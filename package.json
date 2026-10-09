@@ -17,6 +17,7 @@
     "restore": "node scripts/restore.mjs",
     "format": "prettier --write src server shared scripts tests",
     "performance": "node scripts/performance.mjs",
+    "performance:stress": "node scripts/load-test.mjs",
     "licenses": "node scripts/licenses.mjs"
   },
   "dependencies": {

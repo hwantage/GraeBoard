@@ -453,6 +453,45 @@ test("다른 화면에서 삭제된 팀은 자동 조회 때 다른 팀으로 �
   await expect(page.locator(".board-error")).toHaveCount(0);
 });
 
+test("이전 팀의 늦은 보기 저장 실패는 현재 팀에 표시하지 않는다", async ({
+  page,
+}) => {
+  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const nextTeam = boot.teams.find((team: any) => team.id !== teamId).id;
+  let capture: (route: any) => void;
+  const pending = new Promise<any>((resolve) => {
+    capture = resolve;
+  });
+  await page.route("**/api/views", (route) => {
+    if (route.request().method() === "PUT") capture(route);
+    else route.continue();
+  });
+  await page.getByLabel("업무 검색").fill("첫 업무");
+  const previousSave = await pending;
+  await page.getByLabel("팀 선택").selectOption(nextTeam);
+  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("grid")).toBeVisible();
+  const previousResponse = page.waitForResponse(
+    (r) => r.request() === previousSave.request(),
+  );
+  await previousSave.fulfill({
+    status: 503,
+    json: { error: "이전 팀 저장 오류" },
+  });
+  await previousResponse;
+  await expect(page.locator(".board-error")).toHaveCount(0);
+  await page.unroute("**/api/views");
+  await page.route("**/api/views", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: 503, json: { error: "현재 팀 저장 오류" } })
+      : route.continue(),
+  );
+  await page.getByLabel("업무 검색").fill("현재 팀 검색");
+  await expect(page.locator(".board-error")).toContainText("현재 팀 저장 오류");
+});
+
 test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 서식을 보존한다", async ({
   page,
 }, info) => {

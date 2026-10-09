@@ -330,10 +330,11 @@ export function createApp({
     const deleted = req.query.deleted === "1";
     if (deleted)
       requireThat(manager(req.user), 403, "관리자만 휴지통을 볼 수 있습니다.");
-    const cached = cachedTasks(teamId, year, deleted);
-    res.set("ETag", cached.etag);
+    const etag = cachedTasks.etag(teamId, year, deleted);
+    res.set("ETag", etag);
     res.vary("Accept-Encoding");
-    if (req.get("If-None-Match") === cached.etag) return res.status(304).end();
+    if (req.get("If-None-Match") === etag) return res.status(304).end();
+    const cached = cachedTasks(teamId, year, deleted);
     res.type("application/json");
     if (req.acceptsEncodings("gzip")) {
       res.set("Content-Encoding", "gzip");

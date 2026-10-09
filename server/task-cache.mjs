@@ -1,17 +1,19 @@
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { getTasks, now } from "./db.mjs";
 
-export function createTaskCache(db) {
+export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
   const entries = new Map();
-  const limit = 64 * 1024 * 1024;
   let bytes = 0;
-  const cachedTasks = (teamId, year, deleted) => {
-    const key = `${teamId}:${year}:${deleted ? 1 : 0}`;
+  const etagFor = (teamId, year, deleted) => {
     const version =
       db
         .prepare("SELECT version FROM team_revisions WHERE team_id=?")
         .get(teamId)?.version || 0;
-    const etag = `"${key}:${version}"`,
+    return `"${teamId}:${year}:${deleted ? 1 : 0}:${version}"`;
+  };
+  const cachedTasks = (teamId, year, deleted) => {
+    const key = `${teamId}:${year}:${deleted ? 1 : 0}`;
+    const etag = etagFor(teamId, year, deleted),
       existing = entries.get(key);
     if (existing?.etag === etag) return existing;
     if (existing) {
@@ -24,8 +26,13 @@ export function createTaskCache(db) {
           serverTime: now(),
         }),
       ),
-      gzip = gzipSync(body, { level: 1 }),
-      entry = { etag, body, gzip, size: body.length + gzip.length };
+      gzip = gzipSync(body, { level: 1 });
+    // Large annual payloads still fit when stored compressed. Retaining neither
+    // form caused every concurrent request to rebuild the entire dataset.
+    const entry =
+      body.length + gzip.length <= limit
+        ? { etag, body, gzip, size: body.length + gzip.length }
+        : compressedEntry(etag, gzip);
     while (bytes + entry.size > limit && entries.size) {
       const first = entries.keys().next().value;
       bytes -= entries.get(first).size;
@@ -37,6 +44,7 @@ export function createTaskCache(db) {
     }
     return entry;
   };
+  cachedTasks.etag = etagFor;
   cachedTasks.clearTeam = (teamId) => {
     for (const [key, entry] of entries) {
       if (key.startsWith(`${teamId}:`)) {
@@ -46,4 +54,17 @@ export function createTaskCache(db) {
     }
   };
   return cachedTasks;
+}
+
+function compressedEntry(etag, gzip) {
+  return {
+    etag,
+    gzip,
+    size: gzip.length,
+    // Older clients may request identity encoding. Do not retain a second,
+    // oversized buffer after serving their response.
+    get body() {
+      return gunzipSync(gzip);
+    },
+  };
 }

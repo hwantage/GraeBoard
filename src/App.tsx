@@ -396,6 +396,7 @@ function Workspace({
     boardKey.current = key;
     setLoaded(false);
     setError("");
+    setViewError("");
     setSelection(null);
     setReport(null);
     setUndoStack([]);
@@ -498,13 +499,17 @@ function Workspace({
     setView(next);
     if (!report) {
       if (viewTimer.current) clearTimeout(viewTimer.current);
+      const key = `${teamId}:${year}`;
       const save = () => {
         viewTimer.current = null;
         api("/views", {
           method: "PUT",
           body: JSON.stringify({ teamId, name: "__current", data: next }),
           keepalive: true,
-        }).catch((e) => setViewError("보기 설정 저장 실패: " + e.message));
+        }).catch((e) => {
+          if (boardKey.current === key)
+            setViewError("보기 설정 저장 실패: " + e.message);
+        });
       };
       viewSaver.current = save;
       viewTimer.current = setTimeout(() => {

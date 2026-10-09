@@ -381,7 +381,7 @@ export function ImportPanel({
                 </div>
               ) : (
                 <p className="field-help">
-                  담당자가 없는 업무는 가져오는 사람에게 연결됩니다.
+                  담당자가 없는 업무는 미지정 상태로 가져옵니다.
                 </p>
               )}
               <details className="import-warnings">

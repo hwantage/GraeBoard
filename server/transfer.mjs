@@ -67,19 +67,26 @@ function rawValue(c, warnings, label) {
   if (v instanceof Date) return dateKey(v);
   if (typeof v === "object") {
     if ("formula" in v || "sharedFormula" in v) {
-      if (v.result === undefined)
+      // ExcelJS's value getter omits falsy results; the result getter retains
+      // cached zero and false values from the workbook.
+      const result = c.result;
+      if (result === undefined)
         warnings.push(`${label}: 수식 표시값이 없어 빈 값으로 가져옵니다.`);
       else warnings.push(`${label}: 수식은 표시값으로 변환합니다.`);
-      return v.result ?? "";
+      return result instanceof Date ? dateKey(result) : (result ?? "");
     }
     if (v.richText) {
       warnings.push(`${label}: 부분 서식은 셀 기본 서식으로 변환합니다.`);
       return v.richText.map((r) => r.text).join("");
     }
-    if (v.hyperlink)
-      return v.text === v.hyperlink || !v.text
+    if (v.hyperlink) {
+      const text = v.text?.richText
+        ? v.text.richText.map((r) => r.text).join("")
+        : String(v.text || "");
+      return text === v.hyperlink || !text
         ? v.hyperlink
-        : `${v.text} ${v.hyperlink}`;
+        : `${text} ${v.hyperlink}`;
+    }
     if (v.error) {
       warnings.push(`${label}: 오류값 ${v.error}`);
       return v.error;
@@ -133,12 +140,21 @@ function cellStyle(c, warnings, label) {
   }
   return s;
 }
+export function readTransferCell(c, warnings = []) {
+  return {
+    value: rawValue(c, warnings, c.address),
+    style: cellStyle(c, warnings, c.address),
+  };
+}
 function dateFromHeader(value, year) {
-  if (value instanceof Date) return mondayOf(dateKey(value));
+  if (value && typeof value === "object" && !(value instanceof Date))
+    value = value.result ?? value.richText?.map((r) => r.text).join("") ?? "";
+  if (value instanceof Date) return { date: dateKey(value), explicit: true };
   if (typeof value === "number" && value > 40000 && value < 60000)
-    return mondayOf(
-      dateKey(new Date(Date.UTC(1899, 11, 30) + value * 86400000)),
-    );
+    return {
+      date: dateKey(new Date(Date.UTC(1899, 11, 30) + value * 86400000)),
+      explicit: true,
+    };
   const s = String(value ?? "");
   const full = s.match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
   const short = s.match(/(?:^|\s)(\d{1,2})\/(\d{1,2})(?:$|\s)/);
@@ -146,11 +162,36 @@ function dateFromHeader(value, year) {
     const date = full
       ? `${full[1]}-${full[2].padStart(2, "0")}-${full[3].padStart(2, "0")}`
       : `${year}-${short[1].padStart(2, "0")}-${short[2].padStart(2, "0")}`;
-    if (dateSchema.safeParse(date).success) return mondayOf(date);
+    if (dateSchema.safeParse(date).success) return { date, explicit: !!full };
   }
   return null;
 }
-export async function inspectWorkbook(buffer, year, settings) {
+export const importSheetOptionsSchema = z
+  .record(
+    z.string().min(1).max(120),
+    z
+      .object({
+        headerRow: z.number().int().min(1).max(20).optional(),
+        startRow: z.number().int().min(1).max(20000).optional(),
+        endRow: z.number().int().min(1).max(20000).optional(),
+        columns: z
+          .record(z.string().min(1).max(80), z.number().int().min(1).max(500))
+          .optional(),
+      })
+      .strict(),
+  )
+  .refine(
+    (options) => Object.keys(options).length <= 150,
+    "시트 설정은 최대 150개입니다.",
+  );
+
+export async function inspectWorkbook(
+  buffer,
+  year,
+  settings,
+  sheetOptions = {},
+) {
+  sheetOptions = importSheetOptionsSchema.parse(sheetOptions);
   checkWorkbookArchive(buffer);
   const workbook = new ExcelJS.Workbook();
   try {
@@ -178,7 +219,9 @@ export async function inspectWorkbook(buffer, year, settings) {
     let headerRow = 1,
       best = 0,
       mapping = {};
+    const options = sheetOptions[sheet.name] || {};
     for (let r = 1; r <= Math.min(20, sheet.rowCount); r++) {
+      if (options.headerRow && options.headerRow !== r) continue;
       const m = {};
       sheet.getRow(r).eachCell((c, col) => {
         const text = String(c.text || "")
@@ -196,6 +239,42 @@ export async function inspectWorkbook(buffer, year, settings) {
         mapping = m;
       }
     }
+    const headerRows = Array.from({ length: headerRow }, (_, i) => i + 1);
+    if (
+      mapping.title &&
+      !sheet.getCell(headerRow + 1, mapping.title).text.trim()
+    )
+      headerRows.push(headerRow + 1);
+    // Some exports put progress/deadline above or below the main header band.
+    for (const r of headerRows)
+      sheet.getRow(r).eachCell((c, col) => {
+        if (Object.values(mapping).includes(col)) return;
+        const text = String(c.text || "")
+          .trim()
+          .toLowerCase();
+        for (const [key, names] of Object.entries(aliases))
+          if (!mapping[key] && names.some((n) => n.toLowerCase() === text))
+            mapping[key] = col;
+        for (const p of propertiesFor(settings))
+          if (!mapping[p.id] && p.name.toLowerCase() === text)
+            mapping[p.id] = col;
+      });
+    for (const [key, col] of Object.entries(options.columns || {})) {
+      requireThat(
+        FIELD_KEYS.includes(key) ||
+          propertiesFor(settings).some((p) => p.id === key),
+        400,
+        "가져올 속성 연결을 확인하세요.",
+      );
+      mapping[key] = col;
+    }
+    requireThat(
+      new Set(Object.values(mapping)).size === Object.keys(mapping).length,
+      400,
+      "한 원본 열을 여러 속성에 연결할 수 없습니다.",
+    );
+    const startRow = options.startRow || headerRow + 1;
+    const endRow = Math.min(options.endRow || sheet.rowCount, sheet.rowCount);
     if (!mapping.title) {
       sheets.push({
         name: sheet.name,
@@ -209,7 +288,13 @@ export async function inspectWorkbook(buffer, year, settings) {
       });
       continue;
     }
+    requireThat(
+      startRow > headerRow && startRow <= endRow + 1,
+      400,
+      "가져올 행 범위를 확인하세요.",
+    );
     const weekMap = {},
+      weekHeaders = [],
       hiddenWeeks = [],
       warnings = [],
       rows = [],
@@ -225,20 +310,35 @@ export async function inspectWorkbook(buffer, year, settings) {
     const mapped = new Set(Object.values(mapping));
     for (let col = 1; col <= sheet.columnCount; col++) {
       if (mapped.has(col)) continue;
-      for (let r = 1; r <= Math.min(headerRow + 1, sheet.rowCount); r++) {
-        const week = dateFromHeader(sheet.getCell(r, col).value, year);
-        if (week) {
-          weekMap[col] = week;
-          if (sheet.getColumn(col).hidden) hiddenWeeks.push(week);
+      for (const r of headerRows) {
+        const date = dateFromHeader(sheet.getCell(r, col).value, year);
+        if (date) {
+          weekHeaders.push({ col, ...date });
           break;
         }
       }
+    }
+    // Anchor the last short date to the selected year, then follow December →
+    // January boundaries backwards. Explicit years always remain authoritative.
+    let following;
+    for (const header of weekHeaders.toReversed()) {
+      let date = header.date;
+      if (!header.explicit && following) {
+        let inferredYear = Number(following.slice(0, 4));
+        if (Number(date.slice(5, 7)) - Number(following.slice(5, 7)) > 6)
+          inferredYear--;
+        date = `${inferredYear}${date.slice(4)}`;
+      }
+      following = date;
+      const week = mondayOf(date);
+      weekMap[header.col] = week;
+      if (sheet.getColumn(header.col).hidden) hiddenWeeks.push(week);
     }
     if (Object.keys(weekMap).length !== new Set(Object.values(weekMap)).size)
       warnings.push(
         "같은 주차에 연결되는 열이 있습니다. 오른쪽 열 값으로 덮어쓰지 않고 충돌을 확인해야 합니다.",
       );
-    for (let row = headerRow + 1; row <= sheet.rowCount; row++) {
+    for (let row = startRow; row <= endRow; row++) {
       const title = rawValue(
         sheet.getCell(row, mapping.title),
         warnings,
@@ -382,19 +482,21 @@ export async function inspectWorkbook(buffer, year, settings) {
           Math.max(45, Math.round(sheet.getColumn(Number(col)).width * 7)),
         );
     }
-    const visibleFields = fieldsFor(settings)
+    const visibleFields = Object.entries(mapping)
       .filter(
-        (f) =>
-          (mapping[f.key] && !sheet.getColumn(mapping[f.key]).hidden) ||
-          f.key === "title",
+        ([key, col]) =>
+          key !== "id" && (key === "title" || !sheet.getColumn(col).hidden),
       )
-      .map((f) => f.key);
+      .map(([key]) => key);
     sheets.push({
       name: sheet.name,
       widths,
       visibleFields,
       headerRow,
+      startRow,
+      endRow,
       mapping,
+      weekMap,
       rows,
       warnings: [...new Set(warnings)],
       unresolved: [...unresolved],
@@ -595,10 +697,35 @@ export function installTransferRoutes(
       400,
       "XLSX 파일을 선택하세요.",
     );
+    const sheetOptions = importSheetOptionsSchema.parse(
+      req.body.sheetOptions ? parse(req.body.sheetOptions) : {},
+    );
+    const optionsKey = Object.keys(sheetOptions).length
+      ? json(
+          Object.fromEntries(
+            Object.entries(sheetOptions)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([name, options]) => [
+                name,
+                {
+                  ...options,
+                  columns: options.columns
+                    ? Object.fromEntries(
+                        Object.entries(options.columns).sort(([a], [b]) =>
+                          a.localeCompare(b),
+                        ),
+                      )
+                    : undefined,
+                },
+              ]),
+          ),
+        )
+      : "";
     const importId = stableId(
       teamId +
         year +
-        createHash("sha256").update(req.file.buffer).digest("hex"),
+        createHash("sha256").update(req.file.buffer).digest("hex") +
+        optionsKey,
     );
     const existing = db
       .prepare("SELECT * FROM imports WHERE id=?")
@@ -610,6 +737,7 @@ export function installTransferRoutes(
         req.file.buffer,
         year,
         teamAccess(req.user, teamId).settings,
+        sheetOptions,
       );
       db.prepare(
         "INSERT INTO imports(id,team_id,actor_id,filename,data,created_at) VALUES(?,?,?,?,?,?)",
@@ -724,7 +852,7 @@ export function installTransferRoutes(
         const taskId = stableId(`${opKey}:${row.row}`);
         const fields = {
           ...row.fields,
-          owner: d.personMap[row.ownerName] || req.user.id,
+          owner: d.personMap[row.ownerName] || "",
           supporters: row.supporterNames.map((n) => d.personMap[n]),
         };
         for (const [key, list] of [

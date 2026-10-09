@@ -59,6 +59,71 @@ const change = (key, value, version) => ({
   expectedVersion: version ?? getTask(db, task.id).cells[key]?.version ?? 0,
 });
 
+test("원본 행 범위·열 연결별 이관을 구별하고 미지정 담당자를 보존한다", async () => {
+  const target = (await post("/admin/teams", { name: "범위 이관 검증" })).data
+    .id;
+  const wb = new ExcelJS.Workbook(),
+    ws = wb.addWorksheet("일정");
+  ws.getRow(1).values = ["", "", "진척도"];
+  ws.getRow(3).values = ["작업"];
+  ws.getRow(5).values = ["주간 업무", "기획", "75%"];
+  ws.getRow(8).values = ["별도 참고 표"];
+  const file = await wb.xlsx.writeBuffer();
+  const preview = async (options) => {
+    const form = new FormData();
+    form.set("teamId", target);
+    form.set("year", "2026");
+    form.set("file", new Blob([file]), "range.xlsx");
+    form.set("sheetOptions", JSON.stringify(options));
+    return request("/import/preview", { method: "POST", body: form });
+  };
+  const options = {
+    일정: {
+      headerRow: 3,
+      startRow: 5,
+      endRow: 6,
+      columns: { type: 2, title: 1 },
+    },
+  };
+  const first = await preview(options),
+    repeated = await preview({
+      일정: { ...options.일정, columns: { title: 1, type: 2 } },
+    });
+  assert.equal(first.status, 200);
+  assert.equal(first.data.id, repeated.data.id);
+  assert.equal(first.data.sheets[0].count, 1);
+  assert.ok(first.data.sheets[0].visibleFields.includes("progress"));
+  const wider = await preview({ 일정: { ...options.일정, endRow: 8 } });
+  assert.equal(wider.data.sheets[0].count, 2);
+  assert.notEqual(wider.data.id, first.data.id);
+  assert.equal(
+    (await preview({ 일정: { columns: { unknown: 2 } } })).status,
+    400,
+  );
+  const body = {
+    sheet: "일정",
+    year: 2026,
+    personMap: {},
+    mode: "tasks",
+    referenceDate: "2026-10-09",
+    acceptWarnings: true,
+  };
+  assert.equal(
+    (await post(`/import/${first.data.id}/apply`, body)).status,
+    200,
+  );
+  assert.equal(
+    (await post(`/import/${first.data.id}/apply`, body)).data.repeated,
+    true,
+  );
+  const tasks = (await request(`/tasks?teamId=${target}&year=2026`)).data.tasks;
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].cells.title.value, "주간 업무");
+  assert.equal(tasks[0].cells.progress.value, "75%");
+  assert.equal(tasks[0].cells.type.value, "기획");
+  assert.equal(tasks[0].cells.owner.value, "");
+});
+
 test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 데이터와 재시도 기록을 함께 삭제한다", async () => {
   const adminId = (await request("/bootstrap")).data.user.id;
   const tid = (
