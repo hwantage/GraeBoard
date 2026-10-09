@@ -1,0 +1,130 @@
+export type ThemeId = import("../shared/themes.js").ThemeId;
+export type Style = {
+  color?: string;
+  backgroundColor?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  textAlign?: "left" | "center" | "right";
+  verticalAlign?: "top" | "middle" | "bottom";
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  wrap?: boolean;
+  textMode?: "overflow" | "wrap" | "clip";
+};
+export type Cell = {
+  value: string | number | string[];
+  style: Style;
+  version: number;
+};
+export type Task = {
+  id: string;
+  teamId: string;
+  years: number[];
+  position: number;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cells: Record<string, Cell>;
+  defaultStyle?: Style;
+};
+export type User = {
+  id: string;
+  username: string;
+  name: string;
+  role: "admin" | "manager" | "member" | "viewer";
+  active: boolean;
+  color: string;
+  teamIds: string[];
+};
+export type PropertyOption = {
+  id: string;
+  label: string;
+  backgroundColor: string;
+  dotColor: string;
+  emoji: string;
+  archived?: boolean;
+};
+export type Property = {
+  id: string;
+  name: string;
+  kind?: "option" | "text" | "date" | "number" | "member";
+  display: "text" | "round" | "square" | "dot" | "emoji" | "avatar";
+  multiple?: boolean;
+  visible?: boolean;
+  values: PropertyOption[];
+  archived?: boolean;
+};
+export type Settings = {
+  theme?: ThemeId;
+  propertiesVersion?: number;
+  properties?: Property[];
+  revision?: number;
+  defaultStyle?: Style;
+  categories: string[];
+  types: string[];
+  statuses: string[];
+  retentionDays: number;
+};
+export type Team = { id: string; name: string; settings: Settings };
+export type View = {
+  year: number;
+  people: string[];
+  personRole: "either" | "owner" | "supporter";
+  status: string;
+  category: string;
+  propertyFilters?: Record<string, string[]>;
+  search: string;
+  fromMonth: number;
+  toMonth: number;
+  fromWeek?: string;
+  toWeek?: string;
+  hiddenRows: string[];
+  hiddenWeeks: string[];
+  collapsedMonths: number[];
+  visibleFields: string[];
+  frozenColumns?: number;
+  widths: Record<string, number>;
+  compactWeekColumns?: boolean;
+  rowHeights: Record<string, number>;
+  sort: "position" | "deadline" | "title" | "category";
+  groupBy?: string;
+  sortKey?: string;
+  sortDirection?: "asc" | "desc" | "default";
+  knownProperties?: string[];
+  columnVisibility?: Record<string, boolean>;
+  density: "comfortable" | "compact" | "dense";
+};
+export type Bootstrap = {
+  user: User;
+  users: User[];
+  teams: Team[];
+  years: number[];
+};
+export type Point = { taskId: string; key: string };
+export type Selection = { anchor: Point; focus: Point };
+export type CellChange = Point & {
+  value?: Cell["value"];
+  style?: Style;
+  expectedVersion: number;
+};
+export type SavedCell = Point & Cell;
+export type BatchResult = {
+  cells: SavedCell[];
+  before: SavedCell[];
+  updatedAt?: Record<string, string>;
+  operationId: string;
+  savedAt: string;
+};
+export type Report = {
+  id: string;
+  name: string;
+  year: number;
+  referenceDate: string;
+  createdAt: string;
+  tasks: Task[];
+  users: User[];
+  view: View;
+  settings?: Settings;
+};

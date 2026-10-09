@@ -1,0 +1,43 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Runtime data, imports, exports and backups (never commit)
+data/
+backups/
+uploads/
+imports/
+exports/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.sql
+*.dump
+*.bak
+*.xlsx
+*.xls
+*.csv
+*.tsv
+
+# Local configuration and credentials
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+
+# Local test output, source references and workstation files
+test-results/
+playwright-report/
+coverage/
+docs/validation/
+docs/주간업무일지_관리시스템_RFP_v1.0.docx
+*.log
+.DS_Store
+.codebase-memory/
