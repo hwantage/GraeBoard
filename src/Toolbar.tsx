@@ -18,13 +18,15 @@ import {
   ChevronsLeftRight,
   Copy,
 } from "lucide-react";
-import type { Style } from "./types";
+import type { Style, Border, BorderPreset } from "./types";
+import BorderMenu from "./BorderMenu";
 import { FONTS, FONT_SIZES, PALETTE, textMode } from "../shared/domain.js";
 import { Button } from "./components";
 export default function Toolbar({
   style,
   disabled,
   onStyle,
+  onBorder,
   onReset,
   onUndo,
   onRedo,
@@ -37,6 +39,7 @@ export default function Toolbar({
   style: Style;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
+  onBorder: (preset: BorderPreset, border: Border) => void;
   onReset: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -184,6 +187,7 @@ export default function Toolbar({
         />
       </div>
       <div className="toolbar-group">
+        <BorderMenu disabled={disabled} onApply={onBorder} />
         <Button title="서식 초기화" disabled={disabled} onClick={onReset}>
           <ChevronsLeftRight size={16} />
         </Button>

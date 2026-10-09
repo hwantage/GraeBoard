@@ -19,7 +19,9 @@ export function restoreDatabase(backup, destination) {
   try {
     if (
       source.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      ![1, 2].includes(source.prepare("PRAGMA user_version").get().user_version)
+      ![1, 2, 3].includes(
+        source.prepare("PRAGMA user_version").get().user_version,
+      )
     )
       throw new Error("지원하는 정상 백업 파일이 아닙니다.");
     source.prepare("SELECT id FROM tasks LIMIT 1").all();

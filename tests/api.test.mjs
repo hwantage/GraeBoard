@@ -59,6 +59,394 @@ const change = (key, value, version) => ({
   expectedVersion: version ?? getTask(db, task.id).cells[key]?.version ?? 0,
 });
 
+test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·보고본·XLSX 왕복에서 유지된다", async () => {
+  const tid = (await post("/admin/teams", { name: "경계선 검증" })).data.id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  const left = { style: "double", color: "#2255aa" };
+  const right = { style: "dashed", color: "#bb3344" };
+  const saved = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: {
+      ...settings,
+      weekBorders: { left, right },
+      defaultStyle: { ...settings.defaultStyle, borderBottom: right },
+    },
+  });
+  assert.equal(saved.status, 200);
+  settings = saved.data.settings;
+  const invalid = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: { ...settings, weekBorders: { left: { ...left, style: "groove" } } },
+  });
+  assert.equal(invalid.status, 400);
+  const created = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: { title: "테두리 원본" },
+    })
+  ).data.task;
+  assert.deepEqual(created.defaultStyle.borderBottom, right);
+  const changed = await batch([
+    {
+      taskId: created.id,
+      key: "title",
+      expectedVersion: created.cells.title.version,
+      style: { borderLeft: left, borderTop: right, bold: true },
+    },
+  ]);
+  assert.equal(changed.status, 200);
+  assert.equal(changed.data.cells[0].value, "테두리 원본");
+  const invalidCells = await batch([
+    {
+      taskId: created.id,
+      key: "title",
+      expectedVersion: changed.data.cells[0].version,
+      style: { borderLeft: { ...left, color: "red" } },
+    },
+  ]);
+  assert.equal(invalidCells.status, 400);
+  assert.deepEqual(getTask(db, created.id).cells.title.style.borderLeft, left);
+  // Legacy clients omit the optional setting, and must not erase it.
+  const old = structuredClone(settings);
+  delete old.weekBorders;
+  const legacySave = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: old,
+  });
+  assert.equal(legacySave.status, 200);
+  settings = legacySave.data.settings;
+  assert.deepEqual(settings.weekBorders, { left, right });
+  const copied = await post("/admin/teams", {
+    name: "경계선 양식",
+    templateTeamId: tid,
+  });
+  assert.deepEqual(
+    (await request("/admin/users")).data.teams.find(
+      (t) => t.id === copied.data.id,
+    ).settings.weekBorders,
+    { left, right },
+  );
+  const report = await post("/reports", {
+    teamId: tid,
+    year: 2026,
+    name: "경계선 보고본",
+    referenceDate: "2026-03-06",
+    taskIds: [created.id],
+    view: defaultView(2026),
+  });
+  assert.equal(report.status, 201, JSON.stringify(report.data));
+  const exported = await post("/export", {
+    teamId: tid,
+    year: 2026,
+    scope: "view",
+    taskIds: [created.id],
+    keys: ["title", "2026-03-02", "2026-03-16"],
+    format: "xlsx",
+  });
+  assert.equal(exported.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(exported.data);
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.getCell("A2").border.left.style, "double");
+  assert.equal(sheet.getCell("A2").border.top.color.argb, "FFBB3344");
+  for (const address of ["B1", "B2"])
+    assert.equal(sheet.getCell(address).border.left.color.argb, "FF2255AA");
+  for (const address of ["C1", "C2"])
+    assert.equal(sheet.getCell(address).border.right.style, "dashed");
+  sheet.getCell("A2").value = "테두리 재이관";
+  const form = new FormData();
+  form.set("teamId", tid);
+  form.set("year", "2026");
+  form.set(
+    "file",
+    new Blob([await workbook.xlsx.writeBuffer()]),
+    "borders.xlsx",
+  );
+  const preview = await request("/import/preview", {
+    method: "POST",
+    body: form,
+  });
+  assert.equal(preview.status, 200);
+  const imported = await post(`/import/${preview.data.id}/apply`, {
+    sheet: sheet.name,
+    year: 2026,
+    mode: "tasks",
+    referenceDate: "2026-03-06",
+    acceptWarnings: true,
+    personMap: {},
+  });
+  assert.equal(imported.status, 200, JSON.stringify(imported.data));
+  const restored = (
+    await request(`/tasks?teamId=${tid}&year=2026`)
+  ).data.tasks.find((t) => t.cells.title.value === "테두리 재이관");
+  assert.deepEqual(restored.cells.title.style.borderLeft, {
+    ...left,
+    color: left.color.toUpperCase(),
+  });
+  assert.deepEqual(restored.cells.title.style.borderTop, {
+    ...right,
+    color: right.color.toUpperCase(),
+  });
+  assert.deepEqual(restored.cells["2026-03-16"].style.borderRight, {
+    ...right,
+    color: right.color.toUpperCase(),
+  });
+  const clear = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: { ...settings, weekBorders: {} },
+  });
+  assert.equal(clear.status, 200);
+  const snapshot = (await request(`/reports/${report.data.id}`)).data;
+  assert.deepEqual(snapshot.settings.weekBorders, { left, right });
+});
+
+test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하고 값을 보존한다", async () => {
+  const adminId = (await request("/bootstrap")).data.user.id;
+  const target = (
+    await post("/admin/teams", {
+      name: "전체 서식 검증",
+      memberIds: [adminId, memberId],
+    })
+  ).data.id;
+  const tasks = [];
+  for (let i = 0; i < 40; i++)
+    tasks.push(
+      (
+        await post("/tasks", {
+          teamId: target,
+          year: 2026,
+          fields: { title: `전체 서식 ${i}`, owner: memberId },
+        })
+      ).data.task,
+    );
+  const keys = ["owner", ...weeksForYear(2026).map((w) => w.key)];
+  const changes = tasks.flatMap((t) =>
+    keys.map((key) => ({
+      taskId: t.id,
+      key,
+      expectedVersion: t.cells[key]?.version || 0,
+      style: { fontSize: 14, backgroundColor: "#d1eee6" },
+    })),
+  );
+  assert.ok(changes.length > 2000);
+  assert.equal((await batch(changes, viewer)).status, 403);
+  assert.equal(
+    (await batch(changes.map((c) => ({ ...c, value: "" })))).status,
+    400,
+  );
+  const conflict = changes.map((c, i) =>
+    i === changes.length - 1
+      ? { ...c, expectedVersion: c.expectedVersion + 1 }
+      : c,
+  );
+  assert.equal((await batch(conflict, member)).status, 409);
+  assert.deepEqual(getTask(db, tasks[0].id).cells, tasks[0].cells);
+  const operationId = randomUUID();
+  const result = await batch(changes, member, operationId);
+  assert.equal(result.status, 200);
+  assert.equal(result.data.cells.length, changes.length);
+  assert.deepEqual(
+    (await batch(changes, member, operationId)).data,
+    result.data,
+  );
+  for (const t of tasks) {
+    const saved = getTask(db, t.id);
+    assert.equal(saved.cells.owner.value, memberId);
+    assert.equal(saved.cells.title.value, t.cells.title.value);
+    for (const key of keys) {
+      assert.equal(saved.cells[key].style.fontSize, 14);
+      assert.equal(saved.cells[key].style.backgroundColor, "#d1eee6");
+      assert.equal(saved.cells[key].value, key === "owner" ? memberId : "");
+    }
+  }
+  // A member can undo formatting on assignment cells without changing owners.
+  const undone = await batch(
+    result.data.before.map((c) => ({
+      taskId: c.taskId,
+      key: c.key,
+      style: c.style,
+      expectedVersion: c.version + 1,
+    })),
+    member,
+  );
+  assert.equal(undone.status, 200);
+  assert.equal(getTask(db, tasks[0].id).cells.owner.value, memberId);
+  assert.deepEqual(getTask(db, tasks[0].id).cells.owner.style, {
+    ...tasks[0].defaultStyle,
+    ...tasks[0].cells.owner.style,
+  });
+});
+
+test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된 입력과 비관리자 수정을 거절한다", async () => {
+  const body = {
+    username: `avatar-${randomUUID()}`,
+    name: "아바타 검증",
+    password: "profile-test-password",
+    role: "member",
+    active: true,
+    teamIds: [teamId],
+  };
+  const created = await post("/admin/users", body);
+  assert.equal(created.status, 201);
+  const uid = created.data.user.id;
+  assert.equal(created.data.user.avatarInitials, "");
+  assert.equal(created.data.user.avatarImage, "");
+  const patch = (extra, cookie = admin) =>
+    request(`/admin/users/${uid}`, {
+      method: "PATCH",
+      cookie,
+      body: { ...body, ...extra },
+    });
+  assert.equal(
+    (await patch({ avatarInitials: "HK", color: "#cccccc" })).status,
+    200,
+  );
+  const profile = async () =>
+    (await request("/bootstrap")).data.users.find((u) => u.id === uid);
+  assert.equal((await profile()).avatarInitials, "HK");
+  assert.equal((await profile()).color, "#cccccc");
+  // Omitted optional fields preserve the profile for older account clients.
+  assert.equal((await patch({ name: "새 이름" })).status, 200);
+  assert.equal((await profile()).avatarInitials, "HK");
+  for (const initials of ["ABC", "김민"]) {
+    assert.equal((await patch({ avatarInitials: initials })).status, 200);
+    assert.equal((await profile()).avatarInitials, initials);
+  }
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6WAAAAABJRU5ErkJggg==";
+  assert.equal(
+    (await patch({ avatarImage: image, avatarInitials: "" })).status,
+    200,
+  );
+  assert.equal((await profile()).avatarImage, image);
+  for (const invalid of [
+    { avatarInitials: "ABCD" },
+    { avatarInitials: "가나다" },
+    { avatarInitials: "A김" },
+    { avatarInitials: "12" },
+    { color: "red" },
+    { avatarImage: "https://example.com/avatar.png" },
+    { avatarImage: "data:image/svg+xml;base64,PHN2Zz4=" },
+    { avatarImage: "data:image/png;base64,bm90LXBuZw==" },
+  ])
+    assert.equal((await patch(invalid)).status, 400);
+  assert.equal((await patch({ color: "#000000" }, member)).status, 403);
+  assert.equal(
+    (await patch({ avatarImage: "", avatarInitials: "김" })).status,
+    200,
+  );
+  assert.equal((await profile()).avatarInitials, "김");
+  assert.equal((await profile()).avatarImage, "");
+});
+
+test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 값 보존만 허용한다", async () => {
+  const avatarImage =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6WAAAAABJRU5ErkJggg==";
+  const target = (await post("/admin/teams", { name: "이전 팀원 표시 검증" }))
+    .data.id;
+  const adminId = (await request("/bootstrap")).data.user.id;
+  const account = {
+    username: `former-${randomUUID()}`,
+    name: "이전 이름",
+    password: "profile-test-password",
+    role: "member",
+    active: true,
+    teamIds: [target],
+  };
+  const formerId = (await post("/admin/users", account)).data.user.id;
+  const unrelatedId = (
+    await post("/admin/users", {
+      ...account,
+      username: `unrelated-${randomUUID()}`,
+      teamIds: [],
+    })
+  ).data.user.id;
+  const assigned = (
+    await post("/tasks", {
+      teamId: target,
+      year: 2026,
+      fields: {
+        title: "기존 담당 업무",
+        description: unrelatedId,
+        owner: formerId,
+        supporters: [formerId],
+      },
+    })
+  ).data.task;
+  assert.equal(
+    (
+      await request(`/admin/users/${formerId}`, {
+        method: "PATCH",
+        body: {
+          ...account,
+          name: "최신 이름",
+          active: false,
+          teamIds: [],
+          avatarInitials: "최",
+          avatarImage,
+          color: "#888888",
+        },
+      })
+    ).status,
+    200,
+  );
+  const boot = (await request("/bootstrap")).data;
+  const former = boot.users.find((u) => u.id === formerId);
+  assert.equal(former.name, "최신 이름");
+  assert.equal(former.avatarInitials, "최");
+  assert.equal(former.avatarImage, avatarImage);
+  assert.equal(boot.users.filter((u) => u.id === formerId).length, 1);
+  assert.equal(former.color, "#888888");
+  assert.deepEqual(former.teamIds, []);
+  assert(
+    !boot.users.some((u) => u.id === unrelatedId),
+    "관련 없는 계정을 표시용 목록에 포함하지 않는다",
+  );
+  const modify = (key, value, style) =>
+    batch([
+      {
+        taskId: assigned.id,
+        key,
+        expectedVersion: getTask(db, assigned.id).cells[key]?.version || 0,
+        ...(value !== undefined ? { value } : {}),
+        ...(style ? { style } : {}),
+      },
+    ]);
+  assert.equal(
+    (await modify("owner", undefined, { fontSize: 14 })).status,
+    200,
+  );
+  assert.equal((await modify("owner", formerId, { fontSize: 12 })).status, 200);
+  assert.equal((await modify("supporters", [formerId, adminId])).status, 200);
+  const exported = await post("/export", {
+    teamId: target,
+    year: 2026,
+    format: "json",
+    scope: "all",
+  });
+  assert.equal(
+    exported.data.users.find((u) => u.id === formerId).name,
+    "최신 이름",
+  );
+  assert.equal((await modify("owner", adminId)).status, 200);
+  assert.equal((await modify("owner", formerId)).status, 400);
+  assert.equal((await modify("supporters", [adminId])).status, 200);
+  assert.equal((await modify("supporters", [formerId])).status, 400);
+  assert.equal(
+    (
+      await post("/tasks", {
+        teamId: target,
+        year: 2026,
+        fields: { title: "새 배정 금지", owner: formerId },
+      })
+    ).status,
+    400,
+  );
+});
+
 test("원본 행 범위·열 연결별 이관을 구별하고 미지정 담당자를 보존한다", async () => {
   const target = (await post("/admin/teams", { name: "범위 이관 검증" })).data
     .id;
@@ -1569,6 +1957,160 @@ test("동적 속성의 이름·값·모양 변경은 업무 연결과 과거 보
   assert.equal(getTask(db, created.id).cells[pid].value, oid);
 });
 
+test("날짜 뒤 열 배치는 구 설정 저장·팀 양식·보고본·내보내기에서 유지된다", async () => {
+  const tid = (await post("/admin/teams", { name: "날짜 뒤 열 배치" })).data.id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  assert.ok(settings.properties.every((p) => p.placement === "beforeWeeks"));
+  settings.properties.push(
+    {
+      id: "progress",
+      name: "진척률",
+      kind: "text",
+      display: "text",
+      visible: true,
+      placement: "afterWeeks",
+      values: [],
+    },
+    {
+      id: "deadline",
+      name: "목표일",
+      kind: "date",
+      display: "text",
+      visible: true,
+      placement: "afterWeeks",
+      values: [],
+    },
+  );
+  const save = (body) =>
+    request(`/teams/${tid}/settings`, {
+      method: "PATCH",
+      body,
+    });
+  let result = await save(settings);
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  settings = result.data.settings;
+  const created = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: {
+        title: "뒤쪽 속성 검증",
+        progress: "37% 검토",
+        deadline: "2026-12-31",
+      },
+    })
+  ).data.task;
+  const before = getTask(db, created.id);
+  const view = normalizeView(defaultView(2026), settings);
+  const report = await post("/reports", {
+    teamId: tid,
+    year: 2026,
+    name: "날짜 뒤 배치 보고",
+    referenceDate: "2026-10-10",
+    taskIds: [created.id],
+    view,
+  });
+  assert.equal(report.status, 201);
+
+  const body = { teamId: tid, year: 2026, scope: "all" };
+  const headers = [
+    "작업",
+    "팀원",
+    "상태",
+    ...weeksForYear(2026).map((w) => w.key),
+    "진척률",
+    "목표일",
+  ];
+  const csv = await post("/export", { ...body, format: "csv" });
+  assert.equal(csv.status, 200);
+  assert.equal(
+    csv.data
+      .toString("utf8")
+      .replace(/^\uFEFF/, "")
+      .split("\r\n")[0],
+    headers.map((h) => `"${h}"`).join(","),
+  );
+  const xlsx = await post("/export", { ...body, format: "xlsx" });
+  assert.equal(xlsx.status, 200);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(xlsx.data);
+  assert.deepEqual(wb.worksheets[0].getRow(1).values.slice(1), headers);
+  assert.equal(
+    wb.worksheets[0].getRow(2).getCell(headers.length - 1).value,
+    "37% 검토",
+  );
+  assert.equal(
+    wb.worksheets[0].getRow(2).getCell(headers.length).value,
+    "2026-12-31",
+  );
+  const current = await post("/export", {
+    ...body,
+    scope: "view",
+    format: "xlsx",
+    taskIds: [created.id],
+    keys: ["title", "2026-03-02", "deadline", "progress"],
+  });
+  assert.equal(current.status, 200);
+  await wb.xlsx.load(current.data);
+  assert.deepEqual(wb.worksheets[0].getRow(1).values.slice(1), [
+    "작업",
+    "2026-03-02",
+    "목표일",
+    "진척률",
+  ]);
+  const jsonExport = await post("/export", { ...body, format: "json" });
+  assert.equal(
+    jsonExport.data.team.settings.properties.find((p) => p.id === "progress")
+      .placement,
+    "afterWeeks",
+  );
+
+  const copy = await post("/admin/teams", {
+    name: "배치 복사",
+    templateTeamId: tid,
+  });
+  assert.equal(copy.status, 201);
+  const copied = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === copy.data.id,
+  );
+  assert.deepEqual(copied.settings.properties, settings.properties);
+  // Older clients omit placement; unrelated saves must retain the new layout.
+  for (const version of [3, 2]) {
+    const legacy = structuredClone(settings);
+    legacy.propertiesVersion = version;
+    for (const p of legacy.properties) delete p.placement;
+    result = await save(legacy);
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    settings = result.data.settings;
+    for (const id of ["progress", "deadline"])
+      assert.equal(
+        settings.properties.find((p) => p.id === id).placement,
+        "afterWeeks",
+      );
+  }
+  const invalid = structuredClone(settings);
+  invalid.properties.find((p) => p.id === "progress").placement = "middle";
+  assert.equal((await save(invalid)).status, 400);
+  const stale = structuredClone(settings);
+  settings.properties.find((p) => p.id === "progress").placement =
+    "beforeWeeks";
+  result = await save(settings);
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.data.settings.properties.find((p) => p.id === "progress").placement,
+    "beforeWeeks",
+  );
+  assert.equal((await save(stale)).status, 409);
+  const frozen = (await request(`/reports/${report.data.id}`)).data;
+  assert.equal(
+    frozen.settings.properties.find((p) => p.id === "progress").placement,
+    "afterWeeks",
+  );
+  assert.deepEqual(getTask(db, created.id).cells, before.cells);
+});
+
 test("기본 속성 값 변경은 스타일을 보존하며 셀 버전을 올려 오래된 편집을 차단한다", async () => {
   const tid = (
     await post("/admin/teams", {
@@ -1867,6 +2409,146 @@ test("번호 순서 이동은 같은 묶음에만 적용하며 잘못된 요청�
     ),
     ["B", "C", "A", "D"],
   );
+});
+
+test("여러 행 이동은 기존 순서와 제외된 행을 유지하고 모든 행의 권한·버전을 검사한다", async () => {
+  const adminId = (await request("/bootstrap")).data.user.id;
+  const tid = (
+    await post("/admin/teams", {
+      name: "여러 행 이동",
+      templateTeamId: teamId,
+      memberIds: [adminId],
+    })
+  ).data.id;
+  const account = {
+    username: `row-mover-${randomUUID()}`,
+    password: "row-move-test-password",
+  };
+  const moverId = (
+    await post("/admin/users", {
+      ...account,
+      name: "행 이동 팀원",
+      role: "member",
+      active: true,
+      teamIds: [tid],
+    })
+  ).data.user.id;
+  const mover = (await post("/auth/login", account)).cookie;
+  const rows = [];
+  for (const title of ["A", "B", "C", "D", "E", "F"])
+    rows.push(
+      (
+        await post("/tasks", {
+          teamId: tid,
+          year: 2026,
+          fields: {
+            title,
+            category: title === "F" ? "차별화" : "UX 개선",
+            owner: title === "A" ? moverId : adminId,
+          },
+        })
+      ).data.task,
+    );
+  const read = async () =>
+    (await request(`/tasks?teamId=${tid}&year=2026`)).data.tasks;
+  const payload = (indices = [2, 0]) => ({
+    tasks: indices.map((i) => ({
+      id: rows[i].id,
+      updatedAt: getTask(db, rows[i].id).updatedAt,
+    })),
+    targetId: rows[3].id,
+    targetUpdatedAt: getTask(db, rows[3].id).updatedAt,
+    year: 2026,
+    placement: "after",
+    groupBy: "category",
+  });
+  const initial = await read();
+  const noChange = async (body, status, cookie = admin) => {
+    assert.equal((await post("/tasks/reorder", body, cookie)).status, status);
+    assert.deepEqual(await read(), initial);
+  };
+  await noChange(payload([0, 2]), 403, mover);
+  await noChange(payload(), 403, viewer);
+  await noChange(payload([0, 5]), 400);
+  await noChange(payload([0, 0]), 400);
+  await noChange(payload([0, 3]), 400);
+  await noChange({ ...payload(), year: 2027 }, 400);
+  await noChange({ ...payload(), tasks: [] }, 400);
+  const stale = payload();
+  stale.tasks[1].updatedAt = "stale";
+  await noChange(stale, 409);
+  await noChange({ ...payload(), targetUpdatedAt: "stale" }, 409);
+  const moved = await post("/tasks/reorder", payload());
+  assert.equal(moved.status, 200);
+  assert.deepEqual(
+    moved.data.tasks.map((t) => t.cells.title.value),
+    ["A", "C"],
+  );
+  assert.deepEqual(
+    (await read()).map((t) => t.cells.title.value),
+    ["B", "D", "A", "C", "E", "F"],
+  );
+  for (const i of [1, 3, 4, 5])
+    assert.equal(getTask(db, rows[i].id).position, rows[i].position);
+  const back = {
+    ...payload([2, 0]),
+    targetId: rows[1].id,
+    targetUpdatedAt: getTask(db, rows[1].id).updatedAt,
+    placement: "before",
+  };
+  assert.equal((await post("/tasks/reorder", back)).status, 200);
+  assert.deepEqual(
+    (await read()).map((t) => t.cells.title.value),
+    ["A", "C", "B", "D", "E", "F"],
+  );
+});
+
+test("여러 행 저장 도중 실패하면 모두 취소하고 순서 간격이 좁으면 재배치한다", async () => {
+  const tid = (await post("/admin/teams", { name: "행 이동 원자성" })).data.id;
+  const rows = [];
+  for (const title of ["A", "B", "C", "D", "E"])
+    rows.push(
+      (await post("/tasks", { teamId: tid, year: 2026, fields: { title } }))
+        .data.task,
+    );
+  const read = async () =>
+    (await request(`/tasks?teamId=${tid}&year=2026`)).data.tasks;
+  const payload = () => ({
+    tasks: rows
+      .slice(0, 2)
+      .map((t) => ({ id: t.id, updatedAt: getTask(db, t.id).updatedAt })),
+    targetId: rows[3].id,
+    targetUpdatedAt: getTask(db, rows[3].id).updatedAt,
+    year: 2026,
+    placement: "after",
+  });
+  const initial = await read();
+  const auditCount = () =>
+    db.prepare("SELECT COUNT(*) AS n FROM audit WHERE team_id=?").get(tid).n;
+  const originalAuditCount = auditCount();
+  db.exec(
+    `CREATE TEMP TRIGGER fail_second_row BEFORE UPDATE OF position ON tasks WHEN OLD.id='${rows[1].id}' BEGIN SELECT RAISE(ABORT, 'test row move rollback'); END`,
+  );
+  try {
+    assert.equal((await post("/tasks/reorder", payload())).status, 500);
+    assert.deepEqual(await read(), initial);
+    assert.equal(auditCount(), originalAuditCount);
+  } finally {
+    db.exec("DROP TRIGGER fail_second_row");
+  }
+  db.prepare("UPDATE tasks SET position=? WHERE id=?").run(
+    rows[3].position + 1e-8,
+    rows[4].id,
+  );
+  assert.equal((await post("/tasks/reorder", payload())).status, 200);
+  const reordered = await read();
+  assert.deepEqual(
+    reordered.map((t) => t.cells.title.value),
+    ["C", "D", "A", "B", "E"],
+  );
+  assert.equal(new Set(reordered.map((t) => t.position)).size, 5);
+  assert.ok(reordered.every((t) => Number.isFinite(t.position)));
+  assert.equal(auditCount(), originalAuditCount + 2);
 });
 
 test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 보기 필터를 보존한다", async () => {

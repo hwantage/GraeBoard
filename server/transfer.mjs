@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
+import { BORDER_SIDES, weekBorderStyle } from "../shared/borders.js";
 import { checkWorkbookArchive } from "./archive.mjs";
+import { profileSnapshot } from "./profiles.mjs";
 import multer from "multer";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -18,6 +20,7 @@ import {
   safeSpreadsheetText,
   defaultView,
   fieldsFor,
+  orderColumns,
   propertiesFor,
   propertyValue,
   propertyOption,
@@ -111,8 +114,33 @@ function cellStyle(c, warnings, label) {
       `${label}: 테마·인덱스 배경색은 직접 지정 RGB로 변환되지 않았습니다.`,
     );
   if (a.textRotation) warnings.push(`${label}: 글자 회전은 지원하지 않습니다.`);
-  if (Object.keys(c.border || {}).length)
-    warnings.push(`${label}: 셀 테두리는 앱 기본 테두리로 변환합니다.`);
+  for (const side of BORDER_SIDES) {
+    const b = c.border?.[side.toLowerCase()];
+    if (!b?.style) continue;
+    const styles = {
+      thin: "solid",
+      hair: "solid",
+      medium: "medium",
+      thick: "thick",
+      dashed: "dashed",
+      dotted: "dotted",
+      double: "double",
+      dashDot: "dashed",
+      dashDotDot: "dashed",
+      mediumDashed: "dashed",
+      mediumDashDot: "dashed",
+      mediumDashDotDot: "dashed",
+      slantDashDot: "dashed",
+    };
+    s[`border${side}`] = {
+      style: styles[b.style] || "solid",
+      color: color(b.color) || "#607984",
+    };
+    if (b.color && !color(b.color))
+      warnings.push(`${label}: 테마·인덱스 테두리 색은 기본색으로 변환합니다.`);
+  }
+  if (c.border?.diagonal?.style)
+    warnings.push(`${label}: 대각선 테두리는 지원하지 않습니다.`);
   if (color(f.color)) s.color = color(f.color);
   if (c.fill?.type === "pattern" && color(c.fill.fgColor))
     s.backgroundColor = color(c.fill.fgColor);
@@ -508,6 +536,21 @@ export async function inspectWorkbook(
 }
 function excelStyle(style) {
   return {
+    border: Object.fromEntries(
+      BORDER_SIDES.flatMap((side) => {
+        const b = style[`border${side}`];
+        if (!b || b.style === "none") return [];
+        return [
+          [
+            side.toLowerCase(),
+            {
+              style: b.style === "solid" ? "thin" : b.style,
+              color: { argb: "FF" + b.color.slice(1).toUpperCase() },
+            },
+          ],
+        ];
+      }),
+    ),
     font: {
       name: style.fontFamily || FONTS[0],
       size: style.fontSize || 9,
@@ -556,6 +599,12 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
     pattern: "solid",
     fgColor: { argb: "FFEDF6F4" },
   };
+  const weekKeys = keys.filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key));
+  keys.forEach((key, i) => {
+    ws.getRow(1).getCell(i + 1).border = excelStyle(
+      weekBorderStyle(key, weekKeys, settings.weekBorders),
+    ).border;
+  });
   for (const t of tasks) {
     const r = ws.addRow(keys.map((k) => displayValue(t, k, users, settings)));
     keys.forEach((k, i) => {
@@ -566,6 +615,7 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
           ? { backgroundColor: option.backgroundColor }
           : {}),
         ...cell(t, k).style,
+        ...weekBorderStyle(k, weekKeys, settings.weekBorders),
       });
     });
   }
@@ -606,10 +656,10 @@ export function installTransferRoutes(
         "일부 업무가 변경되었습니다. 다시 내보내세요.",
       );
     }
-    const allowedKeys = [
-      ...fieldsFor(settings).map((f) => f.key),
-      ...weeksForYear(d.year).map((w) => w.key),
-    ];
+    const allowedKeys = orderColumns(
+      fieldsFor(settings),
+      weeksForYear(d.year),
+    ).map((column) => column.key);
     const keys = d.scope === "all" ? allowedKeys : d.keys || allowedKeys;
     requireThat(
       keys.length > 0 &&
@@ -618,7 +668,7 @@ export function installTransferRoutes(
       400,
       "내보낼 열을 확인하세요.",
     );
-    const users = teamPeople(d.teamId);
+    const users = teamPeople(d.teamId, true);
     audit(db, req.user.id, d.teamId, "export", id(), undefined, {
       format: d.format,
       scope: d.scope,
@@ -680,7 +730,7 @@ export function installTransferRoutes(
                 ),
               },
         ),
-        users: users.map(({ id, name, color }) => ({ id, name, color })),
+        users: users.map(profileSnapshot),
         views,
         reports,
       }),
@@ -964,7 +1014,7 @@ export function installTransferRoutes(
           now(),
           json({
             tasks,
-            users: people.map(({ id, name, color }) => ({ id, name, color })),
+            users: people.map(profileSnapshot),
             view,
             settings,
           }),

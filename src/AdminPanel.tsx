@@ -1,10 +1,11 @@
 import Select from "./Select";
 import { useEffect, useRef, useState } from "react";
-import { Plus, ArrowUp, ArrowDown, Trash2 } from "lucide-react";
+import { Plus, ArrowUp, ArrowDown, Trash2, CalendarDays } from "lucide-react";
 import type { User, Team, Settings, Property, PropertyOption } from "./types";
 import {
   normalizeSettings,
   propertiesFor,
+  orderColumns,
   propertyValue,
   BUILTIN_PROPERTIES,
   PROPERTY_VALUE_MAX_LENGTH,
@@ -15,6 +16,8 @@ import { Modal, Button, ErrorNote, Avatar } from "./components";
 import PropertyBadge from "./PropertyBadge";
 import DefaultStyleManager from "./DefaultStyleManager";
 import ThemePicker from "./ThemePicker";
+import AvatarEditor from "./AvatarEditor";
+import BorderControls from "./BorderControls";
 import { getTheme } from "../shared/themes.js";
 import type { ThemeId } from "./types";
 const roleNames = {
@@ -36,6 +39,12 @@ const displays = {
   square: "사각형 칩",
   dot: "포인트 칩",
   emoji: "이모지 칩",
+};
+const WEEK_COLUMNS: Property = {
+  id: "__weeks",
+  name: "주차 날짜",
+  display: "text",
+  values: [],
 };
 function move<T extends { id: string; archived?: boolean }>(
   items: T[],
@@ -228,11 +237,24 @@ function PropertiesManager({
   const properties = settings.properties || [],
     active = properties.filter((p) => !p.archived),
     property = active.find((p) => p.id === selected);
+  const columnList = orderColumns(active, [WEEK_COLUMNS]) as Property[];
   const values = property?.values.filter((v) => !v.archived) || [];
   function update(items: Property[]) {
     setSettings((s) => ({ ...s, properties: items }));
     setMessage("");
     setError("");
+  }
+  function moveColumn(id: string, delta: number) {
+    const next = move(columnList, id, delta);
+    const weekIndex = next.findIndex((p) => p.id === WEEK_COLUMNS.id);
+    update([
+      ...next.flatMap((p, i): Property[] =>
+        p.id === WEEK_COLUMNS.id
+          ? []
+          : [{ ...p, placement: i < weekIndex ? "beforeWeeks" : "afterWeeks" }],
+      ),
+      ...properties.filter((p) => p.archived),
+    ]);
   }
   function patchProperty(patch: Partial<Property>) {
     if (property)
@@ -290,9 +312,9 @@ function PropertiesManager({
   return (
     <div ref={root} className="properties-manager">
       <p className="field-help">
-        {team.name}에서 사용할 속성을 설정합니다. 속성 순서는 열 배치에, 값
-        순서는 선택 목록과 묶음 보기에 적용됩니다. 체크박스로 열의 기본 표시
-        여부를 정합니다. 작업·팀원·상태는 삭제할 수 없는 기본 속성입니다.
+        {team.name}의 공통 열 배치를 설정합니다. 위·아래 버튼으로 속성을 ‘주차
+        날짜’ 아래로 옮기면 마지막 날짜 뒤에 표시됩니다. 체크박스로 열의 기본
+        표시 여부를 정합니다.
       </p>
       <ErrorNote error={error} />
       {message && (
@@ -302,58 +324,74 @@ function PropertiesManager({
       )}
       <div className="properties-layout">
         <div className="property-list">
-          {active.map((p, i) => (
+          {columnList.map((p, i) => (
             <div
-              className={`property-list-row ${p.id === selected ? "current" : ""}`}
+              className={`property-list-row ${p.id === WEEK_COLUMNS.id ? "week-column-row" : ""} ${p.id === selected ? "current" : ""}`}
               key={p.id}
+              data-column-item={p.id}
             >
               <button
-                className="property-select"
+                className={
+                  p.id === WEEK_COLUMNS.id
+                    ? "week-column-select"
+                    : "property-select"
+                }
                 onClick={() => setSelected(p.id)}
               >
+                {p.id === WEEK_COLUMNS.id && (
+                  <CalendarDays size={14} aria-hidden="true" />
+                )}
                 {p.name || "이름 없는 속성"}
                 <small>
-                  {CORE_PROPERTY_KEYS.includes(p.id) && "기본 · "}
-                  {p.kind === "option"
-                    ? `${p.values.filter((v) => !v.archived).length}개 값`
-                    : kinds[p.kind || "option"]}
+                  {p.id === WEEK_COLUMNS.id ? (
+                    "전체 주차 묶음"
+                  ) : (
+                    <>
+                      {CORE_PROPERTY_KEYS.includes(p.id) && "기본 · "}
+                      {p.kind === "option"
+                        ? `${p.values.filter((v) => !v.archived).length}개 값`
+                        : kinds[p.kind || "option"]}
+                    </>
+                  )}
                 </small>
               </button>
-              <input
-                type="checkbox"
-                aria-label={`${p.name || "새 속성"} 열 표시`}
-                checked={
-                  visibilityChanges[p.id] ??
-                  (visibleFields &&
-                  stored.current.properties?.some((v) => v.id === p.id)
-                    ? visibleFields.includes(p.id)
-                    : p.visible !== false)
-                }
-                disabled={p.id === "title"}
-                onChange={(e) => {
-                  setVisibilityChanges((s) => ({
-                    ...s,
-                    [p.id]: e.target.checked,
-                  }));
-                  update(
-                    properties.map((v) =>
-                      v.id === p.id ? { ...v, visible: e.target.checked } : v,
-                    ),
-                  );
-                }}
-              />
+              {p.id !== WEEK_COLUMNS.id && (
+                <input
+                  type="checkbox"
+                  aria-label={`${p.name || "새 속성"} 열 표시`}
+                  checked={
+                    visibilityChanges[p.id] ??
+                    (visibleFields &&
+                    stored.current.properties?.some((v) => v.id === p.id)
+                      ? visibleFields.includes(p.id)
+                      : p.visible !== false)
+                  }
+                  disabled={p.id === "title"}
+                  onChange={(e) => {
+                    setVisibilityChanges((s) => ({
+                      ...s,
+                      [p.id]: e.target.checked,
+                    }));
+                    update(
+                      properties.map((v) =>
+                        v.id === p.id ? { ...v, visible: e.target.checked } : v,
+                      ),
+                    );
+                  }}
+                />
+              )}
               <div className="order-buttons">
                 <Button
-                  title={`${p.name} 속성 위로`}
+                  title={`${p.name}${p.id === WEEK_COLUMNS.id ? "" : " 속성"} 위로`}
                   disabled={i === 0}
-                  onClick={() => update(move(properties, p.id, -1))}
+                  onClick={() => moveColumn(p.id, -1)}
                 >
                   <ArrowUp size={13} />
                 </Button>
                 <Button
-                  title={`${p.name} 속성 아래로`}
-                  disabled={i === active.length - 1}
-                  onClick={() => update(move(properties, p.id, 1))}
+                  title={`${p.name}${p.id === WEEK_COLUMNS.id ? "" : " 속성"} 아래로`}
+                  disabled={i === columnList.length - 1}
+                  onClick={() => moveColumn(p.id, 1)}
                 >
                   <ArrowDown size={13} />
                 </Button>
@@ -375,6 +413,7 @@ function PropertiesManager({
                 name: "",
                 kind: "option",
                 visible: true,
+                placement: "beforeWeeks",
                 display: "square",
                 values: [],
               };
@@ -409,6 +448,40 @@ function PropertiesManager({
             </details>
           )}
         </div>
+        {selected === WEEK_COLUMNS.id && (
+          <section className="property-editor" aria-label="주차 날짜 배치 안내">
+            <h3>주차 날짜</h3>
+            <div className="week-border-settings">
+              {(["left", "right"] as const).map((side) => (
+                <BorderControls
+                  key={side}
+                  label={`${side === "left" ? "왼쪽" : "오른쪽"} 경계선`}
+                  value={settings.weekBorders?.[side]}
+                  disabled={busy}
+                  onChange={(border) => {
+                    setSettings((s) => ({
+                      ...s,
+                      weekBorders: { ...s.weekBorders, [side]: border },
+                    }));
+                    setMessage("");
+                  }}
+                />
+              ))}
+            </div>
+            <p className="field-help">
+              현재 보이는 날짜 묶음의 양 끝에 적용됩니다. 주차를 숨기거나 조회
+              기간을 바꿔도 경계선이 따라갑니다.
+            </p>
+            <p className="field-help">
+              조회 기간에 해당하는 날짜 열을 한 묶음으로 표시합니다. 이 항목
+              아래에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
+            </p>
+            <p className="field-help">
+              진척률·목표일을 날짜 뒤에 두려면 왼쪽 목록의 위·아래 버튼으로
+              순서를 바꾼 뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
+            </p>
+          </section>
+        )}
         {property && (
           <section className="property-editor" aria-label="속성 편집">
             <div className="form-grid">
@@ -790,6 +863,7 @@ export default function AdminPanel({
     [memberTeam, setMemberTeam] = useState(""),
     [propertyTeam, setPropertyTeam] = useState(team.id);
   const isAdmin = user.role === "admin";
+  const [avatarLoading, setAvatarLoading] = useState(false);
   async function refresh() {
     if (isAdmin) setData(await api("/admin/users"));
     else {
@@ -819,6 +893,9 @@ export default function AdminPanel({
           role: f.get("role"),
           active: f.get("active") === "on",
           teamIds: f.getAll("teams"),
+          color: edit?.color,
+          avatarInitials: edit?.avatarInitials,
+          avatarImage: edit?.avatarImage,
         },
         edit?.id ? "PATCH" : "POST",
       );
@@ -1048,6 +1125,9 @@ export default function AdminPanel({
                     <input
                       name="name"
                       defaultValue={edit.name}
+                      onChange={(e) =>
+                        setEdit((u) => ({ ...u, name: e.target.value }))
+                      }
                       maxLength={50}
                       required
                     />
@@ -1086,6 +1166,12 @@ export default function AdminPanel({
                     </Select>
                   </label>
                 </div>
+                <AvatarEditor
+                  key={edit.id || "new"}
+                  user={edit}
+                  onChange={(patch) => setEdit((u) => ({ ...u, ...patch }))}
+                  onLoading={setAvatarLoading}
+                />
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -1112,7 +1198,11 @@ export default function AdminPanel({
                 </fieldset>
                 <footer className="form-actions">
                   <Button onClick={() => setEdit(null)}>취소</Button>
-                  <Button type="submit" className="primary" disabled={busy}>
+                  <Button
+                    type="submit"
+                    className="primary"
+                    disabled={busy || avatarLoading}
+                  >
                     팀원 저장
                   </Button>
                 </footer>

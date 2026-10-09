@@ -5,36 +5,68 @@ import { getTasks, getTask, nextTaskStamp, transaction, audit } from "./db.mjs";
 
 export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
   app.post("/api/tasks/reorder", (req, res) => {
+    const destination = {
+      targetId: z.string().uuid(),
+      year: yearSchema,
+      placement: z.enum(["before", "after"]),
+      groupBy: z.string().max(80).default(""),
+      targetUpdatedAt: z.string(),
+    };
     const d = z
-      .object({
-        taskId: z.string().uuid(),
-        targetId: z.string().uuid(),
-        year: yearSchema,
-        placement: z.enum(["before", "after"]),
-        groupBy: z.string().max(80).default(""),
-        updatedAt: z.string(),
-        targetUpdatedAt: z.string(),
-      })
-      .strict()
+      .union([
+        z
+          .object({
+            ...destination,
+            tasks: z
+              .array(
+                z
+                  .object({
+                    id: z.string().uuid(),
+                    updatedAt: z.string(),
+                  })
+                  .strict(),
+              )
+              .min(1)
+              .max(20000),
+          })
+          .strict(),
+        z
+          .object({
+            ...destination,
+            taskId: z.string().uuid(),
+            updatedAt: z.string(),
+          })
+          .strict(),
+      ])
       .parse(req.body);
-    const task = transaction(db, () => {
-      const source = taskAccess(req.user, d.taskId, true),
-        target = taskAccess(req.user, d.targetId);
+    const requested =
+      "tasks" in d ? d.tasks : [{ id: d.taskId, updatedAt: d.updatedAt }];
+    const ids = new Set(requested.map((t) => t.id));
+    requireThat(
+      ids.size === requested.length,
+      400,
+      "같은 업무를 중복 선택할 수 없습니다.",
+    );
+    requireThat(!ids.has(d.targetId), 400, "이동할 행 밖의 위치를 선택하세요.");
+    const tasks = transaction(db, () => {
+      const sources = requested.map((t) => taskAccess(req.user, t.id, true));
+      const target = taskAccess(req.user, d.targetId);
       requireThat(
-        source.id !== target.id &&
-          source.teamId === target.teamId &&
-          source.years.includes(d.year) &&
-          target.years.includes(d.year),
+        sources.every(
+          (source) =>
+            source.teamId === target.teamId && source.years.includes(d.year),
+        ) && target.years.includes(d.year),
         400,
         "같은 팀과 연도의 업무를 선택하세요.",
       );
       requireThat(
-        source.updatedAt === d.updatedAt &&
-          target.updatedAt === d.targetUpdatedAt,
+        sources.every(
+          (source, i) => source.updatedAt === requested[i].updatedAt,
+        ) && target.updatedAt === d.targetUpdatedAt,
         409,
         "업무가 변경되었습니다. 새로고침 후 순서를 다시 변경하세요.",
       );
-      const settings = teamAccess(req.user, source.teamId).settings;
+      const settings = teamAccess(req.user, target.teamId).settings;
       requireThat(
         !d.groupBy || propertiesFor(settings).some((p) => p.id === d.groupBy),
         400,
@@ -42,17 +74,28 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
       );
       requireThat(
         !d.groupBy ||
-          groupValue(source, d.groupBy) === groupValue(target, d.groupBy),
+          sources.every(
+            (source) =>
+              groupValue(source, d.groupBy) === groupValue(target, d.groupBy),
+          ),
         400,
         "묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.",
       );
-      let all = getTasks(db, source.teamId, d.year);
+      let all = getTasks(db, target.teamId, d.year).sort(
+        (a, b) =>
+          a.position - b.position ||
+          a.createdAt.localeCompare(b.createdAt) ||
+          a.id.localeCompare(b.id),
+      );
+      // Always preserve the board's order, even when another selected handle
+      // starts the drag or the client sends the IDs in a different order.
+      const moving = all.filter((t) => ids.has(t.id));
       const neighbors = () => {
         const rows = all.filter(
           (t) =>
-            t.id !== source.id &&
+            !ids.has(t.id) &&
             (!d.groupBy ||
-              groupValue(t, d.groupBy) === groupValue(source, d.groupBy)),
+              groupValue(t, d.groupBy) === groupValue(target, d.groupBy)),
         );
         const index =
           rows.findIndex((t) => t.id === target.id) +
@@ -60,44 +103,54 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
         return [rows[index - 1], rows[index]];
       };
       let [before, after] = neighbors();
-      if (before && after && after.position - before.position < 0.000001) {
+      if (
+        before &&
+        after &&
+        (after.position - before.position) / (moving.length + 1) < 0.000001
+      ) {
         const put = db.prepare(
           "UPDATE tasks SET position=?,updated_at=? WHERE id=?",
         );
         all.forEach((t, i) =>
           put.run((i + 1) * 1000, nextTaskStamp(t.updatedAt), t.id),
         );
-        all = getTasks(db, source.teamId, d.year);
+        all = getTasks(db, target.teamId, d.year);
         [before, after] = neighbors();
       }
-      const position =
+      const step =
         before && after
-          ? (before.position + after.position) / 2
-          : before
-            ? before.position + 100
-            : after.position - 100;
-      db.prepare("UPDATE tasks SET position=?,updated_at=? WHERE id=?").run(
-        position,
-        nextTaskStamp(getTask(db, source.id).updatedAt),
-        source.id,
+          ? (after.position - before.position) / (moving.length + 1)
+          : 100;
+      const start = before
+        ? before.position
+        : after.position - step * (moving.length + 1);
+      const put = db.prepare(
+        "UPDATE tasks SET position=?,updated_at=? WHERE id=?",
       );
-      const result = getTask(db, source.id);
-      audit(
-        db,
-        req.user.id,
-        source.teamId,
-        "reorder",
-        source.id,
-        { position: source.position },
-        {
+      return moving.map((source, i) => {
+        const position = start + step * (i + 1);
+        put.run(
           position,
-          targetId: target.id,
-          placement: d.placement,
-          groupBy: d.groupBy,
-        },
-      );
-      return result;
+          nextTaskStamp(getTask(db, source.id).updatedAt),
+          source.id,
+        );
+        audit(
+          db,
+          req.user.id,
+          source.teamId,
+          "reorder",
+          source.id,
+          { position: source.position },
+          {
+            position,
+            targetId: target.id,
+            placement: d.placement,
+            groupBy: d.groupBy,
+          },
+        );
+        return getTask(db, source.id);
+      });
     });
-    res.json({ task });
+    res.json({ task: tasks[0], tasks });
   });
 }

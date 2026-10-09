@@ -1,5 +1,14 @@
 export type ThemeId = import("../shared/themes.js").ThemeId;
+export type Border = {
+  style: "none" | "solid" | "medium" | "thick" | "dashed" | "dotted" | "double";
+  color: string;
+};
+export type BorderPreset = "outside" | "all" | "none";
 export type Style = {
+  borderTop?: Border;
+  borderRight?: Border;
+  borderBottom?: Border;
+  borderLeft?: Border;
   color?: string;
   backgroundColor?: string;
   fontFamily?: string;
@@ -36,6 +45,8 @@ export type User = {
   role: "admin" | "manager" | "member" | "viewer";
   active: boolean;
   color: string;
+  avatarInitials?: string;
+  avatarImage?: string;
   teamIds: string[];
 };
 export type PropertyOption = {
@@ -53,10 +64,12 @@ export type Property = {
   display: "text" | "round" | "square" | "dot" | "emoji" | "avatar";
   multiple?: boolean;
   visible?: boolean;
+  placement?: "beforeWeeks" | "afterWeeks";
   values: PropertyOption[];
   archived?: boolean;
 };
 export type Settings = {
+  weekBorders?: { left?: Border; right?: Border };
   theme?: ThemeId;
   propertiesVersion?: number;
   properties?: Property[];
@@ -103,7 +116,12 @@ export type Bootstrap = {
   years: number[];
 };
 export type Point = { taskId: string; key: string };
-export type Selection = { anchor: Point; focus: Point };
+export type SelectionArea = {
+  anchor: Point;
+  focus: Point;
+  kind?: "cells" | "columns" | "rows";
+};
+export type Selection = SelectionArea & { areas?: SelectionArea[] };
 export type CellChange = Point & {
   value?: Cell["value"];
   style?: Style;

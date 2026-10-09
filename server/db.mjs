@@ -79,7 +79,13 @@ export function openDatabase(
     db.exec(
       "ALTER TABLE tasks ADD COLUMN default_style TEXT NOT NULL DEFAULT '{}'",
     );
-  db.exec("PRAGMA user_version=2");
+  const userColumns = db.prepare("PRAGMA table_info(users)").all();
+  for (const column of ["avatar_initials", "avatar_image"])
+    if (!userColumns.some((c) => c.name === column))
+      db.exec(
+        `ALTER TABLE users ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
+      );
+  db.exec("PRAGMA user_version=3");
   return db;
 }
 export function transaction(db, work) {
@@ -102,6 +108,8 @@ export function userInfo(db, u) {
     role: u.role,
     active: !!u.active,
     color: u.color,
+    avatarInitials: u.avatar_initials || "",
+    avatarImage: u.avatar_image || "",
     teamIds: db
       .prepare("SELECT team_id FROM memberships WHERE user_id=?")
       .all(u.id)

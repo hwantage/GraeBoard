@@ -1,8 +1,10 @@
 import {
+  Fragment,
   useLayoutEffect,
   useEffect,
   useState,
   useRef,
+  useMemo,
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
@@ -13,8 +15,9 @@ import {
   Plus,
   ArrowUp,
   ArrowDown,
-  ArrowUpDown,
   GripVertical,
+  EyeOff,
+  RotateCcw,
 } from "lucide-react";
 import type {
   Task,
@@ -25,6 +28,7 @@ import type {
   Settings,
   Cell,
   Property,
+  SelectionArea,
 } from "./types";
 import {
   canEdit,
@@ -45,12 +49,16 @@ import InlineCellEditor, {
 } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
+import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
+import { bordersCSS, weekBorderStyle } from "../shared/borders.js";
 import {
   createClipboard,
   copyToEvent,
   readClipboard,
   type ClipboardMatrix,
 } from "./clipboard";
+
+const ROW_HEADER_WIDTH = 48;
 
 export type Column = {
   key: string;
@@ -62,20 +70,34 @@ export type Column = {
   date?: string;
   end?: string;
 };
+type ColumnReference = Pick<Column, "key" | "label" | "month">;
 export function rangeOf(
   selection: Selection | null,
   tasks: Task[],
   columns: Column[],
 ) {
   if (!selection) return null;
-  const r1 = tasks.findIndex((t) => t.id === selection.anchor.taskId),
-    r2 = tasks.findIndex((t) => t.id === selection.focus.taskId),
-    c1 = columns.findIndex((c) => c.key === selection.anchor.key),
-    c2 = columns.findIndex((c) => c.key === selection.focus.key);
-  if ([r1, r2, c1, c2].some((v) => v < 0)) return null;
+  const r1 =
+      selection.kind === "columns"
+        ? 0
+        : tasks.findIndex((t) => t.id === selection.anchor.taskId),
+    r2 =
+      selection.kind === "columns"
+        ? tasks.length - 1
+        : tasks.findIndex((t) => t.id === selection.focus.taskId),
+    c1 =
+      selection.kind === "rows"
+        ? 0
+        : columns.findIndex((c) => c.key === selection.anchor.key),
+    c2 =
+      selection.kind === "rows"
+        ? columns.length - 1
+        : columns.findIndex((c) => c.key === selection.focus.key);
+  if (c1 < 0 || c2 < 0 || (selection.kind !== "columns" && (r1 < 0 || r2 < 0)))
+    return null;
   return {
-    r1: Math.min(r1, r2),
-    r2: Math.max(r1, r2),
+    r1: tasks.length ? Math.min(r1, r2) : 0,
+    r2: tasks.length ? Math.max(r1, r2) : -1,
     c1: Math.min(c1, c2),
     c2: Math.max(c1, c2),
   };
@@ -86,21 +108,50 @@ export function selectedPoints(
   columns: Column[],
   limit = 2000,
 ) {
-  const r = rangeOf(selection, tasks, columns);
-  if (!r) return [];
-  if ((r.r2 - r.r1 + 1) * (r.c2 - r.c1 + 1) > limit)
-    throw new Error(
-      `한 번에 ${limit.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
-    );
-  const points: Point[] = [];
-  for (let i = r.r1; i <= r.r2; i++)
-    for (let j = r.c1; j <= r.c2; j++)
-      points.push({ taskId: tasks[i].id, key: columns[j].key });
-  return points;
+  const points = new Map<string, Point>();
+  for (const r of rangesOf(selection, tasks, columns))
+    for (let i = r.r1; i <= r.r2; i++)
+      for (let j = r.c1; j <= r.c2; j++) {
+        const p = { taskId: tasks[i].id, key: columns[j].key };
+        points.set(`${p.taskId}:${p.key}`, p);
+        if (points.size > limit)
+          throw new Error(
+            `한 번에 ${limit.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
+          );
+      }
+  return [...points.values()];
+}
+export function rangesOf(
+  selection: Selection | null,
+  tasks: Task[],
+  columns: Column[],
+) {
+  return selection
+    ? [...(selection.areas || []), selection]
+        .map((area) => {
+          const range = rangeOf(area, tasks, columns);
+          return range ? { ...range, kind: area.kind } : null;
+        })
+        .filter((range): range is NonNullable<typeof range> => !!range)
+    : [];
+}
+function savedAreas(selection: Selection | null): SelectionArea[] {
+  return selection
+    ? [
+        ...(selection.areas || []),
+        {
+          anchor: selection.anchor,
+          focus: selection.focus,
+          kind: selection.kind,
+        },
+      ]
+    : [];
 }
 export default function Grid({
   tasks,
+  allTasks,
   columns,
+  columnOrder,
   view,
   user,
   users,
@@ -123,7 +174,9 @@ export default function Grid({
   jump,
 }: {
   tasks: Task[];
+  allTasks: Task[];
   columns: Column[];
+  columnOrder: ColumnReference[];
   view: View;
   user: User;
   users: User[];
@@ -138,7 +191,7 @@ export default function Grid({
   onClear: () => void;
   onRowMenu: (task: Task) => void;
   onReorder: (
-    taskId: string,
+    taskIds: string[],
     targetId: string,
     placement: "before" | "after",
   ) => void;
@@ -156,12 +209,25 @@ export default function Grid({
   const rowDragPreview = useRef<HTMLDivElement>(null);
   const [rowDrag, setRowDrag] = useState<{
     taskId: string;
+    taskIds: string[];
     targetId: string;
     placement: "before" | "after";
     valid: boolean;
   } | null>(null);
+  const draggedIds = useMemo(
+    () => new Set(rowDrag?.taskIds),
+    [rowDrag?.taskIds],
+  );
   const stopRowDrag = useRef<(() => void) | null>(null);
+  const stopHeaderDrag = useRef<(() => void) | null>(null);
+  const [headerMenu, setHeaderMenu] = useState<{
+    kind: "columns" | "rows";
+    index: number;
+    x: number;
+    y: number;
+  } | null>(null);
   useEffect(() => () => stopRowDrag.current?.(), []);
+  useEffect(() => () => stopHeaderDrag.current?.(), [tasks, columns]);
   function positionRowDragPreview() {
     const preview = rowDragPreview.current;
     if (!preview) return;
@@ -170,24 +236,173 @@ export default function Grid({
   }
   useLayoutEffect(positionRowDragPreview, [rowDrag]);
   const today = todayKey();
-  const totalWidth = 48 + columns.reduce((s, c) => s + c.width, 0);
-  let offset = 48;
+  const columnGaps = useMemo(() => {
+    const visible = new Set(columns.map((c) => c.key));
+    const before = new Map<string, ColumnReference[]>();
+    let hidden: ColumnReference[] = [];
+    for (const column of columnOrder) {
+      if (!visible.has(column.key)) hidden.push(column);
+      else if (hidden.length) {
+        before.set(column.key, hidden);
+        hidden = [];
+      }
+    }
+    return { before, trailing: hidden };
+  }, [columns, columnOrder]);
+  const rowHeaderWidth = Math.max(
+    ROW_HEADER_WIDTH,
+    30 + String(allTasks.length).length * 6,
+  );
+  let offset = rowHeaderWidth;
   const positions = columns.map((c) => {
     const p = offset;
     offset += c.width;
     return p;
   });
+  const totalWidth = offset;
+  function revealColumns(hidden: ColumnReference[]) {
+    const keys = new Set(hidden.map((c) => c.key));
+    onView({
+      visibleFields: [
+        ...new Set([
+          ...view.visibleFields,
+          ...hidden.filter((c) => !c.month).map((c) => c.key),
+        ]),
+      ],
+      hiddenWeeks: view.hiddenWeeks.filter((key) => !keys.has(key)),
+    });
+    ref.current?.focus({ preventScroll: true });
+  }
+  function columnMarker(hidden: ColumnReference[] | undefined, index: number) {
+    if (presentation || !hidden?.length) return null;
+    const next = columns[index];
+    const fixed = next?.fixed || columns[index - 1]?.fixed;
+    const left = next ? positions[index] : offset;
+    const names =
+      hidden.length === 1
+        ? hidden[0].label
+        : `${hidden[0].label} ~ ${hidden.at(-1)!.label}`;
+    return (
+      <div
+        className={`hidden-column-marker ${fixed ? "fixed" : ""} ${next ? "" : "trailing"}`}
+        role="presentation"
+        style={fixed ? { left } : undefined}
+      >
+        <button
+          type="button"
+          className="hidden-column-reveal"
+          data-hidden-columns={hidden.map((c) => c.key).join(" ")}
+          aria-label={`숨긴 열 ${hidden.length}개 펼치기: ${names}`}
+          title={`${names} · 숨긴 열 ${hidden.length}개 펼치기`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={() => revealColumns(hidden)}
+        >
+          <span className="hidden-column-arrow left" aria-hidden="true" />
+          <span className="hidden-column-arrow right" aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
   const range = rangeOf(selection, tasks, columns);
+  const ranges = useMemo(
+    () => rangesOf(selection, tasks, columns),
+    [selection, tasks, columns],
+  );
+  const weekKeys = columns.filter((c) => c.month).map((c) => c.key);
+  const rowMarkers = useMemo(() => {
+    type Gap = { ids: string[]; start: number; end: number };
+    const map = new Map<
+      string,
+      { number: number; before?: Gap; after?: Gap }
+    >();
+    const hidden = new Set(view.hiddenRows);
+    let previous: string | undefined;
+    let gap: Gap | undefined;
+    allTasks.forEach((task, index) => {
+      if (hidden.has(task.id)) {
+        if (!gap) gap = { ids: [], start: index + 1, end: index + 1 };
+        gap.ids.push(task.id);
+        gap.end = index + 1;
+      } else {
+        map.set(task.id, { number: index + 1, before: gap });
+        if (gap && previous) map.get(previous)!.after = gap;
+        previous = task.id;
+        gap = undefined;
+      }
+    });
+    if (gap && previous) map.get(previous)!.after = gap;
+    return map;
+  }, [allTasks, view.hiddenRows]);
+  function revealRows(ids: string[]) {
+    const reveal = new Set(ids);
+    onView({ hiddenRows: view.hiddenRows.filter((id) => !reveal.has(id)) });
+  }
   const properties = propertiesFor(settings) as Property[];
   const group = properties.find((p) => p.id === view.groupBy);
   const groupKey = group?.id || "";
   const sorted = !!view.sortKey && view.sortDirection !== "default";
+  function rowsToMove(task: Task) {
+    if (
+      selection?.kind === "rows" &&
+      !(selection.areas || []).some((a) => a.kind !== "rows")
+    ) {
+      const index = tasks.findIndex((t) => t.id === task.id);
+      if (ranges.some((r) => index >= r.r1 && index <= r.r2))
+        return tasks.filter((_, i) =>
+          ranges.some((r) => i >= r.r1 && i <= r.r2),
+        );
+    }
+    return [task];
+  }
+  function canMoveRows(moving: Task[]) {
+    if (moving.some((t) => !canEdit(user, t))) {
+      onError("선택한 행에 이동 권한이 없는 업무가 포함되어 있습니다.");
+      return false;
+    }
+    if (
+      groupKey &&
+      moving.some(
+        (t) => groupValue(t, groupKey) !== groupValue(moving[0], groupKey),
+      )
+    ) {
+      onError("묶음 보기에서는 같은 묶음의 행만 함께 이동할 수 있습니다.");
+      return false;
+    }
+    return true;
+  }
+  function moveRows(
+    moving: Task[],
+    targetId: string,
+    placement: "before" | "after",
+  ) {
+    onSelect({
+      kind: "rows",
+      anchor: { taskId: moving[0].id, key: columns[0].key },
+      focus: { taskId: moving.at(-1)!.id, key: columns[0].key },
+    });
+    onReorder(
+      moving.map((t) => t.id),
+      targetId,
+      placement,
+    );
+    ref.current?.focus({ preventScroll: true });
+  }
   function startRowDrag(e: React.PointerEvent, task: Task) {
     if (e.button !== 0 || readOnly || sorted || editor || !canEdit(user, task))
       return;
     e.preventDefault();
     e.stopPropagation();
+    const moving = rowsToMove(task);
+    if (!canMoveRows(moving)) return;
+    const movingTaskIds = moving.map((t) => t.id);
+    const movingIds = new Set(movingTaskIds);
     stopRowDrag.current?.();
+    stopHeaderDrag.current?.();
+    setHeaderMenu(null);
     dragOrigin.current = null;
     const startX = e.clientX,
       startY = e.clientY;
@@ -207,7 +422,7 @@ export default function Grid({
         .elementFromPoint(x, y)
         ?.closest<HTMLElement>(".sheet-row");
       const item = tasks.find((t) => t.id === element?.dataset.rowId);
-      if (!item || item.id === task.id || !element) {
+      if (!item || movingIds.has(item.id) || !element) {
         drop = null;
       } else {
         const box = element.getBoundingClientRect();
@@ -228,6 +443,7 @@ export default function Grid({
       }
       const next = {
         taskId: task.id,
+        taskIds: movingTaskIds,
         ...(drop || {
           targetId: "",
           placement: "before" as const,
@@ -268,7 +484,7 @@ export default function Grid({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
       window.removeEventListener("blur", cancel);
       document.body.classList.remove("row-reordering");
       cancelAnimationFrame(frame);
@@ -281,6 +497,7 @@ export default function Grid({
     const escape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         cancel();
       }
     };
@@ -288,7 +505,7 @@ export default function Grid({
       clean();
       setRowDrag(null);
       if (dragging && drop) {
-        if (drop.valid) onReorder(task.id, drop.targetId, drop.placement);
+        if (drop.valid) moveRows(moving, drop.targetId, drop.placement);
         else onError("묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.");
       }
     };
@@ -296,7 +513,7 @@ export default function Grid({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finishDrag, { once: true });
     window.addEventListener("pointercancel", cancel, { once: true });
-    window.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
     window.addEventListener("blur", cancel);
     frame = requestAnimationFrame(scroll);
   }
@@ -360,7 +577,8 @@ export default function Grid({
       const index = columns.findIndex((c) => c.key === jump.key);
       if (index >= 0) {
         const pinned =
-          48 + columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
+          rowHeaderWidth +
+          columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
         ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 80);
         appliedJump.current = jump.id;
       }
@@ -402,19 +620,288 @@ export default function Grid({
     }
     return true;
   }
-  function sortColumn(key: string) {
-    const current = view.sortKey === key ? view.sortDirection : "default";
-    const direction =
-      current === "asc" ? "desc" : current === "desc" ? "default" : "asc";
+  function sortColumn(key: string, direction: "asc" | "desc" | "default") {
     onView({
       sortKey: direction === "default" ? "" : key,
       sortDirection: direction,
       sort: "position",
     });
   }
-  function pick(point: Point, extend = false) {
-    if (!extend || !selection) onSelect({ anchor: point, focus: point });
-    else onSelect({ ...selection, focus: point });
+  function headerSelection(
+    kind: "columns" | "rows",
+    anchor: number,
+    focus: number,
+  ): Selection {
+    return kind === "columns"
+      ? {
+          kind,
+          anchor: { taskId: tasks[0]?.id || "", key: columns[anchor].key },
+          focus: { taskId: tasks[0]?.id || "", key: columns[focus].key },
+        }
+      : {
+          kind,
+          anchor: { taskId: tasks[anchor].id, key: columns[0].key },
+          focus: { taskId: tasks[focus].id, key: columns[0].key },
+        };
+  }
+  function selectHeader(
+    kind: "columns" | "rows",
+    index: number,
+    extend = false,
+    add = false,
+  ) {
+    let anchor = index;
+    if (extend && selection?.kind === kind) {
+      const previous =
+        kind === "columns"
+          ? columns.findIndex((c) => c.key === selection.anchor.key)
+          : tasks.findIndex((t) => t.id === selection.anchor.taskId);
+      if (previous >= 0) anchor = previous;
+    }
+    onSelect({
+      ...headerSelection(kind, anchor, index),
+      areas: add
+        ? savedAreas(selection)
+        : extend
+          ? selection?.areas
+          : undefined,
+    });
+    ref.current?.focus({ preventScroll: true });
+    return anchor;
+  }
+  function startHeaderSelection(
+    e: React.PointerEvent,
+    kind: "columns" | "rows",
+    index: number,
+  ) {
+    if (e.button !== 0 || presentation) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setHeaderMenu(null);
+    dragOrigin.current = null;
+    stopHeaderDrag.current?.();
+    const previousSelection = selection;
+    const additive = e.metaKey || e.ctrlKey;
+    const areas = additive
+      ? savedAreas(selection)
+      : e.shiftKey
+        ? selection?.areas
+        : undefined;
+    const anchor = selectHeader(kind, index, e.shiftKey, additive);
+    const origin = { x: e.clientX, y: e.clientY };
+    let x = e.clientX,
+      y = e.clientY,
+      last = index,
+      frame = 0,
+      dragging = false;
+    const update = () => {
+      const grid = ref.current;
+      if (!grid) return;
+      const box = grid.getBoundingClientRect();
+      const element = document.elementFromPoint(
+        Math.max(box.left + 2, Math.min(x, box.right - 14)),
+        kind === "columns"
+          ? box.top + 16
+          : Math.max(box.top + 34, Math.min(y, box.bottom - 14)),
+      );
+      const next =
+        kind === "columns"
+          ? columns.findIndex(
+              (c) =>
+                c.key ===
+                element?.closest<HTMLElement>("[data-header-key]")?.dataset
+                  .headerKey,
+            )
+          : tasks.findIndex(
+              (t) =>
+                t.id ===
+                element?.closest<HTMLElement>("[data-row-id]")?.dataset.rowId,
+            );
+      if (next >= 0 && next !== last) {
+        last = next;
+        onSelect({ ...headerSelection(kind, anchor, next), areas });
+      }
+    };
+    const move = (event: PointerEvent) => {
+      x = event.clientX;
+      y = event.clientY;
+      dragging ||= Math.hypot(x - origin.x, y - origin.y) > 3;
+      if (dragging) update();
+    };
+    const scroll = () => {
+      const grid = ref.current;
+      if (grid && dragging) {
+        const box = grid.getBoundingClientRect();
+        if (kind === "columns") {
+          const fixedWidth =
+            rowHeaderWidth +
+            columns.filter((c) => c.fixed).reduce((n, c) => n + c.width, 0);
+          const delta =
+            x > box.right - 28
+              ? 12
+              : x < box.left + fixedWidth + 10 && x > box.left + fixedWidth
+                ? -12
+                : 0;
+          if (delta) {
+            grid.scrollLeft += delta;
+            update();
+          }
+        } else {
+          const delta = y > box.bottom - 28 ? 10 : y < box.top + 48 ? -10 : 0;
+          if (delta) {
+            grid.scrollTop += delta;
+            update();
+          }
+        }
+      }
+      frame = requestAnimationFrame(scroll);
+    };
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", escape, true);
+      stopHeaderDrag.current = null;
+    };
+    const cancel = () => {
+      stop();
+      onSelect(previousSelection);
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        cancel();
+      }
+    };
+    stopHeaderDrag.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointercancel", cancel, { once: true });
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", escape, true);
+    frame = requestAnimationFrame(scroll);
+  }
+  function openHeaderMenu(
+    e: React.MouseEvent,
+    kind: "columns" | "rows",
+    index: number,
+  ) {
+    e.preventDefault();
+    if (e.ctrlKey) return;
+    showHeaderMenu(kind, index, e.clientX, e.clientY);
+  }
+  function showHeaderMenu(
+    kind: "columns" | "rows",
+    index: number,
+    x: number,
+    y: number,
+  ) {
+    if (presentation) return;
+    const alreadySelected = ranges.some(
+      (r) =>
+        r.kind === kind &&
+        (kind === "columns"
+          ? index >= r.c1 && index <= r.c2
+          : index >= r.r1 && index <= r.r2),
+    );
+    if (!alreadySelected) selectHeader(kind, index);
+    setHeaderMenu({ kind, index, x, y });
+  }
+  const menuColumns =
+    headerMenu?.kind === "columns" && range
+      ? columns.filter((_, i) => ranges.some((r) => i >= r.c1 && i <= r.c2))
+      : [];
+  const menuColumn =
+    headerMenu?.kind === "columns" ? columns[headerMenu.index] : undefined;
+  const menuActions: HeaderMenuAction[] =
+    headerMenu?.kind === "columns"
+      ? [
+          {
+            label: "열 숨기기",
+            icon: <EyeOff size={15} />,
+            disabled: !menuColumns.some((c) => c.key !== "title"),
+            run: () => {
+              const keys = new Set(
+                menuColumns.filter((c) => c.key !== "title").map((c) => c.key),
+              );
+              onView({
+                visibleFields: view.visibleFields.filter(
+                  (key) => !keys.has(key),
+                ),
+                hiddenWeeks: [
+                  ...new Set([
+                    ...view.hiddenWeeks,
+                    ...menuColumns.filter((c) => c.month).map((c) => c.key),
+                  ]),
+                ],
+              });
+            },
+          },
+          {
+            label: "오름차순 정렬",
+            icon: <ArrowUp size={15} />,
+            disabled: !menuColumn || !!menuColumn.month,
+            run: () => sortColumn(menuColumn!.key, "asc"),
+          },
+          {
+            label: "내림차순 정렬",
+            icon: <ArrowDown size={15} />,
+            disabled: !menuColumn || !!menuColumn.month,
+            run: () => sortColumn(menuColumn!.key, "desc"),
+          },
+          {
+            label: "정렬 해제",
+            icon: <RotateCcw size={15} />,
+            disabled: !sorted,
+            run: () => sortColumn("", "default"),
+          },
+        ]
+      : [
+          {
+            label: "행 숨기기",
+            icon: <EyeOff size={15} />,
+            run: () => {
+              if (range)
+                onView({
+                  hiddenRows: [
+                    ...new Set([
+                      ...view.hiddenRows,
+                      ...tasks
+                        .filter((_, i) =>
+                          ranges.some((r) => i >= r.r1 && i <= r.r2),
+                        )
+                        .map((t) => t.id),
+                    ]),
+                  ],
+                });
+            },
+          },
+          {
+            label: "업무 상세",
+            icon: <MoreHorizontal size={15} />,
+            disabled: !range || range.r1 !== range.r2,
+            run: () => {
+              if (headerMenu && tasks[headerMenu.index])
+                onRowMenu(tasks[headerMenu.index]);
+            },
+          },
+        ];
+  function pick(point: Point, extend = false, add = false) {
+    if (!extend || !selection)
+      onSelect({
+        anchor: point,
+        focus: point,
+        areas: add ? savedAreas(selection) : undefined,
+      });
+    else
+      onSelect({
+        anchor: selection.anchor,
+        focus: point,
+        areas: selection.areas,
+      });
     ref.current?.focus({ preventScroll: true });
     // Firefox can clear focus when the blurred textarea unmounts. Restore the
     // grid after that commit, unless a new editor has already taken focus.
@@ -459,6 +946,23 @@ export default function Grid({
       const [dr, dc] = delta[e.key],
         r = Math.max(0, Math.min(tasks.length - 1, ri + dr)),
         c = Math.max(0, Math.min(columns.length - 1, ci + dc));
+      if (
+        e.shiftKey &&
+        selection.kind === "columns" &&
+        ["ArrowLeft", "ArrowRight"].includes(e.key)
+      ) {
+        selectHeader("columns", c, true);
+        return;
+      }
+      if (
+        e.shiftKey &&
+        selection.kind === "rows" &&
+        ["ArrowUp", "ArrowDown"].includes(e.key)
+      ) {
+        selectHeader("rows", r, true);
+        virtual.scrollToIndex(r, { align: "auto" });
+        return;
+      }
       pick(
         { taskId: tasks[r].id, key: columns[c].key },
         e.shiftKey && e.key !== "Tab",
@@ -504,13 +1008,16 @@ export default function Grid({
     window.addEventListener("pointerup", stop, { once: true });
   }
   return (
-    <div className="grid-area">
+    <div
+      className="grid-area"
+      style={{ "--row-header-width": `${rowHeaderWidth}px` } as CSSProperties}
+    >
       <div
         ref={ref}
         tabIndex={0}
         role="grid"
         aria-label="연간 업무 일정"
-        aria-rowcount={tasks.length + 1}
+        aria-rowcount={allTasks.length + 1}
         aria-colcount={columns.length + 1}
         aria-readonly={readOnly}
         className="sheet-scroll"
@@ -525,6 +1032,10 @@ export default function Grid({
         onCopy={(e) => {
           if (editor || !range) return;
           e.preventDefault();
+          if (selection?.areas?.length) {
+            onError("복사할 때는 하나의 연속된 영역을 선택하세요.");
+            return;
+          }
           try {
             copyToEvent(
               e.clipboardData,
@@ -551,72 +1062,123 @@ export default function Grid({
       >
         <div className="sheet-header" role="row" style={{ width: totalWidth }}>
           <div className="row-number header-cell" role="columnheader">
-            #
+            {presentation ? (
+              "#"
+            ) : (
+              <button
+                className="row-select"
+                aria-label="모든 셀 선택"
+                disabled={!tasks.length}
+                onClick={() => {
+                  onSelect({
+                    anchor: { taskId: tasks[0].id, key: columns[0].key },
+                    focus: {
+                      taskId: tasks.at(-1)!.id,
+                      key: columns.at(-1)!.key,
+                    },
+                  });
+                  ref.current?.focus();
+                }}
+              >
+                #
+              </button>
+            )}
           </div>
           {columns.map((c, ci) => (
-            <div
-              key={c.key}
-              role="columnheader"
-              aria-sort={
-                c.month
-                  ? undefined
-                  : view.sortKey === c.key
-                    ? view.sortDirection === "asc"
-                      ? "ascending"
-                      : view.sortDirection === "desc"
-                        ? "descending"
-                        : "none"
-                    : "none"
-              }
-              className={`header-cell ${c.fixed ? "fixed" : c.month ? "week-heading" : ""} ${c.key <= today && (c.end || "") >= today ? "this-week" : ""}`}
-              style={{
-                width: c.width,
-                ...(c.fixed ? { left: positions[ci] } : {}),
-              }}
-            >
-              {c.month || presentation ? (
-                <span
-                  className="week-label"
-                  title={c.month ? `${c.key} ~ ${c.end}` : c.label}
-                >
-                  {c.label}
-                </span>
-              ) : (
-                <button
-                  className="column-sort"
-                  aria-label={`${c.label} 정렬`}
-                  onClick={() => sortColumn(c.key)}
-                  title="오름차순 → 내림차순 → 기본 순서"
-                >
-                  {c.label}
-                  {view.sortKey === c.key ? (
-                    view.sortDirection === "asc" ? (
-                      <ArrowUp size={12} />
-                    ) : (
-                      <ArrowDown size={12} />
-                    )
-                  ) : (
-                    <ArrowUpDown className="sort-idle" size={12} />
-                  )}
-                </button>
-              )}
-              {!presentation && (
-                <span
-                  className="column-resizer"
-                  role="separator"
-                  aria-label={`${c.label} 너비 조절`}
-                  onPointerDown={(e) =>
-                    resize(
-                      e,
-                      c.width,
-                      (w) => onView({ widths: { ...view.widths, [c.key]: w } }),
-                      c.month ? 40 : 45,
-                    )
+            <Fragment key={c.key}>
+              {columnMarker(columnGaps.before.get(c.key), ci)}
+              <div
+                key={c.key}
+                role="columnheader"
+                data-header-key={c.key}
+                aria-selected={ranges.some(
+                  (r) => r.kind === "columns" && ci >= r.c1 && ci <= r.c2,
+                )}
+                onPointerDown={(e) => startHeaderSelection(e, "columns", ci)}
+                onContextMenu={(e) => openHeaderMenu(e, "columns", ci)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "ContextMenu" ||
+                    (e.shiftKey && e.key === "F10")
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const box = e.currentTarget.getBoundingClientRect();
+                    showHeaderMenu("columns", ci, box.left, box.bottom);
                   }
-                />
-              )}
-            </div>
+                }}
+                aria-sort={
+                  c.month
+                    ? undefined
+                    : view.sortKey === c.key
+                      ? view.sortDirection === "asc"
+                        ? "ascending"
+                        : view.sortDirection === "desc"
+                          ? "descending"
+                          : "none"
+                      : "none"
+                }
+                className={`header-cell ${c.fixed ? "fixed" : c.month ? "week-heading" : ""} ${c.key <= today && (c.end || "") >= today ? "this-week" : ""}`}
+                style={{
+                  width: c.width,
+                  ...(c.fixed ? { left: positions[ci] } : {}),
+                  ...bordersCSS(
+                    weekBorderStyle(c.key, weekKeys, settings.weekBorders),
+                  ),
+                }}
+              >
+                {presentation ? (
+                  <span
+                    className="week-label"
+                    title={c.month ? `${c.key} ~ ${c.end}` : c.label}
+                  >
+                    {c.label}
+                  </span>
+                ) : (
+                  <button
+                    className={`column-select ${c.month ? "week-label" : ""}`}
+                    aria-label={`${c.label}${c.month ? " 주차" : ""} 열 선택`}
+                    onClick={(e) => {
+                      if (e.detail === 0)
+                        selectHeader(
+                          "columns",
+                          ci,
+                          e.shiftKey,
+                          e.metaKey || e.ctrlKey,
+                        );
+                    }}
+                    title="클릭하여 열 선택 · 드래그하여 여러 열 선택 · 우클릭하여 열 메뉴"
+                  >
+                    {c.label}
+                    {view.sortKey === c.key ? (
+                      view.sortDirection === "asc" ? (
+                        <ArrowUp size={12} />
+                      ) : (
+                        <ArrowDown size={12} />
+                      )
+                    ) : null}
+                  </button>
+                )}
+                {!presentation && (
+                  <span
+                    className="column-resizer"
+                    role="separator"
+                    aria-label={`${c.label} 너비 조절`}
+                    onPointerDown={(e) =>
+                      resize(
+                        e,
+                        c.width,
+                        (w) =>
+                          onView({ widths: { ...view.widths, [c.key]: w } }),
+                        c.month ? 40 : 45,
+                      )
+                    }
+                  />
+                )}
+              </div>
+            </Fragment>
           ))}
+          {columnMarker(columnGaps.trailing, columns.length)}
         </div>
         <div
           className="virtual-body"
@@ -624,13 +1186,15 @@ export default function Grid({
         >
           {virtual.getVirtualItems().map((row) => {
             const task = tasks[row.index];
+            const marker = rowMarkers.get(task.id);
+            const rowNumber = marker?.number || row.index + 1;
             return (
               <div
                 key={task.id}
                 role="row"
-                aria-rowindex={row.index + 2}
+                aria-rowindex={rowNumber + 1}
                 data-row-id={task.id}
-                className={`sheet-row ${rowDrag?.taskId === task.id ? "row-dragging" : ""} ${rowDrag?.targetId === task.id ? (rowDrag.valid ? `row-drop-${rowDrag.placement}` : "row-drop-invalid") : ""}`}
+                className={`sheet-row ${draggedIds.has(task.id) ? "row-dragging" : ""} ${rowDrag?.targetId === task.id ? (rowDrag.valid ? `row-drop-${rowDrag.placement}` : "row-drop-invalid") : ""}`}
                 style={
                   {
                     "--row-group-height": `${groupHeight(row.index)}px`,
@@ -662,9 +1226,30 @@ export default function Grid({
                     </span>
                   </div>
                 )}
-                <div className="row-number">
+                <div
+                  className="row-number"
+                  role="rowheader"
+                  aria-selected={ranges.some(
+                    (r) =>
+                      r.kind === "rows" &&
+                      row.index >= r.r1 &&
+                      row.index <= r.r2,
+                  )}
+                  onContextMenu={(e) => openHeaderMenu(e, "rows", row.index)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "ContextMenu" ||
+                      (e.shiftKey && e.key === "F10")
+                    ) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const box = e.currentTarget.getBoundingClientRect();
+                      showHeaderMenu("rows", row.index, box.right, box.top);
+                    }
+                  }}
+                >
                   {presentation ? (
-                    <span>{row.index + 1}</span>
+                    <span>{rowNumber}</span>
                   ) : (
                     <>
                       <button
@@ -675,8 +1260,8 @@ export default function Grid({
                         }
                         title={
                           sorted
-                            ? "컬럼 정렬을 해제하면 순서를 이동할 수 있습니다."
-                            : "번호를 드래그하여 순서 이동 · Alt+위/아래 방향키"
+                            ? "컬럼 머리글 우클릭 → 정렬 해제 후 이동할 수 있습니다."
+                            : "손잡이를 드래그하여 행 이동 · 여러 행 선택 시 함께 이동 · Alt+위/아래 방향키"
                         }
                         onPointerDown={(e) => startRowDrag(e, task)}
                         onKeyDown={(e) => {
@@ -687,37 +1272,56 @@ export default function Grid({
                             return;
                           e.preventDefault();
                           e.stopPropagation();
+                          const moving = rowsToMove(task);
+                          if (!canMoveRows(moving)) return;
+                          const movingIds = new Set(moving.map((t) => t.id));
                           const same = tasks.filter(
                             (t) =>
                               !groupKey ||
                               groupValue(t, groupKey) ===
                                 groupValue(task, groupKey),
                           );
-                          const index = same.findIndex((t) => t.id === task.id),
-                            direction = e.key === "ArrowUp" ? -1 : 1,
-                            neighbor = same[index + direction];
+                          const direction = e.key === "ArrowUp" ? -1 : 1;
+                          const index =
+                            direction < 0
+                              ? same.findIndex((t) => movingIds.has(t.id))
+                              : same.findLastIndex((t) => movingIds.has(t.id));
+                          const neighbor = same[index + direction];
                           if (neighbor)
-                            onReorder(
-                              task.id,
+                            moveRows(
+                              moving,
                               neighbor.id,
                               direction < 0 ? "before" : "after",
                             );
                         }}
                       >
-                        {row.index + 1}
+                        <GripVertical size={15} aria-hidden="true" />
                       </button>
                       <button
-                        className="row-menu-trigger"
-                        aria-label={`${value(task, "title")} 업무 메뉴`}
-                        onClick={() => onRowMenu(task)}
+                        className="row-select"
+                        aria-label={`${rowNumber}행 전체 선택`}
+                        title="행 선택 · 드래그하여 여러 행 선택 · ⌘/Ctrl로 영역 추가"
+                        onPointerDown={(e) =>
+                          startHeaderSelection(e, "rows", row.index)
+                        }
+                        onClick={(e) => {
+                          if (e.detail === 0)
+                            selectHeader(
+                              "rows",
+                              row.index,
+                              e.shiftKey,
+                              e.metaKey || e.ctrlKey,
+                            );
+                        }}
                       >
-                        <MoreHorizontal size={16} />
+                        <span className="row-index">{rowNumber}</span>
                       </button>
                       <span
                         className="row-resizer"
                         title="행 높이 조절"
                         onPointerDown={(e) => {
                           e.preventDefault();
+                          e.stopPropagation();
                           dragOrigin.current = null;
                           const y = e.clientY;
                           const drag = (ev: PointerEvent) =>
@@ -748,16 +1352,34 @@ export default function Grid({
                       />
                     </>
                   )}
+                  {(["before", "after"] as const).map((side) => {
+                    const gap = marker?.[side];
+                    if (!gap || presentation) return null;
+                    const label = `${gap.start === gap.end ? gap.start : `${gap.start}~${gap.end}`}행 숨김 해제`;
+                    return (
+                      <button
+                        key={side}
+                        className={`hidden-row-marker ${side}`}
+                        aria-label={label}
+                        title={`${label} (${gap.ids.length}개 행)`}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => revealRows(gap.ids)}
+                      >
+                        <span className="hidden-row-arrow" aria-hidden="true" />
+                      </button>
+                    );
+                  })}
                 </div>
                 {columns.map((c, ci) => {
                   const current = cell(task, c.key),
                     s = current.style;
-                  const selected =
-                    range &&
-                    row.index >= range.r1 &&
-                    row.index <= range.r2 &&
-                    ci >= range.c1 &&
-                    ci <= range.c2;
+                  const selected = ranges.some(
+                    (r) =>
+                      row.index >= r.r1 &&
+                      row.index <= r.r2 &&
+                      ci >= r.c1 &&
+                      ci <= r.c2,
+                  );
                   const focused =
                     selection?.focus.taskId === task.id &&
                     selection.focus.key === c.key;
@@ -781,8 +1403,25 @@ export default function Grid({
                     for (let next = ci + 1; next < columns.length; next++) {
                       const neighbor = columns[next];
                       const v = value(task, neighbor.key);
+                      const previousKey = columns[next - 1].key;
+                      const right =
+                        weekBorderStyle(
+                          previousKey,
+                          weekKeys,
+                          settings.weekBorders,
+                        ).borderRight ||
+                        cell(task, previousKey).style.borderRight;
+                      const left =
+                        weekBorderStyle(
+                          neighbor.key,
+                          weekKeys,
+                          settings.weekBorders,
+                        ).borderLeft ||
+                        cell(task, neighbor.key).style.borderLeft;
                       if (
                         !!neighbor.fixed !== !!c.fixed ||
+                        (right && right.style !== "none") ||
+                        (left && left.style !== "none") ||
                         (editor?.point.taskId === task.id &&
                           editor.point.key === neighbor.key) ||
                         (Array.isArray(v)
@@ -829,6 +1468,10 @@ export default function Grid({
                     );
                   const style: CSSProperties = {
                     width: c.width,
+                    ...bordersCSS({
+                      ...s,
+                      ...weekBorderStyle(c.key, weekKeys, settings.weekBorders),
+                    }),
                     ...(c.fixed ? { left: positions[ci] } : {}),
                     color: s.color,
                     backgroundColor: s.backgroundColor,
@@ -876,7 +1519,11 @@ export default function Grid({
                         if (e.button === 0) {
                           dragOrigin.current = { x: e.clientX, y: e.clientY };
                           e.preventDefault();
-                          pick({ taskId: task.id, key: c.key }, e.shiftKey);
+                          pick(
+                            { taskId: task.id, key: c.key },
+                            e.shiftKey,
+                            e.metaKey || e.ctrlKey,
+                          );
                         }
                       }}
                       onPointerMove={(e) => {
@@ -900,6 +1547,8 @@ export default function Grid({
                       }
                       onContextMenu={(e) => {
                         e.preventDefault();
+                        // macOS emits a context menu for Ctrl+click as well.
+                        if (e.ctrlKey) return;
                         if (!presentation) onRowMenu(task);
                       }}
                     >
@@ -966,6 +1615,14 @@ export default function Grid({
             }
           />
         )}
+        {!tasks.length && allTasks.length > 0 && !presentation && (
+          <Button
+            className="reveal-all-rows"
+            onClick={() => revealRows(allTasks.map((t) => t.id))}
+          >
+            숨긴 {allTasks.length}개 행 펼치기
+          </Button>
+        )}
         {!!tasks.length && !readOnly && user.role !== "viewer" && (
           <Button className="primary add-row" onClick={onAdd}>
             <Plus size={17} />
@@ -973,6 +1630,24 @@ export default function Grid({
           </Button>
         )}
       </div>
+      {headerMenu && (
+        <GridHeaderMenu
+          key={`${headerMenu.kind}:${headerMenu.index}`}
+          x={headerMenu.x}
+          y={headerMenu.y}
+          title={
+            headerMenu.kind === "columns"
+              ? `${menuColumn?.label || "선택"} 열 메뉴`
+              : "선택한 행 메뉴"
+          }
+          actions={menuActions}
+          scrollContainer={ref.current}
+          onClose={(restore) => {
+            setHeaderMenu(null);
+            if (restore) ref.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
       {rowDrag &&
         createPortal(
           <div
@@ -983,6 +1658,9 @@ export default function Grid({
             <GripVertical size={18} aria-hidden="true" />
             <div>
               <strong>
+                {rowDrag.taskIds.length > 1
+                  ? `${rowDrag.taskIds.length}개 행 · `
+                  : ""}
                 {String(
                   tasks.find((t) => t.id === rowDrag.taskId)?.cells.title
                     ?.value || "제목 없는 업무",

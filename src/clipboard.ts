@@ -8,12 +8,17 @@ import {
   textMode,
 } from "../shared/domain.js";
 import type { Settings, Style, Task, User } from "./types";
+import { BORDER_SIDES, BORDER_STYLES, borderCSS } from "../shared/borders.js";
 
 export type ClipboardCell = { text: string; style?: Style };
 export type ClipboardMatrix = ClipboardCell[][];
 export const CELL_MIME = "application/x-weekly-plan-cells+json";
 const LIMIT = 2000;
 const BASE_STYLE: Required<Style> = {
+  borderTop: { style: "none", color: "#607984" },
+  borderRight: { style: "none", color: "#607984" },
+  borderBottom: { style: "none", color: "#607984" },
+  borderLeft: { style: "none", color: "#607984" },
   color: "#5c7078",
   backgroundColor: "#ffffff",
   fontFamily: FONTS[0],
@@ -43,6 +48,21 @@ function cleanStyle(input: unknown): Style {
       ? (input as Record<string, unknown>)
       : {};
   const result: Style = {};
+  for (const side of BORDER_SIDES) {
+    const key = `border${side}` as
+      "borderTop" | "borderRight" | "borderBottom" | "borderLeft";
+    const b = s[key] as Record<string, unknown> | undefined;
+    if (
+      b &&
+      BORDER_STYLES.includes(String(b.style)) &&
+      typeof b.color === "string" &&
+      /^#[a-f\d]{6}$/i.test(b.color)
+    )
+      result[key] = {
+        style: b.style as NonNullable<Style[typeof key]>["style"],
+        color: b.color,
+      };
+  }
   for (const key of ["color", "backgroundColor"] as const)
     if (typeof s[key] === "string" && /^#[a-f\d]{6}$/i.test(s[key]))
       result[key] = s[key];
@@ -129,6 +149,10 @@ export function createClipboard(
               `vertical-align:${s.verticalAlign}`,
               `white-space:${s.wrap ? "pre-wrap" : "nowrap"}`,
               `overflow:${s.textMode === "clip" ? "hidden" : "visible"}`,
+              ...BORDER_SIDES.map(
+                (side) =>
+                  `border-${side.toLowerCase()}:${borderCSS(s[`border${side}` as keyof Style])}`,
+              ),
             ].join(";");
             return `<td data-text-mode="${s.textMode}" style="${escapeHTML(css)}">${escapeHTML(text).replace(/\r\n|\r|\n/g, "<br>")}</td>`;
           })
@@ -220,6 +244,26 @@ function htmlStyle(element: HTMLElement): Style {
     result: Style = {};
   const color = colorHex(s.color),
     background = colorHex(s.backgroundColor);
+  for (const side of BORDER_SIDES) {
+    const key = `border${side}` as
+      "borderTop" | "borderRight" | "borderBottom" | "borderLeft";
+    const line = s[`${key}Style`],
+      width = parseFloat(s[`${key}Width`]);
+    if (!line) continue;
+    const style =
+      line === "none" || line === "hidden" || width === 0
+        ? "none"
+        : line === "solid"
+          ? width >= 3
+            ? "thick"
+            : width >= 2
+              ? "medium"
+              : "solid"
+          : ["dashed", "dotted", "double"].includes(line)
+            ? (line as "dashed" | "dotted" | "double")
+            : "solid";
+    result[key] = { style, color: colorHex(s[`${key}Color`]) || "#607984" };
+  }
   if (color) result.color = color;
   if (background) result.backgroundColor = background;
   if (s.fontFamily)

@@ -1,4 +1,6 @@
 import Select from "./Select";
+import BorderControls from "./BorderControls";
+import { bordersCSS } from "../shared/borders.js";
 import { useState } from "react";
 import type { Team, Style, Settings } from "./types";
 import {
@@ -159,9 +161,28 @@ export default function DefaultStyleManager({
           </label>
         ))}
       </div>
+      <div className="form-grid">
+        {(
+          [
+            ["Top", "위쪽"],
+            ["Right", "오른쪽"],
+            ["Bottom", "아래쪽"],
+            ["Left", "왼쪽"],
+          ] as const
+        ).map(([side, label]) => (
+          <BorderControls
+            key={side}
+            label={`기본 ${label} 테두리`}
+            value={style[`border${side}`]}
+            onChange={(border) => change({ [`border${side}`]: border })}
+            disabled={busy}
+          />
+        ))}
+      </div>
       <div
         className="default-style-preview"
         style={{
+          ...bordersCSS(style),
           fontFamily: fontFamilyCSS(style.fontFamily),
           fontSize: `${style.fontSize || 9}pt`,
           color: style.color,

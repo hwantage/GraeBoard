@@ -11,6 +11,7 @@ export default function CellOptionPicker({
   property,
   value,
   multiple,
+  selectedLabels,
   onChange,
   onCommit,
   onCancel,
@@ -20,6 +21,7 @@ export default function CellOptionPicker({
   property?: Property;
   value: Cell["value"];
   multiple: boolean;
+  selectedLabels?: Record<string, string>;
   onChange: (value: Cell["value"]) => void;
   onCommit: (move?: EditMove) => void;
   onCancel: () => void;
@@ -44,7 +46,10 @@ export default function CellOptionPicker({
     ? options
     : [{ value: "", label: "선택 안 함" }, ...options];
   const text = selected
-    .map((v) => options.find((o) => o.value === v)?.label || v)
+    .map(
+      (v) =>
+        options.find((o) => o.value === v)?.label || selectedLabels?.[v] || v,
+    )
     .join(", ");
   function close() {
     const current = actions.current;
@@ -174,6 +179,24 @@ export default function CellOptionPicker({
             }
           }}
         >
+          {multiple &&
+            selected
+              .filter((v) => !options.some((o) => o.value === v))
+              .map((v) => (
+                <div className="former-member-selection" key={v}>
+                  <span>
+                    {selectedLabels?.[v] || v}
+                    <small>이전 팀원</small>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`${selectedLabels?.[v] || v} 선택 해제`}
+                    onClick={() => onChange(selected.filter((id) => id !== v))}
+                  >
+                    해제
+                  </button>
+                </div>
+              ))}
           {entries.map((option) => {
             const checked =
               option.value === ""

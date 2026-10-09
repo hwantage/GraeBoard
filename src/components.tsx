@@ -183,12 +183,21 @@ export function Avatar({
   user?: Partial<User>;
   small?: boolean;
 }) {
+  const backgroundColor = user?.color || "#65818f";
+  const initials = user?.avatarInitials || user?.name?.slice(0, 1) || "?";
+  const rgb = [1, 3, 5].map((start) =>
+    parseInt(backgroundColor.slice(start, start + 2), 16),
+  );
+  const color =
+    rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722 > 170
+      ? "#243642"
+      : "#ffffff";
   return (
     <span
-      className={`avatar ${small ? "small" : ""}`}
-      style={{ backgroundColor: user?.color || "#65818f" }}
+      className={`avatar ${small ? "small" : ""} ${initials.length === 3 ? "long-initials" : ""}`}
+      style={{ backgroundColor, color }}
     >
-      {user?.name?.slice(0, 1) || "?"}
+      {user?.avatarImage ? <img src={user.avatarImage} alt="" /> : initials}
     </span>
   );
 }
@@ -381,6 +390,9 @@ export function ViewOptions({
   tasks: Task[];
 }) {
   const fields = fieldsFor(settings);
+  const freezableFields = fields.filter(
+    (f) => view.visibleFields.includes(f.key) && f.placement !== "afterWeeks",
+  );
   return (
     <Modal title="보기 설정" onClose={onClose}>
       <h3>업무 정보 열</h3>
@@ -536,15 +548,18 @@ export function ViewOptions({
       <h3>왼쪽 열 고정</h3>
       <Select
         aria-label="고정할 업무 정보 열 수"
-        value={Math.min(view.frozenColumns ?? 0, view.visibleFields.length)}
+        value={Math.min(view.frozenColumns ?? 0, freezableFields.length)}
         onChange={(e) => onChange({ frozenColumns: Number(e.target.value) })}
       >
-        {Array.from({ length: view.visibleFields.length + 1 }, (_, i) => (
+        {Array.from({ length: freezableFields.length + 1 }, (_, i) => (
           <option key={i} value={i}>
             {i === 0 ? "고정 안 함" : `앞에서 ${i}개 열`}
           </option>
         ))}
       </Select>
+      <p className="field-help">
+        주차 날짜 앞에 있는 업무 정보 열만 고정할 수 있습니다.
+      </p>
       <h3>셀 높이</h3>
       <Select
         aria-label="셀 높이"

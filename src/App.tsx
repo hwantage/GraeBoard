@@ -44,12 +44,14 @@ import { api, send, ApiError } from "./api";
 import {
   FIELDS,
   fieldsFor,
+  orderColumns,
   propertiesFor,
   emptyPropertyValue,
   propertyValue,
   propertyFiltersFor,
   normalizeView,
   DEFAULT_SETTINGS,
+  MAX_STYLE_CELLS,
   defaultView,
   weeksForYear,
   visibleWeeks,
@@ -67,6 +69,8 @@ import type {
   User,
   View,
   Style,
+  Border,
+  BorderPreset,
   Selection,
   Point,
   CellChange,
@@ -86,7 +90,7 @@ import {
   ViewOptions,
 } from "./components";
 import AdminPanel from "./AdminPanel";
-import Grid, { type Column, rangeOf, selectedPoints } from "./Grid";
+import Grid, { type Column, rangeOf, rangesOf, selectedPoints } from "./Grid";
 import Toolbar from "./Toolbar";
 import PropertyFilter from "./PropertyFilter";
 import {
@@ -228,8 +232,10 @@ function Workspace({
       for (const key of Object.keys(variables)) root.style.removeProperty(key);
     };
   }, [themeId]);
-  const users =
-    report?.users || boot.users.filter((u) => u.teamIds.includes(teamId));
+  const users = report?.users || boot.users;
+  const selectableUsers = report
+    ? users
+    : users.filter((u) => u.teamIds.includes(teamId));
   const isManager = ["admin", "manager"].includes(user.role);
   const settings = report?.settings || team?.settings || DEFAULT_SETTINGS;
   const fields = useMemo(() => fieldsFor(settings), [settings]);
@@ -521,40 +527,61 @@ function Workspace({
   useEffect(() => {
     if (!loaded || report) return;
     const next = normalizeView(viewRef.current, settings) as View;
+    const memberIds = new Set(selectableUsers.map((u) => u.id));
+    next.people = next.people.filter((id) => id === "me" || memberIds.has(id));
+    for (const property of properties.filter((p) => p.kind === "member")) {
+      const values = next.propertyFilters?.[property.id];
+      if (values && next.propertyFilters)
+        next.propertyFilters[property.id] = values.filter(
+          (id) => id === "" || memberIds.has(id),
+        );
+    }
     if (JSON.stringify(next) !== JSON.stringify(viewRef.current))
       changeView(next);
-  }, [settings, loaded, report]);
+  }, [settings, loaded, report, boot.users, teamId, view]);
   const source = report?.tasks || tasks;
   const propertyFilters = propertyFiltersFor(view);
   const matches = useMemo(
     () => filteredTasks(source, view, user.id, settings, users) as Task[],
     [source, view, user.id, settings, users],
   );
-  const shown = useMemo(
-    () => matches.filter((t) => !view.hiddenRows.includes(t.id)),
-    [matches, view.hiddenRows],
-  );
+  const shown = useMemo(() => {
+    const hidden = new Set(view.hiddenRows);
+    return matches.filter((t) => !hidden.has(t.id));
+  }, [matches, view.hiddenRows]);
   const weeks = useMemo(() => visibleWeeks(year, view), [year, view]);
+  const columnOrder = useMemo(
+    () =>
+      orderColumns(fields, visibleWeeks(year, { ...view, hiddenWeeks: [] })),
+    [fields, year, view],
+  );
   const columns = useMemo<Column[]>(
-    () => [
-      ...fields
-        .filter((f) => view.visibleFields.includes(f.key))
-        .map((f, i) => ({
-          key: f.key,
-          label: f.label,
-          width: view.widths[f.key] || f.width,
-          fixed: i < (view.frozenColumns ?? 0),
+    () =>
+      orderColumns(
+        fields
+          .filter((f) => view.visibleFields.includes(f.key))
+          .map((f) => ({
+            key: f.key,
+            label: f.label,
+            width: view.widths[f.key] || f.width,
+            placement: f.placement,
+          })),
+        weeks.map((w) => ({
+          key: w.key,
+          label: w.label,
+          width: view.widths[w.key] || 40,
+          month: w.month,
+          weekIndex: w.index,
+          date: w.date,
+          end: w.end,
         })),
-      ...weeks.map((w) => ({
-        key: w.key,
-        label: w.label,
-        width: view.widths[w.key] || 40,
-        month: w.month,
-        weekIndex: w.index,
-        date: w.date,
-        end: w.end,
+      ).map((c, i) => ({
+        ...c,
+        fixed:
+          !c.month &&
+          c.placement !== "afterWeeks" &&
+          i < (view.frozenColumns ?? 0),
       })),
-    ],
     [weeks, fields, view.visibleFields, view.widths, view.frozenColumns],
   );
   const range = rangeOf(selection, shown, columns);
@@ -566,12 +593,17 @@ function Workspace({
     : undefined;
   const selectedCell =
     selection && selectedTask ? cell(selectedTask, selection.focus.key) : null;
-  const selectionLabel =
-    count === 1
-      ? `${shown.findIndex((t) => t.id === selection!.focus.taskId) + 1}행 · ${columns.find((c) => c.key === selection!.focus.key)?.label}`
-      : count
-        ? `${count.toLocaleString()}개 셀`
-        : "";
+  const selectionLabel = selection?.areas?.length
+    ? `${selection.areas.length + 1}개 영역 선택`
+    : count && range && selection?.kind === "columns"
+      ? `${range.c2 - range.c1 + 1}개 열 · ${count.toLocaleString()}개 셀`
+      : count && range && selection?.kind === "rows"
+        ? `${range.r2 - range.r1 + 1}개 행 · ${count.toLocaleString()}개 셀`
+        : count === 1
+          ? `${shown.findIndex((t) => t.id === selection!.focus.taskId) + 1}행 · ${columns.find((c) => c.key === selection!.focus.key)?.label}`
+          : count
+            ? `${count.toLocaleString()}개 셀`
+            : "";
   const editable =
     !!selectedTask && canEdit(user, selectedTask) && !report && !failed;
   function getPoints() {
@@ -581,8 +613,11 @@ function Workspace({
     const previous = taskRef.current;
     const updatedTasks = (() => {
       const byId = new Map<string, SavedCell[]>();
-      for (const c of result.cells)
-        byId.set(c.taskId, [...(byId.get(c.taskId) || []), c]);
+      for (const c of result.cells) {
+        const changes = byId.get(c.taskId);
+        if (changes) changes.push(c);
+        else byId.set(c.taskId, [c]);
+      }
       const updated = previous.map((t) => {
         const changes = byId.get(t.id);
         if (!changes) return t;
@@ -670,9 +705,10 @@ function Workspace({
     transform: (t: Task, key: string) => Partial<CellChange>,
   ) {
     if (!points.length) return;
-    submitChanges(() =>
-      points.map((p) => {
-        const task = taskRef.current.find((t) => t.id === p.taskId);
+    submitChanges(() => {
+      const tasksById = new Map(taskRef.current.map((t) => [t.id, t]));
+      return points.map((p) => {
+        const task = tasksById.get(p.taskId);
         if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
         if (!canEdit(user, task))
           throw new Error(
@@ -683,14 +719,49 @@ function Workspace({
           expectedVersion: cell(task, p.key).version,
           ...transform(task, p.key),
         };
-      }),
-    );
+      });
+    });
   }
   function style(part: Partial<Style>, reset = false) {
     try {
-      mutate(getPoints(), (t, k) => ({
-        style: reset ? {} : { ...cell(t, k).style, ...part },
-      }));
+      mutate(
+        selectedPoints(selection, shown, columns, MAX_STYLE_CELLS),
+        (t, k) => ({
+          style: reset ? {} : { ...cell(t, k).style, ...part },
+        }),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  function applyBorder(preset: BorderPreset, border: Border) {
+    try {
+      const points = selectedPoints(selection, shown, columns, MAX_STYLE_CELLS);
+      const selected = new Set(points.map((p) => `${p.taskId}:${p.key}`));
+      const rows = new Map(shown.map((t, i) => [t.id, i]));
+      const cols = new Map(columns.map((c, i) => [c.key, i]));
+      const has = (r: number, c: number) =>
+        !!shown[r] &&
+        !!columns[c] &&
+        selected.has(`${shown[r].id}:${columns[c].key}`);
+      mutate(points, (task, key) => {
+        const r = rows.get(task.id)!,
+          c = cols.get(key)!;
+        const next = { ...cell(task, key).style };
+        for (const [side, dr, dc] of [
+          ["Top", -1, 0],
+          ["Right", 0, 1],
+          ["Bottom", 1, 0],
+          ["Left", 0, -1],
+        ] as const) {
+          if (preset !== "outside" || !has(r + dr, c + dc))
+            next[`border${side}`] =
+              preset === "none"
+                ? { style: "none", color: border.color }
+                : border;
+        }
+        return { style: next };
+      });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -726,24 +797,29 @@ function Workspace({
       entry = stack.at(-1);
     if (!entry || pending) return;
     submitChanges(
-      () =>
-        entry.before.map((c) => {
-          const t = taskRef.current.find((t) => t.id === c.taskId);
-          const after = entry.cells.find(
-            (a) => a.taskId === c.taskId && a.key === c.key,
-          )!;
-          if (!t || cell(t, c.key).version !== after.version)
+      () => {
+        const tasksById = new Map(taskRef.current.map((t) => [t.id, t]));
+        const afterById = new Map(
+          entry.cells.map((c) => [`${c.taskId}:${c.key}`, c]),
+        );
+        return entry.before.map((c) => {
+          const t = tasksById.get(c.taskId);
+          const after = afterById.get(`${c.taskId}:${c.key}`);
+          if (!t || !after || cell(t, c.key).version !== after.version)
             throw new Error(
               "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
             );
           return {
             taskId: c.taskId,
             key: c.key,
-            value: c.value,
+            ...(JSON.stringify(c.value) === JSON.stringify(after.value)
+              ? {}
+              : { value: c.value }),
             style: c.style,
             expectedVersion: after.version,
           };
-        }),
+        });
+      },
       redo ? "redo" : "undo",
     );
   }
@@ -758,6 +834,10 @@ function Workspace({
   }
   function paste(matrix: ClipboardMatrix) {
     if (!selection) return;
+    if (selection.areas?.length) {
+      setError("붙여넣을 때는 하나의 연속된 영역을 선택하세요.");
+      return;
+    }
     const ri = shown.findIndex((t) => t.id === selection.focus.taskId),
       ci = columns.findIndex((c) => c.key === selection.focus.key);
     if (ri < 0 || ci < 0) return;
@@ -804,7 +884,7 @@ function Workspace({
               .map((s) => s.trim())
               .filter(Boolean)
               .map((name) => {
-                const matches = users.filter(
+                const matches = selectableUsers.filter(
                   (u) => u.name === name || u.id === name,
                 );
                 if (matches.length !== 1)
@@ -871,45 +951,60 @@ function Workspace({
   }
   function hideRows() {
     if (!range) return;
-    const ids = shown.slice(range.r1, range.r2 + 1).map((t) => t.id);
+    const ranges = rangesOf(selection, shown, columns);
+    const ids = shown
+      .filter((_, i) => ranges.some((r) => i >= r.r1 && i <= r.r2))
+      .map((t) => t.id);
     changeView({ hiddenRows: [...new Set([...view.hiddenRows, ...ids])] });
     setToast(`${ids.length}개 업무를 나의 보기에서 숨겼습니다.`);
   }
   async function reorderTask(
-    taskId: string,
+    taskIds: string | string[],
     targetId: string,
     placement: "before" | "after",
   ) {
-    const task = taskRef.current.find((t) => t.id === taskId),
-      target = taskRef.current.find((t) => t.id === targetId);
-    if (!task || !target || pendingRef.current || failedRef.current || report)
+    const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
+    const byId = new Map(taskRef.current.map((t) => [t.id, t]));
+    const moving = ids.map((id) => byId.get(id));
+    const target = byId.get(targetId);
+    if (
+      !ids.length ||
+      moving.some((t) => !t) ||
+      !target ||
+      pendingRef.current ||
+      failedRef.current ||
+      report ||
+      presentation
+    )
       return;
+    const submittedBoard = boardKey.current;
     setError("");
     mutationEpoch.current++;
     pendingRef.current = 1;
     setPending(1);
     try {
       const result = await send("/tasks/reorder", {
-        taskId,
+        tasks: moving.map((t) => ({ id: t!.id, updatedAt: t!.updatedAt })),
         targetId,
         placement,
         year,
         groupBy: view.groupBy || "",
-        updatedAt: task.updatedAt,
         targetUpdatedAt: target.updatedAt,
       });
-      const next = taskRef.current.map((t) =>
-        t.id === result.task.id ? result.task : t,
+      if (boardKey.current !== submittedBoard) return;
+      const moved = new Map<string, Task>(
+        result.tasks.map((t: Task) => [t.id, t]),
       );
+      const next = taskRef.current.map((t) => moved.get(t.id) || t);
       taskRef.current = next;
       setTasks(next);
     } catch (e) {
-      setError((e as Error).message);
+      if (boardKey.current === submittedBoard) setError((e as Error).message);
     } finally {
       pendingRef.current = 0;
       setPending(0);
     }
-    await refresh();
+    if (boardKey.current === submittedBoard) await refresh();
   }
   async function rowAction(action: string) {
     if (!rowTask) return;
@@ -948,7 +1043,7 @@ function Workspace({
       if (action === "up" || action === "down") {
         if (view.sortKey && view.sortDirection !== "default")
           throw new Error(
-            "컬럼 머리글을 눌러 정렬을 해제한 뒤 순서를 변경하세요.",
+            "컬럼 머리글을 우클릭하여 정렬 해제를 선택한 뒤 순서를 변경하세요.",
           );
         const order = shown.filter(
           (x) =>
@@ -1209,7 +1304,23 @@ function Workspace({
       <main
         className="main-workspace"
         onKeyDown={(e) => {
-          if (presentation) return;
+          if (presentation || e.nativeEvent.isComposing || e.defaultPrevented)
+            return;
+          const target = e.target instanceof HTMLElement ? e.target : null;
+          if (
+            (e.metaKey || e.ctrlKey) &&
+            !e.altKey &&
+            (e.code === "KeyB" || e.key.toLowerCase() === "b") &&
+            target?.closest(".sheet-scroll,.format-toolbar") &&
+            !target.closest("dialog,[role=dialog]") &&
+            (!target.closest("input,textarea,select,[contenteditable=true]") ||
+              target.closest(".inline-editor"))
+          ) {
+            e.preventDefault();
+            if (!e.repeat && editable && !pending)
+              style({ bold: !selectedCell?.style.bold });
+            return;
+          }
           if (
             (e.metaKey || e.ctrlKey) &&
             e.key.toLowerCase() === "z" &&
@@ -1615,7 +1726,7 @@ function Workspace({
                       />
                       나의 업무
                     </label>
-                    {users.map((u) => (
+                    {selectableUsers.map((u) => (
                       <label key={u.id} className="checkbox">
                         <input
                           type="checkbox"
@@ -1650,7 +1761,7 @@ function Workspace({
                     key={property.id}
                     property={property}
                     tasks={source}
-                    users={users}
+                    users={selectableUsers}
                     settings={settings}
                     selected={propertyFilters[property.id] || []}
                     onChange={(values) =>
@@ -1742,6 +1853,7 @@ function Workspace({
             style={selectedCell?.style || {}}
             disabled={!editable || !!pending}
             onStyle={(s) => style(s)}
+            onBorder={applyBorder}
             onReset={() => style({}, true)}
             onUndo={() => undo()}
             onRedo={() => undo(true)}
@@ -1751,6 +1863,10 @@ function Workspace({
             selectionLabel={selectionLabel}
             onCopy={async () => {
               if (!range) return;
+              if (selection?.areas?.length) {
+                setError("복사할 때는 하나의 연속된 영역을 선택하세요.");
+                return;
+              }
               try {
                 await copyToSystem(
                   createClipboard(
@@ -1804,25 +1920,6 @@ function Workspace({
                 ))}
             </div>
           )}
-          {view.hiddenWeeks.length > 0 && (
-            <div className="hidden-weeks-strip">
-              <EyeOff size={13} />
-              숨긴 주차 {view.hiddenWeeks.length}개{" "}
-              {view.hiddenWeeks.map((k) => (
-                <button
-                  key={k}
-                  onClick={() =>
-                    changeView({
-                      hiddenWeeks: view.hiddenWeeks.filter((w) => w !== k),
-                    })
-                  }
-                >
-                  {k.slice(5)}
-                  <Plus size={10} />
-                </button>
-              ))}
-            </div>
-          )}
           {(error || viewError) && (
             <div className="board-error" role="alert">
               <span>{error || viewError}</span>
@@ -1852,7 +1949,9 @@ function Workspace({
           ) : (
             <Grid
               tasks={shown}
+              allTasks={matches}
               columns={columns}
+              columnOrder={columnOrder}
               view={view}
               user={user}
               users={users}

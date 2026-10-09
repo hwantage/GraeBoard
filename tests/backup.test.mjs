@@ -43,6 +43,11 @@ test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일�
       now(),
     );
     db.prepare("INSERT INTO memberships VALUES(?,?)").run(u, team);
+    db.prepare("UPDATE users SET avatar_initials=?,color=? WHERE id=?").run(
+      "BK",
+      "#888888",
+      u,
+    );
     db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
       "session",
       u,
@@ -68,6 +73,11 @@ test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일�
     assert.throws(() => restoreDatabase(backup, target), /파일이/);
     const restored = new DatabaseSync(target, { readOnly: true });
     try {
+      const profile = restored
+        .prepare("SELECT avatar_initials,color FROM users WHERE id=?")
+        .get(u);
+      assert.equal(profile.avatar_initials, "BK");
+      assert.equal(profile.color, "#888888");
       assert.equal(
         JSON.parse(
           restored
@@ -87,6 +97,44 @@ test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일�
     } finally {
       restored.close();
     }
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("기존 계정과 업무를 유지하며 아바타 저장 열을 한 번만 추가한다", () => {
+  const dir = mkdtempSync(join(tmpdir(), "weekly-profile-migration-"));
+  const path = join(dir, "legacy.sqlite");
+  let db = openDatabase(path);
+  try {
+    db.exec(
+      "ALTER TABLE users DROP COLUMN avatar_initials; ALTER TABLE users DROP COLUMN avatar_image; PRAGMA user_version=2;",
+    );
+    db.prepare(
+      "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+    ).run("legacy-id", "legacy", "기존 이름", "unused", "member", now());
+    db.close();
+    db = openDatabase(path);
+    assert.equal(
+      db.prepare("SELECT name FROM users WHERE id='legacy-id'").get().name,
+      "기존 이름",
+    );
+    assert.equal(
+      db.prepare("SELECT avatar_initials FROM users WHERE id='legacy-id'").get()
+        .avatar_initials,
+      "",
+    );
+    db.prepare(
+      "UPDATE users SET avatar_initials='김' WHERE id='legacy-id'",
+    ).run();
+    db.close();
+    db = openDatabase(path);
+    assert.equal(
+      db.prepare("SELECT avatar_initials FROM users WHERE id='legacy-id'").get()
+        .avatar_initials,
+      "김",
+    );
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

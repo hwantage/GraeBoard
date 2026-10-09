@@ -32,6 +32,7 @@ export const FIELDS = [
 ];
 export const FIELD_KEYS = FIELDS.map((f) => f.key);
 export const PROPERTY_VALUE_MAX_LENGTH = 15;
+export const MAX_STYLE_CELLS = 50000;
 /** @type {import("../src/types").Settings} */
 export const DEFAULT_SETTINGS = {
   propertiesVersion: 3,
@@ -196,6 +197,7 @@ export function normalizeSettings(settings = DEFAULT_SETTINGS) {
     properties = upgradeCoreProperties(properties);
   result.properties = properties.map((p) => ({
     ...p,
+    placement: p.placement ?? "beforeWeeks",
     visible:
       p.visible ??
       (!FIELD_KEYS.includes(p.id) ||
@@ -271,7 +273,15 @@ export function fieldsFor(settings) {
     width: FIELDS.find((f) => f.key === p.id)?.width || 120,
     type: p.kind === "option" ? "property" : p.kind,
     multiple: p.multiple,
+    placement: p.placement ?? "beforeWeeks",
   }));
+}
+export function orderColumns(fields, weeks) {
+  return [
+    ...fields.filter((f) => f.placement !== "afterWeeks"),
+    ...weeks,
+    ...fields.filter((f) => f.placement === "afterWeeks"),
+  ];
 }
 export function normalizeView(input, settings = DEFAULT_SETTINGS) {
   const properties = propertiesFor(settings);

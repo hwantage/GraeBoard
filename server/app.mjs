@@ -52,6 +52,7 @@ import { saveSettings } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
 import { installReorderRoute } from "./reorder.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
+import { profileFields, profileSnapshot } from "./profiles.mjs";
 
 const string = (max = 100) => z.string().trim().min(1).max(max);
 const credentials = z.object({
@@ -92,6 +93,7 @@ export function createApp({
   );
   app.use(compression());
   app.use(cookieParser());
+  app.use("/api/cells/batch", express.json({ limit: "32mb" }));
   app.use(express.json({ limit: "5mb" }));
   app.use("/api", (req, res, next) => {
     res.set("Cache-Control", "no-store");
@@ -265,13 +267,40 @@ export function createApp({
       requireThat(canEdit(user, t), 403, "이 업무를 편집할 권한이 없습니다.");
     return t;
   }
-  function teamPeople(teamId) {
-    return db
+  function teamPeople(teamId, includeFormer = false) {
+    const people = db
       .prepare(
         "SELECT u.* FROM users u JOIN memberships m ON u.id=m.user_id WHERE m.team_id=? ORDER BY u.name",
       )
       .all(teamId)
       .map((u) => userInfo(db, u));
+    if (!includeFormer) return people;
+    const settings = normalizeSettings(
+      parse(
+        db.prepare("SELECT settings FROM teams WHERE id=?").get(teamId)
+          ?.settings,
+      ),
+    );
+    const keys = [
+      ...new Set([
+        "owner",
+        "supporters",
+        ...propertiesFor(settings, true)
+          .filter((p) => p.kind === "member")
+          .map((p) => p.id),
+      ]),
+    ];
+    const referenced = db
+      .prepare(
+        // Deduplicate IDs before reading profiles: avatars can be much larger
+        // than the member references repeated across thousands of cells.
+        "SELECT u.* FROM users u WHERE u.id IN (SELECT DISTINCT v.value FROM tasks t JOIN cells c ON c.task_id=t.id JOIN json_each(c.value) v WHERE t.team_id=? AND c.key IN (SELECT value FROM json_each(?)))",
+      )
+      .all(teamId, json(keys));
+    const result = new Map(people.map((u) => [u.id, u]));
+    for (const u of referenced)
+      if (!result.has(u.id)) result.set(u.id, userInfo(db, u));
+    return [...result.values()];
   }
   const context = { db, teamAccess, taskAccess, teamPeople, manager };
   installReorderRoute(app, context);
@@ -309,7 +338,9 @@ export function createApp({
   app.get("/api/bootstrap", (req, res) => {
     const teams = req.user.teamIds.map((t) => teamAccess(req.user, t));
     const people = new Map();
-    teams.forEach((t) => teamPeople(t.id).forEach((u) => people.set(u.id, u)));
+    teams.forEach((t) =>
+      teamPeople(t.id, true).forEach((u) => people.set(u.id, u)),
+    );
     const years = new Set([Number(todayKey().slice(0, 4))]);
     for (const team of teams)
       for (const t of db
@@ -472,14 +503,15 @@ export function createApp({
             403,
             "담당자 변경은 팀 관리자 권한이 필요합니다.",
           );
+        const previous = cell(task, change.key);
         validateCellValue(
           db,
           task.teamId,
           change.key,
           change.value,
           team.settings,
+          previous.value,
         );
-        const previous = cell(task, change.key);
         requireThat(
           previous.version === change.expectedVersion,
           409,
@@ -710,11 +742,7 @@ export function createApp({
     const reportId = id();
     const data = {
       tasks,
-      users: teamPeople(d.teamId).map(({ id, name, color }) => ({
-        id,
-        name,
-        color,
-      })),
+      users: teamPeople(d.teamId, true).map(profileSnapshot),
       view: d.view,
       settings: teamAccess(req.user, d.teamId).settings,
     };
@@ -867,6 +895,7 @@ export function createApp({
     const d = credentials
       .extend({
         name: string(50),
+        ...profileFields,
         active: z.boolean().default(true),
         role: roles,
         teamIds: z.array(z.string().uuid()).max(50),
@@ -896,8 +925,13 @@ export function createApp({
         d.role,
         now(),
       );
-      db.prepare("UPDATE users SET active=? WHERE id=?").run(
+      db.prepare(
+        "UPDATE users SET active=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
+      ).run(
         d.active ? 1 : 0,
+        d.color || "#177b70",
+        d.avatarInitials || "",
+        d.avatarImage || "",
         userId,
       );
       for (const t of new Set(d.teamIds)) {
@@ -925,6 +959,7 @@ export function createApp({
     const d = z
       .object({
         name: string(50),
+        ...profileFields,
         role: roles,
         active: z.boolean(),
         teamIds: z.array(z.string().uuid()).max(50),
@@ -950,12 +985,15 @@ export function createApp({
           "마지막 시스템 관리자는 해제할 수 없습니다.",
         );
       db.prepare(
-        "UPDATE users SET name=?,role=?,active=?,password=? WHERE id=?",
+        "UPDATE users SET name=?,role=?,active=?,password=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
       ).run(
         d.name,
         d.role,
         d.active ? 1 : 0,
         d.password ? passwordHash(d.password) : u.password,
+        d.color ?? u.color,
+        d.avatarInitials ?? u.avatar_initials,
+        d.avatarImage ?? u.avatar_image,
         u.id,
       );
       db.prepare("DELETE FROM memberships WHERE user_id=?").run(u.id);

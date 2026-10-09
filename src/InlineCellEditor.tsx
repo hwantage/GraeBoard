@@ -92,13 +92,22 @@ export default function InlineCellEditor({
   const events = {
     "aria-label": label,
     onKeyDown: (e: React.KeyboardEvent) => {
-      e.stopPropagation();
       if (
         e.nativeEvent.isComposing ||
         composing.current ||
         e.nativeEvent.keyCode === 229
+      ) {
+        e.stopPropagation();
+        return;
+      }
+      // Let the workspace format the cell without committing the draft text.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        (e.code === "KeyB" || e.key.toLowerCase() === "b")
       )
         return;
+      e.stopPropagation();
       if (e.key === "Escape") {
         e.preventDefault();
         cancel();
@@ -126,10 +135,12 @@ export default function InlineCellEditor({
           .filter((v) => !v.archived)
           .map((v) => ({ value: propertyValue(property, v), label: v.label }))
       : property?.kind === "member"
-        ? users.map((u) => ({
-            value: u.id,
-            label: `${u.name}${u.active ? "" : " (비활성)"}`,
-          }))
+        ? users
+            .filter((u) => u.teamIds?.includes(task.teamId))
+            .map((u) => ({
+              value: u.id,
+              label: `${u.name}${u.active ? "" : " (비활성)"}`,
+            }))
         : null;
   return (
     <div
@@ -146,6 +157,11 @@ export default function InlineCellEditor({
           property={property?.kind === "option" ? property : undefined}
           value={draft}
           multiple={!!property?.multiple}
+          selectedLabels={
+            property?.kind === "member"
+              ? Object.fromEntries(users.map((u) => [u.id, u.name]))
+              : undefined
+          }
           onChange={change}
           onCommit={commit}
           onCancel={cancel}

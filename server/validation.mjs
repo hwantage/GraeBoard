@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { BORDER_STYLES } from "../shared/borders.js";
 import {
   FIELDS,
   FONTS,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
+  MAX_STYLE_CELLS,
   FIELD_KEYS,
   mondayOf,
   propertiesFor,
@@ -33,8 +35,24 @@ export const dateSchema = z
       new Date(s + "T12:00:00Z").toISOString().startsWith(s),
     "유효한 날짜가 아닙니다.",
   );
+export const borderSchema = z
+  .object({
+    style: z.enum(BORDER_STYLES),
+    color: z.string().regex(/^#[a-fA-F0-9]{6}$/),
+  })
+  .strict();
+export const weekBordersSchema = z
+  .object({
+    left: borderSchema.optional(),
+    right: borderSchema.optional(),
+  })
+  .strict();
 export const styleSchema = z
   .object({
+    borderTop: borderSchema.optional(),
+    borderRight: borderSchema.optional(),
+    borderBottom: borderSchema.optional(),
+    borderLeft: borderSchema.optional(),
     color: z
       .string()
       .regex(/^#[a-fA-F0-9]{6}$/)
@@ -72,7 +90,16 @@ export const changeSchema = z
   .strict();
 export const batchSchema = z.object({
   operationId: z.string().uuid(),
-  changes: z.array(changeSchema).min(1).max(2000),
+  changes: z
+    .array(changeSchema)
+    .min(1)
+    .max(MAX_STYLE_CELLS)
+    .refine(
+      (changes) =>
+        changes.length <= 2000 ||
+        changes.every((c) => c.value === undefined && c.style !== undefined),
+      "값 변경은 한 번에 2,000셀까지 가능합니다.",
+    ),
 });
 export const viewSchema = z
   .object({
@@ -122,7 +149,14 @@ export function validCellKey(key, settings) {
     (dateSchema.safeParse(key).success && mondayOf(key) === key)
   );
 }
-export function validateCellValue(db, teamId, key, value, settings) {
+export function validateCellValue(
+  db,
+  teamId,
+  key,
+  value,
+  settings,
+  previousValue,
+) {
   requireThat(validCellKey(key, settings), 400, "지원하지 않는 셀입니다.");
   if (value === undefined) return;
   const property = propertiesFor(settings, true).find((p) => p.id === key);
@@ -133,6 +167,15 @@ export function validateCellValue(db, teamId, key, value, settings) {
       : FIELDS.find((f) => f.key === key)?.type) ||
     "text";
   if (type === "member") {
+    // Preserve existing assignments, but never allow a former member to be
+    // assigned again after their value has been removed from this cell.
+    const previous = new Set(
+      Array.isArray(previousValue)
+        ? previousValue
+        : previousValue
+          ? [previousValue]
+          : [],
+    );
     if (property?.multiple ?? key === "supporters") {
       requireThat(Array.isArray(value), 400, "팀원은 목록이어야 합니다.");
       requireThat(
@@ -140,10 +183,10 @@ export function validateCellValue(db, teamId, key, value, settings) {
         400,
         "팀원 목록을 확인하세요.",
       );
-      for (const v of value) member(db, teamId, v);
+      for (const v of value) if (!previous.has(v)) member(db, teamId, v);
     } else {
       requireThat(typeof value === "string", 400, "팀원을 확인하세요.");
-      if (value) member(db, teamId, value);
+      if (value && !previous.has(value)) member(db, teamId, value);
     }
     return;
   }
@@ -217,6 +260,7 @@ export const propertiesSchema = z
         display: z.enum([...PROPERTY_DISPLAYS, "avatar"]),
         multiple: z.boolean().optional(),
         visible: z.boolean().optional(),
+        placement: z.enum(["beforeWeeks", "afterWeeks"]).optional(),
         values: z
           .array(optionSchema)
           .max(100)

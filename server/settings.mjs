@@ -9,6 +9,7 @@ import {
 import {
   propertiesSchema,
   styleSchema,
+  weekBordersSchema,
   requireThat,
   validateCellValue,
 } from "./validation.mjs";
@@ -40,6 +41,7 @@ export function saveSettings(db, team, input, actorId) {
       propertiesVersion: z.literal(3).optional(),
       revision: z.number().int().nonnegative().optional(),
       defaultStyle: styleSchema.optional(),
+      weekBorders: weekBordersSchema.optional(),
     })
     .strict()
     .parse({
@@ -77,8 +79,11 @@ export function saveSettings(db, team, input, actorId) {
   // Removing an option/column archives its definition so historical cells remain readable.
   properties = properties.map((p) => {
     const old = previous.properties.find((o) => o.id === p.id);
+    const requested = input.properties?.find((item) => item.id === p.id);
     return {
       ...p,
+      placement:
+        requested?.placement ?? old?.placement ?? p.placement ?? "beforeWeeks",
       values: [
         ...p.values,
         ...(old?.values || [])
@@ -127,6 +132,7 @@ export function saveSettings(db, team, input, actorId) {
     propertiesVersion: 3,
     properties,
     defaultStyle: data.defaultStyle ?? previous.defaultStyle,
+    weekBorders: data.weekBorders ?? previous.weekBorders,
     revision: (previous.revision || 0) + 1,
   };
   for (const [key, listKey] of Object.entries(BUILTIN_PROPERTIES))
