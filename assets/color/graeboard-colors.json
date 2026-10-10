@@ -1,0 +1,43 @@
+{
+  "brand": {
+    "mint": "#24796d",
+    "deep": "#1b6258",
+    "pastel": "#deebe4",
+    "soft": "#e7f2ee",
+    "surface": "#f0f4f2",
+    "border": "#bdd4c9",
+    "ink": "#293c42",
+    "muted": "#718087",
+    "paper": "#f7f5ef"
+  },
+  "character": {
+    "body": "#daebe2",
+    "limb": "#208780",
+    "line": "#055852",
+    "cheek": "#fabebf",
+    "cell": "#c7dfd3",
+    "cellLight": "#f5f8f5"
+  },
+  "themes": {
+    "mint": {
+      "accent": "#24796d",
+      "pastel": "#deebe4"
+    },
+    "sky": {
+      "accent": "#426f9c",
+      "pastel": "#deeaf7"
+    },
+    "lavender": {
+      "accent": "#746099",
+      "pastel": "#e9e2f3"
+    },
+    "rose": {
+      "accent": "#986176",
+      "pastel": "#f2e1e7"
+    },
+    "sand": {
+      "accent": "#866b42",
+      "pastel": "#eee5d6"
+    }
+  }
+}

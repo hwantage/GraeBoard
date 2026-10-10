@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, X } from "lucide-react";
-import type { Property, Task, User, Settings } from "./types";
-import { propertyValue, value, displayValue } from "../shared/domain.js";
+import { useId, useState } from "react";
+import type { FilterMode, Property, Task, User } from "./types";
+import { propertyValue, value } from "../shared/domain.js";
 import { Button } from "./components";
 import PropertyBadge from "./PropertyBadge";
 
@@ -9,28 +8,20 @@ export default function PropertyFilter({
   property,
   tasks,
   users,
-  settings,
   selected,
+  mode,
   onChange,
+  onModeChange,
 }: {
   property: Property;
   tasks: Task[];
   users: User[];
-  settings: Settings;
   selected: string[];
+  mode: FilterMode;
   onChange: (values: string[]) => void;
+  onModeChange: (mode: FilterMode) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => {
-      if (e.target instanceof Node && !root.current?.contains(e.target))
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [open]);
+  const modeId = useId();
   const [search, setSearch] = useState("");
   const values =
     property.kind === "option"
@@ -64,84 +55,83 @@ export default function PropertyFilter({
   }
   return (
     <div
-      ref={root}
-      className="popover-root property-filter"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          setOpen(false);
-          root.current?.querySelector("button")?.focus();
-        }
-      }}
+      className="property-filter"
+      role="group"
+      aria-label={`${property.name} 필터 선택`}
     >
-      <Button
-        title={`${property.name} 필터`}
-        className={selected.length ? "filter-active" : ""}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {selected.length
-          ? `${property.name} ${selected.length}개`
-          : `모든 ${property.name}`}
-        <ChevronDown size={12} />
-      </Button>
-      {open && (
-        <div
-          className="popover property-filter-popover"
-          role="group"
-          aria-label={`${property.name} 필터 선택`}
-        >
-          <div className="popover-title">
-            <strong>{property.name}</strong>
-            <Button
-              title={`${property.name} 필터 닫기`}
-              onClick={() => setOpen(false)}
-            >
-              <X size={14} />
-            </Button>
-          </div>
+      <div className="property-filter-title">
+        <strong>필터</strong>
+        <span>
+          {selected.length
+            ? `${selected.length}개 ${mode === "exclude" ? "제외" : "일치"}`
+            : "전체 표시"}
+        </span>
+      </div>
+      <input
+        type="search"
+        aria-label={`${property.name} 필터 값 검색`}
+        placeholder="값 검색"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <div className="property-filter-values">
+        <label className="checkbox">
           <input
-            type="search"
-            aria-label={`${property.name} 필터 값 검색`}
-            placeholder="값 검색"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            type="checkbox"
+            checked={selected.includes("")}
+            onChange={(e) => toggle("", e.target.checked)}
           />
-          <div className="property-filter-values">
-            <label className="checkbox">
+          미지정
+        </label>
+        {matching.slice(0, 200).map((option) => {
+          const v = option.value;
+          return (
+            <label className="checkbox" key={option.value}>
               <input
                 type="checkbox"
-                checked={selected.includes("")}
-                onChange={(e) => toggle("", e.target.checked)}
+                checked={selected.includes(v)}
+                onChange={(e) => toggle(v, e.target.checked)}
               />
-              미지정
+              {property.kind === "option" ? (
+                <PropertyBadge property={property} value={v} />
+              ) : (
+                <span>{option.label}</span>
+              )}
+              {option.archived && <small>보관됨</small>}
             </label>
-            {matching.slice(0, 200).map((option) => {
-              const v = option.value;
-              return (
-                <label className="checkbox" key={option.value}>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(v)}
-                    onChange={(e) => toggle(v, e.target.checked)}
-                  />
-                  {property.kind === "option" ? (
-                    <PropertyBadge property={property} value={v} />
-                  ) : (
-                    <span>{option.label}</span>
-                  )}
-                  {option.archived && <small>보관됨</small>}
-                </label>
-              );
-            })}
-          </div>
-          {matching.length > 200 && (
-            <small>검색어를 입력하여 나머지 값을 찾으세요.</small>
-          )}
-          <Button onClick={() => onChange([])}>
-            {property.name} 필터 해제
-          </Button>
-        </div>
+          );
+        })}
+      </div>
+      {matching.length > 200 && (
+        <small>검색어를 입력하여 나머지 값을 찾으세요.</small>
       )}
+      <div className="property-filter-footer">
+        <div
+          className="property-filter-mode"
+          role="radiogroup"
+          aria-label={`${property.name} 필터 방식`}
+        >
+          {(["include", "exclude"] as const).map((option) => (
+            <label key={option}>
+              <input
+                type="radio"
+                name={modeId}
+                value={option}
+                checked={mode === option}
+                onChange={() => onModeChange(option)}
+              />
+              <span>{option === "include" ? "일치" : "제외"}</span>
+            </label>
+          ))}
+        </div>
+        <Button
+          title={`${property.name} 필터 해제`}
+          disabled={!selected.length}
+          onClick={() => onChange([])}
+        >
+          필터 해제
+        </Button>
+      </div>
     </div>
   );
 }

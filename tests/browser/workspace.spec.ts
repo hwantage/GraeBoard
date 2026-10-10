@@ -1135,8 +1135,10 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
     "최신 담당자",
   );
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "팀원 필터", exact: true }).click();
-  await expect(page.locator(".property-filter-popover")).not.toContainText(
+  await page
+    .getByRole("button", { name: "팀원 열 선택", exact: true })
+    .click({ button: "right" });
+  await expect(page.locator(".property-filter")).not.toContainText(
     "최신 담당자",
   );
   await page.keyboard.press("Escape");
@@ -1623,9 +1625,10 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
       "background-color",
       rgb(theme.surface),
     );
-    await expect(page.locator(".brand-symbol")).toHaveCSS(
-      "background-color",
-      rgb(theme.accent),
+    // 브랜드 마크는 팀 테마를 따르지 않고 브랜드 민트를 유지한다
+    await expect(page.locator(".brand-symbol rect").nth(1)).toHaveAttribute(
+      "fill",
+      "#24796d",
     );
     await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
     await expect(title).toHaveCSS("color", "rgb(36, 54, 66)");
@@ -2350,6 +2353,11 @@ test("컬럼 클릭은 열을 선택하고 우클릭 메뉴에서 정렬·해제
   await expect(
     page.locator('[data-column="title"][aria-selected="true"]'),
   ).toHaveCount(3);
+  await button.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "정렬 해제", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
   for (const [action, order] of [
     ["오름차순 정렬", "ascending"],
     ["내림차순 정렬", "descending"],
@@ -2373,6 +2381,22 @@ test("컬럼 클릭은 열을 선택하고 우클릭 메뉴에서 정렬·해제
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
   await sortHeader(page, "작업");
+  for (const other of [
+    page.locator('[data-header-key="status"]'),
+    page.locator(".week-heading").first(),
+  ]) {
+    await other.click({ button: "right" });
+    await expect(
+      page.getByRole("menuitem", { name: "정렬 해제", exact: true }),
+    ).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(header).toHaveAttribute("aria-sort", "ascending");
+  }
+  await button.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "정렬 해제", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect
     .poll(
       async () =>
@@ -3530,7 +3554,7 @@ test("줄바꿈과 세로 정렬은 독립적이고 넘치는 내용은 첫 줄�
   });
 });
 
-test("속성 다중 필터·분기와 반기 선택을 저장하고 날짜와 필터를 두 줄로 구분한다", async ({
+test("헤더의 속성 다중 필터·분기와 반기 선택을 저장한다", async ({
   page,
 }, info) => {
   const data = await (await page.request.get("/api/admin/users")).json();
@@ -3578,9 +3602,10 @@ test("속성 다중 필터·분기와 반기 선택을 저장하고 날짜와 �
       .getByRole("button", { name: "보기 설정", exact: true })
       .boundingBox())!.x,
   );
-  await filters
-    .getByRole("button", { name: "프로젝트 필터", exact: true })
-    .click();
+  await expect(filters.locator(".property-filter")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "프로젝트 열 선택", exact: true })
+    .click({ button: "right" });
   const project = page.getByRole("group", {
     name: "프로젝트 필터 선택",
     exact: true,
@@ -3589,7 +3614,9 @@ test("속성 다중 필터·분기와 반기 선택을 저장하고 날짜와 �
   await project.getByRole("checkbox", { name: "B", exact: true }).check();
   const titles = page.locator('[data-column="title"]');
   await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
-  await filters.getByRole("button", { name: "상태 필터", exact: true }).click();
+  await page
+    .getByRole("button", { name: "상태 열 선택", exact: true })
+    .click({ button: "right" });
   const status = page.getByRole("group", {
     name: "상태 필터 선택",
     exact: true,
@@ -3598,9 +3625,7 @@ test("속성 다중 필터·분기와 반기 선택을 저장하고 날짜와 �
   await expect(titles).toHaveText(["숨길 업무"]);
   await status.getByRole("checkbox", { name: "예정", exact: true }).check();
   await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
-  await page
-    .getByRole("button", { name: "상태 필터 닫기", exact: true })
-    .click();
+  await page.keyboard.press("Escape");
   await expect
     .poll(
       async () =>
@@ -3643,6 +3668,107 @@ test("속성 다중 필터·분기와 반기 선택을 저장하고 날짜와 �
     path: info.outputPath("property-filters-periods.png"),
     fullPage: true,
   });
+});
+
+test("헤더 필터는 일치·제외 전환과 미지정·빈 결과를 처리하고 새로고침 후 유지한다", async ({
+  page,
+}, info) => {
+  await setTaskCells(page, [
+    { index: 0, key: "status", value: "완료" },
+    { index: 1, key: "status", value: "진행 중" },
+    { index: 2, key: "status", value: "" },
+  ]);
+  await page.reload();
+  const titles = page.locator('[data-column="title"]');
+  const open = async (name: string) => {
+    await page
+      .getByRole("button", { name: `${name} 열 선택`, exact: true })
+      .click({ button: "right" });
+    return page.getByRole("group", { name: `${name} 필터 선택`, exact: true });
+  };
+  await expect(
+    page
+      .locator(".view-bar")
+      .getByRole("button", { name: "상태 필터", exact: true }),
+  ).toHaveCount(0);
+  const status = await open("상태");
+  const search = status.getByRole("searchbox");
+  await search.fill("완");
+  await search.press("ArrowDown");
+  await expect(search).toBeFocused();
+  await expect(
+    status.getByRole("checkbox", { name: "진행 중", exact: true }),
+  ).toHaveCount(0);
+  await status.getByRole("checkbox", { name: "완료", exact: true }).check();
+  await expect(titles).toHaveText(["첫 업무"]);
+  await status.getByRole("radio", { name: "일치", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    status.getByRole("radio", { name: "제외", exact: true }),
+  ).toBeChecked();
+  await expect(titles).toHaveText(["숨길 업무", "셋째 업무"]);
+  await search.fill("");
+  const modeBox = (await status.getByRole("radiogroup").boundingBox())!;
+  const clearBox = (await status
+    .getByRole("button", { name: "상태 필터 해제" })
+    .boundingBox())!;
+  expect(modeBox.x + modeBox.width).toBeLessThan(clearBox.x);
+  const menuBox = (await page.locator(".grid-header-menu").boundingBox())!;
+  expect(menuBox.y).toBeGreaterThanOrEqual(8);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(
+    page.viewportSize()!.height - 7,
+  );
+  await page.screenshot({
+    path: info.outputPath("header-exclude-filter.png"),
+    fullPage: true,
+  });
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
+          ).json()
+        ).views.find((v: any) => v.name === "__current")?.data
+          .propertyFilterModes,
+    )
+    .toEqual({ status: "exclude" });
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(titles).toHaveText(["숨길 업무", "셋째 업무"]);
+  await expect(page.getByRole("img", { name: "상태 필터 적용" })).toBeVisible();
+  await open("상태");
+  await expect(
+    status.getByRole("radio", { name: "제외", exact: true }),
+  ).toBeChecked();
+  await expect(
+    status.getByRole("checkbox", { name: "완료", exact: true }),
+  ).toBeChecked();
+  await status.getByRole("checkbox", { name: "미지정", exact: true }).check();
+  await expect(titles).toHaveText(["숨길 업무"]);
+  await status.getByRole("button", { name: "상태 필터 해제" }).click();
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await expect(page.getByRole("img", { name: "상태 필터 적용" })).toHaveCount(
+    0,
+  );
+  const title = await open("작업");
+  await expect(
+    title.getByRole("radio", { name: "일치", exact: true }),
+  ).toBeChecked();
+  await title.getByRole("checkbox", { name: "첫 업무", exact: true }).check();
+  await expect(titles).toHaveText(["첫 업무"]);
+  await title.getByRole("checkbox", { name: "숨길 업무", exact: true }).check();
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
+  await title.getByRole("radio", { name: "제외", exact: true }).check();
+  await expect(titles).toHaveText(["셋째 업무"]);
+  await title.getByRole("checkbox", { name: "셋째 업무", exact: true }).check();
+  await expect(titles).toHaveCount(0);
+  await expect(title).toBeVisible();
+  await title.getByRole("button", { name: "작업 필터 해제" }).click();
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await page.keyboard.press("Escape");
+  await page.locator(".week-heading").first().click({ button: "right" });
+  await expect(page.locator(".property-filter")).toHaveCount(0);
 });
 
 test("초기 조회 중에는 보기와 업무 추가를 잠그고 조회 후 묶음 선택을 보존한다", async ({
@@ -4106,7 +4232,9 @@ test("팀원 필터는 안쪽 선택을 유지하고 바깥 클릭·다른 필�
   await expect(
     popup.getByRole("checkbox", { name: "나의 업무", exact: true }),
   ).toBeChecked();
-  await page.getByRole("button", { name: "분류 필터", exact: true }).click();
+  await page
+    .getByRole("button", { name: "분류 열 선택", exact: true })
+    .click({ button: "right" });
   await expect(popup).toHaveCount(0);
   await expect(
     page.getByRole("group", { name: "분류 필터 선택", exact: true }),

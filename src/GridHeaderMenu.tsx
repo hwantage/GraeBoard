@@ -13,6 +13,7 @@ export default function GridHeaderMenu({
   y,
   title,
   actions,
+  children,
   onClose,
   scrollContainer,
 }: {
@@ -20,6 +21,7 @@ export default function GridHeaderMenu({
   y: number;
   title: string;
   actions: HeaderMenuAction[];
+  children?: ReactNode;
   onClose: (restoreFocus?: boolean) => void;
   scrollContainer?: HTMLElement | null;
 }) {
@@ -28,11 +30,16 @@ export default function GridHeaderMenu({
   const close = useRef(onClose);
   close.current = onClose;
   useLayoutEffect(() => {
-    const box = root.current!.getBoundingClientRect();
-    setPosition({
-      left: Math.max(8, Math.min(x, window.innerWidth - box.width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - box.height - 8)),
-    });
+    const positionMenu = () => {
+      const box = root.current!.getBoundingClientRect();
+      setPosition({
+        left: Math.max(8, Math.min(x, window.innerWidth - box.width - 8)),
+        top: Math.max(8, Math.min(y, window.innerHeight - box.height - 8)),
+      });
+    };
+    positionMenu();
+    const resize = new ResizeObserver(positionMenu);
+    resize.observe(root.current!);
     root.current
       ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
       ?.focus({ preventScroll: true });
@@ -65,10 +72,13 @@ export default function GridHeaderMenu({
       outside(event);
     };
     document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("focusin", outside);
     window.addEventListener("resize", dismiss);
     window.addEventListener("scroll", scroll, true);
     return () => {
+      resize.disconnect();
       document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside);
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("scroll", scroll, true);
     };
@@ -76,9 +86,9 @@ export default function GridHeaderMenu({
   return createPortal(
     <div
       ref={root}
-      role="menu"
+      role={children ? "dialog" : undefined}
       aria-label={title}
-      className="grid-header-menu"
+      className={`grid-header-menu ${children ? "has-filter" : ""}`}
       style={position}
       onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => {
@@ -87,15 +97,19 @@ export default function GridHeaderMenu({
       }}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === "Escape" || e.key === "Tab") {
+        if (e.key === "Escape" || (e.key === "Tab" && !children)) {
           e.preventDefault();
           onClose(true);
         }
-        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+        if (
+          e.target instanceof HTMLElement &&
+          e.target.getAttribute("role") === "menuitem" &&
+          ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)
+        ) {
           e.preventDefault();
           const buttons = [
             ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
-              "button:not(:disabled)",
+              '[role="menuitem"]:not(:disabled)',
             ),
           ];
           const index = buttons.indexOf(
@@ -113,21 +127,24 @@ export default function GridHeaderMenu({
       }}
     >
       <div className="grid-header-menu-title">{title}</div>
-      {actions.map((action) => (
-        <button
-          key={action.label}
-          type="button"
-          role="menuitem"
-          disabled={action.disabled}
-          onClick={() => {
-            action.run();
-            onClose(true);
-          }}
-        >
-          {action.icon}
-          <span>{action.label}</span>
-        </button>
-      ))}
+      <div role="menu" aria-label={title} className="grid-header-menu-actions">
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            role="menuitem"
+            disabled={action.disabled}
+            onClick={() => {
+              action.run();
+              onClose(true);
+            }}
+          >
+            {action.icon}
+            <span>{action.label}</span>
+          </button>
+        ))}
+      </div>
+      {children}
     </div>,
     document.body,
   );

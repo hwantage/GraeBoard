@@ -18,6 +18,7 @@ import {
   GripVertical,
   EyeOff,
   RotateCcw,
+  Filter,
 } from "lucide-react";
 import type {
   Task,
@@ -38,6 +39,7 @@ import {
   textLinks,
   todayKey,
   propertiesFor,
+  propertyFiltersFor,
   groupValue,
   textMode,
   fontFamilyCSS,
@@ -50,6 +52,7 @@ import InlineCellEditor, {
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
+import PropertyFilter from "./PropertyFilter";
 import { bordersCSS, weekBorderStyle } from "../shared/borders.js";
 import {
   createClipboard,
@@ -150,11 +153,13 @@ function savedAreas(selection: Selection | null): SelectionArea[] {
 export default function Grid({
   tasks,
   allTasks,
+  sourceTasks,
   columns,
   columnOrder,
   view,
   user,
   users,
+  selectableUsers,
   selection,
   settings,
   editor,
@@ -175,11 +180,13 @@ export default function Grid({
 }: {
   tasks: Task[];
   allTasks: Task[];
+  sourceTasks: Task[];
   columns: Column[];
   columnOrder: ColumnReference[];
   view: View;
   user: User;
   users: User[];
+  selectableUsers: User[];
   selection: Selection | null;
   settings: Settings;
   editor: EditorState | null;
@@ -342,6 +349,7 @@ export default function Grid({
     onView({ hiddenRows: view.hiddenRows.filter((id) => !reveal.has(id)) });
   }
   const properties = propertiesFor(settings) as Property[];
+  const propertyFilters = propertyFiltersFor(view);
   const group = properties.find((p) => p.id === view.groupBy);
   const groupKey = group?.id || "";
   const sorted = !!view.sortKey && view.sortDirection !== "default";
@@ -810,12 +818,14 @@ export default function Grid({
     if (!alreadySelected) selectHeader(kind, index);
     setHeaderMenu({ kind, index, x, y });
   }
-  const menuColumns =
-    headerMenu?.kind === "columns" && range
-      ? columns.filter((_, i) => ranges.some((r) => i >= r.c1 && i <= r.c2))
-      : [];
   const menuColumn =
     headerMenu?.kind === "columns" ? columns[headerMenu.index] : undefined;
+  const menuColumns = menuColumn
+    ? range
+      ? columns.filter((_, i) => ranges.some((r) => i >= r.c1 && i <= r.c2))
+      : [menuColumn]
+    : [];
+  const menuProperty = properties.find((p) => p.id === menuColumn?.key);
   const menuActions: HeaderMenuAction[] =
     headerMenu?.kind === "columns"
       ? [
@@ -855,7 +865,7 @@ export default function Grid({
           {
             label: "정렬 해제",
             icon: <RotateCcw size={15} />,
-            disabled: !sorted,
+            disabled: !sorted || menuColumn?.key !== view.sortKey,
             run: () => sortColumn("", "default"),
           },
         ]
@@ -1157,6 +1167,16 @@ export default function Grid({
                         <ArrowDown size={12} />
                       )
                     ) : null}
+                    {!!propertyFilters[c.key]?.length && (
+                      <span
+                        className="column-filter-indicator"
+                        role="img"
+                        aria-label={`${c.label} 필터 적용`}
+                        title={`${propertyFilters[c.key].length}개 ${view.propertyFilterModes?.[c.key] === "exclude" ? "제외" : "일치"}`}
+                      >
+                        <Filter size={12} aria-hidden="true" />
+                      </span>
+                    )}
                   </button>
                 )}
                 {!presentation && (
@@ -1432,22 +1452,37 @@ export default function Grid({
                       overflowWidth += neighbor.width;
                     }
                   }
+                  const textDecoration = [
+                    s.underline ? "underline" : "",
+                    s.strike ? "line-through" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+                  const textParts = textLinks(text);
                   const renderedText = (
                     <span className="cell-text">
-                      {textLinks(text).map((part, index) =>
-                        part.href ? (
-                          <a
-                            key={index}
-                            href={part.href}
-                            target="_blank"
-                            rel="noreferrer"
-                            onPointerDown={(e) => e.stopPropagation()}
-                          >
-                            {part.text}
-                          </a>
-                        ) : (
-                          part.text
-                        ),
+                      {textParts.some((part) => part.href) ? (
+                        <span className="cell-linked-text">
+                          {textParts.map((part, index) =>
+                            part.href ? (
+                              <a
+                                key={index}
+                                href={part.href}
+                                target="_blank"
+                                rel="noreferrer"
+                                onPointerDown={(e) => e.stopPropagation()}
+                              >
+                                {part.text}
+                              </a>
+                            ) : (
+                              <span key={index} style={{ textDecoration }}>
+                                {part.text}
+                              </span>
+                            ),
+                          )}
+                        </span>
+                      ) : (
+                        text
                       )}
                     </span>
                   );
@@ -1480,12 +1515,7 @@ export default function Grid({
                     fontWeight:
                       s.bold === undefined ? undefined : s.bold ? 700 : 400,
                     fontStyle: s.italic ? "italic" : undefined,
-                    textDecoration: [
-                      s.underline ? "underline" : "",
-                      s.strike ? "line-through" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" "),
+                    textDecoration,
                     textAlign: s.textAlign || "left",
                     // Keep the chosen alignment when content fits; overflowing
                     // content must start at its first line, even when centered.
@@ -1646,7 +1676,36 @@ export default function Grid({
             setHeaderMenu(null);
             if (restore) ref.current?.focus({ preventScroll: true });
           }}
-        />
+        >
+          {menuProperty && (
+            <PropertyFilter
+              key={menuProperty.id}
+              property={menuProperty}
+              tasks={sourceTasks}
+              users={selectableUsers}
+              selected={propertyFilters[menuProperty.id] || []}
+              mode={view.propertyFilterModes?.[menuProperty.id] || "include"}
+              onChange={(values) =>
+                onView({
+                  propertyFilters: {
+                    ...propertyFilters,
+                    [menuProperty.id]: values,
+                  },
+                  status: "",
+                  category: "",
+                })
+              }
+              onModeChange={(mode) =>
+                onView({
+                  propertyFilterModes: {
+                    ...view.propertyFilterModes,
+                    [menuProperty.id]: mode,
+                  },
+                })
+              }
+            />
+          )}
+        </GridHeaderMenu>
       )}
       {rowDrag &&
         createPortal(

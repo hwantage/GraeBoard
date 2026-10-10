@@ -333,6 +333,12 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
         active.includes(key),
       ),
     ),
+    propertyFilterModes: Object.fromEntries(
+      Object.entries(input.propertyFilterModes || {}).filter(
+        ([key, mode]) =>
+          active.includes(key) && ["include", "exclude"].includes(mode),
+      ),
+    ),
     status: "",
     category: "",
     widths,
@@ -350,6 +356,7 @@ export function defaultView(year) {
     status: "",
     category: "",
     propertyFilters: {},
+    propertyFilterModes: {},
     search: "",
     fromMonth: 1,
     toMonth: 12,
@@ -402,15 +409,18 @@ export function filteredTasks(
     )
       return false;
     if (
-      filters.some(
-        ([key, values]) =>
-          values.length &&
-          !(Array.isArray(value(t, key))
-            ? value(t, key).length
-              ? value(t, key).some((v) => values.includes(v))
-              : values.includes("")
-            : values.includes(String(value(t, key)))),
-      )
+      filters.some(([key, values]) => {
+        if (!values.length) return false;
+        const cellValue = value(t, key);
+        const matches = Array.isArray(cellValue)
+          ? cellValue.length
+            ? cellValue.some((v) => values.includes(v))
+            : values.includes("")
+          : values.includes(String(cellValue));
+        return view.propertyFilterModes?.[key] === "exclude"
+          ? matches
+          : !matches;
+      })
     )
       return false;
     if (

@@ -673,9 +673,10 @@ export function createApp({
       "이 팀의 묶음 속성을 선택하세요.",
     );
     requireThat(
-      Object.keys(d.data.propertyFilters || {}).every((key) =>
-        propertiesFor(team.settings).some((p) => p.id === key),
-      ),
+      [
+        ...Object.keys(d.data.propertyFilters || {}),
+        ...Object.keys(d.data.propertyFilterModes || {}),
+      ].every((key) => propertiesFor(team.settings).some((p) => p.id === key)),
       400,
       "이 팀의 속성 필터를 선택하세요.",
     );

@@ -4,11 +4,11 @@ import {
   X,
   LoaderCircle,
   Check,
-  CalendarDays,
   ArrowRight,
   LockKeyhole,
 } from "lucide-react";
 import { api, send } from "./api";
+import { BrandLockup, Grae } from "./Brand";
 import type {
   Bootstrap,
   Cell,
@@ -113,7 +113,7 @@ export function Empty({
 }) {
   return (
     <div className="empty">
-      <CalendarDays size={32} strokeWidth={1.4} />
+      <Grae className="empty-grae" />
       <h3>{title}</h3>
       {description && <p>{description}</p>}
       {action}
@@ -238,12 +238,7 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
   return (
     <main className="auth-page">
       <section className="auth-story">
-        <div className="brand">
-          <span className="brand-symbol">
-            <CalendarDays size={25} />
-          </span>
-          그래보드
-        </div>
+        <BrandLockup className="auth-lockup" />
         <div>
           <span className="story-line" />
           <h1>
@@ -255,16 +250,20 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
             <br />
             필요한 사람과 기간만 남겨 가볍게 살펴봅니다.
           </p>
-          <div className="mini-schedule" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-            <i />
-            <i />
-            <i />
+          <div className="auth-stage" aria-hidden="true">
+            <div className="mini-schedule">
+              <span />
+              <span />
+              <span />
+              <span />
+              <span />
+              <span />
+              <i />
+              <i />
+              <i />
+            </div>
+            <Grae variant="3d" className="auth-grae" />
+            <span className="auth-bubble">그래, 같이 그려보자!</span>
           </div>
         </div>
         <p className="auth-foot">
@@ -274,6 +273,7 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
       </section>
       <section className="auth-form">
         <div className="auth-card">
+          <BrandLockup className="auth-mobile-brand" />
           <h2>
             {setup?.required ? "우리 팀의 공간 만들기" : "다시 만나 반가워요"}
           </h2>

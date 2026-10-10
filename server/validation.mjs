@@ -112,6 +112,10 @@ export const viewSchema = z
       .record(z.string().max(80), z.array(z.string().max(10000)).max(101))
       .refine((v) => Object.keys(v).length <= 50)
       .optional(),
+    propertyFilterModes: z
+      .record(z.string().max(80), z.enum(["include", "exclude"]))
+      .refine((v) => Object.keys(v).length <= 50)
+      .optional(),
     search: z.string().max(300),
     fromMonth: z.number().int().min(1).max(12),
     toMonth: z.number().int().min(1).max(12),

@@ -13,7 +13,7 @@ import {
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
   WrapText,
-  Paintbrush,
+  PaintBucket,
   EyeOff,
   ChevronsLeftRight,
   Copy,
@@ -105,7 +105,14 @@ export default function Toolbar({
           className={`color-tool ${disabled ? "disabled" : ""}`}
           title="글자 색상"
         >
-          <span style={{ borderBottomColor: style.color || "#243642" }}>A</span>
+          <span className="color-tool-icon" aria-hidden="true">
+            A
+          </span>
+          <span
+            className="color-tool-swatch"
+            style={{ backgroundColor: style.color || "#243642" }}
+            aria-hidden="true"
+          />
           <input
             aria-label="글자 색상"
             type="color"
@@ -119,9 +126,13 @@ export default function Toolbar({
           className={`color-tool ${disabled ? "disabled" : ""}`}
           title="배경색"
         >
-          <Paintbrush
-            size={16}
-            style={{ color: style.backgroundColor || "#607984" }}
+          <span className="color-tool-icon" aria-hidden="true">
+            <PaintBucket size={16} />
+          </span>
+          <span
+            className="color-tool-swatch"
+            style={{ backgroundColor: style.backgroundColor || "#ffffff" }}
+            aria-hidden="true"
           />
           <input
             aria-label="배경색"

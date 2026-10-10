@@ -1,0 +1,28 @@
+/* 그래보드 브랜드 색상 토큰 */
+:root {
+  --grae-mint: #24796d;
+  --grae-deep: #1b6258;
+  --grae-pastel: #deebe4;
+  --grae-soft: #e7f2ee;
+  --grae-surface: #f0f4f2;
+  --grae-border: #bdd4c9;
+  --grae-ink: #293c42;
+  --grae-muted: #718087;
+  --grae-paper: #f7f5ef;
+  --grae-character-body: #daebe2;
+  --grae-character-limb: #208780;
+  --grae-character-line: #055852;
+  --grae-character-cheek: #fabebf;
+  --grae-character-cell: #c7dfd3;
+  --grae-character-cell-light: #f5f8f5;
+  --grae-theme-mint: #24796d;
+  --grae-theme-mint-pastel: #deebe4;
+  --grae-theme-sky: #426f9c;
+  --grae-theme-sky-pastel: #deeaf7;
+  --grae-theme-lavender: #746099;
+  --grae-theme-lavender-pastel: #e9e2f3;
+  --grae-theme-rose: #986176;
+  --grae-theme-rose-pastel: #f2e1e7;
+  --grae-theme-sand: #866b42;
+  --grae-theme-sand-pastel: #eee5d6;
+}

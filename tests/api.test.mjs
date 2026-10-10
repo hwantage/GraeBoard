@@ -2621,6 +2621,74 @@ test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 
   assert.equal(bad.status, 400);
 });
 
+test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경에 보존되고 잘못된 모드는 거절한다", async () => {
+  const tid = (await post("/admin/teams", { name: "제외 필터 검증" })).data.id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  const view = {
+    ...normalizeView(defaultView(2026), settings),
+    propertyFilters: { status: ["완료"] },
+    propertyFilterModes: { status: "exclude" },
+  };
+  const save = (data, name = "제외 보기") =>
+    request("/views", {
+      method: "PUT",
+      body: { teamId: tid, name, data },
+    });
+  assert.equal((await save(view)).status, 200);
+  const load = async (name = "제외 보기") =>
+    (await request(`/views?teamId=${tid}&year=2026`)).data.views.find(
+      (v) => v.name === name,
+    ).data;
+  assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
+  assert.deepEqual((await load()).propertyFilters, { status: ["완료"] });
+  const legacy = { ...view };
+  delete legacy.propertyFilterModes;
+  assert.equal((await save(legacy, "구 일치 보기")).status, 200);
+  assert.deepEqual((await load("구 일치 보기")).propertyFilterModes, {});
+  for (const modes of [
+    { status: "invalid" },
+    { prop_other_team: "exclude" },
+    Object.fromEntries(
+      Array.from({ length: 51 }, (_, i) => [`prop_${i}`, "exclude"]),
+    ),
+  ]) {
+    assert.equal(
+      (await save({ ...view, propertyFilterModes: modes })).status,
+      400,
+    );
+  }
+  const report = await post("/reports", {
+    teamId: tid,
+    year: 2026,
+    name: "완료 제외 보고본",
+    referenceDate: "2026-03-06",
+    taskIds: [],
+    view,
+  });
+  assert.equal(report.status, 201);
+  assert.deepEqual(
+    (await request(`/reports/${report.data.id}`)).data.view.propertyFilterModes,
+    { status: "exclude" },
+  );
+  settings.properties
+    .find((p) => p.id === "status")
+    .values.find((v) => v.label === "완료").label = "종료";
+  const renamed = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: settings,
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.data));
+  assert.deepEqual((await load()).propertyFilters.status, ["종료"]);
+  assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
+  assert.deepEqual(
+    (await request(`/reports/${report.data.id}`)).data.view.propertyFilters
+      .status,
+    ["완료"],
+  );
+});
+
 test("속성 값 신규·수정은 15자로 제한하고 기존 긴 값과 무관한 설정 저장은 보존한다", async () => {
   const tid = (
     await post("/admin/teams", {

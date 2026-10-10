@@ -81,6 +81,7 @@ export type Settings = {
   retentionDays: number;
 };
 export type Team = { id: string; name: string; settings: Settings };
+export type FilterMode = "include" | "exclude";
 export type View = {
   year: number;
   people: string[];
@@ -88,6 +89,7 @@ export type View = {
   status: string;
   category: string;
   propertyFilters?: Record<string, string[]>;
+  propertyFilterModes?: Record<string, FilterMode>;
   search: string;
   fromMonth: number;
   toMonth: number;

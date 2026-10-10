@@ -48,7 +48,6 @@ import {
   propertiesFor,
   emptyPropertyValue,
   propertyValue,
-  propertyFiltersFor,
   normalizeView,
   DEFAULT_SETTINGS,
   MAX_STYLE_CELLS,
@@ -90,9 +89,9 @@ import {
   ViewOptions,
 } from "./components";
 import AdminPanel from "./AdminPanel";
+import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, { type Column, rangeOf, rangesOf, selectedPoints } from "./Grid";
 import Toolbar from "./Toolbar";
-import PropertyFilter from "./PropertyFilter";
 import {
   createClipboard,
   copyToSystem,
@@ -540,7 +539,6 @@ function Workspace({
       changeView(next);
   }, [settings, loaded, report, boot.users, teamId, view]);
   const source = report?.tasks || tasks;
-  const propertyFilters = propertyFiltersFor(view);
   const matches = useMemo(
     () => filteredTasks(source, view, user.id, settings, users) as Task[],
     [source, view, user.id, settings, users],
@@ -935,6 +933,7 @@ function Workspace({
         status: "",
         category: "",
         propertyFilters: {},
+        propertyFilterModes: {},
         people: [],
         sortKey: "",
         sortDirection: "default",
@@ -1168,10 +1167,15 @@ function Workspace({
     >
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-symbol">
-            <CalendarDays size={21} />
-          </span>
-          {!sidebarSmall && <strong>그래보드</strong>}
+          <BrandMark
+            className="brand-symbol"
+            title={sidebarSmall ? "그래보드" : undefined}
+          />
+          {!sidebarSmall && (
+            <strong>
+              <BrandWordmark className="brand-wordmark" />
+            </strong>
+          )}
         </div>
         <div className="team-switch">
           {sidebarSmall ? (
@@ -1750,32 +1754,6 @@ function Workspace({
                   </div>
                 )}
               </div>
-              {properties
-                .filter(
-                  (p) =>
-                    p.id !== "title" &&
-                    (p.kind === "option" || view.visibleFields.includes(p.id)),
-                )
-                .map((property) => (
-                  <PropertyFilter
-                    key={property.id}
-                    property={property}
-                    tasks={source}
-                    users={selectableUsers}
-                    settings={settings}
-                    selected={propertyFilters[property.id] || []}
-                    onChange={(values) =>
-                      changeView({
-                        propertyFilters: {
-                          ...propertyFilters,
-                          [property.id]: values,
-                        },
-                        status: "",
-                        category: "",
-                      })
-                    }
-                  />
-                ))}
               <div className="view-bar-spacer" />
               <span className="visible-count">{shown.length}개 업무 표시</span>
               <div className="popover-root">
@@ -1950,11 +1928,13 @@ function Workspace({
             <Grid
               tasks={shown}
               allTasks={matches}
+              sourceTasks={source}
               columns={columns}
               columnOrder={columnOrder}
               view={view}
               user={user}
               users={users}
+              selectableUsers={selectableUsers}
               selection={selection}
               settings={settings}
               editor={editor}
