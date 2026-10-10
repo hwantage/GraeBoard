@@ -8,7 +8,7 @@ import ExcelJS from "exceljs";
 import { statusSummary } from "../shared/domain.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { createApp } from "../server/app.mjs";
-import { openDatabase, getTask } from "../server/db.mjs";
+import { openDatabase, getTask, passwordHash } from "../server/db.mjs";
 import {
   defaultView,
   weeksForYear,
@@ -376,7 +376,10 @@ test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하
   const target = (
     await post("/admin/teams", {
       name: "전체 서식 검증",
-      memberIds: [adminId, memberId],
+      members: [
+        { userId: adminId, role: "lead" },
+        { userId: memberId, role: "member" },
+      ],
     })
   ).data.id;
   const tasks = [];
@@ -450,12 +453,11 @@ test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하
 
 test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된 입력과 비관리자 수정을 거절한다", async () => {
   const body = {
-    username: `avatar-${randomUUID()}`,
+    username: `avatar-${randomUUID()}@example.com`,
     name: "아바타 검증",
     password: "profile-test-password",
-    role: "member",
     active: true,
-    teamIds: [teamId],
+    memberships: [{ teamId, role: "member" }],
   };
   const created = await post("/admin/users", body);
   assert.equal(created.status, 201);
@@ -513,23 +515,26 @@ test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된
 test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 값 보존만 허용한다", async () => {
   const avatarImage =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6WAAAAABJRU5ErkJggg==";
-  const target = (await post("/admin/teams", { name: "이전 팀원 표시 검증" }))
-    .data.id;
   const adminId = (await request("/bootstrap")).data.user.id;
+  const target = (
+    await post("/admin/teams", {
+      name: "이전 팀원 표시 검증",
+      members: [{ userId: adminId, role: "lead" }],
+    })
+  ).data.id;
   const account = {
-    username: `former-${randomUUID()}`,
+    username: `former-${randomUUID()}@example.com`,
     name: "이전 이름",
     password: "profile-test-password",
-    role: "member",
     active: true,
-    teamIds: [target],
+    memberships: [{ teamId: target, role: "member" }],
   };
   const formerId = (await post("/admin/users", account)).data.user.id;
   const unrelatedId = (
     await post("/admin/users", {
       ...account,
-      username: `unrelated-${randomUUID()}`,
-      teamIds: [],
+      username: `unrelated-${randomUUID()}@example.com`,
+      memberships: [],
     })
   ).data.user.id;
   const assigned = (
@@ -552,7 +557,7 @@ test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 �
           ...account,
           name: "최신 이름",
           active: false,
-          teamIds: [],
+          memberships: [],
           avatarInitials: "최",
           avatarImage,
           color: "#888888",
@@ -685,7 +690,10 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
   const tid = (
     await post("/admin/teams", {
       name: "삭제할 팀",
-      memberIds: [adminId, memberId],
+      members: [
+        { userId: adminId, role: "lead" },
+        { userId: memberId, role: "member" },
+      ],
     })
   ).data.id;
   const keepId = (await post("/admin/teams", { name: "보존할 팀" })).data.id;
@@ -866,42 +874,31 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
     usersBefore,
   );
   assert.equal((await request(`/reports/${report.data.id}`)).status, 404);
-  assert.equal((await request(`/tasks?teamId=${tid}&year=2026`)).status, 403);
+  assert.equal((await request(`/tasks?teamId=${tid}&year=2026`)).status, 404);
   assert.equal((await remove()).status, 404);
   assert(!(await request("/bootstrap")).data.teams.some((t) => t.id === tid));
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
 });
 
-test("팀 삭제는 시스템 관리자의 유일한 배속을 보호하고 실패 시 변경을 모두 되돌린다", async () => {
-  const tid = (await post("/admin/teams", { name: "삭제 보호 팀" })).data.id;
-  const protectedUser = (
+test("팀 삭제는 실패 시 변경을 모두 되돌리고, 소속 팀이 없어지는 시스템 관리자도 막지 않는다", async () => {
+  const tid = (await post("/admin/teams", { name: "삭제 복구 팀" })).data.id;
+  const account = {
+    username: `guard-${randomUUID().slice(0, 8)}@example.com`,
+    password: "guard-test-password",
+  };
+  const soleAdmin = (
     await post("/admin/users", {
-      username: `guard-${randomUUID().slice(0, 8)}`,
-      password: "guard-test-password",
-      name: "배속 보호 관리자",
-      role: "admin",
+      ...account,
+      name: "한 팀 소속 관리자",
+      systemRole: "admin",
       active: true,
-      teamIds: [tid],
+      memberships: [{ teamId: tid, role: "lead" }],
     })
   ).data.user;
   const row = (await post("/tasks", { teamId: tid, year: 2026 })).data.task;
+  // 소속 없는 시스템 관리자가 만든 업무는 담당자를 비워 둔다.
+  assert.equal(row.cells.owner?.value ?? "", "");
   const body = { confirmed: true };
-  const blocked = await request(`/admin/teams/${tid}`, {
-    method: "DELETE",
-    body,
-  });
-  assert.equal(blocked.status, 409);
-  assert.match(blocked.data.error, /다른 팀에 배속/);
-  assert(getTask(db, row.id));
-  await request(`/admin/users/${protectedUser.id}`, {
-    method: "PATCH",
-    body: {
-      name: protectedUser.name,
-      role: "admin",
-      active: true,
-      teamIds: [tid, teamId],
-    },
-  });
   db.exec(
     "CREATE TEMP TRIGGER fail_team_delete BEFORE DELETE ON teams BEGIN SELECT RAISE(ABORT, 'test rollback'); END",
   );
@@ -915,7 +912,7 @@ test("팀 삭제는 시스템 관리자의 유일한 배속을 보호하고 실�
       db
         .prepare("SELECT COUNT(*) AS n FROM memberships WHERE team_id=?")
         .get(tid).n,
-      2,
+      1,
     );
   } finally {
     db.exec("DROP TRIGGER fail_team_delete");
@@ -924,16 +921,16 @@ test("팀 삭제는 시스템 관리자의 유일한 배속을 보호하고 실�
     (await request(`/admin/teams/${tid}`, { method: "DELETE", body })).status,
     200,
   );
+  // 팀이 모두 없어져도 시스템 관리자는 로그인해 모든 팀에 들어갈 수 있다.
+  const token = (await post("/auth/login", account, "")).cookie;
+  const boot = (await request("/bootstrap", { cookie: token })).data;
+  assert.deepEqual(boot.user.teamIds, []);
+  assert(boot.teams.some((t) => t.id === teamId));
   assert.equal(
     (
-      await request(`/admin/users/${protectedUser.id}`, {
+      await request(`/admin/users/${soleAdmin.id}`, {
         method: "PATCH",
-        body: {
-          name: protectedUser.name,
-          role: "member",
-          active: false,
-          teamIds: [],
-        },
+        body: { name: soleAdmin.name, systemRole: "user", active: false },
       })
     ).status,
     200,
@@ -1011,7 +1008,10 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
 
 test("팀 양식 복사는 속성·순서·기본 서식·테마만 독립적으로 복제한다", async () => {
   const sourceId = (
-    await post("/admin/teams", { name: "원본 양식", memberIds: [memberId] })
+    await post("/admin/teams", {
+      name: "원본 양식",
+      members: [{ userId: memberId, role: "member" }],
+    })
   ).data.id;
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === sourceId,
@@ -1241,7 +1241,7 @@ before(async () => {
   const setup = await post(
     "/auth/setup",
     {
-      username: "administrator",
+      username: "administrator@example.com",
       password: "test-password-123",
       name: "관리자",
       teamName: "기획팀",
@@ -1267,16 +1267,15 @@ before(async () => {
     ["viewer", "viewer"],
   ]) {
     const u = await post("/admin/users", {
-      username,
+      username: `${username}@example.com`,
       password: "test-password-123",
       name: username,
-      role,
-      teamIds: [teamId],
+      memberships: [{ teamId, role }],
     });
     assert.equal(u.status, 201);
     const auth = await post(
       "/auth/login",
-      { username, password: "test-password-123" },
+      { username: `${username}@example.com`, password: "test-password-123" },
       "",
     );
     if (username === "member") {
@@ -1286,17 +1285,16 @@ before(async () => {
   }
   const second = await post("/admin/teams", { name: "별도 팀" });
   const u = await post("/admin/users", {
-    username: "other",
+    username: "other@example.com",
     password: "test-password-123",
     name: "별도 사용자",
-    role: "manager",
-    teamIds: [second.data.id],
+    memberships: [{ teamId: second.data.id, role: "lead" }],
   });
   assert.equal(u.status, 201);
   other = (
     await post(
       "/auth/login",
-      { username: "other", password: "test-password-123" },
+      { username: "other@example.com", password: "test-password-123" },
       "",
     )
   ).cookie;
@@ -1318,7 +1316,7 @@ test("첫 설정 재실행, 인증 누락 및 외부 출처를 거절한다", as
   assert.equal(
     (
       await post("/auth/setup", {
-        username: "new",
+        username: "new@example.com",
         password: "test-password-123",
         name: "새 사용자",
         teamName: "새 팀",
@@ -1795,26 +1793,104 @@ test("XLSX 미리보기는 원본을 변경하지 않고 담당자 확인 후 �
   assert.equal(v.rowHeights[imported.id], 80);
   assert.equal(v.widths.title, 294);
 });
-test("마지막 관리자 해제와 소속 팀 누락을 거절한다", async () => {
+test("마지막 시스템 관리자 해제를 거절하고, 시스템 권한 변경은 팀 내 권한을 유지한다", async () => {
   const u = (await request("/bootstrap")).data.user;
+  for (const body of [
+    { name: u.name, systemRole: "user", active: true },
+    { name: u.name, active: false },
+  ])
+    assert.equal(
+      (await request(`/admin/users/${u.id}`, { method: "PATCH", body })).status,
+      400,
+    );
+  const after = (await request("/bootstrap")).data.user;
+  assert.equal(after.systemRole, "admin");
+  assert.equal(after.teamRoles[teamId], "lead");
   assert.equal(
     (
-      await request(`/admin/users/${u.id}`, {
-        method: "PATCH",
-        body: { name: u.name, role: "member", active: true, teamIds: [teamId] },
+      await post("/admin/users", {
+        username: `dup-team-${randomUUID().slice(0, 8)}@example.com`,
+        password: "test-password-123",
+        name: "중복 팀",
+        memberships: [
+          { teamId, role: "member" },
+          { teamId, role: "viewer" },
+        ],
       })
     ).status,
     400,
   );
+});
+test("아이디는 이메일로 받고 소문자로 저장하며 기존 아이디는 로그인 후 이메일로 바꿀 수 있다", async () => {
+  const invalid = await post("/admin/users", {
+    username: "not-an-email",
+    password: "test-password-123",
+    name: "형식 오류",
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.data.error, "아이디는 이메일 주소로 입력하세요.");
+  const created = await post("/admin/users", {
+    username: "  Mixed.Case@Example.COM ",
+    password: "test-password-123",
+    name: "대소문자",
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.username, "mixed.case@example.com");
   assert.equal(
     (
-      await request(`/admin/users/${u.id}`, {
-        method: "PATCH",
-        body: { name: u.name, role: "admin", active: true, teamIds: [] },
+      await post(
+        "/auth/login",
+        { username: "MIXED.case@example.com", password: "test-password-123" },
+        "",
+      )
+    ).status,
+    200,
+  );
+  // 이메일 이전에 만든 아이디도 계속 로그인할 수 있다.
+  const legacyId = randomUUID();
+  db.prepare(
+    "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+  ).run(
+    legacyId,
+    "legacy-user",
+    "기존 아이디",
+    passwordHash("test-password-123"),
+    "user",
+    new Date().toISOString(),
+  );
+  const login = (username) =>
+    post("/auth/login", { username, password: "test-password-123" }, "");
+  assert.equal((await login("legacy-user")).status, 200);
+  const patch = (body) =>
+    request(`/admin/users/${legacyId}`, { method: "PATCH", body });
+  // 아이디를 생략하면 기존 아이디를 유지한다.
+  assert.equal(
+    (await patch({ name: "기존 아이디", active: true })).status,
+    200,
+  );
+  assert.equal((await login("legacy-user")).status, 200);
+  assert.equal(
+    (
+      await patch({
+        name: "기존 아이디",
+        active: true,
+        username: "mixed.case@example.com",
       })
     ).status,
-    400,
+    409,
   );
+  assert.equal(
+    (
+      await patch({
+        name: "기존 아이디",
+        active: true,
+        username: "Legacy@Example.com",
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await login("legacy-user")).status, 401);
+  assert.equal((await login("legacy@example.com")).status, 200);
 });
 test("조건부 조회 캐시는 변경 즉시 무효화되고 팀 접근 검사 후에만 제공된다", async () => {
   const url = `/tasks?teamId=${teamId}&year=2026`,
@@ -1868,7 +1944,7 @@ test("업무별 이력과 복구 버전 검사 및 비활성 계정 차단", asy
   const u = members.find((u) => u.id === memberId);
   const edit = await request(`/admin/users/${memberId}`, {
     method: "PATCH",
-    body: { name: u.name, role: u.role, active: false, teamIds: u.teamIds },
+    body: { name: u.name, active: false },
   });
   assert.equal(edit.status, 200);
   assert.equal((await request("/bootstrap", { cookie: member })).status, 401);
@@ -1876,7 +1952,7 @@ test("업무별 이력과 복구 버전 검사 및 비활성 계정 차단", asy
     (
       await post(
         "/auth/login",
-        { username: "member", password: "test-password-123" },
+        { username: "member@example.com", password: "test-password-123" },
         "",
       )
     ).status,
@@ -1970,11 +2046,10 @@ test("이전 검색 조건은 업무 목록을 필터링하지 않고 보기 정
 test("팀 이름 변경과 팀원 중복 배속은 다른 팀 배정을 보존하고 서버 권한을 검사한다", async () => {
   const uid = (
     await post("/admin/users", {
-      username: "unassigned-new",
+      username: "unassigned-new@example.com",
       password: "test-password-123",
       name: "새 팀원",
-      role: "member",
-      teamIds: [],
+      memberships: [],
     })
   ).data.user.id;
   const adminId = (await request("/bootstrap")).data.user.id;
@@ -1983,11 +2058,22 @@ test("팀 이름 변경과 팀원 중복 배속은 다른 팀 배정을 보존�
   for (const tid of [first, second]) {
     assert.equal(
       (
-        await request(`/admin/teams/${tid}`, {
+        await request(`/teams/${tid}`, {
           method: "PATCH",
+          body: { name: tid === first ? "이름 변경 팀" : "새 팀 2" },
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await request(`/teams/${tid}/members`, {
+          method: "PUT",
           body: {
-            name: tid === first ? "이름 변경 팀" : "새 팀 2",
-            memberIds: [adminId, uid],
+            members: [
+              { userId: adminId, role: "lead" },
+              { userId: uid, role: tid === first ? "lead" : "member" },
+            ],
           },
         })
       ).status,
@@ -1995,26 +2081,27 @@ test("팀 이름 변경과 팀원 중복 배속은 다른 팀 배정을 보존�
     );
   }
   let data = (await request("/admin/users")).data;
-  assert.deepEqual(
-    new Set(data.users.find((u) => u.id === uid).teamIds),
-    new Set([first, second]),
-  );
+  const otherId = data.users.find((u) => u.username === "other@example.com").id;
+  const assigned = data.users.find((u) => u.id === uid);
+  assert.deepEqual(new Set(assigned.teamIds), new Set([first, second]));
+  // 같은 사용자가 팀마다 다른 팀 내 권한을 가진다.
+  assert.deepEqual(assigned.teamRoles, { [first]: "lead", [second]: "member" });
   assert.equal(data.teams.find((t) => t.id === first).name, "이름 변경 팀");
   assert.equal(
     (
-      await request(`/admin/teams/${first}`, {
+      await request(`/teams/${first}`, {
         method: "PATCH",
         cookie: viewer,
-        body: { name: "불법 변경", memberIds: [] },
+        body: { name: "불법 변경" },
       })
     ).status,
     403,
   );
   assert.equal(
     (
-      await request(`/admin/teams/${first}`, {
-        method: "PATCH",
-        body: { name: "실패할 변경", memberIds: [randomUUID()] },
+      await request(`/teams/${first}/members`, {
+        method: "PUT",
+        body: { members: [{ userId: randomUUID(), role: "member" }] },
       })
     ).status,
     400,
@@ -2024,15 +2111,92 @@ test("팀 이름 변경과 팀원 중복 배속은 다른 팀 배정을 보존�
   const token = (
     await post(
       "/auth/login",
-      { username: "unassigned-new", password: "test-password-123" },
+      { username: "unassigned-new@example.com", password: "test-password-123" },
       "",
     )
   ).cookie;
+  // 팀장은 자기 팀의 이름·구성원을 관리하지만 팀원인 팀은 관리하지 못한다.
   assert.equal(
     (
-      await request(`/admin/teams/${first}`, {
+      await request(`/teams/${first}`, {
         method: "PATCH",
-        body: { name: "이름 변경 팀", memberIds: [adminId] },
+        cookie: token,
+        body: { name: "팀장이 바꾼 이름" },
+      })
+    ).status,
+    200,
+  );
+  const directory = await request(`/teams/${first}/members`, {
+    cookie: token,
+  });
+  assert.equal(directory.status, 200);
+  assert(directory.data.users.some((u) => u.id === otherId));
+  assert(!("teamRoles" in directory.data.users[0]));
+  assert.equal(
+    (
+      await request(`/teams/${first}/members`, {
+        method: "PUT",
+        cookie: token,
+        body: {
+          members: [
+            { userId: adminId, role: "lead" },
+            { userId: uid, role: "lead" },
+            { userId: otherId, role: "viewer" },
+          ],
+        },
+      })
+    ).status,
+    200,
+  );
+  // 그 사이 바뀐 목록을 기준으로 저장하면 덮어쓰지 않고 409를 돌려준다.
+  const stale = await request(`/teams/${first}/members`, {
+    method: "PUT",
+    cookie: token,
+    body: {
+      previous: [{ userId: adminId, role: "lead" }],
+      members: [{ userId: uid, role: "lead" }],
+    },
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(
+    (await request(`/teams/${first}/members`, { cookie: token })).data.members
+      .length,
+    3,
+  );
+  for (const [method, path] of [
+    ["GET", `/teams/${second}/members`],
+    ["PATCH", `/teams/${second}`],
+  ])
+    assert.equal(
+      (
+        await request(path, {
+          method,
+          cookie: token,
+          body: method === "PATCH" ? { name: "권한 없음" } : undefined,
+        })
+      ).status,
+      403,
+    );
+  assert.equal(
+    (await post("/admin/teams", { name: "팀장 생성 시도" }, token)).status,
+    403,
+  );
+  // 열람자로 추가된 사용자는 담당자로 지정할 수 없다.
+  assert.equal(
+    (
+      await post("/tasks", {
+        teamId: first,
+        year: 2026,
+        fields: { owner: otherId },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/teams/${first}/members`, {
+        method: "PUT",
+        body: { members: [{ userId: adminId, role: "lead" }] },
       })
     ).status,
     200,
@@ -2657,20 +2821,19 @@ test("여러 행 이동은 기존 순서와 제외된 행을 유지하고 모든
     await post("/admin/teams", {
       name: "여러 행 이동",
       templateTeamId: teamId,
-      memberIds: [adminId],
+      members: [{ userId: adminId, role: "lead" }],
     })
   ).data.id;
   const account = {
-    username: `row-mover-${randomUUID()}`,
+    username: `row-mover-${randomUUID()}@example.com`,
     password: "row-move-test-password",
   };
   const moverId = (
     await post("/admin/users", {
       ...account,
       name: "행 이동 팀원",
-      role: "member",
       active: true,
-      teamIds: [tid],
+      memberships: [{ teamId: tid, role: "member" }],
     })
   ).data.user.id;
   const mover = (await post("/auth/login", account)).cookie;
@@ -3011,11 +3174,16 @@ test("속성 값 신규·수정은 15자로 제한하고 기존 긴 값과 무�
 });
 
 test("모든 업무 정보 열을 속성으로 관리하고 다섯 종류의 값과 XLSX를 보존한다", async () => {
-  const tid = (await post("/admin/teams", { name: "통합 속성" })).data.id;
+  const actor = (await request("/bootstrap")).data.user;
+  const tid = (
+    await post("/admin/teams", {
+      name: "통합 속성",
+      members: [{ userId: actor.id, role: "lead" }],
+    })
+  ).data.id;
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === tid,
   ).settings;
-  const actor = (await request("/bootstrap")).data.user;
   assert.equal(settings.propertiesVersion, 3);
   assert.equal(settings.properties.length, 3);
   const props = [
@@ -3291,7 +3459,7 @@ test("팀 테마는 팀별로 저장하고 기존 설정 저장·권한·충돌 
   assert.equal((await settingsFor(second)).theme, "mint");
   const stale = structuredClone(settings);
   const patch = (body, cookie = admin) =>
-    request(`/admin/teams/${tid}`, {
+    request(`/teams/${tid}`, {
       method: "PATCH",
       body: { name: "테마 팀", ...body },
       cookie,

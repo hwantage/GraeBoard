@@ -53,13 +53,15 @@ export type User = {
   id: string;
   username: string;
   name: string;
-  role: "admin" | "manager" | "member" | "viewer";
+  systemRole: "admin" | "user";
   active: boolean;
   color: string;
   avatarInitials?: string;
   avatarImage?: string;
   teamIds: string[];
+  teamRoles: Record<string, TeamRole>;
 };
+export type TeamRole = "lead" | "member" | "viewer";
 export type PropertyOption = {
   id: string;
   label: string;

@@ -12,7 +12,7 @@ async function post(page: Page, path: string, data: any) {
 let teamId: string, ids: string[], userId: string;
 test.beforeEach(async ({ page }) => {
   await post(page, "/auth/login", {
-    username: "browser-test",
+    username: "browser-test@example.com",
     password: "local-test-only-password",
   });
   const boot = await (await page.request.get("/api/bootstrap")).json();
@@ -20,6 +20,7 @@ test.beforeEach(async ({ page }) => {
   teamId = (
     await post(page, "/admin/teams", {
       name: `찾기 ${randomUUID().slice(0, 8)}`,
+      members: [{ userId, role: "lead" }],
     })
   ).id;
   const latest = await (await page.request.get("/api/bootstrap")).json();
@@ -242,4 +243,131 @@ test("찾기는 컬럼 필터를 존중하고 긴 검색어와 결과 버튼이 
   await page
     .locator(".view-bar")
     .screenshot({ path: info.outputPath("find-compact.png") });
+});
+
+test("검색 대상을 여러 속성으로 좁히고 선택한 셀 결과만 순환한다", async ({
+  page,
+}, info) => {
+  const search = page.getByRole("search", { name: "속성 찾기" });
+  const input = search.getByRole("textbox");
+  const count = search.locator(".search-count");
+  const toggle = search.getByRole("button", { name: "검색 대상 속성 선택" });
+  const popup = page.getByRole("dialog", { name: "검색 대상 속성 선택" });
+  await input.fill("공통");
+  await expect(count).toHaveText("1 / 4");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  for (const name of ["전체 선택", "작업", "팀원", "상태", "추가 메모"])
+    await expect(
+      popup.getByRole("checkbox", { name, exact: true }),
+    ).toBeChecked();
+  const searchBox = (await search.boundingBox())!;
+  const popupBox = (await popup.boundingBox())!;
+  expect(popupBox.y).toBeGreaterThanOrEqual(searchBox.y + searchBox.height);
+  await popup
+    .getByRole("checkbox", { name: "전체 선택", exact: true })
+    .uncheck();
+  await expect(count).toHaveText("0 / 0");
+  await expect(input).toHaveValue("공통");
+  await expect(
+    search.getByRole("button", { name: "다음 검색 결과" }),
+  ).toBeDisabled();
+  await expect(popup).toContainText("검색할 속성을 선택하세요.");
+  await popup.getByRole("checkbox", { name: "작업", exact: true }).check();
+  await expect(count).toHaveText("1 / 1");
+  await expect(input).toHaveAttribute("placeholder", "작업 검색");
+  await expect(page.locator(`[data-cell="${ids[0]}:title"]`)).toHaveClass(
+    /focused/,
+  );
+  await popup.getByRole("checkbox", { name: "추가 메모", exact: true }).check();
+  await expect(count).toHaveText("1 / 3");
+  await expect(
+    popup.getByRole("checkbox", { name: "전체 선택", exact: true }),
+  ).toBeChecked({ indeterminate: true });
+  await page.screenshot({
+    path: info.outputPath("find-selected-properties.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+  await expect(input).toHaveValue("공통");
+  await search.getByRole("button", { name: "다음 검색 결과" }).click();
+  await expect(count).toHaveText("2 / 3");
+  await expect(page.locator(`[data-cell="${ids[1]}:${memoKey}"]`)).toHaveClass(
+    /focused/,
+  );
+  await search.getByRole("button", { name: "다음 검색 결과" }).click();
+  await expect(count).toHaveText("3 / 3");
+  await expect(page.locator(`[data-cell="${ids[2]}:${memoKey}"]`)).toHaveClass(
+    /focused/,
+  );
+  await input.press("Enter");
+  await expect(count).toHaveText("1 / 3");
+  await expect(page.getByRole("grid")).toHaveAttribute("aria-rowcount", "4");
+  await input.fill("지윤");
+  await expect(count).toHaveText("0 / 0");
+  await toggle.click();
+  await popup.getByRole("checkbox", { name: "팀원", exact: true }).check();
+  await expect(count).toHaveText("1 / 3");
+  await expect(page.locator(`[data-cell="${ids[0]}:owner"]`)).toHaveClass(
+    /focused/,
+  );
+  await popup.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
+  await expect(input).toHaveAttribute("placeholder", "전체 속성 검색");
+  await input.fill("공통");
+  await expect(popup).toHaveCount(0);
+  await expect(count).toHaveText("1 / 4");
+});
+
+test("검색 대상은 빠른 변경·키보드 선택을 반영하고 검색어를 지워도 유지한다", async ({
+  page,
+}, info) => {
+  const search = page.getByRole("search", { name: "속성 찾기" });
+  const input = search.getByRole("textbox");
+  const toggle = search.getByRole("button", { name: "검색 대상 속성 선택" });
+  const popup = page.getByRole("dialog", { name: "검색 대상 속성 선택" });
+  await input.fill("공통");
+  await expect(search.locator(".search-count")).toHaveText("1 / 4");
+  await toggle.focus();
+  await toggle.press("ArrowDown");
+  const all = popup.getByRole("checkbox", { name: "전체 선택", exact: true });
+  await expect(all).toBeFocused();
+  await all.press("Space");
+  await popup.getByRole("checkbox", { name: "상태", exact: true }).check();
+  await popup.getByRole("checkbox", { name: "추가 메모", exact: true }).check();
+  await popup.getByRole("checkbox", { name: "상태", exact: true }).uncheck();
+  await expect(search.locator(".search-count")).toHaveText("1 / 2");
+  await expect(page.locator(`[data-cell="${ids[1]}:${memoKey}"]`)).toHaveClass(
+    /focused/,
+  );
+  await page.keyboard.press("Escape");
+  await search.getByRole("button", { name: "검색 지우기" }).click();
+  await expect(input).toHaveValue("");
+  await expect(input).toHaveAttribute("placeholder", "추가 메모 검색");
+  await input.fill("공통");
+  await expect(search.locator(".search-count")).toHaveText("1 / 2");
+  await page.setViewportSize({ width: 720, height: 420 });
+  await toggle.click();
+  await expect(
+    popup.getByRole("checkbox", { name: "추가 메모", exact: true }),
+  ).toBeChecked();
+  await expect(
+    popup.getByRole("checkbox", { name: "작업", exact: true }),
+  ).not.toBeChecked();
+  const bounds = (await popup.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(720);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(420);
+  await page.screenshot({ path: info.outputPath("find-scope-compact.png") });
+  await page.getByRole("button", { name: "다음 연도", exact: true }).click();
+  await expect(popup).toHaveCount(0);
+  await expect(input).toHaveValue("");
+  await expect(input).toHaveAttribute("placeholder", "전체 속성 검색");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(all).toBeChecked();
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(input).toHaveValue("");
+  await expect(input).toHaveAttribute("placeholder", "전체 속성 검색");
 });

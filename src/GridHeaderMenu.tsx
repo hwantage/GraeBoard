@@ -5,6 +5,7 @@ export type HeaderMenuAction = {
   label: string;
   icon?: ReactNode;
   disabled?: boolean;
+  danger?: boolean;
   run: () => void;
 };
 
@@ -133,6 +134,7 @@ export default function GridHeaderMenu({
             key={action.label}
             type="button"
             role="menuitem"
+            className={action.danger ? "menu-danger" : undefined}
             disabled={action.disabled}
             onClick={() => {
               action.run();

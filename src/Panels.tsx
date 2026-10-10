@@ -29,6 +29,8 @@ import {
   propertiesFor,
   displayValue,
   canEdit,
+  canContribute,
+  canManageTeam,
   cell,
   value,
   todayKey,
@@ -119,7 +121,7 @@ export function RowPanel({
           <Button onClick={() => onAction("hide")}>
             <EyeOff size={16} />이 업무 숨기기
           </Button>
-          {user.role !== "viewer" && (
+          {canContribute(user, task.teamId) && (
             <Button onClick={() => onAction("copy")}>
               <Copy size={16} />
               복제
@@ -492,7 +494,7 @@ export function ReportsPanel({
         저장 시점의 업무 내용과 서식을 보존합니다. 이후 원본을 수정해도 보고본은
         바뀌지 않습니다.
       </p>
-      {["admin", "manager"].includes(user.role) && (
+      {canManageTeam(user, teamId) && (
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -688,7 +690,7 @@ export function HistoryPanel({
                     </div>
                   ))}
                 </div>
-                {["admin", "manager"].includes(user.role) && (
+                {canManageTeam(user, teamId) && (
                   <Button
                     disabled={busy}
                     onClick={async () => {

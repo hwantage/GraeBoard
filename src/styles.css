@@ -52,10 +52,25 @@ textarea {
   outline-offset: 3px;
 }
 button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+input:is(
+    [type="checkbox"],
+    [type="radio"],
+    [type="color"],
+    [type="range"]
+  ):focus-visible {
   outline: 2px solid var(--accent);
+}
+/* 입력칸은 바깥 외곽선 대신 자기 테두리를 강조한다. 스크롤 영역 가장자리에서
+   외곽선이 잘리지 않고 칸 모양과 정확히 맞는다. :where()로 우선순위를 낮춰
+   자체 포커스 표시가 있는 입력칸(셀 편집기 등)의 규칙을 그대로 따른다. */
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"]),
+  select,
+  textarea
+):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 input,
 select,
@@ -617,6 +632,7 @@ small {
   cursor: col-resize;
 }
 .search-box {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -630,14 +646,12 @@ small {
   min-width: 244px;
   width: 284px;
 }
-.search-box > svg {
-  flex-shrink: 0;
-}
 .search-box:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
-.search-box input {
+.search-box > input {
+  box-shadow: none;
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -650,7 +664,7 @@ small {
   font-size: 11px;
   outline: none;
 }
-.search-box button {
+.search-box > button {
   display: flex;
   flex-shrink: 0;
   align-items: center;
@@ -660,7 +674,7 @@ small {
   padding: 0;
   color: #71898b;
 }
-.search-box button:disabled {
+.search-box > button:disabled {
   opacity: 0.35;
   cursor: default;
 }
@@ -671,6 +685,79 @@ small {
   font-variant-numeric: tabular-nums;
   text-align: center;
   white-space: nowrap;
+}
+.search-box > .search-scope-toggle {
+  border-radius: 3px;
+}
+.search-scope-toggle.active,
+.search-scope-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.search-scope-popup {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 5px 18px #263e4521;
+  color: var(--ink);
+  font-size: 12px;
+}
+.search-scope-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 6px;
+  font-size: 11px;
+}
+.search-scope-heading > span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.search-scope-popup label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.search-scope-popup label:hover {
+  background: var(--accent-soft);
+}
+.search-scope-popup input {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+.search-scope-popup label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.search-scope-all {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 3px;
+}
+.search-scope-list {
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+}
+.search-scope-empty {
+  margin: 5px 6px 2px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .view-bar {
   display: flex;
@@ -1226,6 +1313,10 @@ body.row-reordering * {
 }
 .row-resizer.start {
   top: -5.5px;
+}
+/* 숨김 구간 위쪽 화살표를 다음 행의 높이 손잡이가 덮지 않게 한다. */
+.row-number:has(> .hidden-row-marker.before) > .row-resizer.start {
+  left: 23px;
 }
 .row-resizer.end.edge {
   bottom: -5.5px;
@@ -2524,6 +2615,9 @@ body.row-reordering * {
   opacity: 0.4;
   cursor: default;
 }
+.grid-header-menu-actions button.menu-danger {
+  color: #b93838;
+}
 .group-heading .property-badge {
   font-size: 11px;
   line-height: 18px;
@@ -2640,33 +2734,14 @@ body.row-reordering * {
   border-bottom: 1px solid #e8eeee;
   vertical-align: top;
 }
-.admin-table input:not([type="checkbox"]):not([type="color"]) {
+.admin-table
+  input:not([type="checkbox"]):not([type="color"]):not([type="radio"]) {
   width: 100%;
   min-width: 105px;
   margin: 0;
 }
 .admin-table td:last-child {
   width: 70px;
-}
-.team-table td:first-child {
-  width: 25%;
-}
-.team-theme-cell {
-  width: 228px;
-}
-.team-table td:last-child {
-  width: 100px;
-}
-.team-row-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.team-row-actions .team-delete {
-  width: 32px;
-  min-width: 32px;
-  padding: 6px;
 }
 .theme-picker {
   display: flex;
@@ -2733,49 +2808,6 @@ body.row-reordering * {
   opacity: 0.5;
   cursor: default;
 }
-.team-create-form {
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-.team-create-form > input {
-  flex: 1 1 160px;
-  min-width: 140px;
-}
-.team-create-form > .select-control {
-  flex: 1 1 200px;
-  width: auto;
-  min-width: 180px;
-}
-.member-picker {
-  border: 1px solid #dde6e4;
-  border-radius: 6px;
-  padding: 7px 9px;
-  background: white;
-}
-.member-picker summary {
-  cursor: pointer;
-  color: var(--accent);
-}
-.member-picker .check-grid {
-  padding-top: 10px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-.member-picker label {
-  align-items: baseline;
-  flex-wrap: wrap;
-}
-.member-picker small {
-  color: #829399;
-  font-size: 10px;
-}
-.member-names {
-  font-size: 11px;
-  color: #789090;
-  padding-top: 6px;
-  line-height: 1.6;
-}
 .member-identity {
   display: flex;
   gap: 9px;
@@ -2806,9 +2838,6 @@ body.row-reordering * {
 .admin-edit legend {
   font-size: 12px;
   color: #68817e;
-}
-.property-team-label {
-  max-width: 300px;
 }
 .properties-layout {
   display: grid;
@@ -2957,39 +2986,6 @@ body.row-reordering * {
   font-size: 12px;
   font-weight: 400;
 }
-.member-team-filters {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  margin: 0 0 14px;
-  padding: 4px 4px 8px;
-}
-.member-team-filters button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px solid #d4dddf;
-  border-radius: 6px;
-  background: #fff;
-  color: #3e5661;
-  white-space: nowrap;
-}
-.member-team-filters button:hover {
-  border-color: var(--accent-border);
-}
-.member-team-filters button[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
-}
-.member-team-filters button > span {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
 .members-table .members-empty {
   padding: 28px 12px;
   text-align: center;
@@ -3014,9 +3010,6 @@ body.row-reordering * {
 .member-identity > span:last-child {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.property-team-label {
-  display: block;
 }
 
 .property-filter {
@@ -3077,9 +3070,6 @@ body.row-reordering * {
 }
 .property-filter-values .property-badge {
   font-size: 11px;
-}
-.modal.wide.format-settings-modal {
-  width: 1000px;
 }
 .default-style-actions {
   display: flex;
@@ -3324,4 +3314,428 @@ body.row-reordering * {
 }
 .format-select-popup {
   max-width: calc(100vw - 16px);
+}
+.format-select.format-select-icons {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 42px;
+  min-width: 42px;
+  padding-left: 6px;
+  padding-right: 17px;
+  background-position: right 2px center;
+}
+.format-icon-popup {
+  display: flex;
+  gap: 0;
+  padding: 6px;
+}
+.format-icon-popup .cell-option {
+  flex: 0 0 34px;
+  width: 34px;
+  min-height: 32px;
+  padding: 6px;
+  justify-content: center;
+  border-radius: 4px;
+}
+.format-icon-popup .cell-option[aria-selected="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 설정: 왼쪽에서 팀·시스템을 고르고 오른쪽에서 그 대상만 편집한다. */
+.modal.wide.settings-modal {
+  width: min(1120px, calc(100vw - 32px));
+  height: min(820px, 86dvh);
+}
+.modal.settings-modal[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-modal .modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  height: 100%;
+}
+.settings-nav {
+  overflow-y: auto;
+  padding: 18px 12px;
+  border-right: 1px solid var(--line);
+  background: #f8faf9;
+}
+.modal-body .settings-nav h3 {
+  margin: 0 8px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.modal-body .settings-nav ul + h3 {
+  margin-top: 22px;
+}
+.settings-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav button:hover {
+  background: #eef3f1;
+}
+.settings-nav button[aria-current="page"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.settings-nav .settings-nav-add {
+  color: var(--muted);
+}
+.settings-nav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-role-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 500;
+}
+.settings-team-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.settings-content {
+  overflow-y: auto;
+  padding: 22px 28px 28px;
+}
+.settings-team-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-team-header .settings-team-dot {
+  width: 14px;
+  height: 14px;
+}
+.modal-body .settings-team-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.settings-team-header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-section {
+  max-width: 560px;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 17px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.settings-field small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.settings-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 560px;
+  margin-top: 32px;
+  padding: 16px;
+  border: 1px solid #efcfcd;
+  border-radius: 8px;
+  background: #fdf7f6;
+}
+.settings-danger h4 {
+  margin: 0 0 4px;
+  color: #b84340;
+}
+.settings-danger p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.settings-danger .button {
+  flex-shrink: 0;
+}
+.section-heading h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.member-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.modal-body .member-add .select-control {
+  flex: 1 1 240px;
+  width: auto;
+  min-width: 0;
+}
+.modal-body .member-add .select-control + .select-control {
+  flex: 0 0 120px;
+}
+.team-members-table th:nth-child(2),
+.team-members-table td:nth-child(2) {
+  width: 150px;
+}
+.role-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.role-legend > div {
+  display: flex;
+  gap: 6px;
+}
+.role-legend dt {
+  font-weight: 600;
+}
+.role-legend dd {
+  margin: 0;
+  color: var(--muted);
+}
+.team-members-table td:last-child {
+  width: 48px;
+  text-align: right;
+}
+.me-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+.user-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.user-toolbar > .button {
+  margin-left: auto;
+}
+.user-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 280px;
+}
+.user-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+}
+.modal-body .user-search input {
+  padding-left: 32px;
+}
+.team-chips button.tag {
+  border: 0;
+  cursor: pointer;
+}
+.team-chips button.tag:hover {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .modal.wide.settings-modal {
+    height: 86dvh;
+  }
+  .settings-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 10px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-nav h3 {
+    display: none;
+  }
+  .settings-nav ul {
+    flex-direction: row;
+  }
+  .settings-nav button {
+    width: auto;
+    white-space: nowrap;
+  }
+  .settings-content {
+    padding: 18px 16px 24px;
+  }
+  .member-add,
+  .user-toolbar,
+  .settings-danger {
+    flex-wrap: wrap;
+  }
+  .settings-content .admin-table {
+    min-width: 560px;
+  }
+}
+.members-table tr.editing > td {
+  background: var(--accent-soft);
+}
+.members-table tr.editing > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.members-table tr.editing > td {
+  border-bottom-color: transparent;
+}
+.members-table .user-edit-row > td {
+  padding: 0 0 14px;
+  background: var(--accent-soft);
+}
+.user-edit-row .admin-edit {
+  margin: 0 12px;
+  background: #fff;
+}
+.status-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+  font-size: 11px;
+}
+.status-pill.inactive {
+  background: #eef0f1;
+  color: var(--muted);
+}
+.field-hint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.admin-edit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.modal-body .admin-edit-heading h3 {
+  margin: 0;
+}
+.switch-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.switch-field > span:first-child {
+  color: var(--muted);
+}
+.switch-field input[role="switch"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.switch-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #c9d3d6;
+  transition: background 0.15s;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px #0003;
+  transition: transform 0.15s;
+}
+.switch-field input:checked + .switch-track {
+  background: var(--accent);
+}
+.switch-field input:checked + .switch-track::after {
+  transform: translateX(14px);
+}
+.switch-field input:focus-visible + .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch-field strong {
+  min-width: 3em;
+  font-weight: 600;
+}
+.switch-field strong.muted {
+  color: var(--muted);
+}
+.switch-warning {
+  margin: -4px 0 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fdf6ec;
+  color: #8a5a1c;
+}
+.select-control:focus-visible {
+  border-color: var(--accent);
 }

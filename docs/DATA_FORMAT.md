@@ -10,9 +10,9 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 ## 업무와 셀
 
-계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. DB `user_version=3`은 `users.avatar_initials`·`avatar_image` 열을 추가하며 기존 계정은 빈 값으로 이행합니다. 기존 버전 1·2 백업과 버전 3 백업을 복구할 수 있습니다.
+계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. 이메일 형식이 아닌 기존 값은 로그인에만 허용하고, `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. DB `user_version=3`은 `users.avatar_initials`·`avatar_image` 열을 추가하며 기존 계정은 빈 값으로 이행합니다. DB `user_version=4`는 `memberships.role`(팀 내 권한 `lead`·`member`·`viewer`)을 추가하고 `users.role`을 시스템 권한(`admin`·`user`)으로 바꿉니다. 이행 시 기존 시스템 관리자·팀 관리자는 소속 팀의 팀장, 팀원·열람자는 같은 팀 내 권한이 되어 기존 권한을 유지합니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다. 기존 버전 1~3 백업과 버전 4 백업을 복구할 수 있습니다.
 
-`bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamIds`에 포함된 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 보고본에도 이전 팀원의 프로필을 포함합니다.
+`bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 보고본에도 이전 팀원의 프로필을 포함합니다.
 
 업무는 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 셀 키는 팀 설정에 정의된 속성 ID 또는 주의 월요일 날짜입니다. 필수 키는 `title`, `owner`, `status`이며, 과거 양식에는 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`가 있을 수 있습니다. 동적으로 추가한 속성은 `prop_<UUID>` 키를 사용합니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
 
@@ -59,7 +59,9 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 기간 선택 표는 `weeksForYear`의 월 배정과 날짜 키를 그대로 사용합니다. 월 드래그는 `fromMonth`·`toMonth`를 설정하고 주 범위를 비우며, 주 드래그는 `fromWeek`·`toWeek`와 전체 월 범위를 설정합니다. 두 선택 모두 `hiddenWeeks`·`collapsedMonths`를 비워 연속 범위를 표시합니다. 드래그 중에는 미리보기만 바꾸고 포인터를 놓을 때 한 번 저장합니다.
 
-클립보드 복사는 `application/x-weekly-plan-cells+json` (`version: 1`, `rows: {text, style}[][]`)과 `text/html`, `text/plain`을 함께 제공한다. 복사 버튼은 표준 HTML·텍스트 형식을 사용한다. 속성·담당자는 표시명으로 전달하고 대상 열의 옵션·사용자에 다시 연결한다. 출처 셀의 적용된 서식과 기본값을 복사하여 대상 업무의 기본 서식이 남지 않도록 한다. 붙여넣기 시 지원하는 서식 필드만 허용하고 HTML을 화면에 삽입하지 않는다. 일반 텍스트에는 서식 변경을 포함하지 않는다. 행·열 크기와 속성의 칩 정의는 복사 대상이 아니다.
+셀 복사 단축키는 `application/x-weekly-plan-cells+json` (`version: 1`, `rows: {text, style}[][]`)과 `text/html`, `text/plain`을 함께 제공한다. 속성·담당자는 표시명으로 전달하고 대상 열의 옵션·사용자에 다시 연결한다. 출처 셀의 적용된 서식과 기본값을 복사하여 대상 업무의 기본 서식이 남지 않도록 한다. 붙여넣기 시 지원하는 서식 필드만 허용하고 HTML을 화면에 삽입하지 않는다. 일반 텍스트에는 서식 변경을 포함하지 않는다. 행·열 크기와 속성의 칩 정의는 셀 복사 대상이 아니다.
+
+행 번호 메뉴의 복사는 시스템 클립보드와 별개로 메모리에 업무 스냅샷과 개인 행 높이를 보관한다. 모든 셀의 값·서식과 업무 기본 서식을 복사하고 셀 버전·업무 ID는 새로 생성한다. 원본을 이후 수정해도 복사 당시 값은 유지한다. 팀·연도 전환이나 페이지 새로고침 시 초기화한다.
 
 발표 모드는 현재 브라우저 화면 상태이며 DB·개인 보기에 저장하지 않는다. 필터·묶음·숨김·열 너비를 유지하고 메뉴와 편집 도구를 숨긴다.
 
@@ -81,9 +83,9 @@ JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 
 
 새로 추가하거나 이름을 변경하는 속성 값은 최대 15자입니다. 화면의 `maxLength`와 서버의 설정 저장 검사를 함께 적용하며, 호환 API로 기본 속성 목록을 변경할 때도 같은 제한을 적용합니다. 저장 형식은 기존 긴 값(최대 60자)을 읽을 수 있도록 유지합니다. 기존 옵션 ID와 이름이 같으면 다른 설정 저장·보관을 허용하여 데이터와 과거 기록을 자르지 않습니다. 저장 전 빈 속성·값 초안을 지울 때는 보관 목록에 추가하지 않습니다.
 
-`visible`은 열 표시 기본값입니다. 보기의 `columnVisibility`는 마지막으로 적용한 기본값을 기록하여 변경된 열만 반영하고 다른 개인 숨김은 보존합니다. 속성 관리에서 현재 보기와 다른 기본값을 가진 열의 체크를 바꾸는 경우 현재 보기에도 직접 적용합니다.
+`visible`은 열 표시 기본값입니다. 보기의 `columnVisibility`는 마지막으로 적용한 기본값을 기록하여 변경된 열만 반영하고 다른 개인 숨김은 보존합니다. 팀 설정의 속성 탭에서 현재 보기와 다른 기본값을 가진 열의 체크를 바꾸는 경우 현재 보기에도 직접 적용합니다.
 
-속성의 `placement`는 `beforeWeeks`(기본) 또는 `afterWeeks`입니다. 표의 순서는 날짜 앞 속성 → 표시 중인 주차 날짜 → 날짜 뒤 속성이며, 각 쪽 안에서는 `properties` 배열의 순서를 따릅니다. 속성 관리의 ‘주차 날짜’ 항목은 날짜 묶음을 나타내는 UI 항목으로, 별도 속성이나 셀로 저장하지 않습니다. 기존 설정의 누락 값은 `beforeWeeks`로 읽고, 구 설정 수정 요청에서 이 필드를 생략하면 기존 배치를 보존합니다. 팀 양식과 보고본 설정 사본에도 배치를 포함합니다. 전체 XLSX·CSV 반출의 열 순서도 이 배치를 따르며, 현재 보기 반출은 요청한 `keys` 순서를 유지합니다. JSON은 팀 설정에 배치 정보를 포함합니다. `frozenColumns`는 표시 중인 `beforeWeeks` 속성에만 적용합니다.
+속성의 `placement`는 `beforeWeeks`(기본) 또는 `afterWeeks`입니다. 표의 순서는 날짜 앞 속성 → 표시 중인 주차 날짜 → 날짜 뒤 속성이며, 각 쪽 안에서는 `properties` 배열의 순서를 따릅니다. 속성 탭의 ‘주차 날짜’ 항목은 날짜 묶음을 나타내는 UI 항목으로, 별도 속성이나 셀로 저장하지 않습니다. 기존 설정의 누락 값은 `beforeWeeks`로 읽고, 구 설정 수정 요청에서 이 필드를 생략하면 기존 배치를 보존합니다. 팀 양식과 보고본 설정 사본에도 배치를 포함합니다. 전체 XLSX·CSV 반출의 열 순서도 이 배치를 따르며, 현재 보기 반출은 요청한 `keys` 순서를 유지합니다. JSON은 팀 설정에 배치 정보를 포함합니다. `frozenColumns`는 표시 중인 `beforeWeeks` 속성에만 적용합니다.
 
 XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에는 ID와 정의를 함께 반출합니다. XLSX 재이관 시 먼저 같은 팀에 속성과 값을 등록해야 합니다. 이름이 일치하는 속성 열을 종류에 맞게 해석하고, Option 값과 Member 사용자 매핑을 검증합니다.
 
@@ -93,7 +95,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 팀 설정의 `theme`는 `mint`·`sky`·`lavender`·`rose`·`sand` 중 하나입니다. 필드가 없는 기존 팀은 민트로 표시하며 DB 스키마 변경은 없습니다. 팔레트는 `shared/themes.js`에서 관리하고, 현재 팀의 테마를 메뉴·버튼·선택 강조·팝업에 적용합니다. 셀의 저장된 색상과 속성 옵션·사용자 아바타 색상은 변경하지 않습니다.
 
-시스템 관리자는 팀 생성·수정 API에서 `theme`를 보낼 수 있습니다. 수정 요청의 `settingsRevision`은 동시 설정 변경을 검사하며, 테마를 바꾸면 설정 `revision`도 증가합니다. 속성·기본 서식 저장은 테마를 보존하고, `theme`가 없는 구 설정 요청도 현재 테마를 유지합니다. 지원하지 않는 테마 ID는 서버에서 거절합니다.
+시스템 관리자는 팀 생성 API에서, 시스템 관리자와 팀장은 `PATCH /api/teams/:id`에서 `theme`를 보낼 수 있습니다. 수정 요청의 `settingsRevision`은 동시 설정 변경을 검사하며, 테마를 바꾸면 설정 `revision`도 증가합니다. 속성·기본 서식 저장은 테마를 보존하고, `theme`가 없는 구 설정 요청도 현재 테마를 유지합니다. 지원하지 않는 테마 ID는 서버에서 거절합니다.
 
 ## 주요 API
 
@@ -103,7 +105,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 |---|---|
 | `GET /api/bootstrap` | 현재 사용자·소속 팀·담당자·연도 |
 | `GET /api/tasks?teamId=…&year=…` | 연간 업무. ETag 조건부 조회 지원 |
-| `POST /api/tasks` | 업무 생성·복제 |
+| `POST /api/tasks` | 업무 생성·복제·기준 행의 앞/뒤에 삽입 |
 | `POST /api/tasks/reorder` | 한 행 또는 여러 행을 기준 업무의 앞/뒤로 함께 이동, 묶음 경계·권한·업무 버전 검사 |
 | `POST /api/cells/batch` | 값 변경 최대 2,000셀, 서식만 변경하면 최대 50,000셀 |
 | `PATCH /api/tasks/:id` | 순서·연도 변경 |
@@ -118,14 +120,17 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `POST /api/import/:id/apply` | 확인한 시트 적용 |
 | `POST /api/import/:id/exceptions` | 전체 이관 예외 JSON 다운로드 |
 | `POST /api/export` | XLSX·CSV·JSON 반출 |
-| `GET/POST /api/admin/users` | 전체 팀원·팀 목록 / 팀원 생성 |
-| `PATCH /api/admin/users/:id` | 팀원 정보·복수 팀 배정 |
-| `POST /api/admin/teams` | 팀 생성 |
-| `PATCH /api/admin/teams/:id` | 팀 이름·팀원 선택 목록·테마 저장 |
+| `GET/POST /api/admin/users` | 전체 사용자·팀 목록 / 사용자 생성 (`systemRole`, `memberships: [{teamId, role}]`) |
+| `PATCH /api/admin/users/:id` | 사용자 정보·시스템 권한, 선택적으로 팀별 권한 전체 교체 |
+| `POST /api/admin/teams` | 팀 생성, 선택적인 `members: [{userId, role}]` |
+| `PATCH /api/teams/:id` | 팀 이름·테마 저장 (시스템 관리자·팀장) |
+| `GET/PUT /api/teams/:id/members` | 팀 구성원과 팀 내 권한 조회·전체 교체, 추가할 사용자 목록 (시스템 관리자·팀장) |
 | `DELETE /api/admin/teams/:id` | 확인한 팀의 전 연도 데이터 영구 삭제 |
 | `PATCH /api/teams/:id/settings` | 속성 이름·값·순서·표시 모양 저장 |
 
 정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
+
+업무 생성의 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·연도의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
 
 행 이동은 `tasks: [{id, updatedAt}]`(최대 20,000행), `targetId`, `targetUpdatedAt`, `year`, `placement`(`before`·`after`), 선택적인 `groupBy`를 받습니다. 기존 단일 행 요청의 `taskId`·`updatedAt`도 지원합니다. 이동할 행은 현재 수동 순서를 유지하며 한 트랜잭션으로 저장하고, 하나라도 권한·버전·팀·연도·묶음 검사를 통과하지 못하면 모두 취소합니다. 기준 행은 이동 대상에 포함할 수 없습니다. 응답의 `tasks`는 이동한 모든 업무이며, 단일 행 클라이언트를 위한 `task`도 유지합니다.
 
@@ -141,4 +146,4 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 서식 메뉴의 재선택은 값 변경 여부와 관계없이 선택 범위의 `/cells/batch` 서식 변경을 요청합니다. 글꼴·크기·세로 정렬·텍스트 표시가 대상이며 내용은 보존하고 기존 원자적 저장·버전 검사·실행취소를 사용합니다.
 
-팀 영구 삭제는 시스템 관리자만 `DELETE /api/admin/teams/:id`에 `{confirmed: true}`로 요청한다. 확인 누락은 400, 권한 부족은 403, 이미 없는 팀은 404, 활성 관리자의 유일한 팀 배속을 제거하는 요청은 409이다. `tasks`(모든 연도·휴지통 포함)·`cells`·`views`·`reports`·`imports`·`audit`·`memberships`·`team_revisions`·팀 설정과 해당 변경/가져오기 작업의 재시도 캐시를 하나의 트랜잭션으로 제거한다. 공용 사용자·세션과 다른 팀의 독립적인 작업 기록은 유지한다. 삭제 내용 없이 `team_id: null`, `action: team-delete`, `target: 삭제한 팀 ID`인 관리자 이벤트를 남긴다. 별도 저장된 백업 파일은 변경하지 않는다.
+팀 영구 삭제는 시스템 관리자만 `DELETE /api/admin/teams/:id`에 `{confirmed: true}`로 요청한다. 확인 누락은 400, 권한 부족은 403, 이미 없는 팀은 404이다. 시스템 관리자는 팀 소속 없이도 모든 팀에 접근하므로 소속 팀이 없어지는 삭제도 허용한다. `tasks`(모든 연도·휴지통 포함)·`cells`·`views`·`reports`·`imports`·`audit`·`memberships`·`team_revisions`·팀 설정과 해당 변경/가져오기 작업의 재시도 캐시를 하나의 트랜잭션으로 제거한다. 공용 사용자·세션과 다른 팀의 독립적인 작업 기록은 유지한다. 삭제 내용 없이 `team_id: null`, `action: team-delete`, `target: 삭제한 팀 ID`인 관리자 이벤트를 남긴다. 별도 저장된 백업 파일은 변경하지 않는다.

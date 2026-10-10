@@ -11,41 +11,58 @@ import {
   AlignCenter,
   AlignRight,
   PaintBucket,
-  EyeOff,
-  ChevronsLeftRight,
-  Copy,
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "./types";
 import BorderMenu from "./BorderMenu";
 import { FONTS, FONT_SIZES, PALETTE, textMode } from "../shared/domain.js";
 import { Button } from "./components";
+
+function FormatIcon({ kind }: { kind: string }) {
+  const paths: Record<string, string> = {
+    top: "M4 4h16M12 20V8m-4 4 4-4 4 4",
+    middle: "M4 12h16M12 2v6m-3-3 3 3 3-3M12 22v-6m-3 3 3-3 3 3",
+    bottom: "M4 20h16M12 4v12m-4-4 4 4 4-4",
+    overflow: "M4 3v5m0 8v5M13 3v5m0 8v5M3 12h18m-4-4 4 4-4 4",
+    wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
+    clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
+  };
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={paths[kind]} />
+    </svg>
+  );
+}
 export default function Toolbar({
   style,
   disabled,
   onStyle,
   onBorder,
-  onReset,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
-  onHide,
   selectionLabel,
-  onCopy,
   label = "셀 서식 도구",
 }: {
   style: Style;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border) => void;
-  onReset: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  onHide?: () => void;
   selectionLabel?: string;
-  onCopy?: () => void;
   label?: string;
 }) {
   const paletteId = useId();
@@ -169,12 +186,21 @@ export default function Toolbar({
         ))}
         <FormatSelect
           label="세로 정렬"
+          iconOnly
           disabled={disabled}
           value={style.verticalAlign || "middle"}
           options={[
-            { value: "top", label: "위" },
-            { value: "middle", label: "중간" },
-            { value: "bottom", label: "아래" },
+            { value: "top", label: "위", icon: <FormatIcon kind="top" /> },
+            {
+              value: "middle",
+              label: "중간",
+              icon: <FormatIcon kind="middle" />,
+            },
+            {
+              value: "bottom",
+              label: "아래",
+              icon: <FormatIcon kind="bottom" />,
+            },
           ]}
           onSelect={(value) =>
             onStyle({ verticalAlign: value as Style["verticalAlign"] })
@@ -182,12 +208,25 @@ export default function Toolbar({
         />
         <FormatSelect
           label="텍스트 표시"
+          iconOnly
           disabled={disabled}
           value={textMode(style)}
           options={[
-            { value: "overflow", label: "오버플로우" },
-            { value: "wrap", label: "줄바꿈" },
-            { value: "clip", label: "자르기" },
+            {
+              value: "overflow",
+              label: "오버플로우",
+              icon: <FormatIcon kind="overflow" />,
+            },
+            {
+              value: "wrap",
+              label: "줄바꿈",
+              icon: <FormatIcon kind="wrap" />,
+            },
+            {
+              value: "clip",
+              label: "자르기",
+              icon: <FormatIcon kind="clip" />,
+            },
           ]}
           onSelect={(value) =>
             onStyle({
@@ -203,27 +242,6 @@ export default function Toolbar({
           onApply={onBorder}
           single={selectionLabel === undefined}
         />
-        <Button title="서식 초기화" disabled={disabled} onClick={onReset}>
-          <ChevronsLeftRight size={16} />
-        </Button>
-        {onCopy && (
-          <Button
-            title="선택 셀 복사"
-            onClick={onCopy}
-            disabled={!selectionLabel}
-          >
-            <Copy size={15} />
-          </Button>
-        )}
-        {onHide && (
-          <Button
-            title="선택 행 숨기기"
-            onClick={onHide}
-            disabled={!selectionLabel}
-          >
-            <EyeOff size={16} />
-          </Button>
-        )}
       </div>
       {selectionLabel !== undefined && (
         <span className="selection-label">

@@ -48,7 +48,10 @@ try {
       "admin",
       n,
     );
-    db.prepare("INSERT INTO memberships VALUES(?,?)").run(uid, team);
+    db.prepare("INSERT INTO memberships(user_id,team_id) VALUES(?,?)").run(
+      uid,
+      team,
+    );
     db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
       createHash("sha256").update(token).digest("hex"),
       uid,

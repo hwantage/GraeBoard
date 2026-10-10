@@ -21,7 +21,10 @@ function fixture() {
   db.prepare(
     "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
   ).run(user, "cache-test", "검증 계정", "unused", "admin", now());
-  db.prepare("INSERT INTO memberships VALUES(?,?)").run(user, team);
+  db.prepare("INSERT INTO memberships(user_id,team_id) VALUES(?,?)").run(
+    user,
+    team,
+  );
   db.prepare(
     "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
   ).run(task, team, "[2026]", 1, user, now(), now());

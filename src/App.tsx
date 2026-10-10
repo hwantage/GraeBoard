@@ -24,7 +24,6 @@ import {
   Check,
   LoaderCircle,
   CloudOff,
-  Eye,
   Bookmark,
   X,
   RotateCcw,
@@ -52,6 +51,9 @@ import {
   cell,
   value,
   canEdit,
+  canContribute,
+  canManageTeam,
+  isAssignable,
   statusSummary,
   todayKey,
 } from "../shared/domain.js";
@@ -84,15 +86,17 @@ import {
 } from "./components";
 import AdminPanel from "./AdminPanel";
 import { BrandMark, BrandWordmark } from "./Brand";
-import Grid, { type Column, rangeOf, rangesOf, selectedPoints } from "./Grid";
+import Grid, {
+  type Column,
+  type RowCommand,
+  rangeOf,
+  rangesOf,
+  selectedPoints,
+} from "./Grid";
 import Toolbar from "./Toolbar";
 import PeriodPicker from "./PeriodPicker";
 import FindBar from "./FindBar";
-import {
-  createClipboard,
-  copyToSystem,
-  type ClipboardMatrix,
-} from "./clipboard";
+import type { ClipboardMatrix } from "./clipboard";
 import { rebaseHistory, cellsBefore, describeStyle } from "./history";
 import {
   RowPanel,
@@ -188,6 +192,10 @@ function Workspace({
     [loaded, setLoaded] = useState(false),
     [panel, setPanel] = useState(""),
     [rowTask, setRowTask] = useState<Task | null>(null),
+    [copiedRow, setCopiedRow] = useState<{
+      task: Task;
+      height?: number;
+    } | null>(null),
     [editor, setEditor] = useState<{ point: Point; initial?: string } | null>(
       null,
     ),
@@ -206,7 +214,6 @@ function Workspace({
     [saveNameOpen, setSaveNameOpen] = useState(false),
     [pending, setPending] = useState(0),
     [failed, setFailed] = useState<Failed | null>(null),
-    [lastSaved, setLastSaved] = useState(""),
     [undoStack, setUndoStack] = useState<HistoryEntry[]>([]),
     [redoStack, setRedoStack] = useState<HistoryEntry[]>([]),
     [report, setReport] = useState<Report | null>(null),
@@ -232,8 +239,13 @@ function Workspace({
   const users = report?.users || boot.users;
   const selectableUsers = report
     ? users
-    : users.filter((u) => u.teamIds.includes(teamId));
-  const isManager = ["admin", "manager"].includes(user.role);
+    : users.filter((u) => isAssignable(u, teamId));
+  const isManager = canManageTeam(user, teamId);
+  const canAdd = canContribute(user, teamId);
+  // 지금 보는 팀이 아니어도 팀장인 팀이 있으면 설정을 열 수 있다.
+  const canOpenSettings =
+    user.systemRole === "admin" ||
+    Object.values(user.teamRoles).includes("lead");
   const settings = report?.settings || team?.settings || DEFAULT_SETTINGS;
   const fields = useMemo(() => fieldsFor(settings), [settings]);
   const properties = useMemo(
@@ -400,6 +412,7 @@ function Workspace({
     setUndoStack([]);
     setRedoStack([]);
     setTasks([]);
+    setCopiedRow(null);
     setJump(null);
     Promise.all([
       api(`/tasks?teamId=${teamId}&year=${year}`),
@@ -640,7 +653,6 @@ function Workspace({
     })();
     taskRef.current = updatedTasks;
     setTasks(updatedTasks);
-    setLastSaved(result.savedAt);
   }
   function recordResult(result: BatchResult, mode: Failed["mode"]) {
     if (mode === "normal") {
@@ -995,15 +1007,6 @@ function Workspace({
       setError((e as Error).message);
     }
   }
-  function hideRows() {
-    if (!range) return;
-    const ranges = rangesOf(selection, shown, columns);
-    const ids = shown
-      .filter((_, i) => ranges.some((r) => i >= r.r1 && i <= r.r2))
-      .map((t) => t.id);
-    changeView({ hiddenRows: [...new Set([...view.hiddenRows, ...ids])] });
-    setToast(`${ids.length}개 업무를 나의 보기에서 숨겼습니다.`);
-  }
   async function reorderTask(
     taskIds: string | string[],
     targetId: string,
@@ -1051,6 +1054,120 @@ function Workspace({
       setPending(0);
     }
     if (boardKey.current === submittedBoard) await refresh();
+  }
+  async function rowCommand(command: RowCommand, selected: Task) {
+    if (
+      pendingRef.current ||
+      failedRef.current ||
+      report ||
+      presentation ||
+      editorRef.current
+    )
+      return;
+    const target = taskRef.current.find((task) => task.id === selected.id);
+    if (!target) return;
+    setError("");
+    if (command === "copy") {
+      setCopiedRow({
+        task: structuredClone(target),
+        height: view.rowHeights[target.id],
+      });
+      setToast("행의 내용과 서식을 복사했습니다. 붙여넣을 행을 선택하세요.");
+      return;
+    }
+    if (command === "delete") {
+      if (canEdit(user, target))
+        await deleteTasks({
+          kind: "delete",
+          ids: [target.id],
+          title: String(value(target, "title")) || "제목 없는",
+        });
+      return;
+    }
+    if (
+      !canAdd ||
+      (command === "paste" && (!copiedRow || copiedRow.task.teamId !== teamId))
+    )
+      return;
+    const copy = command === "paste" ? copiedRow : null;
+    const groupKey = view.groupBy;
+    // A new blank row belongs to the clicked group when its assignment is permitted.
+    const inheritGroup =
+      !!groupKey && (isManager || !["owner", "supporters"].includes(groupKey));
+    const fields =
+      !copy && inheritGroup ? { [groupKey]: value(target, groupKey) } : {};
+    const keepGroup = copy
+      ? inheritGroup &&
+        JSON.stringify(value(copy.task, groupKey)) ===
+          JSON.stringify(value(target, groupKey))
+      : inheritGroup;
+    const submittedBoard = boardKey.current;
+    mutationEpoch.current++;
+    pendingRef.current = 1;
+    setPending(1);
+    try {
+      const { task } = await send("/tasks", {
+        teamId,
+        year,
+        fields,
+        insertAt: {
+          taskId: target.id,
+          updatedAt: target.updatedAt,
+          placement: command === "insertBefore" ? "before" : "after",
+        },
+        ...(copy
+          ? {
+              copiedRow: {
+                cells: Object.fromEntries(
+                  Object.entries(copy.task.cells).map(([key, c]) => [
+                    key,
+                    { value: c.value, style: c.style },
+                  ]),
+                ),
+                defaultStyle: copy.task.defaultStyle || {},
+              },
+            }
+          : {}),
+      });
+      if (boardKey.current !== submittedBoard) return;
+      const next = [...taskRef.current, task];
+      taskRef.current = next;
+      setTasks(next);
+      setRedoStack([]);
+      changeView({
+        propertyFilters: {},
+        propertyFilterModes: {},
+        status: "",
+        category: "",
+        people: [],
+        sortKey: "",
+        sortDirection: "default",
+        sort: "position",
+        groupBy: keepGroup ? groupKey : "",
+        ...(copy?.height
+          ? { rowHeights: { ...view.rowHeights, [task.id]: copy.height } }
+          : {}),
+      });
+      // Spacing may have been normalized by the server; refresh every row's position.
+      const current = await api<{ tasks: Task[] }>(
+        `/tasks?teamId=${teamId}&year=${year}`,
+      );
+      if (boardKey.current !== submittedBoard) return;
+      taskRef.current = current.tasks;
+      setTasks(current.tasks);
+      const point = { taskId: task.id, key: "title" };
+      setSelection({ anchor: point, focus: point });
+      setJump((previous) => ({ ...point, id: (previous?.id || 0) + 1 }));
+      if (!copy) setEditor({ point });
+      setToast(
+        copy ? "복사한 행을 아래에 붙여넣었습니다." : "새 행을 삽입했습니다.",
+      );
+    } catch (e) {
+      if (boardKey.current === submittedBoard) setError((e as Error).message);
+    } finally {
+      pendingRef.current = 0;
+      setPending(0);
+    }
   }
   async function rowAction(action: string) {
     if (!rowTask) return;
@@ -1172,7 +1289,6 @@ function Workspace({
         />
       </main>
     );
-  const hiddenCount = view.hiddenRows.length + view.hiddenWeeks.length;
   return (
     <div
       ref={workspaceRef}
@@ -1227,6 +1343,24 @@ function Workspace({
               </option>
             ))}
           </Select>
+          {(failed || pending > 0) && (
+            <div
+              className={`save-status ${failed ? "failed" : ""}`}
+              role="status"
+            >
+              {failed ? (
+                <>
+                  <CloudOff size={14} />
+                  저장 실패
+                </>
+              ) : (
+                <>
+                  <LoaderCircle size={14} className="spin" />
+                  저장 중
+                </>
+              )}
+            </div>
+          )}
           <nav className="top-navigation" aria-label="주 메뉴">
             <Button
               title="연간 업무"
@@ -1250,42 +1384,18 @@ function Workspace({
               <span>변경 이력</span>
             </Button>
             {isManager && (
-              <>
-                <Button title="휴지통" onClick={() => setPanel("trash")}>
-                  <Trash2 size={15} />
-                  <span>휴지통</span>
-                </Button>
-                <Button
-                  title="팀과 계정 관리"
-                  onClick={() => setPanel("admin")}
-                >
-                  <Settings size={15} />
-                  <span>관리</span>
-                </Button>
-              </>
+              <Button title="휴지통" onClick={() => setPanel("trash")}>
+                <Trash2 size={15} />
+                <span>휴지통</span>
+              </Button>
+            )}
+            {canOpenSettings && (
+              <Button title="설정" onClick={() => setPanel("admin")}>
+                <Settings size={15} />
+                <span>설정</span>
+              </Button>
             )}
           </nav>
-          <div
-            className={`save-status ${failed ? "failed" : ""}`}
-            role="status"
-          >
-            {failed ? (
-              <>
-                <CloudOff size={14} />
-                저장 실패
-              </>
-            ) : pending ? (
-              <>
-                <LoaderCircle size={14} className="spin" />
-                저장 중
-              </>
-            ) : (
-              <>
-                <Check size={14} />
-                {lastSaved ? "변경사항 저장됨" : "모든 변경사항 저장됨"}
-              </>
-            )}
-          </div>
           <Button
             className="top-account"
             title="내 계정"
@@ -1372,7 +1482,7 @@ function Workspace({
                   <Download size={15} />
                   내보내기
                 </Button>
-                {user.role !== "viewer" && (
+                {canAdd && (
                   <Button
                     className="primary"
                     onClick={addTask}
@@ -1441,21 +1551,6 @@ function Workspace({
                 users={users}
                 onNavigate={navigateToSearch}
               />
-              {(hiddenCount > 0 || view.collapsedMonths.length > 0) && (
-                <Button
-                  className="quiet"
-                  onClick={() =>
-                    changeView({
-                      hiddenRows: [],
-                      hiddenWeeks: [],
-                      collapsedMonths: [],
-                    })
-                  }
-                >
-                  <Eye size={14} />
-                  숨김 해제
-                </Button>
-              )}
               <div className="view-bar-spacer" />
               <span className="visible-count">{shown.length}개 업무 표시</span>
               <div className="popover-root" ref={viewMenuRef}>
@@ -1567,37 +1662,11 @@ function Workspace({
             disabled={!editable || !!pending}
             onStyle={(s) => style(s)}
             onBorder={applyBorder}
-            onReset={() => style({}, true)}
             onUndo={() => undo()}
             onRedo={() => undo(true)}
             canUndo={!!undoStack.length && !pending && !report && !failed}
             canRedo={!!redoStack.length && !pending && !report && !failed}
-            onHide={hideRows}
             selectionLabel={selectionLabel}
-            onCopy={async () => {
-              if (!range) return;
-              if (selection?.areas?.length) {
-                setError("복사할 때는 하나의 연속된 영역을 선택하세요.");
-                return;
-              }
-              try {
-                await copyToSystem(
-                  createClipboard(
-                    shown.slice(range.r1, range.r2 + 1),
-                    columns.slice(range.c1, range.c2 + 1).map((c) => c.key),
-                    users,
-                    settings,
-                  ),
-                );
-                setToast("선택 셀의 내용과 서식을 복사했습니다.");
-              } catch (e) {
-                setError(
-                  e instanceof Error && e.message.includes("2,000")
-                    ? e.message
-                    : "표에 초점을 두고 Ctrl/Cmd+C로 복사하세요.",
-                );
-              }
-            }}
           />
           {(error || viewError) && (
             <div className="board-error" role="alert">
@@ -1636,6 +1705,8 @@ function Workspace({
               user={user}
               users={users}
               selectableUsers={selectableUsers}
+              canAdd={canAdd}
+              canEditPeople={isManager}
               selection={selection}
               settings={settings}
               editor={editor}
@@ -1665,6 +1736,9 @@ function Workspace({
               onPaste={paste}
               onClear={clearCells}
               onRowMenu={(t) => setRowTask(t)}
+              onRowCommand={rowCommand}
+              canPasteRow={copiedRow?.task.teamId === teamId}
+              rowActionsDisabled={!!pending || !!editor}
               onReorder={reorderTask}
               onView={changeView}
               onAdd={addTask}
@@ -1712,7 +1786,7 @@ function Workspace({
         <RowPanel
           task={source.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
-          user={report ? { ...user, role: "viewer" } : user}
+          user={report ? { ...user, systemRole: "user", teamRoles: {} } : user}
           users={users}
           onClose={() => setRowTask(null)}
           onEdit={(p) => {

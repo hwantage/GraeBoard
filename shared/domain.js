@@ -134,12 +134,30 @@ export function cell(task, key) {
 export function value(task, key) {
   return cell(task, key).value;
 }
+// 시스템 권한(admin/user)과 팀 내 권한(lead/member/viewer)은 따로 둔다.
+// 시스템 관리자는 소속과 관계없이 모든 팀을 관리하지만, 담당자가 될 수 있는
+// 사람은 그 팀의 팀장·팀원뿐이다.
+export const TEAM_ROLES = ["lead", "member", "viewer"];
+export function teamRole(user, teamId) {
+  return user?.teamRoles?.[teamId] || null;
+}
+export function isSystemAdmin(user) {
+  return user?.systemRole === "admin";
+}
+export function canManageTeam(user, teamId) {
+  return isSystemAdmin(user) || teamRole(user, teamId) === "lead";
+}
+export function canContribute(user, teamId) {
+  return canManageTeam(user, teamId) || teamRole(user, teamId) === "member";
+}
+export function isAssignable(user, teamId) {
+  return ["lead", "member"].includes(teamRole(user, teamId));
+}
 export function canEdit(user, task) {
   return (
-    user &&
-    (user.role === "admin" ||
-      user.role === "manager" ||
-      (user.role === "member" &&
+    !!user &&
+    (canManageTeam(user, task.teamId) ||
+      (teamRole(user, task.teamId) === "member" &&
         (value(task, "owner") === user.id ||
           (value(task, "supporters") || []).includes(user.id))))
   );

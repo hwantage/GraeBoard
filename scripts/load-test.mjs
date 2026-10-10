@@ -105,7 +105,9 @@ for (const scenario of scenarios) {
       const addUser = db.prepare(
         "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
       );
-      const addMember = db.prepare("INSERT INTO memberships VALUES(?,?)"),
+      const addMember = db.prepare(
+          "INSERT INTO memberships(user_id,team_id) VALUES(?,?)",
+        ),
         addSession = db.prepare("INSERT INTO sessions VALUES(?,?,?)");
       const hash = passwordHash("load-test-only-password");
       for (let i = 0; i < 100; i++) {
@@ -118,7 +120,7 @@ for (const scenario of scenarios) {
           `load-${i}`,
           `검증팀원${i}`,
           hash,
-          i === 0 ? "admin" : "member",
+          i === 0 ? "admin" : "user",
           timestamp,
         );
         addMember.run(uid, team);

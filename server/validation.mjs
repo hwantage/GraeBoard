@@ -79,6 +79,26 @@ export const styleSchema = z
     textMode: z.enum(["overflow", "wrap", "clip"]).optional(),
   })
   .strict();
+export const copiedRowSchema = z
+  .object({
+    cells: z
+      .record(
+        z.string().max(80),
+        z
+          .object({
+            value: z.union([
+              z.string().max(10000),
+              z.number().finite(),
+              z.array(z.string().uuid()).max(50),
+            ]),
+            style: styleSchema,
+          })
+          .strict(),
+      )
+      .refine((cells) => Object.keys(cells).length <= MAX_STYLE_CELLS),
+    defaultStyle: styleSchema,
+  })
+  .strict();
 export const changeSchema = z
   .object({
     taskId: z.string().uuid(),
@@ -238,10 +258,12 @@ export function validateCellValue(
 function member(db, teamId, userId) {
   requireThat(
     !!db
-      .prepare("SELECT 1 FROM memberships WHERE team_id=? AND user_id=?")
+      .prepare(
+        "SELECT 1 FROM memberships WHERE team_id=? AND user_id=? AND role IN ('lead','member')",
+      )
       .get(teamId, userId),
     400,
-    "이 팀에 속한 담당자를 선택하세요.",
+    "이 팀의 팀장·팀원 중에서 담당자를 선택하세요.",
   );
 }
 

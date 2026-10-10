@@ -125,7 +125,6 @@ export default function DefaultStyleManager({
             }),
           })
         }
-        onReset={() => change({ style: { ...INITIAL_STYLE } })}
         onUndo={() => {
           setHistory((current) =>
             current.past.length

@@ -14,7 +14,7 @@ const app = createApp({ db, rateLimits: false }),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        username: "browser-test",
+        username: "browser-test@example.com",
         password: "local-test-only-password",
         name: "지윤",
         teamName: "UX기획팀 · 예시",

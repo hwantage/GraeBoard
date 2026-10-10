@@ -287,13 +287,19 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                 </>
               )}
               <label>
-                아이디
+                아이디(이메일)
                 <input
+                  // 이메일 이전에 만든 기존 아이디로도 로그인할 수 있어야 하므로
+                  // 로그인에서는 이메일 형식을 강제하지 않는다.
+                  type={setup?.required ? "email" : "text"}
+                  inputMode="email"
                   name="username"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
-                  maxLength={60}
-                  placeholder="아이디를 입력하세요"
+                  maxLength={254}
+                  placeholder="name@company.com"
                 />
               </label>
               <label>

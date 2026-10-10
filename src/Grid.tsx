@@ -25,6 +25,9 @@ import {
   Filter,
   ListTree,
   List,
+  Copy,
+  ClipboardPaste,
+  Trash2,
 } from "lucide-react";
 import type {
   Task,
@@ -80,6 +83,8 @@ export type Column = {
   end?: string;
 };
 type ColumnReference = Pick<Column, "key" | "label" | "month">;
+export type RowCommand =
+  "insertBefore" | "insertAfter" | "copy" | "paste" | "delete";
 export function rangeOf(
   selection: Selection | null,
   tasks: Task[],
@@ -166,6 +171,8 @@ export default function Grid({
   user,
   users,
   selectableUsers,
+  canAdd,
+  canEditPeople,
   selection,
   settings,
   editor,
@@ -176,6 +183,9 @@ export default function Grid({
   onPaste,
   onClear,
   onRowMenu,
+  onRowCommand,
+  canPasteRow,
+  rowActionsDisabled,
   onReorder,
   onView,
   onAdd,
@@ -193,6 +203,8 @@ export default function Grid({
   user: User;
   users: User[];
   selectableUsers: User[];
+  canAdd: boolean;
+  canEditPeople: boolean;
   selection: Selection | null;
   settings: Settings;
   editor: EditorState | null;
@@ -203,6 +215,9 @@ export default function Grid({
   onPaste: (rows: ClipboardMatrix) => void;
   onClear: () => void;
   onRowMenu: (task: Task) => void;
+  onRowCommand: (command: RowCommand, task: Task) => void;
+  canPasteRow: boolean;
+  rowActionsDisabled: boolean;
   onReorder: (
     taskIds: string[],
     targetId: string,
@@ -255,6 +270,7 @@ export default function Grid({
   const stopHeaderDrag = useRef<(() => void) | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{
     kind: "columns" | "rows";
+    taskId?: string;
     index: number;
     x: number;
     y: number;
@@ -892,7 +908,13 @@ export default function Grid({
           : index >= r.r1 && index <= r.r2),
     );
     if (!alreadySelected) selectHeader(kind, index);
-    setHeaderMenu({ kind, index, x, y });
+    setHeaderMenu({
+      kind,
+      index,
+      x,
+      y,
+      taskId: kind === "rows" ? tasks[index]?.id : undefined,
+    });
   }
   const menuColumn =
     headerMenu?.kind === "columns" ? columns[headerMenu.index] : undefined;
@@ -902,6 +924,15 @@ export default function Grid({
       : [menuColumn]
     : [];
   const menuProperty = properties.find((p) => p.id === menuColumn?.key);
+  const menuTask =
+    headerMenu?.kind === "rows"
+      ? tasks.find((task) => task.id === headerMenu.taskId)
+      : undefined;
+  const selectedRowCount = menuTask
+    ? tasks.filter((_, i) => ranges.some((r) => i >= r.r1 && i <= r.r2)).length
+    : 0;
+  const rowActionDisabled =
+    !menuTask || selectedRowCount !== 1 || readOnly || rowActionsDisabled;
   const menuActions: HeaderMenuAction[] =
     headerMenu?.kind === "columns"
       ? [
@@ -974,6 +1005,38 @@ export default function Grid({
         ]
       : [
           {
+            label: "위에 삽입",
+            icon: <ArrowUp size={15} />,
+            disabled: rowActionDisabled || !canAdd,
+            run: () => menuTask && onRowCommand("insertBefore", menuTask),
+          },
+          {
+            label: "아래에 삽입",
+            icon: <ArrowDown size={15} />,
+            disabled: rowActionDisabled || !canAdd,
+            run: () => menuTask && onRowCommand("insertAfter", menuTask),
+          },
+          {
+            label: "복사",
+            icon: <Copy size={15} />,
+            disabled: rowActionDisabled,
+            run: () => menuTask && onRowCommand("copy", menuTask),
+          },
+          {
+            label: "복사한 행 붙여넣기",
+            icon: <ClipboardPaste size={15} />,
+            disabled: rowActionDisabled || !canAdd || !canPasteRow,
+            run: () => menuTask && onRowCommand("paste", menuTask),
+          },
+          {
+            label: "행 삭제",
+            icon: <Trash2 size={15} />,
+            danger: true,
+            disabled:
+              rowActionDisabled || !menuTask || !canEdit(user, menuTask),
+            run: () => menuTask && onRowCommand("delete", menuTask),
+          },
+          {
             label: "행 숨기기",
             icon: <EyeOff size={15} />,
             run: () => {
@@ -997,8 +1060,7 @@ export default function Grid({
             icon: <MoreHorizontal size={15} />,
             disabled: !range || range.r1 !== range.r2,
             run: () => {
-              if (headerMenu && tasks[headerMenu.index])
-                onRowMenu(tasks[headerMenu.index]);
+              if (menuTask) onRowMenu(menuTask);
             },
           },
         ];
@@ -1466,6 +1528,7 @@ export default function Grid({
                   users={users}
                   settings={settings}
                   user={user}
+                  canEditPeople={canEditPeople}
                   readOnly={readOnly}
                   presentation={presentation}
                   sorted={sorted}
@@ -1496,7 +1559,7 @@ export default function Grid({
             title="표시할 업무가 없습니다"
             description="필터와 숨김 설정을 확인하거나 첫 업무를 등록하세요."
             action={
-              !readOnly && user.role !== "viewer" ? (
+              !readOnly && canAdd ? (
                 <Button className="primary" onClick={onAdd}>
                   <Plus size={16} />
                   업무 추가
@@ -1513,7 +1576,7 @@ export default function Grid({
             숨긴 {allTasks.length}개 행 펼치기
           </Button>
         )}
-        {!!tasks.length && !readOnly && user.role !== "viewer" && (
+        {!!tasks.length && !readOnly && canAdd && (
           <Button className="primary add-row" onClick={onAdd}>
             <Plus size={17} />
             업무 추가
@@ -1651,6 +1714,7 @@ const RowBody = memo(function RowBody({
   users,
   settings,
   user,
+  canEditPeople,
   readOnly,
   presentation,
   sorted,
@@ -1675,6 +1739,7 @@ const RowBody = memo(function RowBody({
   users: User[];
   settings: Settings;
   user: User;
+  canEditPeople: boolean;
   readOnly: boolean;
   presentation: boolean;
   sorted: boolean;
@@ -1850,7 +1915,7 @@ const RowBody = memo(function RowBody({
             focused={focusKey === c.key}
             editor={editing ? editor : null}
             editable={editable}
-            canEditPeople={["admin", "manager"].includes(user.role)}
+            canEditPeople={canEditPeople}
             users={users}
             settings={settings}
             presentation={presentation}

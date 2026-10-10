@@ -6,6 +6,7 @@ import {
   fieldsFor,
   propertiesFor,
   propertyValue,
+  isAssignable,
 } from "../shared/domain.js";
 
 export type EditorState = { point: Point; initial?: string };
@@ -136,7 +137,7 @@ export default function InlineCellEditor({
           .map((v) => ({ value: propertyValue(property, v), label: v.label }))
       : property?.kind === "member"
         ? users
-            .filter((u) => u.teamIds?.includes(task.teamId))
+            .filter((u) => isAssignable(u, task.teamId))
             .map((u) => ({
               value: u.id,
               label: `${u.name}${u.active ? "" : " (비활성)"}`,

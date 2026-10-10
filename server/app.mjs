@@ -33,10 +33,17 @@ import {
   dateSchema,
   viewSchema,
   validateCellValue,
+  copiedRowSchema,
+  validCellKey,
 } from "./validation.mjs";
 import {
   DEFAULT_SETTINGS,
+  TEAM_ROLES,
   canEdit,
+  canContribute,
+  canManageTeam,
+  isAssignable,
+  isSystemAdmin,
   cell,
   defaultView,
   todayKey,
@@ -51,18 +58,48 @@ import { installTransferRoutes } from "./transfer.mjs";
 import { saveSettings } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
 import { installReorderRoute } from "./reorder.mjs";
+import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
 import { profileFields, profileSnapshot } from "./profiles.mjs";
 
 const string = (max = 100) => z.string().trim().min(1).max(max);
+// 아이디는 이메일 주소다. 대소문자를 구분하지 않으므로 소문자로 저장한다.
+// 이메일 이전에 만든 기존 아이디는 로그인만 그대로 허용한다.
+const loginId = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(254)
+  .refine(
+    (v) => z.email().safeParse(v).success,
+    "아이디는 이메일 주소로 입력하세요.",
+  );
 const credentials = z.object({
-  username: string(60).regex(/^[a-zA-Z0-9_.@-]+$/),
+  username: loginId,
   password: z.string().min(10).max(128),
 });
-const roles = z.enum(["admin", "manager", "member", "viewer"]);
+const systemRoles = z.enum(["admin", "user"]);
+const membersSchema = z
+  .array(
+    z.object({ userId: z.string().uuid(), role: z.enum(TEAM_ROLES) }).strict(),
+  )
+  .max(1000)
+  .refine(
+    (members) => new Set(members.map((m) => m.userId)).size === members.length,
+    "같은 사용자를 중복으로 추가할 수 없습니다.",
+  );
+const membershipsSchema = z
+  .array(
+    z.object({ teamId: z.string().uuid(), role: z.enum(TEAM_ROLES) }).strict(),
+  )
+  .max(50)
+  .refine(
+    (items) => new Set(items.map((m) => m.teamId)).size === items.length,
+    "같은 팀을 중복으로 선택할 수 없습니다.",
+  );
 const sessionHash = (t) => createHash("sha256").update(t).digest("hex");
-const admin = (u) => u.role === "admin";
-const manager = (u) => ["admin", "manager"].includes(u.role);
+const admin = isSystemAdmin;
+const manager = canManageTeam;
 export function createApp({
   db = openDatabase(),
   staticDir = resolve("dist"),
@@ -197,7 +234,9 @@ export function createApp({
         "admin",
         now(),
       );
-      db.prepare("INSERT INTO memberships VALUES(?,?)").run(userId, teamId);
+      db.prepare(
+        "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,'lead')",
+      ).run(userId, teamId);
       const user = userInfo(
         db,
         db.prepare("SELECT * FROM users WHERE id=?").get(userId),
@@ -214,7 +253,7 @@ export function createApp({
   });
   app.post("/api/auth/login", (req, res) => {
     const { username, password } = z
-      .object({ username: string(60), password: z.string().min(1).max(128) })
+      .object({ username: string(254), password: z.string().min(1).max(128) })
       .parse(req.body);
     const u = db
       .prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE")
@@ -224,7 +263,7 @@ export function createApp({
     requireThat(
       u && u.active && valid,
       401,
-      "아이디 또는 비밀번호가 올바르지 않습니다.",
+      "아이디(이메일) 또는 비밀번호가 올바르지 않습니다.",
     );
     issueSession(res, u.id);
     res.json({ user: userInfo(db, u) });
@@ -244,7 +283,7 @@ export function createApp({
   });
   function teamAccess(user, teamId) {
     requireThat(
-      user.teamIds.includes(teamId),
+      admin(user) || user.teamIds.includes(teamId),
       403,
       "이 팀에 접근할 권한이 없습니다.",
     );
@@ -274,7 +313,9 @@ export function createApp({
       )
       .all(teamId)
       .map((u) => userInfo(db, u));
-    if (!includeFormer) return people;
+    // 담당자로 고를 수 있는 사람은 팀장·팀원이다. 표시용 목록은 열람자와
+    // 과거 담당자까지 포함해 기존 셀의 이름이 사라지지 않게 한다.
+    if (!includeFormer) return people.filter((u) => isAssignable(u, teamId));
     const settings = normalizeSettings(
       parse(
         db.prepare("SELECT settings FROM teams WHERE id=?").get(teamId)
@@ -336,7 +377,14 @@ export function createApp({
     res.json({ ok: true });
   });
   app.get("/api/bootstrap", (req, res) => {
-    const teams = req.user.teamIds.map((t) => teamAccess(req.user, t));
+    // 시스템 관리자는 소속이 없어도 모든 팀에 들어갈 수 있다.
+    const teamIds = admin(req.user)
+      ? db
+          .prepare("SELECT id FROM teams ORDER BY name")
+          .all()
+          .map((t) => t.id)
+      : req.user.teamIds;
+    const teams = teamIds.map((t) => teamAccess(req.user, t));
     const people = new Map();
     teams.forEach((t) =>
       teamPeople(t.id, true).forEach((u) => people.set(u.id, u)),
@@ -360,7 +408,11 @@ export function createApp({
     const year = yearSchema.parse(req.query.year);
     const deleted = req.query.deleted === "1";
     if (deleted)
-      requireThat(manager(req.user), 403, "관리자만 휴지통을 볼 수 있습니다.");
+      requireThat(
+        manager(req.user, teamId),
+        403,
+        "팀장만 휴지통을 볼 수 있습니다.",
+      );
     const etag = cachedTasks.etag(teamId, year, deleted);
     res.set("ETag", etag);
     res.vary("Accept-Encoding");
@@ -380,12 +432,28 @@ export function createApp({
         year: yearSchema,
         fields: z.record(z.string(), z.any()).default({}),
         sourceId: z.string().uuid().optional(),
+        copiedRow: copiedRowSchema.optional(),
+        insertAt: z
+          .object({
+            taskId: z.string().uuid(),
+            updatedAt: z.string(),
+            placement: z.enum(["before", "after"]),
+          })
+          .strict()
+          .optional(),
       })
+      .refine((d) => !d.sourceId || !d.copiedRow, "복사할 행을 확인하세요.")
       .parse(req.body);
     const team = teamAccess(req.user, d.teamId);
-    requireThat(req.user.role !== "viewer", 403, "등록 권한이 없습니다.");
+    requireThat(
+      canContribute(req.user, d.teamId),
+      403,
+      "등록 권한이 없습니다.",
+    );
+    // 팀에 소속되지 않은 시스템 관리자는 담당자가 될 수 없으므로 비워 둔다.
+    const self = isAssignable(req.user, d.teamId) ? req.user.id : "";
     const fields = {
-      owner: req.user.id,
+      owner: self,
       supporters: [],
       ...Object.fromEntries(
         propertiesFor(team.settings)
@@ -394,7 +462,7 @@ export function createApp({
             p.id === "title"
               ? "새 업무"
               : p.id === "owner"
-                ? req.user.id
+                ? self
                 : p.id === "supporters"
                   ? []
                   : ["category", "type", "status"].includes(p.id) &&
@@ -432,15 +500,71 @@ export function createApp({
           [k]: { value: fields[k], style: cells[k]?.style || {} },
         };
     }
+    if (d.copiedRow) {
+      cells = { ...d.copiedRow.cells };
+      defaultStyle = d.copiedRow.defaultStyle;
+      // A member may create only their own task, even when copying another row.
+      if (!manager(req.user, d.teamId))
+        for (const key of ["owner", "supporters"])
+          cells[key] = {
+            value: key === "owner" ? self : [],
+            style: cells[key]?.style || {},
+          };
+      // 복사한 뒤 보관된 속성·선택값이나 팀을 떠난 담당자처럼 지금은 고를 수
+      // 없는 값만 빼고 나머지 행 내용은 붙여넣는다.
+      const archived = new Set(
+        propertiesFor(team.settings, true)
+          .filter((p) => p.archived)
+          .map((p) => p.id),
+      );
+      for (const [key, c] of Object.entries(cells)) {
+        if (archived.has(key)) {
+          delete cells[key];
+          continue;
+        }
+        requireThat(
+          validCellKey(key, team.settings),
+          400,
+          "지원하지 않는 셀입니다.",
+        );
+        try {
+          validateCellValue(db, d.teamId, key, c.value, team.settings);
+        } catch (e) {
+          if (!(e instanceof HttpError) || e.status !== 400) throw e;
+          delete cells[key];
+        }
+      }
+    }
     for (const [k, v] of Object.entries(fields))
       validateCellValue(db, d.teamId, k, v, team.settings);
-    if (!manager(req.user))
+    if (!manager(req.user, d.teamId))
       requireThat(
         fields.owner === req.user.id,
         403,
         "본인 책임 업무로 등록하세요.",
       );
     const task = transaction(db, () => {
+      let position;
+      if (d.insertAt) {
+        const target = taskAccess(req.user, d.insertAt.taskId);
+        requireThat(
+          target.teamId === d.teamId && target.years.includes(d.year),
+          400,
+          "같은 팀과 연도의 행을 선택하세요.",
+        );
+        requireThat(
+          target.updatedAt === d.insertAt.updatedAt,
+          409,
+          "기준 행이 변경되었습니다. 새로고침 후 다시 선택하세요.",
+        );
+        position = insertionPosition(
+          db,
+          d.teamId,
+          d.year,
+          target.id,
+          d.insertAt.placement,
+        );
+      }
       const t = insertTask(db, {
         teamId: d.teamId,
         year: d.year,
@@ -448,6 +572,7 @@ export function createApp({
         fields,
         cells,
         defaultStyle,
+        position,
       });
       audit(db, req.user.id, d.teamId, "create", t.id, undefined, t);
       return t;
@@ -499,9 +624,9 @@ export function createApp({
           ["owner", "supporters"].includes(change.key)
         )
           requireThat(
-            manager(req.user),
+            manager(req.user, task.teamId),
             403,
-            "담당자 변경은 팀 관리자 권한이 필요합니다.",
+            "담당자 변경은 팀장 권한이 필요합니다.",
           );
         const previous = cell(task, change.key);
         validateCellValue(
@@ -628,9 +753,9 @@ export function createApp({
     const task = taskAccess(req.user, req.params.id, false, true);
     // 삭제할 수 있었던 사람은 바로 실행취소로 되살릴 수 있다.
     requireThat(
-      manager(req.user) || canEdit(req.user, task),
+      manager(req.user, task.teamId) || canEdit(req.user, task),
       403,
-      "관리자만 복구할 수 있습니다.",
+      "팀장만 복구할 수 있습니다.",
     );
     transaction(db, () => {
       db.prepare(
@@ -729,9 +854,9 @@ export function createApp({
       .parse(req.body);
     teamAccess(req.user, d.teamId);
     requireThat(
-      manager(req.user),
+      manager(req.user, d.teamId),
       403,
-      "관리자만 보고본을 저장할 수 있습니다.",
+      "팀장만 보고본을 저장할 수 있습니다.",
     );
     requireThat(
       d.view.year === d.year,
@@ -826,9 +951,9 @@ export function createApp({
     requireThat(entry, 404, "이력을 찾을 수 없습니다.");
     teamAccess(req.user, entry.team_id);
     requireThat(
-      manager(req.user),
+      manager(req.user, entry.team_id),
       403,
-      "관리자만 이전 내용을 복원할 수 있습니다.",
+      "팀장만 이전 내용을 복원할 수 있습니다.",
     );
     requireThat(
       entry.action === "cells",
@@ -873,13 +998,8 @@ export function createApp({
     res.json({ cells: restored });
   });
   app.patch("/api/teams/:id/settings", (req, res) => {
-    const record = admin(req.user)
-      ? db.prepare("SELECT * FROM teams WHERE id=?").get(req.params.id)
-      : null;
-    const team = record
-      ? { ...record, settings: normalizeSettings(parse(record.settings)) }
-      : teamAccess(req.user, req.params.id);
-    requireThat(manager(req.user), 403, "관리자 권한이 필요합니다.");
+    const team = teamAccess(req.user, req.params.id);
+    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
     const settings = saveSettings(db, team, req.body, req.user.id);
     res.json({ settings });
   });
@@ -896,6 +1016,19 @@ export function createApp({
         .map((t) => ({ ...t, settings: normalizeSettings(parse(t.settings)) })),
     });
   });
+  function setUserMemberships(userId, memberships) {
+    for (const m of memberships)
+      requireThat(
+        db.prepare("SELECT id FROM teams WHERE id=?").get(m.teamId),
+        400,
+        "팀을 확인하세요.",
+      );
+    db.prepare("DELETE FROM memberships WHERE user_id=?").run(userId);
+    for (const m of memberships)
+      db.prepare(
+        "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,?)",
+      ).run(userId, m.teamId, m.role);
+  }
   app.post("/api/admin/users", (req, res) => {
     requireThat(admin(req.user), 403, "시스템 관리자 권한이 필요합니다.");
     const d = credentials
@@ -903,15 +1036,10 @@ export function createApp({
         name: string(50),
         ...profileFields,
         active: z.boolean().default(true),
-        role: roles,
-        teamIds: z.array(z.string().uuid()).max(50),
+        systemRole: systemRoles.default("user"),
+        memberships: membershipsSchema.default([]),
       })
       .parse(req.body);
-    requireThat(
-      d.role !== "admin" || d.teamIds.length > 0,
-      400,
-      "시스템 관리자는 한 팀 이상에 배정하세요.",
-    );
     const userId = id();
     transaction(db, () => {
       requireThat(
@@ -919,7 +1047,7 @@ export function createApp({
           .prepare("SELECT id FROM users WHERE username=? COLLATE NOCASE")
           .get(d.username),
         409,
-        "이미 사용 중인 아이디입니다.",
+        "이미 사용 중인 아이디(이메일)입니다.",
       );
       db.prepare(
         "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
@@ -928,7 +1056,7 @@ export function createApp({
         d.username,
         d.name,
         passwordHash(d.password),
-        d.role,
+        d.systemRole,
         now(),
       );
       db.prepare(
@@ -940,17 +1068,11 @@ export function createApp({
         d.avatarImage || "",
         userId,
       );
-      for (const t of new Set(d.teamIds)) {
-        requireThat(
-          db.prepare("SELECT id FROM teams WHERE id=?").get(t),
-          400,
-          "팀을 확인하세요.",
-        );
-        db.prepare("INSERT INTO memberships VALUES(?,?)").run(userId, t);
-      }
+      setUserMemberships(userId, d.memberships);
       audit(db, req.user.id, null, "user-create", userId, undefined, {
         name: d.name,
-        role: d.role,
+        systemRole: d.systemRole,
+        memberships: d.memberships,
       });
     });
     res.status(201).json({
@@ -966,21 +1088,25 @@ export function createApp({
       .object({
         name: string(50),
         ...profileFields,
-        role: roles,
+        // 생략한 시스템 권한·팀 소속은 그대로 둔다.
+        systemRole: systemRoles.optional(),
         active: z.boolean(),
-        teamIds: z.array(z.string().uuid()).max(50),
+        memberships: membershipsSchema.optional(),
+        // 생략하면 아이디를 유지한다. 기존 비이메일 아이디도 이메일로 바꿀 수 있다.
+        username: loginId.optional(),
         password: credentials.shape.password.optional(),
       })
       .parse(req.body);
-    requireThat(
-      d.role !== "admin" || d.teamIds.length > 0,
-      400,
-      "시스템 관리자는 한 팀 이상에 배정하세요.",
-    );
     const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.params.id);
     requireThat(u, 404, "사용자를 찾을 수 없습니다.");
+    const before = userInfo(db, u);
+    const systemRole = d.systemRole ?? before.systemRole;
     transaction(db, () => {
-      if (u.active && u.role === "admin" && (!d.active || d.role !== "admin"))
+      if (
+        u.active &&
+        u.role === "admin" &&
+        (!d.active || systemRole !== "admin")
+      )
         requireThat(
           db
             .prepare(
@@ -990,11 +1116,26 @@ export function createApp({
           400,
           "마지막 시스템 관리자는 해제할 수 없습니다.",
         );
+      if (d.username && d.username !== u.username.toLowerCase()) {
+        requireThat(
+          !db
+            .prepare(
+              "SELECT id FROM users WHERE username=? COLLATE NOCASE AND id<>?",
+            )
+            .get(d.username, u.id),
+          409,
+          "이미 사용 중인 아이디(이메일)입니다.",
+        );
+        db.prepare("UPDATE users SET username=? WHERE id=?").run(
+          d.username,
+          u.id,
+        );
+      }
       db.prepare(
         "UPDATE users SET name=?,role=?,active=?,password=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
       ).run(
         d.name,
-        d.role,
+        systemRole,
         d.active ? 1 : 0,
         d.password ? passwordHash(d.password) : u.password,
         d.color ?? u.color,
@@ -1002,15 +1143,7 @@ export function createApp({
         d.avatarImage ?? u.avatar_image,
         u.id,
       );
-      db.prepare("DELETE FROM memberships WHERE user_id=?").run(u.id);
-      for (const t of new Set(d.teamIds)) {
-        requireThat(
-          db.prepare("SELECT id FROM teams WHERE id=?").get(t),
-          400,
-          "팀을 확인하세요.",
-        );
-        db.prepare("INSERT INTO memberships VALUES(?,?)").run(u.id, t);
-      }
+      if (d.memberships) setUserMemberships(u.id, d.memberships);
       if (!d.active || d.password)
         db.prepare("DELETE FROM sessions WHERE user_id=?").run(u.id);
       audit(
@@ -1019,43 +1152,122 @@ export function createApp({
         null,
         "user-update",
         u.id,
-        { name: u.name, role: u.role, active: !!u.active },
-        { name: d.name, role: d.role, active: d.active },
+        {
+          username: before.username,
+          name: before.name,
+          systemRole: before.systemRole,
+          active: before.active,
+          teamRoles: before.teamRoles,
+        },
+        {
+          username: d.username ?? before.username,
+          name: d.name,
+          systemRole,
+          active: d.active,
+          teamRoles: d.memberships
+            ? Object.fromEntries(d.memberships.map((m) => [m.teamId, m.role]))
+            : before.teamRoles,
+        },
       );
     });
     res.json({ ok: true });
   });
+  function teamMembers(teamId) {
+    return db
+      .prepare(
+        "SELECT user_id AS userId,role FROM memberships WHERE team_id=? ORDER BY rowid",
+      )
+      .all(teamId);
+  }
+  function setTeamMembers(teamId, members) {
+    const current = new Set(teamMembers(teamId).map((m) => m.userId));
+    for (const m of members) {
+      const u = db.prepare("SELECT active FROM users WHERE id=?").get(m.userId);
+      requireThat(u, 400, "등록된 사용자를 선택하세요.");
+      // 이미 소속된 비활성 사용자는 남겨 둘 수 있지만 새로 추가할 수는 없다.
+      requireThat(
+        u.active || current.has(m.userId),
+        400,
+        "비활성 사용자는 팀에 추가할 수 없습니다.",
+      );
+    }
+    db.prepare("DELETE FROM memberships WHERE team_id=?").run(teamId);
+    for (const m of members)
+      db.prepare(
+        "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,?)",
+      ).run(m.userId, teamId, m.role);
+  }
+  app.get("/api/teams/:id/members", (req, res) => {
+    const team = teamAccess(req.user, req.params.id);
+    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
+    // 팀장은 기존 사용자를 팀에 추가할 수 있으므로 전체 사용자 목록이 필요하다.
+    // 다른 팀 소속이나 시스템 권한은 시스템 관리자 화면에서만 보여 준다.
+    res.json({
+      members: teamMembers(team.id),
+      users: db
+        .prepare("SELECT * FROM users ORDER BY name")
+        .all()
+        .map((u) => ({
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          active: !!u.active,
+          color: u.color,
+          avatarInitials: u.avatar_initials || "",
+          avatarImage: u.avatar_image || "",
+        })),
+    });
+  });
+  app.put("/api/teams/:id/members", (req, res) => {
+    const team = teamAccess(req.user, req.params.id);
+    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
+    const d = z
+      .object({
+        members: membersSchema,
+        // 화면이 보고 있던 목록. 그 사이 다른 사람이 바꿨으면 덮어쓰지 않는다.
+        previous: membersSchema.optional(),
+      })
+      .strict()
+      .parse(req.body);
+    const key = (list) =>
+      list
+        .map((m) => `${m.userId}:${m.role}`)
+        .sort()
+        .join(",");
+    transaction(db, () => {
+      const before = teamMembers(team.id);
+      requireThat(
+        !d.previous || key(d.previous) === key(before),
+        409,
+        "다른 사용자가 구성원을 변경했습니다. 최신 목록을 확인한 뒤 다시 시도하세요.",
+      );
+      setTeamMembers(team.id, d.members);
+      audit(
+        db,
+        req.user.id,
+        team.id,
+        "team-members",
+        team.id,
+        before,
+        d.members,
+      );
+    });
+    res.json({ members: teamMembers(team.id) });
+  });
   const teamSchema = z.object({
     name: string(80),
-    memberIds: z.array(z.string().uuid()).max(1000).optional(),
     theme: z.enum(THEME_IDS).optional(),
     settingsRevision: z.number().int().nonnegative().optional(),
-    templateTeamId: z.string().uuid().optional(),
   });
-  function setTeamMembers(teamId, ids) {
-    for (const userId of new Set(ids))
-      requireThat(
-        db.prepare("SELECT id FROM users WHERE id=?").get(userId),
-        400,
-        "등록된 팀원을 선택하세요.",
-      );
-    db.prepare("DELETE FROM memberships WHERE team_id=?").run(teamId);
-    for (const userId of new Set(ids))
-      db.prepare("INSERT INTO memberships VALUES(?,?)").run(userId, teamId);
-    requireThat(
-      !db
-        .prepare(
-          "SELECT 1 FROM users u WHERE u.role='admin' AND u.active=1 AND NOT EXISTS(SELECT 1 FROM memberships m WHERE m.user_id=u.id)",
-        )
-        .get(),
-      400,
-      "활성 시스템 관리자는 한 팀 이상에 배정되어 있어야 합니다.",
-    );
-  }
   app.post("/api/admin/teams", (req, res) => {
     requireThat(admin(req.user), 403, "시스템 관리자 권한이 필요합니다.");
-    const d = teamSchema.parse(req.body),
-      teamId = id();
+    const d = teamSchema
+      .extend({
+        templateTeamId: z.string().uuid().optional(),
+        members: membersSchema.default([]),
+      })
+      .parse(req.body);
+    const teamId = id();
     const template = d.templateTeamId
       ? db
           .prepare("SELECT settings FROM teams WHERE id=?")
@@ -1079,19 +1291,16 @@ export function createApp({
           revision: 0,
         }),
       );
-      setTeamMembers(teamId, d.memberIds ?? [req.user.id]);
+      setTeamMembers(teamId, d.members);
       audit(db, req.user.id, teamId, "team-create", teamId, undefined, d);
     });
     res.status(201).json({ id: teamId });
   });
-  app.patch("/api/admin/teams/:id", (req, res) => {
-    requireThat(admin(req.user), 403, "시스템 관리자 권한이 필요합니다.");
+  app.patch("/api/teams/:id", (req, res) => {
+    const team = teamAccess(req.user, req.params.id);
+    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
     const d = teamSchema.parse(req.body);
-    const team = db
-      .prepare("SELECT * FROM teams WHERE id=?")
-      .get(req.params.id);
-    requireThat(team, 404, "팀을 찾을 수 없습니다.");
-    const settings = normalizeSettings(parse(team.settings));
+    const settings = team.settings;
     const themeChanged = d.theme !== undefined && d.theme !== settings.theme;
     if (themeChanged && d.settingsRevision !== undefined)
       requireThat(
@@ -1099,12 +1308,6 @@ export function createApp({
         409,
         "팀 설정이 변경되었습니다. 관리 화면을 다시 열어 최신 설정을 확인하세요.",
       );
-    const before = {
-      id: team.id,
-      name: team.name,
-      theme: settings.theme,
-      memberIds: teamPeople(team.id).map((u) => u.id),
-    };
     transaction(db, () => {
       db.prepare("UPDATE teams SET name=? WHERE id=?").run(d.name, team.id);
       if (themeChanged)
@@ -1116,12 +1319,15 @@ export function createApp({
           }),
           team.id,
         );
-      if (d.memberIds) setTeamMembers(team.id, d.memberIds);
-      audit(db, req.user.id, team.id, "team-update", team.id, before, {
-        ...d,
-        theme: d.theme ?? settings.theme,
-        memberIds: d.memberIds || before.memberIds,
-      });
+      audit(
+        db,
+        req.user.id,
+        team.id,
+        "team-update",
+        team.id,
+        { id: team.id, name: team.name, theme: settings.theme },
+        { ...d, theme: d.theme ?? settings.theme },
+      );
     });
     res.json({ ok: true });
   });
@@ -1150,7 +1356,10 @@ export function createApp({
       return res.status(400).json({ error: "JSON 입력 형식을 확인하세요." });
     if (err instanceof z.ZodError)
       return res.status(400).json({
-        error: "입력값을 확인하세요.",
+        // 직접 정의한 검증 문구가 있으면 그대로 보여 준다.
+        error:
+          err.issues.find((i) => i.code === "custom")?.message ||
+          "입력값을 확인하세요.",
         details: err.issues.map((i) => ({
           path: i.path.join("."),
           message: i.message,

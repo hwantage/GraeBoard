@@ -151,7 +151,7 @@ export function saveSettings(db, team, rawInput, actorId) {
     const changes = [];
     const people = db
       .prepare(
-        "SELECT u.id,u.name FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=?",
+        "SELECT u.id,u.name,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=?",
       )
       .all(team.id);
     for (const p of properties) {
@@ -194,7 +194,9 @@ export function saveSettings(db, team, rawInput, actorId) {
             .map((n) => n.trim())
             .filter(Boolean)
             .map((n) => {
-              const matches = people.filter((u) => u.id === n || u.name === n);
+              const matches = people.filter(
+                (u) => u.role !== "viewer" && (u.id === n || u.name === n),
+              );
               requireThat(
                 matches.length === 1,
                 400,

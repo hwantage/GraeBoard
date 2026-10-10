@@ -6,22 +6,6 @@ export function deleteTeam(db, teamId, actorId) {
   return transaction(db, () => {
     const team = db.prepare("SELECT id FROM teams WHERE id=?").get(teamId);
     requireThat(team, 404, "팀을 찾을 수 없습니다.");
-    // Match the existing account-management rule: active admins need a team.
-    const strandedAdmin = db
-      .prepare(
-        `
-      SELECT u.id FROM users u JOIN memberships m ON m.user_id=u.id
-      WHERE m.team_id=? AND u.role='admin' AND u.active=1
-        AND NOT EXISTS(SELECT 1 FROM memberships other WHERE other.user_id=u.id AND other.team_id<>?)
-    `,
-      )
-      .get(teamId, teamId);
-    requireThat(
-      !strandedAdmin,
-      409,
-      "이 팀에만 배속된 시스템 관리자가 있습니다. 해당 관리자를 다른 팀에 배속한 뒤 삭제하세요.",
-    );
-
     // Batch responses contain cell contents even after the tasks are deleted.
     db.prepare(
       `DELETE FROM operations WHERE id IN (

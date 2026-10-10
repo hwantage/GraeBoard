@@ -49,7 +49,7 @@ export function openDatabase(
   db.exec(`
     CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',created_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),PRIMARY KEY(user_id,team_id));
+    CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),role TEXT NOT NULL DEFAULT 'member',PRIMARY KEY(user_id,team_id));
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
@@ -85,7 +85,25 @@ export function openDatabase(
       db.exec(
         `ALTER TABLE users ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
       );
-  db.exec("PRAGMA user_version=3");
+  if (
+    !db
+      .prepare("PRAGMA table_info(memberships)")
+      .all()
+      .some((c) => c.name === "role")
+  )
+    // 역할을 사용자 전역 값에서 팀별 값으로 옮긴다. 기존 권한은 그대로 유지된다:
+    // 시스템 관리자와 팀 관리자는 소속 팀의 팀장, 나머지는 같은 이름의 팀 내 권한.
+    transaction(db, () => {
+      db.exec(
+        "ALTER TABLE memberships ADD COLUMN role TEXT NOT NULL DEFAULT 'member'",
+      );
+      db.exec(`UPDATE memberships SET role=CASE
+        (SELECT role FROM users WHERE id=memberships.user_id)
+        WHEN 'admin' THEN 'lead' WHEN 'manager' THEN 'lead'
+        WHEN 'viewer' THEN 'viewer' ELSE 'member' END`);
+      db.exec("UPDATE users SET role='user' WHERE role<>'admin'");
+    });
+  db.exec("PRAGMA user_version=4");
   return db;
 }
 export function transaction(db, work) {
@@ -101,19 +119,20 @@ export function transaction(db, work) {
 }
 export function userInfo(db, u) {
   if (!u) return null;
+  const memberships = db
+    .prepare("SELECT team_id,role FROM memberships WHERE user_id=?")
+    .all(u.id);
   return {
     id: u.id,
     username: u.username,
     name: u.name,
-    role: u.role,
+    systemRole: u.role === "admin" ? "admin" : "user",
     active: !!u.active,
     color: u.color,
     avatarInitials: u.avatar_initials || "",
     avatarImage: u.avatar_image || "",
-    teamIds: db
-      .prepare("SELECT team_id FROM memberships WHERE user_id=?")
-      .all(u.id)
-      .map((t) => t.team_id),
+    teamIds: memberships.map((m) => m.team_id),
+    teamRoles: Object.fromEntries(memberships.map((m) => [m.team_id, m.role])),
   };
 }
 export function getTask(db, taskId) {
@@ -228,7 +247,6 @@ export function seedDemo(db, user, teamId, year) {
       id: id(),
       name,
       username: `example-${id().slice(0, 8)}`,
-      role: "member",
       color,
       active: 0,
     };
@@ -239,12 +257,14 @@ export function seedDemo(db, user, teamId, year) {
       u.username,
       name,
       passwordHash(randomBytes(32).toString("hex")),
-      u.role,
+      "user",
       0,
       color,
       now(),
     );
-    db.prepare("INSERT INTO memberships VALUES(?,?)").run(u.id, teamId);
+    db.prepare(
+      "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,'member')",
+    ).run(u.id, teamId);
     people.push(u);
   }
   const titles = [

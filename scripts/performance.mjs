@@ -42,7 +42,9 @@ try {
     const addUser = db.prepare(
         "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
       ),
-      membership = db.prepare("INSERT INTO memberships VALUES(?,?)"),
+      membership = db.prepare(
+        "INSERT INTO memberships(user_id,team_id) VALUES(?,?)",
+      ),
       session = db.prepare("INSERT INTO sessions VALUES(?,?,?)");
     for (let i = 0; i < 100; i++) {
       const uid = id(),
@@ -53,7 +55,7 @@ try {
         `perf-${i}`,
         `검증${i}`,
         hash,
-        i === 0 ? "admin" : "member",
+        i === 0 ? "admin" : "user",
         n,
       );
       membership.run(uid, team);

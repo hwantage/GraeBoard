@@ -79,6 +79,24 @@ async function openRowDetails(page: Page, row: Locator) {
   await row.locator(".row-select").click({ button: "right" });
   await page.getByRole("menuitem", { name: "업무 상세", exact: true }).click();
 }
+async function hideSelectedRows(page: Page) {
+  const ids = await page
+    .locator('.sheet-cell[aria-selected="true"]')
+    .evaluateAll((nodes) => [
+      ...new Set(
+        nodes.map((node) => node.getAttribute("data-task-id")).filter(Boolean),
+      ),
+    ]);
+  expect(ids.length).toBeGreaterThan(0);
+  for (const [index, id] of ids.entries())
+    await page
+      .locator(`[data-row-id="${id}"] .row-select`)
+      .click({ modifiers: index ? ["Meta"] : [] });
+  await page
+    .locator(`[data-row-id="${ids[0]}"] .row-select`)
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "행 숨기기", exact: true }).click();
+}
 let teamId: string, taskIds: string[];
 test.beforeEach(async ({ page }) => {
   await page.route("**/*", (route) =>
@@ -87,7 +105,7 @@ test.beforeEach(async ({ page }) => {
       : route.abort(),
   );
   await post(page, "/auth/login", {
-    username: "browser-test",
+    username: "browser-test@example.com",
     password: "local-test-only-password",
   });
   const boot = await (await page.request.get("/api/bootstrap")).json();
@@ -97,6 +115,7 @@ test.beforeEach(async ({ page }) => {
       name,
       templateTeamId: boot.teams.find((t: any) => t.name === "UX기획팀 · 예시")
         .id,
+      members: [{ userId: boot.user.id, role: "lead" }],
     })
   ).id;
   taskIds = [];
@@ -178,10 +197,8 @@ async function freezeColumns(page: Page, count: number) {
     .click();
 }
 async function setColumns(page: Page, show: string[], hide: string[] = []) {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   for (const label of show)
     await page.getByLabel(`${label} 열 표시`, { exact: true }).check();
   for (const label of hide)
@@ -193,9 +210,7 @@ async function setColumns(page: Page, show: string[], hide: string[] = []) {
   await page.getByRole("button", { name: "닫기", exact: true }).click();
 }
 async function openDefaultStyle(page: Page) {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "기본 서식", exact: true }).click();
 }
 async function saveDefaultStyle(page: Page) {
@@ -214,7 +229,7 @@ async function setDensity(page: Page, value: string) {
 }
 async function selectDefaultFormat(page: Page, label: string, value: string) {
   const trigger = page
-    .getByRole("dialog", { name: "팀과 계정 관리" })
+    .getByRole("dialog", { name: "설정" })
     .getByRole("combobox", { name: label, exact: true });
   await trigger.click();
   const id = await trigger.getAttribute("aria-controls");
@@ -650,7 +665,7 @@ test("기본 서식 공통 툴바는 미리보기·실행취소·테두리와 �
   const manualHeight = (await first.boundingBox())!.height;
   await openDefaultStyle(page);
   const panel = page.getByRole("dialog", {
-    name: "팀과 계정 관리",
+    name: "설정",
     exact: true,
   });
   const preview = page.locator(".preview-cell").first();
@@ -725,10 +740,8 @@ test("주차 머리글 색은 속성에서 저장하고 날짜 머리글에만 �
   page,
 }, info) => {
   await marchWeeks(page);
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.locator(".week-column-select").click();
   await expect(page.getByText("왼쪽 경계선", { exact: false })).toHaveCount(0);
   await page.getByLabel("주차 머리글 배경색", { exact: true }).fill("#2255aa");
@@ -761,10 +774,8 @@ test("주차 머리글 색은 속성에서 저장하고 날짜 머리글에만 �
     "background-color",
     "rgb(34, 85, 170)",
   );
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.locator(".week-column-select").click();
   await page.getByRole("button", { name: "기본값", exact: true }).click();
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
@@ -919,15 +930,21 @@ test("숨긴 행은 번호를 유지하고 경계 삼각형으로 구간별·전
         .querySelector(".row-drag-handle")!
         .getBoundingClientRect();
       const number = row.querySelector(".row-index")!.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        marker.x + marker.width / 2,
+        marker.y + marker.height / 2,
+      );
       return {
         markerLeft: marker.left,
         markerRight: marker.right,
         handleRight: handle.right,
         numberLeft: number.left,
+        unobstructed: hit === el || el.contains(hit),
       };
     });
     expect(bounds.markerLeft).toBeGreaterThanOrEqual(bounds.handleRight);
     expect(bounds.markerRight).toBeLessThanOrEqual(bounds.numberLeft);
+    expect(bounds.unobstructed).toBe(true);
     await expect(marker).toHaveCSS("border-top-width", "0px");
     await expect(marker).toHaveCSS("border-bottom-width", "0px");
     // The arrow lane is still a row selection target away from the actual arrow.
@@ -983,9 +1000,7 @@ test("숨긴 행은 번호를 유지하고 경계 삼각형으로 구간별·전
     .getByRole("button", { name: "1행 전체 선택", exact: true })
     .click();
   await page.keyboard.press("Control+a");
-  await page
-    .getByRole("button", { name: "선택 행 숨기기", exact: true })
-    .click();
+  await hideSelectedRows(page);
   await expect(page.locator(".sheet-row")).toHaveCount(0);
   await page
     .getByRole("button", { name: "숨긴 3개 행 펼치기", exact: true })
@@ -1319,10 +1334,8 @@ test("속성을 주차 날짜 아래로 옮기면 마지막 날짜 뒤에 저장
   expect(saved.ok()).toBeTruthy();
   await page.reload();
   await freezeColumns(page, 5);
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await expect(page.locator(".property-list-row").last()).toHaveAttribute(
     "data-column-item",
     "__weeks",
@@ -1435,10 +1448,8 @@ test("주차 날짜 묶음을 처음·끝으로 옮기고 모든 주차를 숨�
   page,
 }) => {
   const open = async () => {
-    await page
-      .getByRole("button", { name: "팀과 계정 관리", exact: true })
-      .click();
-    await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("tab", { name: "속성", exact: true }).click();
   };
   const save = async () => {
     await page.getByRole("button", { name: "속성 저장", exact: true }).click();
@@ -1728,26 +1739,25 @@ test("팀원 아바타의 이니셜·이미지·기본 글자와 배경색을 �
   const name = `프로필 ${randomUUID().slice(0, 6)}`;
   const created = await post(page, "/admin/users", {
     name,
-    username: `profile-${randomUUID()}`,
+    username: `profile-${randomUUID()}@example.com`,
     password: "profile-test-password",
-    role: "member",
     active: true,
-    teamIds: [teamId],
+    memberships: [{ teamId, role: "member" }],
   });
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "팀원 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("button", { name: "사용자 계정", exact: true }).click();
   const member = page
     .locator(".members-table tbody tr")
     .filter({ hasText: name });
   const edit = async () => {
     await member
-      .getByRole("button", { name: `${name} 팀원 수정`, exact: true })
+      .getByRole("button", { name: `${name} 사용자 수정`, exact: true })
       .click();
   };
   const save = async () => {
-    await page.getByRole("button", { name: "팀원 저장", exact: true }).click();
+    await page
+      .getByRole("button", { name: "사용자 저장", exact: true })
+      .click();
     await expect(page.locator(".admin-edit")).toHaveCount(0);
   };
   await edit();
@@ -1770,7 +1780,7 @@ test("팀원 아바타의 이니셜·이미지·기본 글자와 배경색을 �
   await edit();
   await expect(initials).toHaveValue("WWW");
   await initials.fill("김민수");
-  await page.getByRole("button", { name: "팀원 저장", exact: true }).click();
+  await page.getByRole("button", { name: "사용자 저장", exact: true }).click();
   await expect(page.locator(".admin-edit")).toBeVisible();
   await initials.fill("김민");
   await expect(page.locator(".avatar-preview .avatar")).toHaveText("김민");
@@ -1805,10 +1815,8 @@ test("팀원 아바타의 이니셜·이미지·기본 글자와 배경색을 �
     await (await page.request.get("/api/bootstrap")).json()
   ).users.find((u: any) => u.id === created.user.id);
   expect(profile.avatarImage).toMatch(/^data:image\/png;base64,/);
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "팀원 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("button", { name: "사용자 계정", exact: true }).click();
   await edit();
   await page.getByRole("radio", { name: "이름 첫 글자", exact: true }).check();
   await expect(page.locator(".avatar-preview .avatar")).toHaveText("프");
@@ -1821,11 +1829,10 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
 }, info) => {
   const account = {
     name: "이전 담당자",
-    username: `former-${randomUUID()}`,
+    username: `former-${randomUUID()}@example.com`,
     password: "profile-test-password",
-    role: "member",
     active: true,
-    teamIds: [teamId],
+    memberships: [{ teamId, role: "member" }],
   };
   const uid = (await post(page, "/admin/users", account)).user.id;
   await setTaskCells(page, [{ index: 0, key: "owner", value: uid }]);
@@ -1874,7 +1881,7 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
     data: {
       ...account,
       name: "최신 담당자",
-      teamIds: [],
+      memberships: [],
       active: false,
       avatarInitials: "WWW",
       color: "#888888",
@@ -2043,15 +2050,16 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
 }, info) => {
   test.setTimeout(60000);
   const name = `기본 팀 ${randomUUID().slice(0, 6)}`;
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("button", { name: "새 팀", exact: true }).click();
   await page.getByLabel("신규 팀 이름").fill(name);
   await expect(page.getByLabel("새 팀 양식")).toHaveValue("");
   await page.getByRole("button", { name: "팀 추가", exact: true }).click();
+  // 만든 팀이 바로 선택되고 구성원 탭으로 이동한다.
+  await expect(page.locator(".settings-team-header h3")).toHaveText(name);
   await expect(
-    page.getByLabel(`${name} 팀 이름`, { exact: true }),
-  ).toBeVisible();
+    page.getByRole("tab", { name: "구성원", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await page.getByLabel("팀 선택").selectOption({ label: name });
   for (const label of ["작업", "팀원", "상태"])
@@ -2086,14 +2094,12 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
   await page.getByRole("option", { name: "완료", exact: true }).click();
   await expect(summary).toContainText("완료 1");
   await expect(summary).toContainText("예정 0");
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "기본 서식", exact: true }).click();
   await expect(
     page.getByRole("dialog").getByLabel("글자 크기", { exact: true }),
   ).toHaveAttribute("data-value", "9");
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await expect(page.locator(".property-select")).toHaveCount(3);
   for (const label of ["작업", "팀원", "상태"]) {
     await page
@@ -2135,12 +2141,8 @@ test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀�
   });
   expect(saved.ok()).toBeTruthy();
   await page.reload();
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await expect(
-    page.locator(".team-table").getByRole("button", { name: /양식 복사/ }),
-  ).toHaveCount(0);
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("button", { name: "새 팀", exact: true }).click();
   await page.getByLabel("새 팀 양식").selectOption(teamId);
   await expect(page.getByLabel("새 팀 양식")).toHaveValue(teamId);
   await expect(
@@ -2155,9 +2157,7 @@ test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀�
     fullPage: true,
   });
   await page.getByRole("button", { name: "팀 추가", exact: true }).click();
-  await expect(
-    page.getByLabel(`${name} 팀 이름`, { exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".settings-team-header h3")).toHaveText(name);
   const latest = await (await page.request.get("/api/admin/users")).json();
   const copied = latest.teams.find((t: any) => t.name === name);
   expect(copied.settings.properties).toEqual(original.settings.properties);
@@ -2182,19 +2182,18 @@ test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀�
     .toBeCloseTo((16 * 4) / 3, 1);
 });
 
-test("팀 행의 휴지통은 저장 오른쪽에 있고 경고 취소·확인 후 데이터와 선택을 갱신한다", async ({
+test("팀 일반 설정의 팀 삭제는 경고 취소·확인 후 데이터와 선택을 갱신한다", async ({
   page,
 }, info) => {
   const original = (
     await (await page.request.get("/api/bootstrap")).json()
   ).teams.find((t: any) => t.id === teamId);
   const member = await post(page, "/admin/users", {
-    username: `delete-${randomUUID().slice(0, 8)}`,
+    username: `delete-${randomUUID().slice(0, 8)}@example.com`,
     password: "delete-test-password",
     name: "남겨둘 팀원",
-    role: "member",
     active: true,
-    teamIds: [teamId],
+    memberships: [{ teamId, role: "member" }],
   });
   let deleteRequests = 0;
   page.on("request", (r) => {
@@ -2204,28 +2203,13 @@ test("팀 행의 휴지통은 저장 오른쪽에 있고 경고 취소·확인 �
     )
       deleteRequests++;
   });
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await expect(
-    page.locator(".team-table").getByRole("button", { name: /양식 복사/ }),
-  ).toHaveCount(0);
-  const row = page.locator(".team-table tbody tr").filter({
-    has: page.getByLabel(`${original.name} 팀 이름`, { exact: true }),
-  });
-  const save = row.getByRole("button", {
-    name: `${original.name} 팀 저장`,
-    exact: true,
-  });
-  const remove = row.getByRole("button", {
-    name: `${original.name} 팀 삭제`,
-    exact: true,
-  });
-  const saveBox = (await save.boundingBox())!,
-    deleteBox = (await remove.boundingBox())!;
-  expect(deleteBox.x).toBeGreaterThanOrEqual(saveBox.x + saveBox.width);
-  expect(Math.abs(deleteBox.y - saveBox.y)).toBeLessThanOrEqual(1);
-  await expect(remove).toHaveText("");
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const nav = page.getByRole("navigation", { name: "설정 메뉴" });
+  const teamLink = nav.getByRole("button", { name: original.name });
+  await expect(teamLink).toHaveAttribute("aria-current", "page");
+  const remove = page
+    .getByRole("region", { name: "팀 삭제", exact: true })
+    .getByRole("button", { name: `${original.name} 팀 삭제`, exact: true });
   page.once("dialog", async (dialog) => {
     expect(dialog.type()).toBe("confirm");
     expect(dialog.message()).toContain(original.name);
@@ -2235,7 +2219,7 @@ test("팀 행의 휴지통은 저장 오른쪽에 있고 경고 취소·확인 �
     await dialog.dismiss();
   });
   await remove.click();
-  await expect(row).toBeVisible();
+  await expect(teamLink).toBeVisible();
   expect(deleteRequests).toBe(0);
   await expect
     .poll(
@@ -2251,17 +2235,16 @@ test("팀 행의 휴지통은 저장 오른쪽에 있고 경고 취소·확인 �
     path: info.outputPath("team-delete-actions.png"),
     fullPage: true,
   });
-  await page.getByLabel("새 팀 양식").selectOption(teamId);
   page.once("dialog", (dialog) => dialog.accept());
   await remove.click();
-  await expect(row).toHaveCount(0);
+  await expect(teamLink).toHaveCount(0);
   await expect(
     page.getByText(`“${original.name}” 팀과 모든 팀 데이터를 삭제했습니다.`, {
       exact: true,
     }),
   ).toBeVisible();
   expect(deleteRequests).toBe(1);
-  await expect(page.getByLabel("새 팀 양식")).toHaveValue("");
+  await nav.getByRole("button", { name: "새 팀", exact: true }).click();
   await expect(
     page.getByLabel("새 팀 양식").locator(`option[value="${teamId}"]`),
   ).toHaveCount(0);
@@ -2271,7 +2254,7 @@ test("팀 행의 휴지통은 저장 오른쪽에 있고 경고 취소·확인 �
   );
   expect(
     (await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)).status(),
-  ).toBe(403);
+  ).toBe(404);
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(page.getByLabel("팀 선택")).not.toHaveValue(teamId);
   await expect(page.locator(`option[value="${teamId}"]`)).toHaveCount(0);
@@ -2363,33 +2346,32 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
   const rgb = (hex: string) =>
     `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
   const open = async () =>
-    page.getByRole("button", { name: "팀과 계정 관리", exact: true }).click();
-  const originalRow = page.locator(".team-table tbody tr").filter({
-    has: page.getByLabel(`${originalName} 팀 이름`, { exact: true }),
+    page.getByRole("button", { name: "설정", exact: true }).click();
+  // 설정을 열면 지금 보는 팀의 일반 탭이 선택된다.
+  const general = page.getByRole("tabpanel");
+  const themes = general.getByRole("group", {
+    name: `${originalName} 테마`,
+    exact: true,
   });
   await open();
-  await expect(originalRow.getByRole("radio")).toHaveCount(5);
-  await originalRow.getByRole("radio", { name: "민트", exact: true }).focus();
+  await expect(themes.getByRole("radio")).toHaveCount(5);
+  await themes.getByRole("radio", { name: "민트", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(
-    originalRow.getByRole("radio", { name: "하늘", exact: true }),
+    themes.getByRole("radio", { name: "하늘", exact: true }),
   ).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "mint");
   for (const [index, theme] of THEMES.entries()) {
     if (index) await open();
-    await originalRow
-      .getByRole("radio", { name: theme.name, exact: true })
-      .check();
+    await themes.getByRole("radio", { name: theme.name, exact: true }).check();
     await Promise.all([
       page.waitForResponse(
         (r) =>
-          r.url().endsWith(`/api/admin/teams/${teamId}`) &&
+          r.url().endsWith(`/api/teams/${teamId}`) &&
           r.request().method() === "PATCH" &&
           r.ok(),
       ),
-      originalRow
-        .getByRole("button", { name: `${originalName} 팀 저장`, exact: true })
-        .click(),
+      general.getByRole("button", { name: "저장", exact: true }).click(),
     ]);
     await expect(
       page.getByText("팀 정보를 저장했습니다.", { exact: true }),
@@ -2426,6 +2408,7 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
     });
   }
   await open();
+  await page.getByRole("button", { name: "새 팀", exact: true }).click();
   const newName = "로즈 팀 " + randomUUID().slice(0, 6);
   await page.getByLabel("신규 팀 이름").fill(newName);
   await page
@@ -2433,9 +2416,7 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
     .getByRole("radio", { name: "로즈", exact: true })
     .check();
   await page.getByRole("button", { name: "팀 추가", exact: true }).click();
-  await expect(
-    page.getByLabel(`${newName} 팀 이름`, { exact: true }),
-  ).toBeVisible();
+  await expect(page.locator(".settings-team-header h3")).toHaveText(newName);
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   const otherId = await page
     .getByLabel("팀 선택")
@@ -2488,7 +2469,7 @@ test("숨김 행을 제외한 범위 서식과 개인 숨김 복원", async ({ p
     hidden = page.locator(`[data-cell="${taskIds[1]}:title"]`),
     last = page.locator(`[data-cell="${taskIds[2]}:title"]`);
   await hidden.click();
-  await page.getByRole("button", { name: "선택 행 숨기기" }).click();
+  await hideSelectedRows(page);
   await expect(hidden).toHaveCount(0);
   await first.click();
   await last.click({ modifiers: ["Shift"] });
@@ -2511,7 +2492,10 @@ test("숨김 행을 제외한 범위 서식과 개인 숨김 복원", async ({ p
     .toBe(1);
   await page.reload();
   await expect(hidden).toHaveCount(0);
-  await page.getByRole("button", { name: "숨김 해제", exact: true }).click();
+  await page
+    .getByRole("button", { name: "2행 숨김 해제", exact: true })
+    .first()
+    .click();
   await expect(hidden).toHaveText("숨길 업무");
 });
 test("월 기간 필터·키보드 편집 및 수식 문자열 입력", async ({ page }) => {
@@ -2602,10 +2586,8 @@ test("기본 서식의 셀 높이 세 단계와 촘촘한 편집 높이를 저�
 test("빈 프로젝트 셀은 안내 문구 없이 더블클릭하고 지정한 칩은 한 번 클릭한다", async ({
   page,
 }) => {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.getByRole("button", { name: "속성 추가", exact: true }).click();
   await page.getByLabel("속성 이름", { exact: true }).fill("프로젝트");
   await page.getByRole("button", { name: "값 추가", exact: true }).click();
@@ -2744,7 +2726,7 @@ test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여�
     hidden = page.locator(`[data-cell="${taskIds[1]}:title"]`),
     last = page.locator(`[data-cell="${taskIds[2]}:title"]`);
   await hidden.click();
-  await page.getByRole("button", { name: "선택 행 숨기기" }).click();
+  await hideSelectedRows(page);
   await first.click();
   await page.getByRole("grid").evaluate((el) => {
     const event = new Event("paste", { bubbles: true, cancelable: true });
@@ -3310,167 +3292,246 @@ test("컬럼 클릭은 열을 선택하고 우클릭 메뉴에서 정렬·해제
   await expect(titles).toHaveText(["셋째 업무", "숨길 업무", "첫 업무"]);
 });
 
-test("팀원 목록을 전체·팀별로 필터링하고 복수 배속과 빈 팀을 표시한다", async ({
+test("사용자 계정은 팀별 권한을 보여 주고 검색과 팀 구성원 이동을 제공한다", async ({
   page,
 }, info) => {
   const suffix = randomUUID().slice(0, 6);
   const secondTeam = await post(page, "/admin/teams", {
     name: `협업 ${suffix}`,
-    memberIds: [],
-  });
-  const emptyTeam = await post(page, "/admin/teams", {
-    name: `신규 ${suffix}`,
-    memberIds: [],
   });
   const usernames = [
-    `single-${suffix}`,
-    `shared-${suffix}`,
-    `unassigned-${suffix}`,
+    `single-${suffix}@example.com`,
+    `shared-${suffix}@example.com`,
+    `unassigned-${suffix}@example.com`,
   ];
-  for (const [i, teams] of [[teamId], [teamId, secondTeam.id], []].entries()) {
+  const memberships = [
+    [{ teamId, role: "member" }],
+    [
+      { teamId, role: "member" },
+      { teamId: secondTeam.id, role: "lead" },
+    ],
+    [],
+  ];
+  for (const [i, username] of usernames.entries())
     await post(page, "/admin/users", {
       name: ["기획 담당", "협업 담당", "배속 대기"][i],
-      username: usernames[i],
+      username,
       password: "new-member-password",
-      role: "member",
       active: true,
-      teamIds: teams,
+      memberships: memberships[i],
     });
-  }
   const adminData = await (await page.request.get("/api/admin/users")).json();
   const firstName = adminData.teams.find((t: any) => t.id === teamId).name;
-  const secondName = adminData.teams.find(
-    (t: any) => t.id === secondTeam.id,
-  ).name;
-  const emptyName = adminData.teams.find(
-    (t: any) => t.id === emptyTeam.id,
-  ).name;
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "팀원 관리", exact: true }).click();
-  const filters = page.getByRole("group", { name: "팀원 소속 팀 필터" });
+  const secondName = `협업 ${suffix}`;
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("button", { name: "사용자 계정", exact: true }).click();
   const rows = page.locator(".members-table tbody tr");
   const sharedRow = rows.filter({ hasText: usernames[1] });
-  await expect(
-    filters.getByRole("button", { name: "전체", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   for (const username of usernames)
     await expect(rows.filter({ hasText: username })).toBeVisible();
-  await filters.getByRole("button", { name: firstName, exact: true }).click();
-  await expect(rows).toHaveCount(
-    adminData.users.filter((u: any) => u.teamIds.includes(teamId)).length,
-  );
-  await expect(rows.filter({ hasText: usernames[0] })).toBeVisible();
-  await expect(sharedRow).toBeVisible();
-  await expect(rows.filter({ hasText: usernames[2] })).toHaveCount(0);
-  await filters.getByRole("button", { name: secondName, exact: true }).click();
-  await expect(rows).toHaveCount(1);
+  // 같은 사람이 팀마다 다른 팀 내 권한을 가진다.
   await expect(sharedRow.locator(".team-chips .tag")).toHaveCount(2);
-  await expect(sharedRow).toContainText(firstName);
-  await expect(sharedRow).toContainText(secondName);
-  await sharedRow.getByRole("button", { name: "협업 담당 팀원 수정" }).click();
-  const form = page.locator(".admin-edit");
-  await expect(
-    form.getByRole("checkbox", { name: firstName, exact: true }),
-  ).toBeChecked();
-  await expect(
-    form.getByRole("checkbox", { name: secondName, exact: true }),
-  ).toBeChecked();
-  await form
-    .getByRole("combobox", { name: "역할", exact: true })
-    .selectOption("viewer");
-  await form.getByRole("combobox", { name: "역할", exact: true }).focus();
+  await expect(sharedRow).toContainText(`${firstName} · 팀원`);
+  await expect(sharedRow).toContainText(`${secondName} · 팀장`);
+  await expect(rows.filter({ hasText: usernames[2] })).toContainText(
+    "소속 없음",
+  );
+  await page.getByLabel("사용자 검색").fill(`shared-${suffix}@example.com`);
+  await expect(rows).toHaveCount(1);
   await page.screenshot({
-    path: info.outputPath("member-role-select.png"),
+    path: info.outputPath("user-accounts.png"),
     fullPage: true,
   });
-  await form.getByRole("button", { name: "팀원 저장", exact: true }).click();
-  await expect(form).toHaveCount(0);
-  await expect(
-    filters.getByRole("button", { name: secondName, exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(sharedRow).toContainText("열람자");
-  await page.screenshot({
-    path: info.outputPath("member-team-filters.png"),
-    fullPage: true,
-  });
-  await filters.getByRole("button", { name: emptyName, exact: true }).click();
-  await expect(
-    page.getByText("이 팀에 배속된 팀원이 없습니다.", { exact: true }),
-  ).toBeVisible();
-  await expect(rows.locator(".member-identity")).toHaveCount(0);
-  await filters.getByRole("button", { name: "전체", exact: true }).click();
+  await page.getByLabel("사용자 검색").fill("");
   await expect(rows).toHaveCount(adminData.users.length);
-  for (const username of usernames)
-    await expect(rows.filter({ hasText: username })).toBeVisible();
+  // 수정 폼은 누른 사용자 바로 아래에 열리고, 같은 버튼으로 닫는다.
+  const editButton = sharedRow.getByRole("button", {
+    name: "협업 담당 사용자 수정",
+    exact: true,
+  });
+  await editButton.click();
+  await expect(editButton).toHaveAttribute("aria-expanded", "true");
+  await expect(editButton).toHaveText("닫기");
+  const editRow = sharedRow.locator("+ tr.user-edit-row");
+  await expect(editRow.getByLabel("이름", { exact: true })).toBeFocused();
+  await expect(editRow.getByLabel("이름", { exact: true })).toHaveValue(
+    "협업 담당",
+  );
+  await expect(page.locator(".admin-edit")).toHaveCount(1);
+  const activeSwitch = editRow.getByRole("switch", {
+    name: "계정 활성화",
+    exact: true,
+  });
+  await expect(activeSwitch).toBeChecked();
+  await activeSwitch.uncheck({ force: true });
+  await expect(editRow.locator(".switch-field")).toContainText("비활성");
+  await expect(editRow.locator(".switch-warning")).toBeVisible();
+  await editButton.click();
+  await expect(page.locator(".admin-edit")).toHaveCount(0);
+  await sharedRow
+    .getByRole("button", { name: `${secondName} · 팀장`, exact: true })
+    .click();
+  await expect(page.locator(".settings-team-header h3")).toHaveText(secondName);
+  await expect(
+    page.getByRole("tab", { name: "구성원", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("combobox", { name: "협업 담당 팀 내 권한", exact: true }),
+  ).toHaveValue("lead");
 });
 
-test("팀 관리와 팀원 관리 탭에서 이름 변경·신규 팀·복수 배속을 연결한다", async ({
+test("팀 구성원 탭에서 사용자를 추가하고 팀마다 다른 권한을 지정한다", async ({
   page,
 }, info) => {
   const suffix = randomUUID().slice(0, 6),
-    username = `member-${suffix}`,
+    username = `member-${suffix}@example.com`,
     newName = `협업 ${suffix}`,
     renamed = `이름 변경 ${suffix}`;
   const original = (
     await (await page.request.get("/api/admin/users")).json()
   ).teams.find((t: any) => t.id === teamId).name;
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const nav = page.getByRole("navigation", { name: "설정 메뉴" });
+  await expect(nav.getByRole("button", { name: original })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await expect(
-    page.getByRole("tab", { name: "팀 관리", exact: true }),
+    page.getByRole("tab", { name: "일반", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "팀원 관리", exact: true }).click();
-  await page.getByRole("button", { name: "팀원 추가", exact: true }).click();
+  // 계정은 시스템 › 사용자 계정에서 만들고, 팀 소속은 각 팀에서 정한다.
+  await nav.getByRole("button", { name: "사용자 계정", exact: true }).click();
+  await page.getByRole("button", { name: "사용자 추가", exact: true }).click();
   const form = page.locator(".admin-edit");
   await form.getByLabel("이름", { exact: true }).fill("배속 검증");
-  await form.getByLabel("아이디", { exact: true }).fill(username);
+  await form.getByLabel("아이디(이메일)", { exact: true }).fill(username);
   await form.getByLabel("초기 비밀번호").fill("new-member-password");
-  await form.getByRole("button", { name: "팀원 저장", exact: true }).click();
+  await form.getByRole("button", { name: "사용자 저장", exact: true }).click();
   const memberRow = page
     .locator(".members-table tbody tr")
     .filter({ hasText: username });
-  await expect(memberRow).toContainText("미배속");
-  await page.getByRole("tab", { name: "팀 관리", exact: true }).click();
+  await expect(memberRow).toContainText("소속 없음");
+  await nav.getByRole("button", { name: "새 팀", exact: true }).click();
   await page.getByLabel("신규 팀 이름").fill(newName);
   await page.getByRole("button", { name: "팀 추가", exact: true }).click();
+  await expect(page.locator(".settings-team-header h3")).toHaveText(newName);
+  const addMember = async (role: string) => {
+    await page
+      .getByLabel("추가할 사용자", { exact: true })
+      .selectOption({ label: `배속 검증 (${username})` });
+    await page
+      .getByLabel("추가할 사용자의 팀 내 권한", { exact: true })
+      .selectOption(role);
+    await page.getByRole("button", { name: "추가", exact: true }).click();
+  };
+  const roleSelect = page.getByRole("combobox", {
+    name: "배속 검증 팀 내 권한",
+    exact: true,
+  });
+  await addMember("lead");
+  await expect(roleSelect).toHaveValue("lead");
+  await nav.getByRole("button", { name: original }).click();
+  // 팀을 바꿔도 같은 탭(구성원)을 유지한다.
   await expect(
-    page.getByLabel(`${newName} 팀 이름`, { exact: true }),
+    page.getByRole("tab", { name: "구성원", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await addMember("viewer");
+  await expect(roleSelect).toHaveValue("viewer");
+  await roleSelect.selectOption("member");
+  await expect(
+    page.getByText("배속 검증님의 권한을 팀원(으)로 변경했습니다.", {
+      exact: true,
+    }),
   ).toBeVisible();
-  for (const name of [original, newName]) {
-    const row = page
-      .locator(".team-table tbody tr")
-      .filter({ has: page.getByLabel(`${name} 팀 이름`, { exact: true }) });
-    if (name === original)
-      await row.getByLabel(`${name} 팀 이름`, { exact: true }).fill(renamed);
-    await row.locator("summary").click();
-    await row.getByRole("checkbox", { name: new RegExp(username) }).check();
-    await row
-      .getByRole("button", { name: `${name} 팀 저장`, exact: true })
-      .click();
-    await expect(
-      page.getByText("팀 정보를 저장했습니다.", { exact: true }),
-    ).toBeVisible();
-  }
-  await page.getByRole("tab", { name: "팀원 관리", exact: true }).click();
-  await expect(memberRow).toContainText(renamed);
-  await expect(memberRow).toContainText(newName);
-  await expect(memberRow.locator(".team-chips .tag")).toHaveCount(2);
   await page.screenshot({
-    path: info.outputPath("member-management.png"),
+    path: info.outputPath("team-members.png"),
     fullPage: true,
   });
+  await page.getByRole("tab", { name: "일반", exact: true }).click();
+  await page.getByLabel("팀 이름", { exact: true }).fill(renamed);
+  await page
+    .getByRole("tabpanel")
+    .getByRole("button", { name: "저장", exact: true })
+    .click();
+  await expect(
+    page.getByText("팀 정보를 저장했습니다.", { exact: true }),
+  ).toBeVisible();
+  await expect(nav.getByRole("button", { name: renamed })).toBeVisible();
+  await nav.getByRole("button", { name: "사용자 계정", exact: true }).click();
+  await expect(memberRow).toContainText(`${renamed} · 팀원`);
+  await expect(memberRow).toContainText(`${newName} · 팀장`);
+  await memberRow
+    .getByRole("button", { name: `${newName} · 팀장`, exact: true })
+    .click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "배속 검증 팀에서 제외", exact: true })
+    .click();
+  await expect(roleSelect).toHaveCount(0);
+  const users = (await (await page.request.get("/api/admin/users")).json())
+    .users;
+  expect(users.find((u: any) => u.username === username).teamRoles).toEqual({
+    [teamId]: "member",
+  });
+});
+
+test("팀장은 자기 팀만 설정하고 시스템 메뉴 없이 기존 사용자를 추가한다", async ({
+  page,
+}) => {
+  const suffix = randomUUID().slice(0, 6);
+  const ledTeam = await post(page, "/admin/teams", {
+    name: `팀장 팀 ${suffix}`,
+  });
+  const account = {
+    username: `lead-${suffix}@example.com`,
+    password: "lead-test-password",
+  };
+  await post(page, "/admin/users", {
+    ...account,
+    name: `팀장 ${suffix}`,
+    active: true,
+    memberships: [
+      { teamId: ledTeam.id, role: "lead" },
+      { teamId, role: "member" },
+    ],
+  });
+  await post(page, "/admin/users", {
+    username: `peer-${suffix}@example.com`,
+    password: "peer-test-password",
+    name: `동료 ${suffix}`,
+    active: true,
+  });
+  await post(page, "/auth/login", account);
+  await page.reload();
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  // 팀원인 팀을 보고 있어도 팀장인 팀이 있으면 설정을 열 수 있다.
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const nav = page.getByRole("navigation", { name: "설정 메뉴" });
+  await expect(nav.getByRole("listitem")).toHaveCount(1);
+  await expect(
+    nav.getByRole("button", { name: `팀장 팀 ${suffix}` }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(nav.getByRole("button", { name: "사용자 계정" })).toHaveCount(0);
+  await expect(nav.getByRole("button", { name: "새 팀" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "팀 삭제" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "구성원", exact: true }).click();
+  await page
+    .getByLabel("추가할 사용자", { exact: true })
+    .selectOption({ label: `동료 ${suffix} (peer-${suffix}@example.com)` });
+  await page.getByRole("button", { name: "추가", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", {
+      name: `동료 ${suffix} 팀 내 권한`,
+      exact: true,
+    }),
+  ).toHaveValue("member");
 });
 
 test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속성으로 묶어 본다", async ({
   page,
 }, info) => {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.getByRole("button", { name: "속성 추가", exact: true }).click();
   await expect(page.getByLabel("속성 이름", { exact: true })).toBeFocused();
   await expect(page.getByLabel("속성 이름", { exact: true })).toHaveValue("");
@@ -3551,10 +3612,8 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
     "첫 업무",
     "셋째 업무",
   ]);
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page
     .locator(".property-select")
     .filter({ hasText: "프로젝트" })
@@ -3697,9 +3756,7 @@ test("모든 셀과 날짜 셀은 편집·넘침·밀도에 관계없이 좌우 
 test("6pt와 새 글꼴을 기본 서식·복사·외부 HTML 붙여넣기에 유지한다", async ({
   page,
 }, info) => {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "기본 서식", exact: true }).click();
   await selectDefaultFormat(page, "글꼴", "Pretendard");
   await selectDefaultFormat(page, "글자 크기", "6");
@@ -4216,9 +4273,7 @@ test("번호 열을 드래그해 순서를 저장하고 묶음 경계 이동은 
 test("기본 서식 탭의 설정은 새 업무에 적용하고 줄바꿈 내용은 첫 줄부터 보인다", async ({
   page,
 }, info) => {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "기본 서식", exact: true }).click();
   await selectDefaultFormat(page, "글꼴", "Nanum Gothic Coding");
   await selectDefaultFormat(page, "글자 크기", "16");
@@ -4784,7 +4839,7 @@ test("셀 범위를 복사하면 빈 값·줄바꿈·서식이 함께 이동하�
   });
 });
 
-test("복사 버튼의 HTML도 서식을 유지하고 일반 텍스트는 대상 서식을 보존한다", async ({
+test("복사한 HTML은 서식을 유지하고 일반 텍스트는 대상 서식을 보존한다", async ({
   page,
 }) => {
   const source = page.locator(`[data-cell="${taskIds[0]}:title"]`),
@@ -4794,24 +4849,11 @@ test("복사 버튼의 HTML도 서식을 유지하고 일반 텍스트는 대상
   await expect(source).toHaveCSS("font-size", "24px");
   await page.getByLabel("배경색", { exact: true }).fill("#d1eee6");
   await expect(source).toHaveCSS("background-color", "rgb(209, 238, 230)");
-  await page.evaluate(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        write: async (items: ClipboardItem[]) => {
-          const data: Record<string, string> = {};
-          for (const type of items[0].types)
-            data[type] = await (await items[0].getType(type)).text();
-          (window as any).__testClipboard = data;
-        },
-      },
-    });
-  });
-  await page.getByRole("button", { name: "선택 셀 복사", exact: true }).click();
-  await expect(page.locator(".toast")).toContainText("내용과 서식");
-  const contents = await page.evaluate(
-    () => (window as any).__testClipboard as Record<string, string>,
-  );
+  const copied = await copyContents(page);
+  const contents = {
+    "text/html": copied["text/html"],
+    "text/plain": copied["text/plain"],
+  };
   expect(contents["text/html"]).toContain("font-size:18pt");
   await target.click();
   await pasteContents(page, contents);
@@ -4914,7 +4956,7 @@ test("상단은 한 줄이고 발표 모드에서 표만 표시한 뒤 필터·�
   await page.getByRole("button", { name: "굵게", exact: true }).click();
   await expect(first).toHaveCSS("font-weight", "700");
   await page.locator(`[data-cell="${taskIds[1]}:title"]`).click();
-  await page.getByRole("button", { name: "선택 행 숨기기" }).click();
+  await hideSelectedRows(page);
   await groupByColumn(page, "category");
   const grid = page.getByRole("grid");
   await grid.evaluate((el) => {
@@ -4985,10 +5027,8 @@ test("상단은 한 줄이고 발표 모드에서 표만 표시한 뒤 필터·�
 test("빈 속성·값에 바로 입력하고 15자 제한과 하단 속성 삭제 확인을 제공한다", async ({
   page,
 }, info) => {
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.getByRole("button", { name: "속성 추가", exact: true }).click();
   const name = page.getByLabel("속성 이름", { exact: true });
   await expect(name).toBeFocused();
@@ -5192,7 +5232,7 @@ test("전체 속성 검색은 포커스와 긴 입력 중에도 테두리 안에
           ? 0
           : parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
       const clear = el
-        .parentElement!.querySelector("button")!
+        .parentElement!.querySelector('[aria-label="검색 지우기"]')!
         .getBoundingClientRect();
       return (
         rect.left - ring >= outer.left - 2 &&
@@ -5303,9 +5343,14 @@ test("오버플로우는 빈 셀까지 표시하고 다음 값 앞에서 자르�
   );
   await selectFormat(mode, "overflow");
   await expect(title).toHaveAttribute("data-text-mode", "overflow");
-  await expect(
-    page.getByText("변경사항 저장됨", { exact: true }),
-  ).toBeVisible();
+  // 저장 상태 표시는 저장 중·실패일 때만 나타나므로 서버 값으로 저장을 확인한다.
+  await expect
+    .poll(async () => {
+      const r = await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`);
+      return (await r.json()).tasks.find((t: any) => t.id === taskIds[0]).cells
+        .title.style.textMode;
+    })
+    .toBe("overflow");
   await page.reload();
   await expect(title).toHaveText(text);
   await expect(title).toHaveAttribute("data-text-mode", "overflow");
@@ -5318,17 +5363,14 @@ test("속성 관리에서 모든 열·다섯 종류·표시 순서·삭제와 �
   test.setTimeout(60000);
   const boot = await (await page.request.get("/api/bootstrap")).json();
   const second = await post(page, "/admin/users", {
-    username: `property-${randomUUID().slice(0, 8)}`,
+    username: `property-${randomUUID().slice(0, 8)}@example.com`,
     name: "협업 팀원",
     password: "test-only-password",
-    role: "member",
     active: true,
-    teamIds: [teamId],
+    memberships: [{ teamId, role: "member" }],
   });
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   for (const name of [
     "작업",
     "설명",
@@ -5416,10 +5458,8 @@ test("속성 관리에서 모든 열·다섯 종류·표시 순서·삭제와 �
   await page.keyboard.press("Tab");
   await expect(c("검토 팀원").locator(".avatar")).toHaveCount(2);
   await expect(c("검토 팀원")).toContainText("협업 팀원");
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.getByLabel("메모 값 열 표시", { exact: true }).uncheck();
   await page
     .locator(".property-select")
@@ -5452,10 +5492,8 @@ test("속성 관리에서 모든 열·다섯 종류·표시 순서·삭제와 �
     path: info.outputPath("typed-property-cells.png"),
     fullPage: true,
   });
-  await page
-    .getByRole("button", { name: "팀과 계정 관리", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "속성 관리", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.getByLabel("메모 값 열 표시", { exact: true }).check();
   await page.getByText("보관된 속성", { exact: true }).click();
   await page.getByRole("button", { name: "진척률 복원", exact: true }).click();

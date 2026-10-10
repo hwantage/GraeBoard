@@ -80,11 +80,11 @@ node --env-file=.env scripts/restore.mjs backups/manual.sqlite data/restored.sql
 
 ```sh
 read -s GRAEBOARD_RESET_PASSWORD
-printf '%s' "$GRAEBOARD_RESET_PASSWORD" | npm run admin -- reset-password 사용자아이디
+printf '%s' "$GRAEBOARD_RESET_PASSWORD" | npm run admin -- reset-password 사용자이메일
 unset GRAEBOARD_RESET_PASSWORD
 ```
 
-비밀번호는 10~128자이며 재설정한 계정의 기존 세션을 해제합니다. `.env`를 쓰는 경우에는 파이프 오른쪽 명령을 `node --env-file=.env scripts/admin.mjs reset-password 사용자아이디`로 바꿉니다. 비밀번호를 명령 인자·스크립트·저장소에 넣지 마세요.
+비밀번호는 10~128자이며 재설정한 계정의 기존 세션을 해제합니다. `.env`를 쓰는 경우에는 파이프 오른쪽 명령을 `node --env-file=.env scripts/admin.mjs reset-password 사용자이메일`로 바꿉니다. 비밀번호를 명령 인자·스크립트·저장소에 넣지 마세요.
 
 ## 업데이트
 

@@ -1,4 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 
@@ -10,13 +17,15 @@ export default function FormatSelect({
   disabled,
   onSelect,
   className = "",
+  iconOnly = false,
 }: {
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; icon?: ReactNode }[];
   disabled?: boolean;
   onSelect: (value: string) => void;
   className?: string;
+  iconOnly?: boolean;
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -47,8 +56,11 @@ export default function FormatSelect({
     if (!open) return;
     function place() {
       const rect = trigger.current!.getBoundingClientRect();
-      const width = Math.min(Math.max(rect.width, 116), window.innerWidth - 16);
-      const height = Math.min(options.length * 34 + 12, 280);
+      const width = Math.min(
+        iconOnly ? options.length * 34 + 14 : Math.max(rect.width, 116),
+        window.innerWidth - 16,
+      );
+      const height = iconOnly ? 46 : Math.min(options.length * 34 + 12, 280);
       const below = window.innerHeight - rect.bottom - 12;
       const above = rect.top - 12;
       const upwards = below < height && above > below;
@@ -67,7 +79,7 @@ export default function FormatSelect({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open, options.length]);
+  }, [open, options.length, iconOnly]);
   useEffect(() => {
     if (!open) return;
     function dismiss(event: Event) {
@@ -97,10 +109,10 @@ export default function FormatSelect({
       <button
         ref={trigger}
         type="button"
-        className={`select-control format-select ${className}`.trim()}
+        className={`select-control format-select ${iconOnly ? "format-select-icons" : ""} ${className}`.trim()}
         role="combobox"
         aria-label={label}
-        title={label}
+        title={iconOnly ? `${label}: ${options[selected].label}` : label}
         aria-haspopup="listbox"
         aria-controls={open ? id : undefined}
         aria-expanded={open}
@@ -109,7 +121,15 @@ export default function FormatSelect({
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(e) => {
-          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+          if (
+            [
+              "ArrowDown",
+              "ArrowUp",
+              "Home",
+              "End",
+              ...(iconOnly ? ["ArrowLeft", "ArrowRight"] : []),
+            ].includes(e.key)
+          ) {
             e.preventDefault();
             if (!open) show();
             else
@@ -122,7 +142,10 @@ export default function FormatSelect({
                         0,
                         Math.min(
                           options.length - 1,
-                          current + (e.key === "ArrowDown" ? 1 : -1),
+                          current +
+                            (["ArrowDown", "ArrowRight"].includes(e.key)
+                              ? 1
+                              : -1),
                         ),
                       ),
               );
@@ -137,7 +160,7 @@ export default function FormatSelect({
           } else if (e.key === "Tab") setOpen(false);
         }}
       >
-        {options.find((o) => o.value === value)?.label || value}
+        {iconOnly ? options[selected].icon : options[selected].label}
       </button>
       {open &&
         createPortal(
@@ -146,7 +169,8 @@ export default function FormatSelect({
             id={id}
             role="listbox"
             aria-label={label}
-            className="cell-option-popup format-select-popup"
+            aria-orientation={iconOnly ? "horizontal" : "vertical"}
+            className={`cell-option-popup format-select-popup ${iconOnly ? "format-icon-popup" : ""}`}
             style={position}
           >
             {options.map((option, index) => (
@@ -158,12 +182,14 @@ export default function FormatSelect({
                 tabIndex={-1}
                 className={`cell-option ${index === active ? "format-option-active" : ""}`}
                 aria-selected={value === option.value}
+                aria-label={option.label}
+                title={option.label}
                 data-value={option.value}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(index)}
               >
-                <span>{option.label}</span>
-                {value === option.value && <Check size={14} />}
+                {iconOnly ? option.icon : <span>{option.label}</span>}
+                {!iconOnly && value === option.value && <Check size={14} />}
               </button>
             ))}
           </div>,

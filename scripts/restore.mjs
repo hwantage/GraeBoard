@@ -19,7 +19,7 @@ export function restoreDatabase(backup, destination) {
   try {
     if (
       source.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      ![1, 2, 3].includes(
+      ![1, 2, 3, 4].includes(
         source.prepare("PRAGMA user_version").get().user_version,
       )
     )

@@ -706,7 +706,7 @@ export function installTransferRoutes(
         .send("\uFEFF" + rows.map((r) => r.map(quote).join(",")).join("\r\n"));
     }
     const reports =
-      manager(req.user) && d.scope === "all"
+      manager(req.user, d.teamId) && d.scope === "all"
         ? db
             .prepare(
               "SELECT name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
@@ -747,7 +747,11 @@ export function installTransferRoutes(
     const teamId = z.string().uuid().parse(req.body.teamId),
       year = yearSchema.parse(req.body.year);
     teamAccess(req.user, teamId);
-    requireThat(manager(req.user), 403, "관리자만 자료를 가져올 수 있습니다.");
+    requireThat(
+      manager(req.user, teamId),
+      403,
+      "팀장만 자료를 가져올 수 있습니다.",
+    );
     requireThat(req.file, 400, "가져올 XLSX 파일을 선택하세요.");
     requireThat(
       req.file.originalname.toLowerCase().endsWith(".xlsx"),
@@ -841,7 +845,7 @@ export function installTransferRoutes(
       .get(req.params.id);
     requireThat(imp, 404, "이관 기록을 찾을 수 없습니다.");
     teamAccess(req.user, imp.team_id);
-    requireThat(manager(req.user), 403, "관리자 권한이 필요합니다.");
+    requireThat(manager(req.user, imp.team_id), 403, "팀장 권한이 필요합니다.");
     res
       .attachment("import-exceptions.json")
       .type("application/json")
@@ -872,7 +876,7 @@ export function installTransferRoutes(
       .get(req.params.id);
     requireThat(imp, 404, "이관 미리보기를 찾을 수 없습니다.");
     const team = teamAccess(req.user, imp.team_id);
-    requireThat(manager(req.user), 403, "관리자 권한이 필요합니다.");
+    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
     const opKey = stableId(`${imp.id}:${d.sheet}:${d.mode}:${d.year}`),
       old = db.prepare("SELECT response FROM operations WHERE id=?").get(opKey);
     if (old) return res.json({ ...parse(old.response), repeated: true });
