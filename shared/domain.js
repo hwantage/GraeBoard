@@ -68,13 +68,15 @@ export const DEFAULT_VISIBLE_FIELDS = ["title", "owner", "status"];
 export function dateKey(d) {
   return d.toISOString().slice(0, 10);
 }
+// Intl.DateTimeFormat 생성 비용이 커서 렌더마다 만들지 않도록 한 번만 만든다.
+const seoulDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 export function todayKey() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  return seoulDate.format(new Date());
 }
 export function mondayOf(date) {
   const d = new Date(

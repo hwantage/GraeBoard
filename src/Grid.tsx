@@ -1,5 +1,7 @@
 import {
   Fragment,
+  memo,
+  useCallback,
   useLayoutEffect,
   useEffect,
   useState,
@@ -154,7 +156,7 @@ export default function Grid({
   tasks,
   allTasks,
   sourceTasks,
-  columns,
+  columns: baseColumns,
   columnOrder,
   view,
   user,
@@ -211,6 +213,26 @@ export default function Grid({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const appliedJump = useRef<number | null>(null);
+  // 크기 조절 드래그 중에는 표만 미리 바꾸고, 놓을 때 한 번 보기 설정에 저장한다.
+  const [columnResize, setColumnResize] = useState<{
+    key: string;
+    width: number;
+  } | null>(null);
+  const [rowResize, setRowResize] = useState<{
+    taskId: string;
+    height: number;
+  } | null>(null);
+  const columns = useMemo(
+    () =>
+      columnResize
+        ? baseColumns.map((c) =>
+            c.key === columnResize.key
+              ? { ...c, width: columnResize.width }
+              : c,
+          )
+        : baseColumns,
+    [baseColumns, columnResize],
+  );
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const rowDragPointer = useRef({ x: 0, y: 0 });
   const rowDragPreview = useRef<HTMLDivElement>(null);
@@ -260,13 +282,16 @@ export default function Grid({
     ROW_HEADER_WIDTH,
     30 + String(allTasks.length).length * 6,
   );
-  let offset = rowHeaderWidth;
-  const positions = columns.map((c) => {
-    const p = offset;
-    offset += c.width;
-    return p;
-  });
-  const totalWidth = offset;
+  const { positions, totalWidth } = useMemo(() => {
+    let left = rowHeaderWidth;
+    const positions = columns.map((c) => {
+      const p = left;
+      left += c.width;
+      return p;
+    });
+    return { positions, totalWidth: left };
+  }, [columns, rowHeaderWidth]);
+  const offset = totalWidth;
   function revealColumns(hidden: ColumnReference[]) {
     const keys = new Set(hidden.map((c) => c.key));
     onView({
@@ -314,12 +339,23 @@ export default function Grid({
       </div>
     );
   }
-  const range = rangeOf(selection, tasks, columns);
+  const range = useMemo(
+    () => rangeOf(selection, tasks, columns),
+    [selection, tasks, columns],
+  );
   const ranges = useMemo(
     () => rangesOf(selection, tasks, columns),
     [selection, tasks, columns],
   );
-  const weekKeys = columns.filter((c) => c.month).map((c) => c.key);
+  // 열 너비만 바뀔 때는 같은 배열을 유지해 셀이 다시 그려지지 않게 한다.
+  const weekKeySignature = columns
+    .filter((c) => c.month)
+    .map((c) => c.key)
+    .join(" ");
+  const weekKeys = useMemo(
+    () => (weekKeySignature ? weekKeySignature.split(" ") : []),
+    [weekKeySignature],
+  );
   const rowMarkers = useMemo(() => {
     type Gap = { ids: string[]; start: number; end: number };
     const map = new Map<
@@ -348,8 +384,11 @@ export default function Grid({
     const reveal = new Set(ids);
     onView({ hiddenRows: view.hiddenRows.filter((id) => !reveal.has(id)) });
   }
-  const properties = propertiesFor(settings) as Property[];
-  const propertyFilters = propertyFiltersFor(view);
+  const properties = useMemo(
+    () => propertiesFor(settings) as Property[],
+    [settings],
+  );
+  const propertyFilters = useMemo(() => propertyFiltersFor(view), [view]);
   const group = properties.find((p) => p.id === view.groupBy);
   const groupKey = group?.id || "";
   const sorted = !!view.sortKey && view.sortDirection !== "default";
@@ -525,56 +564,87 @@ export default function Grid({
     window.addEventListener("blur", cancel);
     frame = requestAnimationFrame(scroll);
   }
-  const groupHeight = (i: number) =>
-    !!group &&
-    (i === 0 ||
-      groupValue(tasks[i], groupKey) !== groupValue(tasks[i - 1], groupKey))
-      ? 28
-      : 0;
-  const groupCounts = new Map<string, number>();
-  if (group)
-    for (const t of tasks) {
-      const key = groupValue(t, groupKey);
-      groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
-    }
-  const rowHeight = (i: number) => {
-    const height = Math.max(
-      view.density === "comfortable" ? 48 : 38,
-      ...Object.values(tasks[i].cells).map((c) =>
-        Math.ceil(
-          (c.style.fontSize || tasks[i].defaultStyle?.fontSize || 9) *
-            (4 / 3) *
-            1.55 +
-            16,
-        ),
+  const groupHeights = useMemo(
+    () =>
+      tasks.map((t, i) =>
+        !!group &&
+        (i === 0 ||
+          groupValue(t, groupKey) !== groupValue(tasks[i - 1], groupKey))
+          ? 28
+          : 0,
       ),
-    );
-    return (
-      groupHeight(i) +
-      (view.rowHeights[tasks[i].id] ||
-        (view.density === "dense"
-          ? Math.max(26, Math.round((height * 2) / 3))
-          : height))
-    );
-  };
+    [tasks, group, groupKey],
+  );
+  const groupHeight = (i: number) => groupHeights[i] || 0;
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (group)
+      for (const t of tasks) {
+        const key = groupValue(t, groupKey);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    return counts;
+  }, [tasks, group, groupKey]);
+  // 셀 글자 크기에 맞춘 행 높이. 렌더·스크롤마다 전체 업무를 다시 계산하지 않도록
+  // 업무 목록이나 높이 설정이 바뀔 때만 구한다.
+  const contentHeights = useMemo(
+    () =>
+      tasks.map((task) => {
+        const fitted = Math.max(
+          view.density === "comfortable" ? 48 : 38,
+          ...Object.values(task.cells).map((c) =>
+            Math.ceil(
+              (c.style.fontSize || task.defaultStyle?.fontSize || 9) *
+                (4 / 3) *
+                1.55 +
+                16,
+            ),
+          ),
+        );
+        return (
+          view.rowHeights[task.id] ||
+          (view.density === "dense"
+            ? Math.max(26, Math.round((fitted * 2) / 3))
+            : fitted)
+        );
+      }),
+    [tasks, view.density, view.rowHeights],
+  );
+  const estimateSize = useCallback(
+    (i: number) =>
+      groupHeights[i] +
+      (rowResize?.taskId === tasks[i].id
+        ? rowResize.height
+        : contentHeights[i]),
+    [tasks, groupHeights, contentHeights, rowResize],
+  );
+  // 함수가 렌더마다 바뀌면 가상 스크롤이 모든 행의 위치를 다시 계산한다.
+  const getItemKey = useCallback((i: number) => tasks[i].id, [tasks]);
+  const editingIndex = useMemo(
+    () => (editor ? tasks.findIndex((t) => t.id === editor.point.taskId) : -1),
+    [tasks, editor?.point.taskId],
+  );
+  const rangeExtractor = useCallback(
+    (range: Parameters<typeof defaultRangeExtractor>[0]) => {
+      const indices = defaultRangeExtractor(range);
+      return editingIndex >= 0
+        ? [...new Set([...indices, editingIndex])].sort((a, b) => a - b)
+        : indices;
+    },
+    [editingIndex],
+  );
   const virtual = useVirtualizer({
     count: tasks.length,
     getScrollElement: () => ref.current,
-    estimateSize: rowHeight,
-    overscan: 8,
-    getItemKey: (i) => tasks[i].id,
+    estimateSize,
+    overscan: 12,
+    getItemKey,
     scrollMargin: 32,
-    rangeExtractor: (range) => {
-      const indices = defaultRangeExtractor(range);
-      const active = tasks.findIndex((t) => t.id === editor?.point.taskId);
-      return active >= 0
-        ? [...new Set([...indices, active])].sort((a, b) => a - b)
-        : indices;
-    },
+    rangeExtractor,
   });
   useLayoutEffect(() => {
     virtual.measure();
-  }, [view.rowHeights, view.density, view.groupBy, tasks]);
+  }, [estimateSize]);
   useLayoutEffect(() => {
     if (jump && ref.current && appliedJump.current !== jump.id) {
       if (jump.key === null) {
@@ -996,27 +1066,122 @@ export default function Grid({
       onEdit(selection.focus, e.key);
     }
   }
-  function resize(
-    e: React.PointerEvent,
-    start: number,
-    commit: (n: number) => void,
-    min = 45,
-    max = 850,
-  ) {
+  function startColumnResize(e: React.PointerEvent, column: Column) {
     e.preventDefault();
     e.stopPropagation();
     dragOrigin.current = null;
-    const origin = e.clientX;
+    const origin = e.clientX,
+      start = column.width,
+      min = column.month ? 40 : 45;
+    let width = start;
     const handle = (ev: PointerEvent) => {
-      commit(Math.min(max, Math.max(min, start + ev.clientX - origin)));
+      width = Math.min(850, Math.max(min, start + ev.clientX - origin));
+      setColumnResize({ key: column.key, width });
     };
     const stop = () => {
       window.removeEventListener("pointermove", handle);
       window.removeEventListener("pointerup", stop);
+      setColumnResize(null);
+      if (width !== start)
+        onView({ widths: { ...view.widths, [column.key]: width } });
     };
     window.addEventListener("pointermove", handle);
     window.addEventListener("pointerup", stop, { once: true });
   }
+  function startRowResize(e: React.PointerEvent, task: Task, index: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragOrigin.current = null;
+    const y = e.clientY,
+      start = contentHeights[index];
+    let height = start;
+    const drag = (ev: PointerEvent) => {
+      height = Math.min(500, Math.max(26, start + ev.clientY - y));
+      setRowResize({ taskId: task.id, height });
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", drag);
+      window.removeEventListener("pointerup", stop);
+      setRowResize(null);
+      if (height !== start)
+        onView({ rowHeights: { ...view.rowHeights, [task.id]: height } });
+    };
+    window.addEventListener("pointermove", drag);
+    window.addEventListener("pointerup", stop, { once: true });
+  }
+  function keyboardMoveRow(e: KeyboardEvent, task: Task) {
+    if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const moving = rowsToMove(task);
+    if (!canMoveRows(moving)) return;
+    const movingIds = new Set(moving.map((t) => t.id));
+    const same = tasks.filter(
+      (t) =>
+        !groupKey || groupValue(t, groupKey) === groupValue(task, groupKey),
+    );
+    const direction = e.key === "ArrowUp" ? -1 : 1;
+    const index =
+      direction < 0
+        ? same.findIndex((t) => movingIds.has(t.id))
+        : same.findLastIndex((t) => movingIds.has(t.id));
+    const neighbor = same[index + direction];
+    if (neighbor)
+      moveRows(moving, neighbor.id, direction < 0 ? "before" : "after");
+  }
+  // 행은 메모된 컴포넌트라 이벤트 처리기를 항상 같은 객체로 넘기고,
+  // 실제 동작은 마지막 렌더의 함수를 호출한다.
+  const handlers: GridActions = {
+    cellPointerDown(e, point) {
+      if (e.button !== 0) return;
+      dragOrigin.current = { x: e.clientX, y: e.clientY };
+      e.preventDefault();
+      pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
+    },
+    dragSelect(e, point) {
+      const start = dragOrigin.current;
+      if (
+        e.buttons !== 1 ||
+        !selection ||
+        !start ||
+        Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 3 ||
+        (selection.focus.taskId === point.taskId &&
+          selection.focus.key === point.key)
+      )
+        return;
+      onSelect({ ...selection, focus: point });
+    },
+    edit: (point) => onEdit(point),
+    rowMenu: (task) => onRowMenu(task),
+    finish,
+    cancelEdit() {
+      onCancelEdit();
+      ref.current?.focus();
+    },
+    startRowDrag,
+    keyboardMoveRow,
+    startHeaderSelection,
+    selectHeader,
+    openHeaderMenu,
+    showHeaderMenu,
+    startRowResize,
+    revealRows,
+  };
+  const live = useRef(handlers);
+  live.current = handlers;
+  const [actions] = useState(
+    () =>
+      new Proxy({} as GridActions, {
+        get:
+          (_, key) =>
+          (...args: unknown[]) =>
+            (
+              live.current[key as keyof GridActions] as (
+                ...a: unknown[]
+              ) => unknown
+            )(...args),
+      }),
+  );
   return (
     <div
       className="grid-area"
@@ -1184,15 +1349,7 @@ export default function Grid({
                     className="column-resizer"
                     role="separator"
                     aria-label={`${c.label} 너비 조절`}
-                    onPointerDown={(e) =>
-                      resize(
-                        e,
-                        c.width,
-                        (w) =>
-                          onView({ widths: { ...view.widths, [c.key]: w } }),
-                        c.month ? 40 : 45,
-                      )
-                    }
+                    onPointerDown={(e) => startColumnResize(e, c)}
                   />
                 )}
               </div>
@@ -1208,6 +1365,15 @@ export default function Grid({
             const task = tasks[row.index];
             const marker = rowMarkers.get(task.id);
             const rowNumber = marker?.number || row.index + 1;
+            const rowGroupHeight = groupHeight(row.index);
+            // 행마다 바뀐 선택만 문자열로 넘겨 선택과 무관한 행은 다시 그리지 않는다.
+            let spans = "",
+              rowSelected = false;
+            for (const r of ranges)
+              if (row.index >= r.r1 && row.index <= r.r2) {
+                spans += `${r.c1}-${r.c2},`;
+                if (r.kind === "rows") rowSelected = true;
+              }
             return (
               <div
                 key={task.id}
@@ -1217,416 +1383,47 @@ export default function Grid({
                 className={`sheet-row ${draggedIds.has(task.id) ? "row-dragging" : ""} ${rowDrag?.targetId === task.id ? (rowDrag.valid ? `row-drop-${rowDrag.placement}` : "row-drop-invalid") : ""}`}
                 style={
                   {
-                    "--row-group-height": `${groupHeight(row.index)}px`,
+                    "--row-group-height": `${rowGroupHeight}px`,
                     height: row.size,
-                    paddingTop: groupHeight(row.index),
+                    paddingTop: rowGroupHeight,
                     width: totalWidth,
                     transform: `translateY(${row.start - virtual.options.scrollMargin}px)`,
                   } as CSSProperties
                 }
               >
-                {!!groupHeight(row.index) && (
-                  <div className="group-heading" role="presentation">
-                    <span>
-                      {group && value(task, groupKey) ? (
-                        group.kind === "option" ? (
-                          <PropertyBadge
-                            property={group}
-                            value={groupValue(task, groupKey)}
-                          />
-                        ) : (
-                          displayValue(task, groupKey, users, settings)
-                        )
-                      ) : (
-                        `${group?.name || "속성"} 미지정`
-                      )}{" "}
-                      <small>
-                        {groupCounts.get(groupValue(task, groupKey))}개 업무
-                      </small>
-                    </span>
-                  </div>
-                )}
-                <div
-                  className="row-number"
-                  role="rowheader"
-                  aria-selected={ranges.some(
-                    (r) =>
-                      r.kind === "rows" &&
-                      row.index >= r.r1 &&
-                      row.index <= r.r2,
-                  )}
-                  onContextMenu={(e) => openHeaderMenu(e, "rows", row.index)}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === "ContextMenu" ||
-                      (e.shiftKey && e.key === "F10")
-                    ) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const box = e.currentTarget.getBoundingClientRect();
-                      showHeaderMenu("rows", row.index, box.right, box.top);
-                    }
-                  }}
-                >
-                  {presentation ? (
-                    <span>{rowNumber}</span>
-                  ) : (
-                    <>
-                      <button
-                        className="row-drag-handle"
-                        aria-label={`${value(task, "title")} 순서 이동`}
-                        disabled={
-                          readOnly || sorted || !!editor || !canEdit(user, task)
-                        }
-                        title={
-                          sorted
-                            ? "컬럼 머리글 우클릭 → 정렬 해제 후 이동할 수 있습니다."
-                            : "손잡이를 드래그하여 행 이동 · 여러 행 선택 시 함께 이동 · Alt+위/아래 방향키"
-                        }
-                        onPointerDown={(e) => startRowDrag(e, task)}
-                        onKeyDown={(e) => {
-                          if (
-                            !e.altKey ||
-                            !["ArrowUp", "ArrowDown"].includes(e.key)
-                          )
-                            return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const moving = rowsToMove(task);
-                          if (!canMoveRows(moving)) return;
-                          const movingIds = new Set(moving.map((t) => t.id));
-                          const same = tasks.filter(
-                            (t) =>
-                              !groupKey ||
-                              groupValue(t, groupKey) ===
-                                groupValue(task, groupKey),
-                          );
-                          const direction = e.key === "ArrowUp" ? -1 : 1;
-                          const index =
-                            direction < 0
-                              ? same.findIndex((t) => movingIds.has(t.id))
-                              : same.findLastIndex((t) => movingIds.has(t.id));
-                          const neighbor = same[index + direction];
-                          if (neighbor)
-                            moveRows(
-                              moving,
-                              neighbor.id,
-                              direction < 0 ? "before" : "after",
-                            );
-                        }}
-                      >
-                        <GripVertical size={15} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="row-select"
-                        aria-label={`${rowNumber}행 전체 선택`}
-                        title="행 선택 · 드래그하여 여러 행 선택 · ⌘/Ctrl로 영역 추가"
-                        onPointerDown={(e) =>
-                          startHeaderSelection(e, "rows", row.index)
-                        }
-                        onClick={(e) => {
-                          if (e.detail === 0)
-                            selectHeader(
-                              "rows",
-                              row.index,
-                              e.shiftKey,
-                              e.metaKey || e.ctrlKey,
-                            );
-                        }}
-                      >
-                        <span className="row-index">{rowNumber}</span>
-                      </button>
-                      <span
-                        className="row-resizer"
-                        title="행 높이 조절"
-                        onPointerDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          dragOrigin.current = null;
-                          const y = e.clientY;
-                          const drag = (ev: PointerEvent) =>
-                            onView({
-                              rowHeights: {
-                                ...view.rowHeights,
-                                [task.id]: Math.min(
-                                  500,
-                                  Math.max(
-                                    26,
-                                    row.size -
-                                      groupHeight(row.index) +
-                                      ev.clientY -
-                                      y,
-                                  ),
-                                ),
-                              },
-                            });
-                          const stop = () => {
-                            window.removeEventListener("pointermove", drag);
-                            window.removeEventListener("pointerup", stop);
-                          };
-                          window.addEventListener("pointermove", drag);
-                          window.addEventListener("pointerup", stop, {
-                            once: true,
-                          });
-                        }}
-                      />
-                    </>
-                  )}
-                  {(["before", "after"] as const).map((side) => {
-                    const gap = marker?.[side];
-                    if (!gap || presentation) return null;
-                    const label = `${gap.start === gap.end ? gap.start : `${gap.start}~${gap.end}`}행 숨김 해제`;
-                    return (
-                      <button
-                        key={side}
-                        className={`hidden-row-marker ${side}`}
-                        aria-label={label}
-                        title={`${label} (${gap.ids.length}개 행)`}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={() => revealRows(gap.ids)}
-                      >
-                        <span className="hidden-row-arrow" aria-hidden="true" />
-                      </button>
-                    );
-                  })}
-                </div>
-                {columns.map((c, ci) => {
-                  const current = cell(task, c.key),
-                    s = current.style;
-                  const selected = ranges.some(
-                    (r) =>
-                      row.index >= r.r1 &&
-                      row.index <= r.r2 &&
-                      ci >= r.c1 &&
-                      ci <= r.c2,
-                  );
-                  const focused =
-                    selection?.focus.taskId === task.id &&
-                    selection.focus.key === c.key;
-                  const text = displayValue(task, c.key, users, settings);
-                  const property = properties.find((p) => p.id === c.key);
-                  const choice =
-                    property?.kind === "option" || property?.kind === "member";
-                  const editableChoice =
-                    choice &&
-                    !!text &&
-                    !readOnly &&
-                    canEdit(user, task) &&
-                    (!["owner", "supporters"].includes(c.key) ||
-                      ["admin", "manager"].includes(user.role));
-                  const editing =
-                    editor?.point.taskId === task.id &&
-                    editor.point.key === c.key;
-                  const mode = textMode(s);
-                  let overflowWidth = c.width;
-                  if (!choice && mode === "overflow" && text && !editing) {
-                    for (let next = ci + 1; next < columns.length; next++) {
-                      const neighbor = columns[next];
-                      const v = value(task, neighbor.key);
-                      const previousKey = columns[next - 1].key;
-                      const right =
-                        weekBorderStyle(
-                          previousKey,
-                          weekKeys,
-                          settings.weekBorders,
-                        ).borderRight ||
-                        cell(task, previousKey).style.borderRight;
-                      const left =
-                        weekBorderStyle(
-                          neighbor.key,
-                          weekKeys,
-                          settings.weekBorders,
-                        ).borderLeft ||
-                        cell(task, neighbor.key).style.borderLeft;
-                      if (
-                        !!neighbor.fixed !== !!c.fixed ||
-                        (right && right.style !== "none") ||
-                        (left && left.style !== "none") ||
-                        (editor?.point.taskId === task.id &&
-                          editor.point.key === neighbor.key) ||
-                        (Array.isArray(v)
-                          ? v.length > 0
-                          : v !== "" && v != null)
-                      )
-                        break;
-                      overflowWidth += neighbor.width;
-                    }
+                <RowBody
+                  task={task}
+                  index={row.index}
+                  rowNumber={rowNumber}
+                  marker={marker}
+                  groupHeight={rowGroupHeight}
+                  group={group}
+                  groupCount={
+                    rowGroupHeight
+                      ? groupCounts.get(groupValue(task, groupKey))
+                      : undefined
                   }
-                  const textDecoration = [
-                    s.underline ? "underline" : "",
-                    s.strike ? "line-through" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ");
-                  const textParts = textLinks(text);
-                  const renderedText = (
-                    <span className="cell-text">
-                      {textParts.some((part) => part.href) ? (
-                        <span className="cell-linked-text">
-                          {textParts.map((part, index) =>
-                            part.href ? (
-                              <a
-                                key={index}
-                                href={part.href}
-                                target="_blank"
-                                rel="noreferrer"
-                                onPointerDown={(e) => e.stopPropagation()}
-                              >
-                                {part.text}
-                              </a>
-                            ) : (
-                              <span key={index} style={{ textDecoration }}>
-                                {part.text}
-                              </span>
-                            ),
-                          )}
-                        </span>
-                      ) : (
-                        text
-                      )}
-                    </span>
-                  );
-                  const content =
-                    property?.kind === "option" ? (
-                      <PropertyBadge
-                        property={property}
-                        value={String(current.value)}
-                      />
-                    ) : property?.kind === "member" ? (
-                      <MemberValue
-                        property={property}
-                        value={current.value}
-                        users={users}
-                      />
-                    ) : (
-                      renderedText
-                    );
-                  const style: CSSProperties = {
-                    width: c.width,
-                    ...bordersCSS({
-                      ...s,
-                      ...weekBorderStyle(c.key, weekKeys, settings.weekBorders),
-                    }),
-                    ...(c.fixed ? { left: positions[ci] } : {}),
-                    color: s.color,
-                    backgroundColor: s.backgroundColor,
-                    fontFamily: fontFamilyCSS(s.fontFamily),
-                    fontSize: s.fontSize ? `${s.fontSize}pt` : undefined,
-                    fontWeight:
-                      s.bold === undefined ? undefined : s.bold ? 700 : 400,
-                    fontStyle: s.italic ? "italic" : undefined,
-                    textDecoration,
-                    textAlign: s.textAlign || "left",
-                    // Keep the chosen alignment when content fits; overflowing
-                    // content must start at its first line, even when centered.
-                    alignItems:
-                      s.verticalAlign === "top"
-                        ? "flex-start"
-                        : s.verticalAlign === "bottom"
-                          ? "safe flex-end"
-                          : "safe center",
-                    justifyContent:
-                      s.textAlign === "center"
-                        ? "safe center"
-                        : s.textAlign === "right"
-                          ? "safe flex-end"
-                          : "flex-start",
-                    whiteSpace: mode === "wrap" ? "pre-wrap" : "nowrap",
-                  };
-                  return (
-                    <div
-                      key={c.key}
-                      role="gridcell"
-                      aria-selected={!!selected}
-                      data-cell={`${task.id}:${c.key}`}
-                      data-task-id={task.id}
-                      data-column={c.key}
-                      data-text-mode={mode}
-                      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selected ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? "task-title" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
-                      style={style}
-                      title={text}
-                      onPointerDown={(e) => {
-                        if (e.button === 0) {
-                          dragOrigin.current = { x: e.clientX, y: e.clientY };
-                          e.preventDefault();
-                          pick(
-                            { taskId: task.id, key: c.key },
-                            e.shiftKey,
-                            e.metaKey || e.ctrlKey,
-                          );
-                        }
-                      }}
-                      onPointerMove={(e) => {
-                        const start = dragOrigin.current;
-                        if (
-                          e.buttons === 1 &&
-                          selection &&
-                          start &&
-                          Math.hypot(e.clientX - start.x, e.clientY - start.y) >
-                            3
-                        )
-                          onSelect({
-                            ...selection,
-                            focus: { taskId: task.id, key: c.key },
-                          });
-                      }}
-                      onDoubleClick={() =>
-                        !readOnly &&
-                        canEdit(user, task) &&
-                        onEdit({ taskId: task.id, key: c.key })
-                      }
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        // macOS emits a context menu for Ctrl+click as well.
-                        if (e.ctrlKey) return;
-                        if (!presentation) onRowMenu(task);
-                      }}
-                    >
-                      {editing && editor ? (
-                        <InlineCellEditor
-                          key={`${task.id}:${c.key}`}
-                          editor={editor}
-                          task={task}
-                          users={users}
-                          settings={settings}
-                          onCommit={finish}
-                          onCancel={() => {
-                            onCancelEdit();
-                            ref.current?.focus();
-                          }}
-                        />
-                      ) : editableChoice ? (
-                        <button
-                          className="cell-choice-trigger"
-                          aria-label={`${c.label} 선택`}
-                          aria-haspopup="listbox"
-                          aria-expanded="false"
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onDoubleClick={(e) => e.stopPropagation()}
-                          onClick={() =>
-                            onEdit({ taskId: task.id, key: c.key })
-                          }
-                        >
-                          {content}
-                        </button>
-                      ) : !choice && mode === "overflow" && text ? (
-                        <div
-                          className="cell-overflow-clip"
-                          style={{ width: overflowWidth }}
-                        >
-                          <div
-                            className="cell-overflow-content"
-                            style={{ width: c.width }}
-                          >
-                            {content}
-                          </div>
-                        </div>
-                      ) : (
-                        content
-                      )}
-                    </div>
-                  );
-                })}
+                  columns={columns}
+                  positions={positions}
+                  weekKeys={weekKeys}
+                  properties={properties}
+                  users={users}
+                  settings={settings}
+                  user={user}
+                  readOnly={readOnly}
+                  presentation={presentation}
+                  sorted={sorted}
+                  spans={spans}
+                  rowSelected={rowSelected}
+                  focusKey={
+                    selection?.focus.taskId === task.id
+                      ? selection.focus.key
+                      : null
+                  }
+                  editor={editor?.point.taskId === task.id ? editor : null}
+                  editorActive={!!editor}
+                  actions={actions}
+                />
               </div>
             );
           })}
@@ -1740,3 +1537,428 @@ export default function Grid({
     </div>
   );
 }
+type GridActions = {
+  cellPointerDown(e: React.PointerEvent, point: Point): void;
+  dragSelect(e: React.PointerEvent, point: Point): void;
+  edit(point: Point): void;
+  rowMenu(task: Task): void;
+  finish(value: Cell["value"], move?: EditMove): boolean | undefined;
+  cancelEdit(): void;
+  startRowDrag(e: React.PointerEvent, task: Task): void;
+  keyboardMoveRow(e: KeyboardEvent, task: Task): void;
+  startHeaderSelection(
+    e: React.PointerEvent,
+    kind: "columns" | "rows",
+    index: number,
+  ): void;
+  selectHeader(
+    kind: "columns" | "rows",
+    index: number,
+    extend?: boolean,
+    add?: boolean,
+  ): number;
+  openHeaderMenu(
+    e: React.MouseEvent,
+    kind: "columns" | "rows",
+    index: number,
+  ): void;
+  showHeaderMenu(
+    kind: "columns" | "rows",
+    index: number,
+    x: number,
+    y: number,
+  ): void;
+  startRowResize(e: React.PointerEvent, task: Task, index: number): void;
+  revealRows(ids: string[]): void;
+};
+type RowGap = { ids: string[]; start: number; end: number };
+
+// 한 행의 머리글과 셀. 스크롤·다른 행 선택처럼 이 행과 무관한 변경에서는 다시 그리지 않는다.
+const RowBody = memo(function RowBody({
+  task,
+  index,
+  rowNumber,
+  marker,
+  groupHeight,
+  group,
+  groupCount,
+  columns,
+  positions,
+  weekKeys,
+  properties,
+  users,
+  settings,
+  user,
+  readOnly,
+  presentation,
+  sorted,
+  spans,
+  rowSelected,
+  focusKey,
+  editor,
+  editorActive,
+  actions,
+}: {
+  task: Task;
+  index: number;
+  rowNumber: number;
+  marker: { number: number; before?: RowGap; after?: RowGap } | undefined;
+  groupHeight: number;
+  group: Property | undefined;
+  groupCount: number | undefined;
+  columns: Column[];
+  positions: number[];
+  weekKeys: string[];
+  properties: Property[];
+  users: User[];
+  settings: Settings;
+  user: User;
+  readOnly: boolean;
+  presentation: boolean;
+  sorted: boolean;
+  spans: string;
+  rowSelected: boolean;
+  focusKey: string | null;
+  editor: EditorState | null;
+  editorActive: boolean;
+  actions: GridActions;
+}) {
+  const groupKey = group?.id || "";
+  const selectedSpans = spans
+    ? spans
+        .slice(0, -1)
+        .split(",")
+        .map((span) => span.split("-").map(Number))
+    : [];
+  const editable = !readOnly && canEdit(user, task);
+  return (
+    <>
+      {!!groupHeight && (
+        <div className="group-heading" role="presentation">
+          <span>
+            {group && value(task, groupKey) ? (
+              group.kind === "option" ? (
+                <PropertyBadge
+                  property={group}
+                  value={groupValue(task, groupKey)}
+                />
+              ) : (
+                displayValue(task, groupKey, users, settings)
+              )
+            ) : (
+              `${group?.name || "속성"} 미지정`
+            )}{" "}
+            <small>{groupCount}개 업무</small>
+          </span>
+        </div>
+      )}
+      <div
+        className="row-number"
+        role="rowheader"
+        aria-selected={rowSelected}
+        onContextMenu={(e) => actions.openHeaderMenu(e, "rows", index)}
+        onKeyDown={(e) => {
+          if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault();
+            e.stopPropagation();
+            const box = e.currentTarget.getBoundingClientRect();
+            actions.showHeaderMenu("rows", index, box.right, box.top);
+          }
+        }}
+      >
+        {presentation ? (
+          <span>{rowNumber}</span>
+        ) : (
+          <>
+            <button
+              className="row-drag-handle"
+              aria-label={`${value(task, "title")} 순서 이동`}
+              disabled={
+                readOnly || sorted || editorActive || !canEdit(user, task)
+              }
+              title={
+                sorted
+                  ? "컬럼 머리글 우클릭 → 정렬 해제 후 이동할 수 있습니다."
+                  : "손잡이를 드래그하여 행 이동 · 여러 행 선택 시 함께 이동 · Alt+위/아래 방향키"
+              }
+              onPointerDown={(e) => actions.startRowDrag(e, task)}
+              onKeyDown={(e) => actions.keyboardMoveRow(e, task)}
+            >
+              <GripVertical size={15} aria-hidden="true" />
+            </button>
+            <button
+              className="row-select"
+              aria-label={`${rowNumber}행 전체 선택`}
+              title="행 선택 · 드래그하여 여러 행 선택 · ⌘/Ctrl로 영역 추가"
+              onPointerDown={(e) =>
+                actions.startHeaderSelection(e, "rows", index)
+              }
+              onClick={(e) => {
+                if (e.detail === 0)
+                  actions.selectHeader(
+                    "rows",
+                    index,
+                    e.shiftKey,
+                    e.metaKey || e.ctrlKey,
+                  );
+              }}
+            >
+              <span className="row-index">{rowNumber}</span>
+            </button>
+            <span
+              className="row-resizer"
+              title="행 높이 조절"
+              onPointerDown={(e) => actions.startRowResize(e, task, index)}
+            />
+          </>
+        )}
+        {(["before", "after"] as const).map((side) => {
+          const gap = marker?.[side];
+          if (!gap || presentation) return null;
+          const label = `${gap.start === gap.end ? gap.start : `${gap.start}~${gap.end}`}행 숨김 해제`;
+          return (
+            <button
+              key={side}
+              className={`hidden-row-marker ${side}`}
+              aria-label={label}
+              title={`${label} (${gap.ids.length}개 행)`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => actions.revealRows(gap.ids)}
+            >
+              <span className="hidden-row-arrow" aria-hidden="true" />
+            </button>
+          );
+        })}
+      </div>
+      {columns.map((c, ci) => {
+        const property = properties.find((p) => p.id === c.key);
+        const choice =
+          property?.kind === "option" || property?.kind === "member";
+        const editing = editor?.point.key === c.key;
+        // 넘치는 글자가 오른쪽 빈 셀로 이어지는 너비. 이웃 셀을 봐야 하므로 행에서 구한다.
+        let overflowWidth = c.width;
+        const own = value(task, c.key);
+        if (
+          !choice &&
+          !editing &&
+          textMode(cell(task, c.key).style) === "overflow" &&
+          (Array.isArray(own) ? own.length > 0 : own !== "" && own != null)
+        ) {
+          for (let next = ci + 1; next < columns.length; next++) {
+            const neighbor = columns[next];
+            const v = value(task, neighbor.key);
+            const previousKey = columns[next - 1].key;
+            const right =
+              weekBorderStyle(previousKey, weekKeys, settings.weekBorders)
+                .borderRight || cell(task, previousKey).style.borderRight;
+            const left =
+              weekBorderStyle(neighbor.key, weekKeys, settings.weekBorders)
+                .borderLeft || cell(task, neighbor.key).style.borderLeft;
+            if (
+              !!neighbor.fixed !== !!c.fixed ||
+              (right && right.style !== "none") ||
+              (left && left.style !== "none") ||
+              editor?.point.key === neighbor.key ||
+              (Array.isArray(v) ? v.length > 0 : v !== "" && v != null)
+            )
+              break;
+            overflowWidth += neighbor.width;
+          }
+        }
+        return (
+          <GridCell
+            key={c.key}
+            task={task}
+            column={c}
+            left={c.fixed ? positions[ci] : undefined}
+            overflowWidth={overflowWidth}
+            property={property}
+            selected={selectedSpans.some(([a, b]) => ci >= a && ci <= b)}
+            focused={focusKey === c.key}
+            editor={editing ? editor : null}
+            editable={editable}
+            canEditPeople={["admin", "manager"].includes(user.role)}
+            weekKeys={weekKeys}
+            users={users}
+            settings={settings}
+            presentation={presentation}
+            actions={actions}
+          />
+        );
+      })}
+    </>
+  );
+});
+
+// 셀 하나. 열 너비·선택이 바뀌어도 해당 셀만 다시 그린다.
+const GridCell = memo(function GridCell({
+  task,
+  column: c,
+  left,
+  overflowWidth,
+  property,
+  selected,
+  focused,
+  editor,
+  editable,
+  canEditPeople,
+  weekKeys,
+  users,
+  settings,
+  presentation,
+  actions,
+}: {
+  task: Task;
+  column: Column;
+  left: number | undefined;
+  overflowWidth: number;
+  property: Property | undefined;
+  selected: boolean;
+  focused: boolean;
+  editor: EditorState | null;
+  editable: boolean;
+  canEditPeople: boolean;
+  weekKeys: string[];
+  users: User[];
+  settings: Settings;
+  presentation: boolean;
+  actions: GridActions;
+}) {
+  const current = cell(task, c.key),
+    s = current.style;
+  const text = displayValue(task, c.key, users, settings);
+  const choice = property?.kind === "option" || property?.kind === "member";
+  const editableChoice =
+    choice &&
+    !!text &&
+    editable &&
+    (!["owner", "supporters"].includes(c.key) || canEditPeople);
+  const editing = !!editor;
+  const mode = textMode(s);
+  const textDecoration = [
+    s.underline ? "underline" : "",
+    s.strike ? "line-through" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  // 빈 셀은 안쪽 요소를 만들지 않는다 (일정 열 대부분이 빈 셀).
+  const textParts = text ? textLinks(text) : [];
+  const renderedText = text ? (
+    <span className="cell-text">
+      {textParts.some((part) => part.href) ? (
+        <span className="cell-linked-text">
+          {textParts.map((part, index) =>
+            part.href ? (
+              <a
+                key={index}
+                href={part.href}
+                target="_blank"
+                rel="noreferrer"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {part.text}
+              </a>
+            ) : (
+              <span key={index} style={{ textDecoration }}>
+                {part.text}
+              </span>
+            ),
+          )}
+        </span>
+      ) : (
+        text
+      )}
+    </span>
+  ) : null;
+  const content =
+    property?.kind === "option" ? (
+      <PropertyBadge property={property} value={String(current.value)} />
+    ) : property?.kind === "member" ? (
+      <MemberValue property={property} value={current.value} users={users} />
+    ) : (
+      renderedText
+    );
+  // 기본값(왼쪽·가운데 정렬, 한 줄 표시)은 .sheet-cell CSS에 두고
+  // 셀마다 다른 값만 인라인으로 지정해 스타일 쓰기를 줄인다.
+  const style: CSSProperties = {
+    width: c.width,
+    ...bordersCSS({
+      ...s,
+      ...weekBorderStyle(c.key, weekKeys, settings.weekBorders),
+    }),
+  };
+  if (left !== undefined) style.left = left;
+  if (s.color) style.color = s.color;
+  if (s.backgroundColor) style.backgroundColor = s.backgroundColor;
+  const fontFamily = fontFamilyCSS(s.fontFamily);
+  if (fontFamily) style.fontFamily = fontFamily;
+  if (s.fontSize) style.fontSize = `${s.fontSize}pt`;
+  if (s.bold !== undefined) style.fontWeight = s.bold ? 700 : 400;
+  if (s.italic) style.fontStyle = "italic";
+  if (textDecoration) style.textDecoration = textDecoration;
+  if (s.textAlign && s.textAlign !== "left") {
+    style.textAlign = s.textAlign;
+    // Keep the chosen alignment when content fits; overflowing
+    // content must start at its first line, even when centered.
+    style.justifyContent =
+      s.textAlign === "center" ? "safe center" : "safe flex-end";
+  }
+  if (s.verticalAlign === "top") style.alignItems = "flex-start";
+  else if (s.verticalAlign === "bottom") style.alignItems = "safe flex-end";
+  if (mode === "wrap") style.whiteSpace = "pre-wrap";
+  const point = { taskId: task.id, key: c.key };
+  return (
+    <div
+      role="gridcell"
+      aria-selected={!!selected}
+      data-cell={`${task.id}:${c.key}`}
+      data-task-id={task.id}
+      data-column={c.key}
+      data-text-mode={mode}
+      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selected ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? "task-title" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
+      style={style}
+      title={text || undefined}
+      onPointerDown={(e) => actions.cellPointerDown(e, point)}
+      onPointerMove={(e) => actions.dragSelect(e, point)}
+      onDoubleClick={() => editable && actions.edit(point)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // macOS emits a context menu for Ctrl+click as well.
+        if (e.ctrlKey) return;
+        if (!presentation) actions.rowMenu(task);
+      }}
+    >
+      {editing && editor ? (
+        <InlineCellEditor
+          key={`${task.id}:${c.key}`}
+          editor={editor}
+          task={task}
+          users={users}
+          settings={settings}
+          onCommit={actions.finish}
+          onCancel={actions.cancelEdit}
+        />
+      ) : editableChoice ? (
+        <button
+          className="cell-choice-trigger"
+          aria-label={`${c.label} 선택`}
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={() => actions.edit(point)}
+        >
+          {content}
+        </button>
+      ) : !choice && mode === "overflow" && text ? (
+        <div className="cell-overflow-clip" style={{ width: overflowWidth }}>
+          <div className="cell-overflow-content" style={{ width: c.width }}>
+            {content}
+          </div>
+        </div>
+      ) : (
+        content
+      )}
+    </div>
+  );
+});

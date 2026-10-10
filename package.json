@@ -18,6 +18,7 @@
     "format": "prettier --write src server shared scripts tests",
     "performance": "node scripts/performance.mjs",
     "performance:stress": "node scripts/load-test.mjs",
+    "performance:ui": "node scripts/ui-performance.mjs",
     "licenses": "node scripts/licenses.mjs"
   },
   "dependencies": {

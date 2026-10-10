@@ -539,9 +539,26 @@ function Workspace({
       changeView(next);
   }, [settings, loaded, report, boot.users, teamId, view]);
   const source = report?.tasks || tasks;
+  // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
+  const filterView = useMemo(
+    () => view,
+    [
+      view.people,
+      view.personRole,
+      view.propertyFilters,
+      view.propertyFilterModes,
+      view.search,
+      view.groupBy,
+      view.sort,
+      view.sortKey,
+      view.sortDirection,
+      view.status,
+      view.category,
+    ],
+  );
   const matches = useMemo(
-    () => filteredTasks(source, view, user.id, settings, users) as Task[],
-    [source, view, user.id, settings, users],
+    () => filteredTasks(source, filterView, user.id, settings, users) as Task[],
+    [source, filterView, user.id, settings, users],
   );
   const shown = useMemo(() => {
     const hidden = new Set(view.hiddenRows);
@@ -1136,6 +1153,10 @@ function Workspace({
     if (selectedWeeks[0])
       setJump({ key: selectedWeeks[0].key, id: Date.now() });
   }
+  const summary = useMemo(
+    () => statusSummary(tasks, settings),
+    [tasks, settings],
+  );
   if (!team)
     return (
       <main className="no-team">
@@ -1156,9 +1177,9 @@ function Workspace({
       </main>
     );
   const hiddenCount = view.hiddenRows.length + view.hiddenWeeks.length;
-  const summary = statusSummary(tasks, settings);
+  const today = todayKey();
   const currentWeek = weeksForYear(year).find(
-    (w) => w.key <= todayKey() && w.end >= todayKey(),
+    (w) => w.key <= today && w.end >= today,
   );
   return (
     <div

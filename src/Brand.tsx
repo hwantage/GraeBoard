@@ -44,9 +44,7 @@ export function BrandWordmark({ className }: { className?: string }) {
 }
 
 export function BrandLockup({ className }: { className?: string }) {
-  return (
-    <img className={className} src={lockupUrl} alt="그래보드 GraeBoard" />
-  );
+  return <img className={className} src={lockupUrl} alt="그래보드 GraeBoard" />;
 }
 
 /** 캐릭터 ‘그래’. 3D는 처음 만나는 자리, 2D는 앱 안의 안내에 씁니다. */

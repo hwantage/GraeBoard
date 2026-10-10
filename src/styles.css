@@ -1062,6 +1062,8 @@ small {
   position: absolute;
   top: 0;
   left: 0;
+  /* 행을 추가·삭제할 때 다른 행의 레이아웃·스타일 계산이 번지지 않게 한다 */
+  contain: layout style;
 }
 .row-number {
   width: var(--row-header-width);
@@ -1334,6 +1336,13 @@ body.row-reordering * {
   min-width: 0;
   cursor: cell;
   isolation: isolate;
+  /* 열 너비가 바뀌어 셀이 밀릴 때 셀 안쪽 배치는 다시 계산하지 않는다 */
+  contain: layout style;
+  /* 셀 서식의 기본값. 다른 값만 인라인 스타일로 덮어쓴다. */
+  align-items: safe center;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
 }
 .sheet-cell > span,
 .sheet-cell > a {
