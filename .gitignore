@@ -3,6 +3,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+/draft/
+
 # Runtime data, imports, exports and backups (never commit)
 data/
 backups/
