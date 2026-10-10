@@ -1,17 +1,24 @@
 import Select from "./Select";
-import BorderControls from "./BorderControls";
-import { bordersCSS } from "../shared/borders.js";
+import Toolbar from "./Toolbar";
+import { applyBorderPreset, bordersCSS } from "../shared/borders.js";
 import { useState } from "react";
 import type { Team, Style, Settings } from "./types";
 import {
   FONTS,
-  FONT_SIZES,
   fontFamilyCSS,
   normalizeSettings,
   textMode,
 } from "../shared/domain.js";
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
+
+const INITIAL_STYLE: Style = {
+  fontFamily: FONTS[0],
+  fontSize: 9,
+  verticalAlign: "top",
+};
+type Draft = { style: Style; density: NonNullable<Settings["defaultDensity"]> };
+type History = { past: Draft[]; present: Draft; future: Draft[] };
 
 export default function DefaultStyleManager({
   team,
@@ -23,194 +30,53 @@ export default function DefaultStyleManager({
   const [settings, setSettings] = useState<Settings>(() =>
     normalizeSettings(team.settings),
   );
-  const [style, setStyle] = useState<Style>({
-    fontFamily: FONTS[0],
-    fontSize: 9,
-    verticalAlign: "top",
-    ...team.settings.defaultStyle,
-  });
+  const [history, setHistory] = useState<History>(() => ({
+    past: [],
+    future: [],
+    present: {
+      style: { ...INITIAL_STYLE, ...team.settings.defaultStyle },
+      density: team.settings.defaultDensity || "compact",
+    },
+  }));
+  const { style, density } = history.present;
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
-  function change(part: Partial<Style>) {
-    setStyle((s) => ({ ...s, ...part }));
+  function change(part: Partial<Draft>) {
+    setHistory((current) => ({
+      past: [...current.past, current.present].slice(-50),
+      present: { ...current.present, ...part },
+      future: [],
+    }));
     setMessage("");
   }
+  const fitted = Math.max(
+    density === "comfortable" ? 48 : 38,
+    Math.ceil((style.fontSize || 9) * (4 / 3) * 1.55 + 16),
+  );
+  const height =
+    density === "dense" ? Math.max(26, Math.round((fitted * 2) / 3)) : fitted;
   return (
     <div className="default-style-manager">
-      <p className="field-help">
-        {team.name}의 새 업무와 그 업무의 빈 일정 셀에 적용할 서식입니다. 기존
-        업무의 서식은 유지됩니다.
-      </p>
-      <ErrorNote error={error} />
-      {message && (
-        <p className="success-note" role="status">
-          {message}
-        </p>
-      )}
-      <div className="form-grid">
-        <label>
-          기본 글꼴
+      <div className="default-style-actions">
+        <label className="density-control">
+          셀 높이
           <Select
-            aria-label="기본 글꼴"
-            value={style.fontFamily || FONTS[0]}
-            onChange={(e) => change({ fontFamily: e.target.value })}
-          >
-            {FONTS.map((f) => (
-              <option key={f}>{f}</option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          기본 글자 크기
-          <Select
-            aria-label="기본 글자 크기"
-            value={style.fontSize || 9}
-            onChange={(e) => change({ fontSize: Number(e.target.value) })}
-          >
-            {FONT_SIZES.map((n) => (
-              <option value={n} key={n}>
-                {n}pt
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          기본 글자 색상
-          <input
-            aria-label="기본 글자 색상"
-            type="color"
-            value={style.color || "#243642"}
-            onChange={(e) => change({ color: e.target.value })}
-          />
-        </label>
-        <label>
-          기본 배경색
-          <input
-            aria-label="기본 배경색"
-            type="color"
-            value={style.backgroundColor || "#ffffff"}
-            onChange={(e) => change({ backgroundColor: e.target.value })}
-          />
-        </label>
-        <label>
-          기본 가로 정렬
-          <Select
-            aria-label="기본 가로 정렬"
-            value={style.textAlign || "left"}
-            onChange={(e) =>
-              change({ textAlign: e.target.value as Style["textAlign"] })
-            }
-          >
-            <option value="left">왼쪽</option>
-            <option value="center">가운데</option>
-            <option value="right">오른쪽</option>
-          </Select>
-        </label>
-        <label>
-          기본 세로 정렬
-          <Select
-            aria-label="기본 세로 정렬"
-            value={style.verticalAlign || "top"}
-            onChange={(e) =>
-              change({
-                verticalAlign: e.target.value as Style["verticalAlign"],
-              })
-            }
-          >
-            <option value="top">위</option>
-            <option value="middle">중간</option>
-            <option value="bottom">아래</option>
-          </Select>
-        </label>
-        <label>
-          기본 텍스트 표시
-          <Select
-            aria-label="기본 텍스트 표시"
-            value={textMode(style)}
-            onChange={(e) =>
-              change({
-                textMode: e.target.value as Style["textMode"],
-                wrap: e.target.value === "wrap",
-              })
-            }
-          >
-            <option value="overflow">오버플로우</option>
-            <option value="wrap">줄바꿈</option>
-            <option value="clip">자르기</option>
-          </Select>
-        </label>
-      </div>
-      <div className="check-grid default-style-options">
-        {(
-          [
-            ["bold", "굵게"],
-            ["italic", "기울임"],
-            ["underline", "밑줄"],
-            ["strike", "취소선"],
-          ] as const
-        ).map(([key, label]) => (
-          <label className="checkbox" key={key}>
-            <input
-              type="checkbox"
-              aria-label={`기본 ${label}`}
-              checked={!!style[key]}
-              onChange={(e) => change({ [key]: e.target.checked })}
-            />
-            {label}
-          </label>
-        ))}
-      </div>
-      <div className="form-grid">
-        {(
-          [
-            ["Top", "위쪽"],
-            ["Right", "오른쪽"],
-            ["Bottom", "아래쪽"],
-            ["Left", "왼쪽"],
-          ] as const
-        ).map(([side, label]) => (
-          <BorderControls
-            key={side}
-            label={`기본 ${label} 테두리`}
-            value={style[`border${side}`]}
-            onChange={(border) => change({ [`border${side}`]: border })}
+            aria-label="셀 높이"
+            value={density}
             disabled={busy}
-          />
-        ))}
-      </div>
-      <div
-        className="default-style-preview"
-        style={{
-          ...bordersCSS(style),
-          fontFamily: fontFamilyCSS(style.fontFamily),
-          fontSize: `${style.fontSize || 9}pt`,
-          color: style.color,
-          backgroundColor: style.backgroundColor,
-          fontWeight: style.bold ? 700 : 400,
-          fontStyle: style.italic ? "italic" : "normal",
-          textDecoration: [
-            style.underline ? "underline" : "",
-            style.strike ? "line-through" : "",
-          ].join(" "),
-          textAlign: style.textAlign,
-          whiteSpace: textMode(style) === "wrap" ? "pre-wrap" : "nowrap",
-          overflow: textMode(style) === "clip" ? "hidden" : "auto",
-          alignItems:
-            style.verticalAlign === "top"
-              ? "flex-start"
-              : style.verticalAlign === "bottom"
-                ? "safe flex-end"
-                : "safe center",
-        }}
-      >
-        <span>
-          {
-            "주간 업무 계획과 진행 내용을 기록합니다.\n다음 업무도 같은 서식으로 시작합니다."
-          }
-        </span>
-      </div>
-      <footer className="form-actions">
+            onChange={(e) =>
+              change({ density: e.target.value as Draft["density"] })
+            }
+          >
+            <option value="comfortable">넉넉하게</option>
+            <option value="compact">편안하게</option>
+            <option value="dense">촘촘하게</option>
+          </Select>
+        </label>
+        <p className="field-help">
+          서식은 새 업무에, 셀 높이는 팀 전체에 적용됩니다.
+        </p>
         <Button
           className="primary"
           disabled={busy}
@@ -221,7 +87,7 @@ export default function DefaultStyleManager({
             try {
               const result = await send(
                 `/teams/${team.id}/settings`,
-                { ...settings, defaultStyle: style },
+                { ...settings, defaultStyle: style, defaultDensity: density },
                 "PATCH",
               );
               setSettings(result.settings);
@@ -236,7 +102,109 @@ export default function DefaultStyleManager({
         >
           기본 서식 저장
         </Button>
-      </footer>
+      </div>
+      <ErrorNote error={error} />
+      {message && (
+        <p className="success-note" role="status">
+          {message}
+        </p>
+      )}
+      <Toolbar
+        label="기본 서식 도구"
+        style={style}
+        disabled={busy}
+        onStyle={(part) => change({ style: { ...style, ...part } })}
+        onBorder={(preset, border) =>
+          // 기본 서식은 셀마다 따로 적용되므로 네 변 모두 바깥 경계로 본다.
+          change({
+            style: applyBorderPreset(style, preset, border, {
+              Top: true,
+              Right: true,
+              Bottom: true,
+              Left: true,
+            }),
+          })
+        }
+        onReset={() => change({ style: { ...INITIAL_STYLE } })}
+        onUndo={() => {
+          setHistory((current) =>
+            current.past.length
+              ? {
+                  past: current.past.slice(0, -1),
+                  present: current.past.at(-1)!,
+                  future: [current.present, ...current.future],
+                }
+              : current,
+          );
+          setMessage("");
+        }}
+        onRedo={() => {
+          setHistory((current) =>
+            current.future.length
+              ? {
+                  past: [...current.past, current.present],
+                  present: current.future[0],
+                  future: current.future.slice(1),
+                }
+              : current,
+          );
+          setMessage("");
+        }}
+        canUndo={!busy && !!history.past.length}
+        canRedo={!busy && !!history.future.length}
+      />
+      <figure className="default-style-example">
+        <figcaption>적용 결과 미리보기</figcaption>
+        <div
+          className="default-style-preview"
+          aria-label="기본 서식 미리보기"
+          data-density={density}
+        >
+          {["업무명", "1주", "2주"].map((label) => (
+            <div key={label} className="preview-heading">
+              {label}
+            </div>
+          ))}
+          {[
+            "신규 서비스 기획",
+            "요구사항 정리",
+            "기획안 검토",
+            "제품 사용성 개선",
+            "화면 구성과 동작 확인",
+            "개선안 적용",
+          ].map((text) => (
+            <div
+              key={text}
+              className="preview-cell"
+              style={{
+                ...bordersCSS(style),
+                height,
+                fontFamily: fontFamilyCSS(style.fontFamily),
+                fontSize: `${style.fontSize || 9}pt`,
+                color: style.color,
+                backgroundColor: style.backgroundColor || "#ffffff",
+                fontWeight: style.bold ? 700 : 400,
+                fontStyle: style.italic ? "italic" : "normal",
+                textDecoration: [
+                  style.underline ? "underline" : "",
+                  style.strike ? "line-through" : "",
+                ].join(" "),
+                textAlign: style.textAlign,
+                whiteSpace: textMode(style) === "wrap" ? "pre-wrap" : "nowrap",
+                overflow: "hidden",
+                alignItems:
+                  style.verticalAlign === "top"
+                    ? "flex-start"
+                    : style.verticalAlign === "bottom"
+                      ? "safe flex-end"
+                      : "safe center",
+              }}
+            >
+              <span>{text}</span>
+            </div>
+          ))}
+        </div>
+      </figure>
     </div>
   );
 }

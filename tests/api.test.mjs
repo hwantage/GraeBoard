@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
 import { statusSummary } from "../shared/domain.js";
+import { applyBorderPreset } from "../shared/borders.js";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, getTask } from "../server/db.mjs";
 import {
@@ -59,18 +60,111 @@ const change = (key, value, version) => ({
   expectedVersion: version ?? getTask(db, task.id).cells[key]?.version ?? 0,
 });
 
-test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·보고본·XLSX 왕복에서 유지된다", async () => {
+test("팀 기본 셀 높이는 검증하고 이전 설정 저장과 팀 양식 복사에서 보존한다", async () => {
+  const tid = (await post("/admin/teams", { name: "기본 셀 높이" })).data.id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  assert.equal(settings.defaultDensity, "compact");
+  const invalid = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: { ...settings, defaultDensity: "tiny" },
+  });
+  assert.equal(invalid.status, 400);
+  for (const density of ["comfortable", "compact", "dense"]) {
+    const result = await request(`/teams/${tid}/settings`, {
+      method: "PATCH",
+      body: { ...settings, defaultDensity: density },
+    });
+    assert.equal(result.status, 200);
+    settings = result.data.settings;
+    assert.equal(settings.defaultDensity, density);
+  }
+  const legacy = { ...settings };
+  delete legacy.defaultDensity;
+  const saved = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: legacy,
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.settings.defaultDensity, "dense");
+  const copied = await post("/admin/teams", {
+    name: "셀 높이 양식 복사",
+    templateTeamId: tid,
+  });
+  const bootstrap = (await request("/bootstrap")).data;
+  assert.equal(
+    bootstrap.teams.find((t) => t.id === copied.data.id).settings
+      .defaultDensity,
+    "dense",
+  );
+});
+
+test("테두리 프리셋은 선택 영역의 바깥·안쪽 경계를 구분하고 안쪽 선을 한 번만 저장한다", () => {
+  const line = { style: "solid", color: "#336699" };
+  const old = { style: "double", color: "#9a2233" };
+  // 2×2 선택의 왼쪽 위 셀: 위·왼쪽은 바깥, 오른쪽·아래는 안쪽.
+  const topLeft = { Top: true, Left: true, Right: false, Bottom: false };
+  // 오른쪽 아래 셀: 오른쪽·아래가 바깥, 위·왼쪽은 안쪽.
+  const bottomRight = { Top: false, Left: false, Right: true, Bottom: true };
+  const filled = {
+    borderTop: old,
+    borderRight: old,
+    borderBottom: old,
+    borderLeft: old,
+    bold: true,
+  };
+  const sides = (style) =>
+    ["Top", "Right", "Bottom", "Left"].map((side) =>
+      style[`border${side}`] ? style[`border${side}`].style : "-",
+    );
+  const apply = (preset, outer, style = {}) =>
+    sides(applyBorderPreset(style, preset, line, outer));
+  assert.deepEqual(apply("all", topLeft), ["solid", "solid", "solid", "solid"]);
+  // 안쪽 위·왼쪽 선은 이웃의 아래·오른쪽 선이 맡으므로 지운다.
+  assert.deepEqual(apply("all", bottomRight, filled), [
+    "-",
+    "solid",
+    "solid",
+    "-",
+  ]);
+  assert.deepEqual(apply("inner", topLeft, filled), [
+    "double",
+    "solid",
+    "solid",
+    "double",
+  ]);
+  assert.deepEqual(apply("horizontal", topLeft), ["-", "-", "solid", "-"]);
+  assert.deepEqual(apply("vertical", topLeft), ["-", "solid", "-", "-"]);
+  assert.deepEqual(apply("outside", topLeft), ["solid", "-", "-", "solid"]);
+  assert.deepEqual(apply("left", topLeft), ["-", "-", "-", "solid"]);
+  assert.deepEqual(apply("left", bottomRight), ["-", "-", "-", "-"]);
+  assert.deepEqual(apply("right", bottomRight), ["-", "solid", "-", "-"]);
+  assert.deepEqual(apply("top", topLeft), ["solid", "-", "-", "-"]);
+  assert.deepEqual(apply("bottom", bottomRight), ["-", "-", "solid", "-"]);
+  const cleared = applyBorderPreset(filled, "none", line, topLeft);
+  assert.deepEqual(cleared, {
+    borderTop: null,
+    borderRight: null,
+    borderBottom: null,
+    borderLeft: null,
+    bold: true,
+  });
+});
+
+test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식·보고본·XLSX 왕복에서 유지된다", async () => {
   const tid = (await post("/admin/teams", { name: "경계선 검증" })).data.id;
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === tid,
   ).settings;
   const left = { style: "double", color: "#2255aa" };
   const right = { style: "dashed", color: "#bb3344" };
+  const weekHeader = { color: "#ffffff", backgroundColor: "#2255aa" };
   const saved = await request(`/teams/${tid}/settings`, {
     method: "PATCH",
     body: {
       ...settings,
-      weekBorders: { left, right },
+      weekHeader,
       defaultStyle: { ...settings.defaultStyle, borderBottom: right },
     },
   });
@@ -78,7 +172,7 @@ test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·�
   settings = saved.data.settings;
   const invalid = await request(`/teams/${tid}/settings`, {
     method: "PATCH",
-    body: { ...settings, weekBorders: { left: { ...left, style: "groove" } } },
+    body: { ...settings, weekHeader: { ...weekHeader, color: "white" } },
   });
   assert.equal(invalid.status, 400);
   const created = (
@@ -110,15 +204,18 @@ test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·�
   assert.equal(invalidCells.status, 400);
   assert.deepEqual(getTask(db, created.id).cells.title.style.borderLeft, left);
   // Legacy clients omit the optional setting, and must not erase it.
+  // Their removed week boundary setting is accepted but no longer stored.
   const old = structuredClone(settings);
-  delete old.weekBorders;
+  delete old.weekHeader;
+  old.weekBorders = { left, right };
   const legacySave = await request(`/teams/${tid}/settings`, {
     method: "PATCH",
     body: old,
   });
   assert.equal(legacySave.status, 200);
   settings = legacySave.data.settings;
-  assert.deepEqual(settings.weekBorders, { left, right });
+  assert.deepEqual(settings.weekHeader, weekHeader);
+  assert.equal(settings.weekBorders, undefined);
   const copied = await post("/admin/teams", {
     name: "경계선 양식",
     templateTeamId: tid,
@@ -126,8 +223,8 @@ test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·�
   assert.deepEqual(
     (await request("/admin/users")).data.teams.find(
       (t) => t.id === copied.data.id,
-    ).settings.weekBorders,
-    { left, right },
+    ).settings.weekHeader,
+    weekHeader,
   );
   const report = await post("/reports", {
     teamId: tid,
@@ -152,10 +249,13 @@ test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·�
   const sheet = workbook.worksheets[0];
   assert.equal(sheet.getCell("A2").border.left.style, "double");
   assert.equal(sheet.getCell("A2").border.top.color.argb, "FFBB3344");
-  for (const address of ["B1", "B2"])
-    assert.equal(sheet.getCell(address).border.left.color.argb, "FF2255AA");
-  for (const address of ["C1", "C2"])
-    assert.equal(sheet.getCell(address).border.right.style, "dashed");
+  for (const address of ["B1", "C1"]) {
+    assert.equal(sheet.getCell(address).fill.fgColor.argb, "FF2255AA");
+    assert.equal(sheet.getCell(address).font.color.argb, "FFFFFFFF");
+    assert.equal(sheet.getCell(address).font.bold, true);
+  }
+  assert.equal(sheet.getCell("A1").fill.fgColor.argb, "FFEDF6F4");
+  assert.equal(sheet.getCell("B2").border.left, undefined);
   sheet.getCell("A2").value = "테두리 재이관";
   const form = new FormData();
   form.set("teamId", tid);
@@ -190,17 +290,85 @@ test("셀 테두리와 주차 경계선은 검증·설정 호환·팀 양식·�
     ...right,
     color: right.color.toUpperCase(),
   });
-  assert.deepEqual(restored.cells["2026-03-16"].style.borderRight, {
-    ...right,
-    color: right.color.toUpperCase(),
-  });
   const clear = await request(`/teams/${tid}/settings`, {
     method: "PATCH",
-    body: { ...settings, weekBorders: {} },
+    body: { ...settings, weekHeader: {} },
   });
   assert.equal(clear.status, 200);
+  assert.deepEqual(clear.data.settings.weekHeader, {});
   const snapshot = (await request(`/reports/${report.data.id}`)).data;
-  assert.deepEqual(snapshot.settings.weekBorders, { left, right });
+  assert.deepEqual(snapshot.settings.weekHeader, weekHeader);
+});
+
+test("기본 테두리 해제는 저장·JSON·XLSX에서 상속된 선을 다시 적용하지 않는다", async () => {
+  const tid = (await post("/admin/teams", { name: "기본 테두리 해제" })).data
+    .id;
+  const settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  const line = { style: "thick", color: "#dd2244" };
+  const saved = await request(`/teams/${tid}/settings`, {
+    method: "PATCH",
+    body: {
+      ...settings,
+      defaultStyle: {
+        ...settings.defaultStyle,
+        borderTop: line,
+        borderRight: line,
+        borderBottom: line,
+        borderLeft: line,
+      },
+    },
+  });
+  assert.equal(saved.status, 200);
+  const created = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: { title: "테두리 해제" },
+    })
+  ).data.task;
+  const clearedStyle = {
+    borderTop: null,
+    borderRight: null,
+    borderBottom: null,
+    borderLeft: null,
+    bold: true,
+  };
+  const changed = await batch([
+    {
+      taskId: created.id,
+      key: "title",
+      expectedVersion: created.cells.title.version,
+      style: clearedStyle,
+    },
+  ]);
+  assert.equal(changed.status, 200);
+  const stored = (await request(`/tasks?teamId=${tid}&year=2026`)).data
+    .tasks[0];
+  assert.deepEqual(stored.cells.title.style, clearedStyle);
+  assert.deepEqual(stored.defaultStyle.borderTop, line);
+  const options = {
+    teamId: tid,
+    year: 2026,
+    scope: "view",
+    taskIds: [created.id],
+    keys: ["title", "2026-03-02"],
+  };
+  const exported = await post("/export", { ...options, format: "json" });
+  assert.equal(exported.status, 200);
+  assert.deepEqual(exported.data.tasks[0].cells.title.style, clearedStyle);
+  const xlsx = await post("/export", { ...options, format: "xlsx" });
+  assert.equal(xlsx.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(xlsx.data);
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.getCell("A2").value, "테두리 해제");
+  assert.equal(sheet.getCell("A2").font.bold, true);
+  for (const side of ["top", "right", "bottom", "left"]) {
+    assert.equal(sheet.getCell("A2").border?.[side], undefined);
+    assert.equal(sheet.getCell("B2").border[side].style, "thick");
+  }
 });
 
 test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하고 값을 보존한다", async () => {
@@ -1402,6 +1570,8 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
   const view = {
     ...defaultView(2026),
     people: [memberId],
+    personRole: "supporter",
+    propertyFilters: { status: ["진행 중"] },
     hiddenRows: [task.id],
     hiddenWeeks: ["2026-10-05"],
     collapsedMonths: [1, 2],
@@ -1420,7 +1590,11 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
     (
       await request("/views", {
         method: "PUT",
-        body: { teamId, name: "__current", data: { ...view, search: "갱신" } },
+        body: {
+          teamId,
+          name: "__current",
+          data: { ...view, widths: { title: 460 }, search: "갱신" },
+        },
       })
     ).status,
     200,
@@ -1430,7 +1604,11 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
       cookie: member,
     });
   assert.equal(own.data.views.length, 1);
-  assert.equal(own.data.views[0].data.search, "갱신");
+  assert.equal(own.data.views[0].data.search, "");
+  assert.equal(own.data.views[0].data.widths.title, 460);
+  assert.deepEqual(own.data.views[0].data.people, []);
+  assert.equal(own.data.views[0].data.personRole, "either");
+  assert.deepEqual(own.data.views[0].data.propertyFilters.status, ["진행 중"]);
   assert.deepEqual(own.data.views[0].data.hiddenRows, [task.id]);
   assert.equal(theirs.data.views.length, 0);
 });
@@ -1489,11 +1667,35 @@ test("연도 이월은 같은 업무 ID를 유지하고 삭제·복구는 버전
       (t) => t.id === task.id,
     ),
   );
+  // 편집 권한이 없으면 휴지통 복구도 할 수 없다.
   assert.equal(
-    (await post(`/tasks/${task.id}/restore`, {}, member)).status,
+    (await post(`/tasks/${task.id}/restore`, {}, viewer)).status,
     403,
   );
   assert.equal((await post(`/tasks/${task.id}/restore`, {})).status, 200);
+  // 자기 업무를 지운 팀원은 실행취소로 바로 되살릴 수 있다.
+  const own = (
+    await post("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "팀원 업무", owner: memberId },
+    })
+  ).data.task;
+  assert.equal(
+    (
+      await request(`/tasks/${own.id}`, {
+        method: "DELETE",
+        body: { updatedAt: getTask(db, own.id).updatedAt },
+        cookie: member,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await post(`/tasks/${own.id}/restore`, {}, member)).status,
+    200,
+  );
+  assert.equal(getTask(db, own.id).deletedAt, null);
 });
 test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 지킨다", async () => {
   const body = {
@@ -1724,6 +1926,44 @@ test("달력은 윤년과 연도 경계를 누락하지 않고 개인 필터의 
       hiddenWeeks: ["2026-10-05"],
       collapsedMonths: [1],
     }).some((w) => w.key === "2026-10-05" || w.month === 1),
+  );
+});
+
+test("이전 검색 조건은 업무 목록을 필터링하지 않고 보기 정규화에서 제거한다", () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.properties.find((p) => p.id === "title").name = "업무명";
+  settings.properties.push({
+    id: "prop_custom",
+    name: "작업",
+    kind: "text",
+    display: "text",
+    visible: true,
+    values: [],
+  });
+  const tasks = [
+    { id: "title-match", cells: { title: { value: "첫 Alpha 업무" } } },
+    {
+      id: "description-only",
+      cells: { title: { value: "다른 업무" }, description: { value: "Alpha" } },
+    },
+    {
+      id: "custom-only",
+      cells: { title: { value: "별도 업무" }, prop_custom: { value: "Alpha" } },
+    },
+  ];
+  const result = filteredTasks(
+    tasks,
+    { ...defaultView(2026), search: "alpHA" },
+    "user",
+    settings,
+  );
+  assert.deepEqual(
+    result.map((t) => t.id),
+    ["custom-only", "description-only", "title-match"],
+  );
+  assert.equal(
+    normalizeView({ ...defaultView(2026), search: "Alpha" }, settings).search,
+    "",
   );
 });
 

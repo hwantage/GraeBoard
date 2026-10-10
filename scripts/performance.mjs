@@ -159,13 +159,15 @@ try {
     );
     filters.push(
       await measure(async () => {
-        await page.getByLabel("업무 검색").fill("검증 업무 9999");
+        await page.getByLabel("전체 속성 검색").fill("검증 업무 9999");
         await page.waitForFunction(
-          () => document.querySelectorAll('[data-column="title"]').length === 1,
+          () =>
+            document.querySelector(".search-count")?.textContent === "1 / 1" &&
+            !!document.querySelector('[data-column="title"].focused'),
         );
       }),
     );
-    await page.getByLabel("업무 검색").fill("");
+    await page.getByLabel("전체 속성 검색").fill("");
     await page.waitForFunction(
       () => document.querySelectorAll('[data-column="title"]').length > 1,
     );

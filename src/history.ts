@@ -1,9 +1,9 @@
-import type { BatchResult, SavedCell, Style } from "./types";
+import type { HistoryEntry, SavedCell, Style } from "./types";
 
 // Only advance a prior operation when it touches the exact version we restored.
 // A version gap belongs to another operation and must keep blocking undo.
 export function rebaseHistory(
-  entries: BatchResult[],
+  entries: HistoryEntry[],
   restored: SavedCell[],
   current: SavedCell[],
 ) {
@@ -13,14 +13,24 @@ export function rebaseHistory(
   const latest = new Map(
     current.map((c) => [`${c.taskId}:${c.key}`, c.version]),
   );
-  return entries.map((entry) => ({
-    ...entry,
-    cells: entry.cells.map((c) =>
-      versions.get(`${c.taskId}:${c.key}`) === c.version
-        ? { ...c, version: latest.get(`${c.taskId}:${c.key}`) ?? c.version }
-        : c,
-    ),
-  }));
+  return entries.map((entry) =>
+    "kind" in entry
+      ? entry
+      : {
+          ...entry,
+          cells: entry.cells.map((c) =>
+            versions.get(`${c.taskId}:${c.key}`) === c.version
+              ? {
+                  ...c,
+                  version: latest.get(`${c.taskId}:${c.key}`) ?? c.version,
+                }
+              : c,
+          ),
+        },
+  );
+}
+export function cellsBefore(entry?: HistoryEntry): SavedCell[] {
+  return entry && !("kind" in entry) ? entry.before : [];
 }
 export function describeStyle(style: Style) {
   const names: Record<string, string> = {

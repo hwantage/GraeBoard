@@ -41,7 +41,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 주차 셀의 빈 값에도 배경색을 저장할 수 있습니다. 색상은 `#RRGGBB`, 글자 크기는 6~36pt 정수이며 새 팀의 기본 크기는 9pt입니다. 지원 글꼴은 Noto Sans KR·Pretendard·맑은 고딕·Noto Serif KR·Nanum Gothic Coding입니다. `맑은 고딕`은 저장 이름이며 HTML/XLSX 가져오기에서는 `Malgun Gothic`도 같은 이름으로 정규화합니다. 실제 화면은 설치된 맑은 고딕이 없으면 자체 제공 Pretendard로 표시하지만 저장된 글꼴 이름은 유지합니다.
 
-셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`dotted`·`double`, `color`는 `#RRGGBB`입니다. 누락 값은 기본 격자선을 유지하고 `none`은 해당 테두리를 지웁니다. XLSX는 thin/medium/thick/dashed/dotted/double을 대응시키며 대각선은 지원하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존합니다.
+셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}` 또는 `null`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`dotted`·`double`, `color`는 `#RRGGBB`입니다. 누락 값은 업무 기본 서식을 상속하며 상속된 선이 없으면 기본 격자선을 유지합니다. `null`은 상속된 선까지 해제해 기본 격자선을 표시하고 `none`은 기본 격자선까지 숨깁니다. 테두리 도구의 지우기는 네 방향에 `null`을 저장합니다. 선택 영역의 맞닿은 안쪽 경계는 위·왼쪽 셀의 `borderBottom`·`borderRight`에만 선을 저장하고 아래·오른쪽 셀의 `borderTop`·`borderLeft`에는 `null`을 저장합니다. XLSX는 thin/medium/thick/dashed/dotted/double을 대응시키며 `null`은 선 없이 반출하고 대각선은 지원하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존하며 HTML의 `data-grid-borders`는 기본 격자선으로 해제한 방향을 기록합니다.
 
 업무의 `defaultStyle`은 생성 시 팀의 기본 서식을 복사한 값입니다. 셀 서식이 이를 덮어쓰며, 빈 일정 셀도 업무 기본 서식을 사용합니다. 기존 업무에 없는 기본 서식은 앱 기본값입니다. SQLite 스키마 v2는 `tasks.default_style`을 추가하며, v1 DB는 기존 값을 유지한 채 자동 확장됩니다. 백업 복구는 v1·v2·v3를 허용합니다. 텍스트에 포함된 수식이나 HTML을 실행하지 않습니다.
 
@@ -55,13 +55,17 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 ## 보기·보고본·계정
 
-새 보기 기본값은 `density: compact`, `frozenColumns: 0`입니다. 저장된 보기 값은 유지합니다. 보기 설정의 `density` 값은 `comfortable`(넉넉하게), `compact`(편안하게), `dense`(촘촘하게)입니다. 기존 두 값의 행 높이는 유지하고, 새 `dense`는 `compact`의 약 2/3(기본 서식에서 26px)입니다. 개별 `rowHeights`는 26~500px을 허용하고 선택한 기본 높이보다 우선합니다.
+새 보기의 열 고정 기본값은 `frozenColumns: 0`입니다. 팀 설정의 `defaultDensity`는 `comfortable`(넉넉하게)·`compact`(편안하게, 기본)·`dense`(촘촘하게)이며 기본 서식 화면에서 저장합니다. 기존 설정에 값이 없으면 `compact`를 사용하고, 해당 필드가 없는 구 클라이언트의 설정 저장은 현재 팀 값을 유지합니다. `dense`는 `compact`의 약 2/3(기본 서식에서 26px)입니다. 개인 보기의 `density` 필드는 저장 형식 호환을 위해 남지만 화면 높이는 팀의 `defaultDensity`를 사용합니다. 개별 `rowHeights`는 26~500px을 허용하며 팀 기본 높이보다 우선합니다. 보고본은 저장 당시 팀 설정의 높이를 사용합니다.
+
+기간 선택 표는 `weeksForYear`의 월 배정과 날짜 키를 그대로 사용합니다. 월 드래그는 `fromMonth`·`toMonth`를 설정하고 주 범위를 비우며, 주 드래그는 `fromWeek`·`toWeek`와 전체 월 범위를 설정합니다. 두 선택 모두 `hiddenWeeks`·`collapsedMonths`를 비워 연속 범위를 표시합니다. 드래그 중에는 미리보기만 바꾸고 포인터를 놓을 때 한 번 저장합니다.
 
 클립보드 복사는 `application/x-weekly-plan-cells+json` (`version: 1`, `rows: {text, style}[][]`)과 `text/html`, `text/plain`을 함께 제공한다. 복사 버튼은 표준 HTML·텍스트 형식을 사용한다. 속성·담당자는 표시명으로 전달하고 대상 열의 옵션·사용자에 다시 연결한다. 출처 셀의 적용된 서식과 기본값을 복사하여 대상 업무의 기본 서식이 남지 않도록 한다. 붙여넣기 시 지원하는 서식 필드만 허용하고 HTML을 화면에 삽입하지 않는다. 일반 텍스트에는 서식 변경을 포함하지 않는다. 행·열 크기와 속성의 칩 정의는 복사 대상이 아니다.
 
 발표 모드는 현재 브라우저 화면 상태이며 DB·개인 보기에 저장하지 않는다. 필터·묶음·숨김·열 너비를 유지하고 메뉴와 편집 도구를 숨긴다.
 
 보기는 사용자·팀·연도별 필터, 숨긴 업무 ID, 숨긴 주차, 접힌 월, 표시 열, 크기와 정렬을 저장합니다. 개인 보기의 숨김은 원본이나 접근 권한을 변경하지 않습니다. `propertyFilters`는 속성 ID별 선택 값 배열입니다. 한 배열의 값은 OR, 서로 다른 속성은 AND로 평가하고 빈 배열은 필터 없음, 빈 문자열 값은 미지정 업무를 뜻합니다. 선택적인 `propertyFilterModes`는 속성 ID별 `include`(일치)·`exclude`(제외)를 저장합니다. 필드나 속성별 모드가 없으면 기존처럼 일치로 해석하며, 제외는 선택 값 중 하나라도 일치하는 업무를 제거합니다. 복수 Member의 빈 배열도 미지정으로 평가하고, 제외 모드라도 선택 값이 없으면 필터를 적용하지 않습니다. 보관된 속성의 모드는 보기 정규화 시 제거합니다. 과거 단일 `category`·`status` 필터는 조회 시 변환합니다. 모드는 개인 보기·보고본·JSON 반출에 함께 보존되며 DB 스키마 변경은 없습니다. `__current`는 최근 보기입니다. JSON의 현재 범위 내보내기는 선택한 업무와 열만 포함하며, 전체 반출을 대신하지 않습니다.
+
+통합 팀원 필터는 제거되었으며, 과거 보기에 저장된 `people`과 `personRole`은 조회·정규화 시 각각 `[]`와 `either`로 초기화합니다. 열별 `propertyFilters`는 유지합니다.
 
 `fromWeek`·`toWeek`는 월요일 날짜 키 또는 제한 없음을 뜻하는 빈 문자열입니다. 월 범위와 함께 표시할 주차를 제한합니다. `frozenColumns`는 왼쪽에서 고정할 업무 정보 열 수이며, `groupBy`는 묶음 속성 ID입니다. `sortKey`와 `sortDirection`(`asc`·`desc`·`default`)은 업무 정보 컬럼 정렬입니다. 주간 날짜 키는 정렬 대상에서 제외합니다. 과거 `sort` 설정은 조회 시 새 형식으로 변환합니다. 그룹 제목은 별도의 업무 레코드가 아닙니다. `compactWeekColumns: true`는 주간 열 너비 전환이 끝난 보기입니다. 이 값이 없는 과거 보기는 날짜 키에 해당하는 저장 너비만 절반(최소 40px)으로 전환하며, 재조회 때 다시 줄이지 않습니다. 새 보기의 주간 열 기본 너비는 40px입니다.
 
@@ -83,7 +87,7 @@ JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 
 
 XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에는 ID와 정의를 함께 반출합니다. XLSX 재이관 시 먼저 같은 팀에 속성과 값을 등록해야 합니다. 이름이 일치하는 속성 열을 종류에 맞게 해석하고, Option 값과 Member 사용자 매핑을 검증합니다.
 
-팀 설정의 `weekBorders: {left?, right?}`는 위와 같은 테두리 객체를 저장합니다. 날짜 묶음의 첫·마지막 표시 열에 적용하며 개별 셀 테두리보다 우선합니다. 구 클라이언트가 생략하면 이전 설정을 보존하고 빈 객체는 설정을 해제합니다. 팀 양식·보고본·JSON에 포함하며 XLSX는 반출하는 주차의 양 끝과 머리글에 적용합니다. DB 스키마 변경은 없습니다.
+팀 설정의 `weekHeader: {color?, backgroundColor?}`는 날짜 열 머리글의 글자색·배경색(`#RRGGBB`)입니다. 이번 주와 선택한 열의 강조색이 우선합니다. 생략하면 이전 설정을 보존하고 빈 객체는 기본 색으로 되돌립니다. 팀 양식·보고본·JSON에 포함하며 XLSX는 반출하는 주차 머리글에 적용합니다. 이전 버전의 `weekBorders`는 읽지도 저장하지도 않으며, 구 클라이언트가 보내도 무시합니다. DB 스키마 변경은 없습니다.
 
 ## 팀 스페이스 테마
 
@@ -104,7 +108,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `POST /api/cells/batch` | 값 변경 최대 2,000셀, 서식만 변경하면 최대 50,000셀 |
 | `PATCH /api/tasks/:id` | 순서·연도 변경 |
 | `DELETE /api/tasks/:id` | 휴지통 이동 |
-| `POST /api/tasks/:id/restore` | 관리자 복구 |
+| `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소 |
 | `GET/PUT /api/views` | 개인 보기 |
 | `GET/POST /api/reports` | 보고본 목록·생성 |
 | `GET /api/reports/:id` | 읽기 전용 보고본 |

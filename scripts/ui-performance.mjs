@@ -159,7 +159,7 @@ try {
     await next();
     const row = document.querySelector(".sheet-row");
     const id = row.dataset.rowId;
-    const handle = row.querySelector(".row-resizer");
+    const handle = document.querySelector('[data-resize-row="0"]');
     const y0 = handle.getBoundingClientRect().top;
     const start = row.getBoundingClientRect().height;
     handle.dispatchEvent(
@@ -193,7 +193,7 @@ try {
   const columnResize = await page.evaluate(async (frameSrc) => {
     const next = eval(frameSrc);
     const header = document.querySelector('[data-header-key="title"]');
-    const handle = header.querySelector(".column-resizer");
+    const handle = document.querySelector('[data-resize-key="title"]');
     const x0 = handle.getBoundingClientRect().left;
     const start = header.getBoundingClientRect().width;
     handle.dispatchEvent(

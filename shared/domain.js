@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS = {
   types: ["기획", "디자인", "개발", "검토", "연구"],
   statuses: DEFAULT_STATUS_OPTIONS.map((v) => v.label),
   retentionDays: 365,
+  defaultDensity: "compact",
   defaultStyle: { fontFamily: FONTS[0], fontSize: 9, verticalAlign: "top" },
 };
 export const PALETTE = [
@@ -152,6 +153,8 @@ export const BUILTIN_PROPERTIES = {
 export const PROPERTY_KINDS = ["option", "text", "date", "number", "member"];
 export function normalizeSettings(settings = DEFAULT_SETTINGS) {
   const result = { ...DEFAULT_SETTINGS, ...settings };
+  // 주차 경계선 설정은 셀 테두리로 대체되어 더 이상 읽거나 내보내지 않는다.
+  delete result.weekBorders;
   let properties = (settings.properties || []).map((p) => ({
     ...p,
     kind: p.kind || "option",
@@ -322,6 +325,11 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
   return {
     ...defaultView(input.year),
     ...input,
+    // Retired team-member filters must not silently hide tasks in saved views.
+    people: [],
+    personRole: "either",
+    // Find is transient UI state; old saved searches must not hide rows.
+    search: "",
     visibleFields: visibleFields.includes("title")
       ? visibleFields
       : ["title", ...visibleFields],
@@ -423,13 +431,6 @@ export function filteredTasks(
           ? matches
           : !matches;
       })
-    )
-      return false;
-    if (
-      view.search &&
-      !`${value(t, "title")} ${value(t, "description")}`
-        .toLowerCase()
-        .includes(view.search.toLowerCase())
     )
       return false;
     return true;

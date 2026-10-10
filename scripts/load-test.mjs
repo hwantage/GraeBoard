@@ -371,11 +371,12 @@ for (const scenario of scenarios) {
       loadTimes.push(ms() - start);
       start = ms();
       await page
-        .getByLabel("업무 검색")
+        .getByLabel("전체 속성 검색")
         .fill(`검증 업무 ${String(scenario.rows - 1).padStart(5, "0")}`);
-      await expect(page.locator('[data-column="title"]')).toHaveCount(1);
+      await expect(page.locator(".search-count")).toHaveText("1 / 1");
+      await expect(page.locator('[data-column="title"].focused')).toBeVisible();
       filterTimes.push(ms() - start);
-      await page.getByLabel("업무 검색").fill("");
+      await page.getByLabel("전체 속성 검색").fill("");
       await expect(page.getByRole("grid")).toHaveAttribute(
         "aria-rowcount",
         String(scenario.rows + 1),
@@ -384,10 +385,16 @@ for (const scenario of scenarios) {
     result.timings.browserLoads = stats(loadTimes);
     result.timings.searches = stats(filterTimes);
     start = ms();
-    await page.getByLabel("묶음 보기", { exact: true }).selectOption("status");
+    await page.locator('[data-header-key="status"]').click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "이 열로 묶음 보기", exact: true })
+      .click();
     await expect(page.locator(".group-heading").first()).toBeVisible();
     result.timings.groupMs = Math.round(ms() - start);
-    await page.getByLabel("묶음 보기", { exact: true }).selectOption("");
+    await page.locator('[data-header-key="status"]').click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "묶음 해제", exact: true })
+      .click();
     const grid = page.getByRole("grid");
     const scrollTimes = [];
     for (const fraction of [0.5, 1, 0, 0.8, 0]) {

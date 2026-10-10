@@ -41,18 +41,24 @@ export const borderSchema = z
     color: z.string().regex(/^#[a-fA-F0-9]{6}$/),
   })
   .strict();
-export const weekBordersSchema = z
+export const weekHeaderSchema = z
   .object({
-    left: borderSchema.optional(),
-    right: borderSchema.optional(),
+    color: z
+      .string()
+      .regex(/^#[a-fA-F0-9]{6}$/)
+      .optional(),
+    backgroundColor: z
+      .string()
+      .regex(/^#[a-fA-F0-9]{6}$/)
+      .optional(),
   })
   .strict();
 export const styleSchema = z
   .object({
-    borderTop: borderSchema.optional(),
-    borderRight: borderSchema.optional(),
-    borderBottom: borderSchema.optional(),
-    borderLeft: borderSchema.optional(),
+    borderTop: borderSchema.nullable().optional(),
+    borderRight: borderSchema.nullable().optional(),
+    borderBottom: borderSchema.nullable().optional(),
+    borderLeft: borderSchema.nullable().optional(),
     color: z
       .string()
       .regex(/^#[a-fA-F0-9]{6}$/)

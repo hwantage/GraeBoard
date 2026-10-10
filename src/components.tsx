@@ -1,32 +1,8 @@
-import Select from "./Select";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  X,
-  LoaderCircle,
-  Check,
-  ArrowRight,
-  LockKeyhole,
-} from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { X, LoaderCircle, Check, ArrowRight, LockKeyhole } from "lucide-react";
 import { api, send } from "./api";
 import { BrandLockup, Grae } from "./Brand";
-import type {
-  Bootstrap,
-  Cell,
-  Point,
-  Task,
-  Team,
-  User,
-  View,
-  Settings,
-} from "./types";
-import {
-  FIELDS,
-  fieldsFor,
-  cell,
-  value,
-  displayValue,
-  weeksForYear,
-} from "../shared/domain.js";
+import type { Bootstrap, User } from "./types";
 
 export function Button({
   children,
@@ -75,6 +51,7 @@ export function Modal({
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     ref.current?.showModal();
     const el = ref.current;
@@ -83,6 +60,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
+      aria-labelledby={titleId}
       className={`modal ${wide ? "wide" : ""} ${className}`}
       onCancel={(e) => {
         e.preventDefault();
@@ -93,7 +71,7 @@ export function Modal({
       }}
     >
       <header>
-        <h2>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <Button title="닫기" onClick={onClose}>
           <X size={18} />
         </Button>
@@ -374,216 +352,5 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
         </div>
       </section>
     </main>
-  );
-}
-export function ViewOptions({
-  settings,
-  view,
-  onChange,
-  onClose,
-  tasks,
-}: {
-  settings: Settings;
-  view: View;
-  onChange: (v: Partial<View>) => void;
-  onClose: () => void;
-  tasks: Task[];
-}) {
-  const fields = fieldsFor(settings);
-  const freezableFields = fields.filter(
-    (f) => view.visibleFields.includes(f.key) && f.placement !== "afterWeeks",
-  );
-  return (
-    <Modal title="보기 설정" onClose={onClose}>
-      <h3>업무 정보 열</h3>
-      <div className="check-grid">
-        {fields.map((f) => (
-          <label className="checkbox" key={f.key}>
-            <input
-              type="checkbox"
-              checked={view.visibleFields.includes(f.key)}
-              disabled={f.key === "title"}
-              onChange={(e) =>
-                onChange({
-                  visibleFields: e.target.checked
-                    ? fields
-                        .map((f) => f.key)
-                        .filter(
-                          (k) => k === f.key || view.visibleFields.includes(k),
-                        )
-                    : view.visibleFields.filter((k) => k !== f.key),
-                })
-              }
-            />
-            {f.label}
-          </label>
-        ))}
-      </div>
-      <h3>주차 범위</h3>
-      <div className="form-grid">
-        <label>
-          시작 주
-          <Select
-            aria-label="시작 주"
-            value={view.fromWeek || ""}
-            onChange={(e) =>
-              onChange({
-                fromWeek: e.target.value,
-                toWeek:
-                  view.toWeek && view.toWeek < e.target.value
-                    ? e.target.value
-                    : view.toWeek || "",
-                fromMonth: 1,
-                toMonth: 12,
-              })
-            }
-          >
-            <option value="">연초부터</option>
-            {weeksForYear(view.year).map((w) => (
-              <option key={w.key} value={w.key}>
-                {w.index}주 · {w.key} ~ {w.end}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          마지막 주
-          <Select
-            aria-label="마지막 주"
-            value={view.toWeek || ""}
-            onChange={(e) =>
-              onChange({
-                toWeek: e.target.value,
-                fromWeek:
-                  view.fromWeek &&
-                  e.target.value &&
-                  view.fromWeek > e.target.value
-                    ? e.target.value
-                    : view.fromWeek || "",
-                fromMonth: 1,
-                toMonth: 12,
-              })
-            }
-          >
-            <option value="">연말까지</option>
-            {weeksForYear(view.year).map((w) => (
-              <option key={w.key} value={w.key}>
-                {w.index}주 · {w.key} ~ {w.end}
-              </option>
-            ))}
-          </Select>
-        </label>
-      </div>
-      <h3>월 접기</h3>
-      <div className="month-choices">
-        {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-          <Button
-            key={m}
-            active={view.collapsedMonths.includes(m)}
-            onClick={() =>
-              onChange({
-                collapsedMonths: view.collapsedMonths.includes(m)
-                  ? view.collapsedMonths.filter((x) => x !== m)
-                  : [...view.collapsedMonths, m],
-              })
-            }
-          >
-            {m}월
-          </Button>
-        ))}
-      </div>
-      <p className="field-help">
-        선택한 월은 접힙니다. 나의 보기만 변경됩니다.
-      </p>
-      <details className="week-visibility">
-        <summary>주차 숨기기 · {view.hiddenWeeks.length}개 숨김</summary>
-        <div className="check-grid">
-          {weeksForYear(view.year).map((w) => (
-            <label className="checkbox" key={w.key}>
-              <input
-                type="checkbox"
-                aria-label={`${w.label} 주차 숨기기`}
-                checked={view.hiddenWeeks.includes(w.key)}
-                onChange={(e) =>
-                  onChange({
-                    hiddenWeeks: e.target.checked
-                      ? [...view.hiddenWeeks, w.key]
-                      : view.hiddenWeeks.filter((k) => k !== w.key),
-                  })
-                }
-              />
-              {w.label}
-            </label>
-          ))}
-        </div>
-      </details>
-      <h3>숨긴 업무 {view.hiddenRows.length}개</h3>
-      <div className="hidden-list">
-        {view.hiddenRows.length ? (
-          view.hiddenRows.map((id) => (
-            <div key={id}>
-              <span>
-                {String(
-                  value(
-                    tasks.find((t) => t.id === id) || { cells: {} },
-                    "title",
-                  ) || "다른 조건의 업무",
-                )}
-              </span>
-              <Button
-                onClick={() =>
-                  onChange({
-                    hiddenRows: view.hiddenRows.filter((x) => x !== id),
-                  })
-                }
-              >
-                다시 표시
-              </Button>
-            </div>
-          ))
-        ) : (
-          <p>숨긴 업무가 없습니다.</p>
-        )}
-      </div>
-      <h3>왼쪽 열 고정</h3>
-      <Select
-        aria-label="고정할 업무 정보 열 수"
-        value={Math.min(view.frozenColumns ?? 0, freezableFields.length)}
-        onChange={(e) => onChange({ frozenColumns: Number(e.target.value) })}
-      >
-        {Array.from({ length: freezableFields.length + 1 }, (_, i) => (
-          <option key={i} value={i}>
-            {i === 0 ? "고정 안 함" : `앞에서 ${i}개 열`}
-          </option>
-        ))}
-      </Select>
-      <p className="field-help">
-        주차 날짜 앞에 있는 업무 정보 열만 고정할 수 있습니다.
-      </p>
-      <h3>셀 높이</h3>
-      <Select
-        aria-label="셀 높이"
-        value={view.density}
-        onChange={(e) =>
-          onChange({ density: e.target.value as View["density"] })
-        }
-      >
-        <option value="comfortable">넉넉하게</option>
-        <option value="compact">편안하게</option>
-        <option value="dense">촘촘하게</option>
-      </Select>
-      <footer className="form-actions">
-        <Button
-          onClick={() =>
-            onChange({ hiddenRows: [], hiddenWeeks: [], collapsedMonths: [] })
-          }
-        >
-          모든 숨김 해제
-        </Button>
-        <Button className="primary" onClick={onClose}>
-          완료
-        </Button>
-      </footer>
-    </Modal>
   );
 }

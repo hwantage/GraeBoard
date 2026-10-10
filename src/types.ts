@@ -3,12 +3,23 @@ export type Border = {
   style: "none" | "solid" | "medium" | "thick" | "dashed" | "dotted" | "double";
   color: string;
 };
-export type BorderPreset = "outside" | "all" | "none";
+export type BorderPreset =
+  | "all"
+  | "inner"
+  | "horizontal"
+  | "vertical"
+  | "outside"
+  | "left"
+  | "top"
+  | "right"
+  | "bottom"
+  | "none";
 export type Style = {
-  borderTop?: Border;
-  borderRight?: Border;
-  borderBottom?: Border;
-  borderLeft?: Border;
+  // null clears inherited borders while preserving the native grid lines.
+  borderTop?: Border | null;
+  borderRight?: Border | null;
+  borderBottom?: Border | null;
+  borderLeft?: Border | null;
   color?: string;
   backgroundColor?: string;
   fontFamily?: string;
@@ -69,7 +80,8 @@ export type Property = {
   archived?: boolean;
 };
 export type Settings = {
-  weekBorders?: { left?: Border; right?: Border };
+  defaultDensity?: "comfortable" | "compact" | "dense";
+  weekHeader?: { color?: string; backgroundColor?: string };
   theme?: ThemeId;
   propertiesVersion?: number;
   properties?: Property[];
@@ -137,6 +149,13 @@ export type BatchResult = {
   operationId: string;
   savedAt: string;
 };
+// 실행취소 기록. 셀 변경 묶음과 업무(행) 삭제를 함께 쌓는다.
+export type TaskDeletion = {
+  kind: "delete";
+  ids: string[];
+  title: string;
+};
+export type HistoryEntry = BatchResult | TaskDeletion;
 export type Report = {
   id: string;
   name: string;

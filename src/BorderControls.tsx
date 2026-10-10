@@ -13,7 +13,7 @@ export default function BorderControls({
   onChange: (border: Border) => void;
   disabled?: boolean;
 }) {
-  const border = value || { style: "none", color: "#607984" };
+  const border = value || { style: "solid", color: "#607984" };
   return (
     <fieldset className="border-controls" disabled={disabled}>
       <legend>{label}</legend>
@@ -26,7 +26,8 @@ export default function BorderControls({
             onChange({ ...border, style: e.target.value as Border["style"] })
           }
         >
-          {BORDER_OPTIONS.map((option) => (
+          {/* 선 없음은 지우기 버튼이 맡는다. */}
+          {BORDER_OPTIONS.filter((o) => o.value !== "none").map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>

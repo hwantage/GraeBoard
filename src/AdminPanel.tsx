@@ -17,7 +17,6 @@ import PropertyBadge from "./PropertyBadge";
 import DefaultStyleManager from "./DefaultStyleManager";
 import ThemePicker from "./ThemePicker";
 import AvatarEditor from "./AvatarEditor";
-import BorderControls from "./BorderControls";
 import { getTheme } from "../shared/themes.js";
 import type { ThemeId } from "./types";
 const roleNames = {
@@ -451,26 +450,58 @@ function PropertiesManager({
         {selected === WEEK_COLUMNS.id && (
           <section className="property-editor" aria-label="주차 날짜 배치 안내">
             <h3>주차 날짜</h3>
-            <div className="week-border-settings">
-              {(["left", "right"] as const).map((side) => (
-                <BorderControls
-                  key={side}
-                  label={`${side === "left" ? "왼쪽" : "오른쪽"} 경계선`}
-                  value={settings.weekBorders?.[side]}
-                  disabled={busy}
-                  onChange={(border) => {
-                    setSettings((s) => ({
-                      ...s,
-                      weekBorders: { ...s.weekBorders, [side]: border },
-                    }));
-                    setMessage("");
-                  }}
-                />
+            <fieldset className="week-header-colors" disabled={busy}>
+              <legend>머리글 색</legend>
+              {(
+                [
+                  ["backgroundColor", "배경색", "#f7f9f9"],
+                  ["color", "글자색", "#72868b"],
+                ] as const
+              ).map(([key, label, fallback]) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    type="color"
+                    aria-label={`주차 머리글 ${label}`}
+                    value={settings.weekHeader?.[key] || fallback}
+                    onChange={(e) => {
+                      const color = e.target.value;
+                      setSettings((s) => ({
+                        ...s,
+                        weekHeader: { ...s.weekHeader, [key]: color },
+                      }));
+                      setMessage("");
+                    }}
+                  />
+                </label>
               ))}
-            </div>
+              <span
+                className="week-header-preview"
+                aria-hidden="true"
+                style={{
+                  background: settings.weekHeader?.backgroundColor,
+                  color: settings.weekHeader?.color,
+                }}
+              >
+                3/2
+              </span>
+              <Button
+                disabled={
+                  !settings.weekHeader?.color &&
+                  !settings.weekHeader?.backgroundColor
+                }
+                onClick={() => {
+                  setSettings((s) => ({ ...s, weekHeader: {} }));
+                  setMessage("");
+                }}
+              >
+                기본값
+              </Button>
+            </fieldset>
             <p className="field-help">
-              현재 보이는 날짜 묶음의 양 끝에 적용됩니다. 주차를 숨기거나 조회
-              기간을 바꿔도 경계선이 따라갑니다.
+              날짜 열 머리글에만 적용됩니다. 이번 주와 선택한 열은 강조색으로
+              표시합니다. 날짜 경계선은 표에서 셀을 선택한 뒤 테두리 도구로
+              지정하세요.
             </p>
             <p className="field-help">
               조회 기간에 해당하는 날짜 열을 한 묶음으로 표시합니다. 이 항목
@@ -913,7 +944,12 @@ export default function AdminPanel({
     ? data.users.filter((u) => u.teamIds.includes(memberTeam))
     : data.users;
   return (
-    <Modal title="팀과 계정 관리" wide onClose={onClose}>
+    <Modal
+      title="팀과 계정 관리"
+      wide
+      className={tab === "format" ? "format-settings-modal" : ""}
+      onClose={onClose}
+    >
       <div className="admin-tabs" role="tablist" aria-label="관리 메뉴">
         {[
           ["teams", "팀 관리"],

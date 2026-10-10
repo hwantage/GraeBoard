@@ -19,8 +19,12 @@ import {
   ArrowDown,
   GripVertical,
   EyeOff,
+  Pin,
+  PinOff,
   RotateCcw,
   Filter,
+  ListTree,
+  List,
 } from "lucide-react";
 import type {
   Task,
@@ -55,7 +59,7 @@ import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
-import { bordersCSS, weekBorderStyle } from "../shared/borders.js";
+import { bordersCSS } from "../shared/borders.js";
 import {
   createClipboard,
   copyToEvent,
@@ -209,7 +213,7 @@ export default function Grid({
   onError: (s: string) => void;
   readOnly?: boolean;
   presentation?: boolean;
-  jump: { key: string | null; id: number } | null;
+  jump: { key: string | null; taskId?: string; id: number } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const appliedJump = useRef<number | null>(null);
@@ -346,15 +350,6 @@ export default function Grid({
   const ranges = useMemo(
     () => rangesOf(selection, tasks, columns),
     [selection, tasks, columns],
-  );
-  // 열 너비만 바뀔 때는 같은 배열을 유지해 셀이 다시 그려지지 않게 한다.
-  const weekKeySignature = columns
-    .filter((c) => c.month)
-    .map((c) => c.key)
-    .join(" ");
-  const weekKeys = useMemo(
-    () => (weekKeySignature ? weekKeySignature.split(" ") : []),
-    [weekKeySignature],
   );
   const rowMarkers = useMemo(() => {
     type Gap = { ids: string[]; start: number; end: number };
@@ -587,11 +582,12 @@ export default function Grid({
   }, [tasks, group, groupKey]);
   // 셀 글자 크기에 맞춘 행 높이. 렌더·스크롤마다 전체 업무를 다시 계산하지 않도록
   // 업무 목록이나 높이 설정이 바뀔 때만 구한다.
+  const density = settings.defaultDensity || "compact";
   const contentHeights = useMemo(
     () =>
       tasks.map((task) => {
         const fitted = Math.max(
-          view.density === "comfortable" ? 48 : 38,
+          density === "comfortable" ? 48 : 38,
           ...Object.values(task.cells).map((c) =>
             Math.ceil(
               (c.style.fontSize || task.defaultStyle?.fontSize || 9) *
@@ -603,12 +599,12 @@ export default function Grid({
         );
         return (
           view.rowHeights[task.id] ||
-          (view.density === "dense"
+          (density === "dense"
             ? Math.max(26, Math.round((fitted * 2) / 3))
             : fitted)
         );
       }),
-    [tasks, view.density, view.rowHeights],
+    [tasks, density, view.rowHeights],
   );
   const estimateSize = useCallback(
     (i: number) =>
@@ -620,6 +616,10 @@ export default function Grid({
   );
   // 함수가 렌더마다 바뀌면 가상 스크롤이 모든 행의 위치를 다시 계산한다.
   const getItemKey = useCallback((i: number) => tasks[i].id, [tasks]);
+  const taskIndexes = useMemo(
+    () => new Map(tasks.map((task, index) => [task.id, index])),
+    [tasks],
+  );
   const editingIndex = useMemo(
     () => (editor ? tasks.findIndex((t) => t.id === editor.point.taskId) : -1),
     [tasks, editor?.point.taskId],
@@ -654,14 +654,20 @@ export default function Grid({
       }
       const index = columns.findIndex((c) => c.key === jump.key);
       if (index >= 0) {
+        if (jump.taskId) {
+          const row = taskIndexes.get(jump.taskId);
+          if (row === undefined) return;
+          virtual.scrollToIndex(row, { align: "center" });
+        }
         const pinned =
           rowHeaderWidth +
           columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
-        ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 80);
+        if (!columns[index].fixed)
+          ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 16);
         appliedJump.current = jump.id;
       }
     }
-  }, [jump?.id, columns.length]);
+  }, [jump, columns, taskIndexes]);
   useLayoutEffect(() => {
     if (!editor) return;
     const ri = tasks.findIndex((t) => t.id === editor.point.taskId);
@@ -921,6 +927,21 @@ export default function Grid({
             },
           },
           {
+            label: "여기까지 열 고정",
+            icon: <Pin size={15} />,
+            disabled:
+              !menuColumn ||
+              !!menuColumn.month ||
+              menuProperty?.placement === "afterWeeks",
+            run: () => onView({ frozenColumns: headerMenu.index + 1 }),
+          },
+          {
+            label: "열 고정 해제",
+            icon: <PinOff size={15} />,
+            disabled: !view.frozenColumns,
+            run: () => onView({ frozenColumns: 0 }),
+          },
+          {
             label: "오름차순 정렬",
             icon: <ArrowUp size={15} />,
             disabled: !menuColumn || !!menuColumn.month,
@@ -937,6 +958,18 @@ export default function Grid({
             icon: <RotateCcw size={15} />,
             disabled: !sorted || menuColumn?.key !== view.sortKey,
             run: () => sortColumn("", "default"),
+          },
+          {
+            label: "이 열로 묶음 보기",
+            icon: <ListTree size={15} />,
+            disabled: !menuProperty || view.groupBy === menuProperty.id,
+            run: () => onView({ groupBy: menuProperty!.id }),
+          },
+          {
+            label: "묶음 해제",
+            icon: <List size={15} />,
+            disabled: !view.groupBy,
+            run: () => onView({ groupBy: "" }),
           },
         ]
       : [
@@ -1088,7 +1121,23 @@ export default function Grid({
     window.addEventListener("pointermove", handle);
     window.addEventListener("pointerup", stop, { once: true });
   }
-  function startRowResize(e: React.PointerEvent, task: Task, index: number) {
+  // 경계선 양쪽에 걸친 손잡이. 뒤 머리글이 앞 머리글 위에 그려지므로
+  // 손잡이는 경계 오른쪽 머리글의 왼쪽 끝에 둔다. 고정 열과 일반 열의
+  // 경계나 마지막 열처럼 오른쪽 머리글이 위에 오지 않으면 자기 오른쪽 끝에 둔다.
+  function columnResizer(column: Column, side: "start" | "end") {
+    return (
+      <span
+        className={`column-resizer ${side}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`${column.label} 너비 조절`}
+        data-resize-key={column.key}
+        onPointerDown={(e) => startColumnResize(e, column)}
+      />
+    );
+  }
+  function startRowResize(e: React.PointerEvent, index: number) {
+    const task = tasks[index];
     e.preventDefault();
     e.stopPropagation();
     dragOrigin.current = null;
@@ -1196,7 +1245,7 @@ export default function Grid({
         aria-colcount={columns.length + 1}
         aria-readonly={readOnly}
         className="sheet-scroll"
-        data-density={view.density}
+        data-density={density}
         onKeyDown={keyboard}
         onPointerUp={() => {
           dragOrigin.current = null;
@@ -1235,7 +1284,17 @@ export default function Grid({
           }
         }}
       >
-        <div className="sheet-header" role="row" style={{ width: totalWidth }}>
+        <div
+          className="sheet-header"
+          role="row"
+          style={
+            {
+              width: totalWidth,
+              "--week-header-bg": settings.weekHeader?.backgroundColor,
+              "--week-header-color": settings.weekHeader?.color,
+            } as CSSProperties
+          }
+        >
           <div className="row-number header-cell" role="columnheader">
             {presentation ? (
               "#"
@@ -1297,9 +1356,6 @@ export default function Grid({
                 style={{
                   width: c.width,
                   ...(c.fixed ? { left: positions[ci] } : {}),
-                  ...bordersCSS(
-                    weekBorderStyle(c.key, weekKeys, settings.weekBorders),
-                  ),
                 }}
               >
                 {presentation ? (
@@ -1344,14 +1400,14 @@ export default function Grid({
                     )}
                   </button>
                 )}
-                {!presentation && (
-                  <span
-                    className="column-resizer"
-                    role="separator"
-                    aria-label={`${c.label} 너비 조절`}
-                    onPointerDown={(e) => startColumnResize(e, c)}
-                  />
-                )}
+                {!presentation &&
+                  ci > 0 &&
+                  !!columns[ci - 1].fixed === !!c.fixed &&
+                  columnResizer(columns[ci - 1], "start")}
+                {!presentation &&
+                  (ci === columns.length - 1 ||
+                    !!columns[ci + 1].fixed !== !!c.fixed) &&
+                  columnResizer(c, "end")}
               </div>
             </Fragment>
           ))}
@@ -1367,11 +1423,12 @@ export default function Grid({
             const rowNumber = marker?.number || row.index + 1;
             const rowGroupHeight = groupHeight(row.index);
             // 행마다 바뀐 선택만 문자열로 넘겨 선택과 무관한 행은 다시 그리지 않는다.
+            // 영역의 첫·마지막 행인지도 함께 넘겨 영역 외곽선을 그린다.
             let spans = "",
               rowSelected = false;
             for (const r of ranges)
               if (row.index >= r.r1 && row.index <= r.r2) {
-                spans += `${r.c1}-${r.c2},`;
+                spans += `${r.c1}-${r.c2}-${+(row.index === r.r1)}-${+(row.index === r.r2)},`;
                 if (r.kind === "rows") rowSelected = true;
               }
             return (
@@ -1405,7 +1462,6 @@ export default function Grid({
                   }
                   columns={columns}
                   positions={positions}
-                  weekKeys={weekKeys}
                   properties={properties}
                   users={users}
                   settings={settings}
@@ -1422,6 +1478,13 @@ export default function Grid({
                   }
                   editor={editor?.point.taskId === task.id ? editor : null}
                   editorActive={!!editor}
+                  resizeEnd={
+                    row.index === tasks.length - 1
+                      ? "edge"
+                      : groupHeight(row.index + 1)
+                        ? "inside"
+                        : ""
+                  }
                   actions={actions}
                 />
               </div>
@@ -1568,7 +1631,7 @@ type GridActions = {
     x: number,
     y: number,
   ): void;
-  startRowResize(e: React.PointerEvent, task: Task, index: number): void;
+  startRowResize(e: React.PointerEvent, index: number): void;
   revealRows(ids: string[]): void;
 };
 type RowGap = { ids: string[]; start: number; end: number };
@@ -1584,7 +1647,6 @@ const RowBody = memo(function RowBody({
   groupCount,
   columns,
   positions,
-  weekKeys,
   properties,
   users,
   settings,
@@ -1597,6 +1659,7 @@ const RowBody = memo(function RowBody({
   focusKey,
   editor,
   editorActive,
+  resizeEnd,
   actions,
 }: {
   task: Task;
@@ -1608,7 +1671,6 @@ const RowBody = memo(function RowBody({
   groupCount: number | undefined;
   columns: Column[];
   positions: number[];
-  weekKeys: string[];
   properties: Property[];
   users: User[];
   settings: Settings;
@@ -1621,6 +1683,9 @@ const RowBody = memo(function RowBody({
   focusKey: string | null;
   editor: EditorState | null;
   editorActive: boolean;
+  // 이 행 아래쪽 끝에 높이 손잡이를 둘지. 마지막 행은 경계에 걸치고,
+  // 묶음 제목 바로 위 행은 제목에 가려지지 않게 행 안쪽에 둔다.
+  resizeEnd: "" | "edge" | "inside";
   actions: GridActions;
 }) {
   const groupKey = group?.id || "";
@@ -1705,11 +1770,24 @@ const RowBody = memo(function RowBody({
             >
               <span className="row-index">{rowNumber}</span>
             </button>
-            <span
-              className="row-resizer"
-              title="행 높이 조절"
-              onPointerDown={(e) => actions.startRowResize(e, task, index)}
-            />
+            {/* 아래 행이 위 행 위에 그려지므로 경계 손잡이는 아래 행의 위쪽 끝에
+                둔다. 마지막 행과 묶음 제목 바로 위 행은 자기 아래쪽 끝에 둔다. */}
+            {index > 0 && !groupHeight && (
+              <span
+                className="row-resizer start"
+                title="행 높이 조절"
+                data-resize-row={index - 1}
+                onPointerDown={(e) => actions.startRowResize(e, index - 1)}
+              />
+            )}
+            {resizeEnd && (
+              <span
+                className={`row-resizer end ${resizeEnd}`}
+                title="행 높이 조절"
+                data-resize-row={index}
+                onPointerDown={(e) => actions.startRowResize(e, index)}
+              />
+            )}
           </>
         )}
         {(["before", "after"] as const).map((side) => {
@@ -1747,13 +1825,8 @@ const RowBody = memo(function RowBody({
           for (let next = ci + 1; next < columns.length; next++) {
             const neighbor = columns[next];
             const v = value(task, neighbor.key);
-            const previousKey = columns[next - 1].key;
-            const right =
-              weekBorderStyle(previousKey, weekKeys, settings.weekBorders)
-                .borderRight || cell(task, previousKey).style.borderRight;
-            const left =
-              weekBorderStyle(neighbor.key, weekKeys, settings.weekBorders)
-                .borderLeft || cell(task, neighbor.key).style.borderLeft;
+            const right = cell(task, columns[next - 1].key).style.borderRight;
+            const left = cell(task, neighbor.key).style.borderLeft;
             if (
               !!neighbor.fixed !== !!c.fixed ||
               (right && right.style !== "none") ||
@@ -1773,12 +1846,11 @@ const RowBody = memo(function RowBody({
             left={c.fixed ? positions[ci] : undefined}
             overflowWidth={overflowWidth}
             property={property}
-            selected={selectedSpans.some(([a, b]) => ci >= a && ci <= b)}
+            selection={selectionEdges(selectedSpans, ci)}
             focused={focusKey === c.key}
             editor={editing ? editor : null}
             editable={editable}
             canEditPeople={["admin", "manager"].includes(user.role)}
-            weekKeys={weekKeys}
             users={users}
             settings={settings}
             presentation={presentation}
@@ -1790,6 +1862,20 @@ const RowBody = memo(function RowBody({
   );
 });
 
+function selectionEdges(spans: number[][], ci: number) {
+  let hit = false,
+    edges = "";
+  for (const [c1, c2, top, bottom] of spans) {
+    if (ci < c1 || ci > c2) continue;
+    hit = true;
+    if (top) edges += "t";
+    if (ci === c2) edges += "r";
+    if (bottom) edges += "b";
+    if (ci === c1) edges += "l";
+  }
+  return hit ? edges : null;
+}
+
 // 셀 하나. 열 너비·선택이 바뀌어도 해당 셀만 다시 그린다.
 const GridCell = memo(function GridCell({
   task,
@@ -1797,12 +1883,11 @@ const GridCell = memo(function GridCell({
   left,
   overflowWidth,
   property,
-  selected,
+  selection,
   focused,
   editor,
   editable,
   canEditPeople,
-  weekKeys,
   users,
   settings,
   presentation,
@@ -1813,12 +1898,12 @@ const GridCell = memo(function GridCell({
   left: number | undefined;
   overflowWidth: number;
   property: Property | undefined;
-  selected: boolean;
+  // 선택되지 않았으면 null, 선택됐으면 영역 외곽에 닿은 변(t·r·b·l).
+  selection: string | null;
   focused: boolean;
   editor: EditorState | null;
   editable: boolean;
   canEditPeople: boolean;
-  weekKeys: string[];
   users: User[];
   settings: Settings;
   presentation: boolean;
@@ -1882,10 +1967,7 @@ const GridCell = memo(function GridCell({
   // 셀마다 다른 값만 인라인으로 지정해 스타일 쓰기를 줄인다.
   const style: CSSProperties = {
     width: c.width,
-    ...bordersCSS({
-      ...s,
-      ...weekBorderStyle(c.key, weekKeys, settings.weekBorders),
-    }),
+    ...bordersCSS(s),
   };
   if (left !== undefined) style.left = left;
   if (s.color) style.color = s.color;
@@ -1910,12 +1992,13 @@ const GridCell = memo(function GridCell({
   return (
     <div
       role="gridcell"
-      aria-selected={!!selected}
+      aria-selected={selection !== null}
+      data-selection-edges={selection || undefined}
       data-cell={`${task.id}:${c.key}`}
       data-task-id={task.id}
       data-column={c.key}
       data-text-mode={mode}
-      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selected ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? "task-title" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
+      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? "task-title" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
       title={text || undefined}
       onPointerDown={(e) => actions.cellPointerDown(e, point)}

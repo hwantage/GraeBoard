@@ -9,7 +9,7 @@ import {
 import {
   propertiesSchema,
   styleSchema,
-  weekBordersSchema,
+  weekHeaderSchema,
   requireThat,
   validateCellValue,
 } from "./validation.mjs";
@@ -24,8 +24,10 @@ import {
 import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
 
-export function saveSettings(db, team, input, actorId) {
+export function saveSettings(db, team, rawInput, actorId) {
   const previous = normalizeSettings(team.settings);
+  // 이전 클라이언트가 보내는 주차 경계선 설정은 저장하지 않는다.
+  const { weekBorders: _legacy, ...input } = rawInput;
   const list = z
     .array(z.string().trim().min(1).max(60))
     .max(100)
@@ -41,7 +43,8 @@ export function saveSettings(db, team, input, actorId) {
       propertiesVersion: z.literal(3).optional(),
       revision: z.number().int().nonnegative().optional(),
       defaultStyle: styleSchema.optional(),
-      weekBorders: weekBordersSchema.optional(),
+      defaultDensity: z.enum(["comfortable", "compact", "dense"]).optional(),
+      weekHeader: weekHeaderSchema.optional(),
     })
     .strict()
     .parse({
@@ -132,7 +135,8 @@ export function saveSettings(db, team, input, actorId) {
     propertiesVersion: 3,
     properties,
     defaultStyle: data.defaultStyle ?? previous.defaultStyle,
-    weekBorders: data.weekBorders ?? previous.weekBorders,
+    defaultDensity: data.defaultDensity ?? previous.defaultDensity,
+    weekHeader: data.weekHeader ?? previous.weekHeader,
     revision: (previous.revision || 0) + 1,
   };
   for (const [key, listKey] of Object.entries(BUILTIN_PROPERTIES))

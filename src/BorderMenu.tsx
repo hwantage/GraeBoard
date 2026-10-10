@@ -1,15 +1,64 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Grid2X2 } from "lucide-react";
-import { Button } from "./components";
+import { Eraser, Grid2X2 } from "lucide-react";
 import BorderControls from "./BorderControls";
+import { BORDER_PRESETS } from "../shared/borders.js";
 import type { Border, BorderPreset } from "./types";
+
+// 아이콘에서 강조할 선. 바깥 네 변과 가운데 가로·세로선.
+const SEGMENTS = {
+  top: "M2 2H16",
+  right: "M16 2V16",
+  bottom: "M2 16H16",
+  left: "M2 2V16",
+  horizontal: "M2 9H16",
+  vertical: "M9 2V16",
+};
+type Segment = keyof typeof SEGMENTS;
+const OUTSIDE: Segment[] = ["top", "right", "bottom", "left"];
+const ICON_SEGMENTS: Record<Exclude<BorderPreset, "none">, Segment[]> = {
+  all: [...OUTSIDE, "horizontal", "vertical"],
+  inner: ["horizontal", "vertical"],
+  horizontal: ["horizontal"],
+  vertical: ["vertical"],
+  outside: OUTSIDE,
+  left: ["left"],
+  top: ["top"],
+  right: ["right"],
+  bottom: ["bottom"],
+};
+// 셀 하나에 적용하는 기본 서식에는 안쪽 경계가 없다.
+const INNER_PRESETS: BorderPreset[] = ["inner", "horizontal", "vertical"];
+
+function BorderIcon({ preset }: { preset: BorderPreset }) {
+  if (preset === "none") return <Eraser size={16} aria-hidden="true" />;
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path
+        d={Object.values(SEGMENTS).join(" ")}
+        stroke="currentColor"
+        strokeOpacity="0.35"
+        strokeDasharray="1 2"
+        fill="none"
+      />
+      <path
+        d={ICON_SEGMENTS[preset].map((k) => SEGMENTS[k]).join(" ")}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="square"
+        fill="none"
+      />
+    </svg>
+  );
+}
 
 export default function BorderMenu({
   disabled,
   onApply,
+  single = false,
 }: {
   disabled: boolean;
+  single?: boolean;
   onApply: (preset: BorderPreset, border: Border) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -34,7 +83,7 @@ export default function BorderMenu({
       });
     };
     place();
-    popup.current?.querySelector("select")?.focus();
+    popup.current?.querySelector("button")?.focus();
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
@@ -83,6 +132,7 @@ export default function BorderMenu({
             aria-label="선택 영역 테두리"
             onKeyDown={(e) => {
               if (e.key === "Escape") {
+                e.preventDefault();
                 e.stopPropagation();
                 setOpen(false);
                 trigger.current?.focus();
@@ -94,32 +144,36 @@ export default function BorderMenu({
               value={border}
               onChange={setBorder}
             />
-            <div className="border-actions">
-              {(
-                [
-                  ["outside", "바깥쪽 테두리"],
-                  ["all", "모든 테두리"],
-                  ["none", "테두리 지우기"],
-                ] as const
-              ).map(([preset, label]) => (
-                <Button
-                  key={preset}
-                  disabled={disabled}
-                  onClick={() => {
-                    onApply(preset, border);
-                    setOpen(false);
-                    trigger.current?.focus();
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
+            <div
+              className="border-presets"
+              role="group"
+              aria-label="테두리 위치"
+              // WebKit otherwise focuses the parent dialog before the click,
+              // which dismisses this popup before its action can run.
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {(BORDER_PRESETS as { value: BorderPreset; label: string }[])
+                .filter((p) => !single || !INNER_PRESETS.includes(p.value))
+                .map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="border-preset"
+                    title={label}
+                    aria-label={label}
+                    disabled={disabled}
+                    onClick={() => {
+                      onApply(value, border);
+                      setOpen(false);
+                      trigger.current?.focus();
+                    }}
+                  >
+                    <BorderIcon preset={value} />
+                  </button>
+                ))}
             </div>
-            <p className="field-help">
-              ⌘/Ctrl을 누르고 드래그하면 떨어진 영역도 추가할 수 있습니다.
-            </p>
           </div>,
-          document.body,
+          trigger.current?.closest("dialog") || document.body,
         )}
     </>
   );

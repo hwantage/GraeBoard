@@ -1,3 +1,4 @@
+import { useId } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -9,10 +10,6 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  AlignVerticalJustifyStart,
-  AlignVerticalJustifyCenter,
-  AlignVerticalJustifyEnd,
-  WrapText,
   PaintBucket,
   EyeOff,
   ChevronsLeftRight,
@@ -35,6 +32,7 @@ export default function Toolbar({
   onHide,
   selectionLabel,
   onCopy,
+  label = "셀 서식 도구",
 }: {
   style: Style;
   disabled: boolean;
@@ -45,12 +43,14 @@ export default function Toolbar({
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  onHide: () => void;
-  selectionLabel: string;
-  onCopy: () => void;
+  onHide?: () => void;
+  selectionLabel?: string;
+  onCopy?: () => void;
+  label?: string;
 }) {
+  const paletteId = useId();
   return (
-    <div className="format-toolbar" aria-label="셀 서식 도구">
+    <div className="format-toolbar" aria-label={label}>
       <div className="toolbar-group">
         <Button title="실행취소" disabled={!canUndo} onClick={onUndo}>
           <Undo2 size={16} />
@@ -117,7 +117,7 @@ export default function Toolbar({
             aria-label="글자 색상"
             type="color"
             value={style.color || "#243642"}
-            list="cell-colors"
+            list={paletteId}
             disabled={disabled}
             onChange={(e) => onStyle({ color: e.target.value })}
           />
@@ -138,12 +138,12 @@ export default function Toolbar({
             aria-label="배경색"
             type="color"
             value={style.backgroundColor || "#ffffff"}
-            list="cell-colors"
+            list={paletteId}
             disabled={disabled}
             onChange={(e) => onStyle({ backgroundColor: e.target.value })}
           />
         </label>
-        <datalist id="cell-colors">
+        <datalist id={paletteId}>
           {PALETTE.map((c) => (
             <option key={c}>{c}</option>
           ))}
@@ -198,28 +198,38 @@ export default function Toolbar({
         />
       </div>
       <div className="toolbar-group">
-        <BorderMenu disabled={disabled} onApply={onBorder} />
+        <BorderMenu
+          disabled={disabled}
+          onApply={onBorder}
+          single={selectionLabel === undefined}
+        />
         <Button title="서식 초기화" disabled={disabled} onClick={onReset}>
           <ChevronsLeftRight size={16} />
         </Button>
-        <Button
-          title="선택 셀 복사"
-          onClick={onCopy}
-          disabled={!selectionLabel}
-        >
-          <Copy size={15} />
-        </Button>
-        <Button
-          title="선택 행 숨기기"
-          onClick={onHide}
-          disabled={!selectionLabel}
-        >
-          <EyeOff size={16} />
-        </Button>
+        {onCopy && (
+          <Button
+            title="선택 셀 복사"
+            onClick={onCopy}
+            disabled={!selectionLabel}
+          >
+            <Copy size={15} />
+          </Button>
+        )}
+        {onHide && (
+          <Button
+            title="선택 행 숨기기"
+            onClick={onHide}
+            disabled={!selectionLabel}
+          >
+            <EyeOff size={16} />
+          </Button>
+        )}
       </div>
-      <span className="selection-label">
-        {selectionLabel || "셀을 선택해 편집하세요"}
-      </span>
+      {selectionLabel !== undefined && (
+        <span className="selection-label">
+          {selectionLabel || "셀을 선택해 편집하세요"}
+        </span>
+      )}
     </div>
   );
 }

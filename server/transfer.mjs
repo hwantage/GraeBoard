@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { BORDER_SIDES, weekBorderStyle } from "../shared/borders.js";
+import { BORDER_SIDES } from "../shared/borders.js";
 import { checkWorkbookArchive } from "./archive.mjs";
 import { profileSnapshot } from "./profiles.mjs";
 import multer from "multer";
@@ -599,11 +599,19 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
     pattern: "solid",
     fgColor: { argb: "FFEDF6F4" },
   };
-  const weekKeys = keys.filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key));
+  const argb = (hex) => "FF" + hex.slice(1).toUpperCase();
+  const { color, backgroundColor } = settings.weekHeader || {};
   keys.forEach((key, i) => {
-    ws.getRow(1).getCell(i + 1).border = excelStyle(
-      weekBorderStyle(key, weekKeys, settings.weekBorders),
-    ).border;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+    const header = ws.getRow(1).getCell(i + 1);
+    if (color)
+      header.font = { ...ws.getRow(1).font, color: { argb: argb(color) } };
+    if (backgroundColor)
+      header.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: argb(backgroundColor) },
+      };
   });
   for (const t of tasks) {
     const r = ws.addRow(keys.map((k) => displayValue(t, k, users, settings)));
@@ -615,7 +623,6 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
           ? { backgroundColor: option.backgroundColor }
           : {}),
         ...cell(t, k).style,
-        ...weekBorderStyle(k, weekKeys, settings.weekBorders),
       });
     });
   }

@@ -51,7 +51,11 @@ function cleanStyle(input: unknown): Style {
   for (const side of BORDER_SIDES) {
     const key = `border${side}` as
       "borderTop" | "borderRight" | "borderBottom" | "borderLeft";
-    const b = s[key] as Record<string, unknown> | undefined;
+    const b = s[key] as Record<string, unknown> | null | undefined;
+    if (b === null) {
+      result[key] = null;
+      continue;
+    }
     if (
       b &&
       BORDER_STYLES.includes(String(b.style)) &&
@@ -137,6 +141,9 @@ export function createClipboard(
       (row) =>
         `<tr>${row
           .map(({ text, style: s }) => {
+            const gridBorders = BORDER_SIDES.filter(
+              (side) => s[`border${side}` as keyof Style] === null,
+            ).join(" ");
             const css = [
               `color:${s.color}`,
               `background-color:${s.backgroundColor}`,
@@ -151,10 +158,10 @@ export function createClipboard(
               `overflow:${s.textMode === "clip" ? "hidden" : "visible"}`,
               ...BORDER_SIDES.map(
                 (side) =>
-                  `border-${side.toLowerCase()}:${borderCSS(s[`border${side}` as keyof Style])}`,
+                  `border-${side.toLowerCase()}:${borderCSS(s[`border${side}` as keyof Style]) ?? "0px none transparent"}`,
               ),
             ].join(";");
-            return `<td data-text-mode="${s.textMode}" style="${escapeHTML(css)}">${escapeHTML(text).replace(/\r\n|\r|\n/g, "<br>")}</td>`;
+            return `<td data-text-mode="${s.textMode}" data-grid-borders="${gridBorders}" style="${escapeHTML(css)}">${escapeHTML(text).replace(/\r\n|\r|\n/g, "<br>")}</td>`;
           })
           .join("")}</tr>`,
     )
@@ -244,9 +251,14 @@ function htmlStyle(element: HTMLElement): Style {
     result: Style = {};
   const color = colorHex(s.color),
     background = colorHex(s.backgroundColor);
+  const gridBorders = new Set((element.dataset.gridBorders || "").split(" "));
   for (const side of BORDER_SIDES) {
     const key = `border${side}` as
       "borderTop" | "borderRight" | "borderBottom" | "borderLeft";
+    if (gridBorders.has(side)) {
+      result[key] = null;
+      continue;
+    }
     const line = s[`${key}Style`],
       width = parseFloat(s[`${key}Width`]);
     if (!line) continue;

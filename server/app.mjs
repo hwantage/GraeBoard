@@ -626,7 +626,12 @@ export function createApp({
   });
   app.post("/api/tasks/:id/restore", (req, res) => {
     const task = taskAccess(req.user, req.params.id, false, true);
-    requireThat(manager(req.user), 403, "관리자만 복구할 수 있습니다.");
+    // 삭제할 수 있었던 사람은 바로 실행취소로 되살릴 수 있다.
+    requireThat(
+      manager(req.user) || canEdit(req.user, task),
+      403,
+      "관리자만 복구할 수 있습니다.",
+    );
     transaction(db, () => {
       db.prepare(
         "UPDATE tasks SET deleted_at=NULL,updated_at=? WHERE id=?",
