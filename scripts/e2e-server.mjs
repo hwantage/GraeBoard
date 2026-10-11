@@ -24,10 +24,11 @@ const app = createApp({ db, rateLimits: false }),
     console.log("임시 브라우저 검증 서버: http://127.0.0.1:4311");
   });
 for (const signal of ["SIGINT", "SIGTERM"])
-  process.on(signal, () =>
+  process.on(signal, () => {
+    app.locals.cellEvents.close();
     server.close(() => {
       db.close();
       rmSync(dir, { recursive: true, force: true });
       process.exit(0);
-    }),
-  );
+    });
+  });

@@ -29,7 +29,14 @@ export async function api<T = any>(
       ...options.headers,
     },
   });
-  if (response.status === 304 && cached) return cached.data as T;
+  const withCursor = (data: unknown) =>
+    cacheable
+      ? {
+          ...(data as object),
+          cellEventId: response.headers.get("X-Cell-Event-ID"),
+        }
+      : data;
+  if (response.status === 304 && cached) return withCursor(cached.data) as T;
   if (!response.ok) {
     if (cacheable && [403, 404].includes(response.status))
       taskResponses.delete(path);
@@ -60,7 +67,7 @@ export async function api<T = any>(
       taskResponses.delete(taskResponses.keys().next().value!);
     taskResponses.set(path, { etag: response.headers.get("etag")!, data });
   }
-  return data;
+  return withCursor(data) as T;
 }
 export const send = <T = any>(path: string, body: unknown, method = "POST") =>
   api<T>(path, { method, body: JSON.stringify(body) });

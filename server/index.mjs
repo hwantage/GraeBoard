@@ -15,9 +15,10 @@ const server = app.listen(port, host, () =>
   console.log(`GraeBoard: http://${host}:${port}`),
 );
 for (const signal of ["SIGINT", "SIGTERM"])
-  process.on(signal, () =>
+  process.on(signal, () => {
+    app.locals.cellEvents.close();
     server.close(() => {
       app.locals.db.close();
       process.exit(0);
-    }),
-  );
+    });
+  });

@@ -65,6 +65,7 @@ import {
 import { installTransferRoutes } from "./transfer.mjs";
 import { saveSettings } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
+import { createCellEvents } from "./cell-events.mjs";
 import { installReorderRoute } from "./reorder.mjs";
 import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
@@ -111,10 +112,13 @@ export function createApp({
   staticDir = resolve("dist"),
   allowSetup = true,
   rateLimits = true,
+  cellEventOptions,
 } = {}) {
   const app = express();
   const cachedTasks = createTaskCache(db);
+  const cellEvents = createCellEvents(db, cellEventOptions);
   app.locals.db = db;
+  app.locals.cellEvents = cellEvents;
   app.disable("x-powered-by");
   if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
   app.use(
@@ -134,7 +138,12 @@ export function createApp({
       crossOriginEmbedderPolicy: false,
     }),
   );
-  app.use(compression());
+  app.use(
+    compression({
+      filter: (req, res) =>
+        req.path !== "/api/cells/events" && compression.filter(req, res),
+    }),
+  );
   app.use(cookieParser());
   app.use("/api/cells/batch", express.json({ limit: "32mb" }));
   app.use(express.json({ limit: "5mb" }));
@@ -429,6 +438,8 @@ export function createApp({
       );
     const etag = cachedTasks.etag(teamId, year, deleted);
     res.set("ETag", etag);
+    // The snapshot and cursor are captured synchronously in this process.
+    res.set("X-Cell-Event-ID", cellEvents.cursor());
     res.vary("Accept-Encoding");
     if (req.get("If-None-Match") === etag) return res.status(304).end();
     const cached = cachedTasks(teamId, year, deleted, etag);
@@ -438,6 +449,16 @@ export function createApp({
       return res.send(cached.gzip);
     }
     res.send(cached.body);
+  });
+  app.get("/api/cells/events", (req, res) => {
+    const teamId = String(req.query.teamId || "");
+    teamAccess(req.user, teamId);
+    const year = yearSchema.parse(req.query.year);
+    cellEvents.subscribe(req, res, {
+      teamId,
+      year,
+      token: sessionHash(req.cookies.weekly_session),
+    });
   });
   app.post("/api/tasks", (req, res) => {
     const d = z
@@ -624,6 +645,7 @@ export function createApp({
         taskAccess(req.user, taskId, false, true);
       return res.json(replay);
     }
+    let eventTasks;
     const response = transaction(db, () => {
       const seen = new Set();
       for (const change of d.changes) {
@@ -642,6 +664,7 @@ export function createApp({
           .filter((t) => !t.deletedAt)
           .map((t) => [t.id, t]),
       );
+      eventTasks = tasks;
       requireThat(
         taskIds.every((taskId) => tasks.has(taskId)),
         404,
@@ -735,6 +758,17 @@ export function createApp({
       );
       return result;
     });
+    // Publish only after COMMIT. A replayed operation returns above and cannot
+    // emit twice. Cell records retain their versions/styles; no View is sent.
+    cellEvents.publish(
+      {
+        ...response,
+        cells: response.cells.filter(
+          (_, i) => d.changes[i].value !== undefined,
+        ),
+      },
+      eventTasks,
+    );
     res.json(response);
   });
   app.patch("/api/tasks/:id", (req, res) => {

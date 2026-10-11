@@ -3304,8 +3304,22 @@ test("같은 셀의 연속 실행취소·재실행과 사이에 발생한 타인
       },
     ],
   });
+  // SSE has already delivered the new version, so undo rejects locally before
+  // sending a stale write. Verify the protection rather than an HTTP-only UI.
+  await expect(cell).toHaveText("타인의 다음 수정", { timeout: 3000 });
+  let undoRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/cells/batch")
+    )
+      undoRequests++;
+  });
   await page.getByRole("button", { name: "실행취소", exact: true }).click();
-  await expect(page.getByRole("button", { name: "입력 확인" })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "이후 변경이 있어 되돌릴 수 없습니다",
+  );
+  expect(undoRequests).toBe(0);
   const latest = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)

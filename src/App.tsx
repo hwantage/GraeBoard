@@ -31,6 +31,8 @@ import {
   Minimize2,
 } from "lucide-react";
 import { api, send, ApiError } from "./api";
+import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
+import { subscribeCellChanges } from "./cell-sync";
 import {
   fieldsFor,
   orderColumns,
@@ -205,9 +207,11 @@ function Workspace({
       task: Task;
       height?: number;
     } | null>(null),
-    [editor, setEditor] = useState<{ point: Point; initial?: string } | null>(
-      null,
-    ),
+    [editor, setEditor] = useState<{
+      point: Point;
+      initial?: string;
+      task: Task;
+    } | null>(null),
     [pendingEdit, setPendingEdit] = useState<{
       point: Point;
       value: SavedCell["value"];
@@ -281,6 +285,8 @@ function Workspace({
     lastView = useRef(view),
     boardKey = useRef(""),
     mutationEpoch = useRef(0),
+    remoteEpoch = useRef(0),
+    cellEventCursor = useRef<string | null>(null),
     viewSaver = useRef<null | (() => void)>(null);
   useLayoutEffect(() => {
     const grid =
@@ -380,7 +386,8 @@ function Workspace({
   const refresh = useCallback(async () => {
     if (!teamId) return;
     const key = `${teamId}:${year}`,
-      epoch = mutationEpoch.current;
+      epoch = mutationEpoch.current,
+      remote = remoteEpoch.current;
     try {
       const [r, latestBoot] = await Promise.all([
         api(`/tasks?teamId=${teamId}&year=${year}`),
@@ -389,6 +396,7 @@ function Workspace({
       if (
         boardKey.current === key &&
         epoch === mutationEpoch.current &&
+        remote === remoteEpoch.current &&
         !pendingRef.current &&
         !failedRef.current &&
         !editorRef.current
@@ -426,6 +434,7 @@ function Workspace({
     if (!teamId) return;
     const key = `${teamId}:${year}`;
     boardKey.current = key;
+    cellEventCursor.current = null;
     setLoaded(false);
     setError("");
     setViewError("");
@@ -447,6 +456,7 @@ function Workspace({
         if (boardKey.current !== key) return;
         setTasks(r.tasks);
         tasksRef.current = r.tasks;
+        cellEventCursor.current = r.cellEventId;
         setSavedViews(v.views);
         const current =
           v.views.find((s: any) => s.name === "__current")?.data ||
@@ -469,6 +479,33 @@ function Workspace({
       viewSaver.current = null;
     };
   }, [teamId, year]);
+  useEffect(() => {
+    if (!loaded || report || !cellEventCursor.current) return;
+    const key = `${teamId}:${year}`;
+    return subscribeCellChanges({
+      teamId,
+      year,
+      cursor: cellEventCursor.current,
+      onActivity: () => {
+        remoteEpoch.current++;
+      },
+      onChanges: (changes) => {
+        if (boardKey.current !== key) return;
+        const next = mergeCellUpdates(tasksRef.current, changes);
+        tasksRef.current = next;
+        setTasks(next);
+      },
+      onSnapshot: (snapshot) => {
+        if (boardKey.current !== key) return;
+        const next = mergeSnapshotCells(tasksRef.current, snapshot);
+        tasksRef.current = next;
+        setTasks(next);
+      },
+      onAccessLost: () => {
+        if (boardKey.current === key) void refreshBoot();
+      },
+    });
+  }, [teamId, year, loaded, !!report]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (
@@ -613,10 +650,24 @@ function Workspace({
     ],
   );
   // 필터를 통과한 업무(숨긴 행 포함) → 그중 화면에 보이는 업무.
-  const matchingTasks = useMemo(
-    () => filteredTasks(allTasks, filterView, settings, users) as Task[],
-    [allTasks, filterView, settings, users],
-  );
+  const matchingTasks = useMemo(() => {
+    // While typing, evaluate this row's filter/sort against the edit baseline.
+    // Remote changes must not unmount the editor or discard an IME draft.
+    const active = editor && allTasks.find((t) => t.id === editor.point.taskId);
+    const source =
+      active && editor
+        ? allTasks.map((t) => (t.id === active.id ? editor.task : t))
+        : allTasks;
+    const matching = filteredTasks(
+      source,
+      filterView,
+      settings,
+      users,
+    ) as Task[];
+    return active
+      ? matching.map((t) => (t.id === active.id ? active : t))
+      : matching;
+  }, [allTasks, filterView, settings, users, editor]);
   const visibleTasks = useMemo(() => {
     const hidden = new Set(view.hiddenRows);
     return matchingTasks.filter((t) => !hidden.has(t.id));
@@ -710,32 +761,37 @@ function Workspace({
     return selectedPoints(selection, visibleTasks, columns);
   }
   function applyResult(result: BatchResult) {
-    const previous = tasksRef.current;
-    const updatedTasks = (() => {
-      const byId = new Map<string, SavedCell[]>();
-      for (const c of result.cells) {
-        const changes = byId.get(c.taskId);
-        if (changes) changes.push(c);
-        else byId.set(c.taskId, [c]);
-      }
-      const updated = previous.map((t) => {
-        const changes = byId.get(t.id);
-        if (!changes) return t;
-        return {
-          ...t,
-          updatedAt: result.updatedAt?.[t.id] || t.updatedAt,
-          cells: {
-            ...t.cells,
-            ...Object.fromEntries(
-              changes.map(({ taskId, key, ...c }) => [key, c]),
-            ),
-          },
-        };
-      });
-      return updated;
-    })();
+    const updatedTasks = mergeCellUpdates(tasksRef.current, result);
     tasksRef.current = updatedTasks;
     setTasks(updatedTasks);
+    // Formatting one's own cell while typing advances its version without
+    // changing the draft. Remote operations must never advance this baseline.
+    const editing = editorRef.current;
+    if (editing) {
+      const p = editing.point,
+        baseline = cell(editing.task, p.key);
+      const before = result.before.find(
+        (c) => c.taskId === p.taskId && c.key === p.key,
+      );
+      const after = result.cells.find(
+        (c) => c.taskId === p.taskId && c.key === p.key,
+      );
+      if (
+        before?.version === baseline.version &&
+        after &&
+        JSON.stringify(after.value) === JSON.stringify(baseline.value)
+      ) {
+        const next = {
+          ...editing,
+          task: {
+            ...editing.task,
+            cells: { ...editing.task.cells, [p.key]: after },
+          },
+        };
+        editorRef.current = next;
+        setEditor(next);
+      }
+    }
   }
   function recordResult(result: BatchResult, mode: Failed["mode"]) {
     if (mode === "normal") {
@@ -890,7 +946,9 @@ function Workspace({
       changeView({ visibleFields: [...viewRef.current.visibleFields, p.key] });
     }
     setSelection({ anchor: p, focus: p });
-    setEditor({ point: p, initial });
+    const next = { point: p, initial, task };
+    editorRef.current = next;
+    setEditor(next);
   }
   // 업무 삭제·복구는 셀 저장과 겹치지 않게 저장 중 표시를 함께 쓴다.
   async function taskOperation(run: () => Promise<void>) {
@@ -1088,7 +1146,7 @@ function Workspace({
         anchor: { taskId: task.id, key: "title" },
         focus: { taskId: task.id, key: "title" },
       });
-      setEditor({ point: { taskId: task.id, key: "title" } });
+      setEditor({ point: { taskId: task.id, key: "title" }, task });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -1241,7 +1299,11 @@ function Workspace({
       const point = { taskId: task.id, key: "title" };
       setSelection({ anchor: point, focus: point });
       setJump((previous) => ({ ...point, id: (previous?.id || 0) + 1 }));
-      if (!copy) setEditor({ point });
+      if (!copy)
+        setEditor({
+          point,
+          task: current.tasks.find((t) => t.id === task.id) || task,
+        });
       setToast(
         copy ? "복사한 행을 아래에 붙여넣었습니다." : "새 행을 삽입했습니다.",
       );
@@ -1827,13 +1889,22 @@ function Workspace({
               editor={editor}
               onCancelEdit={() => setEditor(null)}
               onCommit={(point, v) => {
+                const editing = editorRef.current;
+                const baseline =
+                  editing &&
+                  editing.point.taskId === point.taskId &&
+                  editing.point.key === point.key
+                    ? cell(editing.task, point.key)
+                    : undefined;
                 const task = tasksRef.current.find(
                   (t) => t.id === point.taskId,
                 );
                 if (
-                  task &&
-                  JSON.stringify(cell(task, point.key).value) ===
-                    JSON.stringify(v)
+                  (baseline &&
+                    JSON.stringify(baseline.value) === JSON.stringify(v)) ||
+                  (task &&
+                    JSON.stringify(cell(task, point.key).value) ===
+                      JSON.stringify(v))
                 ) {
                   setEditor(null);
                   return true;
@@ -1844,7 +1915,19 @@ function Workspace({
                   );
                   return false;
                 }
-                if (!mutate([point], () => ({ value: v }))) return false;
+                if (!task || !canEdit(user, task)) {
+                  setError(
+                    "업무 편집 권한이 변경되어 저장할 수 없습니다. 입력은 셀에 남아 있습니다.",
+                  );
+                  return false;
+                }
+                if (
+                  !mutate([point], () => ({
+                    value: v,
+                    ...(baseline ? { expectedVersion: baseline.version } : {}),
+                  }))
+                )
+                  return false;
                 setPendingEdit({ point, value: v });
                 setEditor(null);
                 return true;
