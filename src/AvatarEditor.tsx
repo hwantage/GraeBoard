@@ -16,6 +16,11 @@ export default function AvatarEditor({
   );
   const [error, setError] = useState("");
   const request = useRef(0);
+  // 표시 방식을 바꿔도 편집 중인 이미지와 글자를 다시 선택할 수 있게 보관한다.
+  const drafts = useRef({
+    avatarImage: user.avatarImage || "",
+    avatarInitials: user.avatarInitials || "",
+  });
   useEffect(
     () => () => {
       request.current++;
@@ -91,9 +96,20 @@ export default function AvatarEditor({
                   onChange={() => {
                     request.current++;
                     onLoading(false);
+                    if (mode === "image")
+                      drafts.current.avatarImage = user.avatarImage || "";
+                    if (mode === "initials")
+                      drafts.current.avatarInitials = user.avatarInitials || "";
                     setMode(value);
                     setError("");
-                    onChange({ avatarImage: "", avatarInitials: "" });
+                    onChange({
+                      avatarImage:
+                        value === "image" ? drafts.current.avatarImage : "",
+                      avatarInitials:
+                        value === "initials"
+                          ? drafts.current.avatarInitials
+                          : "",
+                    });
                   }}
                 />
                 {label}

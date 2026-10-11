@@ -145,6 +145,23 @@ async function openPeer(privateView = false) {
   await peer.goto("/");
   await expect(cell(peer, ids[0])).toHaveText("첫 업무");
   await waitReady(peer);
+  if (privateView) {
+    await peer
+      .getByRole("button", { name: "저장된 필터", exact: true })
+      .click();
+    await Promise.all([
+      peer.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().endsWith("/api/views") &&
+          response.ok(),
+      ),
+      peer
+        .locator(".saved-views")
+        .getByRole("button", { name: "내 미완료 필터", exact: true })
+        .click(),
+    ]);
+  }
   await expect.poll(() => currentView(peer)).toBeDefined();
 }
 async function save(
@@ -175,7 +192,7 @@ test("SSE로 셀을 공유해도 다른 사용자의 숨김·필터·배치·스
   page,
 }) => {
   await openPeer(true);
-  await expect(peer.getByRole("status", { name: "적용 중인 필터" })).toHaveText(
+  await expect(peer.locator(".active-filter-banner strong")).toHaveText(
     "내 미완료 필터",
   );
   const before = await currentView(peer);
@@ -201,7 +218,7 @@ test("SSE로 셀을 공유해도 다른 사용자의 숨김·필터·배치·스
   await expect(cell(peer, ids[0])).toHaveText("공유된 제목", { timeout: 3000 });
   await expect(peer.locator(`[data-row-id="${ids[1]}"]`)).toHaveCount(0);
   await expect(peer.locator('[data-header-key="description"]')).toHaveCount(0);
-  await expect(peer.getByRole("status", { name: "적용 중인 필터" })).toHaveText(
+  await expect(peer.locator(".active-filter-banner strong")).toHaveText(
     "내 미완료 필터",
   );
   expect(await currentView(peer)).toEqual(before);
@@ -254,7 +271,7 @@ test("다른 셀은 편집 중에도 갱신하고 같은 셀 충돌은 내 입�
   expect(stored.find((t: any) => t.id === ids[0]).cells.title.value).toBe(
     "다른 사람이 저장한 내용",
   );
-  await expect(peer.getByRole("status", { name: "적용 중인 필터" })).toHaveText(
+  await expect(peer.locator(".active-filter-banner strong")).toHaveText(
     "내 미완료 필터",
   );
 });

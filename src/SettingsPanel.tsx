@@ -36,16 +36,12 @@ export default function SettingsPanel({
   users: boardUsers,
   onClose,
   onRefresh,
-  visibleFields,
-  onVisibilitySaved,
 }: {
   user: User;
   team: Team;
   // 보드가 이미 받아 둔 팀·사용자. 저장 뒤에는 onRefresh가 최신 값을 돌려준다.
   teams: Team[];
   users: User[];
-  visibleFields: string[];
-  onVisibilitySaved: (changes: Record<string, boolean>) => void;
   onClose: () => void;
   onRefresh: () => Promise<Bootstrap | void>;
 }) {
@@ -254,14 +250,6 @@ export default function SettingsPanel({
                   <PropertiesManager
                     key={selectedTeam.id}
                     team={selectedTeam}
-                    visibleFields={
-                      selectedTeam.id === team.id ? visibleFields : undefined
-                    }
-                    onVisibilitySaved={
-                      selectedTeam.id === team.id
-                        ? onVisibilitySaved
-                        : undefined
-                    }
                     onSaved={saved}
                   />
                 )}

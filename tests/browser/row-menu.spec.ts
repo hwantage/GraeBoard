@@ -245,6 +245,8 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
     insertedIds.push(inserted.id);
     expect(inserted.defaultStyle).toEqual(source.defaultStyle);
     expect(inserted.cells.title.value).toBe("새 업무");
+    expect(inserted.cells.owner.value).toBe("");
+    expect(inserted.cells.status.value).toBe("");
     expect(inserted.cells[hiddenWeek].value).toBe("");
     for (const key of keys)
       expect(inserted.cells[key].style).toEqual(styleFor(key));
@@ -291,6 +293,179 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
   }
   await expect(title).toHaveText("둘째 업무");
   await page.screenshot({ path: info.outputPath("inserted-row-styles.png") });
+});
+
+test("위·아래 삽입은 작업명에 포커스하면서 보이는 열의 가로 위치를 유지한다", async ({
+  page,
+}) => {
+  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const settings = boot.teams.find((team: any) => team.id === teamId).settings;
+  settings.properties.sort(
+    (a: any, b: any) =>
+      ["owner", "title", "status"].indexOf(a.id) -
+      ["owner", "title", "status"].indexOf(b.id),
+  );
+  const response = await page.request.patch(`/api/teams/${teamId}/settings`, {
+    headers: { "X-Requested-With": "WeeklyPlan" },
+    data: settings,
+  });
+  expect(response.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.locator("[data-header-key]").first()).toHaveAttribute(
+    "data-header-key",
+    "owner",
+  );
+  const grid = page.getByRole("grid");
+  for (const [label, scrollLeft] of [
+    ["위에 삽입", 0],
+    ["아래에 삽입", 24],
+  ] as const) {
+    await grid.evaluate((el, left) => {
+      el.scrollLeft = left;
+    }, scrollLeft);
+    const task = await insert(page, taskIds[1], label);
+    const input = page
+      .locator(`[data-cell="${task.id}:title"]`)
+      .getByRole("textbox");
+    await expect(input).toBeFocused();
+    await expect
+      .poll(() => grid.evaluate((el) => el.scrollLeft))
+      .toBe(scrollLeft);
+    await expect(
+      page.getByText("새 행을 삽입했습니다.", { exact: true }),
+    ).toHaveCount(0);
+    await input.fill(label);
+    await expect(input).toBeFocused();
+    expect(await grid.evaluate((el) => el.scrollLeft)).toBe(scrollLeft);
+    await input.press("Escape");
+  }
+});
+
+test("묶음 안에 삽입하면 해당 선택값만 유지하고 헤더에 묶음 아이콘을 표시한다", async ({
+  page,
+}, info) => {
+  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const settings = boot.teams.find((team: any) => team.id === teamId).settings;
+  settings.properties.push({
+    id: "p_category",
+    name: "분류",
+    kind: "option",
+    display: "square",
+    visible: true,
+    values: [
+      {
+        id: "o_design",
+        label: "디자인",
+        backgroundColor: "#edf6f4",
+        dotColor: "#177b70",
+        emoji: "📌",
+      },
+    ],
+  });
+  expect(
+    (
+      await page.request.patch(`/api/teams/${teamId}/settings`, {
+        headers: { "X-Requested-With": "WeeklyPlan" },
+        data: settings,
+      })
+    ).ok(),
+  ).toBeTruthy();
+  await post(page, "/cells/batch", {
+    operationId: randomUUID(),
+    changes: [
+      {
+        taskId: taskIds[1],
+        key: "p_category",
+        expectedVersion: 0,
+        value: "o_design",
+        style: { backgroundColor: "#ddedd6" },
+      },
+    ],
+  });
+  await page.reload();
+  for (const [key, label] of [
+    ["owner", "팀원"],
+    ["status", "상태"],
+    ["p_category", "분류"],
+  ]) {
+    const header = page.locator(`[data-header-key="${key}"]`);
+    await header.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "이 열로 묶음 보기", exact: true })
+      .click();
+    const indicator = header.getByRole("img", {
+      name: `${label} 묶음 보기 적용`,
+    });
+    await expect(indicator).toBeVisible();
+    await expect(page.locator(".column-group-indicator")).toHaveCount(1);
+    const iconBox = (await indicator.boundingBox())!;
+    const labelBox = (await header.getByRole("button").boundingBox())!;
+    expect(iconBox.x + iconBox.width).toBeLessThanOrEqual(labelBox.x);
+    for (const placement of ["위에 삽입", "아래에 삽입"]) {
+      const task = await insert(page, taskIds[1], placement);
+      expect(task.cells[key]?.value).toBe(
+        key === "owner"
+          ? boot.user.id
+          : key === "status"
+            ? "status-planned"
+            : "o_design",
+      );
+      for (const other of ["owner", "status", "p_category"].filter(
+        (k) => k !== key,
+      ))
+        expect(task.cells[other]?.value || "").toBe("");
+      expect(task.cells.p_category.style).toEqual({
+        backgroundColor: "#ddedd6",
+      });
+      const editor = page
+        .locator(`[data-cell="${task.id}:title"]`)
+        .getByRole("textbox");
+      await expect(editor).toBeFocused();
+      await editor.press("Escape");
+      await expect(indicator).toBeVisible();
+      const ids = await page
+        .locator("[data-row-id]")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("data-row-id")));
+      expect(ids.indexOf(task.id) - ids.indexOf(taskIds[1])).toBe(
+        placement === "위에 삽입" ? -1 : 1,
+      );
+    }
+  }
+  await page.screenshot({ path: info.outputPath("grouped-column-header.png") });
+  await page
+    .locator('[data-header-key="p_category"]')
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "묶음 해제", exact: true }).click();
+  await expect(page.locator(".column-group-indicator")).toHaveCount(0);
+  const task = await insert(page, taskIds[1], "아래에 삽입");
+  expect(task.cells.owner?.value || "").toBe("");
+  expect(task.cells.status?.value || "").toBe("");
+  expect(task.cells.p_category.value).toBe("");
+});
+
+test("팀원도 위·아래에 미지정 행을 삽입하고 작업명을 바로 입력한다", async ({
+  page,
+}) => {
+  const username = `insert-member-${randomUUID()}@example.com`;
+  const password = "insert-member-test-password";
+  await post(page, "/admin/users", {
+    username,
+    password,
+    name: "삽입 팀원",
+    memberships: [{ teamId, role: "member" }],
+  });
+  await post(page, "/auth/login", { username, password });
+  await page.reload();
+  for (const label of ["위에 삽입", "아래에 삽입"]) {
+    const task = await insert(page, taskIds[1], label);
+    expect(task.cells.owner?.value || "").toBe("");
+    expect(task.cells.status?.value || "").toBe("");
+    const editor = page
+      .locator(`[data-cell="${task.id}:title"]`)
+      .getByRole("textbox");
+    await expect(editor).toBeFocused();
+    await editTitle(page, task.id, label + " 미지정 업무");
+  }
 });
 
 test("행 메뉴는 열람자에게 삽입·붙여넣기·삭제를 허용하지 않는다", async ({

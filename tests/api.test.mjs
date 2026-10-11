@@ -513,6 +513,73 @@ test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된
   assert.equal((await profile()).avatarImage, "");
 });
 
+test("본인 프로필은 직접 수정하고 계정 권한·다른 사용자·로그인 정보는 변경할 수 없다", async () => {
+  const password = "own-profile-test-password";
+  const username = `self-profile-${randomUUID()}@example.com`;
+  const created = await post("/admin/users", {
+    username,
+    password,
+    name: "개인 프로필",
+    active: true,
+    memberships: [{ teamId, role: "viewer" }],
+  });
+  assert.equal(created.status, 201);
+  const uid = created.data.user.id;
+  const login = await post("/auth/login", { username, password });
+  const ownCookie = login.cookie;
+  const patch = (body, cookie = ownCookie) =>
+    request("/auth/profile", { method: "PATCH", body, cookie });
+  assert.equal((await patch({ avatarInitials: "MY" }, "")).status, 401);
+  const saved = await patch({
+    name: "내 프로필",
+    color: "#3377bb",
+    avatarInitials: "MY",
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.user.id, uid);
+  assert.equal(saved.data.user.name, "내 프로필");
+  assert.equal(saved.data.user.avatarInitials, "MY");
+  assert.equal(saved.data.user.color, "#3377bb");
+  assert.equal(saved.data.user.systemRole, "user");
+  assert.equal(saved.data.user.teamRoles[teamId], "viewer");
+  assert.equal("password" in saved.data.user, false);
+  const otherBefore = (await request("/bootstrap")).data.user;
+  for (const body of [
+    {},
+    { name: "" },
+    { avatarInitials: "ABCD" },
+    { color: "red" },
+    { avatarImage: "data:image/svg+xml;base64,PHN2Zz4=" },
+    { id: otherBefore.id, name: "다른 사용자 수정" },
+    { systemRole: "admin" },
+    { memberships: [{ teamId, role: "lead" }] },
+    { active: false },
+    { username: "changed@example.com" },
+    { password: "changed-password" },
+  ])
+    assert.equal((await patch(body)).status, 400);
+  assert.deepEqual((await request("/bootstrap")).data.user, otherBefore);
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6WAAAAABJRU5ErkJggg==";
+  assert.equal(
+    (await patch({ avatarImage: image, avatarInitials: "" })).status,
+    200,
+  );
+  const stored = (await request("/bootstrap", { cookie: ownCookie })).data.user;
+  assert.equal(stored.avatarImage, image);
+  assert.equal(stored.name, "내 프로필");
+  assert.equal(stored.color, "#3377bb");
+  assert.equal(stored.avatarInitials, "");
+  assert.equal(stored.username, username);
+  assert.equal(stored.systemRole, "user");
+  assert.deepEqual(stored.teamRoles, { [teamId]: "viewer" });
+  assert.equal(
+    (await patch({ avatarImage: "", avatarInitials: "나" })).status,
+    200,
+  );
+  assert.equal((await post("/auth/login", { username, password })).status, 200);
+});
+
 test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 값 보존만 허용한다", async () => {
   const avatarImage =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6WAAAAABJRU5ErkJggg==";
@@ -3378,6 +3445,178 @@ test("저장된 필터는 화면 상태를 제거하여 저장하고 속성 변�
       await request("/views", {
         method: "PUT",
         body: { teamId: tid, name: "__current", data: expected },
+      })
+    ).status,
+    400,
+  );
+});
+
+test("저장된 필터 조건 수정은 ID·이름을 유지하고 다른 필터와 현재 보기를 보존한다", async () => {
+  const tid = (await post("/admin/teams", { name: "필터 조건 수정" })).data.id;
+  const originalData = {
+    year: 2026,
+    propertyFilters: { status: ["status-completed"] },
+    propertyFilterModes: { status: "include" },
+  };
+  for (const name of ["선택한 필터", "다른 필터"])
+    assert.equal(
+      (
+        await request("/views", {
+          method: "PUT",
+          body: { teamId: tid, name, data: originalData },
+        })
+      ).status,
+      200,
+    );
+  const views = async () =>
+    (await request(`/views?teamId=${tid}&year=2026`)).data.views;
+  const original = (await views()).find((v) => v.name === "선택한 필터");
+  const otherFilter = (await views()).find((v) => v.name === "다른 필터");
+  const patch = (body) =>
+    request(`/views/${original.id}`, { method: "PATCH", body });
+  const data = {
+    year: 2026,
+    propertyFilters: { status: ["status-progress"] },
+    propertyFilterModes: { status: "exclude" },
+  };
+  assert.equal(
+    (
+      await patch({
+        data: { ...data, widths: { title: 450 }, groupBy: "status" },
+      })
+    ).status,
+    200,
+  );
+  let updated = (await views()).find((v) => v.id === original.id);
+  assert.equal(updated.name, original.name);
+  assert.deepEqual(updated.data, data);
+  assert.deepEqual(
+    (await views()).find((v) => v.id === otherFilter.id),
+    otherFilter,
+  );
+  for (const body of [
+    {},
+    { data: { ...data, year: 2027 } },
+    { data: { ...data, propertyFilters: { missing: ["x"] } } },
+    { data: { ...data, propertyFilterModes: { missing: "exclude" } } },
+    { data: { ...data, propertyFilterModes: { status: "invalid" } } },
+  ])
+    assert.equal((await patch(body)).status, 400);
+  assert.deepEqual(
+    (await views()).find((v) => v.id === original.id),
+    updated,
+  );
+  assert.equal(
+    (await patch({ name: "이름도 변경", data: { year: 2026 } })).status,
+    200,
+  );
+  updated = (await views()).find((v) => v.id === original.id);
+  assert.equal(updated.name, "이름도 변경");
+  assert.deepEqual(updated.data, {
+    year: 2026,
+    propertyFilters: {},
+    propertyFilterModes: {},
+  });
+  assert.equal((await views()).length, 2);
+});
+
+test("필터 이름 변경은 ID·조건을 보존하고 중복 이름·예약 이름·다른 사용자 변경을 막는다", async () => {
+  const tid = (await post("/admin/teams", { name: "필터 이름 변경" })).data.id;
+  const settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  const data = {
+    year: 2026,
+    propertyFilters: { status: ["status-completed"] },
+    propertyFilterModes: { status: "exclude" },
+  };
+  for (const name of ["완료 제외", "이미 있는 이름", "__current"]) {
+    assert.equal(
+      (
+        await request("/views", {
+          method: "PUT",
+          body: {
+            teamId: tid,
+            name,
+            data:
+              name === "__current"
+                ? normalizeView(defaultView(2026), settings)
+                : data,
+          },
+        })
+      ).status,
+      200,
+    );
+  }
+  const views = async () =>
+    (await request(`/views?teamId=${tid}&year=2026`)).data.views;
+  const original = (await views()).find((v) => v.name === "완료 제외");
+  const rename = (name, cookie = admin, filterId = original.id) =>
+    request(`/views/${filterId}`, {
+      method: "PATCH",
+      cookie,
+      body: { name },
+    });
+  const username = `filter-rename-${randomUUID()}@example.com`;
+  const password = "filter-rename-test-password";
+  assert.equal(
+    (
+      await post("/admin/users", {
+        username,
+        password,
+        name: "다른 필터 사용자",
+        memberships: [{ teamId: tid, role: "member" }],
+      })
+    ).status,
+    201,
+  );
+  const otherSession = await post("/auth/login", { username, password });
+  assert.equal(otherSession.status, 200);
+  assert.equal((await rename("진행 업무", otherSession.cookie)).status, 404);
+  assert.equal(
+    (
+      await request(`/views/${original.id}`, {
+        method: "PATCH",
+        cookie: otherSession.cookie,
+        body: { data },
+      })
+    ).status,
+    404,
+  );
+  assert.equal((await rename("이미 있는 이름")).status, 409);
+  for (const name of ["__current", "  ", "a".repeat(61)])
+    assert.equal((await rename(name)).status, 400);
+  const current = (await views()).find((v) => v.name === "__current");
+  assert.equal((await rename("화면 상태", admin, current.id)).status, 400);
+  assert.equal(
+    (
+      await request(`/views/${current.id}`, {
+        method: "PATCH",
+        body: { data },
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await rename("없는 필터", admin, randomUUID())).status, 404);
+  assert.deepEqual(
+    (await views()).find((v) => v.id === original.id),
+    original,
+  );
+  assert.equal((await rename("  진행 업무  ")).status, 200);
+  const renamed = (await views()).find((v) => v.id === original.id);
+  assert.equal(renamed.name, "진행 업무");
+  assert.deepEqual(renamed.data, original.data);
+  assert.equal((await views()).length, 3);
+  assert.deepEqual(
+    (await views()).find((v) => v.name === "__current"),
+    current,
+  );
+  assert.equal((await rename("진행 업무")).status, 200);
+  assert.equal(
+    (
+      await request(`/views/${original.id}`, {
+        method: "PATCH",
+        body: { name: "조건 변경 시도", data: { year: 2027 } },
       })
     ).status,
     400,

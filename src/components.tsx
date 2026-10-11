@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { X, LoaderCircle, ArrowRight, LockKeyhole } from "lucide-react";
 import { api, send } from "./api";
 import { BrandLockup, Grae } from "./Brand";
@@ -47,20 +54,23 @@ export function Modal({
   onClose,
   wide = false,
   className = "",
+  initialFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
   className?: string;
+  initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
     ref.current?.showModal();
+    initialFocus?.current?.focus({ preventScroll: true });
     const el = ref.current;
     return () => el?.close();
-  }, []);
+  }, [initialFocus]);
   return (
     <dialog
       ref={ref}

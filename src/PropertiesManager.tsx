@@ -1,6 +1,6 @@
 import Select from "./Select";
 import { useEffect, useRef, useState } from "react";
-import { Plus, GripVertical, Trash2, CalendarDays } from "lucide-react";
+import { Plus, GripVertical, Trash2 } from "lucide-react";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import type { Team, Settings, Property, PropertyOption } from "./types";
 import {
@@ -14,6 +14,7 @@ import {
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
 import PropertyBadge from "./PropertyBadge";
+import PropertyColumnOrder from "./PropertyColumnOrder";
 const kinds = {
   option: "Option · 선택형",
   text: "Text · 텍스트",
@@ -36,13 +37,9 @@ const WEEK_COLUMNS: Property = {
 };
 export default function PropertiesManager({
   team,
-  visibleFields,
-  onVisibilitySaved,
   onSaved,
 }: {
   team: Team;
-  visibleFields?: string[];
-  onVisibilitySaved?: (changes: Record<string, boolean>) => void;
   onSaved: () => Promise<void>;
 }) {
   const [settings, setSettings] = useState<Settings>(() =>
@@ -55,9 +52,6 @@ export default function PropertiesManager({
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [focusTarget, setFocusTarget] = useState<{ id: string } | null>(null);
-  const [visibilityChanges, setVisibilityChanges] = useState<
-    Record<string, boolean>
-  >({});
   const root = useRef<HTMLDivElement>(null),
     stored = useRef(settings);
   useEffect(() => {
@@ -79,6 +73,26 @@ export default function PropertiesManager({
     setSettings((s) => ({ ...s, properties: items }));
     setMessage("");
     setError("");
+  }
+  function addProperty() {
+    const blank = active.find((p) => !p.name.trim());
+    if (blank) {
+      setSelected(blank.id);
+      setFocusTarget({ id: "property" });
+      return;
+    }
+    const p: Property = {
+      id: shortId("p"),
+      name: "",
+      kind: "option",
+      visible: true,
+      placement: "beforeWeeks",
+      display: "square",
+      values: [],
+    };
+    update([...properties, p]);
+    setSelected(p.id);
+    setFocusTarget({ id: "property" });
   }
   function moveColumn(id: string, targetId: string, placement: Placement) {
     const next = reorderItems(columnList, id, targetId, placement);
@@ -106,11 +120,6 @@ export default function PropertiesManager({
         ),
       });
   }
-  const columnReorder = useListReorder<HTMLDivElement>(
-    columnList.map((p) => p.id),
-    moveColumn,
-    busy,
-  );
   const valueReorder = useListReorder<HTMLTableSectionElement>(
     values.map((v) => v.id),
     (id, targetId, placement) => {
@@ -165,11 +174,21 @@ export default function PropertiesManager({
   }
   return (
     <div ref={root} className="properties-manager">
-      <p className="field-help">
-        {team.name}의 공통 열 배치를 설정합니다. 왼쪽 손잡이를 드래그하여 속성을
-        ‘주차 날짜’ 아래로 옮기면 마지막 날짜 뒤에 표시됩니다. 체크박스로 열의
-        기본 표시 여부를 정합니다.
-      </p>
+      <div className="properties-heading">
+        <p className="field-help">
+          속성을 좌우로 끌어 순서를 바꾸고, 클릭하여 편집하세요. ‘주차 날짜’
+          오른쪽의 속성은 마지막 날짜 뒤에 표시됩니다.
+        </p>
+        <Button
+          className="property-add"
+          title="속성 추가"
+          disabled={busy}
+          onClick={addProperty}
+        >
+          <Plus size={15} />
+          속성 추가
+        </Button>
+      </div>
       <ErrorNote error={error} />
       {message && (
         <p role="status" className="success-note">
@@ -177,95 +196,43 @@ export default function PropertiesManager({
         </p>
       )}
       <div className="properties-layout">
-        <div className="property-list" ref={columnReorder.root}>
-          {columnList.map((p) => (
-            <div
-              className={`property-list-row ${p.id === WEEK_COLUMNS.id ? "week-column-row" : ""} ${p.id === selected ? "current" : ""}`}
-              key={p.id}
-              data-column-item={p.id}
-              {...columnReorder.itemProps(p.id)}
-            >
-              <button
-                {...columnReorder.handleProps(p.id)}
-                aria-label={`${p.name || "새 속성"} 속성 순서 이동`}
-              >
-                <GripVertical size={15} aria-hidden="true" />
-              </button>
-              <button
-                className={
-                  p.id === WEEK_COLUMNS.id
-                    ? "week-column-select"
-                    : "property-select"
-                }
-                onClick={() => setSelected(p.id)}
-              >
-                {p.id === WEEK_COLUMNS.id && (
-                  <CalendarDays size={14} aria-hidden="true" />
-                )}
-                {p.name || "이름 없는 속성"}
-                <small>
-                  {p.id === WEEK_COLUMNS.id ? (
-                    "전체 주차 묶음"
-                  ) : (
-                    <>
-                      {CORE_PROPERTY_KEYS.includes(p.id) && "기본 · "}
-                      {p.kind === "option"
-                        ? `${p.values.filter((v) => !v.archived).length}개 값`
-                        : kinds[p.kind || "option"]}
-                    </>
-                  )}
-                </small>
-              </button>
-              {p.id !== WEEK_COLUMNS.id && (
-                <input
-                  type="checkbox"
-                  aria-label={`${p.name || "새 속성"} 열 표시`}
-                  checked={
-                    visibilityChanges[p.id] ??
-                    (visibleFields &&
-                    stored.current.properties?.some((v) => v.id === p.id)
-                      ? visibleFields.includes(p.id)
-                      : p.visible !== false)
-                  }
-                  disabled={p.id === "title"}
-                  onChange={(e) => {
-                    setVisibilityChanges((s) => ({
-                      ...s,
-                      [p.id]: e.target.checked,
-                    }));
+        <PropertyColumnOrder
+          items={columnList.map((p) => ({
+            id: p.id,
+            name: p.name || "이름 없는 속성",
+            week: p.id === WEEK_COLUMNS.id,
+            description:
+              p.id === WEEK_COLUMNS.id
+                ? "전체 주차 묶음"
+                : `${CORE_PROPERTY_KEYS.includes(p.id) ? "기본 · " : ""}${p.kind === "option" ? `${p.values.filter((v) => !v.archived).length}개 값` : kinds[p.kind || "option"]}`,
+          }))}
+          selected={selected}
+          disabled={busy}
+          onSelect={setSelected}
+          onMove={moveColumn}
+        />
+        {properties.some((p) => p.archived) && (
+          <details className="archived-properties">
+            <summary>보관된 속성</summary>
+            {properties
+              .filter((p) => p.archived)
+              .map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
                     update(
                       properties.map((v) =>
-                        v.id === p.id ? { ...v, visible: e.target.checked } : v,
+                        v.id === p.id ? { ...v, archived: false } : v,
                       ),
                     );
+                    setSelected(p.id);
                   }}
-                />
-              )}
-            </div>
-          ))}
-          {properties.some((p) => p.archived) && (
-            <details className="archived-properties">
-              <summary>보관된 속성</summary>
-              {properties
-                .filter((p) => p.archived)
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      update(
-                        properties.map((v) =>
-                          v.id === p.id ? { ...v, archived: false } : v,
-                        ),
-                      );
-                      setSelected(p.id);
-                    }}
-                  >
-                    {p.name} 복원
-                  </button>
-                ))}
-            </details>
-          )}
-        </div>
+                >
+                  {p.name} 복원
+                </button>
+              ))}
+          </details>
+        )}
         {selected === WEEK_COLUMNS.id && (
           <section className="property-editor" aria-label="주차 날짜 배치 안내">
             <h3>주차 날짜</h3>
@@ -324,11 +291,11 @@ export default function PropertiesManager({
             </p>
             <p className="field-help">
               조회 기간에 해당하는 날짜 열을 한 묶음으로 표시합니다. 이 항목
-              아래에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
+              오른쪽에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
             </p>
             <p className="field-help">
-              속성을 날짜 뒤에 두려면 왼쪽 목록의 손잡이를 드래그하여 순서를
-              바꾼 뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
+              속성을 날짜 뒤에 두려면 위 목록에서 좌우로 끌어 순서를 바꾼 뒤
+              속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
             </p>
           </section>
         )}
@@ -619,34 +586,6 @@ export default function PropertiesManager({
         )}
       </div>
       <footer className="form-actions">
-        <Button
-          className="property-add"
-          title="속성 추가"
-          disabled={busy}
-          onClick={() => {
-            const blank = active.find((p) => !p.name.trim());
-            if (blank) {
-              setSelected(blank.id);
-              setFocusTarget({ id: "property" });
-              return;
-            }
-            const p: Property = {
-              id: shortId("p"),
-              name: "",
-              kind: "option",
-              visible: true,
-              placement: "beforeWeeks",
-              display: "square",
-              values: [],
-            };
-            update([...properties, p]);
-            setSelected(p.id);
-            setFocusTarget({ id: "property" });
-          }}
-        >
-          <Plus size={15} />
-          속성 추가
-        </Button>
         {property && !CORE_PROPERTY_KEYS.includes(property.id) && (
           <Button
             className="danger"
@@ -696,7 +635,6 @@ export default function PropertiesManager({
               setSettings(result.settings);
               stored.current = result.settings;
               await onSaved();
-              onVisibilitySaved?.(visibilityChanges);
               setMessage("속성 설정을 저장했습니다.");
             } catch (e) {
               setError((e as Error).message);

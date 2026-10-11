@@ -156,6 +156,7 @@ export function canEdit(user, task) {
     (canManageTeam(user, task.teamId) ||
       (teamRole(user, task.teamId) === "member" &&
         (value(task, "owner") === user.id ||
+          (!value(task, "owner") && task.createdBy === user.id) ||
           (value(task, "supporters") || []).includes(user.id))))
   );
 }

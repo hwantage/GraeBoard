@@ -188,6 +188,7 @@ function hydrateTasks(db, rows) {
         years: parse(t.years, []),
         position: t.position,
         deletedAt: t.deleted_at,
+        createdBy: t.created_by,
         createdAt: t.created_at,
         updatedAt: t.updated_at,
         cells: {},

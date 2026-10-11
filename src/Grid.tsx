@@ -696,14 +696,26 @@ export default function Grid({
     }
   }, [jump, columns, taskIndexes]);
   useLayoutEffect(() => {
-    if (!editor) return;
+    const grid = ref.current;
+    if (!editor || !grid) return;
     const ri = tasks.findIndex((t) => t.id === editor.point.taskId);
     if (ri >= 0) virtual.scrollToIndex(ri, { align: "auto" });
-    ref.current
-      ?.querySelector(
-        `[data-cell="${editor.point.taskId}:${editor.point.key}"]`,
-      )
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const ci = columns.findIndex((c) => c.key === editor.point.key);
+    if (ci < 0 || columns[ci].fixed) return;
+    const pinned =
+      rowHeaderWidth +
+      columns.filter((c) => c.fixed).reduce((sum, c) => sum + c.width, 0);
+    const left = positions[ci];
+    const right = left + columns[ci].width;
+    // 이미 보이는 편집 셀은 가로 위치를 유지한다. 고정 열에 가리거나
+    // 화면 밖에 있을 때만 그리드 안에서 필요한 만큼 이동한다.
+    if (left < grid.scrollLeft + pinned)
+      grid.scrollLeft = Math.max(0, left - pinned);
+    else if (right > grid.scrollLeft + grid.clientWidth)
+      grid.scrollLeft = Math.max(
+        0,
+        Math.min(left - pinned, right - grid.clientWidth),
+      );
   }, [editor?.point.taskId, editor?.point.key]);
   function finish(value: Cell["value"], move?: EditMove) {
     if (!editor) return;
@@ -1432,6 +1444,16 @@ export default function Grid({
                   ...(c.fixed ? { left: positions[ci] } : {}),
                 }}
               >
+                {view.groupBy === c.key && (
+                  <span
+                    className="column-group-indicator"
+                    role="img"
+                    aria-label={`${c.label} 묶음 보기 적용`}
+                    title="묶음 기준 열"
+                  >
+                    <ListTree size={13} aria-hidden="true" />
+                  </span>
+                )}
                 {presentation ? (
                   <span
                     className="week-label"

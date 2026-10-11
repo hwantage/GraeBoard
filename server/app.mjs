@@ -377,6 +377,53 @@ export function createApp({
     res.clearCookie("weekly_session", { path: "/" });
     res.json({ ok: true });
   });
+  app.patch("/api/auth/profile", (req, res) => {
+    const d = z
+      .object({ name: string(50).optional(), ...profileFields })
+      .strict()
+      .refine(
+        (value) => Object.keys(value).length > 0,
+        "변경할 프로필을 입력하세요.",
+      )
+      .parse(req.body);
+    const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user.id);
+    const next = {
+      name: d.name ?? u.name,
+      color: d.color ?? u.color,
+      avatarInitials: d.avatarInitials ?? u.avatar_initials,
+      avatarImage: d.avatarImage ?? u.avatar_image,
+    };
+    transaction(db, () => {
+      db.prepare(
+        "UPDATE users SET name=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
+      ).run(next.name, next.color, next.avatarInitials, next.avatarImage, u.id);
+      audit(
+        db,
+        u.id,
+        null,
+        "profile",
+        u.id,
+        {
+          name: u.name,
+          color: u.color,
+          avatarInitials: u.avatar_initials,
+          hasAvatarImage: !!u.avatar_image,
+        },
+        {
+          name: next.name,
+          color: next.color,
+          avatarInitials: next.avatarInitials,
+          hasAvatarImage: !!next.avatarImage,
+        },
+      );
+    });
+    res.json({
+      user: userWithTeams(
+        db,
+        db.prepare("SELECT * FROM users WHERE id=?").get(u.id),
+      ),
+    });
+  });
   app.post("/api/auth/password", (req, res) => {
     const d = z
       .object({
@@ -493,7 +540,8 @@ export function createApp({
     );
     // 팀에 소속되지 않은 시스템 관리자는 담당자가 될 수 없으므로 비워 둔다.
     const self = isAssignable(req.user, d.teamId) ? req.user.id : "";
-    // 새 업무의 기본값: 제목, 등록자를 담당자로, 상태는 첫 선택값.
+    const blankInsertion = d.insertAt && !d.sourceId && !d.copiedRow;
+    // 삽입 행의 선택값은 비워 둔다. 묶음 기준값은 fields로 전달받는다.
     const fields = {
       ...Object.fromEntries(
         propertiesFor(team.settings)
@@ -501,9 +549,9 @@ export function createApp({
             p.id,
             p.id === "title"
               ? "새 업무"
-              : p.id === "owner"
+              : p.id === "owner" && !blankInsertion
                 ? self
-                : p.id === "status"
+                : p.id === "status" && !blankInsertion
                   ? (p.values.find((v) => !v.archived)?.id ?? "")
                   : emptyPropertyValue(p),
           ])
@@ -576,7 +624,7 @@ export function createApp({
       validateCellValue(db, d.teamId, k, v, team.settings);
     if (!canManageTeam(req.user, d.teamId))
       requireThat(
-        fields.owner === req.user.id,
+        fields.owner === req.user.id || (blankInsertion && !fields.owner),
         403,
         "본인 책임 업무로 등록하세요.",
       );
@@ -597,7 +645,7 @@ export function createApp({
           409,
           "기준 행이 변경되었습니다. 새로고침 후 다시 선택하세요.",
         );
-        if (!d.sourceId && !d.copiedRow) {
+        if (blankInsertion) {
           // 빈 행 삽입은 기준 행의 서식만 상속한다. 값은 새 업무 기본값이나
           // 묶음에서 전달한 값을 유지하고, 숨긴 열·빈 주차 서식도 보존한다.
           defaultStyle = target.defaultStyle;
@@ -909,6 +957,59 @@ export function createApp({
         d.name === "__current" ? d.data : savedFilter(d.data, team.settings),
       ),
       now(),
+    );
+    res.json({ ok: true });
+  });
+  app.patch("/api/views/:id", (req, res) => {
+    const { name, data } = z
+      .object({
+        name: string(60).optional(),
+        data: savedFilterSchema.optional(),
+      })
+      .strict()
+      .refine((d) => d.name !== undefined || d.data !== undefined)
+      .parse(req.body);
+    const view = db
+      .prepare("SELECT * FROM views WHERE id=? AND user_id=?")
+      .get(req.params.id, req.user.id);
+    requireThat(view, 404, "저장된 필터를 찾을 수 없습니다.");
+    const team = teamAccess(req.user, view.team_id);
+    requireThat(
+      view.name !== "__current" && name !== "__current",
+      400,
+      "현재 보기에는 이 이름을 사용할 수 없습니다.",
+    );
+    if (name !== undefined)
+      requireThat(
+        !db
+          .prepare(
+            "SELECT id FROM views WHERE user_id=? AND team_id=? AND year=? AND name=? AND id<>?",
+          )
+          .get(req.user.id, view.team_id, view.year, name, view.id),
+        409,
+        "같은 이름의 필터가 이미 있습니다.",
+      );
+    if (data !== undefined) {
+      requireThat(
+        data.year === view.year,
+        400,
+        "필터의 연도는 변경할 수 없습니다.",
+      );
+      const properties = new Set(propertiesFor(team.settings).map((p) => p.id));
+      requireThat(
+        [
+          ...Object.keys(data.propertyFilters || {}),
+          ...Object.keys(data.propertyFilterModes || {}),
+        ].every((key) => properties.has(key)),
+        400,
+        "이 팀의 속성 필터를 선택하세요.",
+      );
+    }
+    db.prepare("UPDATE views SET name=?,data=?,updated_at=? WHERE id=?").run(
+      name ?? view.name,
+      data === undefined ? view.data : json(savedFilter(data, team.settings)),
+      now(),
+      view.id,
     );
     res.json({ ok: true });
   });

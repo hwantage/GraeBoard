@@ -10,11 +10,11 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 ## 업무와 셀
 
-계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다. SQLite 스키마는 `server/db.mjs`의 `SCHEMA_VERSION`(`PRAGMA user_version`)으로 표시하며 마이그레이션 코드는 없습니다. `scripts/restore.mjs`는 같은 스키마 버전의 백업만 복구합니다.
+계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다. SQLite 스키마는 `server/db.mjs`의 `SCHEMA_VERSION`(`PRAGMA user_version`)으로 표시하며 마이그레이션 코드는 없습니다. `scripts/restore.mjs`는 같은 스키마 버전의 백업만 복구합니다.
 
 `bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 보고본에도 이전 팀원의 프로필을 포함합니다.
 
-업무는 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 셀 키는 팀 설정에 정의된 활성 속성 ID 또는 주의 월요일 날짜이며, 정의되지 않은 키는 거절합니다. 기본 속성은 `title`, `owner`, `status`이고, 예시 양식(`shared/coreProperties.js`의 `sampleProperties`)은 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`를 더합니다. 화면에서 추가한 속성은 앱이 만든 짧은 ID(`p` + base36 6자리, 예 `p7k2mq`)를 키로 씁니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
+업무 응답은 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdBy`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 셀 키는 팀 설정에 정의된 활성 속성 ID 또는 주의 월요일 날짜이며, 정의되지 않은 키는 거절합니다. 기본 속성은 `title`, `owner`, `status`이고, 예시 양식(`shared/coreProperties.js`의 `sampleProperties`)은 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`를 더합니다. 화면에서 추가한 속성은 앱이 만든 짧은 ID(`p` + base36 6자리, 예 `p7k2mq`)를 키로 씁니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
 
 ```json
 {
@@ -109,6 +109,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `DELETE /api/tasks/:id` | 휴지통 이동 |
 | `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소 |
 | `GET/PUT /api/views` | 현재 보기와 저장된 필터 |
+| `PATCH /api/views/:id` | 본인의 저장된 필터 이름 또는 조건 수정. `name`·`data` 중 하나 이상 필요하며 생략한 값과 ID 유지. 연도 변경·같은 팀·연도의 중복 이름 거부 |
 | `GET/POST /api/reports` | 보고본 목록·생성 |
 | `GET /api/reports/:id` | 읽기 전용 보고본 |
 | `GET /api/audit` | 수행자·시각·전후 값 |
@@ -127,7 +128,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
 
-업무 생성은 `year`에만 등록하며 선택적인 `startMonth`는 삽입 대상의 조회 범위를 지정합니다. 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·표시 기간의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`과 활성 속성·주차 셀의 개별 서식을 함께 저장합니다. 셀 값은 새 업무 기본값과 요청한 `fields`를 유지하며, 빈 복수 팀원 값은 빈 배열로 만듭니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
+업무 생성은 `year`에만 등록하며 선택적인 `startMonth`는 삽입 대상의 조회 범위를 지정합니다. 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·표시 기간의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`과 활성 속성·주차 셀의 개별 서식을 함께 저장합니다. 삽입 행의 팀원을 포함한 셀 값은 비우고, 작업명 기본값과 요청한 묶음 기준 `fields`만 유지합니다. 빈 복수 팀원 값은 빈 배열로 만듭니다. 팀원은 `createdBy`가 본인이며 담당자가 비어 있는 행을 편집할 수 있습니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
 
 행 이동은 `tasks: [{id, updatedAt}]`(최대 20,000행), `targetId`, `targetUpdatedAt`, `year`, 선택적인 `startMonth`(기본 1), `placement`(`before`·`after`), 선택적인 `groupBy`를 받습니다. 기존 단일 행 요청의 `taskId`·`updatedAt`도 지원합니다. 이동할 행은 현재 수동 순서를 유지하며 한 트랜잭션으로 저장하고, 하나라도 권한·버전·팀·연도·묶음 검사를 통과하지 못하면 모두 취소합니다. 기준 행은 이동 대상에 포함할 수 없습니다. 응답의 `tasks`는 이동한 모든 업무이며, 단일 행 클라이언트를 위한 `task`도 유지합니다.
 

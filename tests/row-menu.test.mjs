@@ -131,11 +131,68 @@ test("행 위·아래 삽입은 위치를 저장하고 권한·팀·연도·기�
   assert.equal((await rows(teamId)).length, initialCount);
   const own = await create("팀원 삽입", at(a, "before"), member);
   assert.equal(own.status, 201);
-  assert.equal(own.data.task.cells.owner.value, memberId);
+  assert.equal(cell(own.data.task, "owner").value, "");
   assert.equal((await rows(teamId))[0].id, own.data.task.id);
 });
 
-test("위·아래 삽입은 기준 행의 기본·셀별 서식만 상속하고 새 업무 값을 유지한다", async () => {
+test("팀원은 직접 삽입한 미지정 행을 편집하고 다른 사람의 미지정 행은 편집하지 못한다", async () => {
+  const {
+    teamId,
+    tasks: [source],
+  } = await fixture();
+  const insert = (fields = {}, cookie = member) =>
+    request(
+      "/tasks",
+      {
+        teamId,
+        year: 2026,
+        fields,
+        insertAt: at(source, "after"),
+      },
+      cookie,
+    );
+  const own = await insert();
+  assert.equal(own.status, 201);
+  assert.equal(cell(own.data.task, "owner").value, "");
+  assert.equal(own.data.task.createdBy, memberId);
+  const edit = (task, key, value, cookie = member) =>
+    request(
+      "/cells/batch",
+      {
+        operationId: randomUUID(),
+        changes: [
+          {
+            taskId: task.id,
+            key,
+            value,
+            expectedVersion: task.cells[key]?.version || 0,
+          },
+        ],
+      },
+      cookie,
+    );
+  assert.equal(
+    (await edit(own.data.task, "title", "미지정 업무 입력")).status,
+    200,
+  );
+  assert.equal((await edit(own.data.task, "owner", memberId)).status, 403);
+  const otherRow = await insert({}, admin);
+  assert.equal(
+    (await edit(otherRow.data.task, "title", "타인 업무 수정")).status,
+    403,
+  );
+  assert.equal((await insert({ owner: memberId })).status, 201);
+  assert.equal((await insert({ owner: "" })).status, 201);
+  assert.equal((await insert({ owner: adminId })).status, 403);
+  assert.equal(
+    (await edit(own.data.task, "owner", adminId, admin)).status,
+    200,
+  );
+  const assigned = (await rows(teamId)).find((t) => t.id === own.data.task.id);
+  assert.equal((await edit(assigned, "title", "배정 후 수정")).status, 403);
+});
+
+test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값만 유지한다", async () => {
   const { teamId } = await fixture();
   const settings = JSON.parse(
     db.prepare("SELECT settings FROM teams WHERE id=?").get(teamId).settings,
@@ -171,6 +228,8 @@ test("위·아래 삽입은 기준 행의 기본·셀별 서식만 상속하고 
       },
       owner: { value: adminId, style: { textAlign: "center" } },
       status: { value: "status-completed", style: {} },
+      category: { value: "category-ux", style: { color: "#556677" } },
+      type: { value: "type-design", style: {} },
       supporters: { value: [adminId, memberId], style: { color: "#445566" } },
       score: { value: 95, style: { fontSize: 20 } },
       description: { value: "복사하지 않을 내용", style: { textMode: "clip" } },
@@ -217,8 +276,10 @@ test("위·아래 삽입은 기준 행의 기본·셀별 서식만 상속하고 
     // 셀 데이터가 없던 주차도 기준 행의 기본 서식을 그대로 사용한다.
     assert.deepEqual(cell(stored, "2026-06-01").style, baseStyle);
     assert.equal(cell(stored, "title").value, "새 업무");
-    assert.equal(cell(stored, "owner").value, memberId);
-    assert.equal(cell(stored, "status").value, "status-planned");
+    assert.equal(cell(stored, "owner").value, "");
+    assert.equal(cell(stored, "status").value, "");
+    assert.equal(cell(stored, "category").value, "");
+    assert.equal(cell(stored, "type").value, "");
     assert.deepEqual(cell(stored, "supporters").value, []);
     assert.equal(cell(stored, "score").value, placement === "before" ? 0 : "");
     for (const key of ["description", "2026-12-07", "2027-01-04"])
@@ -228,9 +289,37 @@ test("위·아래 삽입은 기준 행의 기본·셀별 서식만 상속하고 
     (await rows(teamId)).find((t) => t.id === source.id),
     source,
   );
+  for (const key of ["category", "status", "owner", "supporters"]) {
+    const grouped = await request("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { [key]: cell(source, key).value },
+      insertAt: at(source, "after"),
+    });
+    assert.equal(grouped.status, 201);
+    const task = grouped.data.task;
+    assert.deepEqual(cell(task, key).value, cell(source, key).value);
+    for (const other of [
+      "category",
+      "status",
+      "type",
+      "owner",
+      "supporters",
+    ].filter((v) => v !== key))
+      assert.deepEqual(
+        cell(task, other).value,
+        other === "supporters" ? [] : "",
+      );
+    assert.deepEqual(
+      cell(task, "category").style,
+      cell(source, "category").style,
+    );
+  }
   // 일반 업무 추가는 기준 행 없이 기존 팀 기본 서식을 사용한다.
   const plain = await request("/tasks", { teamId, year: 2026 });
   assert.deepEqual(plain.data.task.defaultStyle, settings.defaultStyle);
+  assert.equal(cell(plain.data.task, "status").value, "status-planned");
+  assert.equal(cell(plain.data.task, "owner").value, adminId);
 });
 
 test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하고 담당자 권한을 지킨다", async () => {

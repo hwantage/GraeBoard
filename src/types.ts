@@ -43,6 +43,7 @@ export type Task = {
   years: number[];
   position: number;
   deletedAt?: string | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
   cells: Record<string, Cell>;

@@ -803,34 +803,43 @@ export function TrashPanel({
     </Modal>
   );
 }
-export function AccountPanel({
+export function PasswordPanel({
   user,
   onClose,
-  onLogout,
-  logoutDisabled = false,
 }: {
   user: User;
   onClose: () => void;
-  onLogout: () => void;
-  logoutDisabled?: boolean;
 }) {
   const [error, setError] = useState(""),
-    [done, setDone] = useState(false);
+    [done, setDone] = useState(false),
+    [saving, setSaving] = useState(false);
   return (
-    <Modal title="내 계정" onClose={onClose}>
+    <Modal
+      title="비밀번호 변경"
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+    >
       <p>
         {user.name} · {user.username}
       </p>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
+          if (saving) return;
+          const form = e.currentTarget;
           setError("");
+          setDone(false);
+          setSaving(true);
           const f = new FormData(e.currentTarget);
           try {
             await send("/auth/password", Object.fromEntries(f));
+            form.reset();
             setDone(true);
           } catch (err) {
             setError((err as Error).message);
+          } finally {
+            setSaving(false);
           }
         }}
       >
@@ -856,16 +865,11 @@ export function AccountPanel({
         </label>
         <ErrorNote error={error} />
         {done && <p className="success-note">비밀번호를 변경했습니다.</p>}
-        {logoutDisabled && (
-          <p className="muted">
-            저장 중이거나 실패한 입력을 처리한 뒤 로그아웃할 수 있습니다.
-          </p>
-        )}
         <footer className="form-actions">
-          <Button onClick={onLogout} disabled={logoutDisabled}>
-            로그아웃
+          <Button onClick={onClose} disabled={saving}>
+            닫기
           </Button>
-          <Button type="submit" className="primary">
+          <Button type="submit" className="primary" disabled={saving}>
             비밀번호 변경
           </Button>
         </footer>
