@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { defaultView, weeksForYear } from "../../shared/domain.js";
 
 let teamId: string, taskIds: string[];
 async function post(page: Page, path: string, data: unknown) {
@@ -124,6 +125,172 @@ test("행 메뉴는 위·아래 삽입과 복사 당시 행 붙여넣기·삭제
     "셋째 업무",
     "첫 업무",
   ]);
+});
+
+test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이를 상속한다", async ({
+  page,
+}, info) => {
+  const sourceId = taskIds[1];
+  const source = (
+    await (
+      await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+    ).json()
+  ).tasks.find((task: any) => task.id === sourceId);
+  const border = { style: "solid", color: "#335577" };
+  const common = {
+    backgroundColor: "#ddedd6",
+    color: "#1b3255",
+    fontFamily: "Noto Serif KR",
+    fontSize: 14,
+    bold: true,
+    italic: true,
+    underline: true,
+    strike: true,
+    textAlign: "right",
+    verticalAlign: "bottom",
+    textMode: "wrap",
+    borderTop: border,
+    borderRight: border,
+    borderBottom: border,
+    borderLeft: border,
+  };
+  const hiddenWeek = "2026-12-07";
+  const styleFor = (key: string) =>
+    key === "owner"
+      ? {
+          ...common,
+          backgroundColor: "#fce1cc",
+          bold: false,
+          textAlign: "left",
+          borderTop: null,
+        }
+      : key === hiddenWeek
+        ? {
+            ...common,
+            backgroundColor: "#e3ddfb",
+            fontFamily: "Nanum Gothic Coding",
+            textAlign: "center",
+            verticalAlign: "top",
+            borderLeft: null,
+          }
+        : common;
+  const keys = [
+    "title",
+    "owner",
+    "status",
+    ...weeksForYear(2026).map((week) => week.key),
+  ];
+  await post(page, "/cells/batch", {
+    operationId: randomUUID(),
+    changes: keys.map((key) => ({
+      taskId: sourceId,
+      key,
+      expectedVersion: source.cells[key]?.version || 0,
+      style: styleFor(key),
+    })),
+  });
+  const view = {
+    ...defaultView(2026),
+    fromMonth: 3,
+    toMonth: 3,
+    visibleFields: ["title", "status"],
+    knownProperties: ["title", "owner", "status"],
+    columnVisibility: { title: true, owner: true, status: true },
+    rowHeights: { [sourceId]: 74 },
+  };
+  const headers = { "X-Requested-With": "WeeklyPlan" };
+  const saveView = async (data: unknown) => {
+    const response = await page.request.put("/api/views", {
+      headers,
+      data: { teamId, name: "__current", data },
+    });
+    expect(response.ok()).toBeTruthy();
+  };
+  const currentView = async () =>
+    (
+      await (
+        await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
+      ).json()
+    ).views.find((v: any) => v.name === "__current")?.data;
+  // 첫 화면의 보기 자동 저장이 끝난 뒤 숨김 상태를 준비한다.
+  await expect
+    .poll(async () => (await currentView())?.knownProperties)
+    .toEqual(["title", "owner", "status"]);
+  await saveView(view);
+  await page.reload();
+  const title = page.locator(`[data-cell="${sourceId}:title"]`);
+  await expect(title).toHaveCSS("background-color", "rgb(221, 237, 214)");
+  await expect(page.locator('[data-header-key="owner"]')).toHaveCount(0);
+  await expect(page.locator(`[data-column="${hiddenWeek}"]`)).toHaveCount(0);
+  const properties = [
+    "background-color",
+    "color",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "text-decoration-line",
+    "text-align",
+    "align-items",
+    "white-space",
+  ];
+  const visualStyle = await title.evaluate(
+    (element, names) =>
+      names.map((name) => getComputedStyle(element).getPropertyValue(name)),
+    properties,
+  );
+  const insertedIds: string[] = [];
+  for (const label of ["위에 삽입", "아래에 삽입"]) {
+    const inserted = await insert(page, sourceId, label);
+    insertedIds.push(inserted.id);
+    expect(inserted.defaultStyle).toEqual(source.defaultStyle);
+    expect(inserted.cells.title.value).toBe("새 업무");
+    expect(inserted.cells[hiddenWeek].value).toBe("");
+    for (const key of keys)
+      expect(inserted.cells[key].style).toEqual(styleFor(key));
+    await editTitle(page, inserted.id, label + " 행");
+    const cell = page.locator(`[data-cell="${inserted.id}:title"]`);
+    for (const [index, name] of properties.entries())
+      await expect(cell).toHaveCSS(name, visualStyle[index]);
+    await expect(page.locator(`[data-row-id="${inserted.id}"]`)).toHaveCSS(
+      "height",
+      "74px",
+    );
+    await expect
+      .poll(async () => (await currentView()).rowHeights[inserted.id])
+      .toBe(74);
+  }
+  await saveView({
+    ...(await currentView()),
+    visibleFields: ["title", "owner", "status"],
+    fromMonth: 12,
+    toMonth: 12,
+  });
+  await page.reload();
+  for (const id of [sourceId, ...insertedIds]) {
+    await expect(page.locator(`[data-row-id="${id}"]`)).toHaveCSS(
+      "height",
+      "74px",
+    );
+    await expect(page.locator(`[data-cell="${id}:title"]`)).toHaveCSS(
+      "background-color",
+      "rgb(221, 237, 214)",
+    );
+    await expect(page.locator(`[data-cell="${id}:owner"]`)).toHaveCSS(
+      "background-color",
+      "rgb(252, 225, 204)",
+    );
+    await expect(page.locator(`[data-cell="${id}:${hiddenWeek}"]`)).toHaveCSS(
+      "background-color",
+      "rgb(227, 221, 251)",
+    );
+    await expect(page.locator(`[data-cell="${id}:title"]`)).toHaveCSS(
+      "border-bottom-width",
+      "1px",
+    );
+  }
+  await expect(title).toHaveText("둘째 업무");
+  await page.screenshot({ path: info.outputPath("inserted-row-styles.png") });
 });
 
 test("행 메뉴는 열람자에게 삽입·붙여넣기·삭제를 허용하지 않는다", async ({

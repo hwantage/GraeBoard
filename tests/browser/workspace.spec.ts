@@ -376,6 +376,116 @@ test("콤팩트 기간 표는 월·주 드래그와 역방향·키보드·취소
   ).toBeLessThanOrEqual(720);
 });
 
+test("기간 밖 주차도 숨김 화살표로 펼치고 수동 숨김과 달력 표시를 함께 유지한다", async ({
+  page,
+}, info) => {
+  const allWeeks = weeksForYear(2026).map((week) => week.key);
+  const header = (key: string) => page.locator(`[data-header-key="${key}"]`);
+  const reveal = (key: string) =>
+    page.locator(`.hidden-column-reveal[data-hidden-columns~="${key}"]`);
+  const shownWeeks = () =>
+    page
+      .locator(".week-heading")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-header-key")),
+      );
+  const selectedWeeks = () =>
+    page
+      .locator('.period-week[aria-pressed="true"]')
+      .evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-week")),
+      );
+  const hide = async (key: string) => {
+    await header(key).click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "열 숨기기", exact: true })
+      .click();
+    await expect(header(key)).toHaveCount(0);
+  };
+  // 날짜 범위를 바꾸거나 펼칠 때 속성 필터와 별도로 숨긴 행·열은 유지한다.
+  await header("category").click({ button: "right" });
+  await page.getByRole("checkbox", { name: "UX 개선", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "2행 전체 선택", exact: true })
+    .click();
+  await hideSelectedRows(page);
+  await hide("owner");
+  await chooseMonths(page, 3, 4);
+  await expect(reveal("2025-12-29")).toHaveCount(1);
+  await expect(reveal("2026-12-28")).toHaveCount(1);
+  await hide("2026-03-16");
+  await expect(page.locator('[data-week="2026-03-16"]')).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(
+    page.getByRole("button", { name: "3월 전체", exact: true }),
+  ).toHaveAttribute("aria-pressed", "mixed");
+  await reveal("2025-12-29").click();
+  const expanded = weeksForYear(2026)
+    .filter((week) => week.month <= 4 && week.key !== "2026-03-16")
+    .map((week) => week.key);
+  await expect.poll(shownWeeks).toEqual(expanded);
+  await expect.poll(selectedWeeks).toEqual(expanded);
+  await expect(reveal("2026-03-16")).toHaveCount(1);
+  await expect(reveal("2026-12-28")).toHaveCount(1);
+  await expect(header("owner")).toHaveCount(0);
+  await expect(page.locator(`[data-row-id="${taskIds[1]}"]`)).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const { views } = await (
+        await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
+      ).json();
+      const current = views.find(
+        (view: any) => view.name === "__current",
+      )?.data;
+      return {
+        hiddenWeeks: current?.hiddenWeeks,
+        filters: current?.propertyFilters,
+      };
+    })
+    .toEqual({
+      hiddenWeeks: allWeeks.filter((key) => !expanded.includes(key)),
+      filters: { category: ["category-ux"] },
+    });
+  await page.reload();
+  await expect.poll(shownWeeks).toEqual(expanded);
+  await expect.poll(selectedWeeks).toEqual(expanded);
+  await reveal("2026-12-28").click();
+  await expect
+    .poll(shownWeeks)
+    .toEqual(allWeeks.filter((key) => key !== "2026-03-16"));
+  await reveal("2026-03-16").click();
+  await expect.poll(shownWeeks).toEqual(allWeeks);
+  await expect.poll(selectedWeeks).toEqual(allWeeks);
+  await expect(
+    page.getByRole("button", { name: "2026년 전체 선택", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  // 주차 드래그로 다시 좁힌 뒤에도 앞·뒤를 각각 복원할 수 있다.
+  await chooseWeeks(page, "2026-03-16", "2026-04-06");
+  await expect
+    .poll(selectedWeeks)
+    .toEqual(
+      allWeeks.filter((key) => key >= "2026-03-16" && key <= "2026-04-06"),
+    );
+  await expect(reveal("2025-12-29")).toHaveCount(1);
+  await expect(reveal("2026-12-28")).toHaveCount(1);
+  await page.screenshot({
+    path: info.outputPath("period-hidden-column-arrows.png"),
+    fullPage: true,
+  });
+  await reveal("2025-12-29").click();
+  await expect
+    .poll(shownWeeks)
+    .toEqual(allWeeks.filter((key) => key <= "2026-04-06"));
+  await expect(header("owner")).toHaveCount(0);
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "첫 업무",
+    "셋째 업무",
+  ]);
+});
+
 test("연도 숫자로 연간 전체를 선택하고 업무 필터를 유지하며 저장한다", async ({
   page,
 }) => {
@@ -1109,7 +1219,7 @@ test("숨긴 열은 머리글 좌우 화살표로 구간별 복원하고 고정 
   await hide("2026-03-09");
   await expect(page.locator(".week-heading")).toHaveCount(0);
   await reveal("2026-03-09").click();
-  await expect(page.locator(".week-heading")).toHaveCount(3);
+  await expect(page.locator(".week-heading")).toHaveCount(53);
   await expect(reveal("2026-03-02")).toHaveCount(0);
   await expect(page.locator('[data-column="title"]')).toHaveText([
     "첫 업무",
@@ -1118,7 +1228,7 @@ test("숨긴 열은 머리글 좌우 화살표로 구간별 복원하고 고정 
   ]);
   await chooseWeeks(page, "2026-03-09", "2026-03-16");
   await expect(header("2026-03-02")).toHaveCount(0);
-  await expect(reveal("2026-03-02")).toHaveCount(0);
+  await expect(reveal("2026-03-02")).toHaveCount(1);
 });
 
 test("여러 셀을 선택하면 영역마다 외곽선을 표시한다", async ({
@@ -1342,11 +1452,11 @@ test("속성을 주차 날짜 아래로 옮기면 마지막 날짜 뒤에 저장
     page.getByRole("button", { name: "선택 속성 삭제", exact: true }),
   ).toHaveCount(0);
   await page
-    .getByRole("button", { name: "목표일 속성 아래로", exact: true })
-    .click();
+    .getByRole("button", { name: "목표일 속성 순서 이동", exact: true })
+    .press("Alt+ArrowDown");
   await page
-    .getByRole("button", { name: "진척률 속성 아래로", exact: true })
-    .click();
+    .getByRole("button", { name: "진척률 속성 순서 이동", exact: true })
+    .press("Alt+ArrowDown");
   const list = await page
     .locator(".property-list-row")
     .evaluateAll((rows) => rows.map((r) => r.getAttribute("data-column-item")));
@@ -1456,15 +1566,15 @@ test("주차 날짜 묶음을 처음·끝으로 옮기고 모든 주차를 숨�
   const count = await page.locator(".property-select").count();
   for (let i = 0; i < count; i++)
     await page
-      .getByRole("button", { name: "주차 날짜 위로", exact: true })
-      .click();
+      .getByRole("button", { name: "주차 날짜 속성 순서 이동", exact: true })
+      .press("Alt+ArrowUp");
   await expect(page.locator(".property-list-row").first()).toHaveAttribute(
     "data-column-item",
     "__weeks",
   );
   await expect(
-    page.getByRole("button", { name: "주차 날짜 위로", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "주차 날짜 속성 순서 이동", exact: true }),
+  ).toBeEnabled();
   await save();
   const headers = () =>
     page
@@ -1500,8 +1610,8 @@ test("주차 날짜 묶음을 처음·끝으로 옮기고 모든 주차를 숨�
   );
   for (let i = 0; i < count; i++)
     await page
-      .getByRole("button", { name: "주차 날짜 아래로", exact: true })
-      .click();
+      .getByRole("button", { name: "주차 날짜 속성 순서 이동", exact: true })
+      .press("Alt+ArrowDown");
   await expect(page.locator(".property-list-row").last()).toHaveAttribute(
     "data-column-item",
     "__weeks",
@@ -1902,7 +2012,7 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
     "rgb(136, 136, 136)",
   );
   await expect(page.locator('[data-column="title"]')).toHaveCount(3);
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   const viewSaved = page.waitForResponse(
     (r) =>
       r.url().endsWith("/api/views") &&
@@ -2456,7 +2566,7 @@ test("편집·기본 서식·실행취소·새로고침 복원", async ({ page }
     fullPage: true,
   });
 });
-test("숨김 행을 제외한 범위 서식과 개인 숨김 복원", async ({ page }) => {
+test("숨김 행을 포함한 범위 서식과 개인 숨김 복원", async ({ page }) => {
   const first = page.locator(`[data-cell="${taskIds[0]}:title"]`),
     hidden = page.locator(`[data-cell="${taskIds[1]}:title"]`),
     last = page.locator(`[data-cell="${taskIds[2]}:title"]`);
@@ -2475,7 +2585,7 @@ test("숨김 행을 제외한 범위 서식과 개인 숨김 복원", async ({ p
   ).tasks;
   expect(
     tasks.find((t: any) => t.id === taskIds[1]).cells.title.style.bold,
-  ).toBeUndefined();
+  ).toBe(true);
   await expect
     .poll(async () => {
       const r = await page.request.get(`/api/views?teamId=${teamId}&year=2026`);
@@ -2489,7 +2599,160 @@ test("숨김 행을 제외한 범위 서식과 개인 숨김 복원", async ({ p
     .first()
     .click();
   await expect(hidden).toHaveText("숨길 업무");
+  await expect(hidden).toHaveCSS("font-weight", "700");
 });
+
+test("숨긴 행·열을 포함한 배경색·글자·테두리는 복원과 실행취소 후에도 유지한다", async ({
+  page,
+}, info) => {
+  await marchWeeks(page);
+  const at = (row: number, key: string) =>
+    page.locator(`[data-cell="${taskIds[row]}:${key}"]`);
+  const readTasks = async () =>
+    (
+      await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      ).json()
+    ).tasks;
+  const original = await readTasks();
+  await at(1, "title").click();
+  await hideSelectedRows(page);
+  await page.locator('[data-header-key="owner"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: "열 숨기기", exact: true }).click();
+  await at(0, "title").click();
+  await at(2, "status").click({ modifiers: ["Shift"] });
+  const save = (action: () => Promise<unknown>) =>
+    Promise.all([
+      page.waitForResponse(
+        (r) => r.url().endsWith("/api/cells/batch") && r.ok(),
+      ),
+      action(),
+    ]);
+  await save(() => page.getByLabel("배경색", { exact: true }).fill("#d1eee6"));
+  await save(() =>
+    page.getByRole("button", { name: "굵게", exact: true }).click(),
+  );
+  await applyBorders(page, "모든 테두리", "solid", "#234567");
+  const border = { style: "solid", color: "#234567" };
+  let stored = await readTasks();
+  for (const id of taskIds) {
+    const task = stored.find((t: any) => t.id === id);
+    expect(task.cells.owner.style).toMatchObject({
+      backgroundColor: "#d1eee6",
+      bold: true,
+      borderBottom: border,
+      borderRight: border,
+      borderLeft: null,
+    });
+    expect(task.cells.category.style).toEqual(
+      original.find((t: any) => t.id === id).cells.category.style,
+    );
+  }
+  expect(
+    stored.find((t: any) => t.id === taskIds[1]).cells.owner.style.borderTop,
+  ).toBeNull();
+  await save(() =>
+    page.getByRole("button", { name: "실행취소", exact: true }).click(),
+  );
+  stored = await readTasks();
+  expect(
+    stored.find((t: any) => t.id === taskIds[1]).cells.owner.style,
+  ).toMatchObject({ backgroundColor: "#d1eee6", bold: true });
+  expect(
+    stored.find((t: any) => t.id === taskIds[1]).cells.owner.style.borderBottom,
+  ).toBeUndefined();
+  await save(() =>
+    page.getByRole("button", { name: "재실행", exact: true }).click(),
+  );
+  await page
+    .getByRole("button", { name: "2행 숨김 해제", exact: true })
+    .first()
+    .click();
+  await page
+    .locator('.hidden-column-reveal[data-hidden-columns~="owner"]')
+    .click();
+  for (const row of [0, 1, 2]) {
+    await expect(at(row, "owner")).toHaveCSS(
+      "background-color",
+      "rgb(209, 238, 230)",
+    );
+    await expect(at(row, "owner")).toHaveCSS("font-weight", "700");
+    await expect(at(row, "owner")).toHaveCSS("border-bottom-width", "1px");
+    await expect(at(row, "owner")).toHaveCSS(
+      "border-right-color",
+      "rgb(35, 69, 103)",
+    );
+  }
+  await expect
+    .poll(async () => {
+      const { views } = await (
+        await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
+      ).json();
+      const current = views.find(
+        (view: any) => view.name === "__current",
+      )?.data;
+      return [current?.hiddenRows, current?.visibleFields.includes("owner")];
+    })
+    .toEqual([[], true]);
+  await page.reload();
+  await expect(at(1, "owner")).toHaveCSS(
+    "background-color",
+    "rgb(209, 238, 230)",
+  );
+  await expect(at(1, "owner")).toHaveCSS("border-bottom-width", "1px");
+  await page.screenshot({
+    path: info.outputPath("restored-hidden-cell-styles.png"),
+    fullPage: true,
+  });
+});
+
+test("행·열·전체 선택 서식은 앞뒤 숨긴 날짜 열과 숨긴 행까지 적용한다", async ({
+  page,
+}) => {
+  await marchWeeks(page);
+  await page
+    .getByRole("button", { name: "1행 전체 선택", exact: true })
+    .click();
+  await selectFormat(page.getByLabel("글자 크기", { exact: true }), "14");
+  const readTasks = async () =>
+    (
+      await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      ).json()
+    ).tasks;
+  const stored = await readTasks();
+  for (const key of ["2025-12-29", "2026-03-02", "2026-12-28", "description"])
+    expect(
+      stored.find((t: any) => t.id === taskIds[0]).cells[key].style.fontSize,
+    ).toBe(14);
+  expect(
+    stored.find((t: any) => t.id === taskIds[1]).cells.title.style.fontSize,
+  ).toBeUndefined();
+  await hideSelectedRows(page);
+  await page
+    .getByRole("button", { name: "3행 전체 선택", exact: true })
+    .click();
+  await hideSelectedRows(page);
+  await page.getByRole("button", { name: "팀원 열 선택", exact: true }).click();
+  await selectFormat(page.getByLabel("글자 크기", { exact: true }), "16");
+  for (const task of await readTasks())
+    expect(task.cells.owner.style.fontSize).toBe(16);
+  await page.getByRole("button", { name: "모든 셀 선택", exact: true }).click();
+  await selectFormat(page.getByLabel("글자 크기", { exact: true }), "18");
+  for (const task of await readTasks())
+    for (const key of ["title", "description", "2025-12-29", "2026-12-28"])
+      expect(task.cells[key].style.fontSize).toBe(18);
+  await page.getByRole("grid").focus();
+  await page.keyboard.press("Control+a");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
+    page.getByRole("button", { name: "기울임", exact: true }).click(),
+  ]);
+  for (const task of await readTasks())
+    for (const key of ["title", "description", "2025-12-29", "2026-12-28"])
+      expect(task.cells[key].style.italic).toBe(true);
+});
+
 test("월 기간 필터·키보드 편집 및 수식 문자열 입력", async ({ page }) => {
   await chooseMonths(page, 10);
   await expect(page.getByRole("columnheader")).toHaveCount(10);
@@ -2663,6 +2926,67 @@ test("진척률을 텍스트로 편집·붙여넣고 여섯 자리 이슈 번호
   });
 });
 
+test("셀 편집 확정은 저장 응답 전에 새 값을 표시하고 실행취소 원본을 보존한다", async ({
+  page,
+}) => {
+  const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  let previous = "첫 업무";
+  for (const [text, finish] of [
+    ["저장 중에도 유지할 입력", "Enter"],
+    ["", "Tab"],
+    ["다른 셀을 눌러 확정한 입력", "blur"],
+  ]) {
+    let release!: () => void;
+    let arrived!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const requested = new Promise<void>((resolve) => (arrived = resolve));
+    await page.route("**/api/cells/batch", async (route) => {
+      arrived();
+      await gate;
+      await route.continue();
+    });
+    try {
+      await cell.dblclick();
+      const editor = cell.getByRole("textbox");
+      await editor.fill(text);
+      if (finish === "blur")
+        await page.locator(`[data-cell="${taskIds[1]}:title"]`).click();
+      else await editor.press(finish);
+      await requested;
+      await expect(editor).toHaveCount(0);
+      await expect(cell).toHaveText(text);
+      await expect(page.locator(".save-status")).toHaveText("저장 중");
+      // 서버에는 아직 원래 값이 있어도 화면에서는 방금 확정한 값을 유지한다.
+      const stored = await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      ).json();
+      expect(
+        stored.tasks.find((task: any) => task.id === taskIds[0]).cells.title
+          .value,
+      ).toBe(previous);
+      const response = page.waitForResponse(
+        (r) => r.url().endsWith("/api/cells/batch") && r.ok(),
+      );
+      release();
+      await response;
+      await expect(page.locator(".save-status")).toHaveCount(0);
+      await expect(cell).toHaveText(text);
+      previous = text;
+    } finally {
+      release();
+      await page.unroute("**/api/cells/batch");
+    }
+  }
+  for (const text of ["", "저장 중에도 유지할 입력", "첫 업무"]) {
+    await page.getByRole("button", { name: "실행취소", exact: true }).click();
+    await expect(cell).toHaveText(text);
+  }
+  await page.getByRole("button", { name: "재실행", exact: true }).click();
+  await expect(cell).toHaveText("저장 중에도 유지할 입력");
+  await page.reload();
+  await expect(cell).toHaveText("저장 중에도 유지할 입력");
+});
+
 test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한다", async ({
   page,
 }) => {
@@ -2672,6 +2996,7 @@ test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한�
   await page.locator(".inline-editor textarea").fill("실패 뒤 복구할 입력");
   await page.locator(".inline-editor textarea").press("Enter");
   await expect(page.getByRole("button", { name: "입력 확인" })).toBeVisible();
+  await expect(cell).toHaveText("첫 업무");
   await page.getByTitle("내 계정", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "로그아웃", exact: true }),
@@ -2843,34 +3168,36 @@ test("새 업무 삭제는 이전 재실행을 비우고 삭제 재실행은 다
   await expect(second).toHaveText("숨길 업무 수정");
 });
 
-test("저장한 보기는 닫기 버튼으로 닫고 휴지통으로 삭제한 뒤 알림에서 실행취소한다", async ({
+test("저장된 필터는 닫기 버튼으로 닫고 휴지통으로 삭제한 뒤 알림에서 실행취소한다", async ({
   page,
 }) => {
   const menu = page.locator(".saved-views");
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
-  await page.getByRole("button", { name: "현재 보기 저장" }).click();
-  await page.getByLabel("보기 이름").fill("삭제할 보기");
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await page.getByRole("button", { name: "현재 필터 저장" }).click();
+  await page.getByLabel("필터 이름").fill("삭제할 보기");
   await page
     .locator("dialog")
     .getByRole("button", { name: "저장", exact: true })
     .click();
   await expect(page.locator("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
+  const applied = page.getByRole("status", { name: "적용 중인 필터" });
+  await expect(applied).toHaveText("삭제할 보기");
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   await expect(menu).toBeVisible();
   await page
-    .getByRole("button", { name: "저장한 보기 닫기", exact: true })
+    .getByRole("button", { name: "저장된 필터 닫기", exact: true })
     .click();
   await expect(menu).toHaveCount(0);
   // 바깥을 누르거나 Esc를 눌러도 닫힌다.
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   await expect(menu).toBeVisible();
   await page.locator(".sheet-scroll").click({ position: { x: 5, y: 5 } });
   await expect(menu).toHaveCount(0);
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
-  await page.getByRole("button", { name: "저장한 보기", exact: true }).click();
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   await expect(
     menu.getByRole("button", { name: "삭제할 보기", exact: true }),
   ).toBeVisible();
@@ -2880,17 +3207,19 @@ test("저장한 보기는 닫기 버튼으로 닫고 휴지통으로 삭제한 �
   await expect(
     menu.getByRole("button", { name: "삭제할 보기", exact: true }),
   ).toHaveCount(0);
+  await expect(applied).toHaveText("저장된 필터");
   const toast = page
     .getByRole("status")
-    .filter({ hasText: "보기를 삭제했습니다" });
-  await expect(toast).toContainText("‘삭제할 보기’ 보기를 삭제했습니다.");
+    .filter({ hasText: "필터를 삭제했습니다" });
+  await expect(toast).toContainText("‘삭제할 보기’ 필터를 삭제했습니다.");
   await toast.getByRole("button", { name: "실행취소", exact: true }).click();
   await expect(
     menu.getByRole("button", { name: "삭제할 보기", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".toast")).toHaveText(
-    "‘삭제할 보기’ 보기를 되살렸습니다.",
+    "‘삭제할 보기’ 필터를 되살렸습니다.",
   );
+  await expect(applied).toHaveText("저장된 필터");
   const views = (
     await (
       await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
@@ -2899,14 +3228,14 @@ test("저장한 보기는 닫기 버튼으로 닫고 휴지통으로 삭제한 �
   expect(views).toContain("삭제할 보기");
 });
 
-test("검색·나의 보기 저장과 읽기 전용 보고본의 원본 분리를 확인한다", async ({
+test("검색·필터 저장과 읽기 전용 보고본의 원본 분리를 확인한다", async ({
   page,
 }) => {
   await page.getByLabel("전체 속성 검색").fill("업무");
   await expect(page.locator('[data-column="title"]')).toHaveCount(3);
-  await page.getByRole("button", { name: "저장한 보기" }).click();
-  await page.getByRole("button", { name: "현재 보기 저장" }).click();
-  await page.getByLabel("보기 이름").fill("나의 검토 업무");
+  await page.getByRole("button", { name: "저장된 필터" }).click();
+  await page.getByRole("button", { name: "현재 필터 저장" }).click();
+  await page.getByLabel("필터 이름").fill("나의 검토 업무");
   await page
     .locator("dialog")
     .getByRole("button", { name: "저장", exact: true })
@@ -3165,6 +3494,8 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
   await expect(page.locator(`[data-cell="${taskIds[0]}:owner"]`)).toHaveClass(
     /focused/,
   );
+  // 화면의 낙관적 표시와 서버 저장 완료는 별개이므로 다음 편집 전에 기다린다.
+  await expect(page.locator(".save-status")).toHaveCount(0);
   await first.dblclick();
   await first.getByRole("textbox").fill("취소할 변경");
   await first.getByRole("textbox").press("Escape");
@@ -3174,6 +3505,7 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
   await second.click();
   await expect(first).toHaveText("포커스를 옮겨 저장");
   await expect(second).toHaveClass(/focused/);
+  await expect(page.locator(".save-status")).toHaveCount(0);
   await second.press("F2");
   await expect(second.getByRole("textbox")).toBeFocused();
   await second.getByRole("textbox").fill("키보드 입력");
@@ -3355,7 +3687,9 @@ test("사용자 계정은 팀별 권한을 보여 주고 검색과 팀 구성원
     exact: true,
   });
   await expect(activeSwitch).toBeChecked();
-  await activeSwitch.uncheck({ force: true });
+  // 폼을 여는 스크롤이 끝난 뒤 실제 보이는 스위치를 누른다.
+  await editRow.locator(".switch-track").click();
+  await expect(activeSwitch).not.toBeChecked();
   await expect(editRow.locator(".switch-field")).toContainText("비활성");
   await expect(editRow.locator(".switch-warning")).toBeVisible();
   await editButton.click();
@@ -3546,17 +3880,17 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
   await page.getByLabel("A 프로젝트 배경색").fill("#fff2c6");
   await page.getByLabel("A 프로젝트 점 색상").fill("#e84a2f");
   await page
-    .getByRole("button", { name: "C 프로젝트 값 위로", exact: true })
-    .click();
+    .getByRole("button", { name: "C 프로젝트 값 순서 이동", exact: true })
+    .press("Alt+ArrowUp");
   await page
-    .getByRole("button", { name: "C 프로젝트 값 위로", exact: true })
-    .click();
+    .getByRole("button", { name: "C 프로젝트 값 순서 이동", exact: true })
+    .press("Alt+ArrowUp");
   await expect(page.getByLabel("속성 값 1 이름", { exact: true })).toHaveValue(
     "C 프로젝트",
   );
   await page
-    .getByRole("button", { name: "프로젝트 속성 위로", exact: true })
-    .click();
+    .getByRole("button", { name: "프로젝트 속성 순서 이동", exact: true })
+    .press("Alt+ArrowUp");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
     page.getByText("속성 설정을 저장했습니다.", { exact: true }),
@@ -5379,8 +5713,8 @@ test("속성 관리에서 모든 열·다섯 종류·표시 순서·삭제와 �
       await page.getByLabel("여러 팀원 선택", { exact: true }).check();
   }
   await page
-    .getByRole("button", { name: "검토 팀원 속성 위로", exact: true })
-    .click();
+    .getByRole("button", { name: "검토 팀원 속성 순서 이동", exact: true })
+    .press("Alt+ArrowUp");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
     page.getByText("속성 설정을 저장했습니다.", { exact: true }),
@@ -5477,4 +5811,459 @@ test("속성 관리에서 모든 열·다섯 종류·표시 순서·삭제와 �
   expect(
     latest.properties.find((p: any) => p.id === "progress").archived,
   ).toBeFalsy();
+});
+
+test("행 선택 테두리는 손잡이 호버에도 유지되고 즉시 툴팁은 기간 바와 툴바에만 표시한다", async ({
+  page,
+}, info) => {
+  const row = page.locator(`[data-row-id="${taskIds[0]}"]`);
+  await row.locator(".row-select").click();
+  await row.locator(".row-drag-handle").hover();
+  await expect(row.getByRole("rowheader")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const outline = await row.getByRole("rowheader").evaluate((el) => {
+    const s = getComputedStyle(el, "::after");
+    return { border: s.borderLeftWidth, z: s.zIndex, pointer: s.pointerEvents };
+  });
+  expect(outline).toEqual({ border: "1px", z: "4", pointer: "none" });
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("selected-row-handle.png") });
+  const toolbar = page.locator('.format-toolbar[aria-label="셀 서식 도구"]');
+  const bold = toolbar.getByRole("button", { name: "굵게", exact: true });
+  await bold.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("굵게", { timeout: 300 });
+  await expect(bold).not.toHaveAttribute("title");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  const year = page.getByRole("button", {
+    name: "2026년 전체 선택",
+    exact: true,
+  });
+  await year.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("2026년 전체 선택", {
+    timeout: 300,
+  });
+  await page.getByRole("button", { name: "3월 전체", exact: true }).hover();
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "3월 · 드래그하여 여러 월 선택",
+    { timeout: 300 },
+  );
+  const title = row.locator('[data-column="title"]');
+  await title.hover();
+  await expect(title).toHaveAttribute("title", "첫 업무");
+  await expect(title).not.toHaveAttribute("data-tooltip");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  const settings = page.getByRole("button", { name: "설정", exact: true });
+  await settings.hover();
+  await expect(settings).toHaveAttribute("title", "설정");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await openDefaultStyle(page);
+  const undo = page
+    .getByRole("dialog", { name: "설정" })
+    .getByRole("button", { name: "실행취소", exact: true });
+  await expect(undo).toBeDisabled();
+  await undo.hover();
+  await expect(page.locator("dialog .instant-tooltip")).toHaveText("실행취소", {
+    timeout: 300,
+  });
+});
+
+test("속성과 선택값은 왼쪽 손잡이로 드래그하고 값 편집 중 열 너비를 유지한다", async ({
+  page,
+}, info) => {
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  const rows = page.locator(".property-list-row");
+  const before = await rows.evaluateAll((els) =>
+    els.map((el) => el.getAttribute("data-column-item")),
+  );
+  const source = rows.nth(0).locator(".list-drag-handle");
+  const target = rows.nth(1);
+  const box = (await target.boundingBox())!;
+  await source.hover();
+  await page.mouse.down();
+  await page.mouse.move(box.x + 12, box.y + box.height - 3, { steps: 8 });
+  await expect(target).toHaveAttribute("data-reorder-drop", "after");
+  await page.mouse.up();
+  const expected = [before[1], before[0], ...before.slice(2)];
+  expect(
+    await rows.evaluateAll((els) =>
+      els.map((el) => el.getAttribute("data-column-item")),
+    ),
+  ).toEqual(expected);
+  await page.locator('[data-column-item="status"] .property-select').click();
+  const valueRows = page.locator(".property-values tbody tr");
+  const values = await valueRows.evaluateAll((els) =>
+    els.map((el) => el.getAttribute("data-option-id")),
+  );
+  const last = valueRows.last().locator(".list-drag-handle");
+  await last.hover();
+  const firstBox = (await valueRows.first().boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(firstBox.x + 16, firstBox.y + 2, { steps: 10 });
+  await expect(valueRows.first()).toHaveAttribute(
+    "data-reorder-drop",
+    "before",
+  );
+  await page.mouse.up();
+  await expect(valueRows.first()).toHaveAttribute(
+    "data-option-id",
+    values.at(-1)!,
+  );
+  const widths = () =>
+    page
+      .locator(".property-values th")
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
+  const initialWidths = await widths();
+  await page.getByRole("button", { name: "값 추가", exact: true }).click();
+  expect(await widths()).toEqual(initialWidths);
+  await page
+    .getByLabel(`속성 값 ${values.length + 1} 이름`, { exact: true })
+    .fill("열 너비가 유지되는 긴 이름");
+  expect(await widths()).toEqual(initialWidths);
+  await page.getByLabel("속성 값 1 이름", { exact: true }).fill("A");
+  expect(await widths()).toEqual(initialWidths);
+  await page.screenshot({
+    path: info.outputPath("property-drag-fixed-columns.png"),
+  });
+  await page.getByRole("button", { name: "속성 저장", exact: true }).click();
+  await expect(
+    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  expect(
+    await rows.evaluateAll((els) =>
+      els.map((el) => el.getAttribute("data-column-item")),
+    ),
+  ).toEqual(expected);
+  await page.locator('[data-column-item="status"] .property-select').click();
+  await expect(valueRows.first()).toHaveAttribute(
+    "data-option-id",
+    values.at(-1)!,
+  );
+  await expect(page.getByLabel("속성 값 1 이름", { exact: true })).toHaveValue(
+    "A",
+  );
+});
+
+test("새 팀의 기본 세로 정렬은 중간이며 미리보기와 추가 행의 맞닿은 테두리는 1px이다", async ({
+  page,
+}, info) => {
+  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const fresh = await post(page, "/admin/teams", {
+    name: `중간 정렬 ${randomUUID().slice(0, 6)}`,
+    members: [{ userId: boot.user.id, role: "lead" }],
+  });
+  await page.reload();
+  await page.getByLabel("팀 선택").selectOption(fresh.id);
+  await openDefaultStyle(page);
+  await expect(
+    page
+      .getByRole("dialog", { name: "설정", exact: true })
+      .getByRole("combobox", { name: "세로 정렬", exact: true }),
+  ).toHaveAttribute("data-value", "middle");
+  await page
+    .getByRole("dialog", { name: "설정", exact: true })
+    .getByRole("button", { name: "테두리", exact: true })
+    .click();
+  await page.getByRole("button", { name: "모든 테두리", exact: true }).click();
+  const preview = page.locator(".preview-cell");
+  await expect(preview.nth(0)).toHaveCSS("border-right-width", "1px");
+  await expect(preview.nth(1)).toHaveCSS("border-left-width", "0px");
+  await expect(preview.nth(0)).toHaveCSS("border-bottom-width", "1px");
+  await expect(preview.nth(3)).toHaveCSS("border-top-width", "0px");
+  await page.screenshot({
+    path: info.outputPath("default-borders-preview.png"),
+  });
+  await saveDefaultStyle(page);
+  const ids: string[] = [];
+  for (const title of ["추가 A", "추가 B"]) {
+    const created = page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/tasks") &&
+        r.request().method() === "POST" &&
+        r.ok(),
+    );
+    await page
+      .locator(".heading-actions")
+      .getByRole("button", { name: "업무 추가", exact: true })
+      .click();
+    const id = (await (await created).json()).task.id;
+    ids.push(id);
+    const input = page
+      .locator(`[data-cell="${id}:title"]`)
+      .getByRole("textbox");
+    await input.fill(title);
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().endsWith("/api/cells/batch") && r.ok(),
+      ),
+      input.press("Enter"),
+    ]);
+  }
+  const first = page.locator(`[data-cell="${ids[0]}:title"]`);
+  const next = page.locator(`[data-cell="${ids[1]}:title"]`);
+  const owner = page.locator(`[data-cell="${ids[1]}:owner"]`);
+  await expect(first).toHaveCSS("border-bottom-width", "1px");
+  await expect(next).toHaveCSS("border-top-width", "0px");
+  await expect(next).toHaveCSS("border-right-width", "1px");
+  await expect(owner).toHaveCSS("border-left-width", "0px");
+  await expect(next).toHaveCSS("align-items", "safe center");
+  await page.reload();
+  await expect(next).toHaveCSS("border-top-width", "0px");
+  await expect(owner).toHaveCSS("border-left-width", "0px");
+  await page.screenshot({
+    path: info.outputPath("added-rows-single-borders.png"),
+  });
+});
+
+test("저장된 필터는 열 조건만 저장하고 적용·해제할 때 현재 숨김과 배치를 유지한다", async ({
+  page,
+}) => {
+  await setTaskCells(page, [
+    { index: 0, key: "status", value: "status-completed" },
+  ]);
+  await page.reload();
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
+  const filter = page.getByRole("group", {
+    name: "상태 필터 선택",
+    exact: true,
+  });
+  await filter.getByRole("checkbox", { name: "완료", exact: true }).check();
+  await filter.getByRole("radio", { name: "제외", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await page
+    .getByRole("button", { name: "현재 필터 저장", exact: true })
+    .click();
+  await page.getByLabel("필터 이름").fill("완료 제외 보기");
+  await page
+    .getByRole("dialog", { name: "필터 저장" })
+    .getByRole("button", { name: "저장", exact: true })
+    .click();
+  const applied = page.getByRole("status", { name: "적용 중인 필터" });
+  await expect(applied).toHaveText("완료 제외 보기");
+  const views = async () =>
+    (
+      await (
+        await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
+      ).json()
+    ).views;
+  await expect
+    .poll(
+      async () =>
+        (await views()).find((v: any) => v.name === "__current")?.data
+          .propertyFilterModes,
+    )
+    .toEqual({ status: "exclude" });
+  const saved = (await views()).find(
+    (v: any) => v.name === "완료 제외 보기",
+  ).data;
+  expect(saved).toEqual({
+    year: 2026,
+    propertyFilters: { status: ["status-completed"] },
+    propertyFilterModes: { status: "exclude" },
+  });
+  const current = (await views()).find((v: any) => v.name === "__current").data;
+  const layout = {
+    ...current,
+    propertyFilters: {},
+    propertyFilterModes: {},
+    visibleFields: ["title"],
+    hiddenRows: [taskIds[1]],
+    hiddenWeeks: ["2026-03-02"],
+    collapsedMonths: [2],
+    fromMonth: 2,
+    toMonth: 5,
+    frozenColumns: 1,
+    widths: { title: 370 },
+    rowHeights: { [taskIds[2]]: 62 },
+    sortKey: "title",
+    sortDirection: "desc",
+  };
+  const headers = { "X-Requested-With": "WeeklyPlan" };
+  expect(
+    (
+      await page.request.put("/api/views", {
+        headers,
+        data: { teamId, name: "__current", data: layout },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  expect(
+    (
+      await page.request.put("/api/views", {
+        headers,
+        data: {
+          teamId,
+          name: "필터 없음",
+          data: { year: 2026, propertyFilters: {}, propertyFilterModes: {} },
+        },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  await page.reload();
+  for (const [name, expectedFilters, expectedModes, titles] of [
+    [
+      "완료 제외 보기",
+      saved.propertyFilters,
+      saved.propertyFilterModes,
+      ["셋째 업무"],
+    ],
+    ["필터 없음", {}, {}, ["첫 업무", "셋째 업무"]],
+  ] as const) {
+    await page
+      .getByRole("button", { name: "저장된 필터", exact: true })
+      .click();
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(applied).toHaveText(name);
+    await expect(page.locator('[data-column="title"]')).toHaveText([...titles]);
+    await expect
+      .poll(
+        async () =>
+          (await views()).find((v: any) => v.name === "__current").data,
+      )
+      .toEqual({
+        ...layout,
+        propertyFilters: expectedFilters,
+        propertyFilterModes: expectedModes,
+      });
+    await expect(page.locator('[data-header-key="status"]')).toHaveCount(0);
+    await expect(page.locator(`[data-row-id="${taskIds[1]}"]`)).toHaveCount(0);
+    await page.reload();
+    await expect(applied).toHaveText(
+      name === "필터 없음" ? "저장된 필터" : name,
+    );
+    await page
+      .getByRole("button", { name: "저장된 필터", exact: true })
+      .click();
+    await expect(
+      page.locator(".saved-views").getByRole("button", { name, exact: true }),
+    ).toHaveAttribute("aria-pressed", String(name !== "필터 없음"));
+    await page.keyboard.press("Escape");
+  }
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await page
+    .locator(".saved-views")
+    .getByRole("button", { name: "완료 제외 보기", exact: true })
+    .click();
+  await expect(applied).toHaveText("완료 제외 보기");
+  await page.getByRole("button", { name: "필터 해제", exact: true }).click();
+  await expect(applied).toHaveText("저장된 필터");
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "첫 업무",
+    "셋째 업무",
+  ]);
+  await expect
+    .poll(
+      async () => (await views()).find((v: any) => v.name === "__current").data,
+    )
+    .toEqual(layout);
+  await page.reload();
+  await expect(applied).toHaveText("저장된 필터");
+  await expect(
+    page.getByRole("button", { name: "필터 해제", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await expect(
+    page.locator('.saved-filter-choice[aria-pressed="true"]'),
+  ).toHaveCount(0);
+  await expect(page.locator(".saved-filter-choice")).toHaveCount(2);
+});
+
+test("적용 필터 표시는 같은 조건의 선택 순서와 직접 수정·해제를 반영한다", async ({
+  page,
+}, info) => {
+  const applied = page.getByRole("status", { name: "적용 중인 필터" });
+  const control = page.locator(".saved-filter-control");
+  await expect(control).toHaveCSS("height", "40px");
+  await expect(
+    control.getByRole("status", { name: "적용 중인 필터" }),
+  ).toHaveCount(1);
+  await expect(page.locator(".applied-filter")).toHaveCount(0);
+  await expect(applied).toHaveText("저장된 필터");
+  await expect(page.getByRole("button", { name: "보기 초기화" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".view-bar")).not.toContainText("개 업무 표시");
+  for (const name of ["검토 대상", "동일 조건 다른 이름"]) {
+    const result = await page.request.put("/api/views", {
+      headers: { "X-Requested-With": "WeeklyPlan" },
+      data: {
+        teamId,
+        name,
+        data: {
+          year: 2026,
+          propertyFilters: { status: ["status-completed", "status-progress"] },
+          propertyFilterModes: {},
+        },
+      },
+    });
+    expect(result.ok()).toBeTruthy();
+  }
+  const menu = page.locator(".saved-views");
+  const choose = async (name: string) => {
+    await page
+      .getByRole("button", { name: "저장된 필터", exact: true })
+      .click();
+    await menu.getByRole("button", { name, exact: true }).click();
+    await expect(applied).toHaveText(name);
+  };
+  await choose("검토 대상");
+  await choose("동일 조건 다른 이름");
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await expect(menu.locator('[aria-pressed="true"]')).toHaveCount(1);
+  await expect(
+    menu.getByRole("button", { name: "동일 조건 다른 이름", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(menu.locator(".popover-title strong")).toHaveCSS(
+    "font-size",
+    "11px",
+  );
+  await expect(
+    menu.getByRole("button", { name: "현재 필터 저장", exact: true }),
+  ).toHaveCSS("border-radius", "6px");
+  await page.screenshot({ path: info.outputPath("active-saved-filter.png") });
+  await page.keyboard.press("Escape");
+
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
+  const filter = page.getByRole("group", {
+    name: "상태 필터 선택",
+    exact: true,
+  });
+  const completed = filter.getByRole("checkbox", { name: "완료", exact: true });
+  await completed.uncheck();
+  await expect(applied).toHaveText("사용자 지정 필터");
+  // 다시 선택하면 저장할 때와 값의 배열 순서가 달라도 같은 조건이다.
+  await completed.check();
+  await expect(applied).toHaveText("동일 조건 다른 이름");
+  await filter.getByRole("radio", { name: "제외", exact: true }).check();
+  await expect(applied).toHaveText("사용자 지정 필터");
+  await filter.getByRole("radio", { name: "일치", exact: true }).check();
+  await expect(applied).toHaveText("동일 조건 다른 이름");
+  await filter
+    .getByRole("button", { name: "상태 필터 해제", exact: true })
+    .click();
+  await expect(applied).toHaveText("저장된 필터");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
+  await expect(menu.locator('[aria-pressed="true"]')).toHaveCount(0);
+  await menu.getByRole("button", { name: "검토 대상", exact: true }).click();
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
+  await filter.getByRole("radio", { name: "제외", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await expect(applied).toHaveText("사용자 지정 필터");
+  const clear = control.getByRole("button", { name: "필터 해제", exact: true });
+  await clear.focus();
+  await clear.press("Enter");
+  await expect(applied).toHaveText("저장된 필터");
+  await expect(
+    control.getByRole("button", { name: "저장된 필터", exact: true }),
+  ).toBeFocused();
+  await expect(clear).toHaveCount(0);
 });

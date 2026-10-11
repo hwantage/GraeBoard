@@ -1711,7 +1711,7 @@ test("XLSX 미리보기는 원본을 변경하지 않고 담당자 확인 후 �
     /확인 중/,
   );
   const views = (await request(`/views?teamId=${teamId}&year=2026`)).data.views;
-  const v = views.find((v) => v.name.startsWith("가져온")).data;
+  const v = views.find((v) => v.name === "__current").data;
   assert.ok(v.hiddenRows.includes(imported.id));
   assert.deepEqual(v.hiddenWeeks, ["2026-10-05"]);
   assert.equal(v.rowHeights[imported.id], 80);
@@ -3304,4 +3304,82 @@ test("팀 테마는 팀별로 저장하고 기존 설정 저장·권한·충돌 
     400,
   );
   assert.equal((await settingsFor(tid)).theme, "sand");
+});
+
+test("저장된 필터는 화면 상태를 제거하여 저장하고 속성 변경 뒤에도 필터 형식만 유지한다", async () => {
+  const tid = (await post("/admin/teams", { name: "필터만 저장" })).data.id;
+  const settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  assert.equal(settings.defaultStyle.verticalAlign, "middle");
+  const data = {
+    ...normalizeView(defaultView(2026), settings),
+    propertyFilters: { status: ["status-completed"] },
+    propertyFilterModes: { status: "exclude" },
+    hiddenRows: [task.id],
+    visibleFields: ["title"],
+    widths: { title: 400 },
+    frozenColumns: 1,
+    sortKey: "title",
+    sortDirection: "desc",
+    groupBy: "status",
+    fromMonth: 4,
+    toMonth: 6,
+  };
+  const expected = {
+    year: 2026,
+    propertyFilters: data.propertyFilters,
+    propertyFilterModes: data.propertyFilterModes,
+  };
+  assert.equal(
+    (
+      await request("/views", {
+        method: "PUT",
+        body: { teamId: tid, name: "완료 제외", data },
+      })
+    ).status,
+    200,
+  );
+  const stored = () =>
+    JSON.parse(
+      db
+        .prepare("SELECT data FROM views WHERE team_id=? AND name=?")
+        .get(tid, "완료 제외").data,
+    );
+  assert.deepEqual(stored(), expected);
+  const get = async () =>
+    (await request(`/views?teamId=${tid}&year=2026`)).data.views.find(
+      (v) => v.name === "완료 제외",
+    ).data;
+  assert.deepEqual(await get(), expected);
+  settings.properties.find((p) => p.id === "status").values[0].label = "대기";
+  assert.equal(
+    (
+      await request(`/teams/${tid}/settings`, {
+        method: "PATCH",
+        body: settings,
+      })
+    ).status,
+    200,
+  );
+  assert.deepEqual(stored(), expected);
+  assert.deepEqual(await get(), expected);
+  assert.equal(
+    (
+      await request("/views", {
+        method: "PUT",
+        body: { teamId: tid, name: "빈 필터", data: { year: 2026 } },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request("/views", {
+        method: "PUT",
+        body: { teamId: tid, name: "__current", data: expected },
+      })
+    ).status,
+    400,
+  );
 });

@@ -11,9 +11,11 @@ import "@fontsource/pretendard/500.css";
 import "@fontsource/pretendard/600.css";
 import "@fontsource/pretendard/700.css";
 import App from "./App";
+import Tooltip from "./Tooltip";
 import "./styles.css";
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
+    <Tooltip />
   </React.StrictMode>,
 );

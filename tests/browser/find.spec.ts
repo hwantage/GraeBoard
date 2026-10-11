@@ -36,7 +36,7 @@ test.beforeEach(async ({ page }) => {
     name: "추가 메모",
     kind: "text",
     display: "text",
-    visible: false,
+    visible: true,
     placement: "afterWeeks",
     values: [],
   });
@@ -68,7 +68,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(`[data-cell="${ids[0]}:title"]`)).toBeVisible();
 });
 
-test("전체 속성 찾기는 목록을 유지하고 셀 개수·이전/다음·숨겨진 열 이동을 제공한다", async ({
+test("전체 속성 찾기는 목록을 유지하고 셀 개수·이전/다음·화면 밖 열 이동을 제공한다", async ({
   page,
 }, info) => {
   const input = page.getByLabel("전체 속성 검색", { exact: true });
@@ -370,4 +370,60 @@ test("검색 대상은 빠른 변경·키보드 선택을 반영하고 검색어
   await page.reload();
   await expect(input).toHaveValue("");
   await expect(input).toHaveAttribute("placeholder", "전체 속성 검색");
+});
+
+test("숨긴 열은 검색하지 않고 검색 대상 목록에 검색 제외로 표시한다", async ({
+  page,
+}, info) => {
+  const input = page
+    .getByRole("search", { name: "속성 찾기" })
+    .getByRole("textbox");
+  await input.fill("공통 메모");
+  await expect(page.locator(".search-count")).toHaveText("1 / 2");
+  await page
+    .locator(`[data-header-key="${memoKey}"]`)
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "열 숨기기", exact: true }).click();
+  await expect(page.locator(`[data-header-key="${memoKey}"]`)).toHaveCount(0);
+  await expect(page.locator(".search-count")).toHaveText("0 / 0");
+  await page
+    .getByRole("button", { name: "검색 대상 속성 선택", exact: true })
+    .click();
+  const popup = page.getByRole("dialog", { name: "검색 대상 속성 선택" });
+  const hidden = popup.getByRole("checkbox", {
+    name: "추가 메모",
+    exact: true,
+  });
+  await expect(hidden).toBeDisabled();
+  await expect(hidden).not.toBeChecked();
+  await expect(popup.locator(".search-scope-hidden")).toContainText(
+    "숨김 · 검색 제외",
+  );
+  await expect(popup.locator(".search-scope-hidden > span")).toHaveCSS(
+    "text-decoration-line",
+    "line-through",
+  );
+  await popup
+    .getByRole("checkbox", { name: "전체 선택", exact: true })
+    .uncheck();
+  await popup.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
+  await expect(hidden).not.toBeChecked();
+  await expect(page.locator(".search-count")).toHaveText("0 / 0");
+  await page.screenshot({
+    path: info.outputPath("hidden-search-property.png"),
+  });
+  await page.keyboard.press("Escape");
+  await input.fill("공통");
+  await expect(page.locator(".search-count")).toHaveText("1 / 2");
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(page.locator(`[data-header-key="${memoKey}"]`)).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "숨긴 열 1개 펼치기: 추가 메모", exact: true })
+    .click();
+  await input.fill("공통 메모");
+  await expect(page.locator(".search-count")).toHaveText("1 / 2");
+  await expect(page.locator(`[data-cell="${ids[1]}:${memoKey}"]`)).toHaveClass(
+    /focused/,
+  );
 });

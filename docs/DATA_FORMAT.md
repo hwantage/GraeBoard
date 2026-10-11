@@ -40,13 +40,13 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 주차 셀의 빈 값에도 배경색을 저장할 수 있습니다. 색상은 `#RRGGBB`, 글자 크기는 6~36pt 정수이며 새 팀의 기본 크기는 9pt입니다. 지원 글꼴은 Noto Sans KR·Pretendard·맑은 고딕·Noto Serif KR·Nanum Gothic Coding입니다. `맑은 고딕`은 저장 이름이며 HTML/XLSX 가져오기에서는 `Malgun Gothic`도 같은 이름으로 정규화합니다. 실제 화면은 설치된 맑은 고딕이 없으면 자체 제공 Pretendard로 표시하지만 저장된 글꼴 이름은 유지합니다.
 
-셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}` 또는 `null`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`dotted`·`double`, `color`는 `#RRGGBB`입니다. 누락 값은 업무 기본 서식을 상속하며 상속된 선이 없으면 기본 격자선을 유지합니다. `null`은 상속된 선까지 해제해 기본 격자선을 표시하고 `none`은 기본 격자선까지 숨깁니다. 테두리 도구의 지우기는 네 방향에 `null`을 저장합니다. 선택 영역의 맞닿은 안쪽 경계는 위·왼쪽 셀의 `borderBottom`·`borderRight`에만 선을 저장하고 아래·오른쪽 셀의 `borderTop`·`borderLeft`에는 `null`을 저장합니다. XLSX는 thin/medium/thick/dashed/dotted/double을 대응시키며 `null`은 선 없이 반출하고 대각선은 지원하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존하며 HTML의 `data-grid-borders`는 기본 격자선으로 해제한 방향을 기록합니다.
+셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}` 또는 `null`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`dotted`·`double`, `color`는 `#RRGGBB`입니다. 누락 값은 업무 기본 서식을 상속하며 상속된 선이 없으면 기본 격자선을 유지합니다. `null`은 상속된 선까지 해제해 기본 격자선을 표시하고 `none`은 기본 격자선까지 숨깁니다. 테두리 도구의 지우기는 네 방향에 `null`을 저장합니다. 선택 영역의 맞닿은 안쪽 경계는 위·왼쪽 셀의 `borderBottom`·`borderRight`에만 선을 저장하고 아래·오른쪽 셀의 `borderTop`·`borderLeft`에는 `null`을 저장합니다. XLSX는 thin/medium/thick/dashed/dotted/double을 대응시키며 `null`은 선 없이 반출하고 대각선은 지원하지 않습니다. 기본 서식이나 가져온 셀 양쪽에 명시된 선이 겹치면 화면과 미리보기에서 더 굵은 선을 한 번만 표시하고, 굵기가 같으면 위·왼쪽 셀의 선을 표시합니다. 저장한 서식은 변경하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존하며 HTML의 `data-grid-borders`는 기본 격자선으로 해제한 방향을 기록합니다.
 
-업무의 `defaultStyle`은 생성 시 팀의 기본 서식을 복사한 값입니다. 셀 서식이 이를 덮어쓰며, 빈 일정 셀도 업무 기본 서식을 사용합니다. 텍스트에 포함된 수식이나 HTML을 실행하지 않습니다.
+업무의 `defaultStyle`은 일반 생성 시 팀의 기본 서식을, 행 위·아래 삽입 시 기준 행의 기본 서식을 복사한 값입니다. 셀 서식이 이를 덮어쓰며, 빈 일정 셀도 업무 기본 서식을 사용합니다. 텍스트에 포함된 수식이나 HTML을 실행하지 않습니다.
 
 텍스트의 `#` + 여섯 자리 숫자는 화면에서 `http://redmine.somansa.com/redmine/issues/{숫자}` 링크로 표시합니다. 원문·복사·저장 값은 바꾸지 않습니다. 여러 이슈 번호는 각각 연결하며 HTTP(S) URL 안의 `#`는 별도 이슈로 해석하지 않습니다.
 
-`textMode`는 `overflow`(기본)·`wrap`·`clip` 중 하나이며 `verticalAlign`과 독립적입니다. 값이 없으면 오버플로우입니다. HTML 클립보드는 `data-text-mode`로 자르기와 오버플로우를 구별합니다. 오버플로우는 연속된 빈 셀과 같은 고정 영역 안에서만 표시합니다. 줄바꿈 변경은 정렬 값을 덮어쓰지 않으며, 기본 서식과 HTML 복사도 선택한 정렬을 보존합니다. 화면에서는 내용이 셀 높이를 넘을 때만 첫 줄부터 표시하고, 이는 저장된 정렬을 변경하지 않습니다. 기존에 저장한 위 정렬도 자동 변경하지 않습니다.
+`textMode`는 `overflow`(기본)·`wrap`·`clip` 중 하나이며 `verticalAlign`과 독립적입니다. 값이 없으면 오버플로우입니다. HTML 클립보드는 `data-text-mode`로 자르기와 오버플로우를 구별합니다. 오버플로우는 연속된 빈 셀과 같은 고정 영역 안에서만 표시합니다. 줄바꿈 변경은 정렬 값을 덮어쓰지 않으며, 기본 서식과 HTML 복사도 선택한 정렬을 보존합니다. 화면에서는 내용이 셀 높이를 넘을 때만 첫 줄부터 표시하고, 이는 저장된 정렬을 변경하지 않습니다. 새 팀의 기본 세로 정렬은 중간입니다. 기존에 저장한 위 정렬도 자동 변경하지 않습니다.
 
 셀의 `version`은 동시 수정 검사에 사용합니다. 수정 요청은 클라이언트가 읽은 `expectedVersion`을 보내고, 현재 버전과 다르면 HTTP 409를 받습니다. 범위 변경은 한 트랜잭션으로 처리합니다. 같은 사용자·`operationId`의 재시도는 최초 성공 결과를 재사용합니다. 서버에서 수신한 최신 버전을 확인한 뒤 새 `operationId`로 재적용해야 합니다.
 
@@ -64,7 +64,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 발표 모드는 현재 브라우저 화면 상태이며 DB·개인 보기에 저장하지 않는다. 필터·묶음·숨김·열 너비를 유지하고 메뉴와 편집 도구를 숨긴다.
 
-보기는 사용자·팀·연도별 필터, 숨긴 업무 ID, 숨긴 주차, 접힌 월, 표시 열, 크기와 정렬을 저장합니다. 개인 보기의 숨김은 원본이나 접근 권한을 변경하지 않습니다. `propertyFilters`는 속성 ID별 선택 값 배열입니다. 한 배열의 값은 OR, 서로 다른 속성은 AND로 평가하고 빈 배열은 필터 없음, 빈 문자열 값은 미지정 업무를 뜻합니다. 선택적인 `propertyFilterModes`는 속성 ID별 `include`(일치)·`exclude`(제외)를 저장합니다. 필드나 속성별 모드가 없으면 기존처럼 일치로 해석하며, 제외는 선택 값 중 하나라도 일치하는 업무를 제거합니다. 복수 Member의 빈 배열도 미지정으로 평가하고, 제외 모드라도 선택 값이 없으면 필터를 적용하지 않습니다. 보관된 속성의 필터·모드는 보기 정규화 시 제거합니다. 모드는 개인 보기·보고본·JSON 반출에 함께 보존됩니다. `__current`는 최근 보기입니다. JSON의 현재 범위 내보내기는 선택한 업무와 열만 포함하며, 전체 반출을 대신하지 않습니다.
+보기는 사용자·팀·연도별 필터, 숨긴 업무 ID, 숨긴 주차, 접힌 월, 표시 열, 크기와 정렬을 저장합니다. 개인 보기의 숨김은 원본이나 접근 권한을 변경하지 않습니다. `propertyFilters`는 속성 ID별 선택 값 배열입니다. 한 배열의 값은 OR, 서로 다른 속성은 AND로 평가하고 빈 배열은 필터 없음, 빈 문자열 값은 미지정 업무를 뜻합니다. 선택적인 `propertyFilterModes`는 속성 ID별 `include`(일치)·`exclude`(제외)를 저장합니다. 필드나 속성별 모드가 없으면 기존처럼 일치로 해석하며, 제외는 선택 값 중 하나라도 일치하는 업무를 제거합니다. 복수 Member의 빈 배열도 미지정으로 평가하고, 제외 모드라도 선택 값이 없으면 필터를 적용하지 않습니다. 보관된 속성의 필터·모드는 보기 정규화 시 제거합니다. 모드는 개인 보기·보고본·JSON 반출에 함께 보존됩니다. `__current`는 숨김·배치 등을 포함하는 최근 보기입니다. 나머지 이름의 항목은 저장된 필터이며 `year`, `propertyFilters`, `propertyFilterModes`만 저장합니다. 필터 적용은 이 두 필터 필드만 교체하므로 현재 행·열 숨김, 고정·크기·순서, 기간·묶음·정렬을 유지합니다. 설정 정규화와 JSON 반출에서도 필터에는 표시 설정을 넣지 않습니다. XLSX에서 가져온 숨김·크기는 `__current`에 반영합니다. JSON의 현재 범위 내보내기는 선택한 업무와 열만 포함하며, 전체 반출을 대신하지 않습니다.
 
 `fromWeek`·`toWeek`는 월요일 날짜 키 또는 제한 없음을 뜻하는 빈 문자열입니다. 월 범위와 함께 표시할 주차를 제한합니다. `frozenColumns`는 왼쪽에서 고정할 업무 정보 열 수이며, `groupBy`는 묶음 속성 ID입니다. `sortKey`와 `sortDirection`(`asc`·`desc`·`default`)은 업무 정보 컬럼 정렬입니다. 주간 날짜 키는 정렬 대상에서 제외합니다. 그룹 제목은 별도의 업무 레코드가 아닙니다. 새 보기의 주간 열 기본 너비는 40px입니다. 보기의 `knownProperties`는 보기가 마지막으로 본 속성 목록으로, 그 뒤 추가된 속성은 기본 표시 여부(`visible`)에 따라 열에 더합니다.
 
@@ -108,7 +108,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `PATCH /api/tasks/:id` | 순서·연도 변경 |
 | `DELETE /api/tasks/:id` | 휴지통 이동 |
 | `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소 |
-| `GET/PUT /api/views` | 개인 보기 |
+| `GET/PUT /api/views` | 현재 보기와 저장된 필터 |
 | `GET/POST /api/reports` | 보고본 목록·생성 |
 | `GET /api/reports/:id` | 읽기 전용 보고본 |
 | `GET /api/audit` | 수행자·시각·전후 값 |
@@ -127,7 +127,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
 
-업무 생성의 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·연도의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
+업무 생성의 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·연도의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`과 활성 속성·주차 셀의 개별 서식을 함께 저장합니다. 셀 값은 새 업무 기본값과 요청한 `fields`를 유지하며, 빈 복수 팀원 값은 빈 배열로 만듭니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
 
 행 이동은 `tasks: [{id, updatedAt}]`(최대 20,000행), `targetId`, `targetUpdatedAt`, `year`, `placement`(`before`·`after`), 선택적인 `groupBy`를 받습니다. 기존 단일 행 요청의 `taskId`·`updatedAt`도 지원합니다. 이동할 행은 현재 수동 순서를 유지하며 한 트랜잭션으로 저장하고, 하나라도 권한·버전·팀·연도·묶음 검사를 통과하지 못하면 모두 취소합니다. 기준 행은 이동 대상에 포함할 수 없습니다. 응답의 `tasks`는 이동한 모든 업무이며, 단일 행 클라이언트를 위한 `task`도 유지합니다.
 

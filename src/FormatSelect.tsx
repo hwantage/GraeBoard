@@ -112,7 +112,7 @@ export default function FormatSelect({
         className={`select-control format-select ${iconOnly ? "format-select-icons" : ""} ${className}`.trim()}
         role="combobox"
         aria-label={label}
-        title={iconOnly ? `${label}: ${options[selected].label}` : label}
+        data-tooltip={iconOnly ? `${label}: ${options[selected].label}` : label}
         aria-haspopup="listbox"
         aria-controls={open ? id : undefined}
         aria-expanded={open}
@@ -183,7 +183,7 @@ export default function FormatSelect({
                 className={`cell-option ${index === active ? "format-option-active" : ""}`}
                 aria-selected={value === option.value}
                 aria-label={option.label}
-                title={option.label}
+                data-tooltip={option.label}
                 data-value={option.value}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(index)}

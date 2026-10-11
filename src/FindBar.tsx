@@ -20,18 +20,20 @@ type SearchResult = NonNullable<
 export default function FindBar({
   tasks,
   properties,
+  visibleFields,
   users,
   onNavigate,
 }: {
   tasks: Task[];
   properties: Property[];
+  visibleFields: string[];
   users: User[];
   onNavigate: (point: Point) => void;
 }) {
   const [input, setInput] = useState("");
   const [composing, setComposing] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
-  // null follows all active properties, including properties added later.
+  // null follows all visible properties, including properties added later.
   const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
   const activeProperties = useMemo(
     () => properties.filter((property) => !property.archived),
@@ -41,20 +43,25 @@ export default function FindBar({
     () => (selectedIds === null ? null : new Set(selectedIds)),
     [selectedIds],
   );
+  const visible = useMemo(() => new Set(visibleFields), [visibleFields]);
+  const visibleProperties = useMemo(
+    () => activeProperties.filter((property) => visible.has(property.id)),
+    [activeProperties, visible],
+  );
   const searchProperties = useMemo(
     () =>
-      activeProperties.filter(
+      visibleProperties.filter(
         (property) => !selected || selected.has(property.id),
       ),
-    [activeProperties, selected],
+    [visibleProperties, selected],
   );
   const scopeKey = useMemo(
     () => JSON.stringify(searchProperties.map((property) => property.id)),
     [searchProperties],
   );
   const allSelected =
-    activeProperties.length > 0 &&
-    searchProperties.length === activeProperties.length;
+    visibleProperties.length > 0 &&
+    searchProperties.length === visibleProperties.length;
   const scopeId = useId();
   const scopeTrigger = useRef<HTMLButtonElement>(null);
   const scopePopup = useRef<HTMLDivElement>(null);
@@ -236,7 +243,7 @@ export default function FindBar({
                 ? `${searchProperties.length}개 속성 검색`
                 : "검색 대상 선택"
         }
-        title="현재 필터에 해당하는 업무의 선택된 속성에서 찾습니다. 숨겨진 행·열은 결과로 이동하면 표시됩니다."
+        title="현재 필터에 해당하는 업무에서 찾습니다. 숨긴 열은 검색하지 않으며, 숨긴 행은 결과로 이동하면 표시됩니다."
         value={input}
         onChange={(event) => setInput(event.target.value)}
         onCompositionStart={() => setComposing(true)}
@@ -317,7 +324,7 @@ export default function FindBar({
               ref={allCheckbox}
               type="checkbox"
               checked={allSelected}
-              disabled={!activeProperties.length}
+              disabled={!visibleProperties.length}
               onChange={(event) =>
                 setSelectedIds(event.target.checked ? null : [])
               }
@@ -330,15 +337,26 @@ export default function FindBar({
             aria-label="속성 목록"
           >
             {activeProperties.map((property) => (
-              <label key={property.id}>
+              <label
+                key={property.id}
+                className={
+                  visible.has(property.id) ? "" : "search-scope-hidden"
+                }
+              >
                 <input
                   type="checkbox"
-                  checked={!selected || selected.has(property.id)}
+                  aria-label={property.name}
+                  disabled={!visible.has(property.id)}
+                  checked={
+                    visible.has(property.id) &&
+                    (!selected || selected.has(property.id))
+                  }
                   onChange={(event) =>
                     selectProperty(property.id, event.target.checked)
                   }
                 />
                 <span>{property.name}</span>
+                {!visible.has(property.id) && <small>숨김 · 검색 제외</small>}
               </label>
             ))}
           </div>

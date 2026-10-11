@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS = {
   properties: defaultCoreProperties(),
   theme: "mint",
   defaultDensity: "compact",
-  defaultStyle: { fontFamily: FONTS[0], fontSize: 9, verticalAlign: "top" },
+  defaultStyle: { fontFamily: FONTS[0], fontSize: 9, verticalAlign: "middle" },
 };
 export const PALETTE = [
   "#ffffff",
@@ -269,6 +269,24 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
     widths: input.widths || {},
     sortKey,
     sortDirection: sortKey ? (input.sortDirection ?? "asc") : "default",
+  };
+}
+// 이름을 붙여 저장하는 필터에는 화면 배치나 숨김 상태를 넣지 않는다.
+export function savedFilter(input, settings = DEFAULT_SETTINGS) {
+  const active = new Set(propertiesFor(settings).map((p) => p.id));
+  return {
+    year: input.year,
+    propertyFilters: Object.fromEntries(
+      Object.entries(input.propertyFilters || {}).filter(([key]) =>
+        active.has(key),
+      ),
+    ),
+    propertyFilterModes: Object.fromEntries(
+      Object.entries(input.propertyFilterModes || {}).filter(
+        ([key, mode]) =>
+          active.has(key) && ["include", "exclude"].includes(mode),
+      ),
+    ),
   };
 }
 export function defaultView(year) {

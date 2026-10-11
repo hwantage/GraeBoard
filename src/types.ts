@@ -122,7 +122,7 @@ export type Point = { taskId: string; key: string };
 export type SelectionArea = {
   anchor: Point;
   focus: Point;
-  kind?: "cells" | "columns" | "rows";
+  kind?: "cells" | "columns" | "rows" | "all";
 };
 export type Selection = SelectionArea & { areas?: SelectionArea[] };
 export type CellChange = Point & {

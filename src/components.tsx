@@ -9,6 +9,7 @@ export function Button({
   children,
   onClick,
   title,
+  tooltip,
   disabled = false,
   active = false,
   className = "",
@@ -18,6 +19,7 @@ export function Button({
   children: ReactNode;
   onClick?: () => void;
   title?: string;
+  tooltip?: string;
   disabled?: boolean;
   active?: boolean;
   className?: string;
@@ -28,8 +30,9 @@ export function Button({
     <button
       {...attributes}
       type={type}
-      title={title}
-      aria-label={title}
+      title={tooltip ? undefined : title}
+      data-tooltip={tooltip}
+      aria-label={tooltip || title}
       disabled={disabled}
       onClick={onClick}
       className={`button ${active ? "active" : ""} ${className}`}

@@ -17,6 +17,7 @@ import {
   cell,
   safeSpreadsheetText,
   defaultView,
+  savedFilter,
   fieldsFor,
   orderColumns,
   propertiesFor,
@@ -704,7 +705,13 @@ export function installTransferRoutes(
         "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND year=?",
       )
       .all(req.user.id, d.teamId, d.year)
-      .map((v) => ({ ...v, data: parse(v.data) }));
+      .map((v) => ({
+        ...v,
+        data:
+          v.name === "__current"
+            ? parse(v.data)
+            : savedFilter(parse(v.data), team.settings),
+      }));
     res.type("application/json").send(
       json({
         format: "weekly-plan",
@@ -1004,7 +1011,7 @@ export function installTransferRoutes(
           req.user.id,
           team.id,
           d.year,
-          `가져온 숨김 · ${sheet.name}`.slice(0, 60),
+          "__current",
           json(view),
           now(),
         );

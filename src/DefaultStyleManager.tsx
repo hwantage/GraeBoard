@@ -1,6 +1,6 @@
 import Select from "./Select";
 import Toolbar from "./Toolbar";
-import { applyBorderPreset, bordersCSS } from "../shared/borders.js";
+import { applyBorderPreset, gridBordersCSS } from "../shared/borders.js";
 import { useState } from "react";
 import type { Team, Style, Settings } from "./types";
 import {
@@ -15,7 +15,7 @@ import { Button, ErrorNote } from "./components";
 const INITIAL_STYLE: Style = {
   fontFamily: FONTS[0],
   fontSize: 9,
-  verticalAlign: "top",
+  verticalAlign: "middle",
 };
 type Draft = { style: Style; density: NonNullable<Settings["defaultDensity"]> };
 type History = { past: Draft[]; present: Draft; future: Draft[] };
@@ -171,12 +171,17 @@ export default function DefaultStyleManager({
             "제품 사용성 개선",
             "화면 구성과 동작 확인",
             "개선안 적용",
-          ].map((text) => (
+          ].map((text, index) => (
             <div
               key={text}
               className="preview-cell"
               style={{
-                ...bordersCSS(style),
+                ...gridBordersCSS(style, {
+                  top: index >= 3 ? style.borderBottom : undefined,
+                  left: index % 3 !== 0 ? style.borderRight : undefined,
+                  right: index % 3 !== 2 ? style.borderLeft : undefined,
+                  bottom: index < 3 ? style.borderTop : undefined,
+                }),
                 height,
                 fontFamily: fontFamilyCSS(style.fontFamily),
                 fontSize: `${style.fontSize || 9}pt`,

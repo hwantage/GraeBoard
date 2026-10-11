@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
-import { weeksForYear } from "../shared/domain.js";
+import { visibleWeeks, weeksForYear } from "../shared/domain.js";
 import type { View } from "./types";
 
 type Unit = "month" | "week";
@@ -18,6 +18,10 @@ export default function PeriodPicker({
   onChange: (range: Partial<View>) => void;
 }) {
   const weeks = useMemo(() => weeksForYear(year), [year]);
+  const selectedWeeks = useMemo(
+    () => new Set(visibleWeeks(year, view).map((week) => week.key)),
+    [year, view],
+  );
   const months = useMemo(
     () =>
       Array.from({ length: 12 }, (_, index) => ({
@@ -172,12 +176,7 @@ export default function PeriodPicker({
         value <= Math.max(drag.anchor, drag.end)
       );
     }
-    return (
-      week.month >= view.fromMonth &&
-      week.month <= view.toMonth &&
-      (!view.fromWeek || week.key >= view.fromWeek) &&
-      (!view.toWeek || week.key <= view.toWeek)
-    );
+    return selectedWeeks.has(week.key);
   };
   return (
     <div className="period-picker" role="group" aria-label="월·주차 기간 선택">
@@ -210,7 +209,7 @@ export default function PeriodPicker({
                     ? "mixed"
                     : false
               }
-              title={`${month}월 · 드래그하여 여러 월 선택`}
+              data-tooltip={`${month}월 · 드래그하여 여러 월 선택`}
               disabled={disabled}
               onKeyDown={(event) => key(event, "month", index)}
               onClick={(event) => {
@@ -234,7 +233,7 @@ export default function PeriodPicker({
               data-week={week.key}
               aria-label={`${month}월 ${index + 1}주`}
               aria-pressed={isSelected(week.index - 1)}
-              title={`${month}월 ${index + 1}주 · ${week.key} ~ ${week.end}`}
+              data-tooltip={`${month}월 ${index + 1}주 · ${week.key} ~ ${week.end}`}
               disabled={disabled}
               onKeyDown={(event) => key(event, "week", week.index - 1)}
               onClick={(event) => {

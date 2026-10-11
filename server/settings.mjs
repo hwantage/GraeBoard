@@ -2,6 +2,7 @@ import {
   normalizeSettings,
   PROPERTY_VALUE_MAX_LENGTH,
   normalizeView,
+  savedFilter,
   propertyOption,
   splitNames,
 } from "../shared/domain.js";
@@ -92,9 +93,17 @@ export function saveSettings(db, team, input, actorId) {
     // 보관된 속성의 필터·열을 보기에서 걷어낸다.
     const updateView = db.prepare("UPDATE views SET data=? WHERE id=?");
     for (const row of db
-      .prepare("SELECT id,data FROM views WHERE team_id=?")
+      .prepare("SELECT id,name,data FROM views WHERE team_id=?")
       .all(team.id))
-      updateView.run(json(normalizeView(parse(row.data), settings)), row.id);
+      updateView.run(
+        json(
+          (row.name === "__current" ? normalizeView : savedFilter)(
+            parse(row.data),
+            settings,
+          ),
+        ),
+        row.id,
+      );
     db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
       json(settings),
       team.id,

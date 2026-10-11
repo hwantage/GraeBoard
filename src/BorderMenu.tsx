@@ -113,7 +113,7 @@ export default function BorderMenu({
         ref={trigger}
         type="button"
         className="button"
-        title="테두리"
+        data-tooltip="테두리"
         aria-label="테두리"
         disabled={disabled}
         aria-expanded={open}
@@ -159,7 +159,7 @@ export default function BorderMenu({
                     key={value}
                     type="button"
                     className="border-preset"
-                    title={label}
+                    data-tooltip={label}
                     aria-label={label}
                     disabled={disabled}
                     onClick={() => {

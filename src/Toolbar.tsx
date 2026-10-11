@@ -90,10 +90,10 @@ export default function Toolbar({
   return (
     <div className="format-toolbar" aria-label={label}>
       <div className="toolbar-group">
-        <Button title="실행취소" disabled={!canUndo} onClick={onUndo}>
+        <Button tooltip="실행취소" disabled={!canUndo} onClick={onUndo}>
           <Undo2 size={16} />
         </Button>
-        <Button title="재실행" disabled={!canRedo} onClick={onRedo}>
+        <Button tooltip="재실행" disabled={!canRedo} onClick={onRedo}>
           <Redo2 size={16} />
         </Button>
       </div>
@@ -126,7 +126,7 @@ export default function Toolbar({
         ).map(([Icon, title, key]) => (
           <Button
             key={key}
-            title={title}
+            tooltip={title}
             disabled={disabled}
             active={!!style[key]}
             onClick={() => onStyle({ [key]: !style[key] })}
@@ -138,7 +138,7 @@ export default function Toolbar({
       <div className="toolbar-group">
         <label
           className={`color-tool ${disabled ? "disabled" : ""}`}
-          title="글자 색상"
+          data-tooltip="글자 색상"
         >
           <span className="color-tool-icon" aria-hidden="true">
             A
@@ -159,7 +159,7 @@ export default function Toolbar({
         </label>
         <label
           className={`color-tool ${disabled ? "disabled" : ""}`}
-          title="배경색"
+          data-tooltip="배경색"
         >
           <span className="color-tool-icon" aria-hidden="true">
             <PaintBucket size={16} />
@@ -194,7 +194,7 @@ export default function Toolbar({
         ).map(([Icon, label, key]) => (
           <Button
             key={key}
-            title={label}
+            tooltip={label}
             active={(style.textAlign || "left") === key}
             disabled={disabled}
             onClick={() => onStyle({ textAlign: key })}

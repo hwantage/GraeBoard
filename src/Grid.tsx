@@ -37,6 +37,7 @@ import type {
   Point,
   Settings,
   Cell,
+  Style,
   Property,
   SelectionArea,
 } from "./types";
@@ -62,7 +63,7 @@ import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
-import { bordersCSS } from "../shared/borders.js";
+import { gridBordersCSS } from "../shared/borders.js";
 import {
   createClipboard,
   copyToEvent,
@@ -88,27 +89,24 @@ export type RowCommand =
 export function rangeOf(
   selection: Selection | null,
   tasks: Task[],
-  columns: Column[],
+  columns: Pick<Column, "key">[],
 ) {
   if (!selection) return null;
-  const r1 =
-      selection.kind === "columns"
-        ? 0
-        : tasks.findIndex((t) => t.id === selection.anchor.taskId),
-    r2 =
-      selection.kind === "columns"
-        ? tasks.length - 1
-        : tasks.findIndex((t) => t.id === selection.focus.taskId),
-    c1 =
-      selection.kind === "rows"
-        ? 0
-        : columns.findIndex((c) => c.key === selection.anchor.key),
-    c2 =
-      selection.kind === "rows"
-        ? columns.length - 1
-        : columns.findIndex((c) => c.key === selection.focus.key);
-  if (c1 < 0 || c2 < 0 || (selection.kind !== "columns" && (r1 < 0 || r2 < 0)))
-    return null;
+  const allRows = selection.kind === "columns" || selection.kind === "all";
+  const allColumns = selection.kind === "rows" || selection.kind === "all";
+  const r1 = allRows
+      ? 0
+      : tasks.findIndex((t) => t.id === selection.anchor.taskId),
+    r2 = allRows
+      ? tasks.length - 1
+      : tasks.findIndex((t) => t.id === selection.focus.taskId),
+    c1 = allColumns
+      ? 0
+      : columns.findIndex((c) => c.key === selection.anchor.key),
+    c2 = allColumns
+      ? columns.length - 1
+      : columns.findIndex((c) => c.key === selection.focus.key);
+  if (c1 < 0 || c2 < 0 || (!allRows && (r1 < 0 || r2 < 0))) return null;
   return {
     r1: tasks.length ? Math.min(r1, r2) : 0,
     r2: tasks.length ? Math.max(r1, r2) : -1,
@@ -119,7 +117,7 @@ export function rangeOf(
 export function selectedPoints(
   selection: Selection | null,
   tasks: Task[],
-  columns: Column[],
+  columns: Pick<Column, "key">[],
   limit = 2000,
 ) {
   const points = new Map<string, Point>();
@@ -138,7 +136,7 @@ export function selectedPoints(
 export function rangesOf(
   selection: Selection | null,
   tasks: Task[],
-  columns: Column[],
+  columns: Pick<Column, "key">[],
 ) {
   return selection
     ? [...(selection.areas || []), selection]
@@ -314,6 +312,7 @@ export default function Grid({
   }, [columns, rowHeaderWidth]);
   function revealColumns(hidden: ColumnReference[]) {
     const keys = new Set(hidden.map((c) => c.key));
+    const visible = new Set(columns.map((c) => c.key));
     onView({
       visibleFields: [
         ...new Set([
@@ -321,7 +320,20 @@ export default function Grid({
           ...hidden.filter((c) => !c.month).map((c) => c.key),
         ]),
       ],
-      hiddenWeeks: view.hiddenWeeks.filter((key) => !keys.has(key)),
+      // 기간 밖·접힌 월도 같은 숨김 구간이다. 이 구간만 펼치고 나머지는
+      // 숨긴 주차로 남겨 비연속적인 표시 상태도 보존한다.
+      ...(hidden.some((c) => c.month)
+        ? {
+            fromMonth: 1,
+            toMonth: 12,
+            fromWeek: "",
+            toWeek: "",
+            collapsedMonths: [],
+            hiddenWeeks: columnOrder
+              .filter((c) => c.month && !visible.has(c.key) && !keys.has(c.key))
+              .map((c) => c.key),
+          }
+        : {}),
     });
     ref.current?.focus({ preventScroll: true });
   }
@@ -1099,6 +1111,7 @@ export default function Grid({
     if ((e.ctrlKey || e.metaKey) && e.key === "a") {
       e.preventDefault();
       onSelect({
+        kind: "all",
         anchor: { taskId: tasks[0].id, key: columns[0].key },
         focus: { taskId: tasks.at(-1)!.id, key: columns.at(-1)!.key },
       });
@@ -1365,6 +1378,7 @@ export default function Grid({
                 disabled={!tasks.length}
                 onClick={() => {
                   onSelect({
+                    kind: "all",
                     anchor: { taskId: tasks[0].id, key: columns[0].key },
                     focus: {
                       taskId: tasks.at(-1)!.id,
@@ -1510,6 +1524,14 @@ export default function Grid({
               >
                 <RowBody
                   task={task}
+                  nextTask={
+                    groupHeight(row.index + 1)
+                      ? undefined
+                      : tasks[row.index + 1]
+                  }
+                  previousTask={
+                    rowGroupHeight ? undefined : tasks[row.index - 1]
+                  }
                   index={row.index}
                   rowNumber={rowNumber}
                   marker={marker}
@@ -1698,6 +1720,8 @@ type RowGap = { ids: string[]; start: number; end: number };
 // 한 행의 머리글과 셀. 스크롤·다른 행 선택처럼 이 행과 무관한 변경에서는 다시 그리지 않는다.
 const RowBody = memo(function RowBody({
   task,
+  nextTask,
+  previousTask,
   index,
   rowNumber,
   marker,
@@ -1723,6 +1747,8 @@ const RowBody = memo(function RowBody({
   actions,
 }: {
   task: Task;
+  nextTask: Task | undefined;
+  previousTask: Task | undefined;
   index: number;
   rowNumber: number;
   marker: { number: number; before?: RowGap; after?: RowGap } | undefined;
@@ -1906,6 +1932,24 @@ const RowBody = memo(function RowBody({
             column={c}
             left={c.fixed ? positions[ci] : undefined}
             overflowWidth={overflowWidth}
+            topBorder={
+              previousTask
+                ? cell(previousTask, c.key).style.borderBottom
+                : undefined
+            }
+            leftBorder={
+              columns[ci - 1]
+                ? cell(task, columns[ci - 1].key).style.borderRight
+                : undefined
+            }
+            rightBorder={
+              columns[ci + 1]
+                ? cell(task, columns[ci + 1].key).style.borderLeft
+                : undefined
+            }
+            bottomBorder={
+              nextTask ? cell(nextTask, c.key).style.borderTop : undefined
+            }
             property={property}
             selection={selectionEdges(selectedSpans, ci)}
             focused={focusKey === c.key}
@@ -1943,6 +1987,10 @@ const GridCell = memo(function GridCell({
   column: c,
   left,
   overflowWidth,
+  topBorder,
+  leftBorder,
+  rightBorder,
+  bottomBorder,
   property,
   selection,
   focused,
@@ -1958,6 +2006,10 @@ const GridCell = memo(function GridCell({
   column: Column;
   left: number | undefined;
   overflowWidth: number;
+  topBorder: Style["borderBottom"];
+  leftBorder: Style["borderRight"];
+  rightBorder: Style["borderLeft"];
+  bottomBorder: Style["borderTop"];
   property: Property | undefined;
   // 선택되지 않았으면 null, 선택됐으면 영역 외곽에 닿은 변(t·r·b·l).
   selection: string | null;
@@ -2028,7 +2080,12 @@ const GridCell = memo(function GridCell({
   // 셀마다 다른 값만 인라인으로 지정해 스타일 쓰기를 줄인다.
   const style: CSSProperties = {
     width: c.width,
-    ...bordersCSS(s),
+    ...gridBordersCSS(s, {
+      top: topBorder,
+      left: leftBorder,
+      right: rightBorder,
+      bottom: bottomBorder,
+    }),
   };
   if (left !== undefined) style.left = left;
   if (s.color) style.color = s.color;

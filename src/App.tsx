@@ -26,7 +26,6 @@ import {
   CloudOff,
   Bookmark,
   X,
-  RotateCcw,
   ArrowLeft,
   Presentation,
   Minimize2,
@@ -38,6 +37,7 @@ import {
   propertiesFor,
   emptyPropertyValue,
   normalizeView,
+  savedFilter,
   DEFAULT_SETTINGS,
   MAX_STYLE_CELLS,
   defaultView,
@@ -107,6 +107,20 @@ type Failed = {
   error: ApiError | Error;
   mode: "normal" | "undo" | "redo";
 };
+function propertyFilterKey(
+  view: Pick<View, "propertyFilters" | "propertyFilterModes">,
+) {
+  return JSON.stringify(
+    Object.entries(view.propertyFilters || {})
+      .filter(([, values]) => values.length)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, values]) => [
+        key,
+        [...new Set(values)].sort(),
+        view.propertyFilterModes?.[key] || "include",
+      ]),
+  );
+}
 function rememberedBoard(boot: Bootstrap) {
   try {
     const stored = JSON.parse(
@@ -194,6 +208,10 @@ function Workspace({
     [editor, setEditor] = useState<{ point: Point; initial?: string } | null>(
       null,
     ),
+    [pendingEdit, setPendingEdit] = useState<{
+      point: Point;
+      value: SavedCell["value"];
+    } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
     [error, setError] = useState(""),
     [toast, setToast] = useState(""),
@@ -205,6 +223,7 @@ function Workspace({
     [presentation, setPresentation] = useState(false),
     [viewMenu, setViewMenu] = useState(false),
     [savedViews, setSavedViews] = useState<any[]>([]),
+    [selectedSavedFilterId, setSelectedSavedFilterId] = useState(""),
     [viewName, setViewName] = useState(""),
     [saveNameOpen, setSaveNameOpen] = useState(false),
     [pending, setPending] = useState(0),
@@ -332,7 +351,7 @@ function Workspace({
       return () => clearTimeout(timer);
     }
   }, [undoToast]);
-  // 저장한 보기 팝업은 바깥을 누르거나 Esc로 닫는다. 실행취소 알림은
+  // 저장된 필터 팝업은 바깥을 누르거나 Esc로 닫는다. 실행취소 알림은
   // 되살아난 항목을 바로 확인할 수 있게 팝업을 닫지 않는다.
   useEffect(() => {
     if (!viewMenu) return;
@@ -398,8 +417,9 @@ function Workspace({
     }
   }, [teamId, year]);
   const refreshViews = useCallback(async () => {
+    const key = `${teamId}:${year}`;
     const r = await api(`/views?teamId=${teamId}&year=${year}`);
-    setSavedViews(r.views);
+    if (boardKey.current === key) setSavedViews(r.views);
     return r.views;
   }, [teamId, year]);
   useEffect(() => {
@@ -411,9 +431,12 @@ function Workspace({
     setViewError("");
     setSelection(null);
     setReport(null);
+    setSelectedSavedFilterId("");
+    setSavedViews([]);
     setUndoStack([]);
     setRedoStack([]);
     setTasks([]);
+    setPendingEdit(null);
     setCopiedRow(null);
     setJump(null);
     Promise.all([
@@ -527,7 +550,57 @@ function Workspace({
       changeView(next);
     // 저장된 보기를 불러온 뒤에도 돌아야 하므로 view도 의존성에 둔다.
   }, [settings, loaded, report, boot.users, teamId, view]);
-  const allTasks = report?.tasks || tasks;
+  // 조건 값의 선택 순서나 표시 설정이 달라도 같은 필터로 표시한다.
+  const currentFilterKey = useMemo(
+    () => propertyFilterKey(view),
+    [view.propertyFilters, view.propertyFilterModes],
+  );
+  const savedFilters = useMemo(
+    () =>
+      savedViews
+        .filter((v) => v.name !== "__current")
+        .map((v) => ({
+          ...v,
+          filterKey: propertyFilterKey(savedFilter(v.data, settings)),
+        })),
+    [savedViews, settings],
+  );
+  const activeSavedFilter = useMemo(
+    () =>
+      savedFilters.find(
+        (v) =>
+          v.id === selectedSavedFilterId && v.filterKey === currentFilterKey,
+      ) ||
+      (currentFilterKey !== "[]"
+        ? savedFilters.find((v) => v.filterKey === currentFilterKey)
+        : undefined),
+    [savedFilters, currentFilterKey, selectedSavedFilterId],
+  );
+  const hasPropertyFilters = currentFilterKey !== "[]";
+  const hasAppliedFilter = !!activeSavedFilter || hasPropertyFilters;
+  const appliedFilterLabel = activeSavedFilter
+    ? activeSavedFilter.name
+    : hasPropertyFilters
+      ? "사용자 지정 필터"
+      : "저장된 필터";
+  const allTasks = useMemo(() => {
+    if (report) return report.tasks;
+    if (!pendingEdit) return tasks;
+    const { point, value } = pendingEdit;
+    // 편집창을 닫는 렌더에서 확정한 값을 바로 표시한다. 서버 버전과
+    // 저장 원본은 tasks에 유지해 충돌 검사·실행취소에 그대로 사용한다.
+    return tasks.map((task) =>
+      task.id === point.taskId
+        ? {
+            ...task,
+            cells: {
+              ...task.cells,
+              [point.key]: { ...cell(task, point.key), value },
+            },
+          }
+        : task,
+    );
+  }, [tasks, report, pendingEdit]);
   // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
   const filterView = useMemo(
     () => view,
@@ -550,9 +623,8 @@ function Workspace({
   }, [matchingTasks, view.hiddenRows]);
   function navigateToSearch(point: Point) {
     const current = viewRef.current;
+    if (!current.visibleFields.includes(point.key)) return;
     const reveal: Partial<View> = {};
-    if (!current.visibleFields.includes(point.key))
-      reveal.visibleFields = [...current.visibleFields, point.key];
     if (current.hiddenRows.includes(point.taskId))
       reveal.hiddenRows = current.hiddenRows.filter(
         (id) => id !== point.taskId,
@@ -579,17 +651,8 @@ function Workspace({
   );
   const yearWeekCount = useMemo(() => weeksForYear(year).length, [year]);
   const columnOrder = useMemo(
-    () =>
-      orderColumns(fields, visibleWeeks(year, { ...view, hiddenWeeks: [] })),
-    [
-      fields,
-      year,
-      view.fromWeek,
-      view.toWeek,
-      view.fromMonth,
-      view.toMonth,
-      view.collapsedMonths,
-    ],
+    () => orderColumns(fields, weeksForYear(year)),
+    [fields, year],
   );
   const columns = useMemo<Column[]>(
     () =>
@@ -620,7 +683,8 @@ function Workspace({
       })),
     [weeks, fields, view.visibleFields, view.widths, view.frozenColumns],
   );
-  const range = rangeOf(selection, visibleTasks, columns);
+  // 서식 범위는 숨김 전 행·열 순서로 계산한다. 값 편집·복사는 보이는 셀만 사용한다.
+  const range = rangeOf(selection, matchingTasks, columnOrder);
   const count = range
     ? (range.r2 - range.r1 + 1) * (range.c2 - range.c1 + 1)
     : 0;
@@ -701,10 +765,10 @@ function Workspace({
     build: () => CellChange[],
     mode: Failed["mode"] = "normal",
   ) {
-    if (report || presentation || failedRef.current) return;
+    if (report || presentation || failedRef.current) return false;
     if (pendingRef.current) {
       setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
-      return;
+      return false;
     }
     const submittedBoard = boardKey.current;
     mutationEpoch.current++;
@@ -730,17 +794,19 @@ function Workspace({
           setFailed(f);
         } else setError(e.message);
       } finally {
+        if (boardKey.current === submittedBoard) setPendingEdit(null);
         pendingRef.current--;
         setPending(pendingRef.current);
       }
     });
+    return true;
   }
   function mutate(
     points: Point[],
     transform: (t: Task, key: string) => Partial<CellChange>,
   ) {
-    if (!points.length) return;
-    submitChanges(() => {
+    if (!points.length) return false;
+    return submitChanges(() => {
       const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
       return points.map((p) => {
         const task = tasksById.get(p.taskId);
@@ -760,7 +826,7 @@ function Workspace({
   function applyStyle(part: Partial<Style>, reset = false) {
     try {
       mutate(
-        selectedPoints(selection, visibleTasks, columns, MAX_STYLE_CELLS),
+        selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
         (t, k) => ({
           style: reset ? {} : { ...cell(t, k).style, ...part },
         }),
@@ -773,17 +839,17 @@ function Workspace({
     try {
       const points = selectedPoints(
         selection,
-        visibleTasks,
-        columns,
+        matchingTasks,
+        columnOrder,
         MAX_STYLE_CELLS,
       );
       const selected = new Set(points.map((p) => `${p.taskId}:${p.key}`));
-      const rows = new Map(visibleTasks.map((t, i) => [t.id, i]));
-      const cols = new Map(columns.map((c, i) => [c.key, i]));
+      const rows = new Map(matchingTasks.map((t, i) => [t.id, i]));
+      const cols = new Map(columnOrder.map((c, i) => [c.key, i]));
       const has = (r: number, c: number) =>
-        !!visibleTasks[r] &&
-        !!columns[c] &&
-        selected.has(`${visibleTasks[r].id}:${columns[c].key}`);
+        !!matchingTasks[r] &&
+        !!columnOrder[c] &&
+        selected.has(`${matchingTasks[r].id}:${columnOrder[c].key}`);
       mutate(points, (task, key) => {
         const r = rows.get(task.id)!,
           c = cols.get(key)!;
@@ -1110,6 +1176,7 @@ function Workspace({
     )
       return;
     const copy = command === "paste" ? copiedRow : null;
+    const height = copy ? copy.height : view.rowHeights[target.id];
     const groupKey = view.groupBy;
     // A new blank row belongs to the clicked group when its assignment is permitted.
     const inheritGroup =
@@ -1160,8 +1227,8 @@ function Workspace({
         sortKey: "",
         sortDirection: "default",
         groupBy: keepGroup ? groupKey : "",
-        ...(copy?.height
-          ? { rowHeights: { ...view.rowHeights, [task.id]: copy.height } }
+        ...(height !== undefined
+          ? { rowHeights: { ...view.rowHeights, [task.id]: height } }
           : {}),
       });
       // Spacing may have been normalized by the server; refresh every row's position.
@@ -1518,7 +1585,7 @@ function Workspace({
             <div className="date-controls" aria-label="기간 설정">
               <div className="year-control" role="group" aria-label="연도 선택">
                 <Button
-                  title="이전 연도"
+                  tooltip="이전 연도"
                   disabled={!!pending || !!failed || !!report || year <= 2000}
                   onClick={() => setYear(year - 1)}
                 >
@@ -1526,7 +1593,7 @@ function Workspace({
                 </Button>
                 <Button
                   className="year-value"
-                  title={`${year}년 전체 선택`}
+                  tooltip={`${year}년 전체 선택`}
                   aria-pressed={weeks.length === yearWeekCount}
                   onClick={() => {
                     changeView({
@@ -1543,7 +1610,7 @@ function Workspace({
                   {year}
                 </Button>
                 <Button
-                  title="다음 연도"
+                  tooltip="다음 연도"
                   disabled={!!pending || !!failed || !!report || year >= 2100}
                   onClick={() => setYear(year + 1)}
                 >
@@ -1565,115 +1632,144 @@ function Workspace({
                 key={`${teamId}:${year}:${report?.id || "live"}`}
                 tasks={matchingTasks}
                 properties={properties}
+                visibleFields={view.visibleFields}
                 users={users}
                 onNavigate={navigateToSearch}
               />
               <div className="view-bar-spacer" />
-              <span className="visible-count">
-                {visibleTasks.length}개 업무 표시
-              </span>
               <div className="popover-root" ref={viewMenuRef}>
-                <Button
-                  className="quiet"
-                  onClick={() => {
-                    setViewMenu(!viewMenu);
-                    refreshViews().catch((e) => setError(e.message));
-                  }}
+                <div
+                  className={`saved-filter-control ${hasAppliedFilter ? "is-active" : ""}`}
                 >
-                  <Bookmark size={14} />
-                  저장한 보기
-                  <ChevronDown size={12} />
-                </Button>
+                  <button
+                    type="button"
+                    className="button saved-filter-trigger"
+                    aria-label="저장된 필터"
+                    aria-describedby="applied-saved-filter"
+                    aria-expanded={viewMenu}
+                    onClick={() => {
+                      setViewMenu(!viewMenu);
+                      refreshViews().catch((e) => setError(e.message));
+                    }}
+                  >
+                    <Bookmark size={14} aria-hidden="true" />
+                    <span role="status" aria-label="적용 중인 필터">
+                      <span id="applied-saved-filter">
+                        {appliedFilterLabel}
+                      </span>
+                    </span>
+                    <ChevronDown size={12} aria-hidden="true" />
+                  </button>
+                  {hasAppliedFilter && (
+                    <Button
+                      className="saved-filter-clear"
+                      title="필터 해제"
+                      onClick={() => {
+                        changeView({
+                          propertyFilters: {},
+                          propertyFilterModes: {},
+                        });
+                        setSelectedSavedFilterId("");
+                        setViewMenu(false);
+                        viewMenuRef.current
+                          ?.querySelector<HTMLButtonElement>(
+                            ".saved-filter-trigger",
+                          )
+                          ?.focus({ preventScroll: true });
+                      }}
+                    >
+                      <X size={14} />
+                    </Button>
+                  )}
+                </div>
                 {viewMenu && (
                   <div className="popover saved-views">
                     <div className="popover-title">
-                      <strong>나의 보기</strong>
+                      <strong>저장된 필터</strong>
                       <Button
-                        title="저장한 보기 닫기"
+                        title="저장된 필터 닫기"
                         onClick={() => setViewMenu(false)}
                       >
                         <X size={14} />
                       </Button>
                     </div>
-                    {savedViews
-                      .filter((v) => v.name !== "__current")
-                      .map((v) => (
-                        <div key={v.id}>
-                          <button
-                            onClick={() => {
-                              changeView(v.data);
-                              setViewMenu(false);
-                            }}
-                          >
-                            {v.name}
-                          </button>
-                          <button
-                            className="saved-view-delete"
-                            title={`${v.name} 삭제`}
-                            aria-label={`${v.name} 삭제`}
-                            onClick={async () => {
-                              try {
-                                await api(`/views/${v.id}`, {
-                                  method: "DELETE",
-                                });
-                                const restore = { teamId, ...v };
-                                setToast("");
-                                setUndoToast({
-                                  message: `‘${v.name}’ 보기를 삭제했습니다.`,
-                                  async undo() {
-                                    setUndoToast(null);
-                                    await send(
-                                      "/views",
-                                      {
-                                        teamId: restore.teamId,
-                                        name: restore.name,
-                                        data: restore.data,
-                                      },
-                                      "PUT",
-                                    );
-                                    if (
-                                      boardKey.current ===
-                                      `${restore.teamId}:${restore.data.year}`
-                                    )
-                                      await refreshViews();
-                                    setToast(
-                                      `‘${restore.name}’ 보기를 되살렸습니다.`,
-                                    );
-                                  },
-                                });
-                                await refreshViews();
-                              } catch (e) {
-                                setError((e as Error).message);
-                              }
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))}
+                    {savedFilters.map((v) => (
+                      <div key={v.id}>
+                        <button
+                          className="saved-filter-choice"
+                          aria-pressed={activeSavedFilter?.id === v.id}
+                          onClick={() => {
+                            const filters = savedFilter(v.data, settings);
+                            changeView({
+                              propertyFilters: filters.propertyFilters,
+                              propertyFilterModes: filters.propertyFilterModes,
+                            });
+                            setSelectedSavedFilterId(v.id);
+                            setViewMenu(false);
+                          }}
+                        >
+                          <span>{v.name}</span>
+                          {activeSavedFilter?.id === v.id && (
+                            <Check size={14} aria-hidden="true" />
+                          )}
+                        </button>
+                        <button
+                          className="saved-view-delete"
+                          title={`${v.name} 삭제`}
+                          aria-label={`${v.name} 삭제`}
+                          onClick={async () => {
+                            try {
+                              await api(`/views/${v.id}`, {
+                                method: "DELETE",
+                              });
+                              const restore = { teamId, ...v };
+                              setToast("");
+                              setUndoToast({
+                                message: `‘${v.name}’ 필터를 삭제했습니다.`,
+                                async undo() {
+                                  setUndoToast(null);
+                                  await send(
+                                    "/views",
+                                    {
+                                      teamId: restore.teamId,
+                                      name: restore.name,
+                                      data: restore.data,
+                                    },
+                                    "PUT",
+                                  );
+                                  if (
+                                    boardKey.current ===
+                                    `${restore.teamId}:${restore.data.year}`
+                                  )
+                                    await refreshViews();
+                                  setToast(
+                                    `‘${restore.name}’ 필터를 되살렸습니다.`,
+                                  );
+                                },
+                              });
+                              await refreshViews();
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
                     <Button
+                      className="saved-filter-save"
                       onClick={() => {
                         setSaveNameOpen(true);
                         setViewMenu(false);
                       }}
                     >
-                      현재 보기 저장
+                      <Bookmark size={14} />
+                      현재 필터 저장
                     </Button>
                   </div>
                 )}
               </div>
-              <Button
-                title="보기 초기화"
-                className="quiet"
-                onClick={() => {
-                  changeView(
-                    normalizeView(defaultView(year), settings) as View,
-                  );
-                  setToast("필터와 개인 보기 설정을 초기화했습니다.");
-                }}
-              >
-                <RotateCcw size={14} />
-              </Button>
             </div>
           </fieldset>
           <Toolbar
@@ -1748,7 +1844,8 @@ function Workspace({
                   );
                   return false;
                 }
-                mutate([point], () => ({ value: v }));
+                if (!mutate([point], () => ({ value: v }))) return false;
+                setPendingEdit({ point, value: v });
                 setEditor(null);
                 return true;
               }}
@@ -1832,10 +1929,22 @@ function Workspace({
           teamId={teamId}
           year={year}
           onClose={() => setPanel("")}
-          onDone={() => {
-            refresh();
-            refreshBoot();
-            refreshViews();
+          onDone={async () => {
+            const key = `${teamId}:${year}`;
+            if (boardKey.current !== key) return;
+            const views = await refreshViews();
+            await refresh();
+            const latest = await refreshBoot();
+            if (boardKey.current !== key) return;
+            const imported = views.find((v: any) => v.name === "__current");
+            if (imported) {
+              const next = normalizeView(
+                imported.data,
+                latest?.teams.find((t) => t.id === teamId)?.settings ||
+                  settings,
+              ) as View;
+              changeView(next);
+            }
             setToast("자료 가져오기를 완료했습니다.");
           }}
         />
@@ -1916,37 +2025,43 @@ function Workspace({
         />
       )}
       {saveNameOpen && (
-        <Modal title="나의 보기 저장" onClose={() => setSaveNameOpen(false)}>
+        <Modal title="필터 저장" onClose={() => setSaveNameOpen(false)}>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
               try {
                 await send(
                   "/views",
-                  { teamId, name: viewName, data: view },
+                  { teamId, name: viewName, data: savedFilter(view, settings) },
                   "PUT",
                 );
-                await refreshViews();
+                const views = await refreshViews();
+                setSelectedSavedFilterId(
+                  views.find((v: any) => v.name === viewName.trim())?.id || "",
+                );
                 setSaveNameOpen(false);
                 setViewName("");
-                setToast("나의 보기를 저장했습니다.");
+                setToast("필터를 저장했습니다.");
               } catch (e) {
                 setError((e as Error).message);
               }
             }}
           >
             <label>
-              보기 이름
+              필터 이름
               <input
                 autoFocus
                 value={viewName}
                 onChange={(e) => setViewName(e.target.value)}
                 required
                 maxLength={60}
-                placeholder="예: 나의 이번 달 업무"
+                placeholder="예: 완료 제외 보기"
               />
             </label>
-            <p className="field-help">현재 필터·숨김·열 너비를 저장합니다.</p>
+            <p className="field-help">
+              열 필터의 선택 값과 일치·제외 조건만 저장합니다. 적용할 때 현재
+              행·열 숨김과 표 배치는 유지됩니다.
+            </p>
             <footer className="form-actions">
               <Button type="submit" className="primary">
                 <Bookmark size={15} />

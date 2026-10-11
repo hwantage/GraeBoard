@@ -42,6 +42,35 @@ export function bordersCSS(style) {
   );
 }
 
+// Collapse explicit borders on both sides of a shared edge. The stronger
+// line wins; equal lines belong to the top/left cell. Keep stored styles intact.
+/**
+ * @param {object} style
+ * @param {{top?: {style: string, color: string} | null, left?: {style: string, color: string} | null, right?: {style: string, color: string} | null, bottom?: {style: string, color: string} | null}} neighbors
+ */
+export function gridBordersCSS(style, neighbors = {}) {
+  const weight = (border) =>
+    !border || border.style === "none"
+      ? 0
+      : border.style === "medium"
+        ? 2
+        : ["thick", "double"].includes(border.style)
+          ? 3
+          : 1;
+  const css = bordersCSS(style);
+  for (const side of BORDER_SIDES) {
+    const own = weight(style[`border${side}`]);
+    const neighbor = weight(neighbors[side.toLowerCase()]);
+    if (
+      own &&
+      neighbor &&
+      (neighbor > own || (neighbor === own && ["Top", "Left"].includes(side)))
+    )
+      css[`border${side}`] = "0px none transparent";
+  }
+  return css;
+}
+
 // 선택 영역 테두리 프리셋. 구글 시트의 테두리 메뉴와 같은 순서다.
 export const BORDER_PRESETS = [
   { value: "all", label: "모든 테두리" },

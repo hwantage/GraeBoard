@@ -40,6 +40,7 @@ import {
   yearSchema,
   dateSchema,
   viewSchema,
+  savedFilterSchema,
   validateCellValue,
   copiedRowSchema,
   validCellKey,
@@ -56,6 +57,7 @@ import {
   todayKey,
   sampleProperties,
   normalizeView,
+  savedFilter,
   fieldsFor,
   propertiesFor,
   emptyPropertyValue,
@@ -565,6 +567,25 @@ export function createApp({
           409,
           "기준 행이 변경되었습니다. 새로고침 후 다시 선택하세요.",
         );
+        if (!d.sourceId && !d.copiedRow) {
+          // 빈 행 삽입은 기준 행의 서식만 상속한다. 값은 새 업무 기본값이나
+          // 묶음에서 전달한 값을 유지하고, 숨긴 열·빈 주차 서식도 보존한다.
+          defaultStyle = target.defaultStyle;
+          const properties = new Map(
+            propertiesFor(team.settings).map((p) => [p.id, p]),
+          );
+          for (const [key, c] of Object.entries(target.cells)) {
+            if (
+              !Object.keys(c.style).length ||
+              !validCellKey(key, team.settings)
+            )
+              continue;
+            cells[key] = {
+              value: fields[key] ?? emptyPropertyValue(properties.get(key)),
+              style: c.style,
+            };
+          }
+        }
         position = insertionPosition(
           db,
           d.teamId,
@@ -793,19 +814,29 @@ export function createApp({
         .map((v) => ({
           id: v.id,
           name: v.name,
-          data: normalizeView(parse(v.data), team.settings),
+          data: (v.name === "__current" ? normalizeView : savedFilter)(
+            parse(v.data),
+            team.settings,
+          ),
           updatedAt: v.updated_at,
         })),
     });
   });
   app.put("/api/views", (req, res) => {
     const d = z
-      .object({ teamId: z.string().uuid(), name: string(60), data: viewSchema })
+      .object({
+        teamId: z.string().uuid(),
+        name: string(60),
+        data: z.unknown(),
+      })
       .parse(req.body);
+    d.data = (d.name === "__current" ? viewSchema : savedFilterSchema).parse(
+      d.data,
+    );
     const team = teamAccess(req.user, d.teamId);
     const keys = fieldsFor(team.settings).map((f) => f.key);
     requireThat(
-      d.data.visibleFields.every((k) => keys.includes(k)),
+      (d.data.visibleFields || []).every((k) => keys.includes(k)),
       400,
       "이 팀의 표시 열을 선택하세요.",
     );
@@ -831,7 +862,9 @@ export function createApp({
       d.teamId,
       d.data.year,
       d.name,
-      json(d.data),
+      json(
+        d.name === "__current" ? d.data : savedFilter(d.data, team.settings),
+      ),
       now(),
     );
     res.json({ ok: true });

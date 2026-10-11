@@ -264,7 +264,7 @@ export function ImportPanel({
   teamId: string;
   year: number;
   onClose: () => void;
-  onDone: () => void;
+  onDone: () => Promise<void>;
 }) {
   const [preview, setPreview] = useState<any>(null),
     [sheet, setSheet] = useState(""),
@@ -459,7 +459,7 @@ export function ImportPanel({
                         referenceDate,
                         acceptWarnings: true,
                       });
-                      onDone();
+                      await onDone();
                       onClose();
                     } catch (e) {
                       setError((e as Error).message);

@@ -1,6 +1,7 @@
 import Select from "./Select";
 import { useEffect, useRef, useState } from "react";
-import { Plus, ArrowUp, ArrowDown, Trash2, CalendarDays } from "lucide-react";
+import { Plus, GripVertical, Trash2, CalendarDays } from "lucide-react";
+import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import type { Team, Settings, Property, PropertyOption } from "./types";
 import {
   normalizeSettings,
@@ -33,18 +34,6 @@ const WEEK_COLUMNS: Property = {
   display: "text",
   values: [],
 };
-function move<T extends { id: string; archived?: boolean }>(
-  items: T[],
-  id: string,
-  delta: number,
-) {
-  const active = items.filter((v) => !v.archived),
-    index = active.findIndex((v) => v.id === id),
-    target = index + delta;
-  if (target < 0 || target >= active.length) return items;
-  [active[index], active[target]] = [active[target], active[index]];
-  return [...active, ...items.filter((v) => v.archived)];
-}
 export default function PropertiesManager({
   team,
   visibleFields,
@@ -91,8 +80,8 @@ export default function PropertiesManager({
     setMessage("");
     setError("");
   }
-  function moveColumn(id: string, delta: number) {
-    const next = move(columnList, id, delta);
+  function moveColumn(id: string, targetId: string, placement: Placement) {
+    const next = reorderItems(columnList, id, targetId, placement);
     const weekIndex = next.findIndex((p) => p.id === WEEK_COLUMNS.id);
     update([
       ...next.flatMap((p, i): Property[] =>
@@ -117,6 +106,24 @@ export default function PropertiesManager({
         ),
       });
   }
+  const columnReorder = useListReorder<HTMLDivElement>(
+    columnList.map((p) => p.id),
+    moveColumn,
+    busy,
+  );
+  const valueReorder = useListReorder<HTMLTableSectionElement>(
+    values.map((v) => v.id),
+    (id, targetId, placement) => {
+      if (property)
+        patchProperty({
+          values: [
+            ...reorderItems(values, id, targetId, placement),
+            ...property.values.filter((v) => v.archived),
+          ],
+        });
+    },
+    busy,
+  );
   function removeValue(id: string) {
     if (!property) return;
     const saved = stored.current.properties
@@ -159,9 +166,9 @@ export default function PropertiesManager({
   return (
     <div ref={root} className="properties-manager">
       <p className="field-help">
-        {team.name}의 공통 열 배치를 설정합니다. 위·아래 버튼으로 속성을 ‘주차
-        날짜’ 아래로 옮기면 마지막 날짜 뒤에 표시됩니다. 체크박스로 열의 기본
-        표시 여부를 정합니다.
+        {team.name}의 공통 열 배치를 설정합니다. 왼쪽 손잡이를 드래그하여 속성을
+        ‘주차 날짜’ 아래로 옮기면 마지막 날짜 뒤에 표시됩니다. 체크박스로 열의
+        기본 표시 여부를 정합니다.
       </p>
       <ErrorNote error={error} />
       {message && (
@@ -170,13 +177,20 @@ export default function PropertiesManager({
         </p>
       )}
       <div className="properties-layout">
-        <div className="property-list">
-          {columnList.map((p, i) => (
+        <div className="property-list" ref={columnReorder.root}>
+          {columnList.map((p) => (
             <div
               className={`property-list-row ${p.id === WEEK_COLUMNS.id ? "week-column-row" : ""} ${p.id === selected ? "current" : ""}`}
               key={p.id}
               data-column-item={p.id}
+              {...columnReorder.itemProps(p.id)}
             >
+              <button
+                {...columnReorder.handleProps(p.id)}
+                aria-label={`${p.name || "새 속성"} 속성 순서 이동`}
+              >
+                <GripVertical size={15} aria-hidden="true" />
+              </button>
               <button
                 className={
                   p.id === WEEK_COLUMNS.id
@@ -227,51 +241,8 @@ export default function PropertiesManager({
                   }}
                 />
               )}
-              <div className="order-buttons">
-                <Button
-                  title={`${p.name}${p.id === WEEK_COLUMNS.id ? "" : " 속성"} 위로`}
-                  disabled={i === 0}
-                  onClick={() => moveColumn(p.id, -1)}
-                >
-                  <ArrowUp size={13} />
-                </Button>
-                <Button
-                  title={`${p.name}${p.id === WEEK_COLUMNS.id ? "" : " 속성"} 아래로`}
-                  disabled={i === columnList.length - 1}
-                  onClick={() => moveColumn(p.id, 1)}
-                >
-                  <ArrowDown size={13} />
-                </Button>
-              </div>
             </div>
           ))}
-          <Button
-            title="속성 추가"
-            disabled={busy}
-            onClick={() => {
-              const blank = active.find((p) => !p.name.trim());
-              if (blank) {
-                setSelected(blank.id);
-                setFocusTarget({ id: "property" });
-                return;
-              }
-              const p: Property = {
-                id: shortId("p"),
-                name: "",
-                kind: "option",
-                visible: true,
-                placement: "beforeWeeks",
-                display: "square",
-                values: [],
-              };
-              update([...properties, p]);
-              setSelected(p.id);
-              setFocusTarget({ id: "property" });
-            }}
-          >
-            <Plus size={15} />
-            속성 추가
-          </Button>
           {properties.some((p) => p.archived) && (
             <details className="archived-properties">
               <summary>보관된 속성</summary>
@@ -356,8 +327,8 @@ export default function PropertiesManager({
               아래에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
             </p>
             <p className="field-help">
-              속성을 날짜 뒤에 두려면 왼쪽 목록의 위·아래 버튼으로 순서를 바꾼
-              뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
+              속성을 날짜 뒤에 두려면 왼쪽 목록의 손잡이를 드래그하여 순서를
+              바꾼 뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
             </p>
           </section>
         )}
@@ -505,6 +476,21 @@ export default function PropertiesManager({
                 </p>
                 <div className="settings-table-scroll">
                   <table className="settings-table property-values">
+                    <colgroup>
+                      <col style={{ width: 40 }} />
+                      <col style={{ width: 160 }} />
+                      {property.display !== "emoji" && (
+                        <col style={{ width: 62 }} />
+                      )}
+                      {property.display === "dot" && (
+                        <col style={{ width: 62 }} />
+                      )}
+                      {property.display === "emoji" && (
+                        <col style={{ width: 72 }} />
+                      )}
+                      <col />
+                      <col style={{ width: 48 }} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>순서</th>
@@ -516,35 +502,20 @@ export default function PropertiesManager({
                         <th>관리</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody ref={valueReorder.root}>
                       {values.map((v, i) => (
-                        <tr key={v.id} data-option-id={v.id}>
+                        <tr
+                          key={v.id}
+                          data-option-id={v.id}
+                          {...valueReorder.itemProps(v.id)}
+                        >
                           <td>
-                            <div className="order-buttons">
-                              <span>{i + 1}</span>
-                              <Button
-                                title={`${v.label} 값 위로`}
-                                disabled={i === 0}
-                                onClick={() =>
-                                  patchProperty({
-                                    values: move(property.values, v.id, -1),
-                                  })
-                                }
-                              >
-                                <ArrowUp size={13} />
-                              </Button>
-                              <Button
-                                title={`${v.label} 값 아래로`}
-                                disabled={i === values.length - 1}
-                                onClick={() =>
-                                  patchProperty({
-                                    values: move(property.values, v.id, 1),
-                                  })
-                                }
-                              >
-                                <ArrowDown size={13} />
-                              </Button>
-                            </div>
+                            <button
+                              {...valueReorder.handleProps(v.id)}
+                              aria-label={`${v.label || "새 값"} 값 순서 이동`}
+                            >
+                              <GripVertical size={15} aria-hidden="true" />
+                            </button>
                           </td>
                           <td>
                             <input
@@ -648,6 +619,34 @@ export default function PropertiesManager({
         )}
       </div>
       <footer className="form-actions">
+        <Button
+          className="property-add"
+          title="속성 추가"
+          disabled={busy}
+          onClick={() => {
+            const blank = active.find((p) => !p.name.trim());
+            if (blank) {
+              setSelected(blank.id);
+              setFocusTarget({ id: "property" });
+              return;
+            }
+            const p: Property = {
+              id: shortId("p"),
+              name: "",
+              kind: "option",
+              visible: true,
+              placement: "beforeWeeks",
+              display: "square",
+              values: [],
+            };
+            update([...properties, p]);
+            setSelected(p.id);
+            setFocusTarget({ id: "property" });
+          }}
+        >
+          <Plus size={15} />
+          속성 추가
+        </Button>
         {property && !CORE_PROPERTY_KEYS.includes(property.id) && (
           <Button
             className="danger"

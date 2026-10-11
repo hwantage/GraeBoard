@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
 import { openDatabase } from "../server/db.mjs";
+import { cell, sampleProperties } from "../shared/domain.js";
 
 const dir = mkdtempSync(join(tmpdir(), "row-menu-test-"));
 let db, server, base, admin, adminId, member, memberId, viewer, viewerId;
@@ -134,6 +135,104 @@ test("행 위·아래 삽입은 위치를 저장하고 권한·팀·연도·기�
   assert.equal((await rows(teamId))[0].id, own.data.task.id);
 });
 
+test("위·아래 삽입은 기준 행의 기본·셀별 서식만 상속하고 새 업무 값을 유지한다", async () => {
+  const { teamId } = await fixture();
+  const settings = JSON.parse(
+    db.prepare("SELECT settings FROM teams WHERE id=?").get(teamId).settings,
+  );
+  settings.properties = sampleProperties();
+  db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
+    JSON.stringify(settings),
+    teamId,
+  );
+  const baseStyle = {
+    backgroundColor: "#edf2fa",
+    color: "#123456",
+    fontFamily: "Noto Serif KR",
+    fontSize: 16,
+    bold: true,
+    italic: true,
+    underline: true,
+    strike: true,
+    textAlign: "right",
+    verticalAlign: "bottom",
+    textMode: "wrap",
+    borderTop: { style: "solid", color: "#336699" },
+    borderRight: { style: "dashed", color: "#225588" },
+    borderBottom: { style: "double", color: "#114477" },
+    borderLeft: null,
+  };
+  const snapshot = {
+    defaultStyle: baseStyle,
+    cells: {
+      title: {
+        value: "서식 원본",
+        style: { backgroundColor: "#ffddaa", bold: false, borderTop: null },
+      },
+      owner: { value: adminId, style: { textAlign: "center" } },
+      status: { value: "status-completed", style: {} },
+      supporters: { value: [adminId, memberId], style: { color: "#445566" } },
+      score: { value: 95, style: { fontSize: 20 } },
+      description: { value: "복사하지 않을 내용", style: { textMode: "clip" } },
+      "2026-12-07": {
+        value: "숨긴 일정",
+        style: { backgroundColor: "#cceedd", borderBottom: null },
+      },
+      "2027-01-04": {
+        value: "다른 연도 일정",
+        style: { fontFamily: "Nanum Gothic Coding", italic: false },
+      },
+    },
+  };
+  const created = await request("/tasks", {
+    teamId,
+    year: 2026,
+    copiedRow: snapshot,
+  });
+  assert.equal(created.status, 201);
+  const source = created.data.task;
+  for (const placement of ["before", "after"]) {
+    const inserted = await request(
+      "/tasks",
+      {
+        teamId,
+        year: 2026,
+        fields: placement === "before" ? { score: 0 } : {},
+        insertAt: at(source, placement),
+      },
+      member,
+    );
+    assert.equal(inserted.status, 201);
+    const stored = (await rows(teamId)).find(
+      (t) => t.id === inserted.data.task.id,
+    );
+    assert.deepEqual(stored.defaultStyle, baseStyle);
+    for (const [key, original] of Object.entries(snapshot.cells)) {
+      assert.deepEqual(cell(stored, key).style, cell(source, key).style, key);
+      if (Object.keys(original.style).length) {
+        assert.deepEqual(stored.cells[key].style, original.style, key);
+        assert.equal(stored.cells[key].version, 1);
+      }
+    }
+    // 셀 데이터가 없던 주차도 기준 행의 기본 서식을 그대로 사용한다.
+    assert.deepEqual(cell(stored, "2026-06-01").style, baseStyle);
+    assert.equal(cell(stored, "title").value, "새 업무");
+    assert.equal(cell(stored, "owner").value, memberId);
+    assert.equal(cell(stored, "status").value, "status-planned");
+    assert.deepEqual(cell(stored, "supporters").value, []);
+    assert.equal(cell(stored, "score").value, placement === "before" ? 0 : "");
+    for (const key of ["description", "2026-12-07", "2027-01-04"])
+      assert.equal(cell(stored, key).value, "");
+  }
+  assert.deepEqual(
+    (await rows(teamId)).find((t) => t.id === source.id),
+    source,
+  );
+  // 일반 업무 추가는 기준 행 없이 기존 팀 기본 서식을 사용한다.
+  const plain = await request("/tasks", { teamId, year: 2026 });
+  assert.deepEqual(plain.data.task.defaultStyle, settings.defaultStyle);
+});
+
 test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하고 담당자 권한을 지킨다", async () => {
   const {
     teamId,
@@ -205,7 +304,17 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
 
 test("삽입 간격 재배치는 생성과 함께 저장하고 생성 실패 시 모두 되돌린다", async () => {
   const { teamId, tasks } = await fixture();
-  db.prepare("UPDATE tasks SET position=7 WHERE team_id=?").run(teamId);
+  // B가 반드시 중간 행이어야 간격 재배치 분기를 검증한다. 같은 밀리초에
+  // 생성된 행의 무작위 UUID 순서에 따라 B가 첫 행이 되는 경우를 피한다.
+  const place = db.prepare(
+    "UPDATE tasks SET position=7,created_at=? WHERE id=?",
+  );
+  tasks.forEach((task, index) =>
+    place.run(
+      new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      task.id,
+    ),
+  );
   const positions = () =>
     db
       .prepare(
