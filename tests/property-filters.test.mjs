@@ -15,11 +15,11 @@ const rows = [
   ),
 }));
 const matchingIds = (propertyFilters, propertyFilterModes) =>
-  filteredTasks(
-    rows,
-    { ...defaultView(2026), propertyFilters, propertyFilterModes },
-    "",
-  ).map((task) => task.id);
+  filteredTasks(rows, {
+    ...defaultView(2026),
+    propertyFilters,
+    propertyFilterModes,
+  }).map((task) => task.id);
 
 test("컬럼 필터는 기존 일치 조건을 유지하며 제외 값 사이 OR·컬럼 사이 AND를 적용한다", () => {
   assert.deepEqual(matchingIds({ status: ["완료"] }), ["1"]);
@@ -71,13 +71,13 @@ test("제외 필터는 미지정·숫자 0·복수 팀원 중 하나의 일치�
   );
 });
 
-test("구 저장 보기는 일치로 읽고 제거된 컬럼의 필터 모드는 정리한다", () => {
-  const legacy = { ...defaultView(2026), status: "완료" };
-  delete legacy.propertyFilterModes;
-  const view = normalizeView(legacy);
+test("필터 모드가 없는 보기는 일치로 읽고 제거된 컬럼의 필터 모드는 정리한다", () => {
+  const saved = { ...defaultView(2026), propertyFilters: { status: ["완료"] } };
+  delete saved.propertyFilterModes;
+  const view = normalizeView(saved);
   assert.deepEqual(view.propertyFilterModes, {});
   assert.deepEqual(
-    filteredTasks(rows, view, "").map((task) => task.id),
+    filteredTasks(rows, view).map((task) => task.id),
     ["1"],
   );
   const excluded = normalizeView({
@@ -86,7 +86,7 @@ test("구 저장 보기는 일치로 읽고 제거된 컬럼의 필터 모드는
   });
   assert.deepEqual(excluded.propertyFilterModes, { status: "exclude" });
   assert.deepEqual(
-    filteredTasks(rows, excluded, "").map((task) => task.id),
+    filteredTasks(rows, excluded).map((task) => task.id),
     ["2", "3", "4"],
   );
 });

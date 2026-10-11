@@ -1,8 +1,4 @@
-import {
-  DEFAULT_STATUS_OPTIONS,
-  defaultCoreProperties,
-  upgradeCoreProperties,
-} from "./coreProperties.js";
+import { defaultCoreProperties } from "./coreProperties.js";
 import { FONTS } from "./fonts.js";
 export {
   FONTS,
@@ -16,32 +12,14 @@ export {
   CORE_PROPERTY_KEYS,
   DEFAULT_STATUS_OPTIONS,
   defaultCoreProperties,
+  sampleProperties,
 } from "./coreProperties.js";
-export const FIELDS = [
-  { key: "category", label: "분류", width: 108, type: "category" },
-  { key: "type", label: "유형", width: 84, type: "type" },
-  { key: "title", label: "작업", width: 330, type: "text" },
-  { key: "description", label: "설명", width: 220, type: "text" },
-  { key: "owner", label: "팀원", width: 112, type: "person" },
-  { key: "supporters", label: "지원자", width: 120, type: "people" },
-  { key: "status", label: "상태", width: 105, type: "status" },
-  { key: "progress", label: "진척률", width: 80, type: "text" },
-  { key: "deadline", label: "목표일", width: 112, type: "date" },
-  { key: "score", label: "Score", width: 72, type: "number" },
-  { key: "current", label: "Current", width: 78, type: "number" },
-];
-export const FIELD_KEYS = FIELDS.map((f) => f.key);
 export const PROPERTY_VALUE_MAX_LENGTH = 15;
 export const MAX_STYLE_CELLS = 50000;
 /** @type {import("../src/types").Settings} */
 export const DEFAULT_SETTINGS = {
-  propertiesVersion: 3,
   properties: defaultCoreProperties(),
   theme: "mint",
-  categories: ["UX 개선", "차별화", "기타"],
-  types: ["기획", "디자인", "개발", "검토", "연구"],
-  statuses: DEFAULT_STATUS_OPTIONS.map((v) => v.label),
-  retentionDays: 365,
   defaultDensity: "compact",
   defaultStyle: { fontFamily: FONTS[0], fontSize: 9, verticalAlign: "top" },
 };
@@ -114,7 +92,7 @@ export function emptyCell() {
   return { value: "", style: {}, version: 0 };
 }
 export function textMode(style = {}) {
-  return style.textMode || (style.wrap ? "wrap" : "overflow");
+  return style.textMode || "overflow";
 }
 export function emptyPropertyValue(property) {
   return property?.kind === "member" && property.multiple ? [] : "";
@@ -125,11 +103,7 @@ export function groupValue(task, key) {
 }
 export function cell(task, key) {
   const current = task.cells[key] ?? emptyCell();
-  const style = { ...task.defaultStyle, ...current.style };
-  // A legacy per-cell wrap flag takes priority over the task's newer default mode.
-  if (current.style?.wrap !== undefined && current.style.textMode === undefined)
-    style.textMode = current.style.wrap ? "wrap" : "overflow";
-  return { ...current, style };
+  return { ...current, style: { ...task.defaultStyle, ...current.style } };
 }
 export function value(task, key) {
   return cell(task, key).value;
@@ -163,89 +137,32 @@ export function canEdit(user, task) {
   );
 }
 export const PROPERTY_DISPLAYS = ["text", "round", "square", "dot", "emoji"];
-export const BUILTIN_PROPERTIES = {
-  category: "categories",
-  type: "types",
-  status: "statuses",
-};
 export const PROPERTY_KINDS = ["option", "text", "date", "number", "member"];
+// 저장된 팀 설정에 기본값을 채운다. 속성이 없으면 기본 속성으로 시작한다.
 export function normalizeSettings(settings = DEFAULT_SETTINGS) {
-  const result = { ...DEFAULT_SETTINGS, ...settings };
-  // 주차 경계선 설정은 셀 테두리로 대체되어 더 이상 읽거나 내보내지 않는다.
-  delete result.weekBorders;
-  let properties = (settings.properties || []).map((p) => ({
-    ...p,
-    kind: p.kind || "option",
-    values: (p.values || []).map((v) => ({ ...v })),
-  }));
-  if (![2, 3].includes(settings.propertiesVersion)) {
-    for (const [key, list] of Object.entries(BUILTIN_PROPERTIES)) {
-      if (!properties.some((p) => p.id === key))
-        properties.push({
-          id: key,
-          name: FIELDS.find((f) => f.key === key).label,
-          kind: "option",
-          display: key === "status" ? "dot" : "square",
-          values: result[list].map((label, i) => ({
-            id: `${key}-${i}`,
-            label,
-            backgroundColor: key === "status" ? "#ffffff" : "#e5f0ee",
-            dotColor: "#177b70",
-            emoji: "📌",
-          })),
-        });
-    }
-    // Keep the old interleaved field order while making every information column editable.
-    const options = properties.filter((p) => !p.archived);
-    let i = 0;
-    const ordered = FIELDS.flatMap((f) => {
-      if (BUILTIN_PROPERTIES[f.key]) {
-        if (f.key === "status") return options.slice(i);
-        return i < options.length ? [options[i++]] : [];
-      }
-      return [
-        {
-          id: f.key,
-          name: f.label,
-          kind: ["person", "people"].includes(f.type) ? "member" : f.type,
-          display: f.key === "owner" ? "avatar" : "text",
-          multiple: f.key === "supporters",
-          values: [],
-        },
-      ];
-    });
-    properties = [...ordered, ...properties.filter((p) => p.archived)];
-  }
-  if (settings.propertiesVersion !== 3)
-    properties = upgradeCoreProperties(properties);
-  result.properties = properties.map((p) => ({
-    ...p,
-    placement: p.placement ?? "beforeWeeks",
-    visible:
-      p.visible ??
-      (!FIELD_KEYS.includes(p.id) ||
-        (settings.propertiesVersion === 3
-          ? DEFAULT_VISIBLE_FIELDS
-          : ["category", "title", "owner", "status"]
-        ).includes(p.id)),
-  }));
-  result.propertiesVersion = 3;
-  return result;
+  const { properties, ...rest } = settings || {};
+  return {
+    ...DEFAULT_SETTINGS,
+    ...rest,
+    properties: (properties || defaultCoreProperties()).map((p) => ({
+      ...p,
+      kind: p.kind || "option",
+      placement: p.placement ?? "beforeWeeks",
+      visible: p.visible ?? true,
+      values: (p.values || []).map((v) => ({ ...v })),
+    })),
+  };
 }
 /** @returns {import("../src/types").Property[]} */
 export function propertiesFor(settings, includeArchived = false) {
-  return (
-    settings?.propertiesVersion === 3
-      ? settings.properties
-      : normalizeSettings(settings).properties
-  ).filter((p) => includeArchived || !p.archived);
+  return (settings?.properties || []).filter(
+    (p) => includeArchived || !p.archived,
+  );
 }
-export function propertyValue(property, option) {
-  return BUILTIN_PROPERTIES[property.id] ? option.label : option.id;
-}
+// 선택형 셀에 저장된 옵션 ID로 옵션 정의를 찾는다.
 export function propertyOption(property, stored) {
-  return property?.kind === "option" || property?.kind === undefined
-    ? property?.values.find((v) => propertyValue(property, v) === stored)
+  return property?.kind === "option"
+    ? property.values.find((v) => v.id === stored)
     : undefined;
 }
 export function statusSummary(tasks, settings) {
@@ -261,7 +178,7 @@ export function statusSummary(tasks, settings) {
     }));
   const byId = new Map(groups.map((g) => [g.id, g]));
   let empty = 0,
-    legacy = 0;
+    archived = 0;
   for (const task of tasks) {
     const stored = value(task, "status");
     if (stored === "" || stored === undefined || stored === null) {
@@ -271,7 +188,7 @@ export function statusSummary(tasks, settings) {
     const option = propertyOption(property, stored);
     const group = option && byId.get(option.id);
     if (group) group.count++;
-    else legacy++;
+    else archived++;
   }
   if (empty)
     groups.push({
@@ -280,12 +197,12 @@ export function statusSummary(tasks, settings) {
       color: "#8a959d",
       count: empty,
     });
-  if (legacy)
+  if (archived)
     groups.push({
-      id: "__legacy",
-      label: "기존 값",
+      id: "__archived",
+      label: "보관된 값",
       color: "#8a959d",
-      count: legacy,
+      count: archived,
     });
   return groups;
 }
@@ -293,7 +210,7 @@ export function fieldsFor(settings) {
   return propertiesFor(settings).map((p) => ({
     key: p.id,
     label: p.name,
-    width: FIELDS.find((f) => f.key === p.id)?.width || 120,
+    width: p.width || 120,
     type: p.kind === "option" ? "property" : p.kind,
     multiple: p.multiple,
     placement: p.placement ?? "beforeWeeks",
@@ -309,16 +226,16 @@ export function orderColumns(fields, weeks) {
 export function normalizeView(input, settings = DEFAULT_SETTINGS) {
   const properties = propertiesFor(settings);
   const active = properties.map((p) => p.id);
-  const keys = fieldsFor(settings).map((f) => f.key);
-  const known = [...FIELD_KEYS, ...(input.knownProperties || [])];
+  // 보기가 모르는 사이 추가된 속성은 기본 표시 여부를 따라 열에 더한다.
+  const known = input.knownProperties || [];
   const visibleFields = [
     ...new Set([
-      ...input.visibleFields,
+      ...(input.visibleFields || []),
       ...properties
         .filter((p) => !known.includes(p.id) && p.visible !== false)
         .map((p) => p.id),
     ]),
-  ].filter((k) => keys.includes(k));
+  ].filter((k) => active.includes(k));
   for (const p of properties) {
     if (input.columnVisibility && input.columnVisibility[p.id] !== p.visible) {
       const index = visibleFields.indexOf(p.id);
@@ -326,28 +243,10 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
       if (!p.visible && index !== -1) visibleFields.splice(index, 1);
     }
   }
-  const groupBy =
-    input.groupBy ?? (input.sort === "category" ? "category" : "");
-  const requestedSortKey =
-    input.sortKey ??
-    (["title", "deadline"].includes(input.sort) ? input.sort : "");
-  const sortKey = keys.includes(requestedSortKey) ? requestedSortKey : "";
-  const widths = Object.fromEntries(
-    Object.entries(input.widths || {}).map(([key, width]) => [
-      key,
-      !input.compactWeekColumns && /^\d{4}-\d{2}-\d{2}$/.test(key)
-        ? Math.max(40, Math.round(width / 2))
-        : width,
-    ]),
-  );
+  const sortKey = active.includes(input.sortKey) ? input.sortKey : "";
   return {
     ...defaultView(input.year),
     ...input,
-    // Retired team-member filters must not silently hide tasks in saved views.
-    people: [],
-    personRole: "either",
-    // Find is transient UI state; old saved searches must not hide rows.
-    search: "",
     visibleFields: visibleFields.includes("title")
       ? visibleFields
       : ["title", ...visibleFields],
@@ -355,9 +254,9 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
     columnVisibility: Object.fromEntries(
       properties.map((p) => [p.id, p.visible !== false]),
     ),
-    groupBy: active.includes(groupBy) ? groupBy : "",
+    groupBy: active.includes(input.groupBy) ? input.groupBy : "",
     propertyFilters: Object.fromEntries(
-      Object.entries(propertyFiltersFor(input)).filter(([key]) =>
+      Object.entries(input.propertyFilters || {}).filter(([key]) =>
         active.includes(key),
       ),
     ),
@@ -367,25 +266,16 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
           active.includes(key) && ["include", "exclude"].includes(mode),
       ),
     ),
-    status: "",
-    category: "",
-    widths,
-    compactWeekColumns: true,
+    widths: input.widths || {},
     sortKey,
     sortDirection: sortKey ? (input.sortDirection ?? "asc") : "default",
-    sort: "position",
   };
 }
 export function defaultView(year) {
   return {
     year,
-    people: [],
-    personRole: "either",
-    status: "",
-    category: "",
     propertyFilters: {},
     propertyFilterModes: {},
-    search: "",
     fromMonth: 1,
     toMonth: 12,
     fromWeek: "",
@@ -396,46 +286,22 @@ export function defaultView(year) {
     visibleFields: DEFAULT_VISIBLE_FIELDS,
     frozenColumns: 0,
     widths: {},
-    compactWeekColumns: true,
     rowHeights: {},
-    sort: "position",
     groupBy: "",
     sortKey: "",
     sortDirection: "default",
-    knownProperties: FIELD_KEYS,
-    columnVisibility: Object.fromEntries(
-      FIELD_KEYS.map((key) => [key, DEFAULT_VISIBLE_FIELDS.includes(key)]),
-    ),
-    density: "compact",
+    knownProperties: [],
+    columnVisibility: {},
   };
-}
-export function propertyFiltersFor(view) {
-  const filters = { ...view.propertyFilters };
-  for (const key of ["category", "status"])
-    if (view[key] && filters[key] === undefined) filters[key] = [view[key]];
-  return filters;
 }
 export function filteredTasks(
   tasks,
   view,
-  userId,
   settings = DEFAULT_SETTINGS,
   users = [],
 ) {
-  const selected = view.people.map((p) => (p === "me" ? userId : p));
-  const filters = Object.entries(propertyFiltersFor(view));
+  const filters = Object.entries(view.propertyFilters || {});
   let result = tasks.filter((t) => {
-    const owner = value(t, "owner"),
-      supporters = value(t, "supporters") || [];
-    if (
-      selected.length &&
-      !selected.some(
-        (p) =>
-          (view.personRole !== "supporter" && owner === p) ||
-          (view.personRole !== "owner" && supporters.includes(p)),
-      )
-    )
-      return false;
     if (
       filters.some(([key, values]) => {
         if (!values.length) return false;
@@ -453,18 +319,10 @@ export function filteredTasks(
       return false;
     return true;
   });
-  const property = propertiesFor(settings).find(
-    (p) =>
-      p.id === (view.groupBy || (view.sort === "category" ? "category" : "")),
-  );
-  const order = new Map(
-    (property?.values || []).map((v, i) => [propertyValue(property, v), i]),
-  );
-  const requestedKey =
-    view.sortKey ||
-    (["title", "deadline"].includes(view.sort) ? view.sort : "");
-  const key = fieldsFor(settings).some((f) => f.key === requestedKey)
-    ? requestedKey
+  const property = propertiesFor(settings).find((p) => p.id === view.groupBy);
+  const order = new Map((property?.values || []).map((v, i) => [v.id, i]));
+  const key = propertiesFor(settings).some((p) => p.id === view.sortKey)
+    ? view.sortKey
     : "";
   const direction = view.sortDirection || (key ? "asc" : "default");
   const collator = new Intl.Collator("ko", {
@@ -523,14 +381,8 @@ export function visibleWeeks(year, view) {
       !view.collapsedMonths.includes(w.month),
   );
 }
-export function displayValue(
-  task,
-  key,
-  users = [],
-  settings = DEFAULT_SETTINGS,
-) {
-  const v = value(task, key);
-  const property = propertiesFor(settings, true).find((p) => p.id === key);
+// 셀 값을 화면에 보이는 글자로 바꾼다. 속성을 이미 알고 있으면 이 함수를 직접 쓴다.
+export function displayValueFor(property, v, users = []) {
   if (property?.kind === "member") {
     const ids = Array.isArray(v) ? v : v ? [v] : [];
     return ids
@@ -539,9 +391,35 @@ export function displayValue(
   }
   return propertyOption(property, v)?.label ?? String(v ?? "");
 }
+export function displayValue(
+  task,
+  key,
+  users = [],
+  settings = DEFAULT_SETTINGS,
+) {
+  return displayValueFor(
+    propertiesFor(settings, true).find((p) => p.id === key),
+    value(task, key),
+    users,
+  );
+}
 export function safeSpreadsheetText(v) {
   const s = String(v ?? "");
   return /^[\s]*[=+@\-\t\r]/.test(s) ? `'${s}` : s;
+}
+// 쉼표·세미콜론·줄바꿈으로 나열한 이름 목록을 개별 이름으로 나눈다.
+export function splitNames(text) {
+  return String(text ?? "")
+    .split(/[,;\n]/)
+    .map((n) => n.trim())
+    .filter(Boolean);
+}
+// 속성·선택값 ID. 팀 안에서만 유일하면 되므로 짧은 무작위 문자열로 만든다.
+// 셀 키와 셀 값에 그대로 저장되므로 길이가 저장 공간에 바로 영향을 준다.
+const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
+export function shortId(prefix) {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(6));
+  return prefix + [...bytes].map((b) => ID_ALPHABET[b % 36]).join("");
 }
 export function validLink(text) {
   try {

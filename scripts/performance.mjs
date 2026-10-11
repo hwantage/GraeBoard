@@ -13,7 +13,12 @@ import {
   passwordHash,
   transaction,
 } from "../server/db.mjs";
-import { DEFAULT_SETTINGS, weeksForYear, dateKey } from "../shared/domain.js";
+import {
+  DEFAULT_SETTINGS,
+  sampleProperties,
+  weeksForYear,
+  dateKey,
+} from "../shared/domain.js";
 
 const dir = mkdtempSync(join(tmpdir(), "weekly-perf-")),
   db = openDatabase(join(dir, "perf.sqlite")),
@@ -36,11 +41,11 @@ try {
     db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
       team,
       "성능 검증팀",
-      json(DEFAULT_SETTINGS),
+      json({ ...DEFAULT_SETTINGS, properties: sampleProperties() }),
     );
     const userIds = [];
     const addUser = db.prepare(
-        "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
       ),
       membership = db.prepare(
         "INSERT INTO memberships(user_id,team_id) VALUES(?,?)",
@@ -84,8 +89,8 @@ try {
         description: "한글 일정과 서식 저장을 검증하는 업무입니다.",
         owner: userIds[i % 100],
         supporters: [],
-        status: "진행 중",
-        category: "UX 개선",
+        status: "status-progress",
+        category: "category-ux",
       }))
         addCell.run(tid, key, json(value), "{}", 1);
       for (let w = 0; w < 60; w++)

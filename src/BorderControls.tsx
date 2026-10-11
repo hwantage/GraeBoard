@@ -6,16 +6,14 @@ export default function BorderControls({
   label,
   value,
   onChange,
-  disabled = false,
 }: {
   label: string;
   value?: Border;
   onChange: (border: Border) => void;
-  disabled?: boolean;
 }) {
   const border = value || { style: "solid", color: "#607984" };
   return (
-    <fieldset className="border-controls" disabled={disabled}>
+    <fieldset className="border-controls">
       <legend>{label}</legend>
       <label>
         스타일

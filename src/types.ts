@@ -30,7 +30,6 @@ export type Style = {
   italic?: boolean;
   underline?: boolean;
   strike?: boolean;
-  wrap?: boolean;
   textMode?: "overflow" | "wrap" | "clip";
 };
 export type Cell = {
@@ -77,6 +76,7 @@ export type Property = {
   display: "text" | "round" | "square" | "dot" | "emoji" | "avatar";
   multiple?: boolean;
   visible?: boolean;
+  width?: number;
   placement?: "beforeWeeks" | "afterWeeks";
   values: PropertyOption[];
   archived?: boolean;
@@ -85,26 +85,16 @@ export type Settings = {
   defaultDensity?: "comfortable" | "compact" | "dense";
   weekHeader?: { color?: string; backgroundColor?: string };
   theme?: ThemeId;
-  propertiesVersion?: number;
   properties?: Property[];
   revision?: number;
   defaultStyle?: Style;
-  categories: string[];
-  types: string[];
-  statuses: string[];
-  retentionDays: number;
 };
 export type Team = { id: string; name: string; settings: Settings };
 export type FilterMode = "include" | "exclude";
 export type View = {
   year: number;
-  people: string[];
-  personRole: "either" | "owner" | "supporter";
-  status: string;
-  category: string;
   propertyFilters?: Record<string, string[]>;
   propertyFilterModes?: Record<string, FilterMode>;
-  search: string;
   fromMonth: number;
   toMonth: number;
   fromWeek?: string;
@@ -115,15 +105,12 @@ export type View = {
   visibleFields: string[];
   frozenColumns?: number;
   widths: Record<string, number>;
-  compactWeekColumns?: boolean;
   rowHeights: Record<string, number>;
-  sort: "position" | "deadline" | "title" | "category";
   groupBy?: string;
   sortKey?: string;
   sortDirection?: "asc" | "desc" | "default";
   knownProperties?: string[];
   columnVisibility?: Record<string, boolean>;
-  density: "comfortable" | "compact" | "dense";
 };
 export type Bootstrap = {
   user: User;

@@ -1,15 +1,12 @@
 import { z } from "zod";
 import { BORDER_STYLES } from "../shared/borders.js";
 import {
-  FIELDS,
   FONTS,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
   MAX_STYLE_CELLS,
-  FIELD_KEYS,
   mondayOf,
   propertiesFor,
-  propertyValue,
   PROPERTY_DISPLAYS,
   PROPERTY_KINDS,
   CORE_PROPERTY_KEYS,
@@ -35,22 +32,17 @@ export const dateSchema = z
       new Date(s + "T12:00:00Z").toISOString().startsWith(s),
     "유효한 날짜가 아닙니다.",
   );
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 export const borderSchema = z
   .object({
     style: z.enum(BORDER_STYLES),
-    color: z.string().regex(/^#[a-fA-F0-9]{6}$/),
+    color: hex,
   })
   .strict();
 export const weekHeaderSchema = z
   .object({
-    color: z
-      .string()
-      .regex(/^#[a-fA-F0-9]{6}$/)
-      .optional(),
-    backgroundColor: z
-      .string()
-      .regex(/^#[a-fA-F0-9]{6}$/)
-      .optional(),
+    color: hex.optional(),
+    backgroundColor: hex.optional(),
   })
   .strict();
 export const styleSchema = z
@@ -59,14 +51,8 @@ export const styleSchema = z
     borderRight: borderSchema.nullable().optional(),
     borderBottom: borderSchema.nullable().optional(),
     borderLeft: borderSchema.nullable().optional(),
-    color: z
-      .string()
-      .regex(/^#[a-fA-F0-9]{6}$/)
-      .optional(),
-    backgroundColor: z
-      .string()
-      .regex(/^#[a-fA-F0-9]{6}$/)
-      .optional(),
+    color: hex.optional(),
+    backgroundColor: hex.optional(),
     fontFamily: z.enum(FONTS).optional(),
     fontSize: z.number().int().min(MIN_FONT_SIZE).max(MAX_FONT_SIZE).optional(),
     textAlign: z.enum(["left", "center", "right"]).optional(),
@@ -75,10 +61,15 @@ export const styleSchema = z
     italic: z.boolean().optional(),
     underline: z.boolean().optional(),
     strike: z.boolean().optional(),
-    wrap: z.boolean().optional(),
     textMode: z.enum(["overflow", "wrap", "clip"]).optional(),
   })
   .strict();
+// 셀 값: 텍스트·숫자·사용자 ID 목록(복수 Member).
+const cellValueSchema = z.union([
+  z.string().max(10000),
+  z.number().finite(),
+  z.array(z.string().uuid()).max(50),
+]);
 export const copiedRowSchema = z
   .object({
     cells: z
@@ -86,11 +77,7 @@ export const copiedRowSchema = z
         z.string().max(80),
         z
           .object({
-            value: z.union([
-              z.string().max(10000),
-              z.number().finite(),
-              z.array(z.string().uuid()).max(50),
-            ]),
+            value: cellValueSchema,
             style: styleSchema,
           })
           .strict(),
@@ -104,13 +91,7 @@ export const changeSchema = z
     taskId: z.string().uuid(),
     key: z.string().max(80),
     expectedVersion: z.number().int().nonnegative(),
-    value: z
-      .union([
-        z.string().max(10000),
-        z.number().finite(),
-        z.array(z.string().uuid()).max(50),
-      ])
-      .optional(),
+    value: cellValueSchema.optional(),
     style: styleSchema.optional(),
   })
   .strict();
@@ -130,10 +111,6 @@ export const batchSchema = z.object({
 export const viewSchema = z
   .object({
     year: yearSchema,
-    people: z.array(z.string().max(50)).max(100),
-    personRole: z.enum(["owner", "supporter", "either"]),
-    status: z.string().max(60),
-    category: z.string().max(60),
     propertyFilters: z
       .record(z.string().max(80), z.array(z.string().max(10000)).max(101))
       .refine((v) => Object.keys(v).length <= 50)
@@ -142,7 +119,6 @@ export const viewSchema = z
       .record(z.string().max(80), z.enum(["include", "exclude"]))
       .refine((v) => Object.keys(v).length <= 50)
       .optional(),
-    search: z.string().max(300),
     fromMonth: z.number().int().min(1).max(12),
     toMonth: z.number().int().min(1).max(12),
     fromWeek: z.union([z.literal(""), dateSchema]).default(""),
@@ -153,17 +129,12 @@ export const viewSchema = z
     frozenColumns: z.number().int().min(0).max(60).default(0),
     visibleFields: z.array(z.string().max(80)).min(1).max(60),
     widths: z.record(z.string().max(80), z.number().min(40).max(900)),
-    compactWeekColumns: z.boolean().optional(),
     rowHeights: z.record(z.string().uuid(), z.number().min(26).max(500)),
-    sort: z
-      .enum(["position", "deadline", "title", "category"])
-      .default("position"),
     groupBy: z.string().max(80).optional(),
     sortKey: z.string().max(80).optional(),
     sortDirection: z.enum(["asc", "desc", "default"]).optional(),
     knownProperties: z.array(z.string().max(80)).max(60).optional(),
     columnVisibility: z.record(z.string().max(80), z.boolean()).optional(),
-    density: z.enum(["comfortable", "compact", "dense"]),
   })
   .strict()
   .refine(
@@ -172,9 +143,9 @@ export const viewSchema = z
       (!v.fromWeek || !v.toWeek || v.fromWeek <= v.toWeek),
     "기간 범위를 확인하세요.",
   );
+// 셀 키는 활성 속성 ID이거나 주의 월요일 날짜다.
 export function validCellKey(key, settings) {
   return (
-    FIELD_KEYS.includes(key) ||
     propertiesFor(settings).some((p) => p.id === key) ||
     (dateSchema.safeParse(key).success && mondayOf(key) === key)
   );
@@ -187,15 +158,14 @@ export function validateCellValue(
   settings,
   previousValue,
 ) {
-  requireThat(validCellKey(key, settings), 400, "지원하지 않는 셀입니다.");
+  requireThat(
+    validCellKey(key, settings),
+    400,
+    `지원하지 않는 셀입니다: ${key}`,
+  );
   if (value === undefined) return;
-  const property = propertiesFor(settings, true).find((p) => p.id === key);
-  const type =
-    property?.kind ||
-    (key === "supporters"
-      ? "member"
-      : FIELDS.find((f) => f.key === key)?.type) ||
-    "text";
+  const property = propertiesFor(settings).find((p) => p.id === key);
+  const type = property?.kind || "text";
   if (type === "member") {
     // Preserve existing assignments, but never allow a former member to be
     // assigned again after their value has been removed from this cell.
@@ -206,34 +176,24 @@ export function validateCellValue(
           ? [previousValue]
           : [],
     );
-    if (property?.multiple ?? key === "supporters") {
+    if (property.multiple) {
       requireThat(Array.isArray(value), 400, "팀원은 목록이어야 합니다.");
       requireThat(
         value.length <= 50 && new Set(value).size === value.length,
         400,
         "팀원 목록을 확인하세요.",
       );
-      for (const v of value) if (!previous.has(v)) member(db, teamId, v);
+      for (const v of value)
+        if (!previous.has(v)) requireAssignable(db, teamId, v);
     } else {
       requireThat(typeof value === "string", 400, "팀원을 확인하세요.");
-      if (value && !previous.has(value)) member(db, teamId, value);
+      if (value && !previous.has(value)) requireAssignable(db, teamId, value);
     }
     return;
   }
-  // Preserve numeric progress from older files and undo history.
-  if (
-    key === "progress" &&
-    type === "text" &&
-    typeof value === "number" &&
-    Number.isFinite(value)
-  )
-    return;
   if (type === "number") {
     requireThat(
-      value === "" ||
-        (typeof value === "number" &&
-          Number.isFinite(value) &&
-          (!["score", "current"].includes(key) || value >= 0)),
+      value === "" || (typeof value === "number" && Number.isFinite(value)),
       400,
       "유효한 숫자를 입력하세요.",
     );
@@ -248,14 +208,13 @@ export function validateCellValue(
   if (type === "date" && value) dateSchema.parse(value);
   if (type === "option" && value)
     requireThat(
-      property.values.some(
-        (v) => !v.archived && propertyValue(property, v) === value,
-      ),
+      property.values.some((v) => !v.archived && v.id === value),
       400,
       "속성에 없는 선택값입니다.",
     );
 }
-function member(db, teamId, userId) {
+// 담당자로 지정할 수 있는 사람(팀장·팀원)인지 확인한다.
+function requireAssignable(db, teamId, userId) {
   requireThat(
     !!db
       .prepare(
@@ -267,7 +226,6 @@ function member(db, teamId, userId) {
   );
 }
 
-const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const optionSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),
@@ -282,16 +240,14 @@ export const propertiesSchema = z
   .array(
     z
       .object({
-        id: z
-          .string()
-          .refine(
-            (id) => FIELD_KEYS.includes(id) || /^prop_[0-9a-f-]{36}$/.test(id),
-          ),
+        // 날짜 키와 구분되는 식별자. 기본·예시 속성은 이름, 추가 속성은 shortId("p").
+        id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,59}$/),
         name: z.string().trim().min(1).max(50),
         kind: z.enum(PROPERTY_KINDS).default("option"),
         display: z.enum([...PROPERTY_DISPLAYS, "avatar"]),
         multiple: z.boolean().optional(),
         visible: z.boolean().optional(),
+        width: z.number().int().min(40).max(900).optional(),
         placement: z.enum(["beforeWeeks", "afterWeeks"]).optional(),
         values: z
           .array(optionSchema)

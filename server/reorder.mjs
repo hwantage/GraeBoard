@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { groupValue, propertiesFor } from "../shared/domain.js";
 import { requireThat, yearSchema } from "./validation.mjs";
-import { getTasks, getTask, nextTaskStamp, transaction, audit } from "./db.mjs";
+import { getTasks, nextTaskStamp, transaction, audit } from "./db.mjs";
 
 export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
   app.post("/api/tasks/reorder", (req, res) => {
@@ -89,7 +89,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
       );
       // Always preserve the board's order, even when another selected handle
       // starts the drag or the client sends the IDs in a different order.
-      const moving = all.filter((t) => ids.has(t.id));
+      let moving = all.filter((t) => ids.has(t.id));
       const neighbors = () => {
         const rows = all.filter(
           (t) =>
@@ -115,6 +115,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
           put.run((i + 1) * 1000, nextTaskStamp(t.updatedAt), t.id),
         );
         all = getTasks(db, target.teamId, d.year);
+        moving = all.filter((t) => ids.has(t.id));
         [before, after] = neighbors();
       }
       const step =
@@ -128,12 +129,9 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
         "UPDATE tasks SET position=?,updated_at=? WHERE id=?",
       );
       return moving.map((source, i) => {
-        const position = start + step * (i + 1);
-        put.run(
-          position,
-          nextTaskStamp(getTask(db, source.id).updatedAt),
-          source.id,
-        );
+        const position = start + step * (i + 1),
+          updatedAt = nextTaskStamp(source.updatedAt);
+        put.run(position, updatedAt, source.id);
         audit(
           db,
           req.user.id,
@@ -148,7 +146,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
             groupBy: d.groupBy,
           },
         );
-        return getTask(db, source.id);
+        return { ...source, position, updatedAt };
       });
     });
     res.json({ task: tasks[0], tasks });

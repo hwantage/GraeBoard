@@ -6,9 +6,9 @@ import {
   normalizeSettings,
   propertiesFor,
   orderColumns,
-  propertyValue,
   PROPERTY_VALUE_MAX_LENGTH,
   CORE_PROPERTY_KEYS,
+  shortId,
 } from "../shared/domain.js";
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
@@ -256,7 +256,7 @@ export default function PropertiesManager({
                 return;
               }
               const p: Property = {
-                id: `prop_${crypto.randomUUID()}`,
+                id: shortId("p"),
                 name: "",
                 kind: "option",
                 visible: true,
@@ -356,8 +356,8 @@ export default function PropertiesManager({
               아래에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
             </p>
             <p className="field-help">
-              진척률·목표일을 날짜 뒤에 두려면 왼쪽 목록의 위·아래 버튼으로
-              순서를 바꾼 뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
+              속성을 날짜 뒤에 두려면 왼쪽 목록의 위·아래 버튼으로 순서를 바꾼
+              뒤 속성 저장을 누르세요. 팀원 모두에게 적용됩니다.
             </p>
           </section>
         )}
@@ -486,7 +486,7 @@ export default function PropertiesManager({
                         return;
                       }
                       const option: PropertyOption = {
-                        id: `opt_${crypto.randomUUID()}`,
+                        id: shortId("o"),
                         label: "",
                         backgroundColor: "#edf6f4",
                         dotColor: "#177b70",
@@ -503,8 +503,8 @@ export default function PropertiesManager({
                   값 이름은 최대 {PROPERTY_VALUE_MAX_LENGTH}자까지 입력할 수
                   있습니다.
                 </p>
-                <div className="admin-table-scroll">
-                  <table className="admin-table property-values">
+                <div className="settings-table-scroll">
+                  <table className="settings-table property-values">
                     <thead>
                       <tr>
                         <th>순서</th>
@@ -599,10 +599,7 @@ export default function PropertiesManager({
                           )}
                           <td>
                             {v.label.trim() ? (
-                              <PropertyBadge
-                                property={property}
-                                value={propertyValue(property, v)}
-                              />
+                              <PropertyBadge property={property} value={v.id} />
                             ) : (
                               <span className="muted">—</span>
                             )}

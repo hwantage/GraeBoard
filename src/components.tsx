@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { X, LoaderCircle, Check, ArrowRight, LockKeyhole } from "lucide-react";
+import { X, LoaderCircle, ArrowRight, LockKeyhole } from "lucide-react";
 import { api, send } from "./api";
 import { BrandLockup, Grae } from "./Brand";
+import { inkFor } from "./color";
 import type { Bootstrap, User } from "./types";
 
 export function Button({
@@ -163,13 +164,7 @@ export function Avatar({
 }) {
   const backgroundColor = user?.color || "#65818f";
   const initials = user?.avatarInitials || user?.name?.slice(0, 1) || "?";
-  const rgb = [1, 3, 5].map((start) =>
-    parseInt(backgroundColor.slice(start, start + 2), 16),
-  );
-  const color =
-    rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722 > 170
-      ? "#243642"
-      : "#ffffff";
+  const color = inkFor(backgroundColor);
   return (
     <span
       className={`avatar ${small ? "small" : ""} ${initials.length === 3 ? "long-initials" : ""}`}

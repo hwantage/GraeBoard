@@ -1,4 +1,4 @@
-import type { HistoryEntry, SavedCell, Style } from "./types";
+import type { HistoryEntry, SavedCell, Style, Border } from "./types";
 
 // Only advance a prior operation when it touches the exact version we restored.
 // A version gap belongs to another operation and must keep blocking undo.
@@ -42,9 +42,13 @@ export function describeStyle(style: Style) {
     italic: "기울임",
     underline: "밑줄",
     strike: "취소선",
-    wrap: "줄바꿈",
+    textMode: "텍스트 표시",
     textAlign: "가로 정렬",
     verticalAlign: "세로 정렬",
+    borderTop: "위 테두리",
+    borderRight: "오른쪽 테두리",
+    borderBottom: "아래 테두리",
+    borderLeft: "왼쪽 테두리",
   };
   const values: Record<string, string> = {
     left: "왼쪽",
@@ -53,13 +57,20 @@ export function describeStyle(style: Style) {
     top: "위",
     middle: "중간",
     bottom: "아래",
+    overflow: "오버플로우",
+    clip: "자르기",
+  };
+  const describe = (k: string, v: unknown) => {
+    if (typeof v === "boolean") return v ? "사용" : "해제";
+    if (k === "fontSize") return `${v}pt`;
+    if (v === null) return "없음";
+    if (typeof v === "object" && v && "style" in v)
+      return `${(v as Border).style} ${(v as Border).color}`;
+    return values[String(v)] || String(v);
   };
   return (
     Object.entries(style)
-      .map(
-        ([k, v]) =>
-          `${names[k] || k}: ${typeof v === "boolean" ? (v ? "사용" : "해제") : k === "fontSize" ? `${v}pt` : values[String(v)] || v}`,
-      )
+      .map(([k, v]) => `${names[k] || k}: ${describe(k, v)}`)
       .join(" · ") || "기본 서식"
   );
 }

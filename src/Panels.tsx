@@ -1,12 +1,11 @@
 import Select from "./Select";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Download,
   Upload,
   Plus,
   History,
   Trash2,
-  Check,
   LoaderCircle,
   FileSpreadsheet,
   Copy,
@@ -19,12 +18,11 @@ import {
   Pencil,
 } from "lucide-react";
 import { api, send, download } from "./api";
-import { Modal, Button, ErrorNote, Empty, Avatar } from "./components";
+import { Modal, Button, ErrorNote, Empty } from "./components";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
-import type { Task, User, Team, View, Report, Point, Settings } from "./types";
+import type { Task, User, View, Report, Point, Settings } from "./types";
 import {
-  FIELDS,
   fieldsFor,
   propertiesFor,
   displayValue,
@@ -36,11 +34,31 @@ import {
   todayKey,
 } from "../shared/domain.js";
 
+const AUDIT_LABELS: Record<string, string> = {
+  cells: "셀 편집",
+  reorder: "업무 순서 변경",
+  "property-convert": "속성 종류 변경",
+  "team-update": "팀 정보 변경",
+  "team-create": "팀 생성",
+  "team-members": "구성원 변경",
+  create: "업무 추가",
+  delete: "업무 삭제",
+  restore: "업무 복구",
+  report: "보고본 저장",
+  settings: "설정 변경",
+  export: "내보내기",
+  import: "자료 가져오기",
+  task: "업무 이동·이월",
+  setup: "초기 설정",
+};
+const formatDateTime = (iso: string) => new Date(iso).toLocaleString("ko-KR");
+
 export function RowPanel({
   settings,
   task,
   user,
   users,
+  readOnly = false,
   onClose,
   onEdit,
   onAction,
@@ -49,11 +67,13 @@ export function RowPanel({
   settings: Settings;
   user: User;
   users: User[];
+  // 보고본처럼 읽기 전용 화면에서는 권한과 무관하게 편집 동작을 숨긴다.
+  readOnly?: boolean;
   onClose: () => void;
   onEdit: (p: Point) => void;
   onAction: (action: string) => void;
 }) {
-  const editable = canEdit(user, task);
+  const editable = !readOnly && canEdit(user, task);
   return (
     <Modal title="업무 상세" onClose={onClose} className="task-detail-modal">
       <div className="task-detail-heading">
@@ -121,8 +141,8 @@ export function RowPanel({
           <Button onClick={() => onAction("hide")}>
             <EyeOff size={16} />이 업무 숨기기
           </Button>
-          {canContribute(user, task.teamId) && (
-            <Button onClick={() => onAction("copy")}>
+          {!readOnly && canContribute(user, task.teamId) && (
+            <Button onClick={() => onAction("duplicate")}>
               <Copy size={16} />
               복제
             </Button>
@@ -560,7 +580,7 @@ export function ReportsPanel({
                 <strong>{r.name}</strong>
                 <small>
                   {r.referenceDate} · 버전 {r.id.slice(0, 8)} · {r.author} ·{" "}
-                  {new Date(r.createdAt).toLocaleString("ko-KR")}
+                  {formatDateTime(r.createdAt)}
                 </small>
               </span>
               <ExternalLink size={16} />
@@ -596,22 +616,14 @@ export function HistoryPanel({
   const [entries, setEntries] = useState<any[]>([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const labels: Record<string, string> = {
-    cells: "셀 편집",
-    reorder: "업무 순서 변경",
-    "property-rename": "속성 값 이름 변경",
-    "team-update": "팀 정보 변경",
-    "team-create": "팀 생성",
-    create: "업무 추가",
-    delete: "업무 삭제",
-    restore: "업무 복구",
-    report: "보고본 저장",
-    settings: "설정 변경",
-    export: "내보내기",
-    import: "자료 가져오기",
-    task: "업무 이동·이월",
-    setup: "팀 생성",
-  };
+  const titleById = useMemo(
+    () => new Map(tasks.map((t) => [t.id, String(value(t, "title") || "")])),
+    [tasks],
+  );
+  const fieldLabels = useMemo(
+    () => new Map(fieldsFor(settings).map((f) => [f.key, f.label])),
+    [settings],
+  );
   const refresh = () =>
     api(`/audit?teamId=${teamId}${taskFilter ? `&taskId=${taskFilter}` : ""}`)
       .then((r) => setEntries(r.entries))
@@ -648,9 +660,9 @@ export function HistoryPanel({
               <span className="audit-icon">
                 <History size={15} />
               </span>
-              <strong>{labels[e.action] || e.action}</strong>
+              <strong>{AUDIT_LABELS[e.action] || e.action}</strong>
               <span>{e.actor}</span>
-              <time>{new Date(e.createdAt).toLocaleString("ko-KR")}</time>
+              <time>{formatDateTime(e.createdAt)}</time>
             </summary>
             {e.action === "cells" ? (
               <>
@@ -658,19 +670,9 @@ export function HistoryPanel({
                   {e.after.map((c: any, i: number) => (
                     <div key={i}>
                       <strong>
-                        {String(
-                          value(
-                            tasks.find((t) => t.id === c.taskId) || {
-                              cells: {},
-                            },
-                            "title",
-                          ) || c.taskId.slice(0, 8),
-                        )}
+                        {titleById.get(c.taskId) || c.taskId.slice(0, 8)}
                       </strong>
-                      <span>
-                        {fieldsFor(settings).find((f) => f.key === c.key)
-                          ?.label || c.key}
-                      </span>
+                      <span>{fieldLabels.get(c.key) || c.key}</span>
                       <span>
                         {displayValue(
                           { cells: { [c.key]: e.before[i] || { value: "" } } },
@@ -762,7 +764,7 @@ export function TrashPanel({
       .catch((e) => setError(e.message));
   useEffect(() => {
     refresh();
-  }, []);
+  }, [teamId, year]);
   return (
     <Modal title="휴지통" onClose={onClose}>
       <ErrorNote error={error} />
@@ -772,9 +774,7 @@ export function TrashPanel({
             <div className="trash-item" key={t.id}>
               <span>
                 {String(value(t, "title"))}
-                <small>
-                  {t.deletedAt && new Date(t.deletedAt).toLocaleString("ko-KR")}
-                </small>
+                <small>{t.deletedAt && formatDateTime(t.deletedAt)}</small>
               </span>
               <Button
                 onClick={async () => {

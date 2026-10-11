@@ -29,7 +29,6 @@ const BASE_STYLE: Required<Style> = {
   italic: false,
   underline: false,
   strike: false,
-  wrap: false,
   textMode: "overflow",
 };
 
@@ -83,12 +82,10 @@ function cleanStyle(input: unknown): Style {
     result.textAlign = s.textAlign as Style["textAlign"];
   if (["top", "middle", "bottom"].includes(String(s.verticalAlign)))
     result.verticalAlign = s.verticalAlign as Style["verticalAlign"];
-  for (const key of ["bold", "italic", "underline", "strike", "wrap"] as const)
+  for (const key of ["bold", "italic", "underline", "strike"] as const)
     if (typeof s[key] === "boolean") result[key] = s[key];
   if (["overflow", "wrap", "clip"].includes(String(s.textMode)))
     result.textMode = s.textMode as Style["textMode"];
-  else if (result.wrap !== undefined)
-    result.textMode = result.wrap ? "wrap" : "overflow";
   return result;
 }
 
@@ -120,7 +117,6 @@ export function createClipboard(
           color: key === "title" ? "#3e5661" : BASE_STYLE.color,
           ...cell(task, key).style,
           textMode: textMode(cell(task, key).style) as Style["textMode"],
-          wrap: textMode(cell(task, key).style) === "wrap",
         },
       })),
     ),
@@ -154,7 +150,7 @@ export function createClipboard(
               `text-decoration:${[s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none"}`,
               `text-align:${s.textAlign}`,
               `vertical-align:${s.verticalAlign}`,
-              `white-space:${s.wrap ? "pre-wrap" : "nowrap"}`,
+              `white-space:${textMode(s) === "wrap" ? "pre-wrap" : "nowrap"}`,
               `overflow:${s.textMode === "clip" ? "hidden" : "visible"}`,
               ...BORDER_SIDES.map(
                 (side) =>
@@ -186,20 +182,7 @@ export function copyToEvent(
   }
 }
 
-export async function copyToSystem(
-  contents: ReturnType<typeof createClipboard>,
-) {
-  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined")
-    throw new Error("표에 초점을 두고 Ctrl/Cmd+C로 복사하세요.");
-  await navigator.clipboard.write([
-    new ClipboardItem({
-      "text/plain": new Blob([contents["text/plain"]], { type: "text/plain" }),
-      "text/html": new Blob([contents["text/html"]], { type: "text/html" }),
-    }),
-  ]);
-}
-
-export function parseTSV(text: string): string[][] {
+function parseTSV(text: string): string[][] {
   const rows: string[][] = [[]];
   let token = "",
     quoted = false,
@@ -305,8 +288,7 @@ function htmlStyle(element: HTMLElement): Style {
     result.strike = decoration.includes("line-through");
   }
   if (s.whiteSpace) {
-    result.wrap = !["nowrap", "pre"].includes(s.whiteSpace);
-    result.textMode = result.wrap
+    result.textMode = !["nowrap", "pre"].includes(s.whiteSpace)
       ? "wrap"
       : s.overflow === "hidden"
         ? "clip"
@@ -314,7 +296,6 @@ function htmlStyle(element: HTMLElement): Style {
   }
   if (["overflow", "wrap", "clip"].includes(element.dataset.textMode || "")) {
     result.textMode = element.dataset.textMode as Style["textMode"];
-    result.wrap = result.textMode === "wrap";
   }
   return result;
 }

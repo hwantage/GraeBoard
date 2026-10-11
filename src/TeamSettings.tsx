@@ -7,24 +7,20 @@ import { Avatar, Button, ErrorNote } from "./components";
 import { getTheme } from "../shared/themes.js";
 import type { Team, TeamRole, ThemeId, User } from "./types";
 
-export const teamRoleNames: Record<TeamRole, string> = {
-  lead: "팀장",
-  member: "팀원",
-  viewer: "열람자",
-};
-const roleOrder: TeamRole[] = ["lead", "member", "viewer"];
-const roleHelp: Record<TeamRole, string> = {
-  lead: "팀 설정·구성원 관리, 모든 업무 편집",
-  member: "업무 등록, 담당·지원 업무 편집",
-  viewer: "조회·내보내기만 가능",
-};
+import { teamRoleNames, teamRoleOrder, teamRoleHelp } from "./roles";
 
 type Notify = (message: string) => void;
 type Member = { userId: string; role: TeamRole };
-type Person = Pick<
+type UserSummary = Pick<
   User,
-  "id" | "username" | "name" | "active" | "color" | "avatarInitials"
-> & { avatarImage?: string };
+  | "id"
+  | "username"
+  | "name"
+  | "active"
+  | "color"
+  | "avatarInitials"
+  | "avatarImage"
+>;
 
 export function TeamGeneral({
   team,
@@ -146,24 +142,23 @@ export function TeamGeneral({
 export function TeamMembers({
   team,
   user,
-  isAdmin,
   onSaved,
   onMessage,
 }: {
   team: Team;
   user: User;
-  isAdmin: boolean;
   onSaved: () => Promise<void>;
   onMessage: Notify;
 }) {
+  const isAdmin = user.systemRole === "admin";
   const [members, setMembers] = useState<Member[] | null>(null),
-    [people, setPeople] = useState<Person[]>([]),
+    [people, setPeople] = useState<UserSummary[]>([]),
     [candidate, setCandidate] = useState(""),
     [candidateRole, setCandidateRole] = useState<TeamRole>("member"),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   async function load() {
-    const r = await api<{ members: Member[]; users: Person[] }>(
+    const r = await api<{ members: Member[]; users: UserSummary[] }>(
       `/teams/${team.id}/members`,
     );
     setMembers(r.members);
@@ -179,7 +174,7 @@ export function TeamMembers({
         .map((m) => ({ ...m, person: byId.get(m.userId) }))
         .sort(
           (a, b) =>
-            roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role) ||
+            teamRoleOrder.indexOf(a.role) - teamRoleOrder.indexOf(b.role) ||
             (a.person?.name || "").localeCompare(b.person?.name || "", "ko"),
         ),
     [members, byId],
@@ -225,16 +220,14 @@ export function TeamMembers({
   return (
     <>
       <ErrorNote error={error} />
-      <div className="section-heading">
-        <h4 aria-live="polite">
-          구성원 {members?.length ?? 0}명
-          <span className="member-total">
-            {roleOrder
-              .map((role) => ` · ${teamRoleNames[role]} ${count(role)}`)
-              .join("")}
-          </span>
-        </h4>
-      </div>
+      <h4 className="list-heading" aria-live="polite">
+        구성원 {members?.length ?? 0}명
+        <span className="list-count">
+          {teamRoleOrder
+            .map((role) => ` · ${teamRoleNames[role]} ${count(role)}`)
+            .join("")}
+        </span>
+      </h4>
       <form
         className="member-add"
         aria-label="구성원 추가"
@@ -271,7 +264,7 @@ export function TeamMembers({
           disabled={busy}
           onChange={(e) => setCandidateRole(e.target.value as TeamRole)}
         >
-          {roleOrder.map((role) => (
+          {teamRoleOrder.map((role) => (
             <option key={role} value={role}>
               {teamRoleNames[role]}
             </option>
@@ -289,15 +282,15 @@ export function TeamMembers({
         담당자로는 팀장·팀원만 지정할 수 있습니다.
       </p>
       <dl className="role-legend" aria-label="팀 내 권한 안내">
-        {roleOrder.map((role) => (
+        {teamRoleOrder.map((role) => (
           <div key={role}>
             <dt>{teamRoleNames[role]}</dt>
-            <dd>{roleHelp[role]}</dd>
+            <dd>{teamRoleHelp[role]}</dd>
           </div>
         ))}
       </dl>
-      <div className="admin-table-scroll">
-        <table className="admin-table team-members-table">
+      <div className="settings-table-scroll">
+        <table className="settings-table team-members-table">
           <thead>
             <tr>
               <th>구성원</th>
@@ -313,7 +306,7 @@ export function TeamMembers({
               return (
                 <tr key={userId}>
                   <td>
-                    <div className="member-identity">
+                    <div className="identity-cell">
                       <Avatar user={person} />
                       <span>
                         <strong>
@@ -344,7 +337,7 @@ export function TeamMembers({
                         );
                       }}
                     >
-                      {roleOrder.map((r) => (
+                      {teamRoleOrder.map((r) => (
                         <option key={r} value={r}>
                           {teamRoleNames[r]}
                         </option>
@@ -376,14 +369,14 @@ export function TeamMembers({
             })}
             {members && !rows.length && (
               <tr>
-                <td colSpan={3} className="members-empty">
+                <td colSpan={3} className="table-empty">
                   아직 구성원이 없습니다. 위에서 사용자를 추가하세요.
                 </td>
               </tr>
             )}
             {!members && !error && (
               <tr>
-                <td colSpan={3} className="members-empty">
+                <td colSpan={3} className="table-empty">
                   불러오는 중…
                 </td>
               </tr>

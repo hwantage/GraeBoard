@@ -4,13 +4,8 @@ import Select from "./Select";
 import AvatarEditor from "./AvatarEditor";
 import { send } from "./api";
 import { Avatar, Button, ErrorNote } from "./components";
-import { teamRoleNames } from "./TeamSettings";
+import { systemRoleNames, teamRoleNames } from "./roles";
 import type { Team, User } from "./types";
-
-export const systemRoleNames = {
-  admin: "시스템 관리자",
-  user: "일반 사용자",
-};
 
 export default function UserAccounts({
   users,
@@ -73,7 +68,7 @@ export default function UserAccounts({
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
-        <span className="member-total" aria-live="polite">
+        <span className="list-count" aria-live="polite">
           {needle ? `${shown.length}명 / ` : ""}전체 {users.length}명
         </span>
         <Button
@@ -85,8 +80,8 @@ export default function UserAccounts({
         </Button>
       </div>
       {edit && !edit.id && form}
-      <div className="admin-table-scroll">
-        <table className="admin-table members-table">
+      <div className="settings-table-scroll">
+        <table className="settings-table users-table">
           <thead>
             <tr>
               <th>사용자 / 아이디(이메일)</th>
@@ -105,7 +100,7 @@ export default function UserAccounts({
                 <Fragment key={u.id}>
                   <tr className={editing ? "editing" : undefined}>
                     <td>
-                      <div className="member-identity">
+                      <div className="identity-cell">
                         <Avatar user={u} />
                         <span>
                           <strong>{u.name}</strong>
@@ -163,7 +158,7 @@ export default function UserAccounts({
             })}
             {!shown.length && (
               <tr>
-                <td colSpan={5} className="members-empty">
+                <td colSpan={5} className="table-empty">
                   {needle
                     ? "검색 결과가 없습니다."
                     : "등록된 사용자가 없습니다."}
@@ -210,7 +205,7 @@ function UserForm({
     <form
       ref={ref}
       autoComplete="off"
-      className="admin-edit"
+      className="settings-form"
       aria-label={editing ? `${initial.name} 사용자 수정` : "신규 사용자"}
       onSubmit={async (e) => {
         e.preventDefault();
@@ -243,7 +238,7 @@ function UserForm({
         }
       }}
     >
-      <div className="admin-edit-heading">
+      <div className="settings-form-heading">
         <h3>{editing ? `${initial.name} 수정` : "신규 사용자"}</h3>
         {/* 계정 상태는 폼 전체에 해당하므로 제목 옆에 둔다. */}
         <label className="switch-field">
@@ -252,7 +247,6 @@ function UserForm({
             type="checkbox"
             role="switch"
             aria-label="계정 활성화"
-            name="active"
             checked={active}
             onChange={(e) => setActive(e.target.checked)}
           />

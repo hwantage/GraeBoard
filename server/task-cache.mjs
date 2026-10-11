@@ -11,10 +11,15 @@ export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
         .get(teamId)?.version || 0;
     return `"${teamId}:${year}:${deleted ? 1 : 0}:${version}"`;
   };
-  const cachedTasks = (teamId, year, deleted) => {
+  // 호출자가 이미 ETag를 계산했으면 넘겨서 revision을 두 번 읽지 않게 한다.
+  const cachedTasks = (
+    teamId,
+    year,
+    deleted,
+    etag = etagFor(teamId, year, deleted),
+  ) => {
     const key = `${teamId}:${year}:${deleted ? 1 : 0}`;
-    const etag = etagFor(teamId, year, deleted),
-      existing = entries.get(key);
+    const existing = entries.get(key);
     if (existing?.etag === etag) return existing;
     if (existing) {
       bytes -= existing.size;

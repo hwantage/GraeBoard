@@ -7,8 +7,15 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
-import { DEFAULT_SETTINGS, weeksForYear, todayKey } from "../shared/domain.js";
+import {
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  weeksForYear,
+  todayKey,
+} from "../shared/domain.js";
 
+// 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
+export const SCHEMA_VERSION = 5;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -21,6 +28,9 @@ export const parse = (v, fallback = null) => {
     return fallback;
   }
 };
+// 팀 행의 settings JSON을 현재 형식으로 읽는다. 손상된 JSON은 기본값으로 대체한다.
+export const teamSettings = (row) =>
+  normalizeSettings(parse(row.settings, DEFAULT_SETTINGS));
 export function passwordHash(password) {
   const salt = randomBytes(16).toString("hex");
   return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`;
@@ -48,10 +58,10 @@ export function openDatabase(
   );
   db.exec(`
     CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,system_role TEXT NOT NULL DEFAULT 'user',active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',avatar_initials TEXT NOT NULL DEFAULT '',avatar_image TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),role TEXT NOT NULL DEFAULT 'member',PRIMARY KEY(user_id,team_id));
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,default_style TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
     CREATE INDEX IF NOT EXISTS tasks_team_idx ON tasks(team_id,deleted_at,position);
     CREATE TABLE IF NOT EXISTS views(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(user_id,team_id,year,name));
@@ -61,7 +71,6 @@ export function openDatabase(
     CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL REFERENCES users(id),response TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),filename TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,applied_at TEXT,result TEXT);
     CREATE TABLE IF NOT EXISTS team_revisions(team_id TEXT PRIMARY KEY REFERENCES teams(id),version INTEGER NOT NULL DEFAULT 0);
-    INSERT OR IGNORE INTO team_revisions(team_id) SELECT id FROM teams;
     CREATE TRIGGER IF NOT EXISTS revision_team_insert AFTER INSERT ON teams BEGIN INSERT OR IGNORE INTO team_revisions(team_id) VALUES(NEW.id); END;
     CREATE TRIGGER IF NOT EXISTS revision_task_insert AFTER INSERT ON tasks BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=NEW.team_id; END;
     CREATE TRIGGER IF NOT EXISTS revision_task_update AFTER UPDATE ON tasks BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=NEW.team_id; END;
@@ -69,41 +78,8 @@ export function openDatabase(
     CREATE TRIGGER IF NOT EXISTS revision_cell_insert AFTER INSERT ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=NEW.task_id); END;
     CREATE TRIGGER IF NOT EXISTS revision_cell_update AFTER UPDATE ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=NEW.task_id); END;
     CREATE TRIGGER IF NOT EXISTS revision_cell_delete AFTER DELETE ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=OLD.task_id); END;
+    PRAGMA user_version=${SCHEMA_VERSION};
   `);
-  if (
-    !db
-      .prepare("PRAGMA table_info(tasks)")
-      .all()
-      .some((c) => c.name === "default_style")
-  )
-    db.exec(
-      "ALTER TABLE tasks ADD COLUMN default_style TEXT NOT NULL DEFAULT '{}'",
-    );
-  const userColumns = db.prepare("PRAGMA table_info(users)").all();
-  for (const column of ["avatar_initials", "avatar_image"])
-    if (!userColumns.some((c) => c.name === column))
-      db.exec(
-        `ALTER TABLE users ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
-      );
-  if (
-    !db
-      .prepare("PRAGMA table_info(memberships)")
-      .all()
-      .some((c) => c.name === "role")
-  )
-    // 역할을 사용자 전역 값에서 팀별 값으로 옮긴다. 기존 권한은 그대로 유지된다:
-    // 시스템 관리자와 팀 관리자는 소속 팀의 팀장, 나머지는 같은 이름의 팀 내 권한.
-    transaction(db, () => {
-      db.exec(
-        "ALTER TABLE memberships ADD COLUMN role TEXT NOT NULL DEFAULT 'member'",
-      );
-      db.exec(`UPDATE memberships SET role=CASE
-        (SELECT role FROM users WHERE id=memberships.user_id)
-        WHEN 'admin' THEN 'lead' WHEN 'manager' THEN 'lead'
-        WHEN 'viewer' THEN 'viewer' ELSE 'member' END`);
-      db.exec("UPDATE users SET role='user' WHERE role<>'admin'");
-    });
-  db.exec("PRAGMA user_version=4");
   return db;
 }
 export function transaction(db, work) {
@@ -117,29 +93,91 @@ export function transaction(db, work) {
     throw e;
   }
 }
-export function userInfo(db, u) {
+// API에 내보내는 사용자 객체: 프로필과 함께 소속 팀·팀 내 권한을 담는다.
+export function userWithTeams(db, u) {
   if (!u) return null;
-  const memberships = db
-    .prepare("SELECT team_id,role FROM memberships WHERE user_id=?")
-    .all(u.id);
-  return {
-    id: u.id,
-    username: u.username,
-    name: u.name,
-    systemRole: u.role === "admin" ? "admin" : "user",
-    active: !!u.active,
-    color: u.color,
-    avatarInitials: u.avatar_initials || "",
-    avatarImage: u.avatar_image || "",
-    teamIds: memberships.map((m) => m.team_id),
-    teamRoles: Object.fromEntries(memberships.map((m) => [m.team_id, m.role])),
-  };
+  return usersWithTeams(db, [u])[0];
+}
+// 사용자 행 여러 개를 한 번에 변환한다. 소속은 한 번의 조회로 모아 읽어
+// 사용자 수만큼 조회가 늘어나지 않게 한다.
+export function usersWithTeams(db, rows) {
+  if (!rows.length) return [];
+  const memberships = new Map(rows.map((u) => [u.id, []]));
+  for (let offset = 0; offset < rows.length; offset += 500) {
+    const ids = rows.slice(offset, offset + 500).map((u) => u.id);
+    for (const m of db
+      .prepare(
+        `SELECT user_id,team_id,role FROM memberships WHERE user_id IN (${ids.map(() => "?").join(",")}) ORDER BY rowid`,
+      )
+      .all(...ids))
+      memberships.get(m.user_id).push(m);
+  }
+  return rows.map((u) => {
+    const mine = memberships.get(u.id);
+    return {
+      id: u.id,
+      username: u.username,
+      name: u.name,
+      systemRole: u.system_role,
+      active: !!u.active,
+      color: u.color,
+      avatarInitials: u.avatar_initials || "",
+      avatarImage: u.avatar_image || "",
+      teamIds: mine.map((m) => m.team_id),
+      teamRoles: Object.fromEntries(mine.map((m) => [m.team_id, m.role])),
+    };
+  });
+}
+const INSERT_MEMBERSHIP =
+  "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,?)";
+export function addMembership(db, userId, teamId, role) {
+  db.prepare(INSERT_MEMBERSHIP).run(userId, teamId, role);
+}
+// 한 사용자의 소속을 통째로 바꾼다. rows: [{teamId, role}]
+export function replaceUserMemberships(db, userId, rows) {
+  db.prepare("DELETE FROM memberships WHERE user_id=?").run(userId);
+  const add = db.prepare(INSERT_MEMBERSHIP);
+  for (const m of rows) add.run(userId, m.teamId, m.role);
+}
+// 한 팀의 구성원을 통째로 바꾼다. rows: [{userId, role}]
+export function replaceTeamMembers(db, teamId, rows) {
+  db.prepare("DELETE FROM memberships WHERE team_id=?").run(teamId);
+  const add = db.prepare(INSERT_MEMBERSHIP);
+  for (const m of rows) add.run(m.userId, teamId, m.role);
+}
+export const upsertCellStatement = (db) =>
+  db.prepare(
+    "INSERT INTO cells(task_id,key,value,style,version) VALUES(?,?,?,?,?) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style=excluded.style,version=excluded.version",
+  );
+// 업무의 수정 시각을 이전 값보다 뒤로 올린다. 같은 밀리초에 바뀌어도 값이 달라진다.
+export function touchTasks(db, tasks) {
+  const put = db.prepare("UPDATE tasks SET updated_at=? WHERE id=?");
+  const stamps = {};
+  for (const t of tasks) {
+    stamps[t.id] = nextTaskStamp(t.updatedAt);
+    put.run(stamps[t.id], t.id);
+  }
+  return stamps;
 }
 export function getTask(db, taskId) {
   const t = db.prepare("SELECT * FROM tasks WHERE id=?").get(taskId);
   return t ? hydrateTasks(db, [t])[0] : null;
 }
-export function hydrateTasks(db, rows) {
+export function getTasksById(db, ids) {
+  const rows = [];
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const chunk = ids.slice(offset, offset + 500);
+    rows.push(
+      ...db
+        .prepare(
+          `SELECT * FROM tasks WHERE id IN (${chunk.map(() => "?").join(",")})`,
+        )
+        .all(...chunk),
+    );
+  }
+  return hydrateTasks(db, rows);
+}
+function hydrateTasks(db, rows) {
   if (!rows.length) return [];
   const map = new Map(
     rows.map((t) => [
@@ -214,15 +252,11 @@ export function insertTask(
     n,
     json(defaultStyle),
   );
-  const add = db.prepare(
-    "INSERT INTO cells(task_id,key,value,style,version) VALUES(?,?,?,?,1)",
-  );
+  const put = upsertCellStatement(db);
   for (const [key, val] of Object.entries(fields))
-    add.run(taskId, key, json(val), "{}");
+    put.run(taskId, key, json(val), "{}", 1);
   for (const [key, c] of Object.entries(cells))
-    db.prepare(
-      "INSERT INTO cells(task_id,key,value,style,version) VALUES(?,?,?,?,1) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style=excluded.style",
-    ).run(taskId, key, json(c.value ?? ""), json(c.style || {}));
+    put.run(taskId, key, json(c.value ?? ""), json(c.style || {}), 1);
   return getTask(db, taskId);
 }
 export function audit(db, actorId, teamId, action, target, before, after) {
@@ -238,7 +272,7 @@ export function audit(db, actorId, teamId, action, target, before, after) {
   );
 }
 export function seedDemo(db, user, teamId, year) {
-  const people = [user];
+  const users = [user];
   for (const [name, color] of [
     ["서연", "#9b73bc"],
     ["민준", "#397ca6"],
@@ -251,21 +285,18 @@ export function seedDemo(db, user, teamId, year) {
       active: 0,
     };
     db.prepare(
-      "INSERT INTO users(id,username,name,password,role,active,color,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      "INSERT INTO users(id,username,name,password,active,color,created_at) VALUES(?,?,?,?,?,?,?)",
     ).run(
       u.id,
       u.username,
       name,
       passwordHash(randomBytes(32).toString("hex")),
-      "user",
       0,
       color,
       now(),
     );
-    db.prepare(
-      "INSERT INTO memberships(user_id,team_id,role) VALUES(?,?,'member')",
-    ).run(u.id, teamId);
-    people.push(u);
+    addMembership(db, u.id, teamId, "member");
+    users.push(u);
   }
   const titles = [
     "디자인 시스템 컴포넌트 가이드 정리",
@@ -286,7 +317,7 @@ export function seedDemo(db, user, teamId, year) {
   let center = weeks.findIndex((w) => w.key <= today && w.end >= today);
   if (center < 0) center = 5;
   titles.forEach((title, i) => {
-    const owner = people[i % people.length],
+    const owner = users[i % users.length],
       start = Math.max(0, center - 3 + (i % 6));
     const cells = {};
     for (let j = 0; j < 3 + (i % 3) && start + j < weeks.length; j++) {
@@ -306,12 +337,17 @@ export function seedDemo(db, user, teamId, year) {
         title,
         description:
           "예시 데이터입니다. 실제 업무를 등록하거나 파일을 가져와 시작하세요.",
-        category: i < 8 ? "UX 개선" : "차별화",
-        type: ["기획", "디자인", "검토", "개발"][i % 4],
+        category: i < 8 ? "category-ux" : "category-new",
+        type: ["type-plan", "type-design", "type-review", "type-dev"][i % 4],
         owner: owner.id,
-        supporters: i % 3 === 0 ? [people[(i + 1) % 3].id] : [],
-        status: ["진행 중", "예정", "검토 중", "완료"][i % 4],
-        progress: [50, 0, 80, 100][i % 4],
+        supporters: i % 3 === 0 ? [users[(i + 1) % 3].id] : [],
+        status: [
+          "status-progress",
+          "status-planned",
+          "status-review",
+          "status-completed",
+        ][i % 4],
+        progress: ["50%", "0%", "80%", "100%"][i % 4],
         deadline: weeks[Math.min(start + 3, weeks.length - 1)].date,
         score: 5 + (i % 4) * 5,
         current: i % 4 === 3 ? 10 : 0,

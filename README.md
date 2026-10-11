@@ -45,7 +45,7 @@ npm run dev
 | [사용 안내](docs/USER_GUIDE.md) | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본 |
 | [운영 안내](docs/OPERATIONS.md) | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트 |
 | [개발 안내](docs/DEVELOPMENT.md) | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위 |
-| [데이터 형식과 API](docs/DATA_FORMAT.md) | 셀·속성·보기·보고본, 버전 호환성, 접근 규칙 |
+| [데이터 형식과 API](docs/DATA_FORMAT.md) | 셀·속성·보기·보고본, 접근 규칙 |
 | [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록 |
 
 ## 검증

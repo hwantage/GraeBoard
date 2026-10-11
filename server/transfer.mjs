@@ -6,12 +6,10 @@ import multer from "multer";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  FIELDS,
   FONTS,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
   normalizeFont,
-  FIELD_KEYS,
   weeksForYear,
   mondayOf,
   dateKey,
@@ -22,10 +20,12 @@ import {
   fieldsFor,
   orderColumns,
   propertiesFor,
-  propertyValue,
   propertyOption,
-  normalizeSettings,
+  sampleProperties,
   textMode,
+  splitNames,
+  canManageTeam,
+  shortId,
 } from "../shared/domain.js";
 import {
   id,
@@ -60,6 +60,8 @@ const aliases = {
   current: ["current"],
   id: ["업무 ID", "id"],
 };
+// 예시 양식의 속성은 팀에 없어도 가져오기 열을 연결할 수 있다. 적용 시 정의를 추가한다.
+const SAMPLE_PROPERTIES = sampleProperties();
 export const stableId = (s) => {
   const h = createHash("sha256").update(s).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
@@ -162,17 +164,8 @@ function cellStyle(c, warnings, label) {
     s.textAlign = a.horizontal;
   if (["top", "middle", "bottom"].includes(a.vertical))
     s.verticalAlign = a.vertical;
-  if (a.wrapText) {
-    s.wrap = true;
-    s.textMode = "wrap";
-  }
+  if (a.wrapText) s.textMode = "wrap";
   return s;
-}
-export function readTransferCell(c, warnings = []) {
-  return {
-    value: rawValue(c, warnings, c.address),
-    style: cellStyle(c, warnings, c.address),
-  };
 }
 function dateFromHeader(value, year) {
   if (value && typeof value === "object" && !(value instanceof Date))
@@ -289,7 +282,7 @@ export async function inspectWorkbook(
       });
     for (const [key, col] of Object.entries(options.columns || {})) {
       requireThat(
-        FIELD_KEYS.includes(key) ||
+        SAMPLE_PROPERTIES.some((p) => p.id === key) ||
           propertiesFor(settings).some((p) => p.id === key),
         400,
         "가져올 속성 연결을 확인하세요.",
@@ -380,9 +373,10 @@ export async function inspectWorkbook(
       for (const [key, col] of Object.entries(mapping)) {
         if (key === "id") continue;
         const c = sheet.getCell(row, col);
-        const fieldType =
-          fieldsFor(settings).find((f) => f.key === key)?.type ||
-          FIELDS.find((f) => f.key === key)?.type;
+        const fieldType = (
+          propertiesFor(settings).find((p) => p.id === key) ||
+          SAMPLE_PROPERTIES.find((p) => p.id === key)
+        )?.kind;
         let value = rawValue(c, rowWarnings, c.address);
         if (
           key === "progress" &&
@@ -407,12 +401,7 @@ export async function inspectWorkbook(
             value = "";
           }
         }
-        if (
-          fieldType === "number" &&
-          value !== "" &&
-          (!Number.isFinite(value) ||
-            (["score", "current"].includes(key) && value < 0))
-        ) {
+        if (fieldType === "number" && value !== "" && !Number.isFinite(value)) {
           notes.push(`${key}: ${value}`);
           rowWarnings.push(
             `${c.address}: 범위를 벗어난 숫자는 설명에 보존합니다.`,
@@ -463,20 +452,13 @@ export async function inspectWorkbook(
         };
       }
       const ownerName = String(fields.owner || "").trim(),
-        supporterNames = String(fields.supporters || "")
-          .split(/[,\n;]/)
-          .map((s) => s.trim())
-          .filter(Boolean);
+        supporterNames = splitNames(fields.supporters);
       if (ownerName) unresolved.add(ownerName);
       supporterNames.forEach((n) => unresolved.add(n));
       for (const p of propertiesFor(settings).filter(
         (p) => p.kind === "member" && !["owner", "supporters"].includes(p.id),
       )) {
-        String(fields[p.id] || "")
-          .split(/[,;\n]/)
-          .map((n) => n.trim())
-          .filter(Boolean)
-          .forEach((n) => unresolved.add(n));
+        splitNames(fields[p.id]).forEach((n) => unresolved.add(n));
       }
       rows.push({
         row,
@@ -584,8 +566,9 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
   const ws = wb.addWorksheet(String(year), {
     views: [{ state: "frozen", xSplit: Math.min(3, keys.length), ySplit: 1 }],
   });
+  const labels = fieldLabels(settings);
   ws.columns = keys.map((k) => ({
-    header: fieldsFor(settings).find((f) => f.key === k)?.label || k,
+    header: labels.get(k) || k,
     key: k,
     width: k === "title" ? 42 : k === "description" ? 45 : 16,
   }));
@@ -632,9 +615,11 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
   };
   return wb.xlsx.writeBuffer();
 }
+const fieldLabels = (settings) =>
+  new Map(fieldsFor(settings).map((f) => [f.key, f.label]));
 export function installTransferRoutes(
   app,
-  { db, teamAccess, teamPeople, manager },
+  { db, teamAccess, managedTeam, assignableUsers, referencedUsers },
 ) {
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -651,7 +636,8 @@ export function installTransferRoutes(
         keys: z.array(z.string()).max(150).optional(),
       })
       .parse(req.body);
-    const settings = teamAccess(req.user, d.teamId).settings;
+    const team = teamAccess(req.user, d.teamId),
+      settings = team.settings;
     let tasks = getTasks(db, d.teamId, d.year);
     if (d.scope === "view") {
       const selected = new Set(d.taskIds);
@@ -675,7 +661,7 @@ export function installTransferRoutes(
       400,
       "내보낼 열을 확인하세요.",
     );
-    const users = teamPeople(d.teamId, true);
+    const users = referencedUsers(d.teamId);
     audit(db, req.user.id, d.teamId, "export", id(), undefined, {
       format: d.format,
       scope: d.scope,
@@ -693,10 +679,9 @@ export function installTransferRoutes(
     if (d.format === "csv") {
       const quote = (v) =>
         '"' + safeSpreadsheetText(v).replaceAll('"', '""') + '"';
+      const labels = fieldLabels(settings);
       const rows = [
-        keys.map(
-          (k) => fieldsFor(settings).find((f) => f.key === k)?.label || k,
-        ),
+        keys.map((k) => labels.get(k) || k),
         ...tasks.map((t) =>
           keys.map((k) => displayValue(t, k, users, settings)),
         ),
@@ -706,7 +691,7 @@ export function installTransferRoutes(
         .send("\uFEFF" + rows.map((r) => r.map(quote).join(",")).join("\r\n"));
     }
     const reports =
-      manager(req.user, d.teamId) && d.scope === "all"
+      canManageTeam(req.user, d.teamId) && d.scope === "all"
         ? db
             .prepare(
               "SELECT name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
@@ -725,7 +710,7 @@ export function installTransferRoutes(
         format: "weekly-plan",
         schemaVersion: 1,
         exportedAt: now(),
-        team: teamAccess(req.user, d.teamId),
+        team,
         year: d.year,
         tasks: tasks.map((t) =>
           d.scope === "all"
@@ -746,10 +731,9 @@ export function installTransferRoutes(
   app.post("/api/import/preview", upload.single("file"), async (req, res) => {
     const teamId = z.string().uuid().parse(req.body.teamId),
       year = yearSchema.parse(req.body.year);
-    teamAccess(req.user, teamId);
-    requireThat(
-      manager(req.user, teamId),
-      403,
+    const team = managedTeam(
+      req.user,
+      teamId,
       "팀장만 자료를 가져올 수 있습니다.",
     );
     requireThat(req.file, 400, "가져올 XLSX 파일을 선택하세요.");
@@ -797,7 +781,7 @@ export function installTransferRoutes(
       sheets = await inspectWorkbook(
         req.file.buffer,
         year,
-        teamAccess(req.user, teamId).settings,
+        team.settings,
         sheetOptions,
       );
       db.prepare(
@@ -811,7 +795,7 @@ export function installTransferRoutes(
         now(),
       );
     }
-    const users = teamPeople(teamId),
+    const users = assignableUsers(teamId),
       personMap = {};
     sheets
       .flatMap((s) => s.unresolved)
@@ -844,8 +828,7 @@ export function installTransferRoutes(
       .prepare("SELECT * FROM imports WHERE id=?")
       .get(req.params.id);
     requireThat(imp, 404, "이관 기록을 찾을 수 없습니다.");
-    teamAccess(req.user, imp.team_id);
-    requireThat(manager(req.user, imp.team_id), 403, "팀장 권한이 필요합니다.");
+    managedTeam(req.user, imp.team_id);
     res
       .attachment("import-exceptions.json")
       .type("application/json")
@@ -875,15 +858,14 @@ export function installTransferRoutes(
       .prepare("SELECT * FROM imports WHERE id=?")
       .get(req.params.id);
     requireThat(imp, 404, "이관 미리보기를 찾을 수 없습니다.");
-    const team = teamAccess(req.user, imp.team_id);
-    requireThat(manager(req.user, team.id), 403, "팀장 권한이 필요합니다.");
+    const team = managedTeam(req.user, imp.team_id);
     const opKey = stableId(`${imp.id}:${d.sheet}:${d.mode}:${d.year}`),
       old = db.prepare("SELECT response FROM operations WHERE id=?").get(opKey);
     if (old) return res.json({ ...parse(old.response), repeated: true });
     const sheet = parse(imp.data).find((s) => s.name === d.sheet);
     requireThat(sheet?.rows.length, 400, "업무가 있는 시트를 선택하세요.");
-    const people = teamPeople(team.id),
-      ids = new Set(people.map((u) => u.id));
+    const users = assignableUsers(team.id),
+      ids = new Set(users.map((u) => u.id));
     for (const name of sheet.unresolved)
       requireThat(
         ids.has(d.personMap[name]),
@@ -895,17 +877,12 @@ export function installTransferRoutes(
         hiddenRows = [],
         rowHeights = {};
       const settings = structuredClone(team.settings);
-      const legacy = normalizeSettings({
-        ...settings,
-        propertiesVersion: 1,
-        properties: [],
-      }).properties;
       const importedKeys = new Set(
         sheet.rows.flatMap((r) => Object.keys(r.fields)),
       );
       for (const key of importedKeys) {
         if (settings.properties.some((p) => p.id === key)) continue;
-        const definition = legacy.find((p) => p.id === key);
+        const definition = SAMPLE_PROPERTIES.find((p) => p.id === key);
         if (definition)
           settings.properties.push({ ...definition, visible: true });
       }
@@ -914,52 +891,37 @@ export function installTransferRoutes(
         const fields = {
           ...row.fields,
           owner: d.personMap[row.ownerName] || "",
-          supporters: row.supporterNames.map((n) => d.personMap[n]),
         };
-        for (const [key, list] of [
-          ["category", "categories"],
-          ["type", "types"],
-          ["status", "statuses"],
-        ]) {
-          if (fields[key] && !settings[list].includes(fields[key])) {
-            settings[list] = [...settings[list], String(fields[key])];
-            const property = settings.properties?.find((p) => p.id === key);
-            if (property)
-              property.values.push({
-                id: `opt_${id()}`,
-                label: String(fields[key]),
-                backgroundColor: "#edf6f4",
-                dotColor: "#177b70",
-                emoji: "📌",
-              });
-          }
-        }
+        // 지원자 열은 예시 양식에만 있으므로 팀에 정의된 경우에만 채운다.
+        if (propertiesFor(settings).some((p) => p.id === "supporters"))
+          fields.supporters = row.supporterNames.map((n) => d.personMap[n]);
+        else delete fields.supporters;
+        // 선택형 값은 이름으로 옵션을 찾아 ID로 저장한다. 없는 이름은 새 옵션으로 추가한다.
         for (const property of propertiesFor(settings).filter(
-          (p) => p.id.startsWith("prop_") && p.kind === "option",
+          (p) => p.kind === "option",
         )) {
-          if (fields[property.id]) {
-            const option = property.values.find(
-              (v) =>
-                !v.archived &&
-                (v.label === String(fields[property.id]) ||
-                  v.id === fields[property.id]),
-            );
-            requireThat(
-              option,
-              400,
-              `${property.name}에 없는 값입니다: ${fields[property.id]}. 속성 관리에서 먼저 추가하세요.`,
-            );
-            fields[property.id] = propertyValue(property, option);
+          const text = String(fields[property.id] ?? "");
+          if (!text) continue;
+          let option = property.values.find(
+            (v) => !v.archived && (v.label === text || v.id === text),
+          );
+          if (!option) {
+            option = {
+              id: shortId("o"),
+              label: text,
+              backgroundColor: "#edf6f4",
+              dotColor: "#177b70",
+              emoji: "📌",
+            };
+            property.values.push(option);
           }
+          fields[property.id] = option.id;
         }
         for (const p of propertiesFor(settings).filter(
           (p) => p.kind === "member" && !["owner", "supporters"].includes(p.id),
         )) {
           if (fields[p.id] === undefined) continue;
-          const names = String(fields[p.id] || "")
-            .split(/[,;\n]/)
-            .map((n) => n.trim())
-            .filter(Boolean);
+          const names = splitNames(fields[p.id]);
           requireThat(
             p.multiple || names.length <= 1,
             400,
@@ -1025,7 +987,7 @@ export function installTransferRoutes(
           now(),
           json({
             tasks,
-            users: people.map(profileSnapshot),
+            users: users.map(profileSnapshot),
             view,
             settings,
           }),

@@ -15,7 +15,11 @@ import {
   passwordHash,
   transaction,
 } from "../server/db.mjs";
-import { DEFAULT_SETTINGS, weeksForYear } from "../shared/domain.js";
+import {
+  DEFAULT_SETTINGS,
+  sampleProperties,
+  weeksForYear,
+} from "../shared/domain.js";
 
 const taskCount = Number(process.argv[2] || 2000),
   throttle = Number(process.argv[3] || 4);
@@ -35,11 +39,11 @@ try {
     db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
       team,
       "성능 검증팀",
-      json(DEFAULT_SETTINGS),
+      json({ ...DEFAULT_SETTINGS, properties: sampleProperties() }),
     );
     const uid = id();
     db.prepare(
-      "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+      "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
     ).run(
       uid,
       "perf",
@@ -68,8 +72,8 @@ try {
       for (const [key, value] of Object.entries({
         title: `검증 업무 ${i}`,
         owner: uid,
-        status: "진행 중",
-        category: "UX 개선",
+        status: "status-progress",
+        category: "category-ux",
       }))
         addCell.run(tid, key, json(value), "{}", 1);
       weeks.forEach((week, w) => {

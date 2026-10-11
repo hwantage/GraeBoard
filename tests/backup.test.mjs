@@ -33,7 +33,7 @@ test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일�
       json(DEFAULT_SETTINGS),
     );
     db.prepare(
-      "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+      "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
     ).run(
       u,
       "admin",
@@ -100,115 +100,6 @@ test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일�
     } finally {
       restored.close();
     }
-  } finally {
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-test("기존 계정과 업무를 유지하며 아바타 저장 열을 한 번만 추가한다", () => {
-  const dir = mkdtempSync(join(tmpdir(), "weekly-profile-migration-"));
-  const path = join(dir, "legacy.sqlite");
-  let db = openDatabase(path);
-  try {
-    db.exec(
-      "ALTER TABLE users DROP COLUMN avatar_initials; ALTER TABLE users DROP COLUMN avatar_image; PRAGMA user_version=2;",
-    );
-    db.prepare(
-      "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
-    ).run("legacy-id", "legacy", "기존 이름", "unused", "member", now());
-    db.close();
-    db = openDatabase(path);
-    assert.equal(
-      db.prepare("SELECT name FROM users WHERE id='legacy-id'").get().name,
-      "기존 이름",
-    );
-    assert.equal(
-      db.prepare("SELECT avatar_initials FROM users WHERE id='legacy-id'").get()
-        .avatar_initials,
-      "",
-    );
-    db.prepare(
-      "UPDATE users SET avatar_initials='김' WHERE id='legacy-id'",
-    ).run();
-    db.close();
-    db = openDatabase(path);
-    assert.equal(
-      db.prepare("SELECT avatar_initials FROM users WHERE id='legacy-id'").get()
-        .avatar_initials,
-      "김",
-    );
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
-  } finally {
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-test("사용자 전역 역할을 팀 내 권한으로 옮기고 기존 권한을 유지한다", () => {
-  const dir = mkdtempSync(join(tmpdir(), "weekly-role-migration-"));
-  const path = join(dir, "legacy.sqlite");
-  let db = openDatabase(path);
-  try {
-    db.exec("ALTER TABLE memberships DROP COLUMN role; PRAGMA user_version=3;");
-    db.prepare("INSERT INTO teams VALUES(?,?,?)").run("t1", "기존 팀", "{}");
-    db.prepare("INSERT INTO teams VALUES(?,?,?)").run("t2", "다른 팀", "{}");
-    for (const role of ["admin", "manager", "member", "viewer"]) {
-      db.prepare(
-        "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
-      ).run(role, role, role, "unused", role, now());
-      for (const team of ["t1", "t2"])
-        db.prepare("INSERT INTO memberships VALUES(?,?)").run(role, team);
-    }
-    db.prepare(
-      "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
-    ).run("free-admin", "free-admin", "무소속", "unused", "admin", now());
-    db.close();
-    db = openDatabase(path);
-    const roles = Object.fromEntries(
-      db
-        .prepare("SELECT id,role FROM users")
-        .all()
-        .map((u) => [u.id, u.role]),
-    );
-    assert.deepEqual(roles, {
-      admin: "admin",
-      manager: "user",
-      member: "user",
-      viewer: "user",
-      "free-admin": "admin",
-    });
-    const teamRoles = db
-      .prepare(
-        "SELECT user_id||':'||team_id AS k,role FROM memberships ORDER BY k",
-      )
-      .all()
-      .map((m) => `${m.k}=${m.role}`);
-    assert.deepEqual(teamRoles, [
-      "admin:t1=lead",
-      "admin:t2=lead",
-      "manager:t1=lead",
-      "manager:t2=lead",
-      "member:t1=member",
-      "member:t2=member",
-      "viewer:t1=viewer",
-      "viewer:t2=viewer",
-    ]);
-    db.close();
-    // 두 번째 실행은 이미 옮긴 값을 다시 바꾸지 않는다.
-    db = openDatabase(path);
-    db.prepare(
-      "UPDATE memberships SET role='member' WHERE user_id='manager' AND team_id='t2'",
-    ).run();
-    db.close();
-    db = openDatabase(path);
-    assert.equal(
-      db
-        .prepare(
-          "SELECT role FROM memberships WHERE user_id='manager' AND team_id='t2'",
-        )
-        .get().role,
-      "member",
-    );
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

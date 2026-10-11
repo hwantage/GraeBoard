@@ -27,20 +27,16 @@ import {
   Bookmark,
   X,
   RotateCcw,
-  Save,
-  LogOut,
   ArrowLeft,
   Presentation,
   Minimize2,
 } from "lucide-react";
 import { api, send, ApiError } from "./api";
 import {
-  FIELDS,
   fieldsFor,
   orderColumns,
   propertiesFor,
   emptyPropertyValue,
-  propertyValue,
   normalizeView,
   DEFAULT_SETTINGS,
   MAX_STYLE_CELLS,
@@ -60,7 +56,6 @@ import {
 import type {
   Bootstrap,
   Task,
-  User,
   View,
   Style,
   Border,
@@ -84,13 +79,12 @@ import {
   ErrorNote,
   SessionLogin,
 } from "./components";
-import AdminPanel from "./AdminPanel";
+import SettingsPanel from "./SettingsPanel";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
   type Column,
   type RowCommand,
   rangeOf,
-  rangesOf,
   selectedPoints,
 } from "./Grid";
 import Toolbar from "./Toolbar";
@@ -183,8 +177,9 @@ function Workspace({
   onLogout: () => void;
 }) {
   const { user } = boot;
-  const [teamId, setTeamId] = useState(() => rememberedBoard(boot).teamId),
-    [year, setYear] = useState(() => rememberedBoard(boot).year),
+  const [initialBoard] = useState(() => rememberedBoard(boot));
+  const [teamId, setTeamId] = useState(initialBoard.teamId),
+    [year, setYear] = useState(initialBoard.year),
     [tasks, setTasks] = useState<Task[]>([]),
     [view, setView] = useState<View>(
       defaultView(Number(todayKey().slice(0, 4))) as View,
@@ -237,10 +232,11 @@ function Workspace({
     };
   }, [themeId]);
   const users = report?.users || boot.users;
-  const selectableUsers = report
-    ? users
-    : users.filter((u) => isAssignable(u, teamId));
-  const isManager = canManageTeam(user, teamId);
+  const assignableUsers = useMemo(
+    () => (report ? users : users.filter((u) => isAssignable(u, teamId))),
+    [report, users, teamId],
+  );
+  const canManage = canManageTeam(user, teamId);
   const canAdd = canContribute(user, teamId);
   // 지금 보는 팀이 아니어도 팀장인 팀이 있으면 설정을 열 수 있다.
   const canOpenSettings =
@@ -252,7 +248,8 @@ function Workspace({
     () => propertiesFor(settings) as Property[],
     [settings],
   );
-  const taskRef = useRef(tasks),
+  const tasksRef = useRef(tasks),
+    bootJsonRef = useRef(""),
     workspaceRef = useRef<HTMLDivElement>(null),
     viewMenuRef = useRef<HTMLDivElement>(null),
     presentationScroll = useRef<{ top: number; left: number } | null>(null),
@@ -316,7 +313,10 @@ function Workspace({
       setTeamId(boot.teams[0]?.id || "");
     }
   }, [boot.teams, teamId]);
-  taskRef.current = tasks;
+  tasksRef.current = tasks;
+  useEffect(() => {
+    bootJsonRef.current = JSON.stringify(boot);
+  }, [boot]);
   viewRef.current = view;
   failedRef.current = failed;
   editorRef.current = editor;
@@ -374,9 +374,11 @@ function Workspace({
         !failedRef.current &&
         !editorRef.current
       ) {
-        taskRef.current = r.tasks;
+        tasksRef.current = r.tasks;
         setTasks(r.tasks);
-        onBootstrap(latestBoot);
+        // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
+        if (JSON.stringify(latestBoot) !== bootJsonRef.current)
+          onBootstrap(latestBoot);
       }
     } catch (e) {
       if (e instanceof ApiError && [403, 404].includes(e.status)) {
@@ -421,7 +423,7 @@ function Workspace({
       .then(([r, v]) => {
         if (boardKey.current !== key) return;
         setTasks(r.tasks);
-        taskRef.current = r.tasks;
+        tasksRef.current = r.tasks;
         setSavedViews(v.views);
         const current =
           v.views.find((s: any) => s.name === "__current")?.data ||
@@ -513,7 +515,7 @@ function Workspace({
   useEffect(() => {
     if (!loaded || report) return;
     const next = normalizeView(viewRef.current, settings) as View;
-    const memberIds = new Set(selectableUsers.map((u) => u.id));
+    const memberIds = new Set(assignableUsers.map((u) => u.id));
     for (const property of properties.filter((p) => p.kind === "member")) {
       const values = next.propertyFilters?.[property.id];
       if (values && next.propertyFilters)
@@ -523,32 +525,29 @@ function Workspace({
     }
     if (JSON.stringify(next) !== JSON.stringify(viewRef.current))
       changeView(next);
+    // 저장된 보기를 불러온 뒤에도 돌아야 하므로 view도 의존성에 둔다.
   }, [settings, loaded, report, boot.users, teamId, view]);
-  const source = report?.tasks || tasks;
+  const allTasks = report?.tasks || tasks;
   // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
   const filterView = useMemo(
     () => view,
     [
-      view.people,
-      view.personRole,
       view.propertyFilters,
       view.propertyFilterModes,
       view.groupBy,
-      view.sort,
       view.sortKey,
       view.sortDirection,
-      view.status,
-      view.category,
     ],
   );
-  const matches = useMemo(
-    () => filteredTasks(source, filterView, user.id, settings, users) as Task[],
-    [source, filterView, user.id, settings, users],
+  // 필터를 통과한 업무(숨긴 행 포함) → 그중 화면에 보이는 업무.
+  const matchingTasks = useMemo(
+    () => filteredTasks(allTasks, filterView, settings, users) as Task[],
+    [allTasks, filterView, settings, users],
   );
-  const shown = useMemo(() => {
+  const visibleTasks = useMemo(() => {
     const hidden = new Set(view.hiddenRows);
-    return matches.filter((t) => !hidden.has(t.id));
-  }, [matches, view.hiddenRows]);
+    return matchingTasks.filter((t) => !hidden.has(t.id));
+  }, [matchingTasks, view.hiddenRows]);
   function navigateToSearch(point: Point) {
     const current = viewRef.current;
     const reveal: Partial<View> = {};
@@ -565,12 +564,32 @@ function Workspace({
       id: Math.max(Date.now(), (previous?.id || 0) + 1),
     }));
   }
-  const weeks = useMemo(() => visibleWeeks(year, view), [year, view]);
+  // 보기의 다른 설정(행 높이·열 너비 등)이 바뀔 때 열 객체를 새로 만들지 않는다.
+  const weeks = useMemo(
+    () => visibleWeeks(year, view),
+    [
+      year,
+      view.fromWeek,
+      view.toWeek,
+      view.fromMonth,
+      view.toMonth,
+      view.hiddenWeeks,
+      view.collapsedMonths,
+    ],
+  );
   const yearWeekCount = useMemo(() => weeksForYear(year).length, [year]);
   const columnOrder = useMemo(
     () =>
       orderColumns(fields, visibleWeeks(year, { ...view, hiddenWeeks: [] })),
-    [fields, year, view],
+    [
+      fields,
+      year,
+      view.fromWeek,
+      view.toWeek,
+      view.fromMonth,
+      view.toMonth,
+      view.collapsedMonths,
+    ],
   );
   const columns = useMemo<Column[]>(
     () =>
@@ -601,12 +620,12 @@ function Workspace({
       })),
     [weeks, fields, view.visibleFields, view.widths, view.frozenColumns],
   );
-  const range = rangeOf(selection, shown, columns);
+  const range = rangeOf(selection, visibleTasks, columns);
   const count = range
     ? (range.r2 - range.r1 + 1) * (range.c2 - range.c1 + 1)
     : 0;
   const selectedTask = selection
-    ? source.find((t) => t.id === selection.focus.taskId)
+    ? allTasks.find((t) => t.id === selection.focus.taskId)
     : undefined;
   const selectedCell =
     selection && selectedTask ? cell(selectedTask, selection.focus.key) : null;
@@ -617,17 +636,17 @@ function Workspace({
       : count && range && selection?.kind === "rows"
         ? `${range.r2 - range.r1 + 1}개 행 · ${count.toLocaleString()}개 셀`
         : count === 1
-          ? `${shown.findIndex((t) => t.id === selection!.focus.taskId) + 1}행 · ${columns.find((c) => c.key === selection!.focus.key)?.label}`
+          ? `${visibleTasks.findIndex((t) => t.id === selection!.focus.taskId) + 1}행 · ${columns.find((c) => c.key === selection!.focus.key)?.label}`
           : count
             ? `${count.toLocaleString()}개 셀`
             : "";
   const editable =
     !!selectedTask && canEdit(user, selectedTask) && !report && !failed;
   function getPoints() {
-    return selectedPoints(selection, shown, columns);
+    return selectedPoints(selection, visibleTasks, columns);
   }
   function applyResult(result: BatchResult) {
-    const previous = taskRef.current;
+    const previous = tasksRef.current;
     const updatedTasks = (() => {
       const byId = new Map<string, SavedCell[]>();
       for (const c of result.cells) {
@@ -651,7 +670,7 @@ function Workspace({
       });
       return updated;
     })();
-    taskRef.current = updatedTasks;
+    tasksRef.current = updatedTasks;
     setTasks(updatedTasks);
   }
   function recordResult(result: BatchResult, mode: Failed["mode"]) {
@@ -722,7 +741,7 @@ function Workspace({
   ) {
     if (!points.length) return;
     submitChanges(() => {
-      const tasksById = new Map(taskRef.current.map((t) => [t.id, t]));
+      const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
       return points.map((p) => {
         const task = tasksById.get(p.taskId);
         if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
@@ -738,10 +757,10 @@ function Workspace({
       });
     });
   }
-  function style(part: Partial<Style>, reset = false) {
+  function applyStyle(part: Partial<Style>, reset = false) {
     try {
       mutate(
-        selectedPoints(selection, shown, columns, MAX_STYLE_CELLS),
+        selectedPoints(selection, visibleTasks, columns, MAX_STYLE_CELLS),
         (t, k) => ({
           style: reset ? {} : { ...cell(t, k).style, ...part },
         }),
@@ -752,14 +771,19 @@ function Workspace({
   }
   function applyBorder(preset: BorderPreset, border: Border) {
     try {
-      const points = selectedPoints(selection, shown, columns, MAX_STYLE_CELLS);
+      const points = selectedPoints(
+        selection,
+        visibleTasks,
+        columns,
+        MAX_STYLE_CELLS,
+      );
       const selected = new Set(points.map((p) => `${p.taskId}:${p.key}`));
-      const rows = new Map(shown.map((t, i) => [t.id, i]));
+      const rows = new Map(visibleTasks.map((t, i) => [t.id, i]));
       const cols = new Map(columns.map((c, i) => [c.key, i]));
       const has = (r: number, c: number) =>
-        !!shown[r] &&
+        !!visibleTasks[r] &&
         !!columns[c] &&
-        selected.has(`${shown[r].id}:${columns[c].key}`);
+        selected.has(`${visibleTasks[r].id}:${columns[c].key}`);
       mutate(points, (task, key) => {
         const r = rows.get(task.id)!,
           c = cols.get(key)!;
@@ -776,8 +800,8 @@ function Workspace({
       setError((e as Error).message);
     }
   }
-  function edit(p: Point, initial?: string) {
-    const task = source.find((t) => t.id === p.taskId);
+  function beginEdit(p: Point, initial?: string) {
+    const task = allTasks.find((t) => t.id === p.taskId);
     if (!task || report || presentation || failed) return;
     if (pendingRef.current) {
       setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
@@ -789,7 +813,7 @@ function Workspace({
       );
       return;
     }
-    if (["owner", "supporters"].includes(p.key) && !isManager) {
+    if (["owner", "supporters"].includes(p.key) && !canManage) {
       setError("담당자 변경은 팀 관리자에게 요청하세요.");
       return;
     }
@@ -822,7 +846,7 @@ function Workspace({
   function deleteTasks(entry: TaskDeletion, redo = false) {
     return taskOperation(async () => {
       for (const id of entry.ids) {
-        const t = taskRef.current.find((task) => task.id === id);
+        const t = tasksRef.current.find((task) => task.id === id);
         if (!t) throw new Error("이미 삭제되었거나 찾을 수 없는 업무입니다.");
         await send(`/tasks/${id}`, { updatedAt: t.updatedAt }, "DELETE");
       }
@@ -855,7 +879,7 @@ function Workspace({
     }
     submitChanges(
       () => {
-        const tasksById = new Map(taskRef.current.map((t) => [t.id, t]));
+        const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
         const afterById = new Map(
           entry.cells.map((c) => [`${c.taskId}:${c.key}`, c]),
         );
@@ -895,11 +919,11 @@ function Workspace({
       setError("붙여넣을 때는 하나의 연속된 영역을 선택하세요.");
       return;
     }
-    const ri = shown.findIndex((t) => t.id === selection.focus.taskId),
+    const ri = visibleTasks.findIndex((t) => t.id === selection.focus.taskId),
       ci = columns.findIndex((c) => c.key === selection.focus.key);
     if (ri < 0 || ci < 0) return;
     if (
-      ri + matrix.length > shown.length ||
+      ri + matrix.length > visibleTasks.length ||
       matrix.some((r) => ci + r.length > columns.length)
     ) {
       setError(
@@ -916,19 +940,20 @@ function Workspace({
     try {
       matrix.forEach((r, i) =>
         r.forEach(({ text, style }, j) => {
-          const p = { taskId: shown[ri + i].id, key: columns[ci + j].key };
+          const p = {
+            taskId: visibleTasks[ri + i].id,
+            key: columns[ci + j].key,
+          };
           let v: any = text;
           const field = fields.find((f) => f.key === p.key);
           const property = properties.find((p) => p.id === field?.key);
           if (property?.kind === "option" && text) {
             const option = property.values.find(
-              (o) =>
-                !o.archived &&
-                (o.label === text || propertyValue(property, o) === text),
+              (o) => !o.archived && (o.label === text || o.id === text),
             );
             if (!option)
               throw new Error(`${property.name}에 없는 값입니다: ${text}`);
-            v = propertyValue(property, option);
+            v = option.id;
           }
           if (field?.type === "number") {
             if (text && !Number.isFinite(Number(text)))
@@ -941,7 +966,7 @@ function Workspace({
               .map((s) => s.trim())
               .filter(Boolean)
               .map((name) => {
-                const matches = selectableUsers.filter(
+                const matches = assignableUsers.filter(
                   (u) => u.name === name || u.id === name,
                 );
                 if (matches.length !== 1)
@@ -984,19 +1009,14 @@ function Workspace({
       });
       setTasks((s) => {
         const next = [...s, task];
-        taskRef.current = next;
+        tasksRef.current = next;
         return next;
       });
       changeView({
-        search: "",
-        status: "",
-        category: "",
         propertyFilters: {},
         propertyFilterModes: {},
-        people: [],
         sortKey: "",
         sortDirection: "default",
-        sort: "position",
       });
       setSelection({
         anchor: { taskId: task.id, key: "title" },
@@ -1013,7 +1033,7 @@ function Workspace({
     placement: "before" | "after",
   ) {
     const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
-    const byId = new Map(taskRef.current.map((t) => [t.id, t]));
+    const byId = new Map(tasksRef.current.map((t) => [t.id, t]));
     const moving = ids.map((id) => byId.get(id));
     const target = byId.get(targetId);
     if (
@@ -1044,8 +1064,8 @@ function Workspace({
       const moved = new Map<string, Task>(
         result.tasks.map((t: Task) => [t.id, t]),
       );
-      const next = taskRef.current.map((t) => moved.get(t.id) || t);
-      taskRef.current = next;
+      const next = tasksRef.current.map((t) => moved.get(t.id) || t);
+      tasksRef.current = next;
       setTasks(next);
     } catch (e) {
       if (boardKey.current === submittedBoard) setError((e as Error).message);
@@ -1064,7 +1084,7 @@ function Workspace({
       editorRef.current
     )
       return;
-    const target = taskRef.current.find((task) => task.id === selected.id);
+    const target = tasksRef.current.find((task) => task.id === selected.id);
     if (!target) return;
     setError("");
     if (command === "copy") {
@@ -1093,7 +1113,7 @@ function Workspace({
     const groupKey = view.groupBy;
     // A new blank row belongs to the clicked group when its assignment is permitted.
     const inheritGroup =
-      !!groupKey && (isManager || !["owner", "supporters"].includes(groupKey));
+      !!groupKey && (canManage || !["owner", "supporters"].includes(groupKey));
     const fields =
       !copy && inheritGroup ? { [groupKey]: value(target, groupKey) } : {};
     const keepGroup = copy
@@ -1130,19 +1150,15 @@ function Workspace({
           : {}),
       });
       if (boardKey.current !== submittedBoard) return;
-      const next = [...taskRef.current, task];
-      taskRef.current = next;
+      const next = [...tasksRef.current, task];
+      tasksRef.current = next;
       setTasks(next);
       setRedoStack([]);
       changeView({
         propertyFilters: {},
         propertyFilterModes: {},
-        status: "",
-        category: "",
-        people: [],
         sortKey: "",
         sortDirection: "default",
-        sort: "position",
         groupBy: keepGroup ? groupKey : "",
         ...(copy?.height
           ? { rowHeights: { ...view.rowHeights, [task.id]: copy.height } }
@@ -1153,7 +1169,7 @@ function Workspace({
         `/tasks?teamId=${teamId}&year=${year}`,
       );
       if (boardKey.current !== submittedBoard) return;
-      taskRef.current = current.tasks;
+      tasksRef.current = current.tasks;
       setTasks(current.tasks);
       const point = { taskId: task.id, key: "title" };
       setSelection({ anchor: point, focus: point });
@@ -1169,7 +1185,8 @@ function Workspace({
       setPending(0);
     }
   }
-  async function rowAction(action: string) {
+  // 업무 상세 창의 동작. 행 머리글 메뉴(rowCommand)와 달리 서버에 바로 반영한다.
+  async function detailAction(action: string) {
     if (!rowTask) return;
     const t = rowTask;
     setRowTask(null);
@@ -1179,7 +1196,7 @@ function Workspace({
         changeView({ hiddenRows: [...new Set([...view.hiddenRows, t.id])] });
         return;
       }
-      if (action === "copy") {
+      if (action === "duplicate") {
         await send("/tasks", {
           teamId,
           year,
@@ -1212,7 +1229,7 @@ function Workspace({
           throw new Error(
             "컬럼 머리글을 우클릭하여 정렬 해제를 선택한 뒤 순서를 변경하세요.",
           );
-        const order = shown.filter(
+        const order = visibleTasks.filter(
           (x) =>
             !view.groupBy || value(x, view.groupBy) === value(t, view.groupBy),
         );
@@ -1272,7 +1289,7 @@ function Workspace({
   );
   if (!team)
     return (
-      <main className="no-team">
+      <main>
         <Empty
           title="참여한 팀이 없습니다"
           description="시스템 관리자에게 팀 배정을 요청하세요."
@@ -1311,7 +1328,7 @@ function Workspace({
           ) {
             e.preventDefault();
             if (!e.repeat && editable && !pending)
-              style({ bold: !selectedCell?.style.bold });
+              applyStyle({ bold: !selectedCell?.style.bold });
             return;
           }
           if (
@@ -1383,14 +1400,14 @@ function Workspace({
               <History size={15} />
               <span>변경 이력</span>
             </Button>
-            {isManager && (
+            {canManage && (
               <Button title="휴지통" onClick={() => setPanel("trash")}>
                 <Trash2 size={15} />
                 <span>휴지통</span>
               </Button>
             )}
             {canOpenSettings && (
-              <Button title="설정" onClick={() => setPanel("admin")}>
+              <Button title="설정" onClick={() => setPanel("settings")}>
                 <Settings size={15} />
                 <span>설정</span>
               </Button>
@@ -1424,7 +1441,7 @@ function Workspace({
                 전체 업무 <strong>{tasks.length}</strong>
               </span>
               {summary.map((group) => (
-                <span key={group.id} data-status-summary={group.id}>
+                <span key={group.id}>
                   <i
                     className="summary-dot"
                     style={{ backgroundColor: group.color }}
@@ -1472,7 +1489,7 @@ function Workspace({
               </Button>
             ) : (
               <>
-                {isManager && (
+                {canManage && (
                   <Button onClick={() => setPanel("import")}>
                     <Upload size={15} />
                     가져오기
@@ -1498,7 +1515,7 @@ function Workspace({
         </section>
         <section className="board">
           <fieldset className="view-controls" disabled={!loaded}>
-            <div className="filters date-controls" aria-label="기간 설정">
+            <div className="date-controls" aria-label="기간 설정">
               <div className="year-control" role="group" aria-label="연도 선택">
                 <Button
                   title="이전 연도"
@@ -1546,13 +1563,15 @@ function Workspace({
             <div className="view-bar" aria-label="보기 및 필터">
               <FindBar
                 key={`${teamId}:${year}:${report?.id || "live"}`}
-                tasks={matches}
+                tasks={matchingTasks}
                 properties={properties}
                 users={users}
                 onNavigate={navigateToSearch}
               />
               <div className="view-bar-spacer" />
-              <span className="visible-count">{shown.length}개 업무 표시</span>
+              <span className="visible-count">
+                {visibleTasks.length}개 업무 표시
+              </span>
               <div className="popover-root" ref={viewMenuRef}>
                 <Button
                   className="quiet"
@@ -1660,7 +1679,7 @@ function Workspace({
           <Toolbar
             style={selectedCell?.style || {}}
             disabled={!editable || !!pending}
-            onStyle={(s) => style(s)}
+            onStyle={(s) => applyStyle(s)}
             onBorder={applyBorder}
             onUndo={() => undo()}
             onRedo={() => undo(true)}
@@ -1696,23 +1715,25 @@ function Workspace({
             </div>
           ) : (
             <Grid
-              tasks={shown}
-              allTasks={matches}
-              sourceTasks={source}
+              tasks={visibleTasks}
+              matchingTasks={matchingTasks}
+              allTasks={allTasks}
               columns={columns}
               columnOrder={columnOrder}
               view={view}
               user={user}
               users={users}
-              selectableUsers={selectableUsers}
+              assignableUsers={assignableUsers}
               canAdd={canAdd}
-              canEditPeople={isManager}
+              canEditPeople={canManage}
               selection={selection}
               settings={settings}
               editor={editor}
               onCancelEdit={() => setEditor(null)}
               onCommit={(point, v) => {
-                const task = taskRef.current.find((t) => t.id === point.taskId);
+                const task = tasksRef.current.find(
+                  (t) => t.id === point.taskId,
+                );
                 if (
                   task &&
                   JSON.stringify(cell(task, point.key).value) ===
@@ -1732,7 +1753,7 @@ function Workspace({
                 return true;
               }}
               onSelect={setSelection}
-              onEdit={edit}
+              onEdit={beginEdit}
               onPaste={paste}
               onClear={clearCells}
               onRowMenu={(t) => setRowTask(t)}
@@ -1784,23 +1805,24 @@ function Workspace({
       )}
       {rowTask && !editor && (
         <RowPanel
-          task={source.find((t) => t.id === rowTask.id) || rowTask}
+          task={allTasks.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
-          user={report ? { ...user, systemRole: "user", teamRoles: {} } : user}
+          user={user}
+          readOnly={!!report}
           users={users}
           onClose={() => setRowTask(null)}
           onEdit={(p) => {
             setRowTask(null);
-            edit(p);
+            beginEdit(p);
           }}
-          onAction={rowAction}
+          onAction={detailAction}
         />
       )}
       {panel === "export" && (
         <ExportPanel
           teamId={teamId}
           year={year}
-          taskIds={shown.map((t) => t.id)}
+          taskIds={visibleTasks.map((t) => t.id)}
           keys={columns.map((c) => c.key)}
           onClose={() => setPanel("")}
         />
@@ -1823,7 +1845,7 @@ function Workspace({
           teamId={teamId}
           year={year}
           view={view}
-          tasks={shown}
+          tasks={visibleTasks}
           user={user}
           onClose={() => setPanel("")}
           onOpen={(r) => {
@@ -1858,10 +1880,12 @@ function Workspace({
           onRefresh={refresh}
         />
       )}
-      {panel === "admin" && (
-        <AdminPanel
+      {panel === "settings" && (
+        <SettingsPanel
           user={user}
           team={team}
+          teams={boot.teams}
+          users={boot.users}
           visibleFields={view.visibleFields}
           onVisibilitySaved={(changes) => {
             const next = new Set(viewRef.current.visibleFields);
@@ -1875,6 +1899,7 @@ function Workspace({
           onRefresh={async () => {
             const latest = await refreshBoot();
             if (latest?.teams.some((t) => t.id === teamId)) await refresh();
+            return latest;
           }}
         />
       )}

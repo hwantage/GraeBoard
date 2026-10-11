@@ -44,16 +44,16 @@ import {
   canEdit,
   cell,
   displayValue,
+  displayValueFor,
   value,
   textLinks,
   todayKey,
   propertiesFor,
-  propertyFiltersFor,
   groupValue,
   textMode,
   fontFamilyCSS,
 } from "../shared/domain.js";
-import { Avatar, Button, Empty } from "./components";
+import { Button, Empty } from "./components";
 import InlineCellEditor, {
   type EditorState,
   type EditMove,
@@ -163,14 +163,14 @@ function savedAreas(selection: Selection | null): SelectionArea[] {
 }
 export default function Grid({
   tasks,
+  matchingTasks,
   allTasks,
-  sourceTasks,
   columns: baseColumns,
   columnOrder,
   view,
   user,
   users,
-  selectableUsers,
+  assignableUsers,
   canAdd,
   canEditPeople,
   selection,
@@ -195,14 +195,15 @@ export default function Grid({
   jump,
 }: {
   tasks: Task[];
+  // tasks: 화면에 보이는 행, matchingTasks: 필터 통과(숨긴 행 포함), allTasks: 전체.
+  matchingTasks: Task[];
   allTasks: Task[];
-  sourceTasks: Task[];
   columns: Column[];
   columnOrder: ColumnReference[];
   view: View;
   user: User;
   users: User[];
-  selectableUsers: User[];
+  assignableUsers: User[];
   canAdd: boolean;
   canEditPeople: boolean;
   selection: Selection | null;
@@ -300,7 +301,7 @@ export default function Grid({
   }, [columns, columnOrder]);
   const rowHeaderWidth = Math.max(
     ROW_HEADER_WIDTH,
-    30 + String(allTasks.length).length * 6,
+    30 + String(matchingTasks.length).length * 6,
   );
   const { positions, totalWidth } = useMemo(() => {
     let left = rowHeaderWidth;
@@ -311,7 +312,6 @@ export default function Grid({
     });
     return { positions, totalWidth: left };
   }, [columns, rowHeaderWidth]);
-  const offset = totalWidth;
   function revealColumns(hidden: ColumnReference[]) {
     const keys = new Set(hidden.map((c) => c.key));
     onView({
@@ -329,7 +329,7 @@ export default function Grid({
     if (presentation || !hidden?.length) return null;
     const next = columns[index];
     const fixed = next?.fixed || columns[index - 1]?.fixed;
-    const left = next ? positions[index] : offset;
+    const left = next ? positions[index] : totalWidth;
     const names =
       hidden.length === 1
         ? hidden[0].label
@@ -368,15 +368,14 @@ export default function Grid({
     [selection, tasks, columns],
   );
   const rowMarkers = useMemo(() => {
-    type Gap = { ids: string[]; start: number; end: number };
     const map = new Map<
       string,
-      { number: number; before?: Gap; after?: Gap }
+      { number: number; before?: RowGap; after?: RowGap }
     >();
     const hidden = new Set(view.hiddenRows);
     let previous: string | undefined;
-    let gap: Gap | undefined;
-    allTasks.forEach((task, index) => {
+    let gap: RowGap | undefined;
+    matchingTasks.forEach((task, index) => {
       if (hidden.has(task.id)) {
         if (!gap) gap = { ids: [], start: index + 1, end: index + 1 };
         gap.ids.push(task.id);
@@ -390,7 +389,7 @@ export default function Grid({
     });
     if (gap && previous) map.get(previous)!.after = gap;
     return map;
-  }, [allTasks, view.hiddenRows]);
+  }, [matchingTasks, view.hiddenRows]);
   function revealRows(ids: string[]) {
     const reveal = new Set(ids);
     onView({ hiddenRows: view.hiddenRows.filter((id) => !reveal.has(id)) });
@@ -399,7 +398,7 @@ export default function Grid({
     () => propertiesFor(settings) as Property[],
     [settings],
   );
-  const propertyFilters = useMemo(() => propertyFiltersFor(view), [view]);
+  const propertyFilters = view.propertyFilters || {};
   const group = properties.find((p) => p.id === view.groupBy);
   const groupKey = group?.id || "";
   const sorted = !!view.sortKey && view.sortDirection !== "default";
@@ -724,7 +723,6 @@ export default function Grid({
     onView({
       sortKey: direction === "default" ? "" : key,
       sortDirection: direction,
-      sort: "position",
     });
   }
   function headerSelection(
@@ -1303,7 +1301,7 @@ export default function Grid({
         tabIndex={0}
         role="grid"
         aria-label="연간 업무 일정"
-        aria-rowcount={allTasks.length + 1}
+        aria-rowcount={matchingTasks.length + 1}
         aria-colcount={columns.length + 1}
         aria-readonly={readOnly}
         className="sheet-scroll"
@@ -1568,12 +1566,12 @@ export default function Grid({
             }
           />
         )}
-        {!tasks.length && allTasks.length > 0 && !presentation && (
+        {!tasks.length && matchingTasks.length > 0 && !presentation && (
           <Button
             className="reveal-all-rows"
-            onClick={() => revealRows(allTasks.map((t) => t.id))}
+            onClick={() => revealRows(matchingTasks.map((t) => t.id))}
           >
-            숨긴 {allTasks.length}개 행 펼치기
+            숨긴 {matchingTasks.length}개 행 펼치기
           </Button>
         )}
         {!!tasks.length && !readOnly && canAdd && (
@@ -1604,8 +1602,8 @@ export default function Grid({
             <PropertyFilter
               key={menuProperty.id}
               property={menuProperty}
-              tasks={sourceTasks}
-              users={selectableUsers}
+              tasks={allTasks}
+              users={assignableUsers}
               selected={propertyFilters[menuProperty.id] || []}
               mode={view.propertyFilterModes?.[menuProperty.id] || "include"}
               onChange={(values) =>
@@ -1614,8 +1612,6 @@ export default function Grid({
                     ...propertyFilters,
                     [menuProperty.id]: values,
                   },
-                  status: "",
-                  category: "",
                 })
               }
               onModeChange={(mode) =>
@@ -1976,7 +1972,7 @@ const GridCell = memo(function GridCell({
 }) {
   const current = cell(task, c.key),
     s = current.style;
-  const text = displayValue(task, c.key, users, settings);
+  const text = displayValueFor(property, current.value, users);
   const choice = property?.kind === "option" || property?.kind === "member";
   const editableChoice =
     choice &&

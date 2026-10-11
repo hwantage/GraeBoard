@@ -16,7 +16,7 @@ import {
 } from "../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
-  normalizeSettings,
+  sampleProperties,
   weeksForYear,
 } from "../shared/domain.js";
 
@@ -76,11 +76,12 @@ for (const scenario of scenarios) {
     taskIds = [],
     timestamp = now(),
     weeks = weeksForYear(2026);
-  const settings = normalizeSettings({
-    ...DEFAULT_SETTINGS,
-    propertiesVersion: 1,
-    properties: [],
-  });
+  const settings = { ...DEFAULT_SETTINGS, properties: sampleProperties() };
+  const optionIds = (key) =>
+    settings.properties.find((p) => p.id === key).values.map((v) => v.id);
+  const statusIds = optionIds("status"),
+    categoryIds = optionIds("category"),
+    typeIds = optionIds("type");
   const result = {
     ...scenario,
     scheduleColumns: weeks.length,
@@ -103,7 +104,7 @@ for (const scenario of scenarios) {
         json(settings),
       );
       const addUser = db.prepare(
-        "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
       );
       const addMember = db.prepare(
           "INSERT INTO memberships(user_id,team_id) VALUES(?,?)",
@@ -151,9 +152,9 @@ for (const scenario of scenarios) {
           description: `기획 검토 및 구현 사항 ${i}\n두 번째 줄: 일정과 담당자 확인`,
           owner: userIds[i % 100],
           supporters: [userIds[(i + 1) % 100]],
-          status: settings.statuses[i % 5],
-          category: settings.categories[i % 3],
-          type: settings.types[i % 5],
+          status: statusIds[i % statusIds.length],
+          category: categoryIds[i % categoryIds.length],
+          type: typeIds[i % typeIds.length],
           progress: `${i % 101}%`,
           deadline: "2026-12-31",
           score: i % 100,
@@ -386,6 +387,11 @@ for (const scenario of scenarios) {
     }
     result.timings.browserLoads = stats(loadTimes);
     result.timings.searches = stats(filterTimes);
+    // 검색이 마지막 행으로 스크롤해 두므로, 첫 묶음 머리글이 보이도록 맨 위로 되돌린다.
+    await page.getByRole("grid").evaluate((el) => {
+      el.scrollTop = 0;
+      el.scrollLeft = 0;
+    });
     start = ms();
     await page.locator('[data-header-key="status"]').click({ button: "right" });
     await page

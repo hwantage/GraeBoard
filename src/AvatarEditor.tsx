@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { User } from "./types";
-import { Avatar } from "./components";
+import { Avatar, ErrorNote } from "./components";
 
 export default function AvatarEditor({
   user,
@@ -143,11 +143,7 @@ export default function AvatarEditor({
               onChange={(e) => onChange({ color: e.target.value })}
             />
           </label>
-          {error && (
-            <p className="error-note" role="alert">
-              {error}
-            </p>
-          )}
+          <ErrorNote error={error} />
         </div>
       </div>
     </fieldset>

@@ -11,9 +11,9 @@
 | `src/Grid.tsx` | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그 |
 | `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx` | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택 |
 | `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts` | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기 |
-| `src/AdminPanel.tsx`, `DefaultStyleManager.tsx` | 팀·계정·동적 속성·기본 서식 관리 |
+| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx` | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식 |
 | `src/Panels.tsx`, `components.tsx` | 업무 상세, 이관·반출, 로그인과 공통 UI |
-| `shared/domain.js`, `coreProperties.js` | 날짜·주차, 필터·정렬·통계, 필수 속성과 구 설정 정규화 |
+| `shared/domain.js`, `coreProperties.js` | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화 |
 | `shared/fonts.js`, `themes.js` | 지원 글꼴·크기·폴백과 팀 테마 변수 |
 | `server/app.mjs` | 인증·권한, 업무·보기·보고본·관리 API 연결 |
 | `server/db.mjs`, `validation.mjs` | SQLite 초기화·마이그레이션, 저장 모델과 입력 검증 |
@@ -68,10 +68,10 @@ XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파
 
 - 일반 폼 선택은 `Select.tsx`, 같은 값을 재선택하여 적용해야 하는 서식 선택은 `FormatSelect.tsx`를 사용합니다.
 - 셀 스타일을 추가하면 화면·서버 검증·기본 서식·클립보드·XLSX 변환을 함께 확인합니다. 글꼴과 6~36pt 범위는 `shared/fonts.js`에서 정의합니다.
-- 새 속성 동작은 기본값·기존 설정 정규화·셀 검증·이관·필터·보고본을 함께 검토합니다. 데이터 형식 변경 시 [호환 규칙](DATA_FORMAT.md)을 갱신합니다.
+- 새 속성 동작은 기본값·설정 정규화·셀 검증·이관·필터·보고본을 함께 검토합니다. 데이터 형식 변경 시 [데이터 형식 문서](DATA_FORMAT.md)와 `SCHEMA_VERSION`을 갱신합니다. 배포 전이므로 이전 형식과의 호환 코드는 두지 않습니다.
 - 팀 테마는 `shared/themes.js`의 CSS 변수로 연결합니다. 사용자 지정 셀·칩 색상과 구분합니다.
 - `#` 다음 여섯 자리 이슈 번호의 Redmine 링크는 현재 `shared/domain.js`의 `textLinks`에서 사내 주소를 사용합니다. 다른 설치처에 맞출 때 링크 규칙과 `tests/text-links.test.mjs`를 함께 수정합니다.
-- GraeBoard는 표시 브랜드입니다. 기존 DB 경로, 세션 쿠키, 쓰기 요청 헤더, 클립보드 MIME과 JSON 포맷 식별자는 기존 값으로 호환됩니다.
+- GraeBoard는 표시 브랜드입니다. DB 경로, 세션 쿠키, 쓰기 요청 헤더, 클립보드 MIME과 JSON 포맷 식별자는 `weekly-plan` 계열 값을 씁니다.
 
 ## 검증
 
@@ -82,7 +82,7 @@ npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
 
-`npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
+`npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `DEBUG_HTTP=1`로 실행하면 서버가 거절한 요청(4xx)의 경로와 사유를 콘솔에 남겨 테스트 실패 원인을 바로 볼 수 있습니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
 
 실패한 브라우저 검사는 `test-results/`에 스크린샷·트레이스를 남기고 HTML 보고서는 `playwright-report/`에 생성됩니다. 이 파일들은 Git에서 제외합니다. 테스트 데이터는 코드에서 생성한 가상 업무·계정이며 운영 DB를 사용하지 않습니다.
 

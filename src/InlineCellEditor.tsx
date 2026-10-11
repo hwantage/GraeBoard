@@ -5,7 +5,6 @@ import {
   cell,
   fieldsFor,
   propertiesFor,
-  propertyValue,
   isAssignable,
 } from "../shared/domain.js";
 
@@ -134,7 +133,7 @@ export default function InlineCellEditor({
     property?.kind === "option"
       ? property.values
           .filter((v) => !v.archived)
-          .map((v) => ({ value: propertyValue(property, v), label: v.label }))
+          .map((v) => ({ value: v.id, label: v.label }))
       : property?.kind === "member"
         ? users
             .filter((u) => isAssignable(u, task.teamId))
@@ -174,7 +173,6 @@ export default function InlineCellEditor({
             control.current = el;
           }}
           type={field.type}
-          min={["score", "current"].includes(key) ? 0 : undefined}
           step="any"
           value={String(draft)}
           onChange={(e) => change(e.target.value)}

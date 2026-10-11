@@ -17,6 +17,8 @@ import {
   normalizeView,
   normalizeSettings,
   DEFAULT_SETTINGS,
+  sampleProperties,
+  displayValue,
 } from "../shared/domain.js";
 
 const dir = mkdtempSync(join(tmpdir(), "weekly-plan-test-"));
@@ -153,7 +155,9 @@ test("테두리 프리셋은 선택 영역의 바깥·안쪽 경계를 구분하
 });
 
 test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식·보고본·XLSX 왕복에서 유지된다", async () => {
-  const tid = (await post("/admin/teams", { name: "경계선 검증" })).data.id;
+  const tid = (
+    await post("/admin/teams", { name: "경계선 검증", templateTeamId: teamId })
+  ).data.id;
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === tid,
   ).settings;
@@ -203,19 +207,16 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
   ]);
   assert.equal(invalidCells.status, 400);
   assert.deepEqual(getTask(db, created.id).cells.title.style.borderLeft, left);
-  // Legacy clients omit the optional setting, and must not erase it.
-  // Their removed week boundary setting is accepted but no longer stored.
+  // 머리글 색을 생략한 저장은 기존 값을 지우지 않는다.
   const old = structuredClone(settings);
   delete old.weekHeader;
-  old.weekBorders = { left, right };
-  const legacySave = await request(`/teams/${tid}/settings`, {
+  const partialSave = await request(`/teams/${tid}/settings`, {
     method: "PATCH",
     body: old,
   });
-  assert.equal(legacySave.status, 200);
-  settings = legacySave.data.settings;
+  assert.equal(partialSave.status, 200);
+  settings = partialSave.data.settings;
   assert.deepEqual(settings.weekHeader, weekHeader);
-  assert.equal(settings.weekBorders, undefined);
   const copied = await post("/admin/teams", {
     name: "경계선 양식",
     templateTeamId: tid,
@@ -519,6 +520,7 @@ test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 �
   const target = (
     await post("/admin/teams", {
       name: "이전 팀원 표시 검증",
+      templateTeamId: teamId,
       members: [{ userId: adminId, role: "lead" }],
     })
   ).data.id;
@@ -621,8 +623,12 @@ test("팀에서 제외된 담당자의 최신 프로필을 표시하고 기존 �
 });
 
 test("원본 행 범위·열 연결별 이관을 구별하고 미지정 담당자를 보존한다", async () => {
-  const target = (await post("/admin/teams", { name: "범위 이관 검증" })).data
-    .id;
+  const target = (
+    await post("/admin/teams", {
+      name: "범위 이관 검증",
+      templateTeamId: teamId,
+    })
+  ).data.id;
   const wb = new ExcelJS.Workbook(),
     ws = wb.addWorksheet("일정");
   ws.getRow(1).values = ["", "", "진척도"];
@@ -681,7 +687,7 @@ test("원본 행 범위·열 연결별 이관을 구별하고 미지정 담당�
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].cells.title.value, "주간 업무");
   assert.equal(tasks[0].cells.progress.value, "75%");
-  assert.equal(tasks[0].cells.type.value, "기획");
+  assert.equal(tasks[0].cells.type.value, "type-plan");
   assert.equal(tasks[0].cells.owner.value, "");
 });
 
@@ -690,13 +696,16 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
   const tid = (
     await post("/admin/teams", {
       name: "삭제할 팀",
+      templateTeamId: teamId,
       members: [
         { userId: adminId, role: "lead" },
         { userId: memberId, role: "member" },
       ],
     })
   ).data.id;
-  const keepId = (await post("/admin/teams", { name: "보존할 팀" })).data.id;
+  const keepId = (
+    await post("/admin/teams", { name: "보존할 팀", templateTeamId: teamId })
+  ).data.id;
   const keep = (
     await post("/tasks", {
       teamId: keepId,
@@ -960,10 +969,9 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
   assert.equal(settings.defaultStyle.fontSize, 9);
   const view = normalizeView(defaultView(2026), settings);
   assert.deepEqual(view.visibleFields, ["title", "owner", "status"]);
-  assert.equal(view.density, "compact");
   assert.equal(view.frozenColumns, 0);
   const created = (await post("/tasks", { teamId: tid, year: 2026 })).data.task;
-  assert.equal(created.cells.status.value, "예정");
+  assert.equal(created.cells.status.value, "status-planned");
   assert.equal(created.defaultStyle.fontSize, 9);
   const save = (body) =>
     request(`/teams/${tid}/settings`, { method: "PATCH", body });
@@ -984,9 +992,14 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
   invalid.properties[1].multiple = false;
   invalid.properties[2].values = [];
   assert.equal((await save(invalid)).status, 400);
-  assert.equal(getTask(db, created.id).cells.status.value, "예정");
+  assert.equal(getTask(db, created.id).cells.status.value, "status-planned");
   await batch([
-    { taskId: created.id, key: "status", value: "완료", expectedVersion: 1 },
+    {
+      taskId: created.id,
+      key: "status",
+      value: "status-completed",
+      expectedVersion: 1,
+    },
   ]);
   settings.properties[2].values.find((v) => v.label === "완료").label = "종료";
   settings.properties[1].name = "담당 팀원";
@@ -994,8 +1007,9 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
   const saved = await save(settings);
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
   settings = saved.data.settings;
+  // 선택값 이름을 바꿔도 셀에 저장된 옵션 ID는 그대로다.
   const task = getTask(db, created.id);
-  assert.equal(task.cells.status.value, "종료");
+  assert.equal(task.cells.status.value, "status-completed");
   assert.equal(
     statusSummary([task], settings).find((v) => v.label === "종료").count,
     1,
@@ -1110,96 +1124,6 @@ test("팀 양식 복사는 속성·순서·기본 서식·테마만 독립적으
   );
 });
 
-test("기존 팀의 필수 속성을 복원하고 추가 속성·값·서식과 상태 통계를 보존한다", () => {
-  const old = {
-    propertiesVersion: 2,
-    defaultStyle: { fontSize: 11 },
-    properties: [
-      {
-        id: "prop_project",
-        name: "프로젝트",
-        kind: "text",
-        display: "text",
-        visible: true,
-        values: [],
-      },
-      {
-        id: "title",
-        name: "기존 제목",
-        kind: "text",
-        display: "text",
-        values: [],
-      },
-      {
-        id: "owner",
-        name: "책임자",
-        kind: "member",
-        display: "avatar",
-        archived: true,
-        values: [],
-      },
-      {
-        id: "status",
-        name: "단계",
-        kind: "option",
-        display: "dot",
-        archived: true,
-        values: [
-          {
-            id: "old-complete",
-            label: "완료",
-            dotColor: "#123456",
-            backgroundColor: "#fedcba",
-          },
-          { id: "custom", label: "승인", dotColor: "#654321" },
-          { id: "archived", label: "종전 단계", archived: true },
-        ],
-      },
-    ],
-  };
-  const migrated = normalizeSettings(old);
-  assert.equal(migrated.propertiesVersion, 3);
-  assert.equal(migrated.defaultStyle.fontSize, 11);
-  assert.deepEqual(
-    migrated.properties.map((p) => p.id),
-    ["prop_project", "title", "owner", "status"],
-  );
-  assert.equal(migrated.properties[1].name, "기존 제목");
-  assert.equal(migrated.properties[2].name, "팀원");
-  assert.equal(migrated.properties[2].archived, false);
-  const status = migrated.properties[3];
-  assert.equal(status.name, "단계");
-  assert.equal(status.archived, false);
-  assert.equal(
-    status.values.find((v) => v.label === "완료").id,
-    "old-complete",
-  );
-  assert.equal(
-    status.values.find((v) => v.label === "완료").dotColor,
-    "#123456",
-  );
-  assert.deepEqual(normalizeSettings(migrated), migrated);
-  const rows = ["예정", "완료", "승인", "", "종전 단계", "알 수 없는 값"].map(
-    (value) => ({ cells: { status: { value } } }),
-  );
-  const summary = statusSummary(rows, migrated);
-  assert.equal(summary.find((v) => v.label === "완료").count, 1);
-  assert.equal(summary.find((v) => v.label === "승인").count, 1);
-  assert.equal(summary.find((v) => v.label === "미지정").count, 1);
-  assert.equal(summary.find((v) => v.label === "기존 값").count, 2);
-  assert.equal(
-    summary.reduce((sum, g) => sum + g.count, 0),
-    rows.length,
-  );
-  const missing = normalizeSettings({
-    ...old,
-    properties: old.properties.slice(0, 2),
-  });
-  assert.deepEqual(
-    missing.properties.slice(-2).map((p) => p.id),
-    ["owner", "status"],
-  );
-});
 test("동일 밀리초에 변경해도 업무 버전이 달라져 오래된 삭제를 차단한다", async (t) => {
   const current = getTask(db, task.id),
     time = Date.parse(current.updatedAt) + 1000;
@@ -1251,15 +1175,9 @@ before(async () => {
   assert.equal(setup.status, 201);
   admin = setup.cookie;
   teamId = setup.data.user.teamIds[0];
-  // Keep the original regression fixture as an existing team with optional columns.
+  // 회귀 픽스처 팀은 예시 양식(분류·유형·설명·지원자·진척률·목표일·점수 열)을 쓴다.
   db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
-    JSON.stringify(
-      normalizeSettings({
-        ...DEFAULT_SETTINGS,
-        propertiesVersion: 1,
-        properties: [],
-      }),
-    ),
+    JSON.stringify({ ...DEFAULT_SETTINGS, properties: sampleProperties() }),
     teamId,
   );
   for (const [username, role] of [
@@ -1302,7 +1220,11 @@ before(async () => {
     await post("/tasks", {
       teamId,
       year: 2026,
-      fields: { title: "권한 검증 업무", owner: memberId, status: "진행 중" },
+      fields: {
+        title: "권한 검증 업무",
+        owner: memberId,
+        status: "status-progress",
+      },
     })
   ).data.task;
 });
@@ -1426,7 +1348,7 @@ test("서식만 수정해도 값을 보존하고 버전을 증가시킨다", asy
         fontSize: 18,
         bold: true,
         textAlign: "center",
-        wrap: true,
+        textMode: "wrap",
       },
     },
   ]);
@@ -1436,7 +1358,12 @@ test("서식만 수정해도 값을 보존하고 버전을 증가시킨다", asy
   assert.equal(r.data.before[0].style.color, undefined);
 });
 test("6pt·7pt와 새 글꼴은 기본 서식·셀·XLSX 왕복에서 유지된다", async () => {
-  const tid = (await post("/admin/teams", { name: "작은 글꼴 검증" })).data.id;
+  const tid = (
+    await post("/admin/teams", {
+      name: "작은 글꼴 검증",
+      templateTeamId: teamId,
+    })
+  ).data.id;
   const settings = normalizeSettings({});
   settings.defaultStyle = { fontFamily: "Pretendard", fontSize: 6 };
   assert.equal(
@@ -1527,7 +1454,6 @@ test("잘못된 날짜·주차·서식·숫자 입력은 저장하지 않는다"
   for (const c of [
     change("2026-10-06", "화요일은 주차 키 아님"),
     change("deadline", "2026-02-30"),
-    change("score", -1),
     {
       ...change("title", ""),
       style: { backgroundImage: "url(https://example.com)" },
@@ -1535,7 +1461,7 @@ test("잘못된 날짜·주차·서식·숫자 입력은 저장하지 않는다"
   ])
     assert.equal((await batch([c])).status, 400);
 });
-test("진척률 텍스트를 그대로 저장하고 기존 숫자 값 복원도 허용한다", async () => {
+test("진척률은 백분율·문구·줄바꿈을 텍스트 그대로 저장한다", async () => {
   const created = await post("/tasks", {
     teamId,
     year: 2026,
@@ -1543,12 +1469,13 @@ test("진척률 텍스트를 그대로 저장하고 기존 숫자 값 복원도 
   });
   assert.equal(created.status, 201);
   assert.equal(created.data.task.cells.progress.value, "120% · 검토 중");
-  for (const value of [35, "확인 중\n추가 검토", "120%", "", 35]) {
+  for (const value of ["확인 중\n추가 검토", "120%", "", "35"]) {
     const result = await batch([change("progress", value)]);
     assert.equal(result.status, 200, JSON.stringify(result.data));
     assert.equal(getTask(db, task.id).cells.progress.value, value);
   }
-  for (const value of ["x".repeat(10001), ["진행 중"]]) {
+  // 진척률은 텍스트 속성이므로 숫자·목록은 받지 않는다.
+  for (const value of [35, "x".repeat(10001), ["진행 중"]]) {
     assert.equal((await batch([change("progress", value)])).status, 400);
   }
 });
@@ -1567,9 +1494,7 @@ test("복제 업무는 새 ID, 요청한 제목, 원본 주차와 서식을 가�
 test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 노출하지 않는다", async () => {
   const view = {
     ...defaultView(2026),
-    people: [memberId],
-    personRole: "supporter",
-    propertyFilters: { status: ["진행 중"] },
+    propertyFilters: { status: ["status-progress"] },
     hiddenRows: [task.id],
     hiddenWeeks: ["2026-10-05"],
     collapsedMonths: [1, 2],
@@ -1591,7 +1516,7 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
         body: {
           teamId,
           name: "__current",
-          data: { ...view, widths: { title: 460 }, search: "갱신" },
+          data: { ...view, widths: { title: 460 } },
         },
       })
     ).status,
@@ -1602,11 +1527,10 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
       cookie: member,
     });
   assert.equal(own.data.views.length, 1);
-  assert.equal(own.data.views[0].data.search, "");
   assert.equal(own.data.views[0].data.widths.title, 460);
-  assert.deepEqual(own.data.views[0].data.people, []);
-  assert.equal(own.data.views[0].data.personRole, "either");
-  assert.deepEqual(own.data.views[0].data.propertyFilters.status, ["진행 중"]);
+  assert.deepEqual(own.data.views[0].data.propertyFilters.status, [
+    "status-progress",
+  ]);
   assert.deepEqual(own.data.views[0].data.hiddenRows, [task.id]);
   assert.equal(theirs.data.views.length, 0);
 });
@@ -1849,7 +1773,7 @@ test("아이디는 이메일로 받고 소문자로 저장하며 기존 아이�
   // 이메일 이전에 만든 아이디도 계속 로그인할 수 있다.
   const legacyId = randomUUID();
   db.prepare(
-    "INSERT INTO users(id,username,name,password,role,created_at) VALUES(?,?,?,?,?,?)",
+    "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
   ).run(
     legacyId,
     "legacy-user",
@@ -1968,78 +1892,12 @@ test("달력은 윤년과 연도 경계를 누락하지 않고 개인 필터의 
     assert.ok(weeks.length <= 54);
     assert.equal(new Set(weeks.map((w) => w.key)).size, weeks.length);
   }
-  const tasks = [
-    {
-      id: "a",
-      cells: {
-        owner: { value: "one" },
-        supporters: { value: ["two"] },
-        status: { value: "진행 중" },
-      },
-    },
-    { id: "b", cells: { owner: { value: "two" }, status: { value: "완료" } } },
-  ];
-  const view = {
-    ...defaultView(2026),
-    people: ["one", "two"],
-    status: "진행 중",
-  };
-  assert.deepEqual(
-    filteredTasks(tasks, view, "one").map((t) => t.id),
-    ["a"],
-  );
-  assert.deepEqual(
-    filteredTasks(
-      tasks,
-      { ...view, people: ["two"], personRole: "supporter" },
-      "one",
-    ).map((t) => t.id),
-    ["a"],
-  );
   assert.ok(
     !visibleWeeks(2026, {
-      ...view,
+      ...defaultView(2026),
       hiddenWeeks: ["2026-10-05"],
       collapsedMonths: [1],
     }).some((w) => w.key === "2026-10-05" || w.month === 1),
-  );
-});
-
-test("이전 검색 조건은 업무 목록을 필터링하지 않고 보기 정규화에서 제거한다", () => {
-  const settings = structuredClone(DEFAULT_SETTINGS);
-  settings.properties.find((p) => p.id === "title").name = "업무명";
-  settings.properties.push({
-    id: "prop_custom",
-    name: "작업",
-    kind: "text",
-    display: "text",
-    visible: true,
-    values: [],
-  });
-  const tasks = [
-    { id: "title-match", cells: { title: { value: "첫 Alpha 업무" } } },
-    {
-      id: "description-only",
-      cells: { title: { value: "다른 업무" }, description: { value: "Alpha" } },
-    },
-    {
-      id: "custom-only",
-      cells: { title: { value: "별도 업무" }, prop_custom: { value: "Alpha" } },
-    },
-  ];
-  const result = filteredTasks(
-    tasks,
-    { ...defaultView(2026), search: "alpHA" },
-    "user",
-    settings,
-  );
-  assert.deepEqual(
-    result.map((t) => t.id),
-    ["custom-only", "description-only", "title-match"],
-  );
-  assert.equal(
-    normalizeView({ ...defaultView(2026), search: "Alpha" }, settings).search,
-    "",
   );
 });
 
@@ -2214,7 +2072,9 @@ test("팀 이름 변경과 팀원 중복 배속은 다른 팀 배정을 보존�
 });
 
 test("동적 속성의 이름·값·모양 변경은 업무 연결과 과거 보고본을 보존하고 내보내기에 표시명을 쓴다", async () => {
-  const tid = (await post("/admin/teams", { name: "속성 시험" })).data.id;
+  const tid = (
+    await post("/admin/teams", { name: "속성 시험", templateTeamId: teamId })
+  ).data.id;
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === tid,
   ).settings;
@@ -2480,10 +2340,9 @@ test("날짜 뒤 열 배치는 구 설정 저장·팀 양식·보고본·내보�
     (t) => t.id === copy.data.id,
   );
   assert.deepEqual(copied.settings.properties, settings.properties);
-  // Older clients omit placement; unrelated saves must retain the new layout.
-  for (const version of [3, 2]) {
+  // 배치를 생략한 저장은 기존 배치를 유지한다.
+  {
     const legacy = structuredClone(settings);
-    legacy.propertiesVersion = version;
     for (const p of legacy.properties) delete p.placement;
     result = await save(legacy);
     assert.equal(result.status, 200, JSON.stringify(result.data));
@@ -2526,7 +2385,7 @@ test("기본 속성 값 변경은 스타일을 보존하며 셀 버전을 올려
     await post("/tasks", {
       teamId: tid,
       year: 2026,
-      fields: { title: "분류 변경 검증", category: "UX 개선" },
+      fields: { title: "분류 변경 검증", category: "category-ux" },
     })
   ).data.task;
   const styled = await batch([
@@ -2552,17 +2411,25 @@ test("기본 속성 값 변경은 스타일을 보존하며 셀 버전을 올려
     ).status,
     200,
   );
+  // 셀은 옵션 ID를 저장하므로 이름 변경이 셀 값·버전을 건드리지 않는다.
   const changed = getTask(db, t.id).cells.category;
-  assert.equal(changed.value, "UX 프로젝트");
+  assert.equal(changed.value, "category-ux");
   assert.equal(changed.style.bold, true);
-  assert.equal(changed.version, 3);
+  assert.equal(changed.version, 2);
+  const renamed = (await request("/admin/users")).data.teams.find(
+    (team) => team.id === tid,
+  ).settings;
+  assert.equal(
+    displayValue(getTask(db, t.id), "category", [], renamed),
+    "UX 프로젝트",
+  );
   assert.equal(
     (
       await batch([
         {
           taskId: t.id,
           key: "category",
-          expectedVersion: 2,
+          expectedVersion: 1,
           style: { italic: true },
         },
       ])
@@ -2575,8 +2442,7 @@ test("컬럼 정렬은 숫자와 이름을 비교하고 기본 순서를 복원�
   const { normalizeSettings } = await import("../shared/domain.js");
   const settings = normalizeSettings({
     ...DEFAULT_SETTINGS,
-    propertiesVersion: 1,
-    properties: [],
+    properties: sampleProperties(),
   });
   const pid = `prop_${randomUUID()}`;
   settings.properties.push({
@@ -2609,7 +2475,6 @@ test("컬럼 정렬은 숫자와 이름을 비교하고 기본 순서를 복원�
       filteredTasks(
         rows,
         { ...v, sortKey: "score", sortDirection: "asc" },
-        "",
         settings,
       ),
     ),
@@ -2620,13 +2485,12 @@ test("컬럼 정렬은 숫자와 이름을 비교하고 기본 순서를 복원�
       filteredTasks(
         rows,
         { ...v, sortKey: "title", sortDirection: "desc" },
-        "",
         settings,
       ),
     ),
     ["three", "two", "one"],
   );
-  assert.deepEqual(ids(filteredTasks(rows, v, "", settings)), [
+  assert.deepEqual(ids(filteredTasks(rows, v, settings)), [
     "two",
     "three",
     "one",
@@ -2636,52 +2500,11 @@ test("컬럼 정렬은 숫자와 이름을 비교하고 기본 순서를 복원�
       filteredTasks(
         rows,
         { ...v, groupBy: pid, sortKey: "title", sortDirection: "asc" },
-        "",
         settings,
       ),
     ),
     ["two", "one", "three"],
   );
-});
-
-test("기존 주간 열 너비는 한 번만 절반으로 전환하고 날짜 열 정렬은 해제한다", async () => {
-  const legacy = {
-    ...defaultView(2026),
-    compactWeekColumns: undefined,
-    widths: { title: 330, "2025-12-29": 80, "2026-01-05": 140 },
-    sortKey: "2025-12-29",
-    sortDirection: "desc",
-  };
-  const migrated = normalizeView(legacy);
-  assert.deepEqual(migrated.widths, {
-    title: 330,
-    "2025-12-29": 40,
-    "2026-01-05": 70,
-  });
-  assert.equal(migrated.sortKey, "");
-  assert.equal(migrated.sortDirection, "default");
-  assert.deepEqual(normalizeView(migrated), migrated);
-  const rows = [
-    { id: "first", position: 1, cells: { "2025-12-29": { value: "A" } } },
-    { id: "second", position: 2, cells: { "2025-12-29": { value: "Z" } } },
-  ];
-  assert.deepEqual(
-    filteredTasks(rows, legacy, "").map((t) => t.id),
-    ["first", "second"],
-  );
-  assert.equal(
-    (
-      await request("/views", {
-        method: "PUT",
-        body: { teamId, name: "compact-weeks", data: migrated },
-      })
-    ).status,
-    200,
-  );
-  const saved = (
-    await request(`/views?teamId=${teamId}&year=2026`)
-  ).data.views.find((v) => v.name === "compact-weeks").data;
-  assert.deepEqual(saved.widths, migrated.widths);
 });
 
 test("팀 기본 서식은 새 업무에 고정되고 빈 일정·복제·반출에도 적용된다", async () => {
@@ -2696,7 +2519,7 @@ test("팀 기본 서식은 새 업무에 고정되고 빈 일정·복제·반출
       defaultStyle: {
         fontFamily: "Nanum Gothic Coding",
         fontSize: 18,
-        wrap: true,
+        textMode: "wrap",
         verticalAlign: "top",
         color: "#24796d",
       },
@@ -2758,10 +2581,10 @@ test("번호 순서 이동은 같은 묶음에만 적용하며 잘못된 요청�
   ).data.id;
   const rows = [];
   for (const [title, category] of [
-    ["A", "UX 개선"],
-    ["B", "UX 개선"],
-    ["C", "UX 개선"],
-    ["D", "차별화"],
+    ["A", "category-ux"],
+    ["B", "category-ux"],
+    ["C", "category-ux"],
+    ["D", "category-new"],
   ])
     rows.push(
       (
@@ -2846,7 +2669,7 @@ test("여러 행 이동은 기존 순서와 제외된 행을 유지하고 모든
           year: 2026,
           fields: {
             title,
-            category: title === "F" ? "차별화" : "UX 개선",
+            category: title === "F" ? "category-new" : "category-ux",
             owner: title === "A" ? moverId : adminId,
           },
         })
@@ -2958,8 +2781,7 @@ test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 
   const { normalizeSettings } = await import("../shared/domain.js");
   const settings = normalizeSettings({
     ...DEFAULT_SETTINGS,
-    propertiesVersion: 1,
-    properties: [],
+    properties: sampleProperties(),
   });
   settings.properties.push({
     id: "prop_project",
@@ -2971,9 +2793,9 @@ test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 
     ],
   });
   const rows = [
-    ["one", "a", "예정"],
-    ["two", "b", "진행 중"],
-    ["three", "", "예정"],
+    ["one", "a", "status-planned"],
+    ["two", "b", "status-progress"],
+    ["three", "", "status-planned"],
   ].map(([id, project, status], i) => ({
     id,
     position: i,
@@ -2981,35 +2803,22 @@ test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 
   }));
   const view = {
     ...defaultView(2026),
-    propertyFilters: { prop_project: ["a", "b"], status: ["예정"] },
+    propertyFilters: { prop_project: ["a", "b"], status: ["status-planned"] },
   };
   assert.deepEqual(
-    filteredTasks(rows, view, "", settings).map((t) => t.id),
+    filteredTasks(rows, view, settings).map((t) => t.id),
     ["one"],
   );
-  view.propertyFilters.status.push("진행 중");
+  view.propertyFilters.status.push("status-progress");
   assert.deepEqual(
-    filteredTasks(rows, view, "", settings).map((t) => t.id),
+    filteredTasks(rows, view, settings).map((t) => t.id),
     ["one", "two"],
   );
   view.propertyFilters.prop_project = [""];
   assert.deepEqual(
-    filteredTasks(rows, view, "", settings).map((t) => t.id),
+    filteredTasks(rows, view, settings).map((t) => t.id),
     ["three"],
   );
-  const legacy = normalizeView(
-    {
-      ...defaultView(2026),
-      category: "UX 개선",
-      status: "예정",
-    },
-    settings,
-  );
-  assert.deepEqual(legacy.propertyFilters, {
-    category: ["UX 개선"],
-    status: ["예정"],
-  });
-  assert.equal(legacy.category, "");
   const bad = await request("/views", {
     method: "PUT",
     body: {
@@ -3031,7 +2840,7 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
   ).settings;
   const view = {
     ...normalizeView(defaultView(2026), settings),
-    propertyFilters: { status: ["완료"] },
+    propertyFilters: { status: ["status-completed"] },
     propertyFilterModes: { status: "exclude" },
   };
   const save = (data, name = "제외 보기") =>
@@ -3045,7 +2854,9 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
       (v) => v.name === name,
     ).data;
   assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
-  assert.deepEqual((await load()).propertyFilters, { status: ["완료"] });
+  assert.deepEqual((await load()).propertyFilters, {
+    status: ["status-completed"],
+  });
   const legacy = { ...view };
   delete legacy.propertyFilterModes;
   assert.equal((await save(legacy, "구 일치 보기")).status, 200);
@@ -3083,12 +2894,13 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
     body: settings,
   });
   assert.equal(renamed.status, 200, JSON.stringify(renamed.data));
-  assert.deepEqual((await load()).propertyFilters.status, ["종료"]);
+  // 이름을 바꿔도 필터는 옵션 ID로 저장되어 그대로 적용된다.
+  assert.deepEqual((await load()).propertyFilters.status, ["status-completed"]);
   assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
   assert.deepEqual(
     (await request(`/reports/${report.data.id}`)).data.view.propertyFilters
       .status,
-    ["완료"],
+    ["status-completed"],
   );
 });
 
@@ -3137,15 +2949,6 @@ test("속성 값 신규·수정은 15자로 제한하고 기존 긴 값과 무�
     15,
   );
 
-  const legacyInput = structuredClone(settings);
-  delete legacyInput.properties;
-  legacyInput.categories = ["가".repeat(16)];
-  assert.equal(
-    (await save(legacyInput)).status,
-    400,
-    "기존 호환 API로도 긴 값을 새로 만들 수 없다",
-  );
-
   // Simulate a pre-limit definition in this test's temporary database only.
   const legacyLabel = "예전에 저장한 긴 프로젝트 이름";
   settings.properties.find((p) => p.id === pid).values[0].label = legacyLabel;
@@ -3184,7 +2987,6 @@ test("모든 업무 정보 열을 속성으로 관리하고 다섯 종류의 값
   let settings = (await request("/admin/users")).data.teams.find(
     (t) => t.id === tid,
   ).settings;
-  assert.equal(settings.propertiesVersion, 3);
   assert.equal(settings.properties.length, 3);
   const props = [
     {
@@ -3348,7 +3150,7 @@ test("작업 열 보호·선택 열 삭제와 복원·표시 순서 및 종류 �
     await post("/tasks", {
       teamId: tid,
       year: 2026,
-      fields: { title: "보존 업무", [pid]: "12.5" },
+      fields: { title: "보존 업무", category: "category-ux", [pid]: "12.5" },
     })
   ).data.task;
   const initial = normalizeView(defaultView(2026), settings);
@@ -3410,7 +3212,7 @@ test("작업 열 보호·선택 열 삭제와 복원·표시 순서 및 종류 �
       (f) => f.key === "category" || f.key === "supporters",
     ),
   );
-  assert.equal(getTask(db, task.id).cells.category.value, "UX 개선");
+  assert.equal(getTask(db, task.id).cells.category.value, "category-ux");
   let view = (await request(`/views?teamId=${tid}&year=2026`)).data.views[0]
     .data;
   assert(!view.visibleFields.includes(pid));
@@ -3426,22 +3228,7 @@ test("작업 열 보호·선택 열 삭제와 복원·표시 순서 및 종류 �
   view = (await request(`/views?teamId=${tid}&year=2026`)).data.views[0].data;
   assert(view.visibleFields.includes(pid));
   assert(view.visibleFields.includes("category"));
-  assert.equal(getTask(db, task.id).cells.category.value, "UX 개선");
-});
-
-test("텍스트 표시의 기본값과 구 줄바꿈·개별 셀 서식을 독립적으로 해석한다", async () => {
-  const { cell, textMode } = await import("../shared/domain.js");
-  assert.equal(textMode({}), "overflow");
-  assert.equal(textMode({ wrap: true, verticalAlign: "middle" }), "wrap");
-  assert.equal(textMode({ textMode: "clip", wrap: true }), "clip");
-  const task = {
-    defaultStyle: { textMode: "clip" },
-    cells: {
-      title: { value: "첫 줄", style: { wrap: true, verticalAlign: "bottom" } },
-    },
-  };
-  assert.equal(textMode(cell(task, "title").style), "wrap");
-  assert.equal(cell(task, "title").style.verticalAlign, "bottom");
+  assert.equal(getTask(db, task.id).cells.category.value, "category-ux");
 });
 
 test("팀 테마는 팀별로 저장하고 기존 설정 저장·권한·충돌 검사를 보존한다", async () => {
@@ -3492,16 +3279,8 @@ test("팀 테마는 팀별로 저장하고 기존 설정 저장·권한·충돌 
     ).status,
     409,
   );
-  // A legacy settings client without the new theme field must preserve the team theme.
-  for (const body of [
-    { ...settings, theme: undefined },
-    {
-      categories: settings.categories,
-      types: settings.types,
-      statuses: settings.statuses,
-      retentionDays: settings.retentionDays,
-    },
-  ]) {
+  // 테마를 생략한 설정 저장은 팀 테마를 유지한다.
+  for (const body of [{ ...settings, theme: undefined }]) {
     assert.equal(
       (await request(`/teams/${tid}/settings`, { method: "PATCH", body }))
         .status,

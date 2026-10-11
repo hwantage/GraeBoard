@@ -57,7 +57,7 @@ test.beforeEach(async ({ page }) => {
       fields: {
         title,
         owner: userId,
-        status: ids.length ? "" : status.label,
+        status: ids.length ? "" : status.id,
         [memoKey]: memo,
       },
     });

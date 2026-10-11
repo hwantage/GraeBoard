@@ -33,13 +33,24 @@ export default function FindBar({
   const [scopeOpen, setScopeOpen] = useState(false);
   // null follows all active properties, including properties added later.
   const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
-  const activeProperties = properties.filter((property) => !property.archived);
-  const selected = selectedIds === null ? null : new Set(selectedIds);
-  const searchProperties = activeProperties.filter(
-    (property) => !selected || selected.has(property.id),
+  const activeProperties = useMemo(
+    () => properties.filter((property) => !property.archived),
+    [properties],
   );
-  const scopeKey = JSON.stringify(
-    searchProperties.map((property) => property.id),
+  const selected = useMemo(
+    () => (selectedIds === null ? null : new Set(selectedIds)),
+    [selectedIds],
+  );
+  const searchProperties = useMemo(
+    () =>
+      activeProperties.filter(
+        (property) => !selected || selected.has(property.id),
+      ),
+    [activeProperties, selected],
+  );
+  const scopeKey = useMemo(
+    () => JSON.stringify(searchProperties.map((property) => property.id)),
+    [searchProperties],
   );
   const allSelected =
     activeProperties.length > 0 &&
@@ -104,15 +115,19 @@ export default function FindBar({
     });
   }
   // Polling creates new objects even when labels have not changed.
-  const metadata = JSON.stringify([
-    searchProperties.map((p) => [
-      p.id,
-      p.kind,
-      p.archived,
-      p.values.map((v) => [v.id, v.label]),
-    ]),
-    users.map((user) => [user.id, user.name]),
-  ]);
+  const metadata = useMemo(
+    () =>
+      JSON.stringify([
+        searchProperties.map((p) => [
+          p.id,
+          p.kind,
+          p.archived,
+          p.values.map((v) => [v.id, v.label]),
+        ]),
+        users.map((user) => [user.id, user.name]),
+      ]),
+    [searchProperties, users],
+  );
   const engine = useMemo(
     () => createPropertySearch(searchProperties, users),
     [metadata],

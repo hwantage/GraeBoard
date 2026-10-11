@@ -1,10 +1,9 @@
 import {
-  BUILTIN_PROPERTIES,
   normalizeSettings,
   PROPERTY_VALUE_MAX_LENGTH,
   normalizeView,
-  propertyValue,
   propertyOption,
+  splitNames,
 } from "../shared/domain.js";
 import {
   propertiesSchema,
@@ -13,80 +12,36 @@ import {
   requireThat,
   validateCellValue,
 } from "./validation.mjs";
-import {
-  audit,
-  getTask,
-  json,
-  parse,
-  nextTaskStamp,
-  transaction,
-} from "./db.mjs";
+import { audit, json, parse, touchTasks, transaction } from "./db.mjs";
 import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
 
-export function saveSettings(db, team, rawInput, actorId) {
+const settingsSchema = z
+  .object({
+    theme: z.enum(THEME_IDS).optional(),
+    properties: propertiesSchema.optional(),
+    revision: z.number().int().nonnegative().optional(),
+    defaultStyle: styleSchema.optional(),
+    defaultDensity: z.enum(["comfortable", "compact", "dense"]).optional(),
+    weekHeader: weekHeaderSchema.optional(),
+  })
+  .strict();
+
+export function saveSettings(db, team, input, actorId) {
   const previous = normalizeSettings(team.settings);
-  // 이전 클라이언트가 보내는 주차 경계선 설정은 저장하지 않는다.
-  const { weekBorders: _legacy, ...input } = rawInput;
-  const list = z
-    .array(z.string().trim().min(1).max(60))
-    .max(100)
-    .refine((a) => new Set(a).size === a.length);
-  const data = z
-    .object({
-      theme: z.enum(THEME_IDS).optional(),
-      categories: list,
-      types: list,
-      statuses: list,
-      retentionDays: z.number().int().min(30).max(3650),
-      properties: propertiesSchema.optional(),
-      propertiesVersion: z.literal(3).optional(),
-      revision: z.number().int().nonnegative().optional(),
-      defaultStyle: styleSchema.optional(),
-      defaultDensity: z.enum(["comfortable", "compact", "dense"]).optional(),
-      weekHeader: weekHeaderSchema.optional(),
-    })
-    .strict()
-    .parse({
-      ...(input.properties && input.propertiesVersion !== 3
-        ? normalizeSettings(input)
-        : input),
-      theme: input.theme === undefined ? previous.theme : input.theme,
-    });
+  const data = settingsSchema.parse(input);
   if (data.revision !== undefined)
     requireThat(
       data.revision === (previous.revision || 0),
       409,
       "다른 관리자가 설정을 변경했습니다. 다시 열어 최신 설정을 확인하세요.",
     );
-  let properties = data.properties;
-  if (!properties) {
-    properties = previous.properties.map((p) => {
-      const key = BUILTIN_PROPERTIES[p.id];
-      if (!key) return p;
-      return {
-        ...p,
-        values: data[key].map(
-          (label, i) =>
-            p.values.find((v) => v.label === label) || {
-              id: `legacy-${Date.now()}-${i}`,
-              label,
-              backgroundColor: "#edf6f4",
-              dotColor: "#177b70",
-              emoji: "📌",
-            },
-        ),
-      };
-    });
-  }
-  // Removing an option/column archives its definition so historical cells remain readable.
-  properties = properties.map((p) => {
+  // 제거한 속성·선택값은 보관(archived)해서 기존 셀을 계속 읽을 수 있게 한다.
+  let properties = (data.properties ?? previous.properties).map((p) => {
     const old = previous.properties.find((o) => o.id === p.id);
-    const requested = input.properties?.find((item) => item.id === p.id);
     return {
       ...p,
-      placement:
-        requested?.placement ?? old?.placement ?? p.placement ?? "beforeWeeks",
+      placement: p.placement ?? old?.placement ?? "beforeWeeks",
       values: [
         ...p.values,
         ...(old?.values || [])
@@ -100,26 +55,20 @@ export function saveSettings(db, team, rawInput, actorId) {
       .filter((p) => !properties.some((n) => n.id === p.id))
       .map((p) => ({ ...p, archived: true })),
   );
-  properties = normalizeSettings({
-    ...data,
-    propertiesVersion: 3,
-    properties,
-  }).properties;
+  properties = normalizeSettings({ properties }).properties;
   propertiesSchema.parse(properties);
   for (const p of properties.filter((p) =>
     ["owner", "supporters"].includes(p.id),
-  )) {
+  ))
     requireThat(
       p.kind === "member" && !!p.multiple === (p.id === "supporters"),
       400,
       "팀원·지원자는 업무 편집 권한과 연결된 Member 속성입니다. 기본 팀원 속성은 삭제할 수 없습니다.",
     );
-  }
   for (const p of properties) {
     const old = previous.properties.find((o) => o.id === p.id);
     for (const v of p.values) {
-      // Keep existing longer labels readable and allow unrelated settings changes.
-      // Newly created or renamed values must follow the current length limit.
+      // 이름을 바꾸거나 새로 만든 값만 길이 제한을 받는다.
       const unchanged = old?.values.some(
         (o) => o.id === v.id && o.label === v.label,
       );
@@ -131,200 +80,21 @@ export function saveSettings(db, team, rawInput, actorId) {
     }
   }
   const settings = {
-    ...data,
-    propertiesVersion: 3,
+    theme: data.theme ?? previous.theme,
     properties,
     defaultStyle: data.defaultStyle ?? previous.defaultStyle,
     defaultDensity: data.defaultDensity ?? previous.defaultDensity,
     weekHeader: data.weekHeader ?? previous.weekHeader,
     revision: (previous.revision || 0) + 1,
   };
-  for (const [key, listKey] of Object.entries(BUILTIN_PROPERTIES))
-    settings[listKey] =
-      properties
-        .find((p) => p.id === key)
-        ?.values.filter((v) => !v.archived)
-        .map((v) => v.label) || [];
-  // Built-in cells historically stored labels. Rename all matching cells atomically,
-  // preserving styles and advancing versions so stale edits cannot overwrite them.
   transaction(db, () => {
-    const changes = [];
-    const people = db
-      .prepare(
-        "SELECT u.id,u.name,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=?",
-      )
-      .all(team.id);
-    for (const p of properties) {
-      const old = previous.properties.find((o) => o.id === p.id);
-      if (
-        !old ||
-        p.archived ||
-        (old.kind === p.kind && !!old.multiple === !!p.multiple)
-      )
-        continue;
-      const rows = db
-        .prepare(
-          "SELECT c.* FROM cells c JOIN tasks t ON c.task_id=t.id WHERE t.team_id=? AND c.key=?",
-        )
-        .all(team.id, p.id);
-      for (const row of rows) {
-        const value = parse(row.value);
-        const empty = value === "" || (Array.isArray(value) && !value.length);
-        const text =
-          old.kind === "member"
-            ? (Array.isArray(value) ? value : empty ? [] : [value])
-                .map((id) => people.find((u) => u.id === id)?.name || id)
-                .join(", ")
-            : (propertyOption(old, value)?.label ?? String(value));
-        let next = empty ? (p.kind === "member" && p.multiple ? [] : "") : text;
-        if (!empty && p.kind === "number")
-          next =
-            text.trim() && Number.isFinite(Number(text)) ? Number(text) : text;
-        if (!empty && p.kind === "option") {
-          const option = p.values.find(
-            (v) =>
-              !v.archived &&
-              (v.label === text || propertyValue(p, v) === value),
-          );
-          next = option ? propertyValue(p, option) : text;
-        }
-        if (!empty && p.kind === "member") {
-          const ids = text
-            .split(/[,;\n]/)
-            .map((n) => n.trim())
-            .filter(Boolean)
-            .map((n) => {
-              const matches = people.filter(
-                (u) => u.role !== "viewer" && (u.id === n || u.name === n),
-              );
-              requireThat(
-                matches.length === 1,
-                400,
-                `${p.name}: “${n}”에 해당하는 팀원을 정확히 선택할 수 없습니다.`,
-              );
-              return matches[0].id;
-            });
-          requireThat(
-            p.multiple || ids.length <= 1,
-            400,
-            `${p.name}: 여러 팀원이 선택된 값이 있어 단일 선택으로 바꿀 수 없습니다.`,
-          );
-          next = p.multiple ? [...new Set(ids)] : ids[0] || "";
-        }
-        try {
-          validateCellValue(db, team.id, p.id, next, settings);
-        } catch {
-          requireThat(
-            false,
-            400,
-            `${p.name}: 기존 값 “${text.slice(0, 40)}”을 새 속성 종류로 바꿀 수 없습니다. 해당 값을 먼저 수정하세요.`,
-          );
-        }
-        const prev = {
-          taskId: row.task_id,
-          key: p.id,
-          value,
-          style: parse(row.style),
-          version: row.version,
-        };
-        const updated = { ...prev, value: next, version: prev.version + 1 };
-        db.prepare(
-          "UPDATE cells SET value=?,version=? WHERE task_id=? AND key=?",
-        ).run(json(next), updated.version, row.task_id, p.id);
-        changes.push({ prev, next: updated });
-      }
-    }
-    for (const key of Object.keys(BUILTIN_PROPERTIES)) {
-      const before = previous.properties.find((p) => p.id === key),
-        after = properties.find((p) => p.id === key);
-      if (!before || !after) continue;
-      const names = new Map(
-        (before.kind === "option" && after.kind === "option"
-          ? before.values
-          : []
-        ).map((v) => [
-          v.label,
-          after.values.find((n) => n.id === v.id)?.label || v.label,
-        ]),
-      );
-      const rows = db
-        .prepare(
-          "SELECT c.* FROM cells c JOIN tasks t ON c.task_id=t.id WHERE t.team_id=? AND c.key=?",
-        )
-        .all(team.id, key);
-      for (const c of rows) {
-        const old = parse(c.value),
-          renamed = names.get(old);
-        if (renamed !== undefined && renamed !== old) {
-          const prev = {
-            taskId: c.task_id,
-            key,
-            value: old,
-            style: parse(c.style),
-            version: c.version,
-          };
-          const next = { ...prev, value: renamed, version: prev.version + 1 };
-          db.prepare(
-            "UPDATE cells SET value=?,version=? WHERE task_id=? AND key=?",
-          ).run(json(renamed), next.version, c.task_id, key);
-          changes.push({ prev, next });
-        }
-      }
-      {
-        for (const row of db
-          .prepare("SELECT id,data FROM views WHERE team_id=?")
-          .all(team.id)) {
-          const view = parse(row.data);
-          if (names.has(view[key]) || view.propertyFilters?.[key]) {
-            if (names.has(view[key])) view[key] = names.get(view[key]);
-            if (view.propertyFilters?.[key])
-              view.propertyFilters[key] = view.propertyFilters[key].map(
-                (v) => names.get(v) ?? v,
-              );
-            db.prepare("UPDATE views SET data=? WHERE id=?").run(
-              json(view),
-              row.id,
-            );
-          }
-        }
-      }
-    }
+    convertChangedKinds(db, team.id, actorId, previous, properties, settings);
+    // 보관된 속성의 필터·열을 보기에서 걷어낸다.
+    const updateView = db.prepare("UPDATE views SET data=? WHERE id=?");
     for (const row of db
       .prepare("SELECT id,data FROM views WHERE team_id=?")
-      .all(team.id)) {
-      const view = normalizeView(
-        normalizeView(parse(row.data), previous),
-        settings,
-      );
-      db.prepare("UPDATE views SET data=? WHERE id=?").run(json(view), row.id);
-    }
-    for (const taskId of new Set(changes.map((c) => c.next.taskId))) {
-      const task = getTask(db, taskId);
-      db.prepare("UPDATE tasks SET updated_at=? WHERE id=?").run(
-        nextTaskStamp(task.updatedAt),
-        taskId,
-      );
-    }
-    if (changes.length)
-      audit(
-        db,
-        actorId,
-        team.id,
-        "property-rename",
-        team.id,
-        changes.map((c) => c.prev),
-        changes.map((c) => c.next),
-      );
-    for (const row of db
-      .prepare("SELECT id,data FROM reports WHERE team_id=?")
-      .all(team.id)) {
-      const report = parse(row.data);
-      if (!report.settings)
-        db.prepare("UPDATE reports SET data=? WHERE id=?").run(
-          json({ ...report, settings: previous }),
-          row.id,
-        );
-    }
+      .all(team.id))
+      updateView.run(json(normalizeView(parse(row.data), settings)), row.id);
     db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
       json(settings),
       team.id,
@@ -332,4 +102,119 @@ export function saveSettings(db, team, rawInput, actorId) {
     audit(db, actorId, team.id, "settings", team.id, previous, settings);
   });
   return settings;
+}
+
+// 속성 종류(또는 단일·복수)가 바뀌면 기존 셀 값을 새 종류로 바꾼다.
+// 하나라도 바꿀 수 없으면 설정 저장 전체를 되돌린다.
+function convertChangedKinds(
+  db,
+  teamId,
+  actorId,
+  previous,
+  properties,
+  settings,
+) {
+  const changed = properties.filter((p) => {
+    const old = previous.properties.find((o) => o.id === p.id);
+    return (
+      old &&
+      !p.archived &&
+      (old.kind !== p.kind || !!old.multiple !== !!p.multiple)
+    );
+  });
+  if (!changed.length) return;
+  const users = db
+    .prepare(
+      "SELECT u.id,u.name,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=?",
+    )
+    .all(teamId);
+  const updateCell = db.prepare(
+    "UPDATE cells SET value=?,version=? WHERE task_id=? AND key=?",
+  );
+  const changes = [];
+  for (const p of changed) {
+    const old = previous.properties.find((o) => o.id === p.id);
+    const rows = db
+      .prepare(
+        "SELECT c.* FROM cells c JOIN tasks t ON c.task_id=t.id WHERE t.team_id=? AND c.key=?",
+      )
+      .all(teamId, p.id);
+    for (const row of rows) {
+      const value = parse(row.value);
+      const empty = value === "" || (Array.isArray(value) && !value.length);
+      const text =
+        old.kind === "member"
+          ? (Array.isArray(value) ? value : empty ? [] : [value])
+              .map((id) => users.find((u) => u.id === id)?.name || id)
+              .join(", ")
+          : (propertyOption(old, value)?.label ?? String(value));
+      let next = empty ? (p.kind === "member" && p.multiple ? [] : "") : text;
+      if (!empty && p.kind === "number")
+        next =
+          text.trim() && Number.isFinite(Number(text)) ? Number(text) : text;
+      if (!empty && p.kind === "option") {
+        const option = p.values.find(
+          (v) => !v.archived && (v.label === text || v.id === value),
+        );
+        next = option ? option.id : text;
+      }
+      if (!empty && p.kind === "member") {
+        const ids = splitNames(text).map((n) => {
+          const matches = users.filter(
+            (u) => u.role !== "viewer" && (u.id === n || u.name === n),
+          );
+          requireThat(
+            matches.length === 1,
+            400,
+            `${p.name}: “${n}”에 해당하는 팀원을 정확히 선택할 수 없습니다.`,
+          );
+          return matches[0].id;
+        });
+        requireThat(
+          p.multiple || ids.length <= 1,
+          400,
+          `${p.name}: 여러 팀원이 선택된 값이 있어 단일 선택으로 바꿀 수 없습니다.`,
+        );
+        next = p.multiple ? [...new Set(ids)] : ids[0] || "";
+      }
+      try {
+        validateCellValue(db, teamId, p.id, next, settings);
+      } catch {
+        requireThat(
+          false,
+          400,
+          `${p.name}: 기존 값 “${text.slice(0, 40)}”을 새 속성 종류로 바꿀 수 없습니다. 해당 값을 먼저 수정하세요.`,
+        );
+      }
+      const prev = {
+        taskId: row.task_id,
+        key: p.id,
+        value,
+        style: parse(row.style),
+        version: row.version,
+      };
+      const updated = { ...prev, value: next, version: prev.version + 1 };
+      updateCell.run(json(next), updated.version, row.task_id, p.id);
+      changes.push({ prev, next: updated });
+    }
+  }
+  if (!changes.length) return;
+  const changedIds = [...new Set(changes.map((c) => c.next.taskId))];
+  touchTasks(
+    db,
+    db
+      .prepare(
+        `SELECT id,updated_at AS updatedAt FROM tasks WHERE id IN (${changedIds.map(() => "?").join(",")})`,
+      )
+      .all(...changedIds),
+  );
+  audit(
+    db,
+    actorId,
+    teamId,
+    "property-convert",
+    teamId,
+    changes.map((c) => c.prev),
+    changes.map((c) => c.next),
+  );
 }

@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { SCHEMA_VERSION } from "../server/db.mjs";
 
 // Restore into a NEW destination. Switching DB_PATH is a separate operator action.
 export function restoreDatabase(backup, destination) {
@@ -19,9 +20,8 @@ export function restoreDatabase(backup, destination) {
   try {
     if (
       source.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      ![1, 2, 3, 4].includes(
-        source.prepare("PRAGMA user_version").get().user_version,
-      )
+      source.prepare("PRAGMA user_version").get().user_version !==
+        SCHEMA_VERSION
     )
       throw new Error("지원하는 정상 백업 파일이 아닙니다.");
     source.prepare("SELECT id FROM tasks LIMIT 1").all();

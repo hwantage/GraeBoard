@@ -1,19 +1,15 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Plus, Users } from "lucide-react";
-import type { Team, TeamRole, User } from "./types";
+import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
 import { api } from "./api";
 import { Modal, ErrorNote } from "./components";
 import DefaultStyleManager from "./DefaultStyleManager";
 import PropertiesManager from "./PropertiesManager";
-import {
-  NewTeam,
-  TeamGeneral,
-  TeamMembers,
-  teamRoleNames,
-} from "./TeamSettings";
+import { NewTeam, TeamGeneral, TeamMembers } from "./TeamSettings";
 import UserAccounts from "./UserAccounts";
+import { teamRoleNames } from "./roles";
 
 const teamTabs = [
   ["general", "일반"],
@@ -22,16 +18,22 @@ const teamTabs = [
   ["format", "기본 서식"],
 ] as const;
 type TeamTab = (typeof teamTabs)[number][0];
-type Selection =
+type SettingsTarget =
   | { kind: "team"; id: string; tab: TeamTab }
   | { kind: "new-team" }
   | { kind: "users" };
 
 // 설정은 왼쪽에서 대상(팀·시스템)을 고르고 오른쪽에서 그 대상만 편집한다.
 // 팀을 고르면 오른쪽 전체가 그 팀의 설정이 되어 팀별로 관리한다는 맥락을 유지한다.
-export default function AdminPanel({
+const manageableTeams = (user: User, teams: Team[]) =>
+  teams.filter((t) => canManageTeam(user, t.id));
+const firstTeam = (teams: Team[]): SettingsTarget | null =>
+  teams[0] ? { kind: "team", id: teams[0].id, tab: "general" } : null;
+export default function SettingsPanel({
   user,
   team,
+  teams: allTeams,
+  users: boardUsers,
   onClose,
   onRefresh,
   visibleFields,
@@ -39,71 +41,70 @@ export default function AdminPanel({
 }: {
   user: User;
   team: Team;
+  // 보드가 이미 받아 둔 팀·사용자. 저장 뒤에는 onRefresh가 최신 값을 돌려준다.
+  teams: Team[];
+  users: User[];
   visibleFields: string[];
   onVisibilitySaved: (changes: Record<string, boolean>) => void;
   onClose: () => void;
-  onRefresh: () => void | Promise<void>;
+  onRefresh: () => Promise<Bootstrap | void>;
 }) {
   const isAdmin = user.systemRole === "admin";
-  const [data, setData] = useState<{ users: User[]; teams: Team[] }>({
-    users: [],
-    teams: canManageTeam(user, team.id) ? [team] : [],
-  });
-  const [selection, setSelection] = useState<Selection>({
-    kind: "team",
-    id: team.id,
-    tab: "general",
-  });
+  // 시스템 관리자는 팀에 속하지 않은 계정과 방금 생긴 팀까지 봐야 하므로
+  // 열 때마다 전체 목록을 새로 받는다. 팀장은 보드가 받아 둔 값으로 충분하다.
+  const [adminData, setAdminData] = useState<{
+    users: User[];
+    teams: Team[];
+  } | null>(null);
+  const teams = useMemo(
+    () =>
+      isAdmin
+        ? (adminData?.teams ?? allTeams)
+        : manageableTeams(user, allTeams),
+    [isAdmin, adminData, user, allTeams],
+  );
+  const users = isAdmin ? (adminData?.users ?? []) : boardUsers;
+  const [selection, setSelection] = useState<SettingsTarget>(
+    () =>
+      (canManageTeam(user, team.id)
+        ? { kind: "team", id: team.id, tab: "general" }
+        : firstTeam(teams)) || { kind: "users" },
+  );
   const [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
-    [me, setMe] = useState(user);
-  async function refresh() {
-    const boot = await api("/bootstrap");
-    setMe(boot.user);
-    if (isAdmin) {
-      const admin = await api("/admin/users");
-      setData({ users: admin.users, teams: admin.teams });
-      return admin.teams as Team[];
-    }
-    const teams = boot.teams.filter((t: Team) =>
-      canManageTeam(boot.user, t.id),
-    );
-    setData({ users: boot.users, teams });
-    return teams as Team[];
-  }
-  function firstTeam(teams: Team[]): Selection | null {
-    return teams[0] ? { kind: "team", id: teams[0].id, tab: "general" } : null;
-  }
+    [message, setMessage] = useState("");
+  const loadAdminData = () =>
+    isAdmin
+      ? api("/admin/users").then((r) => {
+          setAdminData(r);
+          return r as { users: User[]; teams: Team[] };
+        })
+      : Promise.resolve(null);
   async function saved() {
-    const teams = await refresh();
-    await onRefresh();
+    const [latest, admin] = await Promise.all([onRefresh(), loadAdminData()]);
+    const next = admin
+      ? admin.teams
+      : latest
+        ? manageableTeams(latest.user, latest.teams)
+        : teams;
     // 팀이 삭제되었거나 내 팀장 권한이 해제되면 남은 팀으로 옮긴다.
-    if (!isAdmin && !teams.length) return onClose();
+    if (!isAdmin && !next.length) return onClose();
     setSelection((s) =>
-      s.kind !== "team" || teams.some((t) => t.id === s.id)
+      s.kind !== "team" || next.some((t) => t.id === s.id)
         ? s
-        : firstTeam(teams) || { kind: "users" },
+        : firstTeam(next) || { kind: "users" },
     );
   }
   useEffect(() => {
-    refresh()
-      .then((teams) =>
-        setSelection((s) =>
-          s.kind === "team" && !teams.some((t) => t.id === s.id)
-            ? firstTeam(teams) || s
-            : s,
-        ),
-      )
-      .catch((e) => setError(e.message));
+    loadAdminData().catch((e) => setError(e.message));
   }, []);
-  function select(next: Selection) {
+  function select(next: SettingsTarget) {
     setSelection(next);
     setError("");
     setMessage("");
   }
   const selectedTeam =
     selection.kind === "team"
-      ? data.teams.find((t) => t.id === selection.id)
+      ? teams.find((t) => t.id === selection.id)
       : undefined;
   return (
     <Modal title="설정" wide className="settings-modal" onClose={onClose}>
@@ -111,8 +112,8 @@ export default function AdminPanel({
         <nav className="settings-nav" aria-label="설정 메뉴">
           <h3 id="settings-teams-heading">팀</h3>
           <ul aria-labelledby="settings-teams-heading">
-            {data.teams.map((t) => {
-              const role = teamRole(me, t.id) as TeamRole | null;
+            {teams.map((t) => {
+              const role = teamRole(user, t.id) as TeamRole | null;
               return (
                 <li key={t.id}>
                   <button
@@ -203,7 +204,7 @@ export default function AdminPanel({
                 </div>
               </div>
               <div
-                className="admin-tabs"
+                className="settings-tabs"
                 role="tablist"
                 aria-label={`${selectedTeam.name} 설정`}
               >
@@ -244,8 +245,7 @@ export default function AdminPanel({
                   <TeamMembers
                     key={selectedTeam.id}
                     team={selectedTeam}
-                    user={me}
-                    isAdmin={isAdmin}
+                    user={user}
                     onSaved={saved}
                     onMessage={setMessage}
                   />
@@ -284,7 +284,7 @@ export default function AdminPanel({
           )}
           {selection.kind === "new-team" && (
             <NewTeam
-              teams={data.teams}
+              teams={teams}
               onCreated={async (id) => {
                 await saved();
                 select({ kind: "team", id, tab: "members" });
@@ -294,8 +294,8 @@ export default function AdminPanel({
           )}
           {selection.kind === "users" && (
             <UserAccounts
-              users={data.users}
-              teams={data.teams}
+              users={users}
+              teams={teams}
               onSaved={saved}
               onMessage={setMessage}
               onOpenTeam={(id) => select({ kind: "team", id, tab: "members" })}

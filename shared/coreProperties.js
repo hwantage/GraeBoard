@@ -1,3 +1,5 @@
+// 모든 팀이 반드시 갖는 속성과, 예시 팀에 함께 만드는 속성 양식.
+// 선택형(option) 셀 값은 언제나 옵션 ID다. 라벨은 표시에만 쓴다.
 export const CORE_PROPERTY_KEYS = ["title", "owner", "status"];
 export const DEFAULT_STATUS_OPTIONS = [
   {
@@ -36,97 +38,136 @@ export const DEFAULT_STATUS_OPTIONS = [
     emoji: "⏸️",
   },
 ];
-/** @returns {import("../src/types").Property[]} */
+const option = (id, label) => ({
+  id,
+  label,
+  backgroundColor: "#e5f0ee",
+  dotColor: "#177b70",
+  emoji: "📌",
+});
+const TITLE = {
+  id: "title",
+  name: "작업",
+  kind: "text",
+  display: "text",
+  width: 330,
+  visible: true,
+  values: [],
+};
+const OWNER = {
+  id: "owner",
+  name: "팀원",
+  kind: "member",
+  display: "avatar",
+  multiple: false,
+  width: 112,
+  visible: true,
+  values: [],
+};
+const STATUS = {
+  id: "status",
+  name: "상태",
+  kind: "option",
+  display: "dot",
+  width: 105,
+  visible: true,
+  values: DEFAULT_STATUS_OPTIONS,
+};
+/** 새 팀의 기본 속성. @returns {import("../src/types").Property[]} */
 export function defaultCoreProperties() {
-  return [
+  return structuredClone([TITLE, OWNER, STATUS]);
+}
+/**
+ * 예시 팀과 XLSX 가져오기가 쓰는 확장 양식. ID는 가져오기 열 별칭과 같다.
+ * @returns {import("../src/types").Property[]}
+ */
+export function sampleProperties() {
+  return structuredClone([
     {
-      id: "title",
-      name: "작업",
+      id: "category",
+      name: "분류",
+      kind: "option",
+      display: "square",
+      width: 108,
+      visible: true,
+      values: [
+        option("category-ux", "UX 개선"),
+        option("category-new", "차별화"),
+        option("category-other", "기타"),
+      ],
+    },
+    {
+      id: "type",
+      name: "유형",
+      kind: "option",
+      display: "square",
+      width: 84,
+      visible: false,
+      values: [
+        option("type-plan", "기획"),
+        option("type-design", "디자인"),
+        option("type-dev", "개발"),
+        option("type-review", "검토"),
+        option("type-research", "연구"),
+      ],
+    },
+    TITLE,
+    {
+      id: "description",
+      name: "설명",
       kind: "text",
       display: "text",
-      visible: true,
+      width: 220,
+      visible: false,
       values: [],
     },
+    OWNER,
     {
-      id: "owner",
-      name: "팀원",
+      id: "supporters",
+      name: "지원자",
       kind: "member",
-      display: "avatar",
-      multiple: false,
-      visible: true,
+      display: "text",
+      multiple: true,
+      width: 120,
+      visible: false,
+      values: [],
+    },
+    STATUS,
+    {
+      id: "progress",
+      name: "진척률",
+      kind: "text",
+      display: "text",
+      width: 80,
+      visible: false,
       values: [],
     },
     {
-      id: "status",
-      name: "상태",
-      kind: "option",
-      display: "dot",
-      visible: true,
-      values: DEFAULT_STATUS_OPTIONS.map((v) => ({ ...v })),
+      id: "deadline",
+      name: "목표일",
+      kind: "date",
+      display: "text",
+      width: 112,
+      visible: false,
+      values: [],
     },
-  ];
-}
-// Restore required definitions once, retaining stable IDs, custom values and colors.
-export function upgradeCoreProperties(properties) {
-  const remaining = properties.filter(
-    (p) => !CORE_PROPERTY_KEYS.includes(p.id),
-  );
-  const names = new Set(
-    remaining.filter((p) => !p.archived).map((p) => p.name),
-  );
-  const core = defaultCoreProperties().map((base) => {
-    const old = properties.find((p) => p.id === base.id);
-    const p = {
-      ...base,
-      ...old,
-      kind: base.kind,
-      archived: false,
-      visible: true,
-    };
-    if (p.id === "owner") {
-      p.multiple = false;
-      if (p.name === "책임자") p.name = "팀원";
-      if (!["avatar", "text"].includes(p.display)) p.display = "avatar";
-    }
-    if (p.id === "status") {
-      if (!["text", "dot", "round", "square", "emoji"].includes(p.display))
-        p.display = "dot";
-      const oldValues = old?.values || [];
-      p.values = DEFAULT_STATUS_OPTIONS.map((preset) => {
-        const found = oldValues.find((v) => v.label === preset.label);
-        if (!found) {
-          let id = preset.id;
-          while (oldValues.some((v) => v.id === id)) id += "-new";
-          return { ...preset, id };
-        }
-        const untouched =
-          found.dotColor === "#177b70" &&
-          ["#ffffff", "#edf6f4"].includes(found.backgroundColor);
-        return {
-          ...found,
-          ...(untouched
-            ? {
-                backgroundColor: preset.backgroundColor,
-                dotColor: preset.dotColor,
-                emoji: preset.emoji,
-              }
-            : {}),
-          archived: false,
-        };
-      });
-      p.values.push(
-        ...oldValues.filter((v) => !p.values.some((n) => n.id === v.id)),
-      );
-    }
-    const desired = p.name;
-    let n = 1;
-    while (names.has(p.name))
-      p.name = `${desired} (기본${n++ === 1 ? "" : n - 1})`;
-    names.add(p.name);
-    return p;
-  });
-  return [
-    ...properties.map((p) => core.find((c) => c.id === p.id) || p),
-    ...core.filter((c) => !properties.some((p) => p.id === c.id)),
-  ];
+    {
+      id: "score",
+      name: "Score",
+      kind: "number",
+      display: "text",
+      width: 72,
+      visible: false,
+      values: [],
+    },
+    {
+      id: "current",
+      name: "Current",
+      kind: "number",
+      display: "text",
+      width: 78,
+      visible: false,
+      values: [],
+    },
+  ]);
 }

@@ -1,6 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useState, useMemo } from "react";
 import type { FilterMode, Property, Task, User } from "./types";
-import { propertyValue, value } from "../shared/domain.js";
+import { value } from "../shared/domain.js";
 import { Button } from "./components";
 import PropertyBadge from "./PropertyBadge";
 
@@ -23,30 +23,36 @@ export default function PropertyFilter({
 }) {
   const modeId = useId();
   const [search, setSearch] = useState("");
-  const values =
-    property.kind === "option"
-      ? property.values
-          .filter(
-            (o) => !o.archived || selected.includes(propertyValue(property, o)),
-          )
-          .map((o) => ({
-            value: propertyValue(property, o),
-            label: o.label,
-            archived: o.archived,
-          }))
-      : property.kind === "member"
-        ? users.map((u) => ({ value: u.id, label: u.name, archived: false }))
-        : [
-            ...new Set([
-              ...tasks.map((t) => String(value(t, property.id))),
-              ...selected,
-            ]),
-          ]
-            .filter(Boolean)
-            .sort((a, b) => a.localeCompare(b, "ko", { numeric: true }))
-            .map((v) => ({ value: v, label: v, archived: false }));
-  const matching = values.filter((o) =>
-    o.label.toLowerCase().includes(search.toLowerCase()),
+  // 텍스트·날짜·숫자 속성은 전체 업무를 훑어 값 목록을 만든다. 키 입력마다 반복하지 않는다.
+  const values = useMemo(
+    () =>
+      property.kind === "option"
+        ? property.values
+            .filter((o) => !o.archived || selected.includes(o.id))
+            .map((o) => ({
+              value: o.id,
+              label: o.label,
+              archived: o.archived,
+            }))
+        : property.kind === "member"
+          ? users.map((u) => ({ value: u.id, label: u.name, archived: false }))
+          : [
+              ...new Set([
+                ...tasks.map((t) => String(value(t, property.id))),
+                ...selected,
+              ]),
+            ]
+              .filter(Boolean)
+              .sort((a, b) => a.localeCompare(b, "ko", { numeric: true }))
+              .map((v) => ({ value: v, label: v, archived: false })),
+    [property, tasks, users, selected],
+  );
+  const matching = useMemo(
+    () =>
+      values.filter((o) =>
+        o.label.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [values, search],
   );
   function toggle(value: string, checked: boolean) {
     onChange(

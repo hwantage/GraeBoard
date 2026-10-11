@@ -17,15 +17,16 @@ import BorderMenu from "./BorderMenu";
 import { FONTS, FONT_SIZES, PALETTE, textMode } from "../shared/domain.js";
 import { Button } from "./components";
 
+const ICON_PATHS: Record<string, string> = {
+  top: "M4 4h16M12 20V8m-4 4 4-4 4 4",
+  middle: "M4 12h16M12 2v6m-3-3 3 3 3-3M12 22v-6m-3 3 3-3 3 3",
+  bottom: "M4 20h16M12 4v12m-4-4 4 4 4-4",
+  overflow: "M4 3v5m0 8v5M13 3v5m0 8v5M3 12h18m-4-4 4 4-4 4",
+  wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
+  clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
+};
 function FormatIcon({ kind }: { kind: string }) {
-  const paths: Record<string, string> = {
-    top: "M4 4h16M12 20V8m-4 4 4-4 4 4",
-    middle: "M4 12h16M12 2v6m-3-3 3 3 3-3M12 22v-6m-3 3 3-3 3 3",
-    bottom: "M4 20h16M12 4v12m-4-4 4 4 4-4",
-    overflow: "M4 3v5m0 8v5M13 3v5m0 8v5M3 12h18m-4-4 4 4-4 4",
-    wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
-    clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
-  };
+  const paths = ICON_PATHS;
   return (
     <svg
       width="18"
@@ -42,6 +43,26 @@ function FormatIcon({ kind }: { kind: string }) {
     </svg>
   );
 }
+// 선택이 바뀔 때마다 옵션 배열과 아이콘을 다시 만들지 않도록 모듈에서 한 번만 만든다.
+const FONT_OPTIONS = FONTS.map((f) => ({ value: f, label: f }));
+const FONT_SIZE_OPTIONS = FONT_SIZES.map((size) => ({
+  value: String(size),
+  label: String(size),
+}));
+const VERTICAL_ALIGN_OPTIONS = [
+  { value: "top", label: "위", icon: <FormatIcon kind="top" /> },
+  { value: "middle", label: "중간", icon: <FormatIcon kind="middle" /> },
+  { value: "bottom", label: "아래", icon: <FormatIcon kind="bottom" /> },
+];
+const TEXT_MODE_OPTIONS = [
+  {
+    value: "overflow",
+    label: "오버플로우",
+    icon: <FormatIcon kind="overflow" />,
+  },
+  { value: "wrap", label: "줄바꿈", icon: <FormatIcon kind="wrap" /> },
+  { value: "clip", label: "자르기", icon: <FormatIcon kind="clip" /> },
+];
 export default function Toolbar({
   style,
   disabled,
@@ -81,7 +102,7 @@ export default function Toolbar({
           className="font-family"
           label="글꼴"
           value={style.fontFamily || FONTS[0]}
-          options={FONTS.map((f) => ({ value: f, label: f }))}
+          options={FONT_OPTIONS}
           disabled={disabled}
           onSelect={(value) => onStyle({ fontFamily: value })}
         />
@@ -89,10 +110,7 @@ export default function Toolbar({
           className="font-size"
           label="글자 크기"
           value={String(style.fontSize || 9)}
-          options={FONT_SIZES.map((size) => ({
-            value: String(size),
-            label: String(size),
-          }))}
+          options={FONT_SIZE_OPTIONS}
           disabled={disabled}
           onSelect={(value) => onStyle({ fontSize: Number(value) })}
         />
@@ -189,19 +207,7 @@ export default function Toolbar({
           iconOnly
           disabled={disabled}
           value={style.verticalAlign || "middle"}
-          options={[
-            { value: "top", label: "위", icon: <FormatIcon kind="top" /> },
-            {
-              value: "middle",
-              label: "중간",
-              icon: <FormatIcon kind="middle" />,
-            },
-            {
-              value: "bottom",
-              label: "아래",
-              icon: <FormatIcon kind="bottom" />,
-            },
-          ]}
+          options={VERTICAL_ALIGN_OPTIONS}
           onSelect={(value) =>
             onStyle({ verticalAlign: value as Style["verticalAlign"] })
           }
@@ -211,27 +217,10 @@ export default function Toolbar({
           iconOnly
           disabled={disabled}
           value={textMode(style)}
-          options={[
-            {
-              value: "overflow",
-              label: "오버플로우",
-              icon: <FormatIcon kind="overflow" />,
-            },
-            {
-              value: "wrap",
-              label: "줄바꿈",
-              icon: <FormatIcon kind="wrap" />,
-            },
-            {
-              value: "clip",
-              label: "자르기",
-              icon: <FormatIcon kind="clip" />,
-            },
-          ]}
+          options={TEXT_MODE_OPTIONS}
           onSelect={(value) =>
             onStyle({
               textMode: value as Style["textMode"],
-              wrap: value === "wrap",
             })
           }
         />

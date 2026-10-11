@@ -7,21 +7,9 @@ import grae3dUrl from "../assets/character/grae-hello-3d-512.png";
 const G_PATTERN = [".XXX.", "X....", "X.XXX", "X...X", ".XXX."];
 
 /** 타일 없는 브랜드 마크. 팀 테마와 관계없이 언제나 브랜드 민트를 씁니다. */
-export function BrandMark({
-  className,
-  title,
-}: {
-  className?: string;
-  title?: string;
-}) {
+export function BrandMark({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      viewBox="0 0 292 292"
-      role={title ? "img" : undefined}
-      aria-label={title}
-      aria-hidden={title ? undefined : true}
-    >
+    <svg className={className} viewBox="0 0 292 292" aria-hidden="true">
       {G_PATTERN.flatMap((row, y) =>
         [...row].map((ch, x) => (
           <rect

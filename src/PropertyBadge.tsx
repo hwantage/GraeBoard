@@ -1,11 +1,6 @@
 import type { Property } from "./types";
 import { propertyOption } from "../shared/domain.js";
-function ink(hex: string) {
-  const n = parseInt(hex.slice(1), 16);
-  return (n >> 16) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114 > 155
-    ? "#243642"
-    : "#ffffff";
-}
+import { inkFor } from "./color";
 export default function PropertyBadge({
   property,
   value,
@@ -24,7 +19,7 @@ export default function PropertyBadge({
       style={
         display === "emoji"
           ? undefined
-          : { backgroundColor: background, color: ink(background) }
+          : { backgroundColor: background, color: inkFor(background) }
       }
     >
       {display === "dot" && (

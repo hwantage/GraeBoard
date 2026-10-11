@@ -174,7 +174,6 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
   const own = await paste(copiedRow, member);
   assert.equal(own.status, 201);
   assert.equal(own.data.task.cells.owner.value, memberId);
-  assert.deepEqual(own.data.task.cells.supporters.value, []);
   assert.equal((await paste(copiedRow, viewer)).status, 403);
   assert.equal(
     (
@@ -195,7 +194,6 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
     cells: {
       ...copiedRow.cells,
       owner: { value: viewerId, style: {} },
-      supporters: { value: [viewerId], style: {} },
       status: { value: "보관된 상태", style: {} },
     },
   });
@@ -203,7 +201,6 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
   assert.equal(stale.data.task.cells.title.value, "복사 당시 작업");
   assert.equal(stale.data.task.cells.owner.value, adminId);
   assert.notEqual(stale.data.task.cells.status?.value, "보관된 상태");
-  assert.notDeepEqual(stale.data.task.cells.supporters?.value, [viewerId]);
 });
 
 test("삽입 간격 재배치는 생성과 함께 저장하고 생성 실패 시 모두 되돌린다", async () => {
