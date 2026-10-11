@@ -144,8 +144,8 @@ async function chooseWeeks(page: Page, from: string, to = from) {
 async function chooseMonths(page: Page, from: number, to = from) {
   await dragSelection(
     page,
-    page.getByRole("button", { name: `${from}월 전체`, exact: true }),
-    page.getByRole("button", { name: `${to}월 전체`, exact: true }),
+    page.locator(`.period-month[data-month="${from}"]`),
+    page.locator(`.period-month[data-month="${to}"]`),
   );
 }
 async function chooseYear(page: Page, target: number) {
@@ -285,7 +285,9 @@ test("콤팩트 기간 표는 월·주 드래그와 역방향·키보드·취소
     0,
   );
   await expect(picker.locator(".period-month")).toHaveText(
-    Array.from({ length: 12 }, (_, i) => `${i + 1}월`),
+    Array.from({ length: 12 }, (_, i) =>
+      i === 0 ? "2026년 1월" : `${i + 1}월`,
+    ),
   );
   const weekButtons = picker.locator(".period-week");
   await expect(weekButtons).toHaveCount(53);
@@ -338,7 +340,9 @@ test("콤팩트 기간 표는 월·주 드래그와 역방향·키보드·취소
     .toEqual(["2026-03-16", "2026-04-06"]);
   await page.reload();
   await expect.poll(headers).toEqual(expected("2026-03-16", "2026-04-06"));
-  await picker.getByRole("button", { name: "1월 전체", exact: true }).focus();
+  await picker
+    .getByRole("button", { name: "2026년 1월 전체", exact: true })
+    .focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Shift+End");
   await expect.poll(headers).toHaveLength(53);
@@ -4926,10 +4930,10 @@ test("헤더의 속성 다중 필터·월 드래그 선택을 저장한다", asy
   ]) {
     await chooseMonths(page, from, to);
     await expect(
-      page.getByRole("button", { name: `${from}월 전체`, exact: true }),
+      page.locator(`.period-month[data-month="${from}"]`),
     ).toHaveAttribute("aria-pressed", "true");
     await expect(
-      page.getByRole("button", { name: `${to}월 전체`, exact: true }),
+      page.locator(`.period-month[data-month="${to}"]`),
     ).toHaveAttribute("aria-pressed", "true");
     const labels = await page
       .locator(".week-heading .week-label")
@@ -5861,7 +5865,7 @@ test("행 선택 테두리는 손잡이 호버에도 유지되고 즉시 툴팁�
   });
   await page.getByRole("button", { name: "3월 전체", exact: true }).hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    "3월 · 드래그하여 여러 월 선택",
+    "2026년 3월 · 드래그하여 여러 월 선택",
     { timeout: 300 },
   );
   const title = row.locator('[data-column="title"]');

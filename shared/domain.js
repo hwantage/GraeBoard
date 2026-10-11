@@ -65,23 +65,46 @@ export function mondayOf(date) {
   return dateKey(d);
 }
 export function weeksForYear(year) {
-  const start = new Date(mondayOf(`${year}-01-01`) + "T12:00:00Z");
-  const end = new Date(`${year}-12-31T12:00:00Z`);
+  return weeksForPeriod(year);
+}
+// A calendar window always contains twelve months and at most two years.
+export function periodYears(year, startMonth = 1) {
+  return startMonth === 1 ? [year] : [year, year + 1];
+}
+export function periodMonths(year, startMonth = 1) {
+  return Array.from({ length: 12 }, (_, index) => {
+    const offset = startMonth - 1 + index;
+    const month = (offset % 12) + 1;
+    const monthYear = year + Math.floor(offset / 12);
+    return {
+      year: monthYear,
+      month,
+      index: index + 1,
+      key: `${monthYear}-${String(month).padStart(2, "0")}`,
+    };
+  });
+}
+export function weeksForPeriod(year, startMonth = 1) {
+  const first = new Date(Date.UTC(year, startMonth - 1, 1, 12));
+  const end = new Date(Date.UTC(year + 1, startMonth - 1, 0, 12));
+  const start = new Date(mondayOf(first) + "T12:00:00Z");
   const weeks = [];
   for (let d = start; d <= end; d = new Date(d.getTime() + 7 * 86400000)) {
     const friday = new Date(d.getTime() + 4 * 86400000),
       sunday = new Date(d.getTime() + 6 * 86400000);
     const display =
-      friday.getUTCFullYear() === year
-        ? friday
-        : d.getUTCFullYear() === year
-          ? d
-          : sunday;
+      friday >= first && friday <= end ? friday : d >= first ? d : sunday;
     weeks.push({
       key: dateKey(d),
       end: dateKey(sunday),
       date: dateKey(friday),
       month: display.getUTCMonth() + 1,
+      year: display.getUTCFullYear(),
+      monthIndex:
+        (display.getUTCFullYear() - year) * 12 +
+        display.getUTCMonth() +
+        2 -
+        startMonth,
       label: `${friday.getUTCMonth() + 1}/${friday.getUTCDate()}`,
       index: weeks.length + 1,
     });
@@ -292,6 +315,7 @@ export function savedFilter(input, settings = DEFAULT_SETTINGS) {
 export function defaultView(year) {
   return {
     year,
+    startMonth: 1,
     propertyFilters: {},
     propertyFilterModes: {},
     fromMonth: 1,
@@ -389,14 +413,14 @@ export function filteredTasks(
   return result;
 }
 export function visibleWeeks(year, view) {
-  return weeksForYear(year).filter(
+  return weeksForPeriod(year, view.startMonth).filter(
     (w) =>
       (!view.fromWeek || w.key >= view.fromWeek) &&
       (!view.toWeek || w.key <= view.toWeek) &&
-      w.month >= view.fromMonth &&
-      w.month <= view.toMonth &&
+      w.monthIndex >= view.fromMonth &&
+      w.monthIndex <= view.toMonth &&
       !view.hiddenWeeks.includes(w.key) &&
-      !view.collapsedMonths.includes(w.month),
+      !view.collapsedMonths.includes(w.monthIndex),
   );
 }
 // 셀 값을 화면에 보이는 글자로 바꾼다. 속성을 이미 알고 있으면 이 함수를 직접 쓴다.

@@ -180,12 +180,14 @@ export function RowPanel({
 export function ExportPanel({
   teamId,
   year,
+  startMonth,
   taskIds,
   keys,
   onClose,
 }: {
   teamId: string;
   year: number;
+  startMonth: number;
   taskIds: string[];
   keys: string[];
   onClose: () => void;
@@ -203,7 +205,9 @@ export function ExportPanel({
           <option value="view">
             현재 보기 · {taskIds.length}개 업무 (숨김 제외)
           </option>
-          <option value="all">이 연도 전체 · 필터와 숨김 포함</option>
+          <option value="all">
+            기준 연도 {year}년 전체 · 필터와 숨김 포함
+          </option>
         </Select>
       </label>
       <label>
@@ -231,6 +235,7 @@ export function ExportPanel({
               await download("/export", {
                 teamId,
                 year,
+                startMonth: scope === "view" ? startMonth : 1,
                 format,
                 scope,
                 taskIds,

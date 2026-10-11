@@ -1,10 +1,11 @@
-import { api, ApiError } from "./api";
+import { api, ApiError, taskQuery } from "./api";
 import type { Task } from "./types";
 import type { CellUpdates, TaskSnapshot } from "./cell-updates.js";
 
 export function subscribeCellChanges({
   teamId,
   year,
+  startMonth = 1,
   cursor,
   onActivity,
   onChanges,
@@ -13,6 +14,7 @@ export function subscribeCellChanges({
 }: {
   teamId: string;
   year: number;
+  startMonth?: number;
   cursor: string;
   onActivity: () => void;
   onChanges: (changes: CellUpdates) => void;
@@ -33,7 +35,7 @@ export function subscribeCellChanges({
   function connect(after: string) {
     if (stopped) return;
     source = new EventSource(
-      `/api/cells/events?${new URLSearchParams({ teamId, year: String(year), after })}`,
+      `/api/cells/events?${new URLSearchParams({ teamId, year: String(year), ...(startMonth > 1 ? { startMonth: "2" } : {}), after })}`,
     );
     source.addEventListener("cells", (event: MessageEvent) => {
       if (stopped || recovering) return;
@@ -88,7 +90,7 @@ export function subscribeCellChanges({
     queuedBytes = 0;
     try {
       const snapshot = await api<TaskSnapshot>(
-        `/tasks?teamId=${teamId}&year=${year}`,
+        taskQuery(teamId, year, startMonth),
         { signal: abort.signal },
       );
       if (stopped) return;

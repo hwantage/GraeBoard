@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { groupValue, propertiesFor } from "../shared/domain.js";
-import { requireThat, yearSchema } from "./validation.mjs";
+import { groupValue, propertiesFor, periodYears } from "../shared/domain.js";
+import { requireThat, yearSchema, periodScopeSchema } from "./validation.mjs";
 import { getTasks, nextTaskStamp, transaction, audit } from "./db.mjs";
 
 export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
@@ -8,6 +8,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
     const destination = {
       targetId: z.string().uuid(),
       year: yearSchema,
+      startMonth: z.number().int().min(1).max(12).default(1),
       placement: z.enum(["before", "after"]),
       groupBy: z.string().max(80).default(""),
       targetUpdatedAt: z.string(),
@@ -39,6 +40,8 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
           .strict(),
       ])
       .parse(req.body);
+    periodScopeSchema.parse(d);
+    const years = periodYears(d.year, d.startMonth);
     const requested =
       "tasks" in d ? d.tasks : [{ id: d.taskId, updatedAt: d.updatedAt }];
     const ids = new Set(requested.map((t) => t.id));
@@ -54,8 +57,9 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
       requireThat(
         sources.every(
           (source) =>
-            source.teamId === target.teamId && source.years.includes(d.year),
-        ) && target.years.includes(d.year),
+            source.teamId === target.teamId &&
+            source.years.some((y) => years.includes(y)),
+        ) && target.years.some((y) => years.includes(y)),
         400,
         "같은 팀과 연도의 업무를 선택하세요.",
       );
@@ -81,7 +85,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
         400,
         "묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.",
       );
-      let all = getTasks(db, target.teamId, d.year).sort(
+      let all = getTasks(db, target.teamId, years).sort(
         (a, b) =>
           a.position - b.position ||
           a.createdAt.localeCompare(b.createdAt) ||
@@ -114,7 +118,7 @@ export function installReorderRoute(app, { db, taskAccess, teamAccess }) {
         all.forEach((t, i) =>
           put.run((i + 1) * 1000, nextTaskStamp(t.updatedAt), t.id),
         );
-        all = getTasks(db, target.teamId, d.year);
+        all = getTasks(db, target.teamId, years);
         moving = all.filter((t) => ids.has(t.id));
         [before, after] = neighbors();
       }

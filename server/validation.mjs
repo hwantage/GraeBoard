@@ -22,6 +22,15 @@ export function requireThat(condition, status, message, details) {
   if (!condition) throw new HttpError(status, message, details);
 }
 export const yearSchema = z.coerce.number().int().min(2000).max(2100);
+export const periodScopeSchema = z
+  .object({
+    year: yearSchema,
+    startMonth: z.coerce.number().int().min(1).max(12).default(1),
+  })
+  .refine(
+    (v) => v.year < 2100 || v.startMonth === 1,
+    "표시 기간은 2100년까지 선택할 수 있습니다.",
+  );
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -121,6 +130,7 @@ export const savedFilterSchema = z.object({
 });
 export const viewSchema = savedFilterSchema
   .extend({
+    startMonth: z.number().int().min(1).max(12).default(1),
     fromMonth: z.number().int().min(1).max(12),
     toMonth: z.number().int().min(1).max(12),
     fromWeek: z.union([z.literal(""), dateSchema]).default(""),
@@ -141,6 +151,7 @@ export const viewSchema = savedFilterSchema
   .strict()
   .refine(
     (v) =>
+      (v.year < 2100 || v.startMonth === 1) &&
       v.fromMonth <= v.toMonth &&
       (!v.fromWeek || !v.toWeek || v.fromWeek <= v.toWeek),
     "기간 범위를 확인하세요.",

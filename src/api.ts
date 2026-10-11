@@ -8,6 +8,9 @@ export class ApiError extends Error {
   }
 }
 const taskResponses = new Map<string, { etag: string; data: unknown }>();
+// Every shifted twelve-month window in a year shares the same two-year data.
+export const taskQuery = (teamId: string, year: number, startMonth = 1) =>
+  `/tasks?teamId=${teamId}&year=${year}${startMonth > 1 ? "&startMonth=2" : ""}`;
 export async function api<T = any>(
   path: string,
   options: RequestInit = {},

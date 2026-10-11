@@ -38,6 +38,7 @@ import {
   requireThat,
   batchSchema,
   yearSchema,
+  periodScopeSchema,
   dateSchema,
   viewSchema,
   savedFilterSchema,
@@ -61,6 +62,7 @@ import {
   fieldsFor,
   propertiesFor,
   emptyPropertyValue,
+  periodYears,
 } from "../shared/domain.js";
 import { installTransferRoutes } from "./transfer.mjs";
 import { saveSettings } from "./settings.mjs";
@@ -428,7 +430,8 @@ export function createApp({
   app.get("/api/tasks", (req, res) => {
     const teamId = String(req.query.teamId || "");
     teamAccess(req.user, teamId);
-    const year = yearSchema.parse(req.query.year);
+    const period = periodScopeSchema.parse(req.query);
+    const year = periodYears(period.year, period.startMonth);
     const deleted = req.query.deleted === "1";
     if (deleted)
       requireThat(
@@ -453,7 +456,8 @@ export function createApp({
   app.get("/api/cells/events", (req, res) => {
     const teamId = String(req.query.teamId || "");
     teamAccess(req.user, teamId);
-    const year = yearSchema.parse(req.query.year);
+    const period = periodScopeSchema.parse(req.query);
+    const year = periodYears(period.year, period.startMonth);
     cellEvents.subscribe(req, res, {
       teamId,
       year,
@@ -465,6 +469,7 @@ export function createApp({
       .object({
         teamId: z.string().uuid(),
         year: yearSchema,
+        startMonth: z.number().int().min(1).max(12).default(1),
         fields: z.record(z.string(), z.any()).default({}),
         sourceId: z.string().uuid().optional(),
         copiedRow: copiedRowSchema.optional(),
@@ -480,6 +485,7 @@ export function createApp({
       .refine((d) => !d.sourceId || !d.copiedRow, "복사할 행을 확인하세요.")
       .parse(req.body);
     const team = teamAccess(req.user, d.teamId);
+    periodScopeSchema.parse(d);
     requireThat(
       canContribute(req.user, d.teamId),
       403,
@@ -579,7 +585,10 @@ export function createApp({
       if (d.insertAt) {
         const target = taskAccess(req.user, d.insertAt.taskId);
         requireThat(
-          target.teamId === d.teamId && target.years.includes(d.year),
+          target.teamId === d.teamId &&
+            target.years.some((y) =>
+              periodYears(d.year, d.startMonth).includes(y),
+            ),
           400,
           "같은 팀과 연도의 행을 선택하세요.",
         );
@@ -610,7 +619,7 @@ export function createApp({
         position = insertionPosition(
           db,
           d.teamId,
-          d.year,
+          periodYears(d.year, d.startMonth),
           target.id,
           d.insertAt.placement,
         );
@@ -943,7 +952,11 @@ export function createApp({
       "보고 연도와 보기의 연도가 일치해야 합니다.",
     );
     const selected = new Set(d.taskIds),
-      tasks = getTasks(db, d.teamId, d.year).filter((t) => selected.has(t.id));
+      tasks = getTasks(
+        db,
+        d.teamId,
+        periodYears(d.year, d.view.startMonth),
+      ).filter((t) => selected.has(t.id));
     requireThat(
       tasks.length === selected.size,
       409,

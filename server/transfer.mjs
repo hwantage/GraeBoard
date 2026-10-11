@@ -11,6 +11,8 @@ import {
   MAX_FONT_SIZE,
   normalizeFont,
   weeksForYear,
+  weeksForPeriod,
+  periodYears,
   mondayOf,
   dateKey,
   displayValue,
@@ -41,6 +43,7 @@ import {
 import {
   requireThat,
   yearSchema,
+  periodScopeSchema,
   styleSchema,
   dateSchema,
   viewSchema,
@@ -631,15 +634,18 @@ export function installTransferRoutes(
       .object({
         teamId: z.string().uuid(),
         year: yearSchema,
+        startMonth: z.number().int().min(1).max(12).default(1),
         format: z.enum(["xlsx", "csv", "json"]),
         scope: z.enum(["view", "all"]),
         taskIds: z.array(z.string().uuid()).max(20000).default([]),
         keys: z.array(z.string()).max(150).optional(),
       })
       .parse(req.body);
+    periodScopeSchema.parse(d);
+    const startMonth = d.scope === "all" ? 1 : d.startMonth;
     const team = teamAccess(req.user, d.teamId),
       settings = team.settings;
-    let tasks = getTasks(db, d.teamId, d.year);
+    let tasks = getTasks(db, d.teamId, periodYears(d.year, startMonth));
     if (d.scope === "view") {
       const selected = new Set(d.taskIds);
       const taskMap = new Map(tasks.map((t) => [t.id, t]));
@@ -652,7 +658,7 @@ export function installTransferRoutes(
     }
     const allowedKeys = orderColumns(
       fieldsFor(settings),
-      weeksForYear(d.year),
+      weeksForPeriod(d.year, startMonth),
     ).map((column) => column.key);
     const keys = d.scope === "all" ? allowedKeys : d.keys || allowedKeys;
     requireThat(
@@ -668,7 +674,9 @@ export function installTransferRoutes(
       scope: d.scope,
       count: tasks.length,
     });
-    res.attachment(`graeboard-${d.year}.${d.format}`);
+    res.attachment(
+      `graeboard-${d.year}${startMonth > 1 ? `-${d.year + 1}` : ""}.${d.format}`,
+    );
     if (d.format === "xlsx")
       return res
         .type(
@@ -719,6 +727,7 @@ export function installTransferRoutes(
         exportedAt: now(),
         team,
         year: d.year,
+        startMonth,
         tasks: tasks.map((t) =>
           d.scope === "all"
             ? t

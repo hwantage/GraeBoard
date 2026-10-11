@@ -15,7 +15,7 @@ import {
 } from "../shared/domain.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -211,13 +211,14 @@ function hydrateTasks(db, rows) {
   return [...map.values()];
 }
 export function getTasks(db, teamId, year, deleted = false) {
+  const years = Array.isArray(year) ? year : [year];
   return hydrateTasks(
     db,
     db
       .prepare(
-        `SELECT * FROM tasks WHERE team_id=? AND deleted_at IS ${deleted ? "NOT " : ""}NULL AND EXISTS(SELECT 1 FROM json_each(tasks.years) WHERE value=?) ORDER BY position,created_at`,
+        `SELECT * FROM tasks WHERE team_id=? AND deleted_at IS ${deleted ? "NOT " : ""}NULL AND EXISTS(SELECT 1 FROM json_each(tasks.years) WHERE value IN (${years.map(() => "?").join(",")})) ORDER BY position,created_at,id`,
       )
-      .all(teamId, year),
+      .all(teamId, ...years),
   );
 }
 export function insertTask(

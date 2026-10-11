@@ -108,11 +108,17 @@ async function fixture(t, cellEventOptions = {}) {
   }
   async function stream(
     after,
-    { id = team, year = 2026, user = member, headers = {} } = {},
+    {
+      id = team,
+      year = 2026,
+      startMonth = 1,
+      user = member,
+      headers = {},
+    } = {},
   ) {
     const abort = new AbortController();
     const res = await fetch(
-      `${base}/cells/events?${new URLSearchParams({ teamId: id, year: String(year), after })}`,
+      `${base}/cells/events?${new URLSearchParams({ teamId: id, year: String(year), startMonth: String(startMonth), after })}`,
       {
         headers: { Cookie: `weekly_session=${user}`, ...headers },
         signal: abort.signal,
@@ -390,4 +396,65 @@ test("SSE 구독 및 전송 시 인증·팀 접근을 재검사하고 권한 회
     200,
   );
   assert.equal((await adminStream.next()).type, "access-revoked");
+});
+
+test("두 해의 SSE는 공통 업무를 중복하지 않고 한 작업을 하나의 이벤트로 재전송한다", async (t) => {
+  const f = await fixture(t);
+  f.db
+    .prepare("UPDATE tasks SET years=? WHERE id=?")
+    .run("[2026,2027]", f.task.id);
+  const onlyCurrent = insertTask(f.db, {
+    teamId: f.team,
+    year: 2026,
+    actorId: f.admin,
+    fields: { title: "올해만" },
+  });
+  const onlyFuture = insertTask(f.db, {
+    teamId: f.team,
+    year: 2027,
+    actorId: f.admin,
+    fields: { title: "내년만" },
+  });
+  const later = insertTask(f.db, {
+    teamId: f.team,
+    year: 2028,
+    actorId: f.admin,
+    fields: { title: "그다음 해" },
+  });
+  const before = await f.request(
+    `/tasks?teamId=${f.team}&year=2026&startMonth=2`,
+  );
+  assert.equal(before.body.tasks.length, 3);
+  const cursor = before.headers.get("x-cell-event-id");
+  const live = await f.stream(cursor, { startMonth: 2 });
+  assert.equal((await live.next()).type, "ready");
+  const ids = [f.task.id, onlyCurrent.id, onlyFuture.id, later.id];
+  const saved = await f.request("/cells/batch", {
+    method: "POST",
+    body: {
+      operationId: randomUUID(),
+      changes: ids.map((taskId) => ({
+        taskId,
+        key: "title",
+        value: "연말 연초 실시간",
+        expectedVersion: getTask(f.db, taskId).cells.title.version,
+      })),
+    },
+  });
+  assert.equal(saved.status, 200);
+  const event = await live.next();
+  assert.equal(event.type, "cells");
+  assert.equal(event.data.cells.length, 3);
+  assert.deepEqual(
+    new Set(event.data.cells.map((c) => c.taskId)),
+    new Set(ids.slice(0, 3)),
+  );
+  live.close();
+  const replay = await f.stream(cursor, { startMonth: 2 });
+  const repeated = await replay.next();
+  assert.equal(repeated.id, event.id);
+  assert.deepEqual(repeated.data, event.data);
+  assert.equal((await replay.next()).type, "ready");
+  const caughtUp = await f.stream(event.id, { startMonth: 2 });
+  assert.equal((await caughtUp.next()).type, "ready");
 });

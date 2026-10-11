@@ -93,6 +93,7 @@ export type Team = { id: string; name: string; settings: Settings };
 export type FilterMode = "include" | "exclude";
 export type View = {
   year: number;
+  startMonth: number;
   propertyFilters?: Record<string, string[]>;
   propertyFilterModes?: Record<string, FilterMode>;
   fromMonth: number;

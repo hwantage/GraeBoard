@@ -30,7 +30,7 @@ import {
   Presentation,
   Minimize2,
 } from "lucide-react";
-import { api, send, ApiError } from "./api";
+import { api, send, ApiError, taskQuery } from "./api";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
 import { subscribeCellChanges } from "./cell-sync";
 import {
@@ -44,7 +44,7 @@ import {
   MAX_STYLE_CELLS,
   defaultView,
   visibleWeeks,
-  weeksForYear,
+  weeksForPeriod,
   filteredTasks,
   cell,
   value,
@@ -146,6 +146,19 @@ function rememberedBoard(boot: Bootstrap) {
     };
   }
 }
+function fullCalendarView(view: View, year: number, startMonth = 1): View {
+  return {
+    ...view,
+    year,
+    startMonth,
+    fromMonth: 1,
+    toMonth: 12,
+    fromWeek: "",
+    toWeek: "",
+    hiddenWeeks: [],
+    collapsedMonths: [],
+  };
+}
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null),
     [authReady, setAuthReady] = useState(false),
@@ -197,9 +210,7 @@ function Workspace({
   const [teamId, setTeamId] = useState(initialBoard.teamId),
     [year, setYear] = useState(initialBoard.year),
     [tasks, setTasks] = useState<Task[]>([]),
-    [view, setView] = useState<View>(
-      defaultView(Number(todayKey().slice(0, 4))) as View,
-    ),
+    [view, setView] = useState<View>(defaultView(initialBoard.year) as View),
     [loaded, setLoaded] = useState(false),
     [panel, setPanel] = useState(""),
     [rowTask, setRowTask] = useState<Task | null>(null),
@@ -241,6 +252,17 @@ function Workspace({
       id: number;
     } | null>(null),
     [viewError, setViewError] = useState("");
+  const [loadedScope, setLoadedScope] = useState("");
+  const scopeMonth = view.startMonth > 1 ? 2 : 1;
+  const taskScope = `${teamId}:${year}:${scopeMonth}`;
+  const ready = loaded && (!!report || loadedScope === taskScope);
+  const taskScopeRef = useRef(taskScope);
+  taskScopeRef.current = taskScope;
+  const calendarNavigation = useRef<{
+    teamId: string;
+    year: number;
+    view?: View;
+  } | null>(null);
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
   const themeId = getTheme(team?.settings.theme).id;
   useLayoutEffect(() => {
@@ -386,15 +408,17 @@ function Workspace({
   const refresh = useCallback(async () => {
     if (!teamId) return;
     const key = `${teamId}:${year}`,
+      scope = taskScopeRef.current,
       epoch = mutationEpoch.current,
       remote = remoteEpoch.current;
     try {
       const [r, latestBoot] = await Promise.all([
-        api(`/tasks?teamId=${teamId}&year=${year}`),
+        api(taskQuery(teamId, year, viewRef.current.startMonth)),
         api<Bootstrap>("/bootstrap"),
       ]);
       if (
         boardKey.current === key &&
+        taskScopeRef.current === scope &&
         epoch === mutationEpoch.current &&
         remote === remoteEpoch.current &&
         !pendingRef.current &&
@@ -403,6 +427,8 @@ function Workspace({
       ) {
         tasksRef.current = r.tasks;
         setTasks(r.tasks);
+        if (!cellEventCursor.current) cellEventCursor.current = r.cellEventId;
+        setLoadedScope(scope);
         // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
         if (JSON.stringify(latestBoot) !== bootJsonRef.current)
           onBootstrap(latestBoot);
@@ -420,7 +446,7 @@ function Workspace({
           }
         } catch {}
       }
-      if (boardKey.current !== key) return;
+      if (boardKey.current !== key || taskScopeRef.current !== scope) return;
       setError((e as Error).message);
     }
   }, [teamId, year]);
@@ -433,8 +459,10 @@ function Workspace({
   useEffect(() => {
     if (!teamId) return;
     const key = `${teamId}:${year}`;
+    let cancelled = false;
     boardKey.current = key;
     cellEventCursor.current = null;
+    setLoadedScope("");
     setLoaded(false);
     setError("");
     setViewError("");
@@ -448,31 +476,42 @@ function Workspace({
     setPendingEdit(null);
     setCopiedRow(null);
     setJump(null);
-    Promise.all([
-      api(`/tasks?teamId=${teamId}&year=${year}`),
-      api(`/views?teamId=${teamId}&year=${year}`),
-    ])
-      .then(([r, v]) => {
-        if (boardKey.current !== key) return;
+    const navigation = calendarNavigation.current;
+    calendarNavigation.current = null;
+    api(`/views?teamId=${teamId}&year=${year}`)
+      .then(async (v) => {
+        if (cancelled || boardKey.current !== key) return;
+        setSavedViews(v.views);
+        const restored =
+          v.views.find((s: any) => s.name === "__current")?.data ||
+          defaultView(year);
+        const target =
+          navigation && navigation.teamId === teamId && navigation.year === year
+            ? navigation
+            : null;
+        const current = target
+          ? target.view || fullCalendarView(restored, year)
+          : restored;
+        setView(current);
+        viewRef.current = current;
+        const r = await api(taskQuery(teamId, year, current.startMonth));
+        if (cancelled || boardKey.current !== key) return;
         setTasks(r.tasks);
         tasksRef.current = r.tasks;
         cellEventCursor.current = r.cellEventId;
-        setSavedViews(v.views);
-        const current =
-          v.views.find((s: any) => s.name === "__current")?.data ||
-          defaultView(year);
-        setView(current);
-        viewRef.current = current;
+        setLoadedScope(`${key}:${current.startMonth > 1 ? 2 : 1}`);
         setLoaded(true);
         setJump({ key: null, id: Date.now() });
+        if (target) changeView(current);
       })
       .catch((e) => {
-        if (boardKey.current === key) {
+        if (!cancelled && boardKey.current === key) {
           setError(e.message);
           setLoaded(true);
         }
       });
     return () => {
+      cancelled = true;
       boardKey.current = "";
       if (viewTimer.current) clearTimeout(viewTimer.current);
       viewSaver.current?.();
@@ -480,23 +519,55 @@ function Workspace({
     };
   }, [teamId, year]);
   useEffect(() => {
-    if (!loaded || report || !cellEventCursor.current) return;
+    if (
+      !loaded ||
+      report ||
+      view.year !== year ||
+      !loadedScope.startsWith(`${teamId}:${year}:`) ||
+      loadedScope === taskScope
+    )
+      return;
+    let cancelled = false;
+    cellEventCursor.current = null;
+    setSelection(null);
+    setError("");
+    api(taskQuery(teamId, year, scopeMonth))
+      .then((r) => {
+        if (cancelled || taskScopeRef.current !== taskScope) return;
+        tasksRef.current = r.tasks;
+        setTasks(r.tasks);
+        cellEventCursor.current = r.cellEventId;
+        setLoadedScope(taskScope);
+      })
+      .catch((e) => {
+        if (!cancelled && taskScopeRef.current === taskScope)
+          setError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, year, scopeMonth, loaded, !!report]);
+  useEffect(() => {
+    if (!ready || report || !cellEventCursor.current) return;
     const key = `${teamId}:${year}`;
     return subscribeCellChanges({
       teamId,
       year,
+      startMonth: scopeMonth,
       cursor: cellEventCursor.current,
       onActivity: () => {
         remoteEpoch.current++;
       },
       onChanges: (changes) => {
-        if (boardKey.current !== key) return;
+        if (boardKey.current !== key || taskScopeRef.current !== taskScope)
+          return;
         const next = mergeCellUpdates(tasksRef.current, changes);
         tasksRef.current = next;
         setTasks(next);
       },
       onSnapshot: (snapshot) => {
-        if (boardKey.current !== key) return;
+        if (boardKey.current !== key || taskScopeRef.current !== taskScope)
+          return;
         const next = mergeSnapshotCells(tasksRef.current, snapshot);
         tasksRef.current = next;
         setTasks(next);
@@ -505,7 +576,7 @@ function Workspace({
         if (boardKey.current === key) void refreshBoot();
       },
     });
-  }, [teamId, year, loaded, !!report]);
+  }, [teamId, year, scopeMonth, ready, !!report]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (
@@ -519,13 +590,13 @@ function Workspace({
     }, 7000);
     return () => clearInterval(timer);
   }, [refresh, report]);
+  function flushView() {
+    if (viewTimer.current) clearTimeout(viewTimer.current);
+    const save = viewSaver.current;
+    viewSaver.current = null;
+    save?.();
+  }
   useEffect(() => {
-    const flushView = () => {
-      if (viewTimer.current) clearTimeout(viewTimer.current);
-      const save = viewSaver.current;
-      viewSaver.current = null;
-      save?.();
-    };
     const guard = (e: BeforeUnloadEvent) => {
       flushView();
       if (
@@ -571,6 +642,58 @@ function Workspace({
         save();
       }, 450);
     }
+  }
+  function moveYear(direction: -1 | 1) {
+    if (
+      !ready ||
+      report ||
+      pendingRef.current ||
+      failedRef.current ||
+      editorRef.current
+    )
+      return;
+    const current = viewRef.current;
+    const nextYear =
+      direction === -1 && current.startMonth > 1 ? year : year + direction;
+    if (nextYear < 2000 || nextYear > 2100) return;
+    const next = fullCalendarView(current, nextYear);
+    if (nextYear === year) changeView(next);
+    else {
+      flushView();
+      // Restore this year's personal layout, but always show January–December.
+      calendarNavigation.current = { teamId, year: nextYear };
+      setView(next);
+      setYear(nextYear);
+    }
+    setJump({ key: null, id: Date.now() });
+  }
+  function moveCalendar(direction: -1 | 1) {
+    if (
+      !ready ||
+      report ||
+      pendingRef.current ||
+      failedRef.current ||
+      editorRef.current
+    )
+      return;
+    const current = viewRef.current;
+    const offset = current.startMonth - 1 + direction;
+    const nextYear = year + Math.floor(offset / 12);
+    const startMonth = (((offset % 12) + 12) % 12) + 1;
+    if (
+      nextYear < 2000 ||
+      nextYear > 2100 ||
+      (nextYear === 2100 && startMonth > 1)
+    )
+      return;
+    const next = fullCalendarView(current, nextYear, startMonth);
+    if (nextYear !== year) {
+      flushView();
+      calendarNavigation.current = { teamId, year: nextYear, view: next };
+      setView(next);
+      setYear(nextYear);
+    } else changeView(next);
+    setJump({ key: null, id: Date.now() });
   }
   useEffect(() => {
     if (!loaded || report) return;
@@ -692,6 +815,7 @@ function Workspace({
     () => visibleWeeks(year, view),
     [
       year,
+      view.startMonth,
       view.fromWeek,
       view.toWeek,
       view.fromMonth,
@@ -700,10 +824,14 @@ function Workspace({
       view.collapsedMonths,
     ],
   );
-  const yearWeekCount = useMemo(() => weeksForYear(year).length, [year]);
+  const periodWeeks = useMemo(
+    () => weeksForPeriod(year, view.startMonth),
+    [year, view.startMonth],
+  );
+  const yearWeekCount = periodWeeks.length;
   const columnOrder = useMemo(
-    () => orderColumns(fields, weeksForYear(year)),
-    [fields, year],
+    () => orderColumns(fields, periodWeeks),
+    [fields, periodWeeks],
   );
   const columns = useMemo<Column[]>(
     () =>
@@ -1118,6 +1246,20 @@ function Workspace({
     }
   }
   async function addTask() {
+    if (
+      !ready ||
+      !canAdd ||
+      report ||
+      presentation ||
+      pendingRef.current ||
+      failedRef.current
+    )
+      return;
+    const submittedBoard = boardKey.current;
+    const submittedScope = taskScopeRef.current;
+    mutationEpoch.current++;
+    pendingRef.current = 1;
+    setPending(1);
     setError("");
     try {
       const { task } = await send("/tasks", {
@@ -1131,6 +1273,11 @@ function Workspace({
             }
           : {},
       });
+      if (
+        boardKey.current !== submittedBoard ||
+        taskScopeRef.current !== submittedScope
+      )
+        return;
       setTasks((s) => {
         const next = [...s, task];
         tasksRef.current = next;
@@ -1148,7 +1295,14 @@ function Workspace({
       });
       setEditor({ point: { taskId: task.id, key: "title" }, task });
     } catch (e) {
-      setError((e as Error).message);
+      if (
+        boardKey.current === submittedBoard &&
+        taskScopeRef.current === submittedScope
+      )
+        setError((e as Error).message);
+    } finally {
+      pendingRef.current = 0;
+      setPending(0);
     }
   }
   async function reorderTask(
@@ -1181,6 +1335,7 @@ function Workspace({
         targetId,
         placement,
         year,
+        startMonth: view.startMonth,
         groupBy: view.groupBy || "",
         targetUpdatedAt: target.updatedAt,
       });
@@ -1255,6 +1410,7 @@ function Workspace({
         teamId,
         year,
         fields,
+        startMonth: view.startMonth,
         insertAt: {
           taskId: target.id,
           updatedAt: target.updatedAt,
@@ -1291,7 +1447,7 @@ function Workspace({
       });
       // Spacing may have been normalized by the server; refresh every row's position.
       const current = await api<{ tasks: Task[] }>(
-        `/tasks?teamId=${teamId}&year=${year}`,
+        taskQuery(teamId, year, view.startMonth),
       );
       if (boardKey.current !== submittedBoard) return;
       tasksRef.current = current.tasks;
@@ -1562,8 +1718,8 @@ function Workspace({
           {!report && (
             <div
               className="board-summary"
-              aria-label="선택한 팀·연도 전체 업무 통계"
-              title="선택한 팀·연도의 전체 업무 기준입니다. 필터와 숨김 설정에 영향을 받지 않습니다."
+              aria-label="선택한 팀·표시 기간 전체 업무 통계"
+              title="달력의 12개월에 해당하는 연도의 전체 업무 기준입니다. 필터와 숨김 설정에 영향을 받지 않습니다."
             >
               <span>
                 <i className="summary-dot" />
@@ -1584,7 +1740,7 @@ function Workspace({
             <Button
               className="presentation-start"
               title="발표 모드"
-              disabled={!loaded || !!pending || !!failed || !!editor}
+              disabled={!ready || !!pending || !!failed || !!editor}
               onClick={() => {
                 if (
                   pendingRef.current ||
@@ -1632,7 +1788,7 @@ function Workspace({
                   <Button
                     className="primary"
                     onClick={addTask}
-                    disabled={!loaded || !!pending || !!failed}
+                    disabled={!ready || !!pending || !!failed}
                   >
                     <Plus size={17} />
                     업무 추가
@@ -1643,19 +1799,30 @@ function Workspace({
           </div>
         </section>
         <section className="board">
-          <fieldset className="view-controls" disabled={!loaded}>
+          <fieldset className="view-controls" disabled={!ready}>
             <div className="date-controls" aria-label="기간 설정">
               <div className="year-control" role="group" aria-label="연도 선택">
                 <Button
                   tooltip="이전 연도"
-                  disabled={!!pending || !!failed || !!report || year <= 2000}
-                  onClick={() => setYear(year - 1)}
+                  disabled={
+                    !ready ||
+                    !!pending ||
+                    !!failed ||
+                    !!report ||
+                    !!editor ||
+                    (year <= 2000 && view.startMonth === 1)
+                  }
+                  onClick={() => moveYear(-1)}
                 >
                   <ChevronLeft size={15} />
                 </Button>
                 <Button
                   className="year-value"
-                  tooltip={`${year}년 전체 선택`}
+                  tooltip={
+                    view.startMonth === 1
+                      ? `${year}년 전체 선택`
+                      : `${year}~${year + 1}년 표시 기간 전체 선택`
+                  }
                   aria-pressed={weeks.length === yearWeekCount}
                   onClick={() => {
                     changeView({
@@ -1670,11 +1837,19 @@ function Workspace({
                   }}
                 >
                   {year}
+                  {view.startMonth > 1 && <span>~{year + 1}</span>}
                 </Button>
                 <Button
                   tooltip="다음 연도"
-                  disabled={!!pending || !!failed || !!report || year >= 2100}
-                  onClick={() => setYear(year + 1)}
+                  disabled={
+                    !ready ||
+                    !!pending ||
+                    !!failed ||
+                    !!report ||
+                    !!editor ||
+                    year >= 2100
+                  }
+                  onClick={() => moveYear(1)}
                 >
                   <ChevronRight size={15} />
                 </Button>
@@ -1682,7 +1857,11 @@ function Workspace({
               <PeriodPicker
                 year={year}
                 view={view}
-                disabled={!loaded}
+                disabled={!ready}
+                navigationDisabled={
+                  !!pending || !!failed || !!report || !!editor
+                }
+                onNavigate={moveCalendar}
                 onChange={(range) => {
                   changeView(range);
                   setJump({ key: null, id: Date.now() });
@@ -1866,7 +2045,7 @@ function Workspace({
               <Button onClick={() => setPanel("failed")}>입력 확인</Button>
             </div>
           )}
-          {!loaded ? (
+          {!ready ? (
             <div className="board-loading">
               <LoaderCircle className="spin" />
               업무를 불러오는 중
@@ -2002,6 +2181,7 @@ function Workspace({
         <ExportPanel
           teamId={teamId}
           year={year}
+          startMonth={view.startMonth}
           taskIds={visibleTasks.map((t) => t.id)}
           keys={columns.map((c) => c.key)}
           onClose={() => setPanel("")}

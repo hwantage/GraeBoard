@@ -59,8 +59,38 @@ export function createCellEvents(
   function frame(type, data, eventId) {
     return `id: ${eventId}\nevent: ${type}\ndata: ${data}\n\n`;
   }
+  function messageFor(entry, client) {
+    const matches = client.scopes.filter((scope) => entry.messages.has(scope));
+    if (!matches.length) return;
+    const eventId = `${epoch}:${entry.sequence}`;
+    const data = matches.map((scope) => entry.messages.get(scope));
+    if (data.some((value) => value === null))
+      return frame("reset", "{}", eventId);
+    if (data.length === 1) return frame("cells", data[0], eventId);
+    // One atomic event per operation, even if its tasks belong to both years.
+    // A reconnect after this cursor must not lose the second year's changes.
+    const payloads = data.map((value) => JSON.parse(value));
+    const cells = new Map();
+    for (const payload of payloads)
+      for (const c of payload.cells) cells.set(`${c.taskId}:${c.key}`, c);
+    const merged = JSON.stringify({
+      operationId: payloads[0].operationId,
+      cells: [...cells.values()],
+      updatedAt: Object.assign({}, ...payloads.map((p) => p.updatedAt)),
+    });
+    return Buffer.byteLength(merged) > maxEventBytes
+      ? frame("reset", "{}", eventId)
+      : frame("cells", merged, eventId);
+  }
   function subscribe(req, res, { teamId, year, token }) {
-    const client = { res, teamId, token, scope: `${teamId}:${year}` };
+    const years = Array.isArray(year) ? year : [year];
+    const client = {
+      res,
+      teamId,
+      token,
+      scope: `${teamId}:${years}`,
+      scopes: years.map((y) => `${teamId}:${y}`),
+    };
     res.set({
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-store, no-transform",
@@ -84,8 +114,9 @@ export function createCellEvents(
       write(client, frame("reset", "{}", cursor()));
     } else {
       for (const entry of history) {
-        const message = entry.messages.get(client.scope);
-        if (entry.sequence > since && message) write(client, message);
+        if (entry.sequence <= since) continue;
+        const message = messageFor(entry, client);
+        if (message) write(client, message);
       }
     }
     // Advance over changes to other teams/years without exposing their data.
@@ -121,12 +152,11 @@ export function createCellEvents(
     const entry = { sequence, messages: new Map(), bytes: 0 };
     for (const [scope, payload] of scopes) {
       const data = JSON.stringify(payload);
-      const message =
-        Buffer.byteLength(data) > maxEventBytes
-          ? frame("reset", "{}", cursor())
-          : frame("cells", data, cursor());
-      entry.messages.set(scope, message);
-      entry.bytes += Buffer.byteLength(message);
+      const stored = Buffer.byteLength(data) > maxEventBytes ? null : data;
+      entry.messages.set(scope, stored);
+      entry.bytes += Buffer.byteLength(
+        frame(stored === null ? "reset" : "cells", stored ?? "{}", cursor()),
+      );
     }
     history.push(entry);
     bytes += entry.bytes;
@@ -138,8 +168,11 @@ export function createCellEvents(
       bytes -= removed.bytes;
       floor = removed.sequence;
     }
+    const delivery = new Map();
     for (const client of clients) {
-      const message = entry.messages.get(client.scope);
+      if (!delivery.has(client.scope))
+        delivery.set(client.scope, messageFor(entry, client));
+      const message = delivery.get(client.scope);
       if (message) write(client, message);
     }
   }

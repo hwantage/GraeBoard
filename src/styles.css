@@ -524,7 +524,8 @@ small {
   border-radius: 4px;
   background: #fff;
 }
-.year-control .button {
+.year-control .button,
+.period-nav.button {
   width: 10px;
   min-height: 0;
   padding: 0;
@@ -533,11 +534,17 @@ small {
   background: transparent;
   color: var(--muted);
 }
-.year-control .button svg {
+.year-control .button svg,
+.period-nav.button svg {
   width: 10px;
   height: 14px;
 }
 .year-control .year-value {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.2;
   width: 56px;
   border-inline: 1px solid var(--accent-border);
   font-size: 11px;
@@ -545,24 +552,38 @@ small {
   font-variant-numeric: tabular-nums;
 }
 .year-control .button:hover:not(:disabled),
+.period-nav.button:hover:not(:disabled),
 .year-control .year-value[aria-pressed="true"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
-.year-control .button:focus-visible {
+.year-control .button:focus-visible,
+.period-nav.button:focus-visible {
   outline-offset: -2px;
 }
 .period-picker {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  background: #fff;
+}
+.period-scroll {
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+.period-nav.button {
+  flex: 0 0 10px;
 }
 .period-grid {
   display: grid;
   grid-template-rows: 20px 18px;
-  border: 1px solid var(--accent-border);
-  border-radius: 4px;
+  border-inline: 1px solid var(--accent-border);
   overflow: hidden;
   user-select: none;
   touch-action: none;
@@ -577,6 +598,7 @@ small {
 }
 .period-month {
   font-size: 11px;
+  white-space: nowrap;
   border-bottom: 1px solid var(--accent-border);
 }
 .period-month + .period-month {

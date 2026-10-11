@@ -3,11 +3,12 @@ import { requireThat } from "./validation.mjs";
 
 // Call inside the creation transaction so a failed insert also rolls back spacing.
 export function insertionPosition(db, teamId, year, targetId, placement) {
+  const years = Array.isArray(year) ? year : [year];
   const rows = db
     .prepare(
-      "SELECT id,position,updated_at FROM tasks WHERE team_id=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM json_each(years) WHERE value=?) ORDER BY position,created_at,id",
+      `SELECT id,position,updated_at FROM tasks WHERE team_id=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM json_each(years) WHERE value IN (${years.map(() => "?").join(",")})) ORDER BY position,created_at,id`,
     )
-    .all(teamId, year);
+    .all(teamId, ...years);
   const target = rows.findIndex((row) => row.id === targetId);
   requireThat(target >= 0, 409, "기준 행이 변경되었습니다. 다시 선택하세요.");
   const index = target + (placement === "after" ? 1 : 0);
