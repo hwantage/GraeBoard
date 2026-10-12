@@ -217,7 +217,7 @@ export default function CellOptionPicker({
                         : [...selected, option.value]
                       : option.value,
                   );
-                  if (!multiple) onCommit();
+                  if (!multiple) onCommit("stay");
                 }}
               >
                 {property && option.value ? (

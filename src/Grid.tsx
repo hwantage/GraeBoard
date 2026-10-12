@@ -737,7 +737,8 @@ export default function Grid({
     if (!editor) return;
     const point = editor.point;
     if (!onCommit(point, value)) return false;
-    if (move) {
+    if (move === "stay") pick(point);
+    else if (move) {
       const r = tasks.findIndex((t) => t.id === point.taskId),
         c = columns.findIndex((c) => c.key === point.key);
       let nextR = r,

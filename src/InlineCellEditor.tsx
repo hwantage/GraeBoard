@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Cell, Point, Task, User, Settings, Property } from "./types";
 import CellOptionPicker from "./CellOptionPicker";
 import {
@@ -9,7 +9,40 @@ import {
 } from "../shared/domain.js";
 
 export type EditorState = { point: Point; initial?: string };
-export type EditMove = "down" | "next" | "previous";
+export type EditMove = "stay" | "down" | "next" | "previous";
+
+function fitTextEditor(input: HTMLTextAreaElement) {
+  const editor = input.parentElement;
+  const cell = input.closest<HTMLElement>(".sheet-cell");
+  const grid = input.closest<HTMLElement>(".sheet-scroll");
+  if (!editor || !cell || !grid || !cell.offsetWidth) return;
+  const box = cell.getBoundingClientRect();
+  const gridBox = grid.getBoundingClientRect();
+  const scale = box.width / cell.offsetWidth;
+  const top = Math.max(
+    0,
+    gridBox.top,
+    grid.querySelector(".sheet-header")?.getBoundingClientRect().bottom || 0,
+  );
+  const bottom =
+    Math.min(window.innerHeight, gridBox.top + grid.clientHeight * scale) - 4;
+  const style = getComputedStyle(input);
+  const borders =
+    parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  const scrollTop = input.scrollTop;
+  // 먼저 높이를 비워야 삭제한 줄과 자동 줄바꿈이 줄어든 경우도 다시 잴 수 있다.
+  input.style.height = "0px";
+  const height = Math.max(
+    cell.clientHeight,
+    Math.min(input.scrollHeight + borders, Math.floor((bottom - top) / scale)),
+  );
+  editor.style.height = `${height}px`;
+  // 아래 공간이 부족하면 위로 펼쳐 화면 안에서 계속 편집할 수 있게 한다.
+  editor.style.top = `${Math.min(0, (bottom - box.top) / scale - height)}px`;
+  input.style.height = "100%";
+  input.scrollTop = scrollTop;
+}
+
 export default function InlineCellEditor({
   editor,
   task,
@@ -45,6 +78,29 @@ export default function InlineCellEditor({
   >(null);
   const [error, setError] = useState("");
   const label = `${field?.label || key} 편집`;
+  useLayoutEffect(() => {
+    if (control.current instanceof HTMLTextAreaElement)
+      fitTextEditor(control.current);
+  }, [draft, task, settings]);
+  useLayoutEffect(() => {
+    const input = control.current;
+    if (!(input instanceof HTMLTextAreaElement)) return;
+    const cell = input.closest<HTMLElement>(".sheet-cell")!;
+    const grid = input.closest<HTMLElement>(".sheet-scroll")!;
+    const resize = () => fitTextEditor(input);
+    const observer = new ResizeObserver(resize);
+    observer.observe(cell);
+    observer.observe(grid);
+    grid.addEventListener("scroll", resize);
+    window.addEventListener("resize", resize);
+    document.fonts.addEventListener("loadingdone", resize);
+    return () => {
+      observer.disconnect();
+      grid.removeEventListener("scroll", resize);
+      window.removeEventListener("resize", resize);
+      document.fonts.removeEventListener("loadingdone", resize);
+    };
+  }, []);
   useEffect(() => {
     control.current?.focus({ preventScroll: true });
     if (

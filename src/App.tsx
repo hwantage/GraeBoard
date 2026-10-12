@@ -31,6 +31,7 @@ import {
   Pencil,
   Users,
   UserRound,
+  FunnelX,
 } from "lucide-react";
 import { api, send, ApiError, taskQuery } from "./api";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
@@ -2287,6 +2288,24 @@ function Workspace({
                   업무 추가
                 </Button>
               ) : undefined
+            }
+            trailingAction={
+              <Button
+                tooltip="모든 필터 초기화"
+                disabled={
+                  !ready ||
+                  !!report ||
+                  !!activeSavedFilter ||
+                  !Object.values(view.propertyFilters || {}).some(
+                    (values) => values.length > 0,
+                  )
+                }
+                onClick={() =>
+                  changeView({ propertyFilters: {}, propertyFilterModes: {} })
+                }
+              >
+                <FunnelX size={16} aria-hidden="true" />
+              </Button>
             }
             style={selectedCell?.style || {}}
             disabled={!editable || !!pending}

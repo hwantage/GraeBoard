@@ -74,6 +74,7 @@ export default function Toolbar({
   canUndo,
   canRedo,
   leadingAction,
+  trailingAction,
   selectionLabel,
   zoom,
   onZoom,
@@ -88,6 +89,7 @@ export default function Toolbar({
   canUndo: boolean;
   canRedo: boolean;
   leadingAction?: ReactNode;
+  trailingAction?: ReactNode;
   selectionLabel?: string;
   zoom?: number;
   onZoom?: (zoom: number) => void;
@@ -243,6 +245,7 @@ export default function Toolbar({
       {zoom !== undefined && onZoom && (
         <ZoomControls value={zoom} onChange={onZoom} />
       )}
+      {trailingAction && <div className="toolbar-group">{trailingAction}</div>}
       {selectionLabel !== undefined && (
         <span className="selection-label">
           {selectionLabel || "셀을 선택해 편집하세요"}

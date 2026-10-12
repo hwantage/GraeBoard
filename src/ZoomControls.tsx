@@ -29,7 +29,7 @@ export default function ZoomControls({
       <button
         type="button"
         className={buttonClass}
-        title="축소"
+        data-tooltip="축소"
         aria-label="축소"
         disabled={value <= 50}
         onClick={() => apply(value - 25)}
@@ -40,7 +40,7 @@ export default function ZoomControls({
         <input
           type="number"
           aria-label="확대율"
-          title="확대율 (50~200%)"
+          data-tooltip="확대율 (50~200%)"
           min={50}
           max={200}
           step={1}
@@ -66,7 +66,7 @@ export default function ZoomControls({
       <button
         type="button"
         className={buttonClass}
-        title="확대"
+        data-tooltip="확대"
         aria-label="확대"
         disabled={value >= 200}
         onClick={() => apply(value + 25)}
@@ -76,7 +76,7 @@ export default function ZoomControls({
       <button
         type="button"
         className={buttonClass}
-        title="원래대로 (100%)"
+        data-tooltip="원래대로 (100%)"
         aria-label="원래대로"
         disabled={value === 100}
         onClick={() => apply(100)}

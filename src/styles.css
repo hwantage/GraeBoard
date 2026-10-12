@@ -2876,6 +2876,9 @@ body.row-reordering * {
 }
 
 /* Inline editing stays inside the grid and preserves its navigation model. */
+.sheet-row:has(.inline-editor > textarea) {
+  z-index: 10;
+}
 .sheet-cell.editing {
   z-index: 9;
   padding: 0;
@@ -2891,6 +2894,12 @@ body.row-reordering * {
   position: relative;
   background: white;
   color: #243642;
+}
+.inline-editor:has(> textarea) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 7;
 }
 .inline-editor textarea,
 .inline-editor input {

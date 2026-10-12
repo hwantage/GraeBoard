@@ -4599,6 +4599,157 @@ test("정확한 주차 범위·속성 묶음·열 메뉴의 고정 영역을 저
   ).toBeInViewport();
 });
 
+test("여러 줄 텍스트 편집창은 내용에 맞춰 늘고 줄며 행 높이를 유지한다", async ({
+  page,
+}, info) => {
+  const original =
+    "첫 번째 줄\n두 번째 줄\n세 번째 줄\n네 번째 줄\n다섯 번째 줄";
+  await setTaskCells(page, [{ index: 0, key: "title", value: original }]);
+  await page.reload();
+  const first = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  const second = page.locator(`[data-cell="${taskIds[1]}:title"]`);
+  const input = first.getByRole("textbox");
+  await expect(first).toHaveText(original);
+  const rowHeight = (await first.boundingBox())!.height;
+  const nextRowTop = (await second.boundingBox())!.y;
+  const rowHeights = async () =>
+    (await readPreferences(page, teamId)).views.find(
+      (view: any) => view.name === "__current",
+    )?.data.rowHeights || {};
+  const savedHeights = await rowHeights();
+  await first.dblclick();
+  await expect(input).toBeFocused();
+  await expect
+    .poll(async () => (await input.boundingBox())!.height)
+    .toBeGreaterThan(rowHeight);
+  const initialHeight = (await input.boundingBox())!.height;
+  expect(
+    await input.evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+  ).toBe(true);
+  expect((await first.boundingBox())!.height).toBe(rowHeight);
+  expect((await second.boundingBox())!.y).toBe(nextRowTop);
+  // 펼쳐진 부분도 다음 행에 가려지지 않고 실제로 편집할 수 있어야 한다.
+  expect(
+    await input.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return (
+        document.elementFromPoint(box.x + box.width / 2, box.bottom - 8) === el
+      );
+    }),
+  ).toBe(true);
+  await page.screenshot({ path: info.outputPath("expanded-text-editor.png") });
+  const longer = original + "\n여섯 번째 줄\n일곱 번째 줄";
+  await input.fill(longer);
+  await expect
+    .poll(async () => (await input.boundingBox())!.height)
+    .toBeGreaterThan(initialHeight);
+  const beforeNewline = (await input.boundingBox())!.height;
+  await input.press("Shift+Enter");
+  await expect(input).toHaveValue(longer + "\n");
+  await expect
+    .poll(async () => (await input.boundingBox())!.height)
+    .toBeGreaterThan(beforeNewline);
+  await input.fill("짧은 내용");
+  await expect
+    .poll(async () => (await input.boundingBox())!.height)
+    .toBeLessThanOrEqual(rowHeight);
+  await input.fill(longer);
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/cells/batch") && response.ok(),
+    ),
+    input.press("Enter"),
+  ]);
+  await expect(input).toHaveCount(0);
+  await expect(first).toHaveText(longer);
+  await expect(page.getByRole("grid")).toBeFocused();
+  expect((await first.boundingBox())!.height).toBe(rowHeight);
+  expect((await second.boundingBox())!.y).toBe(nextRowTop);
+  await page.reload();
+  await expect(first).toHaveText(longer);
+  await first.dblclick();
+  await expect
+    .poll(async () => (await input.boundingBox())!.height)
+    .toBeGreaterThan(rowHeight);
+  await input.fill("취소할 내용\n두 줄");
+  await input.press("Escape");
+  await expect(first).toHaveText(longer);
+  expect((await first.boundingBox())!.height).toBe(rowHeight);
+  expect(await rowHeights()).toEqual(savedHeights);
+});
+
+test("긴 텍스트 편집창은 확대율과 화면 경계에 맞추고 내부에서 스크롤한다", async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 1366, height: 480 });
+  const cell = page.locator(`[data-cell="${taskIds[2]}:title"]`);
+  const grid = page.getByRole("grid");
+  const zoom = page
+    .locator('.format-toolbar[aria-label="셀 서식 도구"]')
+    .getByRole("spinbutton", { name: "확대율", exact: true });
+  const input = cell.getByRole("textbox");
+  const text = Array.from(
+    { length: 80 },
+    (_, i) => `${i + 1}번째 긴 내용`,
+  ).join("\n");
+  for (const value of [50, 150]) {
+    await page.setViewportSize({ width: 1366, height: 480 });
+    await zoom.fill(String(value));
+    await zoom.press("Enter");
+    await cell.dblclick();
+    await input.fill(text);
+    await expect(input).toBeFocused();
+    const fits = () =>
+      input.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const grid = el.closest(".sheet-scroll")!.getBoundingClientRect();
+        const header = el
+          .closest(".sheet-scroll")!
+          .querySelector(".sheet-header")!
+          .getBoundingClientRect();
+        return (
+          box.top >= header.bottom - 1 &&
+          box.bottom <= Math.min(grid.bottom, window.innerHeight) + 1
+        );
+      });
+    await expect.poll(fits).toBe(true);
+    expect(
+      await input.evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
+    expect(
+      await input.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return (
+          document.elementFromPoint(box.x + box.width / 2, box.y + 8) === el
+        );
+      }),
+    ).toBe(true);
+    await input.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await input.hover();
+    await page.mouse.wheel(0, 200);
+    await expect
+      .poll(() => input.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(0);
+    const height = (await input.boundingBox())!.height;
+    await page.setViewportSize({ width: 1366, height: 700 });
+    await expect.poll(fits).toBe(true);
+    await expect
+      .poll(async () => (await input.boundingBox())!.height)
+      .toBeGreaterThan(height);
+    await expect(input).toBeFocused();
+    await page.screenshot({
+      path: info.outputPath(`bounded-text-editor-${value}.png`),
+    });
+    await input.press("Escape");
+    await expect(input).toHaveCount(0);
+    await expect(cell).toHaveText("셋째 업무");
+    await expect(grid).toBeFocused();
+  }
+});
+
 test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하며 Esc는 취소한다", async ({
   page,
 }) => {
@@ -5161,6 +5312,63 @@ test("속성은 칩·글자만 한 번 눌러 아래 목록을 열고 행 높이
   await people.getByRole("option").first().click();
   await page.keyboard.press("Escape");
   await expect(supporters).toContainText(name.trim());
+});
+
+test("옵션을 키보드로 확정한 뒤 방향키로 셀 이동을 계속한다", async ({
+  page,
+}) => {
+  const grid = page.getByRole("grid");
+  const row = page.locator(`[data-row-id="${taskIds[0]}"]`);
+  const keys = await row
+    .locator("[data-column]")
+    .evaluateAll((cells) =>
+      cells.map((cell) => cell.getAttribute("data-column")!),
+    );
+  const categoryIndex = keys.indexOf("category");
+  expect(categoryIndex).toBeGreaterThanOrEqual(0);
+  expect(categoryIndex).toBeLessThan(keys.length - 1);
+  const category = row.locator('[data-column="category"]');
+  const next = row.locator(`[data-column="${keys[categoryIndex + 1]}"]`);
+  const popup = page.getByRole("listbox", { name: "분류 편집", exact: true });
+  await row.locator('[data-column="title"]').click();
+  const offset = categoryIndex - keys.indexOf("title");
+  for (let i = 0; i < Math.abs(offset); i++)
+    await page.keyboard.press(offset < 0 ? "ArrowLeft" : "ArrowRight");
+  await expect(category).toHaveClass(/focused/);
+  await page.keyboard.press("Enter");
+  await expect(
+    popup.getByRole("option", { name: "UX 개선", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    popup.getByRole("option", { name: "차별화", exact: true }),
+  ).toBeFocused();
+  const saved = page.waitForResponse(
+    (response) => response.url().endsWith("/api/cells/batch") && response.ok(),
+  );
+  await page.keyboard.press("Enter");
+  await expect(popup).toHaveCount(0);
+  await expect(category).toHaveText("차별화");
+  await page.keyboard.press("ArrowRight");
+  await expect(next).toHaveClass(/focused/);
+  await expect(grid).toBeFocused();
+  await saved;
+
+  // 값이 바뀌지 않는 재선택도 포커스를 표로 돌려줘야 한다.
+  await page.keyboard.press("ArrowLeft");
+  await expect(category).toHaveClass(/focused/);
+  await page.keyboard.press("Enter");
+  await expect(
+    popup.getByRole("option", { name: "차별화", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(popup).toHaveCount(0);
+  await page.keyboard.press("ArrowRight");
+  await expect(next).toHaveClass(/focused/);
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.locator(`[data-cell="${taskIds[1]}:${keys[categoryIndex + 1]}"]`),
+  ).toHaveClass(/focused/);
 });
 
 test("모든 셀과 날짜 셀은 편집·넘침·밀도에 관계없이 좌우 여백 4px를 사용한다", async ({
