@@ -127,6 +127,110 @@ test("행 메뉴는 위·아래 삽입과 복사 당시 행 붙여넣기·삭제
   ]);
 });
 
+test("점선이 있는 행을 복사해 같은 행에서 붙여넣으면 내용과 서식을 그대로 보존한다", async ({
+  page,
+}) => {
+  const sourceId = taskIds[0];
+  const title = "디자인 시스템 컴포넌트 가이드 정리";
+  const week = "2026-11-02";
+  const { tasks } = await (
+    await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+  ).json();
+  const source = tasks.find((task: any) => task.id === sourceId);
+  const savedStyle = {
+    borderTop: null,
+    borderRight: { style: "dashed", color: "#856060" },
+    borderBottom: null,
+    borderLeft: null,
+  };
+  await post(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: sourceId,
+        key: "title",
+        expectedVersion: source.cells.title.version,
+        value: title,
+      },
+      {
+        taskId: sourceId,
+        key: week,
+        expectedVersion: 0,
+        value: "컴포넌트 가이드 검토",
+        style: savedStyle,
+      },
+    ],
+  });
+  await page.reload();
+  await expect(page.locator(`[data-cell="${sourceId}:title"]`)).toHaveText(
+    title,
+  );
+  await menu(page, sourceId);
+  await page.getByRole("menuitem", { name: "복사", exact: true }).click();
+  const pasted = await insert(page, sourceId, "복사한 행 붙여넣기");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    title,
+    title,
+    "둘째 업무",
+    "셋째 업무",
+  ]);
+  expect(pasted.cells[week]).toMatchObject({
+    value: "컴포넌트 가이드 검토",
+    style: savedStyle,
+  });
+  expect(pasted.defaultStyle).toEqual(source.defaultStyle);
+  await page.reload();
+  await expect(page.locator(`[data-cell="${pasted.id}:title"]`)).toHaveText(
+    title,
+  );
+  const stored = (
+    await (
+      await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+    ).json()
+  ).tasks.find((task: any) => task.id === pasted.id);
+  expect(stored.cells).toEqual(pasted.cells);
+  expect(stored.defaultStyle).toEqual(pasted.defaultStyle);
+});
+
+test("행 삽입·붙여넣기를 실행취소하고 같은 위치와 내용으로 재실행한다", async ({
+  page,
+}) => {
+  const above = await insert(page, taskIds[1], "위에 삽입");
+  const aboveTitle = page.locator(`[data-cell="${above.id}:title"]`);
+  await aboveTitle.getByRole("textbox").press("Escape");
+  const undo = page.getByRole("button", { name: "실행취소", exact: true });
+  const redo = page.getByRole("button", { name: "재실행", exact: true });
+  await undo.click();
+  await expect(aboveTitle).toHaveCount(0);
+  await redo.click();
+  await expect(aboveTitle).toBeVisible();
+  await expect(page.locator(".sheet-row").nth(1)).toHaveAttribute(
+    "data-row-id",
+    above.id,
+  );
+  await menu(page, taskIds[0]);
+  await page.getByRole("menuitem", { name: "복사", exact: true }).click();
+  const pasted = await insert(page, taskIds[2], "복사한 행 붙여넣기");
+  const pastedTitle = page.locator(`[data-cell="${pasted.id}:title"]`);
+  await expect(pastedTitle).toHaveText("첫 업무");
+  await undo.click();
+  await expect(pastedTitle).toHaveCount(0);
+  await undo.click();
+  await expect(aboveTitle).toHaveCount(0);
+  await redo.click();
+  await expect(aboveTitle).toBeVisible();
+  await redo.click();
+  await expect(pastedTitle).toHaveText("첫 업무");
+  const { tasks } = await (
+    await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+  ).json();
+  expect(tasks.find((task: any) => task.id === pasted.id).cells).toEqual(
+    pasted.cells,
+  );
+});
+
 test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이를 상속한다", async ({
   page,
 }, info) => {
@@ -182,6 +286,7 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
   ];
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
     changes: keys.map((key) => ({
       taskId: sourceId,
       key,
@@ -372,6 +477,7 @@ test("묶음 안에 삽입하면 해당 선택값만 유지하고 헤더에 묶�
   ).toBeTruthy();
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
     changes: [
       {
         taskId: taskIds[1],

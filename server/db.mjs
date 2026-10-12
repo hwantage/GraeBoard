@@ -15,7 +15,7 @@ import {
 } from "../shared/domain.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 13;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -56,7 +56,11 @@ export function openDatabase(
   db.exec(
     "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
   );
-  db.exec(`
+  transaction(db, () => {
+    // v13은 보고서를 새 압축 형식으로 초기화한다. 기존 보고서는 변환하지 않는다.
+    if (db.prepare("PRAGMA user_version").get().user_version < 13)
+      db.exec("DROP TABLE IF EXISTS reports");
+    db.exec(`
     CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,system_role TEXT NOT NULL DEFAULT 'user',active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',avatar_initials TEXT NOT NULL DEFAULT '',avatar_image TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),role TEXT NOT NULL DEFAULT 'member',PRIMARY KEY(user_id,team_id));
@@ -65,10 +69,20 @@ export function openDatabase(
     CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
     CREATE INDEX IF NOT EXISTS tasks_team_idx ON tasks(team_id,deleted_at,position);
     CREATE TABLE IF NOT EXISTS views(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(user_id,team_id,year,name));
-    CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS saved_filters(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),scope TEXT NOT NULL CHECK(scope IN ('team','personal')),owner_id TEXT REFERENCES users(id),name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((scope='team' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL)));
+    CREATE UNIQUE INDEX IF NOT EXISTS saved_filters_team_name ON saved_filters(team_id,name) WHERE scope='team';
+    CREATE UNIQUE INDEX IF NOT EXISTS saved_filters_personal_name ON saved_filters(team_id,owner_id,name) WHERE scope='personal';
+    CREATE TABLE IF NOT EXISTS filter_states(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),selected_id TEXT REFERENCES saved_filters(id) ON DELETE SET NULL,data TEXT NOT NULL,PRIMARY KEY(user_id,team_id));
+    CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data BLOB NOT NULL CHECK(typeof(data)='blob'));
     CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,team_id TEXT REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target TEXT NOT NULL,before_json TEXT,after_json TEXT,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS audit_team_idx ON audit(team_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS audit_system_idx ON audit(team_id,created_at DESC,id DESC) WHERE team_id IS NULL;
+    DROP INDEX IF EXISTS audit_created_idx;
+    DROP INDEX IF EXISTS audit_cleanup_idx;
+    CREATE INDEX IF NOT EXISTS audit_cleanup_team_idx ON audit(team_id,created_at DESC,id DESC) WHERE action='history-cleanup';
     CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL REFERENCES users(id),response TEXT NOT NULL,created_at TEXT NOT NULL);
+    DROP INDEX IF EXISTS operations_cell_created_idx;
+    CREATE INDEX IF NOT EXISTS operations_cell_team_created_idx ON operations((CASE WHEN json_array_length(response,'$.refs')=1 THEN json_extract(response,'$.refs[0].teamId') ELSE NULL END),created_at,id) WHERE json_extract(response,'$.kind')='cell-audit';
     CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),filename TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,applied_at TEXT,result TEXT);
     CREATE TABLE IF NOT EXISTS team_revisions(team_id TEXT PRIMARY KEY REFERENCES teams(id),version INTEGER NOT NULL DEFAULT 0);
     CREATE TRIGGER IF NOT EXISTS revision_team_insert AFTER INSERT ON teams BEGIN INSERT OR IGNORE INTO team_revisions(team_id) VALUES(NEW.id); END;
@@ -80,6 +94,7 @@ export function openDatabase(
     CREATE TRIGGER IF NOT EXISTS revision_cell_delete AFTER DELETE ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=OLD.task_id); END;
     PRAGMA user_version=${SCHEMA_VERSION};
   `);
+  });
   return db;
 }
 export function transaction(db, work) {
@@ -262,8 +277,9 @@ export function insertTask(
   return getTask(db, taskId);
 }
 export function audit(db, actorId, teamId, action, target, before, after) {
+  const auditId = id();
   db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)").run(
-    id(),
+    auditId,
     teamId,
     actorId,
     action,
@@ -272,6 +288,7 @@ export function audit(db, actorId, teamId, action, target, before, after) {
     after === undefined ? null : json(after),
     now(),
   );
+  return auditId;
 }
 export function seedDemo(db, user, teamId, year) {
   const users = [user];

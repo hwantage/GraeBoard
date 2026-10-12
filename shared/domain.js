@@ -295,11 +295,15 @@ export function normalizeView(input, settings = DEFAULT_SETTINGS) {
     sortDirection: sortKey ? (input.sortDirection ?? "asc") : "default",
   };
 }
+// 표 배치 저장에는 독립적으로 관리하는 필터 조건을 넣지 않는다.
+export function viewLayout(input) {
+  const { propertyFilters, propertyFilterModes, ...layout } = input;
+  return layout;
+}
 // 이름을 붙여 저장하는 필터에는 화면 배치나 숨김 상태를 넣지 않는다.
 export function savedFilter(input, settings = DEFAULT_SETTINGS) {
   const active = new Set(propertiesFor(settings).map((p) => p.id));
   return {
-    year: input.year,
     propertyFilters: Object.fromEntries(
       Object.entries(input.propertyFilters || {}).filter(([key]) =>
         active.has(key),

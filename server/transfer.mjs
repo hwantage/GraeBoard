@@ -1,7 +1,13 @@
+import { filtersFor, currentFiltersFor } from "./filters.mjs";
 import ExcelJS from "exceljs";
-import { BORDER_SIDES } from "../shared/borders.js";
+import {
+  BORDER_SIDES,
+  weekBoundaryStyles,
+  withWeekBoundaries,
+} from "../shared/borders.js";
 import { checkWorkbookArchive } from "./archive.mjs";
 import { profileSnapshot } from "./profiles.mjs";
+import { encodeReport, decodeReport } from "./reports.mjs";
 import multer from "multer";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -19,7 +25,7 @@ import {
   cell,
   safeSpreadsheetText,
   defaultView,
-  savedFilter,
+  viewLayout,
   fieldsFor,
   orderColumns,
   propertiesFor,
@@ -129,7 +135,6 @@ function cellStyle(c, warnings, label) {
       medium: "medium",
       thick: "thick",
       dashed: "dashed",
-      dotted: "dotted",
       double: "double",
       dashDot: "dashed",
       dashDotDot: "dashed",
@@ -588,9 +593,11 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
   };
   const argb = (hex) => "FF" + hex.slice(1).toUpperCase();
   const { color, backgroundColor } = settings.weekHeader || {};
+  const boundaryStyles = weekBoundaryStyles(keys, settings.weekBorders);
   keys.forEach((key, i) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
     const header = ws.getRow(1).getCell(i + 1);
+    header.border = excelStyle(boundaryStyles.get(key) || {}).border;
     if (color)
       header.font = { ...ws.getRow(1).font, color: { argb: argb(color) } };
     if (backgroundColor)
@@ -602,6 +609,12 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
   });
   for (const t of tasks) {
     const r = ws.addRow(keys.map((k) => displayValue(t, k, users, settings)));
+    const styles = withWeekBoundaries(
+      keys,
+      keys.map((key) => cell(t, key).style),
+      boundaryStyles,
+      keys.map((key) => t.cells[key]?.style || {}),
+    );
     keys.forEach((k, i) => {
       const property = propertiesFor(settings).find((p) => p.id === k);
       const option = propertyOption(property, t.cells[k]?.value);
@@ -609,7 +622,7 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
         ...(property?.display !== "emoji" && option
           ? { backgroundColor: option.backgroundColor }
           : {}),
-        ...cell(t, k).style,
+        ...styles[i],
       });
     });
   }
@@ -706,19 +719,16 @@ export function installTransferRoutes(
               "SELECT name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
             )
             .all(d.teamId, d.year)
-            .map((r) => ({ ...r, data: parse(r.data) }))
+            .map((r) => ({ ...r, data: decodeReport(r.data) }))
         : [];
     const views = db
       .prepare(
-        "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND year=?",
+        "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
       )
       .all(req.user.id, d.teamId, d.year)
       .map((v) => ({
         ...v,
-        data:
-          v.name === "__current"
-            ? parse(v.data)
-            : savedFilter(parse(v.data), team.settings),
+        data: viewLayout(parse(v.data)),
       }));
     res.type("application/json").send(
       json({
@@ -740,6 +750,8 @@ export function installTransferRoutes(
         ),
         users: users.map(profileSnapshot),
         views,
+        filters: filtersFor(db, req.user, team),
+        currentFilters: currentFiltersFor(db, req.user, team),
         reports,
       }),
     );
@@ -1001,9 +1013,9 @@ export function installTransferRoutes(
           d.referenceDate,
           req.user.id,
           now(),
-          json({
+          encodeReport({
             tasks,
-            users: users.map(profileSnapshot),
+            users,
             view,
             settings,
           }),
@@ -1021,7 +1033,7 @@ export function installTransferRoutes(
           team.id,
           d.year,
           "__current",
-          json(view),
+          json(viewLayout(view)),
           now(),
         );
       }

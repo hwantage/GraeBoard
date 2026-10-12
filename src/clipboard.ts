@@ -254,8 +254,8 @@ function htmlStyle(element: HTMLElement): Style {
             : width >= 2
               ? "medium"
               : "solid"
-          : ["dashed", "dotted", "double"].includes(line)
-            ? (line as "dashed" | "dotted" | "double")
+          : ["dashed", "double"].includes(line)
+            ? (line as "dashed" | "double")
             : "solid";
     result[key] = { style, color: colorHex(s[`${key}Color`]) || "#607984" };
   }

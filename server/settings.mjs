@@ -3,6 +3,7 @@ import {
   PROPERTY_VALUE_MAX_LENGTH,
   normalizeView,
   savedFilter,
+  viewLayout,
   propertyOption,
   splitNames,
 } from "../shared/domain.js";
@@ -10,6 +11,7 @@ import {
   propertiesSchema,
   styleSchema,
   weekHeaderSchema,
+  borderSchema,
   requireThat,
   validateCellValue,
 } from "./validation.mjs";
@@ -25,6 +27,10 @@ const settingsSchema = z
     defaultStyle: styleSchema.optional(),
     defaultDensity: z.enum(["comfortable", "compact", "dense"]).optional(),
     weekHeader: weekHeaderSchema.optional(),
+    weekBorders: z
+      .object({ left: borderSchema.optional(), right: borderSchema.optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -86,23 +92,32 @@ export function saveSettings(db, team, input, actorId) {
     defaultStyle: data.defaultStyle ?? previous.defaultStyle,
     defaultDensity: data.defaultDensity ?? previous.defaultDensity,
     weekHeader: data.weekHeader ?? previous.weekHeader,
+    weekBorders: data.weekBorders ?? previous.weekBorders,
     revision: (previous.revision || 0) + 1,
   };
   transaction(db, () => {
     convertChangedKinds(db, team.id, actorId, previous, properties, settings);
     // 보관된 속성의 필터·열을 보기에서 걷어낸다.
-    const updateView = db.prepare("UPDATE views SET data=? WHERE id=?");
+    for (const [table, normalize] of [
+      ["views", (data) => viewLayout(normalizeView(data, settings))],
+      ["saved_filters", (data) => savedFilter(data, settings)],
+    ]) {
+      const update = db.prepare(`UPDATE ${table} SET data=? WHERE id=?`);
+      for (const row of db
+        .prepare(`SELECT id,data FROM ${table} WHERE team_id=?`)
+        .all(team.id))
+        update.run(json(normalize(parse(row.data))), row.id);
+    }
+    const updateState = db.prepare(
+      "UPDATE filter_states SET data=? WHERE user_id=? AND team_id=?",
+    );
     for (const row of db
-      .prepare("SELECT id,name,data FROM views WHERE team_id=?")
+      .prepare("SELECT user_id,data FROM filter_states WHERE team_id=?")
       .all(team.id))
-      updateView.run(
-        json(
-          (row.name === "__current" ? normalizeView : savedFilter)(
-            parse(row.data),
-            settings,
-          ),
-        ),
-        row.id,
+      updateState.run(
+        json(savedFilter(parse(row.data), settings)),
+        row.user_id,
+        team.id,
       );
     db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
       json(settings),

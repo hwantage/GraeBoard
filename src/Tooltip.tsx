@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-// One delegated tooltip for period controls and formatting toolbars, including dialogs.
+// One delegated tooltip for period controls, formatting toolbars and dialog help.
 export default function Tooltip() {
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });

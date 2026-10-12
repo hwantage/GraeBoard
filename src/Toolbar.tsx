@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "./types";
 import BorderMenu from "./BorderMenu";
+import ZoomControls from "./ZoomControls";
 import { FONTS, FONT_SIZES, PALETTE, textMode } from "../shared/domain.js";
 import { Button } from "./components";
 
@@ -72,23 +73,30 @@ export default function Toolbar({
   onRedo,
   canUndo,
   canRedo,
+  leadingAction,
   selectionLabel,
+  zoom,
+  onZoom,
   label = "셀 서식 도구",
 }: {
   style: Style;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
-  onBorder: (preset: BorderPreset, border: Border) => void;
+  onBorder: (preset: BorderPreset, border: Border | null) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  leadingAction?: ReactNode;
   selectionLabel?: string;
+  zoom?: number;
+  onZoom?: (zoom: number) => void;
   label?: string;
 }) {
   const paletteId = useId();
   return (
     <div className="format-toolbar" aria-label={label}>
+      {leadingAction}
       <div className="toolbar-group">
         <Button tooltip="실행취소" disabled={!canUndo} onClick={onUndo}>
           <Undo2 size={16} />
@@ -232,6 +240,9 @@ export default function Toolbar({
           single={selectionLabel === undefined}
         />
       </div>
+      {zoom !== undefined && onZoom && (
+        <ZoomControls value={zoom} onChange={onZoom} />
+      )}
       {selectionLabel !== undefined && (
         <span className="selection-label">
           {selectionLabel || "셀을 선택해 편집하세요"}

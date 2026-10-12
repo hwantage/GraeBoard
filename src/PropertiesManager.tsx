@@ -15,12 +15,13 @@ import { send } from "./api";
 import { Button, ErrorNote } from "./components";
 import PropertyBadge from "./PropertyBadge";
 import PropertyColumnOrder from "./PropertyColumnOrder";
+import BorderControls from "./BorderControls";
 const kinds = {
-  option: "Option · 선택형",
-  text: "Text · 텍스트",
-  date: "Date · 날짜",
-  number: "Number · 숫자",
-  member: "Member · 팀원",
+  option: { name: "Option", description: "선택형" },
+  text: { name: "Text", description: "텍스트" },
+  date: { name: "Date", description: "날짜" },
+  number: { name: "Number", description: "숫자" },
+  member: { name: "Member", description: "팀원" },
 };
 const displays = {
   text: "일반 텍스트",
@@ -56,6 +57,11 @@ export default function PropertiesManager({
     stored = useRef(settings);
   useEffect(() => {
     if (!focusTarget) return;
+    if (focusTarget.id === "property") {
+      root.current
+        ?.querySelector(".property-list-row.current")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
     root.current
       ?.querySelector<HTMLInputElement>(
         focusTarget.id === "property"
@@ -204,7 +210,7 @@ export default function PropertiesManager({
             description:
               p.id === WEEK_COLUMNS.id
                 ? "전체 주차 묶음"
-                : `${CORE_PROPERTY_KEYS.includes(p.id) ? "기본 · " : ""}${p.kind === "option" ? `${p.values.filter((v) => !v.archived).length}개 값` : kinds[p.kind || "option"]}`,
+                : kinds[p.kind || "option"].name,
           }))}
           selected={selected}
           disabled={busy}
@@ -286,9 +292,40 @@ export default function PropertiesManager({
             </fieldset>
             <p className="field-help">
               날짜 열 머리글에만 적용됩니다. 이번 주와 선택한 열은 강조색으로
-              표시합니다. 날짜 경계선은 표에서 셀을 선택한 뒤 테두리 도구로
-              지정하세요.
+              표시합니다.
             </p>
+            <fieldset className="week-boundary-settings" disabled={busy}>
+              <legend>기본 경계선</legend>
+              <div className="week-boundary-controls">
+                {(
+                  [
+                    ["left", "왼쪽 경계선"],
+                    ["right", "오른쪽 경계선"],
+                  ] as const
+                ).map(([side, label]) => (
+                  <BorderControls
+                    key={side}
+                    label={label}
+                    value={settings.weekBorders?.[side]}
+                    allowNone
+                    onChange={(border) => {
+                      setSettings((s) => ({
+                        ...s,
+                        weekBorders: { ...s.weekBorders, [side]: border },
+                      }));
+                      setMessage("");
+                      setError("");
+                    }}
+                  />
+                ))}
+              </div>
+              <p className="field-help">
+                현재 보이는 첫 날짜의 왼쪽과 마지막 날짜의 오른쪽에 적용합니다.
+                기간을 바꾸거나 날짜 열을 숨기면 새 경계로 이동하며, 셀에서
+                별도로 그린 선이 우선합니다. 셀 테두리를 지우면 기본 경계선이
+                표시됩니다.
+              </p>
+            </fieldset>
             <p className="field-help">
               조회 기간에 해당하는 날짜 열을 한 묶음으로 표시합니다. 이 항목
               오른쪽에 놓인 속성은 마지막 날짜 뒤에 나타납니다.
@@ -313,9 +350,14 @@ export default function PropertiesManager({
                 />
               </label>
               <label>
-                속성 종류
+                <span className="property-type-label">
+                  타입
+                  {CORE_PROPERTY_KEYS.includes(property.id) && (
+                    <small>(필수 고정 타입)</small>
+                  )}
+                </span>
                 <Select
-                  aria-label="속성 종류"
+                  aria-label="타입"
                   value={property.kind || "option"}
                   disabled={[...CORE_PROPERTY_KEYS, "supporters"].includes(
                     property.id,
@@ -336,7 +378,7 @@ export default function PropertiesManager({
                 >
                   {Object.entries(kinds).map(([k, v]) => (
                     <option key={k} value={k}>
-                      {v}
+                      {v.name} · {v.description}
                     </option>
                   ))}
                 </Select>
@@ -398,7 +440,7 @@ export default function PropertiesManager({
             )}
             {property.id === "status" && (
               <p className="field-help">
-                기본 상태는 삭제하거나 종류를 바꿀 수 없습니다. 값의
+                기본 상태는 삭제하거나 타입을 바꿀 수 없습니다. 값의
                 이름·색상·순서를 변경하면 상단 상태별 통계에도 반영됩니다.
               </p>
             )}

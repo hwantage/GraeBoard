@@ -6,7 +6,13 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { X, LoaderCircle, ArrowRight, LockKeyhole } from "lucide-react";
+import {
+  X,
+  LoaderCircle,
+  ArrowRight,
+  LockKeyhole,
+  CircleHelp,
+} from "lucide-react";
 import { api, send } from "./api";
 import { BrandLockup, Grae } from "./Brand";
 import { inkFor } from "./color";
@@ -31,7 +37,9 @@ export function Button({
   active?: boolean;
   className?: string;
   type?: "button" | "submit";
+  ref?: RefObject<HTMLButtonElement | null>;
   "aria-expanded"?: boolean;
+  "aria-pressed"?: boolean;
 }) {
   return (
     <button
@@ -50,6 +58,7 @@ export function Button({
 }
 export function Modal({
   title,
+  help,
   children,
   onClose,
   wide = false,
@@ -57,6 +66,7 @@ export function Modal({
   initialFocus,
 }: {
   title: string;
+  help?: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
@@ -64,13 +74,17 @@ export function Modal({
   initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
+  const hasHelp = !!help;
   useEffect(() => {
     ref.current?.showModal();
-    initialFocus?.current?.focus({ preventScroll: true });
+    (initialFocus?.current || (hasHelp ? closeButton.current : null))?.focus({
+      preventScroll: true,
+    });
     const el = ref.current;
     return () => el?.close();
-  }, [initialFocus]);
+  }, [initialFocus, hasHelp]);
   return (
     <dialog
       ref={ref}
@@ -85,8 +99,20 @@ export function Modal({
       }}
     >
       <header>
-        <h2 id={titleId}>{title}</h2>
-        <Button title="닫기" onClick={onClose}>
+        <div className="modal-heading">
+          <h2 id={titleId}>{title}</h2>
+          {help && (
+            <button
+              type="button"
+              className="modal-help"
+              aria-label={`${title} 도움말`}
+              data-tooltip={help}
+            >
+              <CircleHelp size={17} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        <Button ref={closeButton} title="닫기" onClick={onClose}>
           <X size={18} />
         </Button>
       </header>

@@ -4,15 +4,35 @@
 
 ## 기준
 
-표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 형식만 설명하며, 이전 형식과의 호환 계층은 없습니다.
+표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 형식만 설명하며, 이전 형식과의 호환 계층은 없습니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 보기 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 7입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 13입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+
+## 변경이력과 셀 재시도 저장
+
+명시적인 로그인 성공과 로그아웃은 공통 `audit`에 각각 `login`·`logout` 작업으로 저장합니다. 수행자·대상은 해당 사용자 ID이며 `after`에는 당시 `{name, username}`만 담습니다. 세션 생성·삭제와 감사 기록은 같은 트랜잭션으로 처리합니다. 비밀번호·세션 토큰은 기록하지 않으며 세션 확인·비밀번호 변경 후 세션 재발급은 로그인 기록을 만들지 않습니다.
+
+셀 저장은 현재 셀, 팀별 `audit` 전후 JSON, `operations` 재시도 메타데이터를 한 트랜잭션으로 기록합니다. 새 셀 작업의 `operations.response`는 `{kind: "cell-audit", refs, savedAt, updatedAt}`이며 셀 값·서식을 포함하지 않습니다. `refs`는 `{id: 이력 ID, teamId}` 배열입니다. 여러 팀의 셀이 섞인 요청만 각 참조에 원래 응답 배열의 `positions`를 추가합니다. 단일 팀 요청은 셀별 순서 정보도 저장하지 않습니다.
+
+정상 저장은 과거 이력 조회나 내용 비교 없이 이력 ID를 연결합니다. 같은 `operationId`가 다시 들어왔을 때만 `audit.id` 기본키로 전후 JSON을 읽어 `cells`, `before`, `operationId`, `savedAt`, `updatedAt` 응답을 복원합니다. 현재 셀을 응답 원본으로 사용하지 않으므로 이후 편집·복원·서버 재시작에도 최초 응답과 순서가 같습니다. 요청자와 현재 팀 접근 권한은 재시도에도 검사합니다. 참조 이력이 없으면 410으로 거절하고 변경을 다시 실행하지 않습니다.
+
+셀 요청의 `createdAt`은 필수 UTC ISO 시각이며 `operationId`와 함께 최초 전송부터 재시도까지 유지합니다. 생성 후 7일이 지나면 기록 유무와 관계없이 410으로 거절하고, 서버보다 5분 넘는 미래 시각이나 누락된 생성 시각은 400으로 거절합니다.
+
+`GET /api/admin/audit`는 `team_id IS NULL`인 공통 감사 로그만 반환합니다. `from`·`to`는 선택적인 `YYYY-MM-DD` 날짜이며 한국 시간 기준 양 끝 날짜를 포함합니다. `actorId`·`action`을 함께 지정할 수 있습니다. 목록은 전후 JSON 없이 `entries`와 `nextCursor: {createdAt, id} | null`을 반환하며 한 번에 최대 50건입니다. 다음 페이지는 `cursorAt`·`cursorId`를 함께 보내고 `(created_at,id)` 내림차순으로 이어갑니다. 상세는 `GET /api/admin/audit/:id`의 `{before,after}`로 별도 조회합니다. 팀 이력·없는 이력·정리된 이력은 상세 API에서 404, 시스템 관리자가 아닌 계정은 목록·상세 모두 403입니다. 공통 범위 전용 날짜·ID 인덱스로 탐색하며 조회 자체는 새 이력을 만들지 않습니다.
+
+`GET /api/admin/history-cleanup/storage`는 시스템 관리자에게 팀별 저장 본문 용량과 최근 정리 결과를 반환합니다. 단일 팀 재시도는 해당 팀에, 여러 팀의 공유 재시도와 `team_id IS NULL` 이력은 `system` 범위에 한 번만 집계합니다. 업무·설정·필터·보기 JSON, 압축 스냅샷 BLOB, 가져오기 본문·결과, 이력 전후 JSON, 셀 재시도 메타데이터의 바이트 수이며 DB 물리적 파일 크기는 아닙니다.
+
+`GET /api/admin/history-cleanup?scopeId=팀UUID&beforeDate=YYYY-MM-DD`는 해당 범위와 날짜 이전의 전체·삭제 가능 건수 및 바이트 수, 15분 유효 토큰을 반환합니다. `scopeId=system`은 시스템 공통만 의미하며 모든 팀 범위는 없습니다. `beforeDate`의 한국 시간 00:00을 UTC `cutoff`로 바꾸어 `created_at < cutoff`를 적용합니다. 2000년 1월 1일부터 오늘까지 선택할 수 있습니다. `retentionDays` 방식은 지원하지 않습니다.
+
+`POST /api/admin/history-cleanup`에 `{token, confirmed: true}`를 보내면 토큰에 고정된 범위를 최대 500건/10MiB씩 삭제하고 `deleted` 누계·`batch` 건수·`hasMore`를 반환합니다. 셀 재시도는 선택 날짜 이전이면서 7일+시각 오차 5분이 지난 기록만 삭제합니다. 유효한 단일·다중 팀 재시도 참조 이력은 보호합니다. 정리 결과는 선택한 팀(`system`은 NULL)에 기록합니다. 팀별 이력 날짜 인덱스와 셀 재시도의 단일 팀/공유 범위를 구분하는 표현식 날짜 인덱스로 대상을 찾습니다.
+
+XLSX 가져오기 작업은 작은 결과 응답을 직접 저장합니다. 팀 영구 삭제는 셀 재시도 참조의 `teamId`로 연결된 기록을 제거하므로 해당 이력이 먼저 없어졌더라도 정리할 수 있습니다. 보관기간과 정리 절차는 [운영 안내](OPERATIONS.md#이력-보관과-정리)을 참고하세요.
 
 ## 업무와 셀
 
-계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다. SQLite 스키마는 `server/db.mjs`의 `SCHEMA_VERSION`(`PRAGMA user_version`)으로 표시하며 마이그레이션 코드는 없습니다. `scripts/restore.mjs`는 같은 스키마 버전의 백업만 복구합니다.
+계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문·숫자 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다. SQLite 스키마는 `server/db.mjs`의 `SCHEMA_VERSION`(`PRAGMA user_version`)으로 표시합니다. v13 전환 시 이전 스냅샷만 폐기하며 내용 변환은 하지 않습니다. `scripts/restore.mjs`는 같은 스키마 버전의 백업만 복구합니다.
 
-`bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 보고본에도 이전 팀원의 프로필을 포함합니다.
+`bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 스냅샷에도 이전 팀원의 프로필을 포함합니다.
 
 업무 응답은 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdBy`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 셀 키는 팀 설정에 정의된 활성 속성 ID 또는 주의 월요일 날짜이며, 정의되지 않은 키는 거절합니다. 기본 속성은 `title`, `owner`, `status`이고, 예시 양식(`shared/coreProperties.js`의 `sampleProperties`)은 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`를 더합니다. 화면에서 추가한 속성은 앱이 만든 짧은 ID(`p` + base36 6자리, 예 `p7k2mq`)를 키로 씁니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
 
@@ -40,7 +60,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 주차 셀의 빈 값에도 배경색을 저장할 수 있습니다. 색상은 `#RRGGBB`, 글자 크기는 6~36pt 정수이며 새 팀의 기본 크기는 9pt입니다. 지원 글꼴은 Noto Sans KR·Pretendard·맑은 고딕·Noto Serif KR·Nanum Gothic Coding입니다. `맑은 고딕`은 저장 이름이며 HTML/XLSX 가져오기에서는 `Malgun Gothic`도 같은 이름으로 정규화합니다. 실제 화면은 설치된 맑은 고딕이 없으면 자체 제공 Pretendard로 표시하지만 저장된 글꼴 이름은 유지합니다.
 
-셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}` 또는 `null`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`dotted`·`double`, `color`는 `#RRGGBB`입니다. 누락 값은 업무 기본 서식을 상속하며 상속된 선이 없으면 기본 격자선을 유지합니다. `null`은 상속된 선까지 해제해 기본 격자선을 표시하고 `none`은 기본 격자선까지 숨깁니다. 테두리 도구의 지우기는 네 방향에 `null`을 저장합니다. 선택 영역의 맞닿은 안쪽 경계는 위·왼쪽 셀의 `borderBottom`·`borderRight`에만 선을 저장하고 아래·오른쪽 셀의 `borderTop`·`borderLeft`에는 `null`을 저장합니다. XLSX는 thin/medium/thick/dashed/dotted/double을 대응시키며 `null`은 선 없이 반출하고 대각선은 지원하지 않습니다. 기본 서식이나 가져온 셀 양쪽에 명시된 선이 겹치면 화면과 미리보기에서 더 굵은 선을 한 번만 표시하고, 굵기가 같으면 위·왼쪽 셀의 선을 표시합니다. 저장한 서식은 변경하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존하며 HTML의 `data-grid-borders`는 기본 격자선으로 해제한 방향을 기록합니다.
+셀·기본 서식의 `borderTop`, `borderRight`, `borderBottom`, `borderLeft`는 선택적인 `{style, color}` 또는 `null`입니다. `style`은 `none`·`solid`·`medium`·`thick`·`dashed`·`double`, `color`는 `#RRGGBB`입니다. 화면의 **점선**은 `dashed`입니다. 누락 값은 업무 기본 서식을 상속하며 상속된 선이 없으면 기본 격자선을 유지합니다. `null`은 상속된 선까지 해제해 기본 격자선을 표시하고 `none`은 기본 격자선까지 숨깁니다. 테두리 스타일의 **기본 테두리**는 선택한 위치에 `null`을 저장하며, 테두리 도구의 지우기는 네 방향에 `null`을 저장합니다. 선택 영역의 맞닿은 안쪽 경계는 위·왼쪽 셀의 `borderBottom`·`borderRight`에만 선을 저장하고 아래·오른쪽 셀의 `borderTop`·`borderLeft`에는 `null`을 저장합니다. XLSX는 thin/medium/thick/dashed/double을 대응시키며 `null`은 선 없이 반출하고 대각선은 지원하지 않습니다. 기본 서식이나 가져온 셀 양쪽에 명시된 선이 겹치면 화면과 미리보기에서 더 굵은 선을 한 번만 표시하고, 굵기가 같으면 위·왼쪽 셀의 선을 표시합니다. 저장한 서식은 변경하지 않습니다. HTML·앱 클립보드와 실행취소도 네 방향을 보존하며 HTML의 `data-grid-borders`는 기본 격자선으로 해제한 방향을 기록합니다.
 
 업무의 `defaultStyle`은 일반 생성 시 팀의 기본 서식을, 행 위·아래 삽입 시 기준 행의 기본 서식을 복사한 값입니다. 셀 서식이 이를 덮어쓰며, 빈 일정 셀도 업무 기본 서식을 사용합니다. 텍스트에 포함된 수식이나 HTML을 실행하지 않습니다.
 
@@ -52,9 +72,9 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 여러 영역 선택은 UI 상태의 `areas`와 활성 `anchor`·`focus`로 표현하며 저장 보기에 포함하지 않습니다. 영역이 겹치면 셀 ID를 중복 제거하여 동일 배치에 한 번만 포함합니다. 숨긴 행의 번호·구간은 필터와 정렬을 적용한 결과에서 개인 숨김을 제외하기 전 순서로 계산합니다.
 
-## 보기·보고본·계정
+## 보기·스냅샷·계정
 
-새 보기의 열 고정 기본값은 `frozenColumns: 0`입니다. 팀 설정의 `defaultDensity`는 `comfortable`(넉넉하게)·`compact`(편안하게, 기본)·`dense`(촘촘하게)이며 기본 서식 화면에서 저장합니다. 설정 저장에서 생략하면 현재 팀 값을 유지합니다. `dense`는 `compact`의 약 2/3(기본 서식에서 26px)입니다. 개별 `rowHeights`는 26~500px을 허용하며 팀 기본 높이보다 우선합니다. 보고본은 저장 당시 팀 설정의 높이를 사용합니다.
+새 보기의 열 고정 기본값은 `frozenColumns: 0`입니다. 팀 설정의 `defaultDensity`는 `comfortable`(넉넉하게)·`compact`(편안하게, 기본)·`dense`(촘촘하게)이며 기본 서식 화면에서 저장합니다. 설정 저장에서 생략하면 현재 팀 값을 유지합니다. `dense`는 `compact`의 약 2/3(기본 서식에서 26px)입니다. 개별 `rowHeights`는 26~500px을 허용하며 팀 기본 높이보다 우선합니다. 스냅샷은 저장 당시 팀 설정의 높이를 사용합니다.
 
 기간 선택 표는 `weeksForPeriod(year, startMonth)`로 생성합니다. 주차 키는 월요일 날짜이며 주를 한 번씩 생성하므로 연말 중복이 없습니다. 월 배정은 범위 안의 금요일을 우선하고 경계 주는 월요일 또는 일요일로 보정합니다. `fromMonth`·`toMonth`·`collapsedMonths`는 달력에 나열된 12개월 중 1부터 시작하는 위치입니다. 예를 들어 시작 월이 2월이면 12번은 다음 해 1월입니다. 조회 연도는 1월 시작일 때 기준 연도 하나, 나머지는 기준 연도와 다음 연도 두 개입니다. 2100년은 1월 시작만 허용합니다. 월 드래그는 `fromMonth`·`toMonth`를 설정하고 주 범위를 비우며, 주 드래그는 `fromWeek`·`toWeek`와 전체 월 범위를 설정합니다. 두 선택 모두 `hiddenWeeks`·`collapsedMonths`를 비워 연속 범위를 표시합니다. 드래그 중에는 미리보기만 바꾸고 포인터를 놓을 때 한 번 저장합니다.
 
@@ -64,29 +84,43 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `1`입니다. `expo
 
 발표 모드는 현재 브라우저 화면 상태이며 DB·개인 보기에 저장하지 않는다. 필터·묶음·숨김·열 너비를 유지하고 메뉴와 편집 도구를 숨긴다.
 
-보기는 사용자·팀·기준 연도별 시작 월(`startMonth`), 필터, 숨긴 업무 ID, 숨긴 주차, 접힌 월, 표시 열, 크기와 정렬을 저장합니다. 개인 보기의 숨김은 원본이나 접근 권한을 변경하지 않습니다. `propertyFilters`는 속성 ID별 선택 값 배열입니다. 한 배열의 값은 OR, 서로 다른 속성은 AND로 평가하고 빈 배열은 필터 없음, 빈 문자열 값은 미지정 업무를 뜻합니다. 선택적인 `propertyFilterModes`는 속성 ID별 `include`(일치)·`exclude`(제외)를 저장합니다. 필드나 속성별 모드가 없으면 기존처럼 일치로 해석하며, 제외는 선택 값 중 하나라도 일치하는 업무를 제거합니다. 복수 Member의 빈 배열도 미지정으로 평가하고, 제외 모드라도 선택 값이 없으면 필터를 적용하지 않습니다. 보관된 속성의 필터·모드는 보기 정규화 시 제거합니다. 모드는 개인 보기·보고본·JSON 반출에 함께 보존됩니다. `__current`는 숨김·배치 등을 포함하는 최근 보기입니다. 나머지 이름의 항목은 저장된 필터이며 `year`, `propertyFilters`, `propertyFilterModes`만 저장합니다. 필터 적용은 이 두 필터 필드만 교체하므로 현재 행·열 숨김, 고정·크기·순서, 기간·묶음·정렬을 유지합니다. 설정 정규화와 JSON 반출에서도 필터에는 표시 설정을 넣지 않습니다. XLSX에서 가져온 숨김·크기는 `__current`에 반영합니다. JSON의 현재 범위 내보내기는 선택한 업무와 열만 포함하며, 전체 반출을 대신하지 않습니다.
+표 배치는 사용자·팀·기준 연도별 시작 월(`startMonth`), 숨긴 업무 ID, 숨긴 주차, 접힌 월, 표시 열, 크기·묶음·정렬을 `views`의 `__current`에 저장합니다. 필터 조건은 이 저장 대상에서 제외합니다. 개인 보기의 숨김은 원본이나 접근 권한을 변경하지 않습니다. XLSX에서 가져온 숨김·크기도 표 배치에만 반영합니다.
+
+필터는 연도 필드가 없는 `saved_filters`와 `filter_states`로 관리합니다. `saved_filters`는 `id`, `team_id`, `scope`, `owner_id`, `name`, `data`, `updated_at`을 저장합니다. `scope=team`은 `owner_id=NULL`이며 해당 팀에 접근할 수 있는 모든 사용자가 조회하고, 해당 팀의 `lead`만 저장·수정·삭제합니다. 시스템 관리자도 팀장으로 배속되어야 공용 필터를 편집할 수 있습니다. `scope=personal`은 `owner_id`인 본인만 조회·편집합니다. 이름은 팀 공용끼리, 또는 같은 사용자·팀의 개인용끼리 중복할 수 없습니다. 공용과 개인용 사이에는 같은 이름을 사용할 수 있습니다. 공개 범위는 생성 시 지정하며 수정 API에서는 변경하지 않습니다.
+
+`filter_states`는 사용자·팀별 `selected_id`, `data`를 저장합니다. 저장 필터를 선택한 경우 조회 시 해당 항목의 최신 조건을 사용합니다. 항목을 삭제하면 선택만 해제하고 마지막 적용 조건은 유지합니다. 연도 전환은 필터 목록·조건·선택 상태를 조회하거나 저장하지 않습니다. API도 필터의 연도 입력을 받지 않습니다. 이전 저장 방식의 변환·호환 코드는 없습니다.
+
+필터 `data`는 `propertyFilters`, `propertyFilterModes`만 허용합니다. `propertyFilters`는 속성 ID별 선택 값 배열이며, 같은 속성의 값은 OR, 서로 다른 속성은 AND로 평가합니다. 빈 배열은 필터 없음, 빈 문자열은 미지정 업무입니다. `propertyFilterModes`는 속성별 `include`(기본, 일치)·`exclude`(제외)입니다. 복수 Member의 빈 배열도 미지정으로 평가하며 선택 값이 없으면 모드와 관계없이 필터를 적용하지 않습니다. 보관된 속성의 조건은 현재 조건과 개인·공용 저장 필터에서 제거합니다. 필터 적용·해제는 행·열 숨김, 고정·크기·순서, 기간·묶음·정렬을 변경하지 않습니다. 팀원이 공용 필터의 조건을 바꾸면 공용 선택을 해제하여 개인의 현재 조건으로 사용하고 공용 원본은 수정하지 않습니다.
+
+화면의 `View`와 스냅샷은 표 배치와 필터 조건을 합친 스냅샷입니다. JSON 반출은 `views`에 표 배치, `filters`에 조회 가능한 공용·본인 개인용 필터, `currentFilters`에 본인의 조건·선택을 각각 담습니다. 다른 사용자의 개인용 필터는 포함하지 않습니다. 현재 범위 내보내기는 선택한 업무와 열만 포함하며 전체 반출을 대신하지 않습니다.
 
 `fromWeek`·`toWeek`는 월요일 날짜 키 또는 제한 없음을 뜻하는 빈 문자열입니다. 월 범위와 함께 표시할 주차를 제한합니다. `frozenColumns`는 왼쪽에서 고정할 업무 정보 열 수이며, `groupBy`는 묶음 속성 ID입니다. `sortKey`와 `sortDirection`(`asc`·`desc`·`default`)은 업무 정보 컬럼 정렬입니다. 주간 날짜 키는 정렬 대상에서 제외합니다. 그룹 제목은 별도의 업무 레코드가 아닙니다. 새 보기의 주간 열 기본 너비는 40px입니다. 보기의 `knownProperties`는 보기가 마지막으로 본 속성 목록으로, 그 뒤 추가된 속성은 기본 표시 여부(`visible`)에 따라 열에 더합니다.
 
-보고본은 보기의 12개월에 해당하는 두 연도 업무도 함께 검증·보관합니다. 보고본은 `tasks`, 당시 사용자 ID·이름·색상, `view`를 독립적으로 저장합니다. 기준일·생성 시각·고유 보고본 ID로 구별합니다. 같은 기준일에 다시 저장하면 새 보고본이 생성됩니다. 계정 이름 변경이나 원본 업무 삭제가 과거 스냅샷을 수정하지 않습니다.
+스냅샷은 보기의 12개월에 해당하는 두 연도 업무도 함께 검증·보관합니다. `tasks`, `users`, `view`, `settings`를 하나의 JSON으로 만든 뒤 gzip(level 1)으로 압축하여 `reports.data`에 BLOB으로 저장합니다. Base64 인코딩은 하지 않습니다. `users`에는 업무의 Member 셀(보관된 속성 포함) 또는 Member 필터에서 참조하는 사용자만 `{id, name}`으로 보관합니다. 아바타 이미지·글자·색상·계정 권한과 관계없는 팀원은 포함하지 않습니다. 업무 내용·셀 서식·보기·속성 정의는 유지합니다. 일반 저장과 XLSX 보고서 가져오기는 같은 저장 함수를 사용하고, 조회와 JSON 반출은 압축을 해제한 객체를 반환합니다.
 
-JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 않습니다. 다른 시스템으로 옮길 때 사용자 ID를 매핑하고, 날짜 키·업무 ID·색상·보고본을 유지해야 합니다. 현재 앱의 JSON 직접 재가져오기 기능은 없습니다. 완전 복구는 SQLite 백업으로 수행합니다. XLSX 가져오기는 새 업무 ID를 부여하며, 동일 파일 재시도용 키를 별도로 관리합니다.
+기준일·생성 시각·고유 스냅샷 ID로 구별하며 같은 기준일에 다시 저장하면 새 스냅샷이 생성됩니다. 계정 이름 변경이나 원본 업무 삭제가 과거 스냅샷을 수정하지 않습니다. v13 최초 실행 시 이전 형식의 보고서 테이블을 비우고 새 형식으로 생성합니다. 이전 스냅샷의 변환·호환 조회는 제공하지 않습니다. 새 스냅샷은 이후 재시작에도 유지합니다.
+
+스냅샷 조회에는 현재 업무 화면의 연도 제한을 적용하지 않습니다. 날짜 열과 달력은 저장된 `year`, `view.startMonth`를 사용합니다. 닫을 때 현재 업무 화면의 연도·보기·스크롤을 복원하고 연간 보기나 필터 저장소에는 스냅샷의 조건을 쓰지 않습니다. 선택 삭제는 모든 ID가 해당 팀의 스냅샷인지 검사한 뒤 하나의 트랜잭션으로 삭제하며, 원본 업무를 유지하고 `report-delete` 이력을 남깁니다.
+
+JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 않습니다. 다른 시스템으로 옮길 때 사용자 ID를 매핑하고, 날짜 키·업무 ID·색상·스냅샷을 유지해야 합니다. 현재 앱의 JSON 직접 재가져오기 기능은 없습니다. 완전 복구는 SQLite 백업으로 수행합니다. XLSX 가져오기는 새 업무 ID를 부여하며, 동일 파일 재시도용 키를 별도로 관리합니다.
 
 ## 동적 속성
 
 팀 설정은 `theme`, `properties`, `defaultStyle`, `defaultDensity`, `weekHeader`, `revision`으로 이루어지며 `properties` 배열이 모든 업무 정보 열과 순서를 정의합니다. 속성은 `id`, `name`, `kind`, `display`, `values`, `visible`, 선택적인 `multiple`·`width`(기본 열 너비, 없으면 120px)·`placement`·`archived`를 가집니다. 속성 ID는 영문자로 시작하는 영문·숫자·`_`·`-` 60자 이내입니다. `kind`는 `option`·`text`·`date`·`number`·`member`입니다. Option의 `display`는 `text`·`round`·`square`·`dot`·`emoji`, Member는 `text`·`avatar`입니다. `title`은 항상 활성 Text이며 삭제·숨김·종류 변경을 거절합니다. `owner`는 삭제 불가한 단일 Member, `status`는 삭제 불가하고 활성 값이 하나 이상인 Option입니다. `supporters`는 선택 속성으로 보관·복원이 가능하며 복수 Member와 권한 연계를 유지합니다. 새 팀에는 `title`, `owner`, `status`만 생성합니다. 첫 설정에서 예시 업무를 선택한 팀과 XLSX 가져오기는 예시 양식 속성을 사용합니다. 기본 상태는 예정·검토 중·진행 중·완료·보류이며 옵션 ID는 `status-planned`·`status-review`·`status-progress`·`status-completed`·`status-paused`입니다. `POST /api/admin/teams`의 `templateTeamId`는 원본 팀 설정을 복사하며 새 revision은 0입니다. 속성·값·순서·표시·기본 서식·테마를 포함하고 업무·회원 배정·개인 보기는 복사하지 않습니다. 값 배열의 순서가 선택 목록·묶음 순서이며, 각 값에는 `id`, `label`, `backgroundColor`, `dotColor`, `emoji`, 선택적인 `archived`가 있습니다.
 
-속성·선택값 ID는 팀 안에서 유일하면 되므로 앱이 `p`/`o` + base36 6자리로 만듭니다(기본 속성과 기본 상태값은 `title`, `status-planned`처럼 고정 이름). ID는 셀 키와 셀 값에 그대로 저장되므로 짧게 유지합니다. Option 셀 값은 옵션 ID, Text는 문자열, Date는 유효한 `YYYY-MM-DD`, Number는 유한한 숫자, 단일 Member는 소속 팀의 사용자 ID 또는 빈 문자열, 복수 Member는 중복 없는 사용자 ID 배열입니다. Number는 음수와 소수를 허용합니다. 속성·선택값의 이름을 바꿔도 ID는 유지되므로 셀·필터·보고본은 바뀌지 않습니다. 설정의 `revision`을 보낸 수정 요청은 동시 관리자 변경을 검사합니다. 종류 변경 시 기존 값을 새 종류로 변환·검증하고 셀 버전과 이력을 함께 갱신합니다. 하나라도 변환에 실패하면 설정과 셀을 모두 되돌립니다. 제거된 정의는 보관하여 기존 셀을 설명할 수 있게 합니다. 보고본은 `settings` 사본도 보존합니다.
+속성·선택값 ID는 팀 안에서 유일하면 되므로 앱이 `p`/`o` + base36 6자리로 만듭니다(기본 속성과 기본 상태값은 `title`, `status-planned`처럼 고정 이름). ID는 셀 키와 셀 값에 그대로 저장되므로 짧게 유지합니다. Option 셀 값은 옵션 ID, Text는 문자열, Date는 유효한 `YYYY-MM-DD`, Number는 유한한 숫자, 단일 Member는 소속 팀의 사용자 ID 또는 빈 문자열, 복수 Member는 중복 없는 사용자 ID 배열입니다. Number는 음수와 소수를 허용합니다. 속성·선택값의 이름을 바꿔도 ID는 유지되므로 셀·필터·스냅샷은 바뀌지 않습니다. 설정의 `revision`을 보낸 수정 요청은 동시 관리자 변경을 검사합니다. 종류 변경 시 기존 값을 새 종류로 변환·검증하고 셀 버전과 이력을 함께 갱신합니다. 하나라도 변환에 실패하면 설정과 셀을 모두 되돌립니다. 제거된 정의는 보관하여 기존 셀을 설명할 수 있게 합니다. 스냅샷은 `settings` 사본도 보존합니다.
 
 새로 추가하거나 이름을 변경하는 속성 값은 최대 15자입니다. 화면의 `maxLength`와 서버의 설정 저장 검사를 함께 적용합니다. 저장 형식은 긴 값(최대 60자)을 읽을 수 있습니다. 기존 옵션 ID와 이름이 같으면 다른 설정 저장·보관을 허용하여 데이터와 과거 기록을 자르지 않습니다. 저장 전 빈 속성·값 초안을 지울 때는 보관 목록에 추가하지 않습니다.
 
 `visible`은 열 표시 기본값입니다. 보기의 `columnVisibility`는 마지막으로 적용한 기본값을 기록하여 변경된 열만 반영하고 다른 개인 숨김은 보존합니다. 팀 설정의 속성 탭에서 현재 보기와 다른 기본값을 가진 열의 체크를 바꾸는 경우 현재 보기에도 직접 적용합니다.
 
-속성의 `placement`는 `beforeWeeks`(기본) 또는 `afterWeeks`입니다. 표의 순서는 날짜 앞 속성 → 표시 중인 주차 날짜 → 날짜 뒤 속성이며, 각 쪽 안에서는 `properties` 배열의 순서를 따릅니다. 속성 탭의 ‘주차 날짜’ 항목은 날짜 묶음을 나타내는 UI 항목으로, 별도 속성이나 셀로 저장하지 않습니다. 설정 저장에서 이 필드를 생략하면 기존 배치를 보존합니다. 팀 양식과 보고본 설정 사본에도 배치를 포함합니다. 전체 XLSX·CSV 반출의 열 순서도 이 배치를 따르며, 현재 보기 반출은 요청한 `keys` 순서를 유지합니다. JSON은 팀 설정에 배치 정보를 포함합니다. `frozenColumns`는 표시 중인 `beforeWeeks` 속성에만 적용합니다.
+속성의 `placement`는 `beforeWeeks`(기본) 또는 `afterWeeks`입니다. 표의 순서는 날짜 앞 속성 → 표시 중인 주차 날짜 → 날짜 뒤 속성이며, 각 쪽 안에서는 `properties` 배열의 순서를 따릅니다. 속성 탭의 ‘주차 날짜’ 항목은 날짜 묶음을 나타내는 UI 항목으로, 별도 속성이나 셀로 저장하지 않습니다. 설정 저장에서 이 필드를 생략하면 기존 배치를 보존합니다. 팀 양식과 스냅샷 설정 사본에도 배치를 포함합니다. 전체 XLSX·CSV 반출의 열 순서도 이 배치를 따르며, 현재 보기 반출은 요청한 `keys` 순서를 유지합니다. JSON은 팀 설정에 배치 정보를 포함합니다. `frozenColumns`는 표시 중인 `beforeWeeks` 속성에만 적용합니다.
 
 XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에는 ID와 정의를 함께 반출합니다. 가져오기는 이름이 일치하는 속성 열을 종류에 맞게 해석합니다. 선택형 값은 이름으로 옵션을 찾아 ID로 저장하고, 없는 이름은 새 옵션으로 추가합니다. 예시 양식의 열(분류·유형·설명·지원자·진척률·목표일 등)은 팀에 없어도 연결되며 적용 시 속성 정의를 추가합니다. Member 사용자 매핑은 검증합니다.
 
-팀 설정의 `weekHeader: {color?, backgroundColor?}`는 날짜 열 머리글의 글자색·배경색(`#RRGGBB`)입니다. 이번 주와 선택한 열의 강조색이 우선합니다. 생략하면 이전 설정을 보존하고 빈 객체는 기본 색으로 되돌립니다. 팀 양식·보고본·JSON에 포함하며 XLSX는 반출하는 주차 머리글에 적용합니다.
+팀 설정의 `weekHeader: {color?, backgroundColor?}`는 날짜 열 머리글의 글자색·배경색(`#RRGGBB`)입니다. 이번 주와 선택한 열의 강조색이 우선합니다. 생략하면 이전 설정을 보존하고 빈 객체는 기본 색으로 되돌립니다. 팀 양식·스냅샷·JSON에 포함하며 XLSX는 반출하는 주차 머리글에 적용합니다.
+
+팀 설정의 `weekBorders: {left?: Border, right?: Border}`는 현재 보이는 첫 날짜의 왼쪽과 마지막 날짜의 오른쪽 기본 경계선입니다. `Border`는 셀 테두리와 같은 `{style, color}`이며 설정의 `none`은 별도 경계선을 표시하지 않습니다. 날짜가 하나면 양쪽을 같은 열에, 날짜가 없으면 어느 열에도 적용하지 않습니다. 셀이나 같은 경계를 공유하는 이웃 셀에 별도로 저장한 선이 우선하며, 셀의 `null`·`none`과 업무 기본 서식에서 상속된 테두리는 주차 경계선을 가리지 않습니다. 기간·숨김에 따라 렌더링할 때만 계산하므로 셀 값·서식·버전을 변경하지 않고 셀 복사에도 포함하지 않습니다. 팀 양식·스냅샷·JSON에 보존하며 XLSX는 반출 열의 양 끝에 적용합니다. 필드 생략은 기존 설정을 유지하고 빈 객체는 경계선을 해제합니다.
 
 ## 팀 스페이스 테마
 
@@ -106,13 +140,20 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `POST /api/tasks/reorder` | 한 행 또는 여러 행을 기준 업무의 앞/뒤로 함께 이동, 묶음 경계·권한·업무 버전 검사 |
 | `POST /api/cells/batch` | 값 변경 최대 2,000셀, 서식만 변경하면 최대 50,000셀 |
 | `PATCH /api/tasks/:id` | 순서·연도 변경 |
-| `DELETE /api/tasks/:id` | 휴지통 이동 |
-| `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소 |
-| `GET/PUT /api/views` | 현재 보기와 저장된 필터 |
-| `PATCH /api/views/:id` | 본인의 저장된 필터 이름 또는 조건 수정. `name`·`data` 중 하나 이상 필요하며 생략한 값과 ID 유지. 연도 변경·같은 팀·연도의 중복 이름 거부 |
-| `GET/POST /api/reports` | 보고본 목록·생성 |
-| `GET /api/reports/:id` | 읽기 전용 보고본 |
+| `DELETE /api/tasks/:id` | 휴지통 이동, 삭제 후 `updatedAt` 반환 |
+| `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소. `updatedAt`을 보내면 복구 전 버전 일치 검사 |
+| `GET/PUT /api/views` | 사용자·팀·기준 연도별 표 배치 (`__current`). 필터 조건 제외 |
+| `GET /api/filters?teamId=…` | 팀 공용·본인 개인용 필터 목록과 본인의 현재 조건·선택. 연도 매개변수 없음 |
+| `PUT /api/filters` | `teamId`, `scope`(`team`·`personal`), `name`, `data`로 저장. 공용은 팀장만 허용 |
+| `PUT /api/filters/current` | 본인의 `teamId`, `selectedId`(또는 빈 문자열), `data` 저장 |
+| `PATCH /api/filters/:id` | 이름·조건 수정. 개인용은 본인, 공용은 팀장만 허용. 같은 구분의 중복 이름 거부 |
+| `DELETE /api/filters/:id` | 개인용은 본인, 공용은 팀장만 삭제 |
+| `GET/POST /api/reports` | 스냅샷 목록·생성 |
+| `GET /api/reports/:id` | 읽기 전용 스냅샷 |
+| `DELETE /api/reports` | `{teamId, ids}`로 선택한 스냅샷을 일괄 삭제. 팀장·시스템 관리자만 허용 |
 | `GET /api/audit` | 수행자·시각·전후 값 |
+| `GET /api/admin/audit` | 관리자 전용 공통 감사 로그 메타데이터, 기간·수행자·작업 필터, 50건 커서 페이지 |
+| `GET /api/admin/audit/:id` | 관리자 전용 공통 감사 로그의 변경 전·후 값 |
 | `POST /api/audit/:id/restore` | 이력 복원도 새 변경으로 기록 |
 | `POST /api/import/preview` | XLSX 사전 분석, multipart 파일 |
 | `POST /api/import/:id/apply` | 확인한 시트 적용 |

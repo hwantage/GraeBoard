@@ -63,7 +63,12 @@ import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
-import { gridBordersCSS } from "../shared/borders.js";
+import {
+  gridBordersCSS,
+  bordersCSS,
+  weekBoundaryStyles,
+  withWeekBoundaries,
+} from "../shared/borders.js";
 import {
   createClipboard,
   copyToEvent,
@@ -160,6 +165,7 @@ function savedAreas(selection: Selection | null): SelectionArea[] {
     : [];
 }
 export default function Grid({
+  zoom = 1,
   tasks,
   matchingTasks,
   allTasks,
@@ -192,6 +198,7 @@ export default function Grid({
   presentation = false,
   jump,
 }: {
+  zoom?: number;
   tasks: Task[];
   // tasks: 화면에 보이는 행, matchingTasks: 필터 통과(숨긴 행 포함), allTasks: 전체.
   matchingTasks: Task[];
@@ -284,6 +291,15 @@ export default function Grid({
   }
   useLayoutEffect(positionRowDragPreview, [rowDrag]);
   const today = todayKey();
+  // Width previews change only the resized column, not the cell border layout.
+  const columnKeys = useMemo(
+    () => baseColumns.map((column) => column.key),
+    [baseColumns],
+  );
+  const boundaryStyles = useMemo(
+    () => weekBoundaryStyles(columnKeys, settings.weekBorders),
+    [columnKeys, settings.weekBorders],
+  );
   const columnGaps = useMemo(() => {
     const visible = new Set(columns.map((c) => c.key));
     const before = new Map<string, ColumnReference[]>();
@@ -823,8 +839,8 @@ export default function Grid({
       const element = document.elementFromPoint(
         Math.max(box.left + 2, Math.min(x, box.right - 14)),
         kind === "columns"
-          ? box.top + 16
-          : Math.max(box.top + 34, Math.min(y, box.bottom - 14)),
+          ? box.top + 16 * zoom
+          : Math.max(box.top + 34 * zoom, Math.min(y, box.bottom - 14)),
       );
       const next =
         kind === "columns"
@@ -856,8 +872,9 @@ export default function Grid({
         const box = grid.getBoundingClientRect();
         if (kind === "columns") {
           const fixedWidth =
-            rowHeaderWidth +
-            columns.filter((c) => c.fixed).reduce((n, c) => n + c.width, 0);
+            (rowHeaderWidth +
+              columns.filter((c) => c.fixed).reduce((n, c) => n + c.width, 0)) *
+            zoom;
           const delta =
             x > box.right - 28
               ? 12
@@ -1193,7 +1210,10 @@ export default function Grid({
       min = column.month ? 40 : 45;
     let width = start;
     const handle = (ev: PointerEvent) => {
-      width = Math.min(850, Math.max(min, start + ev.clientX - origin));
+      width = Math.min(
+        850,
+        Math.max(min, start + (ev.clientX - origin) / zoom),
+      );
       setColumnResize({ key: column.key, width });
     };
     const stop = () => {
@@ -1230,7 +1250,7 @@ export default function Grid({
       start = contentHeights[index];
     let height = start;
     const drag = (ev: PointerEvent) => {
-      height = Math.min(500, Math.max(26, start + ev.clientY - y));
+      height = Math.min(500, Math.max(26, start + (ev.clientY - y) / zoom));
       setRowResize({ taskId: task.id, height });
     };
     const stop = () => {
@@ -1319,7 +1339,12 @@ export default function Grid({
   return (
     <div
       className="grid-area"
-      style={{ "--row-header-width": `${rowHeaderWidth}px` } as CSSProperties}
+      style={
+        {
+          "--row-header-width": `${rowHeaderWidth}px`,
+          "--grid-zoom": zoom,
+        } as CSSProperties
+      }
     >
       <div
         ref={ref}
@@ -1438,9 +1463,10 @@ export default function Grid({
                           : "none"
                       : "none"
                 }
-                className={`header-cell ${c.fixed ? "fixed" : c.month ? "week-heading" : ""} ${c.key <= today && (c.end || "") >= today ? "this-week" : ""}`}
+                className={`header-cell ${c.fixed ? "fixed" : c.month ? "week-heading" : ""} ${c.key <= today && (c.end || "") >= today ? "this-week" : ""} ${propertyFilters[c.key]?.length ? "is-filtered" : ""}`}
                 style={{
                   width: c.width,
+                  ...bordersCSS(boundaryStyles.get(c.key) || {}),
                   ...(c.fixed ? { left: positions[ci] } : {}),
                 }}
               >
@@ -1565,6 +1591,8 @@ export default function Grid({
                       : undefined
                   }
                   columns={columns}
+                  columnKeys={columnKeys}
+                  boundaryStyles={boundaryStyles}
                   positions={positions}
                   properties={properties}
                   users={users}
@@ -1751,6 +1779,8 @@ const RowBody = memo(function RowBody({
   group,
   groupCount,
   columns,
+  columnKeys,
+  boundaryStyles,
   positions,
   properties,
   users,
@@ -1778,6 +1808,8 @@ const RowBody = memo(function RowBody({
   group: Property | undefined;
   groupCount: number | undefined;
   columns: Column[];
+  columnKeys: string[];
+  boundaryStyles: Map<string, Style>;
   positions: number[];
   properties: Property[];
   users: User[];
@@ -1805,6 +1837,16 @@ const RowBody = memo(function RowBody({
         .map((span) => span.split("-").map(Number))
     : [];
   const editable = !readOnly && canEdit(user, task);
+  const displayStyles = useMemo(
+    () =>
+      withWeekBoundaries(
+        columnKeys,
+        columnKeys.map((key) => cell(task, key).style),
+        boundaryStyles,
+        columnKeys.map((key) => task.cells[key]?.style || {}),
+      ),
+    [task, columnKeys, boundaryStyles],
+  );
   return (
     <>
       {!!groupHeight && (
@@ -1928,14 +1970,14 @@ const RowBody = memo(function RowBody({
         if (
           !choice &&
           !editing &&
-          textMode(cell(task, c.key).style) === "overflow" &&
+          textMode(displayStyles[ci]) === "overflow" &&
           (Array.isArray(own) ? own.length > 0 : own !== "" && own != null)
         ) {
           for (let next = ci + 1; next < columns.length; next++) {
             const neighbor = columns[next];
             const v = value(task, neighbor.key);
-            const right = cell(task, columns[next - 1].key).style.borderRight;
-            const left = cell(task, neighbor.key).style.borderLeft;
+            const right = displayStyles[next - 1].borderRight;
+            const left = displayStyles[next].borderLeft;
             if (
               !!neighbor.fixed !== !!c.fixed ||
               (right && right.style !== "none") ||
@@ -1952,6 +1994,7 @@ const RowBody = memo(function RowBody({
             key={c.key}
             task={task}
             column={c}
+            displayStyle={displayStyles[ci]}
             left={c.fixed ? positions[ci] : undefined}
             overflowWidth={overflowWidth}
             topBorder={
@@ -1959,16 +2002,8 @@ const RowBody = memo(function RowBody({
                 ? cell(previousTask, c.key).style.borderBottom
                 : undefined
             }
-            leftBorder={
-              columns[ci - 1]
-                ? cell(task, columns[ci - 1].key).style.borderRight
-                : undefined
-            }
-            rightBorder={
-              columns[ci + 1]
-                ? cell(task, columns[ci + 1].key).style.borderLeft
-                : undefined
-            }
+            leftBorder={displayStyles[ci - 1]?.borderRight}
+            rightBorder={displayStyles[ci + 1]?.borderLeft}
             bottomBorder={
               nextTask ? cell(nextTask, c.key).style.borderTop : undefined
             }
@@ -2007,6 +2042,7 @@ function selectionEdges(spans: number[][], ci: number) {
 const GridCell = memo(function GridCell({
   task,
   column: c,
+  displayStyle,
   left,
   overflowWidth,
   topBorder,
@@ -2026,6 +2062,7 @@ const GridCell = memo(function GridCell({
 }: {
   task: Task;
   column: Column;
+  displayStyle: Style;
   left: number | undefined;
   overflowWidth: number;
   topBorder: Style["borderBottom"];
@@ -2045,7 +2082,7 @@ const GridCell = memo(function GridCell({
   actions: GridActions;
 }) {
   const current = cell(task, c.key),
-    s = current.style;
+    s = displayStyle;
   const text = displayValueFor(property, current.value, users);
   const choice = property?.kind === "option" || property?.kind === "member";
   const editableChoice =

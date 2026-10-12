@@ -6,17 +6,14 @@ export function deleteTeam(db, teamId, actorId) {
   return transaction(db, () => {
     const team = db.prepare("SELECT id FROM teams WHERE id=?").get(teamId);
     requireThat(team, 404, "팀을 찾을 수 없습니다.");
-    // Batch responses contain cell contents even after the tasks are deleted.
+    // References retain team IDs so cleanup also works after an audit expires.
     db.prepare(
-      `DELETE FROM operations WHERE id IN (
-      SELECT target FROM audit WHERE team_id=? AND action='cells'
-    ) OR EXISTS (
-      SELECT 1 FROM json_each(operations.response, '$.cells') c
-      JOIN tasks t ON t.id=json_extract(c.value, '$.taskId') WHERE t.team_id=?
+      `DELETE FROM operations WHERE EXISTS (
+      SELECT 1 FROM json_each(operations.response, '$.refs') r
+      WHERE json_extract(r.value, '$.teamId')=?
     )`,
-    ).run(teamId, teamId);
-    // Import replay IDs predate a team reference in their response. Remove all
-    // possible replay keys for this team's previews, across supported years.
+    ).run(teamId);
+    // Import operations use deterministic IDs for each sheet, mode and year.
     const removeOperation = db.prepare("DELETE FROM operations WHERE id=?");
     for (const preview of db
       .prepare("SELECT id,data FROM imports WHERE team_id=?")
@@ -36,6 +33,8 @@ export function deleteTeam(db, teamId, actorId) {
     for (const table of [
       "tasks",
       "views",
+      "filter_states",
+      "saved_filters",
       "reports",
       "audit",
       "imports",

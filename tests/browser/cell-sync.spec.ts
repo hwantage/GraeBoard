@@ -1,3 +1,4 @@
+import { readPreferences, writePreferences } from "./preferences";
 import {
   test,
   expect,
@@ -135,7 +136,7 @@ async function openPeer(privateView = false) {
         },
       ],
     ]) {
-      const res = await peer.request.put("/api/views", {
+      const res = await writePreferences(peer, {
         headers,
         data: { teamId, name, data: value },
       });
@@ -153,7 +154,7 @@ async function openPeer(privateView = false) {
       peer.waitForResponse(
         (response) =>
           response.request().method() === "PUT" &&
-          response.url().endsWith("/api/views") &&
+          response.url().endsWith("/api/filters/current") &&
           response.ok(),
       ),
       peer
@@ -173,6 +174,7 @@ async function save(
   ).tasks;
   return post(p.request, "/cells/batch", {
     operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
     changes: changes.map(({ id, key = "title", value }) => ({
       taskId: id,
       key,
@@ -183,9 +185,9 @@ async function save(
   });
 }
 async function currentView(p: Page) {
-  return (
-    await (await p.request.get(`/api/views?teamId=${teamId}&year=2026`)).json()
-  ).views.find((v: any) => v.name === "__current")?.data;
+  return (await readPreferences(p, teamId)).views.find(
+    (v: any) => v.name === "__current",
+  )?.data;
 }
 
 test("SSE로 셀을 공유해도 다른 사용자의 숨김·필터·배치·스크롤을 유지한다", async ({

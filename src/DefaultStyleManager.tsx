@@ -11,6 +11,7 @@ import {
 } from "../shared/domain.js";
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
+import { appendHistory } from "./history";
 
 const INITIAL_STYLE: Style = {
   fontFamily: FONTS[0],
@@ -44,7 +45,7 @@ export default function DefaultStyleManager({
     [message, setMessage] = useState("");
   function change(part: Partial<Draft>) {
     setHistory((current) => ({
-      past: [...current.past, current.present].slice(-50),
+      past: appendHistory(current.past, current.present),
       present: { ...current.present, ...part },
       future: [],
     }));
@@ -141,7 +142,7 @@ export default function DefaultStyleManager({
           setHistory((current) =>
             current.future.length
               ? {
-                  past: [...current.past, current.present],
+                  past: appendHistory(current.past, current.present),
                   present: current.future[0],
                   future: current.future.slice(1),
                 }

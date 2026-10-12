@@ -147,7 +147,7 @@ test("업무 추가 저장 중에는 기준 연도와 달력 이동을 잠근다
     (r) => r.url().endsWith("/api/tasks") && r.request().method() === "POST",
   );
   const add = page
-    .locator(".heading-actions")
+    .locator('.format-toolbar[aria-label="셀 서식 도구"]')
     .getByRole("button", { name: "업무 추가", exact: true });
   let created: any;
   try {
@@ -270,7 +270,7 @@ test("달력은 12개월을 한 달씩 이동하고 두 해의 개인 보기를 
       response.request().method() === "POST",
   );
   await page
-    .locator(".heading-actions")
+    .locator('.format-toolbar[aria-label="셀 서식 도구"]')
     .getByRole("button", { name: "업무 추가", exact: true })
     .click();
   const added = await (await addedResponse).json();
@@ -341,6 +341,7 @@ test("연말·연초 드래그와 다음 해 업무의 실시간 셀 갱신을 �
   await page.route("**/api/tasks?*", (route) => route.abort());
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
     changes: [
       {
         taskId: tasks["내년 신규 업무"].id,

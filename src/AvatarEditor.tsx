@@ -124,13 +124,15 @@ export default function AvatarEditor({
                 value={user.avatarInitials || ""}
                 maxLength={3}
                 required
-                pattern="[a-zA-Z]{1,3}|[가-힣]{1,2}"
-                placeholder="예: HJK 또는 민수"
+                pattern="[a-zA-Z0-9]{1,3}|[가-힣]{1,2}"
+                placeholder="예: HJ1, 123 또는 민수"
                 onChange={(e) =>
                   onChange({ avatarInitials: e.target.value, avatarImage: "" })
                 }
               />
-              <small className="field-help">영문 1~3자 또는 한글 1~2자</small>
+              <small className="field-help">
+                영문·숫자 1~3자 또는 한글 1~2자
+              </small>
             </label>
           )}
           {mode === "image" && (

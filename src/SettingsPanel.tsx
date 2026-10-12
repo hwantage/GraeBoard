@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Plus, Users } from "lucide-react";
+import { Plus, Users, History, ScrollText } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
@@ -9,6 +9,8 @@ import DefaultStyleManager from "./DefaultStyleManager";
 import PropertiesManager from "./PropertiesManager";
 import { NewTeam, TeamGeneral, TeamMembers } from "./TeamSettings";
 import UserAccounts from "./UserAccounts";
+import HistoryCleanup from "./HistoryCleanup";
+import SystemAuditLog from "./SystemAuditLog";
 import { teamRoleNames } from "./roles";
 
 const teamTabs = [
@@ -21,6 +23,8 @@ type TeamTab = (typeof teamTabs)[number][0];
 type SettingsTarget =
   | { kind: "team"; id: string; tab: TeamTab }
   | { kind: "new-team" }
+  | { kind: "history-cleanup" }
+  | { kind: "audit" }
   | { kind: "users" };
 
 // 설정은 왼쪽에서 대상(팀·시스템)을 고르고 오른쪽에서 그 대상만 편집한다.
@@ -171,6 +175,30 @@ export default function SettingsPanel({
                     <span className="settings-nav-name">사용자 계정</span>
                   </button>
                 </li>
+                <li>
+                  <button
+                    type="button"
+                    aria-current={
+                      selection.kind === "audit" ? "page" : undefined
+                    }
+                    onClick={() => select({ kind: "audit" })}
+                  >
+                    <ScrollText size={15} aria-hidden="true" />
+                    <span className="settings-nav-name">감사 로그</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    aria-current={
+                      selection.kind === "history-cleanup" ? "page" : undefined
+                    }
+                    onClick={() => select({ kind: "history-cleanup" })}
+                  >
+                    <History size={15} aria-hidden="true" />
+                    <span className="settings-nav-name">변경 이력 정리</span>
+                  </button>
+                </li>
               </ul>
             </>
           )}
@@ -288,6 +316,12 @@ export default function SettingsPanel({
               onMessage={setMessage}
               onOpenTeam={(id) => select({ kind: "team", id, tab: "members" })}
             />
+          )}
+          {isAdmin && selection.kind === "history-cleanup" && (
+            <HistoryCleanup initialTeamId={team.id} />
+          )}
+          {isAdmin && selection.kind === "audit" && (
+            <SystemAuditLog users={users} teams={teams} />
           )}
         </section>
       </div>

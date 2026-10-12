@@ -118,6 +118,7 @@ test("행 위·아래 삽입은 위치를 저장하고 권한·팀·연도·기�
   assert.equal((await create("다른 팀", at(foreign, "before"))).status, 400);
   await request("/cells/batch", {
     operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
     changes: [
       {
         taskId: b.id,
@@ -160,6 +161,7 @@ test("팀원은 직접 삽입한 미지정 행을 편집하고 다른 사람의 
       "/cells/batch",
       {
         operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
         changes: [
           {
             taskId: task.id,
@@ -389,6 +391,105 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
   assert.equal(stale.data.task.cells.title.value, "복사 당시 작업");
   assert.equal(stale.data.task.cells.owner.value, adminId);
   assert.notEqual(stale.data.task.cells.status?.value, "보관된 상태");
+});
+
+test("현재 점선 서식의 행은 같은 행 아래에 그대로 붙여넣고 옛 서식은 거절한다", async () => {
+  const {
+    teamId,
+    tasks: [original],
+  } = await fixture();
+  const title = "디자인 시스템 컴포넌트 가이드 정리";
+  const week = "2026-11-02";
+  const updated = await request("/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: original.id,
+        key: "title",
+        expectedVersion: original.cells.title.version,
+        value: title,
+      },
+      {
+        taskId: original.id,
+        key: week,
+        expectedVersion: 0,
+        value: "컴포넌트 가이드 검토",
+      },
+    ],
+  });
+  assert.equal(updated.status, 200);
+  const savedStyle = {
+    borderTop: null,
+    borderRight: { style: "dashed", color: "#856060" },
+    borderBottom: null,
+    borderLeft: null,
+  };
+  const savedDefault = {
+    fontSize: 14,
+    borderBottom: { style: "dashed", color: "#335577" },
+  };
+  db.prepare("UPDATE cells SET style=? WHERE task_id=? AND key=?").run(
+    JSON.stringify(savedStyle),
+    original.id,
+    week,
+  );
+  db.prepare("UPDATE tasks SET default_style=? WHERE id=?").run(
+    JSON.stringify(savedDefault),
+    original.id,
+  );
+  const source = (await rows(teamId)).find((task) => task.id === original.id);
+  const copiedRow = {
+    defaultStyle: source.defaultStyle,
+    cells: Object.fromEntries(
+      Object.entries(source.cells).map(([key, c]) => [
+        key,
+        { value: c.value, style: c.style },
+      ]),
+    ),
+  };
+  const pasted = await request("/tasks", {
+    teamId,
+    year: 2026,
+    copiedRow,
+    insertAt: at(source, "after"),
+  });
+  assert.equal(pasted.status, 201, JSON.stringify(pasted.data));
+  const stored = await rows(teamId);
+  const copy = stored.find((task) => task.id === pasted.data.task.id);
+  assert.equal(
+    stored[stored.findIndex((task) => task.id === source.id) + 1].id,
+    copy.id,
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(copy.cells).map(([key, c]) => [key, c.value]),
+    ),
+    Object.fromEntries(
+      Object.entries(source.cells).map(([key, c]) => [key, c.value]),
+    ),
+  );
+  assert.deepEqual(copy.cells[week].style, savedStyle);
+  assert.deepEqual(copy.defaultStyle, savedDefault);
+  const untouched = stored.find((task) => task.id === original.id);
+  assert.deepEqual(untouched.cells[week].style, savedStyle);
+  assert.deepEqual(untouched.defaultStyle, savedDefault);
+  // 자동 변환 없이 현재 선 종류와 유효한 색상만 허용한다.
+  for (const border of [
+    { style: "dotted", color: "#856060" },
+    { style: "groove", color: "#856060" },
+    { style: "dashed", color: "invalid" },
+    { style: "dashed", color: "#856060", extra: true },
+  ]) {
+    const invalid = await request("/tasks", {
+      teamId,
+      year: 2026,
+      insertAt: at(source, "after"),
+      copiedRow: { ...copiedRow, defaultStyle: { borderRight: border } },
+    });
+    assert.equal(invalid.status, 400);
+  }
+  assert.equal((await rows(teamId)).length, stored.length);
 });
 
 test("삽입 간격 재배치는 생성과 함께 저장하고 생성 실패 시 모두 되돌린다", async () => {

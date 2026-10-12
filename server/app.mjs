@@ -1,3 +1,4 @@
+import { installFilterRoutes } from "./filters.mjs";
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
@@ -41,7 +42,6 @@ import {
   periodScopeSchema,
   dateSchema,
   viewSchema,
-  savedFilterSchema,
   validateCellValue,
   copiedRowSchema,
   validCellKey,
@@ -58,7 +58,7 @@ import {
   todayKey,
   sampleProperties,
   normalizeView,
-  savedFilter,
+  viewLayout,
   fieldsFor,
   propertiesFor,
   emptyPropertyValue,
@@ -68,10 +68,17 @@ import { installTransferRoutes } from "./transfer.mjs";
 import { saveSettings } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
 import { createCellEvents } from "./cell-events.mjs";
+import { storeCellOperation, replayCellOperation } from "./cell-operations.mjs";
+import {
+  installHistoryCleanupRoutes,
+  validateCellRequestTime,
+} from "./history-cleanup.mjs";
 import { installReorderRoute } from "./reorder.mjs";
+import { installSystemAuditRoutes } from "./system-audit.mjs";
 import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
-import { profileFields, profileSnapshot } from "./profiles.mjs";
+import { profileFields } from "./profiles.mjs";
+import { encodeReport, decodeReport } from "./reports.mjs";
 
 const string = (max = 100) => z.string().trim().min(1).max(max);
 // 아이디는 이메일 주소다. 대소문자를 구분하지 않으므로 소문자로 저장한다.
@@ -276,7 +283,13 @@ export function createApp({
       401,
       "아이디(이메일) 또는 비밀번호가 올바르지 않습니다.",
     );
-    issueSession(res, u.id);
+    transaction(db, () => {
+      audit(db, u.id, null, "login", u.id, undefined, {
+        name: u.name,
+        username: u.username,
+      });
+      issueSession(res, u.id);
+    });
     res.json({ user: userWithTeams(db, u) });
   });
   app.use("/api", (req, res, next) => {
@@ -311,6 +324,8 @@ export function createApp({
   function requireSystemAdmin(user) {
     requireThat(isSystemAdmin(user), 403, "시스템 관리자 권한이 필요합니다.");
   }
+  installHistoryCleanupRoutes(app, { db, requireSystemAdmin });
+  installSystemAuditRoutes(app, { db, requireSystemAdmin });
   function taskAccess(user, taskId, edit = false, includeDeleted = false) {
     const t = getTask(db, taskId);
     requireThat(
@@ -371,9 +386,15 @@ export function createApp({
   }
   installReorderRoute(app, { db, taskAccess, teamAccess });
   app.post("/api/auth/logout", (req, res) => {
-    db.prepare("DELETE FROM sessions WHERE token=?").run(
-      sessionHash(req.cookies.weekly_session),
-    );
+    transaction(db, () => {
+      db.prepare("DELETE FROM sessions WHERE token=?").run(
+        sessionHash(req.cookies.weekly_session),
+      );
+      audit(db, req.user.id, null, "logout", req.user.id, undefined, {
+        name: req.user.name,
+        username: req.user.username,
+      });
+    });
     res.clearCookie("weekly_session", { path: "/" });
     res.json({ ok: true });
   });
@@ -688,6 +709,7 @@ export function createApp({
   });
   app.post("/api/cells/batch", (req, res) => {
     const d = batchSchema.parse(req.body);
+    validateCellRequestTime(d.createdAt);
     const old = db
       .prepare("SELECT * FROM operations WHERE id=?")
       .get(d.operationId);
@@ -697,7 +719,7 @@ export function createApp({
         403,
         "다른 사용자의 작업입니다.",
       );
-      const replay = parse(old.response);
+      const replay = replayCellOperation(db, old);
       for (const taskId of new Set(replay.cells.map((c) => c.taskId)))
         taskAccess(req.user, taskId, false, true);
       return res.json(replay);
@@ -784,22 +806,6 @@ export function createApp({
       for (const c of after)
         put.run(c.taskId, c.key, json(c.value), json(c.style), c.version);
       const updatedAt = touchTasks(db, [...tasks.values()]);
-      for (const teamId of teams.keys()) {
-        const ids = new Set(
-          [...tasks.values()]
-            .filter((t) => t.teamId === teamId)
-            .map((t) => t.id),
-        );
-        audit(
-          db,
-          req.user.id,
-          teamId,
-          "cells",
-          d.operationId,
-          before.filter((c) => ids.has(c.taskId)),
-          after.filter((c) => ids.has(c.taskId)),
-        );
-      }
       const result = {
         cells: after,
         before,
@@ -807,12 +813,7 @@ export function createApp({
         savedAt: now(),
         updatedAt,
       };
-      db.prepare("INSERT INTO operations VALUES(?,?,?,?)").run(
-        d.operationId,
-        req.user.id,
-        json(result),
-        now(),
-      );
+      storeCellOperation(db, req.user.id, result, tasks);
       return result;
     });
     // Publish only after COMMIT. A replayed operation returns above and cannot
@@ -864,23 +865,32 @@ export function createApp({
       409,
       "업무가 변경되었습니다. 확인 후 다시 삭제하세요.",
     );
+    const updatedAt = nextTaskStamp(task.updatedAt);
     transaction(db, () => {
       db.prepare("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?").run(
         now(),
-        nextTaskStamp(task.updatedAt),
+        updatedAt,
         task.id,
       );
       audit(db, req.user.id, task.teamId, "delete", task.id, task, undefined);
     });
-    res.json({ ok: true });
+    res.json({ ok: true, updatedAt });
   });
   app.post("/api/tasks/:id/restore", (req, res) => {
+    const { updatedAt } = z
+      .object({ updatedAt: z.string().datetime().optional() })
+      .parse(req.body ?? {});
     const task = taskAccess(req.user, req.params.id, false, true);
     // 삭제할 수 있었던 사람은 바로 실행취소로 되살릴 수 있다.
     requireThat(
       canManageTeam(req.user, task.teamId) || canEdit(req.user, task),
       403,
       "팀장만 복구할 수 있습니다.",
+    );
+    requireThat(
+      updatedAt === undefined || updatedAt === task.updatedAt,
+      409,
+      "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
     );
     transaction(db, () => {
       db.prepare(
@@ -899,16 +909,13 @@ export function createApp({
     res.json({
       views: db
         .prepare(
-          "SELECT * FROM views WHERE user_id=? AND team_id=? AND year=? ORDER BY updated_at DESC",
+          "SELECT * FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
         )
         .all(req.user.id, teamId, year)
         .map((v) => ({
           id: v.id,
           name: v.name,
-          data: (v.name === "__current" ? normalizeView : savedFilter)(
-            parse(v.data),
-            team.settings,
-          ),
+          data: viewLayout(normalizeView(parse(v.data), team.settings)),
           updatedAt: v.updated_at,
         })),
     });
@@ -917,13 +924,10 @@ export function createApp({
     const d = z
       .object({
         teamId: z.string().uuid(),
-        name: string(60),
-        data: z.unknown(),
+        name: z.literal("__current"),
+        data: viewSchema,
       })
       .parse(req.body);
-    d.data = (d.name === "__current" ? viewSchema : savedFilterSchema).parse(
-      d.data,
-    );
     const team = teamAccess(req.user, d.teamId);
     const keys = fieldsFor(team.settings).map((f) => f.key);
     requireThat(
@@ -953,73 +957,12 @@ export function createApp({
       d.teamId,
       d.data.year,
       d.name,
-      json(
-        d.name === "__current" ? d.data : savedFilter(d.data, team.settings),
-      ),
+      json(viewLayout(d.data)),
       now(),
     );
     res.json({ ok: true });
   });
-  app.patch("/api/views/:id", (req, res) => {
-    const { name, data } = z
-      .object({
-        name: string(60).optional(),
-        data: savedFilterSchema.optional(),
-      })
-      .strict()
-      .refine((d) => d.name !== undefined || d.data !== undefined)
-      .parse(req.body);
-    const view = db
-      .prepare("SELECT * FROM views WHERE id=? AND user_id=?")
-      .get(req.params.id, req.user.id);
-    requireThat(view, 404, "저장된 필터를 찾을 수 없습니다.");
-    const team = teamAccess(req.user, view.team_id);
-    requireThat(
-      view.name !== "__current" && name !== "__current",
-      400,
-      "현재 보기에는 이 이름을 사용할 수 없습니다.",
-    );
-    if (name !== undefined)
-      requireThat(
-        !db
-          .prepare(
-            "SELECT id FROM views WHERE user_id=? AND team_id=? AND year=? AND name=? AND id<>?",
-          )
-          .get(req.user.id, view.team_id, view.year, name, view.id),
-        409,
-        "같은 이름의 필터가 이미 있습니다.",
-      );
-    if (data !== undefined) {
-      requireThat(
-        data.year === view.year,
-        400,
-        "필터의 연도는 변경할 수 없습니다.",
-      );
-      const properties = new Set(propertiesFor(team.settings).map((p) => p.id));
-      requireThat(
-        [
-          ...Object.keys(data.propertyFilters || {}),
-          ...Object.keys(data.propertyFilterModes || {}),
-        ].every((key) => properties.has(key)),
-        400,
-        "이 팀의 속성 필터를 선택하세요.",
-      );
-    }
-    db.prepare("UPDATE views SET name=?,data=?,updated_at=? WHERE id=?").run(
-      name ?? view.name,
-      data === undefined ? view.data : json(savedFilter(data, team.settings)),
-      now(),
-      view.id,
-    );
-    res.json({ ok: true });
-  });
-  app.delete("/api/views/:id", (req, res) => {
-    db.prepare("DELETE FROM views WHERE id=? AND user_id=?").run(
-      req.params.id,
-      req.user.id,
-    );
-    res.json({ ok: true });
-  });
+  installFilterRoutes(app, { db, teamAccess });
   app.get("/api/reports", (req, res) => {
     const teamId = String(req.query.teamId);
     teamAccess(req.user, teamId);
@@ -1045,7 +988,7 @@ export function createApp({
     const team = managedTeam(
       req.user,
       d.teamId,
-      "팀장만 보고본을 저장할 수 있습니다.",
+      "팀장만 스냅샷을 저장할 수 있습니다.",
     );
     requireThat(
       d.view.year === d.year,
@@ -1066,7 +1009,7 @@ export function createApp({
     const reportId = id();
     const data = {
       tasks,
-      users: referencedUsers(d.teamId).map(profileSnapshot),
+      users: referencedUsers(d.teamId),
       view: d.view,
       settings: team.settings,
     };
@@ -1079,7 +1022,7 @@ export function createApp({
         d.referenceDate,
         req.user.id,
         now(),
-        json(data),
+        encodeReport(data),
       );
       audit(db, req.user.id, d.teamId, "report", reportId, undefined, {
         name: d.name,
@@ -1090,7 +1033,7 @@ export function createApp({
   });
   app.get("/api/reports/:id", (req, res) => {
     const r = db.prepare("SELECT * FROM reports WHERE id=?").get(req.params.id);
-    requireThat(r, 404, "보고본을 찾을 수 없습니다.");
+    requireThat(r, 404, "스냅샷을 찾을 수 없습니다.");
     teamAccess(req.user, r.team_id);
     res.json({
       id: r.id,
@@ -1098,8 +1041,44 @@ export function createApp({
       year: r.year,
       referenceDate: r.reference_date,
       createdAt: r.created_at,
-      ...parse(r.data),
+      ...decodeReport(r.data),
     });
+  });
+  app.delete("/api/reports", (req, res) => {
+    const d = z
+      .object({
+        teamId: z.string().uuid(),
+        ids: z.array(z.string().uuid()).min(1).max(20000),
+      })
+      .strict()
+      .parse(req.body);
+    managedTeam(
+      req.user,
+      d.teamId,
+      "팀장만 보고서 스냅샷을 삭제할 수 있습니다.",
+    );
+    const ids = [...new Set(d.ids)];
+    transaction(db, () => {
+      const rows = db
+        .prepare(
+          `SELECT id,name,reference_date AS referenceDate FROM reports WHERE team_id=? AND id IN (${ids.map(() => "?").join(",")})`,
+        )
+        .all(d.teamId, ...ids);
+      requireThat(
+        rows.length === ids.length,
+        404,
+        "일부 스냅샷을 찾을 수 없습니다. 목록을 새로 열어 확인하세요.",
+      );
+      const remove = db.prepare("DELETE FROM reports WHERE id=? AND team_id=?");
+      for (const row of rows) {
+        remove.run(row.id, d.teamId);
+        audit(db, req.user.id, d.teamId, "report-delete", row.id, {
+          name: row.name,
+          referenceDate: row.referenceDate,
+        });
+      }
+    });
+    res.json({ ok: true });
   });
   app.get("/api/audit", (req, res) => {
     const teamId = String(req.query.teamId);

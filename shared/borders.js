@@ -4,7 +4,6 @@ export const BORDER_STYLES = [
   "medium",
   "thick",
   "dashed",
-  "dotted",
   "double",
 ];
 export const BORDER_OPTIONS = [
@@ -12,11 +11,78 @@ export const BORDER_OPTIONS = [
   { value: "solid", label: "실선" },
   { value: "medium", label: "중간 실선" },
   { value: "thick", label: "굵은 실선" },
-  { value: "dashed", label: "파선" },
-  { value: "dotted", label: "점선" },
+  { value: "dashed", label: "점선" },
   { value: "double", label: "이중선" },
 ];
 export const BORDER_SIDES = ["Top", "Right", "Bottom", "Left"];
+
+/**
+ * Date boundaries follow the displayed/exported columns, never a stored date.
+ * @param {string[]} keys
+ * @param {import("../src/types").Settings["weekBorders"]} borders
+ * @returns {Map<string, import("../src/types").Style>}
+ */
+export function weekBoundaryStyles(keys, borders = {}) {
+  const dates = keys.filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key));
+  const styles = new Map();
+  if (!dates.length) return styles;
+  for (const [side, key] of [
+    ["left", dates[0]],
+    ["right", dates.at(-1)],
+  ]) {
+    const border = borders[side];
+    if (border && border.style !== "none")
+      styles.set(key, {
+        ...styles.get(key),
+        [side === "left" ? "borderLeft" : "borderRight"]: border,
+      });
+  }
+  return styles;
+}
+
+/**
+ * Resolve both cells sharing each date boundary together. Only a visible border
+ * stored on a cell overrides the boundary; null/none and inherited task borders
+ * fall back to the boundary. Never persist these display styles.
+ * @param {string[]} keys
+ * @param {import("../src/types").Style[]} styles Effective styles, including task defaults.
+ * @param {Map<string, import("../src/types").Style>} boundaries
+ * @param {import("../src/types").Style[]} cellStyles Stored cell overrides only.
+ * @returns {import("../src/types").Style[]}
+ */
+export function withWeekBoundaries(keys, styles, boundaries, cellStyles) {
+  if (!boundaries.size) return styles;
+  const result = [...styles];
+  const visible = (border) => border && border.style !== "none";
+  const cleared = { style: "none", color: "#000000" };
+  for (const [index, key] of keys.entries()) {
+    const boundary = boundaries.get(key);
+    if (!boundary) continue;
+    for (const [side, offset, opposite] of [
+      ["borderLeft", -1, "borderRight"],
+      ["borderRight", 1, "borderLeft"],
+    ]) {
+      if (!boundary[side]) continue;
+      const neighborIndex = index + offset;
+      const own = cellStyles[index]?.[side];
+      const neighbor = cellStyles[neighborIndex]?.[opposite];
+      result[index] = {
+        ...result[index],
+        [side]: visible(own)
+          ? own
+          : visible(neighbor)
+            ? cleared
+            : boundary[side],
+      };
+      if (result[neighborIndex])
+        result[neighborIndex] = {
+          ...result[neighborIndex],
+          [opposite]: visible(neighbor) ? neighbor : cleared,
+        };
+    }
+  }
+  return result;
+}
 
 export function borderCSS(border) {
   if (!border) return undefined;
@@ -91,6 +157,7 @@ export const BORDER_PRESETS = [
  * 맡고, 아래·오른쪽 셀의 위·왼쪽 선은 지워 선이 두 겹으로 그려지지 않게 한다.
  * null은 업무 기본 서식의 선도 덮어쓰고 기본 격자선으로 되돌린다.
  * 키를 삭제하면 cell()이 업무 기본 서식의 선을 다시 상속하므로 남겨 둔다.
+ * border가 null이면 선택한 위치만, preset이 none이면 모든 방향을 되돌린다.
  */
 export function applyBorderPreset(style, preset, border, outer) {
   const next = { ...style };

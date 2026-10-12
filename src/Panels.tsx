@@ -1,12 +1,13 @@
 import Select from "./Select";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   Upload,
   Plus,
-  History,
+  ChevronRight,
   Trash2,
   LoaderCircle,
+  Check,
   FileSpreadsheet,
   Copy,
   EyeOff,
@@ -21,6 +22,7 @@ import { api, send, download } from "./api";
 import { Modal, Button, ErrorNote, Empty } from "./components";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
+import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import type { Task, User, View, Report, Point, Settings } from "./types";
 import {
   fieldsFor,
@@ -39,12 +41,14 @@ const AUDIT_LABELS: Record<string, string> = {
   reorder: "업무 순서 변경",
   "property-convert": "속성 종류 변경",
   "team-update": "팀 정보 변경",
+  "history-cleanup": "변경 이력 정리",
   "team-create": "팀 생성",
   "team-members": "구성원 변경",
   create: "업무 추가",
   delete: "업무 삭제",
   restore: "업무 복구",
-  report: "보고본 저장",
+  report: "보고서 스냅샷 저장",
+  "report-delete": "보고서 스냅샷 삭제",
   settings: "설정 변경",
   export: "내보내기",
   import: "자료 가져오기",
@@ -67,7 +71,7 @@ export function RowPanel({
   settings: Settings;
   user: User;
   users: User[];
-  // 보고본처럼 읽기 전용 화면에서는 권한과 무관하게 편집 동작을 숨긴다.
+  // 스냅샷처럼 읽기 전용 화면에서는 권한과 무관하게 편집 동작을 숨긴다.
   readOnly?: boolean;
   onClose: () => void;
   onEdit: (p: Point) => void;
@@ -197,8 +201,11 @@ export function ExportPanel({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   return (
-    <Modal title="업무 내보내기" onClose={onClose}>
-      <p>필요한 범위와 파일 형식을 선택하세요.</p>
+    <Modal
+      title="업무 내보내기"
+      help="필요한 범위와 파일 형식을 선택하세요."
+      onClose={onClose}
+    >
       <label>
         내보낼 범위
         <Select value={scope} onChange={(e) => setScope(e.target.value)}>
@@ -215,11 +222,11 @@ export function ExportPanel({
         <Select value={format} onChange={(e) => setFormat(e.target.value)}>
           <option value="xlsx">Excel (.xlsx) · 값과 기본 서식</option>
           <option value="csv">CSV (.csv) · 값만</option>
-          <option value="json">JSON (.json) · ID·서식·보고본 보관</option>
+          <option value="json">JSON (.json) · ID·서식·스냅샷 보관</option>
         </Select>
       </label>
       <p className="field-help">
-        JSON 전체 반출은 보고본(관리자), 본인의 보기 설정과 담당자 정보를
+        JSON 전체 반출은 스냅샷(관리자), 본인의 보기 설정과 담당자 정보를
         포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다.
       </p>
       <ErrorNote error={error} />
@@ -304,11 +311,12 @@ export function ImportPanel({
     }
   }
   return (
-    <Modal title="기존 업무 가져오기" wide onClose={onClose}>
-      <p>
-        Google Sheets에서 다운로드한 XLSX 파일을 선택하세요. 미리보기를 확인한
-        뒤 반영합니다.
-      </p>
+    <Modal
+      title="기존 업무 가져오기"
+      help="Google Sheets에서 다운로드한 XLSX 파일을 선택하세요. 미리보기를 확인한 뒤 반영합니다."
+      wide
+      onClose={onClose}
+    >
       <label className="upload-zone">
         <FileSpreadsheet size={30} />
         <strong>{busy ? "파일을 확인하고 있습니다" : "XLSX 파일 선택"}</strong>
@@ -344,7 +352,7 @@ export function ImportPanel({
               반영 방식
               <Select value={mode} onChange={(e) => setMode(e.target.value)}>
                 <option value="tasks">운영 업무로 추가</option>
-                <option value="report">과거 주간 보고본으로 보관</option>
+                <option value="report">과거 보고서 스냅샷으로 보관</option>
               </Select>
             </label>
             {mode === "report" && (
@@ -490,114 +498,289 @@ export function ReportsPanel({
   view,
   tasks,
   user,
+  canSave,
   onClose,
   onOpen,
+  onDelete,
 }: {
   teamId: string;
   year: number;
   view: View;
   tasks: Task[];
   user: User;
+  canSave: boolean;
   onClose: () => void;
   onOpen: (r: Report) => void;
+  onDelete: (ids: string[]) => Promise<void>;
 }) {
-  const [reports, setReports] = useState<any[]>([]),
-    [name, setName] = useState(`${todayKey()} 주간 보고`),
+  const [reports, setReports] = useState<
+      (Pick<Report, "id" | "name" | "year" | "referenceDate" | "createdAt"> & {
+        author: string;
+      })[]
+    >([]),
+    [name, setName] = useState(`${todayKey()} 보고서`),
     [date, setDate] = useState(todayKey()),
+    [selected, setSelected] = useState<string[]>([]),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const refresh = () =>
-    api(`/reports?teamId=${teamId}`)
-      .then((r) => setReports(r.reports))
-      .catch((e) => setError(e.message));
+    [busy, setBusy] = useState(false),
+    [savePhase, setSavePhase] = useState<"saving" | "saved" | null>(null),
+    [savedId, setSavedId] = useState<string | null>(null);
+  const canManage = canManageTeam(user, teamId);
+  const active = useRef(true);
+  const saving = useRef(false);
+  const listRequest = useRef(0);
+  function close() {
+    active.current = false;
+    onClose();
+  }
+  const refresh = async () => {
+    const request = ++listRequest.current;
+    try {
+      const result = await api(`/reports?teamId=${teamId}`);
+      if (!active.current || request !== listRequest.current) return;
+      setReports(result.reports);
+      setSelected((ids) =>
+        ids.filter((id) => result.reports.some((r: Report) => r.id === id)),
+      );
+    } catch (e) {
+      if (active.current && request === listRequest.current)
+        setError((e as Error).message);
+    }
+  };
   useEffect(() => {
-    refresh();
+    active.current = true;
+    void refresh();
+    return () => {
+      active.current = false;
+      listRequest.current++;
+    };
   }, [teamId]);
+  async function saveReport() {
+    if (busy || saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    setError("");
+    setSavedId(null);
+    setSavePhase("saving");
+    const started = performance.now();
+    try {
+      const saved = await send<{ id: string }>("/reports", {
+        teamId,
+        year,
+        name,
+        referenceDate: date,
+        view,
+        taskIds: tasks.map((t) => t.id),
+      });
+      if (!active.current) return;
+      // Hold the refreshed list until the feedback card finishes, and ignore
+      // an initial list request that might still be in flight.
+      listRequest.current++;
+      let nextReports: typeof reports | undefined;
+      let refreshError = "";
+      try {
+        const result = await api<{ reports: typeof reports }>(
+          `/reports?teamId=${teamId}`,
+        );
+        nextReports = result.reports;
+      } catch {
+        refreshError =
+          "스냅샷은 저장되었지만 목록을 불러오지 못했습니다. 목록을 다시 열어 확인해 주세요.";
+      }
+      // These waits only pace the feedback; the save request starts immediately.
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, 650 - (performance.now() - started))),
+      );
+      if (!active.current) return;
+      setSavePhase("saved");
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (!active.current) return;
+      if (nextReports) {
+        setReports(nextReports);
+        setSelected((ids) =>
+          ids.filter((id) => nextReports.some((r) => r.id === id)),
+        );
+        setSavedId(saved.id);
+      }
+      setError(refreshError);
+    } catch (e) {
+      if (active.current) setError((e as Error).message);
+    } finally {
+      saving.current = false;
+      if (active.current) {
+        setSavePhase(null);
+        setBusy(false);
+      }
+    }
+  }
+  async function removeSelected() {
+    if (!selected.length || busy) return;
+    if (
+      !confirm(
+        `선택한 스냅샷 ${selected.length}개를 삭제할까요? 원본 업무는 유지됩니다.`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      await onDelete(selected);
+      setReports((rows) => rows.filter((r) => !selected.includes(r.id)));
+      setSelected([]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <Modal title="주간 보고본" onClose={onClose}>
-      <p>
-        저장 시점의 업무 내용과 서식을 보존합니다. 이후 원본을 수정해도 보고본은
-        바뀌지 않습니다.
-      </p>
-      {canManageTeam(user, teamId) && (
+    <Modal
+      title="보고서 스냅샷"
+      help="저장 시점의 업무 내용과 서식을 보존합니다. 이후 원본을 수정해도 스냅샷은 바뀌지 않습니다."
+      onClose={close}
+    >
+      {canManage && canSave && (
         <form
-          onSubmit={async (e) => {
+          className="report-save-form"
+          onSubmit={(e) => {
             e.preventDefault();
-            setBusy(true);
-            setError("");
-            try {
-              await send("/reports", {
-                teamId,
-                year,
-                name,
-                referenceDate: date,
-                view,
-                taskIds: tasks.map((t) => t.id),
-              });
-              await refresh();
-            } catch (e) {
-              setError((e as Error).message);
-            } finally {
-              setBusy(false);
-            }
+            void saveReport();
           }}
         >
-          <label>
-            보고본 이름
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              maxLength={120}
-            />
-          </label>
-          <label>
-            보고 기준일
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              required
-            />
-          </label>
-          <Button className="primary" type="submit" disabled={busy}>
-            <Plus size={16} />
-            현재 보기 {tasks.length}개 업무 저장
-          </Button>
+          <div className="report-save-fields">
+            <label className="report-name-field">
+              보고서 이름
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                maxLength={120}
+                disabled={busy}
+              />
+            </label>
+            <label className="report-date-field">
+              보고 기준일
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+                disabled={busy}
+              />
+            </label>
+          </div>
+          <div className="report-save-actions">
+            <small>현재 보기의 업무 {tasks.length}개</small>
+            <Button className="primary" type="submit" disabled={busy}>
+              <Plus size={16} />
+              현재 보기 저장
+            </Button>
+          </div>
         </form>
       )}
       <ErrorNote error={error} />
-      <div className="report-list">
-        {reports.length ? (
-          reports.map((r) => (
-            <button
-              key={r.id}
-              onClick={async () => {
-                try {
-                  onOpen(await api(`/reports/${r.id}`));
-                  onClose();
-                } catch (e) {
-                  setError((e as Error).message);
-                }
+      {canManage && (reports.length > 0 || savePhase) && (
+        <div className="report-list-actions">
+          <label>
+            <input
+              type="checkbox"
+              checked={reports.length > 0 && selected.length === reports.length}
+              ref={(input) => {
+                if (input)
+                  input.indeterminate =
+                    selected.length > 0 && selected.length < reports.length;
               }}
-            >
-              <span>
-                <strong>{r.name}</strong>
-                <small>
-                  {r.referenceDate} · 버전 {r.id.slice(0, 8)} · {r.author} ·{" "}
-                  {formatDateTime(r.createdAt)}
-                </small>
-              </span>
-              <ExternalLink size={16} />
-            </button>
-          ))
-        ) : (
-          <Empty title="저장된 보고본이 없습니다" />
+              onChange={(e) =>
+                setSelected(e.target.checked ? reports.map((r) => r.id) : [])
+              }
+              disabled={busy}
+            />
+            전체 선택
+          </label>
+          <Button disabled={busy || !selected.length} onClick={removeSelected}>
+            <Trash2 size={14} />
+            선택 삭제{selected.length > 0 && ` (${selected.length})`}
+          </Button>
+        </div>
+      )}
+      <div className="report-list">
+        {savePhase && (
+          <div
+            className="report-item report-save-feedback"
+            data-state={savePhase}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <span className="report-save-status" key={savePhase}>
+              {savePhase === "saving" ? (
+                <LoaderCircle className="spin" size={22} aria-hidden="true" />
+              ) : (
+                <span className="report-save-check" aria-hidden="true">
+                  <Check size={21} />
+                </span>
+              )}
+              <strong>
+                {savePhase === "saving" ? "스냅샷 저장 중…" : "저장 완료"}
+              </strong>
+            </span>
+          </div>
         )}
+        {reports.length
+          ? reports.map((r) => (
+              <div
+                className={`report-item${r.id === savedId ? " report-item-saved" : ""}`}
+                key={r.id}
+              >
+                {canManage && (
+                  <input
+                    type="checkbox"
+                    aria-label={`${r.name} 선택`}
+                    checked={selected.includes(r.id)}
+                    onChange={(e) =>
+                      setSelected((ids) =>
+                        e.target.checked
+                          ? [...ids, r.id]
+                          : ids.filter((id) => id !== r.id),
+                      )
+                    }
+                    disabled={busy}
+                  />
+                )}
+                <button
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      const snapshot = await api(`/reports/${r.id}`);
+                      if (!active.current) return;
+                      onOpen(snapshot);
+                      close();
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <span>
+                    <strong>{r.name}</strong>
+                    <small>
+                      {r.referenceDate} · {r.author} ·{" "}
+                      {formatDateTime(r.createdAt)}
+                    </small>
+                  </span>
+                  <ExternalLink size={16} />
+                </button>
+              </div>
+            ))
+          : !savePhase && <Empty title="저장된 스냅샷이 없습니다" />}
       </div>
     </Modal>
   );
 }
+
 export function HistoryPanel({
   teamId,
   year,
@@ -637,12 +820,13 @@ export function HistoryPanel({
     refresh();
   }, [teamId, taskFilter]);
   return (
-    <Modal title="변경 이력" wide onClose={onClose}>
-      <p>
-        최근 100개의 기록입니다. 셀 수정 이력에서 변경 전 내용으로 복원할 수
-        있습니다.
-      </p>
-      <label>
+    <Modal
+      title="변경 이력"
+      help="팀 변경 이력을 최신순으로 최대 100개까지 표시합니다. 셀 수정 이력에서 변경 전 내용으로 복원할 수 있습니다."
+      className="history-modal"
+      onClose={onClose}
+    >
+      <label className="form-field">
         업무별 이력
         <Select
           aria-label="업무별 이력"
@@ -658,16 +842,16 @@ export function HistoryPanel({
         </Select>
       </label>
       <ErrorNote error={error} />
-      <div className="audit-list">
+      <HistoryTimeline>
         {entries.map((e) => (
           <details key={e.id}>
             <summary>
-              <span className="audit-icon">
-                <History size={15} />
+              <span className="audit-icon" aria-hidden="true">
+                <ChevronRight size={16} />
               </span>
               <strong>{AUDIT_LABELS[e.action] || e.action}</strong>
               <span>{e.actor}</span>
-              <time>{formatDateTime(e.createdAt)}</time>
+              <HistoryTime iso={e.createdAt} />
             </summary>
             {e.action === "cells" ? (
               <>
@@ -746,7 +930,7 @@ export function HistoryPanel({
             )}
           </details>
         ))}
-      </div>
+      </HistoryTimeline>
     </Modal>
   );
 }
@@ -816,12 +1000,15 @@ export function PasswordPanel({
   return (
     <Modal
       title="비밀번호 변경"
+      className="password-modal"
       onClose={() => {
         if (!saving) onClose();
       }}
     >
-      <p>
-        {user.name} · {user.username}
+      <p className="password-identity">
+        <strong>
+          {user.name} · {user.username}
+        </strong>
       </p>
       <form
         onSubmit={async (e) => {
@@ -830,10 +1017,20 @@ export function PasswordPanel({
           const form = e.currentTarget;
           setError("");
           setDone(false);
+          const f = new FormData(form);
+          if (f.get("password") !== f.get("confirmPassword")) {
+            setError("새 비밀번호와 비밀번호 확인이 일치하지 않습니다.");
+            form
+              .querySelector<HTMLInputElement>('[name="confirmPassword"]')
+              ?.focus();
+            return;
+          }
           setSaving(true);
-          const f = new FormData(e.currentTarget);
           try {
-            await send("/auth/password", Object.fromEntries(f));
+            await send("/auth/password", {
+              currentPassword: f.get("currentPassword"),
+              password: f.get("password"),
+            });
             form.reset();
             setDone(true);
           } catch (err) {
@@ -857,6 +1054,17 @@ export function PasswordPanel({
           <input
             type="password"
             name="password"
+            minLength={10}
+            maxLength={128}
+            required
+            autoComplete="new-password"
+          />
+        </label>
+        <label>
+          비밀번호 확인
+          <input
+            type="password"
+            name="confirmPassword"
             minLength={10}
             maxLength={128}
             required

@@ -276,6 +276,7 @@ for (const scenario of scenarios) {
             token,
             data: {
               operationId: id(),
+              createdAt: new Date().toISOString(),
               changes: [
                 {
                   taskId: taskIds[i],
@@ -315,7 +316,11 @@ for (const scenario of scenarios) {
       expectedVersion: 1,
       style: { fontSize: 6, backgroundColor: "#e7effb" },
     }));
-    const batch = { operationId: id(), changes };
+    const batch = {
+      operationId: id(),
+      createdAt: new Date().toISOString(),
+      changes,
+    };
     const batchResult = await request("/api/cells/batch", { data: batch });
     assert.equal(batchResult.response.status, 200);
     result.timings.batchCells = changes.length;
@@ -328,6 +333,7 @@ for (const scenario of scenarios) {
         request("/api/cells/batch", {
           data: {
             operationId: id(),
+            createdAt: new Date().toISOString(),
             changes: [
               {
                 taskId: taskIds.at(-1),

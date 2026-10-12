@@ -11,13 +11,13 @@ import {
   Eraser,
   MoveUpRight,
   Pencil,
-  RotateCcw,
   Square,
   Undo2,
   X,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
+
+import ZoomControls from "./ZoomControls";
+import { appendHistory } from "./history";
 
 type Tool = "cursor" | "pen" | "rectangle" | "ellipse" | "arrow" | "eraser";
 type Point = { x: number; y: number };
@@ -82,17 +82,18 @@ function nearSegment(p: Point, a: Point, b: Point, radius: number) {
 
 export default function PresentationTools({
   workspaceRef,
+  initialZoom,
   onClose,
 }: {
   workspaceRef: RefObject<HTMLDivElement | null>;
+  initialZoom: number;
   onClose: () => void;
 }) {
   const [tool, setTool] = useState<Tool>("cursor");
   const [laserOn, setLaserOn] = useState(true);
   const [color, setColor] = useState(COLORS[0].value);
   const [pointerSize, setPointerSize] = useState(14);
-  const [zoom, setZoom] = useState(100);
-  const [zoomText, setZoomText] = useState("100");
+  const [zoom, setZoom] = useState(initialZoom);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [draft, setDraft] = useState<Mark | null>(null);
   const [historySize, setHistorySize] = useState(0);
@@ -129,7 +130,7 @@ export default function PresentationTools({
     setMarks(next);
   }
   function remember(before: Mark[]) {
-    history.current = [...history.current.slice(-49), before];
+    history.current = appendHistory(history.current, before);
     setHistorySize(history.current.length);
   }
   function undo() {
@@ -149,12 +150,8 @@ export default function PresentationTools({
     setTool(next);
   }
   function changeZoom(value: number) {
-    const next = Number.isFinite(value)
-      ? Math.max(50, Math.min(200, Math.round(value)))
-      : zoom;
     finishRef.current?.();
-    setZoom(next);
-    setZoomText(String(next));
+    setZoom(value);
   }
 
   useLayoutEffect(() => {
@@ -609,72 +606,7 @@ export default function PresentationTools({
               <span>전체 지우기</span>
             </button>
           </div>
-          <div
-            className="presentation-tool-group presentation-zoom"
-            role="group"
-            aria-label="확대와 축소"
-          >
-            <button
-              type="button"
-              className="presentation-tool"
-              title="축소"
-              aria-label="축소"
-              disabled={zoom <= 50}
-              onClick={() => changeZoom(zoom - 25)}
-            >
-              <ZoomOut size={17} />
-            </button>
-            <label className="presentation-zoom-value">
-              <input
-                type="number"
-                aria-label="확대율"
-                title="확대율 (50~200%)"
-                min={50}
-                max={200}
-                step={1}
-                value={zoomText}
-                onFocus={(event) => event.target.select()}
-                onChange={(event) => setZoomText(event.target.value)}
-                onBlur={(event) =>
-                  changeZoom(
-                    event.target.value === ""
-                      ? zoom
-                      : Number(event.target.value),
-                  )
-                }
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== "Escape") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (event.key === "Escape")
-                    event.currentTarget.value = String(zoom);
-                  event.currentTarget.blur();
-                }}
-              />
-              <span aria-hidden="true">%</span>
-            </label>
-            <button
-              type="button"
-              className="presentation-tool"
-              title="확대"
-              aria-label="확대"
-              disabled={zoom >= 200}
-              onClick={() => changeZoom(zoom + 25)}
-            >
-              <ZoomIn size={17} />
-            </button>
-            <button
-              type="button"
-              className="presentation-tool"
-              title="원래대로 (100%)"
-              aria-label="원래대로"
-              disabled={zoom === 100}
-              onClick={() => changeZoom(100)}
-            >
-              <RotateCcw size={16} />
-              <span>원래대로</span>
-            </button>
-          </div>
+          <ZoomControls value={zoom} onChange={changeZoom} presentation />
         </div>
         <button
           type="button"

@@ -94,6 +94,7 @@ async function fixture(t, cellEventOptions = {}) {
       user,
       body: {
         operationId,
+        createdAt: new Date().toISOString(),
         changes: [
           {
             taskId: id,
@@ -254,6 +255,7 @@ test("충돌·롤백·중복 재시도와 개인 View·서식만 저장한 작�
     method: "POST",
     body: {
       operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
       changes: [
         {
           taskId: f.task.id,
@@ -276,6 +278,7 @@ test("충돌·롤백·중복 재시도와 개인 View·서식만 저장한 작�
     method: "POST",
     body: {
       operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
       changes: [
         {
           taskId: f.task.id,
@@ -433,6 +436,7 @@ test("두 해의 SSE는 공통 업무를 중복하지 않고 한 작업을 하�
     method: "POST",
     body: {
       operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
       changes: ids.map((taskId) => ({
         taskId,
         key: "title",

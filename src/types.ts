@@ -1,6 +1,6 @@
 export type ThemeId = import("../shared/themes.js").ThemeId;
 export type Border = {
-  style: "none" | "solid" | "medium" | "thick" | "dashed" | "dotted" | "double";
+  style: "none" | "solid" | "medium" | "thick" | "dashed" | "double";
   color: string;
 };
 export type BorderPreset =
@@ -85,6 +85,7 @@ export type Property = {
 export type Settings = {
   defaultDensity?: "comfortable" | "compact" | "dense";
   weekHeader?: { color?: string; backgroundColor?: string };
+  weekBorders?: { left?: Border; right?: Border };
   theme?: ThemeId;
   properties?: Property[];
   revision?: number;
@@ -140,13 +141,18 @@ export type BatchResult = {
   operationId: string;
   savedAt: string;
 };
-// 실행취소 기록. 셀 변경 묶음과 업무(행) 삭제를 함께 쌓는다.
+// 실행취소 기록. 셀 변경 묶음과 업무(행) 추가·삭제를 함께 쌓는다.
 export type TaskDeletion = {
   kind: "delete";
   ids: string[];
   title: string;
 };
-export type HistoryEntry = BatchResult | TaskDeletion;
+export type TaskCreation = Omit<TaskDeletion, "kind"> & {
+  kind: "create";
+  task: Task;
+  deletedVersion?: string;
+};
+export type HistoryEntry = BatchResult | TaskDeletion | TaskCreation;
 export type Report = {
   id: string;
   name: string;

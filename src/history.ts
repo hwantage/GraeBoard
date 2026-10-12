@@ -1,4 +1,10 @@
-import type { HistoryEntry, SavedCell, Style, Border } from "./types";
+import type { HistoryEntry, SavedCell, Style, Border, Task } from "./types";
+
+export const HISTORY_LIMIT = 50;
+
+export function appendHistory<T>(entries: T[], entry: T): T[] {
+  return [...entries.slice(-(HISTORY_LIMIT - 1)), entry];
+}
 
 // Only advance a prior operation when it touches the exact version we restored.
 // A version gap belongs to another operation and must keep blocking undo.
@@ -13,20 +19,50 @@ export function rebaseHistory(
   const latest = new Map(
     current.map((c) => [`${c.taskId}:${c.key}`, c.version]),
   );
-  return entries.map((entry) =>
-    "kind" in entry
-      ? entry
-      : {
-          ...entry,
-          cells: entry.cells.map((c) =>
-            versions.get(`${c.taskId}:${c.key}`) === c.version
-              ? {
-                  ...c,
-                  version: latest.get(`${c.taskId}:${c.key}`) ?? c.version,
-                }
-              : c,
-          ),
-        },
+  return entries.map((entry) => {
+    if ("kind" in entry) {
+      if (entry.kind === "delete") return entry;
+      const cells = { ...entry.task.cells };
+      // Undoing our own edits advances versions even when a formerly empty
+      // cell is restored. Keep creation undo tied to those exact versions.
+      for (const c of current) {
+        if (
+          c.taskId === entry.task.id &&
+          versions.get(`${c.taskId}:${c.key}`) === (cells[c.key]?.version ?? 0)
+        )
+          cells[c.key] = { value: c.value, style: c.style, version: c.version };
+      }
+      return { ...entry, task: { ...entry.task, cells } };
+    }
+    return {
+      ...entry,
+      cells: entry.cells.map((c) =>
+        versions.get(`${c.taskId}:${c.key}`) === c.version
+          ? {
+              ...c,
+              version: latest.get(`${c.taskId}:${c.key}`) ?? c.version,
+            }
+          : c,
+      ),
+    };
+  });
+}
+export function canUndoCreation(expected: Task, current: Task) {
+  return (
+    expected.position === current.position &&
+    JSON.stringify(expected.years) === JSON.stringify(current.years) &&
+    JSON.stringify(expected.defaultStyle) ===
+      JSON.stringify(current.defaultStyle) &&
+    [
+      ...new Set([
+        ...Object.keys(expected.cells),
+        ...Object.keys(current.cells),
+      ]),
+    ].every(
+      (key) =>
+        (expected.cells[key]?.version ?? 0) ===
+        (current.cells[key]?.version ?? 0),
+    )
   );
 }
 export function cellsBefore(entry?: HistoryEntry): SavedCell[] {

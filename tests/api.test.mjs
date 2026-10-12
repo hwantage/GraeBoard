@@ -54,7 +54,11 @@ async function request(
 const post = (path, body, cookie = admin) =>
   request(path, { method: "POST", body, cookie });
 const batch = (changes, cookie = admin, operationId = randomUUID()) =>
-  post("/cells/batch", { operationId, changes }, cookie);
+  post(
+    "/cells/batch",
+    { operationId, createdAt: new Date().toISOString(), changes },
+    cookie,
+  );
 const change = (key, value, version) => ({
   taskId: task.id,
   key,
@@ -144,6 +148,10 @@ test("테두리 프리셋은 선택 영역의 바깥·안쪽 경계를 구분하
   assert.deepEqual(apply("right", bottomRight), ["-", "solid", "-", "-"]);
   assert.deepEqual(apply("top", topLeft), ["solid", "-", "-", "-"]);
   assert.deepEqual(apply("bottom", bottomRight), ["-", "-", "solid", "-"]);
+  assert.deepEqual(applyBorderPreset(filled, "right", null, bottomRight), {
+    ...filled,
+    borderRight: null,
+  });
   const cleared = applyBorderPreset(filled, "none", line, topLeft);
   assert.deepEqual(cleared, {
     borderTop: null,
@@ -299,6 +307,184 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
   assert.deepEqual(clear.data.settings.weekHeader, {});
   const snapshot = (await request(`/reports/${report.data.id}`)).data;
   assert.deepEqual(snapshot.settings.weekHeader, weekHeader);
+});
+
+test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범위의 XLSX에 적용하고 셀 지정이 우선한다", async () => {
+  const tid = (await post("/admin/teams", { name: "주차 기본 경계선" })).data
+    .id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (t) => t.id === tid,
+  ).settings;
+  const created = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: { title: "움직이는 경계" },
+    })
+  ).data.task;
+  const weekBorders = {
+    left: { style: "double", color: "#2255aa" },
+    right: { style: "thick", color: "#bb3344" },
+  };
+  const save = (body) =>
+    request(`/teams/${tid}/settings`, { method: "PATCH", body });
+  const inheritedLine = { style: "thick", color: "#607984" };
+  const saved = await save({
+    ...settings,
+    weekBorders,
+    defaultStyle: {
+      ...settings.defaultStyle,
+      borderLeft: inheritedLine,
+      borderRight: inheritedLine,
+    },
+  });
+  assert.equal(saved.status, 200);
+  settings = saved.data.settings;
+  assert.deepEqual(settings.weekBorders, weekBorders);
+  assert.deepEqual(getTask(db, created.id).cells, created.cells);
+  const inherited = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: { title: "상속된 기본 테두리" },
+    })
+  ).data.task;
+  for (const invalid of [
+    { left: { style: "invalid", color: "#2255aa" } },
+    { right: { style: "solid", color: "red" } },
+    { top: weekBorders.left },
+  ])
+    assert.equal(
+      (await save({ ...settings, weekBorders: invalid })).status,
+      400,
+    );
+  const omitted = { ...settings };
+  delete omitted.weekBorders;
+  const partial = await save(omitted);
+  assert.equal(partial.status, 200);
+  settings = partial.data.settings;
+  assert.deepEqual(settings.weekBorders, weekBorders);
+  const copied = await post("/admin/teams", {
+    name: "주차 경계 양식",
+    templateTeamId: tid,
+  });
+  assert.deepEqual(
+    (await request("/admin/users")).data.teams.find(
+      (t) => t.id === copied.data.id,
+    ).settings.weekBorders,
+    weekBorders,
+  );
+  const report = await post("/reports", {
+    teamId: tid,
+    year: 2026,
+    name: "주차 경계 보고본",
+    referenceDate: "2026-03-06",
+    taskIds: [created.id],
+    view: defaultView(2026),
+  });
+  assert.equal(report.status, 201);
+  const exportSheet = async (keys, taskIds = [created.id]) => {
+    const response = await post("/export", {
+      teamId: tid,
+      year: 2026,
+      scope: "view",
+      taskIds,
+      keys,
+      format: "xlsx",
+    });
+    assert.equal(response.status, 200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(response.data);
+    return workbook.worksheets[0];
+  };
+  const keys = ["title", "2026-03-02", "2026-03-09", "2026-03-16", "status"];
+  let sheet = await exportSheet(keys);
+  for (const row of [1, 2]) {
+    assert.equal(sheet.getCell(`B${row}`).border.left.style, "double");
+    assert.equal(sheet.getCell(`D${row}`).border.right.style, "thick");
+    assert.equal(sheet.getCell(`C${row}`).border?.left, undefined);
+    assert.equal(sheet.getCell(`C${row}`).border?.right, undefined);
+  }
+  assert.deepEqual(getTask(db, created.id).cells, created.cells);
+  const changed = await batch([
+    {
+      taskId: created.id,
+      key: "2026-03-02",
+      expectedVersion: 0,
+      style: { borderLeft: { style: "solid", color: "#339966" } },
+    },
+    {
+      taskId: created.id,
+      key: "2026-03-16",
+      expectedVersion: 0,
+      style: { borderRight: null },
+    },
+    {
+      taskId: created.id,
+      key: "2026-03-09",
+      expectedVersion: 0,
+      style: {
+        borderLeft: { style: "none", color: "#607984" },
+        borderRight: { style: "none", color: "#607984" },
+      },
+    },
+    {
+      taskId: created.id,
+      key: "title",
+      expectedVersion: created.cells.title.version,
+      style: { borderRight: null },
+    },
+    {
+      taskId: created.id,
+      key: "status",
+      expectedVersion: created.cells.status?.version || 0,
+      style: { borderLeft: { style: "none", color: "#607984" } },
+    },
+  ]);
+  assert.equal(changed.status, 200);
+  sheet = await exportSheet(keys, [created.id, inherited.id]);
+  assert.equal(sheet.getCell("B2").border.left.style, "thin");
+  assert.equal(sheet.getCell("B2").border.left.color.argb, "FF339966");
+  assert.equal(sheet.getCell("D2").border.right.style, "thick");
+  assert.equal(sheet.getCell("B3").border.left.style, "double");
+  assert.equal(sheet.getCell("D3").border.right.color.argb, "FFBB3344");
+  assert.equal(sheet.getCell("A3").border.right, undefined);
+  assert.equal(sheet.getCell("E3").border.left, undefined);
+  assert.equal(sheet.getCell("C3").border.left.color.argb, "FF607984");
+  // One visible week owns both edges; hidden dates keep their own styles.
+  sheet = await exportSheet(["title", "2026-03-09", "status"]);
+  assert.equal(sheet.getCell("B2").border.left.style, "double");
+  assert.equal(sheet.getCell("B2").border.right.style, "thick");
+  const neighborLines = await batch(
+    [
+      ["title", "borderRight"],
+      ["status", "borderLeft"],
+    ].map(([key, side]) => ({
+      taskId: created.id,
+      key,
+      expectedVersion: getTask(db, created.id).cells[key].version,
+      style: { [side]: { style: "dashed", color: "#339966" } },
+    })),
+  );
+  assert.equal(neighborLines.status, 200);
+  sheet = await exportSheet(["title", "2026-03-09", "status"]);
+  assert.equal(sheet.getCell("A2").border.right.style, "dashed");
+  assert.equal(sheet.getCell("C2").border.left.style, "dashed");
+  assert.equal(sheet.getCell("B2").border?.left, undefined);
+  assert.equal(sheet.getCell("B2").border?.right, undefined);
+  sheet = await exportSheet(["title", "status"]);
+  assert.equal(sheet.getCell("A2").border?.left, undefined);
+  assert.equal(sheet.getCell("B2").border?.right, undefined);
+  const cleared = await save({ ...settings, weekBorders: {} });
+  assert.equal(cleared.status, 200);
+  assert.deepEqual(cleared.data.settings.weekBorders, {});
+  assert.deepEqual(
+    (await request(`/reports/${report.data.id}`)).data.settings.weekBorders,
+    weekBorders,
+  );
+  sheet = await exportSheet(["title", "2026-03-09", "status"]);
+  assert.equal(sheet.getCell("B2").border?.left, undefined);
+  assert.equal(sheet.getCell("B2").border?.right, undefined);
 });
 
 test("기본 테두리 해제는 저장·JSON·XLSX에서 상속된 선을 다시 적용하지 않는다", async () => {
@@ -482,7 +668,7 @@ test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된
   // Omitted optional fields preserve the profile for older account clients.
   assert.equal((await patch({ name: "새 이름" })).status, 200);
   assert.equal((await profile()).avatarInitials, "HK");
-  for (const initials of ["ABC", "김민"]) {
+  for (const initials of ["ABC", "A1", "a12", "0", "12", "123", "김민"]) {
     assert.equal((await patch({ avatarInitials: initials })).status, 200);
     assert.equal((await profile()).avatarInitials, initials);
   }
@@ -497,7 +683,9 @@ test("팀원 아바타의 글자·배경색·이미지를 저장하고 잘못된
     { avatarInitials: "ABCD" },
     { avatarInitials: "가나다" },
     { avatarInitials: "A김" },
-    { avatarInitials: "12" },
+    { avatarInitials: "1234" },
+    { avatarInitials: "A!" },
+    { avatarInitials: "김1" },
     { color: "red" },
     { avatarImage: "https://example.com/avatar.png" },
     { avatarImage: "data:image/svg+xml;base64,PHN2Zz4=" },
@@ -843,7 +1031,7 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
       (
         await request("/views", {
           method: "PUT",
-          body: { teamId: tid, name: "저장 보기", data: defaultView(year) },
+          body: { teamId: tid, name: "__current", data: defaultView(year) },
         })
       ).status,
       200,
@@ -920,6 +1108,8 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
   for (const table of [
     "tasks",
     "views",
+    "filter_states",
+    "saved_filters",
     "reports",
     "imports",
     "audit",
@@ -1558,7 +1748,7 @@ test("복제 업무는 새 ID, 요청한 제목, 원본 주차와 서식을 가�
   assert.equal(r.data.task.cells.title.value, "검증 업무 사본");
   assert.equal(r.data.task.cells["2026-10-05"].style.fontSize, 18);
 });
-test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 노출하지 않는다", async () => {
+test("개인 보기의 배치와 숨김을 저장하며 필터 조건을 섞거나 다른 사용자에게 노출하지 않는다", async () => {
   const view = {
     ...defaultView(2026),
     propertyFilters: { status: ["status-progress"] },
@@ -1595,9 +1785,7 @@ test("개인 보기의 필터와 숨김을 저장하며 다른 사용자에게 �
     });
   assert.equal(own.data.views.length, 1);
   assert.equal(own.data.views[0].data.widths.title, 460);
-  assert.deepEqual(own.data.views[0].data.propertyFilters.status, [
-    "status-progress",
-  ]);
+  assert.equal(own.data.views[0].data.propertyFilters, undefined);
   assert.deepEqual(own.data.views[0].data.hiddenRows, [task.id]);
   assert.equal(theirs.data.views.length, 0);
 });
@@ -1622,6 +1810,70 @@ test("주간 보고본은 원본 셀 수정 이후에도 고정된다", async ()
   assert.equal(
     (await request(`/reports/${report.data.id}`, { cookie: other })).status,
     403,
+  );
+});
+test("스냅샷 선택 삭제는 팀장 권한과 팀 범위를 검사하고 전체 선택을 원자적으로 삭제한다", async () => {
+  const tid = (
+    await post("/admin/teams", {
+      name: "스냅샷 삭제 검증",
+      members: [{ userId: memberId, role: "lead" }],
+    })
+  ).data.id;
+  const create = async (team, name, cookie = admin) => {
+    const result = await post(
+      "/reports",
+      {
+        teamId: team,
+        year: 2026,
+        name,
+        referenceDate: "2026-10-12",
+        taskIds: [],
+        view: defaultView(2026),
+      },
+      cookie,
+    );
+    assert.equal(result.status, 201);
+    return result.data.id;
+  };
+  const first = await create(tid, "삭제 하나", member);
+  const second = await create(tid, "삭제 둘", member);
+  const keep = await create(tid, "유지");
+  const foreign = await create(teamId, "다른 팀 스냅샷");
+  const remove = (team, ids, cookie = admin) =>
+    request("/reports", {
+      method: "DELETE",
+      body: { teamId: team, ids },
+      cookie,
+    });
+  for (const cookie of [member, viewer, other])
+    assert.equal((await remove(teamId, [foreign], cookie)).status, 403);
+  assert.equal((await remove(tid, [], member)).status, 400);
+  assert.equal((await remove(tid, [first, foreign], member)).status, 404);
+  assert.equal(
+    (await request(`/reports/${first}`, { cookie: member })).status,
+    200,
+  );
+  assert.equal((await remove(tid, [first, randomUUID()], member)).status, 404);
+  assert.equal(
+    (await request(`/reports/${first}`, { cookie: member })).status,
+    200,
+  );
+  assert.equal((await remove(tid, [first, second, first], member)).status, 200);
+  assert.equal((await request(`/reports/${first}`)).status, 404);
+  assert.equal((await request(`/reports/${second}`)).status, 404);
+  assert.equal((await request(`/reports/${keep}`)).status, 200);
+  assert.equal((await request(`/reports/${foreign}`)).status, 200);
+  assert.deepEqual(
+    (await request(`/reports?teamId=${tid}`)).data.reports.map((r) => r.id),
+    [keep],
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM audit WHERE team_id=? AND action='report-delete'",
+      )
+      .get(tid).n,
+    2,
   );
 });
 test("연도 이월은 같은 업무 ID를 유지하고 삭제·복구는 버전 충돌을 검사한다", async () => {
@@ -1686,6 +1938,60 @@ test("연도 이월은 같은 업무 ID를 유지하고 삭제·복구는 버전
   );
   assert.equal(getTask(db, own.id).deletedAt, null);
 });
+test("업무 추가 재실행은 삭제 당시 버전과 다르면 복구와 이력 기록 전에 거절한다", async () => {
+  const created = (
+    await post("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "재실행 충돌" },
+    })
+  ).data.task;
+  const remove = () =>
+    request(`/tasks/${created.id}`, {
+      method: "DELETE",
+      body: { updatedAt: getTask(db, created.id).updatedAt },
+    });
+  const first = await remove();
+  assert.equal(first.status, 200);
+  assert.equal(first.data.updatedAt, getTask(db, created.id).updatedAt);
+  assert.equal(
+    (
+      await post(`/tasks/${created.id}/restore`, {
+        updatedAt: first.data.updatedAt,
+      })
+    ).status,
+    200,
+  );
+  const second = await remove();
+  const before = getTask(db, created.id);
+  const auditCount = db
+    .prepare("SELECT count(*) AS n FROM audit WHERE target=?")
+    .get(created.id).n;
+  assert.equal(
+    (
+      await post(`/tasks/${created.id}/restore`, {
+        updatedAt: first.data.updatedAt,
+      })
+    ).status,
+    409,
+  );
+  assert.deepEqual(getTask(db, created.id), before);
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM audit WHERE target=?").get(created.id)
+      .n,
+    auditCount,
+  );
+  assert.equal(
+    (
+      await post(`/tasks/${created.id}/restore`, {
+        updatedAt: second.data.updatedAt,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(getTask(db, created.id).deletedAt, null);
+});
+
 test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 지킨다", async () => {
   const body = {
     teamId,
@@ -2886,13 +3192,13 @@ test("동적 속성 다중 필터는 값 사이 OR·속성 사이 AND이며 구 
     filteredTasks(rows, view, settings).map((t) => t.id),
     ["three"],
   );
-  const bad = await request("/views", {
+  const bad = await request("/filters", {
     method: "PUT",
     body: {
       teamId,
+      scope: "personal",
       name: "bad-property",
       data: {
-        ...defaultView(2026),
         propertyFilters: { prop_other_team: ["a"] },
       },
     },
@@ -2911,13 +3217,21 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
     propertyFilterModes: { status: "exclude" },
   };
   const save = (data, name = "제외 보기") =>
-    request("/views", {
+    request("/filters", {
       method: "PUT",
-      body: { teamId: tid, name, data },
+      body: {
+        teamId: tid,
+        scope: "personal",
+        name,
+        data: {
+          propertyFilters: data.propertyFilters,
+          propertyFilterModes: data.propertyFilterModes,
+        },
+      },
     });
   assert.equal((await save(view)).status, 200);
   const load = async (name = "제외 보기") =>
-    (await request(`/views?teamId=${tid}&year=2026`)).data.views.find(
+    (await request(`/filters?teamId=${tid}`)).data.filters.find(
       (v) => v.name === name,
     ).data;
   assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
@@ -3372,253 +3686,382 @@ test("팀 테마는 팀별로 저장하고 기존 설정 저장·권한·충돌 
   );
   assert.equal((await settingsFor(tid)).theme, "sand");
 });
+async function filterFixture() {
+  const tid = (await post("/admin/teams", { name: `필터 ${randomUUID()}` }))
+    .data.id;
+  const sessions = {};
+  const userIds = {};
+  for (const role of ["lead", "secondLead", "member", "viewer"]) {
+    const username = `${role}-${randomUUID()}@example.com`;
+    const password = "filter-role-test-password";
+    const created = await post("/admin/users", {
+      username,
+      password,
+      name: role,
+      memberships: [
+        { teamId: tid, role: role === "secondLead" ? "lead" : role },
+      ],
+    });
+    assert.equal(created.status, 201);
+    userIds[role] = created.data.user.id;
+    sessions[role] = (await post("/auth/login", { username, password })).cookie;
+  }
+  const list = (cookie = sessions.lead) =>
+    request(`/filters?teamId=${tid}`, { cookie });
+  const save = (scope, name, data = {}, cookie = sessions.lead) =>
+    request("/filters", {
+      method: "PUT",
+      cookie,
+      body: { teamId: tid, scope, name, data },
+    });
+  const patch = (id, body, cookie = sessions.lead) =>
+    request(`/filters/${id}`, { method: "PATCH", cookie, body });
+  const remove = (id, cookie = sessions.lead) =>
+    request(`/filters/${id}`, { method: "DELETE", cookie });
+  return { tid, sessions, userIds, list, save, patch, remove };
+}
 
-test("저장된 필터는 화면 상태를 제거하여 저장하고 속성 변경 뒤에도 필터 형식만 유지한다", async () => {
-  const tid = (await post("/admin/teams", { name: "필터만 저장" })).data.id;
-  const settings = (await request("/admin/users")).data.teams.find(
-    (t) => t.id === tid,
-  ).settings;
-  assert.equal(settings.defaultStyle.verticalAlign, "middle");
+test("필터 저장소·API·현재 선택에는 연도가 없고 개인 배치와 독립적으로 저장한다", async () => {
+  const f = await filterFixture();
   const data = {
-    ...normalizeView(defaultView(2026), settings),
     propertyFilters: { status: ["status-completed"] },
     propertyFilterModes: { status: "exclude" },
-    hiddenRows: [task.id],
-    visibleFields: ["title"],
-    widths: { title: 400 },
-    frozenColumns: 1,
-    sortKey: "title",
-    sortDirection: "desc",
-    groupBy: "status",
-    fromMonth: 4,
-    toMonth: 6,
   };
-  const expected = {
-    year: 2026,
-    propertyFilters: data.propertyFilters,
-    propertyFilterModes: data.propertyFilterModes,
-  };
+  assert.equal((await f.save("personal", "내 조건", data)).status, 200);
+  const filter = (await f.list()).data.filters[0];
+  assert.deepEqual(filter.data, data);
+  for (const table of ["saved_filters", "filter_states"])
+    assert.equal(
+      db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((column) => column.name === "year"),
+      false,
+    );
+  assert.equal(
+    (
+      await request(`/filters?teamId=${f.tid}&year=2026`, {
+        cookie: f.sessions.lead,
+      })
+    ).status,
+    400,
+  );
+  for (const extra of [
+    { year: 2026 },
+    { widths: { title: 300 } },
+    { groupBy: "status" },
+  ])
+    assert.equal(
+      (await f.save("personal", "잘못된 필터", { ...data, ...extra })).status,
+      400,
+    );
+  const saveCurrent = (body) =>
+    request("/filters/current", {
+      method: "PUT",
+      cookie: f.sessions.lead,
+      body: { teamId: f.tid, data, selectedId: filter.id, ...body },
+    });
+  assert.equal((await saveCurrent({})).status, 200);
+  assert.equal((await saveCurrent({ year: 2026 })).status, 400);
+  assert.equal((await saveCurrent({ selectedId: randomUUID() })).status, 404);
+  const state = { selectedId: filter.id, data };
+  for (const year of [2026, 2027]) {
+    const layout = {
+      ...defaultView(year),
+      widths: { title: year - 1700 },
+      ...data,
+    };
+    assert.equal(
+      (
+        await request("/views", {
+          method: "PUT",
+          cookie: f.sessions.lead,
+          body: { teamId: f.tid, name: "__current", data: layout },
+        })
+      ).status,
+      200,
+    );
+    assert.deepEqual((await f.list()).data.current, state);
+    const views = (
+      await request(`/views?teamId=${f.tid}&year=${year}`, {
+        cookie: f.sessions.lead,
+      })
+    ).data.views;
+    assert.equal(views.length, 1);
+    assert.equal(views[0].data.propertyFilters, undefined);
+    assert.equal(views[0].data.widths.title, year - 1700);
+    const exported = await post(
+      "/export",
+      { teamId: f.tid, year, format: "json", scope: "all" },
+      f.sessions.lead,
+    );
+    assert.equal(exported.status, 200);
+    assert.deepEqual(exported.data.filters, [filter]);
+    assert.deepEqual(exported.data.currentFilters, state);
+    assert.equal(exported.data.views[0].data.propertyFilters, undefined);
+  }
   assert.equal(
     (
       await request("/views", {
         method: "PUT",
-        body: { teamId: tid, name: "완료 제외", data },
+        cookie: f.sessions.lead,
+        body: {
+          teamId: f.tid,
+          name: "이름 있는 필터",
+          data: defaultView(2026),
+        },
       })
+    ).status,
+    400,
+  );
+  const updated = { ...data, propertyFilters: { status: ["status-progress"] } };
+  assert.equal((await f.patch(filter.id, { data: updated })).status, 200);
+  assert.deepEqual((await f.list()).data.current, {
+    selectedId: filter.id,
+    data: updated,
+  });
+  assert.equal((await f.remove(filter.id)).status, 200);
+  assert.deepEqual((await f.list()).data.filters, []);
+  assert.equal((await f.list()).data.current.selectedId, "");
+});
+
+test("팀 공용은 팀장만 저장·수정·삭제하고 개인용은 본인에게만 노출한다", async () => {
+  const f = await filterFixture();
+  const data = { propertyFilters: { status: ["status-completed"] } };
+  assert.equal((await f.save("team", "같은 이름", data)).status, 200);
+  const shared = (await f.list()).data.filters[0];
+  for (const [role, cookie] of Object.entries(f.sessions)) {
+    assert.equal(
+      (await f.save("personal", "같은 이름", {}, cookie)).status,
+      200,
+    );
+    const response = (await f.list(cookie)).data;
+    assert.equal(response.filters.length, 2);
+    assert.equal(
+      response.filters.find((v) => v.id === shared.id).canEdit,
+      role === "lead" || role === "secondLead",
+    );
+    assert.equal(
+      response.filters.filter((v) => v.scope === "personal").length,
+      1,
+    );
+  }
+  const personal = (await f.list()).data.filters.find(
+    (v) => v.scope === "personal",
+  );
+  for (const cookie of [f.sessions.member, f.sessions.viewer, admin]) {
+    assert.equal((await f.save("team", "같은 이름", {}, cookie)).status, 403);
+    assert.equal((await f.save("team", "새 공용", {}, cookie)).status, 403);
+    assert.equal(
+      (await f.patch(shared.id, { name: "탈취", data: {} }, cookie)).status,
+      403,
+    );
+    assert.equal((await f.remove(shared.id, cookie)).status, 403);
+  }
+  for (const cookie of [
+    f.sessions.secondLead,
+    f.sessions.member,
+    f.sessions.viewer,
+    admin,
+  ]) {
+    assert.equal(
+      (await f.patch(personal.id, { name: "타인의 개인용" }, cookie)).status,
+      404,
+    );
+    assert.equal((await f.remove(personal.id, cookie)).status, 404);
+    assert.equal(
+      (
+        await request("/filters/current", {
+          method: "PUT",
+          cookie,
+          body: { teamId: f.tid, selectedId: personal.id, data: {} },
+        })
+      ).status,
+      404,
+    );
+  }
+  assert.equal((await f.patch(personal.id, { scope: "team" })).status, 400);
+  assert.equal((await f.list(other)).status, 403);
+  assert.equal(
+    (await f.patch(shared.id, { name: "다른 팀" }, other)).status,
+    403,
+  );
+  assert.equal((await f.remove(shared.id, other)).status, 403);
+  const another = (await post("/admin/teams", { name: "다른 팀 필터" })).data
+    .id;
+  assert.deepEqual(
+    (await request(`/filters?teamId=${another}`)).data.filters,
+    [],
+  );
+  const exported = await post(
+    "/export",
+    { teamId: f.tid, year: 2026, scope: "all", format: "json" },
+    f.sessions.member,
+  );
+  assert.equal(exported.status, 200);
+  assert.equal(exported.data.filters.length, 2);
+  assert.equal(
+    exported.data.filters.some((v) => v.id === personal.id),
+    false,
+  );
+  assert.equal(
+    (
+      await f.patch(
+        shared.id,
+        { name: "팀장 수정", data: {} },
+        f.sessions.secondLead,
+      )
     ).status,
     200,
   );
-  const stored = () =>
-    JSON.parse(
-      db
-        .prepare("SELECT data FROM views WHERE team_id=? AND name=?")
-        .get(tid, "완료 제외").data,
-    );
-  assert.deepEqual(stored(), expected);
-  const get = async () =>
-    (await request(`/views?teamId=${tid}&year=2026`)).data.views.find(
-      (v) => v.name === "완료 제외",
-    ).data;
-  assert.deepEqual(await get(), expected);
-  settings.properties.find((p) => p.id === "status").values[0].label = "대기";
+  assert.equal(
+    (await f.list(f.sessions.viewer)).data.filters.find(
+      (v) => v.id === shared.id,
+    ).name,
+    "팀장 수정",
+  );
+  db.prepare(
+    "UPDATE memberships SET role='member' WHERE user_id=? AND team_id=?",
+  ).run(f.userIds.secondLead, f.tid);
+  assert.equal(
+    (await f.patch(shared.id, { name: "권한 회수 후" }, f.sessions.secondLead))
+      .status,
+    403,
+  );
+  assert.equal((await f.remove(shared.id, f.sessions.secondLead)).status, 403);
+  assert.equal((await f.remove(shared.id)).status, 200);
+  assert.equal((await f.list(f.sessions.member)).data.filters.length, 1);
+});
+
+test("필터 이름·조건 수정은 같은 구분의 중복과 잘못된 속성을 거절하고 다른 항목을 보존한다", async () => {
+  const f = await filterFixture();
+  const data = {
+    propertyFilters: { status: ["status-completed"] },
+    propertyFilterModes: { status: "exclude" },
+  };
+  for (const name of ["첫 필터", "다른 필터"])
+    assert.equal((await f.save("personal", name, data)).status, 200);
+  assert.equal((await f.save("team", "팀 이름", data)).status, 200);
+  const original = (await f.list()).data.filters.find(
+    (v) => v.name === "첫 필터",
+  );
+  const otherFilter = (await f.list()).data.filters.find(
+    (v) => v.name === "다른 필터",
+  );
+  assert.equal((await f.patch(original.id, { name: "다른 필터" })).status, 409);
+  for (const body of [
+    {},
+    { name: " " },
+    { name: "a".repeat(61) },
+    { data: { year: 2027 } },
+    { data: { propertyFilters: { missing: ["x"] } } },
+    {
+      name: "실패해야 하는 이름",
+      data: { propertyFilterModes: { status: "invalid" } },
+    },
+  ])
+    assert.equal((await f.patch(original.id, body)).status, 400);
+  assert.deepEqual(
+    (await f.list()).data.filters.find((v) => v.id === original.id),
+    original,
+  );
+  assert.equal(
+    (await f.patch(original.id, { name: "  팀 이름  " })).status,
+    200,
+  );
+  let changed = (await f.list()).data.filters.find((v) => v.id === original.id);
+  assert.equal(changed.name, "팀 이름");
+  assert.deepEqual(changed.data, data);
+  assert.equal((await f.patch(original.id, { data: {} })).status, 200);
+  changed = (await f.list()).data.filters.find((v) => v.id === original.id);
+  assert.deepEqual(changed.data, {
+    propertyFilters: {},
+    propertyFilterModes: {},
+  });
+  assert.deepEqual(
+    (await f.list()).data.filters.find((v) => v.id === otherFilter.id),
+    otherFilter,
+  );
+  assert.equal(
+    (await f.patch(randomUUID(), { name: "없는 필터" })).status,
+    404,
+  );
+});
+
+test("속성 보관 시 팀·개인 저장 필터와 현재 필터에서 해당 조건을 제거한다", async () => {
+  const f = await filterFixture();
+  const settings = (
+    await request("/bootstrap", { cookie: f.sessions.lead })
+  ).data.teams.find((t) => t.id === f.tid).settings;
+  const property = { ...sampleProperties().find((p) => p.id === "category") };
+  settings.properties.push(property);
   assert.equal(
     (
-      await request(`/teams/${tid}/settings`, {
+      await request(`/teams/${f.tid}/settings`, {
         method: "PATCH",
+        cookie: f.sessions.lead,
         body: settings,
       })
     ).status,
     200,
   );
-  assert.deepEqual(stored(), expected);
-  assert.deepEqual(await get(), expected);
-  assert.equal(
-    (
-      await request("/views", {
-        method: "PUT",
-        body: { teamId: tid, name: "빈 필터", data: { year: 2026 } },
-      })
-    ).status,
-    200,
-  );
-  assert.equal(
-    (
-      await request("/views", {
-        method: "PUT",
-        body: { teamId: tid, name: "__current", data: expected },
-      })
-    ).status,
-    400,
-  );
-});
-
-test("저장된 필터 조건 수정은 ID·이름을 유지하고 다른 필터와 현재 보기를 보존한다", async () => {
-  const tid = (await post("/admin/teams", { name: "필터 조건 수정" })).data.id;
-  const originalData = {
-    year: 2026,
-    propertyFilters: { status: ["status-completed"] },
-    propertyFilterModes: { status: "include" },
-  };
-  for (const name of ["선택한 필터", "다른 필터"])
-    assert.equal(
-      (
-        await request("/views", {
-          method: "PUT",
-          body: { teamId: tid, name, data: originalData },
-        })
-      ).status,
-      200,
-    );
-  const views = async () =>
-    (await request(`/views?teamId=${tid}&year=2026`)).data.views;
-  const original = (await views()).find((v) => v.name === "선택한 필터");
-  const otherFilter = (await views()).find((v) => v.name === "다른 필터");
-  const patch = (body) =>
-    request(`/views/${original.id}`, { method: "PATCH", body });
   const data = {
-    year: 2026,
-    propertyFilters: { status: ["status-progress"] },
-    propertyFilterModes: { status: "exclude" },
+    propertyFilters: {
+      category: ["category-ux"],
+      status: ["status-completed"],
+    },
+    propertyFilterModes: { category: "exclude" },
   };
+  for (const scope of ["team", "personal"])
+    assert.equal((await f.save(scope, "보관 검사", data)).status, 200);
   assert.equal(
     (
-      await patch({
-        data: { ...data, widths: { title: 450 }, groupBy: "status" },
+      await request("/filters/current", {
+        method: "PUT",
+        cookie: f.sessions.member,
+        body: { teamId: f.tid, selectedId: "", data },
       })
     ).status,
     200,
   );
-  let updated = (await views()).find((v) => v.id === original.id);
-  assert.equal(updated.name, original.name);
-  assert.deepEqual(updated.data, data);
-  assert.deepEqual(
-    (await views()).find((v) => v.id === otherFilter.id),
-    otherFilter,
-  );
-  for (const body of [
-    {},
-    { data: { ...data, year: 2027 } },
-    { data: { ...data, propertyFilters: { missing: ["x"] } } },
-    { data: { ...data, propertyFilterModes: { missing: "exclude" } } },
-    { data: { ...data, propertyFilterModes: { status: "invalid" } } },
-  ])
-    assert.equal((await patch(body)).status, 400);
-  assert.deepEqual(
-    (await views()).find((v) => v.id === original.id),
-    updated,
-  );
+  const latest = (
+    await request("/bootstrap", { cookie: f.sessions.lead })
+  ).data.teams.find((t) => t.id === f.tid).settings;
+  latest.properties.find((p) => p.id === "category").archived = true;
   assert.equal(
-    (await patch({ name: "이름도 변경", data: { year: 2026 } })).status,
+    (
+      await request(`/teams/${f.tid}/settings`, {
+        method: "PATCH",
+        cookie: f.sessions.lead,
+        body: latest,
+      })
+    ).status,
     200,
   );
-  updated = (await views()).find((v) => v.id === original.id);
-  assert.equal(updated.name, "이름도 변경");
-  assert.deepEqual(updated.data, {
-    year: 2026,
-    propertyFilters: {},
+  const expected = {
+    propertyFilters: { status: ["status-completed"] },
     propertyFilterModes: {},
-  });
-  assert.equal((await views()).length, 2);
-});
-
-test("필터 이름 변경은 ID·조건을 보존하고 중복 이름·예약 이름·다른 사용자 변경을 막는다", async () => {
-  const tid = (await post("/admin/teams", { name: "필터 이름 변경" })).data.id;
-  const settings = (await request("/admin/users")).data.teams.find(
-    (t) => t.id === tid,
-  ).settings;
-  const data = {
-    year: 2026,
-    propertyFilters: { status: ["status-completed"] },
-    propertyFilterModes: { status: "exclude" },
   };
-  for (const name of ["완료 제외", "이미 있는 이름", "__current"]) {
+  for (const filter of (await f.list()).data.filters)
+    assert.deepEqual(filter.data, expected);
+  assert.deepEqual(
+    (await f.list(f.sessions.member)).data.current.data,
+    expected,
+  );
+  assert.equal(
+    (
+      await request(`/admin/teams/${f.tid}`, {
+        method: "DELETE",
+        body: { confirmed: true },
+      })
+    ).status,
+    200,
+  );
+  for (const table of ["saved_filters", "filter_states"])
     assert.equal(
-      (
-        await request("/views", {
-          method: "PUT",
-          body: {
-            teamId: tid,
-            name,
-            data:
-              name === "__current"
-                ? normalizeView(defaultView(2026), settings)
-                : data,
-          },
-        })
-      ).status,
-      200,
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE team_id=?`)
+        .get(f.tid).n,
+      0,
     );
-  }
-  const views = async () =>
-    (await request(`/views?teamId=${tid}&year=2026`)).data.views;
-  const original = (await views()).find((v) => v.name === "완료 제외");
-  const rename = (name, cookie = admin, filterId = original.id) =>
-    request(`/views/${filterId}`, {
-      method: "PATCH",
-      cookie,
-      body: { name },
-    });
-  const username = `filter-rename-${randomUUID()}@example.com`;
-  const password = "filter-rename-test-password";
-  assert.equal(
-    (
-      await post("/admin/users", {
-        username,
-        password,
-        name: "다른 필터 사용자",
-        memberships: [{ teamId: tid, role: "member" }],
-      })
-    ).status,
-    201,
-  );
-  const otherSession = await post("/auth/login", { username, password });
-  assert.equal(otherSession.status, 200);
-  assert.equal((await rename("진행 업무", otherSession.cookie)).status, 404);
-  assert.equal(
-    (
-      await request(`/views/${original.id}`, {
-        method: "PATCH",
-        cookie: otherSession.cookie,
-        body: { data },
-      })
-    ).status,
-    404,
-  );
-  assert.equal((await rename("이미 있는 이름")).status, 409);
-  for (const name of ["__current", "  ", "a".repeat(61)])
-    assert.equal((await rename(name)).status, 400);
-  const current = (await views()).find((v) => v.name === "__current");
-  assert.equal((await rename("화면 상태", admin, current.id)).status, 400);
-  assert.equal(
-    (
-      await request(`/views/${current.id}`, {
-        method: "PATCH",
-        body: { data },
-      })
-    ).status,
-    400,
-  );
-  assert.equal((await rename("없는 필터", admin, randomUUID())).status, 404);
-  assert.deepEqual(
-    (await views()).find((v) => v.id === original.id),
-    original,
-  );
-  assert.equal((await rename("  진행 업무  ")).status, 200);
-  const renamed = (await views()).find((v) => v.id === original.id);
-  assert.equal(renamed.name, "진행 업무");
-  assert.deepEqual(renamed.data, original.data);
-  assert.equal((await views()).length, 3);
-  assert.deepEqual(
-    (await views()).find((v) => v.name === "__current"),
-    current,
-  );
-  assert.equal((await rename("진행 업무")).status, 200);
-  assert.equal(
-    (
-      await request(`/views/${original.id}`, {
-        method: "PATCH",
-        body: { name: "조건 변경 시도", data: { year: 2027 } },
-      })
-    ).status,
-    400,
-  );
 });

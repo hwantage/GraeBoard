@@ -59,10 +59,10 @@ export default function BorderMenu({
 }: {
   disabled: boolean;
   single?: boolean;
-  onApply: (preset: BorderPreset, border: Border) => void;
+  onApply: (preset: BorderPreset, border: Border | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [border, setBorder] = useState<Border>({
+  const [border, setBorder] = useState<Border | null>({
     style: "solid",
     color: "#607984",
   });
@@ -141,7 +141,10 @@ export default function BorderMenu({
           >
             <BorderControls
               label="테두리 선"
-              value={border}
+              value={border || undefined}
+              allowNone
+              defaultSelected={border === null}
+              onDefault={() => setBorder(null)}
               onChange={setBorder}
             />
             <div

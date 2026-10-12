@@ -17,6 +17,7 @@ export default function GridHeaderMenu({
   children,
   onClose,
   scrollContainer,
+  anchor,
 }: {
   x: number;
   y: number;
@@ -25,6 +26,7 @@ export default function GridHeaderMenu({
   children?: ReactNode;
   onClose: (restoreFocus?: boolean) => void;
   scrollContainer?: HTMLElement | null;
+  anchor?: HTMLElement | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
@@ -42,13 +44,29 @@ export default function GridHeaderMenu({
     const resize = new ResizeObserver(positionMenu);
     resize.observe(root.current!);
     root.current
-      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.querySelector<HTMLElement>(
+        actions.length
+          ? "button:not(:disabled)"
+          : "input:not(:disabled), button:not(:disabled)",
+      )
       ?.focus({ preventScroll: true });
     const outside = (event: Event) => {
-      if (event.target instanceof Node && !root.current?.contains(event.target))
+      if (
+        event.target instanceof Node &&
+        !root.current?.contains(event.target) &&
+        !anchor?.contains(event.target)
+      )
         close.current();
     };
     const dismiss = () => close.current();
+    // Pointer interaction can leave focus on the body, especially when a
+    // clicked control becomes disabled. Escape must still dismiss the popover.
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close.current(true);
+    };
     // Ignore a scroll event queued before opening; only a new movement closes it.
     const scrollPositions = new Map<EventTarget, [number, number]>([
       [document, [window.scrollX, window.scrollY]],
@@ -74,16 +92,18 @@ export default function GridHeaderMenu({
     };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", outside);
+    document.addEventListener("keydown", keydown, true);
     window.addEventListener("resize", dismiss);
     window.addEventListener("scroll", scroll, true);
     return () => {
       resize.disconnect();
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("focusin", outside);
+      document.removeEventListener("keydown", keydown, true);
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("scroll", scroll, true);
     };
-  }, [x, y, scrollContainer]);
+  }, [x, y, scrollContainer, anchor]);
   return createPortal(
     <div
       ref={root}
@@ -98,7 +118,7 @@ export default function GridHeaderMenu({
       }}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === "Escape" || (e.key === "Tab" && !children)) {
+        if (e.key === "Tab" && !children) {
           e.preventDefault();
           onClose(true);
         }
@@ -128,24 +148,30 @@ export default function GridHeaderMenu({
       }}
     >
       <div className="grid-header-menu-title">{title}</div>
-      <div role="menu" aria-label={title} className="grid-header-menu-actions">
-        {actions.map((action) => (
-          <button
-            key={action.label}
-            type="button"
-            role="menuitem"
-            className={action.danger ? "menu-danger" : undefined}
-            disabled={action.disabled}
-            onClick={() => {
-              action.run();
-              onClose(true);
-            }}
-          >
-            {action.icon}
-            <span>{action.label}</span>
-          </button>
-        ))}
-      </div>
+      {!!actions.length && (
+        <div
+          role="menu"
+          aria-label={title}
+          className="grid-header-menu-actions"
+        >
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              role="menuitem"
+              className={action.danger ? "menu-danger" : undefined}
+              disabled={action.disabled}
+              onClick={() => {
+                action.run();
+                onClose(true);
+              }}
+            >
+              {action.icon}
+              <span>{action.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {children}
     </div>,
     document.body,
