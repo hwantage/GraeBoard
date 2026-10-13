@@ -183,7 +183,7 @@ export default function Grid({
   editor,
   onCommit,
   onCancelEdit,
-  onSelect,
+  onSelect: onSelectionChange,
   onEdit,
   onPaste,
   onClear,
@@ -218,7 +218,7 @@ export default function Grid({
   onCommit: (point: Point, value: Cell["value"]) => boolean;
   onCancelEdit: () => void;
   onSelect: (s: Selection | null) => void;
-  onEdit: (p: Point, initial?: string) => void;
+  onEdit: (p: Point, initial?: string) => boolean;
   onPaste: (rows: ClipboardMatrix) => void;
   onClear: () => void;
   onRowMenu: (task: Task) => void;
@@ -243,6 +243,14 @@ export default function Grid({
   } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const focusTarget = useRef(selection?.focus);
+  focusTarget.current = selection?.focus;
+  function onSelect(next: Selection | null) {
+    // 포커스 이벤트는 선택 변경의 렌더보다 먼저 발생할 수 있다.
+    // 곧 제거될 이전 셀의 입력창으로 포커스가 돌아가지 않게 한다.
+    focusTarget.current = next?.focus;
+    onSelectionChange(next);
+  }
   const appliedJump = useRef<number | null>(null);
   // 크기 조절 드래그 중에는 표만 미리 바꾸고, 놓을 때 한 번 보기 설정에 저장한다.
   const [columnResize, setColumnResize] = useState<{
@@ -662,18 +670,17 @@ export default function Grid({
     () => new Map(tasks.map((task, index) => [task.id, index])),
     [tasks],
   );
-  const editingIndex = useMemo(
-    () => (editor ? tasks.findIndex((t) => t.id === editor.point.taskId) : -1),
-    [tasks, editor?.point.taskId],
-  );
+  const inputTaskId = editor?.point.taskId || selection?.focus.taskId;
+  const inputIndex = inputTaskId ? (taskIndexes.get(inputTaskId) ?? -1) : -1;
   const rangeExtractor = useCallback(
     (range: Parameters<typeof defaultRangeExtractor>[0]) => {
       const indices = defaultRangeExtractor(range);
-      return editingIndex >= 0
-        ? [...new Set([...indices, editingIndex])].sort((a, b) => a - b)
+      // 화면 밖에서도 선택한 셀의 IME 입력창과 편집 중인 입력창을 유지한다.
+      return inputIndex >= 0
+        ? [...new Set([...indices, inputIndex])].sort((a, b) => a - b)
         : indices;
     },
-    [editingIndex],
+    [inputIndex],
   );
   const virtual = useVirtualizer({
     count: tasks.length,
@@ -1121,19 +1128,28 @@ export default function Grid({
     // grid after that commit, unless a new editor has already taken focus.
     requestAnimationFrame(() => {
       if (!ref.current?.querySelector(".inline-editor"))
-        ref.current?.focus({ preventScroll: true });
+        (
+          ref.current?.querySelector<HTMLTextAreaElement>(
+            ".cell-input-ready textarea",
+          ) || ref.current
+        )?.focus({ preventScroll: true });
     });
   }
   function keyboard(e: KeyboardEvent) {
+    const prepared =
+      e.target instanceof Element && !!e.target.closest(".cell-input-ready");
     if (
       (e.target instanceof Element &&
-        e.target.closest("input,textarea,select,button,a")) ||
+        e.target.closest("input,textarea,select,button,a") &&
+        !prepared) ||
       editor ||
-      e.nativeEvent.isComposing
+      e.nativeEvent.isComposing ||
+      e.nativeEvent.keyCode === 229
     )
       return;
     if (e.key === "Escape") {
       onSelect(null);
+      ref.current?.focus({ preventScroll: true });
       return;
     }
     if (!selection || !tasks.length) return;
@@ -1197,6 +1213,8 @@ export default function Grid({
       e.preventDefault();
       onClear();
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // 준비된 textarea가 첫 글자와 IME 조합을 직접 받는다.
+      if (prepared) return;
       e.preventDefault();
       onEdit(selection.focus, e.key);
     }
@@ -1305,7 +1323,7 @@ export default function Grid({
         return;
       onSelect({ ...selection, focus: point });
     },
-    edit: (point) => onEdit(point),
+    edit: (point, initial) => onEdit(point, initial),
     rowMenu: (task) => onRowMenu(task),
     finish,
     cancelEdit() {
@@ -1356,6 +1374,19 @@ export default function Grid({
         aria-readonly={readOnly}
         className="sheet-scroll"
         data-density={density}
+        onFocus={(e) => {
+          if (e.target !== e.currentTarget || editor) return;
+          const input = e.currentTarget.querySelector<HTMLTextAreaElement>(
+            ".cell-input-ready textarea",
+          );
+          const point = focusTarget.current;
+          if (
+            point &&
+            input?.closest<HTMLElement>("[data-cell]")?.dataset.cell ===
+              `${point.taskId}:${point.key}`
+          )
+            input.focus({ preventScroll: true });
+        }}
         onKeyDown={keyboard}
         onPointerUp={() => {
           dragOrigin.current = null;
@@ -1734,7 +1765,7 @@ export default function Grid({
 type GridActions = {
   cellPointerDown(e: React.PointerEvent, point: Point): void;
   dragSelect(e: React.PointerEvent, point: Point): void;
-  edit(point: Point): void;
+  edit(point: Point, initial?: string): boolean;
   rowMenu(task: Task): void;
   finish(value: Cell["value"], move?: EditMove): boolean | undefined;
   cancelEdit(): void;
@@ -2091,6 +2122,12 @@ const GridCell = memo(function GridCell({
     editable &&
     (!["owner", "supporters"].includes(c.key) || canEditPeople);
   const editing = !!editor;
+  const prepareText =
+    focused &&
+    editable &&
+    !choice &&
+    property?.kind !== "date" &&
+    property?.kind !== "number";
   const mode = textMode(s);
   const textDecoration = [
     s.underline ? "underline" : "",
@@ -2169,6 +2206,7 @@ const GridCell = memo(function GridCell({
   return (
     <div
       role="gridcell"
+      aria-label={prepareText && !editing ? text || undefined : undefined}
       aria-selected={selection !== null}
       data-selection-edges={selection || undefined}
       data-cell={`${task.id}:${c.key}`}
@@ -2188,38 +2226,42 @@ const GridCell = memo(function GridCell({
         if (!presentation) actions.rowMenu(task);
       }}
     >
-      {editing && editor ? (
+      {(editing || prepareText) && (
         <InlineCellEditor
           key={`${task.id}:${c.key}`}
-          editor={editor}
+          editor={editor || { point }}
+          prepared={!editing}
+          onStart={() => actions.edit(point, "")}
           task={task}
           users={users}
           settings={settings}
           onCommit={actions.finish}
           onCancel={actions.cancelEdit}
         />
-      ) : editableChoice ? (
-        <button
-          className="cell-choice-trigger"
-          aria-label={`${c.label} 선택`}
-          aria-haspopup="listbox"
-          aria-expanded="false"
-          onClick={(e) => {
-            // 키보드·보조기기의 활성화는 유지하고 포인터 입력은 셀에서 처리한다.
-            if (e.detail === 0) actions.edit(point);
-          }}
-        >
-          {content}
-        </button>
-      ) : !choice && mode === "overflow" && text ? (
-        <div className="cell-overflow-clip" style={{ width: overflowWidth }}>
-          <div className="cell-overflow-content" style={{ width: c.width }}>
-            {content}
-          </div>
-        </div>
-      ) : (
-        content
       )}
+      {!editing &&
+        (editableChoice ? (
+          <button
+            className="cell-choice-trigger"
+            aria-label={`${c.label} 선택`}
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            onClick={(e) => {
+              // 키보드·보조기기의 활성화는 유지하고 포인터 입력은 셀에서 처리한다.
+              if (e.detail === 0) actions.edit(point);
+            }}
+          >
+            {content}
+          </button>
+        ) : !choice && mode === "overflow" && text ? (
+          <div className="cell-overflow-clip" style={{ width: overflowWidth }}>
+            <div className="cell-overflow-content" style={{ width: c.width }}>
+              {content}
+            </div>
+          </div>
+        ) : (
+          content
+        ))}
     </div>
   );
 });

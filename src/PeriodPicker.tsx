@@ -4,6 +4,7 @@ import {
   visibleWeeks,
   weeksForPeriod,
   periodMonths,
+  todayKey,
 } from "../shared/domain.js";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./components";
@@ -44,6 +45,7 @@ export default function PeriodPicker({
     [weeks, year, view.startMonth],
   );
   const root = useRef<HTMLDivElement>(null);
+  const today = todayKey();
   const dragRef = useRef<Drag | null>(null);
   const stopDrag = useRef<(() => void) | null>(null);
   const keyboardAnchor = useRef<{ unit: Unit; index: number } | null>(null);
@@ -267,12 +269,15 @@ export default function PeriodPicker({
               <button
                 type="button"
                 key={week.key}
-                className={`period-week ${isSelected(week.index - 1) ? "is-selected" : ""} ${index === 0 ? "month-start" : ""}`}
+                className={`period-week ${isSelected(week.index - 1) ? "is-selected" : ""} ${index === 0 ? "month-start" : ""} ${today >= week.key && today <= week.end ? "this-week" : ""}`}
                 data-period-unit="week"
                 data-week={week.key}
                 aria-label={`${month}월 ${index + 1}주`}
                 aria-pressed={isSelected(week.index - 1)}
-                data-tooltip={`${month}월 ${index + 1}주 · ${week.key} ~ ${week.end}`}
+                aria-current={
+                  today >= week.key && today <= week.end ? "date" : undefined
+                }
+                data-tooltip={`${month}월 ${index + 1}주 · ${week.key} ~ ${week.end}${today >= week.key && today <= week.end ? " · 이번 주" : ""}`}
                 disabled={disabled}
                 onKeyDown={(event) => key(event, "week", week.index - 1)}
                 onClick={(event) => {

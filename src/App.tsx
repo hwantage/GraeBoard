@@ -1420,20 +1420,20 @@ function Workspace({
   }
   function beginEdit(p: Point, initial?: string) {
     const task = allTasks.find((t) => t.id === p.taskId);
-    if (!task || report || presentation || failed) return;
+    if (!task || report || presentation || failed) return false;
     if (pendingRef.current) {
       setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
-      return;
+      return false;
     }
     if (!canEdit(user, task)) {
       setError(
         "본인의 책임·지원 업무 또는 관리 권한이 있는 업무를 선택하세요.",
       );
-      return;
+      return false;
     }
     if (["owner", "supporters"].includes(p.key) && !canManage) {
       setError("담당자 변경은 팀 관리자에게 요청하세요.");
-      return;
+      return false;
     }
     if (
       fields.some((f) => f.key === p.key) &&
@@ -1445,6 +1445,7 @@ function Workspace({
     const next = { point: p, initial, task };
     editorRef.current = next;
     setEditor(next);
+    return true;
   }
   // 업무 삭제·복구는 셀 저장과 겹치지 않게 저장 중 표시를 함께 쓴다.
   async function taskOperation(run: () => Promise<void>) {
@@ -2090,7 +2091,7 @@ function Workspace({
             target?.closest(".sheet-scroll,.format-toolbar") &&
             !target.closest("dialog,[role=dialog]") &&
             (!target.closest("input,textarea,select,[contenteditable=true]") ||
-              target.closest(".inline-editor"))
+              target.closest(".inline-editor,.cell-input-ready"))
           ) {
             e.preventDefault();
             if (!e.repeat && editable && !pending)
@@ -2101,7 +2102,8 @@ function Workspace({
             (e.metaKey || e.ctrlKey) &&
             e.key.toLowerCase() === "z" &&
             e.target instanceof HTMLElement &&
-            !e.target.closest("input,textarea,select,dialog")
+            (!e.target.closest("input,textarea,select,dialog") ||
+              e.target.closest(".cell-input-ready"))
           ) {
             e.preventDefault();
             undo(e.shiftKey);

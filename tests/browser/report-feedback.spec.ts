@@ -1,7 +1,7 @@
 import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { defaultView } from "../../shared/domain.js";
+import { defaultView, normalizeView } from "../../shared/domain.js";
 
 async function post(page: Page, path: string, data: unknown) {
   const response = await page.request.post(`/api${path}`, {
@@ -64,6 +64,185 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByRole("gridcell", { name: "스냅샷에 보관할 업무", exact: true }),
   ).toBeVisible();
+});
+
+test("기존 스냅샷은 현재 아바타 사진·글자·배경색을 표시하고 저장 당시 이름을 유지한다", async ({
+  page,
+}, info) => {
+  const headers = { "X-Requested-With": "WeeklyPlan" };
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 2;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#3377bb";
+    context.fillRect(0, 0, 2, 2);
+    return canvas.toDataURL("image/png");
+  });
+  const owner = (
+    await post(page, "/admin/users", {
+      username: `snapshot-owner-${randomUUID()}@example.com`,
+      name: "저장 당시 팀원",
+      password: "snapshot-profile-password",
+      active: true,
+      memberships: [{ teamId, role: "member" }],
+      color: "#3377bb",
+      avatarInitials: "한글",
+      avatarImage: "",
+    })
+  ).user;
+  const supporter = (
+    await post(page, "/admin/users", {
+      username: `snapshot-support-${randomUUID()}@example.com`,
+      name: "저장 당시 지원자",
+      password: "snapshot-profile-password",
+      active: true,
+      memberships: [{ teamId, role: "member" }],
+      avatarImage: image,
+    })
+  ).user;
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  const settings = boot.teams.find((team: any) => team.id === teamId).settings;
+  for (const key of ["owner", "supporters"])
+    settings.properties.find((property: any) => property.id === key).display =
+      "avatar";
+  const configured = await page.request.patch(`/api/teams/${teamId}/settings`, {
+    headers,
+    data: settings,
+  });
+  expect(configured.ok(), await configured.text()).toBeTruthy();
+  const task = (
+    await post(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: {
+        title: "프로필을 표시할 보관 업무",
+        owner: owner.id,
+        supporters: [supporter.id],
+      },
+    })
+  ).task;
+  const snapshot = await post(page, "/reports", {
+    teamId,
+    year: 2026,
+    name: "아바타 검증 스냅샷",
+    referenceDate: "2026-10-13",
+    view: {
+      ...normalizeView(defaultView(2026), settings),
+      visibleFields: ["title", "owner", "supporters"],
+      widths: { owner: 220, supporters: 220 },
+    },
+    taskIds: [task.id],
+  });
+  await page.reload();
+  const open = async () => {
+    await openReports(page);
+    await modalFor(page)
+      .getByRole("button", { name: /아바타 검증 스냅샷/ })
+      .click();
+    await expect(modalFor(page)).toHaveCount(0);
+    await expect(page.getByRole("grid")).toHaveAttribute(
+      "aria-readonly",
+      "true",
+    );
+  };
+  const ownerCell = page.locator(`[data-cell="${task.id}:owner"]`);
+  const supportCell = page.locator(`[data-cell="${task.id}:supporters"]`);
+  await open();
+  await expect(ownerCell.locator(".avatar")).toHaveText("한글");
+  await expect(ownerCell.locator(".avatar")).toHaveCSS(
+    "background-color",
+    "rgb(51, 119, 187)",
+  );
+  await expect(supportCell.locator(".avatar img")).toHaveAttribute(
+    "src",
+    image,
+  );
+  await expect
+    .poll(() =>
+      supportCell
+        .locator(".avatar img")
+        .evaluate(
+          (element: HTMLImageElement) =>
+            element.complete && element.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+  await ownerCell.dblclick();
+  await expect(page.locator(".inline-editor")).toHaveCount(0);
+
+  // 스냅샷에만 남은 이전 팀원도 현재 프로필로 표시한다.
+  await post(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: task.id,
+        key: "owner",
+        value: "",
+        expectedVersion: task.cells.owner.version,
+      },
+      {
+        taskId: task.id,
+        key: "supporters",
+        value: [],
+        expectedVersion: task.cells.supporters.version,
+      },
+    ],
+  });
+  for (const [person, avatar] of [
+    [
+      owner,
+      {
+        name: "현재 팀원",
+        color: "#bf4962",
+        avatarInitials: "",
+        avatarImage: image,
+      },
+    ],
+    [
+      supporter,
+      {
+        name: "현재 지원자",
+        color: "#888888",
+        avatarInitials: "",
+        avatarImage: "",
+      },
+    ],
+  ] as const) {
+    const updated = await page.request.patch(`/api/admin/users/${person.id}`, {
+      headers,
+      data: { ...avatar, active: false, memberships: [] },
+    });
+    expect(updated.ok(), await updated.text()).toBeTruthy();
+  }
+  await page.reload();
+  await open();
+  await expect(ownerCell).toContainText("저장 당시 팀원");
+  await expect(ownerCell.locator(".avatar img")).toHaveAttribute("src", image);
+  await expect(ownerCell.locator(".avatar")).toHaveCSS(
+    "background-color",
+    "rgb(191, 73, 98)",
+  );
+  await expect(supportCell).toContainText("저장 당시 지원자");
+  await expect(supportCell.locator(".avatar img")).toHaveCount(0);
+  await expect(supportCell.locator(".avatar")).toHaveText("현");
+  await expect(supportCell.locator(".avatar")).toHaveCSS(
+    "background-color",
+    "rgb(136, 136, 136)",
+  );
+  const current = await (
+    await page.request.get(`/api/reports/${snapshot.id}`)
+  )
+    .json()
+    .then(unpack);
+  expect(current.users).toHaveLength(2);
+  await page.screenshot({
+    path: info.outputPath("snapshot-profile-avatars.png"),
+  });
 });
 
 test("스냅샷 저장은 토스트로 진행과 완료를 알리고 실제 카드를 갱신한다", async ({

@@ -165,6 +165,7 @@ async function fixture(t) {
     teamId,
     task,
     people,
+    image,
     view,
     request,
     save: () =>
@@ -233,14 +234,84 @@ test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·
   await f.restart();
   const opened = await f.request(`/reports/${id}`);
   assert.equal(opened.status, 200);
-  for (const key of ["tasks", "users", "view", "settings"])
+  for (const key of ["tasks", "view", "settings"])
     assert.deepEqual(opened.data[key], saved[key]);
+  assert.deepEqual(
+    opened.data.users.map(({ id, name }) => ({ id, name })),
+    saved.users,
+  );
   const exported = await f.request("/export", {
     method: "POST",
     body: { teamId: f.teamId, year: 2026, format: "json", scope: "all" },
   });
   assert.equal(exported.status, 200);
   assert.deepEqual(exported.data.reports[0].data, saved);
+});
+
+test("스냅샷 조회는 현재 아바타만 연결하고 저장 당시 이름·본문과 최소 저장 형식을 보존한다", async (t) => {
+  const f = await fixture(t);
+  const saved = await f.save();
+  assert.equal(saved.status, 201);
+  const path = `/reports/${saved.data.id}`;
+  const stored = Buffer.from(
+    f.db.prepare("SELECT data FROM reports WHERE id=?").get(saved.data.id).data,
+  );
+  let opened = await f.request(path);
+  assert.equal(opened.status, 200);
+  for (const person of opened.data.users) {
+    assert.equal(person.color, "#123456");
+    assert.equal(person.avatarInitials, "AB");
+    assert.equal(person.avatarImage, f.image);
+    assert.deepEqual(Object.keys(person).sort(), [
+      "avatarImage",
+      "avatarInitials",
+      "color",
+      "id",
+      "name",
+    ]);
+  }
+  assert.equal(opened.data.users.length, 4);
+  assert(!opened.data.users.some((user) => user.id === f.people.unused.id));
+  // 원본 업무·팀 소속에서 사라진 계정도 스냅샷에 남은 ID로 찾는다.
+  f.db
+    .prepare("DELETE FROM memberships WHERE user_id=?")
+    .run(f.people.owner.id);
+  f.db
+    .prepare("DELETE FROM cells WHERE task_id=? AND key='owner'")
+    .run(f.task.id);
+  f.db
+    .prepare(
+      "UPDATE users SET name=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
+    )
+    .run("현재 담당자", "#3377bb", "한글", "", f.people.owner.id);
+  opened = await f.request(path);
+  assert.equal(opened.status, 200);
+  assert.deepEqual(
+    opened.data.users.find((user) => user.id === f.people.owner.id),
+    {
+      ...f.people.owner,
+      color: "#3377bb",
+      avatarInitials: "한글",
+      avatarImage: "",
+    },
+  );
+  assert.equal(opened.data.tasks[0].cells.owner.value, f.people.owner.id);
+  f.db
+    .prepare("UPDATE users SET avatar_initials='' WHERE id=?")
+    .run(f.people.owner.id);
+  opened = await f.request(path);
+  assert.equal(
+    opened.data.users.find((user) => user.id === f.people.owner.id)
+      .avatarInitials,
+    "현",
+  );
+  assert.deepEqual(
+    Buffer.from(
+      f.db.prepare("SELECT data FROM reports WHERE id=?").get(saved.data.id)
+        .data,
+    ),
+    stored,
+  );
 });
 
 test("빈 스냅샷에는 관계없는 팀원 프로필을 저장하지 않는다", async (t) => {

@@ -86,7 +86,11 @@ import { installSystemAuditRoutes } from "./system-audit.mjs";
 import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
 import { profileFields } from "./profiles.mjs";
-import { encodeReport, decodeReport } from "./reports.mjs";
+import {
+  encodeReport,
+  decodeReport,
+  reportUsersWithAvatars,
+} from "./reports.mjs";
 
 const string = (max = 100) => z.string().trim().min(1).max(max);
 // 아이디는 이메일 주소다. 대소문자를 구분하지 않으므로 소문자로 저장한다.
@@ -1140,13 +1144,15 @@ export function createApp({
     const r = db.prepare("SELECT * FROM reports WHERE id=?").get(req.params.id);
     requireThat(r, 404, "스냅샷을 찾을 수 없습니다.");
     teamAccess(req.user, r.team_id);
+    const report = decodeReport(r.data);
     res.json({
       id: r.id,
       name: r.name,
       year: r.year,
       referenceDate: r.reference_date,
       createdAt: r.created_at,
-      ...decodeReport(r.data),
+      ...report,
+      users: reportUsersWithAvatars(db, report.users),
     });
   });
   app.delete("/api/reports", (req, res) => {

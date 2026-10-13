@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { Cell, Point, Task, User, Settings, Property } from "./types";
 import CellOptionPicker from "./CellOptionPicker";
+import CellDatePicker, { normalizeDateInput } from "./CellDatePicker";
 import {
   cell,
   fieldsFor,
@@ -48,6 +49,8 @@ export default function InlineCellEditor({
   task,
   users,
   settings,
+  prepared = false,
+  onStart,
   onCommit,
   onCancel,
 }: {
@@ -55,6 +58,8 @@ export default function InlineCellEditor({
   task: Task;
   users: User[];
   settings: Settings;
+  prepared?: boolean;
+  onStart?: () => boolean;
   onCommit: (value: Cell["value"], move?: EditMove) => boolean | undefined;
   onCancel: () => void;
 }) {
@@ -64,27 +69,31 @@ export default function InlineCellEditor({
     (p) => p.id === key,
   );
   const [draft, setDraft] = useState<Cell["value"]>(
-    property?.kind === "member" && property.multiple
-      ? Array.isArray(cell(task, key).value)
-        ? cell(task, key).value
-        : []
-      : (editor.initial ?? cell(task, key).value),
+    prepared
+      ? ""
+      : property?.kind === "member" && property.multiple
+        ? Array.isArray(cell(task, key).value)
+          ? cell(task, key).value
+          : []
+        : (editor.initial ?? cell(task, key).value),
   );
   const draftRef = useRef(draft),
     finished = useRef(false),
     composing = useRef(false);
+  const startedByInput = useRef(false);
+  const previouslyPrepared = useRef(prepared);
   const control = useRef<
     HTMLTextAreaElement | HTMLInputElement | HTMLSelectElement
   >(null);
   const [error, setError] = useState("");
   const label = `${field?.label || key} 편집`;
   useLayoutEffect(() => {
-    if (control.current instanceof HTMLTextAreaElement)
+    if (!prepared && control.current instanceof HTMLTextAreaElement)
       fitTextEditor(control.current);
-  }, [draft, task, settings]);
+  }, [draft, task, settings, prepared]);
   useLayoutEffect(() => {
     const input = control.current;
-    if (!(input instanceof HTMLTextAreaElement)) return;
+    if (prepared || !(input instanceof HTMLTextAreaElement)) return;
     const cell = input.closest<HTMLElement>(".sheet-cell")!;
     const grid = input.closest<HTMLElement>(".sheet-scroll")!;
     const resize = () => fitTextEditor(input);
@@ -100,23 +109,64 @@ export default function InlineCellEditor({
       window.removeEventListener("resize", resize);
       document.fonts.removeEventListener("loadingdone", resize);
     };
-  }, []);
-  useEffect(() => {
-    control.current?.focus({ preventScroll: true });
+  }, [prepared]);
+  useLayoutEffect(() => {
+    const input = control.current;
+    const wasPrepared = previouslyPrepared.current;
+    previouslyPrepared.current = prepared;
+    if (prepared) {
+      finished.current = false;
+      composing.current = false;
+      startedByInput.current = false;
+      draftRef.current = "";
+      setDraft("");
+      if (input instanceof HTMLTextAreaElement) {
+        input.parentElement?.style.removeProperty("height");
+        input.parentElement?.style.removeProperty("top");
+      }
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    // IME가 시작된 textarea를 교체하거나 다시 focus/select하지 않는다.
+    if (startedByInput.current) return;
+    if (wasPrepared && input instanceof HTMLTextAreaElement) {
+      const value = editor.initial ?? cell(task, key).value;
+      draftRef.current = value;
+      setDraft(value);
+      input.value = String(value);
+    }
+    input?.focus({ preventScroll: true });
     if (
-      editor.initial === undefined &&
-      control.current instanceof HTMLTextAreaElement
-    )
-      control.current.select();
-  }, []);
+      input instanceof HTMLTextAreaElement ||
+      (field?.type === "date" && input instanceof HTMLInputElement)
+    ) {
+      if (editor.initial === undefined) input.select();
+      // 첫 키로 편집을 시작하면 다음 글자는 이미 입력한 글자 뒤에 붙인다.
+      else input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, [prepared]);
+  function startInput() {
+    if (!prepared || startedByInput.current) return true;
+    startedByInput.current = onStart?.() ?? false;
+    return startedByInput.current;
+  }
   function change(value: Cell["value"]) {
     draftRef.current = value;
     setDraft(value);
     setError("");
   }
   function commit(move?: EditMove) {
-    if (finished.current || composing.current) return;
+    if (prepared || finished.current || composing.current) return;
     let value = draftRef.current;
+    if (field?.type === "date") {
+      const date = normalizeDateInput(String(value));
+      if (date === null) {
+        setError("유효한 날짜를 입력하세요. 예: 2026-10-13 또는 20261013");
+        control.current?.focus();
+        return;
+      }
+      value = date;
+    }
     if (
       control.current instanceof HTMLInputElement &&
       !control.current.checkValidity()
@@ -148,6 +198,7 @@ export default function InlineCellEditor({
   const events = {
     "aria-label": label,
     onKeyDown: (e: React.KeyboardEvent) => {
+      if (prepared) return;
       if (
         e.nativeEvent.isComposing ||
         composing.current ||
@@ -179,10 +230,13 @@ export default function InlineCellEditor({
     },
     onBlur: () => commit(),
     onCompositionStart: () => {
-      composing.current = true;
+      if (startInput()) composing.current = true;
     },
-    onCompositionEnd: () => {
+    onCompositionEnd: (
+      e: React.CompositionEvent<HTMLTextAreaElement | HTMLInputElement>,
+    ) => {
       composing.current = false;
+      if (startedByInput.current || !prepared) change(e.currentTarget.value);
     },
   };
   const options =
@@ -200,11 +254,19 @@ export default function InlineCellEditor({
         : null;
   return (
     <div
-      className={`inline-editor ${options ? "inline-choice-editor" : ""}`}
+      className={
+        prepared
+          ? "cell-input-ready"
+          : `inline-editor ${options ? "inline-choice-editor" : ""}`
+      }
       onPointerDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
-      onCopy={(e) => e.stopPropagation()}
-      onPaste={(e) => e.stopPropagation()}
+      onCopy={(e) => {
+        if (!prepared) e.stopPropagation();
+      }}
+      onPaste={(e) => {
+        if (!prepared) e.stopPropagation();
+      }}
     >
       {options ? (
         <CellOptionPicker
@@ -222,7 +284,19 @@ export default function InlineCellEditor({
           onCommit={commit}
           onCancel={cancel}
         />
-      ) : field?.type === "date" || field?.type === "number" ? (
+      ) : field?.type === "date" ? (
+        <CellDatePicker
+          label={label}
+          inputProps={{ ...events, "aria-invalid": !!error }}
+          inputRef={(el) => {
+            control.current = el;
+          }}
+          value={String(draft)}
+          onChange={change}
+          onCommit={commit}
+          onCancel={cancel}
+        />
+      ) : field?.type === "number" ? (
         <input
           {...events}
           ref={(el) => {
@@ -236,11 +310,23 @@ export default function InlineCellEditor({
       ) : (
         <textarea
           {...events}
+          aria-label={
+            prepared
+              ? `${field?.label || key} 셀: ${String(cell(task, key).value) || "비어 있음"}`
+              : label
+          }
+          tabIndex={prepared ? -1 : undefined}
           ref={(el) => {
             control.current = el;
           }}
           value={String(draft)}
-          onChange={(e) => change(e.target.value)}
+          onBeforeInput={(e) => {
+            if (!startInput()) e.preventDefault();
+          }}
+          onChange={(e) => {
+            if (startInput()) change(e.target.value);
+            else e.target.value = "";
+          }}
           maxLength={10000}
           spellCheck={false}
         />

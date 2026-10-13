@@ -3892,6 +3892,278 @@ test("변경 이력은 날짜 왼쪽의 상대 시간만 갱신하고 기록을 
   expect(loads).toBe(1);
 });
 
+for (const key of ["title", "2025-12-29"]) {
+  test(`텍스트 셀을 선택한 뒤 바로 입력하면 첫 글자부터 순서대로 저장한다 (${key})`, async ({
+    page,
+  }) => {
+    const target = page.locator(`[data-cell="${taskIds[0]}:${key}"]`);
+    await target.click();
+    const editor = target.getByRole("textbox");
+    await expect(target.locator(".inline-editor")).toHaveCount(0);
+    // fill()은 최초 키 입력으로 편집을 시작할 때의 커서 문제를 재현하지 못한다.
+    await page.keyboard.type("somansa");
+    await expect(editor).toHaveValue("somansa");
+    await expect(editor).toBeFocused();
+    expect(
+      await editor.evaluate((element: HTMLTextAreaElement) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    ).toEqual([7, 7]);
+    // 편집 도중 사용자가 옮긴 커서는 이후 입력에도 그대로 유지한다.
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.type("-");
+    await expect(editor).toHaveValue("somans-a");
+    await page.keyboard.press("Backspace");
+    await expect(editor).toHaveValue("somansa");
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/cells/batch") && response.ok(),
+      ),
+      editor.press("Enter"),
+    ]);
+    await expect(target).toHaveText("somansa");
+    await page.reload();
+    await expect(target).toHaveText("somansa");
+  });
+}
+
+for (const key of ["title", "2025-12-29"]) {
+  test(`한글 IME는 셀 선택부터 같은 입력창에서 조합하고 저장한다 (${key})`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      browserName !== "chromium",
+      "브라우저의 IME 조합 명령은 Chromium CDP에서 제공한다.",
+    );
+    const client = await page.context().newCDPSession(page);
+    const target = page.locator(`[data-cell="${taskIds[0]}:${key}"]`);
+    await target.click();
+    const input = target.locator("textarea");
+    await expect(input).toBeFocused();
+    const originalInput = await input.elementHandle();
+    const compose = async (text: string) => {
+      await client.send("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+      expect(
+        await originalInput!.evaluate(
+          (element) =>
+            element.isConnected && element === document.activeElement,
+        ),
+      ).toBe(true);
+    };
+    // isComposing이 아직 false인 첫 keydown도 조합 문자로 가로채지 않는다.
+    await client.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Process",
+      code: "KeyG",
+      windowsVirtualKeyCode: 229,
+    });
+    for (const text of ["ㅎ", "하", "한"]) {
+      await compose(text);
+      await expect(input).toHaveValue(text);
+    }
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      keyCode: 229,
+      isComposing: false,
+    });
+    await expect(target.locator(".inline-editor")).toHaveCount(1);
+    await expect(input).toHaveValue("한");
+    await client.send("Input.insertText", { text: "한" });
+    for (const text of ["ㄱ", "그", "글"]) {
+      await compose(text);
+      await expect(input).toHaveValue(`한${text}`);
+    }
+    if (key === "title") {
+      await client.send("Input.insertText", { text: "글" });
+      await page.keyboard.type(" somansa");
+      await expect(input).toHaveValue("한글 somansa");
+    }
+    const expected = key === "title" ? "한글 somansa" : "한글";
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/cells/batch") && response.ok(),
+      ),
+      key === "title"
+        ? input.press("Enter")
+        : page.locator(`[data-cell="${taskIds[1]}:title"]`).click(),
+    ]);
+    await expect(target).toHaveText(expected);
+    await page.reload();
+    await expect(target).toHaveText(expected);
+    await client.detach();
+  });
+}
+
+test("한글 조합 이벤트 중 입력창과 커서를 유지하고 조합 완료 후 취소할 수 있다", async ({
+  page,
+}) => {
+  const target = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  await target.click();
+  const input = target.locator("textarea");
+  await expect(input).toBeFocused();
+  const originalInput = await input.elementHandle();
+  await input.dispatchEvent("compositionstart", { data: "" });
+  for (const text of ["ㅎ", "하", "한"]) {
+    await input.dispatchEvent("compositionupdate", { data: text });
+    await input.evaluate((element: HTMLTextAreaElement, text) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(element, text);
+      element.setSelectionRange(text.length, text.length);
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertCompositionText",
+          data: text,
+          isComposing: true,
+        }),
+      );
+    }, text);
+    await expect(input).toHaveValue(text);
+    expect(
+      await originalInput!.evaluate((element: HTMLTextAreaElement) => [
+        element === document.activeElement,
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    ).toEqual([true, 1, 1]);
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      keyCode: 229,
+      isComposing: false,
+    });
+    await expect(target.locator(".inline-editor")).toHaveCount(1);
+  }
+  await input.dispatchEvent("compositionend", { data: "한" });
+  await page.keyboard.type("somansa");
+  await expect(input).toHaveValue("한somansa");
+  await input.press("Escape");
+  await expect(target.locator(".inline-editor")).toHaveCount(0);
+  await expect(target).toHaveText("첫 업무");
+  await expect(target.locator(".cell-input-ready textarea")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(target).not.toHaveClass(/focused/);
+  await expect(page.getByRole("grid")).toBeFocused();
+});
+
+test("선택한 텍스트 셀이 화면 밖에 나가도 입력 준비와 키보드 이동을 유지한다", async ({
+  page,
+}) => {
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  for (let i = 0; i < 45; i++)
+    await post(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: `스크롤 업무 ${i}`, owner: boot.user.id },
+    });
+  await page.reload();
+  const first = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  const second = page.locator(`[data-cell="${taskIds[1]}:title"]`);
+  await first.click();
+  const input = await first.locator("textarea").elementHandle();
+  await page.getByRole("grid").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    page.getByRole("gridcell", { name: "스크롤 업무 44", exact: true }),
+  ).toBeInViewport();
+  await expect(first).not.toBeInViewport();
+  expect(
+    await input!.evaluate(
+      (element) => element.isConnected && element === document.activeElement,
+    ),
+  ).toBe(true);
+  await page.keyboard.press("ArrowDown");
+  await expect(second).toHaveClass(/focused/);
+  await expect(second).toBeInViewport();
+  await expect(second.locator(".cell-input-ready textarea")).toBeFocused();
+  await page.keyboard.type("somansa");
+  await expect(second.locator(".inline-editor textarea")).toHaveValue(
+    "somansa",
+  );
+  await page.keyboard.press("Escape");
+  await expect(second).toHaveText("숨길 업무");
+});
+
+test("IME 입력 준비 상태에서도 실제 복사·붙여넣기·실행취소와 방향키가 동작한다", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "실제 클립보드 권한을 사용하는 검사");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const first = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  const second = page.locator(`[data-cell="${taskIds[1]}:title"]`);
+  await first.click();
+  await expect(first.locator(".cell-input-ready textarea")).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("첫 업무");
+  await page.keyboard.press("ArrowDown");
+  await expect(second).toHaveClass(/focused/);
+  await expect(second.locator(".cell-input-ready textarea")).toBeFocused();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/cells/batch") && response.ok(),
+    ),
+    page.keyboard.press("ControlOrMeta+v"),
+  ]);
+  await expect(second).toHaveText("첫 업무");
+  await expect(second.locator(".inline-editor")).toHaveCount(0);
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/cells/batch") && response.ok(),
+    ),
+    page.keyboard.press("ControlOrMeta+z"),
+  ]);
+  await expect(second).toHaveText("숨길 업무");
+  await page.keyboard.press("Shift+ArrowUp");
+  await expect(page.locator('.sheet-cell[aria-selected="true"]')).toHaveCount(
+    2,
+  );
+});
+
+test("더블클릭과 Enter·F2로 연 텍스트 편집은 기존 내용 전체 선택과 취소를 유지한다", async ({
+  page,
+}) => {
+  const target = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  for (const action of ["double-click", "Enter", "F2"]) {
+    if (action === "double-click") await target.dblclick();
+    else {
+      await target.click();
+      await page.keyboard.press(action);
+    }
+    const editor = target.getByRole("textbox");
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveValue("첫 업무");
+    expect(
+      await editor.evaluate((element: HTMLTextAreaElement) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    ).toEqual([0, "첫 업무".length]);
+    await page.keyboard.type("somansa");
+    await expect(editor).toHaveValue("somansa");
+    await editor.press("Escape");
+    await expect(target).toHaveText("첫 업무");
+  }
+});
+
 test("셀 편집 확정은 저장 응답 전에 새 값을 표시하고 실행취소 원본을 보존한다", async ({
   page,
 }) => {
@@ -4765,7 +5037,7 @@ test("여러 줄 텍스트 편집창은 내용에 맞춰 늘고 줄며 행 높�
   ]);
   await expect(input).toHaveCount(0);
   await expect(first).toHaveText(longer);
-  await expect(page.getByRole("grid")).toBeFocused();
+  await expect(second.locator(".cell-input-ready textarea")).toBeFocused();
   expect((await first.boundingBox())!.height).toBe(rowHeight);
   expect((await second.boundingBox())!.y).toBe(nextRowTop);
   await page.reload();
@@ -4786,11 +5058,10 @@ test("긴 텍스트 편집창은 확대율과 화면 경계에 맞추고 내부�
 }, info) => {
   await page.setViewportSize({ width: 1366, height: 480 });
   const cell = page.locator(`[data-cell="${taskIds[2]}:title"]`);
-  const grid = page.getByRole("grid");
   const zoom = page
     .locator('.format-toolbar[aria-label="셀 서식 도구"]')
     .getByRole("spinbutton", { name: "확대율", exact: true });
-  const input = cell.getByRole("textbox");
+  const input = cell.locator(".inline-editor textarea");
   const text = Array.from(
     { length: 80 },
     (_, i) => `${i + 1}번째 긴 내용`,
@@ -4848,7 +5119,7 @@ test("긴 텍스트 편집창은 확대율과 화면 경계에 맞추고 내부�
     await input.press("Escape");
     await expect(input).toHaveCount(0);
     await expect(cell).toHaveText("셋째 업무");
-    await expect(grid).toBeFocused();
+    await expect(cell.locator(".cell-input-ready textarea")).toBeFocused();
   }
 });
 
@@ -5418,7 +5689,7 @@ test("속성 칩·글자는 한 번 클릭해 셀을 선택하고 더블클릭�
   await expect(category).toHaveClass(/focused/);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await title.click();
-  await expect(title.getByRole("textbox")).toHaveCount(0);
+  await expect(title.locator(".inline-editor")).toHaveCount(0);
   const trigger = category.getByRole("button", {
     name: "분류 선택",
     exact: true,
@@ -5487,7 +5758,6 @@ test("속성 칩·글자는 한 번 클릭해 셀을 선택하고 더블클릭�
 test("옵션을 키보드로 확정한 뒤 방향키로 셀 이동을 계속한다", async ({
   page,
 }) => {
-  const grid = page.getByRole("grid");
   const row = page.locator(`[data-row-id="${taskIds[0]}"]`);
   const keys = await row
     .locator("[data-column]")
@@ -5521,7 +5791,7 @@ test("옵션을 키보드로 확정한 뒤 방향키로 셀 이동을 계속한�
   await expect(category).toHaveText("차별화");
   await page.keyboard.press("ArrowRight");
   await expect(next).toHaveClass(/focused/);
-  await expect(grid).toBeFocused();
+  await expect(next.locator(".cell-input-ready textarea")).toBeFocused();
   await saved;
 
   // 값이 바뀌지 않는 재선택도 포커스를 표로 돌려줘야 한다.

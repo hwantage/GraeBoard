@@ -37,3 +37,28 @@ export function encodeReport({ tasks, users, view, settings }) {
 export function decodeReport(data) {
   return parseCompact(gunzipSync(data).toString("utf8"));
 }
+
+// 저장 당시 이름은 보존하고, 스냅샷을 열 때 현재 아바타만 연결한다.
+// 현재 팀에서 빠졌거나 원본 업무에서 제거된 팀원도 스냅샷의 ID로 조회한다.
+export function reportUsersWithAvatars(db, users) {
+  if (!users.length) return users;
+  const profiles = new Map(
+    db
+      .prepare(
+        "SELECT id,name,color,avatar_initials AS avatarInitials,avatar_image AS avatarImage FROM users WHERE id IN (SELECT value FROM json_each(?))",
+      )
+      .all(JSON.stringify(users.map(({ id }) => id)))
+      .map((profile) => [profile.id, profile]),
+  );
+  return users.map((user) => {
+    const profile = profiles.get(user.id);
+    return profile
+      ? {
+          ...user,
+          color: profile.color,
+          avatarInitials: profile.avatarInitials || profile.name.slice(0, 1),
+          avatarImage: profile.avatarImage,
+        }
+      : user;
+  });
+}

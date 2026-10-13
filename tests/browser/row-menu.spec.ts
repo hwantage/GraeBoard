@@ -508,7 +508,7 @@ test("행 복사 직후 붙여넣기는 작업 셀을 선택하면서 가로 스
     const cell = page.locator(`[data-cell="${pasted.id}:title"]`);
     await expect(cell).toHaveText("첫 업무");
     await expect(cell).toHaveClass(/\bfocused\b/);
-    await expect(cell.getByRole("textbox")).toHaveCount(0);
+    await expect(cell.locator(".inline-editor")).toHaveCount(0);
     await expect
       .poll(() => grid.evaluate((el) => el.scrollLeft))
       .toBe(scrollLeft);
