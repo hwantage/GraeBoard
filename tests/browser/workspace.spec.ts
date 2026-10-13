@@ -341,7 +341,8 @@ test("콤팩트 기간 표는 월·주 드래그와 역방향·키보드·취소
   const weekButtons = picker.locator(".period-week");
   await expect(weekButtons).toHaveCount(53);
   expect((await picker.boundingBox())!.height).toBeLessThanOrEqual(45);
-  expect((await page.getByRole("grid").boundingBox())!.y).toBeLessThan(200);
+  // 달력 최소 너비 900px을 유지할 때 보기 버튼은 다음 줄로 내려간다.
+  expect((await page.getByRole("grid").boundingBox())!.y).toBeLessThan(240);
   for (let month = 1; month <= 12; month++) {
     const count = weeksForYear(2026).filter((w) => w.month === month).length;
     expect([4, 5]).toContain(count);
@@ -3281,7 +3282,7 @@ test("이전 팀의 늦은 보기 저장 실패는 현재 팀에 표시하지 �
   await expect(page.locator(".board-error")).toContainText("현재 팀 저장 오류");
 });
 
-test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 서식을 보존한다", async ({
+test("팀별 파스텔 테마를 선택·저장하고 기존 스냅샷·전환·새로고침에서 셀 서식을 보존한다", async ({
   page,
 }, info) => {
   const boot = await (
@@ -3302,6 +3303,14 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
         style: { color: "#243642", backgroundColor: "#ffe6dd" },
       },
     ],
+  });
+  const snapshot = await post(page, "/reports", {
+    teamId,
+    year: 2026,
+    name: "테마 변경 전 스냅샷",
+    referenceDate: "2026-10-13",
+    view: defaultView(2026),
+    taskIds,
   });
   await page.reload();
   await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
@@ -3368,7 +3377,55 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
       path: info.outputPath(`theme-${theme.id}.png`),
       fullPage: true,
     });
+    // 같은 민트 스냅샷을 열어 저장 당시 테마가 현재 팀 테마를 덮지 않는지 확인한다.
+    await page
+      .getByRole("button", { name: "보고서 스냅샷", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "보고서 스냅샷", exact: true })
+      .getByRole("button", { name: /테마 변경 전 스냅샷/ })
+      .click();
+    await expect(page.getByRole("grid")).toHaveAttribute(
+      "aria-readonly",
+      "true",
+    );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
+    await expect(page.locator(".format-toolbar")).toHaveCount(0);
+    await expect(page.locator(".active-report-banner")).toHaveCSS(
+      "border-left-color",
+      rgb(theme.snapshot),
+    );
+    await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
+    await expect(title).toHaveCSS("color", "rgb(36, 54, 66)");
+    await page.screenshot({
+      path: info.outputPath(`snapshot-current-theme-${theme.id}.png`),
+      animations: "disabled",
+    });
+    await page
+      .getByRole("button", { name: "스냅샷 수정", exact: true })
+      .click();
+    await expect(page.locator(".format-toolbar")).toHaveCSS(
+      "background-color",
+      rgb(theme.surface),
+    );
+    await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
+    await page.getByRole("button", { name: "수정 취소", exact: true }).click();
+    await expect(page.locator(".format-toolbar")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "스냅샷 보기 종료", exact: true })
+      .click();
+    await expect(page.getByRole("grid")).toHaveAttribute(
+      "aria-readonly",
+      "false",
+    );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
   }
+  const saved = await (
+    await page.request.get(`/api/reports/${snapshot.id}`)
+  )
+    .json()
+    .then(unpack);
+  expect(saved.settings.theme).toBe("mint");
   await open();
   await page.getByRole("button", { name: "새 팀", exact: true }).click();
   const newName = "로즈 팀 " + randomUUID().slice(0, 6);
@@ -4738,9 +4795,10 @@ test("검색·필터 저장과 읽기 전용 보고본의 원본 분리를 확�
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
     "첫 업무",
   );
-  await expect(
-    page.getByRole("button", { name: "굵게", exact: true }),
-  ).toBeDisabled();
+  await expect(page.locator(".format-toolbar")).toHaveCount(0);
+  await expect(page.getByRole("grid")).toHaveAttribute("aria-readonly", "true");
+  await page.locator(`[data-cell="${taskIds[0]}:title"]`).dblclick();
+  await expect(page.locator(".inline-editor")).toHaveCount(0);
 });
 test("같은 셀의 연속 실행취소·재실행과 사이에 발생한 타인의 변경을 보호한다", async ({
   page,
@@ -9963,7 +10021,247 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
   }
 });
 
-test("스냅샷은 다른 연도로 열고 연이어 전환해도 닫기와 삭제 후 원래 업무 보기를 복원한다", async ({
+test("스냅샷·필터 버튼은 나란히 표시하고 스냅샷에서는 저장된 필터를 잠근 뒤 이전 보기를 복원한다", async ({
+  page,
+}, info) => {
+  await setTaskCells(page, [
+    { index: 0, key: "status", value: "status-planned" },
+    { index: 1, key: "status", value: "status-completed" },
+    { index: 2, key: "status", value: "status-progress" },
+  ]);
+  const snapshot = await post(page, "/reports", {
+    teamId,
+    year: 2026,
+    name: "머리글 조건을 조정할 스냅샷",
+    referenceDate: "2026-10-13",
+    view: {
+      ...defaultView(2026),
+      propertyFilters: { status: ["status-planned", "status-completed"] },
+      propertyFilterModes: { status: "include" },
+    },
+    taskIds,
+  });
+  await post(page, "/reports", {
+    teamId,
+    year: 2026,
+    name: "전환할 스냅샷",
+    referenceDate: "2026-10-13",
+    view: defaultView(2026),
+    taskIds,
+  });
+  for (const [name, mode] of [
+    ["완료 제외", "exclude"],
+    ["완료만", "include"],
+  ]) {
+    const response = await page.request.put("/api/filters", {
+      headers: { "X-Requested-With": "WeeklyPlan" },
+      data: {
+        teamId,
+        scope: "team",
+        name,
+        data: {
+          propertyFilters: { status: ["status-completed"] },
+          propertyFilterModes: { status: mode },
+        },
+      },
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+  }
+  const filters = async () =>
+    (await page.request.get(`/api/filters?teamId=${teamId}`)).json();
+  const savedSnapshot = async () =>
+    (await page.request.get(`/api/reports/${snapshot.id}`)).json().then(unpack);
+  const originalSnapshot = await savedSnapshot();
+  const savedFilterButton = page.getByRole("button", {
+    name: "저장된 필터",
+    exact: true,
+  });
+  const choose = async (name: string) => {
+    await savedFilterButton.click();
+    await page
+      .locator(".saved-views")
+      .getByRole("button", { name, exact: true })
+      .click();
+  };
+  const open = async (name = "머리글 조건을 조정할 스냅샷") => {
+    await page
+      .getByRole("button", { name: "보고서 스냅샷", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "보고서 스냅샷", exact: true })
+      .getByRole("button", { name: new RegExp(name) })
+      .click();
+    await expect(page.getByRole("grid")).toHaveAttribute(
+      "aria-readonly",
+      "true",
+    );
+    await expect(savedFilterButton).toBeDisabled();
+    await expect(savedFilterButton).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".saved-views")).toHaveCount(0);
+  };
+  const statusFilter = async (values: string[]) => {
+    await page
+      .getByRole("button", { name: "상태 열 선택", exact: true })
+      .click({ button: "right" });
+    const menu = page.getByRole("group", {
+      name: "상태 필터 선택",
+      exact: true,
+    });
+    for (const name of ["예정", "진행 중", "완료"])
+      await menu
+        .getByRole("checkbox", { name, exact: true })
+        .setChecked(values.includes(name));
+    await page.keyboard.press("Escape");
+  };
+  const checkButtons = async () => {
+    const reportBox = (await page
+      .getByRole("button", { name: "보고서 스냅샷", exact: true })
+      .boundingBox())!;
+    const filterBox = (await page
+      .locator(".saved-filter-control")
+      .boundingBox())!;
+    expect(reportBox.x + reportBox.width).toBeLessThanOrEqual(filterBox.x);
+    expect(filterBox.x - reportBox.x - reportBox.width).toBeLessThanOrEqual(6);
+    expect(Math.abs(reportBox.y - filterBox.y)).toBeLessThan(1);
+    expect(reportBox.height).toBe(filterBox.height);
+    expect(reportBox.height).toBe(40);
+    expect(filterBox.x + filterBox.width).toBeLessThanOrEqual(
+      page.viewportSize()!.width,
+    );
+    if (page.viewportSize()!.width >= 1366) {
+      const calendar = await page.locator(".period-scroll").evaluate((el) => ({
+        viewport: el.clientWidth,
+        content: el.scrollWidth,
+      }));
+      expect(calendar.content).toBeLessThanOrEqual(calendar.viewport + 1);
+    }
+    await expect(
+      page
+        .locator(".top-navigation")
+        .getByRole("button", { name: "보고서 스냅샷", exact: true }),
+    ).toHaveCount(0);
+  };
+  const reportBanner = page.getByRole("region", {
+    name: "스냅샷 보기",
+    exact: true,
+  });
+  const filterBanner = page.getByRole("region", {
+    name: "필터 보기",
+    exact: true,
+  });
+  const close = () =>
+    reportBanner.getByRole("button", { name: "스냅샷 보기 종료" }).click();
+  const titles = page.locator('[data-column="title"]');
+  const header = page.locator('[data-header-key="title"]');
+  const rowHeader = page.locator(".sheet-row .row-number").first();
+  const background = (locator: Locator) =>
+    locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await checkButtons();
+  const liveHeaderColor = await background(header);
+  await choose("완료 제외");
+  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
+  const liveId = (await filters()).filters.find(
+    (f: any) => f.name === "완료 제외",
+  ).id;
+  await expect
+    .poll(async () => (await filters()).current.selectedId)
+    .toBe(liveId);
+  const originalFilters = await filters();
+  const filterHeaderColor = await background(header);
+  const filterRowColor = await background(rowHeader);
+
+  // 기존 선택은 보관하고 스냅샷에 저장된 조건과 색상으로 시작한다.
+  await open();
+  await expect(reportBanner).toBeVisible();
+  await expect(filterBanner).toHaveCount(0);
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
+  expect(await filters()).toEqual(originalFilters);
+  const reportHeaderColor = await background(header);
+  expect(reportHeaderColor).not.toBe(filterHeaderColor);
+  expect(await background(rowHeader)).not.toBe(filterRowColor);
+  await page.screenshot({
+    path: info.outputPath("snapshot-filter-disabled.png"),
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 640, height: 900 });
+  await checkButtons();
+  await expect(savedFilterButton).toBeDisabled();
+  await page.screenshot({
+    path: info.outputPath("snapshot-filter-disabled-compact.png"),
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1366, height: 900 });
+
+  // 머리글 필터는 읽기 전용 스냅샷에서도 바꿀 수 있고 원본에는 저장하지 않는다.
+  await statusFilter(["완료", "진행 중"]);
+  await expect(titles).toHaveText(["숨길 업무", "셋째 업무"]);
+  await expect(header).toHaveCSS("background-color", reportHeaderColor);
+  await expect(filterBanner).toHaveCount(0);
+  await titles.first().dblclick();
+  await expect(page.locator(".inline-editor")).toHaveCount(0);
+  expect(await filters()).toEqual(originalFilters);
+  expect(await savedSnapshot()).toEqual(originalSnapshot);
+  await open("전환할 스냅샷");
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await statusFilter(["진행 중"]);
+  await expect(titles).toHaveText(["셋째 업무"]);
+  await close();
+  await expect(reportBanner).toHaveCount(0);
+  await expect(savedFilterButton).toBeEnabled();
+  await expect(filterBanner.locator("strong")).toHaveText("완료 제외");
+  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
+  await expect(header).toHaveCSS("background-color", filterHeaderColor);
+  await expect(rowHeader).toHaveCSS("background-color", filterRowColor);
+  await expect(page.getByRole("grid")).toHaveAttribute(
+    "aria-readonly",
+    "false",
+  );
+  expect(await filters()).toEqual(originalFilters);
+  await page.reload();
+  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
+  await expect(filterBanner.locator("strong")).toHaveText("완료 제외");
+  expect(await filters()).toEqual(originalFilters);
+
+  // 다시 진입하면 그 시점의 선택을 보관하고, 업무로 돌아가기로도 복원한다.
+  await choose("완료만");
+  await expect(titles).toHaveText(["숨길 업무"]);
+  await open();
+  await page
+    .getByRole("button", { name: "업무로 돌아가기", exact: true })
+    .click();
+  await expect(titles).toHaveText(["숨길 업무"]);
+  await expect(filterBanner.locator("strong")).toHaveText("완료만");
+  await expect(savedFilterButton).toBeEnabled();
+
+  // 선택된 필터가 없었던 화면과 저장하지 않은 머리글 조건도 각각 복원한다.
+  await filterBanner.getByRole("button", { name: "필터 보기 종료" }).click();
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await expect.poll(async () => (await filters()).current.selectedId).toBe("");
+  const unfiltered = await filters();
+  await open();
+  await statusFilter(["진행 중"]);
+  await close();
+  await expect(page.locator(".active-filter-banner")).toHaveCount(0);
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await expect(header).toHaveCSS("background-color", liveHeaderColor);
+  expect(await filters()).toEqual(unfiltered);
+  await statusFilter(["진행 중"]);
+  await expect(titles).toHaveText(["셋째 업무"]);
+  await expect
+    .poll(async () => (await filters()).current.data.propertyFilters.status)
+    .toEqual(["status-progress"]);
+  const manualFilters = await filters();
+  await open();
+  await statusFilter(["완료"]);
+  await expect(titles).toHaveText(["숨길 업무"]);
+  await close();
+  await expect(titles).toHaveText(["셋째 업무"]);
+  await expect(page.locator(".active-filter-banner")).toHaveCount(0);
+  expect(await filters()).toEqual(manualFilters);
+  expect(await savedSnapshot()).toEqual(originalSnapshot);
+});
+
+test("스냅샷은 다른 연도로 전환해도 닫기와 삭제 후 직전 필터와 배치를 복원한다", async ({
   page,
 }, info) => {
   const snapshot = await post(page, "/reports", {
@@ -10105,6 +10403,9 @@ test("스냅샷은 다른 연도로 열고 연이어 전환해도 닫기와 삭�
     page.getByRole("region", { name: "스냅샷 보기", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator(".year-badge")).toHaveText("2027");
+  await expect(
+    page.getByRole("region", { name: "필터 보기", exact: true }),
+  ).toContainText("복원할 필터");
   expect((await page.request.get(`/api/reports/${snapshot.id}`)).status()).toBe(
     404,
   );
@@ -10135,6 +10436,9 @@ test("스냅샷은 다른 연도로 열고 연이어 전환해도 닫기와 삭�
   await expect(page.locator(`[data-cell="${liveTask.id}:title"]`)).toHaveText(
     "현재 2027 업무",
   );
+  await expect(
+    page.getByRole("region", { name: "필터 보기", exact: true }),
+  ).toContainText("복원할 필터");
 });
 
 test("스냅샷 저장 폼은 이름과 날짜를 한 줄에 배치하고 선택한 목록만 삭제한다", async ({

@@ -69,6 +69,63 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+test("밑줄·취소선은 실제 텍스트에 표시되고 각각 해제하거나 함께 저장할 수 있다", async ({
+  page,
+}, info) => {
+  const title = page.locator(`[data-cell="${ids[0]}:title"]`);
+  const text = title.locator(".cell-text");
+  await title.click();
+  for (const [label, key, decoration] of [
+    ["밑줄", "underline", "underline"],
+    ["취소선", "strike", "line-through"],
+  ] as const) {
+    const button = page.getByRole("button", { name: label, exact: true });
+    await save(page, () => button.click());
+    expect(cell((await stored(page))[0], "title").style[key]).toBe(true);
+    // 셀 컨테이너뿐 아니라 실제 글자에도 서식이 전달되어야 한다.
+    await expect(text).toHaveCSS("text-decoration-line", decoration);
+    await save(page, () => button.click());
+    await expect(text).toHaveCSS("text-decoration-line", "none");
+  }
+  await save(page, () =>
+    page.getByRole("button", { name: "밑줄", exact: true }).click(),
+  );
+  await save(page, () =>
+    page.getByRole("button", { name: "취소선", exact: true }).click(),
+  );
+  await expect(text).toHaveCSS(
+    "text-decoration-line",
+    "underline line-through",
+  );
+  for (const mode of ["줄바꿈", "자르기", "오버플로우"]) {
+    await page
+      .getByRole("combobox", { name: "텍스트 표시", exact: true })
+      .click();
+    await save(page, () =>
+      page.getByRole("option", { name: mode, exact: true }).click(),
+    );
+    await expect(text).toHaveCSS(
+      "text-decoration-line",
+      "underline line-through",
+    );
+  }
+  await title.dblclick();
+  await expect(title.locator(".inline-editor textarea")).toHaveCSS(
+    "text-decoration-line",
+    "underline line-through",
+  );
+  await title.locator(".inline-editor textarea").press("Escape");
+  await page.reload();
+  await expect(text).toHaveCSS(
+    "text-decoration-line",
+    "underline line-through",
+  );
+  await page.screenshot({
+    path: info.outputPath("text-decorations.png"),
+    fullPage: true,
+  });
+});
+
 test("행 전체 서식은 빈 주차를 저장하지 않고 월 이동·새해 1월·2월·새로고침에도 이어진다", async ({
   page,
 }) => {

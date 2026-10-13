@@ -188,6 +188,7 @@ export type TaskCreation = Omit<TaskDeletion, "kind"> & {
 export type HistoryEntry = BatchResult | TaskDeletion | TaskCreation;
 export type Report = {
   id: string;
+  revision: string;
   name: string;
   year: number;
   referenceDate: string;

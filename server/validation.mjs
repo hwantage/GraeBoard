@@ -232,6 +232,7 @@ export function validateCellValue(
   value,
   settings,
   previousValue,
+  assignableIds,
 ) {
   requireThat(
     validCellKey(key, settings),
@@ -259,10 +260,26 @@ export function validateCellValue(
         "팀원 목록을 확인하세요.",
       );
       for (const v of value)
-        if (!previous.has(v)) requireAssignable(db, teamId, v);
+        if (!previous.has(v)) {
+          if (assignableIds)
+            requireThat(
+              assignableIds.has(v),
+              400,
+              "보고본에서 선택할 수 없는 팀원입니다.",
+            );
+          else requireAssignable(db, teamId, v);
+        }
     } else {
       requireThat(typeof value === "string", 400, "팀원을 확인하세요.");
-      if (value && !previous.has(value)) requireAssignable(db, teamId, value);
+      if (value && !previous.has(value)) {
+        if (assignableIds)
+          requireThat(
+            assignableIds.has(value),
+            400,
+            "보고본에서 선택할 수 없는 팀원입니다.",
+          );
+        else requireAssignable(db, teamId, value);
+      }
     }
     return;
   }

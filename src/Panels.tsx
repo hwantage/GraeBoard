@@ -51,6 +51,7 @@ const AUDIT_LABELS: Record<string, string> = {
   delete: "업무 삭제",
   restore: "업무 복구",
   report: "보고서 스냅샷 저장",
+  "report-edit": "보고서 스냅샷 수정",
   "report-delete": "보고서 스냅샷 삭제",
   settings: "설정 변경",
   export: "내보내기",
@@ -66,6 +67,7 @@ export function RowPanel({
   user,
   users,
   readOnly = false,
+  reportMode = false,
   onClose,
   onEdit,
   onAction,
@@ -76,6 +78,7 @@ export function RowPanel({
   users: User[];
   // 스냅샷처럼 읽기 전용 화면에서는 권한과 무관하게 편집 동작을 숨긴다.
   readOnly?: boolean;
+  reportMode?: boolean;
   onClose: () => void;
   onEdit: (p: Point) => void;
   onAction: (action: string) => void;
@@ -154,7 +157,7 @@ export function RowPanel({
               복제
             </Button>
           )}
-          {editable && (
+          {editable && !reportMode && (
             <Button onClick={() => onAction("carry")}>
               <CalendarPlus size={16} />
               다음 연도에도 표시
@@ -175,7 +178,7 @@ export function RowPanel({
             </div>
             <Button className="danger" onClick={() => onAction("delete")}>
               <Trash2 size={16} />
-              휴지통으로 이동
+              {reportMode ? "보고본에서 삭제" : "휴지통으로 이동"}
             </Button>
           </div>
         )}

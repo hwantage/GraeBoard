@@ -1,4 +1,8 @@
 import { installFilterRoutes } from "./filters.mjs";
+import {
+  installReportEditingRoutes,
+  reportResponse,
+} from "./report-editing.mjs";
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
@@ -86,11 +90,7 @@ import { installSystemAuditRoutes } from "./system-audit.mjs";
 import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
 import { profileFields } from "./profiles.mjs";
-import {
-  encodeReport,
-  decodeReport,
-  reportUsersWithAvatars,
-} from "./reports.mjs";
+import { encodeReport } from "./reports.mjs";
 
 const string = (max = 100) => z.string().trim().min(1).max(max);
 // 아이디는 이메일 주소다. 대소문자를 구분하지 않으므로 소문자로 저장한다.
@@ -172,6 +172,7 @@ export function createApp({
     next();
   });
   app.use("/api/cells/batch", express.json({ limit: "32mb" }));
+  app.use("/api/reports", express.json({ limit: "32mb" }));
   app.use(express.json({ limit: "5mb" }));
   app.use((req, res, next) => {
     try {
@@ -1072,6 +1073,7 @@ export function createApp({
     res.json({ ok: true });
   });
   installFilterRoutes(app, { db, teamAccess });
+  installReportEditingRoutes(app, { db, managedTeam });
   app.get("/api/reports", (req, res) => {
     const teamId = String(req.query.teamId);
     teamAccess(req.user, teamId);
@@ -1144,16 +1146,7 @@ export function createApp({
     const r = db.prepare("SELECT * FROM reports WHERE id=?").get(req.params.id);
     requireThat(r, 404, "스냅샷을 찾을 수 없습니다.");
     teamAccess(req.user, r.team_id);
-    const report = decodeReport(r.data);
-    res.json({
-      id: r.id,
-      name: r.name,
-      year: r.year,
-      referenceDate: r.reference_date,
-      createdAt: r.created_at,
-      ...report,
-      users: reportUsersWithAvatars(db, report.users),
-    });
+    res.json(reportResponse(db, r));
   });
   app.delete("/api/reports", (req, res) => {
     const d = z

@@ -91,6 +91,7 @@ import {
 } from "./components";
 import SettingsPanel from "./SettingsPanel";
 import Toast, { useToast } from "./Toast";
+import useReportDraft from "./useReportDraft";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
   type Column,
@@ -318,7 +319,8 @@ function Workspace({
     (id: string) => {
       setFilterUpdateNotice(null);
       setSelectedSavedFilterId(id);
-      saveCurrentFilters(currentFilters.current.data, id);
+      if (!reportRef.current)
+        saveCurrentFilters(currentFilters.current.data, id);
     },
     [user.id, teamId],
   );
@@ -348,8 +350,12 @@ function Workspace({
     view?: View;
   } | null>(null);
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
+  const reportDraft = useReportDraft(teamId, user.id);
+  const editingReport = !!report && reportDraft.draft?.report.id === report.id;
+  const addTaskLabel = report ? "스냅샷에 업무 추가" : "업무 추가";
   const viewYear = report?.year ?? year;
-  const themeId = getTheme(report?.settings?.theme ?? team?.settings.theme).id;
+  // 화면 테마는 스냅샷을 포함한 모든 보기에서 현재 팀 설정을 따른다.
+  const themeId = getTheme(team?.settings.theme).id;
   useLayoutEffect(() => {
     const root = document.documentElement;
     const variables = themeVariables(themeId);
@@ -361,7 +367,18 @@ function Workspace({
       for (const key of Object.keys(variables)) root.style.removeProperty(key);
     };
   }, [themeId]);
-  const users = report?.users || boot.users;
+  const users = useMemo(() => {
+    if (!report) return boot.users;
+    if (!editingReport) return report.users;
+    return [
+      ...new Map([
+        ...boot.users
+          .filter((u) => isAssignable(u, teamId))
+          .map((u) => [u.id, u] as const),
+        ...report.users.map((u) => [u.id, u] as const),
+      ]).values(),
+    ];
+  }, [report, editingReport, boot.users, teamId]);
   const assignableUsers = useMemo(
     () => (report ? users : users.filter((u) => isAssignable(u, teamId))),
     [report, users, teamId],
@@ -397,6 +414,42 @@ function Workspace({
     remoteEpoch = useRef(0),
     cellEventCursor = useRef<string | null>(null),
     viewSaver = useRef<null | (() => void)>(null);
+  const reportEditView = useRef<View | null>(null);
+  function editTasks() {
+    return reportRef.current
+      ? reportDraft.ref.current?.tasks || reportRef.current.tasks
+      : tasksRef.current;
+  }
+  function cancelReportEdit() {
+    if (reportDraft.saving) return;
+    reportDraft.cancel();
+    setEditor(null);
+    editorRef.current = null;
+    setRowTask(null);
+    setSelection(null);
+    setCopiedRow(null);
+    setError("");
+    if (reportEditView.current) {
+      viewRef.current = reportEditView.current;
+      setView(reportEditView.current);
+      reportEditView.current = null;
+    }
+  }
+  async function saveReportEdit() {
+    if (editorRef.current || !canManage) return;
+    setError("");
+    try {
+      const saved = await reportDraft.save();
+      if (!saved || reportRef.current?.id !== saved.id) return;
+      reportRef.current = saved;
+      setReport(saved);
+      reportEditView.current = null;
+      setCopiedRow(null);
+      setToast("보고본의 변경 내용을 저장했습니다.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   useLayoutEffect(() => {
     const grid =
       workspaceRef.current?.querySelector<HTMLElement>(".sheet-scroll");
@@ -409,14 +462,22 @@ function Workspace({
   }, [report?.id, ready]);
   function closeReport() {
     if (!reportRef.current) return;
+    if (reportDraft.ref.current) {
+      setError("보고본 수정을 저장하거나 취소한 뒤 보기를 종료하세요.");
+      return;
+    }
     reportRef.current = null;
     setReport(null);
     viewRef.current = lastView.current;
     setView(lastView.current);
+    setSelectedSavedFilterId(currentFilters.current.selectedId);
+    setFilterUpdateNotice(null);
     setSelection(null);
     setJump(null);
   }
   async function deleteReports(ids: string[]) {
+    if (reportDraft.ref.current)
+      throw new Error("보고본 수정을 마친 뒤 삭제하세요.");
     setDeletingReports(true);
     try {
       await api("/reports", {
@@ -630,6 +691,7 @@ function Workspace({
     setViewError("");
     setSelection(null);
     setReport(null);
+    reportDraft.cancel();
     reportScroll.current = null;
     setUndoStack([]);
     setRedoStack([]);
@@ -769,6 +831,7 @@ function Workspace({
         pendingRef.current ||
         failedRef.current ||
         editorRef.current ||
+        reportDraft.ref.current?.cursor ||
         filterSavePending.current ||
         viewTimer.current
       ) {
@@ -864,16 +927,15 @@ function Workspace({
     setViewError("");
     const next = { ...viewRef.current, ...part };
     if (
-      !report &&
       ("propertyFilters" in part || "propertyFilterModes" in part) &&
       propertyFilterKey(next) !== propertyFilterKey(viewRef.current)
     ) {
       const selected = savedFilters.find((v) => v.id === selectedSavedFilterId);
       const selectedId =
         updateSelectedFilter && selected?.canEdit ? selected.id : "";
-      if (selectedId && selected) updateSavedFilter(selected, next);
+      if (!report && selectedId && selected) updateSavedFilter(selected, next);
       setSelectedSavedFilterId(selectedId);
-      saveCurrentFilters(savedFilter(next, settings), selectedId);
+      if (!report) saveCurrentFilters(savedFilter(next, settings), selectedId);
     }
     viewRef.current = next;
     setView(next);
@@ -980,7 +1042,7 @@ function Workspace({
     [savedFilters, selectedSavedFilterId],
   );
   useEffect(() => {
-    if (ready && !report && selectedSavedFilterId && !activeSavedFilter)
+    if (ready && selectedSavedFilterId && !activeSavedFilter)
       rememberSelectedFilter("");
   }, [
     ready,
@@ -1038,7 +1100,7 @@ function Workspace({
     }
   }
   const allTasks = useMemo(() => {
-    if (report) return report.tasks;
+    if (report) return reportDraft.draft?.tasks || report.tasks;
     if (!pendingEdit) return tasks;
     const { point, value } = pendingEdit;
     // 편집창을 닫는 렌더에서 확정한 값을 바로 표시한다. 서버 버전과
@@ -1054,7 +1116,7 @@ function Workspace({
           }
         : task,
     );
-  }, [tasks, report, pendingEdit]);
+  }, [tasks, report, reportDraft.draft, pendingEdit]);
   // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
   const filterView = useMemo(
     () => view,
@@ -1156,6 +1218,35 @@ function Workspace({
       })),
     [weeks, fields, view.visibleFields, view.widths, view.frozenColumns],
   );
+  function retainReportSelection(source: Task[]) {
+    const currentView = viewRef.current;
+    const hidden = new Set(currentView.hiddenRows);
+    const visible = (
+      filteredTasks(source, currentView, settings, users) as Task[]
+    ).filter((task) => !hidden.has(task.id));
+    const taskIds = new Set(visible.map((task) => task.id));
+    const keys = new Set(columns.map((column) => column.key));
+    const available = (point: Point) =>
+      taskIds.has(point.taskId) && keys.has(point.key);
+    // 보고본 수정 진입·실행취소 후에도 서식을 계속 적용할 수 있게 한다.
+    if (
+      selection &&
+      [selection, ...(selection.areas || [])].every(
+        (area) => available(area.anchor) && available(area.focus),
+      )
+    )
+      return;
+    const point =
+      visible[0] && columns[0]
+        ? { taskId: visible[0].id, key: columns[0].key }
+        : null;
+    setSelection(point ? { anchor: point, focus: point } : null);
+    if (point)
+      setJump((previous) => ({
+        ...point,
+        id: Math.max(Date.now(), (previous?.id || 0) + 1),
+      }));
+  }
   // 서식 범위는 숨김 전 행·열 순서로 계산한다. 값 편집·복사는 보이는 셀만 사용한다.
   const range = rangeOf(selection, matchingTasks, columnOrder);
   const count = range
@@ -1178,7 +1269,11 @@ function Workspace({
             ? `${count.toLocaleString()}개 셀`
             : "";
   const editable =
-    !!selectedTask && canEdit(user, selectedTask) && !report && !failed;
+    !!selectedTask &&
+    canEdit(user, selectedTask) &&
+    (!report || (editingReport && canManage)) &&
+    !reportDraft.saving &&
+    !failed;
   function getPoints() {
     return selectedPoints(selection, visibleTasks, columns);
   }
@@ -1263,6 +1358,34 @@ function Workspace({
     mode: Failed["mode"] = "normal",
     buildFormat?: () => FormatChange,
   ) {
+    if (report) {
+      if (!editingReport || !canManage || reportDraft.saving || presentation)
+        return false;
+      try {
+        const changes = build();
+        const format = buildFormat?.();
+        if (changes.length) reportDraft.apply({ kind: "cells", changes });
+        if (format?.scopes)
+          reportDraft.apply({
+            kind: "format",
+            id: crypto.randomUUID(),
+            scopes: format.scopes,
+          });
+        if (editorRef.current) {
+          const task = editTasks().find(
+            (t) => t.id === editorRef.current!.task.id,
+          );
+          if (task) {
+            editorRef.current = { ...editorRef.current, task };
+            setEditor(editorRef.current);
+          }
+        }
+        return true;
+      } catch (e) {
+        setError((e as Error).message);
+        return false;
+      }
+    }
     if (report || presentation || failedRef.current) return false;
     if (pendingRef.current) {
       setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
@@ -1311,7 +1434,7 @@ function Workspace({
   ) {
     if (!points.length) return false;
     return submitChanges(() => {
-      const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
+      const tasksById = new Map(editTasks().map((t) => [t.id, t]));
       return points.map((p) => {
         const task = tasksById.get(p.taskId);
         if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
@@ -1364,7 +1487,7 @@ function Workspace({
       () => [],
       "normal",
       () => {
-        const tasks = tasksRef.current,
+        const tasks = editTasks(),
           ids = new Set(scopes.flatMap((s) => s.rows || []));
         const selected = tasks.filter((t) => ids.has(t.id));
         if (
@@ -1420,7 +1543,13 @@ function Workspace({
   }
   function beginEdit(p: Point, initial?: string) {
     const task = allTasks.find((t) => t.id === p.taskId);
-    if (!task || report || presentation || failed) return false;
+    if (
+      !task ||
+      (report && (!editingReport || !canManage || reportDraft.saving)) ||
+      presentation ||
+      failed
+    )
+      return false;
     if (pendingRef.current) {
       setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
       return false;
@@ -1492,6 +1621,20 @@ function Workspace({
     entry: TaskDeletion | TaskCreation,
     mode: Failed["mode"] = "normal",
   ) {
+    if (report) {
+      if (!editingReport || !canManage || reportDraft.saving || presentation)
+        return;
+      try {
+        reportDraft.apply({ kind: "delete", taskIds: entry.ids });
+        setSelection(null);
+        setToast(
+          "보고본에서 업무를 삭제했습니다. 실행취소로 되돌릴 수 있습니다.",
+        );
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      return;
+    }
     const submittedBoard = boardKey.current;
     return taskOperation(async () => {
       let nextEntry = entry;
@@ -1535,6 +1678,21 @@ function Workspace({
     });
   }
   function undo(redo = false) {
+    if (report) {
+      if (
+        editingReport &&
+        canManage &&
+        !reportDraft.saving &&
+        !presentation &&
+        !editorRef.current
+      ) {
+        reportDraft.undo(redo);
+        retainReportSelection(reportDraft.ref.current?.tasks || report.tasks);
+        setRowTask(null);
+        setError("");
+      }
+      return;
+    }
     const stack = redo ? redoStack : undoStack,
       entry = stack.at(-1);
     if (
@@ -1702,7 +1860,57 @@ function Workspace({
       setError((e as Error).message);
     }
   }
+  function addReportTask(
+    sourceId?: string,
+    target?: Task,
+    placement: "before" | "after" = "after",
+    copied?: ReturnType<typeof copyRowFormatting>,
+  ) {
+    if (
+      !editingReport ||
+      !canManage ||
+      reportDraft.saving ||
+      presentation ||
+      editorRef.current
+    )
+      return;
+    try {
+      const taskId = crypto.randomUUID();
+      const fields =
+        !sourceId && !copied && target && view.groupBy
+          ? { [view.groupBy]: value(target, view.groupBy) }
+          : {};
+      reportDraft.apply({
+        kind: "create",
+        taskId,
+        sourceId,
+        ...(copied ? { copiedRow: copied } : {}),
+        fields,
+        ...(target ? { insertAt: { taskId: target.id, placement } } : {}),
+      });
+      const task = editTasks().find((t) => t.id === taskId)!;
+      changeView({
+        propertyFilters: {},
+        propertyFilterModes: {},
+        sortKey: "",
+        sortDirection: "default",
+      });
+      const point = { taskId, key: "title" };
+      setSelection({ anchor: point, focus: point });
+      setJump({ ...point, id: Date.now(), preserveHorizontalScroll: true });
+      if (!sourceId && !copied) {
+        editorRef.current = { point, task };
+        setEditor(editorRef.current);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   async function addTask() {
+    if (report) {
+      addReportTask();
+      return;
+    }
     if (
       !ready ||
       !canAdd ||
@@ -1768,6 +1976,36 @@ function Workspace({
     targetId: string,
     placement: "before" | "after",
   ) {
+    if (report) {
+      if (!editingReport || !canManage || reportDraft.saving || presentation)
+        return;
+      try {
+        const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
+        const target = editTasks().find((task) => task.id === targetId);
+        if (
+          view.groupBy &&
+          ids.some((id) => {
+            const task = editTasks().find((t) => t.id === id);
+            return (
+              !task ||
+              !target ||
+              JSON.stringify(value(task, view.groupBy!)) !==
+                JSON.stringify(value(target, view.groupBy!))
+            );
+          })
+        )
+          throw new Error("같은 묶음 안에서 순서를 변경하세요.");
+        reportDraft.apply({
+          kind: "reorder",
+          taskIds: ids,
+          targetId,
+          placement,
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      return;
+    }
     const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
     const byId = new Map(tasksRef.current.map((t) => [t.id, t]));
     const moving = ids.map((id) => byId.get(id));
@@ -1813,6 +2051,45 @@ function Workspace({
     if (boardKey.current === submittedBoard) await refresh();
   }
   async function rowCommand(command: RowCommand, selected: Task) {
+    if (report) {
+      if (
+        !editingReport ||
+        !canManage ||
+        reportDraft.saving ||
+        presentation ||
+        editorRef.current
+      )
+        return;
+      const target = editTasks().find((task) => task.id === selected.id);
+      if (!target) return;
+      if (command === "copy") {
+        setCopiedRow({
+          task: structuredClone(target),
+          height: view.rowHeights[target.id],
+        });
+        setToast("보고본의 행을 복사했습니다.");
+      } else if (command === "delete") {
+        deleteTasks({
+          kind: "delete",
+          ids: [target.id],
+          title: String(value(target, "title")),
+        });
+      } else if (command === "paste") {
+        if (copiedRow)
+          addReportTask(
+            undefined,
+            target,
+            "after",
+            copyRowFormatting(copiedRow.task),
+          );
+      } else
+        addReportTask(
+          undefined,
+          target,
+          command === "insertBefore" ? "before" : "after",
+        );
+      return;
+    }
     if (
       pendingRef.current ||
       failedRef.current ||
@@ -1940,6 +2217,10 @@ function Workspace({
         return;
       }
       if (action === "duplicate") {
+        if (report) {
+          addReportTask(t.id, t);
+          return;
+        }
         const submittedBoard = boardKey.current;
         await taskOperation(async () => {
           const { task } = await send<{ task: Task }>("/tasks", {
@@ -1962,6 +2243,7 @@ function Workspace({
         return;
       }
       if (action === "carry") {
+        if (report) return;
         await send(
           `/tasks/${t.id}`,
           {
@@ -2126,7 +2408,7 @@ function Workspace({
             className="team-select"
             aria-label="팀 선택"
             value={teamId}
-            disabled={!!pending || !!failed}
+            disabled={!!pending || !!failed || editingReport}
             onChange={(e) => setTeamId(e.target.value)}
           >
             {boot.teams.map((t) => (
@@ -2135,32 +2417,51 @@ function Workspace({
               </option>
             ))}
           </Select>
-          <SaveStatus pending={pending > 0} failed={!!failed} />
+          {editingReport ? (
+            <span className="tag" role="status">
+              {reportDraft.saving
+                ? "보고본 저장 중…"
+                : reportDraft.dirty
+                  ? "보고본 변경사항 저장 전"
+                  : "보고본 수정 중"}
+            </span>
+          ) : (
+            <SaveStatus pending={pending > 0} failed={!!failed} />
+          )}
           <nav className="top-navigation" aria-label="주 메뉴">
-            <Button title="연간 업무" active={!report} onClick={closeReport}>
+            <Button
+              title="연간 업무"
+              active={!report}
+              onClick={closeReport}
+              disabled={editingReport}
+            >
               <CalendarDays size={15} />
               <span>연간 업무</span>
             </Button>
             <Button
-              title="보고서 스냅샷"
-              disabled={!ready || !!pending || !!failed || !!editor}
-              onClick={() => setPanel("reports")}
+              title="변경 이력"
+              onClick={() => setPanel("history")}
+              disabled={editingReport}
             >
-              <FileClock size={15} />
-              <span>보고서 스냅샷</span>
-            </Button>
-            <Button title="변경 이력" onClick={() => setPanel("history")}>
               <History size={15} />
               <span>변경 이력</span>
             </Button>
             {canManage && (
-              <Button title="휴지통" onClick={() => setPanel("trash")}>
+              <Button
+                title="휴지통"
+                onClick={() => setPanel("trash")}
+                disabled={editingReport}
+              >
                 <Trash2 size={15} />
                 <span>휴지통</span>
               </Button>
             )}
             {canOpenSettings && (
-              <Button title="설정" onClick={() => setPanel("settings")}>
+              <Button
+                title="설정"
+                onClick={() => setPanel("settings")}
+                disabled={editingReport}
+              >
                 <Settings size={15} />
                 <span>설정</span>
               </Button>
@@ -2170,9 +2471,14 @@ function Workspace({
             user={user}
             onProfile={() => setPanel("profile")}
             onPassword={() => setPanel("password")}
-            logoutDisabled={!!pending || !!failed}
+            logoutDisabled={!!pending || !!failed || editingReport}
             onLogout={async () => {
-              if (pendingRef.current || failedRef.current) return;
+              if (
+                pendingRef.current ||
+                failedRef.current ||
+                reportDraft.ref.current
+              )
+                return;
               flushView();
               await send("/auth/logout", {});
               onLogout();
@@ -2184,7 +2490,10 @@ function Workspace({
             <h1>{report ? report.name : "연간 업무"}</h1>
             <span className="year-badge">{viewYear}</span>
             {report && (
-              <span className="tag">읽기 전용 · {report.referenceDate}</span>
+              <span className="tag">
+                {editingReport ? "보고본 수정 중" : "읽기 전용"} ·{" "}
+                {report.referenceDate}
+              </span>
             )}
           </div>
           {!report && (
@@ -2234,7 +2543,7 @@ function Workspace({
               발표 모드
             </Button>
             {report ? (
-              <Button onClick={closeReport}>
+              <Button onClick={closeReport} disabled={editingReport}>
                 <ArrowLeft size={16} />
                 업무로 돌아가기
               </Button>
@@ -2254,77 +2563,95 @@ function Workspace({
             )}
           </div>
         </section>
-        <section className="board">
-          <fieldset className="view-controls" disabled={!ready}>
-            <div className="date-controls" aria-label="기간 설정">
-              <div className="year-control" role="group" aria-label="연도 선택">
-                <Button
-                  tooltip="이전 연도"
-                  disabled={
-                    !ready ||
-                    !!pending ||
-                    !!failed ||
-                    !!report ||
-                    !!editor ||
-                    (year <= 2000 && view.startMonth === 1)
-                  }
-                  onClick={() => moveYear(-1)}
+        <section
+          className="board"
+          data-view-mode={
+            ready
+              ? activeSavedFilter
+                ? "filter"
+                : report
+                  ? "snapshot"
+                  : undefined
+              : undefined
+          }
+        >
+          <fieldset
+            className="view-controls"
+            disabled={!ready || reportDraft.saving}
+          >
+            <div className="date-search-controls">
+              <div className="date-controls" aria-label="기간 설정">
+                <div
+                  className="year-control"
+                  role="group"
+                  aria-label="연도 선택"
                 >
-                  <ChevronLeft size={15} />
-                </Button>
-                <Button
-                  className="year-value"
-                  tooltip={
-                    view.startMonth === 1
-                      ? `${viewYear}년 전체 선택`
-                      : `${viewYear}~${viewYear + 1}년 표시 기간 전체 선택`
+                  <Button
+                    tooltip="이전 연도"
+                    disabled={
+                      !ready ||
+                      !!pending ||
+                      !!failed ||
+                      !!report ||
+                      !!editor ||
+                      (year <= 2000 && view.startMonth === 1)
+                    }
+                    onClick={() => moveYear(-1)}
+                  >
+                    <ChevronLeft size={15} />
+                  </Button>
+                  <Button
+                    className="year-value"
+                    tooltip={
+                      view.startMonth === 1
+                        ? `${viewYear}년 전체 선택`
+                        : `${viewYear}~${viewYear + 1}년 표시 기간 전체 선택`
+                    }
+                    aria-pressed={weeks.length === yearWeekCount}
+                    onClick={() => {
+                      changeView({
+                        fromMonth: 1,
+                        toMonth: 12,
+                        fromWeek: "",
+                        toWeek: "",
+                        hiddenWeeks: [],
+                        collapsedMonths: [],
+                      });
+                      setJump({ key: null, id: Date.now() });
+                    }}
+                  >
+                    {viewYear}
+                    {view.startMonth > 1 && <span>~{viewYear + 1}</span>}
+                  </Button>
+                  <Button
+                    tooltip="다음 연도"
+                    disabled={
+                      !ready ||
+                      !!pending ||
+                      !!failed ||
+                      !!report ||
+                      !!editor ||
+                      year >= 2100
+                    }
+                    onClick={() => moveYear(1)}
+                  >
+                    <ChevronRight size={15} />
+                  </Button>
+                </div>
+                <PeriodPicker
+                  year={viewYear}
+                  view={view}
+                  disabled={!ready}
+                  navigationDisabled={
+                    !!pending || !!failed || !!report || !!editor
                   }
-                  aria-pressed={weeks.length === yearWeekCount}
-                  onClick={() => {
-                    changeView({
-                      fromMonth: 1,
-                      toMonth: 12,
-                      fromWeek: "",
-                      toWeek: "",
-                      hiddenWeeks: [],
-                      collapsedMonths: [],
-                    });
+                  onNavigate={moveCalendar}
+                  onChange={(range) => {
+                    changeView(range);
                     setJump({ key: null, id: Date.now() });
                   }}
-                >
-                  {viewYear}
-                  {view.startMonth > 1 && <span>~{viewYear + 1}</span>}
-                </Button>
-                <Button
-                  tooltip="다음 연도"
-                  disabled={
-                    !ready ||
-                    !!pending ||
-                    !!failed ||
-                    !!report ||
-                    !!editor ||
-                    year >= 2100
-                  }
-                  onClick={() => moveYear(1)}
-                >
-                  <ChevronRight size={15} />
-                </Button>
+                />
               </div>
-              <PeriodPicker
-                year={viewYear}
-                view={view}
-                disabled={!ready}
-                navigationDisabled={
-                  !!pending || !!failed || !!report || !!editor
-                }
-                onNavigate={moveCalendar}
-                onChange={(range) => {
-                  changeView(range);
-                  setJump({ key: null, id: Date.now() });
-                }}
-              />
-            </div>
-            <div className="view-bar" aria-label="보기 및 필터">
               <FindBar
                 key={`${teamId}:${year}:${report?.id || "live"}`}
                 tasks={matchingTasks}
@@ -2333,130 +2660,173 @@ function Workspace({
                 users={users}
                 onNavigate={navigateToSearch}
               />
-              <div className="view-bar-spacer" />
-              <div className="popover-root" ref={viewMenuRef}>
-                <div className="saved-filter-control">
-                  <button
-                    type="button"
-                    className="button saved-filter-trigger"
-                    aria-label="저장된 필터"
-                    aria-expanded={viewMenu}
-                    onClick={() => {
-                      setViewMenu(!viewMenu);
-                      refreshFilters().catch((e) => setError(e.message));
-                    }}
+            </div>
+            <div className="view-bar" aria-label="보기 및 필터">
+              <div className="view-mode-controls">
+                <Button
+                  className="report-trigger"
+                  title="보고서 스냅샷"
+                  disabled={
+                    !ready || !!pending || !!failed || !!editor || editingReport
+                  }
+                  onClick={() => setPanel("reports")}
+                >
+                  <FileClock size={14} aria-hidden="true" />
+                  <span>보고서 스냅샷</span>
+                </Button>
+                <div className="popover-root" ref={viewMenuRef}>
+                  <div
+                    className="saved-filter-control"
+                    data-tooltip={
+                      report
+                        ? "스냅샷 보기를 종료하면 저장된 필터를 사용할 수 있습니다."
+                        : undefined
+                    }
                   >
-                    <Bookmark size={14} aria-hidden="true" />
-                    <span>저장된 필터</span>
-                    <ChevronDown size={12} aria-hidden="true" />
-                  </button>
-                </div>
-                {viewMenu && (
-                  <div className="popover saved-views">
-                    <div className="popover-title">
-                      <strong>저장된 필터</strong>
-                      <Button
-                        title="저장된 필터 닫기"
-                        onClick={() => setViewMenu(false)}
-                      >
-                        <X size={14} />
-                      </Button>
-                    </div>
-                    {savedFilters.map((v) => (
-                      <div key={v.id}>
-                        <button
-                          className="saved-filter-choice"
-                          aria-label={v.name}
-                          aria-description={
-                            v.scope === "team" ? "팀 공용" : "개인용"
-                          }
-                          aria-pressed={activeSavedFilter?.id === v.id}
-                          onClick={() => {
-                            const filters = savedFilter(v.data, settings);
-                            changeView({
-                              propertyFilters: filters.propertyFilters,
-                              propertyFilterModes: filters.propertyFilterModes,
-                            });
-                            rememberSelectedFilter(v.id);
-                            setViewMenu(false);
-                          }}
-                        >
-                          <span className="saved-filter-name">{v.name}</span>
-                          <span className={`filter-scope-tag ${v.scope}`}>
-                            {v.scope === "team" ? (
-                              <Users size={12} aria-hidden="true" />
-                            ) : (
-                              <UserRound size={12} aria-hidden="true" />
-                            )}
-                            {v.scope === "team" ? "팀 공용" : "개인용"}
-                          </span>
-                          {activeSavedFilter?.id === v.id && (
-                            <Check size={14} aria-hidden="true" />
-                          )}
-                        </button>
-                      </div>
-                    ))}
-                    <Button
-                      className="saved-filter-save"
+                    <button
+                      type="button"
+                      className="button saved-filter-trigger"
+                      aria-label="저장된 필터"
+                      aria-expanded={viewMenu}
+                      disabled={!!report}
                       onClick={() => {
-                        setViewName("");
-                        setFilterScope("personal");
-                        setFilterNameError("");
-                        setFilterNameDialog({});
-                        setViewMenu(false);
+                        setViewMenu(!viewMenu);
+                        refreshFilters().catch((e) => setError(e.message));
                       }}
                     >
-                      <Bookmark size={14} />
-                      현재 필터 저장
-                    </Button>
+                      <Bookmark size={14} aria-hidden="true" />
+                      <span>저장된 필터</span>
+                      <ChevronDown size={12} aria-hidden="true" />
+                    </button>
                   </div>
-                )}
+                  {viewMenu && !report && (
+                    <div className="popover saved-views">
+                      <div className="popover-title">
+                        <strong>저장된 필터</strong>
+                        <Button
+                          title="저장된 필터 닫기"
+                          onClick={() => setViewMenu(false)}
+                        >
+                          <X size={14} />
+                        </Button>
+                      </div>
+                      {savedFilters.map((v) => (
+                        <div key={v.id}>
+                          <button
+                            className="saved-filter-choice"
+                            aria-label={v.name}
+                            aria-description={
+                              v.scope === "team" ? "팀 공용" : "개인용"
+                            }
+                            aria-pressed={activeSavedFilter?.id === v.id}
+                            onClick={() => {
+                              const filters = savedFilter(v.data, settings);
+                              changeView({
+                                propertyFilters: filters.propertyFilters,
+                                propertyFilterModes:
+                                  filters.propertyFilterModes,
+                              });
+                              rememberSelectedFilter(v.id);
+                              setViewMenu(false);
+                            }}
+                          >
+                            <span className="saved-filter-name">{v.name}</span>
+                            <span className={`filter-scope-tag ${v.scope}`}>
+                              {v.scope === "team" ? (
+                                <Users size={12} aria-hidden="true" />
+                              ) : (
+                                <UserRound size={12} aria-hidden="true" />
+                              )}
+                              {v.scope === "team" ? "팀 공용" : "개인용"}
+                            </span>
+                            {activeSavedFilter?.id === v.id && (
+                              <Check size={14} aria-hidden="true" />
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                      <Button
+                        className="saved-filter-save"
+                        onClick={() => {
+                          setViewName("");
+                          setFilterScope("personal");
+                          setFilterNameError("");
+                          setFilterNameDialog({});
+                          setViewMenu(false);
+                        }}
+                      >
+                        <Bookmark size={14} />
+                        현재 필터 저장
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </fieldset>
-          <Toolbar
-            leadingAction={
-              !report && canAdd ? (
+          {(!report || editingReport) && (
+            <Toolbar
+              leadingAction={
+                (!report ? canAdd : editingReport && canManage) ? (
+                  <Button
+                    className="primary toolbar-add-task"
+                    onClick={addTask}
+                    disabled={
+                      !ready || !!pending || !!failed || reportDraft.saving
+                    }
+                  >
+                    <Plus size={17} />
+                    {addTaskLabel}
+                  </Button>
+                ) : undefined
+              }
+              trailingAction={
                 <Button
-                  className="primary toolbar-add-task"
-                  onClick={addTask}
-                  disabled={!ready || !!pending || !!failed}
+                  tooltip="모든 필터 초기화"
+                  disabled={
+                    !ready ||
+                    !!report ||
+                    !!activeSavedFilter ||
+                    !Object.values(view.propertyFilters || {}).some(
+                      (values) => values.length > 0,
+                    )
+                  }
+                  onClick={() =>
+                    changeView({ propertyFilters: {}, propertyFilterModes: {} })
+                  }
                 >
-                  <Plus size={17} />
-                  업무 추가
+                  <FunnelX size={16} aria-hidden="true" />
                 </Button>
-              ) : undefined
-            }
-            trailingAction={
-              <Button
-                tooltip="모든 필터 초기화"
-                disabled={
-                  !ready ||
-                  !!report ||
-                  !!activeSavedFilter ||
-                  !Object.values(view.propertyFilters || {}).some(
-                    (values) => values.length > 0,
-                  )
-                }
-                onClick={() =>
-                  changeView({ propertyFilters: {}, propertyFilterModes: {} })
-                }
-              >
-                <FunnelX size={16} aria-hidden="true" />
-              </Button>
-            }
-            style={selectedCell?.style || {}}
-            disabled={!editable || !!pending}
-            onStyle={(s) => applyStyle(s)}
-            onBorder={applyBorder}
-            onUndo={() => undo()}
-            onRedo={() => undo(true)}
-            canUndo={!!undoStack.length && !pending && !report && !failed}
-            canRedo={!!redoStack.length && !pending && !report && !failed}
-            selectionLabel={selectionLabel}
-            zoom={gridZoom}
-            onZoom={setGridZoom}
-          />
+              }
+              style={selectedCell?.style || {}}
+              disabled={!editable || !!pending}
+              onStyle={(s) => applyStyle(s)}
+              onBorder={applyBorder}
+              onUndo={() => undo()}
+              onRedo={() => undo(true)}
+              canUndo={
+                report
+                  ? editingReport &&
+                    canManage &&
+                    reportDraft.canUndo &&
+                    !reportDraft.saving &&
+                    !editor
+                  : !!undoStack.length && !pending && !failed
+              }
+              canRedo={
+                report
+                  ? editingReport &&
+                    canManage &&
+                    reportDraft.canRedo &&
+                    !reportDraft.saving &&
+                    !editor
+                  : !!redoStack.length && !pending && !failed
+              }
+              selectionLabel={selectionLabel}
+              zoom={gridZoom}
+              onZoom={setGridZoom}
+            />
+          )}
           {ready && report && (
             <section
               className="active-filter-banner active-report-banner"
@@ -2465,13 +2835,59 @@ function Workspace({
               <FileClock size={17} aria-hidden="true" />
               <span className="active-filter-heading">
                 <strong title={report.name}>{report.name}</strong>
+                {editingReport && (
+                  <span className="report-edit-note">
+                    일정·서식 변경은 이 보고본에만 저장됩니다.
+                  </span>
+                )}
               </span>
               <div className="active-filter-actions">
+                {canManage &&
+                  (editingReport ? (
+                    <>
+                      <Button
+                        className="report-edit-save"
+                        onClick={saveReportEdit}
+                        disabled={reportDraft.saving}
+                      >
+                        {reportDraft.saving ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <Check size={14} />
+                        )}
+                        변경 저장
+                      </Button>
+                      <Button
+                        onClick={cancelReportEdit}
+                        disabled={reportDraft.saving}
+                      >
+                        수정 취소
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        reportEditView.current = viewRef.current;
+                        reportDraft.begin(report);
+                        retainReportSelection(report.tasks);
+                        setCopiedRow(null);
+                        setUndoToast(null);
+                        setRowTask(null);
+                        setError("");
+                      }}
+                      disabled={
+                        !!pending || !!failed || !!editor || deletingReports
+                      }
+                    >
+                      <Pencil size={14} />
+                      스냅샷 수정
+                    </Button>
+                  ))}
                 {canManage && (
                   <Button
                     className="active-filter-delete"
                     title="스냅샷 삭제"
-                    disabled={deletingReports}
+                    disabled={deletingReports || editingReport}
                     onClick={async () => {
                       if (
                         !confirm(
@@ -2494,13 +2910,14 @@ function Workspace({
                   className="active-filter-exit"
                   title="스냅샷 보기 종료"
                   onClick={closeReport}
+                  disabled={editingReport}
                 >
                   <X size={17} />
                 </Button>
               </div>
             </section>
           )}
-          {ready && !report && activeSavedFilter && (
+          {ready && activeSavedFilter && (
             <section
               className="active-filter-banner active-saved-filter-banner"
               aria-label="필터 보기"
@@ -2521,7 +2938,7 @@ function Workspace({
                 </span>
               </span>
               <ActiveFilterConditions
-                key={`${teamId}:${activeSavedFilter.id}`}
+                key={`${teamId}:${report?.id || "live"}:${activeSavedFilter.id}`}
                 properties={properties}
                 tasks={allTasks}
                 users={assignableUsers}
@@ -2614,7 +3031,8 @@ function Workspace({
               user={user}
               users={users}
               assignableUsers={assignableUsers}
-              canAdd={canAdd}
+              canAdd={report ? editingReport && canManage : canAdd}
+              addTaskLabel={addTaskLabel}
               canEditPeople={canManage}
               selection={selection}
               settings={settings}
@@ -2628,9 +3046,7 @@ function Workspace({
                   editing.point.key === point.key
                     ? cell(editing.task, point.key)
                     : undefined;
-                const task = tasksRef.current.find(
-                  (t) => t.id === point.taskId,
-                );
+                const task = editTasks().find((t) => t.id === point.taskId);
                 if (
                   (baseline &&
                     JSON.stringify(baseline.value) === JSON.stringify(v)) ||
@@ -2660,7 +3076,8 @@ function Workspace({
                   }))
                 )
                   return false;
-                setPendingEdit({ point, value: v });
+                if (!report) setPendingEdit({ point, value: v });
+                editorRef.current = null;
                 setEditor(null);
                 return true;
               }}
@@ -2671,12 +3088,17 @@ function Workspace({
               onRowMenu={(t) => setRowTask(t)}
               onRowCommand={rowCommand}
               canPasteRow={copiedRow?.task.teamId === teamId}
-              rowActionsDisabled={!!pending || !!editor}
+              rowActionsDisabled={!!pending || !!editor || reportDraft.saving}
               onReorder={reorderTask}
               onView={(part) => changeView(part, true)}
               onAdd={addTask}
               onError={setError}
-              readOnly={!!report || !!failed || presentation}
+              readOnly={
+                (!!report && (!editingReport || !canManage)) ||
+                reportDraft.saving ||
+                !!failed ||
+                presentation
+              }
               presentation={presentation}
               jump={jump}
             />
@@ -2704,7 +3126,10 @@ function Workspace({
           task={allTasks.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
           user={user}
-          readOnly={!!report}
+          readOnly={
+            !!report && (!editingReport || !canManage || reportDraft.saving)
+          }
+          reportMode={!!report}
           users={users}
           onClose={() => setRowTask(null)}
           onEdit={(p) => {
@@ -2760,6 +3185,9 @@ function Workspace({
           canSave={!report && ready && !pending && !failed && !editor}
           onClose={() => setPanel("")}
           onOpen={(r) => {
+            if (reportDraft.ref.current) return;
+            setCopiedRow(null);
+            setRowTask(null);
             if (!reportRef.current) {
               lastView.current = viewRef.current;
               const grid = workspaceRef.current?.querySelector(".sheet-scroll");
@@ -2771,10 +3199,16 @@ function Workspace({
             flushView();
             setViewMenu(false);
             setError("");
+            setFilterUpdateNotice(null);
             setJump(null);
+            setSelectedSavedFilterId("");
+            const snapshotSettings = r.settings || team.settings;
+            // 업무 화면의 필터는 보관하고 스냅샷에 저장된 보기부터 표시한다.
+            const next = normalizeView(r.view, snapshotSettings) as View;
             reportRef.current = r;
             setReport(r);
-            setView(normalizeView(r.view, r.settings || team.settings) as View);
+            viewRef.current = next;
+            setView(next);
             setSelection(null);
           }}
           onDelete={deleteReports}

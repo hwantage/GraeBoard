@@ -1,5 +1,5 @@
 /** @typedef {"mint" | "sky" | "lavender" | "rose" | "sand"} ThemeId */
-/** @type {{id: ThemeId, name: string, accent: string, strong: string, pastel: string, soft: string, surface: string, border: string}[]} */
+/** @type {{id: ThemeId, name: string, accent: string, strong: string, pastel: string, soft: string, surface: string, border: string, filter: string, snapshot: string}[]} */
 export const THEMES = [
   {
     id: "mint",
@@ -10,6 +10,8 @@ export const THEMES = [
     soft: "#e7f2ee",
     surface: "#f0f4f2",
     border: "#bdd4c9",
+    filter: "#94621f",
+    snapshot: "#66539c",
   },
   {
     id: "sky",
@@ -20,6 +22,8 @@ export const THEMES = [
     soft: "#edf3fa",
     surface: "#f1f5fa",
     border: "#bccfe2",
+    filter: "#94621f",
+    snapshot: "#874d78",
   },
   {
     id: "lavender",
@@ -30,6 +34,8 @@ export const THEMES = [
     soft: "#f3eff9",
     surface: "#f5f2f8",
     border: "#d0c4e2",
+    filter: "#28776b",
+    snapshot: "#946039",
   },
   {
     id: "rose",
@@ -40,6 +46,8 @@ export const THEMES = [
     soft: "#faeff3",
     surface: "#faf3f5",
     border: "#e2c5d0",
+    filter: "#2b7181",
+    snapshot: "#565d9c",
   },
   {
     id: "sand",
@@ -50,6 +58,8 @@ export const THEMES = [
     soft: "#f6f1e7",
     surface: "#f8f5ef",
     border: "#daccb3",
+    filter: "#386c94",
+    snapshot: "#825879",
   },
 ];
 export const THEME_IDS = THEMES.map((theme) => theme.id);
@@ -65,5 +75,7 @@ export function themeVariables(id) {
     "--accent-soft": theme.soft,
     "--accent-surface": theme.surface,
     "--accent-border": theme.border,
+    "--filter-accent": theme.filter,
+    "--snapshot-accent": theme.snapshot,
   };
 }

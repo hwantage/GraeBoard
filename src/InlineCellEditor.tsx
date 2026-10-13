@@ -48,6 +48,7 @@ export default function InlineCellEditor({
   editor,
   task,
   users,
+  memberOptions,
   settings,
   prepared = false,
   onStart,
@@ -57,6 +58,7 @@ export default function InlineCellEditor({
   editor: EditorState;
   task: Task;
   users: User[];
+  memberOptions?: User[];
   settings: Settings;
   prepared?: boolean;
   onStart?: () => boolean;
@@ -245,12 +247,12 @@ export default function InlineCellEditor({
           .filter((v) => !v.archived)
           .map((v) => ({ value: v.id, label: v.label }))
       : property?.kind === "member"
-        ? users
-            .filter((u) => isAssignable(u, task.teamId))
-            .map((u) => ({
-              value: u.id,
-              label: `${u.name}${u.active ? "" : " (비활성)"}`,
-            }))
+        ? (
+            memberOptions || users.filter((u) => isAssignable(u, task.teamId))
+          ).map((u) => ({
+            value: u.id,
+            label: `${u.name}${u.active === false ? " (비활성)" : ""}`,
+          }))
         : null;
   return (
     <div

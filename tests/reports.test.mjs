@@ -16,6 +16,7 @@ import {
   DEFAULT_SETTINGS,
   defaultView,
   weeksForYear,
+  cell,
 } from "../shared/domain.js";
 
 async function fixture(t) {
@@ -204,6 +205,325 @@ function storedReport(db, id) {
   );
   return parseCompact(plain.toString("utf8"));
 }
+
+const reportCell = (taskId, key, value, style) => ({
+  kind: "cells",
+  at: new Date().toISOString(),
+  changes: [
+    {
+      taskId,
+      key,
+      expectedVersion: 0,
+      ...(value === undefined ? {} : { value }),
+      ...(style ? { style } : {}),
+    },
+  ],
+});
+const editReport = (f, report, operations) =>
+  f.request(`/reports/${report.id}`, {
+    method: "PATCH",
+    body: { operationId: randomUUID(), revision: report.revision, operations },
+  });
+
+test("보고본 편집은 삭제·추가·종류·선택값이 바뀐 원본 속성과 삭제된 원본 업무에 영향받지 않는다", async (t) => {
+  const f = await fixture(t);
+  let settings = parseCompact(
+    f.db.prepare("SELECT settings FROM teams WHERE id=?").get(f.teamId)
+      .settings,
+  );
+  settings.properties.push(
+    {
+      id: "legacy",
+      name: "과거 메모",
+      kind: "text",
+      display: "text",
+      values: [],
+    },
+    { id: "amount", name: "숫자", kind: "number", display: "text", values: [] },
+    { id: "deadline", name: "기한", kind: "date", display: "text", values: [] },
+    {
+      id: "priority",
+      name: "당시 선택값",
+      kind: "option",
+      display: "text",
+      values: [
+        {
+          id: "old",
+          label: "기존 값",
+          backgroundColor: "#ffffff",
+          dotColor: "#000000",
+          emoji: "",
+        },
+      ],
+    },
+  );
+  const configured = await f.request(`/teams/${f.teamId}/settings`, {
+    method: "PATCH",
+    body: settings,
+  });
+  assert.equal(configured.status, 200, JSON.stringify(configured.data));
+  settings = configured.data.settings;
+  const { data: saved } = await f.save();
+  const report = (await f.request(`/reports/${saved.id}`)).data;
+  const otherId = (await f.save()).data.id;
+  const other = (await f.request(`/reports/${otherId}`)).data;
+  settings.properties = settings.properties.filter((p) => p.id !== "legacy");
+  settings.properties.find((p) => p.id === "amount").kind = "text";
+  settings.properties.find((p) => p.id === "priority").values = [];
+  settings.properties.push({
+    id: "new_field",
+    name: "새 속성",
+    kind: "text",
+    display: "text",
+    values: [],
+  });
+  const changed = await f.request(`/teams/${f.teamId}/settings`, {
+    method: "PATCH",
+    body: settings,
+  });
+  assert.equal(changed.status, 200, JSON.stringify(changed.data));
+  const source = getTask(f.db, f.task.id);
+  assert.equal(
+    (
+      await f.request(`/tasks/${source.id}`, {
+        method: "DELETE",
+        body: { updatedAt: source.updatedAt },
+      })
+    ).status,
+    200,
+  );
+  const live = getTask(f.db, source.id);
+  const taskId = randomUUID();
+  const result = await editReport(f, report, [
+    reportCell(source.id, "legacy", "보고본에서만 수정"),
+    reportCell(source.id, "amount", 42),
+    reportCell(source.id, "deadline", "2026-12-31"),
+    reportCell(source.id, "priority", "old"),
+    {
+      kind: "create",
+      at: now(),
+      taskId,
+      fields: {
+        title: "보고용 추가 업무",
+        amount: 77,
+        owner: f.people.unused.id,
+      },
+    },
+  ]);
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.notEqual(result.data.revision, report.revision);
+  assert.deepEqual(result.data.settings, report.settings);
+  assert.deepEqual(result.data.view, report.view);
+  assert.equal(result.data.tasks[0].cells.legacy.value, "보고본에서만 수정");
+  assert.equal(result.data.tasks[0].cells.amount.value, 42);
+  assert.equal(result.data.tasks[0].cells.priority.value, "old");
+  assert.equal(result.data.tasks[1].cells.title.value, "보고용 추가 업무");
+  assert.equal(
+    result.data.users.find((u) => u.id === f.people.unused.id).name,
+    f.people.unused.name,
+  );
+  assert.deepEqual(getTask(f.db, source.id), live);
+  assert.equal(getTask(f.db, taskId), null);
+  assert.deepEqual((await f.request(`/reports/${otherId}`)).data, other);
+  const deleted = await editReport(f, result.data, [
+    { kind: "delete", at: now(), taskIds: [source.id] },
+  ]);
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(
+    deleted.data.tasks.map((task) => task.id),
+    [taskId],
+  );
+  await f.restart();
+  assert.deepEqual(
+    (await f.request(`/reports/${saved.id}`)).data,
+    deleted.data,
+  );
+  assert.deepEqual(getTask(f.db, source.id), live);
+});
+
+test("보고본 편집은 현재 팀의 새 속성·잘못된 자료형·다른 업무 ID를 거절하고 전체 저장을 취소한다", async (t) => {
+  const f = await fixture(t);
+  const saved = await f.save();
+  const report = (await f.request(`/reports/${saved.data.id}`)).data;
+  const task = getTask(f.db, f.task.id);
+  for (const invalid of [
+    reportCell(task.id, "new_field", "현재에만 있는 속성"),
+    reportCell(task.id, "title", 12),
+    reportCell(task.id, "status", "존재하지 않는 값"),
+    reportCell(task.id, "owner", randomUUID()),
+    reportCell(randomUUID(), "title", "다른 업무"),
+    { kind: "delete", at: now(), taskIds: [randomUUID()] },
+    {
+      kind: "create",
+      at: now(),
+      taskId: randomUUID(),
+      sourceId: randomUUID(),
+      fields: {},
+    },
+    {
+      kind: "format",
+      id: randomUUID(),
+      at: now(),
+      scopes: [{ rows: [task.id], keys: ["new_field"], style: { bold: true } }],
+    },
+  ]) {
+    const result = await editReport(f, report, [
+      reportCell(task.id, "title", "부분 저장되면 안 됨"),
+      invalid,
+    ]);
+    assert.equal(result.status, 400, JSON.stringify(result));
+    assert.deepEqual((await f.request(`/reports/${report.id}`)).data, report);
+    assert.deepEqual(getTask(f.db, task.id), task);
+  }
+});
+
+test("보고본은 팀장만 편집하고 오래된 수정본은 덮어쓰지 않는다", async (t) => {
+  const f = await fixture(t);
+  const saved = await f.save();
+  const report = (await f.request(`/reports/${saved.data.id}`)).data;
+  const changes = [reportCell(f.task.id, "title", "먼저 저장")];
+  f.db
+    .prepare("UPDATE users SET system_role='user' WHERE id=?")
+    .run(f.people.admin.id);
+  for (const role of ["member", "viewer"]) {
+    f.db
+      .prepare("UPDATE memberships SET role=? WHERE user_id=? AND team_id=?")
+      .run(role, f.people.admin.id, f.teamId);
+    assert.equal((await editReport(f, report, changes)).status, 403);
+  }
+  f.db
+    .prepare("UPDATE memberships SET role='lead' WHERE user_id=? AND team_id=?")
+    .run(f.people.admin.id, f.teamId);
+  const first = await editReport(f, report, changes);
+  assert.equal(first.status, 200, JSON.stringify(first.data));
+  const stale = await editReport(f, report, [
+    reportCell(f.task.id, "title", "오래된 화면"),
+  ]);
+  assert.equal(stale.status, 409);
+  assert.deepEqual((await f.request(`/reports/${report.id}`)).data, first.data);
+  f.db
+    .prepare("DELETE FROM memberships WHERE user_id=? AND team_id=?")
+    .run(f.people.admin.id, f.teamId);
+  assert.equal((await editReport(f, first.data, changes)).status, 403);
+});
+
+test("보고본의 행 복제·순서·공통 서식·셀 서식과 과거 팀원은 원본에 쓰지 않고 저장한다", async (t) => {
+  const f = await fixture(t);
+  const saved = await f.save();
+  const report = (await f.request(`/reports/${saved.data.id}`)).data;
+  const source = getTask(f.db, f.task.id);
+  const copyId = randomUUID();
+  const result = await editReport(f, report, [
+    {
+      kind: "create",
+      at: now(),
+      taskId: copyId,
+      sourceId: source.id,
+      fields: {},
+      insertAt: { taskId: source.id, placement: "after" },
+    },
+    {
+      kind: "format",
+      id: randomUUID(),
+      at: now(),
+      scopes: [
+        {
+          rows: [copyId],
+          keys: null,
+          style: { fontSize: 18, color: "#123456" },
+        },
+      ],
+    },
+    reportCell(copyId, "title", "복제한 보고용 업무", {
+      bold: true,
+      color: "#abcdef",
+    }),
+    reportCell(copyId, "owner", f.people.former.id),
+    {
+      kind: "reorder",
+      at: now(),
+      taskIds: [copyId],
+      targetId: source.id,
+      placement: "before",
+    },
+  ]);
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  const copy = result.data.tasks.find((task) => task.id === copyId);
+  assert.equal(cell(copy, "title").style.bold, true);
+  assert.equal(cell(copy, "title").style.fontSize, 18);
+  assert.equal(cell(copy, "title").style.color, "#abcdef");
+  assert.equal(cell(copy, weeksForYear(2026)[0].key).style.color, "#123456");
+  assert.equal(copy.cells.owner.value, f.people.former.id);
+  assert(
+    copy.position <
+      result.data.tasks.find((task) => task.id === source.id).position,
+  );
+  assert.deepEqual(getTask(f.db, source.id), source);
+  assert.equal(
+    f.db.prepare("SELECT COUNT(*) AS count FROM tasks").get().count,
+    1,
+  );
+});
+
+test("보고본 저장 응답 유실 후 같은 요청을 재시도해도 행과 이력이 중복되지 않는다", async (t) => {
+  const f = await fixture(t);
+  const saved = await f.save();
+  const report = (await f.request(`/reports/${saved.data.id}`)).data;
+  const body = {
+    operationId: randomUUID(),
+    revision: report.revision,
+    operations: [
+      {
+        kind: "create",
+        taskId: randomUUID(),
+        at: now(),
+        fields: { title: "응답 유실 재시도" },
+      },
+    ],
+  };
+  const first = await f.request(`/reports/${report.id}`, {
+    method: "PATCH",
+    body,
+  });
+  assert.equal(first.status, 200);
+  await f.restart();
+  const retry = await f.request(`/reports/${report.id}`, {
+    method: "PATCH",
+    body,
+  });
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.data, first.data);
+  assert.equal(
+    f.db
+      .prepare("SELECT COUNT(*) AS count FROM audit WHERE action='report-edit'")
+      .get().count,
+    1,
+  );
+  const altered = structuredClone(body);
+  altered.operations[0].fields.title = "다른 요청 내용";
+  assert.equal(
+    (
+      await f.request(`/reports/${report.id}`, {
+        method: "PATCH",
+        body: altered,
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await editReport(f, first.data, [
+        reportCell(f.task.id, "title", "이후 저장"),
+      ])
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.request(`/reports/${report.id}`, { method: "PATCH", body }))
+      .status,
+    409,
+  );
+});
 
 test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·원본 변경 뒤에도 내용과 서식을 보존한다", async (t) => {
   const f = await fixture(t);

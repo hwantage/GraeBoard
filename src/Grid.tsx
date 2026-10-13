@@ -177,6 +177,7 @@ export default function Grid({
   users,
   assignableUsers,
   canAdd,
+  addTaskLabel = "업무 추가",
   canEditPeople,
   selection,
   settings,
@@ -211,6 +212,7 @@ export default function Grid({
   users: User[];
   assignableUsers: User[];
   canAdd: boolean;
+  addTaskLabel?: string;
   canEditPeople: boolean;
   selection: Selection | null;
   settings: Settings;
@@ -1324,6 +1326,7 @@ export default function Grid({
       onSelect({ ...selection, focus: point });
     },
     edit: (point, initial) => onEdit(point, initial),
+    memberOptions: () => assignableUsers,
     rowMenu: (task) => onRowMenu(task),
     finish,
     cancelEdit() {
@@ -1663,7 +1666,7 @@ export default function Grid({
               !readOnly && canAdd ? (
                 <Button className="primary" onClick={onAdd}>
                   <Plus size={16} />
-                  업무 추가
+                  {addTaskLabel}
                 </Button>
               ) : undefined
             }
@@ -1680,7 +1683,7 @@ export default function Grid({
         {!!tasks.length && !readOnly && canAdd && (
           <Button className="primary add-row" onClick={onAdd}>
             <Plus size={17} />
-            업무 추가
+            {addTaskLabel}
           </Button>
         )}
       </div>
@@ -1766,6 +1769,7 @@ type GridActions = {
   cellPointerDown(e: React.PointerEvent, point: Point): void;
   dragSelect(e: React.PointerEvent, point: Point): void;
   edit(point: Point, initial?: string): boolean;
+  memberOptions(): User[];
   rowMenu(task: Task): void;
   finish(value: Cell["value"], move?: EditMove): boolean | undefined;
   cancelEdit(): void;
@@ -2138,7 +2142,11 @@ const GridCell = memo(function GridCell({
   // 빈 셀은 안쪽 요소를 만들지 않는다 (일정 열 대부분이 빈 셀).
   const textParts = text ? textLinks(text) : [];
   const renderedText = text ? (
-    <span className="cell-text">
+    // 오버플로우 표시 영역은 절대 위치여서 셀의 글자 장식이 전파되지 않는다.
+    <span
+      className="cell-text"
+      style={textDecoration ? { textDecoration } : undefined}
+    >
       {textParts.some((part) => part.href) ? (
         <span className="cell-linked-text">
           {textParts.map((part, index) =>
@@ -2234,6 +2242,7 @@ const GridCell = memo(function GridCell({
           onStart={() => actions.edit(point, "")}
           task={task}
           users={users}
+          memberOptions={actions.memberOptions()}
           settings={settings}
           onCommit={actions.finish}
           onCancel={actions.cancelEdit}
