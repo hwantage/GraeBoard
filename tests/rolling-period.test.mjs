@@ -1,3 +1,4 @@
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -81,7 +82,7 @@ async function fixture(t) {
       response.status === 304
         ? null
         : response.headers.get("content-type")?.includes("json")
-          ? await response.json()
+          ? await response.json().then(unpack)
           : await response.text();
     return { status: response.status, headers: response.headers, data };
   }

@@ -1,3 +1,4 @@
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -52,7 +53,7 @@ async function fixture(t) {
     });
     return {
       status: response.status,
-      data: await response.json(),
+      data: await response.json().then(unpack),
       token: response.headers
         .get("set-cookie")
         ?.split(";")[0]

@@ -3,6 +3,7 @@ import { HardDrive, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { todayKey } from "../shared/domain.js";
 import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
+import Toast, { useToast } from "./Toast";
 
 type Count = { count: number; bytes: number };
 type Summary = Count & { oldest: string | null; newest: string | null };
@@ -65,7 +66,7 @@ export default function HistoryCleanup({
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToast();
   const stop = useRef(false);
   const previewElement = useRef<HTMLElement | null>(null);
   const previewRequest = useRef<AbortController | null>(null);
@@ -207,11 +208,7 @@ export default function HistoryCleanup({
         </Button>
       </div>
       <ErrorNote error={error} />
-      {message && (
-        <p className="success-note" role="status">
-          {message}
-        </p>
-      )}
+      <Toast message={message} />
       {storageLoading && (
         <p className="history-cleanup-progress" role="status">
           <LoaderCircle size={16} className="spin" />

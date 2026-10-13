@@ -1,3 +1,4 @@
+import { parseCompact } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gunzipSync } from "node:zlib";
@@ -32,7 +33,7 @@ function fixture() {
     task,
     "title",
     json("한글 일정 검증 ".repeat(800)),
-    "{}",
+    0,
     1,
   );
   return { db, team, user, task };
@@ -58,7 +59,7 @@ test("캐시 한도를 넘는 원문은 압축본으로 재사용하고 비압�
     const updated = cache(team, 2026, false);
     assert.notEqual(updated.etag, first.etag);
     assert.equal(
-      JSON.parse(updated.body).tasks[0].cells.title.value,
+      parseCompact(updated.body).tasks[0].cells.title.value,
       "수정 후",
     );
     cache.clearTeam(team);

@@ -1,3 +1,5 @@
+import { parseCompact } from "../shared/compact.js";
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -73,7 +75,7 @@ async function fixture(t, cellEventOptions = {}) {
     return {
       status: res.status,
       headers: res.headers,
-      body: res.status === 304 ? null : await res.json(),
+      body: res.status === 304 ? null : await res.json().then(unpack),
     };
   }
   async function snapshot(id = team, year = 2026, headers) {
@@ -154,7 +156,7 @@ async function fixture(t, cellEventOptions = {}) {
             const event = {
               type,
               id: frame.match(/^id: (.+)$/m)?.[1],
-              data: JSON.parse(frame.match(/^data: (.+)$/m)?.[1] || "{}"),
+              data: parseCompact(frame.match(/^data: (.+)$/m)?.[1] || "{}"),
             };
             all.push(event);
             if (pending) {

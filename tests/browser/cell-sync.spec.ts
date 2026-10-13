@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { readPreferences, writePreferences } from "./preferences";
 import {
   test,
@@ -13,7 +14,7 @@ const headers = { "X-Requested-With": "WeeklyPlan" };
 async function post(request: APIRequestContext, path: string, data: unknown) {
   const res = await request.post(`/api${path}`, { headers, data });
   expect(res.ok(), await res.text()).toBeTruthy();
-  return res.json();
+  return res.json().then(unpack);
 }
 let peerContext: BrowserContext,
   peer: Page,
@@ -26,7 +27,11 @@ test.beforeEach(async ({ page, browser }) => {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   teamId = (
     await post(page.request, "/admin/teams", {
       name: "SSE " + randomUUID().slice(0, 8),
@@ -36,7 +41,7 @@ test.beforeEach(async ({ page, browser }) => {
     })
   ).id;
   settings = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const username = `sse-${randomUUID()}@example.com`;
   peerId = (
@@ -170,7 +175,11 @@ async function save(
   changes: { id: string; key?: string; value: unknown }[],
 ) {
   const tasks = (
-    await (await p.request.get(`/api/tasks?teamId=${teamId}&year=2026`)).json()
+    await (
+      await p.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   return post(p.request, "/cells/batch", {
     operationId: randomUUID(),
@@ -268,7 +277,9 @@ test("다른 셀은 편집 중에도 갱신하고 같은 셀 충돌은 내 입�
   const stored = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   expect(stored.find((t: any) => t.id === ids[0]).cells.title.value).toBe(
     "다른 사람이 저장한 내용",
@@ -315,7 +326,11 @@ test("담당자 변경으로 편집 권한을 잃어도 작성 중인 입력을 
   await peer
     .locator(".inline-editor textarea")
     .fill("권한 변경 전 작성한 내용");
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   await save(page, [
     { id: ids[0], key: "owner", value: boot.user.id },
     { id: ids[2], value: "담당자 변경 수신 확인" },

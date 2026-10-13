@@ -1,6 +1,8 @@
 import Select from "./Select";
 import { getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
+import { formatScopes } from "./format-selection.js";
+import { copyRowFormatting, resetCellStyle } from "../shared/formatting.js";
 import {
   useCallback,
   useEffect,
@@ -77,6 +79,7 @@ import type {
   Report,
   SavedCell,
   Property,
+  FormatChange,
 } from "./types";
 import {
   Auth,
@@ -87,11 +90,13 @@ import {
   SessionLogin,
 } from "./components";
 import SettingsPanel from "./SettingsPanel";
+import Toast, { useToast } from "./Toast";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
   type Column,
   type RowCommand,
   rangeOf,
+  rangesOf,
   selectedPoints,
 } from "./Grid";
 import Toolbar from "./Toolbar";
@@ -121,7 +126,12 @@ import {
 } from "./Panels";
 
 type Failed = {
-  payload: { operationId: string; createdAt: string; changes: CellChange[] };
+  payload: {
+    operationId: string;
+    createdAt: string;
+    changes: CellChange[];
+    format?: FormatChange;
+  };
   error: ApiError | Error;
   mode: "normal" | "undo" | "redo";
 };
@@ -250,7 +260,6 @@ function Workspace({
     } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
     [error, setError] = useState(""),
-    [toast, setToast] = useState(""),
     // 방금 삭제한 보기. 알림이 떠 있는 동안 실행취소로 되살릴 수 있다.
     [undoToast, setUndoToast] = useState<{
       message: string;
@@ -286,9 +295,11 @@ function Workspace({
       key: string | null;
       taskId?: string;
       id: number;
+      preserveHorizontalScroll?: boolean;
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
+  const [toast, setToast] = useToast();
   const filterNameInput = useRef<HTMLInputElement>(null);
   const filterSaveQueue = useRef(Promise.resolve());
   const filterSaveRevision = useRef(0);
@@ -314,6 +325,18 @@ function Workspace({
   useEffect(() => {
     setFilterUpdateNotice(null);
   }, [teamId, selectedSavedFilterId]);
+  useEffect(() => {
+    if (
+      filterUpdateNotice?.state === "saved" &&
+      filterUpdateNotice.teamId === teamId &&
+      filterUpdateNotice.filterId === selectedSavedFilterId
+    )
+      setToast(
+        filterUpdateNotice.cleared
+          ? "해제한 필터는 저장된 필터에서 제외됩니다."
+          : "필터 변경사항이 업데이트되었습니다.",
+      );
+  }, [filterUpdateNotice, teamId, selectedSavedFilterId, setToast]);
   const scopeMonth = view.startMonth > 1 ? 2 : 1;
   const taskScope = `${teamId}:${year}:${scopeMonth}`;
   const ready = loaded && (!!report || loadedScope === taskScope);
@@ -472,12 +495,6 @@ function Workspace({
   viewRef.current = view;
   failedRef.current = failed;
   editorRef.current = editor;
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(""), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
   useEffect(() => {
     if (undoToast) {
       const timer = setTimeout(() => setUndoToast(null), 8000);
@@ -768,6 +785,7 @@ function Workspace({
   }, []);
   function updateSavedFilter(filter: SavedFilter, next: View) {
     const sameTeam = () => filterTeam.current === teamId;
+    setToast("");
     const data = savedFilter(next, settings) as SavedFilter["data"];
     const revision = ++filterSaveRevision.current;
     const cleared = Object.entries(viewRef.current.propertyFilters || {}).some(
@@ -1170,8 +1188,21 @@ function Workspace({
     setTasks(updatedTasks);
     // Formatting one's own cell while typing advances its version without
     // changing the draft. Remote operations must never advance this baseline.
-    const editing = editorRef.current;
+    let editing = editorRef.current;
     if (editing) {
+      if (
+        result.formatting &&
+        result.formatTeamId === editing.task.teamId &&
+        result.formatting.revision > (editing.task.formatting?.revision ?? 0)
+      ) {
+        const next = {
+          ...editing,
+          task: { ...editing.task, formatting: result.formatting },
+        };
+        editorRef.current = next;
+        setEditor(next);
+        editing = next;
+      }
       const p = editing.point,
         baseline = cell(editing.task, p.key);
       const before = result.before.find(
@@ -1198,6 +1229,8 @@ function Workspace({
     }
   }
   function recordResult(result: BatchResult, mode: Failed["mode"]) {
+    if (mode === "normal" && !result.cells.length && !result.formatOperation)
+      return;
     if (mode === "normal") {
       setUndoStack((previous) => appendHistory(previous, result));
       setRedoStack([]);
@@ -1207,6 +1240,8 @@ function Workspace({
           undoStack.slice(0, -1),
           cellsBefore(undoStack.at(-1)),
           result.cells,
+          undoStack.at(-1),
+          result,
         ),
       );
       setRedoStack(appendHistory(redoStack, result));
@@ -1216,6 +1251,8 @@ function Workspace({
           redoStack.slice(0, -1),
           cellsBefore(redoStack.at(-1)),
           result.cells,
+          redoStack.at(-1),
+          result,
         ),
       );
       setUndoStack(appendHistory(undoStack, result));
@@ -1224,6 +1261,7 @@ function Workspace({
   function submitChanges(
     build: () => CellChange[],
     mode: Failed["mode"] = "normal",
+    buildFormat?: () => FormatChange,
   ) {
     if (report || presentation || failedRef.current) return false;
     if (pendingRef.current) {
@@ -1239,11 +1277,13 @@ function Workspace({
       try {
         if (failedRef.current) return;
         const changes = build();
-        if (!changes.length) return;
+        const format = buildFormat?.();
+        if (!changes.length && !format) return;
         payload = {
           operationId: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
           changes,
+          ...(format ? { format } : {}),
         };
         const result = await send<BatchResult>("/cells/batch", payload);
         if (boardKey.current !== submittedBoard) return;
@@ -1282,6 +1322,7 @@ function Workspace({
         return {
           ...p,
           expectedVersion: cell(task, p.key).version,
+          expectedFormatRevision: task.formatting?.revision ?? 0,
           ...transform(task, p.key),
         };
       });
@@ -1289,18 +1330,65 @@ function Workspace({
   }
   function applyStyle(part: Partial<Style>, reset = false) {
     try {
+      if (applyCommonStyle(part, reset)) return;
       mutate(
         selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
         (t, k) => ({
-          style: reset ? {} : { ...cell(t, k).style, ...part },
+          style: reset
+            ? resetCellStyle(t, k)
+            : { ...cell(t, k).style, ...part },
         }),
       );
     } catch (e) {
       setError((e as Error).message);
     }
   }
+  function applyCommonStyle(
+    part: Partial<Style>,
+    reset = false,
+    border?: { preset: BorderPreset; border: Border | null },
+  ) {
+    const ranges = rangesOf(selection, matchingTasks, columnOrder);
+    if (!ranges.length || ranges.some((r) => !r.kind || r.kind === "cells"))
+      return false;
+    const scopes = formatScopes(
+      ranges,
+      matchingTasks,
+      columnOrder,
+      part,
+      reset,
+      border,
+    );
+    if (!scopes.length) return true;
+    submitChanges(
+      () => [],
+      "normal",
+      () => {
+        const tasks = tasksRef.current,
+          ids = new Set(scopes.flatMap((s) => s.rows || []));
+        const selected = tasks.filter((t) => ids.has(t.id));
+        if (
+          selected.length !== ids.size ||
+          selected.some((t) => !canEdit(user, t))
+        )
+          throw new Error(
+            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
+          );
+        return {
+          teamId,
+          expectedRevision: tasks[0]?.formatting?.revision ?? 0,
+          scopes,
+          expectedTasks: Object.fromEntries(
+            selected.map((t) => [t.id, t.updatedAt]),
+          ),
+        };
+      },
+    );
+    return true;
+  }
   function applyBorder(preset: BorderPreset, border: Border | null) {
     try {
+      if (applyCommonStyle({}, false, { preset, border })) return;
       const points = selectedPoints(
         selection,
         matchingTasks,
@@ -1463,6 +1551,26 @@ function Workspace({
       else void restoreTasks(entry, mode);
       return;
     }
+    if (entry.formatOperation) {
+      submitChanges(
+        () => [],
+        redo ? "redo" : "undo",
+        () => {
+          const revision = tasksRef.current[0]?.formatting?.revision ?? 0;
+          if (revision !== entry.formatRevision)
+            throw new Error("이후 서식 변경이 있어 되돌릴 수 없습니다.");
+          return {
+            teamId,
+            expectedRevision: revision,
+            restore: entry.operationId,
+            expectedCells: Object.fromEntries(
+              entry.cells.map((c) => [`${c.taskId}:${c.key}`, c.version]),
+            ),
+          };
+        },
+      );
+      return;
+    }
     submitChanges(
       () => {
         const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
@@ -1476,6 +1584,11 @@ function Workspace({
             throw new Error(
               "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
             );
+          if (
+            JSON.stringify(c.style) !== JSON.stringify(after.style) &&
+            (entry.formatRevision ?? 0) !== (t.formatting?.revision ?? 0)
+          )
+            throw new Error("이후 공통 서식 변경이 있어 되돌릴 수 없습니다.");
           return {
             taskId: c.taskId,
             key: c.key,
@@ -1484,6 +1597,8 @@ function Workspace({
               : { value: c.value }),
             style: c.style,
             expectedVersion: after.version,
+            expectedFormatRevision: t.formatting?.revision ?? 0,
+            rawStyle: true,
           };
         });
       },
@@ -1570,7 +1685,14 @@ function Workspace({
           points.push(p);
           changes.set(`${p.taskId}:${p.key}`, {
             value: v,
-            ...(style ? { style } : {}),
+            ...(style
+              ? {
+                  style: {
+                    ...resetCellStyle(visibleTasks[ri + i], p.key),
+                    ...style,
+                  },
+                }
+              : {}),
           });
         }),
       );
@@ -1757,15 +1879,7 @@ function Workspace({
         },
         ...(copy
           ? {
-              copiedRow: {
-                cells: Object.fromEntries(
-                  Object.entries(copy.task.cells).map(([key, c]) => [
-                    key,
-                    { value: c.value, style: c.style },
-                  ]),
-                ),
-                defaultStyle: copy.task.defaultStyle || {},
-              },
+              copiedRow: copyRowFormatting(copy.task),
             }
           : {}),
       });
@@ -1794,7 +1908,11 @@ function Workspace({
       const point = { taskId: task.id, key: "title" };
       setSelection({ anchor: point, focus: point });
       if (copy) {
-        setJump((previous) => ({ ...point, id: (previous?.id || 0) + 1 }));
+        setJump((previous) => ({
+          ...point,
+          id: (previous?.id || 0) + 1,
+          preserveHorizontalScroll: true,
+        }));
         setToast("복사한 행을 아래에 붙여넣었습니다.");
       } else {
         setEditor({
@@ -1887,15 +2005,33 @@ function Workspace({
     let payload = failed.payload;
     try {
       if (overwrite) {
-        const d = (failed.error as ApiError).details;
+        const latest = await api<{ tasks: Task[] }>(
+          taskQuery(teamId, year, view.startMonth),
+        );
+        const tasks = new Map(latest.tasks.map((t) => [t.id, t]));
+        tasksRef.current = latest.tasks;
+        setTasks(latest.tasks);
         payload = {
+          ...payload,
           operationId: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
-          changes: payload.changes.map((c) =>
-            c.taskId === d?.taskId && c.key === d?.key
-              ? { ...c, expectedVersion: d.current.version }
-              : c,
-          ),
+          changes: payload.changes.map((c) => ({
+            ...c,
+            expectedVersion: tasks.get(c.taskId)?.cells[c.key]?.version ?? 0,
+            expectedFormatRevision:
+              tasks.get(c.taskId)?.formatting?.revision ?? 0,
+          })),
+          ...(payload.format
+            ? {
+                format: {
+                  ...payload.format,
+                  expectedRevision: latest.tasks[0]?.formatting?.revision ?? 0,
+                  expectedTasks: Object.fromEntries(
+                    latest.tasks.map((t) => [t.id, t.updatedAt]),
+                  ),
+                },
+              }
+            : {}),
         };
       }
       const result = await send<BatchResult>("/cells/batch", payload);
@@ -2403,9 +2539,7 @@ function Workspace({
                       ? "필터 변경사항 저장 중…"
                       : filterUpdateNotice.state === "error"
                         ? "필터 변경사항을 저장하지 못했습니다."
-                        : filterUpdateNotice.cleared
-                          ? "해제한 필터는 저장된 필터에서 제외됩니다."
-                          : "필터 변경사항이 업데이트되었습니다.")}
+                        : "")}
                 </span>
               </ActiveFilterConditions>
               <div className="active-filter-actions">
@@ -2561,13 +2695,7 @@ function Workspace({
           </button>
         </div>
       ) : (
-        toast &&
-        !presentation && (
-          <div className="toast" role="status">
-            <Check size={16} />
-            {toast}
-          </div>
-        )
+        !presentation && <Toast message={toast} />
       )}
       {rowTask && !editor && (
         <RowPanel
@@ -2656,6 +2784,7 @@ function Workspace({
           users={users}
           teamId={teamId}
           year={year}
+          startMonth={view.startMonth}
           tasks={tasks}
           user={user}
           onClose={() => setPanel("")}
@@ -2832,6 +2961,13 @@ function Workspace({
             />
           )}
           <div className="failed-input">
+            {failed.payload.format && (
+              <p>
+                {failed.payload.format.restore
+                  ? "공통 서식 실행취소·재실행"
+                  : "선택한 행·열의 공통 서식 변경"}
+              </p>
+            )}
             <ol>
               {failed.payload.changes.map((c, i) => (
                 <li key={i}>

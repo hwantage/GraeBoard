@@ -1,5 +1,5 @@
 import { gzipSync, gunzipSync } from "node:zlib";
-import { getTasks, now } from "./db.mjs";
+import { getTasks, now, json } from "./db.mjs";
 
 export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
   const entries = new Map();
@@ -26,7 +26,7 @@ export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
       entries.delete(key);
     }
     const body = Buffer.from(
-        JSON.stringify({
+        json({
           tasks: getTasks(db, teamId, year, deleted),
           serverTime: now(),
         }),

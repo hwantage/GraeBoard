@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { defaultView } from "../../shared/domain.js";
@@ -7,7 +8,7 @@ const headers = { "X-Requested-With": "WeeklyPlan" };
 async function post(page: Page, path: string, data: any) {
   const response = await page.request.post(`/api${path}`, { headers, data });
   expect(response.ok(), await response.text()).toBeTruthy();
-  return response.json();
+  return response.json().then(unpack);
 }
 let teamId: string, ids: string[], userId: string;
 test.beforeEach(async ({ page }) => {
@@ -15,7 +16,11 @@ test.beforeEach(async ({ page }) => {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   userId = boot.user.id;
   teamId = (
     await post(page, "/admin/teams", {
@@ -23,7 +28,11 @@ test.beforeEach(async ({ page }) => {
       members: [{ userId, role: "lead" }],
     })
   ).id;
-  const latest = await (await page.request.get("/api/bootstrap")).json();
+  const latest = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const settings = latest.teams.find(
     (team: any) => team.id === teamId,
   ).settings;

@@ -13,6 +13,7 @@ import {
 } from "../shared/domain.js";
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
+import Toast, { useToast } from "./Toast";
 import PropertyBadge from "./PropertyBadge";
 import PropertyColumnOrder from "./PropertyColumnOrder";
 import BorderControls from "./BorderControls";
@@ -50,9 +51,9 @@ export default function PropertiesManager({
       propertiesFor(team.settings)[0]?.id || "",
     ),
     [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
     [focusTarget, setFocusTarget] = useState<{ id: string } | null>(null);
+  const [message, setMessage] = useToast();
   const root = useRef<HTMLDivElement>(null),
     stored = useRef(settings);
   useEffect(() => {
@@ -196,11 +197,7 @@ export default function PropertiesManager({
         </Button>
       </div>
       <ErrorNote error={error} />
-      {message && (
-        <p role="status" className="success-note">
-          {message}
-        </p>
-      )}
+      <Toast message={message} />
       <div className="properties-layout">
         <PropertyColumnOrder
           items={columnList.map((p) => ({
@@ -577,7 +574,7 @@ export default function PropertiesManager({
                               />
                             </td>
                           )}
-                          <td>
+                          <td className="property-value-preview">
                             {v.label.trim() ? (
                               <PropertyBadge property={property} value={v.id} />
                             ) : (
@@ -677,7 +674,7 @@ export default function PropertiesManager({
               setSettings(result.settings);
               stored.current = result.settings;
               await onSaved();
-              setMessage("속성 설정을 저장했습니다.");
+              setMessage("속성이 저장되었습니다.");
             } catch (e) {
               setError((e as Error).message);
             } finally {

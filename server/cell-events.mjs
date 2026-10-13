@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { stringify, parseCompact } from "../shared/compact.js";
 
 // A bounded replay buffer for the single-server deployment. A new process or
 // an expired cursor requests a DB snapshot instead of silently losing edits.
@@ -69,11 +70,11 @@ export function createCellEvents(
     if (data.length === 1) return frame("cells", data[0], eventId);
     // One atomic event per operation, even if its tasks belong to both years.
     // A reconnect after this cursor must not lose the second year's changes.
-    const payloads = data.map((value) => JSON.parse(value));
+    const payloads = data.map(parseCompact);
     const cells = new Map();
     for (const payload of payloads)
       for (const c of payload.cells) cells.set(`${c.taskId}:${c.key}`, c);
-    const merged = JSON.stringify({
+    const merged = stringify({
       operationId: payloads[0].operationId,
       cells: [...cells.values()],
       updatedAt: Object.assign({}, ...payloads.map((p) => p.updatedAt)),
@@ -151,7 +152,7 @@ export function createCellEvents(
     sequence++;
     const entry = { sequence, messages: new Map(), bytes: 0 };
     for (const [scope, payload] of scopes) {
-      const data = JSON.stringify(payload);
+      const data = stringify(payload);
       const stored = Buffer.byteLength(data) > maxEventBytes ? null : data;
       entry.messages.set(scope, stored);
       entry.bytes += Buffer.byteLength(

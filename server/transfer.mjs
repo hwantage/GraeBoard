@@ -1,5 +1,6 @@
 import { filtersFor, currentFiltersFor } from "./filters.mjs";
 import ExcelJS from "exceljs";
+import { explicitStyle } from "../shared/formatting.js";
 import {
   BORDER_SIDES,
   weekBoundaryStyles,
@@ -38,6 +39,7 @@ import {
 } from "../shared/domain.js";
 import {
   id,
+  initialCells,
   now,
   json,
   parse,
@@ -613,7 +615,7 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
       keys,
       keys.map((key) => cell(t, key).style),
       boundaryStyles,
-      keys.map((key) => t.cells[key]?.style || {}),
+      keys.map((key) => explicitStyle(t, key)),
     );
     keys.forEach((k, i) => {
       const property = propertiesFor(settings).find((p) => p.id === k);
@@ -733,7 +735,7 @@ export function installTransferRoutes(
     res.type("application/json").send(
       json({
         format: "weekly-plan",
-        schemaVersion: 1,
+        schemaVersion: 3,
         exportedAt: now(),
         team,
         year: d.year,
@@ -986,9 +988,8 @@ export function installTransferRoutes(
             teamId: team.id,
             years: [d.year],
             position: row.row,
-            cells: Object.fromEntries(
-              Object.entries(cells).map(([k, c]) => [k, { ...c, version: 1 }]),
-            ),
+            defaultStyle: {},
+            cells: Object.fromEntries(initialCells(cells)),
           };
         tasks.push(task);
         if (row.height) rowHeights[task.id] = row.height;

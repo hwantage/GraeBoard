@@ -48,6 +48,7 @@ export function TeamGeneral({
           e.preventDefault();
           setBusy(true);
           setError("");
+          onMessage("");
           try {
             await send(
               `/teams/${team.id}`,
@@ -196,6 +197,7 @@ export function TeamMembers({
       return false;
     setBusy(true);
     setError("");
+    onMessage("");
     try {
       const r = await send<{ members: Member[] }>(
         `/teams/${team.id}/members`,

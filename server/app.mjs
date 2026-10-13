@@ -10,6 +10,13 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
 import {
+  normalizeCellStyle,
+  copyRowFormatting,
+  taskAuditSnapshot,
+} from "../shared/formatting.js";
+import { applyFormatting, replayFormatOperation } from "./formatting.mjs";
+import { pack, unpack, styleNormalizer, sameStyle } from "../shared/compact.js";
+import {
   openDatabase,
   id,
   now,
@@ -25,6 +32,7 @@ import {
   replaceUserMemberships,
   replaceTeamMembers,
   upsertCellStatement,
+  pruneStyles,
   touchTasks,
   getTask,
   getTasks,
@@ -154,8 +162,21 @@ export function createApp({
     }),
   );
   app.use(cookieParser());
+  app.use((req, res, next) => {
+    const respond = res.json.bind(res);
+    res.json = (data) => respond(pack(data));
+    next();
+  });
   app.use("/api/cells/batch", express.json({ limit: "32mb" }));
   app.use(express.json({ limit: "5mb" }));
+  app.use((req, res, next) => {
+    try {
+      req.body = unpack(req.body, { maxStyles: 50001 });
+      next();
+    } catch (error) {
+      next(new HttpError(400, error.message));
+    }
+  });
   app.use("/api", (req, res, next) => {
     res.set("Cache-Control", "no-store");
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
@@ -583,7 +604,8 @@ export function createApp({
     const defined = (key) =>
       propertiesFor(team.settings).some((p) => p.id === key);
     let cells = {},
-      defaultStyle = team.settings.defaultStyle;
+      defaultStyle = team.settings.defaultStyle,
+      rowStyle = {};
     if (d.sourceId) {
       const source = taskAccess(req.user, d.sourceId);
       requireThat(
@@ -591,8 +613,7 @@ export function createApp({
         400,
         "같은 팀의 업무만 복제할 수 있습니다.",
       );
-      cells = source.cells;
-      defaultStyle = source.defaultStyle;
+      ({ cells, defaultStyle, rowStyle = {} } = copyRowFormatting(source));
       // 복제본은 등록자가 담당자가 되고 지원자는 비운다.
       for (const k of new Set([
         ...["owner", "supporters"].filter(defined),
@@ -609,6 +630,7 @@ export function createApp({
     if (d.copiedRow) {
       cells = { ...d.copiedRow.cells };
       defaultStyle = d.copiedRow.defaultStyle;
+      rowStyle = d.copiedRow.rowStyle || {};
       // A member may create only their own task, even when copying another row.
       if (!canManageTeam(req.user, d.teamId))
         for (const key of ["owner", "supporters"].filter(defined))
@@ -669,11 +691,13 @@ export function createApp({
         if (blankInsertion) {
           // 빈 행 삽입은 기준 행의 서식만 상속한다. 값은 새 업무 기본값이나
           // 묶음에서 전달한 값을 유지하고, 숨긴 열·빈 주차 서식도 보존한다.
-          defaultStyle = target.defaultStyle;
+          const copied = copyRowFormatting(target);
+          defaultStyle = copied.defaultStyle;
+          rowStyle = copied.rowStyle || {};
           const properties = new Map(
             propertiesFor(team.settings).map((p) => [p.id, p]),
           );
-          for (const [key, c] of Object.entries(target.cells)) {
+          for (const [key, c] of Object.entries(copied.cells)) {
             if (
               !Object.keys(c.style).length ||
               !validCellKey(key, team.settings)
@@ -700,9 +724,18 @@ export function createApp({
         fields,
         cells,
         defaultStyle,
+        rowStyle,
         position,
       });
-      audit(db, req.user.id, d.teamId, "create", t.id, undefined, t);
+      audit(
+        db,
+        req.user.id,
+        d.teamId,
+        "create",
+        t.id,
+        undefined,
+        taskAuditSnapshot(t),
+      );
       return t;
     });
     res.status(201).json({ task });
@@ -719,10 +752,20 @@ export function createApp({
         403,
         "다른 사용자의 작업입니다.",
       );
-      const replay = replayCellOperation(db, old);
+      const replay =
+        parse(old.response)?.kind === "format-audit"
+          ? replayFormatOperation(db, old)
+          : replayCellOperation(db, old);
+      if (replay.formatTeamId) teamAccess(req.user, replay.formatTeamId);
       for (const taskId of new Set(replay.cells.map((c) => c.taskId)))
         taskAccess(req.user, taskId, false, true);
       return res.json(replay);
+    }
+    if (d.format) {
+      const team = teamAccess(req.user, d.format.teamId);
+      return res.json(
+        transaction(db, () => applyFormatting(db, req.user, d, team)),
+      );
     }
     let eventTasks;
     const response = transaction(db, () => {
@@ -761,6 +804,7 @@ export function createApp({
       }
       const before = [],
         after = [];
+      const normalize = styleNormalizer();
       for (const change of d.changes) {
         const task = tasks.get(change.taskId),
           team = teams.get(task.teamId);
@@ -773,7 +817,11 @@ export function createApp({
             403,
             "담당자 변경은 팀장 권한이 필요합니다.",
           );
-        const previous = cell(task, change.key);
+        const previous = task.cells[change.key] ?? {
+          value: "",
+          style: {},
+          version: 0,
+        };
         validateCellValue(
           db,
           task.teamId,
@@ -793,36 +841,77 @@ export function createApp({
             attempted: change,
           },
         );
+        const value =
+          change.value === undefined ? previous.value : change.value;
+        if (change.style !== undefined)
+          requireThat(
+            (change.expectedFormatRevision ?? 0) ===
+              (task.formatting?.revision ?? 0),
+            409,
+            "공통 서식이 변경되었습니다. 최신 내용을 확인한 뒤 다시 적용하세요.",
+          );
+        const style =
+          change.style === undefined
+            ? previous.style
+            : change.rawStyle
+              ? change.style
+              : task.formatting?.rules.length || task.rowStyle
+                ? normalizeCellStyle(task, change.key, change.style)
+                : normalize(change.style, task.defaultStyle);
+        if (
+          (value === previous.value ||
+            (Array.isArray(value) &&
+              Array.isArray(previous.value) &&
+              value.length === previous.value.length &&
+              value.every((v, i) => v === previous.value[i]))) &&
+          sameStyle(style, previous.style)
+        )
+          continue;
         before.push({ taskId: task.id, key: change.key, ...previous });
         after.push({
           taskId: task.id,
           key: change.key,
-          value: change.value === undefined ? previous.value : change.value,
-          style: change.style === undefined ? previous.style : change.style,
+          value,
+          style,
           version: previous.version + 1,
         });
       }
       const put = upsertCellStatement(db);
       for (const c of after)
-        put.run(c.taskId, c.key, json(c.value), json(c.style), c.version);
-      const updatedAt = touchTasks(db, [...tasks.values()]);
+        put.run(c.taskId, c.key, c.value, c.style, c.version);
+      pruneStyles(
+        db,
+        before.map((c) => c.style),
+      );
+      const updatedAt = touchTasks(db, [
+        ...new Set(after.map((c) => tasks.get(c.taskId))),
+      ]);
       const result = {
         cells: after,
         before,
         operationId: d.operationId,
         savedAt: now(),
         updatedAt,
+        ...(tasks.size &&
+        new Set([...tasks.values()].map((t) => t.teamId)).size === 1
+          ? { formatRevision: [...tasks.values()][0].formatting?.revision ?? 0 }
+          : {}),
       };
       storeCellOperation(db, req.user.id, result, tasks);
       return result;
     });
     // Publish only after COMMIT. A replayed operation returns above and cannot
     // emit twice. Cell records retain their versions/styles; no View is sent.
+    const valueChanges = new Set(
+      d.changes
+        .filter((c) => c.value !== undefined)
+        .map((c) => `${c.taskId}:${c.key}`),
+    );
     cellEvents.publish(
       {
         ...response,
-        cells: response.cells.filter(
-          (_, i) => d.changes[i].value !== undefined,
+        cells: response.cells.filter((c) =>
+          valueChanges.has(`${c.taskId}:${c.key}`),
         ),
       },
       eventTasks,
@@ -853,7 +942,15 @@ export function createApp({
         task.id,
       );
       const after = getTask(db, task.id);
-      audit(db, req.user.id, task.teamId, "task", task.id, task, after);
+      audit(
+        db,
+        req.user.id,
+        task.teamId,
+        "task",
+        task.id,
+        taskAuditSnapshot(task),
+        taskAuditSnapshot(after),
+      );
       return after;
     });
     res.json({ task: updated });
@@ -872,7 +969,15 @@ export function createApp({
         updatedAt,
         task.id,
       );
-      audit(db, req.user.id, task.teamId, "delete", task.id, task, undefined);
+      audit(
+        db,
+        req.user.id,
+        task.teamId,
+        "delete",
+        task.id,
+        taskAuditSnapshot(task),
+        undefined,
+      );
     });
     res.json({ ok: true, updatedAt });
   });
@@ -1100,9 +1205,9 @@ export function createApp({
       );
     const rows = db
       .prepare(
-        "SELECT a.*,u.name AS actor FROM audit a JOIN users u ON a.actor_id=u.id WHERE a.team_id=? AND (? IS NULL OR a.target=? OR EXISTS(SELECT 1 FROM json_each(CASE WHEN a.action='cells' THEN a.after_json ELSE '[]' END) c WHERE json_extract(c.value,'$.taskId')=?)) ORDER BY a.created_at DESC LIMIT ?",
+        "SELECT a.*,u.name AS actor FROM audit a JOIN users u ON a.actor_id=u.id WHERE a.team_id=? AND (? IS NULL OR a.target=? OR EXISTS(SELECT 1 FROM json_each(CASE WHEN a.action='cells' THEN COALESCE(json_extract(a.after_json,'$.$data'),a.after_json) ELSE '[]' END) c WHERE json_extract(c.value,'$.taskId')=?) OR (a.action='format' AND EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(a.after_json,'$.$data.taskIds'),json_extract(a.after_json,'$.taskIds'),'[]')) t WHERE t.value=?))) ORDER BY a.created_at DESC LIMIT ?",
       )
-      .all(teamId, taskId, taskId, taskId, limit);
+      .all(teamId, taskId, taskId, taskId, taskId, limit);
     res.json({
       entries: rows.map((r) => ({
         id: r.id,
@@ -1121,11 +1226,36 @@ export function createApp({
       .prepare("SELECT * FROM audit WHERE id=?")
       .get(req.params.id);
     requireThat(entry, 404, "이력을 찾을 수 없습니다.");
-    managedTeam(
+    const team = managedTeam(
       req.user,
       entry.team_id,
       "팀장만 이전 내용을 복원할 수 있습니다.",
     );
+    if (entry.action === "format") {
+      const expectedRevision = z
+        .number()
+        .int()
+        .nonnegative()
+        .parse(req.body.formatRevision);
+      const expectedCells = z
+        .record(z.string(), z.number().int().nonnegative())
+        .parse(req.body.versions);
+      const request = {
+        operationId: id(),
+        createdAt: now(),
+        format: {
+          teamId: entry.team_id,
+          expectedRevision,
+          restore: entry.target,
+          expectedCells,
+        },
+      };
+      return res.json(
+        transaction(db, () =>
+          applyFormatting(db, req.user, request, team, entry),
+        ),
+      );
+    }
     requireThat(
       entry.action === "cells",
       400,
@@ -1142,18 +1272,30 @@ export function createApp({
       for (const c of before) {
         if (!tasks.has(c.taskId))
           tasks.set(c.taskId, taskAccess(req.user, c.taskId, true));
-        const current = cell(tasks.get(c.taskId), c.key);
+        const task = tasks.get(c.taskId);
+        const current = task.cells[c.key] ?? {
+          value: "",
+          style: {},
+          version: 0,
+        };
         requireThat(
           expected[`${c.taskId}:${c.key}`] === current.version,
           409,
           "복구 대상이 변경되었습니다. 최신 이력을 다시 확인하세요.",
         );
         prev.push({ taskId: c.taskId, key: c.key, ...current });
-        after.push({ ...c, version: current.version + 1 });
+        after.push({
+          ...c,
+          version: current.version + 1,
+        });
       }
       const put = upsertCellStatement(db);
       for (const c of after)
-        put.run(c.taskId, c.key, json(c.value), json(c.style), c.version);
+        put.run(c.taskId, c.key, c.value, c.style, c.version);
+      pruneStyles(
+        db,
+        prev.map((c) => c.style),
+      );
       touchTasks(db, [...tasks.values()]);
       audit(db, req.user.id, entry.team_id, "cells", id(), prev, after);
       return after;

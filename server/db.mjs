@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
+  createHash,
   randomUUID,
   randomBytes,
   scryptSync,
@@ -13,17 +14,27 @@ import {
   weeksForYear,
   todayKey,
 } from "../shared/domain.js";
+import {
+  compactStyle,
+  expandStyle,
+  normalizeStyle,
+  styleNormalizer,
+  stringify,
+  parseCompact,
+} from "../shared/compact.js";
+
+import { normalizeCellStyle } from "../shared/formatting.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 15;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
   new Date(Math.max(Date.now(), Date.parse(previous) + 1)).toISOString();
-export const json = (v) => JSON.stringify(v);
+export const json = stringify;
 export const parse = (v, fallback = null) => {
   try {
-    return JSON.parse(v);
+    return parseCompact(v);
   } catch {
     return fallback;
   }
@@ -53,20 +64,32 @@ export function openDatabase(
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
   if (path !== ":memory:") chmodSync(path, 0o600);
+  const version = db.prepare("PRAGMA user_version").get().user_version;
+  if (version !== 0 && version !== SCHEMA_VERSION) {
+    db.close();
+    throw new Error(
+      `DB 형식 v${version}은 지원하지 않습니다. v${SCHEMA_VERSION}용 새 DB를 사용하세요.`,
+    );
+  }
   db.exec(
     "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
   );
   transaction(db, () => {
-    // v13은 보고서를 새 압축 형식으로 초기화한다. 기존 보고서는 변환하지 않는다.
-    if (db.prepare("PRAGMA user_version").get().user_version < 13)
-      db.exec("DROP TABLE IF EXISTS reports");
     db.exec(`
     CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,system_role TEXT NOT NULL DEFAULT 'user',active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',avatar_initials TEXT NOT NULL DEFAULT '',avatar_image TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),role TEXT NOT NULL DEFAULT 'member',PRIMARY KEY(user_id,team_id));
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,default_style TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
+      CREATE TABLE IF NOT EXISTS styles(id INTEGER PRIMARY KEY,data TEXT NOT NULL UNIQUE);
+      INSERT OR IGNORE INTO styles(id,data) VALUES(0,'{}');
+      CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,default_style INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),row_style INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style_id INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
+      CREATE INDEX IF NOT EXISTS cells_style_idx ON cells(style_id);
+      CREATE INDEX IF NOT EXISTS tasks_style_idx ON tasks(default_style);
+      CREATE INDEX IF NOT EXISTS tasks_row_style_idx ON tasks(row_style);
+    CREATE TABLE IF NOT EXISTS format_states(team_id TEXT PRIMARY KEY REFERENCES teams(id),revision INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS format_rules(team_id TEXT NOT NULL REFERENCES teams(id),id TEXT NOT NULL,selector TEXT NOT NULL,rows_json TEXT,keys_json TEXT,exclusions_json TEXT NOT NULL,style_id INTEGER NOT NULL REFERENCES styles(id),orders_json TEXT NOT NULL,PRIMARY KEY(team_id,id),UNIQUE(team_id,selector));
+    CREATE INDEX IF NOT EXISTS format_styles_idx ON format_rules(style_id);
     CREATE INDEX IF NOT EXISTS tasks_team_idx ON tasks(team_id,deleted_at,position);
     CREATE TABLE IF NOT EXISTS views(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(user_id,team_id,year,name));
     CREATE TABLE IF NOT EXISTS saved_filters(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),scope TEXT NOT NULL CHECK(scope IN ('team','personal')),owner_id TEXT REFERENCES users(id),name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((scope='team' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL)));
@@ -82,7 +105,7 @@ export function openDatabase(
     CREATE INDEX IF NOT EXISTS audit_cleanup_team_idx ON audit(team_id,created_at DESC,id DESC) WHERE action='history-cleanup';
     CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL REFERENCES users(id),response TEXT NOT NULL,created_at TEXT NOT NULL);
     DROP INDEX IF EXISTS operations_cell_created_idx;
-    CREATE INDEX IF NOT EXISTS operations_cell_team_created_idx ON operations((CASE WHEN json_array_length(response,'$.refs')=1 THEN json_extract(response,'$.refs[0].teamId') ELSE NULL END),created_at,id) WHERE json_extract(response,'$.kind')='cell-audit';
+    CREATE INDEX IF NOT EXISTS operations_cell_team_created_idx ON operations((CASE WHEN json_array_length(response,'$.refs')=1 THEN json_extract(response,'$.refs[0].teamId') ELSE NULL END),created_at,id) WHERE json_extract(response,'$.kind') IN ('cell-audit','format-audit');
     CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),filename TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,applied_at TEXT,result TEXT);
     CREATE TABLE IF NOT EXISTS team_revisions(team_id TEXT PRIMARY KEY REFERENCES teams(id),version INTEGER NOT NULL DEFAULT 0);
     CREATE TRIGGER IF NOT EXISTS revision_team_insert AFTER INSERT ON teams BEGIN INSERT OR IGNORE INTO team_revisions(team_id) VALUES(NEW.id); END;
@@ -95,6 +118,7 @@ export function openDatabase(
     PRAGMA user_version=${SCHEMA_VERSION};
   `);
   });
+  pruneStyles(db);
   return db;
 }
 export function transaction(db, work) {
@@ -160,10 +184,50 @@ export function replaceTeamMembers(db, teamId, rows) {
   const add = db.prepare(INSERT_MEMBERSHIP);
   for (const m of rows) add.run(m.userId, teamId, m.role);
 }
-export const upsertCellStatement = (db) =>
-  db.prepare(
-    "INSERT INTO cells(task_id,key,value,style,version) VALUES(?,?,?,?,?) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style=excluded.style,version=excluded.version",
+export function styleWriter(db) {
+  const known = new Map([["{}", 0]]);
+  const objects = new WeakMap();
+  const insert = db.prepare(
+    "INSERT INTO styles(data) VALUES(?) ON CONFLICT(data) DO NOTHING",
   );
+  const find = db.prepare("SELECT id FROM styles WHERE data=?");
+  return (style) => {
+    if (objects.has(style)) return objects.get(style);
+    const data = JSON.stringify(compactStyle(style));
+    if (!known.has(data)) {
+      insert.run(data);
+      known.set(data, find.get(data).id);
+    }
+    const id = known.get(data);
+    objects.set(style, id);
+    return id;
+  };
+}
+
+export function upsertCellStatement(db) {
+  const intern = styleWriter(db);
+  const put = db.prepare(
+    "INSERT INTO cells(task_id,key,value,style_id,version) VALUES(?,?,?,?,?) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style_id=excluded.style_id,version=excluded.version",
+  );
+  return {
+    run(taskId, key, value, style, version) {
+      return put.run(taskId, key, json(value), intern(style), version);
+    },
+  };
+}
+
+export function pruneStyles(db, candidates) {
+  if (candidates?.length === 0) return;
+  const unused =
+    "id<>0 AND NOT EXISTS(SELECT 1 FROM cells WHERE style_id=styles.id) AND NOT EXISTS(SELECT 1 FROM tasks WHERE default_style=styles.id) AND NOT EXISTS(SELECT 1 FROM tasks WHERE row_style=styles.id) AND NOT EXISTS(SELECT 1 FROM format_rules WHERE style_id=styles.id)";
+  if (candidates) {
+    const remove = db.prepare(`DELETE FROM styles WHERE data=? AND ${unused}`);
+    for (const data of new Set(
+      [...new Set(candidates)].map((s) => JSON.stringify(compactStyle(s))),
+    ))
+      remove.run(data);
+  } else db.exec(`DELETE FROM styles WHERE ${unused}`);
+}
 // 업무의 수정 시각을 이전 값보다 뒤로 올린다. 같은 밀리초에 바뀌어도 값이 달라진다.
 export function touchTasks(db, tasks) {
   const put = db.prepare("UPDATE tasks SET updated_at=? WHERE id=?");
@@ -192,8 +256,97 @@ export function getTasksById(db, ids) {
   }
   return hydrateTasks(db, rows);
 }
+function readStyles(db, requested, styles) {
+  const styleIds = [...new Set(requested)].filter((id) => !styles.has(id));
+  for (let offset = 0; offset < styleIds.length; offset += 500) {
+    const ids = styleIds.slice(offset, offset + 500);
+    for (const s of db
+      .prepare(
+        `SELECT * FROM styles WHERE id IN (${ids.map(() => "?").join(",")})`,
+      )
+      .all(...ids))
+      styles.set(s.id, expandStyle(JSON.parse(s.data)));
+  }
+}
+export function readFormatting(db, teamId) {
+  const revision =
+    db.prepare("SELECT revision FROM format_states WHERE team_id=?").get(teamId)
+      ?.revision ?? 0;
+  const rows = db
+    .prepare(
+      "SELECT f.*,s.data FROM format_rules f JOIN styles s ON s.id=f.style_id WHERE f.team_id=? ORDER BY f.id",
+    )
+    .all(teamId);
+  return {
+    revision,
+    rules: rows.map((r) => ({
+      id: r.id,
+      rows: parse(r.rows_json),
+      keys: parse(r.keys_json),
+      excludeKeys: parse(r.exclusions_json),
+      style: expandStyle(JSON.parse(r.data)),
+      orders: parse(r.orders_json, {}),
+    })),
+  };
+}
+
+export function writeFormatting(db, teamId, formatting) {
+  const intern = styleWriter(db);
+  const previous = db
+    .prepare("SELECT id,style_id,orders_json FROM format_rules WHERE team_id=?")
+    .all(teamId);
+  const prior = new Map(previous.map((r) => [r.id, r]));
+  const put = db.prepare(
+    "INSERT INTO format_rules(team_id,id,selector,rows_json,keys_json,exclusions_json,style_id,orders_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(team_id,id) DO UPDATE SET style_id=excluded.style_id,orders_json=excluded.orders_json",
+  );
+  for (const rule of formatting.rules) {
+    const rows = JSON.stringify(rule.rows),
+      keys = JSON.stringify(rule.keys),
+      orders = JSON.stringify(rule.orders),
+      styleId = intern(rule.style);
+    const old = prior.get(rule.id);
+    if (!old || old.style_id !== styleId || old.orders_json !== orders)
+      put.run(
+        teamId,
+        rule.id,
+        createHash("sha256")
+          .update(
+            JSON.stringify([rule.rows, rule.keys, rule.excludeKeys || []]),
+          )
+          .digest("hex"),
+        rows,
+        keys,
+        JSON.stringify(rule.excludeKeys || []),
+        styleId,
+        orders,
+      );
+    prior.delete(rule.id);
+  }
+  const remove = db.prepare(
+    "DELETE FROM format_rules WHERE team_id=? AND id=?",
+  );
+  for (const id of prior.keys()) remove.run(teamId, id);
+  db.prepare(
+    "INSERT INTO format_states(team_id,revision) VALUES(?,?) ON CONFLICT(team_id) DO UPDATE SET revision=excluded.revision",
+  ).run(teamId, formatting.revision);
+  db.prepare("UPDATE team_revisions SET version=version+1 WHERE team_id=?").run(
+    teamId,
+  );
+}
 function hydrateTasks(db, rows) {
   if (!rows.length) return [];
+  const formatting = new Map(
+    [...new Set(rows.map((t) => t.team_id))].map((teamId) => [
+      teamId,
+      readFormatting(db, teamId),
+    ]),
+  );
+  const styles = new Map();
+  readStyles(
+    db,
+    rows.flatMap((t) => [t.default_style, t.row_style]),
+    styles,
+  );
   const map = new Map(
     rows.map((t) => [
       t.id,
@@ -207,22 +360,33 @@ function hydrateTasks(db, rows) {
         createdAt: t.created_at,
         updatedAt: t.updated_at,
         cells: {},
-        defaultStyle: parse(t.default_style, {}),
+        defaultStyle: styles.get(t.default_style),
+        ...(t.row_style ? { rowStyle: styles.get(t.row_style) } : {}),
+        ...(formatting.get(t.team_id).revision
+          ? { formatting: formatting.get(t.team_id) }
+          : {}),
       },
     ]),
   );
   for (let offset = 0; offset < rows.length; offset += 500) {
     const ids = rows.slice(offset, offset + 500).map((t) => t.id);
-    for (const c of db
+    const cells = db
       .prepare(
         `SELECT * FROM cells WHERE task_id IN (${ids.map(() => "?").join(",")})`,
       )
-      .all(...ids))
+      .all(...ids);
+    readStyles(
+      db,
+      cells.map((c) => c.style_id),
+      styles,
+    );
+    for (const c of cells) {
       map.get(c.task_id).cells[c.key] = {
         value: parse(c.value, ""),
-        style: parse(c.style, {}),
+        style: styles.get(c.style_id),
         version: c.version,
       };
+    }
   }
   return [...map.values()];
 }
@@ -249,6 +413,7 @@ export function insertTask(
     cells = {},
     position,
     defaultStyle = {},
+    rowStyle = {},
   },
 ) {
   const n = now();
@@ -258,7 +423,7 @@ export function insertTask(
         .prepare("SELECT MAX(position) AS position FROM tasks WHERE team_id=?")
         .get(teamId).position || 0) + 100;
   db.prepare(
-    "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at,default_style) VALUES(?,?,?,?,?,?,?,?)",
+    "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at,default_style,row_style) VALUES(?,?,?,?,?,?,?,?,?)",
   ).run(
     taskId,
     teamId,
@@ -267,14 +432,44 @@ export function insertTask(
     actorId,
     n,
     n,
-    json(defaultStyle),
+    styleWriter(db)(normalizeStyle(defaultStyle)),
+    styleWriter(db)(rowStyle),
   );
   const put = upsertCellStatement(db);
-  for (const [key, val] of Object.entries(fields))
-    put.run(taskId, key, json(val), "{}", 1);
-  for (const [key, c] of Object.entries(cells))
-    put.run(taskId, key, json(c.value ?? ""), json(c.style || {}), 1);
+  const initial = {
+    ...Object.fromEntries(
+      Object.entries(fields).map(([key, value]) => [key, { value, style: {} }]),
+    ),
+    ...cells,
+  };
+  if (Object.keys(rowStyle).length)
+    for (const [key, c] of Object.entries(initial))
+      initial[key] = {
+        ...c,
+        style: normalizeCellStyle(
+          { id: taskId, defaultStyle, rowStyle, cells: {} },
+          key,
+          c.style || {},
+        ),
+      };
+  for (const [key, c] of initialCells(initial, {
+    ...defaultStyle,
+    ...rowStyle,
+  }))
+    put.run(taskId, key, c.value, c.style, c.version);
   return getTask(db, taskId);
+}
+
+// New tasks and imported snapshots share sparse initialization. Existing cells
+// never use this path: clearing them must preserve their conflict versions.
+export function* initialCells(cells, defaultStyle = {}) {
+  const normalize = styleNormalizer();
+  for (const [key, c] of Object.entries(cells)) {
+    const value = c.value ?? "",
+      style = normalize(c.style || {}, defaultStyle);
+    if (value === "" && !Object.keys(style).length) continue;
+    yield [key, { value, style, version: 1 }];
+  }
 }
 export function audit(db, actorId, teamId, action, target, before, after) {
   const auditId = id();

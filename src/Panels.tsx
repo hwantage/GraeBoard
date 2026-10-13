@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Trash2,
   LoaderCircle,
-  Check,
   FileSpreadsheet,
   Copy,
   EyeOff,
@@ -18,11 +17,14 @@ import {
   CalendarPlus,
   Pencil,
 } from "lucide-react";
-import { api, send, download } from "./api";
+import { api, send, download, taskQuery } from "./api";
 import { Modal, Button, ErrorNote, Empty } from "./components";
+import Toast, { useToast } from "./Toast";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import HistoryTime, { HistoryTimeline } from "./HistoryTime";
+import { describeStyle } from "./history";
+import { pack, compactStyle } from "../shared/compact.js";
 import type { Task, User, View, Report, Point, Settings } from "./types";
 import {
   fieldsFor,
@@ -37,6 +39,7 @@ import {
 } from "../shared/domain.js";
 
 const AUDIT_LABELS: Record<string, string> = {
+  format: "공통 서식 변경",
   cells: "셀 편집",
   reorder: "업무 순서 변경",
   "property-convert": "속성 종류 변경",
@@ -523,8 +526,9 @@ export function ReportsPanel({
     [selected, setSelected] = useState<string[]>([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [savePhase, setSavePhase] = useState<"saving" | "saved" | null>(null),
+    [savePhase, setSavePhase] = useState<"saving" | null>(null),
     [savedId, setSavedId] = useState<string | null>(null);
+  const [message, setMessage] = useToast();
   const canManage = canManageTeam(user, teamId);
   const active = useRef(true);
   const saving = useRef(false);
@@ -561,8 +565,8 @@ export function ReportsPanel({
     setBusy(true);
     setError("");
     setSavedId(null);
+    setMessage("");
     setSavePhase("saving");
-    const started = performance.now();
     try {
       const saved = await send<{ id: string }>("/reports", {
         teamId,
@@ -573,9 +577,10 @@ export function ReportsPanel({
         taskIds: tasks.map((t) => t.id),
       });
       if (!active.current) return;
-      // Hold the refreshed list until the feedback card finishes, and ignore
-      // an initial list request that might still be in flight.
+      // 처음 목록을 읽던 요청이 저장 후 목록을 덮어쓰지 않도록 무효화한다.
       listRequest.current++;
+      setSavePhase(null);
+      setMessage("스냅샷을 저장했습니다.");
       let nextReports: typeof reports | undefined;
       let refreshError = "";
       try {
@@ -587,13 +592,6 @@ export function ReportsPanel({
         refreshError =
           "스냅샷은 저장되었지만 목록을 불러오지 못했습니다. 목록을 다시 열어 확인해 주세요.";
       }
-      // These waits only pace the feedback; the save request starts immediately.
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, 650 - (performance.now() - started))),
-      );
-      if (!active.current) return;
-      setSavePhase("saved");
-      await new Promise((resolve) => setTimeout(resolve, 800));
       if (!active.current) return;
       if (nextReports) {
         setReports(nextReports);
@@ -623,10 +621,12 @@ export function ReportsPanel({
       return;
     setBusy(true);
     setError("");
+    setMessage("");
     try {
       await onDelete(selected);
       setReports((rows) => rows.filter((r) => !selected.includes(r.id)));
       setSelected([]);
+      setMessage(`스냅샷 ${selected.length}개를 삭제했습니다.`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -703,29 +703,11 @@ export function ReportsPanel({
           </Button>
         </div>
       )}
+      <Toast
+        message={savePhase ? "스냅샷 저장 중…" : message}
+        pending={!!savePhase}
+      />
       <div className="report-list">
-        {savePhase && (
-          <div
-            className="report-item report-save-feedback"
-            data-state={savePhase}
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <span className="report-save-status" key={savePhase}>
-              {savePhase === "saving" ? (
-                <LoaderCircle className="spin" size={22} aria-hidden="true" />
-              ) : (
-                <span className="report-save-check" aria-hidden="true">
-                  <Check size={21} />
-                </span>
-              )}
-              <strong>
-                {savePhase === "saving" ? "스냅샷 저장 중…" : "저장 완료"}
-              </strong>
-            </span>
-          </div>
-        )}
         {reports.length
           ? reports.map((r) => (
               <div
@@ -784,6 +766,7 @@ export function ReportsPanel({
 export function HistoryPanel({
   teamId,
   year,
+  startMonth,
   tasks,
   settings,
   users,
@@ -793,6 +776,7 @@ export function HistoryPanel({
 }: {
   teamId: string;
   year: number;
+  startMonth: number;
   tasks: Task[];
   settings: Settings;
   users: User[];
@@ -822,7 +806,7 @@ export function HistoryPanel({
   return (
     <Modal
       title="변경 이력"
-      help="팀 변경 이력을 최신순으로 최대 100개까지 표시합니다. 셀 수정 이력에서 변경 전 내용으로 복원할 수 있습니다."
+      help="팀 변경 이력을 최신순으로 최대 100개까지 표시합니다. 셀·공통 서식 변경 전 내용으로 복원할 수 있습니다."
       className="history-modal"
       onClose={onClose}
     >
@@ -853,34 +837,71 @@ export function HistoryPanel({
               <span>{e.actor}</span>
               <HistoryTime iso={e.createdAt} />
             </summary>
-            {e.action === "cells" ? (
+            {e.action === "cells" || e.action === "format" ? (
               <>
-                <div className="audit-changes">
-                  {e.after.map((c: any, i: number) => (
-                    <div key={i}>
-                      <strong>
-                        {titleById.get(c.taskId) || c.taskId.slice(0, 8)}
-                      </strong>
-                      <span>{fieldLabels.get(c.key) || c.key}</span>
-                      <span>
-                        {displayValue(
-                          { cells: { [c.key]: e.before[i] || { value: "" } } },
-                          c.key,
-                          users,
-                          settings,
-                        ) || "빈 값"}{" "}
-                        →{" "}
-                        {displayValue(
-                          { cells: { [c.key]: c } },
-                          c.key,
-                          users,
-                          settings,
-                        ) || "빈 값"}
-                      </span>
-                      <small>서식: {JSON.stringify(c.style)}</small>
-                    </div>
-                  ))}
-                </div>
+                {e.action === "format" && (
+                  <div className="audit-changes">
+                    <p>{e.after.taskIds.length}개 업무의 공통 서식 변경</p>
+                    {e.after.formatting.rules
+                      .filter(
+                        (r: any) =>
+                          JSON.stringify(r) !==
+                          JSON.stringify(
+                            e.before.formatting.rules.find(
+                              (b: any) => b.id === r.id,
+                            ),
+                          ),
+                      )
+                      .map((r: any) => (
+                        <div key={r.id}>
+                          <strong>
+                            {r.rows ? `${r.rows.length}개 행` : "모든 행"} ·{" "}
+                            {r.keys ? `${r.keys.length}개 열` : "전체 열"}
+                          </strong>
+                          <small>{describeStyle(r.style)}</small>
+                        </div>
+                      ))}
+                  </div>
+                )}
+                {(e.action === "format" ? e.after.cells : e.after).length >
+                  0 && (
+                  <div className="audit-changes">
+                    {(e.action === "format" ? e.after.cells : e.after).map(
+                      (c: any, i: number) => (
+                        <div key={i}>
+                          <strong>
+                            {titleById.get(c.taskId) || c.taskId.slice(0, 8)}
+                          </strong>
+                          <span>{fieldLabels.get(c.key) || c.key}</span>
+                          <span>
+                            {displayValue(
+                              {
+                                cells: {
+                                  [c.key]: (e.action === "format"
+                                    ? e.before.cells
+                                    : e.before)[i] || { value: "" },
+                                },
+                              },
+                              c.key,
+                              users,
+                              settings,
+                            ) || "빈 값"}{" "}
+                            →{" "}
+                            {displayValue(
+                              { cells: { [c.key]: c } },
+                              c.key,
+                              users,
+                              settings,
+                            ) || "빈 값"}
+                          </span>
+                          <small>
+                            서식: {JSON.stringify(compactStyle(c.style))}
+                          </small>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
                 {canManageTeam(user, teamId) && (
                   <Button
                     disabled={busy}
@@ -895,10 +916,12 @@ export function HistoryPanel({
                       setError("");
                       try {
                         const current = await api(
-                          `/tasks?teamId=${teamId}&year=${year}`,
+                          taskQuery(teamId, year, startMonth),
                         );
                         const versions: Record<string, number> = {};
-                        for (const c of e.before) {
+                        for (const c of e.action === "format"
+                          ? e.before.cells
+                          : e.before) {
                           const task = current.tasks.find(
                             (t: Task) => t.id === c.taskId,
                           );
@@ -911,7 +934,11 @@ export function HistoryPanel({
                             c.key,
                           ).version;
                         }
-                        await send(`/audit/${e.id}/restore`, { versions });
+                        await send(`/audit/${e.id}/restore`, {
+                          versions,
+                          formatRevision:
+                            current.tasks[0]?.formatting?.revision ?? 0,
+                        });
                         await refresh();
                         onRefresh();
                       } catch (err) {
@@ -926,7 +953,7 @@ export function HistoryPanel({
                 )}
               </>
             ) : (
-              <pre>{JSON.stringify(e.after || e.before, null, 2)}</pre>
+              <pre>{JSON.stringify(pack(e.after || e.before), null, 2)}</pre>
             )}
           </details>
         ))}
@@ -995,8 +1022,8 @@ export function PasswordPanel({
   onClose: () => void;
 }) {
   const [error, setError] = useState(""),
-    [done, setDone] = useState(false),
     [saving, setSaving] = useState(false);
+  const [message, setMessage] = useToast();
   return (
     <Modal
       title="비밀번호 변경"
@@ -1016,7 +1043,7 @@ export function PasswordPanel({
           if (saving) return;
           const form = e.currentTarget;
           setError("");
-          setDone(false);
+          setMessage("");
           const f = new FormData(form);
           if (f.get("password") !== f.get("confirmPassword")) {
             setError("새 비밀번호와 비밀번호 확인이 일치하지 않습니다.");
@@ -1032,7 +1059,7 @@ export function PasswordPanel({
               password: f.get("password"),
             });
             form.reset();
-            setDone(true);
+            setMessage("비밀번호를 변경했습니다.");
           } catch (err) {
             setError((err as Error).message);
           } finally {
@@ -1072,7 +1099,7 @@ export function PasswordPanel({
           />
         </label>
         <ErrorNote error={error} />
-        {done && <p className="success-note">비밀번호를 변경했습니다.</p>}
+        <Toast message={message} />
         <footer className="form-actions">
           <Button onClick={onClose} disabled={saving}>
             닫기

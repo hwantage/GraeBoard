@@ -1,4 +1,5 @@
 import { defaultCoreProperties } from "./coreProperties.js";
+import { inheritedStyle } from "./formatting.js";
 import { FONTS } from "./fonts.js";
 export {
   FONTS,
@@ -126,10 +127,13 @@ export function groupValue(task, key) {
 }
 export function cell(task, key) {
   const current = task.cells[key] ?? emptyCell();
-  return { ...current, style: { ...task.defaultStyle, ...current.style } };
+  return {
+    ...current,
+    style: { ...inheritedStyle(task, key), ...current.style },
+  };
 }
 export function value(task, key) {
-  return cell(task, key).value;
+  return (task.cells[key] ?? emptyCell()).value;
 }
 // 시스템 권한(admin/user)과 팀 내 권한(lead/member/viewer)은 따로 둔다.
 // 시스템 관리자는 소속과 관계없이 모든 팀을 관리하지만, 담당자가 될 수 있는

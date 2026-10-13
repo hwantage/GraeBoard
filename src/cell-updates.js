@@ -1,6 +1,6 @@
 /** @typedef {import("./types").Task} Task */
 /** @typedef {import("./types").SavedCell} SavedCell */
-/** @typedef {{ cells: SavedCell[], updatedAt?: Record<string, string> }} CellUpdates */
+/** @typedef {{ cells: SavedCell[], updatedAt?: Record<string, string>, formatting?: import("./types").Formatting, formatTeamId?: string }} CellUpdates */
 /** @typedef {{ tasks: Task[], cellEventId: string }} TaskSnapshot */
 
 // HTTP acknowledgements and SSE can arrive in either order. Never replace a
@@ -17,19 +17,26 @@ export function mergeCellUpdates(tasks, update) {
   let changed = false;
   const next = tasks.map((task) => {
     const changes = byTask.get(task.id);
-    if (!changes) return task;
+    const formatting =
+      update.formatting &&
+      task.teamId === update.formatTeamId &&
+      update.formatting.revision > (task.formatting?.revision ?? 0)
+        ? update.formatting
+        : task.formatting;
+    if (!changes && formatting === task.formatting) return task;
     let cells = task.cells;
-    for (const { taskId, key, ...c } of changes.values()) {
+    for (const { taskId, key, ...c } of changes?.values() || []) {
       if ((cells[key]?.version ?? 0) >= c.version) continue;
       if (cells === task.cells) cells = { ...cells };
       cells[key] = c;
     }
-    if (cells === task.cells) return task;
+    if (cells === task.cells && formatting === task.formatting) return task;
     changed = true;
     const stamp = update.updatedAt?.[task.id];
     return {
       ...task,
       cells,
+      ...(formatting ? { formatting } : {}),
       updatedAt: stamp && stamp > task.updatedAt ? stamp : task.updatedAt,
     };
   });
@@ -49,11 +56,16 @@ export function mergeSnapshotCells(tasks, snapshot) {
       if (cells === task.cells) cells = { ...cells };
       cells[key] = c;
     }
-    if (cells === task.cells) return task;
+    const formatting =
+      (fresh.formatting?.revision ?? 0) > (task.formatting?.revision ?? 0)
+        ? fresh.formatting
+        : task.formatting;
+    if (cells === task.cells && formatting === task.formatting) return task;
     changed = true;
     return {
       ...task,
       cells,
+      ...(formatting ? { formatting } : {}),
       updatedAt:
         fresh.updatedAt > task.updatedAt ? fresh.updatedAt : task.updatedAt,
     };

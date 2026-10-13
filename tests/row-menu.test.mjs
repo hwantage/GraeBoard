@@ -1,3 +1,5 @@
+import { parseCompact, compactStyle } from "../shared/compact.js";
+import { unpack } from "../shared/compact.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -22,7 +24,7 @@ async function request(path, body, cookie = admin) {
   });
   return {
     status: response.status,
-    data: await response.json(),
+    data: await response.json().then(unpack),
     cookie: response.headers.get("set-cookie")?.split(";")[0],
   };
 }
@@ -196,7 +198,7 @@ test("팀원은 직접 삽입한 미지정 행을 편집하고 다른 사람의 
 
 test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값만 유지한다", async () => {
   const { teamId } = await fixture();
-  const settings = JSON.parse(
+  const settings = parseCompact(
     db.prepare("SELECT settings FROM teams WHERE id=?").get(teamId).settings,
   );
   settings.properties = sampleProperties();
@@ -219,7 +221,6 @@ test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값
     borderTop: { style: "solid", color: "#336699" },
     borderRight: { style: "dashed", color: "#225588" },
     borderBottom: { style: "double", color: "#114477" },
-    borderLeft: null,
   };
   const snapshot = {
     defaultStyle: baseStyle,
@@ -420,22 +421,24 @@ test("현재 점선 서식의 행은 같은 행 아래에 그대로 붙여넣고
   });
   assert.equal(updated.status, 200);
   const savedStyle = {
-    borderTop: null,
     borderRight: { style: "dashed", color: "#856060" },
     borderBottom: null,
-    borderLeft: null,
   };
   const savedDefault = {
     fontSize: 14,
     borderBottom: { style: "dashed", color: "#335577" },
   };
-  db.prepare("UPDATE cells SET style=? WHERE task_id=? AND key=?").run(
-    JSON.stringify(savedStyle),
+  const addStyle = (style) =>
+    db
+      .prepare("INSERT INTO styles(data) VALUES(?) RETURNING id")
+      .get(JSON.stringify(compactStyle(style))).id;
+  db.prepare("UPDATE cells SET style_id=? WHERE task_id=? AND key=?").run(
+    addStyle(savedStyle),
     original.id,
     week,
   );
   db.prepare("UPDATE tasks SET default_style=? WHERE id=?").run(
-    JSON.stringify(savedDefault),
+    addStyle(savedDefault),
     original.id,
   );
   const source = (await rows(teamId)).find((task) => task.id === original.id);

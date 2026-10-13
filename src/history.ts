@@ -1,4 +1,5 @@
 import type { HistoryEntry, SavedCell, Style, Border, Task } from "./types";
+import { rowFormatSignature } from "../shared/formatting.js";
 
 export const HISTORY_LIMIT = 50;
 
@@ -12,6 +13,8 @@ export function rebaseHistory(
   entries: HistoryEntry[],
   restored: SavedCell[],
   current: SavedCell[],
+  undone?: HistoryEntry,
+  result?: import("./types").BatchResult,
 ) {
   const versions = new Map(
     restored.map((c) => [`${c.taskId}:${c.key}`, c.version]),
@@ -36,6 +39,12 @@ export function rebaseHistory(
     }
     return {
       ...entry,
+      ...(!("kind" in (undone || {})) &&
+      (undone as import("./types").BatchResult | undefined)?.formatOperation &&
+      entry.formatRevision ===
+        (undone as import("./types").BatchResult).previousFormatRevision
+        ? { formatRevision: result?.formatRevision }
+        : {}),
       cells: entry.cells.map((c) =>
         versions.get(`${c.taskId}:${c.key}`) === c.version
           ? {
@@ -53,6 +62,7 @@ export function canUndoCreation(expected: Task, current: Task) {
     JSON.stringify(expected.years) === JSON.stringify(current.years) &&
     JSON.stringify(expected.defaultStyle) ===
       JSON.stringify(current.defaultStyle) &&
+    rowFormatSignature(expected) === rowFormatSignature(current) &&
     [
       ...new Set([
         ...Object.keys(expected.cells),

@@ -15,22 +15,22 @@ export type BorderPreset =
   | "bottom"
   | "none";
 export type Style = {
-  // null clears inherited borders while preserving the native grid lines.
+  // null cancels an inherited property and restores its native appearance.
   borderTop?: Border | null;
   borderRight?: Border | null;
   borderBottom?: Border | null;
   borderLeft?: Border | null;
-  color?: string;
-  backgroundColor?: string;
-  fontFamily?: string;
-  fontSize?: number;
-  textAlign?: "left" | "center" | "right";
-  verticalAlign?: "top" | "middle" | "bottom";
-  bold?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-  strike?: boolean;
-  textMode?: "overflow" | "wrap" | "clip";
+  color?: string | null;
+  backgroundColor?: string | null;
+  fontFamily?: string | null;
+  fontSize?: number | null;
+  textAlign?: "left" | "center" | "right" | null;
+  verticalAlign?: "top" | "middle" | "bottom" | null;
+  bold?: boolean | null;
+  italic?: boolean | null;
+  underline?: boolean | null;
+  strike?: boolean | null;
+  textMode?: "overflow" | "wrap" | "clip" | null;
 };
 export type Cell = {
   value: string | number | string[];
@@ -48,6 +48,32 @@ export type Task = {
   updatedAt: string;
   cells: Record<string, Cell>;
   defaultStyle?: Style;
+  formatting?: Formatting;
+  rowStyle?: Style;
+};
+export type FormatRule = {
+  id: string;
+  rows: string[] | null;
+  keys: string[] | null;
+  excludeKeys?: string[];
+  style: Style;
+  orders: Record<string, number>;
+};
+export type Formatting = { revision: number; rules: FormatRule[] };
+export type FormatScope = {
+  rows: string[] | null;
+  keys: string[] | null;
+  excludeKeys?: string[];
+  style: Style;
+  reset?: boolean;
+};
+export type FormatChange = {
+  teamId: string;
+  expectedRevision: number;
+  scopes?: FormatScope[];
+  expectedTasks?: Record<string, string>;
+  restore?: string;
+  expectedCells?: Record<string, number>;
 };
 export type User = {
   id: string;
@@ -132,6 +158,8 @@ export type CellChange = Point & {
   value?: Cell["value"];
   style?: Style;
   expectedVersion: number;
+  expectedFormatRevision?: number;
+  rawStyle?: boolean;
 };
 export type SavedCell = Point & Cell;
 export type BatchResult = {
@@ -140,6 +168,11 @@ export type BatchResult = {
   updatedAt?: Record<string, string>;
   operationId: string;
   savedAt: string;
+  formatting?: Formatting;
+  formatTeamId?: string;
+  formatRevision?: number;
+  previousFormatRevision?: number;
+  formatOperation?: boolean;
 };
 // 실행취소 기록. 셀 변경 묶음과 업무(행) 추가·삭제를 함께 쌓는다.
 export type TaskDeletion = {

@@ -1,3 +1,6 @@
+import { DatabaseSync } from "node:sqlite";
+import { parseCompact } from "../shared/compact.js";
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -150,7 +153,10 @@ async function fixture(t) {
       },
       body: body === undefined ? undefined : form ? body : json(body),
     });
-    return { status: response.status, data: await response.json() };
+    return {
+      status: response.status,
+      data: await response.json().then(unpack),
+    };
   }
   return {
     get db() {
@@ -195,7 +201,7 @@ function storedReport(db, id) {
     row.data.length < plain.length / 2,
     "반복되는 업무·서식은 압축되어야 한다",
   );
-  return JSON.parse(plain.toString("utf8"));
+  return parseCompact(plain.toString("utf8"));
 }
 
 test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·원본 변경 뒤에도 내용과 서식을 보존한다", async (t) => {
@@ -308,33 +314,18 @@ test("XLSX 보고서 가져오기도 이름만 압축 저장하고 원본 업무
   assert.deepEqual(opened.data.tasks, saved.tasks);
 });
 
-test("저장 형식 전환은 기존 보고서만 폐기하고 새 보고서는 다음 실행에도 유지한다", async (t) => {
-  const f = await fixture(t);
-  f.db.exec(
-    "DROP TABLE reports; CREATE TABLE reports(id TEXT PRIMARY KEY,team_id TEXT,year INTEGER,name TEXT,reference_date TEXT,created_by TEXT,created_at TEXT,data TEXT); PRAGMA user_version=12;",
+test("이전 DB 형식은 변환·삭제하지 않고 새 DB 사용을 요구한다", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "graeboard-old-schema-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "old.sqlite");
+  const db = openDatabase(path);
+  db.exec(
+    "CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('보존'); PRAGMA user_version=13;",
   );
-  f.db
-    .prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)")
-    .run(
-      randomUUID(),
-      f.teamId,
-      2026,
-      "폐기할 과거 보고서",
-      "2026-10-01",
-      f.people.admin.id,
-      now(),
-      "이전 형식은 해석하거나 변환하지 않는다",
-    );
-  const usersBefore = f.db.prepare("SELECT * FROM users ORDER BY id").all();
-  await f.restart();
-  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM reports").get().n, 0);
-  assert.deepEqual(getTask(f.db, f.task.id), f.task);
-  assert.deepEqual(
-    f.db.prepare("SELECT * FROM users ORDER BY id").all(),
-    usersBefore,
-  );
-  const created = await f.save();
-  assert.equal(created.status, 201);
-  await f.restart();
-  assert.equal((await f.request(`/reports/${created.data.id}`)).status, 200);
+  db.close();
+  assert.throws(() => openDatabase(path), /v13.*지원하지 않습니다/);
+  const check = new DatabaseSync(path);
+  assert.equal(check.prepare("SELECT value FROM sentinel").get().value, "보존");
+  assert.equal(check.prepare("PRAGMA user_version").get().user_version, 13);
+  check.close();
 });

@@ -12,7 +12,9 @@ import {
   id,
   now,
   json,
+  parse,
   passwordHash,
+  upsertCellStatement,
 } from "../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
@@ -134,7 +136,7 @@ for (const scenario of scenarios) {
       const addTask = db.prepare(
         "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
       );
-      const addCell = db.prepare("INSERT INTO cells VALUES(?,?,?,?,?)");
+      const addCell = upsertCellStatement(db);
       for (let i = 0; i < scenario.rows; i++) {
         const tid = id();
         taskIds.push(tid);
@@ -161,21 +163,19 @@ for (const scenario of scenarios) {
           current: i % 50,
         };
         for (const [key, value] of Object.entries(fields))
-          addCell.run(tid, key, json(value), "{}", 1);
+          addCell.run(tid, key, value, {}, 1);
         for (let w = 0; w < weeks.length; w++)
           if ((i * 37 + w * 13) % 100 < scenario.fill)
             addCell.run(
               tid,
               weeks[w].key,
-              json(
-                `업무 ${i} / ${w + 1}주: 화면 설계와 개발 검토 #${100000 + ((i * 53 + w) % 900000)}\n확인 후 협의 진행`,
-              ),
-              json({
+              `업무 ${i} / ${w + 1}주: 화면 설계와 개발 검토 #${100000 + ((i * 53 + w) % 900000)}\n확인 후 협의 진행`,
+              {
                 backgroundColor: i % 2 ? "#e7effb" : "#d1eee6",
                 fontSize: 9,
                 textMode: "wrap",
                 verticalAlign: "top",
-              }),
+              },
               1,
             );
       }
@@ -236,7 +236,7 @@ for (const scenario of scenarios) {
     const path = `/api/tasks?teamId=${team}&year=2026`;
     let read = await request(path);
     assert.equal(read.response.status, 200);
-    const tasks = JSON.parse(Buffer.from(read.body)).tasks;
+    const tasks = parse(Buffer.from(read.body)).tasks;
     assert.equal(tasks.length, scenario.rows);
     assert.equal(
       tasks.reduce((n, t) => n + Object.keys(t.cells).length, 0),

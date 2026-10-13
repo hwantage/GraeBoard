@@ -6,7 +6,9 @@ import { requireThat } from "./validation.mjs";
 export function storeCellOperation(db, actorId, result, tasks) {
   const teamIds = new Set([...tasks.values()].map((task) => task.teamId));
   const refs = [];
-  if (teamIds.size === 1) {
+  if (!result.cells.length) {
+    // An idempotency marker is sufficient; no empty audit snapshot is written.
+  } else if (teamIds.size === 1) {
     const teamId = teamIds.values().next().value;
     refs.push({
       teamId,
@@ -56,6 +58,9 @@ export function storeCellOperation(db, actorId, result, tasks) {
       refs,
       savedAt: result.savedAt,
       updatedAt: result.updatedAt,
+      ...(result.formatRevision !== undefined
+        ? { formatRevision: result.formatRevision }
+        : {}),
     }),
     result.savedAt,
   );
@@ -64,7 +69,7 @@ export function storeCellOperation(db, actorId, result, tasks) {
 export function replayCellOperation(db, operation) {
   const stored = parse(operation.response);
   requireThat(
-    stored?.kind === "cell-audit" && stored.refs?.length,
+    stored?.kind === "cell-audit" && Array.isArray(stored.refs),
     409,
     "셀 저장 요청의 작업 ID가 아닙니다.",
   );
@@ -101,5 +106,8 @@ export function replayCellOperation(db, operation) {
     operationId: operation.id,
     savedAt: stored.savedAt,
     updatedAt: stored.updatedAt,
+    ...(stored.formatRevision !== undefined
+      ? { formatRevision: stored.formatRevision }
+      : {}),
   };
 }

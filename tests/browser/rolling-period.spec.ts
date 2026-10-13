@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
@@ -10,14 +11,18 @@ async function post(page: Page, path: string, data: any, method = "post") {
     data,
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  return response.json();
+  return response.json().then(unpack);
 }
 test.beforeEach(async ({ page }) => {
   await post(page, "/auth/login", {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   teamId = (
     await post(page, "/admin/teams", {
       name: `월 이동 ${randomUUID().slice(0, 8)}`,
@@ -120,7 +125,9 @@ test("연도 화살표는 겹친 기간과 저장된 월 범위를 단일 연도
     .poll(async () => {
       const data = await (
         await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
-      ).json();
+      )
+        .json()
+        .then(unpack);
       return data.views.find((view: any) => view.name === "__current")?.data
         .startMonth;
     })
@@ -165,7 +172,7 @@ test("업무 추가 저장 중에는 기준 연도와 달력 이동을 잠근다
     await expect(add).toBeDisabled();
   } finally {
     release();
-    created = await (await response).json();
+    created = await (await response).json().then(unpack);
     await page.unroute("**/api/tasks");
   }
   expect(created.task.years).toEqual([2026]);
@@ -273,7 +280,7 @@ test("달력은 12개월을 한 달씩 이동하고 두 해의 개인 보기를 
     .locator('.format-toolbar[aria-label="셀 서식 도구"]')
     .getByRole("button", { name: "업무 추가", exact: true })
     .click();
-  const added = await (await addedResponse).json();
+  const added = await (await addedResponse).json().then(unpack);
   expect(added.task.years).toEqual([2026]);
   await page.keyboard.press("Escape");
   await page.screenshot({ path: info.outputPath("rolling-calendar.png") });

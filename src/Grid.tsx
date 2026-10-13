@@ -1,3 +1,4 @@
+import { explicitStyle, rowFontSize } from "../shared/formatting.js";
 import {
   Fragment,
   memo,
@@ -234,7 +235,12 @@ export default function Grid({
   onError: (s: string) => void;
   readOnly?: boolean;
   presentation?: boolean;
-  jump: { key: string | null; taskId?: string; id: number } | null;
+  jump: {
+    key: string | null;
+    taskId?: string;
+    id: number;
+    preserveHorizontalScroll?: boolean;
+  } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const appliedJump = useRef<number | null>(null);
@@ -631,14 +637,7 @@ export default function Grid({
       tasks.map((task) => {
         const fitted = Math.max(
           density === "comfortable" ? 48 : 38,
-          ...Object.values(task.cells).map((c) =>
-            Math.ceil(
-              (c.style.fontSize || task.defaultStyle?.fontSize || 9) *
-                (4 / 3) *
-                1.55 +
-                16,
-            ),
-          ),
+          Math.ceil(rowFontSize(task) * (4 / 3) * 1.55 + 16),
         );
         return (
           view.rowHeights[task.id] ||
@@ -705,7 +704,7 @@ export default function Grid({
         const pinned =
           rowHeaderWidth +
           columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
-        if (!columns[index].fixed)
+        if (!jump.preserveHorizontalScroll && !columns[index].fixed)
           ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 16);
         appliedJump.current = jump.id;
       }
@@ -1844,7 +1843,7 @@ const RowBody = memo(function RowBody({
         columnKeys,
         columnKeys.map((key) => cell(task, key).style),
         boundaryStyles,
-        columnKeys.map((key) => task.cells[key]?.style || {}),
+        columnKeys.map((key) => explicitStyle(task, key)),
       ),
     [task, columnKeys, boundaryStyles],
   );
@@ -2205,9 +2204,10 @@ const GridCell = memo(function GridCell({
           aria-label={`${c.label} 선택`}
           aria-haspopup="listbox"
           aria-expanded="false"
-          onPointerDown={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-          onClick={() => actions.edit(point)}
+          onClick={(e) => {
+            // 키보드·보조기기의 활성화는 유지하고 포인터 입력은 셀에서 처리한다.
+            if (e.detail === 0) actions.edit(point);
+          }}
         >
           {content}
         </button>

@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { defaultView } from "../../shared/domain.js";
@@ -8,7 +9,7 @@ async function post(page: Page, path: string, data: unknown) {
     data,
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  return response.json();
+  return response.json().then(unpack);
 }
 
 function deferred() {
@@ -38,7 +39,11 @@ test.beforeEach(async ({ page }) => {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   teamId = (
     await post(page, "/admin/teams", {
       name: `저장 표시 검증 ${randomUUID().slice(0, 8)}`,
@@ -61,7 +66,7 @@ test.beforeEach(async ({ page }) => {
   ).toBeVisible();
 });
 
-test("스냅샷 저장은 맨 위 임시 카드에서 진행과 완료를 표시한 뒤 실제 카드로 바뀐다", async ({
+test("스냅샷 저장은 토스트로 진행과 완료를 알리고 실제 카드를 갱신한다", async ({
   page,
 }, info) => {
   await post(page, "/reports", {
@@ -92,10 +97,12 @@ test("스냅샷 저장은 맨 위 임시 카드에서 진행과 완료를 표시
     await stored.promise;
     const status = modal.getByRole("status");
     await expect(status).toHaveText("스냅샷 저장 중…");
+    await expect(status).toHaveClass("toast");
+    await expect(status).toBeInViewport();
     await expect(status.locator(".spin")).toBeVisible();
-    await expect(modal.locator(".report-item")).toHaveCount(2);
+    await expect(modal.locator(".report-item")).toHaveCount(1);
     await expect(modal.locator(".report-item").first()).toContainText(
-      "스냅샷 저장 중…",
+      "이전 주 보고서",
     );
     await expect(
       modal.getByRole("button", { name: /이전 주 보고서/ }),
@@ -110,32 +117,16 @@ test("스냅샷 저장은 맨 위 임시 카드에서 진행과 완료를 표시
     await page.waitForTimeout(750);
     await expect(status).toHaveText("스냅샷 저장 중…");
     expect(saves).toBe(1);
-    const pendingBox = (await status.boundingBox())!;
-    await modal.screenshot({ path: info.outputPath("snapshot-saving.png") });
+    await page.screenshot({ path: info.outputPath("snapshot-saving.png") });
     release.resolve();
-    await expect(status).toHaveText("저장 완료");
-    await expect(status.locator(".report-save-check")).toBeVisible();
-    expect(
-      await status.locator(".report-save-check path").evaluate(async (path) => {
-        await Promise.all(
-          path.getAnimations().map((animation) => animation.finished),
-        );
-        return getComputedStyle(path).strokeDashoffset;
-      }),
-    ).toBe("0px");
-    await expect(
-      modal.getByRole("button", { name: /이번 주 보고서/ }),
-    ).toHaveCount(0);
-    await modal.screenshot({ path: info.outputPath("snapshot-saved.png") });
+    await expect(status).toHaveText("스냅샷을 저장했습니다.");
+    await expect(status.locator(".spin")).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath("snapshot-saved.png") });
     const newest = modal.locator(".report-item").first();
     await expect(
       newest.getByRole("button", { name: /이번 주 보고서/ }),
     ).toBeEnabled();
-    await expect(status).toHaveCount(0);
     await expect(modal.locator(".report-item")).toHaveCount(2);
-    const finalBox = (await newest.boundingBox())!;
-    expect(Math.abs(finalBox.y - pendingBox.y)).toBeLessThan(2);
-    expect(Math.abs(finalBox.height - pendingBox.height)).toBeLessThan(2);
     await modal.screenshot({ path: info.outputPath("snapshot-ready.png") });
     // The completion highlight must release the card's regular selection color.
     await newest.getByRole("checkbox").check();
@@ -150,7 +141,9 @@ test("스냅샷 저장은 맨 위 임시 카드에서 진행과 완료를 표시
     );
     const reports = await (
       await page.request.get(`/api/reports?teamId=${teamId}`)
-    ).json();
+    )
+      .json()
+      .then(unpack);
     expect(reports.reports).toHaveLength(2);
     await newest.getByRole("button").click();
     await expect(
@@ -161,7 +154,7 @@ test("스냅샷 저장은 맨 위 임시 카드에서 진행과 완료를 표시
   }
 });
 
-test("빠른 첫 스냅샷 저장도 상태를 충분히 보여 주며 동작 줄이기 설정을 따른다", async ({
+test("빠른 스냅샷 저장도 작은 화면에서 완료 토스트를 표시하고 4초 뒤 닫는다", async ({
   page,
 }, info) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -170,44 +163,29 @@ test("빠른 첫 스냅샷 저장도 상태를 충분히 보여 주며 동작 �
   const modal = modalFor(page);
   await expect(modal.getByText("저장된 스냅샷이 없습니다")).toBeVisible();
   await modal.getByLabel("보고서 이름", { exact: true }).fill("첫 보고서");
-  await modal.evaluate((el) => {
-    const transitions: { text: string; at: number }[] = [];
-    const observer = new MutationObserver(() => {
-      const text = el.querySelector('[role="status"]')?.textContent || "ready";
-      if (transitions.at(-1)?.text !== text)
-        transitions.push({ text, at: performance.now() });
-    });
-    observer.observe(el, { childList: true, subtree: true });
-    (window as any).reportFeedbackTransitions = transitions;
-  });
+  await page.clock.install();
   await saveFor(page).click();
   const status = modal.getByRole("status");
-  await expect(status).toHaveText("스냅샷 저장 중…");
-  await expect(status.locator(".spin")).toHaveCSS("animation-name", "none");
+  await expect(status).toHaveText("스냅샷을 저장했습니다.");
+  await expect(status).toBeInViewport();
+  await expect(status).toHaveCSS("position", "fixed");
   await expect(modal.getByText("저장된 스냅샷이 없습니다")).toHaveCount(0);
-  await expect(status).toHaveText("저장 완료");
-  await expect(status.locator(".report-save-check")).toHaveCSS(
+  await expect(modal.locator(".report-item-saved")).toHaveCSS(
     "animation-name",
     "none",
   );
-  await modal.screenshot({
+  await page.screenshot({
     path: info.outputPath("snapshot-mobile-saved.png"),
   });
   await expect(modal.getByRole("button", { name: /첫 보고서/ })).toBeEnabled();
-  const transitions = await page.evaluate(
-    () => (window as any).reportFeedbackTransitions,
-  );
-  expect(transitions.map((step: any) => step.text)).toEqual([
-    "스냅샷 저장 중…",
-    "저장 완료",
-    "ready",
-  ]);
-  expect(transitions[1].at - transitions[0].at).toBeGreaterThanOrEqual(600);
-  expect(transitions[2].at - transitions[1].at).toBeGreaterThanOrEqual(750);
   await expect(modal.locator(".report-item")).toHaveCount(1);
+  await page.clock.fastForward(3000);
+  await expect(status).toBeVisible();
+  await page.clock.fastForward(1100);
+  await expect(status).toHaveCount(0);
 });
 
-test("스냅샷 저장 실패는 임시 카드를 제거하고 같은 이름으로 재시도할 수 있다", async ({
+test("스냅샷 저장 실패는 완료 토스트를 표시하지 않고 같은 이름으로 재시도할 수 있다", async ({
   page,
 }) => {
   await openReports(page);
@@ -255,7 +233,7 @@ test("저장 후 목록 조회만 실패하면 저장 완료를 알리고 다시
     }),
   );
   await saveFor(page).click();
-  await expect(modal.getByRole("status")).toHaveText("저장 완료");
+  await expect(modal.getByRole("status")).toHaveText("스냅샷을 저장했습니다.");
   await expect(modal.getByRole("alert")).toContainText(
     "스냅샷은 저장되었지만 목록을 불러오지 못했습니다.",
   );
@@ -291,7 +269,7 @@ for (const phase of ["saving", "saved"] as const) {
       await saveFor(page).click();
       await stored.promise;
       await expect(modal.getByRole("status")).toHaveText(
-        phase === "saving" ? "스냅샷 저장 중…" : "저장 완료",
+        phase === "saving" ? "스냅샷 저장 중…" : "스냅샷을 저장했습니다.",
       );
       await modal.getByRole("button", { name: "닫기", exact: true }).click();
       await openReports(page);

@@ -9,7 +9,8 @@ const CLOCK_SKEW = 5 * 60 * 1000;
 const PREVIEW_TTL = 15 * 60 * 1000;
 const BATCH_ROWS = 500;
 const BATCH_BYTES = 10 * 1024 * 1024;
-const CELL_OPERATION = "json_extract(response,'$.kind')='cell-audit'";
+const CELL_OPERATION =
+  "json_extract(response,'$.kind') IN ('cell-audit','format-audit')";
 const AUDIT_BYTES =
   "COALESCE(length(CAST(before_json AS BLOB)),0)+COALESCE(length(CAST(after_json AS BLOB)),0)";
 const OPERATION_BYTES = "length(CAST(response AS BLOB))";
@@ -66,11 +67,19 @@ function storageByTeam(db) {
     ],
     [
       "currentBytes",
-      `SELECT team_id,sum(${length("years")}+${length("default_style")}) AS bytes FROM tasks GROUP BY team_id`,
+      `SELECT team_id,sum(${length("years")}) AS bytes FROM tasks GROUP BY team_id`,
     ],
     [
       "currentBytes",
-      `SELECT t.team_id,sum(${length("c.value")}+${length("c.style")}) AS bytes FROM cells c JOIN tasks t ON t.id=c.task_id GROUP BY t.team_id`,
+      `SELECT t.team_id,sum(${length("c.value")}) AS bytes FROM cells c JOIN tasks t ON t.id=c.task_id GROUP BY t.team_id`,
+    ],
+    [
+      "currentBytes",
+      `SELECT NULL AS team_id,sum(${length("data")}) AS bytes FROM styles`,
+    ],
+    [
+      "currentBytes",
+      `SELECT team_id,sum(${length("rows_json")}+${length("keys_json")}+${length("exclusions_json")}+${length("orders_json")}) AS bytes FROM format_rules GROUP BY team_id`,
     ],
     ...["views", "saved_filters", "filter_states"].map((table) => [
       "currentBytes",

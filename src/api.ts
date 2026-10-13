@@ -1,3 +1,5 @@
+import { stringify, unpack } from "../shared/compact.js";
+
 export class ApiError extends Error {
   status: number;
   details: any;
@@ -45,7 +47,7 @@ export async function api<T = any>(
       taskResponses.delete(path);
     let data: any;
     try {
-      data = await response.json();
+      data = unpack(await response.json());
     } catch {
       data = { error: "서버에 연결할 수 없습니다." };
     }
@@ -56,7 +58,7 @@ export async function api<T = any>(
     );
   }
   if (response.headers.get("content-disposition")) return response as T;
-  const data = await response.json();
+  const data = unpack(await response.json());
   if (options.method === "DELETE" && path.startsWith("/admin/teams/")) {
     const deletedTeamId = path.split("/").at(-1);
     for (const key of taskResponses.keys())
@@ -73,7 +75,7 @@ export async function api<T = any>(
   return withCursor(data) as T;
 }
 export const send = <T = any>(path: string, body: unknown, method = "POST") =>
-  api<T>(path, { method, body: JSON.stringify(body) });
+  api<T>(path, { method, body: stringify(body) });
 export async function download(path: string, body: unknown) {
   const res = await send<Response>(path, body);
   const blob = await res.blob();

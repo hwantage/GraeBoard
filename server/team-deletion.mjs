@@ -1,4 +1,4 @@
-import { audit, parse, transaction } from "./db.mjs";
+import { audit, parse, transaction, pruneStyles } from "./db.mjs";
 import { requireThat } from "./validation.mjs";
 import { stableId } from "./transfer.mjs";
 
@@ -31,6 +31,8 @@ export function deleteTeam(db, teamId, actorId) {
       "DELETE FROM cells WHERE task_id IN (SELECT id FROM tasks WHERE team_id=?)",
     ).run(teamId);
     for (const table of [
+      "format_rules",
+      "format_states",
       "tasks",
       "views",
       "filter_states",
@@ -43,6 +45,7 @@ export function deleteTeam(db, teamId, actorId) {
     ])
       db.prepare(`DELETE FROM ${table} WHERE team_id=?`).run(teamId);
     db.prepare("DELETE FROM teams WHERE id=?").run(teamId);
+    pruneStyles(db);
     // Keep only the administrative deletion event, without the deleted payload.
     audit(db, actorId, null, "team-delete", teamId);
     return { ok: true };

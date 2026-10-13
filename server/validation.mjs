@@ -60,19 +60,39 @@ export const styleSchema = z
     borderRight: borderSchema.nullable().optional(),
     borderBottom: borderSchema.nullable().optional(),
     borderLeft: borderSchema.nullable().optional(),
-    color: hex.optional(),
-    backgroundColor: hex.optional(),
-    fontFamily: z.enum(FONTS).optional(),
-    fontSize: z.number().int().min(MIN_FONT_SIZE).max(MAX_FONT_SIZE).optional(),
-    textAlign: z.enum(["left", "center", "right"]).optional(),
-    verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-    underline: z.boolean().optional(),
-    strike: z.boolean().optional(),
-    textMode: z.enum(["overflow", "wrap", "clip"]).optional(),
+    color: hex.nullable().optional(),
+    backgroundColor: hex.nullable().optional(),
+    fontFamily: z.enum(FONTS).nullable().optional(),
+    fontSize: z
+      .number()
+      .int()
+      .min(MIN_FONT_SIZE)
+      .max(MAX_FONT_SIZE)
+      .nullable()
+      .optional(),
+    textAlign: z.enum(["left", "center", "right"]).nullable().optional(),
+    verticalAlign: z.enum(["top", "middle", "bottom"]).nullable().optional(),
+    bold: z.boolean().nullable().optional(),
+    italic: z.boolean().nullable().optional(),
+    underline: z.boolean().nullable().optional(),
+    strike: z.boolean().nullable().optional(),
+    textMode: z.enum(["overflow", "wrap", "clip"]).nullable().optional(),
   })
   .strict();
+// 공통 서식 사전의 같은 항목은 한 번만 검증하고 같은 객체로 유지한다.
+const validatedStyles = new WeakMap();
+export const sharedStyleSchema = z.any().transform((value, ctx) => {
+  if (value && typeof value === "object" && validatedStyles.has(value))
+    return validatedStyles.get(value);
+  const result = styleSchema.safeParse(value);
+  if (!result.success) {
+    for (const issue of result.error.issues) ctx.addIssue(issue);
+    return z.NEVER;
+  }
+  validatedStyles.set(value, result.data);
+  return result.data;
+});
+
 // 셀 값: 텍스트·숫자·사용자 ID 목록(복수 Member).
 const cellValueSchema = z.union([
   z.string().max(10000),
@@ -87,12 +107,13 @@ export const copiedRowSchema = z
         z
           .object({
             value: cellValueSchema,
-            style: styleSchema,
+            style: sharedStyleSchema,
           })
           .strict(),
       )
       .refine((cells) => Object.keys(cells).length <= MAX_STYLE_CELLS),
     defaultStyle: styleSchema,
+    rowStyle: styleSchema.optional(),
   })
   .strict();
 export const changeSchema = z
@@ -100,24 +121,62 @@ export const changeSchema = z
     taskId: z.string().uuid(),
     key: z.string().max(80),
     expectedVersion: z.number().int().nonnegative(),
+    expectedFormatRevision: z.number().int().nonnegative().optional(),
+    rawStyle: z.boolean().optional(),
     value: cellValueSchema.optional(),
-    style: styleSchema.optional(),
+    style: sharedStyleSchema.optional(),
   })
   .strict();
-export const batchSchema = z.object({
-  operationId: z.string().uuid(),
-  createdAt: z.string().datetime(),
-  changes: z
-    .array(changeSchema)
-    .min(1)
-    .max(MAX_STYLE_CELLS)
-    .refine(
-      (changes) =>
-        changes.length <= 2000 ||
-        changes.every((c) => c.value === undefined && c.style !== undefined),
-      "값 변경은 한 번에 2,000셀까지 가능합니다.",
-    ),
-});
+export const formatSchema = z
+  .object({
+    teamId: z.string().uuid(),
+    expectedRevision: z.number().int().nonnegative(),
+    scopes: z
+      .array(
+        z
+          .object({
+            rows: z.array(z.string().uuid()).min(1).max(20000).nullable(),
+            keys: z.array(z.string().max(80)).min(1).max(1000).nullable(),
+            excludeKeys: z.array(z.string().max(80)).max(1000).optional(),
+            style: sharedStyleSchema,
+            reset: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(1000)
+      .optional(),
+    expectedTasks: z.record(z.string().uuid(), z.string()).optional(),
+    restore: z.string().uuid().optional(),
+    expectedCells: z
+      .record(z.string(), z.number().int().nonnegative())
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (d) => !!d.scopes !== !!d.restore,
+    "서식 변경 또는 복원 중 하나를 지정하세요.",
+  );
+export const batchSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    createdAt: z.string().datetime(),
+    changes: z
+      .array(changeSchema)
+      .max(MAX_STYLE_CELLS)
+      .refine(
+        (changes) =>
+          changes.length <= 2000 ||
+          changes.every((c) => c.value === undefined && c.style !== undefined),
+        "값 변경은 한 번에 2,000셀까지 가능합니다.",
+      )
+      .default([]),
+    format: formatSchema.optional(),
+  })
+  .refine(
+    (d) => (d.format ? !d.changes.length : d.changes.length > 0),
+    "서식 범위와 셀 변경을 분리하세요.",
+  );
 export const savedFilterSchema = z
   .object({
     propertyFilters: z

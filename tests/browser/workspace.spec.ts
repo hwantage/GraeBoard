@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { readPreferences, writePreferences } from "./preferences";
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
@@ -6,6 +7,7 @@ import {
   defaultView,
   weeksForYear,
   visibleWeeks,
+  cell,
 } from "../../shared/domain.js";
 
 async function selectFormat(control: Locator, value: string) {
@@ -60,7 +62,7 @@ async function post(page: Page, path: string, data: any) {
     data,
   });
   expect(r.ok(), await r.text()).toBeTruthy();
-  return r.json();
+  return r.json().then(unpack);
 }
 async function sortHeader(
   page: Page,
@@ -113,7 +115,11 @@ test.beforeEach(async ({ page }) => {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const name = "검증 " + randomUUID().slice(0, 8);
   teamId = (
     await post(page, "/admin/teams", {
@@ -203,7 +209,11 @@ async function freezeColumns(page: Page, count: number) {
 }
 async function setColumns(page: Page, show: string[], hide: string[] = []) {
   await expect(page.locator('[data-header-key="title"]')).toBeVisible();
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const properties = boot.teams.find((t: any) => t.id === teamId).settings
     .properties;
   const key = (name: string) => properties.find((p: any) => p.name === name).id;
@@ -897,7 +907,7 @@ test("주차 머리글 색은 속성에서 저장하고 날짜 머리글에만 �
   });
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   const week = page.locator('[data-header-key="2026-03-09"]');
@@ -921,7 +931,7 @@ test("주차 머리글 색은 속성에서 저장하고 날짜 머리글에만 �
   await page.getByRole("button", { name: "기본값", exact: true }).click();
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(page.locator('[data-header-key="2026-03-16"]')).toHaveCSS(
@@ -934,7 +944,7 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
   page,
 }, info) => {
   const settings = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const saved = await page.request.patch(`/api/teams/${teamId}/settings`, {
     headers: { "X-Requested-With": "WeeklyPlan" },
@@ -953,7 +963,9 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const before = await readTasks();
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -972,7 +984,7 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
   });
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   const headers = page.locator(".week-heading[data-header-key]");
@@ -1052,7 +1064,7 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
     .selectOption("none");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(headers.first()).not.toHaveCSS("border-left-style", "double");
@@ -1063,7 +1075,7 @@ test("주차 기본 경계선은 기존 테두리 지우기·없음·업무 기�
   page,
 }, info) => {
   const settings = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const line = { style: "double", color: "#ff7aba" };
   const inheritedLine = { style: "thick", color: "#607984" };
@@ -1095,7 +1107,9 @@ test("주차 기본 경계선은 기존 테두리 지우기·없음·업무 기�
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const tasks = await readTasks();
   // Imported/previously formatted cells retain null or none on date and property edges.
@@ -1206,7 +1220,7 @@ test("주차 기본 경계선보다 셀에 그린 선이 우선하고 지우면 
   page,
 }) => {
   const settings = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const response = await page.request.patch(`/api/teams/${teamId}/settings`, {
     headers: { "X-Requested-With": "WeeklyPlan" },
@@ -1366,7 +1380,9 @@ test("열 너비와 화면 배율을 바꿔도 기본 격자선과 지정한 오
   const tasks = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
@@ -1473,7 +1489,11 @@ test("열 너비와 화면 배율을 바꿔도 기본 격자선과 지정한 오
 test("기본 테두리 지우기는 새로고침·실행취소·복사 후에도 기본 격자선을 유지한다", async ({
   page,
 }) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const settings = boot.teams.find((t: any) => t.id === teamId).settings;
   const line = { style: "thick", color: "#dd2244" };
   const saved = await page.request.patch(`/api/teams/${teamId}/settings`, {
@@ -1952,7 +1972,7 @@ test("속성을 주차 날짜 오른쪽으로 옮기면 마지막 날짜 뒤에 
   page,
 }, info) => {
   const settings = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const trailing = ["progress", "deadline"];
   settings.properties = [
@@ -1998,7 +2018,7 @@ test("속성을 주차 날짜 오른쪽으로 옮기면 마지막 날짜 뒤에 
   });
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   const headers = () =>
@@ -2065,7 +2085,7 @@ test("속성을 주차 날짜 오른쪽으로 옮기면 마지막 날짜 뒤에 
   await expect.poll(headers).toEqual(expected);
   await expect(progress).toHaveText("75% 검토 중");
   const stored = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   expect(stored.properties).toHaveLength(settings.properties.length);
   expect(stored.properties.some((p: any) => p.id === "__weeks")).toBeFalsy();
@@ -2085,7 +2105,7 @@ test("주차 날짜 묶음을 처음·끝으로 옮기고 모든 주차를 숨�
   const save = async () => {
     await page.getByRole("button", { name: "속성 저장", exact: true }).click();
     await expect(
-      page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+      page.getByText("속성이 저장되었습니다.", { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "닫기", exact: true }).click();
   };
@@ -2201,11 +2221,13 @@ test("열 머리글 드래그·Shift 선택은 전체 열에 서식을 적용하
   const saved = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   for (const task of saved)
     for (const key of keys)
-      expect(task.cells[key].style.backgroundColor).toBe("#d1eee6");
+      expect(cell(task, key).style.backgroundColor).toBe("#d1eee6");
   await owner.getByRole("button").click({ button: "right" });
   await expect(page.locator('.sheet-cell[aria-selected="true"]')).toHaveCount(
     keys.length * 3,
@@ -2248,7 +2270,9 @@ test("행 번호 드래그는 행 전체를 선택하고 서식·실행취소·�
   const saved = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   const keys = await page
     .locator("[data-header-key]")
@@ -2256,7 +2280,7 @@ test("행 번호 드래그는 행 전체를 선택하고 서식·실행취소·�
       els.map((el) => (el as HTMLElement).dataset.headerKey!),
     );
   for (const task of saved.slice(0, 2))
-    for (const key of keys) expect(task.cells[key].style.fontSize).toBe(12);
+    for (const key of keys) expect(cell(task, key).style.fontSize).toBe(12);
   expect(saved[2].cells.title.style.fontSize).not.toBe(12);
   await page.getByRole("button", { name: "실행취소", exact: true }).click();
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveCSS(
@@ -2283,7 +2307,11 @@ test("행 번호 드래그는 행 전체를 선택하고 서식·실행취소·�
 test("2,000셀 이상 열 전체 서식은 화면 밖 행·실행취소를 지원하고 필터에서 제외한 행을 보존한다", async ({
   page,
 }) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   for (let i = 0; i < 45; i++)
     await post(page, "/tasks", {
       teamId,
@@ -2311,11 +2339,15 @@ test("2,000셀 이상 열 전체 서식은 화면 밖 행·실행취소를 지�
   const saved = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   for (const task of saved)
-    expect(task.cells.title.style.fontSize).toBe(
-      task.cells.title.value.startsWith("대상") ? 14 : undefined,
+    expect(cell(task, "title").style.fontSize).toBe(
+      task.cells.title.value.startsWith("대상")
+        ? 14
+        : task.defaultStyle.fontSize,
     );
   const keys = await page
     .locator("[data-header-key]")
@@ -2340,12 +2372,14 @@ test("2,000셀 이상 열 전체 서식은 화면 밖 행·실행취소를 지�
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const verifyBackground = async (formatted: boolean) => {
     for (const task of await readTasks())
       for (const key of keys)
-        expect(task.cells[key]?.style.backgroundColor).toBe(
+        expect(cell(task, key).style.backgroundColor).toBe(
           formatted && task.cells.title.value.startsWith("대상")
             ? "#d1eee6"
             : undefined,
@@ -2378,7 +2412,9 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   const tasks = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
@@ -2701,7 +2737,7 @@ test("팀원 아바타의 이니셜·이미지·기본 글자와 배경색을 �
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await page.reload();
   const profile = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).users.find((u: any) => u.id === created.user.id);
   expect(profile.avatarImage).toMatch(/^data:image\/png;base64,/);
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -2805,8 +2841,13 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
   await expect
     .poll(
       async () =>
-        (await (await page.request.get(`/api/filters?teamId=${teamId}`)).json())
-          .current.data.propertyFilters.owner,
+        (
+          await (
+            await page.request.get(`/api/filters?teamId=${teamId}`)
+          )
+            .json()
+            .then(unpack)
+        ).current.data.propertyFilters.owner,
     )
     .toEqual([]);
   await expect(page.locator('[data-column="title"]')).toHaveCount(3);
@@ -2818,6 +2859,8 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
   );
   await page.keyboard.press("Escape");
   await cell.getByRole("button").click();
+  await expect(page.locator(".inline-editor")).toHaveCount(0);
+  await cell.getByRole("button").dblclick();
   await expect(page.locator(".inline-editor")).toContainText("최신 담당자");
   await expect(
     page.getByRole("option", { name: "최신 담당자", exact: true }),
@@ -2826,11 +2869,16 @@ test("팀에서 제외된 팀원은 최신 이름과 아바타로 남고 필터�
     path: info.outputPath("former-member.png"),
     fullPage: true,
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   await page.getByRole("option", { name: boot.user.name, exact: true }).click();
   await expect(cell).toContainText(boot.user.name);
   await page.reload();
-  await cell.getByRole("button").click();
+  await cell.getByRole("button").dblclick();
+  await expect(page.locator(".inline-editor")).toBeVisible();
   await expect(
     page.getByRole("option", { name: "최신 담당자", exact: true }),
   ).toHaveCount(0);
@@ -2974,7 +3022,7 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
   const status = page.locator('[data-column="status"]');
   const summary = page.locator(".board-summary");
   await expect(summary).toContainText("예정 1");
-  await status.locator(".cell-choice-trigger").click();
+  await status.locator(".cell-choice-trigger").dblclick();
   for (const label of ["예정", "검토 중", "진행 중", "완료", "보류"])
     await expect(
       page.getByRole("option", { name: label, exact: true }),
@@ -3005,7 +3053,7 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
   await page.getByLabel("속성 값 4 이름", { exact: true }).fill("종료");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(summary).toContainText("종료 1");
@@ -3022,7 +3070,11 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
 test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀에 가져온다", async ({
   page,
 }, info) => {
-  const data = await (await page.request.get("/api/admin/users")).json();
+  const data = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const original = data.teams.find((t: any) => t.id === teamId);
   original.settings.theme = "lavender";
   original.settings.defaultStyle.fontSize = 16;
@@ -3049,7 +3101,11 @@ test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀�
   });
   await page.getByRole("button", { name: "팀 추가", exact: true }).click();
   await expect(page.locator(".settings-team-header h3")).toHaveText(name);
-  const latest = await (await page.request.get("/api/admin/users")).json();
+  const latest = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const copied = latest.teams.find((t: any) => t.name === name);
   expect(copied.settings.properties).toEqual(original.settings.properties);
   expect(copied.settings.defaultStyle.fontSize).toBe(16);
@@ -3077,7 +3133,7 @@ test("팀 일반 설정의 팀 삭제는 경고 취소·확인 후 데이터와 
   page,
 }, info) => {
   const original = (
-    await (await page.request.get("/api/bootstrap")).json()
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId);
   const member = await post(page, "/admin/users", {
     username: `delete-${randomUUID().slice(0, 8)}@example.com`,
@@ -3118,7 +3174,9 @@ test("팀 일반 설정의 팀 삭제는 경고 취소·확인 후 데이터와 
         (
           await (
             await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-          ).json()
+          )
+            .json()
+            .then(unpack)
         ).tasks.length,
     )
     .toBe(3);
@@ -3139,7 +3197,11 @@ test("팀 일반 설정의 팀 삭제는 경고 취소·확인 후 데이터와 
   await expect(
     page.getByLabel("새 팀 양식").locator(`option[value="${teamId}"]`),
   ).toHaveCount(0);
-  const users = await (await page.request.get("/api/admin/users")).json();
+  const users = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   expect(users.users.find((u: any) => u.id === member.user.id).teamIds).toEqual(
     [],
   );
@@ -3179,7 +3241,11 @@ test("다른 화면에서 삭제된 팀은 자동 조회 때 다른 팀으로 �
 test("이전 팀의 늦은 보기 저장 실패는 현재 팀에 표시하지 않는다", async ({
   page,
 }) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const nextTeam = boot.teams.find((team: any) => team.id !== teamId).id;
   let capture: (route: any) => void;
   const pending = new Promise<any>((resolve) => {
@@ -3218,7 +3284,11 @@ test("이전 팀의 늦은 보기 저장 실패는 현재 팀에 표시하지 �
 test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 서식을 보존한다", async ({
   page,
 }, info) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const originalName = boot.teams.find((t: any) => t.id === teamId).name;
   const title = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   await post(page, "/cells/batch", {
@@ -3288,7 +3358,7 @@ test("팀별 파스텔 테마를 선택·저장하고 전환·새로고침·셀 
     await expect(title).toHaveCSS("color", "rgb(36, 54, 66)");
     await page
       .locator(`[data-cell="${taskIds[0]}:category"] .cell-choice-trigger`)
-      .click();
+      .dblclick();
     await expect(page.locator('.cell-option[aria-selected="true"]')).toHaveCSS(
       "color",
       rgb(theme.accent),
@@ -3371,7 +3441,9 @@ test("숨김 행을 포함한 범위 서식과 개인 숨김 복원", async ({ p
   const tasks = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   expect(
     tasks.find((t: any) => t.id === taskIds[1]).cells.title.style.bold,
@@ -3379,7 +3451,7 @@ test("숨김 행을 포함한 범위 서식과 개인 숨김 복원", async ({ p
   await expect
     .poll(async () => {
       const r = await page.request.get(`/api/views?teamId=${teamId}&year=2026`);
-      return (await r.json()).views[0]?.data.hiddenRows.length;
+      return (await r.json().then(unpack)).views[0]?.data.hiddenRows.length;
     })
     .toBe(1);
   await page.reload();
@@ -3402,7 +3474,9 @@ test("숨긴 행·열을 포함한 배경색·글자·테두리는 복원과 실
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const original = await readTasks();
   await at(1, "title").click();
@@ -3432,7 +3506,6 @@ test("숨긴 행·열을 포함한 배경색·글자·테두리는 복원과 실
       bold: true,
       borderBottom: border,
       borderRight: border,
-      borderLeft: null,
     });
     expect(task.cells.category.style).toEqual(
       original.find((t: any) => t.id === id).cells.category.style,
@@ -3440,7 +3513,7 @@ test("숨긴 행·열을 포함한 배경색·글자·테두리는 복원과 실
   }
   expect(
     stored.find((t: any) => t.id === taskIds[1]).cells.owner.style.borderTop,
-  ).toBeNull();
+  ).toBeUndefined();
   await save(() =>
     page.getByRole("button", { name: "실행취소", exact: true }).click(),
   );
@@ -3506,12 +3579,17 @@ test("행·열·전체 선택 서식은 앞뒤 숨긴 날짜 열과 숨긴 행�
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const stored = await readTasks();
   for (const key of ["2025-12-29", "2026-03-02", "2026-12-28", "description"])
     expect(
-      stored.find((t: any) => t.id === taskIds[0]).cells[key].style.fontSize,
+      cell(
+        stored.find((t: any) => t.id === taskIds[0]),
+        key,
+      ).style.fontSize,
     ).toBe(14);
   expect(
     stored.find((t: any) => t.id === taskIds[1]).cells.title.style.fontSize,
@@ -3524,12 +3602,12 @@ test("행·열·전체 선택 서식은 앞뒤 숨긴 날짜 열과 숨긴 행�
   await page.getByRole("button", { name: "팀원 열 선택", exact: true }).click();
   await selectFormat(page.getByLabel("글자 크기", { exact: true }), "16");
   for (const task of await readTasks())
-    expect(task.cells.owner.style.fontSize).toBe(16);
+    expect(cell(task, "owner").style.fontSize).toBe(16);
   await page.getByRole("button", { name: "모든 셀 선택", exact: true }).click();
   await selectFormat(page.getByLabel("글자 크기", { exact: true }), "18");
   for (const task of await readTasks())
     for (const key of ["title", "description", "2025-12-29", "2026-12-28"])
-      expect(task.cells[key].style.fontSize).toBe(18);
+      expect(cell(task, key).style.fontSize).toBe(18);
   await page.getByRole("grid").focus();
   await page.keyboard.press("Control+a");
   await Promise.all([
@@ -3538,7 +3616,7 @@ test("행·열·전체 선택 서식은 앞뒤 숨긴 날짜 열과 숨긴 행�
   ]);
   for (const task of await readTasks())
     for (const key of ["title", "description", "2025-12-29", "2026-12-28"])
-      expect(task.cells[key].style.italic).toBe(true);
+      expect(cell(task, key).style.italic).toBe(true);
 });
 
 test("월 기간 필터·키보드 편집 및 수식 문자열 입력", async ({ page }) => {
@@ -3609,7 +3687,11 @@ test("기본 서식의 셀 높이 세 단계와 촘촘한 편집 높이를 저�
   await expect.poll(height).toBe(dense);
   await groupByColumn(page, "category");
   expect(await height()).toBe(dense);
-  const stored = await (await page.request.get("/api/bootstrap")).json();
+  const stored = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   expect(
     stored.teams.find((t: any) => t.id === teamId).settings.defaultDensity,
   ).toBe("dense");
@@ -3626,7 +3708,7 @@ test("기본 서식의 셀 높이 세 단계와 촘촘한 편집 높이를 저�
   expect(await height()).toBe(roomy);
 });
 
-test("빈 프로젝트 셀은 안내 문구 없이 더블클릭하고 지정한 칩은 한 번 클릭한다", async ({
+test("빈 프로젝트 셀과 지정한 칩은 모두 더블클릭으로 목록을 연다", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -3637,16 +3719,22 @@ test("빈 프로젝트 셀은 안내 문구 없이 더블클릭하고 지정한 
   await page.getByLabel("속성 값 1 이름", { exact: true }).fill("A 프로젝트");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
-  const data = await (await page.request.get("/api/admin/users")).json();
+  const data = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const pid = data.teams
     .find((t: any) => t.id === teamId)
     .settings.properties.find((p: any) => p.name === "프로젝트").id;
   const project = page.locator(`[data-cell="${taskIds[0]}:${pid}"]`);
   await expect(project).toHaveText("");
   await expect(project.getByRole("button")).toHaveCount(0);
+  await project.click();
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   await project.dblclick();
   const popup = page.getByRole("listbox", {
     name: "프로젝트 편집",
@@ -3657,6 +3745,9 @@ test("빈 프로젝트 셀은 안내 문구 없이 더블클릭하고 지정한 
   await popup.getByRole("option", { name: "A 프로젝트", exact: true }).click();
   await expect(project).toHaveText("A 프로젝트");
   await project.locator(".property-badge").click();
+  await expect(project).toHaveClass(/focused/);
+  await expect(popup).toHaveCount(0);
+  await project.locator(".property-badge").dblclick();
   await popup.getByRole("option", { name: "선택 안 함", exact: true }).click();
   await expect(project).toHaveText("");
 });
@@ -3834,7 +3925,9 @@ test("셀 편집 확정은 저장 응답 전에 새 값을 표시하고 실행�
       // 서버에는 아직 원래 값이 있어도 화면에서는 방금 확정한 값을 유지한다.
       const stored = await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json();
+      )
+        .json()
+        .then(unpack);
       expect(
         stored.tasks.find((task: any) => task.id === taskIds[0]).cells.title
           .value,
@@ -3936,7 +4029,9 @@ test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여�
   const stored = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   expect(stored.find((t: any) => t.id === taskIds[1]).cells.title.value).toBe(
     "숨길 업무",
@@ -3990,7 +4085,7 @@ for (const lastAction of ["셀 편집", "업무 추가"]) {
           .first()
           .click(),
       ]);
-      const { task } = await response.json();
+      const { task } = await response.json().then(unpack);
       created = page.locator(`[data-cell="${task.id}:title"]`);
       await created.getByRole("textbox").press("Escape");
     }
@@ -4038,7 +4133,7 @@ test("업무 추가 직후와 제목·서식 편집 후에도 단계별 실행�
       .first()
       .click(),
   ]);
-  const { task } = await response.json();
+  const { task } = await response.json().then(unpack);
   const title = page.locator(`[data-cell="${task.id}:title"]`);
   await expect(title.getByRole("textbox")).toBeVisible();
   await expect(undo).toBeEnabled();
@@ -4096,7 +4191,7 @@ test("추가한 업무에 다른 변경이 있으면 자신의 편집을 취소�
       .first()
       .click(),
   ]);
-  const { task } = await response.json();
+  const { task } = await response.json().then(unpack);
   const title = page.locator(`[data-cell="${task.id}:title"]`);
   await title.getByRole("textbox").press("Escape");
   await post(page, "/cells/batch", {
@@ -4144,7 +4239,7 @@ test("업무 추가를 취소한 뒤 다른 사용자가 복구·수정·삭제�
       .first()
       .click(),
   ]);
-  const { task } = await response.json();
+  const { task } = await response.json().then(unpack);
   const title = page.locator(`[data-cell="${task.id}:title"]`);
   await title.getByRole("textbox").press("Escape");
   await page.getByRole("button", { name: "실행취소", exact: true }).click();
@@ -4166,7 +4261,9 @@ test("업무 추가를 취소한 뒤 다른 사용자가 복구·수정·삭제�
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks;
   const current = (await getTasks()).find((t: any) => t.id === task.id);
   const removed = await page.request.delete(`/api/tasks/${task.id}`, {
@@ -4194,7 +4291,7 @@ test("업무 복제로 추가한 행도 같은 ID로 실행취소·재실행한�
     ),
     page.getByRole("button", { name: "복제", exact: true }).click(),
   ]);
-  const { task } = await response.json();
+  const { task } = await response.json().then(unpack);
   const title = page.locator(`[data-cell="${task.id}:title"]`);
   await expect(title).toHaveText("첫 업무 사본");
   await page.getByRole("button", { name: "실행취소", exact: true }).click();
@@ -4396,7 +4493,9 @@ test("같은 셀의 연속 실행취소·재실행과 사이에 발생한 타인
   const tasks = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   const current = tasks.find((t: any) => t.id === taskIds[0]);
   await post(page, "/cells/batch", {
@@ -4430,7 +4529,9 @@ test("같은 셀의 연속 실행취소·재실행과 사이에 발생한 타인
   const latest = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks.find((t: any) => t.id === taskIds[0]);
   expect(latest.cells.title.value).toBe("타인의 다음 수정");
 });
@@ -4583,8 +4684,9 @@ test("정확한 주차 범위·속성 묶음·열 메뉴의 고정 영역을 저
   await expect
     .poll(async () => {
       const r = await page.request.get(`/api/views?teamId=${teamId}&year=2026`);
-      return (await r.json()).views.find((v: any) => v.name === "__current")
-        ?.data.toWeek;
+      return (await r.json().then(unpack)).views.find(
+        (v: any) => v.name === "__current",
+      )?.data.toWeek;
     })
     .toBe("2026-10-26");
   await page.reload();
@@ -4915,7 +5017,11 @@ test("사용자 계정은 팀별 권한을 보여 주고 검색과 팀 구성원
       active: true,
       memberships: memberships[i],
     });
-  const adminData = await (await page.request.get("/api/admin/users")).json();
+  const adminData = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const firstName = adminData.teams.find((t: any) => t.id === teamId).name;
   const secondName = `협업 ${suffix}`;
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -4977,6 +5083,55 @@ test("사용자 계정은 팀별 권한을 보여 주고 검색과 팀 구성원
   ).toHaveValue("lead");
 });
 
+test("설정 완료 토스트는 연속 저장 때 시간을 갱신하고 저장 실패에는 표시하지 않는다", async ({
+  page,
+}, info) => {
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+  const toast = dialog.locator(".toast");
+  const save = dialog
+    .getByRole("tabpanel")
+    .getByRole("button", { name: "저장", exact: true });
+  await page.clock.install();
+  await save.click();
+  await expect(toast).toHaveText("팀 정보를 저장했습니다.");
+  await expect(toast).toHaveAttribute("role", "status");
+  await expect(toast).toBeInViewport();
+  await expect(toast).toHaveCSS("position", "fixed");
+  await page.screenshot({ path: info.outputPath("settings-saved-toast.png") });
+  await page.clock.fastForward(3000);
+  await save.click();
+  await expect(toast).toHaveText("팀 정보를 저장했습니다.");
+  await expect(save).toBeEnabled();
+  await page.clock.fastForward(3000);
+  await expect(toast).toBeVisible();
+  await page.clock.fastForward(1100);
+  await expect(toast).toHaveCount(0);
+  await page.route(
+    `**/api/teams/${teamId}`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "팀 정보 저장 실패" }),
+      }),
+    { times: 1 },
+  );
+  await save.click();
+  await expect(dialog.getByRole("alert")).toContainText("팀 정보 저장 실패");
+  await expect(toast).toHaveCount(0);
+  await dialog.getByRole("tab", { name: "기본 서식", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "기본 서식 저장", exact: true })
+    .click();
+  await expect(toast).toHaveText("기본 서식을 저장했습니다.");
+  await expect(toast).toBeInViewport();
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.clock.fastForward(5000);
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(dialog.locator(".toast")).toHaveCount(0);
+});
+
 test("팀 구성원 탭에서 사용자를 추가하고 팀마다 다른 권한을 지정한다", async ({
   page,
 }, info) => {
@@ -4985,7 +5140,7 @@ test("팀 구성원 탭에서 사용자를 추가하고 팀마다 다른 권한�
     newName = `협업 ${suffix}`,
     renamed = `이름 변경 ${suffix}`;
   const original = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).name;
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const nav = page.getByRole("navigation", { name: "설정 메뉴" });
@@ -5036,10 +5191,8 @@ test("팀 구성원 탭에서 사용자를 추가하고 팀마다 다른 권한�
   await expect(roleSelect).toHaveValue("viewer");
   await roleSelect.selectOption("member");
   await expect(
-    page.getByText("배속 검증님의 권한을 팀원(으)로 변경했습니다.", {
-      exact: true,
-    }),
-  ).toBeVisible();
+    page.getByRole("dialog", { name: "설정", exact: true }).locator(".toast"),
+  ).toHaveText("배속 검증님의 권한을 팀원(으)로 변경했습니다.");
   await page.screenshot({
     path: info.outputPath("team-members.png"),
     fullPage: true,
@@ -5065,8 +5218,9 @@ test("팀 구성원 탭에서 사용자를 추가하고 팀마다 다른 권한�
     .getByRole("button", { name: "배속 검증 팀에서 제외", exact: true })
     .click();
   await expect(roleSelect).toHaveCount(0);
-  const users = (await (await page.request.get("/api/admin/users")).json())
-    .users;
+  const users = (
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
+  ).users;
   expect(users.find((u: any) => u.username === username).teamRoles).toEqual({
     [teamId]: "member",
   });
@@ -5164,13 +5318,17 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
     .press("Alt+ArrowLeft");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("property-management.png"),
     fullPage: true,
   });
-  const data = await (await page.request.get("/api/admin/users")).json();
+  const data = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const property = data.teams
     .find((t: any) => t.id === teamId)
     .settings.properties.find((p: any) => p.name === "프로젝트");
@@ -5224,11 +5382,11 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
   await page.getByLabel("A 서비스 이모지").fill("🚀");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(first).toHaveText("🚀A 서비스");
-  await first.locator(".property-badge").click();
+  await first.locator(".property-badge").dblclick();
   await expect(
     page.getByRole("listbox", { name: "제품 프로젝트 편집", exact: true }),
   ).toBeVisible();
@@ -5250,7 +5408,7 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
   });
 });
 
-test("속성은 칩·글자만 한 번 눌러 아래 목록을 열고 행 높이를 유지한다", async ({
+test("속성 칩·글자는 한 번 클릭해 셀을 선택하고 더블클릭해 목록을 열며 행 높이를 유지한다", async ({
   page,
 }, info) => {
   const category = page.locator(`[data-cell="${taskIds[0]}:category"]`);
@@ -5261,10 +5419,15 @@ test("속성은 칩·글자만 한 번 눌러 아래 목록을 열고 행 높이
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await title.click();
   await expect(title.getByRole("textbox")).toHaveCount(0);
-  await category
-    .getByRole("button", { name: "분류 선택", exact: true })
-    .click();
+  const trigger = category.getByRole("button", {
+    name: "분류 선택",
+    exact: true,
+  });
   const popup = page.getByRole("listbox", { name: "분류 편집", exact: true });
+  await trigger.click();
+  await expect(category).toHaveClass(/focused/);
+  await expect(popup).toHaveCount(0);
+  await trigger.dblclick();
   await expect(popup).toBeVisible();
   expect((await category.boundingBox())!.height).toBe(height);
   const cellBox = (await category.boundingBox())!,
@@ -5272,17 +5435,19 @@ test("속성은 칩·글자만 한 번 눌러 아래 목록을 열고 행 높이
   expect(popupBox.y).toBeGreaterThanOrEqual(cellBox.y + cellBox.height);
   await popup.getByRole("option", { name: "UX 개선", exact: true }).click();
   await expect(category).toHaveText("UX 개선");
-  await category.locator(".property-badge").click();
+  await category.locator(".property-badge").dblclick();
   await expect(popup).toBeVisible();
   await page.screenshot({
-    path: info.outputPath("property-single-click.png"),
+    path: info.outputPath("property-double-click.png"),
     fullPage: true,
   });
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(category).toHaveText("차별화");
   expect((await category.boundingBox())!.height).toBe(height);
-  await category.locator(".property-badge").click();
+  await trigger.focus();
+  await trigger.press("Enter");
+  await expect(popup).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(popup).toHaveCount(0);
   await expect(category).toHaveText("차별화");
@@ -5309,6 +5474,11 @@ test("속성은 칩·글자만 한 번 눌러 아래 목록을 열고 행 높이
   await supporters
     .getByRole("button", { name: "지원자 선택", exact: true })
     .click();
+  await expect(supporters).toHaveClass(/focused/);
+  await expect(people).toHaveCount(0);
+  await supporters
+    .getByRole("button", { name: "지원자 선택", exact: true })
+    .dblclick();
   await people.getByRole("option").first().click();
   await page.keyboard.press("Escape");
   await expect(supporters).toContainText(name.trim());
@@ -5571,7 +5741,9 @@ async function setTaskCells(
   const current = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
@@ -5747,7 +5919,9 @@ test("숨긴 행을 건너뛰어 여러 행을 선택하고 보이는 행만 함
   const saved = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   expect(saved.map((t: any) => t.cells.title.value)).toEqual([
     "숨길 업무",
@@ -6144,7 +6318,11 @@ test("줄바꿈과 세로 정렬은 독립적이고 넘치는 내용은 첫 줄�
 test("헤더의 속성 다중 필터·월 드래그 선택을 저장한다", async ({
   page,
 }, info) => {
-  const data = await (await page.request.get("/api/admin/users")).json();
+  const data = await (
+    await page.request.get("/api/admin/users")
+  )
+    .json()
+    .then(unpack);
   const settings = data.teams.find((t: any) => t.id === teamId).settings;
   const pid = `prop_${randomUUID()}`;
   settings.properties.push({
@@ -6689,7 +6867,9 @@ test("보기모드에서 색상·펜·도형·지우개·실행취소·확대 �
     .toBeTruthy();
   const original = await (
     await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-  ).json();
+  )
+    .json()
+    .then(unpack);
   const writes: string[] = [];
   page.on("request", (request) => {
     if (
@@ -6807,7 +6987,9 @@ test("보기모드에서 색상·펜·도형·지우개·실행취소·확대 �
     (
       await (
         await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).tasks,
   ).toEqual(original.tasks);
   await toolbar.getByRole("button", { name: "보기모드 닫기 (Esc)" }).click();
@@ -7179,10 +7361,10 @@ test("빈 속성·값에 바로 입력하고 15자 제한과 하단 속성 삭�
   await expect(remove).toBeVisible();
   await footer.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   const stored = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const prop = stored.properties.find((p: any) => p.name === "검토 프로젝트");
   expect(prop.values).toHaveLength(1);
@@ -7211,10 +7393,10 @@ test("빈 속성·값에 바로 입력하고 15자 제한과 하단 속성 삭�
   ).toHaveCount(0);
   await footer.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   const updated = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   expect(
     updated.properties.find((p: any) => p.id === prop.id).archived,
@@ -7222,7 +7404,9 @@ test("빈 속성·값에 바로 입력하고 15자 제한과 하단 속성 삭�
   const tasks = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks;
   expect(tasks.find((t: any) => t.id === taskIds[0]).cells[prop.id].value).toBe(
     prop.values[0].id,
@@ -7428,8 +7612,9 @@ test("오버플로우는 빈 셀까지 표시하고 다음 값 앞에서 자르�
   await expect
     .poll(async () => {
       const r = await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`);
-      return (await r.json()).tasks.find((t: any) => t.id === taskIds[0]).cells
-        .title.style.textMode;
+      return (await r.json().then(unpack)).tasks.find(
+        (t: any) => t.id === taskIds[0],
+      ).cells.title.style.textMode;
     })
     .toBe("overflow");
   await page.reload();
@@ -7442,7 +7627,11 @@ test("속성 관리에서 모든 열·다섯 타입·표시 순서·삭제와 �
   page,
 }, info) => {
   test.setTimeout(60000);
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const second = await post(page, "/admin/users", {
     username: `property-${randomUUID().slice(0, 8)}@example.com`,
     name: "협업 팀원",
@@ -7523,7 +7712,7 @@ test("속성 관리에서 모든 열·다섯 타입·표시 순서·삭제와 �
     .press("Alt+ArrowLeft");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("dialog").evaluate((el) => (el.scrollTop = 0));
   await page.screenshot({
@@ -7531,7 +7720,7 @@ test("속성 관리에서 모든 열·다섯 타입·표시 순서·삭제와 �
     fullPage: true,
   });
   const settings = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   const key = (name: string) =>
     settings.properties.find((p: any) => p.name === name).id;
@@ -7584,7 +7773,7 @@ test("속성 관리에서 모든 열·다섯 타입·표시 순서·삭제와 �
     .click();
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(c("메모 값")).toHaveCount(0);
@@ -7607,12 +7796,12 @@ test("속성 관리에서 모든 열·다섯 타입·표시 순서·삭제와 �
   await page.getByRole("button", { name: "진척률 복원", exact: true }).click();
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(c("메모 값")).toHaveText("직접 입력");
   const latest = (
-    await (await page.request.get("/api/admin/users")).json()
+    await (await page.request.get("/api/admin/users")).json().then(unpack)
   ).teams.find((t: any) => t.id === teamId).settings;
   expect(
     latest.properties.find((p: any) => p.id === "progress").archived,
@@ -7718,7 +7907,7 @@ test("속성 카드는 목록 아래로 대각선으로 끌어도 이동하고 �
   await expect.poll(order).toEqual(expected);
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -7759,7 +7948,7 @@ test("속성 카드를 목록 양 끝까지 끌면 자동으로 스크롤하며 
   await expect(page.locator(".property-drag-preview")).toHaveCount(0);
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
 
   await rows.last().locator(".list-drag-handle").hover();
@@ -7944,7 +8133,7 @@ test("속성은 가로로 끌어 이동하고 선택값은 세로로 이동하�
   });
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
-    page.getByText("속성 설정을 저장했습니다.", { exact: true }),
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "닫기", exact: true }).click();
   await page.reload();
@@ -7968,7 +8157,11 @@ test("속성은 가로로 끌어 이동하고 선택값은 세로로 이동하�
 test("새 팀의 기본 세로 정렬은 중간이며 미리보기와 추가 행의 맞닿은 테두리는 1px이다", async ({
   page,
 }, info) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const fresh = await post(page, "/admin/teams", {
     name: `중간 정렬 ${randomUUID().slice(0, 6)}`,
     members: [{ userId: boot.user.id, role: "lead" }],
@@ -8007,7 +8200,7 @@ test("새 팀의 기본 세로 정렬은 중간이며 미리보기와 추가 행
       .locator('.format-toolbar[aria-label="셀 서식 도구"]')
       .getByRole("button", { name: "업무 추가", exact: true })
       .click();
-    const id = (await (await created).json()).task.id;
+    const id = (await (await created).json().then(unpack)).task.id;
     ids.push(id);
     const input = page
       .locator(`[data-cell="${id}:title"]`)
@@ -8547,7 +8740,11 @@ test("저장된 필터를 직접 선택할 때만 보기 띠가 나타나고 상
 test("저장된 필터 표시줄은 숨긴 열도 속성 순서대로 표시하고 조건을 바로 수정한다", async ({
   page,
 }, info) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const settings = boot.teams.find((t: any) => t.id === teamId).settings;
   const first = ["owner", "status", "title"];
   settings.properties = [
@@ -8668,28 +8865,11 @@ test("저장된 필터 표시줄은 숨긴 열도 속성 순서대로 표시하�
   await expect(conditions.getByRole("button").nth(2)).toHaveAccessibleName(
     `팀원 필터 변경: ${boot.user.name}, 미지정`,
   );
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "필터 변경사항이 업데이트되었습니다.",
   );
-  const lastConditionBox = (await conditions
-    .getByRole("button")
-    .last()
-    .boundingBox())!;
-  const noticeBox = (await banner.getByRole("status").boundingBox())!;
-  expect(
-    noticeBox.x - lastConditionBox.x - lastConditionBox.width,
-  ).toBeGreaterThanOrEqual(0);
-  expect(
-    noticeBox.x - lastConditionBox.x - lastConditionBox.width,
-  ).toBeLessThan(16);
-  expect(
-    Math.abs(
-      noticeBox.y +
-        noticeBox.height / 2 -
-        lastConditionBox.y -
-        lastConditionBox.height / 2,
-    ),
-  ).toBeLessThan(2);
+  await expect(page.locator(".toast")).toBeInViewport();
+  await expect(page.locator(".toast")).toHaveCSS("position", "fixed");
   await page.screenshot({
     path: info.outputPath("saved-filter-conditions.png"),
   });
@@ -8735,7 +8915,7 @@ test("저장된 필터 표시줄은 숨긴 열도 속성 순서대로 표시하�
       .click();
     await page.keyboard.press("Escape");
   }
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "해제한 필터는 저장된 필터에서 제외됩니다.",
   );
   await expect(conditions.locator(".active-filter-condition-name")).toHaveText([
@@ -8813,7 +8993,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
   await expect(cleared).toBeFocused();
   await expect(conditions.getByRole("button")).toHaveCount(1);
   await expect(banner.locator("strong")).toHaveText("해제할 조건");
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "해제한 필터는 저장된 필터에서 제외됩니다.",
   );
   await expect
@@ -8842,7 +9022,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
     }),
   ).toBeVisible();
   await expect(page.locator('[data-column="title"]')).toHaveText(["숨길 업무"]);
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "필터 변경사항이 업데이트되었습니다.",
   );
   // Clearing from the column menu keeps the same banner control as well.
@@ -8852,7 +9032,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
     .click();
   await page.keyboard.press("Escape");
   await expect(cleared).toBeVisible();
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "해제한 필터는 저장된 필터에서 제외됩니다.",
   );
   await page.setViewportSize({ width: 650, height: 900 });
@@ -8920,7 +9100,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
   await filter.getByRole("checkbox", { name: "첫 업무", exact: true }).check();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-column="title"]')).toHaveText(["첫 업무"]);
-  await expect(banner.getByRole("status")).toHaveText(
+  await expect(page.locator(".toast")).toHaveText(
     "필터 변경사항이 업데이트되었습니다.",
   );
   await page.reload();
@@ -9229,7 +9409,7 @@ test("저장된 필터를 연속 수정한 직후 다른 필터를 선택해도 
       .getByRole("button", { name: "상태 필터 해제", exact: true })
       .click();
     await expect(banner.locator("strong")).toHaveText(original.name);
-    await expect(banner.getByRole("status")).toHaveText(
+    await expect(page.locator(".toast")).toHaveText(
       "해제한 필터는 저장된 필터에서 제외됩니다.",
     );
     await expect
@@ -9297,7 +9477,10 @@ test("저장된 필터 조건 저장 실패를 알리고 선택 상태에서 다
     .poll(async () => (await saved()).data.propertyFilters.status)
     .toEqual(["status-completed", "status-progress"]);
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(notice).toHaveText("필터 변경사항이 업데이트되었습니다.");
+  await expect(notice).toHaveText("");
+  await expect(page.locator(".toast")).toHaveText(
+    "필터 변경사항이 업데이트되었습니다.",
+  );
   await expect(page.locator(".active-filter-banner strong")).toHaveText(
     original.name,
   );
@@ -9428,7 +9611,11 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
     await page.keyboard.press("Escape");
     const readShared = async () =>
       (
-        await (await peer.request.get(`/api/filters?teamId=${teamId}`)).json()
+        await (
+          await peer.request.get(`/api/filters?teamId=${teamId}`)
+        )
+          .json()
+          .then(unpack)
       ).filters.find((v: any) => v.scope === "team");
     await expect
       .poll(async () => (await readShared()).data.propertyFilters.status)

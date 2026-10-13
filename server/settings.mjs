@@ -18,6 +18,7 @@ import {
 import { audit, json, parse, touchTasks, transaction } from "./db.mjs";
 import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
+import { expandStyle } from "../shared/compact.js";
 
 const settingsSchema = z
   .object({
@@ -160,7 +161,7 @@ function convertChangedKinds(
     const old = previous.properties.find((o) => o.id === p.id);
     const rows = db
       .prepare(
-        "SELECT c.* FROM cells c JOIN tasks t ON c.task_id=t.id WHERE t.team_id=? AND c.key=?",
+        "SELECT c.*,s.data AS style_data FROM cells c JOIN tasks t ON c.task_id=t.id JOIN styles s ON s.id=c.style_id WHERE t.team_id=? AND c.key=?",
       )
       .all(teamId, p.id);
     for (const row of rows) {
@@ -214,7 +215,7 @@ function convertChangedKinds(
         taskId: row.task_id,
         key: p.id,
         value,
-        style: parse(row.style),
+        style: expandStyle(JSON.parse(row.style_data)),
         version: row.version,
       };
       const updated = { ...prev, value: next, version: prev.version + 1 };

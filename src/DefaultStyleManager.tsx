@@ -11,6 +11,7 @@ import {
 } from "../shared/domain.js";
 import { send } from "./api";
 import { Button, ErrorNote } from "./components";
+import Toast, { useToast } from "./Toast";
 import { appendHistory } from "./history";
 
 const INITIAL_STYLE: Style = {
@@ -41,8 +42,8 @@ export default function DefaultStyleManager({
   }));
   const { style, density } = history.present;
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+    [error, setError] = useState("");
+  const [message, setMessage] = useToast();
   function change(part: Partial<Draft>) {
     setHistory((current) => ({
       past: appendHistory(current.past, current.present),
@@ -105,11 +106,7 @@ export default function DefaultStyleManager({
         </Button>
       </div>
       <ErrorNote error={error} />
-      {message && (
-        <p className="success-note" role="status">
-          {message}
-        </p>
-      )}
+      <Toast message={message} />
       <Toolbar
         label="기본 서식 도구"
         style={style}
@@ -186,7 +183,7 @@ export default function DefaultStyleManager({
                 height,
                 fontFamily: fontFamilyCSS(style.fontFamily),
                 fontSize: `${style.fontSize || 9}pt`,
-                color: style.color,
+                color: style.color ?? undefined,
                 backgroundColor: style.backgroundColor || "#ffffff",
                 fontWeight: style.bold ? 700 : 400,
                 fontStyle: style.italic ? "italic" : "normal",
@@ -194,7 +191,7 @@ export default function DefaultStyleManager({
                   style.underline ? "underline" : "",
                   style.strike ? "line-through" : "",
                 ].join(" "),
-                textAlign: style.textAlign,
+                textAlign: style.textAlign ?? undefined,
                 whiteSpace: textMode(style) === "wrap" ? "pre-wrap" : "nowrap",
                 overflow: "hidden",
                 alignItems:

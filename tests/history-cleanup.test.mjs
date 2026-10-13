@@ -1,3 +1,4 @@
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -98,7 +99,10 @@ async function fixture(t) {
       },
       body: body === undefined ? undefined : json(body),
     });
-    return { status: response.status, data: await response.json() };
+    return {
+      status: response.status,
+      data: await response.json().then(unpack),
+    };
   }
   function history({
     stamp = ago(400),
@@ -480,9 +484,8 @@ test("팀별 저장 용량은 실제 본문·서식·압축 스냅샷 바이트�
     team.currentBytes,
     byteLength(DEFAULT_SETTINGS) +
       byteLength(f.task.years) +
-      byteLength(f.task.defaultStyle) +
       Object.values(f.task.cells).reduce(
-        (sum, cell) => sum + byteLength(cell.value) + byteLength(cell.style),
+        (sum, cell) => sum + byteLength(cell.value),
         0,
       ),
   );

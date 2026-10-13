@@ -1,4 +1,5 @@
 import { api, ApiError, taskQuery } from "./api";
+import { parseCompact } from "../shared/compact.js";
 import type { Task } from "./types";
 import type { CellUpdates, TaskSnapshot } from "./cell-updates.js";
 
@@ -40,7 +41,7 @@ export function subscribeCellChanges({
     source.addEventListener("cells", (event: MessageEvent) => {
       if (stopped || recovering) return;
       try {
-        const update = JSON.parse(event.data) as CellUpdates;
+        const update = parseCompact(event.data) as CellUpdates;
         onActivity();
         queuedCells += update.cells.length;
         queuedBytes += event.data.length * 2;

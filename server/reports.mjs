@@ -1,5 +1,6 @@
 import { gzipSync, gunzipSync } from "node:zlib";
 import { propertiesFor } from "../shared/domain.js";
+import { stringify, parseCompact } from "../shared/compact.js";
 
 // 보고서의 셀과 필터를 해석하는 데 필요한 이름만 보관한다.
 // 프로필 이미지·색상·권한과 보고서에 등장하지 않는 팀원은 복사하지 않는다.
@@ -20,7 +21,7 @@ export function encodeReport({ tasks, users, view, settings }) {
     for (const key of memberKeys) remember(task.cells[key]?.value);
   for (const key of memberKeys) remember(view.propertyFilters?.[key]);
   return gzipSync(
-    JSON.stringify({
+    stringify({
       tasks,
       users: users
         .filter((user) => referenced.has(user.id))
@@ -34,5 +35,5 @@ export function encodeReport({ tasks, users, view, settings }) {
 }
 
 export function decodeReport(data) {
-  return JSON.parse(gunzipSync(data).toString("utf8"));
+  return parseCompact(gunzipSync(data).toString("utf8"));
 }

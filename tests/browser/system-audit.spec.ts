@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -15,7 +16,7 @@ async function post(page: Page, path: string, data: unknown) {
     data,
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  return response.json();
+  return response.json().then(unpack);
 }
 const settings = (page: Page) =>
   page.getByRole("dialog", { name: "설정", exact: true });

@@ -1,3 +1,4 @@
+import { unpack } from "../shared/compact.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -42,7 +43,7 @@ async function request(
   });
   const type = r.headers.get("content-type") || "";
   const data = type.includes("json")
-    ? await r.json()
+    ? await r.json().then(unpack)
     : Buffer.from(await r.arrayBuffer());
   return {
     status: r.status,
@@ -633,7 +634,6 @@ test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하
   assert.equal(undone.status, 200);
   assert.equal(getTask(db, tasks[0].id).cells.owner.value, memberId);
   assert.deepEqual(getTask(db, tasks[0].id).cells.owner.style, {
-    ...tasks[0].defaultStyle,
     ...tasks[0].cells.owner.style,
   });
 });
@@ -943,7 +943,7 @@ test("원본 행 범위·열 연결별 이관을 구별하고 미지정 담당�
   assert.equal(tasks[0].cells.title.value, "주간 업무");
   assert.equal(tasks[0].cells.progress.value, "75%");
   assert.equal(tasks[0].cells.type.value, "type-plan");
-  assert.equal(tasks[0].cells.owner.value, "");
+  assert.equal(tasks[0].cells.owner, undefined);
 });
 
 test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 데이터와 재시도 기록을 함께 삭제한다", async () => {
@@ -2013,7 +2013,7 @@ test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 �
   assert.equal(c.font.size, 18);
   assert.equal(c.fill.fgColor.argb, "FFFFEEAA");
   const data = await post("/export", { ...body, format: "json" });
-  assert.equal(data.data.schemaVersion, 1);
+  assert.equal(data.data.schemaVersion, 3);
   assert.deepEqual(Object.keys(data.data.tasks[0].cells).sort(), [
     "2026-10-05",
     "title",

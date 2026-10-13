@@ -5,6 +5,7 @@ import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
 import { api } from "./api";
 import { Modal, ErrorNote } from "./components";
+import Toast, { useToast } from "./Toast";
 import DefaultStyleManager from "./DefaultStyleManager";
 import PropertiesManager from "./PropertiesManager";
 import { NewTeam, TeamGeneral, TeamMembers } from "./TeamSettings";
@@ -70,8 +71,8 @@ export default function SettingsPanel({
         ? { kind: "team", id: team.id, tab: "general" }
         : firstTeam(teams)) || { kind: "users" },
   );
-  const [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useToast();
   const loadAdminData = () =>
     isAdmin
       ? api("/admin/users").then((r) => {
@@ -205,11 +206,7 @@ export default function SettingsPanel({
         </nav>
         <section className="settings-content">
           <ErrorNote error={error} />
-          {message && (
-            <p className="success-note" role="status">
-              {message}
-            </p>
-          )}
+          <Toast message={message} />
           {selection.kind === "team" && selectedTeam && (
             <>
               <div

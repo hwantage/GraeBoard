@@ -14,6 +14,7 @@ import {
   now,
   passwordHash,
   transaction,
+  upsertCellStatement,
 } from "../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
@@ -64,7 +65,7 @@ try {
     const addTask = db.prepare(
         "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
       ),
-      addCell = db.prepare("INSERT INTO cells VALUES(?,?,?,?,?)");
+      addCell = upsertCellStatement(db);
     const weeks = weeksForYear(2026).map((w) => w.key);
     for (let i = 0; i < taskCount; i++) {
       const tid = id();
@@ -75,14 +76,14 @@ try {
         status: "status-progress",
         category: "category-ux",
       }))
-        addCell.run(tid, key, json(value), "{}", 1);
+        addCell.run(tid, key, value, {}, 1);
       weeks.forEach((week, w) => {
         if ((i * 7 + w) % 10 < 3)
           addCell.run(
             tid,
             week,
-            json("진행 · 검토"),
-            json({ backgroundColor: "#d1eee6" }),
+            "진행 · 검토",
+            { backgroundColor: "#d1eee6" },
             1,
           );
       });

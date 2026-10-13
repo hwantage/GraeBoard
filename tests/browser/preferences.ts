@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { expect, type Page } from "@playwright/test";
 
 // 화면은 별도로 저장한 배치와 필터 조건을 합쳐 표시한다.
@@ -8,8 +9,8 @@ export async function readPreferences(page: Page, teamId: string, year = 2026) {
   ]);
   expect(layoutResponse.ok()).toBeTruthy();
   expect(filterResponse.ok()).toBeTruthy();
-  const { views } = await layoutResponse.json();
-  const { filters, current } = await filterResponse.json();
+  const { views } = await layoutResponse.json().then(unpack);
+  const { filters, current } = await filterResponse.json().then(unpack);
   return {
     views: [
       ...views.map((v: any) => ({

@@ -1,3 +1,4 @@
+import { unpack } from "../../shared/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { defaultView, weeksForYear } from "../../shared/domain.js";
@@ -9,7 +10,7 @@ async function post(page: Page, path: string, data: unknown) {
     data,
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  return response.json();
+  return response.json().then(unpack);
 }
 async function menu(page: Page, id: string) {
   await page
@@ -25,7 +26,7 @@ async function insert(page: Page, id: string, label: string) {
     page.getByRole("menuitem", { name: label, exact: true }).click(),
   ]);
   expect(response.ok(), await response.text()).toBeTruthy();
-  return (await response.json()).task;
+  return (await response.json().then(unpack)).task;
 }
 async function editTitle(page: Page, id: string, text: string) {
   const cell = page.locator(`[data-cell="${id}:title"]`);
@@ -47,7 +48,11 @@ test.beforeEach(async ({ page }) => {
     username: "browser-test@example.com",
     password: "local-test-only-password",
   });
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   teamId = (
     await post(page, "/admin/teams", {
       name: "행 메뉴 " + randomUUID().slice(0, 8),
@@ -135,7 +140,9 @@ test("점선이 있는 행을 복사해 같은 행에서 붙여넣으면 내용�
   const week = "2026-11-02";
   const { tasks } = await (
     await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-  ).json();
+  )
+    .json()
+    .then(unpack);
   const source = tasks.find((task: any) => task.id === sourceId);
   const savedStyle = {
     borderTop: null,
@@ -178,7 +185,7 @@ test("점선이 있는 행을 복사해 같은 행에서 붙여넣으면 내용�
   ]);
   expect(pasted.cells[week]).toMatchObject({
     value: "컴포넌트 가이드 검토",
-    style: savedStyle,
+    style: { borderRight: { style: "dashed", color: "#856060" } },
   });
   expect(pasted.defaultStyle).toEqual(source.defaultStyle);
   await page.reload();
@@ -188,7 +195,9 @@ test("점선이 있는 행을 복사해 같은 행에서 붙여넣으면 내용�
   const stored = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks.find((task: any) => task.id === pasted.id);
   expect(stored.cells).toEqual(pasted.cells);
   expect(stored.defaultStyle).toEqual(pasted.defaultStyle);
@@ -225,7 +234,9 @@ test("행 삽입·붙여넣기를 실행취소하고 같은 위치와 내용으�
   await expect(pastedTitle).toHaveText("첫 업무");
   const { tasks } = await (
     await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-  ).json();
+  )
+    .json()
+    .then(unpack);
   expect(tasks.find((task: any) => task.id === pasted.id).cells).toEqual(
     pasted.cells,
   );
@@ -238,7 +249,9 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
   const source = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
-    ).json()
+    )
+      .json()
+      .then(unpack)
   ).tasks.find((task: any) => task.id === sourceId);
   const border = { style: "solid", color: "#335577" };
   const common = {
@@ -315,7 +328,9 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
     (
       await (
         await page.request.get(`/api/views?teamId=${teamId}&year=2026`)
-      ).json()
+      )
+        .json()
+        .then(unpack)
     ).views.find((v: any) => v.name === "__current")?.data;
   // 첫 화면의 보기 자동 저장이 끝난 뒤 숨김 상태를 준비한다.
   await expect
@@ -353,8 +368,12 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
     expect(inserted.cells.owner.value).toBe("");
     expect(inserted.cells.status.value).toBe("");
     expect(inserted.cells[hiddenWeek].value).toBe("");
-    for (const key of keys)
-      expect(inserted.cells[key].style).toEqual(styleFor(key));
+    for (const key of keys) {
+      const expected = { ...styleFor(key) };
+      if (key === "owner") delete expected.borderTop;
+      if (key === hiddenWeek) delete expected.borderLeft;
+      expect(inserted.cells[key].style).toEqual(expected);
+    }
     await editTitle(page, inserted.id, label + " 행");
     const cell = page.locator(`[data-cell="${inserted.id}:title"]`);
     for (const [index, name] of properties.entries())
@@ -403,7 +422,11 @@ test("위·아래 삽입은 숨긴 열을 포함한 셀별 서식과 행 높이�
 test("위·아래 삽입은 작업명에 포커스하면서 보이는 열의 가로 위치를 유지한다", async ({
   page,
 }) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const settings = boot.teams.find((team: any) => team.id === teamId).settings;
   settings.properties.sort(
     (a: any, b: any) =>
@@ -446,10 +469,64 @@ test("위·아래 삽입은 작업명에 포커스하면서 보이는 열의 가
   }
 });
 
+test("행 복사 직후 붙여넣기는 작업 셀을 선택하면서 가로 스크롤을 유지한다", async ({
+  page,
+}) => {
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  const settings = boot.teams.find((team: any) => team.id === teamId).settings;
+  settings.properties.sort(
+    (a: any, b: any) =>
+      ["owner", "title", "status"].indexOf(a.id) -
+      ["owner", "title", "status"].indexOf(b.id),
+  );
+  const response = await page.request.patch(`/api/teams/${teamId}/settings`, {
+    headers: { "X-Requested-With": "WeeklyPlan" },
+    data: settings,
+  });
+  expect(response.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.locator("[data-header-key]").first()).toHaveAttribute(
+    "data-header-key",
+    "owner",
+  );
+  const grid = page.getByRole("grid");
+  // 작업 열이 이미 보이는 위치와 화면 밖에 있는 위치 모두 유지한다.
+  for (const scrollLeft of [0, 24, 900]) {
+    await grid.evaluate((el, left) => {
+      el.scrollLeft = left;
+    }, scrollLeft);
+    await expect
+      .poll(() => grid.evaluate((el) => el.scrollLeft))
+      .toBe(scrollLeft);
+    await menu(page, taskIds[0]);
+    await page.getByRole("menuitem", { name: "복사", exact: true }).click();
+    const pasted = await insert(page, taskIds[0], "복사한 행 붙여넣기");
+    const cell = page.locator(`[data-cell="${pasted.id}:title"]`);
+    await expect(cell).toHaveText("첫 업무");
+    await expect(cell).toHaveClass(/\bfocused\b/);
+    await expect(cell.getByRole("textbox")).toHaveCount(0);
+    await expect
+      .poll(() => grid.evaluate((el) => el.scrollLeft))
+      .toBe(scrollLeft);
+    await expect(page.locator(".sheet-row").nth(1)).toHaveAttribute(
+      "data-row-id",
+      pasted.id,
+    );
+  }
+});
+
 test("묶음 안에 삽입하면 해당 선택값만 유지하고 헤더에 묶음 아이콘을 표시한다", async ({
   page,
 }, info) => {
-  const boot = await (await page.request.get("/api/bootstrap")).json();
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
   const settings = boot.teams.find((team: any) => team.id === teamId).settings;
   settings.properties.push({
     id: "p_category",

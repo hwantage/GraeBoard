@@ -1,3 +1,4 @@
+import { unpack } from "../shared/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -85,7 +86,7 @@ async function fixture(t) {
       },
       body: body === undefined ? undefined : json(body),
     });
-    return { status: res.status, body: await res.json() };
+    return { status: res.status, body: await res.json().then(unpack) };
   }
   return {
     get db() {
