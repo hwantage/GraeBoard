@@ -1,3 +1,4 @@
+import { hasDocumentContent } from "./task-documents.js";
 import { emptyPropertyValue, propertiesFor } from "./domain.js";
 import { STYLE_KEYS } from "./compact.js";
 import {
@@ -16,10 +17,28 @@ export function applyReportOperation(tasks, operation, context) {
   const get = (id) => {
     const task = byId.get(id);
     if (!task)
-      throw new ReportEditError("보고본에서 해당 업무를 찾지 못했습니다.");
+      throw new ReportEditError("사본에서 해당 업무를 찾지 못했습니다.");
     return task;
   };
   const stamp = operation.at;
+  if (operation.kind === "restore") {
+    // Sheet undo never rolls back independently edited documents of live rows.
+    const removed = new Set(operation.removeIds || []);
+    const restored = operation.tasks.map((task) => ({
+      ...task,
+      teamId: context.teamId,
+      updatedAt: stamp,
+      ...(byId.has(task.id)
+        ? {
+            documents: byId.get(task.id).documents,
+            hasDocument: byId.get(task.id).hasDocument,
+            documentCount: byId.get(task.id).documentCount,
+          }
+        : {}),
+    }));
+    for (const task of restored) byId.set(task.id, task);
+    return [...byId.values()].filter((task) => !removed.has(task.id));
+  }
   if (operation.kind === "cells") {
     for (const change of operation.changes) {
       const task = get(change.taskId);
@@ -94,10 +113,10 @@ export function applyReportOperation(tasks, operation, context) {
   }
   if (operation.kind === "create") {
     if (byId.has(operation.taskId))
-      throw new ReportEditError("이미 추가된 보고본 업무입니다.");
+      throw new ReportEditError("이미 추가된 사본 업무입니다.");
     if (tasks.length >= 20000)
       throw new ReportEditError(
-        "스냅샷에는 업무를 20,000개까지 저장할 수 있습니다.",
+        "사본에는 업무를 20,000개까지 저장할 수 있습니다.",
       );
     const source = operation.sourceId ? get(operation.sourceId) : null;
     const target = operation.insertAt ? get(operation.insertAt.taskId) : null;
@@ -137,6 +156,17 @@ export function applyReportOperation(tasks, operation, context) {
       createdAt: stamp,
       updatedAt: stamp,
       cells,
+      ...(copyValues && copied?.documents
+        ? {
+            documents: copied.documents.map((doc) => ({ ...doc })),
+            documentCount: copied.documents.length,
+            hasDocument: copied.documents.some((doc) =>
+              doc.markdown === undefined
+                ? !!doc.hasContent
+                : hasDocumentContent(doc.markdown),
+            ),
+          }
+        : {}),
       defaultStyle: copied?.defaultStyle || context.settings.defaultStyle || {},
       ...(copied?.rowStyle ? { rowStyle: copied.rowStyle } : {}),
     };
@@ -176,5 +206,5 @@ export function applyReportOperation(tasks, operation, context) {
       updatedAt: stamp,
     }));
   }
-  throw new ReportEditError("지원하지 않는 보고본 편집입니다.");
+  throw new ReportEditError("지원하지 않는 사본 편집입니다.");
 }

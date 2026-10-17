@@ -205,6 +205,9 @@ export function copyRowFormatting(task) {
     ]),
   );
   return {
+    ...(task.documents
+      ? { documents: task.documents.map((doc) => ({ ...doc })) }
+      : {}),
     defaultStyle,
     ...(Object.keys(rowStyle).length ? { rowStyle } : {}),
     cells,

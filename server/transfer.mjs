@@ -1,3 +1,7 @@
+import { exportDocumentImages } from "./document-images.mjs";
+import { reportDocumentContents, readReport } from "./document-storage.mjs";
+import { reportRevision } from "./report-editing.mjs";
+import { withTaskDocuments } from "./task-documents.mjs";
 import { filtersFor, currentFiltersFor } from "./filters.mjs";
 import ExcelJS from "exceljs";
 import { explicitStyle } from "../shared/formatting.js";
@@ -8,7 +12,11 @@ import {
 } from "../shared/borders.js";
 import { checkWorkbookArchive } from "./archive.mjs";
 import { profileSnapshot } from "./profiles.mjs";
-import { encodeReport, decodeReport } from "./reports.mjs";
+import {
+  encodeReport,
+  decodeReport,
+  requireUniqueReportName,
+} from "./reports.mjs";
 import multer from "multer";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -26,6 +34,7 @@ import {
   cell,
   safeSpreadsheetText,
   defaultView,
+  savedFilter,
   viewLayout,
   fieldsFor,
   orderColumns,
@@ -638,7 +647,14 @@ const fieldLabels = (settings) =>
   new Map(fieldsFor(settings).map((f) => [f.key, f.label]));
 export function installTransferRoutes(
   app,
-  { db, teamAccess, managedTeam, assignableUsers, referencedUsers },
+  {
+    db,
+    teamAccess,
+    managedTeam,
+    assignableUsers,
+    referencedUsers,
+    documentImagesDir,
+  },
 ) {
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -648,6 +664,8 @@ export function installTransferRoutes(
     const d = z
       .object({
         teamId: z.string().uuid(),
+        reportId: z.string().uuid().optional(),
+        revision: z.string().optional(),
         year: yearSchema,
         startMonth: z.number().int().min(1).max(12).default(1),
         format: z.enum(["xlsx", "csv", "json"]),
@@ -657,10 +675,30 @@ export function installTransferRoutes(
       })
       .parse(req.body);
     periodScopeSchema.parse(d);
-    const startMonth = d.scope === "all" ? 1 : d.startMonth;
-    const team = teamAccess(req.user, d.teamId),
-      settings = team.settings;
-    let tasks = getTasks(db, d.teamId, periodYears(d.year, startMonth));
+    const team = teamAccess(req.user, d.teamId);
+    const reportRow =
+      d.reportId &&
+      db
+        .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+        .get(d.reportId, d.teamId);
+    requireThat(!d.reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
+    requireThat(
+      !reportRow || d.revision === reportRevision(reportRow.data),
+      409,
+      "사본이 변경되었습니다. 최신 내용을 확인한 뒤 내보내세요.",
+    );
+    const report = reportRow ? readReport(db, reportRow) : null;
+    requireThat(
+      !reportRow || d.year === reportRow.year,
+      409,
+      "사본의 표시 연도가 변경되었습니다. 다시 내보내세요.",
+    );
+    const startMonth =
+      d.scope === "all" ? report?.view.startMonth || 1 : d.startMonth;
+    const settings = report?.settings || team.settings;
+    let tasks = report
+      ? report.tasks
+      : getTasks(db, d.teamId, periodYears(d.year, startMonth));
     if (d.scope === "view") {
       const selected = new Set(d.taskIds);
       const taskMap = new Map(tasks.map((t) => [t.id, t]));
@@ -683,11 +721,12 @@ export function installTransferRoutes(
       400,
       "내보낼 열을 확인하세요.",
     );
-    const users = referencedUsers(d.teamId);
+    const users = report?.users || referencedUsers(d.teamId);
     audit(db, req.user.id, d.teamId, "export", id(), undefined, {
       format: d.format,
       scope: d.scope,
       count: tasks.length,
+      ...(reportRow ? { reportId: reportRow.id, name: reportRow.name } : {}),
     });
     res.attachment(
       `graeboard-${d.year}${startMonth > 1 ? `-${d.year + 1}` : ""}.${d.format}`,
@@ -715,32 +754,54 @@ export function installTransferRoutes(
         .send("\uFEFF" + rows.map((r) => r.map(quote).join(",")).join("\r\n"));
     }
     const reports =
-      canManageTeam(req.user, d.teamId) && d.scope === "all"
+      !report && canManageTeam(req.user, d.teamId) && d.scope === "all"
         ? db
             .prepare(
-              "SELECT name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
+              "SELECT id,name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
             )
             .all(d.teamId, d.year)
-            .map((r) => ({ ...r, data: decodeReport(r.data) }))
+            .map(({ id, ...r }) => ({
+              ...r,
+              data: reportDocumentContents(db, readReport(db, { id, ...r })),
+            }))
         : [];
-    const views = db
-      .prepare(
-        "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
-      )
-      .all(req.user.id, d.teamId, d.year)
-      .map((v) => ({
-        ...v,
-        data: viewLayout(parse(v.data)),
-      }));
+    const views = report
+      ? [{ name: "__current", data: viewLayout(report.view) }]
+      : db
+          .prepare(
+            "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
+          )
+          .all(req.user.id, d.teamId, d.year)
+          .map((v) => ({
+            ...v,
+            data: viewLayout(parse(v.data)),
+          }));
+    const documentTasks = report
+      ? reportDocumentContents(db, { ...report, tasks }).tasks
+      : withTaskDocuments(db, tasks);
+    const documentImages = exportDocumentImages(documentImagesDir, [
+      ...documentTasks.flatMap((task) =>
+        (task.documents || []).map((doc) => doc.markdown),
+      ),
+      ...reports.flatMap((report) =>
+        report.data.tasks.flatMap((task) =>
+          (task.documents || []).map((doc) => doc.markdown),
+        ),
+      ),
+    ]);
     res.type("application/json").send(
       json({
         format: "weekly-plan",
-        schemaVersion: 3,
+        schemaVersion: 5,
         exportedAt: now(),
-        team,
+        team: { ...team, settings },
+        ...(reportRow
+          ? { sheet: { id: reportRow.id, name: reportRow.name } }
+          : {}),
         year: d.year,
         startMonth,
-        tasks: tasks.map((t) =>
+        documentImages,
+        tasks: documentTasks.map((t) =>
           d.scope === "all"
             ? t
             : {
@@ -752,8 +813,10 @@ export function installTransferRoutes(
         ),
         users: users.map(profileSnapshot),
         views,
-        filters: filtersFor(db, req.user, team),
-        currentFilters: currentFiltersFor(db, req.user, team),
+        filters: report ? [] : filtersFor(db, req.user, team),
+        currentFilters: report
+          ? { selectedId: "", data: savedFilter(report.view, settings) }
+          : currentFiltersFor(db, req.user, team),
         reports,
       }),
     );
@@ -766,6 +829,16 @@ export function installTransferRoutes(
       teamId,
       "팀장만 자료를 가져올 수 있습니다.",
     );
+    const reportId = z.string().uuid().optional().parse(req.body.reportId);
+    const reportRow =
+      reportId &&
+      db
+        .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+        .get(reportId, teamId);
+    requireThat(!reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
+    const settings = reportRow
+      ? decodeReport(reportRow.data).settings
+      : team.settings;
     requireThat(req.file, 400, "가져올 XLSX 파일을 선택하세요.");
     requireThat(
       req.file.originalname.toLowerCase().endsWith(".xlsx"),
@@ -799,6 +872,7 @@ export function installTransferRoutes(
     const importId = stableId(
       teamId +
         year +
+        (reportId || "") +
         createHash("sha256").update(req.file.buffer).digest("hex") +
         optionsKey,
     );
@@ -811,9 +885,10 @@ export function installTransferRoutes(
       sheets = await inspectWorkbook(
         req.file.buffer,
         year,
-        team.settings,
+        settings,
         sheetOptions,
       );
+      if (reportId) sheets = sheets.map((sheet) => ({ ...sheet, reportId }));
       db.prepare(
         "INSERT INTO imports(id,team_id,actor_id,filename,data,created_at) VALUES(?,?,?,?,?,?)",
       ).run(
@@ -879,7 +954,9 @@ export function installTransferRoutes(
         sheet: stringSchema(),
         year: yearSchema,
         personMap: z.record(z.string(), z.string().uuid()),
-        mode: z.enum(["tasks", "report"]),
+        mode: z.enum(["tasks", "report", "copy"]),
+        reportId: z.string().uuid().optional(),
+        revision: z.string().optional(),
         referenceDate: dateSchema,
         acceptWarnings: z.literal(true),
       })
@@ -889,11 +966,42 @@ export function installTransferRoutes(
       .get(req.params.id);
     requireThat(imp, 404, "이관 미리보기를 찾을 수 없습니다.");
     const team = managedTeam(req.user, imp.team_id);
-    const opKey = stableId(`${imp.id}:${d.sheet}:${d.mode}:${d.year}`),
-      old = db.prepare("SELECT response FROM operations WHERE id=?").get(opKey);
-    if (old) return res.json({ ...parse(old.response), repeated: true });
+    requireThat(
+      (d.mode === "copy") === !!d.reportId,
+      400,
+      "가져올 시트를 확인하세요.",
+    );
+    const reportRow =
+      d.reportId &&
+      db
+        .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+        .get(d.reportId, team.id);
+    requireThat(!d.reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
     const sheet = parse(imp.data).find((s) => s.name === d.sheet);
     requireThat(sheet?.rows.length, 400, "업무가 있는 시트를 선택하세요.");
+    requireThat(
+      (sheet.reportId || null) === (d.reportId || null),
+      400,
+      "미리보기와 반영할 시트가 다릅니다. 파일을 다시 선택하세요.",
+    );
+    const opKey = stableId(
+        `${imp.id}:${d.sheet}:${d.mode}:${d.year}${d.reportId ? `:${d.reportId}` : ""}`,
+      ),
+      old = db.prepare("SELECT response FROM operations WHERE id=?").get(opKey);
+    if (old) return res.json({ ...parse(old.response), repeated: true });
+    requireThat(
+      !reportRow ||
+        (d.revision === reportRevision(reportRow.data) &&
+          d.year === reportRow.year),
+      409,
+      "사본이 변경되었습니다. 최신 내용을 확인한 뒤 다시 가져오세요.",
+    );
+    const report = reportRow ? readReport(db, reportRow) : null;
+    requireThat(
+      !report || report.tasks.length + sheet.rows.length <= 20000,
+      400,
+      "사본에는 최대 20,000개 업무를 저장할 수 있습니다.",
+    );
     const users = assignableUsers(team.id),
       ids = new Set(users.map((u) => u.id));
     for (const name of sheet.unresolved)
@@ -903,10 +1011,17 @@ export function installTransferRoutes(
         `담당자 “${name}” 연결을 확인하세요.`,
       );
     const result = transaction(db, () => {
+      const reportName =
+        d.mode === "report"
+          ? requireUniqueReportName(db, team.id, sheet.name)
+          : null;
       const tasks = [],
         hiddenRows = [],
         rowHeights = {};
-      const settings = structuredClone(team.settings);
+      const settings = structuredClone(report?.settings || team.settings);
+      const lastPosition = report
+        ? Math.max(-1, ...report.tasks.map((task) => task.position))
+        : 0;
       const importedKeys = new Set(
         sheet.rows.flatMap((r) => Object.keys(r.fields)),
       );
@@ -987,7 +1102,10 @@ export function installTransferRoutes(
             id: taskId,
             teamId: team.id,
             years: [d.year],
-            position: row.row,
+            position: report ? lastPosition + tasks.length + 1 : row.row,
+            createdBy: req.user.id,
+            createdAt: now(),
+            updatedAt: now(),
             defaultStyle: {},
             cells: Object.fromEntries(initialCells(cells)),
           };
@@ -1005,12 +1123,31 @@ export function installTransferRoutes(
           weeksForYear(d.year).some((w) => w.key === k),
         ),
       };
-      if (d.mode === "report") {
+      if (report) {
+        const people = new Map(report.users.map((user) => [user.id, user]));
+        for (const user of users)
+          if (!people.has(user.id)) people.set(user.id, user);
+        const nextView = {
+          ...report.view,
+          rowHeights: { ...report.view.rowHeights, ...rowHeights },
+          hiddenRows: [...report.view.hiddenRows, ...hiddenRows],
+        };
+        db.prepare("UPDATE reports SET data=? WHERE id=?").run(
+          encodeReport({
+            ...report,
+            tasks: [...report.tasks, ...tasks],
+            settings,
+            users: [...people.values()],
+            view: nextView,
+          }),
+          reportRow.id,
+        );
+      } else if (d.mode === "report") {
         db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
           id(),
           team.id,
           d.year,
-          sheet.name,
+          reportName,
           d.referenceDate,
           req.user.id,
           now(),
@@ -1042,6 +1179,7 @@ export function installTransferRoutes(
         count: tasks.length,
         warningCount: sheet.warnings.length,
         mode: d.mode,
+        ...(reportRow ? { reportId: reportRow.id, name: reportRow.name } : {}),
       };
       db.prepare("INSERT INTO operations VALUES(?,?,?,?)").run(
         opKey,

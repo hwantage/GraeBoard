@@ -4,6 +4,7 @@ import { todayKey } from "../shared/domain.js";
 import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import Toast, { useToast } from "./Toast";
+import LoadingState from "./LoadingState";
 
 type Count = { count: number; bytes: number };
 type Summary = Count & { oldest: string | null; newest: string | null };
@@ -144,7 +145,7 @@ export default function HistoryCleanup({
     if (
       !count ||
       !confirm(
-        `“${preview.scope.name}”의 ${preview.beforeDate} 00:00 (한국 시간) 이전 데이터만 삭제할까요?\n\n변경 이력 ${number(preview.audit.eligible.count)}건 · ${bytes(preview.audit.eligible.bytes)}\n저장 재시도 기록 ${number(preview.operations.eligible.count)}건 · ${bytes(preview.operations.eligible.bytes)}\n\n삭제한 이력은 조회하거나 복원할 수 없습니다. 현재 업무·계정·스냅샷·백업과 다른 팀의 이력은 유지됩니다.`,
+        `“${preview.scope.name}”의 ${preview.beforeDate} 00:00 (한국 시간) 이전 데이터만 삭제할까요?\n\n변경 이력 ${number(preview.audit.eligible.count)}건 · ${bytes(preview.audit.eligible.bytes)}\n저장 재시도 기록 ${number(preview.operations.eligible.count)}건 · ${bytes(preview.operations.eligible.bytes)}\n\n삭제한 이력은 조회하거나 복원할 수 없습니다. 현재 업무·계정·사본·백업과 다른 팀의 이력은 유지됩니다.`,
       )
     )
       return;
@@ -209,12 +210,15 @@ export default function HistoryCleanup({
       </div>
       <ErrorNote error={error} />
       <Toast message={message} />
-      {storageLoading && (
-        <p className="history-cleanup-progress" role="status">
-          <LoaderCircle size={16} className="spin" />
-          저장 용량을 확인하고 있습니다.
-        </p>
-      )}
+      {storageLoading &&
+        (scopes.length ? (
+          <p className="history-cleanup-progress" role="status">
+            <LoaderCircle size={16} className="spin" />
+            저장 용량을 확인하고 있습니다.
+          </p>
+        ) : (
+          <LoadingState label="저장 용량을 확인하고 있습니다." />
+        ))}
       {!!scopes.length && (
         <>
           <div className="history-cleanup-table-wrap">
@@ -225,7 +229,7 @@ export default function HistoryCleanup({
                   <th scope="col">팀</th>
                   <th scope="col">전체 데이터</th>
                   <th scope="col">변경 이력</th>
-                  <th scope="col">스냅샷</th>
+                  <th scope="col">사본</th>
                 </tr>
               </thead>
               <tbody>
@@ -271,7 +275,7 @@ export default function HistoryCleanup({
                 {bytes(selected.operations.bytes)}
               </p>
               <p className="field-help">
-                본문·설정·압축 스냅샷의 저장 용량입니다. 계정 정보와 DB 공통
+                본문·설정·압축 사본의 저장 용량입니다. 계정 정보와 DB 공통
                 공간은 제외합니다. 시스템 공통은 공통 이력과 여러 팀이 공유하는
                 재시도 기록입니다.
               </p>
@@ -403,7 +407,7 @@ export default function HistoryCleanup({
             <div>
               <h4>확인한 이력 영구 삭제</h4>
               <p>
-                현재 업무·스냅샷·백업과 최대 50회의 실행 취소는 유지됩니다. 삭제
+                현재 업무·사본·백업과 최대 50회의 실행 취소는 유지됩니다. 삭제
                 공간은 다음 저장에 재사용되며 DB 파일 크기는 바로 줄지 않을 수
                 있습니다.
               </p>

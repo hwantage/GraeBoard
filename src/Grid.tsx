@@ -1,3 +1,4 @@
+import { FileText } from "lucide-react";
 import { explicitStyle, rowFontSize } from "../shared/formatting.js";
 import {
   Fragment,
@@ -196,6 +197,7 @@ export default function Grid({
   onView,
   onAdd,
   onError,
+  copyEditable = false,
   readOnly = false,
   presentation = false,
   jump,
@@ -224,7 +226,11 @@ export default function Grid({
   onPaste: (rows: ClipboardMatrix) => void;
   onClear: () => void;
   onRowMenu: (task: Task) => void;
-  onRowCommand: (command: RowCommand, task: Task) => void;
+  onRowCommand: (
+    command: RowCommand,
+    task: Task,
+    selectedRows?: Task[],
+  ) => void;
   canPasteRow: boolean;
   rowActionsDisabled: boolean;
   onReorder: (
@@ -235,6 +241,7 @@ export default function Grid({
   onView: (v: Partial<View>) => void;
   onAdd: () => void;
   onError: (s: string) => void;
+  copyEditable?: boolean;
   readOnly?: boolean;
   presentation?: boolean;
   jump: {
@@ -460,7 +467,7 @@ export default function Grid({
     return [task];
   }
   function canMoveRows(moving: Task[]) {
-    if (moving.some((t) => !canEdit(user, t))) {
+    if (!copyEditable && moving.some((t) => !canEdit(user, t))) {
       onError("선택한 행에 이동 권한이 없는 업무가 포함되어 있습니다.");
       return false;
     }
@@ -493,7 +500,13 @@ export default function Grid({
     ref.current?.focus({ preventScroll: true });
   }
   function startRowDrag(e: React.PointerEvent, task: Task) {
-    if (e.button !== 0 || readOnly || sorted || editor || !canEdit(user, task))
+    if (
+      e.button !== 0 ||
+      readOnly ||
+      sorted ||
+      editor ||
+      !(copyEditable || canEdit(user, task))
+    )
       return;
     e.preventDefault();
     e.stopPropagation();
@@ -976,11 +989,11 @@ export default function Grid({
     headerMenu?.kind === "rows"
       ? tasks.find((task) => task.id === headerMenu.taskId)
       : undefined;
-  const selectedRowCount = menuTask
-    ? tasks.filter((_, i) => ranges.some((r) => i >= r.r1 && i <= r.r2)).length
-    : 0;
+  const selectedRows = menuTask
+    ? tasks.filter((_, i) => ranges.some((r) => i >= r.r1 && i <= r.r2))
+    : [];
   const rowActionDisabled =
-    !menuTask || selectedRowCount !== 1 || readOnly || rowActionsDisabled;
+    !menuTask || selectedRows.length !== 1 || readOnly || rowActionsDisabled;
   const menuActions: HeaderMenuAction[] =
     headerMenu?.kind === "columns"
       ? [
@@ -1081,8 +1094,14 @@ export default function Grid({
             icon: <Trash2 size={15} />,
             danger: true,
             disabled:
-              rowActionDisabled || !menuTask || !canEdit(user, menuTask),
-            run: () => menuTask && onRowCommand("delete", menuTask),
+              readOnly ||
+              rowActionsDisabled ||
+              !selectedRows.length ||
+              !selectedRows.every(
+                (task) => copyEditable || canEdit(user, task),
+              ),
+            run: () =>
+              menuTask && onRowCommand("delete", menuTask, selectedRows),
           },
           {
             label: "행 숨기기",
@@ -1633,6 +1652,7 @@ export default function Grid({
                   settings={settings}
                   user={user}
                   canEditPeople={canEditPeople}
+                  copyEditable={copyEditable}
                   readOnly={readOnly}
                   presentation={presentation}
                   sorted={sorted}
@@ -1822,6 +1842,7 @@ const RowBody = memo(function RowBody({
   settings,
   user,
   canEditPeople,
+  copyEditable,
   readOnly,
   presentation,
   sorted,
@@ -1851,6 +1872,7 @@ const RowBody = memo(function RowBody({
   settings: Settings;
   user: User;
   canEditPeople: boolean;
+  copyEditable: boolean;
   readOnly: boolean;
   presentation: boolean;
   sorted: boolean;
@@ -1871,7 +1893,7 @@ const RowBody = memo(function RowBody({
         .split(",")
         .map((span) => span.split("-").map(Number))
     : [];
-  const editable = !readOnly && canEdit(user, task);
+  const editable = !readOnly && (copyEditable || canEdit(user, task));
   const displayStyles = useMemo(
     () =>
       withWeekBoundaries(
@@ -1925,7 +1947,10 @@ const RowBody = memo(function RowBody({
               className="row-drag-handle"
               aria-label={`${value(task, "title")} 순서 이동`}
               disabled={
-                readOnly || sorted || editorActive || !canEdit(user, task)
+                readOnly ||
+                sorted ||
+                editorActive ||
+                !(copyEditable || canEdit(user, task))
               }
               title={
                 sorted
@@ -2119,6 +2144,11 @@ const GridCell = memo(function GridCell({
   const current = cell(task, c.key),
     s = displayStyle;
   const text = displayValueFor(property, current.value, users);
+  const documentCount = task.documentCount ?? task.documents?.length ?? 0;
+  const showDocumentCount = documentCount > 1;
+  const documentLabel = showDocumentCount
+    ? `문서 ${documentCount}개 열기`
+    : "문서 열기";
   const choice = property?.kind === "option" || property?.kind === "member";
   const editableChoice =
     choice &&
@@ -2221,7 +2251,7 @@ const GridCell = memo(function GridCell({
       data-task-id={task.id}
       data-column={c.key}
       data-text-mode={mode}
-      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? "task-title" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
+      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
       title={text || undefined}
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
@@ -2234,6 +2264,34 @@ const GridCell = memo(function GridCell({
         if (!presentation) actions.rowMenu(task);
       }}
     >
+      {c.key === "title" && task.hasDocument && !editing && (
+        <button
+          type="button"
+          className="task-document-indicator"
+          disabled={presentation}
+          aria-label={`${text || "제목 없는 업무"} ${documentLabel}`}
+          data-tooltip={`업무 ${documentLabel}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerMove={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.rowMenu(task);
+          }}
+        >
+          {showDocumentCount && (
+            <span className="task-document-count" aria-hidden="true">
+              {documentCount}
+            </span>
+          )}
+          <FileText size={11} aria-hidden="true" />
+        </button>
+      )}
       {(editing || prepareText) && (
         <InlineCellEditor
           key={`${task.id}:${c.key}`}

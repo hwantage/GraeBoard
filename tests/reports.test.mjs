@@ -169,16 +169,17 @@ async function fixture(t) {
     image,
     view,
     request,
-    save: () =>
+    save: (name = "최소 저장 검증", overrides = {}) =>
       request("/reports", {
         method: "POST",
         body: {
           teamId,
           year: 2026,
-          name: "최소 저장 검증",
+          name,
           referenceDate: "2026-10-12",
           taskIds: [task.id],
           view,
+          ...overrides,
         },
       }),
     async restart() {
@@ -225,6 +226,311 @@ const editReport = (f, report, operations) =>
     body: { operationId: randomUUID(), revision: report.revision, operations },
   });
 
+test("사본 다중 삭제 이력은 해당 시트의 행·문서만 복구하고 재삭제 충돌을 검사한다", async (t) => {
+  const f = await fixture(t);
+  await f.request(`/tasks/${f.task.id}/document`, {
+    method: "PUT",
+    body: {
+      markdown: "원본 문서",
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    },
+  });
+  const reportId = (await f.save("복구 대상")).data.id;
+  const otherId = (await f.save("독립 시트")).data.id;
+  let report = (await f.request(`/reports/${reportId}`)).data;
+  const docPath = `/reports/${reportId}/tasks/${f.task.id}/document`;
+  const doc = (await f.request(docPath)).data;
+  assert.equal(
+    (
+      await f.request(docPath, {
+        method: "PUT",
+        body: {
+          markdown: "이 사본만의 문서",
+          expectedRevision: doc.revision,
+          operationId: randomUUID(),
+        },
+      })
+    ).status,
+    200,
+  );
+  const addedId = randomUUID();
+  report = (
+    await editReport(f, report, [
+      {
+        kind: "create",
+        at: now(),
+        taskId: addedId,
+        fields: { title: "사본에만 존재" },
+      },
+    ])
+  ).data;
+  const deleted = await editReport(f, report, [
+    { kind: "delete", at: now(), taskIds: [f.task.id, addedId] },
+  ]);
+  assert.equal(deleted.status, 200, json(deleted.data));
+  const history = async () =>
+    (await f.request(`/audit?teamId=${f.teamId}&sheetId=${reportId}`)).data
+      .entries;
+  const entry = (await history()).find((e) => e.restorableTaskIds.length);
+  assert.deepEqual(entry.sheet, { id: reportId, name: "복구 대상" });
+  assert.deepEqual(
+    new Set(entry.restorableTaskIds),
+    new Set([f.task.id, addedId]),
+  );
+  const originalHistory = (
+    await f.request(`/audit?teamId=${f.teamId}&sheetId=original`)
+  ).data.entries;
+  assert(!originalHistory.some((e) => e.id === entry.id));
+  const changed = (
+    await editReport(f, deleted.data, [
+      {
+        kind: "create",
+        at: now(),
+        taskId: randomUUID(),
+        fields: { title: "삭제 후 새 업무" },
+      },
+    ])
+  ).data;
+  assert.equal(
+    (
+      await f.request(`/audit/${entry.id}/restore`, {
+        method: "POST",
+        body: { revision: deleted.data.revision },
+      })
+    ).status,
+    409,
+  );
+  await f.restart();
+  const restored = await f.request(`/audit/${entry.id}/restore`, {
+    method: "POST",
+    body: { revision: changed.revision },
+  });
+  assert.equal(restored.status, 200, json(restored.data));
+  assert.equal(restored.data.tasks.length, 3);
+  assert.equal(
+    restored.data.users.find((user) => user.id === f.people.owner.id).name,
+    f.people.owner.name,
+  );
+  assert.equal((await f.request(docPath)).data.markdown, "이 사본만의 문서");
+  assert.equal(
+    (await f.request(`/tasks/${f.task.id}/document`)).data.markdown,
+    "원본 문서",
+  );
+  assert.equal((await f.request(`/reports/${otherId}`)).data.tasks.length, 1);
+  assert.equal(getTask(f.db, addedId), null);
+  const second = await editReport(f, restored.data, [
+    { kind: "delete", at: now(), taskIds: [f.task.id, addedId] },
+  ]);
+  assert.equal(
+    (
+      await f.request(`/audit/${entry.id}/restore`, {
+        method: "POST",
+        body: { revision: second.data.revision },
+      })
+    ).status,
+    409,
+  );
+  assert.deepEqual(
+    (await history()).find((e) => e.id === entry.id).restorableTaskIds,
+    [],
+  );
+});
+
+test("사본 가져오기·내보내기는 자체 설정·업무·문서를 사용하며 원본과 다른 사본을 보존한다", async (t) => {
+  const f = await fixture(t);
+  const reportId = (await f.save("엑셀 대상 사본")).data.id;
+  const otherId = (await f.save("다른 사본")).data.id;
+  const original = getTask(f.db, f.task.id);
+  const originalSettings = f.db
+    .prepare("SELECT settings FROM teams WHERE id=?")
+    .get(f.teamId).settings;
+  const other = (await f.request(`/reports/${otherId}`)).data;
+  let report = (await f.request(`/reports/${reportId}`)).data;
+  report = (
+    await editReport(f, report, [
+      reportCell(f.task.id, "title", "사본에서 변경한 제목"),
+    ])
+  ).data;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("추가 시트");
+  sheet.addRow(["작업", "상태", "검토자", "2026-10-05"]);
+  sheet.addRow([
+    "가져온 업무",
+    "사본 전용 상태",
+    f.people.reviewer.name,
+    "가져온 일정",
+  ]);
+  const preview = async (id) => {
+    const body = new FormData();
+    body.set("teamId", f.teamId);
+    body.set("year", "2026");
+    body.set("reportId", id);
+    body.set(
+      "file",
+      new Blob([await workbook.xlsx.writeBuffer()]),
+      "sheet.xlsx",
+    );
+    return f.request("/import/preview", { method: "POST", body });
+  };
+  const firstPreview = await preview(reportId);
+  assert.equal(firstPreview.status, 200, json(firstPreview.data));
+  const options = {
+    sheet: sheet.name,
+    year: 2026,
+    mode: "copy",
+    reportId,
+    revision: report.revision,
+    referenceDate: "2026-10-16",
+    acceptWarnings: true,
+    personMap: { [f.people.reviewer.name]: f.people.reviewer.id },
+  };
+  const apply = (overrides = {}) =>
+    f.request(`/import/${firstPreview.data.id}/apply`, {
+      method: "POST",
+      body: { ...options, ...overrides },
+    });
+  assert.equal(
+    (await apply({ reportId: otherId, revision: other.revision })).status,
+    400,
+  );
+  assert.equal((await apply({ revision: "outdated" })).status, 409);
+  assert.equal((await apply()).status, 200);
+  assert.equal((await apply()).data.repeated, true);
+  report = (await f.request(`/reports/${reportId}`)).data;
+  assert.equal(report.tasks.length, 2);
+  const added = report.tasks.find((t) => t.cells.title.value === "가져온 업무");
+  assert.equal(added.cells.reviewers.value[0], f.people.reviewer.id);
+  assert.equal(
+    report.settings.properties
+      .find((p) => p.id === "status")
+      .values.find((v) => v.id === added.cells.status.value).label,
+    "사본 전용 상태",
+  );
+  assert.equal(getTask(f.db, added.id), null);
+  assert.equal(
+    f.db.prepare("SELECT settings FROM teams WHERE id=?").get(f.teamId)
+      .settings,
+    originalSettings,
+  );
+  assert.deepEqual(getTask(f.db, f.task.id), original);
+  assert.deepEqual((await f.request(`/reports/${otherId}`)).data, other);
+  const exported = await f.request("/export", {
+    method: "POST",
+    body: {
+      teamId: f.teamId,
+      reportId,
+      revision: report.revision,
+      year: 2026,
+      format: "json",
+      scope: "all",
+    },
+  });
+  assert.equal(exported.status, 200, json(exported.data));
+  assert.equal(exported.data.sheet.id, reportId);
+  assert.deepEqual(
+    exported.data.tasks.map((t) => t.cells.title.value),
+    ["사본에서 변경한 제목", "가져온 업무"],
+  );
+  assert.deepEqual(exported.data.team.settings, report.settings);
+  assert.deepEqual(exported.data.reports, []);
+  const history = (
+    await f.request(`/audit?teamId=${f.teamId}&sheetId=${reportId}`)
+  ).data.entries;
+  assert(history.some((e) => e.action === "import" && e.sheet.id === reportId));
+  assert(history.some((e) => e.action === "export" && e.sheet.id === reportId));
+  assert.notEqual((await preview(otherId)).data.id, firstPreview.data.id);
+});
+
+test("사본 제목은 생성·이름 변경에서 50자까지 저장하고 초과 요청을 거절한다", async (t) => {
+  const f = await fixture(t);
+  const name = "가".repeat(50);
+  const created = await f.save(name.normalize("NFD"));
+  assert.equal(created.status, 201);
+  assert.equal((await f.save("가".repeat(51))).status, 400);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM reports").get().n, 1);
+  const path = `/reports/${created.data.id}/name`;
+  assert.equal(
+    (
+      await f.request(path, {
+        method: "PATCH",
+        body: { name: "나".repeat(51), expectedName: name },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await f.request(`/reports/${created.data.id}`)).data.name,
+    name,
+  );
+  const renamed = await f.request(path, {
+    method: "PATCH",
+    body: { name: "나".repeat(50), expectedName: name },
+  });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.data.name, "나".repeat(50));
+});
+
+test("스냅샷 이름은 팀 안에서 연도·기준일과 무관하게 유일하고 동시 저장도 중복을 만들지 않는다", async (t) => {
+  const f = await fixture(t);
+  const name = "한글 보고서";
+  const first = await f.save(`  ${name.normalize("NFD")}  `);
+  assert.equal(first.status, 201);
+  assert.equal(
+    f.db.prepare("SELECT name FROM reports WHERE id=?").get(first.data.id).name,
+    name,
+  );
+  const before = storedReport(f.db, first.data.id);
+  for (const [duplicate, overrides] of [
+    [name, {}],
+    [`\t${name} \n`, { referenceDate: "2026-11-01" }],
+    [
+      name.normalize("NFD"),
+      { year: 2027, view: defaultView(2027), taskIds: [] },
+    ],
+  ]) {
+    const result = await f.save(duplicate, overrides);
+    assert.equal(result.status, 409);
+    assert.match(result.data.error, /같은 이름의 사본/);
+  }
+  assert.deepEqual(storedReport(f.db, first.data.id), before);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM reports").get().n, 1);
+  assert.equal(
+    f.db.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='report'").get()
+      .n,
+    1,
+  );
+  const concurrent = await Promise.all([
+    f.save("동시 저장"),
+    f.save(" 동시 저장 "),
+  ]);
+  assert.deepEqual(concurrent.map((r) => r.status).sort(), [201, 409]);
+  assert.equal(
+    f.db
+      .prepare("SELECT COUNT(*) AS n FROM reports WHERE name=?")
+      .get("동시 저장").n,
+    1,
+  );
+  const otherTeam = randomUUID();
+  f.db
+    .prepare("INSERT INTO teams VALUES(?,?,?)")
+    .run(otherTeam, "다른 팀", json(DEFAULT_SETTINGS));
+  assert.equal(
+    (await f.save(name, { teamId: otherTeam, taskIds: [] })).status,
+    201,
+  );
+  const deleted = await f.request("/reports", {
+    method: "DELETE",
+    body: { teamId: f.teamId, ids: [first.data.id] },
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(
+    (await f.save(name)).status,
+    201,
+    "삭제한 이름은 다시 사용할 수 있다",
+  );
+});
+
 test("보고본 편집은 삭제·추가·종류·선택값이 바뀐 원본 속성과 삭제된 원본 업무에 영향받지 않는다", async (t) => {
   const f = await fixture(t);
   let settings = parseCompact(
@@ -265,7 +571,7 @@ test("보고본 편집은 삭제·추가·종류·선택값이 바뀐 원본 속
   settings = configured.data.settings;
   const { data: saved } = await f.save();
   const report = (await f.request(`/reports/${saved.id}`)).data;
-  const otherId = (await f.save()).data.id;
+  const otherId = (await f.save("다른 보고본")).data.id;
   const other = (await f.request(`/reports/${otherId}`)).data;
   settings.properties = settings.properties.filter((p) => p.id !== "legacy");
   settings.properties.find((p) => p.id === "amount").kind = "text";
@@ -377,7 +683,7 @@ test("보고본 편집은 현재 팀의 새 속성·잘못된 자료형·다른 
   }
 });
 
-test("보고본은 팀장만 편집하고 오래된 수정본은 덮어쓰지 않는다", async (t) => {
+test("사본은 팀원이 편집하고 오래된 수정본은 덮어쓰지 않는다", async (t) => {
   const f = await fixture(t);
   const saved = await f.save();
   const report = (await f.request(`/reports/${saved.data.id}`)).data;
@@ -385,14 +691,16 @@ test("보고본은 팀장만 편집하고 오래된 수정본은 덮어쓰지 �
   f.db
     .prepare("UPDATE users SET system_role='user' WHERE id=?")
     .run(f.people.admin.id);
-  for (const role of ["member", "viewer"]) {
+  for (const role of ["viewer"]) {
     f.db
       .prepare("UPDATE memberships SET role=? WHERE user_id=? AND team_id=?")
       .run(role, f.people.admin.id, f.teamId);
     assert.equal((await editReport(f, report, changes)).status, 403);
   }
   f.db
-    .prepare("UPDATE memberships SET role='lead' WHERE user_id=? AND team_id=?")
+    .prepare(
+      "UPDATE memberships SET role='member' WHERE user_id=? AND team_id=?",
+    )
     .run(f.people.admin.id, f.teamId);
   const first = await editReport(f, report, changes);
   assert.equal(first.status, 200, JSON.stringify(first.data));
@@ -531,7 +839,7 @@ test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·
   assert.equal(result.status, 201);
   const id = result.data.id;
   const saved = storedReport(f.db, id);
-  assert.deepEqual(saved.tasks, [f.task]);
+  assert.deepEqual(saved.tasks, [{ ...f.task, documents: [] }]);
   assert.deepEqual(
     [...saved.users].sort((a, b) => a.name.localeCompare(b.name)),
     ["owner", "reviewer", "former", "filterOnly"]
@@ -555,7 +863,12 @@ test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·
   const opened = await f.request(`/reports/${id}`);
   assert.equal(opened.status, 200);
   for (const key of ["tasks", "view", "settings"])
-    assert.deepEqual(opened.data[key], saved[key]);
+    assert.deepEqual(
+      opened.data[key],
+      key === "tasks"
+        ? saved.tasks.map(({ documents, ...task }) => task)
+        : saved[key],
+    );
   assert.deepEqual(
     opened.data.users.map(({ id, name }) => ({ id, name })),
     saved.users,
@@ -676,20 +989,22 @@ test("XLSX 보고서 가져오기도 이름만 압축 저장하고 원본 업무
   const preview = await f.request("/import/preview", { method: "POST", body });
   assert.equal(preview.status, 200);
   const before = f.db.prepare("SELECT COUNT(*) AS n FROM tasks").get().n;
-  const applied = await f.request(`/import/${preview.data.id}/apply`, {
-    method: "POST",
-    body: {
-      sheet: "과거 보고서",
-      year: 2026,
-      mode: "report",
-      referenceDate: "2026-10-05",
-      acceptWarnings: true,
-      personMap: {
-        [f.people.owner.name]: f.people.owner.id,
-        [f.people.reviewer.name]: f.people.reviewer.id,
+  const apply = (id) =>
+    f.request(`/import/${id}/apply`, {
+      method: "POST",
+      body: {
+        sheet: sheet.name,
+        year: 2026,
+        mode: "report",
+        referenceDate: "2026-10-05",
+        acceptWarnings: true,
+        personMap: {
+          [f.people.owner.name]: f.people.owner.id,
+          [f.people.reviewer.name]: f.people.reviewer.id,
+        },
       },
-    },
-  });
+    });
+  const applied = await apply(preview.data.id);
   assert.equal(applied.status, 200, json(applied.data));
   assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM tasks").get().n, before);
   const { id } = f.db.prepare("SELECT id FROM reports").get();
@@ -702,7 +1017,40 @@ test("XLSX 보고서 가져오기도 이름만 압축 저장하고 원본 업무
   assert.equal(saved.tasks[0].cells["2026-10-05"].style.bold, true);
   const opened = await f.request(`/reports/${id}`);
   assert.equal(opened.status, 200);
-  assert.deepEqual(opened.data.tasks, saved.tasks);
+  assert.deepEqual(
+    opened.data.tasks,
+    saved.tasks.map((task) => ({ ...task, documentCount: 0 })),
+  );
+  assert.equal(
+    (await apply(preview.data.id)).data.repeated,
+    true,
+    "동일 가져오기 재시도는 기존 성공 응답을 반환한다",
+  );
+  assert.equal(
+    (await f.save(sheet.name)).status,
+    409,
+    "가져온 스냅샷 이름도 일반 저장에서 중복 검사한다",
+  );
+  const previewAgain = async () => {
+    body.set(
+      "file",
+      new Blob([await workbook.xlsx.writeBuffer()]),
+      "report.xlsx",
+    );
+    const result = await f.request("/import/preview", { method: "POST", body });
+    assert.equal(result.status, 200);
+    return result.data.id;
+  };
+  sheet.getCell("A2").value = "다른 파일의 업무";
+  const duplicate = await apply(await previewAgain());
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.data.error, /같은 이름의 사본/);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM reports").get().n, 1);
+  assert.deepEqual(storedReport(f.db, id), saved);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM tasks").get().n, before);
+  sheet.name = "다른 보고서";
+  assert.equal((await apply(await previewAgain())).status, 200);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM reports").get().n, 2);
 });
 
 test("이전 DB 형식은 변환·삭제하지 않고 새 DB 사용을 요구한다", (t) => {

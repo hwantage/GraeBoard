@@ -67,6 +67,82 @@ const next = (page: Page) =>
 const previous = (page: Page) =>
   page.getByRole("button", { name: "이전 달로 이동", exact: true });
 
+test("월 이동은 11~12월 선택을 유지하고 경계에서만 두 달씩 함께 밀어 저장한다", async ({
+  page,
+}) => {
+  const selected = page.locator('.period-month[aria-pressed="true"]');
+  const november = page.locator('.period-month[data-month="11"]');
+  await november.click();
+  await november.press("Shift+ArrowRight");
+  await expect(selected).toHaveText(["11월", "12월"]);
+  for (let month = 2; month <= 11; month++) {
+    await next(page).click();
+    await expect(next(page)).toBeEnabled();
+    await expect(page.locator(".period-month").first()).toHaveAttribute(
+      "data-month",
+      String(month),
+    );
+    await expect(selected).toHaveText(["11월", "12월"]);
+  }
+  await next(page).click();
+  await expect(selected).toHaveText(["12월", "2027년 1월"]);
+  await next(page).click();
+  await expect(next(page)).toBeEnabled();
+  await expect(selected).toHaveText(["2027년 1월", "2월"]);
+  await expect(page.locator(".year-value")).toHaveText("2027");
+  await expect
+    .poll(async () => {
+      const data = await (
+        await page.request.get(`/api/views?teamId=${teamId}&year=2027`)
+      )
+        .json()
+        .then(unpack);
+      const view = data.views.find(
+        (item: any) => item.name === "__current",
+      )?.data;
+      return view && [view.startMonth, view.fromMonth, view.toMonth];
+    })
+    .toEqual([1, 1, 2]);
+  await page.reload();
+  await expect(selected).toHaveText(["2027년 1월", "2월"]);
+  for (let month = 12; month >= 1; month--) {
+    await previous(page).click();
+    await expect(previous(page)).toBeEnabled();
+    await expect(selected).toHaveCount(2);
+    if (month >= 3) await expect(selected).toHaveText(["2027년 1월", "2월"]);
+    else if (month === 2)
+      await expect(selected).toHaveText(["12월", "2027년 1월"]);
+    else await expect(selected).toHaveText(["11월", "12월"]);
+  }
+});
+
+test("월 이동은 선택한 주차 날짜를 유지하고 범위를 벗어나면 같은 주 수로 옮긴다", async ({
+  page,
+}) => {
+  const start = page.locator('.period-week[data-week="2026-12-14"]');
+  await start.click();
+  await start.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  const dates = () =>
+    page
+      .locator('.period-week[aria-pressed="true"]')
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getAttribute("data-week")),
+      );
+  const expected = ["2026-12-14", "2026-12-21", "2026-12-28"];
+  await expect.poll(dates).toEqual(expected);
+  await next(page).click();
+  await expect(next(page)).toBeEnabled();
+  await expect.poll(dates).toEqual(expected);
+  await previous(page).click();
+  await expect(previous(page)).toBeEnabled();
+  await expect.poll(dates).toEqual(expected);
+  await previous(page).click();
+  await expect(previous(page)).toBeEnabled();
+  await expect.poll(dates).toEqual(["2026-11-16", "2026-11-23", "2026-11-30"]);
+  await expect(page.locator(".week-heading")).toHaveCount(3);
+});
+
 test("연도 화살표는 겹친 기간과 저장된 월 범위를 단일 연도 전체로 바꾼다", async ({
   page,
 }) => {

@@ -5,13 +5,25 @@ import {
   chmodSync,
   copyFileSync,
   constants,
+  renameSync,
+  unlinkSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SCHEMA_VERSION } from "../server/db.mjs";
+import {
+  databaseImageUrls,
+  documentImagesDirectory,
+  readDocumentImage,
+  writeDocumentImage,
+} from "../server/document-images.mjs";
 
 // Restore into a NEW destination. Switching DB_PATH is a separate operator action.
-export function restoreDatabase(backup, destination) {
+export function restoreDatabase(
+  backup,
+  destination,
+  { documentImagesDir = documentImagesDirectory() } = {},
+) {
   backup = resolve(backup);
   destination = resolve(destination);
   if (existsSync(destination))
@@ -25,17 +37,33 @@ export function restoreDatabase(backup, destination) {
     )
       throw new Error("지원하는 정상 백업 파일이 아닙니다.");
     source.prepare("SELECT id FROM tasks LIMIT 1").all();
+    const urls = databaseImageUrls(source);
+    // Validate the entire bundle before publishing a database or any assets.
+    for (const url of urls) readDocumentImage(backup + ".images", url);
+    for (const url of urls)
+      writeDocumentImage(
+        documentImagesDir,
+        url,
+        readDocumentImage(backup + ".images", url),
+      );
   } finally {
     source.close();
   }
   mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-  copyFileSync(backup, destination, constants.COPYFILE_EXCL);
-  chmodSync(destination, 0o600);
-  const restored = new DatabaseSync(destination);
+  const temporary = destination + ".partial";
+  copyFileSync(backup, temporary, constants.COPYFILE_EXCL);
+  chmodSync(temporary, 0o600);
   try {
-    restored.exec("DELETE FROM sessions");
-  } finally {
-    restored.close();
+    const restored = new DatabaseSync(temporary);
+    try {
+      restored.exec("DELETE FROM sessions");
+    } finally {
+      restored.close();
+    }
+    renameSync(temporary, destination);
+  } catch (error) {
+    unlinkSync(temporary);
+    throw error;
   }
   return destination;
 }

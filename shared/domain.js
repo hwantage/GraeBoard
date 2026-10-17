@@ -432,6 +432,55 @@ export function visibleWeeks(year, view) {
       !view.collapsedMonths.includes(w.monthIndex),
   );
 }
+/**
+ * Move the calendar window without changing an in-bounds month/week selection.
+ * At either edge, slide the whole selection just far enough to fit.
+ * @param {import("../src/types").View} view
+ * @param {number} year
+ * @param {number} startMonth
+ * @returns {import("../src/types").View}
+ */
+export function movePeriodView(view, year, startMonth) {
+  const offset = (year - view.year) * 12 + startMonth - view.startMonth;
+  const monthCount = view.toMonth - view.fromMonth + 1;
+  const fromMonth = Math.max(
+    1,
+    Math.min(13 - monthCount, view.fromMonth - offset),
+  );
+  const next = {
+    ...view,
+    year,
+    startMonth,
+    fromMonth,
+    toMonth: fromMonth + monthCount - 1,
+    collapsedMonths: view.collapsedMonths
+      .map((month) => month - offset)
+      .filter((month) => month >= 1 && month <= 12),
+  };
+  if (view.fromWeek || view.toWeek) {
+    const selected = weeksForPeriod(view.year, view.startMonth).filter(
+      (week) =>
+        (!view.fromWeek || week.key >= view.fromWeek) &&
+        (!view.toWeek || week.key <= view.toWeek) &&
+        week.monthIndex >= view.fromMonth &&
+        week.monthIndex <= view.toMonth,
+    );
+    if (selected.length) {
+      const weeks = weeksForPeriod(year, startMonth);
+      const count = Math.min(selected.length, weeks.length);
+      const index = Math.round(
+        (Date.parse(selected[0].key) - Date.parse(weeks[0].key)) /
+          (7 * 86400000),
+      );
+      const first = Math.max(0, Math.min(weeks.length - count, index));
+      next.fromMonth = 1;
+      next.toMonth = 12;
+      next.fromWeek = weeks[first].key;
+      next.toWeek = weeks[first + count - 1].key;
+    }
+  }
+  return next;
+}
 // 셀 값을 화면에 보이는 글자로 바꾼다. 속성을 이미 알고 있으면 이 함수를 직접 쓴다.
 export function displayValueFor(property, v, users = []) {
   if (property?.kind === "member") {

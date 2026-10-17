@@ -97,6 +97,107 @@ const at = (task, placement) => ({
 const rows = async (teamId) =>
   (await request(`/tasks?teamId=${teamId}&year=2026`)).data.tasks;
 
+test("다중 삭제·복구는 권한·버전·팀을 검사하고 실패하면 전체를 보존한다", async () => {
+  const { teamId, tasks } = await fixture();
+  const versions = (tasks) =>
+    tasks.map(({ id, updatedAt }) => ({ id, updatedAt }));
+  const remove = (tasks, cookie = admin) =>
+    request("/tasks/delete", { tasks: versions(tasks) }, cookie);
+  assert.equal((await remove(tasks, viewer)).status, 403);
+  assert.equal(
+    (await remove([tasks[0], (await fixture()).tasks[0]])).status,
+    400,
+  );
+  const own = (
+    await request(
+      "/tasks",
+      { teamId, year: 2026, fields: { title: "내 업무" } },
+      member,
+    )
+  ).data.task;
+  assert.equal((await remove([own, tasks[0]], member)).status, 403);
+  assert.equal((await rows(teamId)).length, 4);
+  await request("/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: tasks[1].id,
+        key: "title",
+        value: "동시 변경",
+        expectedVersion: tasks[1].cells.title.version,
+      },
+    ],
+  });
+  assert.equal((await remove(tasks.slice(0, 2))).status, 409);
+  assert.equal((await rows(teamId)).length, 4);
+  const current = (await rows(teamId)).filter((t) =>
+    tasks.some((old) => old.id === t.id),
+  );
+  db.exec(`CREATE TEMP TRIGGER fail_bulk_delete BEFORE UPDATE OF deleted_at ON tasks
+    WHEN NEW.id='${current[1].id}' AND NEW.deleted_at IS NOT NULL
+    BEGIN SELECT RAISE(ABORT,'bulk rollback'); END`);
+  assert.equal((await remove(current)).status, 500);
+  db.exec("DROP TRIGGER fail_bulk_delete");
+  assert.equal((await rows(teamId)).length, 4);
+  const deleted = await remove(current);
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(
+    (await rows(teamId)).map((t) => t.id),
+    [own.id],
+  );
+  const restoring = current.map((t) => ({
+    id: t.id,
+    updatedAt: deleted.data.updatedAt[t.id],
+  }));
+  assert.equal(
+    (
+      await request("/tasks/restore", {
+        tasks: [
+          restoring[0],
+          { ...restoring[1], updatedAt: current[1].updatedAt },
+        ],
+      })
+    ).status,
+    409,
+  );
+  assert.equal((await rows(teamId)).length, 1);
+  assert.equal(
+    (await request("/tasks/restore", { tasks: restoring })).status,
+    200,
+  );
+  assert.equal((await rows(teamId)).length, 4);
+});
+
+test("삭제 이력에서 원본 업무를 복구하고 이전 삭제 이력으로 새 삭제를 되돌리지 않는다", async () => {
+  const { teamId, tasks } = await fixture();
+  const remove = async () => {
+    const current = (await rows(teamId))[0];
+    return request("/tasks/delete", {
+      tasks: [{ id: current.id, updatedAt: current.updatedAt }],
+    });
+  };
+  await remove();
+  const history = async () =>
+    (await request(`/audit?teamId=${teamId}&sheetId=original`)).data.entries;
+  const first = (await history()).find((e) => e.action === "delete");
+  assert.deepEqual(first.sheet, { id: "original", name: "원본" });
+  assert.deepEqual(first.restorableTaskIds, [tasks[0].id]);
+  assert.equal(
+    (await request(`/audit/${first.id}/restore`, {}, viewer)).status,
+    403,
+  );
+  assert.equal((await request(`/audit/${first.id}/restore`, {})).status, 200);
+  assert.equal((await rows(teamId)).length, 3);
+  assert.deepEqual(
+    (await history()).find((e) => e.id === first.id).restorableTaskIds,
+    [],
+  );
+  await remove();
+  assert.equal((await request(`/audit/${first.id}/restore`, {})).status, 409);
+  assert.equal((await rows(teamId)).length, 2);
+});
+
 test("행 위·아래 삽입은 위치를 저장하고 권한·팀·연도·기준 행 버전을 검사한다", async () => {
   const {
     teamId,
@@ -321,8 +422,8 @@ test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값
   // 일반 업무 추가는 기준 행 없이 기존 팀 기본 서식을 사용한다.
   const plain = await request("/tasks", { teamId, year: 2026 });
   assert.deepEqual(plain.data.task.defaultStyle, settings.defaultStyle);
-  assert.equal(cell(plain.data.task, "status").value, "status-planned");
-  assert.equal(cell(plain.data.task, "owner").value, adminId);
+  assert.equal(cell(plain.data.task, "status").value, "");
+  assert.equal(cell(plain.data.task, "owner").value, "");
 });
 
 test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하고 담당자 권한을 지킨다", async () => {
@@ -390,7 +491,7 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
   });
   assert.equal(stale.status, 201);
   assert.equal(stale.data.task.cells.title.value, "복사 당시 작업");
-  assert.equal(stale.data.task.cells.owner.value, adminId);
+  assert.equal(cell(stale.data.task, "owner").value, "");
   assert.notEqual(stale.data.task.cells.status?.value, "보관된 상태");
 });
 

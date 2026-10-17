@@ -1,5 +1,23 @@
+import type { DocumentHandle } from "./TaskDocumentPanel";
+import type { DocumentSaveResult, SavedCell } from "./types";
+import TaskPropertyEditor, {
+  type PropertyEditorHandle,
+  type PropertySaveRequest,
+} from "./TaskPropertyEditor";
 import Select from "./Select";
-import { useEffect, useMemo, useRef, useState } from "react";
+import DocumentLoading from "./DocumentLoading";
+import LoadingState from "./LoadingState";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Download,
   Upload,
@@ -10,22 +28,22 @@ import {
   FileSpreadsheet,
   Copy,
   EyeOff,
-  ArrowUp,
-  ArrowDown,
   ExternalLink,
-  CalendarDays,
   CalendarPlus,
-  Pencil,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
-import { api, send, download, taskQuery } from "./api";
+import { api, send, download, taskQuery, ApiError } from "./api";
+import {
+  normalizeReportName,
+  DUPLICATE_REPORT_NAME,
+} from "../shared/report-names.js";
 import { Modal, Button, ErrorNote, Empty } from "./components";
 import Toast, { useToast } from "./Toast";
-import PropertyBadge from "./PropertyBadge";
-import MemberValue from "./MemberValue";
 import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
-import type { Task, User, View, Report, Point, Settings } from "./types";
+import type { Task, User, View, Report, Settings } from "./types";
 import {
   fieldsFor,
   propertiesFor,
@@ -38,9 +56,34 @@ import {
   todayKey,
 } from "../shared/domain.js";
 
+const TaskDocumentPanel = lazy(() => import("./TaskDocumentPanel"));
+class DocumentLoadBoundary extends Component<
+  { children: ReactNode; onError: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onError();
+  }
+  render() {
+    return this.state.failed ? (
+      <p className="error-note" role="alert">
+        문서 편집기를 불러오지 못했습니다. 화면을 새로고침한 뒤 다시 열어
+        주세요.
+      </p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
 const AUDIT_LABELS: Record<string, string> = {
   format: "공통 서식 변경",
   cells: "셀 편집",
+  document: "업무 문서 편집",
   reorder: "업무 순서 변경",
   "property-convert": "속성 종류 변경",
   "team-update": "팀 정보 변경",
@@ -50,16 +93,18 @@ const AUDIT_LABELS: Record<string, string> = {
   create: "업무 추가",
   delete: "업무 삭제",
   restore: "업무 복구",
-  report: "보고서 스냅샷 저장",
-  "report-edit": "보고서 스냅샷 수정",
-  "report-delete": "보고서 스냅샷 삭제",
+  report: "사본 저장",
+  "report-edit": "사본 수정",
+  "report-rename": "사본 이름 변경",
+  "report-restore": "업무 복구",
+  "report-document": "업무 문서 편집",
+  "report-delete": "사본 삭제",
   settings: "설정 변경",
   export: "내보내기",
   import: "자료 가져오기",
   task: "업무 이동·이월",
   setup: "초기 설정",
 };
-const formatDateTime = (iso: string) => new Date(iso).toLocaleString("ko-KR");
 
 export function RowPanel({
   settings,
@@ -68,127 +113,163 @@ export function RowPanel({
   users,
   readOnly = false,
   reportMode = false,
+  documentReport,
+  onDocumentSaved,
+  copySaveError,
+  onRetryCopySave,
   onClose,
-  onEdit,
+  onSaveProperty,
   onAction,
 }: {
   task: Task;
   settings: Settings;
   user: User;
   users: User[];
-  // 스냅샷처럼 읽기 전용 화면에서는 권한과 무관하게 편집 동작을 숨긴다.
+  // 열람자·발표 화면에서는 편집 동작을 숨긴다.
   readOnly?: boolean;
   reportMode?: boolean;
+  documentReport?: { id: string; revision: string; isNew: boolean };
+  onDocumentSaved: (result: DocumentSaveResult) => void;
+  copySaveError?: string;
+  onRetryCopySave?: () => void;
   onClose: () => void;
-  onEdit: (p: Point) => void;
+  onSaveProperty: (request: PropertySaveRequest) => Promise<SavedCell[]>;
   onAction: (action: string) => void;
 }) {
-  const editable = !readOnly && canEdit(user, task);
+  const editable =
+    !readOnly &&
+    (reportMode ? canContribute(user, task.teamId) : canEdit(user, task));
+  const documentRef = useRef<DocumentHandle>(null);
+  const propertyRef = useRef<PropertyEditorHandle>(null);
+  const [documentFullPage, setDocumentFullPage] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(true);
+  const leaving = useRef(false);
+  async function leave(
+    action: () => void | Promise<void>,
+    keepDocumentDraft = false,
+  ) {
+    if (leaving.current) return;
+    leaving.current = true;
+    try {
+      if (propertyRef.current && !(await propertyRef.current.flush())) return;
+      if (
+        keepDocumentDraft ||
+        !documentRef.current ||
+        (await documentRef.current.flush())
+      )
+        await action();
+    } finally {
+      leaving.current = false;
+    }
+  }
+  function act(action: string) {
+    void leave(() => onAction(action));
+  }
   return (
-    <Modal title="업무 상세" onClose={onClose} className="task-detail-modal">
-      <div className="task-detail-heading">
-        <p className="task-detail-year">
-          <CalendarDays size={14} /> 관리 연도 {task.years.join(" · ")}
-        </p>
-        <h3 className="task-detail-title">
-          {String(value(task, "title")) || "제목 없는 업무"}
-        </h3>
-      </div>
-      <dl className="detail-fields">
-        {propertiesFor(settings)
-          .filter((f) => f.id !== "title")
-          .map((f) => {
-            const raw = value(task, f.id);
-            const text = displayValue(task, f.id, users, settings);
-            const wide =
-              f.kind === "text" &&
-              (f.id === "description" ||
-                text.includes("\n") ||
-                text.length > 60);
-            return (
-              <div key={f.id} className={wide ? "detail-field-wide" : ""}>
-                <dt>{f.name}</dt>
-                <dd>
-                  <button
-                    className={`detail-field-value ${text ? "" : "is-empty"}`}
-                    aria-label={`${f.name} 수정`}
-                    disabled={!editable}
-                    onClick={() => onEdit({ taskId: task.id, key: f.id })}
-                  >
-                    <span>
-                      {!text ? (
-                        "미입력"
-                      ) : f.kind === "option" ? (
-                        <PropertyBadge property={f} value={String(raw)} />
-                      ) : f.kind === "member" ? (
-                        <MemberValue property={f} value={raw} users={users} />
-                      ) : (
-                        text
-                      )}
-                    </span>
-                    {editable && (
-                      <Pencil
-                        className="detail-edit-icon"
-                        size={13}
-                        aria-hidden="true"
-                      />
-                    )}
-                  </button>
-                </dd>
-              </div>
-            );
-          })}
-      </dl>
-      <details className="task-detail-meta">
-        <summary>업무 정보</summary>
-        <p>
-          <span>업무 ID</span>
-          <code>{task.id}</code>
-        </p>
-      </details>
-      <footer className="task-detail-actions">
-        <div className="task-utility-actions">
-          <Button onClick={() => onAction("hide")}>
-            <EyeOff size={16} />이 업무 숨기기
+    <Modal
+      title="업무 상세"
+      titleAction={
+        <Button
+          tooltip={
+            documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
+          }
+          className="document-expand"
+          aria-pressed={documentFullPage}
+          onClick={() => setDocumentFullPage((value) => !value)}
+        >
+          {documentFullPage ? (
+            <Minimize2 size={16} aria-hidden="true" />
+          ) : (
+            <Maximize2 size={16} aria-hidden="true" />
+          )}
+        </Button>
+      }
+      onClose={() => void leave(onClose)}
+      className={`task-detail-modal${documentFullPage ? " document-full-page" : ""}`}
+      headerActions={
+        <div
+          className="task-detail-actions"
+          role="group"
+          aria-label="업무 동작"
+        >
+          <Button tooltip="이 업무 숨기기" onClick={() => act("hide")}>
+            <EyeOff size={16} aria-hidden="true" />
+            <span className="task-detail-action-label">이 업무 숨기기</span>
           </Button>
           {!readOnly && canContribute(user, task.teamId) && (
-            <Button onClick={() => onAction("duplicate")}>
-              <Copy size={16} />
-              복제
+            <Button tooltip="복제" onClick={() => act("duplicate")}>
+              <Copy size={16} aria-hidden="true" />
+              <span className="task-detail-action-label">복제</span>
             </Button>
           )}
           {editable && !reportMode && (
-            <Button onClick={() => onAction("carry")}>
-              <CalendarPlus size={16} />
-              다음 연도에도 표시
+            <Button tooltip="다음 연도에도 표시" onClick={() => act("carry")}>
+              <CalendarPlus size={16} aria-hidden="true" />
+              <span className="task-detail-action-label">
+                다음 연도에도 표시
+              </span>
+            </Button>
+          )}
+          {editable && (
+            <Button
+              className="danger"
+              tooltip="업무 삭제"
+              onClick={() => act("delete")}
+            >
+              <Trash2 size={16} aria-hidden="true" />
+              <span className="task-detail-action-label">업무 삭제</span>
             </Button>
           )}
         </div>
-        {editable && (
-          <div className="task-order-actions">
-            <div role="group" aria-label="업무 순서 이동">
-              <Button onClick={() => onAction("up")}>
-                <ArrowUp size={16} />
-                위로
-              </Button>
-              <Button onClick={() => onAction("down")}>
-                <ArrowDown size={16} />
-                아래로
-              </Button>
-            </div>
-            <Button className="danger" onClick={() => onAction("delete")}>
-              <Trash2 size={16} />
-              {reportMode ? "보고본에서 삭제" : "휴지통으로 이동"}
-            </Button>
-          </div>
-        )}
-      </footer>
+      }
+    >
+      <TaskPropertyEditor
+        ref={propertyRef}
+        task={task}
+        settings={settings}
+        users={users}
+        readOnly={!editable}
+        onSave={onSaveProperty}
+      />
+      {copySaveError && (
+        <div className="task-property-error" role="alert">
+          <span>{copySaveError}</span>
+          <Button onClick={onRetryCopySave}>사본 저장 재시도</Button>
+        </div>
+      )}
+      <div
+        className="task-document-shell"
+        data-loading={documentLoading || undefined}
+      >
+        {documentLoading && <DocumentLoading />}
+        <div
+          className="task-document-surface"
+          aria-hidden={documentLoading || undefined}
+          inert={documentLoading}
+        >
+          <DocumentLoadBoundary onError={() => setDocumentLoading(false)}>
+            <Suspense fallback={null}>
+              <TaskDocumentPanel
+                ref={documentRef}
+                task={task}
+                userId={user.id}
+                readOnly={!editable}
+                report={documentReport}
+                onSaved={onDocumentSaved}
+                onCloseWithDraft={() => void leave(onClose, true)}
+                onLoadingChange={setDocumentLoading}
+              />
+            </Suspense>
+          </DocumentLoadBoundary>
+        </div>
+      </div>
     </Modal>
   );
 }
 
 export function ExportPanel({
   teamId,
+  report,
   year,
   startMonth,
   taskIds,
@@ -196,6 +277,7 @@ export function ExportPanel({
   onClose,
 }: {
   teamId: string;
+  report?: { id: string; name: string; revision: string } | null;
   year: number;
   startMonth: number;
   taskIds: string[];
@@ -219,7 +301,8 @@ export function ExportPanel({
             현재 보기 · {taskIds.length}개 업무 (숨김 제외)
           </option>
           <option value="all">
-            기준 연도 {year}년 전체 · 필터와 숨김 포함
+            {report ? "현재 사본 전체" : `기준 연도 ${year}년 전체`} · 필터와
+            숨김 포함
           </option>
         </Select>
       </label>
@@ -228,12 +311,13 @@ export function ExportPanel({
         <Select value={format} onChange={(e) => setFormat(e.target.value)}>
           <option value="xlsx">Excel (.xlsx) · 값과 기본 서식</option>
           <option value="csv">CSV (.csv) · 값만</option>
-          <option value="json">JSON (.json) · ID·서식·스냅샷 보관</option>
+          <option value="json">JSON (.json) · ID·서식·사본 보관</option>
         </Select>
       </label>
       <p className="field-help">
-        JSON 전체 반출은 스냅샷(관리자), 본인의 보기 설정과 담당자 정보를
-        포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다.
+        {report
+          ? `‘${report.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON에 포함됩니다.`
+          : "JSON 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
       </p>
       <ErrorNote error={error} />
       <footer className="form-actions">
@@ -247,6 +331,8 @@ export function ExportPanel({
             try {
               await download("/export", {
                 teamId,
+                reportId: report?.id,
+                revision: report?.revision,
                 year,
                 startMonth: scope === "view" ? startMonth : 1,
                 format,
@@ -275,11 +361,13 @@ export function ExportPanel({
 }
 export function ImportPanel({
   teamId,
+  report,
   year,
   onClose,
   onDone,
 }: {
   teamId: string;
+  report?: { id: string; name: string; revision: string } | null;
   year: number;
   onClose: () => void;
   onDone: () => Promise<void>;
@@ -287,21 +375,23 @@ export function ImportPanel({
   const [preview, setPreview] = useState<any>(null),
     [sheet, setSheet] = useState(""),
     [personMap, setPersonMap] = useState<Record<string, string>>({}),
-    [mode, setMode] = useState("tasks"),
-    [busy, setBusy] = useState(false),
+    [mode, setMode] = useState(report ? "copy" : "tasks"),
+    [phase, setPhase] = useState<"preview" | "apply" | null>(null),
     [error, setError] = useState(""),
     [accepted, setAccepted] = useState(false),
     [referenceDate, setReferenceDate] = useState(todayKey());
   const selected = preview?.sheets.find((s: any) => s.name === sheet);
+  const busy = phase !== null;
   async function choose(file?: File) {
     if (!file) return;
-    setBusy(true);
+    setPhase("preview");
     setError("");
     try {
       const body = new FormData();
       body.set("file", file);
       body.set("teamId", teamId);
       body.set("year", String(year));
+      if (report) body.set("reportId", report.id);
       const result = await api("/import/preview", { method: "POST", body });
       setPreview(result);
       setSheet(
@@ -313,7 +403,7 @@ export function ImportPanel({
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setPhase(null);
     }
   }
   return (
@@ -324,17 +414,38 @@ export function ImportPanel({
       onClose={onClose}
     >
       <label className="upload-zone">
-        <FileSpreadsheet size={30} />
-        <strong>{busy ? "파일을 확인하고 있습니다" : "XLSX 파일 선택"}</strong>
+        <span className="upload-presentation">
+          {busy ? (
+            <LoadingState
+              label={
+                phase === "preview"
+                  ? "파일을 분석하고 미리보기를 준비하고 있습니다"
+                  : "업무를 반영하고 있습니다"
+              }
+            />
+          ) : (
+            <>
+              <FileSpreadsheet size={30} />
+              <strong>XLSX 파일 선택</strong>
+            </>
+          )}
+        </span>
         <span>최대 25MB · 숨겨진 행과 주차도 포함합니다</span>
         <input
           type="file"
+          aria-label="XLSX 파일 선택"
           accept=".xlsx"
           disabled={busy}
           onChange={(e) => choose(e.target.files?.[0])}
         />
       </label>
       <ErrorNote error={error} />
+      {report && (
+        <p className="field-help">
+          가져올 위치: <strong>{report.name}</strong> · 현재 사본에 업무를
+          추가합니다.
+        </p>
+      )}
       {preview && (
         <>
           <div className="form-grid">
@@ -354,13 +465,15 @@ export function ImportPanel({
                 ))}
               </Select>
             </label>
-            <label>
-              반영 방식
-              <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-                <option value="tasks">운영 업무로 추가</option>
-                <option value="report">과거 보고서 스냅샷으로 보관</option>
-              </Select>
-            </label>
+            {!report && (
+              <label>
+                반영 방식
+                <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  <option value="tasks">운영 업무로 추가</option>
+                  <option value="report">과거 사본으로 보관</option>
+                </Select>
+              </label>
+            )}
             {mode === "report" && (
               <label>
                 보고 기준일
@@ -453,8 +566,9 @@ export function ImportPanel({
                 변환 내용과 담당자 연결을 확인했습니다.
               </label>
               <p className="field-help">
-                같은 파일·시트·반영 방식은 반복 실행해도 중복 추가되지 않습니다.
-                서로 다른 주간 탭을 운영 업무로 가져오면 별개 업무로 보존됩니다.
+                {report
+                  ? "같은 파일의 같은 시트는 이 사본에 한 번만 추가됩니다."
+                  : "같은 파일·시트·반영 방식은 반복 실행해도 중복 추가되지 않습니다. 서로 다른 주간 탭을 운영 업무로 가져오면 별개 업무로 보존됩니다."}
               </p>
               <footer className="form-actions">
                 <Button onClick={onClose}>닫기</Button>
@@ -467,7 +581,7 @@ export function ImportPanel({
                     selected.unresolved.some((n: string) => !personMap[n])
                   }
                   onClick={async () => {
-                    setBusy(true);
+                    setPhase("apply");
                     setError("");
                     try {
                       await send(`/import/${preview.id}/apply`, {
@@ -475,6 +589,8 @@ export function ImportPanel({
                         year,
                         personMap,
                         mode,
+                        reportId: report?.id,
+                        revision: report?.revision,
                         referenceDate,
                         acceptWarnings: true,
                       });
@@ -483,7 +599,7 @@ export function ImportPanel({
                     } catch (e) {
                       setError((e as Error).message);
                     } finally {
-                      setBusy(false);
+                      setPhase(null);
                     }
                   }}
                 >
@@ -498,276 +614,10 @@ export function ImportPanel({
     </Modal>
   );
 }
-export function ReportsPanel({
-  teamId,
-  year,
-  view,
-  tasks,
-  user,
-  canSave,
-  onClose,
-  onOpen,
-  onDelete,
-}: {
-  teamId: string;
-  year: number;
-  view: View;
-  tasks: Task[];
-  user: User;
-  canSave: boolean;
-  onClose: () => void;
-  onOpen: (r: Report) => void;
-  onDelete: (ids: string[]) => Promise<void>;
-}) {
-  const [reports, setReports] = useState<
-      (Pick<Report, "id" | "name" | "year" | "referenceDate" | "createdAt"> & {
-        author: string;
-      })[]
-    >([]),
-    [name, setName] = useState(`${todayKey()} 보고서`),
-    [date, setDate] = useState(todayKey()),
-    [selected, setSelected] = useState<string[]>([]),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [savePhase, setSavePhase] = useState<"saving" | null>(null),
-    [savedId, setSavedId] = useState<string | null>(null);
-  const [message, setMessage] = useToast();
-  const canManage = canManageTeam(user, teamId);
-  const active = useRef(true);
-  const saving = useRef(false);
-  const listRequest = useRef(0);
-  function close() {
-    active.current = false;
-    onClose();
-  }
-  const refresh = async () => {
-    const request = ++listRequest.current;
-    try {
-      const result = await api(`/reports?teamId=${teamId}`);
-      if (!active.current || request !== listRequest.current) return;
-      setReports(result.reports);
-      setSelected((ids) =>
-        ids.filter((id) => result.reports.some((r: Report) => r.id === id)),
-      );
-    } catch (e) {
-      if (active.current && request === listRequest.current)
-        setError((e as Error).message);
-    }
-  };
-  useEffect(() => {
-    active.current = true;
-    void refresh();
-    return () => {
-      active.current = false;
-      listRequest.current++;
-    };
-  }, [teamId]);
-  async function saveReport() {
-    if (busy || saving.current) return;
-    saving.current = true;
-    setBusy(true);
-    setError("");
-    setSavedId(null);
-    setMessage("");
-    setSavePhase("saving");
-    try {
-      const saved = await send<{ id: string }>("/reports", {
-        teamId,
-        year,
-        name,
-        referenceDate: date,
-        view,
-        taskIds: tasks.map((t) => t.id),
-      });
-      if (!active.current) return;
-      // 처음 목록을 읽던 요청이 저장 후 목록을 덮어쓰지 않도록 무효화한다.
-      listRequest.current++;
-      setSavePhase(null);
-      setMessage("스냅샷을 저장했습니다.");
-      let nextReports: typeof reports | undefined;
-      let refreshError = "";
-      try {
-        const result = await api<{ reports: typeof reports }>(
-          `/reports?teamId=${teamId}`,
-        );
-        nextReports = result.reports;
-      } catch {
-        refreshError =
-          "스냅샷은 저장되었지만 목록을 불러오지 못했습니다. 목록을 다시 열어 확인해 주세요.";
-      }
-      if (!active.current) return;
-      if (nextReports) {
-        setReports(nextReports);
-        setSelected((ids) =>
-          ids.filter((id) => nextReports.some((r) => r.id === id)),
-        );
-        setSavedId(saved.id);
-      }
-      setError(refreshError);
-    } catch (e) {
-      if (active.current) setError((e as Error).message);
-    } finally {
-      saving.current = false;
-      if (active.current) {
-        setSavePhase(null);
-        setBusy(false);
-      }
-    }
-  }
-  async function removeSelected() {
-    if (!selected.length || busy) return;
-    if (
-      !confirm(
-        `선택한 스냅샷 ${selected.length}개를 삭제할까요? 원본 업무는 유지됩니다.`,
-      )
-    )
-      return;
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      await onDelete(selected);
-      setReports((rows) => rows.filter((r) => !selected.includes(r.id)));
-      setSelected([]);
-      setMessage(`스냅샷 ${selected.length}개를 삭제했습니다.`);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Modal
-      title="보고서 스냅샷"
-      help="저장 시점의 업무 내용과 서식을 보존합니다. 이후 원본을 수정해도 스냅샷은 바뀌지 않습니다."
-      onClose={close}
-    >
-      {canManage && canSave && (
-        <form
-          className="report-save-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void saveReport();
-          }}
-        >
-          <div className="report-save-fields">
-            <label className="report-name-field">
-              보고서 이름
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                maxLength={120}
-                disabled={busy}
-              />
-            </label>
-            <label className="report-date-field">
-              보고 기준일
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-                disabled={busy}
-              />
-            </label>
-          </div>
-          <div className="report-save-actions">
-            <small>현재 보기의 업무 {tasks.length}개</small>
-            <Button className="primary" type="submit" disabled={busy}>
-              <Plus size={16} />
-              현재 보기 저장
-            </Button>
-          </div>
-        </form>
-      )}
-      <ErrorNote error={error} />
-      {canManage && (reports.length > 0 || savePhase) && (
-        <div className="report-list-actions">
-          <label>
-            <input
-              type="checkbox"
-              checked={reports.length > 0 && selected.length === reports.length}
-              ref={(input) => {
-                if (input)
-                  input.indeterminate =
-                    selected.length > 0 && selected.length < reports.length;
-              }}
-              onChange={(e) =>
-                setSelected(e.target.checked ? reports.map((r) => r.id) : [])
-              }
-              disabled={busy}
-            />
-            전체 선택
-          </label>
-          <Button disabled={busy || !selected.length} onClick={removeSelected}>
-            <Trash2 size={14} />
-            선택 삭제{selected.length > 0 && ` (${selected.length})`}
-          </Button>
-        </div>
-      )}
-      <Toast
-        message={savePhase ? "스냅샷 저장 중…" : message}
-        pending={!!savePhase}
-      />
-      <div className="report-list">
-        {reports.length
-          ? reports.map((r) => (
-              <div
-                className={`report-item${r.id === savedId ? " report-item-saved" : ""}`}
-                key={r.id}
-              >
-                {canManage && (
-                  <input
-                    type="checkbox"
-                    aria-label={`${r.name} 선택`}
-                    checked={selected.includes(r.id)}
-                    onChange={(e) =>
-                      setSelected((ids) =>
-                        e.target.checked
-                          ? [...ids, r.id]
-                          : ids.filter((id) => id !== r.id),
-                      )
-                    }
-                    disabled={busy}
-                  />
-                )}
-                <button
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    setError("");
-                    try {
-                      const snapshot = await api(`/reports/${r.id}`);
-                      if (!active.current) return;
-                      onOpen(snapshot);
-                      close();
-                    } catch (e) {
-                      setError((e as Error).message);
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  <span>
-                    <strong>{r.name}</strong>
-                    <small>
-                      {r.referenceDate} · {r.author} ·{" "}
-                      {formatDateTime(r.createdAt)}
-                    </small>
-                  </span>
-                  <ExternalLink size={16} />
-                </button>
-              </div>
-            ))
-          : !savePhase && <Empty title="저장된 스냅샷이 없습니다" />}
-      </div>
-    </Modal>
-  );
-}
 
 export function HistoryPanel({
   teamId,
+  report,
   year,
   startMonth,
   tasks,
@@ -778,6 +628,7 @@ export function HistoryPanel({
   onRefresh,
 }: {
   teamId: string;
+  report?: { id: string; name: string } | null;
   year: number;
   startMonth: number;
   tasks: Task[];
@@ -785,7 +636,7 @@ export function HistoryPanel({
   users: User[];
   user: User;
   onClose: () => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [taskFilter, setTaskFilter] = useState("");
   const [entries, setEntries] = useState<any[]>([]),
@@ -800,34 +651,41 @@ export function HistoryPanel({
     [settings],
   );
   const refresh = () =>
-    api(`/audit?teamId=${teamId}${taskFilter ? `&taskId=${taskFilter}` : ""}`)
+    api(
+      `/audit?teamId=${teamId}&sheetId=${report?.id || "original"}${taskFilter ? `&taskId=${taskFilter}` : ""}`,
+    )
       .then((r) => setEntries(r.entries))
       .catch((e) => setError(e.message));
   useEffect(() => {
     refresh();
-  }, [teamId, taskFilter]);
+  }, [teamId, report?.id, taskFilter]);
   return (
     <Modal
       title="변경 이력"
-      help="팀 변경 이력을 최신순으로 최대 100개까지 표시합니다. 셀·공통 서식 변경 전 내용으로 복원할 수 있습니다."
+      help={`${report?.name || "원본"} 시트의 변경 이력을 최신순으로 최대 100개까지 표시합니다. 삭제한 업무를 이 시트로 복구할 수 있습니다.`}
       className="history-modal"
       onClose={onClose}
     >
-      <label className="form-field">
-        업무별 이력
-        <Select
-          aria-label="업무별 이력"
-          value={taskFilter}
-          onChange={(e) => setTaskFilter(e.target.value)}
-        >
-          <option value="">모든 업무</option>
-          {tasks.map((t) => (
-            <option key={t.id} value={t.id}>
-              {String(value(t, "title")) || "제목 없음"}
-            </option>
-          ))}
-        </Select>
-      </label>
+      <p className="field-help">
+        현재 시트: <strong>{report?.name || "원본"}</strong>
+      </p>
+      {!report && (
+        <label className="form-field">
+          업무별 이력
+          <Select
+            aria-label="업무별 이력"
+            value={taskFilter}
+            onChange={(e) => setTaskFilter(e.target.value)}
+          >
+            <option value="">모든 업무</option>
+            {tasks.map((t) => (
+              <option key={t.id} value={t.id}>
+                {String(value(t, "title")) || "제목 없음"}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
       <ErrorNote error={error} />
       <HistoryTimeline>
         {entries.map((e) => (
@@ -836,7 +694,11 @@ export function HistoryPanel({
               <span className="audit-icon" aria-hidden="true">
                 <ChevronRight size={16} />
               </span>
-              <strong>{AUDIT_LABELS[e.action] || e.action}</strong>
+              <strong>
+                {e.before?.deletedTasks?.length
+                  ? `업무 삭제 · ${e.before.deletedTasks.length}개`
+                  : AUDIT_LABELS[e.action] || e.action}
+              </strong>
               <span>{e.actor}</span>
               <HistoryTime iso={e.createdAt} />
             </summary>
@@ -955,65 +817,57 @@ export function HistoryPanel({
                   </Button>
                 )}
               </>
+            ) : e.action === "delete" || e.before?.deletedTasks?.length ? (
+              <div className="audit-changes">
+                {(e.action === "delete"
+                  ? [e.before]
+                  : e.before.deletedTasks
+                ).map((task: Task) => (
+                  <p key={task.id}>
+                    {String(value(task, "title")) || "제목 없는 업무"}
+                  </p>
+                ))}
+                {e.restorableTaskIds?.length > 0 &&
+                  (report
+                    ? canContribute(user, teamId)
+                    : canManageTeam(user, teamId)) && (
+                    <Button
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setError("");
+                        try {
+                          const current = report
+                            ? await api(`/reports/${report.id}`)
+                            : null;
+                          await send(
+                            `/audit/${e.id}/restore`,
+                            current ? { revision: current.revision } : {},
+                          );
+                          await refresh();
+                          await onRefresh();
+                        } catch (err) {
+                          setError((err as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      삭제한 업무 복구
+                    </Button>
+                  )}
+                {!e.restorableTaskIds?.length && (
+                  <p className="field-help">
+                    이미 복구되었거나 이후 삭제 이력이 있습니다.
+                  </p>
+                )}
+              </div>
             ) : (
               <pre>{JSON.stringify(pack(e.after || e.before), null, 2)}</pre>
             )}
           </details>
         ))}
       </HistoryTimeline>
-    </Modal>
-  );
-}
-export function TrashPanel({
-  teamId,
-  year,
-  onClose,
-  onRefresh,
-}: {
-  teamId: string;
-  year: number;
-  onClose: () => void;
-  onRefresh: () => void;
-}) {
-  const [tasks, setTasks] = useState<Task[]>([]),
-    [error, setError] = useState("");
-  const refresh = () =>
-    api(`/tasks?teamId=${teamId}&year=${year}&deleted=1`)
-      .then((r) => setTasks(r.tasks))
-      .catch((e) => setError(e.message));
-  useEffect(() => {
-    refresh();
-  }, [teamId, year]);
-  return (
-    <Modal title="휴지통" onClose={onClose}>
-      <ErrorNote error={error} />
-      {tasks.length ? (
-        <div className="report-list">
-          {tasks.map((t) => (
-            <div className="trash-item" key={t.id}>
-              <span>
-                {String(value(t, "title"))}
-                <small>{t.deletedAt && formatDateTime(t.deletedAt)}</small>
-              </span>
-              <Button
-                onClick={async () => {
-                  try {
-                    await send(`/tasks/${t.id}/restore`, {});
-                    refresh();
-                    onRefresh();
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                복구
-              </Button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <Empty title="삭제한 업무가 없습니다" />
-      )}
     </Modal>
   );
 }

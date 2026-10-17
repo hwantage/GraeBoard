@@ -114,6 +114,11 @@ export function createClipboard(
         // Explicit defaults also clear formatting inherited from the destination task.
         style: {
           ...BASE_STYLE,
+          // Null restores native gridlines; an explicit "none" hides them.
+          borderTop: null,
+          borderRight: null,
+          borderBottom: null,
+          borderLeft: null,
           color: key === "title" ? "#3e5661" : BASE_STYLE.color,
           ...cell(task, key).style,
           textMode: textMode(cell(task, key).style) as Style["textMode"],

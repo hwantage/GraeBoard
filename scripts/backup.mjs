@@ -5,19 +5,33 @@ import {
   chmodSync,
   renameSync,
   unlinkSync,
+  rmSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  databaseImageUrls,
+  documentImagesDirectory,
+  readDocumentImage,
+  writeDocumentImage,
+} from "../server/document-images.mjs";
 
-export function backupDatabase(source, destination) {
+export function backupDatabase(
+  source,
+  destination,
+  { documentImagesDir = documentImagesDirectory() } = {},
+) {
   source = resolve(source);
   destination = resolve(destination);
   if (!existsSync(source)) throw new Error("백업할 데이터베이스가 없습니다.");
-  if (existsSync(destination))
+  if (existsSync(destination) || existsSync(destination + ".images"))
     throw new Error("백업 파일이 이미 있습니다. 다른 이름을 지정하세요.");
   mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
   const temporary = destination + ".partial";
-  if (existsSync(temporary)) throw new Error("진행 중인 백업 파일이 있습니다.");
+  const images = destination + ".images";
+  const temporaryImages = images + ".partial";
+  if (existsSync(temporary) || existsSync(temporaryImages))
+    throw new Error("진행 중인 백업 파일이 있습니다.");
   const db = new DatabaseSync(source, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout=10000");
@@ -29,13 +43,26 @@ export function backupDatabase(source, destination) {
         verify.prepare("PRAGMA integrity_check").get().integrity_check !== "ok"
       )
         throw new Error("백업 무결성 검사에 실패했습니다.");
+      // Copy exactly the assets referenced by this consistent SQLite snapshot.
+      // Asset files are immutable and retained while the application is running.
+      const urls = databaseImageUrls(verify);
+      for (const url of urls)
+        writeDocumentImage(
+          temporaryImages,
+          url,
+          readDocumentImage(documentImagesDir, url),
+        );
     } finally {
       verify.close();
     }
+    if (existsSync(temporaryImages)) renameSync(temporaryImages, images);
     renameSync(temporary, destination);
     return destination;
   } catch (e) {
     if (existsSync(temporary)) unlinkSync(temporary);
+    rmSync(temporaryImages, { recursive: true, force: true });
+    if (!existsSync(destination))
+      rmSync(images, { recursive: true, force: true });
     throw e;
   } finally {
     db.close();

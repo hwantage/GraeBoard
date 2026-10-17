@@ -81,6 +81,10 @@ function storageByTeam(db) {
       "currentBytes",
       `SELECT team_id,sum(${length("rows_json")}+${length("keys_json")}+${length("exclusions_json")}+${length("orders_json")}) AS bytes FROM format_rules GROUP BY team_id`,
     ],
+    [
+      "currentBytes",
+      `SELECT team_id,sum(${length("markdown")}) AS bytes FROM document_versions GROUP BY team_id`,
+    ],
     ...["views", "saved_filters", "filter_states"].map((table) => [
       "currentBytes",
       `SELECT team_id,sum(${length("data")}) AS bytes FROM ${table} GROUP BY team_id`,

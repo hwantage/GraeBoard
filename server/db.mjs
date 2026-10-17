@@ -1,3 +1,5 @@
+import { storeDocumentVersion } from "./document-storage.mjs";
+import { hasDocumentContent } from "../shared/task-documents.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -26,7 +28,7 @@ import {
 import { normalizeCellStyle } from "../shared/formatting.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 18;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -87,6 +89,10 @@ export function openDatabase(
       CREATE INDEX IF NOT EXISTS cells_style_idx ON cells(style_id);
       CREATE INDEX IF NOT EXISTS tasks_style_idx ON tasks(default_style);
       CREATE INDEX IF NOT EXISTS tasks_row_style_idx ON tasks(row_style);
+    CREATE TABLE IF NOT EXISTS document_versions(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,document_id TEXT NOT NULL,content_hash TEXT NOT NULL,markdown TEXT NOT NULL,has_content INTEGER NOT NULL,created_at TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),UNIQUE(team_id,document_id,content_hash));
+    CREATE TABLE IF NOT EXISTS task_documents(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,id TEXT NOT NULL DEFAULT 'main',title TEXT NOT NULL DEFAULT '문서 1',position INTEGER NOT NULL DEFAULT 0,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(task_id,id));
+    CREATE INDEX IF NOT EXISTS task_documents_version_idx ON task_documents(version_id);
+    CREATE INDEX IF NOT EXISTS task_documents_summary_idx ON task_documents(task_id,has_content);
     CREATE TABLE IF NOT EXISTS format_states(team_id TEXT PRIMARY KEY REFERENCES teams(id),revision INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS format_rules(team_id TEXT NOT NULL REFERENCES teams(id),id TEXT NOT NULL,selector TEXT NOT NULL,rows_json TEXT,keys_json TEXT,exclusions_json TEXT NOT NULL,style_id INTEGER NOT NULL REFERENCES styles(id),orders_json TEXT NOT NULL,PRIMARY KEY(team_id,id),UNIQUE(team_id,selector));
     CREATE INDEX IF NOT EXISTS format_styles_idx ON format_rules(style_id);
@@ -97,6 +103,8 @@ export function openDatabase(
     CREATE UNIQUE INDEX IF NOT EXISTS saved_filters_personal_name ON saved_filters(team_id,owner_id,name) WHERE scope='personal';
     CREATE TABLE IF NOT EXISTS filter_states(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),selected_id TEXT REFERENCES saved_filters(id) ON DELETE SET NULL,data TEXT NOT NULL,PRIMARY KEY(user_id,team_id));
     CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data BLOB NOT NULL CHECK(typeof(data)='blob'));
+    CREATE TABLE IF NOT EXISTS report_documents(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,task_id TEXT NOT NULL,document_id TEXT NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),PRIMARY KEY(report_id,task_id,document_id));
+    CREATE INDEX IF NOT EXISTS report_documents_version_idx ON report_documents(version_id);
     CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,team_id TEXT REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target TEXT NOT NULL,before_json TEXT,after_json TEXT,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS audit_team_idx ON audit(team_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_system_idx ON audit(team_id,created_at DESC,id DESC) WHERE team_id IS NULL;
@@ -359,6 +367,7 @@ function hydrateTasks(db, rows) {
         createdBy: t.created_by,
         createdAt: t.created_at,
         updatedAt: t.updated_at,
+        documentCount: 0,
         cells: {},
         defaultStyle: styles.get(t.default_style),
         ...(t.row_style ? { rowStyle: styles.get(t.row_style) } : {}),
@@ -370,6 +379,15 @@ function hydrateTasks(db, rows) {
   );
   for (let offset = 0; offset < rows.length; offset += 500) {
     const ids = rows.slice(offset, offset + 500).map((t) => t.id);
+    for (const doc of db
+      .prepare(
+        `SELECT task_id,COUNT(*) AS document_count,MAX(has_content) AS has_content FROM task_documents WHERE task_id IN (${ids.map(() => "?").join(",")}) GROUP BY task_id`,
+      )
+      .all(...ids)) {
+      const task = map.get(doc.task_id);
+      task.documentCount = doc.document_count;
+      if (doc.has_content) task.hasDocument = true;
+    }
     const cells = db
       .prepare(
         `SELECT * FROM cells WHERE task_id IN (${ids.map(() => "?").join(",")})`,
@@ -414,6 +432,7 @@ export function insertTask(
     position,
     defaultStyle = {},
     rowStyle = {},
+    documents,
   },
 ) {
   const n = now();
@@ -457,6 +476,25 @@ export function insertTask(
     ...rowStyle,
   }))
     put.run(taskId, key, c.value, c.style, c.version);
+  for (const [position, document] of (documents || []).entries())
+    db.prepare(
+      "INSERT INTO task_documents(task_id,id,title,position,version_id,has_content,revision,updated_at,actor_id) VALUES(?,?,?,?,?,?,?,?,?)",
+    ).run(
+      taskId,
+      document.id,
+      document.title,
+      position,
+      storeDocumentVersion(db, {
+        teamId,
+        documentId: `${taskId}:${document.id}`,
+        markdown: document.markdown,
+        actorId,
+      }),
+      Number(hasDocumentContent(document.markdown)),
+      1,
+      n,
+      actorId,
+    );
   return getTask(db, taskId);
 }
 

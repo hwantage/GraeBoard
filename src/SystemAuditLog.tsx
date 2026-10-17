@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ChevronRight, LoaderCircle, Search } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
+import LoadingState from "./LoadingState";
 import { todayKey } from "../shared/domain.js";
 import { api } from "./api";
 import { Button, ErrorNote } from "./components";
@@ -333,12 +334,7 @@ export default function SystemAuditLog({
         중인 전체 기간을 조회합니다.
       </p>
       <ErrorNote error={error} />
-      {loading && (
-        <p className="history-cleanup-progress" role="status">
-          <LoaderCircle size={16} className="spin" />
-          로그를 불러오는 중…
-        </p>
-      )}
+      {loading && <LoadingState label="로그를 불러오는 중…" />}
       {result && (
         <>
           <p className="system-audit-count" role="status">

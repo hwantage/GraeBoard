@@ -26,6 +26,7 @@ export default function CellDatePicker({
   onChange,
   onCommit,
   onCancel,
+  portalContainer,
 }: {
   label: string;
   value: string;
@@ -34,6 +35,7 @@ export default function CellDatePicker({
   onChange: (value: string) => void;
   onCommit: (move?: EditMove) => void;
   onCancel: () => void;
+  portalContainer?: HTMLElement;
 }) {
   const id = useId();
   const anchor = useRef<HTMLInputElement>(null);
@@ -274,7 +276,7 @@ export default function CellDatePicker({
             </button>
           </div>
         </div>,
-        document.body,
+        portalContainer || document.body,
       )}
     </>
   );
