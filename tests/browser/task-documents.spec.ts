@@ -68,19 +68,26 @@ async function settleRichSelection(page: Page) {
   });
 }
 
-async function pasteText(page: Page, text: string) {
+async function pasteClipboard(page: Page, text: string, html = "") {
   await settleRichSelection(page);
-  await rich(page).evaluate((el, text) => {
-    const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", {
-      value: {
-        types: ["text/plain", "text/html"],
-        getData: (type: string) =>
-          type === "text/plain" ? text : `<p>${text}</p>`,
-      },
-    });
-    el.dispatchEvent(event);
-  }, text);
+  await rich(page).evaluate(
+    (el, { text, html }) => {
+      const data = { "text/plain": text, "text/html": html };
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: {
+          types: html ? ["text/plain", "text/html"] : ["text/plain"],
+          getData: (type: string) => data[type as keyof typeof data] || "",
+        },
+      });
+      el.dispatchEvent(event);
+    },
+    { text, html },
+  );
+}
+
+async function pasteText(page: Page, text: string) {
+  await pasteClipboard(page, text);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -90,8 +97,8 @@ test.beforeEach(async ({ page }) => {
       : route.abort(),
   );
   await post(page, "/auth/login", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await get(page, "/bootstrap");
   teamId = (
@@ -1235,11 +1242,13 @@ test("리치 표 셀은 선택한 글자를 교체하고 빈 셀에도 블록·H
     .first()
     .locator("p")
     .click({ position: { x: 1, y: 8 } });
+  await settleRichSelection(page);
   await page.keyboard.press("Shift+ArrowRight");
+  await settleRichSelection(page);
   await page.keyboard.press("Shift+ArrowRight");
-  expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(
-    "교체",
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()!.toString()))
+    .toBe("교체");
   await expect(
     detail(page).getByRole("button", { name: "표 열 +", exact: true }),
   ).toBeEnabled();
@@ -1261,6 +1270,186 @@ test("리치 표 셀은 선택한 글자를 교체하고 빈 셀에도 블록·H
   await close(page);
   await open(page);
   await preserved();
+});
+
+test("리치 문서의 표와 텍스트를 함께 복사하면 서식과 구조를 유지한다", async ({
+  page,
+  browserName,
+}) => {
+  const markdown =
+    "## 복사할 제목\n\n**굵게**와 *기울임*, ~~취소선~~, `코드`, [자료](https://example.com/docs)\n\n> 인용 문장\n\n- 목록 항목\n\n1. 순서 항목\n\n- [x] 완료 항목\n- [ ] 대기 항목\n\n| 항목 | 결과 |\n| :--- | ---: |\n| **표 안 굵게** | 첫 줄<br />둘째 줄 |\n\n마지막 문단\n";
+  await save(page, taskIds[0], markdown);
+  await open(page);
+  await rich(page).press("ControlOrMeta+a");
+  await settleRichSelection(page);
+  let copied: { html: string; text: string };
+  if (browserName === "chromium") {
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.keyboard.press("ControlOrMeta+c");
+    copied = await page.evaluate(async () => {
+      const [item] = await navigator.clipboard.read();
+      return {
+        html: await (await item.getType("text/html")).text(),
+        text: await (await item.getType("text/plain")).text(),
+      };
+    });
+  } else {
+    // Exercise the editor's copy serializer where OS clipboard access is absent.
+    copied = await rich(page).evaluate((el) => {
+      const data = new Map<string, string>();
+      const event = new Event("copy", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: {
+          clearData: () => data.clear(),
+          setData: (type: string, value: string) => data.set(type, value),
+        },
+      });
+      el.dispatchEvent(event);
+      return {
+        html: data.get("text/html") || "",
+        text: data.get("text/plain") || "",
+      };
+    });
+  }
+  expect(copied.html).toContain("<table");
+  expect(copied.html).toContain("<strong");
+  await rich(page)
+    .locator(":scope > p")
+    .last()
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await settleRichSelection(page);
+  await page.keyboard.press("Enter");
+  if (browserName === "chromium") {
+    await page.keyboard.press("ControlOrMeta+v");
+  } else {
+    await pasteClipboard(page, copied.text, copied.html);
+  }
+  const preserved = async () => {
+    await expect(rich(page).locator("table")).toHaveCount(2);
+    await expect(
+      rich(page).getByRole("heading", { name: "복사할 제목" }),
+    ).toHaveCount(2);
+    await expect(rich(page).locator("strong")).toHaveText([
+      "굵게",
+      "표 안 굵게",
+      "굵게",
+      "표 안 굵게",
+    ]);
+    for (const [selector, text] of [
+      ["em", "기울임"],
+      ["del", "취소선"],
+      ["code", "코드"],
+      ["blockquote", "인용 문장"],
+      ["ol li", "순서 항목"],
+    ])
+      await expect(rich(page).locator(selector)).toHaveText([text, text]);
+    await expect(rich(page).getByRole("link", { name: "자료" })).toHaveCount(2);
+    for (const link of await rich(page)
+      .getByRole("link", { name: "자료" })
+      .all())
+      await expect(link).toHaveAttribute("href", "https://example.com/docs");
+    const checks = rich(page).getByRole("checkbox", {
+      name: "체크리스트 완료",
+    });
+    await expect(checks).toHaveCount(4);
+    for (let i = 0; i < 4; i++)
+      await expect(checks.nth(i)).toBeChecked({ checked: i % 2 === 0 });
+    for (const table of await rich(page).locator("table").all()) {
+      await expect(table.locator("th, td")).toHaveText([
+        "항목",
+        "결과",
+        "표 안 굵게",
+        "첫 줄둘째 줄",
+      ]);
+      await expect(table.locator("th").last()).toHaveCSS("text-align", "right");
+      await expect(table.locator("td").last().locator("br")).toHaveCount(1);
+    }
+  };
+  await preserved();
+  await detail(page).getByRole("button", { name: "문서 실행취소" }).click();
+  await expect(rich(page).locator("table")).toHaveCount(1);
+  await detail(page).getByRole("button", { name: "문서 재실행" }).click();
+  await preserved();
+  await close(page);
+  await page.reload();
+  await open(page);
+  await preserved();
+});
+
+test("HTML 붙여넣기는 서식을 보존하고 지원하지 않는 내용은 일반 텍스트로 남긴다", async ({
+  page,
+}) => {
+  await open(page);
+  await rich(page).focus();
+  await pasteClipboard(
+    page,
+    "굵은 문장과 자료",
+    '<p><strong>굵은 문장</strong>과 <a href="https://example.com/docs" onclick="window.documentAttack = true">자료</a></p>',
+  );
+  await expect(rich(page).locator("strong")).toHaveText("굵은 문장");
+  await expect(rich(page).getByRole("link")).toHaveAttribute(
+    "href",
+    "https://example.com/docs",
+  );
+  await expect(rich(page).locator("[onclick]")).toHaveCount(0);
+  for (const html of [
+    '<p><a href="javascript:window.documentAttack=true">원문 유지</a></p>',
+    '<p><img src="https://example.com/private.png" onerror="window.documentAttack=true" alt="원문 유지"></p>',
+    '<span data-type="html" data-value="&lt;script&gt;window.documentAttack=true&lt;/script&gt;">원문 유지</span>',
+    '<sup data-type="footnote_reference" data-label="1">원문 유지</sup>',
+  ]) {
+    await rich(page).press("ControlOrMeta+a");
+    await pasteClipboard(page, "원문 유지", html);
+    await expect(rich(page)).toHaveText("원문 유지");
+    await expect(rich(page).locator("a, img, script, sup")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as any).documentAttack),
+    ).toBeUndefined();
+  }
+  await close(page);
+  await open(page);
+  await expect(rich(page)).toHaveText("원문 유지");
+});
+
+test("리치 코드 블록에 붙여넣으면 서식과 Markdown 기호를 코드 그대로 유지한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "```text\n처음\n```\n");
+  await open(page);
+  await rich(page)
+    .locator("pre code")
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await pasteClipboard(
+    page,
+    "**문자 그대로**\n다음 줄",
+    "<p><strong>문자 그대로</strong></p><p>다음 줄</p>",
+  );
+  await expect(rich(page).locator("pre code")).toHaveText(
+    "**문자 그대로**\n다음 줄",
+  );
+  await expect(rich(page).locator("strong")).toHaveCount(0);
+  await close(page);
+  await open(page);
+  await expect(rich(page).locator("pre code")).toHaveText(
+    "**문자 그대로**\n다음 줄",
+  );
 });
 
 test("Chromium 실제 클립보드로 복사한 문장은 리치 표 셀 안에 붙는다", async ({
@@ -2062,7 +2251,7 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
     await icon(page).click();
     await expect(rich(page)).toContainText("주간 업무 기록");
     await expect(rich(page)).toHaveCSS("font-family", /^"?Pretendard"?,/);
-    await expect(rich(page)).toHaveCSS("font-size", "13px");
+    await expect(rich(page)).toHaveCSS("font-size", "15px");
     await detail(page).screenshot({
       path: info.outputPath(`document-${theme}.png`),
     });
@@ -2083,7 +2272,7 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   await page.keyboard.press("Enter");
   await expect(source(page)).toBeVisible();
   await expect(source(page)).toHaveCSS("font-family", /^"?Pretendard"?,/);
-  await expect(source(page)).toHaveCSS("font-size", "13px");
+  await expect(source(page)).toHaveCSS("font-size", "15px");
   const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
   for (const name of ["리치 문서"]) {
     await page.keyboard.press(tab);
@@ -2106,7 +2295,7 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   await expect(detail(page)).toHaveClass(/document-full-page/);
   await expect(detail(page).locator(".task-detail-properties")).toBeVisible();
   await expect(detail(page).locator(".task-detail-year")).toBeVisible();
-  await expect(source(page)).toHaveCSS("font-size", "13px");
+  await expect(source(page)).toHaveCSS("font-size", "15px");
 });
 
 test("행 복사는 문서도 복사 당시 값으로 보존하고 복제본 저장을 분리", async ({

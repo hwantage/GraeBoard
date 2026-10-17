@@ -294,6 +294,25 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
   return doc;
 }
 
+function safeClipboardSlice(slice: Slice) {
+  let safe = true;
+  slice.content.descendants((node) => {
+    if (
+      (node.type.name === "html" && !isPlainLineBreak(node.attrs.value)) ||
+      (node.type.name === "image" && !isDocumentImage(node.attrs.src)) ||
+      node.type.name === "footnote_definition" ||
+      node.type.name === "footnote_reference" ||
+      node.marks.some(
+        (mark) =>
+          mark.type.name === "link" && !safeDocumentLink(mark.attrs.href),
+      )
+    )
+      safe = false;
+    return safe;
+  });
+  return safe;
+}
+
 function tableCellPaste(ctx: Ctx, text: string) {
   const { schema } = ctx.get(editorViewCtx).state;
   // GFM cells hold one paragraph. Store line breaks as supported inline HTML
@@ -450,9 +469,7 @@ export default function RichMarkdownEditor(props: Props) {
             );
             return true;
           },
-          // Paste Markdown/plain text through the same preservation check. Rich
-          // HTML is not executed and unsupported text remains literal content.
-          handlePaste: (view, event) => {
+          handlePaste: (view, event, slice) => {
             if (event.clipboardData?.files?.length) {
               if (latest.current.readOnly) {
                 event.preventDefault();
@@ -462,6 +479,16 @@ export default function RichMarkdownEditor(props: Props) {
             }
             const text = event.clipboardData?.getData("text/plain");
             if (text === undefined || latest.current.readOnly) return false;
+            // ProseMirror has already parsed HTML through the editor schema.
+            // Keep its slice boundaries, marks and table paste handling instead
+            // of replacing rich clipboard content with its plain-text fallback.
+            if (
+              view.state.selection.$from.parent.type.spec.code ||
+              (event.clipboardData?.getData("text/html") &&
+                safeClipboardSlice(slice))
+            )
+              return false;
+            // Markdown/plain text still uses the same preservation check.
             event.preventDefault();
             const { $from, $to } = view.state.selection;
             if (

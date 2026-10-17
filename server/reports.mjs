@@ -62,7 +62,7 @@ export function decodeReport(data) {
 
 // Document access only needs row identity and tab metadata, never the cells.
 // Key by the stored bytes so edits, restores and other writers invalidate it.
-// The cache contains no bodies/cells and stays bounded even across many sheets.
+// Keep its budget separate from browsing so large properties cannot evict it.
 const documentIndexes = new Map();
 const MAX_DOCUMENT_INDEX_BYTES = 16 * 1024 * 1024;
 let documentIndexBytes = 0;
@@ -95,6 +95,53 @@ export function reportDocumentIndex(data, decoded) {
     documentIndexBytes += bytes;
   }
   return tasks;
+}
+
+// Browsing also needs property values, but excludes bodies, weekly cells and styles.
+const browseIndexes = new Map();
+const MAX_BROWSE_INDEX_BYTES = 16 * 1024 * 1024;
+let browseIndexBytes = 0;
+export function reportBrowseIndex(data, decoded) {
+  const key = reportDataKey(data);
+  const cached = browseIndexes.get(key);
+  if (cached) {
+    browseIndexes.delete(key);
+    browseIndexes.set(key, cached);
+    return cached.index;
+  }
+  const tasks = new Map();
+  let bytes = 128;
+  const report = decoded || decodeReport(data);
+  const keys = new Set(propertiesFor(report.settings, true).map((p) => p.id));
+  for (const task of report.tasks) {
+    const documents = task.documents || [];
+    const metadata = {
+      id: task.id,
+      updatedAt: task.updatedAt,
+      position: task.position,
+      createdAt: task.createdAt,
+      documents,
+      cells: Object.fromEntries(
+        Object.entries(task.cells)
+          .filter(([key]) => keys.has(key))
+          .map(([key, cell]) => [key, { value: cell.value }]),
+      ),
+    };
+    tasks.set(task.id, metadata);
+    bytes += 256 + JSON.stringify(metadata).length * 2;
+  }
+  const index = { tasks, settings: report.settings, users: report.users };
+  bytes += JSON.stringify([index.settings, index.users]).length * 2;
+  if (bytes <= MAX_BROWSE_INDEX_BYTES) {
+    while (browseIndexBytes + bytes > MAX_BROWSE_INDEX_BYTES) {
+      const oldest = browseIndexes.keys().next().value;
+      browseIndexBytes -= browseIndexes.get(oldest).bytes;
+      browseIndexes.delete(oldest);
+    }
+    browseIndexes.set(key, { index, bytes });
+    browseIndexBytes += bytes;
+  }
+  return index;
 }
 
 // 저장 당시 이름은 보존하고, 스냅샷을 열 때 현재 아바타만 연결한다.

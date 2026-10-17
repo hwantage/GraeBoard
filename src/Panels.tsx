@@ -1,4 +1,4 @@
-import type { DocumentHandle } from "./TaskDocumentPanel";
+import type { DocumentPanelHandle } from "./TaskDocumentPanel";
 import type { DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
@@ -9,6 +9,8 @@ import DocumentLoading from "./DocumentLoading";
 import LoadingState from "./LoadingState";
 import {
   Component,
+  forwardRef,
+  useImperativeHandle,
   lazy,
   Suspense,
   useEffect,
@@ -98,6 +100,117 @@ const AUDIT_LABELS: Record<string, string> = {
   setup: "초기 설정",
 };
 
+export type TaskDetailHandle = {
+  flush: (keepDocumentDraft?: boolean) => Promise<boolean>;
+  selectDocument: (id: string) => Promise<boolean>;
+};
+export const TaskDetailContent = forwardRef<
+  TaskDetailHandle,
+  {
+    task: Task;
+    settings: Settings;
+    user: User;
+    users: User[];
+    readOnly?: boolean;
+    reportMode?: boolean;
+    documentReport?: { id: string; isNew: boolean };
+    initialDocumentId?: string;
+    onDocumentSelected?: (id: string) => void;
+    onDocumentSaved: (result: DocumentSaveResult) => void;
+    onSaveProperty: (request: PropertySaveRequest) => Promise<SavedCell[]>;
+    onCloseWithDraft: () => void;
+    copySaveError?: string;
+    onRetryCopySave?: () => void;
+  }
+>(function TaskDetailContent(
+  {
+    task,
+    settings,
+    user,
+    users,
+    readOnly,
+    reportMode,
+    documentReport,
+    initialDocumentId,
+    onDocumentSelected,
+    onDocumentSaved,
+    onSaveProperty,
+    onCloseWithDraft,
+    copySaveError,
+    onRetryCopySave,
+  },
+  ref,
+) {
+  const editable =
+    !readOnly &&
+    (reportMode ? canContribute(user, task.teamId) : canEdit(user, task));
+  const documentRef = useRef<DocumentPanelHandle>(null);
+  const propertyRef = useRef<PropertyEditorHandle>(null);
+  const [documentLoading, setDocumentLoading] = useState(true);
+  useImperativeHandle(ref, () => ({
+    flush: async (keepDocumentDraft = false) => {
+      if (propertyRef.current && !(await propertyRef.current.flush()))
+        return false;
+      return (
+        keepDocumentDraft ||
+        !documentRef.current ||
+        (await documentRef.current.flush())
+      );
+    },
+    selectDocument: async (id) => {
+      if (propertyRef.current && !(await propertyRef.current.flush()))
+        return false;
+      return (await documentRef.current?.selectDocument(id)) ?? false;
+    },
+  }));
+  return (
+    <>
+      <TaskPropertyEditor
+        ref={propertyRef}
+        task={task}
+        settings={settings}
+        users={users}
+        readOnly={!editable}
+        onSave={onSaveProperty}
+      />
+      {copySaveError && (
+        <div className="task-property-error" role="alert">
+          <span>{copySaveError}</span>
+          <Button onClick={onRetryCopySave}>사본 저장 재시도</Button>
+        </div>
+      )}
+      <div
+        className="task-document-shell"
+        data-loading={documentLoading || undefined}
+      >
+        {documentLoading && <DocumentLoading />}
+        <div
+          className="task-document-surface"
+          aria-hidden={documentLoading || undefined}
+          inert={documentLoading}
+        >
+          <DocumentLoadBoundary onError={() => setDocumentLoading(false)}>
+            <Suspense fallback={null}>
+              <TaskDocumentPanel
+                ref={documentRef}
+                task={task}
+                userId={user.id}
+                readOnly={!editable}
+                report={documentReport}
+                onSaved={onDocumentSaved}
+                onCloseWithDraft={onCloseWithDraft}
+                initialDocumentId={initialDocumentId}
+                onDocumentSelected={onDocumentSelected}
+                onLoadingChange={setDocumentLoading}
+              />
+            </Suspense>
+          </DocumentLoadBoundary>
+        </div>
+      </div>
+    </>
+  );
+});
+
 export function RowPanel({
   settings,
   task,
@@ -131,10 +244,8 @@ export function RowPanel({
   const editable =
     !readOnly &&
     (reportMode ? canContribute(user, task.teamId) : canEdit(user, task));
-  const documentRef = useRef<DocumentHandle>(null);
-  const propertyRef = useRef<PropertyEditorHandle>(null);
+  const detailRef = useRef<TaskDetailHandle>(null);
   const [documentFullPage, setDocumentFullPage] = useState(false);
-  const [documentLoading, setDocumentLoading] = useState(true);
   const leaving = useRef(false);
   async function leave(
     action: () => void | Promise<void>,
@@ -143,13 +254,12 @@ export function RowPanel({
     if (leaving.current) return;
     leaving.current = true;
     try {
-      if (propertyRef.current && !(await propertyRef.current.flush())) return;
       if (
-        keepDocumentDraft ||
-        !documentRef.current ||
-        (await documentRef.current.flush())
+        detailRef.current &&
+        !(await detailRef.current.flush(keepDocumentDraft))
       )
-        await action();
+        return;
+      await action();
     } finally {
       leaving.current = false;
     }
@@ -215,46 +325,21 @@ export function RowPanel({
         </div>
       }
     >
-      <TaskPropertyEditor
-        ref={propertyRef}
+      <TaskDetailContent
+        ref={detailRef}
         task={task}
         settings={settings}
+        user={user}
         users={users}
-        readOnly={!editable}
-        onSave={onSaveProperty}
+        readOnly={readOnly}
+        reportMode={reportMode}
+        documentReport={documentReport}
+        onDocumentSaved={onDocumentSaved}
+        onSaveProperty={onSaveProperty}
+        copySaveError={copySaveError}
+        onRetryCopySave={onRetryCopySave}
+        onCloseWithDraft={() => void leave(onClose, true)}
       />
-      {copySaveError && (
-        <div className="task-property-error" role="alert">
-          <span>{copySaveError}</span>
-          <Button onClick={onRetryCopySave}>사본 저장 재시도</Button>
-        </div>
-      )}
-      <div
-        className="task-document-shell"
-        data-loading={documentLoading || undefined}
-      >
-        {documentLoading && <DocumentLoading />}
-        <div
-          className="task-document-surface"
-          aria-hidden={documentLoading || undefined}
-          inert={documentLoading}
-        >
-          <DocumentLoadBoundary onError={() => setDocumentLoading(false)}>
-            <Suspense fallback={null}>
-              <TaskDocumentPanel
-                ref={documentRef}
-                task={task}
-                userId={user.id}
-                readOnly={!editable}
-                report={documentReport}
-                onSaved={onDocumentSaved}
-                onCloseWithDraft={() => void leave(onClose, true)}
-                onLoadingChange={setDocumentLoading}
-              />
-            </Suspense>
-          </DocumentLoadBoundary>
-        </div>
-      </div>
     </Modal>
   );
 }

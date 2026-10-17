@@ -98,7 +98,7 @@
 .document-prose,
 .document-source {
   font-family: "Pretendard", sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.8;
 }
 .document-prose {
@@ -542,7 +542,7 @@
 .document-tablist [role="tab"] {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--document-icon-gap);
   white-space: nowrap;
   max-width: 220px;
   overflow: hidden;
@@ -551,12 +551,15 @@
   border-bottom: 2px solid transparent;
   color: var(--muted);
   font-size: 13px;
+  line-height: 18px;
+}
+.document-tablist [role="tab"] > svg {
+  flex-shrink: 0;
 }
 .document-tab-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: -2px;
 }
 .document-tablist [role="tab"]:focus-visible {
   outline: 2px solid var(--accent);

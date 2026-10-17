@@ -13,8 +13,8 @@ async function post(page: Page, path: string, data: any) {
 let teamId: string, ids: string[], userId: string;
 test.beforeEach(async ({ page }) => {
   await post(page, "/auth/login", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await (
     await page.request.get("/api/bootstrap")
