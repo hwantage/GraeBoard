@@ -59,6 +59,8 @@ export function Button({
 export function Modal({
   title,
   help,
+  titleAction,
+  headerActions,
   children,
   onClose,
   wide = false,
@@ -67,6 +69,8 @@ export function Modal({
 }: {
   title: string;
   help?: string;
+  titleAction?: ReactNode;
+  headerActions?: ReactNode;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
@@ -77,14 +81,18 @@ export function Modal({
   const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const hasHelp = !!help;
+  const hasHeaderActions = !!headerActions || !!titleAction;
   useEffect(() => {
     ref.current?.showModal();
-    (initialFocus?.current || (hasHelp ? closeButton.current : null))?.focus({
+    (
+      initialFocus?.current ||
+      (hasHelp || hasHeaderActions ? closeButton.current : null)
+    )?.focus({
       preventScroll: true,
     });
     const el = ref.current;
     return () => el?.close();
-  }, [initialFocus, hasHelp]);
+  }, [initialFocus, hasHelp, hasHeaderActions]);
   return (
     <dialog
       ref={ref}
@@ -92,6 +100,7 @@ export function Modal({
       className={`modal ${wide ? "wide" : ""} ${className}`}
       onCancel={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }}
       onClick={(e) => {
@@ -101,6 +110,7 @@ export function Modal({
       <header>
         <div className="modal-heading">
           <h2 id={titleId}>{title}</h2>
+          {titleAction}
           {help && (
             <button
               type="button"
@@ -112,6 +122,7 @@ export function Modal({
             </button>
           )}
         </div>
+        {headerActions}
         <Button ref={closeButton} title="닫기" onClick={onClose}>
           <X size={18} />
         </Button>

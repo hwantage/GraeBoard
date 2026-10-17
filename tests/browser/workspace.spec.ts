@@ -1049,6 +1049,10 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
   await page
     .getByRole("button", { name: "다음 달로 이동", exact: true })
     .click();
+  // 월 이동은 선택한 주차의 숨김도 유지한다. 기간을 다시 고르면 펼쳐진다.
+  await expect(headers).toHaveCount(0);
+  await chooseWeeks(page, "2026-03-02", "2026-03-16");
+  await expect(headers).toHaveCount(3);
   await assertEdges();
   expect(await readTasks()).toEqual(before);
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -3022,8 +3026,10 @@ test("새 팀은 작업·팀원·상태와 새 보기 기본값으로 시작하�
     await title.getByRole("textbox").press("Escape");
   const status = page.locator('[data-column="status"]');
   const summary = page.locator(".board-summary");
-  await expect(summary).toContainText("예정 1");
-  await status.locator(".cell-choice-trigger").dblclick();
+  await expect(status).toHaveText("");
+  await expect(page.locator('[data-column="owner"]')).toHaveText("");
+  await expect(summary).toContainText("예정 0");
+  await status.dblclick();
   for (const label of ["예정", "검토 중", "진행 중", "완료", "보류"])
     await expect(
       page.getByRole("option", { name: label, exact: true }),
@@ -3377,47 +3383,21 @@ test("팀별 파스텔 테마를 선택·저장하고 기존 스냅샷·전환·
       path: info.outputPath(`theme-${theme.id}.png`),
       fullPage: true,
     });
-    // 같은 민트 스냅샷을 열어 저장 당시 테마가 현재 팀 테마를 덮지 않는지 확인한다.
     await page
-      .getByRole("button", { name: "보고서 스냅샷", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "보고서 스냅샷", exact: true })
-      .getByRole("button", { name: /테마 변경 전 스냅샷/ })
-      .click();
-    await expect(page.getByRole("grid")).toHaveAttribute(
-      "aria-readonly",
-      "true",
-    );
-    await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
-    await expect(page.locator(".format-toolbar")).toHaveCount(0);
-    await expect(page.locator(".active-report-banner")).toHaveCSS(
-      "border-left-color",
-      rgb(theme.snapshot),
-    );
-    await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
-    await expect(title).toHaveCSS("color", "rgb(36, 54, 66)");
-    await page.screenshot({
-      path: info.outputPath(`snapshot-current-theme-${theme.id}.png`),
-      animations: "disabled",
-    });
-    await page
-      .getByRole("button", { name: "스냅샷 수정", exact: true })
-      .click();
-    await expect(page.locator(".format-toolbar")).toHaveCSS(
-      "background-color",
-      rgb(theme.surface),
-    );
-    await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
-    await page.getByRole("button", { name: "수정 취소", exact: true }).click();
-    await expect(page.locator(".format-toolbar")).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "스냅샷 보기 종료", exact: true })
+      .getByRole("tab", { name: "테마 변경 전 스냅샷", exact: true })
       .click();
     await expect(page.getByRole("grid")).toHaveAttribute(
       "aria-readonly",
       "false",
     );
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
+    await expect(page.locator(".format-toolbar")).toHaveCSS(
+      "background-color",
+      rgb(theme.surface),
+    );
+    await expect(title).toHaveCSS("background-color", "rgb(255, 230, 221)");
+    await expect(title).toHaveCSS("color", "rgb(36, 54, 66)");
+    await page.getByRole("tab", { name: "원본", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
   }
   const saved = await (
@@ -4485,14 +4465,14 @@ test("업무 추가 직후와 제목·서식 편집 후에도 단계별 실행�
   await undo.click();
   await expect(title).toHaveText(task.cells.title?.value || "");
   // A failed delete keeps the same undo entry available for retry.
-  await page.route(`**/api/tasks/${task.id}`, (route) =>
+  await page.route("**/api/tasks/delete", (route) =>
     route.fulfill({ status: 503, json: { error: "추가 취소 재시도" } }),
   );
   await undo.click();
   await expect(page.getByRole("alert")).toContainText("추가 취소 재시도");
   await expect(title).toBeVisible();
   await expect(undo).toBeEnabled();
-  await page.unroute(`**/api/tasks/${task.id}`);
+  await page.unroute("**/api/tasks/delete");
   await undo.click();
   await expect(title).toHaveCount(0);
   await redo.click();
@@ -4544,7 +4524,11 @@ test("추가한 업무에 다른 변경이 있으면 자신의 편집을 취소�
   await expect(title).not.toHaveCSS("font-weight", "700");
   let deletions = 0;
   page.on("request", (request) => {
-    if (request.method() === "DELETE") deletions++;
+    if (
+      request.method() === "DELETE" ||
+      request.url().endsWith("/api/tasks/delete")
+    )
+      deletions++;
   });
   await undo.click();
   await expect(page.getByRole("alert")).toContainText(
@@ -4629,7 +4613,7 @@ test("업무 복제로 추가한 행도 같은 ID로 실행취소·재실행한�
   await expect(title).toHaveText("첫 업무 사본");
 });
 
-test("업무 삭제는 확인 없이 지우고 툴바 실행취소와 재실행으로 되돌린다", async ({
+test("업무 삭제는 확인 없이 지우고 알림·툴바 실행취소와 재실행으로 되돌린다", async ({
   page,
 }) => {
   const titles = page.locator('[data-column="title"]');
@@ -4643,27 +4627,26 @@ test("업무 삭제는 확인 없이 지우고 툴바 실행취소와 재실행�
   });
   await expect(undo).toBeDisabled();
   await openRowDetails(page, page.locator(`[data-row-id="${taskIds[1]}"]`));
-  await page
-    .getByRole("button", { name: "휴지통으로 이동", exact: true })
-    .click();
+  await page.getByRole("button", { name: "업무 삭제", exact: true }).click();
   await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
   expect(dialogs).toBe(0);
   const toast = page.locator(".toast");
-  await expect(toast).toHaveText("‘숨길 업무’ 업무를 삭제했습니다.");
-  await expect(toast.getByRole("button")).toHaveCount(0);
-  // 툴바 실행취소로 되살리고 재실행으로 다시 지운다.
+  await expect(toast).toContainText("‘숨길 업무’ 업무를 삭제했습니다.");
+  await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
+  // 알림 실행취소로 되살리고 툴바 재실행으로 다시 지운다.
   await expect(undo).toBeEnabled();
-  await undo.click();
+  await toast.getByRole("button", { name: "실행취소" }).click();
   await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
   await expect(toast).toHaveText("‘숨길 업무’ 업무를 되살렸습니다.");
   await expect(redo).toBeEnabled();
   await redo.click();
   await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
-  // 삭제 알림에는 실행취소 버튼이 없다.
-  await expect(toast).toHaveText("‘숨길 업무’ 업무를 삭제했습니다.");
-  await expect(toast.getByRole("button")).toHaveCount(0);
+  // 재실행으로 지운 행도 알림과 툴바 양쪽에서 복구할 수 있다.
+  await expect(toast).toContainText("‘숨길 업무’ 업무를 삭제했습니다.");
+  await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
   await undo.click();
   await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
+  await expect(toast.getByRole("button")).toHaveCount(0);
   await page.reload();
   await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
 });
@@ -4692,9 +4675,7 @@ test("새 업무 삭제는 이전 재실행을 비우고 삭제 재실행은 다
   await expect(first).toHaveText("첫 업무");
   await expect(redo).toBeEnabled();
   await openRowDetails(page, page.locator(`[data-row-id="${taskIds[0]}"]`));
-  await page
-    .getByRole("button", { name: "휴지통으로 이동", exact: true })
-    .click();
+  await page.getByRole("button", { name: "업무 삭제", exact: true }).click();
   await expect(first).toHaveCount(0);
   await expect(undo).toBeEnabled();
   await expect(redo).toBeDisabled();
@@ -4757,7 +4738,7 @@ test("저장된 필터 목록은 항목 선택만 제공하고 닫기·바깥 �
   await expect(trigger).toHaveText("저장된 필터");
 });
 
-test("검색·필터 저장과 읽기 전용 보고본의 원본 분리를 확인한다", async ({
+test("검색·필터 저장과 편집 가능한 사본의 원본 분리를 확인한다", async ({
   page,
 }) => {
   await page.getByLabel("전체 속성 검색").fill("업무");
@@ -4770,12 +4751,13 @@ test("검색·필터 저장과 읽기 전용 보고본의 원본 분리를 확�
     .getByRole("button", { name: "저장", exact: true })
     .click();
   await expect(page.locator("dialog")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "보고서 스냅샷", exact: true })
-    .click();
-  await page.getByLabel("보고서 이름").fill("검증 보고본");
-  await page.getByRole("button", { name: "현재 보기 저장" }).click();
-  await expect(page.getByRole("button", { name: /검증 보고본/ })).toBeVisible();
+  await page.getByRole("button", { name: "사본 추가", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "사본 만들기", exact: true });
+  await dialog.getByLabel("사본 이름").fill("검증 사본");
+  await dialog.getByRole("button", { name: "확인", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "검증 사본", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await post(page, "/cells/batch", {
     operationId: randomUUID(),
     createdAt: new Date().toISOString(),
@@ -4788,17 +4770,17 @@ test("검색·필터 저장과 읽기 전용 보고본의 원본 분리를 확�
       },
     ],
   });
-  await page.getByRole("button", { name: /검증 보고본/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "검증 보고본" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "검증 사본" })).toBeVisible();
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
     "첫 업무",
   );
-  await expect(page.locator(".format-toolbar")).toHaveCount(0);
-  await expect(page.getByRole("grid")).toHaveAttribute("aria-readonly", "true");
+  await expect(page.locator(".format-toolbar")).toBeVisible();
+  await expect(page.getByRole("grid")).toHaveAttribute(
+    "aria-readonly",
+    "false",
+  );
   await page.locator(`[data-cell="${taskIds[0]}:title"]`).dblclick();
-  await expect(page.locator(".inline-editor")).toHaveCount(0);
+  await expect(page.locator(".inline-editor")).toBeVisible();
 });
 test("같은 셀의 연속 실행취소·재실행과 사이에 발생한 타인의 변경을 보호한다", async ({
   page,
@@ -5233,17 +5215,19 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
     page,
     page.locator(".sheet-row").filter({ has: second }),
   );
-  await page
-    .locator(".detail-fields > div")
-    .filter({ has: page.locator("dt").filter({ hasText: /^설명$/ }) })
-    .getByRole("button")
-    .click();
-  const description = page.locator(`[data-cell="${taskIds[1]}:description"]`);
-  await expect(page.locator("dialog")).toHaveCount(0);
-  await expect(description.getByRole("textbox")).toBeFocused();
-  await description.getByRole("textbox").fill("숨긴 열도 셀에서 편집");
-  await description.getByRole("textbox").press("Enter");
-  await expect(description).toHaveText("숨긴 열도 셀에서 편집");
+  const detail = page.getByRole("dialog", { name: "업무 상세", exact: true });
+  const description = detail.getByRole("textbox", {
+    name: "설명 편집",
+    exact: true,
+  });
+  await description.fill("숨긴 열도 상세에서 직접 편집");
+  await detail.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(detail).toHaveCount(0);
+  await openRowDetails(
+    page,
+    page.locator(".sheet-row").filter({ has: second }),
+  );
+  await expect(description).toHaveValue("숨긴 열도 상세에서 직접 편집");
 });
 
 test("컬럼 클릭은 열을 선택하고 우클릭 메뉴에서 정렬·해제를 저장한다", async ({
@@ -5969,7 +5953,7 @@ test("6pt와 새 글꼴을 기본 서식·복사·외부 HTML 붙여넣기에 �
   });
 });
 
-test("업무 상세는 속성·정보·동작을 구분하고 작은 화면에서도 셀 편집으로 이동한다", async ({
+test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과 작은 화면 직접 편집을 제공한다", async ({
   page,
 }, info) => {
   await setTaskCells(page, [
@@ -5980,15 +5964,36 @@ test("업무 상세는 속성·정보·동작을 구분하고 작은 화면에�
       value:
         "관리자와 팀원의 권한을 확인합니다.\n모바일 화면에서도 설정을 검토합니다.",
     },
+    { index: 0, key: "status", value: "status-progress" },
     { index: 0, key: "deadline", value: "2026-10-30" },
   ]);
   await page.reload();
   const row = page.locator(`[data-row-id="${taskIds[0]}"]`);
   await openRowDetails(page, row);
   const dialog = page.locator(".task-detail-modal");
-  await expect(dialog.locator(".task-detail-title")).toHaveText(
-    "권한 관리 화면 프로토타입",
-  );
+  await expect(
+    dialog.getByRole("textbox", { name: "작업 편집", exact: true }),
+  ).toHaveValue("권한 관리 화면 프로토타입");
+  await expect(dialog.locator(".detail-fields")).toBeVisible();
+  await expect(
+    dialog.locator(".task-property-editor, .task-detail-title svg"),
+  ).toHaveCount(0);
+  await expect(
+    dialog.locator('.detail-fields [data-property="description"]'),
+  ).toHaveCount(0);
+  const description = dialog.getByRole("textbox", {
+    name: "설명 편집",
+    exact: true,
+  });
+  const titleBox = (await dialog
+    .getByRole("textbox", { name: "작업 편집", exact: true })
+    .boundingBox())!;
+  const descriptionBox = (await description.boundingBox())!;
+  expect(descriptionBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(descriptionBox.height).toBeLessThan(30);
+  await expect(
+    dialog.getByRole("button", { name: "문서 작성", exact: true }),
+  ).toBeVisible();
   await expect(
     dialog
       .getByRole("button", { name: "상태 수정", exact: true })
@@ -5999,37 +6004,179 @@ test("업무 상세는 속성·정보·동작을 구분하고 작은 화면에�
       .getByRole("button", { name: "팀원 수정", exact: true })
       .locator(".avatar"),
   ).toBeVisible();
-  await expect(dialog.locator(".task-detail-meta code")).toBeHidden();
+  await expect(dialog.locator(".task-detail-meta")).toHaveCount(0);
+  await expect(dialog.locator(".document-hint")).toHaveCount(0);
   await expect(
-    dialog
-      .getByRole("group", { name: "업무 순서 이동", exact: true })
-      .getByRole("button"),
-  ).toHaveCount(2);
-  const actions = dialog.locator(".task-detail-actions");
-  const dialogBox = (await dialog.boundingBox())!;
-  const actionsBox = (await actions.boundingBox())!;
-  expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(
-    dialogBox.y + dialogBox.height,
-  );
+    dialog.getByRole("button", { name: /^(위로|아래로)$/ }),
+  ).toHaveCount(0);
+  const aligned = async () => {
+    for (const selector of [
+      ".detail-fields dt",
+      ".detail-fields dd",
+      ".task-detail-actions > button",
+    ])
+      expect(
+        await dialog
+          .locator(selector)
+          .evaluateAll(
+            (els) =>
+              new Set(
+                els.map((el) => Math.round(el.getBoundingClientRect().top)),
+              ).size,
+          ),
+      ).toBe(1);
+  };
+  await aligned();
+  const actions = dialog.getByRole("group", { name: "업무 동작", exact: true });
+  const headerActionsFit = async () => {
+    await expect(dialog.locator("footer")).toHaveCount(0);
+    const headingBox = (await dialog
+      .getByRole("heading", {
+        name: "업무 상세",
+        exact: true,
+      })
+      .boundingBox())!;
+    const headingGroup = (await dialog
+      .locator(":scope > header > .modal-heading")
+      .boundingBox())!;
+    const expandBox = (await dialog
+      .locator(":scope > header")
+      .getByRole("button", {
+        name: /^(문서 전체 페이지로 보기|전체 페이지 닫기)$/,
+      })
+      .boundingBox())!;
+    expect(expandBox.x).toBeGreaterThanOrEqual(headingBox.x + headingBox.width);
+    expect(expandBox.x - headingBox.x - headingBox.width).toBeLessThan(16);
+    expect(expandBox.y).toBeLessThan(headingBox.y + headingBox.height);
+    const actionsBox = (await actions.boundingBox())!;
+    const closeBox = (await dialog
+      .getByRole("button", {
+        name: "닫기",
+        exact: true,
+      })
+      .boundingBox())!;
+    const bodyBox = (await dialog
+      .locator(":scope > .modal-body")
+      .boundingBox())!;
+    if (actionsBox.y < headingGroup.y + headingGroup.height) {
+      expect(actionsBox.x).toBeGreaterThanOrEqual(
+        headingGroup.x + headingGroup.width,
+      );
+      expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(closeBox.x);
+    } else {
+      expect(actionsBox.y).toBeGreaterThanOrEqual(closeBox.y + closeBox.height);
+      expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(
+        closeBox.x + closeBox.width,
+      );
+    }
+    expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(bodyBox.y);
+    for (const button of await actions.getByRole("button").all()) {
+      await expect(button).toBeInViewport();
+    }
+  };
+  await headerActionsFit();
   await dialog.screenshot({
     path: info.outputPath("task-detail-organized.png"),
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await dialog.locator(".task-detail-meta summary").click();
-  await expect(dialog.locator("code")).toHaveText(taskIds[0]);
+  await aligned();
+  await headerActionsFit();
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
     true,
   );
   await dialog.screenshot({
     path: info.outputPath("task-detail-mobile.png"),
   });
-  await dialog.getByRole("button", { name: "설명 수정", exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  await aligned();
+  await headerActionsFit();
+  await dialog.getByRole("button", { name: "문서 전체 페이지로 보기" }).click();
+  await headerActionsFit();
+  await expect(dialog.locator(".task-detail-year")).toBeVisible();
+  await expect(dialog.locator(".task-detail-properties")).toBeVisible();
+  await expect(description).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "상태 수정", exact: true }),
+  ).toBeEnabled();
+  await dialog.screenshot({
+    path: info.outputPath("task-detail-full-page-mobile.png"),
+  });
+  await dialog
+    .getByRole("button", { name: "전체 페이지 닫기", exact: true })
+    .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await description.fill("상세 창에서 바로 수정\n두 번째 줄");
+  await dialog
+    .getByRole("button", { name: "목표일 수정", exact: true })
+    .click();
+  const calendar = dialog.getByRole("dialog", { name: "목표일 편집 달력" });
+  await expect(calendar).toBeVisible();
+  await dialog.getByRole("textbox", { name: "목표일 편집" }).fill("20260230");
+  await dialog.getByRole("textbox", { name: "목표일 편집" }).press("Enter");
+  await expect(dialog.getByRole("alert")).toContainText("유효한 날짜");
+  await dialog.getByRole("textbox", { name: "목표일 편집" }).fill("20261030");
+  await calendar
+    .getByRole("button", { name: "2026년 10월 31일", exact: true })
+    .click();
+  await expect(calendar).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "목표일 수정", exact: true }),
+  ).toContainText("2026-10-31");
+  await dialog.getByRole("spinbutton", { name: "Score 편집" }).fill("12.5");
+  await dialog.getByRole("button", { name: "상태 수정", exact: true }).click();
+  const status = dialog.getByRole("listbox", {
+    name: "상태 편집",
+    exact: true,
+  });
+  await expect(status).toBeVisible();
+  await status.getByRole("option", { name: "완료", exact: true }).click();
+  await expect(status).toHaveCount(0);
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  await dialog.getByRole("button", { name: "팀원 수정", exact: true }).click();
+  const members = dialog.getByRole("listbox", {
+    name: "팀원 편집",
+    exact: true,
+  });
+  await expect(members).toBeVisible();
+  await members
+    .getByRole("option", { name: boot.user.name, exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "지원자 수정", exact: true })
+    .click();
+  const supporters = dialog.getByRole("listbox", {
+    name: "지원자 편집",
+    exact: true,
+  });
+  await supporters
+    .getByRole("option", { name: boot.user.name, exact: true })
+    .click();
+  await expect(supporters).toBeVisible();
+  await page.screenshot({
+    path: info.outputPath("task-property-dropdown-mobile.png"),
+  });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const description = page.locator(`[data-cell="${taskIds[0]}:description"]`);
-  await expect(description.getByRole("textbox")).toBeFocused();
-  await description.getByRole("textbox").fill("상세 창에서 이동하여 수정");
-  await description.getByRole("textbox").press("Tab");
-  await expect(description).toHaveText("상세 창에서 이동하여 수정");
+  const tasks = (
+    await (
+      await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+    )
+      .json()
+      .then(unpack)
+  ).tasks;
+  const saved = tasks.find((t: any) => t.id === taskIds[0]);
+  expect(saved.cells.description.value).toBe(
+    "상세 창에서 바로 수정\n두 번째 줄",
+  );
+  expect(saved.cells.deadline.value).toBe("2026-10-31");
+  expect(saved.cells.score.value).toBe(12.5);
+  expect(saved.cells.status.value).toBe("status-completed");
+  expect(saved.cells.owner.value).toBe(boot.user.id);
+  expect(saved.cells.supporters.value).toContain(boot.user.id);
 });
 
 test("주간 날짜 헤더는 월/일 한 줄·절반 너비이며 정렬하지 않는다", async ({
@@ -6347,6 +6494,8 @@ test("묶음·정렬 중에도 새 업무는 미지정 묶음의 맨 아래에 �
   await expect(page.locator(".group-heading").last()).toContainText(
     "분류 미지정",
   );
+  await expect(page.locator('[data-column="owner"]').last()).toHaveText("");
+  await expect(page.locator('[data-column="status"]').last()).toHaveText("");
   await expect(
     page.getByRole("columnheader").filter({
       has: page.getByRole("button", { name: "작업 열 선택", exact: true }),
@@ -6356,6 +6505,8 @@ test("묶음·정렬 중에도 새 업무는 미지정 묶음의 맨 아래에 �
   await expect(page.locator('[data-column="title"]').last()).toHaveText(
     "맨 아래 새 업무",
   );
+  await expect(page.locator('[data-column="owner"]').last()).toHaveText("");
+  await expect(page.locator('[data-column="status"]').last()).toHaveText("");
 });
 
 test("번호 열을 드래그해 순서를 저장하고 묶음 경계 이동은 막는다", async ({
@@ -6992,6 +7143,120 @@ test("셀 범위를 복사하면 빈 값·줄바꿈·서식이 함께 이동하�
     fullPage: true,
   });
 });
+
+for (const mixed of [false, true])
+  test(`행 클립보드는 ${mixed ? "지정한 선·없음과 나머지 열의" : "서식을 지정하지 않은 행의"} 기본 격자선을 보존한다`, async ({
+    page,
+  }) => {
+    const sourceId = taskIds[0];
+    const tasks = (
+      await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      )
+        .json()
+        .then(unpack)
+    ).tasks;
+    const source = tasks.find((task: any) => task.id === sourceId);
+    if (mixed)
+      await post(page, "/cells/batch", {
+        operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        changes: Object.entries({
+          title: { borderBottom: { style: "solid", color: "#335577" } },
+          status: { borderRight: { style: "dashed", color: "#856060" } },
+          category: { borderBottom: { style: "double", color: "#2255aa" } },
+          owner: { borderBottom: { style: "none", color: "#607984" } },
+        }).map(([key, style]) => ({
+          taskId: sourceId,
+          key,
+          expectedVersion: source.cells[key]?.version || 0,
+          style,
+        })),
+      });
+    const targets = [];
+    const inherited = { style: "thick", color: "#dd2244" };
+    for (const title of ["앱 클립보드 대상", "HTML 클립보드 대상"])
+      targets.push(
+        (
+          await post(page, "/tasks", {
+            teamId,
+            year: 2026,
+            copiedRow: {
+              defaultStyle: {
+                ...source.defaultStyle,
+                borderRight: inherited,
+              },
+              cells: { title: { value: title, style: {} } },
+            },
+          })
+        ).task,
+      );
+    await page.reload();
+    const at = (id: string, key: string) =>
+      page.locator(`[data-cell="${id}:${key}"]`);
+    const rowBorders = (id: string) =>
+      page.locator(`[data-row-id="${id}"] .sheet-cell`).evaluateAll((cells) =>
+        Object.fromEntries(
+          cells.map((element) => {
+            const style = getComputedStyle(element);
+            return [
+              element.getAttribute("data-column"),
+              [
+                style.borderRightWidth,
+                style.borderRightStyle,
+                style.borderRightColor,
+                style.borderBottomWidth,
+                style.borderBottomStyle,
+                style.borderBottomColor,
+              ],
+            ];
+          }),
+        ),
+      );
+    await expect(at(sourceId, "title")).toHaveCSS("border-right-width", "1px");
+    await expect(at(sourceId, "owner")).toHaveCSS(
+      "border-bottom-width",
+      mixed ? "0px" : "1px",
+    );
+    await page.locator(`[data-row-id="${sourceId}"] .row-select`).click();
+    const copied = await copyContents(page);
+    const expected = await rowBorders(sourceId);
+    // Exercise both the app format and the HTML fallback through the real grid handlers.
+    for (const [index, target] of targets.entries()) {
+      await expect(at(target.id, "title")).toHaveCSS(
+        "border-right-width",
+        "3px",
+      );
+      await page
+        .locator(`[data-row-id="${target.id}"] .sheet-cell`)
+        .first()
+        .click();
+      await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/api/cells/batch") && response.ok(),
+        ),
+        pasteContents(
+          page,
+          index ? { "text/html": copied["text/html"] } : copied,
+        ),
+      ]);
+      await expect(at(target.id, "title")).toHaveText("첫 업무");
+      await expect.poll(() => rowBorders(target.id)).toEqual(expected);
+      await page.getByRole("button", { name: "실행취소", exact: true }).click();
+      await expect(at(target.id, "title")).toHaveText(target.cells.title.value);
+      await expect(at(target.id, "title")).toHaveCSS(
+        "border-right-width",
+        "3px",
+      );
+      await page.getByRole("button", { name: "재실행", exact: true }).click();
+      await expect.poll(() => rowBorders(target.id)).toEqual(expected);
+    }
+    await page.reload();
+    await expect(at(sourceId, "title")).toBeVisible();
+    for (const target of targets)
+      await expect.poll(() => rowBorders(target.id)).toEqual(expected);
+  });
 
 test("복사한 HTML은 서식을 유지하고 일반 텍스트는 대상 서식을 보존한다", async ({
   page,
@@ -10021,499 +10286,6 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
   }
 });
 
-test("스냅샷·필터 버튼은 나란히 표시하고 스냅샷에서는 저장된 필터를 잠근 뒤 이전 보기를 복원한다", async ({
-  page,
-}, info) => {
-  await setTaskCells(page, [
-    { index: 0, key: "status", value: "status-planned" },
-    { index: 1, key: "status", value: "status-completed" },
-    { index: 2, key: "status", value: "status-progress" },
-  ]);
-  const snapshot = await post(page, "/reports", {
-    teamId,
-    year: 2026,
-    name: "머리글 조건을 조정할 스냅샷",
-    referenceDate: "2026-10-13",
-    view: {
-      ...defaultView(2026),
-      propertyFilters: { status: ["status-planned", "status-completed"] },
-      propertyFilterModes: { status: "include" },
-    },
-    taskIds,
-  });
-  await post(page, "/reports", {
-    teamId,
-    year: 2026,
-    name: "전환할 스냅샷",
-    referenceDate: "2026-10-13",
-    view: defaultView(2026),
-    taskIds,
-  });
-  for (const [name, mode] of [
-    ["완료 제외", "exclude"],
-    ["완료만", "include"],
-  ]) {
-    const response = await page.request.put("/api/filters", {
-      headers: { "X-Requested-With": "WeeklyPlan" },
-      data: {
-        teamId,
-        scope: "team",
-        name,
-        data: {
-          propertyFilters: { status: ["status-completed"] },
-          propertyFilterModes: { status: mode },
-        },
-      },
-    });
-    expect(response.ok(), await response.text()).toBeTruthy();
-  }
-  const filters = async () =>
-    (await page.request.get(`/api/filters?teamId=${teamId}`)).json();
-  const savedSnapshot = async () =>
-    (await page.request.get(`/api/reports/${snapshot.id}`)).json().then(unpack);
-  const originalSnapshot = await savedSnapshot();
-  const savedFilterButton = page.getByRole("button", {
-    name: "저장된 필터",
-    exact: true,
-  });
-  const choose = async (name: string) => {
-    await savedFilterButton.click();
-    await page
-      .locator(".saved-views")
-      .getByRole("button", { name, exact: true })
-      .click();
-  };
-  const open = async (name = "머리글 조건을 조정할 스냅샷") => {
-    await page
-      .getByRole("button", { name: "보고서 스냅샷", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "보고서 스냅샷", exact: true })
-      .getByRole("button", { name: new RegExp(name) })
-      .click();
-    await expect(page.getByRole("grid")).toHaveAttribute(
-      "aria-readonly",
-      "true",
-    );
-    await expect(savedFilterButton).toBeDisabled();
-    await expect(savedFilterButton).toHaveAttribute("aria-expanded", "false");
-    await expect(page.locator(".saved-views")).toHaveCount(0);
-  };
-  const statusFilter = async (values: string[]) => {
-    await page
-      .getByRole("button", { name: "상태 열 선택", exact: true })
-      .click({ button: "right" });
-    const menu = page.getByRole("group", {
-      name: "상태 필터 선택",
-      exact: true,
-    });
-    for (const name of ["예정", "진행 중", "완료"])
-      await menu
-        .getByRole("checkbox", { name, exact: true })
-        .setChecked(values.includes(name));
-    await page.keyboard.press("Escape");
-  };
-  const checkButtons = async () => {
-    const reportBox = (await page
-      .getByRole("button", { name: "보고서 스냅샷", exact: true })
-      .boundingBox())!;
-    const filterBox = (await page
-      .locator(".saved-filter-control")
-      .boundingBox())!;
-    expect(reportBox.x + reportBox.width).toBeLessThanOrEqual(filterBox.x);
-    expect(filterBox.x - reportBox.x - reportBox.width).toBeLessThanOrEqual(6);
-    expect(Math.abs(reportBox.y - filterBox.y)).toBeLessThan(1);
-    expect(reportBox.height).toBe(filterBox.height);
-    expect(reportBox.height).toBe(40);
-    expect(filterBox.x + filterBox.width).toBeLessThanOrEqual(
-      page.viewportSize()!.width,
-    );
-    if (page.viewportSize()!.width >= 1366) {
-      const calendar = await page.locator(".period-scroll").evaluate((el) => ({
-        viewport: el.clientWidth,
-        content: el.scrollWidth,
-      }));
-      expect(calendar.content).toBeLessThanOrEqual(calendar.viewport + 1);
-    }
-    await expect(
-      page
-        .locator(".top-navigation")
-        .getByRole("button", { name: "보고서 스냅샷", exact: true }),
-    ).toHaveCount(0);
-  };
-  const reportBanner = page.getByRole("region", {
-    name: "스냅샷 보기",
-    exact: true,
-  });
-  const filterBanner = page.getByRole("region", {
-    name: "필터 보기",
-    exact: true,
-  });
-  const close = () =>
-    reportBanner.getByRole("button", { name: "스냅샷 보기 종료" }).click();
-  const titles = page.locator('[data-column="title"]');
-  const header = page.locator('[data-header-key="title"]');
-  const rowHeader = page.locator(".sheet-row .row-number").first();
-  const background = (locator: Locator) =>
-    locator.evaluate((el) => getComputedStyle(el).backgroundColor);
-  await checkButtons();
-  const liveHeaderColor = await background(header);
-  await choose("완료 제외");
-  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
-  const liveId = (await filters()).filters.find(
-    (f: any) => f.name === "완료 제외",
-  ).id;
-  await expect
-    .poll(async () => (await filters()).current.selectedId)
-    .toBe(liveId);
-  const originalFilters = await filters();
-  const filterHeaderColor = await background(header);
-  const filterRowColor = await background(rowHeader);
-
-  // 기존 선택은 보관하고 스냅샷에 저장된 조건과 색상으로 시작한다.
-  await open();
-  await expect(reportBanner).toBeVisible();
-  await expect(filterBanner).toHaveCount(0);
-  await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
-  expect(await filters()).toEqual(originalFilters);
-  const reportHeaderColor = await background(header);
-  expect(reportHeaderColor).not.toBe(filterHeaderColor);
-  expect(await background(rowHeader)).not.toBe(filterRowColor);
-  await page.screenshot({
-    path: info.outputPath("snapshot-filter-disabled.png"),
-    animations: "disabled",
-  });
-  await page.setViewportSize({ width: 640, height: 900 });
-  await checkButtons();
-  await expect(savedFilterButton).toBeDisabled();
-  await page.screenshot({
-    path: info.outputPath("snapshot-filter-disabled-compact.png"),
-    animations: "disabled",
-  });
-  await page.setViewportSize({ width: 1366, height: 900 });
-
-  // 머리글 필터는 읽기 전용 스냅샷에서도 바꿀 수 있고 원본에는 저장하지 않는다.
-  await statusFilter(["완료", "진행 중"]);
-  await expect(titles).toHaveText(["숨길 업무", "셋째 업무"]);
-  await expect(header).toHaveCSS("background-color", reportHeaderColor);
-  await expect(filterBanner).toHaveCount(0);
-  await titles.first().dblclick();
-  await expect(page.locator(".inline-editor")).toHaveCount(0);
-  expect(await filters()).toEqual(originalFilters);
-  expect(await savedSnapshot()).toEqual(originalSnapshot);
-  await open("전환할 스냅샷");
-  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
-  await statusFilter(["진행 중"]);
-  await expect(titles).toHaveText(["셋째 업무"]);
-  await close();
-  await expect(reportBanner).toHaveCount(0);
-  await expect(savedFilterButton).toBeEnabled();
-  await expect(filterBanner.locator("strong")).toHaveText("완료 제외");
-  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
-  await expect(header).toHaveCSS("background-color", filterHeaderColor);
-  await expect(rowHeader).toHaveCSS("background-color", filterRowColor);
-  await expect(page.getByRole("grid")).toHaveAttribute(
-    "aria-readonly",
-    "false",
-  );
-  expect(await filters()).toEqual(originalFilters);
-  await page.reload();
-  await expect(titles).toHaveText(["첫 업무", "셋째 업무"]);
-  await expect(filterBanner.locator("strong")).toHaveText("완료 제외");
-  expect(await filters()).toEqual(originalFilters);
-
-  // 다시 진입하면 그 시점의 선택을 보관하고, 업무로 돌아가기로도 복원한다.
-  await choose("완료만");
-  await expect(titles).toHaveText(["숨길 업무"]);
-  await open();
-  await page
-    .getByRole("button", { name: "업무로 돌아가기", exact: true })
-    .click();
-  await expect(titles).toHaveText(["숨길 업무"]);
-  await expect(filterBanner.locator("strong")).toHaveText("완료만");
-  await expect(savedFilterButton).toBeEnabled();
-
-  // 선택된 필터가 없었던 화면과 저장하지 않은 머리글 조건도 각각 복원한다.
-  await filterBanner.getByRole("button", { name: "필터 보기 종료" }).click();
-  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
-  await expect.poll(async () => (await filters()).current.selectedId).toBe("");
-  const unfiltered = await filters();
-  await open();
-  await statusFilter(["진행 중"]);
-  await close();
-  await expect(page.locator(".active-filter-banner")).toHaveCount(0);
-  await expect(titles).toHaveText(["첫 업무", "숨길 업무", "셋째 업무"]);
-  await expect(header).toHaveCSS("background-color", liveHeaderColor);
-  expect(await filters()).toEqual(unfiltered);
-  await statusFilter(["진행 중"]);
-  await expect(titles).toHaveText(["셋째 업무"]);
-  await expect
-    .poll(async () => (await filters()).current.data.propertyFilters.status)
-    .toEqual(["status-progress"]);
-  const manualFilters = await filters();
-  await open();
-  await statusFilter(["완료"]);
-  await expect(titles).toHaveText(["숨길 업무"]);
-  await close();
-  await expect(titles).toHaveText(["셋째 업무"]);
-  await expect(page.locator(".active-filter-banner")).toHaveCount(0);
-  expect(await filters()).toEqual(manualFilters);
-  expect(await savedSnapshot()).toEqual(originalSnapshot);
-});
-
-test("스냅샷은 다른 연도로 전환해도 닫기와 삭제 후 직전 필터와 배치를 복원한다", async ({
-  page,
-}, info) => {
-  const snapshot = await post(page, "/reports", {
-    teamId,
-    year: 2026,
-    name: "2026 보관 화면",
-    referenceDate: "2026-10-12",
-    view: { ...defaultView(2026), startMonth: 10, widths: { title: 390 } },
-    taskIds,
-  });
-  const pastTask = (
-    await post(page, "/tasks", {
-      teamId,
-      year: 2025,
-      fields: { title: "2025 기록 업무" },
-    })
-  ).task;
-  const past = await post(page, "/reports", {
-    teamId,
-    year: 2025,
-    name: "2025 보관 화면",
-    referenceDate: "2025-05-12",
-    view: defaultView(2025),
-    taskIds: [pastTask.id],
-  });
-  const liveTask = (
-    await post(page, "/tasks", {
-      teamId,
-      year: 2027,
-      fields: { title: "현재 2027 업무" },
-    })
-  ).task;
-  await post(page, "/cells/batch", {
-    operationId: randomUUID(),
-    createdAt: new Date().toISOString(),
-    changes: [
-      {
-        taskId: taskIds[0],
-        key: "title",
-        value: "저장 후 바꾼 원본",
-        expectedVersion: 1,
-      },
-    ],
-  });
-  await chooseYear(page, 2027);
-  await expect(page.locator(`[data-cell="${liveTask.id}:title"]`)).toHaveText(
-    "현재 2027 업무",
-  );
-  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
-  await page
-    .getByRole("button", { name: "현재 필터 저장", exact: true })
-    .click();
-  await page.getByLabel("필터 이름", { exact: true }).fill("복원할 필터");
-  await page
-    .locator("dialog")
-    .getByRole("button", { name: "저장", exact: true })
-    .click();
-  await expect(page.locator("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
-  await page.getByRole("button", { name: "복원할 필터", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: "필터 보기", exact: true }),
-  ).toContainText("복원할 필터");
-  const grid = page.getByRole("grid");
-  await grid.evaluate((el) => {
-    el.scrollLeft = 270;
-  });
-  const scroll = await grid.evaluate((el) => el.scrollLeft);
-  await expect
-    .poll(async () =>
-      (await readPreferences(page, teamId, 2027)).views.some(
-        (v: any) => v.name === "__current",
-      ),
-    )
-    .toBe(true);
-  const layoutBefore = (await readPreferences(page, teamId, 2027)).views.find(
-    (v: any) => v.name === "__current",
-  ).data;
-  const open = async (name: string) => {
-    await page
-      .getByRole("button", { name: "보고서 스냅샷", exact: true })
-      .click();
-    await page
-      .locator("dialog")
-      .getByRole("button", { name: new RegExp(name) })
-      .click();
-    await expect(page.locator("dialog")).toHaveCount(0);
-    await expect(
-      page.getByRole("region", { name: "스냅샷 보기", exact: true }),
-    ).toContainText(name);
-  };
-  await open("2026 보관 화면");
-  await expect(page.locator(".year-badge")).toHaveText("2026");
-  await expect(page.locator(".year-value")).toHaveText("2026~2027");
-  await expect(page.locator('[data-header-key="2026-10-05"]')).toBeVisible();
-  await expect(page.locator('[data-header-key="2027-09-27"]')).toBeAttached();
-  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
-    "첫 업무",
-  );
-  await expect(page.locator('[data-header-key="title"]')).toHaveCSS(
-    "width",
-    "390px",
-  );
-  await expect(grid).toHaveAttribute("aria-readonly", "true");
-  await expect(
-    page.getByRole("region", { name: "필터 보기", exact: true }),
-  ).toHaveCount(0);
-  await page.screenshot({ path: info.outputPath("snapshot-banner.png") });
-  await open("2025 보관 화면");
-  await expect(page.locator(".year-badge")).toHaveText("2025");
-  await expect(page.locator(`[data-cell="${pastTask.id}:title"]`)).toHaveText(
-    "2025 기록 업무",
-  );
-  await expect(page.locator('[data-header-key="2025-01-06"]')).toBeAttached();
-  await page
-    .getByRole("button", { name: "스냅샷 보기 종료", exact: true })
-    .click();
-  await expect(
-    page.getByRole("region", { name: "스냅샷 보기", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.locator(".year-badge")).toHaveText("2027");
-  await expect(page.locator(`[data-cell="${liveTask.id}:title"]`)).toHaveText(
-    "현재 2027 업무",
-  );
-  await expect(
-    page.getByRole("region", { name: "필터 보기", exact: true }),
-  ).toContainText("복원할 필터");
-  await expect.poll(() => grid.evaluate((el) => el.scrollLeft)).toBe(scroll);
-  await expect(grid).toHaveAttribute("aria-readonly", "false");
-  expect(
-    (await readPreferences(page, teamId, 2027)).views.find(
-      (v: any) => v.name === "__current",
-    ).data,
-  ).toEqual(layoutBefore);
-  await open("2026 보관 화면");
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "스냅샷 삭제", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: "스냅샷 보기", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.locator(".year-badge")).toHaveText("2027");
-  await expect(
-    page.getByRole("region", { name: "필터 보기", exact: true }),
-  ).toContainText("복원할 필터");
-  expect((await page.request.get(`/api/reports/${snapshot.id}`)).status()).toBe(
-    404,
-  );
-  expect((await page.request.get(`/api/reports/${past.id}`)).status()).toBe(
-    200,
-  );
-  await open("2025 보관 화면");
-  await page
-    .getByRole("button", { name: "보고서 스냅샷", exact: true })
-    .click();
-  const reports = page.getByRole("dialog", {
-    name: "보고서 스냅샷",
-    exact: true,
-  });
-  await reports
-    .getByRole("checkbox", { name: "2025 보관 화면 선택", exact: true })
-    .check();
-  page.once("dialog", (dialog) => dialog.accept());
-  await reports
-    .getByRole("button", { name: "선택 삭제 (1)", exact: true })
-    .click();
-  await expect(reports.locator(".report-item")).toHaveCount(0);
-  await reports.getByRole("button", { name: "닫기", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: "스냅샷 보기", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.locator(".year-badge")).toHaveText("2027");
-  await expect(page.locator(`[data-cell="${liveTask.id}:title"]`)).toHaveText(
-    "현재 2027 업무",
-  );
-  await expect(
-    page.getByRole("region", { name: "필터 보기", exact: true }),
-  ).toContainText("복원할 필터");
-});
-
-test("스냅샷 저장 폼은 이름과 날짜를 한 줄에 배치하고 선택한 목록만 삭제한다", async ({
-  page,
-}, info) => {
-  await page
-    .getByRole("button", { name: "보고서 스냅샷", exact: true })
-    .click();
-  const modal = page.getByRole("dialog", {
-    name: "보고서 스냅샷",
-    exact: true,
-  });
-  const name = modal.getByLabel("보고서 이름", { exact: true });
-  const date = modal.getByLabel("보고 기준일", { exact: true });
-  const save = modal.getByRole("button", {
-    name: "현재 보기 저장",
-    exact: true,
-  });
-  const nameBox = (await name.boundingBox())!,
-    dateBox = (await date.boundingBox())!,
-    saveBox = (await save.boundingBox())!;
-  expect(Math.abs(nameBox.y - dateBox.y)).toBeLessThan(2);
-  expect(dateBox.width).toBeLessThan(170);
-  expect(saveBox.x + saveBox.width).toBeCloseTo(dateBox.x + dateBox.width, 0);
-  for (const title of ["삭제할 첫 기록", "삭제할 둘째 기록", "유지할 기록"]) {
-    await name.fill(title);
-    await save.click();
-    await expect(
-      modal.getByRole("button", { name: new RegExp(title) }),
-    ).toBeVisible();
-  }
-  const items = modal.locator(".report-item");
-  await expect(items).toHaveCount(3);
-  await modal.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
-  await modal
-    .getByRole("checkbox", { name: "유지할 기록 선택", exact: true })
-    .uncheck();
-  await expect(
-    modal.getByRole("checkbox", { name: "전체 선택", exact: true }),
-  ).toBeChecked({ indeterminate: true });
-  await page.screenshot({ path: info.outputPath("snapshot-save-list.png") });
-  const remove = modal.getByRole("button", {
-    name: "선택 삭제 (2)",
-    exact: true,
-  });
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await remove.click();
-  await expect(items).toHaveCount(3);
-  // 실패 시 목록과 체크를 유지하여 재시도할 수 있다.
-  await page.route("**/api/reports", async (route) => {
-    if (route.request().method() === "DELETE")
-      await route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "일시적 삭제 실패" }),
-      });
-    else await route.fallback();
-  });
-  page.once("dialog", (dialog) => dialog.accept());
-  await remove.click();
-  await expect(modal.getByRole("alert")).toContainText("일시적 삭제 실패");
-  await expect(items).toHaveCount(3);
-  await expect(remove).toBeEnabled();
-  await page.unroute("**/api/reports");
-  page.once("dialog", (dialog) => dialog.accept());
-  await remove.click();
-  await expect(items).toHaveCount(1);
-  await expect(items).toContainText("유지할 기록");
-  await expect(
-    modal.getByRole("button", { name: "선택 삭제", exact: true }),
-  ).toBeDisabled();
-  await modal.getByRole("button", { name: "닫기", exact: true }).click();
-  await expect(page.locator('[data-column="title"]')).toHaveCount(3);
-});
-
 test("기본 툴바의 셀 확대율은 편집과 크기 조절에 적용되고 발표 종료 시 복원된다", async ({
   page,
 }, info) => {
@@ -10618,51 +10390,4 @@ test("기본 툴바의 셀 확대율은 편집과 크기 조절에 적용되고 
     .poll(async () => (await cell.boundingBox())!.width)
     .toBeCloseTo(original.width + 40, 0);
   await page.screenshot({ path: info.outputPath("base-zoom-toolbar.png") });
-});
-
-test("스냅샷을 불러오는 중 목록을 닫으면 늦은 응답이 현재 화면을 바꾸지 않는다", async ({
-  page,
-}) => {
-  const snapshot = await post(page, "/reports", {
-    teamId,
-    year: 2026,
-    name: "늦게 도착하는 기록",
-    referenceDate: "2026-10-12",
-    view: defaultView(2026),
-    taskIds,
-  });
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let requested!: () => void;
-  const started = new Promise<void>((resolve) => {
-    requested = resolve;
-  });
-  await page.route(`**/api/reports/${snapshot.id}`, async (route) => {
-    const response = await route.fetch();
-    requested();
-    await pending;
-    await route.fulfill({ response });
-  });
-  await page
-    .getByRole("button", { name: "보고서 스냅샷", exact: true })
-    .click();
-  const modal = page.getByRole("dialog", {
-    name: "보고서 스냅샷",
-    exact: true,
-  });
-  await modal.getByRole("button", { name: /늦게 도착하는 기록/ }).click();
-  await started;
-  await modal.getByRole("button", { name: "닫기", exact: true }).click();
-  await chooseYear(page, 2027);
-  const response = page.waitForResponse((r) =>
-    r.url().endsWith(`/api/reports/${snapshot.id}`),
-  );
-  release();
-  await (await response).finished();
-  await expect(page.locator(".year-badge")).toHaveText("2027");
-  await expect(
-    page.getByRole("region", { name: "스냅샷 보기", exact: true }),
-  ).toHaveCount(0);
 });

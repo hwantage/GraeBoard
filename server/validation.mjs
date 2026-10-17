@@ -1,3 +1,12 @@
+import {
+  MAX_DOCUMENT_BYTES,
+  MAX_TASK_DOCUMENTS,
+  documentBytes,
+} from "../shared/task-documents.js";
+import {
+  normalizeReportName,
+  MAX_REPORT_NAME_LENGTH,
+} from "../shared/report-names.js";
 import { z } from "zod";
 import { BORDER_STYLES } from "../shared/borders.js";
 import {
@@ -21,6 +30,18 @@ export class HttpError extends Error {
 export function requireThat(condition, status, message, details) {
   if (!condition) throw new HttpError(status, message, details);
 }
+export const reportNameSchema = z
+  .string()
+  .transform(normalizeReportName)
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(
+        MAX_REPORT_NAME_LENGTH,
+        `사본 제목은 최대 ${MAX_REPORT_NAME_LENGTH}자까지 입력할 수 있습니다.`,
+      ),
+  );
 export const yearSchema = z.coerce.number().int().min(2000).max(2100);
 export const periodScopeSchema = z
   .object({
@@ -99,6 +120,17 @@ const cellValueSchema = z.union([
   z.number().finite(),
   z.array(z.string().uuid()).max(50),
 ]);
+export const documentSchema = z
+  .object({
+    markdown: z
+      .string()
+      .max(MAX_DOCUMENT_BYTES)
+      .refine(
+        (value) => documentBytes(value) <= MAX_DOCUMENT_BYTES,
+        "문서는 UTF-8 기준 256KiB까지 저장할 수 있습니다.",
+      ),
+  })
+  .strict();
 export const copiedRowSchema = z
   .object({
     cells: z
@@ -114,6 +146,19 @@ export const copiedRowSchema = z
       .refine((cells) => Object.keys(cells).length <= MAX_STYLE_CELLS),
     defaultStyle: styleSchema,
     rowStyle: styleSchema.optional(),
+    documents: z
+      .array(
+        documentSchema.extend({
+          id: z.union([z.literal("main"), z.string().uuid()]),
+          title: z.string().trim().min(1).max(80),
+        }),
+      )
+      .max(MAX_TASK_DOCUMENTS)
+      .refine(
+        (docs) => new Set(docs.map((doc) => doc.id)).size === docs.length,
+        "문서 ID가 중복되었습니다.",
+      )
+      .optional(),
   })
   .strict();
 export const changeSchema = z
@@ -265,7 +310,7 @@ export function validateCellValue(
             requireThat(
               assignableIds.has(v),
               400,
-              "보고본에서 선택할 수 없는 팀원입니다.",
+              "사본에서 선택할 수 없는 팀원입니다.",
             );
           else requireAssignable(db, teamId, v);
         }
@@ -276,7 +321,7 @@ export function validateCellValue(
           requireThat(
             assignableIds.has(value),
             400,
-            "보고본에서 선택할 수 없는 팀원입니다.",
+            "사본에서 선택할 수 없는 팀원입니다.",
           );
         else requireAssignable(db, teamId, value);
       }

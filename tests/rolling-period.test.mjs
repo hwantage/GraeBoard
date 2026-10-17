@@ -12,6 +12,7 @@ import {
   periodYears,
   weeksForPeriod,
   visibleWeeks,
+  movePeriodView,
 } from "../shared/domain.js";
 
 async function fixture(t) {
@@ -99,6 +100,81 @@ async function fixture(t) {
     request,
   };
 }
+
+test("월 이동은 선택한 월을 유지하고 경계에서 같은 개월 수로 밀어낸다", () => {
+  const selectedMonths = (view) =>
+    periodMonths(view.year, view.startMonth)
+      .slice(view.fromMonth - 1, view.toMonth)
+      .map((month) => month.key);
+  let view = { ...defaultView(2026), fromMonth: 11, toMonth: 12 };
+  for (let startMonth = 2; startMonth <= 11; startMonth++) {
+    view = movePeriodView(view, 2026, startMonth);
+    assert.deepEqual(selectedMonths(view), ["2026-11", "2026-12"]);
+  }
+  view = movePeriodView(view, 2026, 12);
+  assert.deepEqual(selectedMonths(view), ["2026-12", "2027-01"]);
+  view = movePeriodView(view, 2027, 1);
+  assert.deepEqual(selectedMonths(view), ["2027-01", "2027-02"]);
+  view = movePeriodView(view, 2026, 12);
+  assert.deepEqual(selectedMonths(view), ["2027-01", "2027-02"]);
+  for (let startMonth = 11; startMonth >= 1; startMonth--)
+    view = movePeriodView(view, 2026, startMonth);
+  assert.deepEqual(selectedMonths(view), ["2026-11", "2026-12"]);
+});
+
+test("주차 선택은 같은 날짜를 유지하고 양 끝에서 주 수를 보존한다", () => {
+  const selected = (view) =>
+    visibleWeeks(view.year, view).map((week) => week.key);
+  const view = {
+    ...defaultView(2026),
+    startMonth: 12,
+    fromWeek: "2026-12-28",
+    toWeek: "2027-01-11",
+  };
+  const nextYear = movePeriodView(view, 2027, 1);
+  assert.deepEqual(selected(nextYear), [
+    "2026-12-28",
+    "2027-01-04",
+    "2027-01-11",
+  ]);
+  assert.deepEqual(selected(movePeriodView(nextYear, 2027, 2)), [
+    "2027-02-01",
+    "2027-02-08",
+    "2027-02-15",
+  ]);
+  assert.deepEqual(selected(movePeriodView(view, 2026, 1)), [
+    "2026-12-14",
+    "2026-12-21",
+    "2026-12-28",
+  ]);
+});
+
+test("월 이동은 전체 기간과 날짜 숨김·업무 필터·표 배치를 보존한다", () => {
+  const view = {
+    ...defaultView(2026),
+    hiddenWeeks: ["2026-11-09"],
+    collapsedMonths: [1, 11],
+    propertyFilters: { title: ["검토"] },
+    hiddenRows: ["hidden-task"],
+    widths: { title: 300 },
+  };
+  const before = structuredClone(view);
+  const next = movePeriodView(view, 2026, 2);
+  assert.deepEqual(next, {
+    ...view,
+    startMonth: 2,
+    collapsedMonths: [10],
+  });
+  assert.deepEqual(view, before);
+  assert.deepEqual(
+    visibleWeeks(2026, next).filter((week) => week.month === 11),
+    [],
+  );
+  for (const year of [2026, 2027, 2028]) {
+    const full = movePeriodView(defaultView(year), year, 2);
+    assert.deepEqual(visibleWeeks(year, full), weeksForPeriod(year, 2));
+  }
+});
 
 test("12개월 달력은 두 해까지만 포함하고 연말 주차를 중복하지 않는다", () => {
   assert.deepEqual(

@@ -15,6 +15,8 @@ export default function CellOptionPicker({
   onChange,
   onCommit,
   onCancel,
+  portalContainer,
+  onDismiss,
 }: {
   label: string;
   options: { value: string; label: string }[];
@@ -25,6 +27,8 @@ export default function CellOptionPicker({
   onChange: (value: Cell["value"]) => void;
   onCommit: (move?: EditMove) => void;
   onCancel: () => void;
+  portalContainer?: HTMLElement;
+  onDismiss?: () => void;
 }) {
   const id = useId();
   const anchor = useRef<HTMLButtonElement>(null);
@@ -35,8 +39,8 @@ export default function CellOptionPicker({
     width: 240,
     maxHeight: 280,
   });
-  const actions = useRef({ onCommit, onCancel, multiple });
-  actions.current = { onCommit, onCancel, multiple };
+  const actions = useRef({ onCommit, onCancel, multiple, onDismiss });
+  actions.current = { onCommit, onCancel, multiple, onDismiss };
   const selected = Array.isArray(value)
     ? value
     : value === ""
@@ -53,14 +57,15 @@ export default function CellOptionPicker({
     .join(", ");
   function close() {
     const current = actions.current;
-    if (current.multiple) current.onCommit();
+    if (current.onDismiss) current.onDismiss();
+    else if (current.multiple) current.onCommit();
     else current.onCancel();
   }
   useLayoutEffect(() => {
     const place = () => {
-      const rect = anchor.current
-        ?.closest(".sheet-cell")
-        ?.getBoundingClientRect();
+      const rect = (
+        anchor.current?.closest(".sheet-cell") || anchor.current
+      )?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(
         Math.max(rect.width, 240),
@@ -233,7 +238,7 @@ export default function CellOptionPicker({
             <p className="cell-options-empty">선택할 항목이 없습니다.</p>
           )}
         </div>,
-        document.body,
+        portalContainer || document.body,
       )}
     </>
   );

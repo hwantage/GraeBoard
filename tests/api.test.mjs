@@ -1228,7 +1228,8 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
   assert.deepEqual(view.visibleFields, ["title", "owner", "status"]);
   assert.equal(view.frozenColumns, 0);
   const created = (await post("/tasks", { teamId: tid, year: 2026 })).data.task;
-  assert.equal(created.cells.status.value, "status-planned");
+  assert.equal(created.cells.status?.value ?? "", "");
+  assert.equal(created.cells.owner?.value ?? "", "");
   assert.equal(created.defaultStyle.fontSize, 9);
   const save = (body) =>
     request(`/teams/${tid}/settings`, { method: "PATCH", body });
@@ -1249,13 +1250,13 @@ test("새 팀은 필수 속성 세 개·상태 다섯 개와 9pt 기본값을 �
   invalid.properties[1].multiple = false;
   invalid.properties[2].values = [];
   assert.equal((await save(invalid)).status, 400);
-  assert.equal(getTask(db, created.id).cells.status.value, "status-planned");
+  assert.equal(getTask(db, created.id).cells.status?.value ?? "", "");
   await batch([
     {
       taskId: created.id,
       key: "status",
       value: "status-completed",
-      expectedVersion: 1,
+      expectedVersion: created.cells.status?.version ?? 0,
     },
   ]);
   settings.properties[2].values.find((v) => v.label === "완료").label = "종료";
@@ -1571,6 +1572,60 @@ test("팀원은 담당 업무를 편집하고 담당자 변경은 관리자에�
     403,
   );
 });
+test("신규 업무는 팀원·상태를 비우며 작성자는 미지정 업무를 편집할 수 있다", async () => {
+  const adminId = (await request("/bootstrap")).data.user.id;
+  for (const cookie of [admin, member]) {
+    const result = await post("/tasks", { teamId, year: 2026 }, cookie);
+    assert.equal(result.status, 201);
+    const created = result.data.task;
+    assert.equal(created.cells.owner?.value ?? "", "");
+    assert.equal(created.cells.status?.value ?? "", "");
+    const changed = await batch(
+      [
+        {
+          taskId: created.id,
+          key: "title",
+          value: "미지정 업무 편집",
+          expectedVersion: created.cells.title.version,
+        },
+        {
+          taskId: created.id,
+          key: "status",
+          value: "status-completed",
+          expectedVersion: created.cells.status?.version ?? 0,
+        },
+      ],
+      cookie,
+    );
+    assert.equal(changed.status, 200);
+    const stored = getTask(db, created.id);
+    assert.equal(stored.cells.title.value, "미지정 업무 편집");
+    assert.equal(stored.cells.owner?.value ?? "", "");
+    assert.equal(stored.cells.status.value, "status-completed");
+  }
+  assert.equal(
+    (await post("/tasks", { teamId, year: 2026 }, viewer)).status,
+    403,
+  );
+  assert.equal(
+    (
+      await post(
+        "/tasks",
+        { teamId, year: 2026, fields: { owner: adminId } },
+        member,
+      )
+    ).status,
+    403,
+  );
+  const assigned = await post("/tasks", {
+    teamId,
+    year: 2026,
+    fields: { owner: memberId, status: "status-completed" },
+  });
+  assert.equal(assigned.status, 201);
+  assert.equal(assigned.data.task.cells.owner.value, memberId);
+  assert.equal(assigned.data.task.cells.status.value, "status-completed");
+});
 test("충돌이 포함된 범위 수정은 모든 셀을 원상태로 유지한다", async () => {
   const before = getTask(db, task.id);
   const r = await batch([
@@ -1845,7 +1900,7 @@ test("스냅샷 선택 삭제는 팀장 권한과 팀 범위를 검사하고 전
       body: { teamId: team, ids },
       cookie,
     });
-  for (const cookie of [member, viewer, other])
+  for (const cookie of [viewer, other])
     assert.equal((await remove(teamId, [foreign], cookie)).status, 403);
   assert.equal((await remove(tid, [], member)).status, 400);
   assert.equal((await remove(tid, [first, foreign], member)).status, 404);
@@ -2013,7 +2068,7 @@ test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 �
   assert.equal(c.font.size, 18);
   assert.equal(c.fill.fgColor.argb, "FFFFEEAA");
   const data = await post("/export", { ...body, format: "json" });
-  assert.equal(data.data.schemaVersion, 3);
+  assert.equal(data.data.schemaVersion, 5);
   assert.deepEqual(Object.keys(data.data.tasks[0].cells).sort(), [
     "2026-10-05",
     "title",

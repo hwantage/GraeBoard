@@ -5,7 +5,11 @@ import { createApp } from "../server/app.mjs";
 import { openDatabase } from "../server/db.mjs";
 const dir = mkdtempSync(join(tmpdir(), "weekly-plan-browser-"));
 const db = openDatabase(join(dir, "test.sqlite"));
-const app = createApp({ db, rateLimits: false }),
+const app = createApp({
+    db,
+    rateLimits: false,
+    documentImagesDir: join(dir, "images"),
+  }),
   server = app.listen(4311, "127.0.0.1", async () => {
     await fetch("http://127.0.0.1:4311/api/auth/setup", {
       method: "POST",

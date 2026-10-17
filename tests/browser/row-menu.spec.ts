@@ -119,7 +119,10 @@ test("행 메뉴는 위·아래 삽입과 복사 당시 행 붙여넣기·삭제
   await menu(page, pasted.id);
   await page.getByRole("menuitem", { name: "행 삭제", exact: true }).click();
   await expect(copy).toHaveCount(0);
-  await page.getByRole("button", { name: "실행취소", exact: true }).click();
+  await page
+    .locator(".toast")
+    .getByRole("button", { name: "실행취소", exact: true })
+    .click();
   await expect(copy).toHaveText("첫 업무");
   await page.reload();
   await expect(titles).toHaveText([
@@ -130,6 +133,92 @@ test("행 메뉴는 위·아래 삽입과 복사 당시 행 붙여넣기·삭제
     "셋째 업무",
     "첫 업무",
   ]);
+});
+
+test("떨어진 여러 행을 함께 삭제·실행취소하고 변경 이력에서 복구한다", async ({
+  page,
+}) => {
+  await expect(
+    page.getByRole("button", { name: "휴지통", exact: true }),
+  ).toHaveCount(0);
+  await page.locator(`[data-row-id="${taskIds[0]}"] .row-select`).click();
+  await page
+    .locator(`[data-row-id="${taskIds[2]}"] .row-select`)
+    .click({ modifiers: ["ControlOrMeta"] });
+  await menu(page, taskIds[0]);
+  await expect(
+    page.getByRole("menuitem", { name: "복사", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("menuitem", { name: "행 삭제", exact: true }).click();
+  const titles = page.locator('[data-column="title"]');
+  await expect(titles).toHaveText(["둘째 업무"]);
+  const toast = page.locator(".toast");
+  await expect(toast).toContainText("2개 업무를 삭제했습니다.");
+  await toast.getByRole("button", { name: "실행취소", exact: true }).click();
+  await expect(titles).toHaveText(["첫 업무", "둘째 업무", "셋째 업무"]);
+  await page.getByRole("button", { name: "재실행", exact: true }).click();
+  await expect(titles).toHaveText(["둘째 업무"]);
+  await page.getByRole("button", { name: "변경 이력", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "변경 이력", exact: true });
+  const deletions = history
+    .locator("details")
+    .filter({ has: page.getByText("업무 삭제", { exact: true }) });
+  await deletions.nth(0).locator("summary").click();
+  await deletions
+    .nth(0)
+    .getByRole("button", { name: "삭제한 업무 복구" })
+    .click();
+  await deletions.nth(1).locator("summary").click();
+  await deletions
+    .nth(1)
+    .getByRole("button", { name: "삭제한 업무 복구" })
+    .click();
+  await history.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(titles).toHaveText(["첫 업무", "둘째 업무", "셋째 업무"]);
+});
+
+test("행 삭제 알림은 후속 편집을 되돌리는 버튼으로 남지 않는다", async ({
+  page,
+}) => {
+  await menu(page, taskIds[0]);
+  await page.getByRole("menuitem", { name: "행 삭제", exact: true }).click();
+  const toast = page.locator(".toast");
+  await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
+  await editTitle(page, taskIds[1], "삭제 이후 편집");
+  await expect(toast).toHaveCount(0);
+  await page
+    .locator('.format-toolbar[aria-label="셀 서식 도구"]')
+    .getByRole("button", { name: "실행취소", exact: true })
+    .click();
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "둘째 업무",
+    "셋째 업무",
+  ]);
+  await expect(toast.getByRole("button")).toHaveCount(0);
+});
+
+test("다중 행 삭제는 숨긴 행을 제외하고 선택한 보이는 행만 삭제한다", async ({
+  page,
+}) => {
+  await menu(page, taskIds[1]);
+  await page.getByRole("menuitem", { name: "행 숨기기", exact: true }).click();
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "첫 업무",
+    "셋째 업무",
+  ]);
+  await page.locator(`[data-row-id="${taskIds[0]}"] .row-select`).click();
+  await page
+    .locator(`[data-row-id="${taskIds[2]}"] .row-select`)
+    .click({ modifiers: ["Shift"] });
+  await menu(page, taskIds[0]);
+  await page.getByRole("menuitem", { name: "행 삭제", exact: true }).click();
+  await expect(page.locator('[data-column="title"]')).toHaveCount(0);
+  const result = await (
+    await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+  )
+    .json()
+    .then(unpack);
+  expect(result.tasks.map((t: any) => t.id)).toEqual([taskIds[1]]);
 });
 
 test("점선이 있는 행을 복사해 같은 행에서 붙여넣으면 내용과 서식을 그대로 보존한다", async ({
@@ -562,6 +651,19 @@ test("묶음 안에 삽입하면 해당 선택값만 유지하고 헤더에 묶�
         expectedVersion: 0,
         value: "o_design",
         style: { backgroundColor: "#ddedd6" },
+      },
+      // New tasks are unassigned; set the group values explicitly.
+      {
+        taskId: taskIds[1],
+        key: "owner",
+        expectedVersion: 0,
+        value: boot.user.id,
+      },
+      {
+        taskId: taskIds[1],
+        key: "status",
+        expectedVersion: 0,
+        value: "status-planned",
       },
     ],
   });

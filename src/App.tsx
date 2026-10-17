@@ -1,4 +1,6 @@
 import Select from "./Select";
+import LoadingState from "./LoadingState";
+import SheetTabs from "./SheetTabs";
 import { getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";
@@ -20,15 +22,12 @@ import {
   Download,
   Upload,
   History,
-  FileClock,
   Trash2,
   Settings,
   Check,
-  LoaderCircle,
   CloudOff,
   Bookmark,
   X,
-  ArrowLeft,
   Presentation,
   Pencil,
   Users,
@@ -52,6 +51,7 @@ import {
   defaultView,
   visibleWeeks,
   weeksForPeriod,
+  movePeriodView,
   filteredTasks,
   cell,
   value,
@@ -120,9 +120,7 @@ import {
   RowPanel,
   ExportPanel,
   ImportPanel,
-  ReportsPanel,
   HistoryPanel,
-  TrashPanel,
   PasswordPanel,
 } from "./Panels";
 
@@ -205,10 +203,7 @@ export default function App() {
   }, []);
   if (!authReady)
     return (
-      <div className="app-loading">
-        <LoaderCircle className="spin" />
-        기록을 불러오고 있습니다
-      </div>
+      <LoadingState className="app-loading" label="기록을 불러오고 있습니다" />
     );
   if (startupError)
     return (
@@ -261,11 +256,14 @@ function Workspace({
     } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
     [error, setError] = useState(""),
-    // 방금 삭제한 보기. 알림이 떠 있는 동안 실행취소로 되살릴 수 있다.
-    [undoToast, setUndoToast] = useState<{
-      message: string;
-      undo: () => Promise<void>;
-    } | null>(null),
+    // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
+    [undoToast, setUndoToast] = useState<
+      | ({ message: string } & (
+          | { kind: "filter"; undo: () => Promise<void> }
+          | { kind: "rows"; sheet: string; target: HistoryEntry | Task[] }
+        ))
+      | null
+    >(null),
     [presentation, setPresentation] = useState(false),
     [gridZoom, setGridZoom] = useState(100),
     [viewMenu, setViewMenu] = useState(false),
@@ -291,7 +289,6 @@ function Workspace({
     [undoStack, setUndoStack] = useState<HistoryEntry[]>([]),
     [redoStack, setRedoStack] = useState<HistoryEntry[]>([]),
     [report, setReport] = useState<Report | null>(null),
-    [deletingReports, setDeletingReports] = useState(false),
     [jump, setJump] = useState<{
       key: string | null;
       taskId?: string;
@@ -310,6 +307,14 @@ function Workspace({
   const filterLoad = useRef(Promise.resolve());
   const reportRef = useRef(report);
   reportRef.current = report;
+  const savedReportDocuments = useRef({
+    reportId: "",
+    sequence: 0,
+    tasks: new Map<
+      string,
+      { sequence: number; hasDocument: boolean; documentCount: number }
+    >(),
+  });
   const currentFilters = useRef<{
     teamId: string;
     data: SavedFilter["data"];
@@ -352,9 +357,9 @@ function Workspace({
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
   const reportDraft = useReportDraft(teamId, user.id);
   const editingReport = !!report && reportDraft.draft?.report.id === report.id;
-  const addTaskLabel = report ? "스냅샷에 업무 추가" : "업무 추가";
-  const viewYear = report?.year ?? year;
-  // 화면 테마는 스냅샷을 포함한 모든 보기에서 현재 팀 설정을 따른다.
+  const addTaskLabel = report ? "사본에 업무 추가" : "업무 추가";
+  const viewYear = report ? view.year : year;
+  // 화면 테마는 사본을 포함한 모든 보기에서 현재 팀 설정을 따른다.
   const themeId = getTheme(team?.settings.theme).id;
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -414,42 +419,58 @@ function Workspace({
     remoteEpoch = useRef(0),
     cellEventCursor = useRef<string | null>(null),
     viewSaver = useRef<null | (() => void)>(null);
-  const reportEditView = useRef<View | null>(null);
   function editTasks() {
     return reportRef.current
       ? reportDraft.ref.current?.tasks || reportRef.current.tasks
       : tasksRef.current;
   }
-  function cancelReportEdit() {
-    if (reportDraft.saving) return;
-    reportDraft.cancel();
-    setEditor(null);
-    editorRef.current = null;
-    setRowTask(null);
-    setSelection(null);
-    setCopiedRow(null);
-    setError("");
-    if (reportEditView.current) {
-      viewRef.current = reportEditView.current;
-      setView(reportEditView.current);
-      reportEditView.current = null;
-    }
+  async function prepareCopySwitch() {
+    if (editorRef.current || pendingRef.current || failedRef.current)
+      throw new Error("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
+    if (reportDraft.ref.current) await reportDraft.save();
   }
-  async function saveReportEdit() {
-    if (editorRef.current || !canManage) return;
+  async function openCopy(id: string | null) {
+    if (filterTeam.current !== teamId || id === (reportRef.current?.id || null))
+      return;
+    const scope = boardKey.current;
+    await prepareCopySwitch();
+    if (!id) {
+      closeReportNow();
+      return;
+    }
+    const r = await api<Report>(`/reports/${id}`);
+    if (filterTeam.current !== teamId || boardKey.current !== scope) return;
+    if (!reportRef.current) {
+      lastView.current = viewRef.current;
+      const grid = workspaceRef.current?.querySelector(".sheet-scroll");
+      reportScroll.current = {
+        left: grid?.scrollLeft || 0,
+        top: grid?.scrollTop || 0,
+      };
+    }
+    flushView();
+    setCopiedRow(null);
+    setRowTask(null);
+    setViewMenu(false);
     setError("");
-    try {
-      const saved = await reportDraft.save();
-      if (!saved || reportRef.current?.id !== saved.id) return;
+    setFilterUpdateNotice(null);
+    setJump(null);
+    setSelectedSavedFilterId("");
+    const next = normalizeView(r.view, r.settings || team.settings) as View;
+    reportRef.current = r;
+    setReport(r);
+    reportDraft.begin(r);
+    viewRef.current = next;
+    setView(next);
+    setSelection(null);
+  }
+  useEffect(() => {
+    const saved = reportDraft.draft?.report;
+    if (saved && saved.id === reportRef.current?.id) {
       reportRef.current = saved;
       setReport(saved);
-      reportEditView.current = null;
-      setCopiedRow(null);
-      setToast("보고본의 변경 내용을 저장했습니다.");
-    } catch (e) {
-      setError((e as Error).message);
     }
-  }
+  }, [reportDraft.draft?.report]);
   useLayoutEffect(() => {
     const grid =
       workspaceRef.current?.querySelector<HTMLElement>(".sheet-scroll");
@@ -460,12 +481,9 @@ function Workspace({
       reportScroll.current = null;
     }
   }, [report?.id, ready]);
-  function closeReport() {
+  function closeReportNow() {
     if (!reportRef.current) return;
-    if (reportDraft.ref.current) {
-      setError("보고본 수정을 저장하거나 취소한 뒤 보기를 종료하세요.");
-      return;
-    }
+    reportDraft.cancel();
     reportRef.current = null;
     setReport(null);
     viewRef.current = lastView.current;
@@ -475,24 +493,36 @@ function Workspace({
     setSelection(null);
     setJump(null);
   }
-  async function deleteReports(ids: string[]) {
-    if (reportDraft.ref.current)
-      throw new Error("보고본 수정을 마친 뒤 삭제하세요.");
-    setDeletingReports(true);
-    try {
-      await api("/reports", {
-        method: "DELETE",
-        body: JSON.stringify({ teamId, ids }),
-      });
-      if (
-        filterTeam.current === teamId &&
-        reportRef.current &&
-        ids.includes(reportRef.current.id)
-      )
-        closeReport();
-    } finally {
-      setDeletingReports(false);
+  function closeReport() {
+    void openCopy(null).catch((e) => setError(e.message));
+  }
+  async function refreshSheet() {
+    const current = reportRef.current;
+    if (!current) {
+      await refresh();
+      return;
     }
+    const latest = await api<Report>(`/reports/${current.id}`);
+    if (reportRef.current?.id !== current.id) return;
+    reportRef.current = latest;
+    setReport(latest);
+    reportDraft.begin(latest);
+    const next = normalizeView(
+      latest.view,
+      latest.settings || team.settings,
+    ) as View;
+    viewRef.current = next;
+    setView(next);
+    setSelection(null);
+  }
+  async function deleteReports(ids: string[]) {
+    await prepareCopySwitch();
+    await api("/reports", {
+      method: "DELETE",
+      body: JSON.stringify({ teamId, ids }),
+    });
+    if (reportRef.current && ids.includes(reportRef.current.id))
+      closeReportNow();
   }
   useLayoutEffect(() => {
     const grid =
@@ -556,6 +586,16 @@ function Workspace({
   viewRef.current = view;
   failedRef.current = failed;
   editorRef.current = editor;
+  const undoToastCurrent =
+    undoToast?.kind !== "rows" ||
+    (undoToast.sheet === `${teamId}:${year}:${report?.id || "original"}` &&
+      undoToast.target ===
+        (report
+          ? reportDraft.draft?.history[reportDraft.draft.cursor]
+          : undoStack.at(-1)));
+  useEffect(() => {
+    if (!undoToastCurrent) setUndoToast(null);
+  }, [undoToastCurrent]);
   useEffect(() => {
     if (undoToast) {
       const timer = setTimeout(() => setUndoToast(null), 8000);
@@ -939,6 +979,7 @@ function Workspace({
     }
     viewRef.current = next;
     setView(next);
+    if (report && canAdd) reportDraft.changeView(next);
     if (
       !report &&
       Object.keys(part).some(
@@ -970,20 +1011,16 @@ function Workspace({
     }
   }
   function moveYear(direction: -1 | 1) {
-    if (
-      !ready ||
-      report ||
-      pendingRef.current ||
-      failedRef.current ||
-      editorRef.current
-    )
+    if (!ready || pendingRef.current || failedRef.current || editorRef.current)
       return;
     const current = viewRef.current;
     const nextYear =
-      direction === -1 && current.startMonth > 1 ? year : year + direction;
+      direction === -1 && current.startMonth > 1
+        ? viewYear
+        : viewYear + direction;
     if (nextYear < 2000 || nextYear > 2100) return;
     const next = fullCalendarView(current, nextYear);
-    if (nextYear === year) changeView(next);
+    if (report || nextYear === year) changeView(next);
     else {
       flushView();
       // Restore this year's personal layout, but always show January–December.
@@ -994,17 +1031,11 @@ function Workspace({
     setJump({ key: null, id: Date.now() });
   }
   function moveCalendar(direction: -1 | 1) {
-    if (
-      !ready ||
-      report ||
-      pendingRef.current ||
-      failedRef.current ||
-      editorRef.current
-    )
+    if (!ready || pendingRef.current || failedRef.current || editorRef.current)
       return;
     const current = viewRef.current;
     const offset = current.startMonth - 1 + direction;
-    const nextYear = year + Math.floor(offset / 12);
+    const nextYear = viewYear + Math.floor(offset / 12);
     const startMonth = (((offset % 12) + 12) % 12) + 1;
     if (
       nextYear < 2000 ||
@@ -1012,8 +1043,8 @@ function Workspace({
       (nextYear === 2100 && startMonth > 1)
     )
       return;
-    const next = fullCalendarView(current, nextYear, startMonth);
-    if (nextYear !== year) {
+    const next = movePeriodView(current, nextYear, startMonth);
+    if (!report && nextYear !== year) {
       flushView();
       calendarNavigation.current = { teamId, year: nextYear, view: next };
       setView(next);
@@ -1075,6 +1106,7 @@ function Workspace({
       const restore = { teamId, ...filter };
       setToast("");
       setUndoToast({
+        kind: "filter",
         message: `‘${filter.name}’ 필터를 삭제했습니다.`,
         async undo() {
           setUndoToast(null);
@@ -1228,7 +1260,7 @@ function Workspace({
     const keys = new Set(columns.map((column) => column.key));
     const available = (point: Point) =>
       taskIds.has(point.taskId) && keys.has(point.key);
-    // 보고본 수정 진입·실행취소 후에도 서식을 계속 적용할 수 있게 한다.
+    // 사본 수정 진입·실행취소 후에도 서식을 계속 적용할 수 있게 한다.
     if (
       selection &&
       [selection, ...(selection.areas || [])].every(
@@ -1270,9 +1302,8 @@ function Workspace({
             : "";
   const editable =
     !!selectedTask &&
-    canEdit(user, selectedTask) &&
-    (!report || (editingReport && canManage)) &&
-    !reportDraft.saving &&
+    (report ? canAdd : canEdit(user, selectedTask)) &&
+    (!report || editingReport) &&
     !failed;
   function getPoints() {
     return selectedPoints(selection, visibleTasks, columns);
@@ -1359,8 +1390,7 @@ function Workspace({
     buildFormat?: () => FormatChange,
   ) {
     if (report) {
-      if (!editingReport || !canManage || reportDraft.saving || presentation)
-        return false;
+      if (!editingReport || !canAdd || presentation) return false;
       try {
         const changes = build();
         const format = buildFormat?.();
@@ -1438,7 +1468,7 @@ function Workspace({
       return points.map((p) => {
         const task = tasksById.get(p.taskId);
         if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
-        if (!canEdit(user, task))
+        if (!(report ? canAdd : canEdit(user, task)))
           throw new Error(
             "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
           );
@@ -1492,7 +1522,7 @@ function Workspace({
         const selected = tasks.filter((t) => ids.has(t.id));
         if (
           selected.length !== ids.size ||
-          selected.some((t) => !canEdit(user, t))
+          selected.some((t) => !(report ? canAdd : canEdit(user, t)))
         )
           throw new Error(
             "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
@@ -1545,7 +1575,7 @@ function Workspace({
     const task = allTasks.find((t) => t.id === p.taskId);
     if (
       !task ||
-      (report && (!editingReport || !canManage || reportDraft.saving)) ||
+      (report && (!editingReport || !canAdd)) ||
       presentation ||
       failed
     )
@@ -1554,13 +1584,16 @@ function Workspace({
       setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
       return false;
     }
-    if (!canEdit(user, task)) {
+    if (!(report ? canAdd : canEdit(user, task))) {
       setError(
         "본인의 책임·지원 업무 또는 관리 권한이 있는 업무를 선택하세요.",
       );
       return false;
     }
-    if (["owner", "supporters"].includes(p.key) && !canManage) {
+    if (
+      ["owner", "supporters"].includes(p.key) &&
+      !(report ? canAdd : canManage)
+    ) {
       setError("담당자 변경은 팀 관리자에게 요청하세요.");
       return false;
     }
@@ -1616,20 +1649,33 @@ function Workspace({
       task,
     });
   }
-  // 추가 실행취소와 삭제·재실행 모두 휴지통을 사용한다.
-  function deleteTasks(
+  // 삭제한 데이터는 실행취소와 변경 이력 복구를 위해 보존한다.
+  async function deleteTasks(
     entry: TaskDeletion | TaskCreation,
     mode: Failed["mode"] = "normal",
   ) {
     if (report) {
-      if (!editingReport || !canManage || reportDraft.saving || presentation)
-        return;
+      if (!editingReport || !canAdd || presentation) return;
       try {
+        const ids = new Set(entry.ids);
+        const documents = await documentsForReportRows(
+          editTasks().filter((task) => ids.has(task.id)),
+        );
+        if (reportDraft.ref.current?.report.id !== report.id) return;
+        reportDraft.preserveDocuments(documents);
         reportDraft.apply({ kind: "delete", taskIds: entry.ids });
         setSelection(null);
-        setToast(
-          "보고본에서 업무를 삭제했습니다. 실행취소로 되돌릴 수 있습니다.",
-        );
+        const deleted = reportDraft.ref.current!;
+        setToast("");
+        setUndoToast({
+          kind: "rows",
+          sheet: `${teamId}:${year}:${report.id}`,
+          target: deleted.history[deleted.cursor],
+          message:
+            entry.ids.length > 1
+              ? `사본에서 ${entry.ids.length}개 업무를 삭제했습니다.`
+              : "사본에서 업무를 삭제했습니다.",
+        });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -1637,26 +1683,39 @@ function Workspace({
     }
     const submittedBoard = boardKey.current;
     return taskOperation(async () => {
-      let nextEntry = entry;
-      for (const id of entry.ids) {
+      const deleting = entry.ids.map((id) => {
         const t = tasksRef.current.find((task) => task.id === id);
         if (!t) throw new Error("이미 삭제되었거나 찾을 수 없는 업무입니다.");
         if (entry.kind === "create" && !canUndoCreation(entry.task, t))
           throw new Error(
             "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
           );
-        const { updatedAt } = await send<{ updatedAt: string }>(
-          `/tasks/${id}`,
-          { updatedAt: t.updatedAt },
-          "DELETE",
-        );
-        if (entry.kind === "create")
-          nextEntry = { ...entry, deletedVersion: updatedAt };
-      }
+        return { id, updatedAt: t.updatedAt };
+      });
+      const { updatedAt } = await send<{ updatedAt: Record<string, string> }>(
+        "/tasks/delete",
+        { tasks: deleting },
+      );
+      const nextEntry = { ...entry, deletedVersions: updatedAt };
       if (boardKey.current !== submittedBoard) return;
       recordTaskResult(entry, mode, nextEntry);
-      setUndoToast(null);
-      setToast(`‘${entry.title}’ 업무를 삭제했습니다.`);
+      setSelection(null);
+      const message =
+        entry.ids.length > 1
+          ? `${entry.ids.length}개 업무를 삭제했습니다.`
+          : `‘${entry.title}’ 업무를 삭제했습니다.`;
+      if (entry.kind === "delete") {
+        setToast("");
+        setUndoToast({
+          kind: "rows",
+          sheet: `${teamId}:${year}:original`,
+          target: nextEntry,
+          message,
+        });
+      } else {
+        setUndoToast(null);
+        setToast(message);
+      }
     });
   }
   function restoreTasks(
@@ -1665,28 +1724,44 @@ function Workspace({
   ) {
     const submittedBoard = boardKey.current;
     return taskOperation(async () => {
-      for (const id of entry.ids) {
-        await send(
-          `/tasks/${id}/restore`,
-          entry.kind === "create" ? { updatedAt: entry.deletedVersion } : {},
-          "POST",
-        );
-      }
+      await send("/tasks/restore", {
+        tasks: entry.ids.map((id) => ({
+          id,
+          updatedAt: entry.deletedVersions?.[id],
+        })),
+      });
       if (boardKey.current !== submittedBoard) return;
       recordTaskResult(entry, mode);
-      setToast(`‘${entry.title}’ 업무를 되살렸습니다.`);
+      setToast(
+        entry.ids.length > 1
+          ? `${entry.ids.length}개 업무를 되살렸습니다.`
+          : `‘${entry.title}’ 업무를 되살렸습니다.`,
+      );
     });
   }
-  function undo(redo = false) {
+  async function undo(redo = false) {
     if (report) {
-      if (
-        editingReport &&
-        canManage &&
-        !reportDraft.saving &&
-        !presentation &&
-        !editorRef.current
-      ) {
-        reportDraft.undo(redo);
+      if (editingReport && canAdd && !presentation && !editorRef.current) {
+        const draft = reportDraft.ref.current;
+        if (!draft) return;
+        const next = draft.history[draft.cursor + (redo ? 1 : -1)];
+        if (!next) return;
+        try {
+          const ids = new Set(next.map((task) => task.id));
+          const documents = await documentsForReportRows(
+            draft.tasks.filter((task) => !ids.has(task.id)),
+          );
+          if (
+            reportDraft.ref.current?.report.id !== draft.report.id ||
+            reportDraft.ref.current?.cursor !== draft.cursor
+          )
+            return;
+          reportDraft.preserveDocuments(documents);
+          reportDraft.undo(redo);
+        } catch (e) {
+          setError((e as Error).message);
+          return;
+        }
         retainReportSelection(reportDraft.ref.current?.tasks || report.tasks);
         setRowTask(null);
         setError("");
@@ -1860,21 +1935,21 @@ function Workspace({
       setError((e as Error).message);
     }
   }
-  function addReportTask(
+  async function addReportTask(
     sourceId?: string,
     target?: Task,
     placement: "before" | "after" = "after",
     copied?: ReturnType<typeof copyRowFormatting>,
   ) {
-    if (
-      !editingReport ||
-      !canManage ||
-      reportDraft.saving ||
-      presentation ||
-      editorRef.current
-    )
-      return;
+    if (!editingReport || !canAdd || presentation || editorRef.current) return;
     try {
+      if (sourceId) {
+        const source = editTasks().find((task) => task.id === sourceId);
+        if (!source) return;
+        const documents = await documentsForCopy(source);
+        if (reportDraft.ref.current?.report.id !== report?.id) return;
+        copied = { ...copyRowFormatting(source), documents };
+      }
       const taskId = crypto.randomUUID();
       const fields =
         !sourceId && !copied && target && view.groupBy
@@ -1977,8 +2052,7 @@ function Workspace({
     placement: "before" | "after",
   ) {
     if (report) {
-      if (!editingReport || !canManage || reportDraft.saving || presentation)
-        return;
+      if (!editingReport || !canAdd || presentation) return;
       try {
         const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
         const target = editTasks().find((task) => task.id === targetId);
@@ -2050,30 +2124,93 @@ function Workspace({
     }
     if (boardKey.current === submittedBoard) await refresh();
   }
-  async function rowCommand(command: RowCommand, selected: Task) {
-    if (report) {
+  async function documentsForReportRows(tasks: Task[]) {
+    const documents = new Map<string, NonNullable<Task["documents"]>>();
+    const stored = new Set(report?.tasks.map((task) => task.id));
+    const pending: string[] = [];
+    for (const task of tasks) {
+      if (task.documents)
+        documents.set(task.id, structuredClone(task.documents));
+      else if (!stored.has(task.id)) documents.set(task.id, []);
+      else pending.push(task.id);
+    }
+    // Fetch fresh metadata even for apparently empty rows: another user may
+    // have added a document since this sheet was loaded. Preserve all results
+    // in one state update instead of remapping the undo history for every row.
+    for (let offset = 0; offset < pending.length;) {
+      const result = await send<{
+        tasks: { id: string; documents: NonNullable<Task["documents"]> }[];
+      }>(`/reports/${report!.id}/documents/batch`, {
+        taskIds: pending.slice(offset, offset + 100),
+      });
+      if (reportDraft.ref.current?.report.id !== report!.id)
+        throw new Error("시트가 변경되었습니다.");
+      for (const task of result.tasks) documents.set(task.id, task.documents);
+      offset += result.tasks.length;
+    }
+    return documents;
+  }
+  async function documentsForCopy(task: Task) {
+    if (task.documents) return structuredClone(task.documents);
+    if (report && !report.tasks.some((t) => t.id === task.id)) return [];
+    const result = await api<{ documents: NonNullable<Task["documents"]> }>(
+      report
+        ? `/reports/${report.id}/tasks/${task.id}/documents?content=1`
+        : `/tasks/${task.id}/documents?content=1`,
+    );
+    return result.documents;
+  }
+
+  async function rowCommand(
+    command: RowCommand,
+    selected: Task,
+    selectedRows = [selected],
+  ) {
+    if (command === "delete") {
       if (
-        !editingReport ||
-        !canManage ||
-        reportDraft.saving ||
+        pendingRef.current ||
+        failedRef.current ||
         presentation ||
         editorRef.current
       )
         return;
+      const byId = new Map(editTasks().map((task) => [task.id, task]));
+      const targets = [...new Set(selectedRows.map((task) => task.id))].map(
+        (id) => byId.get(id),
+      );
+      if (
+        !targets.length ||
+        targets.some(
+          (task) =>
+            !task || !(report ? editingReport && canAdd : canEdit(user, task)),
+        )
+      )
+        return;
+      setError("");
+      await deleteTasks({
+        kind: "delete",
+        ids: targets.map((task) => task!.id),
+        title: String(value(targets[0]!, "title")) || "제목 없는",
+      });
+      return;
+    }
+    if (report) {
+      if (!editingReport || !canAdd || presentation || editorRef.current)
+        return;
       const target = editTasks().find((task) => task.id === selected.id);
       if (!target) return;
       if (command === "copy") {
-        setCopiedRow({
-          task: structuredClone(target),
-          height: view.rowHeights[target.id],
-        });
-        setToast("보고본의 행을 복사했습니다.");
-      } else if (command === "delete") {
-        deleteTasks({
-          kind: "delete",
-          ids: [target.id],
-          title: String(value(target, "title")),
-        });
+        try {
+          const documents = await documentsForCopy(target);
+          if (reportDraft.ref.current?.report.id !== report.id) return;
+          setCopiedRow({
+            task: { ...structuredClone(target), documents },
+            height: view.rowHeights[target.id],
+          });
+          setToast("사본의 행과 문서를 복사했습니다.");
+        } catch (e) {
+          setError((e as Error).message);
+        }
       } else if (command === "paste") {
         if (copiedRow)
           addReportTask(
@@ -2102,20 +2239,20 @@ function Workspace({
     if (!target) return;
     setError("");
     if (command === "copy") {
-      setCopiedRow({
-        task: structuredClone(target),
-        height: view.rowHeights[target.id],
-      });
-      setToast("행의 내용과 서식을 복사했습니다. 붙여넣을 행을 선택하세요.");
-      return;
-    }
-    if (command === "delete") {
-      if (canEdit(user, target))
-        await deleteTasks({
-          kind: "delete",
-          ids: [target.id],
-          title: String(value(target, "title")) || "제목 없는",
+      const board = boardKey.current;
+      try {
+        const documents = await documentsForCopy(target);
+        if (boardKey.current !== board) return;
+        setCopiedRow({
+          task: { ...structuredClone(target), documents },
+          height: view.rowHeights[target.id],
         });
+        setToast(
+          "행의 내용과 서식, 문서를 복사했습니다. 붙여넣을 행을 선택하세요.",
+        );
+      } catch (e) {
+        if (boardKey.current === board) setError((e as Error).message);
+      }
       return;
     }
     if (
@@ -2208,7 +2345,7 @@ function Workspace({
   // 업무 상세 창의 동작. 행 머리글 메뉴(rowCommand)와 달리 서버에 바로 반영한다.
   async function detailAction(action: string) {
     if (!rowTask) return;
-    const t = rowTask;
+    const t = editTasks().find((task) => task.id === rowTask.id) || rowTask;
     setRowTask(null);
     setError("");
     try {
@@ -2408,7 +2545,9 @@ function Workspace({
             className="team-select"
             aria-label="팀 선택"
             value={teamId}
-            disabled={!!pending || !!failed || editingReport}
+            disabled={
+              !!pending || !!failed || reportDraft.dirty || reportDraft.saving
+            }
             onChange={(e) => setTeamId(e.target.value)}
           >
             {boot.teams.map((t) => (
@@ -2420,10 +2559,10 @@ function Workspace({
           {editingReport ? (
             <span className="tag" role="status">
               {reportDraft.saving
-                ? "보고본 저장 중…"
+                ? "사본 저장 중…"
                 : reportDraft.dirty
-                  ? "보고본 변경사항 저장 전"
-                  : "보고본 수정 중"}
+                  ? "사본 저장 대기 중…"
+                  : "저장됨"}
             </span>
           ) : (
             <SaveStatus pending={pending > 0} failed={!!failed} />
@@ -2433,7 +2572,7 @@ function Workspace({
               title="연간 업무"
               active={!report}
               onClick={closeReport}
-              disabled={editingReport}
+              disabled={reportDraft.dirty || reportDraft.saving}
             >
               <CalendarDays size={15} />
               <span>연간 업무</span>
@@ -2441,26 +2580,16 @@ function Workspace({
             <Button
               title="변경 이력"
               onClick={() => setPanel("history")}
-              disabled={editingReport}
+              disabled={reportDraft.dirty || reportDraft.saving}
             >
               <History size={15} />
               <span>변경 이력</span>
             </Button>
-            {canManage && (
-              <Button
-                title="휴지통"
-                onClick={() => setPanel("trash")}
-                disabled={editingReport}
-              >
-                <Trash2 size={15} />
-                <span>휴지통</span>
-              </Button>
-            )}
             {canOpenSettings && (
               <Button
                 title="설정"
                 onClick={() => setPanel("settings")}
-                disabled={editingReport}
+                disabled={reportDraft.dirty || reportDraft.saving}
               >
                 <Settings size={15} />
                 <span>설정</span>
@@ -2471,13 +2600,11 @@ function Workspace({
             user={user}
             onProfile={() => setPanel("profile")}
             onPassword={() => setPanel("password")}
-            logoutDisabled={!!pending || !!failed || editingReport}
+            logoutDisabled={
+              !!pending || !!failed || reportDraft.dirty || reportDraft.saving
+            }
             onLogout={async () => {
-              if (
-                pendingRef.current ||
-                failedRef.current ||
-                reportDraft.ref.current
-              )
+              if (pendingRef.current || failedRef.current || reportDraft.dirty)
                 return;
               flushView();
               await send("/auth/logout", {});
@@ -2489,12 +2616,6 @@ function Workspace({
           <div className="heading-line">
             <h1>{report ? report.name : "연간 업무"}</h1>
             <span className="year-badge">{viewYear}</span>
-            {report && (
-              <span className="tag">
-                {editingReport ? "보고본 수정 중" : "읽기 전용"} ·{" "}
-                {report.referenceDate}
-              </span>
-            )}
           </div>
           {!report && (
             <div
@@ -2542,25 +2663,36 @@ function Workspace({
               <Presentation size={15} />
               발표 모드
             </Button>
-            {report ? (
-              <Button onClick={closeReport} disabled={editingReport}>
-                <ArrowLeft size={16} />
-                업무로 돌아가기
+            {canManage && (
+              <Button
+                disabled={
+                  !ready ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  reportDraft.dirty ||
+                  reportDraft.saving
+                }
+                onClick={() => setPanel("import")}
+              >
+                <Upload size={15} />
+                가져오기
               </Button>
-            ) : (
-              <>
-                {canManage && (
-                  <Button onClick={() => setPanel("import")}>
-                    <Upload size={15} />
-                    가져오기
-                  </Button>
-                )}
-                <Button onClick={() => setPanel("export")}>
-                  <Download size={15} />
-                  내보내기
-                </Button>
-              </>
             )}
+            <Button
+              disabled={
+                !ready ||
+                !!pending ||
+                !!failed ||
+                !!editor ||
+                reportDraft.dirty ||
+                reportDraft.saving
+              }
+              onClick={() => setPanel("export")}
+            >
+              <Download size={15} />
+              내보내기
+            </Button>
           </div>
         </section>
         <section
@@ -2570,15 +2702,12 @@ function Workspace({
               ? activeSavedFilter
                 ? "filter"
                 : report
-                  ? "snapshot"
+                  ? "copy"
                   : undefined
               : undefined
           }
         >
-          <fieldset
-            className="view-controls"
-            disabled={!ready || reportDraft.saving}
-          >
+          <fieldset className="view-controls" disabled={!ready}>
             <div className="date-search-controls">
               <div className="date-controls" aria-label="기간 설정">
                 <div
@@ -2592,9 +2721,8 @@ function Workspace({
                       !ready ||
                       !!pending ||
                       !!failed ||
-                      !!report ||
                       !!editor ||
-                      (year <= 2000 && view.startMonth === 1)
+                      (viewYear <= 2000 && view.startMonth === 1)
                     }
                     onClick={() => moveYear(-1)}
                   >
@@ -2629,9 +2757,8 @@ function Workspace({
                       !ready ||
                       !!pending ||
                       !!failed ||
-                      !!report ||
                       !!editor ||
-                      year >= 2100
+                      viewYear >= 2100
                     }
                     onClick={() => moveYear(1)}
                   >
@@ -2642,9 +2769,7 @@ function Workspace({
                   year={viewYear}
                   view={view}
                   disabled={!ready}
-                  navigationDisabled={
-                    !!pending || !!failed || !!report || !!editor
-                  }
+                  navigationDisabled={!!pending || !!failed || !!editor}
                   onNavigate={moveCalendar}
                   onChange={(range) => {
                     changeView(range);
@@ -2663,32 +2788,13 @@ function Workspace({
             </div>
             <div className="view-bar" aria-label="보기 및 필터">
               <div className="view-mode-controls">
-                <Button
-                  className="report-trigger"
-                  title="보고서 스냅샷"
-                  disabled={
-                    !ready || !!pending || !!failed || !!editor || editingReport
-                  }
-                  onClick={() => setPanel("reports")}
-                >
-                  <FileClock size={14} aria-hidden="true" />
-                  <span>보고서 스냅샷</span>
-                </Button>
                 <div className="popover-root" ref={viewMenuRef}>
-                  <div
-                    className="saved-filter-control"
-                    data-tooltip={
-                      report
-                        ? "스냅샷 보기를 종료하면 저장된 필터를 사용할 수 있습니다."
-                        : undefined
-                    }
-                  >
+                  <div className="saved-filter-control">
                     <button
                       type="button"
                       className="button saved-filter-trigger"
                       aria-label="저장된 필터"
                       aria-expanded={viewMenu}
-                      disabled={!!report}
                       onClick={() => {
                         setViewMenu(!viewMenu);
                         refreshFilters().catch((e) => setError(e.message));
@@ -2699,7 +2805,7 @@ function Workspace({
                       <ChevronDown size={12} aria-hidden="true" />
                     </button>
                   </div>
-                  {viewMenu && !report && (
+                  {viewMenu && (
                     <div className="popover saved-views">
                       <div className="popover-title">
                         <strong>저장된 필터</strong>
@@ -2767,13 +2873,11 @@ function Workspace({
           {(!report || editingReport) && (
             <Toolbar
               leadingAction={
-                (!report ? canAdd : editingReport && canManage) ? (
+                (!report ? canAdd : editingReport && canAdd) ? (
                   <Button
                     className="primary toolbar-add-task"
                     onClick={addTask}
-                    disabled={
-                      !ready || !!pending || !!failed || reportDraft.saving
-                    }
+                    disabled={!ready || !!pending || !!failed}
                   >
                     <Plus size={17} />
                     {addTaskLabel}
@@ -2785,7 +2889,6 @@ function Workspace({
                   tooltip="모든 필터 초기화"
                   disabled={
                     !ready ||
-                    !!report ||
                     !!activeSavedFilter ||
                     !Object.values(view.propertyFilters || {}).some(
                       (values) => values.length > 0,
@@ -2806,116 +2909,18 @@ function Workspace({
               onRedo={() => undo(true)}
               canUndo={
                 report
-                  ? editingReport &&
-                    canManage &&
-                    reportDraft.canUndo &&
-                    !reportDraft.saving &&
-                    !editor
+                  ? editingReport && canAdd && reportDraft.canUndo && !editor
                   : !!undoStack.length && !pending && !failed
               }
               canRedo={
                 report
-                  ? editingReport &&
-                    canManage &&
-                    reportDraft.canRedo &&
-                    !reportDraft.saving &&
-                    !editor
+                  ? editingReport && canAdd && reportDraft.canRedo && !editor
                   : !!redoStack.length && !pending && !failed
               }
               selectionLabel={selectionLabel}
               zoom={gridZoom}
               onZoom={setGridZoom}
             />
-          )}
-          {ready && report && (
-            <section
-              className="active-filter-banner active-report-banner"
-              aria-label="스냅샷 보기"
-            >
-              <FileClock size={17} aria-hidden="true" />
-              <span className="active-filter-heading">
-                <strong title={report.name}>{report.name}</strong>
-                {editingReport && (
-                  <span className="report-edit-note">
-                    일정·서식 변경은 이 보고본에만 저장됩니다.
-                  </span>
-                )}
-              </span>
-              <div className="active-filter-actions">
-                {canManage &&
-                  (editingReport ? (
-                    <>
-                      <Button
-                        className="report-edit-save"
-                        onClick={saveReportEdit}
-                        disabled={reportDraft.saving}
-                      >
-                        {reportDraft.saving ? (
-                          <LoaderCircle size={14} className="spin" />
-                        ) : (
-                          <Check size={14} />
-                        )}
-                        변경 저장
-                      </Button>
-                      <Button
-                        onClick={cancelReportEdit}
-                        disabled={reportDraft.saving}
-                      >
-                        수정 취소
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      onClick={() => {
-                        reportEditView.current = viewRef.current;
-                        reportDraft.begin(report);
-                        retainReportSelection(report.tasks);
-                        setCopiedRow(null);
-                        setUndoToast(null);
-                        setRowTask(null);
-                        setError("");
-                      }}
-                      disabled={
-                        !!pending || !!failed || !!editor || deletingReports
-                      }
-                    >
-                      <Pencil size={14} />
-                      스냅샷 수정
-                    </Button>
-                  ))}
-                {canManage && (
-                  <Button
-                    className="active-filter-delete"
-                    title="스냅샷 삭제"
-                    disabled={deletingReports || editingReport}
-                    onClick={async () => {
-                      if (
-                        !confirm(
-                          `‘${report.name}’ 스냅샷을 삭제할까요? 원본 업무는 유지됩니다.`,
-                        )
-                      )
-                        return;
-                      try {
-                        await deleteReports([report.id]);
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    <Trash2 size={14} />
-                    <span>삭제</span>
-                  </Button>
-                )}
-                <Button
-                  className="active-filter-exit"
-                  title="스냅샷 보기 종료"
-                  onClick={closeReport}
-                  disabled={editingReport}
-                >
-                  <X size={17} />
-                </Button>
-              </div>
-            </section>
           )}
           {ready && activeSavedFilter && (
             <section
@@ -2993,6 +2998,37 @@ function Workspace({
               </div>
             </section>
           )}
+          {reportDraft.error && (
+            <div className="board-error" role="alert">
+              <span>{reportDraft.error}</span>
+              <Button onClick={() => void reportDraft.save().catch(() => {})}>
+                저장 재시도
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (
+                    !report ||
+                    !confirm(
+                      "저장하지 못한 표 변경을 폐기하고 최신 사본을 불러올까요?",
+                    )
+                  )
+                    return;
+                  try {
+                    const latest = await api<Report>(`/reports/${report.id}`);
+                    reportDraft.begin(latest);
+                    reportRef.current = latest;
+                    setReport(latest);
+                    viewRef.current = latest.view;
+                    setView(latest.view);
+                  } catch (e) {
+                    setError((e as Error).message);
+                  }
+                }}
+              >
+                최신 내용 불러오기
+              </Button>
+            </div>
+          )}
           {(error || viewError) && (
             <div className="board-error" role="alert">
               <span>{error || viewError}</span>
@@ -3015,10 +3051,10 @@ function Workspace({
             </div>
           )}
           {!ready ? (
-            <div className="board-loading">
-              <LoaderCircle className="spin" />
-              업무를 불러오는 중
-            </div>
+            <LoadingState
+              className="board-loading"
+              label="업무를 불러오는 중"
+            />
           ) : (
             <Grid
               zoom={gridZoom / 100}
@@ -3031,9 +3067,9 @@ function Workspace({
               user={user}
               users={users}
               assignableUsers={assignableUsers}
-              canAdd={report ? editingReport && canManage : canAdd}
+              canAdd={canAdd}
               addTaskLabel={addTaskLabel}
-              canEditPeople={canManage}
+              canEditPeople={report ? canAdd : canManage}
               selection={selection}
               settings={settings}
               editor={editor}
@@ -3063,7 +3099,7 @@ function Workspace({
                   );
                   return false;
                 }
-                if (!task || !canEdit(user, task)) {
+                if (!task || !(report ? canAdd : canEdit(user, task))) {
                   setError(
                     "업무 편집 권한이 변경되어 저장할 수 없습니다. 입력은 셀에 남아 있습니다.",
                   );
@@ -3088,14 +3124,14 @@ function Workspace({
               onRowMenu={(t) => setRowTask(t)}
               onRowCommand={rowCommand}
               canPasteRow={copiedRow?.task.teamId === teamId}
-              rowActionsDisabled={!!pending || !!editor || reportDraft.saving}
+              rowActionsDisabled={!!pending || !!editor}
               onReorder={reorderTask}
               onView={(part) => changeView(part, true)}
               onAdd={addTask}
               onError={setError}
+              copyEditable={!!report && canAdd}
               readOnly={
-                (!!report && (!editingReport || !canManage)) ||
-                reportDraft.saving ||
+                (!!report && (!editingReport || !canAdd)) ||
                 !!failed ||
                 presentation
               }
@@ -3104,16 +3140,64 @@ function Workspace({
             />
           )}
         </section>
+        {!presentation && (
+          <SheetTabs
+            key={teamId}
+            teamId={teamId}
+            year={year}
+            view={view}
+            taskIds={allTasks.map((task) => task.id)}
+            active={report}
+            canEdit={canAdd}
+            disabled={!ready || !!pending || !!failed || !!editor}
+            status={
+              report
+                ? reportDraft.error
+                  ? "저장 실패"
+                  : reportDraft.saving || reportDraft.dirty
+                    ? "저장 중…"
+                    : "저장됨"
+                : ""
+            }
+            onPrepare={prepareCopySwitch}
+            onSelect={openCopy}
+            onDelete={deleteReports}
+            onRename={(id, name) => {
+              if (reportRef.current?.id === id) {
+                const next = { ...reportRef.current, name };
+                reportRef.current = next;
+                setReport(next);
+                reportDraft.rename(name);
+              }
+            }}
+          />
+        )}
       </main>
-      {undoToast && !presentation ? (
-        <div className="toast" role="status">
-          <Trash2 size={16} />
+      {undoToast && undoToastCurrent && !presentation ? (
+        <div className="toast" role="status" aria-atomic="true">
+          <Trash2 size={16} aria-hidden="true" />
           <span>{undoToast.message}</span>
           <button
+            type="button"
             className="toast-action"
-            onClick={() =>
-              undoToast.undo().catch((e) => setError((e as Error).message))
+            disabled={
+              undoToast.kind === "rows" &&
+              (!!pending || !!failed || !!editor || (!!report && !canAdd))
             }
+            onClick={() => {
+              if (undoToast.kind === "rows") {
+                if (
+                  pendingRef.current ||
+                  failedRef.current ||
+                  editorRef.current
+                )
+                  return;
+                setUndoToast(null);
+                void undo();
+              } else {
+                undoToast.undo().catch((e) => setError((e as Error).message));
+              }
+            }}
           >
             실행취소
           </button>
@@ -3123,18 +3207,126 @@ function Workspace({
       )}
       {rowTask && !editor && (
         <RowPanel
+          key={`${report?.id || "live"}:${rowTask.id}`}
           task={allTasks.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
           user={user}
-          readOnly={
-            !!report && (!editingReport || !canManage || reportDraft.saving)
-          }
+          readOnly={!!report && (!editingReport || !canAdd)}
           reportMode={!!report}
+          copySaveError={report ? reportDraft.error : undefined}
+          onRetryCopySave={() => void reportDraft.save().catch(() => {})}
+          documentReport={
+            report
+              ? {
+                  id: report.id,
+                  revision: report.revision,
+                  isNew: !report.tasks.some((t) => t.id === rowTask.id),
+                }
+              : undefined
+          }
+          onDocumentSaved={(result) => {
+            if (report) {
+              const current = reportRef.current;
+              if (current?.id !== report.id) return;
+              const documents = savedReportDocuments.current;
+              if (documents.reportId !== report.id) {
+                documents.reportId = report.id;
+                documents.tasks.clear();
+              }
+              documents.tasks.set(rowTask.id, {
+                sequence: ++documents.sequence,
+                hasDocument: result.hasDocument,
+                documentCount: result.documentCount,
+              });
+              const next = {
+                ...current,
+                tasks: current.tasks.map((task) =>
+                  task.id === rowTask.id
+                    ? {
+                        ...task,
+                        hasDocument: result.hasDocument,
+                        documentCount: result.documentCount,
+                      }
+                    : task,
+                ),
+              };
+              reportRef.current = next;
+              setReport(next);
+              reportDraft.updateDocument(
+                rowTask.id,
+                result.hasDocument,
+                result.documentCount,
+              );
+              return;
+            }
+            mutationEpoch.current++;
+            let recheck = false;
+            const next = tasksRef.current.map((task) => {
+              if (task.id !== rowTask.id) return task;
+              if (task.updatedAt > result.taskUpdatedAt) {
+                // A newer cell event carries no document metadata. Re-read the
+                // current flag without overwriting newer cells or documents.
+                recheck = true;
+                return task;
+              }
+              return {
+                ...task,
+                hasDocument: result.hasDocument,
+                documentCount: result.documentCount,
+                updatedAt: result.taskUpdatedAt,
+              };
+            });
+            tasksRef.current = next;
+            setTasks(next);
+            if (recheck) void refresh();
+          }}
           users={users}
           onClose={() => setRowTask(null)}
-          onEdit={(p) => {
-            setRowTask(null);
-            beginEdit(p);
+          onSaveProperty={async (payload) => {
+            const task = editTasks().find((t) => t.id === rowTask.id);
+            if (
+              !task ||
+              !(report ? canAdd : canEdit(user, task)) ||
+              presentation
+            )
+              throw new Error("업무를 수정할 권한이 없습니다.");
+            if (report) {
+              if (
+                !editingReport ||
+                !canAdd ||
+                !reportDraft.apply({ kind: "cells", changes: payload.changes })
+              )
+                throw new Error(
+                  "사본을 수정할 수 없습니다. 수정 상태를 확인하세요.",
+                );
+              const updated = editTasks().find((t) => t.id === rowTask.id)!;
+              return payload.changes.map(({ taskId, key }) => ({
+                taskId,
+                key,
+                ...cell(updated, key),
+              }));
+            }
+            if (failedRef.current || pendingRef.current)
+              throw new Error(
+                "앞선 셀 변경을 처리 중입니다. 잠시 후 다시 저장하세요.",
+              );
+            const submittedBoard = boardKey.current;
+            mutationEpoch.current++;
+            pendingRef.current++;
+            setPending(pendingRef.current);
+            try {
+              const result = await send<BatchResult>("/cells/batch", payload);
+              if (boardKey.current !== submittedBoard)
+                throw new Error(
+                  "화면이 변경되었습니다. 업무를 다시 열어 확인하세요.",
+                );
+              applyResult(result);
+              recordResult(result, "normal");
+              return result.cells;
+            } finally {
+              pendingRef.current--;
+              setPending(pendingRef.current);
+            }
           }}
           onAction={detailAction}
         />
@@ -3142,7 +3334,8 @@ function Workspace({
       {panel === "export" && (
         <ExportPanel
           teamId={teamId}
-          year={year}
+          report={report}
+          year={viewYear}
           startMonth={view.startMonth}
           taskIds={visibleTasks.map((t) => t.id)}
           keys={columns.map((c) => c.key)}
@@ -3152,9 +3345,15 @@ function Workspace({
       {panel === "import" && (
         <ImportPanel
           teamId={teamId}
-          year={year}
+          report={report}
+          year={viewYear}
           onClose={() => setPanel("")}
           onDone={async () => {
+            if (report) {
+              await refreshSheet();
+              setToast("사본에 자료 가져오기를 완료했습니다.");
+              return;
+            }
             const key = `${teamId}:${year}`;
             if (boardKey.current !== key) return;
             const { views } = await api(`/views?teamId=${teamId}&year=${year}`);
@@ -3174,65 +3373,19 @@ function Workspace({
           }}
         />
       )}
-      {panel === "reports" && (
-        <ReportsPanel
-          key={teamId}
-          teamId={teamId}
-          year={year}
-          view={view}
-          tasks={visibleTasks}
-          user={user}
-          canSave={!report && ready && !pending && !failed && !editor}
-          onClose={() => setPanel("")}
-          onOpen={(r) => {
-            if (reportDraft.ref.current) return;
-            setCopiedRow(null);
-            setRowTask(null);
-            if (!reportRef.current) {
-              lastView.current = viewRef.current;
-              const grid = workspaceRef.current?.querySelector(".sheet-scroll");
-              reportScroll.current = {
-                left: grid?.scrollLeft || 0,
-                top: grid?.scrollTop || 0,
-              };
-            }
-            flushView();
-            setViewMenu(false);
-            setError("");
-            setFilterUpdateNotice(null);
-            setJump(null);
-            setSelectedSavedFilterId("");
-            const snapshotSettings = r.settings || team.settings;
-            // 업무 화면의 필터는 보관하고 스냅샷에 저장된 보기부터 표시한다.
-            const next = normalizeView(r.view, snapshotSettings) as View;
-            reportRef.current = r;
-            setReport(r);
-            viewRef.current = next;
-            setView(next);
-            setSelection(null);
-          }}
-          onDelete={deleteReports}
-        />
-      )}
       {panel === "history" && (
         <HistoryPanel
+          key={report?.id || "original"}
+          report={report}
           settings={settings}
           users={users}
           teamId={teamId}
-          year={year}
+          year={viewYear}
           startMonth={view.startMonth}
-          tasks={tasks}
+          tasks={report ? editTasks() : tasks}
           user={user}
           onClose={() => setPanel("")}
-          onRefresh={refresh}
-        />
-      )}
-      {panel === "trash" && (
-        <TrashPanel
-          teamId={teamId}
-          year={year}
-          onClose={() => setPanel("")}
-          onRefresh={refresh}
+          onRefresh={refreshSheet}
         />
       )}
       {panel === "settings" && (

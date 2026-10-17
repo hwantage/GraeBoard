@@ -1,4 +1,5 @@
-// 표 화면 반응 속도 측정: npm run build 후 node scripts/ui-performance.mjs [업무 수] [CPU 감속 배수]
+import { storeDocumentVersion } from "../server/document-storage.mjs";
+// 표 화면 반응 속도 측정: npm run build 후 node scripts/ui-performance.mjs [업무 수] [CPU 감속 배수] [업무별 문서 KiB]
 // 셀 선택, 스크롤 프레임, 행 높이 조절의 지연을 브라우저에서 측정합니다.
 // STATIC_DIR 환경 변수로 다른 빌드(dist)와 비교할 수 있습니다.
 import { mkdtempSync, rmSync } from "node:fs";
@@ -6,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { chromium } from "@playwright/test";
+import { unpack } from "../shared/compact.js";
 import { createApp } from "../server/app.mjs";
 import {
   openDatabase,
@@ -23,7 +25,10 @@ import {
 } from "../shared/domain.js";
 
 const taskCount = Number(process.argv[2] || 2000),
-  throttle = Number(process.argv[3] || 4);
+  throttle = Number(process.argv[3] || 4),
+  documentKiB = Number(process.argv[4] || 0);
+if (!Number.isInteger(documentKiB) || documentKiB < 0 || documentKiB > 256)
+  throw new Error("문서 크기는 0~256 KiB의 정수여야 합니다.");
 const dir = mkdtempSync(join(tmpdir(), "weekly-ui-perf-")),
   db = openDatabase(join(dir, "perf.sqlite")),
   team = id(),
@@ -66,10 +71,29 @@ try {
         "INSERT INTO tasks(id,team_id,years,position,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
       ),
       addCell = upsertCellStatement(db);
+    const addDocument = db.prepare(
+      "INSERT INTO task_documents(task_id,version_id,has_content,revision,updated_at,actor_id) VALUES(?,?,1,1,?,?)",
+    );
+    const document = "# document-performance-body\n\n".padEnd(
+      documentKiB * 1024,
+      "x",
+    );
     const weeks = weeksForYear(2026).map((w) => w.key);
     for (let i = 0; i < taskCount; i++) {
       const tid = id();
       addTask.run(tid, team, "[2026]", i, uid, n, n);
+      if (documentKiB)
+        addDocument.run(
+          tid,
+          storeDocumentVersion(db, {
+            teamId: team,
+            documentId: tid,
+            markdown: document,
+            actorId: uid,
+          }),
+          n,
+          uid,
+        );
       for (const [key, value] of Object.entries({
         title: `검증 업무 ${i}`,
         owner: uid,
@@ -103,10 +127,35 @@ try {
   await context.addCookies([{ name: "weekly_session", value: token, url }]);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+  const requests = [],
+    lists = [];
+  page.on("request", (req) => requests.push(new URL(req.url()).pathname));
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/tasks") lists.push(response);
+  });
+  const loadStarted = performance.now();
   await page.goto(url);
   await page.locator('[data-column="title"]').first().waitFor();
+  const firstGridReadyMs = Math.round(performance.now() - loadStarted);
   await page.waitForTimeout(500);
-  await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+  const listBody = await lists.at(-1).body();
+  const initial = {
+    firstGridReadyMs,
+    columns: await page.locator("[data-header-key]").count(),
+    listBytes: listBody.length,
+    tasksWithDocuments: unpack(JSON.parse(listBody)).tasks.filter(
+      (t) => t.hasDocument,
+    ).length,
+    documentBodyInList: listBody.includes("document-performance-body"),
+    documentRequests: requests.filter((path) => /\/document$/.test(path)),
+    editorChunks: requests.filter((path) =>
+      /RichMarkdownEditor|TaskDocumentPanel/.test(path),
+    ),
+    renderedDocumentIcons: await page
+      .locator(".task-document-indicator")
+      .count(),
+  };
 
   // 다음 화면 그리기까지 기다림 (React 커밋 → 페인트)
   const frame = `() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)))`;
@@ -158,6 +207,22 @@ try {
     }
     return frames;
   });
+
+  // Same 900px jumps as the document handoff investigation; no grid changes.
+  const scroll900 = await page.evaluate(async (frameSrc) => {
+    const next = eval(frameSrc);
+    const grid = document.querySelector(".sheet-scroll");
+    grid.scrollTop = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    const times = [];
+    for (let i = 0; i < 30; i++) {
+      const started = performance.now();
+      grid.scrollTop += 900;
+      await next();
+      times.push(performance.now() - started);
+    }
+    return times;
+  }, frame);
 
   // 3. 행 높이 조절 드래그
   const resize = await page.evaluate(async (frameSrc) => {
@@ -233,9 +298,12 @@ try {
   const result = {
     tasks: taskCount,
     cpuThrottle: `${throttle}x`,
+    documentKiB,
+    initial,
     renderedCells: await page.locator(".sheet-cell").count(),
     selectMs: stats(select),
     scrollFrameMs: stats(scroll),
+    scroll900PaintMs: stats(scroll900),
     rowResizeStepMs: stats(resize),
     columnResizeStepMs: stats(columnResize),
   };

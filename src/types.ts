@@ -37,6 +37,25 @@ export type Cell = {
   style: Style;
   version: number;
 };
+export type DocumentInfo = {
+  id: string;
+  title: string;
+  revision: number | string;
+  hasContent: boolean;
+  updatedAt: string | null;
+};
+export type TaskDocument = {
+  id?: string;
+  title?: string;
+  markdown: string;
+  revision: number | string;
+  updatedAt: string | null;
+};
+export type DocumentSaveResult = TaskDocument & {
+  hasDocument: boolean;
+  documentCount: number;
+  taskUpdatedAt: string;
+};
 export type Task = {
   id: string;
   teamId: string;
@@ -50,6 +69,9 @@ export type Task = {
   defaultStyle?: Style;
   formatting?: Formatting;
   rowStyle?: Style;
+  hasDocument?: boolean;
+  documentCount?: number;
+  documents?: { id: string; title: string; markdown: string }[];
 };
 export type FormatRule = {
   id: string;
@@ -179,11 +201,11 @@ export type TaskDeletion = {
   kind: "delete";
   ids: string[];
   title: string;
+  deletedVersions?: Record<string, string>;
 };
 export type TaskCreation = Omit<TaskDeletion, "kind"> & {
   kind: "create";
   task: Task;
-  deletedVersion?: string;
 };
 export type HistoryEntry = BatchResult | TaskDeletion | TaskCreation;
 export type Report = {
