@@ -2341,9 +2341,6 @@ body.row-reordering * {
 .detail-field-value.is-empty {
   color: #8a969c;
 }
-.detail-field-value:hover:not(:disabled) {
-  background: var(--accent-surface);
-}
 .detail-field-value:disabled {
   opacity: 1;
 }
@@ -2366,10 +2363,6 @@ body.row-reordering * {
 .task-detail-modal .task-detail-actions .danger {
   color: #b84340;
 }
-.task-detail-modal .task-detail-actions .report-edit-save {
-  color: var(--accent-strong);
-  font-weight: 700;
-}
 @media (max-width: 720px) {
   .task-detail-action-label {
     display: none;
@@ -2382,21 +2375,6 @@ body.row-reordering * {
   }
   .task-detail-modal > header {
     padding-inline: 16px;
-  }
-}
-@media (max-width: 600px) {
-  .task-detail-modal > header:has(.report-edit-save) {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    row-gap: 6px;
-  }
-  .task-detail-modal > header:has(.report-edit-save) > .task-detail-actions {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-  .task-detail-modal > header:has(.report-edit-save) > .button {
-    grid-column: 2;
-    grid-row: 1;
   }
 }
 @media (max-width: 360px) {
@@ -2423,13 +2401,13 @@ body.row-reordering * {
 }
 .task-inline-properties .detail-text-input {
   display: block;
-  width: 100%;
+  width: calc(100% + 12px);
   min-width: 0;
   min-height: 0;
   border: 0;
-  border-radius: 3px;
-  padding: 0;
-  margin: 0;
+  border-radius: 4px;
+  padding: 0 6px;
+  margin: 0 -6px;
   resize: none;
   overflow: hidden;
   background: transparent;
@@ -2442,12 +2420,9 @@ body.row-reordering * {
   color: #8a969c;
   font-weight: 400;
 }
-.task-inline-properties .detail-text-input:hover:not(:read-only) {
-  background: var(--accent-surface);
-}
-.task-inline-properties .detail-text-input:focus-visible {
+.task-inline-properties .detail-text-input:focus-visible:not(:read-only) {
   outline: none;
-  box-shadow: 0 1px 0 var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 .task-detail-title .detail-text-input::placeholder {
   font-weight: inherit;
@@ -2458,7 +2433,8 @@ body.row-reordering * {
   line-height: 22px;
 }
 .detail-fields .detail-text-input {
-  margin-block: 3px;
+  min-height: 28px;
+  padding-block: 3px;
 }
 .detail-fields .cell-choice-trigger {
   display: flex;
@@ -5000,9 +4976,6 @@ body.row-reordering * {
   font-size: 12px;
   font-weight: 400;
   opacity: 0.85;
-}
-.active-report-banner .report-edit-save {
-  font-weight: 700;
 }
 
 .sheet-cell.task-title.has-document {

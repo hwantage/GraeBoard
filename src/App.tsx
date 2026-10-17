@@ -3219,7 +3219,6 @@ function Workspace({
             report
               ? {
                   id: report.id,
-                  revision: report.revision,
                   isNew: !report.tasks.some((t) => t.id === rowTask.id),
                 }
               : undefined

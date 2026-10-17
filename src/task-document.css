@@ -304,84 +304,6 @@
   }
 }
 
-.document-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.document-versions-link {
-  padding: 4px 0;
-  font-size: 11px;
-  color: var(--accent-strong);
-}
-.document-versions-link:hover {
-  text-decoration: underline;
-}
-.document-actions .button {
-  min-height: 30px;
-  padding: 5px 8px;
-  gap: 5px;
-  font-size: 11px;
-}
-.document-actions .report-edit-save {
-  font-weight: 700;
-}
-.document-versions-link {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.document-branch-info {
-  padding: 8px 24px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.document-branch-info .document-error {
-  margin: 0;
-}
-.document-branch-tabs {
-  display: flex;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  position: sticky;
-  top: var(--document-controls-height, 55px);
-  z-index: 3;
-  padding: 0 24px;
-  background: white;
-  border-bottom: 1px solid var(--line);
-  scrollbar-width: thin;
-}
-.document-branch-tabs button {
-  flex-shrink: 0;
-  max-width: min(320px, 70vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 10px 12px;
-  font-size: 12px;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-}
-.document-branch-tabs button[aria-selected="true"] {
-  border-bottom-color: var(--accent-strong);
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-.document-branch-tabs button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -3px;
-}
-.document-branch-references {
-  padding: 10px 24px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-.document-branch-loading {
-  padding: 20px 24px;
-  min-height: 300px;
-}
 .document-current[hidden] {
   display: none;
 }
@@ -544,17 +466,6 @@
   max-height: none;
   margin: auto;
 }
-@media (max-width: 600px) {
-  .document-branch-info,
-  .document-branch-references,
-  .document-branch-tabs {
-    padding-inline: 12px;
-  }
-  .document-controls .document-actions {
-    gap: 6px;
-  }
-}
-
 .task-documents {
   --document-tabs-height: 40px;
 }
@@ -658,6 +569,7 @@
   align-items: center;
   padding: 4px 5px;
   border-bottom: 2px solid var(--accent);
+  background: var(--accent-soft, #eaf5f2);
   font-size: 13px;
   font-weight: 600;
   color: var(--accent);
@@ -688,6 +600,7 @@
 }
 .document-tablist [role="tab"][aria-selected="true"] {
   border-bottom-color: var(--accent);
+  background: var(--accent-soft, #eaf5f2);
   color: var(--accent);
   font-weight: 600;
 }

@@ -48,7 +48,7 @@ export type DocumentEditorProps = {
   task: Task;
   userId: string;
   readOnly: boolean;
-  report?: { id: string; revision: string; isNew: boolean };
+  report?: { id: string; isNew: boolean };
   onSaved: (result: DocumentSaveResult) => void;
   onCloseWithDraft: () => void;
   onLoadingChange: (loading: boolean) => void;

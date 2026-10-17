@@ -1705,6 +1705,274 @@ test("문서 서식 버튼·세 가지 목록 아이콘과 한글 제목 셀 아
   await expect(rich(page).getByRole("checkbox")).toBeChecked();
 });
 
+const listFormats = [
+  { name: "글머리 목록", tag: "ul", markdown: "- **첫 항목**\n- 둘째 항목" },
+  { name: "번호 목록", tag: "ol", markdown: "3. **첫 항목**\n4. 둘째 항목" },
+  {
+    name: "체크리스트",
+    tag: "ul",
+    markdown: "- [x] **첫 항목**\n- [ ] 둘째 항목",
+  },
+];
+for (const from of listFormats)
+  for (const to of listFormats.filter((format) => format !== from))
+    test(`문서 목록 전환 (${from.name} → ${to.name})은 내용·실행취소·저장 후 형식을 보존한다`, async ({
+      page,
+    }) => {
+      await save(page, taskIds[0], from.markdown);
+      await open(page);
+      const checkFormat = async (format: (typeof listFormats)[number]) => {
+        const list = rich(page).locator(`:scope > ${format.tag}`);
+        await expect(list).toHaveCount(1);
+        await expect(list.locator("li")).toHaveCount(2);
+        await expect(list.locator("li p")).toHaveText(["첫 항목", "둘째 항목"]);
+        await expect(list.locator("strong")).toHaveText("첫 항목");
+        await expect(list.locator("ul, ol")).toHaveCount(0);
+        await expect(rich(page).getByRole("checkbox")).toHaveCount(
+          format.name === "체크리스트" ? 2 : 0,
+        );
+      };
+      await checkFormat(from);
+      // A caret in an existing list must convert it, without wrapping or
+      // requiring the user to delete and recreate its items.
+      await rich(page).locator("li p").first().click();
+      await settleRichSelection(page);
+      const caret = () =>
+        rich(page).evaluate(() => {
+          const selection = window.getSelection()!;
+          return {
+            text: selection.anchorNode?.textContent,
+            offset: selection.anchorOffset,
+            collapsed: selection.isCollapsed,
+          };
+        });
+      const before = await caret();
+      await detail(page)
+        .getByRole("button", { name: to.name, exact: true })
+        .click();
+      await checkFormat(to);
+      expect(await caret()).toEqual(before);
+      if (to.name === "체크리스트") {
+        for (const checkbox of await rich(page).getByRole("checkbox").all())
+          await expect(checkbox).not.toBeChecked();
+      }
+      await detail(page)
+        .getByRole("button", { name: "문서 실행취소", exact: true })
+        .click();
+      await checkFormat(from);
+      if (from.name === "체크리스트")
+        await expect(rich(page).getByRole("checkbox").first()).toBeChecked();
+      if (from.name === "번호 목록")
+        await expect(rich(page).locator(":scope > ol")).toHaveAttribute(
+          "start",
+          "3",
+        );
+      await detail(page)
+        .getByRole("button", { name: "문서 재실행", exact: true })
+        .click();
+      await checkFormat(to);
+      await close(page);
+      const saved = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
+        .markdown;
+      expect(saved).toContain("**첫 항목**");
+      expect(saved).toContain("둘째 항목");
+      if (to.name === "체크리스트")
+        expect(saved).toMatch(/\[ \] \*\*첫 항목\*\*/);
+      else expect(saved).not.toMatch(/\[[ x]\]/);
+      await page.reload();
+      await open(page);
+      await checkFormat(to);
+    });
+
+test("문서 목록 전환은 선택한 깊이에 적용하고 하위 목록과 주변 문단을 보존한다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "앞 문단\n\n- [x] **상위 완료**\n\n  5. 하위 첫 항목\n  6. 하위 둘째 항목\n\n- [ ] 상위 대기\n\n뒤 문단",
+  );
+  await open(page);
+  await rich(page)
+    .locator("p")
+    .filter({ hasText: /^상위 완료$/ })
+    .click();
+  await settleRichSelection(page);
+  await detail(page)
+    .getByRole("button", { name: "번호 목록", exact: true })
+    .click();
+  const outer = rich(page).locator(":scope > ol");
+  await expect(outer).toHaveCount(1);
+  await expect(outer.locator(":scope > li")).toHaveCount(2);
+  await expect(outer.locator("ol")).toHaveAttribute("start", "5");
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+  await expect(
+    rich(page).locator(":scope > p").filter({ hasText: /문단/ }),
+  ).toHaveText(["앞 문단", "뒤 문단"]);
+  await rich(page).evaluate((el) => {
+    const items = el.querySelectorAll("ol ol p");
+    const range = document.createRange();
+    range.setStart(items[0].firstChild!, 0);
+    range.setEnd(items[1].firstChild!, items[1].textContent!.length);
+    el.focus();
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await settleRichSelection(page);
+  await detail(page)
+    .getByRole("button", { name: "체크리스트", exact: true })
+    .click();
+  await expect(outer).toHaveCount(1);
+  const nested = outer.locator("ul");
+  await expect(nested).toHaveCount(1);
+  await expect(nested.getByRole("checkbox")).toHaveCount(2);
+  await expect(outer.locator(":scope > li.document-check-item")).toHaveCount(0);
+  await expect(rich(page).locator("strong")).toHaveText("상위 완료");
+  await detail(page)
+    .getByRole("button", { name: "문서 실행취소", exact: true })
+    .click();
+  await expect(outer.locator("ol")).toHaveAttribute("start", "5");
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+  await detail(page)
+    .getByRole("button", { name: "문서 재실행", exact: true })
+    .click();
+  await expect(nested.getByRole("checkbox")).toHaveCount(2);
+  await nested.getByRole("checkbox").first().check();
+  await nested.locator("p").first().click();
+  await settleRichSelection(page);
+  await detail(page)
+    .getByRole("button", { name: "체크리스트", exact: true })
+    .click();
+  await expect(nested.getByRole("checkbox").first()).toBeChecked();
+  await close(page);
+  await page.reload();
+  await open(page);
+  await expect(outer).toHaveCount(1);
+  await expect(nested.getByRole("checkbox").first()).toBeChecked();
+  await expect(nested.locator("p")).toHaveText([
+    "하위 첫 항목",
+    "하위 둘째 항목",
+  ]);
+});
+
+for (const format of listFormats)
+  test(`문서 혼합 선택을 ${format.name}으로 바꾸면 모든 문단과 목록을 변환한다`, async ({
+    page,
+  }) => {
+    await save(
+      page,
+      taskIds[0],
+      "선택 밖 앞\n\n앞 문단\n\n- [x] **첫 항목**\n\n  5. 하위 항목\n\n- [ ] 둘째 항목\n\n뒤 문단\n\n선택 밖 뒤",
+    );
+    await open(page);
+    await rich(page).evaluate((el) => {
+      const paragraphs = Array.from(el.querySelectorAll(":scope > p"));
+      const first = paragraphs.find((p) => p.textContent === "앞 문단")!;
+      const last = paragraphs.find((p) => p.textContent === "뒤 문단")!;
+      el.focus();
+      // Backwards selection must remain usable after the structural change.
+      window
+        .getSelection()!
+        .setBaseAndExtent(
+          last.firstChild!,
+          last.textContent!.length,
+          first.firstChild!,
+          0,
+        );
+    });
+    await settleRichSelection(page);
+    await detail(page)
+      .getByRole("button", { name: format.name, exact: true })
+      .click();
+    const check = async () => {
+      const list = rich(page).locator(`:scope > ${format.tag}`);
+      await expect(list).toHaveCount(1);
+      await expect(list.locator(":scope > li > div > p")).toHaveText([
+        "앞 문단",
+        "첫 항목",
+        "둘째 항목",
+        "뒤 문단",
+      ]);
+      await expect(list.locator("strong")).toHaveText("첫 항목");
+      await expect(list.locator("ol")).toHaveAttribute("start", "5");
+      await expect(rich(page).locator(":scope > p")).toHaveText([
+        "선택 밖 앞",
+        "선택 밖 뒤",
+      ]);
+      await expect(list.getByRole("checkbox")).toHaveCount(
+        format.name === "체크리스트" ? 4 : 0,
+      );
+      if (format.name === "체크리스트") {
+        await expect(list.getByRole("checkbox").nth(1)).toBeChecked();
+        await expect(list.getByRole("checkbox").nth(0)).not.toBeChecked();
+        await expect(list.getByRole("checkbox").nth(2)).not.toBeChecked();
+        await expect(list.getByRole("checkbox").nth(3)).not.toBeChecked();
+      }
+    };
+    await check();
+    expect(
+      await rich(page).evaluate(() => {
+        const selection = window.getSelection()!;
+        return [
+          selection.anchorNode?.textContent,
+          selection.anchorOffset,
+          selection.focusNode?.textContent,
+          selection.focusOffset,
+        ];
+      }),
+    ).toEqual(["뒤 문단", 4, "앞 문단", 0]);
+    await detail(page)
+      .getByRole("button", { name: "문서 실행취소", exact: true })
+      .click();
+    await expect(rich(page).locator(":scope > p")).toHaveText([
+      "선택 밖 앞",
+      "앞 문단",
+      "뒤 문단",
+      "선택 밖 뒤",
+    ]);
+    await expect(rich(page).getByRole("checkbox").first()).toBeChecked();
+    await detail(page)
+      .getByRole("button", { name: "문서 재실행", exact: true })
+      .click();
+    await check();
+    await close(page);
+    await page.reload();
+    await open(page);
+    await check();
+  });
+
+test("문서 목록 단축키는 툴바와 같은 전환과 실행취소를 지원한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "- [x] **완료 항목**\n- [ ] 대기 항목");
+  await open(page);
+  await rich(page).locator("li p").first().click();
+  await settleRichSelection(page);
+  await page.keyboard.press("ControlOrMeta+Alt+7");
+  await expect(rich(page).locator(":scope > ol > li")).toHaveCount(2);
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+Alt+8");
+  await expect(rich(page).locator(":scope > ul > li")).toHaveCount(2);
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+  await detail(page)
+    .getByRole("button", { name: "문서 실행취소", exact: true })
+    .click();
+  await expect(rich(page).locator(":scope > ol > li")).toHaveCount(2);
+  await detail(page)
+    .getByRole("button", { name: "문서 실행취소", exact: true })
+    .click();
+  await expect(rich(page).getByRole("checkbox").first()).toBeChecked();
+  await page.keyboard.press("ControlOrMeta+Alt+8");
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+  await expect(rich(page).locator("strong")).toHaveText("완료 항목");
+  await close(page);
+  await page.reload();
+  await open(page);
+  await expect(rich(page).locator(":scope > ul > li")).toHaveCount(2);
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(0);
+});
+
 test("열람자는 문서와 원문을 읽고 편집하지 못함", async ({ page }) => {
   await save(page, taskIds[0], "# 열람 전용\n\n- [ ] 수정 금지");
   const username = `document-viewer-${randomUUID()}@example.com`;
@@ -1733,6 +2001,11 @@ test("열람자는 문서와 원문을 읽고 편집하지 못함", async ({ pag
   await expect(
     detail(page).getByRole("group", { name: "문서 서식" }),
   ).toHaveCount(0);
+  await rich(page).locator("li p").click();
+  await page.keyboard.press("ControlOrMeta+Alt+7");
+  await page.keyboard.press("ControlOrMeta+Alt+8");
+  await expect(rich(page).getByRole("checkbox")).toHaveCount(1);
+  await expect(rich(page).locator("ol")).toHaveCount(0);
   await raw(page);
   await expect(source(page)).toHaveJSProperty("readOnly", true);
   await close(page);

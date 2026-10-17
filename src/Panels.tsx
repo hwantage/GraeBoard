@@ -12,7 +12,6 @@ import {
   lazy,
   Suspense,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -21,32 +20,25 @@ import {
 import {
   Download,
   Upload,
-  Plus,
   ChevronRight,
   Trash2,
   LoaderCircle,
   FileSpreadsheet,
   Copy,
   EyeOff,
-  ExternalLink,
   CalendarPlus,
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import { api, send, download, taskQuery, ApiError } from "./api";
-import {
-  normalizeReportName,
-  DUPLICATE_REPORT_NAME,
-} from "../shared/report-names.js";
-import { Modal, Button, ErrorNote, Empty } from "./components";
+import { api, send, download, taskQuery } from "./api";
+import { Modal, Button, ErrorNote } from "./components";
 import Toast, { useToast } from "./Toast";
 import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
-import type { Task, User, View, Report, Settings } from "./types";
+import type { Task, User, Settings } from "./types";
 import {
   fieldsFor,
-  propertiesFor,
   displayValue,
   canEdit,
   canContribute,
@@ -128,7 +120,7 @@ export function RowPanel({
   // 열람자·발표 화면에서는 편집 동작을 숨긴다.
   readOnly?: boolean;
   reportMode?: boolean;
-  documentReport?: { id: string; revision: string; isNew: boolean };
+  documentReport?: { id: string; isNew: boolean };
   onDocumentSaved: (result: DocumentSaveResult) => void;
   copySaveError?: string;
   onRetryCopySave?: () => void;

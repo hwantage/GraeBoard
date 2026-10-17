@@ -23,8 +23,6 @@ import {
   toggleInlineCodeCommand,
   wrapInHeadingCommand,
   turnIntoTextCommand,
-  wrapInBulletListCommand,
-  wrapInOrderedListCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
   linkSchema,
@@ -41,8 +39,14 @@ import {
   undoCommand,
   redoCommand,
 } from "@milkdown/kit/plugin/history";
-import { Plugin, type Command } from "@milkdown/kit/prose/state";
-import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
+import { Plugin, TextSelection, type Command } from "@milkdown/kit/prose/state";
+import {
+  Fragment,
+  NodeRange,
+  Slice,
+  type Node,
+} from "@milkdown/kit/prose/model";
+import { keydownHandler } from "@milkdown/kit/prose/keymap";
 import {
   closeHistory,
   undoDepth,
@@ -55,7 +59,6 @@ import {
   isInTable,
   selectedRect,
 } from "@milkdown/kit/prose/tables";
-import { wrapInList } from "@milkdown/kit/prose/schema-list";
 import { $prose, callCommand } from "@milkdown/kit/utils";
 import type { Ctx } from "@milkdown/kit/ctx";
 import {
@@ -91,6 +94,106 @@ const deleteTableRow: Command = (state, dispatch) => {
   if (top === 0 || bottom - top === map.height - 1) return false;
   return deleteRow(state, dispatch);
 };
+
+type ListFormat = "bullet" | "ordered" | "task";
+function listFormatCommand(format: ListFormat): Command {
+  return (state, dispatch) => {
+    const { schema, selection } = state;
+    const { $from, $to } = selection;
+    const isList = (node: Node) =>
+      node.type === schema.nodes.bullet_list ||
+      node.type === schema.nodes.ordered_list;
+    let range = $from.blockRange($to);
+    // A caret or selection within one list changes that list's depth only.
+    for (let depth = $from.sharedDepth($to.pos); depth > 0; depth--) {
+      if (isList($from.node(depth))) {
+        range = new NodeRange($from, $to, depth - 1);
+        break;
+      }
+    }
+    if (!range) return false;
+    const { parent, startIndex, endIndex, start, end } = range;
+    const type =
+      schema.nodes[format === "ordered" ? "ordered_list" : "bullet_list"];
+    const first = parent.child(startIndex);
+    const attrs = isList(first) ? first.attrs : undefined;
+    const order = attrs?.order ?? 1;
+    const items: Node[] = [];
+    // Map text positions inside the replacement, including backwards ranges.
+    // The default replace mapping would collapse the selection to its end.
+    const positions: { from: number; to: number; offset: number }[] = [];
+    let size = 0;
+    const append = (item: Node, from: number, to: number, offset: number) => {
+      const checked = format === "task" ? (item.attrs.checked ?? false) : null;
+      const listType = format === "ordered" ? "ordered" : "bullet";
+      const label = format === "ordered" ? `${order + items.length}.` : "•";
+      items.push(
+        item.attrs.checked === checked &&
+          item.attrs.listType === listType &&
+          item.attrs.label === label
+          ? item
+          : item.type.create(
+              { ...item.attrs, checked, listType, label },
+              item.content,
+              item.marks,
+            ),
+      );
+      positions.push({ from, to, offset: start + 1 + size + offset - from });
+      size += item.nodeSize;
+    };
+    let pos = start;
+    for (let index = startIndex; index < endIndex; index++) {
+      const block = parent.child(index);
+      if (isList(block)) {
+        block.forEach((item, offset) => {
+          const from = pos + 1 + offset;
+          append(item, from, from + item.nodeSize, 0);
+        });
+      } else if (block.isTextblock) {
+        const paragraph = schema.nodes.paragraph.create(null, block.content);
+        append(
+          schema.nodes.list_item.create(null, paragraph),
+          pos,
+          pos + block.nodeSize,
+          1,
+        );
+      } else return false;
+      pos += block.nodeSize;
+    }
+    const list = type.create(
+      attrs,
+      items,
+      isList(first) ? first.marks : undefined,
+    );
+    const content = Fragment.from(list);
+    if (!parent.canReplace(startIndex, endIndex, content)) return false;
+    if (dispatch && !state.doc.slice(start, end).content.eq(content)) {
+      // Build once: one replacement avoids rebuilding the parent per item.
+      const tr = state.tr.replaceWith(start, end, list);
+      if (selection instanceof TextSelection) {
+        const mapPosition = (pos: number) => {
+          const part = positions.find(
+            ({ from, to }) => pos >= from && pos <= to,
+          );
+          return part ? pos + part.offset : tr.mapping.map(pos);
+        };
+        tr.setSelection(
+          TextSelection.create(
+            tr.doc,
+            mapPosition(selection.anchor),
+            mapPosition(selection.head),
+          ),
+        );
+      }
+      dispatch(closeHistory(tr).scrollIntoView());
+    }
+    return true;
+  };
+}
+const listFormatKeydown = keydownHandler({
+  "Mod-Alt-7": listFormatCommand("ordered"),
+  "Mod-Alt-8": listFormatCommand("bullet"),
+});
 
 export function safeDocumentLink(url: string) {
   return (
@@ -321,10 +424,10 @@ export default function RichMarkdownEditor(props: Props) {
             },
           },
           handleKeyDown: (view, event) => {
+            if (latest.current.readOnly || view.composing || event.isComposing)
+              return false;
+            if (listFormatKeydown(view, event)) return true;
             if (
-              latest.current.readOnly ||
-              view.composing ||
-              event.isComposing ||
               event.key !== "Enter" ||
               !event.shiftKey ||
               event.ctrlKey ||
@@ -539,31 +642,10 @@ export default function RichMarkdownEditor(props: Props) {
       );
     });
   }
-  function taskList() {
+  function setListFormat(format: ListFormat) {
     run((ctx) => {
-      callCommand(turnIntoTextCommand.key)(ctx);
       const view = ctx.get(editorViewCtx);
-      wrapInList(view.state.schema.nodes.bullet_list)(
-        view.state,
-        view.dispatch,
-      );
-      const { from, to, $from } = view.state.selection;
-      const positions = new Map<number, Record<string, unknown>>();
-      for (let depth = $from.depth; depth > 0; depth--) {
-        const node = $from.node(depth);
-        if (node.type.name === "list_item") {
-          positions.set($from.before(depth), node.attrs);
-          break;
-        }
-      }
-      view.state.doc.nodesBetween(from, to, (node, pos) => {
-        if (node.type.name === "list_item") positions.set(pos, node.attrs);
-      });
-      let tr = view.state.tr;
-      for (const [pos, attrs] of positions)
-        if (attrs.checked == null)
-          tr = tr.setNodeMarkup(pos, undefined, { ...attrs, checked: false });
-      if (tr.docChanged) view.dispatch(tr);
+      listFormatCommand(format)(view.state, view.dispatch, view);
     });
   }
   return (
@@ -619,13 +701,9 @@ export default function RichMarkdownEditor(props: Props) {
                 () => command(toggleStrikethroughCommand.key),
               ],
               ["인라인 코드", Code, () => command(toggleInlineCodeCommand.key)],
-              ["글머리 목록", List, () => command(wrapInBulletListCommand.key)],
-              [
-                "번호 목록",
-                ListOrdered,
-                () => command(wrapInOrderedListCommand.key),
-              ],
-              ["체크리스트", ListChecks, taskList],
+              ["글머리 목록", List, () => setListFormat("bullet")],
+              ["번호 목록", ListOrdered, () => setListFormat("ordered")],
+              ["체크리스트", ListChecks, () => setListFormat("task")],
               [
                 "링크",
                 Link,

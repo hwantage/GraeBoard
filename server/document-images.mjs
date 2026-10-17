@@ -161,7 +161,7 @@ export function installDocumentImageRoutes(
       );
     return task.teamId;
   };
-  const snapshotAccess = (req) => {
+  const reportImageWriteAccess = (req) => {
     const row = db
       .prepare("SELECT * FROM reports WHERE id=?")
       .get(req.params.id);
@@ -188,10 +188,10 @@ export function installDocumentImageRoutes(
   for (const [route, access] of [
     ["/api/tasks/:id/document/images", liveAccess],
     ["/api/tasks/:id/documents/:documentId/images", liveAccess],
-    ["/api/reports/:id/tasks/:taskId/document/images", snapshotAccess],
+    ["/api/reports/:id/tasks/:taskId/document/images", reportImageWriteAccess],
     [
       "/api/reports/:id/tasks/:taskId/documents/:documentId/images",
-      snapshotAccess,
+      reportImageWriteAccess,
     ],
   ]) {
     app.post(
