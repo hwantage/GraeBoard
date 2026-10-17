@@ -17,6 +17,7 @@
   --filter-accent: #94621f;
   --snapshot-accent: #66539c;
   --document-accent: #621b43;
+  --document-icon-gap: 6px;
   --accent-muted: color-mix(in srgb, var(--accent) 60%, #76828b);
   --accent-selection: color-mix(in srgb, var(--accent) 12%, transparent);
   --accent-ruler: color-mix(in srgb, var(--accent) 35%, transparent);
@@ -2280,7 +2281,8 @@ body.row-reordering * {
   font-size: 11px;
   color: var(--accent-muted);
 }
-.modal-body .task-detail-title {
+.modal-body .task-detail-title,
+.document-browser-detail-scroll .task-detail-title {
   margin: 0;
   font-size: 20px;
   line-height: 1.5;
@@ -2317,7 +2319,7 @@ body.row-reordering * {
   gap: 4px;
   width: 100%;
   min-height: 28px;
-  padding: 3px 0;
+  padding: 2px 0;
   border-radius: 4px;
   text-align: left;
   font-size: 12px;
@@ -5013,7 +5015,10 @@ body.row-reordering * {
 }
 .sheet-cell.has-document-count .task-document-indicator {
   width: 34px;
+  justify-content: flex-end;
   gap: 2px;
+  /* Match the centered 11px icon in the single-document 22px button. */
+  padding-right: 5.5px;
 }
 .task-document-indicator > svg,
 .task-document-count {

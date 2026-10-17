@@ -1,11 +1,12 @@
 import { defineConfig } from "@playwright/test";
+const baseURL = `http://127.0.0.1:${process.env.E2E_PORT || 4311}`;
 export default defineConfig({
   testDir: "tests/browser",
   fullyParallel: false,
   workers: 1,
   timeout: 30000,
   use: {
-    baseURL: "http://127.0.0.1:4311",
+    baseURL,
     viewport: { width: 1366, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -17,7 +18,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node scripts/e2e-server.mjs",
-    url: "http://127.0.0.1:4311/api/health",
+    url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 30000,
   },

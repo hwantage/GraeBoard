@@ -93,14 +93,26 @@ export default forwardRef<
       window.removeEventListener("beforeunload", beforeUnload);
     };
   }, []);
-  useLayoutEffect(() => {
+  function sizeTextareas() {
     for (const [key, control] of controls.current) {
       if (!(control instanceof HTMLTextAreaElement)) continue;
       control.style.height = "auto";
-      const line = parseFloat(getComputedStyle(control).lineHeight);
+      const line = parseFloat(getComputedStyle(control).lineHeight) || 20;
       control.style.height = `${key === "title" ? Math.max(line, control.scrollHeight) : line}px`;
     }
-  });
+  }
+  useLayoutEffect(sizeTextareas);
+  useEffect(() => {
+    if (!root.current) return;
+    let width = -1;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      sizeTextareas();
+    });
+    observer.observe(root.current);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     if (popupKey)
       controls.current.get(popupKey)?.focus({ preventScroll: true });

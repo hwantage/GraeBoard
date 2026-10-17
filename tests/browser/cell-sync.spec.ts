@@ -24,8 +24,8 @@ let peerContext: BrowserContext,
   settings: any;
 test.beforeEach(async ({ page, browser }) => {
   await post(page.request, "/auth/login", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await (
     await page.request.get("/api/bootstrap")
