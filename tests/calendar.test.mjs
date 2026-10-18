@@ -29,6 +29,7 @@ import {
   moveMonth,
   moveCalendarRange,
 } from "../shared/calendar.js";
+import { placeCalendarEntry } from "../shared/calendar-layout.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
 import { CALENDAR_TAG_COLORS } from "../shared/calendar-tags.js";
 import { unpack } from "../shared/compact.js";
@@ -458,6 +459,49 @@ test("조회 범위 밖으로 이어진 배치 좌표는 개인·공용 캘린�
   }
 });
 
+test("긴 일정이 화면 밖의 새 날짜에 닿아도 미리보기 좌표와 저장 결과가 같다", async (t) => {
+  const f = await fixture(t);
+  const create = async (date, endDate) =>
+    (
+      await f.req("/calendar/entries", "POST", {
+        id: randomUUID(),
+        teamId: f.teamId,
+        userId: f.people.member.id,
+        date,
+        endDate,
+        title: "긴 일정 범위",
+      })
+    ).data;
+  await create("2026-01-01", "2026-01-02");
+  const target = await create("2026-01-01", "2026-03-01");
+  const future = await create("2026-03-05", "2026-03-06");
+  assert.equal(target.lane, 1);
+  const loaded = (
+    await f.list("member", f.people.member.id, "2026-02-01", "2026-02-07")
+  ).data;
+  assert.deepEqual(
+    loaded.entries.map((item) => item.id),
+    [target.id],
+  );
+  assert.ok(loaded.layout.some((item) => item.id === future.id));
+  const changed = { ...target, date: "2026-01-07", endDate: "2026-03-07" };
+  assert.equal(
+    placeCalendarEntry(loaded.layout, changed).find(
+      (item) => item.id === target.id,
+    ).lane,
+    1,
+  );
+  const saved = await f.req(`/calendar/entries/${target.id}`, "PATCH", {
+    date: changed.date,
+    endDate: changed.endDate,
+    expectedDate: target.date,
+    expectedEndDate: target.endDate,
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.lane, 1);
+  assert.ok(saved.data.layout.some((item) => item.id === future.id));
+});
+
 test("이동·재시도는 이전·새 구간의 연결된 일정만 반환하고 무관한 이력을 제외한다", async (t) => {
   const f = await fixture(t);
   const target = (await f.create("2026-10-12")).data;
@@ -505,7 +549,7 @@ test("이동·재시도는 이전·새 구간의 연결된 일정만 반환하�
     "2026-11-08",
     "2026-11-14",
   );
-  assert.equal(fresh.data.layout.length, 3);
+  assert.equal(fresh.data.layout.length, 2);
   const previous = await f.req(
     `${path}?placements=1&from=${target.date}&to=${target.endDate}`,
   );

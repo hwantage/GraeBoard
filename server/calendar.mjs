@@ -24,6 +24,7 @@ import {
 import {
   addDays,
   calendarWeek,
+  daysBetween,
   calendarRuleProblem,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
@@ -261,7 +262,7 @@ export function installCalendarRoutes(
   }
   // Both the grab point and the drop target are within a <=62-day view.
   // A long card can therefore reach up to 61 days beyond either endpoint.
-  function dragLayoutRange(range) {
+  function dragLayoutRange(range, view) {
     const extend = (date, days) =>
       new Date(
         Math.max(
@@ -275,15 +276,32 @@ export function installCalendarRoutes(
         .toISOString()
         .slice(0, 10);
     return {
-      date: extend(range.date, 1 - CALENDAR_MAX_RANGE_DAYS),
-      endDate: extend(range.endDate, CALENDAR_MAX_RANGE_DAYS - 1),
+      date: extend(
+        range.date,
+        view
+          ? -daysBetween(
+              view.date,
+              range.endDate < view.endDate ? range.endDate : view.endDate,
+            )
+          : 1 - CALENDAR_MAX_RANGE_DAYS,
+      ),
+      endDate: extend(
+        range.endDate,
+        view
+          ? daysBetween(
+              range.date > view.date ? range.date : view.date,
+              view.endDate,
+            )
+          : CALENDAR_MAX_RANGE_DAYS - 1,
+      ),
     };
   }
   const rowRange = (row) => ({ date: row.date, endDate: row.end_date });
   function placementResult(teamId, userId, layout, changed) {
-    const previewLayout = changed
-      ? placements(teamId, userId, [dragLayoutRange(changed)])
-      : [];
+    const previewLayout =
+      changed && changed.date !== changed.endDate
+        ? placements(teamId, userId, [dragLayoutRange(changed)])
+        : [];
     return {
       placements: layout.map(({ id, lane }) => ({ id, lane })),
       layout: mergeCalendarLayout(previewLayout, layout).sort((a, b) =>
@@ -655,19 +673,21 @@ export function installCalendarRoutes(
       query.scope === "team"
         ? []
         : weeklyItems(query.teamId, query.userId, query.from, query.to);
-    const viewRange = entries.reduce(
-      (range, item) => ({
-        date: item.date < range.date ? item.date : range.date,
-        endDate: item.endDate > range.endDate ? item.endDate : range.endDate,
-      }),
-      { date: query.from, endDate: query.to },
-    );
+    const viewRange = { date: query.from, endDate: query.to };
+    const layoutRange = entries.reduce((range, item) => {
+      const reachable = dragLayoutRange(item, viewRange);
+      return {
+        date: reachable.date < range.date ? reachable.date : range.date,
+        endDate:
+          reachable.endDate > range.endDate ? reachable.endDate : range.endDate,
+      };
+    }, viewRange);
     const layout =
       query.userId || query.scope === "team"
         ? placements(
             query.teamId,
             query.scope === "team" ? null : query.userId,
-            [entries.length ? dragLayoutRange(viewRange) : viewRange],
+            [layoutRange],
           )
         : [];
     res.json({ entries, weekly, layout });

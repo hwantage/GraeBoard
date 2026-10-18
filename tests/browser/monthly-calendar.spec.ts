@@ -139,6 +139,23 @@ test.afterEach(() => {
   expect(pageErrors).toEqual([]);
 });
 
+test("캘린더·문서 브라우저·연간 업무를 오가도 선택 화면과 이동 잠금이 유지된다", async ({
+  page,
+}) => {
+  await enter(page);
+  await page
+    .getByRole("button", { name: "문서 브라우저", exact: true })
+    .click();
+  await expect(page.locator(".document-browser")).toBeVisible();
+  await expect(calendar(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(calendar(page).locator(".calendar-grid")).toBeVisible();
+  await expect(page.locator(".document-browser")).toHaveCount(0);
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await expect(page.locator(`[data-cell="${taskId}:title"]`)).toBeVisible();
+  await expect(calendar(page)).toHaveCount(0);
+});
+
 test("주간 업무를 과거·미래에 선택해 넣고 원본 제목과 중복 여부를 함께 유지한다", async ({
   page,
 }, info) => {

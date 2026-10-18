@@ -83,7 +83,6 @@ export function useCalendarData(
     return available.length
       ? {
           entries: available.flatMap((result) => result.entries),
-          layout: available.flatMap((result) => result.layout),
           weekly: available.flatMap((result) => result.weekly),
         }
       : null;
