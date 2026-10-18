@@ -390,6 +390,11 @@ small {
   gap: 7px;
   flex-shrink: 0;
 }
+.topbar .brand-home {
+  padding: 0;
+  border-radius: 3px;
+  text-align: left;
+}
 .topbar .brand-symbol {
   width: 24px;
   height: 24px;

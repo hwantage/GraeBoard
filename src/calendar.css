@@ -1,11 +1,24 @@
 /* Codex Resets reference: warm paper, ink outlines and tactile calendar sheets.
    Keep the palette local to the calendar; annual boards retain their team theme. */
 .workspace[data-screen="calendar"] {
+  color-scheme: light;
   --calendar-paper: #fff4dd;
   --calendar-sheet: #fffdf7;
   --calendar-sun: #ffd84d;
   --calendar-mint: #b9e6a6;
   --calendar-orange: #ff5c2b;
+  --calendar-sunday: #a53c1c;
+  --calendar-saturday: #336b8a;
+  --calendar-outside: #f7efdf;
+  --calendar-outside-ink: #8c8070;
+  --calendar-today: #fff4cf;
+  --calendar-week-paper: #fff8e7;
+  --calendar-card-hover: #c9eeb9;
+  --calendar-shadow: var(--ink);
+  --calendar-ring: #c4b79e;
+  --calendar-on-sun: var(--ink);
+  --calendar-on-mint: var(--ink);
+  --calendar-on-orange: var(--ink);
   --ink: #26201a;
   --muted: #716454;
   --line: #ded2bb;
@@ -17,6 +30,36 @@
   --surface: var(--calendar-sheet);
   color: var(--ink);
   font-family: "Pretendard", "Noto Sans KR", sans-serif;
+}
+/* Codex Resets dark palette, scoped to the calendar and its nested dialogs. */
+.workspace[data-screen="calendar"][data-calendar-theme="dark"] {
+  color-scheme: dark;
+  --calendar-paper: oklch(18% 0.012 70);
+  --calendar-sheet: oklch(24% 0.014 70);
+  --calendar-sun: oklch(75% 0.135 82);
+  --calendar-mint: oklch(72% 0.11 145);
+  --calendar-orange: oklch(67% 0.2 38);
+  --ink: oklch(93% 0.025 80);
+  --muted: oklch(76% 0.025 75);
+  --line: oklch(40% 0.022 75);
+  --accent: oklch(75% 0.15 45);
+  --accent-strong: oklch(83% 0.12 48);
+  --accent-pastel: oklch(35% 0.055 72);
+  --accent-soft: oklch(30% 0.055 72);
+  --accent-surface: oklch(27% 0.025 70);
+  --accent-border: oklch(53% 0.03 75);
+  --calendar-sunday: oklch(78% 0.13 38);
+  --calendar-saturday: oklch(78% 0.095 232);
+  --calendar-outside: oklch(21% 0.012 70);
+  --calendar-outside-ink: oklch(66% 0.024 72);
+  --calendar-today: oklch(30% 0.055 72);
+  --calendar-week-paper: oklch(22% 0.02 72);
+  --calendar-card-hover: oklch(77% 0.11 145);
+  --calendar-shadow: oklch(8% 0.005 70);
+  --calendar-ring: oklch(35% 0.022 75);
+  --calendar-on-sun: oklch(22% 0.04 82);
+  --calendar-on-mint: oklch(20% 0.04 145);
+  --calendar-on-orange: oklch(20% 0.03 38);
 }
 .workspace[data-screen="calendar"] .main-workspace {
   padding-inline: 28px;
@@ -37,15 +80,20 @@
   border-color: var(--ink);
   background: var(--calendar-mint);
 }
-.workspace[data-screen="calendar"] .topbar .calendar-close {
+.workspace[data-screen="calendar"]
+  .topbar
+  :is(.calendar-close, .calendar-theme-toggle) {
   flex-shrink: 0;
   width: 34px;
   height: 34px;
-  margin-left: auto;
+  margin-left: 0;
   padding: 0;
   border: 1.5px solid var(--ink);
   border-radius: 50%;
   background: var(--calendar-sheet);
+}
+.workspace[data-screen="calendar"] .topbar .calendar-theme-toggle {
+  margin-left: auto;
 }
 .workspace[data-screen="calendar"] .topbar .team-select {
   background-color: var(--calendar-sheet);
@@ -65,19 +113,19 @@
 .calendar-workspace .button:hover:not(:disabled) {
   background: var(--accent-soft);
   border-color: var(--ink);
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: 2px 2px 0 var(--calendar-shadow);
 }
 .calendar-workspace .button.active {
   background: var(--calendar-mint);
-  color: var(--ink);
-  box-shadow: 2px 2px 0 var(--ink);
+  color: var(--calendar-on-mint);
+  box-shadow: 2px 2px 0 var(--calendar-shadow);
 }
 .calendar-workspace .modal {
   border: 2px solid var(--ink);
   border-radius: 14px;
   background: var(--calendar-sheet);
   color: var(--ink);
-  box-shadow: 6px 6px 0 var(--ink);
+  box-shadow: 6px 6px 0 var(--calendar-shadow);
 }
 .calendar-workspace .modal > header {
   background: var(--accent-soft);
@@ -108,11 +156,11 @@
   border-radius: 6px;
   padding: 4px 9px;
   background: var(--calendar-sun);
-  color: var(--ink);
+  color: var(--calendar-on-sun);
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: 2px 2px 0 var(--calendar-shadow);
   transform: rotate(-4deg);
 }
 .calendar-heading .calendar-view-switch {
@@ -142,6 +190,7 @@
   gap: 12px;
   padding: 14px 22px;
   background: var(--calendar-sun);
+  color: var(--calendar-on-sun);
   border-radius: 13px 13px 0 0;
 }
 .calendar-toolbar .calendar-toolbar-actions {
@@ -363,10 +412,10 @@
   border-right: 1px solid var(--line);
 }
 .calendar-grid-header .weekday-0 {
-  color: #a53c1c;
+  color: var(--calendar-sunday);
 }
 .calendar-grid-header .weekday-6 {
-  color: #336b8a;
+  color: var(--calendar-saturday);
 }
 .calendar-week-row {
   min-height: 150px;
@@ -379,7 +428,7 @@
   left: 0;
   z-index: 2;
   padding: 10px;
-  background: #fff8e7;
+  background: var(--calendar-week-paper);
   border-right: 1px solid var(--line);
   min-width: 0;
 }
@@ -467,6 +516,7 @@
   gap: 12px;
   padding: 14px 16px;
   background: var(--calendar-mint);
+  color: var(--calendar-on-mint);
   border-block: 1.5px solid var(--ink);
 }
 .calendar-member {
@@ -548,22 +598,22 @@
   background: var(--calendar-sheet);
 }
 .calendar-day[data-weekday="0"] time {
-  color: #a53c1c;
+  color: var(--calendar-sunday);
 }
 .calendar-day[data-weekday="6"] time {
-  color: #336b8a;
+  color: var(--calendar-saturday);
 }
 .calendar-day:nth-last-child(2) {
   border-right: 0;
 }
 .calendar-day.is-outside {
-  background: #f7efdf;
+  background: var(--calendar-outside);
 }
 .calendar-day.is-outside time {
-  color: #8c8070;
+  color: var(--calendar-outside-ink);
 }
 .calendar-day.is-today {
-  background: #fff4cf;
+  background: var(--calendar-today);
 }
 .calendar-date {
   justify-content: space-between;
@@ -585,10 +635,10 @@
 }
 .is-today .calendar-date time {
   background: var(--calendar-orange);
-  color: var(--ink);
+  color: var(--calendar-on-orange);
   border: 1.5px solid var(--ink);
   border-radius: 7px;
-  box-shadow: 1.5px 1.5px 0 var(--ink);
+  box-shadow: 1.5px 1.5px 0 var(--calendar-shadow);
 }
 .calendar-date .button {
   padding: 2px;
@@ -638,7 +688,7 @@
   right: 6px;
   padding: 0 4px;
   border-radius: 3px;
-  background: white;
+  background: var(--calendar-sheet);
   color: var(--accent);
   font-size: 10px;
   pointer-events: none;
@@ -679,14 +729,14 @@
   font-size: 12px;
   line-height: 20px;
   overflow-wrap: anywhere;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: 2px 2px 0 var(--calendar-shadow);
   transition:
     background 0.12s,
     box-shadow 0.12s;
 }
 .calendar-entry-segment:hover .calendar-entry-card {
-  background: var(--calendar-tag-bg, #c9eeb9);
-  box-shadow: 3px 3px 0 var(--ink);
+  background: var(--calendar-tag-bg, var(--calendar-card-hover));
+  box-shadow: 3px 3px 0 var(--calendar-shadow);
 }
 .calendar-entry-card strong {
   font-weight: 600;
@@ -721,7 +771,7 @@
   outline: none;
 }
 .calendar-entry-segment.is-changing .calendar-entry-card {
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: 2px 2px 0 var(--calendar-shadow);
 }
 .calendar-entry-segment:has(:focus-visible) .calendar-entry-card {
   border-color: var(--accent);
@@ -760,7 +810,7 @@
   border: 2px solid var(--ink);
   border-radius: 16px;
   background: var(--calendar-sheet);
-  box-shadow: 5px 5px 0 var(--ink);
+  box-shadow: 5px 5px 0 var(--calendar-shadow);
 }
 .calendar-board::before,
 .calendar-board::after {
@@ -773,7 +823,7 @@
   border: 2px solid var(--ink);
   border-radius: 7px;
   background: var(--calendar-paper);
-  box-shadow: inset -3px 0 0 #c4b79e;
+  box-shadow: inset -3px 0 0 var(--calendar-ring);
   pointer-events: none;
 }
 .calendar-board::before {
@@ -877,6 +927,122 @@
   display: flex;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+.workspace[data-calendar-theme="dark"] .brand-wordmark {
+  filter: brightness(0) invert(0.93);
+}
+.workspace[data-calendar-theme="dark"] .button.active:hover:not(:disabled) {
+  background: var(--calendar-mint);
+}
+.workspace[data-calendar-theme="dark"] .modal > header .button {
+  color: var(--ink);
+}
+.workspace[data-calendar-theme="dark"] .modal .button.danger {
+  color: var(--calendar-sunday);
+}
+.workspace[data-calendar-theme="dark"]
+  .calendar-toolbar
+  :is(
+    .calendar-month-picker select,
+    .calendar-team-overview,
+    .calendar-team-overview > span:first-child
+  ) {
+  color: var(--calendar-on-sun);
+}
+.workspace[data-calendar-theme="dark"] .calendar-member-label {
+  color: var(--calendar-on-mint);
+}
+.workspace[data-calendar-theme="dark"]
+  :is(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="color"],
+      [type="range"]
+    ),
+    select,
+    textarea
+  ) {
+  background-color: var(--calendar-sheet);
+  border-color: var(--accent-border);
+  color: var(--ink);
+}
+.workspace[data-calendar-theme="dark"] .calendar-month-picker select {
+  background-color: transparent;
+  border: 0;
+}
+.workspace[data-calendar-theme="dark"] :is(input, textarea)::placeholder {
+  color: var(--muted);
+}
+.workspace[data-calendar-theme="dark"] .modal::backdrop {
+  background: #040302b8;
+}
+.workspace[data-calendar-theme="dark"]
+  :is(
+    .document-modes,
+    .document-rich-tools,
+    .document-source,
+    .document-image-actions,
+    .document-image-view-controls,
+    .document-tabs,
+    .document-tab-menu [role="menu"],
+    .cell-option-popup,
+    .popover,
+    .loading-state
+  ) {
+  background: var(--calendar-sheet);
+  color: var(--ink);
+}
+.workspace[data-calendar-theme="dark"]
+  .cell-date-days
+  button[aria-pressed="true"] {
+  color: var(--calendar-on-orange);
+}
+.workspace[data-calendar-theme="dark"] .calendar-entry-title[readonly] {
+  border-color: transparent;
+}
+.workspace[data-calendar-theme="dark"] :is(.toast, .toast-action) {
+  color: var(--calendar-on-orange);
+}
+.workspace[data-calendar-theme="dark"]
+  :is(.document-modes button[aria-pressed="true"], .document-image-canvas) {
+  background: var(--accent-surface);
+}
+.workspace[data-calendar-theme="dark"] .calendar-entry-card {
+  background: color-mix(
+    in oklab,
+    var(--calendar-tag-bg, var(--calendar-mint)) 16%,
+    var(--calendar-sheet)
+  );
+}
+.workspace[data-calendar-theme="dark"]
+  .calendar-entry-segment:hover
+  .calendar-entry-card {
+  background: color-mix(
+    in oklab,
+    var(--calendar-tag-bg, var(--calendar-mint)) 24%,
+    var(--calendar-sheet)
+  );
+}
+.workspace[data-calendar-theme="dark"]
+  :is(.calendar-tag-chip, .calendar-tag-selected) {
+  background: color-mix(
+    in oklab,
+    var(--calendar-tag-chip) 24%,
+    var(--calendar-sheet)
+  );
+  color: color-mix(in oklab, var(--calendar-tag-ink) 15%, var(--ink));
+  border-color: color-mix(in oklab, var(--calendar-tag-border) 65%, var(--ink));
+}
+.workspace[data-calendar-theme="dark"] .calendar-tag-preview {
+  background: color-mix(
+    in oklab,
+    var(--calendar-tag-bg) 16%,
+    var(--calendar-sheet)
+  );
+}
+.workspace[data-calendar-theme="dark"] .calendar-check-tag input {
+  accent-color: var(--calendar-mint);
 }
 @media (max-width: 700px) {
   .calendar-workspace[data-calendar-view="shared"] .calendar-grid-header,

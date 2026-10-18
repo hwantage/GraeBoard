@@ -221,7 +221,8 @@ test("팀 월간 보기에서 일반 팀원이 공용 태그·일정을 만들�
     weekdays: [0, 1, 2, 3, 4, 5, 6],
   });
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   const shared = page.getByRole("button", {
     name: "팀 월간 보기",
     exact: true,
@@ -397,7 +398,8 @@ test("열람자도 팀 공용 일정·태그를 편집하지만 개인 일정·�
     weekdays: [0, 1, 2, 3, 4, 5, 6],
   });
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   await page
     .getByRole("button", { name: "개인 태그 관리", exact: true })
     .click();
@@ -559,7 +561,8 @@ test("태그 관리의 고정 10색과 일정 생성의 복수 선택·Enter·�
   ).toBeVisible();
   await closeDetail(page);
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   await expect(card(page, entries[0].id)).toHaveCSS(
     "background-color",
     "rgb(243, 239, 251)",
@@ -1038,7 +1041,8 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
     fullPage: true,
   });
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   await expect(checks(first.id).first()).toBeChecked();
   await expect(checks(second.id).first()).toBeChecked();
   await page
@@ -1197,7 +1201,8 @@ test("열람자는 체크 태그의 상태를 볼 수 있지만 변경할 수 �
   await request(page, "/auth/logout", "POST");
   await request(page, "/auth/login", "POST", { username, password });
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   await page.getByLabel("캘린더 팀원").selectOption(userId);
   const box = page
     .locator(`[data-entry-id="${entry.id}"]`)
@@ -1345,7 +1350,8 @@ test("일정 상세를 간결하게 표시하고 즉시 삭제·실행취소로 
     (await request(page, `/calendar/entries/${entry.id}/document`)).markdown,
   ).toBe(markdown);
   await page.reload();
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(page.locator(".calendar-grid")).toBeVisible();
   await expect(card(page, entry.id)).toContainText("삭제 직전 입력한 제목");
 });
 

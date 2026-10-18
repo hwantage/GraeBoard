@@ -33,7 +33,9 @@ const entryDialog = (page: Page) =>
 const source = (page: Page) =>
   entryDialog(page).getByRole("textbox", { name: "일정 문서 Markdown 원문" });
 async function enter(page: Page) {
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  if (new URL(page.url()).pathname !== "/calendar")
+    await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
   await expect(calendar(page).locator(".calendar-grid")).toBeVisible();
 }
 async function teamWeek(page: Page, start: string) {

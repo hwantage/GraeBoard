@@ -4,6 +4,8 @@ import Select from "./Select";
 import LoadingState from "./LoadingState";
 import SheetTabs from "./SheetTabs";
 import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
+import useWorkspaceRoute from "./useWorkspaceRoute";
+import useCalendarTheme from "./useCalendarTheme";
 import { getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";
@@ -37,6 +39,8 @@ import {
   UserRound,
   FunnelX,
   FolderOpen,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { api, send, ApiError, taskQuery } from "./api";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
@@ -237,9 +241,11 @@ function Workspace({
   onLogout: () => void;
 }) {
   const { user } = boot;
-  const [screen, setScreen] = useState<"annual" | "calendar">("annual");
+  const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
+  const calendarTheme = useCalendarTheme();
+  const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
   const [calendarBusy, setCalendarBusy] = useState(false);
-  const [documentBrowser, setDocumentBrowser] = useState(false);
+  const documentBrowser = workspaceRoute.route === "documents";
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
   const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const [initialBoard] = useState(() => rememberedBoard(boot));
@@ -2506,24 +2512,58 @@ function Workspace({
   async function closeDocumentBrowser() {
     closeReportNow();
     await refresh();
-    setDocumentBrowser(false);
+    workspaceRoute.commit("annual");
   }
   async function navigateWorkspace(action: () => void | Promise<void>) {
     if (documentBrowser) await documentBrowserRef.current?.navigate(action);
     else await action();
   }
   function openAnnualWorkspace() {
-    void navigateWorkspace(async () => {
-      if (documentBrowser) await closeDocumentBrowser();
-      else closeReport();
-      setScreen("annual");
-    });
+    if (workspaceRoute.route === "annual") closeReport();
+    else void workspaceRoute.navigate("annual");
+  }
+  async function prepareWorkspaceRoute(
+    next: "annual" | "documents" | "calendar",
+  ) {
+    if (
+      calendarBusy ||
+      workspaceNavigating ||
+      pendingRef.current ||
+      failedRef.current ||
+      editorRef.current ||
+      reportDraft.dirty ||
+      reportDraft.saving
+    )
+      return false;
+    const prepare = async () => {
+      flushView();
+      if (next === "annual") {
+        if (documentBrowser) {
+          closeReportNow();
+          await refresh();
+        } else await openCopy(null);
+      }
+      setViewMenu(false);
+      if (next === "calendar") setRowTask(null);
+    };
+    try {
+      if (documentBrowser)
+        return (await documentBrowserRef.current?.navigate(prepare)) ?? false;
+      await prepare();
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    }
   }
   return (
     <div
       ref={workspaceRef}
       className={`workspace ${presentation ? "presentation-mode" : ""}`}
       data-screen={screen}
+      data-calendar-theme={
+        screen === "calendar" ? calendarTheme.theme : undefined
+      }
     >
       <main
         className="main-workspace"
@@ -2571,10 +2611,24 @@ function Workspace({
           />
         )}
         <header className="topbar">
-          <div className="brand">
+          <button
+            type="button"
+            className="brand brand-home"
+            aria-label="그래보드 홈 (연간 업무)"
+            onClick={openAnnualWorkspace}
+            {...busyProps(
+              calendarBusy,
+              workspaceNavigating ||
+                !!pending ||
+                !!failed ||
+                !!editor ||
+                reportDraft.dirty ||
+                reportDraft.saving,
+            )}
+          >
             <BrandMark className="brand-symbol" />
             <BrandWordmark className="brand-wordmark" />
-          </div>
+          </button>
           <Select
             className="team-select"
             aria-label="팀 선택"
@@ -2633,13 +2687,7 @@ function Workspace({
                     reportDraft.dirty ||
                     reportDraft.saving,
                 )}
-                onClick={() => {
-                  if (documentBrowser) return;
-                  flushView();
-                  setViewMenu(false);
-                  setScreen("annual");
-                  setDocumentBrowser(true);
-                }}
+                onClick={() => void workspaceRoute.navigate("documents")}
               >
                 <FolderOpen size={15} />
                 <span>문서 브라우저</span>
@@ -2656,14 +2704,7 @@ function Workspace({
                     reportDraft.dirty ||
                     reportDraft.saving,
                 )}
-                onClick={() =>
-                  void navigateWorkspace(() => {
-                    setDocumentBrowser(false);
-                    setScreen("calendar");
-                    setViewMenu(false);
-                    setRowTask(null);
-                  })
-                }
+                onClick={() => void workspaceRoute.navigate("calendar")}
               >
                 <svg
                   width="21"
@@ -2726,17 +2767,37 @@ function Workspace({
             <SaveStatus pending={pending > 0} failed={!!failed} />
           )}
           {screen === "calendar" ? (
-            <Button
-              className="calendar-close"
-              title="캘린더 닫기"
-              onClick={openAnnualWorkspace}
-              {...busyProps(
-                calendarBusy,
-                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
-              )}
-            >
-              <X size={18} />
-            </Button>
+            <>
+              <Button
+                className="calendar-theme-toggle"
+                title={
+                  calendarTheme.theme === "dark"
+                    ? "밝은 테마로 전환"
+                    : "어두운 테마로 전환"
+                }
+                aria-pressed={calendarTheme.theme === "dark"}
+                onClick={calendarTheme.toggle}
+              >
+                {calendarTheme.theme === "dark" ? (
+                  <Sun size={17} />
+                ) : (
+                  <Moon size={17} />
+                )}
+              </Button>
+              <Button
+                className="calendar-close"
+                title="캘린더 닫기"
+                onClick={openAnnualWorkspace}
+                {...busyProps(
+                  calendarBusy,
+                  workspaceNavigating ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
+                )}
+              >
+                <X size={18} />
+              </Button>
+            </>
           ) : (
             <>
               <nav className="top-navigation" aria-label="관리 메뉴">

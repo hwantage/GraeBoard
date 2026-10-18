@@ -626,6 +626,17 @@ test("문서 저장 실패 시 작업·검색·분류·닫기 이동을 막고 �
   await expect(
     page.getByText("검증용 저장 실패", { exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
+    .click();
+  await expect(raw(page)).toHaveValue("저장 실패 중 보존할 입력");
+  await expect(page).toHaveURL(/\/documents$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/documents$/);
+  await expect(raw(page)).toHaveValue("저장 실패 중 보존할 입력");
+  await expect(
+    page.getByText("저장을 완료하지 못했습니다.", { exact: false }),
+  ).toBeVisible();
   await sheet(page)
     .getByRole("button", { name: "다른 문서 작업", exact: true })
     .click();
@@ -684,6 +695,39 @@ test("문서 저장 실패 시 작업·검색·분류·닫기 이동을 막고 �
   ).toBeVisible();
   expect((await get(page, `/tasks/${taskId}/documents/main`)).markdown).toBe(
     "저장 실패 중 보존할 입력",
+  );
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "문서 브라우저", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "연간 업무", exact: true }),
+  ).toBeVisible();
+});
+
+test("뒤로가기 전에 문서 입력을 저장하고 앞으로가기로 다시 연다", async ({
+  page,
+}) => {
+  await openBrowser(page);
+  await openDocument(page);
+  await markdown(page);
+  await raw(page).fill("브라우저 뒤로가기 직전에 수정한 본문");
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "연간 업무", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  expect((await get(page, `/tasks/${taskId}/documents/main`)).markdown).toBe(
+    "브라우저 뒤로가기 직전에 수정한 본문",
+  );
+  await page.goForward();
+  await expect(
+    page.getByRole("heading", { name: "문서 브라우저", exact: true }),
+  ).toBeVisible();
+  await openDocument(page);
+  await expect(rich(page)).toContainText(
+    "브라우저 뒤로가기 직전에 수정한 본문",
   );
 });
 
