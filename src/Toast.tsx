@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, LoaderCircle } from "lucide-react";
+import { Check, LoaderCircle, Trash2 } from "lucide-react";
 
 export function useToast() {
   const [notice, setNotice] = useState<{ message: string } | null>(null);
@@ -32,4 +32,29 @@ export default function Toast({
       <span>{message}</span>
     </div>
   ) : null;
+}
+
+export function UndoToast({
+  message,
+  disabled = false,
+  onUndo,
+}: {
+  message: string;
+  disabled?: boolean;
+  onUndo: () => void;
+}) {
+  return (
+    <div className="toast" role="status" aria-atomic="true">
+      <Trash2 size={16} aria-hidden="true" />
+      <span>{message}</span>
+      <button
+        type="button"
+        className="toast-action"
+        disabled={disabled}
+        onClick={onUndo}
+      >
+        실행취소
+      </button>
+    </div>
+  );
 }

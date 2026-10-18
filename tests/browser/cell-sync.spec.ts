@@ -53,7 +53,7 @@ test.beforeEach(async ({ page, browser }) => {
     })
   ).user.id;
   peerContext = await browser.newContext({
-    baseURL: "http://127.0.0.1:4311",
+    baseURL: test.info().project.use.baseURL,
     viewport: { width: 1366, height: 900 },
   });
   peer = await peerContext.newPage();

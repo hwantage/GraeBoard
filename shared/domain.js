@@ -345,6 +345,16 @@ export function defaultView(year) {
     columnVisibility: {},
   };
 }
+export function matchesPropertyFilter(cellValue, values, mode = "include") {
+  if (!values.length) return true;
+  const matches = Array.isArray(cellValue)
+    ? cellValue.length
+      ? cellValue.some((v) => values.includes(v))
+      : values.includes("")
+    : values.includes(String(cellValue));
+  return mode === "exclude" ? !matches : matches;
+}
+
 export function filteredTasks(
   tasks,
   view,
@@ -355,16 +365,11 @@ export function filteredTasks(
   let result = tasks.filter((t) => {
     if (
       filters.some(([key, values]) => {
-        if (!values.length) return false;
-        const cellValue = value(t, key);
-        const matches = Array.isArray(cellValue)
-          ? cellValue.length
-            ? cellValue.some((v) => values.includes(v))
-            : values.includes("")
-          : values.includes(String(cellValue));
-        return view.propertyFilterModes?.[key] === "exclude"
-          ? matches
-          : !matches;
+        return !matchesPropertyFilter(
+          value(t, key),
+          values,
+          view.propertyFilterModes?.[key],
+        );
       })
     )
       return false;

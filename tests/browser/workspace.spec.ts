@@ -6260,6 +6260,49 @@ async function dragRow(
   await page.mouse.up();
 }
 
+test("행 이동도 버튼 해제 이동이 먼저 오면 마지막으로 누른 위치에 한 번만 저장한다", async ({
+  page,
+}) => {
+  const handle = page.locator(`[data-row-id="${taskIds[0]}"] .row-drag-handle`);
+  await handle.evaluate((element) => {
+    element.addEventListener(
+      "pointerdown",
+      (event) =>
+        element.setAttribute("data-test-pointer", String(event.pointerId)),
+      { once: true },
+    );
+  });
+  let writes = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/tasks/reorder")
+    )
+      writes++;
+  });
+  await dragRow(page, taskIds[0], taskIds[2], "after", async () => {
+    await expect(page.locator(".row-drag-preview")).toBeVisible();
+    await handle.evaluate((element) => {
+      element.dispatchEvent(
+        new PointerEvent("pointermove", {
+          pointerId: Number(element.getAttribute("data-test-pointer")),
+          buttons: 0,
+          button: -1,
+          clientX: 5,
+          clientY: 5,
+          bubbles: true,
+        }),
+      );
+    });
+    await expect(page.locator(".row-drag-preview")).toHaveCount(0);
+  });
+  const expected = ["숨길 업무", "셋째 업무", "첫 업무"];
+  await expect(page.locator('[data-column="title"]')).toHaveText(expected);
+  expect(writes).toBe(1);
+  await page.reload();
+  await expect(page.locator('[data-column="title"]')).toHaveText(expected);
+});
+
 test("행 번호 가운데는 선택하고 왼쪽 손잡이는 겹침 없이 한 행을 이동한다", async ({
   page,
 }) => {
@@ -8603,6 +8646,78 @@ test("속성 카드의 여백과 이웃 카드의 손잡이 위치에서도 끌�
   );
 });
 
+test("속성 값 순서도 캡처 해제 뒤 버튼 해제 이동으로 확정하고 다음 드래그를 취소할 수 있다", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  await page.locator('[data-column-item="status"] .property-select').click();
+  const rows = page.locator(".property-values tbody tr");
+  const order = () =>
+    rows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-option-id")),
+    );
+  const before = await order();
+  const moving = rows.last().locator(".list-drag-handle");
+  await moving.evaluate((element) => {
+    element.addEventListener(
+      "pointerdown",
+      (event) =>
+        element.setAttribute("data-test-pointer", String(event.pointerId)),
+      { once: true },
+    );
+  });
+  await moving.hover();
+  const first = (await rows.first().boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(first.x + 16, first.y + 2, { steps: 8 });
+  await expect(rows.first()).toHaveAttribute("data-reorder-drop", "before");
+  await moving.evaluate((element) => {
+    const pointerId = Number(element.getAttribute("data-test-pointer"));
+    element.releasePointerCapture(pointerId);
+    element.dispatchEvent(
+      new PointerEvent("lostpointercapture", {
+        pointerId,
+        buttons: 0,
+        bubbles: true,
+      }),
+    );
+    element.dispatchEvent(
+      new PointerEvent("pointermove", {
+        pointerId,
+        buttons: 0,
+        button: -1,
+        clientX: 5,
+        clientY: 5,
+        bubbles: true,
+      }),
+    );
+  });
+  await page.mouse.up();
+  const expected = [before.at(-1)!, ...before.slice(0, -1)];
+  await expect.poll(order).toEqual(expected);
+  await expect(page.locator('[data-reordering="true"]')).toHaveCount(0);
+  await rows.first().locator(".list-drag-handle").hover();
+  const last = (await rows.last().boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(last.x + 16, last.y + last.height - 2, { steps: 8 });
+  await expect(rows.last()).toHaveAttribute("data-reorder-drop", "after");
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect.poll(order).toEqual(expected);
+  await expect(page.locator('[data-reordering="true"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "속성 저장", exact: true }).click();
+  await expect(
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  await page.locator('[data-column-item="status"] .property-select').click();
+  await expect.poll(order).toEqual(expected);
+});
+
 test("속성은 가로로 끌어 이동하고 선택값은 세로로 이동하며 열 너비를 유지한다", async ({
   page,
 }, info) => {
@@ -10153,7 +10268,7 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
     memberships: [{ teamId, role: "member" }],
   });
   const peer = await browser.newPage({
-    baseURL: "http://127.0.0.1:4311",
+    baseURL: test.info().project.use.baseURL,
     viewport: { width: 1366, height: 900 },
   });
   try {

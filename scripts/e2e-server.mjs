@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
 import { openDatabase } from "../server/db.mjs";
+const port = Number(process.env.E2E_PORT || 4311);
 const dir = mkdtempSync(join(tmpdir(), "weekly-plan-browser-"));
 const db = openDatabase(join(dir, "test.sqlite"));
 const app = createApp({
@@ -10,8 +11,8 @@ const app = createApp({
     rateLimits: false,
     documentImagesDir: join(dir, "images"),
   }),
-  server = app.listen(4311, "127.0.0.1", async () => {
-    await fetch("http://127.0.0.1:4311/api/auth/setup", {
+  server = app.listen(port, "127.0.0.1", async () => {
+    await fetch(`http://127.0.0.1:${port}/api/auth/setup`, {
       method: "POST",
       headers: {
         "X-Requested-With": "WeeklyPlan",
@@ -25,7 +26,7 @@ const app = createApp({
         sample: true,
       }),
     });
-    console.log("임시 브라우저 검증 서버: http://127.0.0.1:4311");
+    console.log(`임시 브라우저 검증 서버: http://127.0.0.1:${port}`);
   });
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {

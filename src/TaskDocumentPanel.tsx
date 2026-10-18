@@ -233,6 +233,11 @@ export default forwardRef<DocumentHandle, Props>(
       setTabToFocus(null);
     }, [tabToFocus, selected, renaming]);
     useImperativeHandle(ref, () => ({
+      persistDraft: () => {
+        for (const handle of handles.current.values())
+          if (!handle.persistDraft()) return false;
+        return true;
+      },
       flush: async () => {
         if (busy || !(await finishRename())) return false;
         for (const handle of handles.current.values())

@@ -5,6 +5,7 @@ import {
   type PointerEvent,
   type KeyboardEvent,
 } from "react";
+import { trackPointerDrag } from "./trackPointerDrag";
 
 export type Placement = "before" | "after";
 export function reorderItems<T extends { id: string }>(
@@ -103,49 +104,28 @@ export function useListReorder<T extends HTMLElement>(
       frame = requestAnimationFrame(autoScroll);
     };
     const move = (e: globalThis.PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
       if (!moved && Math.abs(e.clientY - startY) < 4) return;
       moved = true;
       pointer = { x: e.clientX, y: e.clientY };
       locate();
       if (!frame) frame = requestAnimationFrame(autoScroll);
     };
-    const cancel = () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("blur", cancel);
-      window.removeEventListener("keydown", escape, true);
-      handle.removeEventListener("lostpointercapture", cancel);
-      if (handle.hasPointerCapture(pointerId))
-        handle.releasePointerCapture(pointerId);
-      cleanup.current = null;
-      setDrag(null);
-    };
-    const finish = (e: globalThis.PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
-      if (moved) {
-        pointer = { x: e.clientX, y: e.clientY };
-        locate();
-      }
-      cancel();
-      if (moved && drop) onMove(id, drop.targetId, drop.placement);
-    };
-    const escape = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      cancel();
-    };
-    cleanup.current = cancel;
+    cleanup.current = trackPointerDrag(event, {
+      captureTarget: handle,
+      onMove: move,
+      onEnd: (position, cancelled) => {
+        if (moved && !cancelled) {
+          pointer = { x: position.clientX, y: position.clientY };
+          locate();
+        }
+        cancelAnimationFrame(frame);
+        cleanup.current = null;
+        setDrag(null);
+        if (!cancelled && moved && drop)
+          onMove(id, drop.targetId, drop.placement);
+      },
+    });
     handle.setPointerCapture(pointerId);
-    handle.addEventListener("lostpointercapture", cancel);
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", cancel);
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", escape, true);
   }
   function keyboard(event: KeyboardEvent<HTMLButtonElement>, id: string) {
     if (

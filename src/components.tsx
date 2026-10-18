@@ -83,6 +83,10 @@ export function Modal({
   const hasHelp = !!help;
   const hasHeaderActions = !!headerActions || !!titleAction;
   useEffect(() => {
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     ref.current?.showModal();
     (
       initialFocus?.current ||
@@ -91,7 +95,10 @@ export function Modal({
       preventScroll: true,
     });
     const el = ref.current;
-    return () => el?.close();
+    return () => {
+      el?.close();
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
   }, [initialFocus, hasHelp, hasHeaderActions]);
   return (
     <dialog
