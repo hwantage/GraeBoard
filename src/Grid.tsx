@@ -13,6 +13,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { trackPointerDrag } from "./trackPointerDrag";
 import { useVirtualizer, defaultRangeExtractor } from "@tanstack/react-virtual";
 import {
   MoreHorizontal,
@@ -594,41 +595,25 @@ export default function Grid({
       }
       if (dragging) target();
     };
-    const clean = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finishDrag);
-      window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("keydown", escape, true);
-      window.removeEventListener("blur", cancel);
-      document.body.classList.remove("row-reordering");
-      cancelAnimationFrame(frame);
-      stopRowDrag.current = null;
-    };
-    const cancel = () => {
-      clean();
-      setRowDrag(null);
-    };
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        cancel();
-      }
-    };
-    const finishDrag = () => {
-      clean();
-      setRowDrag(null);
-      if (dragging && drop) {
-        if (drop.valid) moveRows(moving, drop.targetId, drop.placement);
-        else onError("묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.");
-      }
-    };
-    stopRowDrag.current = clean;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finishDrag, { once: true });
-    window.addEventListener("pointercancel", cancel, { once: true });
-    window.addEventListener("keydown", escape, true);
-    window.addEventListener("blur", cancel);
+    stopRowDrag.current = trackPointerDrag(e, {
+      onMove: move,
+      onEnd: (position, cancelled) => {
+        if (dragging && !cancelled) {
+          x = position.clientX;
+          y = position.clientY;
+          target();
+        }
+        document.body.classList.remove("row-reordering");
+        cancelAnimationFrame(frame);
+        stopRowDrag.current = null;
+        setRowDrag(null);
+        if (!cancelled && dragging && drop) {
+          if (drop.valid) moveRows(moving, drop.targetId, drop.placement);
+          else
+            onError("묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.");
+        }
+      },
+    });
     frame = requestAnimationFrame(scroll);
   }
   const groupHeights = useMemo(

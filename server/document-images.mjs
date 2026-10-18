@@ -143,7 +143,15 @@ export function databaseImageUrls(db) {
 
 export function installDocumentImageRoutes(
   app,
-  { db, taskAccess, teamAccess, managedTeam, documentImagesDir, refreshUser },
+  {
+    db,
+    taskAccess,
+    teamAccess,
+    managedTeam,
+    documentImagesDir,
+    refreshUser,
+    calendarImageAccess,
+  },
 ) {
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -186,6 +194,7 @@ export function installDocumentImageRoutes(
     return row.team_id;
   };
   for (const [route, access] of [
+    ["/api/calendar/entries/:id/document/images", calendarImageAccess],
     ["/api/tasks/:id/document/images", liveAccess],
     ["/api/tasks/:id/documents/:documentId/images", liveAccess],
     ["/api/reports/:id/tasks/:taskId/document/images", reportImageWriteAccess],

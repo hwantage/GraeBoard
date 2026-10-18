@@ -78,6 +78,7 @@ const AUDIT_LABELS: Record<string, string> = {
   format: "공통 서식 변경",
   cells: "셀 편집",
   document: "업무 문서 편집",
+  "calendar-rule": "주간 할 일 기준 변경",
   reorder: "업무 순서 변경",
   "property-convert": "속성 종류 변경",
   "team-update": "팀 정보 변경",
@@ -239,7 +240,7 @@ export function RowPanel({
   onRetryCopySave?: () => void;
   onClose: () => void;
   onSaveProperty: (request: PropertySaveRequest) => Promise<SavedCell[]>;
-  onAction: (action: string) => void;
+  onAction?: (action: string) => void;
 }) {
   const editable =
     !readOnly &&
@@ -265,7 +266,7 @@ export function RowPanel({
     }
   }
   function act(action: string) {
-    void leave(() => onAction(action));
+    void leave(() => onAction?.(action));
   }
   return (
     <Modal
@@ -289,40 +290,42 @@ export function RowPanel({
       onClose={() => void leave(onClose)}
       className={`task-detail-modal${documentFullPage ? " document-full-page" : ""}`}
       headerActions={
-        <div
-          className="task-detail-actions"
-          role="group"
-          aria-label="업무 동작"
-        >
-          <Button tooltip="이 업무 숨기기" onClick={() => act("hide")}>
-            <EyeOff size={16} aria-hidden="true" />
-            <span className="task-detail-action-label">이 업무 숨기기</span>
-          </Button>
-          {!readOnly && canContribute(user, task.teamId) && (
-            <Button tooltip="복제" onClick={() => act("duplicate")}>
-              <Copy size={16} aria-hidden="true" />
-              <span className="task-detail-action-label">복제</span>
+        onAction && (
+          <div
+            className="task-detail-actions"
+            role="group"
+            aria-label="업무 동작"
+          >
+            <Button tooltip="이 업무 숨기기" onClick={() => act("hide")}>
+              <EyeOff size={16} aria-hidden="true" />
+              <span className="task-detail-action-label">이 업무 숨기기</span>
             </Button>
-          )}
-          {editable && !reportMode && (
-            <Button tooltip="다음 연도에도 표시" onClick={() => act("carry")}>
-              <CalendarPlus size={16} aria-hidden="true" />
-              <span className="task-detail-action-label">
-                다음 연도에도 표시
-              </span>
-            </Button>
-          )}
-          {editable && (
-            <Button
-              className="danger"
-              tooltip="업무 삭제"
-              onClick={() => act("delete")}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              <span className="task-detail-action-label">업무 삭제</span>
-            </Button>
-          )}
-        </div>
+            {!readOnly && canContribute(user, task.teamId) && (
+              <Button tooltip="복제" onClick={() => act("duplicate")}>
+                <Copy size={16} aria-hidden="true" />
+                <span className="task-detail-action-label">복제</span>
+              </Button>
+            )}
+            {editable && !reportMode && (
+              <Button tooltip="다음 연도에도 표시" onClick={() => act("carry")}>
+                <CalendarPlus size={16} aria-hidden="true" />
+                <span className="task-detail-action-label">
+                  다음 연도에도 표시
+                </span>
+              </Button>
+            )}
+            {editable && (
+              <Button
+                className="danger"
+                tooltip="업무 삭제"
+                onClick={() => act("delete")}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+                <span className="task-detail-action-label">업무 삭제</span>
+              </Button>
+            )}
+          </div>
+        )
       }
     >
       <TaskDetailContent

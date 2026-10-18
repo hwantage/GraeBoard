@@ -222,14 +222,18 @@ export const batchSchema = z
     (d) => (d.format ? !d.changes.length : d.changes.length > 0),
     "서식 범위와 셀 변경을 분리하세요.",
   );
+export const propertyFilterValuesSchema = z
+  .array(z.string().max(10000))
+  .max(101);
+export const propertyFilterModeSchema = z.enum(["include", "exclude"]);
 export const savedFilterSchema = z
   .object({
     propertyFilters: z
-      .record(z.string().max(80), z.array(z.string().max(10000)).max(101))
+      .record(z.string().max(80), propertyFilterValuesSchema)
       .refine((v) => Object.keys(v).length <= 50)
       .optional(),
     propertyFilterModes: z
-      .record(z.string().max(80), z.enum(["include", "exclude"]))
+      .record(z.string().max(80), propertyFilterModeSchema)
       .refine((v) => Object.keys(v).length <= 50)
       .optional(),
   })

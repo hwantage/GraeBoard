@@ -5,6 +5,7 @@ import {
   removeTeamDocumentImages,
 } from "./document-images.mjs";
 import { installReportDocumentRoutes } from "./report-documents.mjs";
+import { installCalendarRoutes } from "./calendar.mjs";
 import { installDocumentBrowserRoutes } from "./document-browser.mjs";
 import {
   withTaskDocumentReferences,
@@ -594,7 +595,15 @@ export function createApp({
     teamAccess,
     documentImagesDir,
   });
+  const { calendarImageAccess } = installCalendarRoutes(app, {
+    db,
+    teamAccess,
+    managedTeam,
+    taskAccess,
+    documentImagesDir,
+  });
   installDocumentImageRoutes(app, {
+    calendarImageAccess,
     db,
     taskAccess,
     teamAccess,

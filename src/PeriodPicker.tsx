@@ -9,6 +9,7 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./components";
 import type { View } from "./types";
+import { trackPointerDrag } from "./trackPointerDrag";
 
 type Unit = "month" | "week";
 type Drag = { unit: Unit; anchor: number; end: number; pointerId: number };
@@ -96,64 +97,24 @@ export default function PeriodPicker({
     setDrag(next);
     keyboardAnchor.current = { unit, index };
 
-    const clean = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", cancelPointer, true);
-      window.removeEventListener("blur", cancel);
-      window.removeEventListener("keydown", escape, true);
-      dragRef.current = null;
-      stopDrag.current = null;
-      if (grid.hasPointerCapture(pointerId))
-        grid.releasePointerCapture(pointerId);
-    };
-    const cancel = () => {
-      clean();
-      setDrag(null);
-    };
-    const commit = (end: number) => {
-      clean();
-      setDrag(null);
-      apply(unit, index, end);
-    };
-    const move = (event: globalThis.PointerEvent) => {
-      const current = dragRef.current;
-      if (!current || event.pointerId !== pointerId) return;
-      if (!(event.buttons & 1)) {
-        // Some browsers report the released button in a move before pointerup.
-        // Keep the last range dragged while pressed; this move may be a hover.
-        commit(current.end);
-        return;
-      }
-      const end = indexAt(event.clientX);
-      if (end === current.end) return;
-      const next = { ...current, end };
-      dragRef.current = next;
-      setDrag(next);
-    };
-    const finish = (event: globalThis.PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      // The release can arrive without a final pointermove during a fast drag.
-      const end = indexAt(event.clientX);
-      commit(end);
-    };
-    const cancelPointer = (event: globalThis.PointerEvent) => {
-      if (event.pointerId === pointerId) cancel();
-    };
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        cancel();
-      }
-    };
-    stopDrag.current = clean;
-    // Keep tracking outside the cells, including when the browser drops capture.
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", finish, true);
-    window.addEventListener("pointercancel", cancelPointer, true);
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", escape, true);
+    stopDrag.current = trackPointerDrag(event, {
+      captureTarget: grid,
+      onMove: (event) => {
+        const current = dragRef.current;
+        if (!current) return;
+        const end = indexAt(event.clientX);
+        if (end === current.end) return;
+        const next = { ...current, end };
+        dragRef.current = next;
+        setDrag(next);
+      },
+      onEnd: (position, cancelled) => {
+        dragRef.current = null;
+        stopDrag.current = null;
+        setDrag(null);
+        if (!cancelled) apply(unit, index, indexAt(position.clientX));
+      },
+    });
     grid.setPointerCapture(pointerId);
   }
   function key(

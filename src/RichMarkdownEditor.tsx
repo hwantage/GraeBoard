@@ -343,6 +343,7 @@ function tableCellPaste(ctx: Ctx, text: string) {
 }
 
 type Props = {
+  label?: string;
   initialMarkdown: string;
   readOnly: boolean;
   saveStatus?: ReactNode;
@@ -423,7 +424,7 @@ export default function RichMarkdownEditor(props: Props) {
           editable: () => !latest.current.readOnly,
           attributes: {
             role: "textbox",
-            "aria-label": "업무 문서 리치 편집",
+            "aria-label": props.label || "업무 문서 리치 편집",
             "aria-multiline": "true",
             spellcheck: "false",
             translate: "no",

@@ -28,7 +28,7 @@ import {
 import { normalizeCellStyle } from "../shared/formatting.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 27;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -105,6 +105,21 @@ export function openDatabase(
     CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data BLOB NOT NULL CHECK(typeof(data)='blob'));
     CREATE TABLE IF NOT EXISTS report_documents(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,task_id TEXT NOT NULL,document_id TEXT NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),PRIMARY KEY(report_id,task_id,document_id));
     CREATE INDEX IF NOT EXISTS report_documents_version_idx ON report_documents(version_id);
+    CREATE TABLE IF NOT EXISTS calendar_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,weekdays TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS calendar_rules(team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,property_id TEXT NOT NULL,filter_values TEXT NOT NULL,filter_mode TEXT NOT NULL DEFAULT 'include' CHECK(filter_mode IN ('include','exclude')),revision INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS calendar_entries(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT REFERENCES users(id),date TEXT NOT NULL,end_date TEXT NOT NULL CHECK(end_date>=date),lane INTEGER NOT NULL DEFAULT 0 CHECK(lane>=0),title TEXT NOT NULL,preview TEXT NOT NULL DEFAULT '',version_id TEXT REFERENCES document_versions(id),revision INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,deleted_at TEXT,deletion_id TEXT);
+    CREATE INDEX IF NOT EXISTS calendar_entries_scope_idx ON calendar_entries(team_id,date,user_id);
+    CREATE INDEX IF NOT EXISTS calendar_entries_owner_idx ON calendar_entries(team_id,user_id);
+    CREATE INDEX IF NOT EXISTS calendar_entries_layout_start_idx ON calendar_entries(team_id,user_id,date,end_date) WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS calendar_entries_layout_end_idx ON calendar_entries(team_id,user_id,end_date,date) WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS calendar_entries_version_idx ON calendar_entries(version_id);
+    CREATE TABLE IF NOT EXISTS calendar_tags(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT REFERENCES users(id),name TEXT NOT NULL COLLATE NOCASE,color TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'label' CHECK(kind IN ('label','check')),revision INTEGER NOT NULL DEFAULT 1);
+    CREATE UNIQUE INDEX IF NOT EXISTS calendar_tags_personal_name_idx ON calendar_tags(team_id,user_id,name) WHERE user_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS calendar_tags_shared_name_idx ON calendar_tags(team_id,name) WHERE user_id IS NULL;
+    CREATE TABLE IF NOT EXISTS calendar_entry_tags(entry_id TEXT NOT NULL REFERENCES calendar_entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES calendar_tags(id) ON DELETE CASCADE,position INTEGER NOT NULL,checked INTEGER NOT NULL DEFAULT 0 CHECK(checked IN (0,1)),PRIMARY KEY(entry_id,tag_id),UNIQUE(entry_id,position));
+    CREATE INDEX IF NOT EXISTS calendar_entry_tags_tag_idx ON calendar_entry_tags(tag_id);
+    CREATE TABLE IF NOT EXISTS calendar_weekly_items(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),week_start TEXT NOT NULL,task_id TEXT NOT NULL,title TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(team_id,user_id,week_start,task_id));
+    CREATE INDEX IF NOT EXISTS calendar_weekly_scope_idx ON calendar_weekly_items(team_id,week_start,user_id);
     CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,team_id TEXT REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target TEXT NOT NULL,before_json TEXT,after_json TEXT,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS audit_team_idx ON audit(team_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_system_idx ON audit(team_id,created_at DESC,id DESC) WHERE team_id IS NULL;

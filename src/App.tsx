@@ -1,3 +1,5 @@
+import Calendar from "./Calendar";
+import { busyProps } from "./busyProps";
 import Select from "./Select";
 import LoadingState from "./LoadingState";
 import SheetTabs from "./SheetTabs";
@@ -92,7 +94,7 @@ import {
   SessionLogin,
 } from "./components";
 import SettingsPanel from "./SettingsPanel";
-import Toast, { useToast } from "./Toast";
+import Toast, { UndoToast, useToast } from "./Toast";
 import useReportDraft from "./useReportDraft";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
@@ -235,6 +237,8 @@ function Workspace({
   onLogout: () => void;
 }) {
   const { user } = boot;
+  const [screen, setScreen] = useState<"annual" | "calendar">("annual");
+  const [calendarBusy, setCalendarBusy] = useState(false);
   const [documentBrowser, setDocumentBrowser] = useState(false);
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
   const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
@@ -821,7 +825,8 @@ function Workspace({
     };
   }, [teamId, year, scopeMonth, loaded, !!report]);
   useEffect(() => {
-    if (!ready || report || !cellEventCursor.current) return;
+    if (screen !== "annual" || !ready || report || !cellEventCursor.current)
+      return;
     const key = `${teamId}:${year}`;
     return subscribeCellChanges({
       teamId,
@@ -849,10 +854,11 @@ function Workspace({
         if (boardKey.current === key) void refreshBoot();
       },
     });
-  }, [teamId, year, scopeMonth, ready, !!report]);
+  }, [teamId, year, scopeMonth, ready, !!report, screen]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (
+        screen === "annual" &&
         !report &&
         !pendingRef.current &&
         !failedRef.current &&
@@ -862,7 +868,7 @@ function Workspace({
         refresh();
     }, 7000);
     return () => clearInterval(timer);
-  }, [refresh, report]);
+  }, [refresh, report, screen]);
   function flushView() {
     if (viewTimer.current) clearTimeout(viewTimer.current);
     const save = viewSaver.current;
@@ -2537,6 +2543,7 @@ function Workspace({
             return;
           }
           if (
+            screen === "annual" &&
             (e.metaKey || e.ctrlKey) &&
             e.key.toLowerCase() === "z" &&
             e.target instanceof HTMLElement &&
@@ -2564,13 +2571,14 @@ function Workspace({
             className="team-select"
             aria-label="팀 선택"
             value={teamId}
-            disabled={
+            {...busyProps(
+              calendarBusy,
               workspaceNavigating ||
-              !!pending ||
-              !!failed ||
-              reportDraft.dirty ||
-              reportDraft.saving
-            }
+                !!pending ||
+                !!failed ||
+                reportDraft.dirty ||
+                reportDraft.saving,
+            )}
             onChange={(e) => {
               const id = e.target.value;
               void navigateWorkspace(() => setTeamId(id));
@@ -2596,35 +2604,66 @@ function Workspace({
           <nav className="top-navigation" aria-label="주 메뉴">
             <Button
               title={documentBrowser ? "연간 업무로 돌아가기" : "연간 업무"}
-              active={!documentBrowser && !report}
+              active={screen === "annual" && !documentBrowser && !report}
+              aria-pressed={screen === "annual" && !documentBrowser && !report}
               onClick={() =>
-                documentBrowser
-                  ? void navigateWorkspace(closeDocumentBrowser)
-                  : closeReport()
+                void navigateWorkspace(async () => {
+                  if (documentBrowser) await closeDocumentBrowser();
+                  else closeReport();
+                  setScreen("annual");
+                })
               }
-              disabled={
-                workspaceNavigating || reportDraft.dirty || reportDraft.saving
-              }
+              {...busyProps(
+                calendarBusy,
+                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
+              )}
             >
               <CalendarDays size={15} />
               <span>연간 업무</span>
             </Button>
             <Button
+              title="캘린더"
+              active={screen === "calendar"}
+              aria-pressed={screen === "calendar"}
+              {...busyProps(
+                calendarBusy,
+                workspaceNavigating ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  reportDraft.dirty ||
+                  reportDraft.saving,
+              )}
+              onClick={() =>
+                void navigateWorkspace(() => {
+                  setDocumentBrowser(false);
+                  setScreen("calendar");
+                  setViewMenu(false);
+                  setRowTask(null);
+                })
+              }
+            >
+              <CalendarDays size={15} />
+              <span>캘린더</span>
+            </Button>
+            <Button
               title="문서 브라우저"
               active={documentBrowser}
-              disabled={
+              {...busyProps(
+                calendarBusy,
                 workspaceNavigating ||
-                (!documentBrowser && !ready) ||
-                !!pending ||
-                !!failed ||
-                !!editor ||
-                reportDraft.dirty ||
-                reportDraft.saving
-              }
+                  (!documentBrowser && !ready) ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  reportDraft.dirty ||
+                  reportDraft.saving,
+              )}
               onClick={() => {
                 if (documentBrowser) return;
                 flushView();
                 setViewMenu(false);
+                setScreen("annual");
                 setDocumentBrowser(true);
               }}
             >
@@ -2634,9 +2673,10 @@ function Workspace({
             <Button
               title="변경 이력"
               onClick={() => void navigateWorkspace(() => setPanel("history"))}
-              disabled={
-                workspaceNavigating || reportDraft.dirty || reportDraft.saving
-              }
+              {...busyProps(
+                calendarBusy,
+                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
+              )}
             >
               <History size={15} />
               <span>변경 이력</span>
@@ -2647,9 +2687,12 @@ function Workspace({
                 onClick={() =>
                   void navigateWorkspace(() => setPanel("settings"))
                 }
-                disabled={
-                  workspaceNavigating || reportDraft.dirty || reportDraft.saving
-                }
+                {...busyProps(
+                  calendarBusy,
+                  workspaceNavigating ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
+                )}
               >
                 <Settings size={15} />
                 <span>설정</span>
@@ -2663,6 +2706,7 @@ function Workspace({
               void navigateWorkspace(() => setPanel("password"))
             }
             logoutDisabled={
+              calendarBusy ||
               workspaceNavigating ||
               !!pending ||
               !!failed ||
@@ -2680,7 +2724,18 @@ function Workspace({
             }}
           />
         </header>
-        {documentBrowser ? (
+        {screen === "calendar" ? (
+          <Calendar
+            key={teamId}
+            team={team}
+            user={user}
+            onBusyChange={setCalendarBusy}
+            onNotify={(message) => {
+              setUndoToast(null);
+              setToast(message);
+            }}
+          />
+        ) : documentBrowser ? (
           <DocumentBrowser
             ref={documentBrowserRef}
             boot={boot}
@@ -3278,35 +3333,28 @@ function Workspace({
           </>
         )}
       </main>
-      {undoToast && undoToastCurrent && !presentation && !documentBrowser ? (
-        <div className="toast" role="status" aria-atomic="true">
-          <Trash2 size={16} aria-hidden="true" />
-          <span>{undoToast.message}</span>
-          <button
-            type="button"
-            className="toast-action"
-            disabled={
-              undoToast.kind === "rows" &&
-              (!!pending || !!failed || !!editor || (!!report && !canAdd))
+      {undoToast &&
+      undoToastCurrent &&
+      !presentation &&
+      !documentBrowser &&
+      screen === "annual" ? (
+        <UndoToast
+          message={undoToast.message}
+          disabled={
+            undoToast.kind === "rows" &&
+            (!!pending || !!failed || !!editor || (!!report && !canAdd))
+          }
+          onUndo={() => {
+            if (undoToast.kind === "rows") {
+              if (pendingRef.current || failedRef.current || editorRef.current)
+                return;
+              setUndoToast(null);
+              void undo();
+            } else {
+              undoToast.undo().catch((e) => setError((e as Error).message));
             }
-            onClick={() => {
-              if (undoToast.kind === "rows") {
-                if (
-                  pendingRef.current ||
-                  failedRef.current ||
-                  editorRef.current
-                )
-                  return;
-                setUndoToast(null);
-                void undo();
-              } else {
-                undoToast.undo().catch((e) => setError((e as Error).message));
-              }
-            }}
-          >
-            실행취소
-          </button>
-        </div>
+          }}
+        />
       ) : (
         !presentation && <Toast message={toast} />
       )}

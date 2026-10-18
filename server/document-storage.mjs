@@ -168,6 +168,7 @@ export function pruneDocumentVersions(db, teamId, versionIds) {
     `DELETE FROM document_versions WHERE team_id=?
     ${versionIds ? "AND id IN (SELECT value FROM json_each(?))" : ""}
     AND NOT EXISTS(SELECT 1 FROM task_documents WHERE version_id=document_versions.id)
+    AND NOT EXISTS(SELECT 1 FROM calendar_entries WHERE version_id=document_versions.id)
     AND NOT EXISTS(SELECT 1 FROM report_documents WHERE version_id=document_versions.id)`,
   ).run(teamId, ...(versionIds ? [JSON.stringify(versionIds)] : []));
 }
