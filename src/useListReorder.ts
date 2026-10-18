@@ -4,6 +4,7 @@ import {
   useState,
   type PointerEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { trackPointerDrag } from "./trackPointerDrag";
 
@@ -27,9 +28,12 @@ export function useListReorder<T extends HTMLElement>(
   ids: string[],
   onMove: (id: string, targetId: string, placement: Placement) => void,
   disabled: boolean,
+  axis: "vertical" | "horizontal" = "vertical",
 ) {
   const root = useRef<T>(null);
   const cleanup = useRef<(() => void) | null>(null);
+  const suppressClickUntil = useRef(0);
+  const horizontal = axis === "horizontal";
   const [drag, setDrag] = useState<{
     id: string;
     targetId: string;
@@ -41,17 +45,19 @@ export function useListReorder<T extends HTMLElement>(
   }, [disabled, ids.join(":")]);
   function start(event: PointerEvent<HTMLButtonElement>, id: string) {
     if (disabled || event.button !== 0) return;
-    event.preventDefault();
+    if (!horizontal) event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     cleanup.current?.();
     const handle = event.currentTarget;
     const pointerId = event.pointerId;
-    const startY = event.clientY;
+    const origin = horizontal ? event.clientX : event.clientY;
     let pointer = { x: event.clientX, y: event.clientY };
     let frame = 0;
     let scroll: HTMLElement | null = root.current;
+    // Horizontal tabs own their scroll area; never scroll the surrounding sheet.
     while (
       scroll &&
+      !horizontal &&
       !(
         scroll.scrollHeight > scroll.clientHeight &&
         /auto|scroll/.test(getComputedStyle(scroll).overflowY)
@@ -64,18 +70,17 @@ export function useListReorder<T extends HTMLElement>(
       const row = document
         .elementFromPoint(pointer.x, pointer.y)
         ?.closest<HTMLElement>("[data-reorder-id]");
-      drop =
-        row && root.current?.contains(row) && row.dataset.reorderId !== id
-          ? {
-              targetId: row.dataset.reorderId!,
-              placement:
-                pointer.y <
-                row.getBoundingClientRect().top +
-                  row.getBoundingClientRect().height / 2
-                  ? "before"
-                  : "after",
-            }
-          : null;
+      drop = null;
+      if (row && root.current?.contains(row) && row.dataset.reorderId !== id) {
+        const box = row.getBoundingClientRect();
+        const before = horizontal
+          ? pointer.x < box.left + box.width / 2
+          : pointer.y < box.top + box.height / 2;
+        drop = {
+          targetId: row.dataset.reorderId!,
+          placement: before ? "before" : "after",
+        };
+      }
       const next = {
         id,
         targetId: drop?.targetId || "",
@@ -92,11 +97,17 @@ export function useListReorder<T extends HTMLElement>(
     const autoScroll = () => {
       if (scroll) {
         const box = scroll.getBoundingClientRect();
-        if (pointer.x >= box.left && pointer.x <= box.right) {
-          const delta =
-            pointer.y < box.top + 24 ? -8 : pointer.y > box.bottom - 24 ? 8 : 0;
+        const inside = horizontal
+          ? pointer.y >= box.top && pointer.y <= box.bottom
+          : pointer.x >= box.left && pointer.x <= box.right;
+        if (inside) {
+          const position = horizontal ? pointer.x : pointer.y;
+          const near = horizontal ? box.left : box.top;
+          const far = horizontal ? box.right : box.bottom;
+          const delta = position < near + 24 ? -8 : position > far - 24 ? 8 : 0;
           if (delta) {
-            scroll.scrollTop += delta;
+            if (horizontal) scroll.scrollLeft += delta;
+            else scroll.scrollTop += delta;
             locate();
           }
         }
@@ -104,7 +115,9 @@ export function useListReorder<T extends HTMLElement>(
       frame = requestAnimationFrame(autoScroll);
     };
     const move = (e: globalThis.PointerEvent) => {
-      if (!moved && Math.abs(e.clientY - startY) < 4) return;
+      if (!moved && Math.abs((horizontal ? e.clientX : e.clientY) - origin) < 4)
+        return;
+      if (horizontal) e.preventDefault();
       moved = true;
       pointer = { x: e.clientX, y: e.clientY };
       locate();
@@ -118,6 +131,7 @@ export function useListReorder<T extends HTMLElement>(
           pointer = { x: position.clientX, y: position.clientY };
           locate();
         }
+        if (horizontal && moved) suppressClickUntil.current = Date.now() + 250;
         cancelAnimationFrame(frame);
         cleanup.current = null;
         setDrag(null);
@@ -131,12 +145,14 @@ export function useListReorder<T extends HTMLElement>(
     if (
       disabled ||
       !event.altKey ||
-      !["ArrowUp", "ArrowDown"].includes(event.key)
+      !(
+        horizontal ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"]
+      ).includes(event.key)
     )
       return;
     event.preventDefault();
     event.stopPropagation();
-    const after = event.key === "ArrowDown";
+    const after = event.key === (horizontal ? "ArrowRight" : "ArrowDown");
     const target = ids[ids.indexOf(id) + (after ? 1 : -1)];
     if (target) onMove(id, target, after ? "after" : "before");
   }
@@ -144,6 +160,7 @@ export function useListReorder<T extends HTMLElement>(
     root,
     itemProps: (id: string) => ({
       "data-reorder-id": id,
+      "data-reorder-enabled": !disabled || undefined,
       "data-reordering": drag?.id === id || undefined,
       "data-reorder-drop": drag?.targetId === id ? drag.placement : undefined,
     }),
@@ -151,7 +168,15 @@ export function useListReorder<T extends HTMLElement>(
       type: "button" as const,
       className: "list-drag-handle",
       disabled,
-      title: "드래그하여 순서 이동 · Alt+위/아래 방향키",
+      title: horizontal
+        ? "드래그하여 순서 이동 · Alt+왼쪽/오른쪽 방향키"
+        : "드래그하여 순서 이동 · Alt+위/아래 방향키",
+      onClickCapture: (event: MouseEvent<HTMLButtonElement>) => {
+        if (horizontal && Date.now() < suppressClickUntil.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      },
       onPointerDown: (e: PointerEvent<HTMLButtonElement>) => start(e, id),
       onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => keyboard(e, id),
     }),

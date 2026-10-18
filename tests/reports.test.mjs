@@ -878,7 +878,7 @@ test("스냅샷은 참조된 사용자 이름만 압축 저장하고 재시작·
     body: { teamId: f.teamId, year: 2026, format: "json", scope: "all" },
   });
   assert.equal(exported.status, 200);
-  assert.deepEqual(exported.data.reports[0].data, saved);
+  assert.deepEqual(exported.data.reports[0].data, { ...saved, memos: [] });
 });
 
 test("스냅샷 조회는 현재 아바타만 연결하고 저장 당시 이름·본문과 최소 저장 형식을 보존한다", async (t) => {

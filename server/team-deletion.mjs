@@ -31,6 +31,7 @@ export function deleteTeam(db, teamId, actorId) {
       "DELETE FROM cells WHERE task_id IN (SELECT id FROM tasks WHERE team_id=?)",
     ).run(teamId);
     for (const table of [
+      "annual_memos",
       "calendar_entries",
       "calendar_tags",
       "calendar_weekly_items",

@@ -6,7 +6,7 @@
 
 표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 형식만 설명하며, 이전 형식과의 호환 계층은 없습니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `5`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 27입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 29입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
 
 ## 저장 규칙 요약
 
@@ -357,3 +357,11 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 `GET /api/calendar/tasks?teamId=…&userId=…&weekStart=…&q=…&offset=…`는 주간 목록에 추가할 같은 팀의 활성 업무를 연도·상태·담당자 제한 없이 검색합니다. 제목·연도·해당 주 추가 여부를 50개씩 반환하며 `nextOffset`이 `null`이면 마지막 페이지입니다. `POST /api/calendar/weekly`는 `{teamId,userId,weekStart,taskIds}`로 최대 100개 업무를 과거·현재·미래의 주에 연결합니다. 대상 개인 일정의 수정 권한과 모든 업무 ID를 한 번에 검증하며 중복 연결·재시도는 기존 기록을 유지합니다. `POST /api/calendar/import`는 서울 날짜 기준 이번 주에만 허용하고, 팀원(`owner`) 값이 대상 `userId`인 업무 중 설정한 기준에 맞는 업무를 추가합니다. 지원자·검토자로만 참여한 업무는 제외합니다. 두 저장 경로는 `{added,existing,weekly}`를 반환하므로 해당 소유자·주의 목록만 병합하며 전체 캘린더를 재조회하지 않습니다. 두 경로 모두 원본 업무를 복제하거나 수정하지 않습니다.
 
 체크 태그의 상태는 태그 정의가 아닌 일정별 연결에 저장합니다. 일정 응답의 `checkedTagIds`는 체크된 태그 ID이며 생성 시에도 지정할 수 있습니다. 지정되지 않은 태그나 일반 태그의 체크는 거절합니다. `PATCH /api/calendar/entries/:id/tags/:tagId`에 `{checked, expectedChecked}`를 보내면 해당 체크만 저장하고 `{tagId, checked, updatedAt}`를 반환합니다. 같은 값의 재시도는 중복 변경 없이 처리합니다. 태그 순서·색상·이름 변경 시 체크는 유지하며, 일정에서 제거했다 다시 지정하거나 유형을 일반 태그로 바꾸면 체크는 해제됩니다. 체크는 일정 수정 권한을 따르고 제목·기간·본문 저장과 독립적으로 병합합니다.
+
+## 연간 업무 메모
+
+연간 업무 하단의 메모는 `annual_memos`에 팀·기준 연도별로 저장합니다. 개별 업무에 종속되지 않으며 원본 연간 업무에서 조회합니다. 사본 메모는 `report_memos`에 별도로 저장합니다. 제목·순서·revision·수정자·재시도 정보는 메모 행이 소유하고, 본문은 기존 `document_versions`를 참조합니다. 메모는 연도별 최대 50개, 제목 50자, 본문 UTF-8 256KiB이며 팀장·팀원·시스템 관리자가 편집하고 뷰어는 조회합니다.
+
+`/api/teams/:teamId/years/:year/memos`에서 목록 조회·생성을, `/:documentId`에서 본문 조회·저장·이름 변경·삭제를 제공합니다. 본문 저장은 revision과 operationId로 충돌·재시도를 검사합니다. `POST /api/teams/:teamId/years/:year/memos/reorder`는 `{ids, expectedIds}`로 전체 메모 순서를 저장합니다. 현재 목록·순서를 검사하고 이미 같은 순서인 재시도는 허용하며, 본문 revision과 수정 시각은 바꾸지 않습니다. 전체 SQLite 백업·복구와 JSON 반출(`memos`, 포함된 사본의 `data.memos`)에 포함합니다. XLSX·CSV는 업무 표만 반출합니다. 참조 정리와 팀 삭제 시 메모 참조도 함께 처리합니다.
+
+사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/reports/:reportId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `report_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.

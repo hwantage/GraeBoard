@@ -2068,7 +2068,7 @@ test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 �
   assert.equal(c.font.size, 18);
   assert.equal(c.fill.fgColor.argb, "FFFFEEAA");
   const data = await post("/export", { ...body, format: "json" });
-  assert.equal(data.data.schemaVersion, 5);
+  assert.equal(data.data.schemaVersion, 6);
   assert.deepEqual(Object.keys(data.data.tasks[0].cells).sort(), [
     "2026-10-05",
     "title",

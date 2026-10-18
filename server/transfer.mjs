@@ -1,4 +1,5 @@
 import { exportDocumentImages } from "./document-images.mjs";
+import { memoContents } from "./memo-storage.mjs";
 import { reportDocumentContents, readReport } from "./document-storage.mjs";
 import { reportRevision } from "./report-editing.mjs";
 import { withTaskDocuments } from "./task-documents.mjs";
@@ -762,7 +763,10 @@ export function installTransferRoutes(
             .all(d.teamId, d.year)
             .map(({ id, ...r }) => ({
               ...r,
-              data: reportDocumentContents(db, readReport(db, { id, ...r })),
+              data: {
+                ...reportDocumentContents(db, readReport(db, { id, ...r })),
+                memos: memoContents(db, { reportId: id }),
+              },
             }))
         : [];
     const views = report
@@ -779,7 +783,16 @@ export function installTransferRoutes(
     const documentTasks = report
       ? reportDocumentContents(db, { ...report, tasks }).tasks
       : withTaskDocuments(db, tasks);
+    const memos = memoContents(db, {
+      reportId: reportRow?.id,
+      teamId: d.teamId,
+      year: d.year,
+    });
     const documentImages = exportDocumentImages(documentImagesDir, [
+      ...memos.map((memo) => memo.markdown),
+      ...reports.flatMap((report) =>
+        report.data.memos.map((memo) => memo.markdown),
+      ),
       ...documentTasks.flatMap((task) =>
         (task.documents || []).map((doc) => doc.markdown),
       ),
@@ -792,7 +805,7 @@ export function installTransferRoutes(
     res.type("application/json").send(
       json({
         format: "weekly-plan",
-        schemaVersion: 5,
+        schemaVersion: 6,
         exportedAt: now(),
         team: { ...team, settings },
         ...(reportRow
@@ -801,6 +814,7 @@ export function installTransferRoutes(
         year: d.year,
         startMonth,
         documentImages,
+        memos,
         tasks: documentTasks.map((t) =>
           d.scope === "all"
             ? t

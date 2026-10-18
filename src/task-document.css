@@ -679,3 +679,130 @@
     padding-left: 4px;
   }
 }
+
+.annual-memos {
+  position: sticky;
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  flex: none;
+  background: white;
+}
+.annual-memos .document-tabs {
+  top: 32px;
+}
+.annual-memos-collapsed .document-tabs {
+  border-bottom-color: transparent;
+}
+.annual-memos .document-rich-tools {
+  top: 0;
+}
+.annual-memos .add-row,
+.annual-memos .toggle-memos {
+  position: static;
+  flex-shrink: 0;
+  margin: 0 6px 0 0;
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.document-pages {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.memo-documents {
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #bacbc7 #f4f7f6;
+  padding: 12px;
+}
+.memo-documents:empty {
+  display: none;
+}
+.annual-memos .memo-document-card {
+  flex: 0 0 min(800px, 100%);
+  width: min(800px, 100%);
+  min-width: 0;
+  min-height: 360px;
+  height: clamp(360px, 60dvh, 600px);
+  gap: 8px;
+}
+.memo-document-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  scrollbar-width: thin;
+}
+.memo-document-body[data-loading] > .task-document {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+}
+.memo-document-card[data-selected] .memo-document-body {
+  border-color: var(--accent);
+}
+.memo-document-heading {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 4px 10px;
+  background: white;
+}
+.memo-document-title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.memo-document-heading > div {
+  flex-shrink: 0;
+}
+.annual-memos .document-source {
+  min-height: 320px;
+}
+
+.annual-memos .document-tab-item {
+  position: relative;
+}
+.annual-memos .document-tablist [role="tab"] {
+  user-select: none;
+}
+.annual-memos .document-tab-item[data-reorder-enabled] [role="tab"] {
+  touch-action: pan-y;
+  cursor: grab;
+}
+.annual-memos .document-tab-item[data-reordering] {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+.annual-memos .document-tab-item[data-reorder-drop]::after {
+  content: "";
+  position: absolute;
+  inset-block: 4px;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.annual-memos .document-tab-item[data-reorder-drop="before"]::after {
+  left: 0;
+}
+.annual-memos .document-tab-item[data-reorder-drop="after"]::after {
+  right: 0;
+}

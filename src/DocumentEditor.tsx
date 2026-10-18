@@ -58,7 +58,7 @@ export type SharedDocumentEditorProps = {
   readOnly: boolean;
   emptyUntilSaved?: boolean;
   saveDocument: (input: DocumentWrite) => Promise<TaskDocument>;
-  onCloseWithDraft: () => void;
+  onCloseWithDraft?: () => void;
   onLoadingChange: (loading: boolean) => void;
 };
 type LocalDraft = {
@@ -412,11 +412,11 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                   </button>
                 )
               )}
-              {loaded && (
+              {loaded && props.onCloseWithDraft && (
                 <button
                   type="button"
                   onClick={() => {
-                    if (persist()) props.onCloseWithDraft();
+                    if (persist()) props.onCloseWithDraft?.();
                   }}
                 >
                   초안 보관하고 닫기

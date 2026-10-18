@@ -1,3 +1,5 @@
+import AnnualMemoPanel from "./AnnualMemoPanel";
+import type { DocumentPanelHandle } from "./DocumentPanel";
 import Calendar from "./Calendar";
 import { busyProps } from "./busyProps";
 import Select from "./Select";
@@ -246,6 +248,7 @@ function Workspace({
   const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
   const [calendarBusy, setCalendarBusy] = useState(false);
   const documentBrowser = workspaceRoute.route === "documents";
+  const annualMemoRef = useRef<DocumentPanelHandle>(null);
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
   const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const [initialBoard] = useState(() => rememberedBoard(boot));
@@ -440,6 +443,8 @@ function Workspace({
       : tasksRef.current;
   }
   async function prepareCopySwitch() {
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
+      throw new Error("메모 저장을 마친 뒤 전환해 주세요.");
     if (editorRef.current || pendingRef.current || failedRef.current)
       throw new Error("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
     if (reportDraft.ref.current) await reportDraft.save();
@@ -1027,7 +1032,8 @@ function Workspace({
       }, 450);
     }
   }
-  function moveYear(direction: -1 | 1) {
+  async function moveYear(direction: -1 | 1) {
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     if (!ready || pendingRef.current || failedRef.current || editorRef.current)
       return;
     const current = viewRef.current;
@@ -1047,7 +1053,8 @@ function Workspace({
     }
     setJump({ key: null, id: Date.now() });
   }
-  function moveCalendar(direction: -1 | 1) {
+  async function moveCalendar(direction: -1 | 1) {
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     if (!ready || pendingRef.current || failedRef.current || editorRef.current)
       return;
     const current = viewRef.current;
@@ -2515,6 +2522,7 @@ function Workspace({
     workspaceRoute.commit("annual");
   }
   async function navigateWorkspace(action: () => void | Promise<void>) {
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     if (documentBrowser) await documentBrowserRef.current?.navigate(action);
     else await action();
   }
@@ -2534,6 +2542,8 @@ function Workspace({
       reportDraft.dirty ||
       reportDraft.saving
     )
+      return false;
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
       return false;
     const prepare = async () => {
       flushView();
@@ -2921,7 +2931,12 @@ function Workspace({
                   className="presentation-start"
                   title="발표 모드"
                   disabled={!ready || !!pending || !!failed || !!editor}
-                  onClick={() => {
+                  onClick={async () => {
+                    if (
+                      annualMemoRef.current &&
+                      !(await annualMemoRef.current.flush())
+                    )
+                      return;
                     if (
                       pendingRef.current ||
                       failedRef.current ||
@@ -3368,6 +3383,22 @@ function Workspace({
                   assignableUsers={assignableUsers}
                   canAdd={canAdd}
                   addTaskLabel={addTaskLabel}
+                  footer={
+                    !presentation
+                      ? (addButton) => (
+                          <AnnualMemoPanel
+                            key={`${teamId}:${report?.id || year}`}
+                            ref={annualMemoRef}
+                            teamId={teamId}
+                            year={year}
+                            userId={user.id}
+                            readOnly={!canAdd || (!!report && !editingReport)}
+                            reportId={report?.id}
+                            leading={addButton}
+                          />
+                        )
+                      : undefined
+                  }
                   canEditPeople={report ? canAdd : canManage}
                   selection={selection}
                   settings={settings}

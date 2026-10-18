@@ -28,7 +28,7 @@ import {
 import { normalizeCellStyle } from "../shared/formatting.js";
 
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 29;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -90,6 +90,8 @@ export function openDatabase(
       CREATE INDEX IF NOT EXISTS tasks_style_idx ON tasks(default_style);
       CREATE INDEX IF NOT EXISTS tasks_row_style_idx ON tasks(row_style);
     CREATE TABLE IF NOT EXISTS document_versions(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,document_id TEXT NOT NULL,content_hash TEXT NOT NULL,markdown TEXT NOT NULL,has_content INTEGER NOT NULL,created_at TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),UNIQUE(team_id,document_id,content_hash));
+    CREATE TABLE IF NOT EXISTS annual_memos(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,year INTEGER NOT NULL,id TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(team_id,year,id));
+    CREATE INDEX IF NOT EXISTS annual_memos_version_idx ON annual_memos(version_id);
     CREATE TABLE IF NOT EXISTS task_documents(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,id TEXT NOT NULL DEFAULT 'main',title TEXT NOT NULL DEFAULT '문서 1',position INTEGER NOT NULL DEFAULT 0,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(task_id,id));
     CREATE INDEX IF NOT EXISTS task_documents_version_idx ON task_documents(version_id);
     CREATE INDEX IF NOT EXISTS task_documents_summary_idx ON task_documents(task_id,has_content);
@@ -105,6 +107,8 @@ export function openDatabase(
     CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data BLOB NOT NULL CHECK(typeof(data)='blob'));
     CREATE TABLE IF NOT EXISTS report_documents(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,task_id TEXT NOT NULL,document_id TEXT NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),PRIMARY KEY(report_id,task_id,document_id));
     CREATE INDEX IF NOT EXISTS report_documents_version_idx ON report_documents(version_id);
+    CREATE TABLE IF NOT EXISTS report_memos(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,id TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(report_id,id));
+    CREATE INDEX IF NOT EXISTS report_memos_version_idx ON report_memos(version_id);
     CREATE TABLE IF NOT EXISTS calendar_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,weekdays TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS calendar_rules(team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,property_id TEXT NOT NULL,filter_values TEXT NOT NULL,filter_mode TEXT NOT NULL DEFAULT 'include' CHECK(filter_mode IN ('include','exclude')),revision INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS calendar_entries(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT REFERENCES users(id),date TEXT NOT NULL,end_date TEXT NOT NULL CHECK(end_date>=date),lane INTEGER NOT NULL DEFAULT 0 CHECK(lane>=0),title TEXT NOT NULL,preview TEXT NOT NULL DEFAULT '',version_id TEXT REFERENCES document_versions(id),revision INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,deleted_at TEXT,deletion_id TEXT);

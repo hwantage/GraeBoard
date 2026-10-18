@@ -151,6 +151,7 @@ export function installDocumentImageRoutes(
     documentImagesDir,
     refreshUser,
     calendarImageAccess,
+    memoImageAccess,
   },
 ) {
   const upload = multer({
@@ -194,6 +195,11 @@ export function installDocumentImageRoutes(
     return row.team_id;
   };
   for (const [route, access] of [
+    [
+      "/api/teams/:teamId/years/:year/memos/:documentId/images",
+      memoImageAccess,
+    ],
+    ["/api/reports/:reportId/memos/:documentId/images", memoImageAccess],
     ["/api/calendar/entries/:id/document/images", calendarImageAccess],
     ["/api/tasks/:id/document/images", liveAccess],
     ["/api/tasks/:id/documents/:documentId/images", liveAccess],

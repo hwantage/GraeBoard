@@ -10,6 +10,7 @@ import {
   useRef,
   useMemo,
   type CSSProperties,
+  type ReactNode,
   type KeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -180,6 +181,7 @@ export default function Grid({
   assignableUsers,
   canAdd,
   addTaskLabel = "업무 추가",
+  footer,
   canEditPeople,
   selection,
   settings,
@@ -216,6 +218,7 @@ export default function Grid({
   assignableUsers: User[];
   canAdd: boolean;
   addTaskLabel?: string;
+  footer?: (addButton: ReactNode) => ReactNode;
   canEditPeople: boolean;
   selection: Selection | null;
   settings: Settings;
@@ -1668,7 +1671,7 @@ export default function Grid({
             title="표시할 업무가 없습니다"
             description="필터와 숨김 설정을 확인하거나 첫 업무를 등록하세요."
             action={
-              !readOnly && canAdd ? (
+              !footer && !readOnly && canAdd ? (
                 <Button className="primary" onClick={onAdd}>
                   <Plus size={16} />
                   {addTaskLabel}
@@ -1685,12 +1688,23 @@ export default function Grid({
             숨긴 {matchingTasks.length}개 행 펼치기
           </Button>
         )}
-        {!!tasks.length && !readOnly && canAdd && (
-          <Button className="primary add-row" onClick={onAdd}>
-            <Plus size={17} />
-            {addTaskLabel}
-          </Button>
-        )}
+        {footer
+          ? footer(
+              !readOnly && canAdd ? (
+                <Button className="primary add-row" onClick={onAdd}>
+                  <Plus size={17} />
+                  {addTaskLabel}
+                </Button>
+              ) : null,
+            )
+          : !!tasks.length &&
+            !readOnly &&
+            canAdd && (
+              <Button className="primary add-row" onClick={onAdd}>
+                <Plus size={17} />
+                {addTaskLabel}
+              </Button>
+            )}
       </div>
       {headerMenu && (
         <GridHeaderMenu

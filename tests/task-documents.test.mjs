@@ -554,7 +554,7 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
     format: "json",
     scope: "all",
   });
-  assert.equal(exported.data.schemaVersion, 5);
+  assert.equal(exported.data.schemaVersion, 6);
   assert.equal(
     exported.data.tasks.find((t) => t.id === f.task.id).documents[0].markdown,
     "원본만 수정",
@@ -2018,4 +2018,578 @@ test("문서 브라우저 묶음 보기와 페이지는 다중 구성원 조합�
   assert.equal(combined.groups.length, 1);
   assert.equal(combined.groups[0].taskCount, 2);
   assert.equal(combined.groups[0].key, [...members].sort().join(","));
+});
+
+test("연간 메모는 팀·연도별로 분리하고 권한·충돌·재시도·버전 참조를 보존한다", async (t) => {
+  const f = await fixture(t);
+  const base = `/teams/${f.teamId}/years/2026/memos`;
+  const id = randomUUID(),
+    path = `${base}/${id}`;
+  assert.deepEqual((await f.req(base)).data.documents, []);
+  for (const role of ["viewer", "outsider"])
+    assert.equal((await f.req(base, "POST", { id }, role)).status, 403);
+  assert.equal((await f.req(base, "POST", { id }, "member")).status, 201);
+  assert.equal((await f.req(base, "POST", { id })).data.documents.length, 1);
+  assert.equal((await f.req(base)).data.documents[0].title, "메모 1");
+  assert.deepEqual(
+    (await f.req(`/teams/${f.teamId}/years/2027/memos`)).data.documents,
+    [],
+  );
+  assert.equal(
+    (await f.req(`/teams/${f.teamId}/years/2027/memos/${id}`)).status,
+    404,
+  );
+  assert.equal((await f.req(base, "GET", undefined, "outsider")).status, 403);
+  assert.equal((await f.req(path, "GET", undefined, "viewer")).status, 200);
+  const save = {
+    markdown: "# 연간 기록\n\n- [x] 완료",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  };
+  assert.equal((await f.req(path, "PUT", save, "viewer")).status, 403);
+  const saved = await f.req(path, "PUT", save, "member");
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.revision, 1);
+  assert.deepEqual((await f.req(path, "PUT", save, "member")).data, saved.data);
+  const conflict = await f.req(path, "PUT", {
+    ...save,
+    operationId: randomUUID(),
+    markdown: "덮어쓰기",
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.data.details.current.markdown, save.markdown);
+  assert.equal(
+    (await f.req(path, "PATCH", { title: "회의록", expectedTitle: "메모 1" }))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.req(path, "PATCH", {
+        title: "낡은 이름",
+        expectedTitle: "메모 1",
+      })
+    ).status,
+    409,
+  );
+  // Unrelated task saves prune unused versions but must retain annual memo bodies.
+  await f.save("업무 문서 저장");
+  assert.equal((await f.req(path)).data.markdown, save.markdown);
+  assert.equal(
+    (await f.req(path, "DELETE", { expectedRevision: 0 })).status,
+    409,
+  );
+  assert.equal(
+    (await f.req(path, "DELETE", { expectedRevision: 1 }, "viewer")).status,
+    403,
+  );
+  assert.equal(
+    (await f.req(path, "DELETE", { expectedRevision: 1 })).status,
+    200,
+  );
+  assert.equal((await f.req(path)).status, 404);
+  assert.deepEqual((await f.req(base)).data.documents, []);
+});
+
+test("연간 메모는 이미지·백업을 보존하고 제목·본문 크기·목록 상한을 검사한다", async (t) => {
+  const f = await fixture(t);
+  const base = `/teams/${f.teamId}/years/2026/memos`;
+  const id = randomUUID(),
+    path = `${base}/${id}`;
+  assert.equal(
+    (await f.req(base, "POST", { id, title: "가".repeat(51) })).status,
+    400,
+  );
+  await f.req(base, "POST", { id });
+  const image = new FormData();
+  image.append(
+    "image",
+    new Blob(
+      [
+        await sharp({
+          create: { width: 2, height: 2, channels: 4, background: "#aaccff" },
+        })
+          .png()
+          .toBuffer(),
+      ],
+      { type: "image/png" },
+    ),
+    "memo.png",
+  );
+  assert.equal(
+    (await f.req(`${path}/images`, "POST", image, "viewer")).status,
+    403,
+  );
+  const uploaded = await f.req(`${path}/images`, "POST", image, "member");
+  assert.equal(uploaded.status, 201);
+  const markdown = `# 이미지 메모\n\n![메모](${uploaded.data.url})`;
+  const payload = { markdown, expectedRevision: 0, operationId: randomUUID() };
+  assert.equal(
+    (
+      await f.req(path, "PUT", {
+        ...payload,
+        markdown: "가".repeat(MAX_DOCUMENT_BYTES),
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await f.req(path, "PUT", payload)).status, 200);
+  const backup = backupDatabase(f.path, join(f.dir, "memos.sqlite"), {
+    documentImagesDir: f.images,
+  });
+  const restoredPath = restoreDatabase(
+    backup,
+    join(f.dir, "memos-restored.sqlite"),
+    { documentImagesDir: join(f.dir, "restored-images") },
+  );
+  const restored = openDatabase(restoredPath);
+  try {
+    const row = restored
+      .prepare("SELECT version_id FROM annual_memos WHERE id=?")
+      .get(id);
+    assert.equal(
+      restored
+        .prepare("SELECT markdown FROM document_versions WHERE id=?")
+        .get(row.version_id).markdown,
+      markdown,
+    );
+  } finally {
+    restored.close();
+  }
+  for (let n = 1; n < 50; n++)
+    assert.equal((await f.req(base, "POST", { id: randomUUID() })).status, 201);
+  assert.equal((await f.req(base, "POST", { id: randomUUID() })).status, 400);
+  assert.equal(
+    (await f.req(`/teams/${f.teamId}/years/1999/memos`)).status,
+    400,
+  );
+});
+
+test("연간 메모 순서는 권한과 전체 목록을 검증하고 동시 변경·재시도에서 본문을 보존한다", async (t) => {
+  const f = await fixture(t);
+  const base = `/teams/${f.teamId}/years/2026/memos`;
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  for (const id of ids) await f.req(base, "POST", { id });
+  await f.req(`${base}/${ids[0]}`, "PUT", {
+    markdown: "# 이동 중 보존할 문서",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  const before = (await f.req(`${base}/${ids[0]}`)).data;
+  const next = [ids[2], ids[0], ids[1]];
+  const payload = { ids: next, expectedIds: ids };
+  for (const role of ["viewer", "outsider"])
+    assert.equal(
+      (await f.req(`${base}/reorder`, "POST", payload, role)).status,
+      403,
+    );
+  const saved = await f.req(`${base}/reorder`, "POST", payload, "member");
+  assert.equal(saved.status, 200);
+  assert.deepEqual(
+    saved.data.documents.map((doc) => doc.id),
+    next,
+  );
+  assert.deepEqual(
+    (await f.req(`${base}/reorder`, "POST", payload, "member")).data,
+    saved.data,
+  );
+  assert.deepEqual((await f.req(`${base}/${ids[0]}`)).data, before);
+  const stale = await f.req(`${base}/reorder`, "POST", {
+    ids: [...ids].reverse(),
+    expectedIds: ids,
+  });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(
+    stale.data.details.documents.map((doc) => doc.id),
+    next,
+  );
+  for (const bad of [[ids[0], ids[0], ids[1]], [], Array(51).fill(ids[0])])
+    assert.equal(
+      (await f.req(`${base}/reorder`, "POST", { ids: bad, expectedIds: next }))
+        .status,
+      400,
+    );
+  const foreignId = randomUUID();
+  await f.req(`/teams/${f.teamId}/years/2027/memos`, "POST", { id: foreignId });
+  assert.equal(
+    (
+      await f.req(`${base}/reorder`, "POST", {
+        ids: [ids[0], ids[1], foreignId],
+        expectedIds: next,
+      })
+    ).status,
+    409,
+  );
+  const added = randomUUID();
+  await f.req(base, "POST", { id: added });
+  assert.equal((await f.req(`${base}/reorder`, "POST", payload)).status, 409);
+  assert.deepEqual(
+    (await f.req(base)).data.documents.map((doc) => doc.id),
+    [...next, added],
+  );
+  await f.req(`${base}/${ids[1]}`, "DELETE", { expectedRevision: 0 });
+  assert.equal(
+    (
+      await f.req(`${base}/reorder`, "POST", {
+        ids: [...next, added],
+        expectedIds: [...next, added],
+      })
+    ).status,
+    409,
+  );
+  const current = [ids[2], ids[0], added];
+  assert.equal(
+    (
+      await f.req(`${base}/reorder`, "POST", {
+        ids: [...current].reverse(),
+        expectedIds: current,
+      })
+    ).status,
+    200,
+  );
+  assert.deepEqual((await f.req(`${base}/${ids[0]}`)).data, before);
+});
+
+test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전을 공유하며 사본의 최신 참조로 재복사한다", async (t) => {
+  const f = await fixture(t);
+  const base = `/teams/${f.teamId}/years/2026/memos`;
+  const a = randomUUID(),
+    b = randomUUID();
+  await f.req(base, "POST", { id: a, title: "연간 회의록" });
+  await f.req(base, "POST", { id: b, title: "빈 메모" });
+  const markdown =
+    "# 저장 시점 기록\n\n" + "사본에서 공유할 본문입니다. ".repeat(5000);
+  await f.req(`${base}/${a}`, "PUT", {
+    markdown,
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await f.req(`${base}/reorder`, "POST", { ids: [b, a], expectedIds: [a, b] });
+  await f.req(`/teams/${f.teamId}/years/2027/memos`, "POST", {
+    id: randomUUID(),
+  });
+  const versions = () =>
+    f.db.prepare("SELECT COUNT(*) AS n FROM document_versions").get().n;
+  const beforeVersions = versions();
+  const id = randomUUID();
+  const payload = {
+    id,
+    teamId: f.teamId,
+    year: 2026,
+    name: "메모 포함 사본",
+    referenceDate: "2026-10-18",
+    view: defaultView(2026),
+    taskIds: [],
+  };
+  assert.equal((await f.req("/reports", "POST", payload)).status, 201);
+  const copy = `/reports/${id}/memos`;
+  assert.deepEqual(
+    (await f.req(copy)).data.documents.map((doc) => [doc.id, doc.title]),
+    [
+      [b, "빈 메모"],
+      [a, "연간 회의록"],
+    ],
+  );
+  const row = f.db.prepare("SELECT data FROM reports WHERE id=?").get(id);
+  assert.equal(decodeReport(row.data).tasks.length, 0);
+  assert.ok(row.data.length < 5000, "사본 표 BLOB에 메모 본문을 넣지 않는다");
+  assert.equal(
+    versions(),
+    beforeVersions,
+    "복사 시 기존 본문 버전 참조만 연결한다",
+  );
+  const originalRef = f.db
+    .prepare("SELECT version_id FROM annual_memos WHERE id=?")
+    .get(a).version_id;
+  assert.equal(
+    f.db
+      .prepare("SELECT version_id FROM report_memos WHERE report_id=? AND id=?")
+      .get(id, a).version_id,
+    originalRef,
+  );
+  const sheet = (await f.req(`/reports/${id}`)).data;
+  assert.equal(JSON.stringify(sheet).includes("저장 시점 기록"), false);
+  assert.equal((await f.req(copy)).data.documents[1].markdown, undefined);
+  assert.equal((await f.req(`${copy}/${a}`)).data.markdown, markdown);
+  await f.req(`${base}/${a}`, "PUT", {
+    markdown: "원본 이후 수정",
+    expectedRevision: 1,
+    operationId: randomUUID(),
+  });
+  assert.equal((await f.req("/reports", "POST", payload)).status, 201);
+  assert.equal(
+    (await f.req(`${copy}/${a}`)).data.markdown,
+    markdown,
+    "생성 응답 유실 재시도는 메모를 다시 복사하지 않는다",
+  );
+  const edit = {
+    markdown: "사본에서만 수정한 내용",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  };
+  assert.equal((await f.req(`${copy}/${a}`, "PUT", edit)).status, 200);
+  assert.equal((await f.req(`${copy}/${a}`, "PUT", edit)).data.revision, 1);
+  assert.equal((await f.req(`${base}/${a}`)).data.markdown, "원본 이후 수정");
+  assert.equal(
+    (
+      await f.req(`${copy}/${a}`, "PATCH", {
+        title: "사본 회의록",
+        expectedTitle: "연간 회의록",
+      })
+    ).status,
+    200,
+  );
+  await f.req(`${copy}/reorder`, "POST", { ids: [a, b], expectedIds: [b, a] });
+  const beforeClone = versions();
+  const clone = await f.req("/reports", "POST", {
+    ...payload,
+    id: randomUUID(),
+    name: "메모 재복사",
+    sourceId: id,
+  });
+  assert.equal(clone.status, 201);
+  assert.equal(versions(), beforeClone);
+  const cloned = `/reports/${clone.data.id}/memos`;
+  assert.deepEqual(
+    (await f.req(cloned)).data.documents.map((doc) => [doc.id, doc.title]),
+    [
+      [a, "사본 회의록"],
+      [b, "빈 메모"],
+    ],
+  );
+  assert.equal((await f.req(`${cloned}/${a}`)).data.markdown, edit.markdown);
+  assert.deepEqual(
+    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+    row.data,
+    "메모 본문·제목·순서는 표 BLOB을 다시 쓰지 않는다",
+  );
+  assert.equal((await f.req(`/reports/${id}`)).data.revision, sheet.revision);
+  assert.equal(
+    (await f.req(`${copy}/${a}`, "DELETE", { expectedRevision: 1 })).status,
+    200,
+  );
+  assert.equal((await f.req(`${cloned}/${a}`)).data.markdown, edit.markdown);
+  assert.equal((await f.req(`${base}/${a}`)).data.markdown, "원본 이후 수정");
+});
+
+test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분리하고 삭제·추가를 원본에 반영하지 않는다", async (t) => {
+  const f = await fixture(t);
+  const original = `/teams/${f.teamId}/years/2026/memos`;
+  const a = randomUUID(),
+    b = randomUUID();
+  await f.req(original, "POST", { id: a });
+  await f.req(original, "POST", { id: b });
+  const id = await f.report("메모 권한 사본");
+  const base = `/reports/${id}/memos`;
+  const sheet = (await f.req(`/reports/${id}`)).data;
+  for (const role of ["viewer", "outsider"]) {
+    const expectStatus = role === "viewer" ? 200 : 403;
+    assert.equal(
+      (await f.req(base, "GET", undefined, role)).status,
+      expectStatus,
+    );
+    assert.equal(
+      (await f.req(`${base}/${a}`, "GET", undefined, role)).status,
+      expectStatus,
+    );
+    for (const [path, method, body] of [
+      [base, "POST", { id: randomUUID() }],
+      [
+        `${base}/${a}`,
+        "PUT",
+        {
+          markdown: "권한 없는 수정",
+          expectedRevision: 0,
+          operationId: randomUUID(),
+        },
+      ],
+      [`${base}/${a}`, "PATCH", { title: "변경", expectedTitle: "메모 1" }],
+      [`${base}/${a}`, "DELETE", { expectedRevision: 0 }],
+      [`${base}/reorder`, "POST", { ids: [b, a], expectedIds: [a, b] }],
+    ])
+      assert.equal((await f.req(path, method, body, role)).status, 403);
+  }
+  const saved = await f.req(
+    `${base}/${a}`,
+    "PUT",
+    {
+      markdown: "사본 독립 저장",
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    },
+    "member",
+  );
+  assert.equal(saved.status, 200);
+  const conflict = await f.req(`${base}/${a}`, "PUT", {
+    markdown: "낡은 입력",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.data.details.current.markdown, "사본 독립 저장");
+  assert.equal(
+    (await f.req(`${base}/${a}`, "DELETE", { expectedRevision: 0 })).status,
+    409,
+  );
+  const c = randomUUID();
+  assert.equal((await f.req(base, "POST", { id: c })).status, 201);
+  assert.equal((await f.req(base, "POST", { id: c })).data.documents.length, 3);
+  assert.equal(
+    (
+      await f.req(`${base}/reorder`, "POST", {
+        ids: [c, b, a],
+        expectedIds: [a, b, c],
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.req(`${base}/reorder`, "POST", {
+        ids: [a, c, b],
+        expectedIds: [a, b, c],
+      })
+    ).status,
+    409,
+  );
+  const edited = await f.req(`/reports/${id}`, "PATCH", {
+    operationId: randomUUID(),
+    revision: sheet.revision,
+    operations: [
+      {
+        kind: "cells",
+        at: now(),
+        changes: [
+          {
+            taskId: f.task.id,
+            key: "title",
+            value: "표도 독립 저장",
+            expectedVersion: sheet.tasks[0].cells.title.version,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(edited.status, 200, "메모 저장으로 표 revision을 바꾸지 않는다");
+  assert.equal((await f.req(`${base}/${a}`)).data.markdown, "사본 독립 저장");
+  assert.equal((await f.req(`${original}/${a}`)).data.markdown, "");
+  assert.equal((await f.req(`${original}/${c}`)).status, 404);
+  assert.equal((await f.req(`/reports/${randomUUID()}/memos`)).status, 404);
+  await f.req(`${base}/${a}`, "DELETE", { expectedRevision: 1 });
+  assert.equal((await f.req(`${original}/${a}`)).status, 200);
+  const empty = await f.req("/reports", "POST", {
+    teamId: f.teamId,
+    year: 2027,
+    name: "빈 메모 사본",
+    referenceDate: "2026-10-18",
+    view: defaultView(2027),
+    taskIds: [],
+  });
+  assert.deepEqual(
+    (await f.req(`/reports/${empty.data.id}/memos`)).data.documents,
+    [],
+  );
+});
+
+test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반출·백업 후 보존하고 마지막 사본 삭제 시 정리한다", async (t) => {
+  const f = await fixture(t);
+  const original = `/teams/${f.teamId}/years/2026/memos`;
+  const memoId = randomUUID();
+  await f.req(original, "POST", { id: memoId });
+  const image = new FormData();
+  image.append(
+    "image",
+    new Blob(
+      [
+        await sharp({
+          create: { width: 3, height: 3, channels: 4, background: "#7bbcff" },
+        })
+          .png()
+          .toBuffer(),
+      ],
+      { type: "image/png" },
+    ),
+    "memo.png",
+  );
+  const url = (await f.req(`${original}/${memoId}/images`, "POST", image)).data
+    .url;
+  const markdown = `# 사본에 보존할 이미지\n\n![기록](${url})`;
+  await f.req(`${original}/${memoId}`, "PUT", {
+    markdown,
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  const id = await f.report("이미지 메모 사본");
+  const base = `/reports/${id}/memos`;
+  const versionId = f.db
+    .prepare("SELECT version_id FROM report_memos WHERE report_id=? AND id=?")
+    .get(id, memoId).version_id;
+  await f.req(`${original}/${memoId}`, "DELETE", { expectedRevision: 1 });
+  await f.save("무관한 업무 문서 정리");
+  assert.equal((await f.req(`${base}/${memoId}`)).data.markdown, markdown);
+  assert.equal(
+    (await f.req(`${base}/${memoId}/images`, "POST", image, "viewer")).status,
+    403,
+  );
+  assert.equal(
+    (await f.req(`${base}/${memoId}/images`, "POST", image, "member")).status,
+    201,
+  );
+  const report = (await f.req(`/reports/${id}`)).data;
+  for (const source of [undefined, id]) {
+    const exported = await f.req("/export", "POST", {
+      teamId: f.teamId,
+      year: 2026,
+      format: "json",
+      scope: "all",
+      ...(source ? { reportId: source, revision: report.revision } : {}),
+    });
+    assert.equal(exported.status, 200);
+    assert.equal(exported.data.schemaVersion, 6);
+    const memos = source
+      ? exported.data.memos
+      : exported.data.reports.find((row) => row.name === "이미지 메모 사본")
+          .data.memos;
+    assert.deepEqual(memos, [{ id: memoId, title: "메모 1", markdown }]);
+    assert.ok(exported.data.documentImages.some((item) => item.url === url));
+  }
+  const backup = backupDatabase(f.path, join(f.dir, "copy-memos.sqlite"), {
+    documentImagesDir: f.images,
+  });
+  const restoredPath = restoreDatabase(
+    backup,
+    join(f.dir, "copy-memos-restored.sqlite"),
+    { documentImagesDir: join(f.dir, "copy-memos-images") },
+  );
+  const restored = openDatabase(restoredPath);
+  try {
+    assert.equal(
+      restored
+        .prepare("SELECT markdown FROM document_versions WHERE id=?")
+        .get(versionId).markdown,
+      markdown,
+    );
+    assert.equal(
+      restored
+        .prepare(
+          "SELECT version_id FROM report_memos WHERE report_id=? AND id=?",
+        )
+        .get(id, memoId).version_id,
+      versionId,
+    );
+  } finally {
+    restored.close();
+  }
+  assert.equal(
+    (await f.req("/reports", "DELETE", { teamId: f.teamId, ids: [id] })).status,
+    200,
+  );
+  assert.equal(
+    f.db.prepare("SELECT 1 FROM report_memos WHERE report_id=?").get(id),
+    undefined,
+  );
+  assert.equal(
+    f.db.prepare("SELECT 1 FROM document_versions WHERE id=?").get(versionId),
+    undefined,
+  );
 });

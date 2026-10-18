@@ -5,6 +5,8 @@ import {
   removeTeamDocumentImages,
 } from "./document-images.mjs";
 import { installReportDocumentRoutes } from "./report-documents.mjs";
+import { copyReportMemos } from "./memo-storage.mjs";
+import { installAnnualMemoRoutes } from "./annual-memos.mjs";
 import { installCalendarRoutes } from "./calendar.mjs";
 import { installDocumentBrowserRoutes } from "./document-browser.mjs";
 import {
@@ -589,6 +591,11 @@ export function createApp({
       token: sessionHash(req.cookies.weekly_session),
     });
   });
+  const { memoImageAccess } = installAnnualMemoRoutes(app, {
+    db,
+    teamAccess,
+    documentImagesDir,
+  });
   installTaskDocumentRoutes(app, {
     db,
     taskAccess,
@@ -604,6 +611,7 @@ export function createApp({
   });
   installDocumentImageRoutes(app, {
     calendarImageAccess,
+    memoImageAccess,
     db,
     taskAccess,
     teamAccess,
@@ -1268,33 +1276,33 @@ export function createApp({
       "보고 연도와 보기의 연도가 일치해야 합니다.",
     );
     const selected = new Set(d.sourceId ? [] : d.taskIds),
-      tasks = getTasks(
-        db,
-        d.teamId,
-        periodYears(d.year, d.view.startMonth),
-      ).filter((t) => selected.has(t.id));
+      tasks = selected.size
+        ? getTasks(db, d.teamId, periodYears(d.year, d.view.startMonth)).filter(
+            (t) => selected.has(t.id),
+          )
+        : [];
     requireThat(
       tasks.length === selected.size,
       409,
       "일부 업무가 변경 또는 삭제되었습니다. 새로고침 후 다시 저장하세요.",
     );
-    const source = d.sourceId
-      ? db
-          .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-          .get(d.sourceId, d.teamId)
-      : null;
-    requireThat(!d.sourceId || source, 404, "사본을 찾을 수 없습니다.");
-    const data = source
-      ? readReport(db, source)
-      : {
-          tasks: withTaskDocumentReferences(db, tasks),
-          users: referencedUsers(d.teamId),
-          view: d.view,
-          settings: team.settings,
-        };
     transaction(db, () => {
       if (replay()) return;
       requireUniqueReportName(db, d.teamId, d.name);
+      const source = d.sourceId
+        ? db
+            .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+            .get(d.sourceId, d.teamId)
+        : null;
+      requireThat(!d.sourceId || source, 404, "사본을 찾을 수 없습니다.");
+      const data = source
+        ? readReport(db, source)
+        : {
+            tasks: withTaskDocumentReferences(db, tasks),
+            users: referencedUsers(d.teamId),
+            view: d.view,
+            settings: team.settings,
+          };
       db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
         reportId,
         d.teamId,
@@ -1306,6 +1314,13 @@ export function createApp({
         encodeReport(data),
       );
       syncReportDocuments(db, reportId, data.tasks);
+      copyReportMemos(db, {
+        reportId,
+        sourceId: source?.id,
+        teamId: d.teamId,
+        year: d.year,
+        actorId: req.user.id,
+      });
       audit(db, req.user.id, d.teamId, "report", reportId, undefined, {
         name: d.name,
         count: data.tasks.length,
