@@ -142,7 +142,56 @@ test.afterEach(() => {
 test("캘린더·문서 브라우저·연간 업무를 오가도 선택 화면과 이동 잠금이 유지된다", async ({
   page,
 }) => {
+  const navigation = page.getByRole("navigation", { name: "주 메뉴" });
+  expect(
+    await navigation
+      .getByRole("button")
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+  ).toEqual(["연간 업무", "문서 브라우저", "캘린더"]);
+  const teamSelect = (await page
+    .getByLabel("팀 선택", { exact: true })
+    .boundingBox())!;
+  const navigationBox = (await navigation.boundingBox())!;
+  expect(navigationBox.x).toBeGreaterThanOrEqual(
+    teamSelect.x + teamSelect.width,
+  );
+  expect(navigationBox.x - teamSelect.x - teamSelect.width).toBeLessThanOrEqual(
+    16,
+  );
+  const launch = navigation.getByRole("button", {
+    name: "캘린더",
+    exact: true,
+  });
+  const launchBox = (await launch.boundingBox())!;
+  expect(launchBox.width).toBe(launchBox.height);
+  await expect(launch).toHaveCSS("border-radius", "50%");
   await enter(page);
+  await expect(page.getByRole("navigation", { name: "주 메뉴" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".top-account")).toHaveCount(0);
+  const closeCalendar = page.getByRole("button", {
+    name: "캘린더 닫기",
+    exact: true,
+  });
+  await expect(closeCalendar).toBeEnabled();
+  for (const viewport of [
+    { width: 1366, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const box = (await closeCalendar.boundingBox())!;
+    expect(box.width).toBe(box.height);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    await expect(closeCalendar).toHaveCSS("border-radius", "50%");
+  }
+  await closeCalendar.focus();
+  await page.keyboard.press("Enter");
+  await expect(calendar(page)).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "주 메뉴" })).toBeVisible();
+  await page.setViewportSize({ width: 1366, height: 900 });
   await page
     .getByRole("button", { name: "문서 브라우저", exact: true })
     .click();
@@ -151,7 +200,7 @@ test("캘린더·문서 브라우저·연간 업무를 오가도 선택 화면�
   await page.getByRole("button", { name: "캘린더", exact: true }).click();
   await expect(calendar(page).locator(".calendar-grid")).toBeVisible();
   await expect(page.locator(".document-browser")).toHaveCount(0);
-  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await page.getByRole("button", { name: "캘린더 닫기", exact: true }).click();
   await expect(page.locator(`[data-cell="${taskId}:title"]`)).toBeVisible();
   await expect(calendar(page)).toHaveCount(0);
 });
@@ -731,8 +780,8 @@ test("주 메뉴, 월 이동과 날짜 강조, 공통 Markdown 저장·수정·�
 }, info) => {
   await enter(page);
   await expect(
-    page.getByRole("button", { name: "캘린더", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByRole("button", { name: "캘린더 닫기", exact: true }),
+  ).toBeEnabled();
   await expect(
     calendar(page).locator(".calendar-grid-header > div"),
   ).toHaveCount(8);
@@ -803,7 +852,7 @@ test("주 메뉴, 월 이동과 날짜 강조, 공통 Markdown 저장·수정·�
   await expect(
     calendar(page).getByRole("button", { name: /수정된 제목/ }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await page.getByRole("button", { name: "캘린더 닫기", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "연간 업무", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -1287,7 +1336,7 @@ test("저장 실패 중 닫기와 전환은 입력을 버리지 않고 재시도
     .click();
   await expect(source(page)).toHaveValue("실패해도 남아야 하는 한국어 입력");
   await expect(
-    page.getByRole("button", { name: "연간 업무", exact: true }),
+    page.getByRole("button", { name: "캘린더 닫기", exact: true }),
   ).toBeDisabled();
   await expect(page.getByLabel("팀 선택", { exact: true })).toBeDisabled();
   fail = false;
@@ -2622,7 +2671,7 @@ for (const [view, gesture] of [
       await expect(entryDialog(page)).toHaveCount(0);
       expect(calls).toEqual([`PATCH /api/calendar/entries/${moving.id}`]);
       await expect(
-        page.getByRole("button", { name: "연간 업무", exact: true }),
+        page.getByRole("button", { name: "캘린더 닫기", exact: true }),
       ).toBeDisabled();
     } finally {
       release();
@@ -2784,6 +2833,10 @@ test("주를 가로질러 양 끝을 줄여도 놓은 날짜를 저장한다", a
   );
   await page.mouse.up();
   await expectRange(page, entry.id, "2026-10-14", "2026-10-15");
+  // The previous shrink can leave the earlier week above the scroll viewport.
+  await calendar(page)
+    .locator('.calendar-day[data-date="2026-10-06"]')
+    .scrollIntoViewIfNeeded();
   await dragToDate(
     page,
     segment(page, entry.id)
@@ -3621,7 +3674,7 @@ test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변�
     calendar(page).getByText("기간 저장 실패 테스트", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "연간 업무", exact: true }),
+    page.getByRole("button", { name: "캘린더 닫기", exact: true }),
   ).toBeDisabled();
   await expect(calendar(page).getByLabel("캘린더 팀원")).toBeDisabled();
   await expectRange(page, entry.id, "2026-10-13", "2026-10-20");

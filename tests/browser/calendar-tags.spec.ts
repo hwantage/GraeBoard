@@ -336,7 +336,7 @@ test("팀 월간 보기에서 일반 팀원이 공용 태그·일정을 만들�
   await expect(checkbox()).toBeChecked();
   await expect(card(page, entry.id)).toHaveCSS(
     "background-color",
-    "rgb(237, 243, 236)",
+    "rgb(237, 246, 230)",
   );
   await card(page, entry.id).click();
   await detail(page)
@@ -548,7 +548,7 @@ test("태그 관리의 고정 10색과 일정 생성의 복수 선택·Enter·�
   expect(entries[0].tagIds).toHaveLength(2);
   await expect(card(page, entries[0].id)).toHaveCSS(
     "background-color",
-    "rgb(246, 243, 249)",
+    "rgb(243, 239, 251)",
   );
   await card(page, entries[0].id).click();
   await expect(
@@ -562,7 +562,7 @@ test("태그 관리의 고정 10색과 일정 생성의 복수 선택·Enter·�
   await page.getByRole("button", { name: "캘린더", exact: true }).click();
   await expect(card(page, entries[0].id)).toHaveCSS(
     "background-color",
-    "rgb(246, 243, 249)",
+    "rgb(243, 239, 251)",
   );
   await expect(
     card(page, entries[0].id).locator(".calendar-tag-chip"),
@@ -585,7 +585,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   for (const entry of [day, multi])
     await expect(card(page, entry.id)).toHaveCSS(
       "background-color",
-      "rgb(246, 243, 249)",
+      "rgb(243, 239, 251)",
     );
   await openManager(page);
   await manager(page).getByRole("button", { name: "회의 2개 일정" }).click();
@@ -614,7 +614,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   for (const entry of [day, multi]) {
     await expect(card(page, entry.id)).toHaveCSS(
       "background-color",
-      "rgb(237, 243, 236)",
+      "rgb(237, 246, 230)",
     );
     await expect(card(page, entry.id).locator(".calendar-tag-chip")).toHaveText(
       ["정기 회의", "휴무"],
@@ -626,7 +626,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   for (const entry of [day, multi])
     await expect(card(page, entry.id)).toHaveCSS(
       "background-color",
-      "rgb(237, 243, 236)",
+      "rgb(237, 246, 230)",
     );
   await info.attach("tagged-team-calendar", {
     body: await page.locator(".calendar-workspace").screenshot({
@@ -647,7 +647,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   await closeDetail(page);
   await expect(card(page, day.id)).toHaveCSS(
     "background-color",
-    "rgb(253, 235, 236)",
+    "rgb(255, 240, 235)",
   );
   await card(page, day.id).focus();
   const moveDays = calendarWeek(todayKey()) === todayKey() ? 1 : -1;
@@ -659,7 +659,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   ).toHaveAttribute("data-range-start", addDays(todayKey(), moveDays));
   await expect(card(page, day.id)).toHaveCSS(
     "background-color",
-    "rgb(253, 235, 236)",
+    "rgb(255, 240, 235)",
   );
   await expect
     .poll(
@@ -681,7 +681,7 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
   for (const entry of [day, multi])
     await expect(card(page, entry.id)).toHaveCSS(
       "background-color",
-      "rgb(237, 243, 236)",
+      "rgb(237, 246, 230)",
     );
   await openManager(page);
   await manager(page)
@@ -697,14 +697,16 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
     manager(page).getByRole("button", { name: "정기 회의 2개 일정" }),
   ).toHaveCount(0);
   await closeManager(page);
-  const fallback = await card(page, day.id).evaluate(
-    (el) => getComputedStyle(el).backgroundColor,
-  );
-  await expect(card(page, multi.id)).toHaveCSS("background-color", fallback);
-  for (const entry of [day, multi])
+  await page.mouse.move(0, 0);
+  for (const entry of [day, multi]) {
+    await expect(card(page, entry.id)).toHaveCSS(
+      "background-color",
+      "rgb(185, 230, 166)",
+    );
     expect(
       (await request(page, `/calendar/entries/${entry.id}`)).tagIds,
     ).toEqual([]);
+  }
 });
 
 test("일정 태그 저장 실패를 알리고 지연된 태그 저장이 동시 제목 저장을 덮어쓰지 않는다", async ({
@@ -775,7 +777,7 @@ test("일정 태그 저장 실패를 알리고 지연된 태그 저장이 동시
   await closeDetail(page);
   await expect(card(page, entry.id)).toHaveCSS(
     "background-color",
-    "rgb(231, 243, 248)",
+    "rgb(234, 245, 252)",
   );
   await expect(card(page, entry.id).locator("strong")).toHaveText(
     "동시에 바꾼 제목",
@@ -811,7 +813,7 @@ test("일정 태그 저장 실패를 알리고 지연된 태그 저장이 동시
   await closeDetail(page);
   await expect(card(page, entry.id)).toHaveCSS(
     "background-color",
-    "rgb(253, 235, 236)",
+    "rgb(255, 240, 235)",
   );
   await expect(card(page, entry.id).locator(".calendar-tag-chip")).toHaveText([
     "긴급",
@@ -1025,7 +1027,7 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
   await closeDetail(page);
   await expect(card(page, first.id)).toHaveCSS(
     "background-color",
-    "rgb(246, 243, 249)",
+    "rgb(243, 239, 251)",
   );
   const firstSaved = await request(page, `/calendar/entries/${first.id}`);
   expect(firstSaved.tagIds).toEqual([label.id, tag.id]);
