@@ -68,8 +68,8 @@ test.beforeEach(async ({ page }) => {
   errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await request(page, "/auth/login", "POST", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   userId = (await request(page, "/bootstrap")).user.id;
   teamId = (

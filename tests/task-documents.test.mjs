@@ -31,7 +31,47 @@ import { unpack } from "../shared/compact.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
-import { encodeReport } from "../server/reports.mjs";
+import {
+  decodeReport,
+  encodeReport,
+  reportBrowseIndex,
+  reportDocumentIndex,
+} from "../server/reports.mjs";
+
+test("큰 사본의 목록 캐시와 별개로 문서 조회·저장의 메타데이터 캐시를 재사용한다", async (t) => {
+  const f = await fixture(t);
+  await f.save("캐시 검증 본문");
+  const id = await f.report();
+  const report = decodeReport(
+    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+  );
+  report.settings.properties.push({
+    id: "description",
+    name: "설명",
+    kind: "text",
+    display: "text",
+    values: [],
+    visible: true,
+  });
+  const task = report.tasks[0];
+  report.tasks = Array.from({ length: 10000 }, (_, i) => ({
+    ...task,
+    id: i ? randomUUID() : task.id,
+    position: i,
+    cells: { ...task.cells, description: { value: "가".repeat(1000) } },
+  }));
+  const data = encodeReport(report);
+  f.db.prepare("UPDATE reports SET data=? WHERE id=?").run(data, id);
+  const index = reportDocumentIndex(data);
+  // Property values exceed the browse cache budget; document metadata still fits.
+  reportBrowseIndex(data);
+  assert.ok(reportDocumentIndex(data) === index);
+  const path = `/reports/${id}/tasks/${task.id}/documents/main`;
+  assert.equal((await f.req(path)).data.markdown, "캐시 검증 본문");
+  assert.equal((await f.saveReport(id, "캐시 이후 저장")).status, 200);
+  assert.equal((await f.req(path)).data.markdown, "캐시 이후 저장");
+  assert.ok(reportDocumentIndex(data) === index);
+});
 
 test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참조를 복제·반출·복구한다", async (t) => {
   const f = await fixture(t);
@@ -1451,4 +1491,531 @@ test("사본 생성 응답 유실 재시도는 원래 사본이 삭제되어도 
       .data.markdown,
     "복사할 본문",
   );
+});
+
+test("문서 브라우저 집계는 가상 빈 문서를 제외하고 등록된 빈 탭·접힌 사본을 포함한다", async (t) => {
+  const f = await fixture(t);
+  const base = `/document-browser/sources?teamId=${f.teamId}&year=2026`;
+  assert.equal((await f.req(base)).data.sources[0].documentCount, 0);
+  const empty = randomUUID();
+  await f.req(`/tasks/${f.task.id}/documents`, "POST", {
+    id: empty,
+    title: "등록한 빈 문서",
+  });
+  const reportId = await f.report();
+  const result = (await f.req(base)).data.sources;
+  for (const id of ["live", reportId]) {
+    const source = result.find((source) => source.id === id);
+    assert.equal(source.taskCount, 1);
+    assert.equal(source.documentCount, 2);
+    assert.equal(source.data, undefined);
+  }
+  const list = (
+    await f.req(
+      `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=live`,
+    )
+  ).data;
+  assert.equal(list.tasks.length, 1);
+  assert.equal(list.tasks[0].documents[1].title, "등록한 빈 문서");
+  assert.equal(list.tasks[0].documents[1].hasContent, 0);
+  assert.equal(JSON.stringify(list).includes('"markdown"'), false);
+  await f.req(`/tasks/${f.task.id}/documents/${empty}`, "DELETE", {
+    expectedRevision: 0,
+  });
+  assert.equal(
+    (await f.req(base)).data.sources.find((s) => s.id === "live").documentCount,
+    1,
+  );
+  assert.equal(
+    (await f.req(base)).data.sources.find((s) => s.id === reportId)
+      .documentCount,
+    2,
+  );
+});
+
+test("작업 이름 검색은 모든 문서를 표시하고 첫 문서 삭제 시 다음 문서로 바뀐다", async (t) => {
+  const f = await fixture(t);
+  await f.save("첫 문서의 본문");
+  const second = randomUUID();
+  await f.req(`/tasks/${f.task.id}/documents`, "POST", {
+    id: second,
+    title: "후속 검색 문서",
+  });
+  const copy = await f.report();
+  for (const source of ["live", copy]) {
+    const path = `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}&q=문서가`;
+    const found = (await f.req(path)).data.tasks[0];
+    assert.deepEqual(
+      found.documents.map((doc) => doc.id),
+      ["main", second],
+    );
+    const main = `${source === "live" ? "" : `/reports/${source}`}/tasks/${f.task.id}/documents/main`;
+    assert.equal(
+      (
+        await f.req(main, "DELETE", {
+          expectedRevision: (await f.req(main)).data.revision,
+        })
+      ).status,
+      200,
+    );
+    assert.deepEqual(
+      (await f.req(path)).data.tasks[0].documents.map((doc) => doc.id),
+      [second],
+    );
+  }
+});
+
+test("문서 브라우저는 작업 이름만 검색하고 미리보기는 사본의 최신 독립 참조를 따른다", async (t) => {
+  const f = await fixture(t);
+  await f.save("원본에만 있는 고유문구");
+  const second = randomUUID();
+  await f.req(`/tasks/${f.task.id}/documents`, "POST", {
+    id: second,
+    title: "문서전용검색어",
+  });
+  const a = await f.report("첫 사본"),
+    b = await f.report("둘째 사본");
+  const blob = f.db.prepare("SELECT data FROM reports WHERE id=?").get(a).data;
+  await f.saveReport(a, "사본에서만 찾는 바다별 검색어");
+  assert.deepEqual(
+    f.db.prepare("SELECT data FROM reports WHERE id=?").get(a).data,
+    blob,
+  );
+  const list = async (source, q) =>
+    (
+      await f.req(
+        `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}&q=${encodeURIComponent(q)}`,
+      )
+    ).data;
+  for (const source of ["live", a, b]) {
+    for (const q of ["고유문구", "바다별", "문서전용검색어", "문서 1"]) {
+      const excluded = await list(source, q);
+      assert.equal(excluded.matchedTaskCount, 0);
+      assert.equal(excluded.matchedDocumentCount, 0);
+      assert.deepEqual(excluded.tasks, []);
+      assert.equal(excluded.taskCount, 1);
+      assert.equal(excluded.documentCount, 2);
+    }
+    const matched = await list(source, " 문서가 있는 ");
+    assert.equal(matched.matchedTaskCount, 1);
+    assert.equal(matched.matchedDocumentCount, 2);
+    assert.deepEqual(
+      matched.tasks[0].documents.map((doc) => doc.id),
+      ["main", second],
+    );
+  }
+  const found = await list(a, "문서가 있는");
+  assert.equal(found.tasks[0].id, f.task.id);
+  assert.equal(found.tasks[0].documents[0].id, "main");
+  assert.equal(
+    found.tasks[0].documents[0].preview,
+    "사본에서만 찾는 바다별 검색어",
+  );
+  assert.equal(found.tasks[0].documents[0].markdown, undefined);
+  for (const source of ["live", b])
+    assert.equal(
+      (await list(source, "")).tasks[0].documents[0].preview,
+      "원본에만 있는 고유문구",
+    );
+  await f.req(`/reports/${a}/tasks/${f.task.id}/documents/main`, "PATCH", {
+    title: "찾을 제목",
+    expectedTitle: "문서 1",
+  });
+  assert.equal((await list(a, "찾을 제목")).matchedDocumentCount, 0);
+  assert.equal((await list(a, "문서가 있는 업무")).matchedTaskCount, 1);
+  const report = (await f.req(`/reports/${a}`)).data;
+  const renamed = await f.req(`/reports/${a}`, "PATCH", {
+    operationId: randomUUID(),
+    revision: report.revision,
+    operations: [
+      {
+        kind: "cells",
+        at: now(),
+        changes: [
+          {
+            taskId: f.task.id,
+            key: "title",
+            value: "검토 Alpha 작업",
+            expectedVersion: report.tasks[0].cells.title.version,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(renamed.status, 200);
+  assert.equal((await list(a, " alpha ")).matchedDocumentCount, 2);
+  assert.equal((await list(a, "문서가 있는 업무")).matchedTaskCount, 0);
+  for (const source of ["live", b]) {
+    assert.equal((await list(source, "alpha")).matchedTaskCount, 0);
+    assert.equal(
+      (await list(source, "문서가 있는 업무")).matchedDocumentCount,
+      2,
+    );
+  }
+});
+
+test("문서 미리보기는 페이지와 문서별로 구분한 짧은 한 줄이며 긴 본문은 검색 대상에서 제외한다", async (t) => {
+  const f = await fixture(t);
+  const markdown =
+    "# 시작\n\n- **첫 항목**\n- [x] [설계 링크](https://example.com/design)\n\n![설계 이미지](/images/design.png)\n\n" +
+    "긴 본문 내용입니다. ".repeat(500) +
+    "끝부분고유검색어";
+  assert.equal((await f.save(markdown)).status, 200);
+  const emptyId = randomUUID();
+  await f.req(`/tasks/${f.task.id}/documents`, "POST", {
+    id: emptyId,
+    title: "빈 문서",
+  });
+  await f.save("다른 작업의 main 본문", 0, "lead", f.unassigned.id);
+  const copy = await f.report();
+  const list = async (source, extra = "") => {
+    const response = await f.req(
+      `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}${extra}`,
+    );
+    assert.equal(response.status, 200);
+    return response.data;
+  };
+  for (const source of ["live", copy]) {
+    assert.equal(
+      (await list(source, "&q=끝부분고유검색어")).matchedDocumentCount,
+      0,
+    );
+    const found = await list(source, "&q=문서가");
+    assert.equal(found.matchedDocumentCount, 2);
+    const doc = found.tasks[0].documents[0];
+    assert.equal(doc.id, "main");
+    assert.ok(
+      doc.preview.startsWith("시작 첫 항목 설계 링크 설계 이미지 긴 본문"),
+    );
+    assert.ok(doc.preview.endsWith("…"));
+    assert.ok(Array.from(doc.preview).length <= 240);
+    assert.equal(/[\n\r#*]|https:|끝부분고유검색어/.test(doc.preview), false);
+    assert.equal(doc.markdown, undefined);
+    const all = await list(source);
+    assert.equal(
+      all.tasks
+        .find((task) => task.id === f.task.id)
+        .documents.find((doc) => doc.id === emptyId).preview,
+      "",
+    );
+  }
+  const first = await list("live", "&limit=1");
+  assert.equal(first.tasks.length, 1);
+  assert.equal(first.nextOffset, 1);
+  const second = await list("live", "&limit=1&offset=1");
+  assert.equal(second.tasks.length, 1);
+  assert.equal(second.nextOffset, null);
+  assert.notEqual(first.tasks[0].id, second.tasks[0].id);
+  for (const result of [first, second]) {
+    const task = result.tasks[0];
+    assert.equal(
+      task.documents[0].preview.startsWith("다른 작업의 main 본문"),
+      task.id === f.unassigned.id,
+    );
+  }
+  assert.equal((await f.save("원본만 갱신한 본문", 1)).status, 200);
+  assert.equal(
+    (await list("live")).tasks.find((task) => task.id === f.task.id)
+      .documents[0].preview,
+    "원본만 갱신한 본문",
+  );
+  assert.ok(
+    (await list(copy)).tasks[0].documents[0].preview.startsWith("시작 첫 항목"),
+  );
+});
+
+test("문서 브라우저 담당자는 원본과 사본의 속성을 따르고 변경·미지정을 반영한다", async (t) => {
+  const f = await fixture(t);
+  await f.save("담당자를 표시할 문서");
+  const copy = await f.report();
+  const owner = async (source) => {
+    const list = (
+      await f.req(
+        `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}`,
+      )
+    ).data;
+    return list.owners[list.tasks[0].ownerId]?.name || "";
+  };
+  assert.equal(await owner("live"), "member");
+  assert.equal(await owner(copy), "member");
+  const changeOwner = async (value) =>
+    f.req("/cells/batch", "POST", {
+      operationId: randomUUID(),
+      createdAt: now(),
+      changes: [
+        {
+          taskId: f.task.id,
+          key: "owner",
+          value,
+          expectedVersion: getTask(f.db, f.task.id).cells.owner.version,
+        },
+      ],
+    });
+  assert.equal((await changeOwner(f.people.lead.id)).status, 200);
+  assert.equal(await owner("live"), "lead");
+  assert.equal(await owner(copy), "member");
+  const report = (await f.req(`/reports/${copy}`)).data;
+  const result = await f.req(`/reports/${copy}`, "PATCH", {
+    operationId: randomUUID(),
+    revision: report.revision,
+    operations: [
+      {
+        kind: "cells",
+        at: now(),
+        changes: [
+          {
+            taskId: f.task.id,
+            key: "owner",
+            value: f.people.supporter.id,
+            expectedVersion: report.tasks.find((task) => task.id === f.task.id)
+              .cells.owner.version,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.status, 200);
+  assert.equal(await owner(copy), "supporter");
+  assert.equal(await owner("live"), "lead");
+  assert.equal((await changeOwner("")).status, 200);
+  assert.equal(await owner("live"), "");
+  assert.equal(await owner(copy), "supporter");
+});
+
+test("문서 브라우저 프로필은 페이지에서 중복하지 않고 사본의 저장된 이름과 현재 아바타를 함께 표시한다", async (t) => {
+  const f = await fixture(t);
+  await f.save("프로필 검증 첫 문서");
+  const copy = await f.report();
+  const blob = f.db
+    .prepare("SELECT data FROM reports WHERE id=?")
+    .get(copy).data;
+  await f.save("프로필 검증 둘째 문서", 0, "lead", f.unassigned.id);
+  f.db
+    .prepare("UPDATE cells SET value=? WHERE task_id=? AND key='owner'")
+    .run(json(f.people.member.id), f.unassigned.id);
+  const image = `data:image/png;base64,${(
+    await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "#3467bc" },
+    })
+      .png()
+      .toBuffer()
+  ).toString("base64")}`;
+  f.db
+    .prepare(
+      "UPDATE users SET name=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
+    )
+    .run("현재 이름", "#3467bc", "M1", image, f.people.member.id);
+  const list = async (source, extra = "") =>
+    (
+      await f.req(
+        `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}${extra}`,
+      )
+    ).data;
+  for (const source of ["live", copy]) {
+    const result = await list(source);
+    assert.equal(Object.keys(result.owners).length, 1);
+    const profile = result.owners[f.people.member.id];
+    assert.equal(profile.name, source === "live" ? "현재 이름" : "member");
+    assert.equal(profile.color, "#3467bc");
+    assert.equal(profile.avatarInitials, "M1");
+    assert.equal(profile.avatarImage, image);
+    assert.equal(JSON.stringify(result).split(image).length - 1, 1);
+    assert.equal(profile.username, undefined);
+    assert.equal(profile.teamRoles, undefined);
+  }
+  assert.equal((await list("live")).tasks.length, 2);
+  assert.deepEqual((await list("live", "&q=없는검색어")).owners, {});
+  f.db
+    .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+    .run(f.teamId, f.people.member.id);
+  const formerOwner = (await list("live", "&groupBy=owner")).owners[
+    f.people.member.id
+  ];
+  assert.equal(formerOwner.name, "현재 이름");
+  assert.equal(formerOwner.avatarImage, image);
+  assert.equal(
+    (await list("live", "&groupBy=owner")).groups[0].label,
+    "현재 이름",
+  );
+  const detail = await f.req(
+    `/document-browser/task?teamId=${f.teamId}&year=2026&source=live&taskId=${f.task.id}`,
+  );
+  const formerMember = detail.data.users.find(
+    (user) => user.id === f.people.member.id,
+  );
+  assert.equal(formerMember?.name, "현재 이름");
+  assert.equal(formerMember.avatarImage, image);
+  assert.equal(
+    (
+      await f.req(
+        `/document-browser/tasks?teamId=${f.teamId}&year=2026`,
+        "GET",
+        undefined,
+        "member",
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await list(copy)).owners[f.people.member.id].avatarImage,
+    image,
+  );
+  assert.deepEqual(
+    f.db.prepare("SELECT data FROM reports WHERE id=?").get(copy).data,
+    blob,
+  );
+});
+
+test("문서 브라우저 모든 조회는 팀 권한·범위·페이지 한도를 검사한다", async (t) => {
+  const f = await fixture(t);
+  await f.save("검증 본문");
+  const copy = await f.report();
+  for (const path of [
+    `/document-browser/sources?teamId=${f.teamId}&year=2026`,
+    ...["live", copy].flatMap((source) => [
+      `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}&q=검증`,
+      `/document-browser/task?teamId=${f.teamId}&year=2026&source=${source}&taskId=${f.task.id}`,
+    ]),
+  ]) {
+    assert.equal((await f.req(path, "GET", undefined, "viewer")).status, 200);
+    assert.equal((await f.req(path, "GET", undefined, "outsider")).status, 403);
+    assert.equal((await f.req(path, "GET", undefined, null)).status, 401);
+  }
+  const base = `/document-browser/tasks?teamId=${f.teamId}&source=live`;
+  assert.equal((await f.req(`${base}&year=2025`)).data.taskCount, 0);
+  assert.equal(
+    (await f.req(`${base}&year=2025&startMonth=2`)).data.taskCount,
+    0,
+  );
+  for (const year of ["1999", "2101", "2026.5", "invalid"])
+    assert.equal((await f.req(`${base}&year=${year}`)).status, 400);
+  assert.equal((await f.req(`${base}&year=2026&limit=101`)).status, 400);
+  assert.equal((await f.req(`${base}&year=2026&offset=-1`)).status, 400);
+  assert.equal(
+    (
+      await f.req(
+        `/document-browser/task?teamId=${f.teamId}&year=2026&source=${copy}&taskId=${f.unassigned.id}`,
+      )
+    ).status,
+    404,
+  );
+});
+
+test("문서 브라우저 집계·목록·작업 이름 검색은 선택 연도만 조회하고 여러 연도 작업을 중복하지 않는다", async (t) => {
+  const f = await fixture(t);
+  await f.save("두 연도에 등록한 작업의 문서");
+  f.db
+    .prepare("UPDATE tasks SET years=? WHERE id=?")
+    .run(json([2026, 2027]), f.task.id);
+  const currentCopy = await f.report();
+  const nextTask = (
+    await f.req("/tasks", "POST", {
+      teamId: f.teamId,
+      year: 2027,
+      fields: { title: "다음 해에만 등록한 작업" },
+    })
+  ).data.task;
+  await f.req(`/tasks/${nextTask.id}/documents/main`, "PUT", {
+    markdown: "다음연도전용검색어",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  const nextCopy = (
+    await f.req("/reports", "POST", {
+      teamId: f.teamId,
+      year: 2027,
+      name: "다음 연도 사본",
+      referenceDate: "2027-01-01",
+      view: defaultView(2027),
+      taskIds: [f.task.id, nextTask.id],
+    })
+  ).data.id;
+  for (const [year, count, copy] of [
+    [2026, 1, currentCopy],
+    [2027, 2, nextCopy],
+  ]) {
+    const query = `teamId=${f.teamId}&year=${year}&startMonth=2`;
+    const sources = (await f.req(`/document-browser/sources?${query}`)).data
+      .sources;
+    assert.deepEqual(
+      sources.map((s) => s.id),
+      ["live", copy],
+    );
+    for (const source of sources) {
+      assert.equal(source.taskCount, count);
+      assert.equal(source.documentCount, count);
+      const list = (
+        await f.req(`/document-browser/tasks?${query}&source=${source.id}`)
+      ).data;
+      assert.equal(list.taskCount, count);
+      assert.equal(list.documentCount, count);
+      assert.equal(
+        list.tasks.filter((task) => task.id === f.task.id).length,
+        1,
+      );
+      const search = (
+        await f.req(
+          `/document-browser/tasks?${query}&source=${source.id}&q=다음`,
+        )
+      ).data;
+      assert.equal(search.matchedDocumentCount, year === 2027 ? 1 : 0);
+    }
+  }
+  assert.equal(
+    (
+      await f.req(
+        `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${nextCopy}`,
+      )
+    ).status,
+    404,
+  );
+});
+
+test("문서 브라우저 묶음 보기와 페이지는 다중 구성원 조합·미입력·전체 수를 유지한다", async (t) => {
+  const f = await fixture(t);
+  await f.save("첫 본문");
+  await f.save("두 번째 본문", 0, "lead", f.unassigned.id);
+  const base = `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=live&groupBy=supporters&limit=1`;
+  const first = (await f.req(base)).data;
+  assert.equal(first.taskCount, 2);
+  assert.equal(first.tasks.length, 1);
+  assert.equal(first.groups.length, 2);
+  assert.equal(first.groups.at(-1).label, "미입력");
+  assert.equal(first.nextOffset, 1);
+  const second = (await f.req(`${base}&offset=1`)).data;
+  assert.notEqual(second.tasks[0].id, first.tasks[0].id);
+  assert.equal(second.nextOffset, null);
+  const matched = (await f.req(`${base}&q=다른 사람`)).data;
+  assert.equal(matched.taskCount, 2);
+  assert.equal(matched.matchedTaskCount, 1);
+  assert.equal(matched.groups.at(-1).matchedTaskCount, 1);
+  // Reversed selections belong to the same combination, as in the annual grid.
+  const members = [f.people.member.id, f.people.supporter.id];
+  for (const [taskId, value] of [
+    [f.task.id, members],
+    [f.unassigned.id, [...members].reverse()],
+  ]) {
+    const task = (
+      await f.req(
+        `/document-browser/task?teamId=${f.teamId}&year=2026&source=live&taskId=${taskId}`,
+      )
+    ).data.task;
+    const saved = await f.req("/cells/batch", "POST", {
+      operationId: randomUUID(),
+      createdAt: now(),
+      changes: [
+        {
+          taskId,
+          key: "supporters",
+          value,
+          expectedVersion: task.cells.supporters?.version || 0,
+        },
+      ],
+    });
+    assert.equal(saved.status, 200);
+  }
+  const combined = (await f.req(base)).data;
+  assert.equal(combined.groups.length, 1);
+  assert.equal(combined.groups[0].taskCount, 2);
+  assert.equal(combined.groups[0].key, [...members].sort().join(","));
 });

@@ -3,6 +3,7 @@ import { busyProps } from "./busyProps";
 import Select from "./Select";
 import LoadingState from "./LoadingState";
 import SheetTabs from "./SheetTabs";
+import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
 import { getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";
@@ -35,6 +36,7 @@ import {
   Users,
   UserRound,
   FunnelX,
+  FolderOpen,
 } from "lucide-react";
 import { api, send, ApiError, taskQuery } from "./api";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
@@ -237,6 +239,9 @@ function Workspace({
   const { user } = boot;
   const [screen, setScreen] = useState<"annual" | "calendar">("annual");
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const [documentBrowser, setDocumentBrowser] = useState(false);
+  const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
+  const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const [initialBoard] = useState(() => rememberedBoard(boot));
   const [teamId, setTeamId] = useState(initialBoard.teamId),
     [year, setYear] = useState(initialBoard.year),
@@ -2498,6 +2503,15 @@ function Workspace({
         />
       </main>
     );
+  async function closeDocumentBrowser() {
+    closeReportNow();
+    await refresh();
+    setDocumentBrowser(false);
+  }
+  async function navigateWorkspace(action: () => void | Promise<void>) {
+    if (documentBrowser) await documentBrowserRef.current?.navigate(action);
+    else await action();
+  }
   return (
     <div
       ref={workspaceRef}
@@ -2506,7 +2520,12 @@ function Workspace({
       <main
         className="main-workspace"
         onKeyDown={(e) => {
-          if (presentation || e.nativeEvent.isComposing || e.defaultPrevented)
+          if (
+            documentBrowser ||
+            presentation ||
+            e.nativeEvent.isComposing ||
+            e.defaultPrevented
+          )
             return;
           const target = e.target instanceof HTMLElement ? e.target : null;
           if (
@@ -2554,9 +2573,16 @@ function Workspace({
             value={teamId}
             {...busyProps(
               calendarBusy,
-              !!pending || !!failed || reportDraft.dirty || reportDraft.saving,
+              workspaceNavigating ||
+                !!pending ||
+                !!failed ||
+                reportDraft.dirty ||
+                reportDraft.saving,
             )}
-            onChange={(e) => setTeamId(e.target.value)}
+            onChange={(e) => {
+              const id = e.target.value;
+              void navigateWorkspace(() => setTeamId(id));
+            }}
           >
             {boot.teams.map((t) => (
               <option key={t.id} value={t.id}>
@@ -2564,7 +2590,7 @@ function Workspace({
               </option>
             ))}
           </Select>
-          {editingReport ? (
+          {documentBrowser ? null : editingReport ? (
             <span className="tag" role="status">
               {reportDraft.saving
                 ? "사본 저장 중…"
@@ -2577,16 +2603,19 @@ function Workspace({
           )}
           <nav className="top-navigation" aria-label="주 메뉴">
             <Button
-              title="연간 업무"
-              active={screen === "annual" && !report}
-              aria-pressed={screen === "annual" && !report}
-              onClick={() => {
-                setScreen("annual");
-                closeReport();
-              }}
+              title={documentBrowser ? "연간 업무로 돌아가기" : "연간 업무"}
+              active={screen === "annual" && !documentBrowser && !report}
+              aria-pressed={screen === "annual" && !documentBrowser && !report}
+              onClick={() =>
+                void navigateWorkspace(async () => {
+                  if (documentBrowser) await closeDocumentBrowser();
+                  else closeReport();
+                  setScreen("annual");
+                })
+              }
               {...busyProps(
                 calendarBusy,
-                reportDraft.dirty || reportDraft.saving,
+                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
               )}
             >
               <CalendarDays size={15} />
@@ -2598,27 +2627,55 @@ function Workspace({
               aria-pressed={screen === "calendar"}
               {...busyProps(
                 calendarBusy,
-                !!pending ||
+                workspaceNavigating ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  reportDraft.dirty ||
+                  reportDraft.saving,
+              )}
+              onClick={() =>
+                void navigateWorkspace(() => {
+                  setDocumentBrowser(false);
+                  setScreen("calendar");
+                  setViewMenu(false);
+                  setRowTask(null);
+                })
+              }
+            >
+              <CalendarDays size={15} />
+              <span>캘린더</span>
+            </Button>
+            <Button
+              title="문서 브라우저"
+              active={documentBrowser}
+              {...busyProps(
+                calendarBusy,
+                workspaceNavigating ||
+                  (!documentBrowser && !ready) ||
+                  !!pending ||
                   !!failed ||
                   !!editor ||
                   reportDraft.dirty ||
                   reportDraft.saving,
               )}
               onClick={() => {
-                setScreen("calendar");
+                if (documentBrowser) return;
+                flushView();
                 setViewMenu(false);
-                setRowTask(null);
+                setScreen("annual");
+                setDocumentBrowser(true);
               }}
             >
-              <CalendarDays size={15} />
-              <span>캘린더</span>
+              <FolderOpen size={15} />
+              <span>문서 브라우저</span>
             </Button>
             <Button
               title="변경 이력"
-              onClick={() => setPanel("history")}
+              onClick={() => void navigateWorkspace(() => setPanel("history"))}
               {...busyProps(
                 calendarBusy,
-                reportDraft.dirty || reportDraft.saving,
+                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
               )}
             >
               <History size={15} />
@@ -2627,10 +2684,14 @@ function Workspace({
             {canOpenSettings && (
               <Button
                 title="설정"
-                onClick={() => setPanel("settings")}
+                onClick={() =>
+                  void navigateWorkspace(() => setPanel("settings"))
+                }
                 {...busyProps(
                   calendarBusy,
-                  reportDraft.dirty || reportDraft.saving,
+                  workspaceNavigating ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
                 )}
               >
                 <Settings size={15} />
@@ -2640,10 +2701,13 @@ function Workspace({
           </nav>
           <AccountMenu
             user={user}
-            onProfile={() => setPanel("profile")}
-            onPassword={() => setPanel("password")}
+            onProfile={() => void navigateWorkspace(() => setPanel("profile"))}
+            onPassword={() =>
+              void navigateWorkspace(() => setPanel("password"))
+            }
             logoutDisabled={
               calendarBusy ||
+              workspaceNavigating ||
               !!pending ||
               !!failed ||
               reportDraft.dirty ||
@@ -2652,9 +2716,11 @@ function Workspace({
             onLogout={async () => {
               if (pendingRef.current || failedRef.current || reportDraft.dirty)
                 return;
-              flushView();
-              await send("/auth/logout", {});
-              onLogout();
+              await navigateWorkspace(async () => {
+                flushView();
+                await send("/auth/logout", {});
+                onLogout();
+              });
             }}
           />
         </header>
@@ -2668,6 +2734,16 @@ function Workspace({
               setUndoToast(null);
               setToast(message);
             }}
+          />
+        ) : documentBrowser ? (
+          <DocumentBrowser
+            ref={documentBrowserRef}
+            boot={boot}
+            teamId={team.id}
+            initialYear={viewYear}
+            initialGroupBy={view.groupBy || ""}
+            onClose={closeDocumentBrowser}
+            onNavigationChange={setWorkspaceNavigating}
           />
         ) : (
           <>
@@ -3257,7 +3333,11 @@ function Workspace({
           </>
         )}
       </main>
-      {undoToast && undoToastCurrent && !presentation ? (
+      {undoToast &&
+      undoToastCurrent &&
+      !presentation &&
+      !documentBrowser &&
+      screen === "annual" ? (
         <UndoToast
           message={undoToast.message}
           disabled={

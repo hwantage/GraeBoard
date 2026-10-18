@@ -6,6 +6,7 @@ import {
 } from "./document-images.mjs";
 import { installReportDocumentRoutes } from "./report-documents.mjs";
 import { installCalendarRoutes } from "./calendar.mjs";
+import { installDocumentBrowserRoutes } from "./document-browser.mjs";
 import {
   withTaskDocumentReferences,
   syncReportDocuments,
@@ -619,6 +620,13 @@ export function createApp({
     },
   });
   installReportDocumentRoutes(app, { db, teamAccess, documentImagesDir });
+  installDocumentBrowserRoutes(app, {
+    db,
+    teamAccess,
+    taskAccess,
+    teamUsers,
+    referencedUsers,
+  });
   app.post("/api/tasks", (req, res) => {
     const d = z
       .object({

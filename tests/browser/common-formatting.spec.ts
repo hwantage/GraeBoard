@@ -30,8 +30,8 @@ async function save(page: Page, action: () => Promise<unknown>) {
 }
 test.beforeEach(async ({ page }) => {
   await post(page, "/auth/login", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await (
     await page.request.get("/api/bootstrap")

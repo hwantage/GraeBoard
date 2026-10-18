@@ -112,8 +112,8 @@ test.beforeEach(async ({ page }) => {
       : route.abort(),
   );
   await post(page, "/auth/login", {
-    username: "browser-test@example.com",
-    password: "local-test-only-password",
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await (
     await page.request.get("/api/bootstrap")

@@ -97,8 +97,8 @@ test.beforeEach(async ({ page }) => {
   pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await request(page, "/auth/login", "POST", {
-    username: "browser-test@example.com",
-    password,
+    username: "test@somansa.com",
+    password: "1234",
   });
   const boot = await request(page, "/bootstrap");
   userId = boot.user.id;
@@ -834,8 +834,8 @@ test("개인 요일 설정은 재로그인 후 유지되고 숨긴 날짜 보존
   });
   await request(page, "/auth/logout", "POST", {});
   await request(page, "/auth/login", "POST", {
-    username: "browser-test@example.com",
-    password,
+    username: "test@somansa.com",
+    password: "1234",
   });
   expect((await request(page, "/calendar/preferences")).weekdays).toEqual([
     1, 2, 3, 4,

@@ -27,7 +27,13 @@ import {
 } from "../shared/task-documents.js";
 import "./task-document.css";
 export type { DocumentHandle } from "./TaskDocumentEditor";
-type Props = Omit<DocumentEditorProps, "documentId" | "controlsTarget">;
+export type DocumentPanelHandle = DocumentHandle & {
+  selectDocument: (id: string) => Promise<boolean>;
+};
+type Props = Omit<DocumentEditorProps, "documentId" | "controlsTarget"> & {
+  initialDocumentId?: string;
+  onDocumentSelected?: (id: string) => void;
+};
 type RenameDraft = { document: DocumentInfo; title: string };
 type ListResult = {
   documents: DocumentInfo[];
@@ -47,7 +53,7 @@ function tabTitle(title: string) {
   return letters.length >= 10 ? `${letters.slice(0, 9).join("")}…` : title;
 }
 
-export default forwardRef<DocumentHandle, Props>(
+export default forwardRef<DocumentPanelHandle, Props>(
   function TaskDocumentPanel(props, ref) {
     const [documents, setDocuments] = useState<DocumentInfo[]>([]);
     const [opened, setOpened] = useState(false);
@@ -138,10 +144,26 @@ export default forwardRef<DocumentHandle, Props>(
               documentDraftKey({ ...latest.current, documentId: doc.id }),
             ),
           );
+          const requested = result.documents.find(
+            (doc) => doc.id === props.initialDocumentId,
+          )?.id;
+          if (props.initialDocumentId && !requested) {
+            setSelected(props.initialDocumentId);
+            setOpened(true);
+            setError(
+              "선택한 문서를 찾을 수 없습니다. 삭제되었는지 확인하고 다른 문서를 선택하세요.",
+            );
+            latest.current.onLoadingChange(false);
+            return;
+          }
           const shouldOpen =
-            opened || !!draft || result.documents.some((doc) => doc.hasContent);
+            opened ||
+            !!requested ||
+            !!draft ||
+            result.documents.some((doc) => doc.hasContent);
           setSelected(
             (previous) =>
+              requested ||
               draft?.id ||
               (result.documents.some((doc) => doc.id === previous)
                 ? previous
@@ -150,7 +172,10 @@ export default forwardRef<DocumentHandle, Props>(
           if (shouldOpen) {
             setOpened(true);
             setVisited((previous) => [
-              ...new Set([...previous, draft?.id || result.documents[0].id]),
+              ...new Set([
+                ...previous,
+                requested || draft?.id || result.documents[0].id,
+              ]),
             ]);
           } else {
             latest.current.onLoadingChange(false);
@@ -238,6 +263,7 @@ export default forwardRef<DocumentHandle, Props>(
           if (!handle.persistDraft()) return false;
         return true;
       },
+      selectDocument: select,
       flush: async () => {
         if (busy || !(await finishRename())) return false;
         for (const handle of handles.current.values())
@@ -245,8 +271,13 @@ export default forwardRef<DocumentHandle, Props>(
         return true;
       },
     }));
+    useEffect(() => {
+      if (opened && documents.some((doc) => doc.id === selected))
+        props.onDocumentSelected?.(selected);
+    }, [opened, selected, documents]);
     async function select(documentId: string) {
       if (busy || !(await finishRename())) return false;
+      if (!documents.some((doc) => doc.id === documentId)) return false;
       if (documentId === selected) return true;
       const handle = handles.current.get(selected);
       if (handle && !(await handle.flush())) return false;
