@@ -19,6 +19,7 @@ import {
 import { api, ApiError, send } from "./api";
 import { busyProps } from "./busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
+import Select from "./Select";
 import { RowPanel } from "./Panels";
 import { UndoToast } from "./Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
@@ -661,6 +662,7 @@ export default function Calendar({
       key={date}
       className={`calendar-day${date === today ? " is-today" : ""}${view !== "team" && !date.startsWith(month) ? " is-outside" : ""}`}
       data-date={date}
+      data-weekday={weekdays[column]}
       data-owner-id={ownerId ?? "team"}
       style={{ gridColumn: column + (ownerId === null ? 1 : 2), gridRow: 1 }}
     >
@@ -997,7 +999,7 @@ export default function Calendar({
                 </Button>
               </div>
               {view === "month" && (
-                <select
+                <Select
                   className="calendar-owner"
                   aria-label="캘린더 팀원"
                   value={memberId}
@@ -1009,7 +1011,7 @@ export default function Calendar({
                       {m.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               )}
             </>
           ) : (

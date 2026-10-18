@@ -2512,10 +2512,18 @@ function Workspace({
     if (documentBrowser) await documentBrowserRef.current?.navigate(action);
     else await action();
   }
+  function openAnnualWorkspace() {
+    void navigateWorkspace(async () => {
+      if (documentBrowser) await closeDocumentBrowser();
+      else closeReport();
+      setScreen("annual");
+    });
+  }
   return (
     <div
       ref={workspaceRef}
       className={`workspace ${presentation ? "presentation-mode" : ""}`}
+      data-screen={screen}
     >
       <main
         className="main-workspace"
@@ -2590,6 +2598,122 @@ function Workspace({
               </option>
             ))}
           </Select>
+          {screen !== "calendar" && (
+            <nav
+              className="top-navigation workspace-navigation"
+              aria-label="주 메뉴"
+            >
+              <Button
+                title={documentBrowser ? "연간 업무로 돌아가기" : "연간 업무"}
+                active={screen === "annual" && !documentBrowser && !report}
+                aria-pressed={
+                  screen === "annual" && !documentBrowser && !report
+                }
+                onClick={openAnnualWorkspace}
+                {...busyProps(
+                  calendarBusy,
+                  workspaceNavigating ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
+                )}
+              >
+                <CalendarDays size={15} />
+                <span>연간 업무</span>
+              </Button>
+              <Button
+                title="문서 브라우저"
+                active={documentBrowser}
+                {...busyProps(
+                  calendarBusy,
+                  workspaceNavigating ||
+                    (!documentBrowser && !ready) ||
+                    !!pending ||
+                    !!failed ||
+                    !!editor ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
+                )}
+                onClick={() => {
+                  if (documentBrowser) return;
+                  flushView();
+                  setViewMenu(false);
+                  setScreen("annual");
+                  setDocumentBrowser(true);
+                }}
+              >
+                <FolderOpen size={15} />
+                <span>문서 브라우저</span>
+              </Button>
+              <Button
+                className="calendar-launch"
+                title="캘린더"
+                {...busyProps(
+                  calendarBusy,
+                  workspaceNavigating ||
+                    !!pending ||
+                    !!failed ||
+                    !!editor ||
+                    reportDraft.dirty ||
+                    reportDraft.saving,
+                )}
+                onClick={() =>
+                  void navigateWorkspace(() => {
+                    setDocumentBrowser(false);
+                    setScreen("calendar");
+                    setViewMenu(false);
+                    setRowTask(null);
+                  })
+                }
+              >
+                <svg
+                  width="21"
+                  height="21"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="3"
+                    y="4.5"
+                    width="18"
+                    height="17"
+                    rx="3"
+                    fill="#fffdf7"
+                    stroke="#26201a"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M6 4.5h12a3 3 0 0 1 3 3V10H3V7.5a3 3 0 0 1 3-3Z"
+                    fill="#ff5c2b"
+                    stroke="#26201a"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M8 2.5v4M16 2.5v4"
+                    stroke="#26201a"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                  <rect
+                    x="6"
+                    y="13"
+                    width="4"
+                    height="4"
+                    rx="1"
+                    fill="#b9e6a6"
+                  />
+                  <rect
+                    x="13"
+                    y="13"
+                    width="4"
+                    height="4"
+                    rx="1"
+                    fill="#c7b9ed"
+                  />
+                </svg>
+              </Button>
+            </nav>
+          )}
           {documentBrowser ? null : editingReport ? (
             <span className="tag" role="status">
               {reportDraft.saving
@@ -2601,128 +2725,86 @@ function Workspace({
           ) : (
             <SaveStatus pending={pending > 0} failed={!!failed} />
           )}
-          <nav className="top-navigation" aria-label="주 메뉴">
+          {screen === "calendar" ? (
             <Button
-              title={documentBrowser ? "연간 업무로 돌아가기" : "연간 업무"}
-              active={screen === "annual" && !documentBrowser && !report}
-              aria-pressed={screen === "annual" && !documentBrowser && !report}
-              onClick={() =>
-                void navigateWorkspace(async () => {
-                  if (documentBrowser) await closeDocumentBrowser();
-                  else closeReport();
-                  setScreen("annual");
-                })
-              }
+              className="calendar-close"
+              title="캘린더 닫기"
+              onClick={openAnnualWorkspace}
               {...busyProps(
                 calendarBusy,
                 workspaceNavigating || reportDraft.dirty || reportDraft.saving,
               )}
             >
-              <CalendarDays size={15} />
-              <span>연간 업무</span>
+              <X size={18} />
             </Button>
-            <Button
-              title="캘린더"
-              active={screen === "calendar"}
-              aria-pressed={screen === "calendar"}
-              {...busyProps(
-                calendarBusy,
-                workspaceNavigating ||
-                  !!pending ||
-                  !!failed ||
-                  !!editor ||
-                  reportDraft.dirty ||
-                  reportDraft.saving,
-              )}
-              onClick={() =>
-                void navigateWorkspace(() => {
-                  setDocumentBrowser(false);
-                  setScreen("calendar");
-                  setViewMenu(false);
-                  setRowTask(null);
-                })
-              }
-            >
-              <CalendarDays size={15} />
-              <span>캘린더</span>
-            </Button>
-            <Button
-              title="문서 브라우저"
-              active={documentBrowser}
-              {...busyProps(
-                calendarBusy,
-                workspaceNavigating ||
-                  (!documentBrowser && !ready) ||
-                  !!pending ||
-                  !!failed ||
-                  !!editor ||
-                  reportDraft.dirty ||
-                  reportDraft.saving,
-              )}
-              onClick={() => {
-                if (documentBrowser) return;
-                flushView();
-                setViewMenu(false);
-                setScreen("annual");
-                setDocumentBrowser(true);
-              }}
-            >
-              <FolderOpen size={15} />
-              <span>문서 브라우저</span>
-            </Button>
-            <Button
-              title="변경 이력"
-              onClick={() => void navigateWorkspace(() => setPanel("history"))}
-              {...busyProps(
-                calendarBusy,
-                workspaceNavigating || reportDraft.dirty || reportDraft.saving,
-              )}
-            >
-              <History size={15} />
-              <span>변경 이력</span>
-            </Button>
-            {canOpenSettings && (
-              <Button
-                title="설정"
-                onClick={() =>
-                  void navigateWorkspace(() => setPanel("settings"))
-                }
-                {...busyProps(
-                  calendarBusy,
-                  workspaceNavigating ||
-                    reportDraft.dirty ||
-                    reportDraft.saving,
+          ) : (
+            <>
+              <nav className="top-navigation" aria-label="관리 메뉴">
+                <Button
+                  title="변경 이력"
+                  onClick={() =>
+                    void navigateWorkspace(() => setPanel("history"))
+                  }
+                  {...busyProps(
+                    calendarBusy,
+                    workspaceNavigating ||
+                      reportDraft.dirty ||
+                      reportDraft.saving,
+                  )}
+                >
+                  <History size={15} />
+                  <span>변경 이력</span>
+                </Button>
+                {canOpenSettings && (
+                  <Button
+                    title="설정"
+                    onClick={() =>
+                      void navigateWorkspace(() => setPanel("settings"))
+                    }
+                    {...busyProps(
+                      calendarBusy,
+                      workspaceNavigating ||
+                        reportDraft.dirty ||
+                        reportDraft.saving,
+                    )}
+                  >
+                    <Settings size={15} />
+                    <span>설정</span>
+                  </Button>
                 )}
-              >
-                <Settings size={15} />
-                <span>설정</span>
-              </Button>
-            )}
-          </nav>
-          <AccountMenu
-            user={user}
-            onProfile={() => void navigateWorkspace(() => setPanel("profile"))}
-            onPassword={() =>
-              void navigateWorkspace(() => setPanel("password"))
-            }
-            logoutDisabled={
-              calendarBusy ||
-              workspaceNavigating ||
-              !!pending ||
-              !!failed ||
-              reportDraft.dirty ||
-              reportDraft.saving
-            }
-            onLogout={async () => {
-              if (pendingRef.current || failedRef.current || reportDraft.dirty)
-                return;
-              await navigateWorkspace(async () => {
-                flushView();
-                await send("/auth/logout", {});
-                onLogout();
-              });
-            }}
-          />
+              </nav>
+              <AccountMenu
+                user={user}
+                onProfile={() =>
+                  void navigateWorkspace(() => setPanel("profile"))
+                }
+                onPassword={() =>
+                  void navigateWorkspace(() => setPanel("password"))
+                }
+                logoutDisabled={
+                  calendarBusy ||
+                  workspaceNavigating ||
+                  !!pending ||
+                  !!failed ||
+                  reportDraft.dirty ||
+                  reportDraft.saving
+                }
+                onLogout={async () => {
+                  if (
+                    pendingRef.current ||
+                    failedRef.current ||
+                    reportDraft.dirty
+                  )
+                    return;
+                  await navigateWorkspace(async () => {
+                    flushView();
+                    await send("/auth/logout", {});
+                    onLogout();
+                  });
+                }}
+              />
+            </>
+          )}
         </header>
         {screen === "calendar" ? (
           <Calendar

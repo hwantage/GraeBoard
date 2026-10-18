@@ -423,6 +423,26 @@ small {
 .topbar .button.active {
   background: var(--accent-soft);
 }
+.topbar .workspace-navigation {
+  margin-left: 0;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.topbar .calendar-launch {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  margin-inline: 4px 2px;
+  padding: 0;
+  border: 1.5px solid #26201a;
+  border-radius: 50%;
+  background: #ffd84d;
+  box-shadow: 1.5px 1.5px 0 #26201a;
+}
+.topbar .calendar-launch:hover:not(:disabled) {
+  border-color: #26201a;
+  background: #ffe070;
+}
 .topbar .top-account {
   border-left: 1px solid var(--line);
   border-radius: 0;
