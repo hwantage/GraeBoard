@@ -31,7 +31,6 @@ import {
   History,
   Trash2,
   Settings,
-  Check,
   CloudOff,
   Bookmark,
   X,
@@ -1091,7 +1090,7 @@ function Workspace({
       changeView(next);
     // 저장된 보기를 불러온 뒤에도 돌아야 하므로 view도 의존성에 둔다.
   }, [settings, ready, report, boot.users, teamId, view]);
-  // 보기 모드는 직접 선택한 저장 필터에만 연결한다. 조건 일치만으로 진입하지 않는다.
+  // 보기 모드는 저장하거나 직접 선택한 필터에 연결한다. 조건 일치만으로 진입하지 않는다.
   const activeSavedFilter = useMemo(
     () => savedFilters.find((v) => v.id === selectedSavedFilterId),
     [savedFilters, selectedSavedFilterId],
@@ -1106,6 +1105,15 @@ function Workspace({
     activeSavedFilter,
     rememberSelectedFilter,
   ]);
+  function applySavedFilter(filter: SavedFilter) {
+    const filters = savedFilter(filter.data, settings);
+    changeView({
+      propertyFilters: filters.propertyFilters,
+      propertyFilterModes: filters.propertyFilterModes,
+    });
+    rememberSelectedFilter(filter.id);
+    setViewMenu(false);
+  }
   function clearFilters() {
     changeView({ propertyFilters: {}, propertyFilterModes: {} });
     rememberSelectedFilter("");
@@ -3118,16 +3126,7 @@ function Workspace({
                                   v.scope === "team" ? "팀 공용" : "개인용"
                                 }
                                 aria-pressed={activeSavedFilter?.id === v.id}
-                                onClick={() => {
-                                  const filters = savedFilter(v.data, settings);
-                                  changeView({
-                                    propertyFilters: filters.propertyFilters,
-                                    propertyFilterModes:
-                                      filters.propertyFilterModes,
-                                  });
-                                  rememberSelectedFilter(v.id);
-                                  setViewMenu(false);
-                                }}
+                                onClick={() => applySavedFilter(v)}
                               >
                                 <span className="saved-filter-name">
                                   {v.name}
@@ -3140,9 +3139,6 @@ function Workspace({
                                   )}
                                   {v.scope === "team" ? "팀 공용" : "개인용"}
                                 </span>
-                                {activeSavedFilter?.id === v.id && (
-                                  <Check size={14} aria-hidden="true" />
-                                )}
                               </button>
                             </div>
                           ))}
@@ -3778,7 +3774,17 @@ function Workspace({
                     },
                     "PUT",
                   );
-                await refreshFilters();
+                const filters: SavedFilter[] = await refreshFilters();
+                if (
+                  !filterNameDialog.filterId &&
+                  filterTeam.current === teamId
+                ) {
+                  const filter = filters.find(
+                    (v) =>
+                      v.name === viewName.trim() && v.scope === filterScope,
+                  );
+                  if (filter) applySavedFilter(filter);
+                }
                 setFilterNameDialog(null);
                 setViewName("");
                 setToast(

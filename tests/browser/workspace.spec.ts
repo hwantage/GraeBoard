@@ -4713,7 +4713,7 @@ test("저장된 필터 목록은 항목 선택만 제공하고 닫기·바깥 �
     .getByRole("button", { name: "저장", exact: true })
     .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(banner).toHaveCount(0);
+  await expect(banner.locator("strong")).toHaveText("필터 없는 보기");
   await expect(trigger).toHaveText("저장된 필터");
   await trigger.click();
   await expect(
@@ -4736,6 +4736,13 @@ test("저장된 필터 목록은 항목 선택만 제공하고 닫기·바깥 �
   await expect(banner.locator("strong")).toHaveText("필터 없는 보기");
   await expect(menu).toHaveCount(0);
   await expect(trigger).toHaveText("저장된 필터");
+  await trigger.click();
+  const selected = menu.getByRole("button", {
+    name: "필터 없는 보기",
+    exact: true,
+  });
+  await expect(selected).toHaveAttribute("aria-pressed", "true");
+  await expect(selected.locator(":scope > svg")).toHaveCount(0);
 });
 
 test("검색·필터 저장과 편집 가능한 사본의 원본 분리를 확인한다", async ({
@@ -9170,15 +9177,31 @@ test("저장된 필터는 열 조건만 저장하고 적용·해제할 때 현�
     .getByRole("button", { name: "현재 필터 저장", exact: true })
     .click();
   await expect(page.getByLabel("필터 이름")).toBeFocused();
-  await page.keyboard.insertText("완료 제외 보기");
-  await expect(page.getByLabel("필터 이름")).toHaveValue("완료 제외 보기");
+  await page.keyboard.insertText("  완료 제외 보기  ");
+  await expect(page.getByLabel("필터 이름")).toHaveValue("  완료 제외 보기  ");
   await page
     .getByRole("dialog", { name: "필터 저장" })
     .getByRole("button", { name: "저장", exact: true })
     .click();
   const banner = page.getByRole("region", { name: "필터 보기", exact: true });
   const applied = banner.locator("strong");
-  await expect(banner).toHaveCount(0);
+  await expect(applied).toHaveText("완료 제외 보기");
+  const filterState = async () =>
+    (await page.request.get(`/api/filters?teamId=${teamId}`))
+      .json()
+      .then(unpack);
+  const savedId = (await filterState()).filters.find(
+    (v: any) => v.name === "완료 제외 보기",
+  ).id;
+  await expect
+    .poll(async () => (await filterState()).current.selectedId)
+    .toBe(savedId);
+  await page.reload();
+  await expect(applied).toHaveText("완료 제외 보기");
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "숨길 업무",
+    "셋째 업무",
+  ]);
   const views = async () => (await readPreferences(page, teamId)).views;
   await expect
     .poll(
@@ -10240,6 +10263,7 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
     await input.fill(name);
     await input.press("Enter");
     await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".active-filter-banner strong")).toHaveText(name);
   };
   await save("팀장 개인 조건", "개인용");
   await save("팀 완료 조건", "팀 공용");
@@ -10369,6 +10393,7 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
       .fill("팀원 개인 조건");
     await dialog.getByRole("button", { name: "저장", exact: true }).click();
     await expect(dialog).toHaveCount(0);
+    await expect(peerBanner.locator("strong")).toHaveText("팀원 개인 조건");
     await peerTrigger.click();
     await expect(
       peer
