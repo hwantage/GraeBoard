@@ -1,3 +1,4 @@
+import "./polyfills";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/noto-sans-kr/400.css";
