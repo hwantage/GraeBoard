@@ -871,27 +871,25 @@ test("속성 없는 줄바꿈은 빈 문단·표·인라인에서 보존하고 �
   ).toBe("<br />\n");
 });
 
-test("끝 빈 줄과 함께 실제로 변환 손실이 있는 코드 정보는 계속 원문에 보존한다", async ({
-  page,
-}) => {
+test("코드 블록 언어 뒤 정보를 리치 편집에서도 보존한다", async ({ page }) => {
   const markdown =
-    '```js filename="업무.js"\nconst note = "보존";\n```\n\n<br />\n';
-  const original = await save(page, taskIds[0], markdown);
-  await page
-    .locator(`[data-cell="${taskIds[0]}:title"]`)
-    .click({ button: "right" });
-  await expect(source(page)).toHaveValue(markdown);
-  await expect(detail(page).locator(".document-notice")).toContainText(
-    "리치 편집으로 변환하면 달라질 수 있어",
+    '```js filename="업무.js"\nconst note = "보존";\n```\n\n```plain text\n노션 본문\n```\n\n<br />\n';
+  await save(page, taskIds[0], markdown);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator('pre[data-meta="text"]')).toHaveText(
+    "노션 본문",
   );
-  await detail(page)
-    .getByRole("button", { name: "리치 문서", exact: true })
-    .click();
-  await expect(source(page)).toHaveValue(markdown);
+  await rich(page).locator("pre").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" // 수정");
   await close(page);
-  const current = await get(page, `/tasks/${taskIds[0]}/documents/main`);
-  expect(current.revision).toBe(original.revision);
-  expect(current.markdown).toBe(markdown);
+  const markdownNow = async () =>
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown;
+  await expect
+    .poll(markdownNow)
+    .toContain('```js filename="업무.js"\nconst note = "보존"; // 수정\n```');
+  expect(await markdownNow()).toContain("```plain text\n노션 본문\n```");
 });
 
 test("지원하지 않는 원문과 위험한 HTML·링크를 보존하고 실행하지 않음", async ({

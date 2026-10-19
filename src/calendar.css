@@ -869,6 +869,10 @@
   padding: 0;
   min-width: 0;
 }
+.calendar-entry-modal {
+  /* 일정 팝업에는 문서 탭이 없으므로 서식 툴바를 스크롤 영역 맨 위에 고정한다. */
+  --document-tabs-height: 0px;
+}
 .calendar-entry-heading {
   padding: 16px 28px;
 }

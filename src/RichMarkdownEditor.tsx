@@ -25,6 +25,7 @@ import {
   turnIntoTextCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
+  codeBlockSchema,
   linkSchema,
 } from "@milkdown/kit/preset/commonmark";
 import {
@@ -193,6 +194,55 @@ function listFormatCommand(format: ListFormat): Command {
 const listFormatKeydown = keydownHandler({
   "Mod-Alt-7": listFormatCommand("ordered"),
   "Mod-Alt-8": listFormatCommand("bullet"),
+});
+
+// Milkdown keeps only a fence's language. Keep the rest of the info string
+// (```plain text, ```js filename="a.js", future mermaid options) so rich
+// editing round-trips it instead of rewriting the fence.
+const codeBlockMetaSchema = codeBlockSchema.extendSchema((prev) => (ctx) => {
+  const base = prev(ctx);
+  const parseRule = base.parseDOM![0];
+  return {
+    ...base,
+    attrs: { ...base.attrs, meta: { default: "", validate: "string" } },
+    parseDOM: [
+      {
+        ...parseRule,
+        getAttrs: (dom) => ({
+          ...(parseRule.getAttrs?.(dom) || {}),
+          meta: (dom as HTMLElement).dataset.meta ?? "",
+        }),
+      },
+    ],
+    toDOM: (node) => {
+      const [tag, attrs, ...rest] = base.toDOM!(node) as [string, object];
+      return [
+        tag,
+        node.attrs.meta ? { ...attrs, "data-meta": node.attrs.meta } : attrs,
+        ...rest,
+      ];
+    },
+    parseMarkdown: {
+      match: base.parseMarkdown.match,
+      runner: (state, node, type) => {
+        state.openNode(type, {
+          language: node.lang ?? "",
+          meta: node.meta ?? "",
+        });
+        if (node.value) state.addText(node.value as string);
+        state.closeNode();
+      },
+    },
+    toMarkdown: {
+      match: base.toMarkdown.match,
+      runner: (state, node) => {
+        state.addNode("code", undefined, node.content.firstChild?.text || "", {
+          lang: node.attrs.language,
+          meta: node.attrs.meta || undefined,
+        });
+      },
+    },
+  };
 });
 
 export function safeDocumentLink(url: string) {
@@ -584,6 +634,7 @@ export default function RichMarkdownEditor(props: Props) {
         });
       })
       .use(commonmark)
+      .use(codeBlockMetaSchema)
       .use(gfm)
       .use(history)
       .use(upload)
