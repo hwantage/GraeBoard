@@ -1482,6 +1482,22 @@ small {
   scrollbar-color: #bacbc7 #f4f7f6;
   overscroll-behavior: contain;
 }
+.sheet-scroll.has-sheet-footer {
+  overflow-x: hidden;
+}
+.sheet-horizontal-scroll {
+  position: sticky;
+  left: 0;
+  bottom: 0;
+  z-index: 16;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #bacbc7 #f4f7f6;
+  background: white;
+}
 .sheet-header {
   display: flex;
   position: sticky;

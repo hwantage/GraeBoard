@@ -249,21 +249,26 @@ export function createApp({
       tokenRequired: !!process.env.SETUP_TOKEN,
     }),
   );
+  const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
+  const sessionRenewInterval = 24 * 60 * 60 * 1000;
+  function sessionCookie(res, token) {
+    res.cookie("weekly_session", token, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.COOKIE_SECURE === "1",
+      maxAge: sessionLifetime,
+      path: "/",
+    });
+  }
   function issueSession(res, userId) {
     const token = randomBytes(32).toString("hex");
     db.prepare("DELETE FROM sessions WHERE expires_at<?").run(Date.now());
     db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
       sessionHash(token),
       userId,
-      Date.now() + 8 * 60 * 60 * 1000,
+      Date.now() + sessionLifetime,
     );
-    res.cookie("weekly_session", token, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: process.env.COOKIE_SECURE === "1",
-      maxAge: 8 * 60 * 60 * 1000,
-      path: "/",
-    });
+    sessionCookie(res, token);
   }
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -359,10 +364,22 @@ export function createApp({
       token &&
       db
         .prepare(
-          "SELECT u.* FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=? AND s.expires_at>? AND u.active=1",
+          "SELECT u.*, s.expires_at AS sessionExpiresAt FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=? AND s.expires_at>? AND u.active=1",
         )
         .get(sessionHash(token), Date.now());
     if (!u) return res.status(401).json({ error: "로그인이 필요합니다." });
+    // Renew the existing session at most once a day, including valid sessions
+    // issued before this release. Expired or revoked tokens never reach here.
+    if (
+      !["/auth/logout", "/auth/password"].includes(req.path) &&
+      u.sessionExpiresAt < Date.now() + sessionLifetime - sessionRenewInterval
+    ) {
+      db.prepare("UPDATE sessions SET expires_at=? WHERE token=?").run(
+        Date.now() + sessionLifetime,
+        sessionHash(token),
+      );
+      sessionCookie(res, token);
+    }
     req.user = userWithTeams(db, u);
     next();
   });

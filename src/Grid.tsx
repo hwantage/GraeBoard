@@ -1,3 +1,4 @@
+import SheetHorizontalScroll from "./SheetHorizontalScroll";
 import { FileText } from "lucide-react";
 import { explicitStyle, rowFontSize } from "../shared/formatting.js";
 import {
@@ -1382,7 +1383,7 @@ export default function Grid({
         aria-rowcount={matchingTasks.length + 1}
         aria-colcount={columns.length + 1}
         aria-readonly={readOnly}
-        className="sheet-scroll"
+        className={`sheet-scroll${footer ? " has-sheet-footer" : ""}`}
         data-density={density}
         onFocus={(e) => {
           if (e.target !== e.currentTarget || editor) return;
@@ -1688,6 +1689,7 @@ export default function Grid({
             숨긴 {matchingTasks.length}개 행 펼치기
           </Button>
         )}
+        {footer && <SheetHorizontalScroll width={totalWidth} />}
         {footer
           ? footer(
               !readOnly && canAdd ? (

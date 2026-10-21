@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import ExcelJS from "exceljs";
 import { statusSummary } from "../shared/domain.js";
 import { applyBorderPreset } from "../shared/borders.js";
@@ -65,6 +65,82 @@ const change = (key, value, version) => ({
   key,
   value,
   expectedVersion: version ?? getTask(db, task.id).cells[key]?.version ?? 0,
+});
+
+test("로그인은 30일 유지하고 하루 단위로 갱신하며 만료·로그아웃·계정 해제를 존중한다", async () => {
+  const account = {
+    username: `session-${randomUUID()}@example.com`,
+    password: "persistent-test-password",
+  };
+  const created = await post("/admin/users", {
+    ...account,
+    name: "로그인 유지 검증",
+    teamIds: [teamId],
+  });
+  assert.equal(created.status, 201);
+  const login = () => post("/auth/login", account, "");
+  const day = 24 * 60 * 60 * 1000;
+  let result = await login();
+  assert.equal(result.status, 200);
+  const cookie = result.cookie;
+  const header = result.headers.get("set-cookie");
+  assert.match(header, /Max-Age=2592000/);
+  assert.match(header, /HttpOnly/);
+  assert.match(header, /SameSite=Strict/i);
+  const token = createHash("sha256").update(cookie.split("=")[1]).digest("hex");
+  const expires = () =>
+    db.prepare("SELECT expires_at FROM sessions WHERE token=?").get(token)
+      ?.expires_at;
+  assert.ok(Math.abs(expires() - Date.now() - 30 * day) < 2000);
+  // A still-valid token issued by the old eight-hour policy is renewed in place.
+  db.prepare("UPDATE sessions SET expires_at=? WHERE token=?").run(
+    Date.now() + 3600000,
+    token,
+  );
+  result = await request("/bootstrap", { cookie });
+  assert.equal(result.status, 200);
+  assert.equal(result.cookie, cookie);
+  assert.match(result.headers.get("set-cookie"), /Max-Age=2592000/);
+  const renewed = expires();
+  result = await request("/bootstrap", { cookie });
+  assert.equal(result.headers.get("set-cookie"), null);
+  assert.equal(expires(), renewed);
+  db.prepare("UPDATE sessions SET expires_at=? WHERE token=?").run(
+    Date.now() + 28 * day,
+    token,
+  );
+  result = await request("/bootstrap", { cookie });
+  assert.equal(result.cookie, cookie);
+  assert.ok(Math.abs(expires() - Date.now() - 30 * day) < 2000);
+  db.prepare("UPDATE sessions SET expires_at=? WHERE token=?").run(
+    Date.now() - 1,
+    token,
+  );
+  result = await request("/bootstrap", { cookie });
+  assert.equal(result.status, 401);
+  assert.equal(result.headers.get("set-cookie"), null);
+  const loggedIn = await login();
+  const logout = await post("/auth/logout", {}, loggedIn.cookie);
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get("set-cookie"), /Expires=Thu, 01 Jan 1970/);
+  assert.equal(
+    (await request("/bootstrap", { cookie: loggedIn.cookie })).status,
+    401,
+  );
+  const disabled = await login();
+  assert.equal(
+    (
+      await request(`/admin/users/${created.data.user.id}`, {
+        method: "PATCH",
+        body: { name: "로그인 유지 검증", active: false },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request("/bootstrap", { cookie: disabled.cookie })).status,
+    401,
+  );
 });
 
 test("팀 기본 셀 높이는 검증하고 이전 설정 저장과 팀 양식 복사에서 보존한다", async () => {

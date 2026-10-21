@@ -8,8 +8,16 @@ import {
   useState,
   useId,
   type ReactNode,
+  type CSSProperties,
 } from "react";
-import { Plus, MoreHorizontal, Pencil, Trash2, FileText } from "lucide-react";
+import {
+  Plus,
+  MoreHorizontal,
+  ChevronDown,
+  Pencil,
+  Trash2,
+  FileText,
+} from "lucide-react";
 import { api, send, ApiError } from "./api";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import { Button, ErrorNote } from "./components";
@@ -74,7 +82,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const [loading, setLoading] = useState<Record<string, boolean>>({});
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const [menu, setMenu] = useState(false);
+    const [menu, setMenu] = useState<string | null>(null);
     const [renaming, setRenaming] = useState<RenameDraft | null>(null);
     const [renamePending, setRenamePending] = useState(false);
     const [tabToFocus, setTabToFocus] = useState<string | null>(null);
@@ -181,21 +189,21 @@ export default forwardRef<DocumentPanelHandle, Props>(
           event.target instanceof Node &&
           !menuRoot.current?.contains(event.target)
         )
-          setMenu(false);
+          setMenu(null);
       };
       let focusFrame = 0;
       const keydown = (event: KeyboardEvent) => {
         if (event.key === "Tab") {
           focusFrame = requestAnimationFrame(() => {
             if (!menuRoot.current?.contains(document.activeElement))
-              setMenu(false);
+              setMenu(null);
           });
           return;
         }
         if (event.key !== "Escape" || event.isComposing) return;
         event.preventDefault();
         event.stopPropagation();
-        setMenu(false);
+        setMenu(null);
         menuTrigger.current?.focus({ preventScroll: true });
       };
       document.addEventListener("pointerdown", outside, true);
@@ -410,7 +418,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
       setVisited((previous) =>
         previous.includes(documentId) ? previous : [...previous, documentId],
       );
-      setMenu(false);
+      setMenu(null);
       setConfirmDelete(false);
       setError("");
       return true;
@@ -483,7 +491,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
     }
     async function startRename(doc: DocumentInfo) {
       if (readOnly || busy || !(await select(doc.id))) return;
-      setMenu(false);
+      setMenu(null);
       setConfirmDelete(false);
       setError("");
       changeRename({ document: doc, title: doc.title });
@@ -560,6 +568,61 @@ export default forwardRef<DocumentPanelHandle, Props>(
       } finally {
         setBusy(false);
       }
+    }
+    function documentMenu(doc: DocumentInfo) {
+      if (readOnly) return null;
+      const expanded = menu === doc.id;
+      return (
+        <div
+          className="document-tab-menu"
+          ref={expanded ? menuRoot : undefined}
+        >
+          <Button
+            ref={expanded ? menuTrigger : undefined}
+            tooltip={props.inline ? `${doc.title} 메뉴` : "문서 메뉴"}
+            aria-haspopup="menu"
+            aria-controls={expanded ? `${id}-menu` : undefined}
+            aria-expanded={expanded}
+            disabled={busy}
+            onClick={() => {
+              if (expanded) setMenu(null);
+              else
+                void select(doc.id, false).then((saved) => {
+                  if (saved) setMenu(doc.id);
+                });
+            }}
+          >
+            {props.inline ? (
+              <ChevronDown size={14} />
+            ) : (
+              <MoreHorizontal size={16} />
+            )}
+          </Button>
+          {expanded && (
+            <div id={`${id}-menu`} role="menu" aria-label="문서 메뉴">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void startRename(doc)}
+              >
+                <Pencil size={14} />
+                문서 이름 변경
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setConfirmDelete(true);
+                  setMenu(null);
+                }}
+              >
+                <Trash2 size={14} />
+                문서 삭제
+              </button>
+            </div>
+          )}
+        </div>
+      );
     }
     if (!opened && !props.inline)
       return (
@@ -770,48 +833,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
           )}
           <div className="document-tab-actions">
             {!props.inline && <div ref={setControlsTarget} />}
-            {!readOnly && current && (
-              <div className="document-tab-menu" ref={menuRoot}>
-                <Button
-                  ref={menuTrigger}
-                  tooltip="문서 메뉴"
-                  aria-haspopup="menu"
-                  aria-controls={menu ? `${id}-menu` : undefined}
-                  aria-expanded={menu}
-                  disabled={busy}
-                  onClick={() =>
-                    void finishRename().then((saved) => {
-                      if (saved) setMenu((value) => !value);
-                    })
-                  }
-                >
-                  <MoreHorizontal size={16} />
-                </Button>
-                {menu && (
-                  <div id={`${id}-menu`} role="menu" aria-label="문서 메뉴">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => void startRename(current)}
-                    >
-                      <Pencil size={14} />
-                      문서 이름 변경
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setConfirmDelete(true);
-                        setMenu(false);
-                      }}
-                    >
-                      <Trash2 size={14} />
-                      문서 삭제
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+            {!props.inline && current && documentMenu(current)}
           </div>
         </div>
         {confirmDelete && (
@@ -848,6 +870,8 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 tabId={`${id}-${doc.id}-tab`}
                 documentId={doc.id}
                 title={doc.title}
+                menu={props.inline ? documentMenu(doc) : null}
+                widthKey={`${props.draftKey(doc.id)}:width`}
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -947,6 +971,8 @@ function DocumentPage({
   tabId,
   documentId,
   title,
+  menu,
+  widthKey,
   inline,
   selected,
   loading,
@@ -958,6 +984,8 @@ function DocumentPage({
   tabId: string;
   documentId: string;
   title: string;
+  menu: ReactNode;
+  widthKey: string;
   inline: boolean;
   selected: boolean;
   loading: boolean;
@@ -965,11 +993,42 @@ function DocumentPage({
   onSelect: () => void;
   children: (controls: HTMLDivElement | null) => ReactNode;
 }) {
+  const [width, setWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem(widthKey));
+      return saved >= 280 && saved <= 2400 ? saved : 800;
+    } catch {
+      return 800;
+    }
+  });
+  const resize = useRef<{
+    x: number;
+    width: number;
+    previous: number;
+    scale: number;
+  } | null>(null);
+  const currentWidth = useRef(width);
+  currentWidth.current = width;
+  function updateWidth(value: number, save = false) {
+    const next = Math.max(280, Math.min(2400, Math.round(value)));
+    currentWidth.current = next;
+    setWidth(next);
+    if (save) {
+      try {
+        localStorage.setItem(widthKey, String(next));
+      } catch {
+        /* retain this session's width */
+      }
+    }
+  }
   const [cardControls, setCardControls] = useState<HTMLDivElement | null>(null);
   return (
     <div
       className={`document-page ${inline ? "memo-document-card" : ""}`}
       id={pageId}
+      style={
+        inline ? ({ "--memo-width": `${width}px` } as CSSProperties) : undefined
+      }
       role="tabpanel"
       aria-labelledby={tabId}
       hidden={!inline && !selected}
@@ -984,7 +1043,8 @@ function DocumentPage({
           <span className="memo-document-title" title={title}>
             {title}
           </span>
-          <div ref={setCardControls} />
+          {menu}
+          <div className="memo-document-controls" ref={setCardControls} />
         </div>
       )}
       {inline ? (
@@ -993,6 +1053,74 @@ function DocumentPage({
         </div>
       ) : (
         children(controlsTarget)
+      )}
+      {inline && (
+        <div
+          className="memo-width-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`${title} 너비`}
+          aria-valuemin={280}
+          aria-valuemax={2400}
+          aria-valuenow={width}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.focus({ preventScroll: true });
+            const card = event.currentTarget.parentElement!;
+            const box = card.getBoundingClientRect();
+            const scale = box.width / card.offsetWidth || 1;
+            resize.current = {
+              x: event.clientX,
+              width: box.width / scale,
+              previous: width,
+              scale,
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const drag = resize.current;
+            if (drag)
+              updateWidth(drag.width + (event.clientX - drag.x) / drag.scale);
+          }}
+          onPointerUp={(event) => {
+            if (!resize.current) return;
+            resize.current = null;
+            updateWidth(currentWidth.current, true);
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onLostPointerCapture={() => {
+            if (resize.current) updateWidth(resize.current.previous);
+            resize.current = null;
+          }}
+          onPointerCancel={() => {
+            if (resize.current) updateWidth(resize.current.previous);
+            resize.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && resize.current) {
+              updateWidth(resize.current.previous);
+              resize.current = null;
+            }
+            const delta = event.shiftKey ? 100 : 20;
+            const value =
+              event.key === "ArrowLeft"
+                ? width - delta
+                : event.key === "ArrowRight"
+                  ? width + delta
+                  : event.key === "Home"
+                    ? 280
+                    : event.key === "End"
+                      ? 2400
+                      : null;
+            if (value === null) return;
+            event.preventDefault();
+            event.stopPropagation();
+            updateWidth(value, true);
+          }}
+        />
       )}
     </div>
   );

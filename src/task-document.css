@@ -726,8 +726,8 @@
   display: none;
 }
 .annual-memos .memo-document-card {
-  flex: 0 0 min(800px, 100%);
-  width: min(800px, 100%);
+  flex: 0 0 min(var(--memo-width, 800px), 100%);
+  width: min(var(--memo-width, 800px), 100%);
   min-width: 0;
   min-height: 360px;
   height: clamp(360px, 60dvh, 600px);
@@ -751,21 +751,24 @@
   visibility: hidden;
 }
 .memo-document-card[data-selected] .memo-document-body {
+  border-width: 2px;
   border-color: var(--accent);
 }
 .memo-document-heading {
+  position: relative;
+  z-index: 3;
   display: flex;
   align-items: center;
   flex-shrink: 0;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px;
   min-height: 40px;
-  padding: 4px 10px;
+  padding: 4px 8px;
   background: white;
 }
 .memo-document-title {
   min-width: 0;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
   overflow: hidden;
   white-space: nowrap;
@@ -805,4 +808,64 @@
 }
 .annual-memos .document-tab-item[data-reorder-drop="after"]::after {
   right: 0;
+}
+
+.annual-memos .toggle-memos {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-weight: 500;
+}
+.annual-memos .toggle-memos:hover,
+.annual-memos .toggle-memos[aria-expanded="true"] {
+  color: var(--accent);
+  background: var(--accent-surface);
+}
+.memo-document-card[data-selected] .memo-document-heading {
+  background: var(--accent-surface);
+  border-radius: 6px;
+}
+.memo-document-card[data-selected] .memo-document-title {
+  color: var(--accent);
+  font-weight: 700;
+}
+.memo-document-controls {
+  margin-left: auto;
+}
+.memo-document-heading .document-tab-menu > .button {
+  padding: 3px;
+  min-height: 24px;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.memo-document-heading .document-tab-menu [role="menu"] {
+  left: 0;
+  right: auto;
+}
+.memo-width-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -14px;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.memo-width-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.memo-width-handle:hover::after,
+.memo-width-handle:focus-visible::after,
+.memo-width-handle:active::after {
+  background: var(--accent);
 }

@@ -49,13 +49,13 @@ export default forwardRef<
     <>
       {leading}
       <Button
-        className="primary toggle-memos"
+        className="toggle-memos"
         aria-expanded={opened}
         disabled={closing}
         onClick={() => void toggle()}
       >
         <FileText size={17} />
-        {opened ? "메모 닫기" : "메모 열기"}
+        {opened ? "꼬리 메모 닫기" : "꼬리 메모 열기"}
       </Button>
     </>
   );

@@ -95,7 +95,7 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
             .click();
         if (memo)
           await p
-            .getByRole("button", { name: "메모 열기", exact: true })
+            .getByRole("button", { name: "꼬리 메모 열기", exact: true })
             .click();
         else
           await p
@@ -191,7 +191,7 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
           .click();
       if (memo)
         await peer
-          .getByRole("button", { name: "메모 열기", exact: true })
+          .getByRole("button", { name: "꼬리 메모 열기", exact: true })
           .click();
       else
         await peer
