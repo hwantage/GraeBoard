@@ -701,9 +701,23 @@
   position: static;
   flex-shrink: 0;
   margin: 0 6px 0 0;
-  min-height: 26px;
-  padding: 3px 8px;
-  font-size: 11px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--document-accent);
+  background: var(--document-accent);
+  color: white;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+}
+.annual-memos .toggle-memos:hover:not(:disabled),
+.annual-memos .toggle-memos[aria-expanded="true"] {
+  border-color: var(--document-accent);
+  background: color-mix(in srgb, var(--document-accent) 85%, black);
+}
+.annual-memos .toggle-memos:focus-visible {
+  outline-color: currentColor;
+  outline-offset: -3px;
 }
 .document-pages {
   display: flex;
@@ -809,18 +823,6 @@
   right: 0;
 }
 
-.annual-memos .toggle-memos {
-  color: var(--muted);
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  font-weight: 500;
-}
-.annual-memos .toggle-memos:hover,
-.annual-memos .toggle-memos[aria-expanded="true"] {
-  color: var(--accent);
-  background: var(--accent-surface);
-}
 .memo-document-card[data-selected] .memo-document-heading {
   background: var(--accent-surface);
   border-radius: 6px;
