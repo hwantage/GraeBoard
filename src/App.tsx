@@ -3443,20 +3443,17 @@ function Workspace({
                   canAdd={canAdd}
                   addTaskLabel={addTaskLabel}
                   footer={
-                    !presentation
-                      ? (addButton) => (
-                          <AnnualMemoPanel
-                            key={`${teamId}:${report?.id || year}`}
-                            ref={annualMemoRef}
-                            teamId={teamId}
-                            year={year}
-                            userId={user.id}
-                            readOnly={!canAdd || (!!report && !editingReport)}
-                            reportId={report?.id}
-                            leading={addButton}
-                          />
-                        )
-                      : undefined
+                    !presentation ? (
+                      <AnnualMemoPanel
+                        key={`${teamId}:${report?.id || year}`}
+                        ref={annualMemoRef}
+                        teamId={teamId}
+                        year={year}
+                        userId={user.id}
+                        readOnly={!canAdd || (!!report && !editingReport)}
+                        reportId={report?.id}
+                      />
+                    ) : undefined
                   }
                   canEditPeople={report ? canAdd : canManage}
                   selection={selection}

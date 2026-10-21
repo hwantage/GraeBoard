@@ -219,7 +219,7 @@ export default function Grid({
   assignableUsers: User[];
   canAdd: boolean;
   addTaskLabel?: string;
-  footer?: (addButton: ReactNode) => ReactNode;
+  footer?: ReactNode;
   canEditPeople: boolean;
   selection: Selection | null;
   settings: Settings;
@@ -1690,23 +1690,7 @@ export default function Grid({
           </Button>
         )}
         {footer && <SheetHorizontalScroll width={totalWidth} />}
-        {footer
-          ? footer(
-              !readOnly && canAdd ? (
-                <Button className="primary add-row" onClick={onAdd}>
-                  <Plus size={17} />
-                  {addTaskLabel}
-                </Button>
-              ) : null,
-            )
-          : !!tasks.length &&
-            !readOnly &&
-            canAdd && (
-              <Button className="primary add-row" onClick={onAdd}>
-                <Plus size={17} />
-                {addTaskLabel}
-              </Button>
-            )}
+        {footer}
       </div>
       {headerMenu && (
         <GridHeaderMenu

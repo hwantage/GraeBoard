@@ -597,8 +597,7 @@ small {
   flex-shrink: 0;
 }
 .heading-actions .button,
-.toolbar-add-task.button,
-.add-row.button {
+.toolbar-add-task.button {
   font-size: 11px;
   min-height: 26px;
   padding: 3px 8px;
@@ -2090,11 +2089,6 @@ body.row-reordering * {
   line-height: 1.6;
   background: #f0f3f5;
   white-space: nowrap;
-}
-.add-row {
-  position: sticky;
-  left: 12px;
-  margin: 10px 12px;
 }
 .modal {
   width: min(520px, calc(100vw - 32px));

@@ -1,10 +1,4 @@
-import {
-  forwardRef,
-  useImperativeHandle,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import { FileText } from "lucide-react";
 import { Button } from "./components";
 import DocumentPanel, { type DocumentPanelHandle } from "./DocumentPanel";
@@ -16,13 +10,9 @@ export default forwardRef<
     year: number;
     userId: string;
     readOnly: boolean;
-    leading: ReactNode;
     reportId?: string;
   }
->(function AnnualMemoPanel(
-  { teamId, year, userId, readOnly, leading, reportId },
-  ref,
-) {
+>(function AnnualMemoPanel({ teamId, year, userId, readOnly, reportId }, ref) {
   const [opened, setOpened] = useState(false);
   const [closing, setClosing] = useState(false);
   const panel = useRef<DocumentPanelHandle>(null);
@@ -46,18 +36,15 @@ export default forwardRef<
     }
   }
   const controls = (
-    <>
-      {leading}
-      <Button
-        className="toggle-memos"
-        aria-expanded={opened}
-        disabled={closing}
-        onClick={() => void toggle()}
-      >
-        <FileText size={17} />
-        {opened ? "꼬리 메모 닫기" : "꼬리 메모 열기"}
-      </Button>
-    </>
+    <Button
+      className="toggle-memos"
+      aria-expanded={opened}
+      disabled={closing}
+      onClick={() => void toggle()}
+    >
+      <FileText size={17} />
+      {opened ? "꼬리 메모 닫기" : "꼬리 메모 열기"}
+    </Button>
   );
   return opened ? (
     <DocumentPanel

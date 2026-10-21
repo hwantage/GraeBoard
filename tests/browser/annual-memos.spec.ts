@@ -67,12 +67,16 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   await expect(toggle).toHaveText("꼬리 메모 열기");
   await expect(rail).toHaveCount(0);
   expect(memoRequests).toHaveLength(0);
-  expect((await toggle.boundingBox())!.x).toBeGreaterThan(
-    (await memos
-      .getByRole("button", { name: "업무 추가", exact: true })
-      .boundingBox())!.x,
-  );
+  await expect(
+    page.getByRole("button", { name: "업무 추가", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    memos.getByRole("button", { name: "업무 추가", exact: true }),
+  ).toHaveCount(0);
   await openMemos();
+  await expect(
+    memos.getByRole("button", { name: "업무 추가", exact: true }),
+  ).toHaveCount(0);
   await expect(memos.getByRole("tab")).toHaveCount(0);
   await plus.click();
   await expect(rich("메모 1")).toBeVisible();
