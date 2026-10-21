@@ -1,3 +1,4 @@
+import useResourceSync from "./useResourceSync";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Plus,
@@ -67,6 +68,15 @@ export default function SheetTabs({
   const [scrollable, setScrollable] = useState({ left: false, right: false });
   const createId = useRef<string>("");
   const root = useRef<HTMLDivElement>(null);
+  useResourceSync(`/teams/${teamId}`, async (signal) => {
+    if (busy || renaming || dialog) return false;
+    const result = await api<{ reports: CopyInfo[] }>(
+      `/reports?teamId=${teamId}`,
+      { signal },
+    );
+    if (!signal.aborted) setCopies(result.reports);
+    return true;
+  });
   async function refresh() {
     const result = await api<{ reports: CopyInfo[] }>(
       `/reports?teamId=${teamId}`,

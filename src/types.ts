@@ -45,6 +45,7 @@ export type DocumentInfo = {
   updatedAt: string | null;
 };
 export type TaskDocument = {
+  sync?: { session: string; sequence: number };
   id?: string;
   title?: string;
   markdown: string;

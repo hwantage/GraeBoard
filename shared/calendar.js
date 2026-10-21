@@ -81,3 +81,26 @@ export function calendarRuleProblem(rule, properties) {
     return "기준 옵션이 삭제되거나 보관되었습니다. 팀장이 기준을 다시 설정해야 합니다.";
   return "";
 }
+
+// Keep one copy suffix and leave room within the existing 120-character title limit.
+export function nextCalendarCopyTitle(title, existingTitles) {
+  const titles = new Set(existingTitles);
+  const match = title.match(/^(.*) \(([1-9]\d*)\)$/);
+  const base = match?.[1] || title;
+  const previous = Number(match?.[2] || 0);
+  let number =
+    Number.isSafeInteger(previous) &&
+    previous < Number.MAX_SAFE_INTEGER - titles.size - 1
+      ? previous + 1
+      : 1;
+  for (;;) {
+    const suffix = ` (${number})`;
+    const prefix = base
+      .slice(0, 120 - suffix.length)
+      .replace(/[\uD800-\uDBFF]$/, "")
+      .trimEnd();
+    const candidate = `${prefix}${suffix}`;
+    if (!titles.has(candidate)) return candidate;
+    number++;
+  }
+}

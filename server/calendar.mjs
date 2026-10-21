@@ -26,6 +26,7 @@ import {
   calendarWeek,
   daysBetween,
   calendarRuleProblem,
+  nextCalendarCopyTitle,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
 } from "../shared/calendar.js";
@@ -93,7 +94,14 @@ function validRange(data) {
 
 export function installCalendarRoutes(
   app,
-  { db, teamAccess, managedTeam, taskAccess, documentImagesDir },
+  {
+    db,
+    teamAccess,
+    managedTeam,
+    taskAccess,
+    documentImagesDir,
+    documentEvents,
+  },
 ) {
   db.function(
     "normalize_search_text",
@@ -816,6 +824,51 @@ export function installCalendarRoutes(
       unassigned,
     });
   });
+  function createEntry(data, actorId) {
+    const endDate = data.endDate || data.date;
+    validateTags(data.teamId, data.userId, data.tagIds);
+    validateChecks(data.teamId, data.userId, data.tagIds, data.checkedTagIds);
+    const previous = db
+      .prepare("SELECT * FROM calendar_entries WHERE id=?")
+      .get(data.id);
+    if (previous) {
+      requireThat(
+        !previous.deleted_at &&
+          previous.team_id === data.teamId &&
+          previous.user_id === data.userId &&
+          previous.date === data.date &&
+          previous.end_date === endDate &&
+          previous.title === data.title &&
+          json(tagIdsFor(previous.id)) === json(data.tagIds) &&
+          json([...checkedTagIdsFor(previous.id)].sort()) ===
+            json([...data.checkedTagIds].sort()),
+        409,
+        "이 일정 요청은 이미 처리되었습니다. 일정을 다시 확인하세요.",
+      );
+    } else {
+      db.prepare(
+        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id) VALUES(?,?,?,?,?,?,?,?,?)",
+      ).run(
+        data.id,
+        data.teamId,
+        data.userId,
+        data.date,
+        endDate,
+        firstCalendarLane(
+          overlappingPlacements(data.teamId, data.userId, {
+            date: data.date,
+            endDate,
+          }),
+          { date: data.date, endDate },
+        ),
+        data.title,
+        now(),
+        actorId,
+      );
+      setTags(data.id, data.tagIds, data.checkedTagIds);
+    }
+    return summary(data.id);
+  }
   app.post("/api/calendar/entries", (req, res) => {
     const data = scopeSchema
       .extend({
@@ -832,49 +885,47 @@ export function installCalendarRoutes(
     writable(req.user, data.teamId, data.userId);
     const endDate = data.endDate || data.date;
     validRange({ date: data.date, endDate });
+    const entry = transaction(db, () => createEntry(data, req.user.id));
+    res.status(201).json(entry);
+  });
+  app.post("/api/calendar/entries/:id/copy", (req, res) => {
+    const data = z.object({ id: uuid }).strict().parse(req.body);
     const entry = transaction(db, () => {
-      validateTags(data.teamId, data.userId, data.tagIds);
-      validateChecks(data.teamId, data.userId, data.tagIds, data.checkedTagIds);
+      const source = entryAccess(req.user, req.params.id, true);
+      requireThat(data.id !== source.id, 400, "새 일정 ID가 필요합니다.");
       const previous = db
         .prepare("SELECT * FROM calendar_entries WHERE id=?")
         .get(data.id);
       if (previous) {
+        // The client retains this UUID when the creation response is lost.
         requireThat(
           !previous.deleted_at &&
-            previous.team_id === data.teamId &&
-            previous.user_id === data.userId &&
-            previous.date === data.date &&
-            previous.end_date === endDate &&
-            previous.title === data.title &&
-            json(tagIdsFor(previous.id)) === json(data.tagIds) &&
-            json([...checkedTagIdsFor(previous.id)].sort()) ===
-              json([...data.checkedTagIds].sort()),
+            previous.team_id === source.team_id &&
+            previous.user_id === source.user_id,
           409,
           "이 일정 요청은 이미 처리되었습니다. 일정을 다시 확인하세요.",
         );
-      } else {
-        db.prepare(
-          "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id) VALUES(?,?,?,?,?,?,?,?,?)",
-        ).run(
-          data.id,
-          data.teamId,
-          data.userId,
-          data.date,
-          endDate,
-          firstCalendarLane(
-            overlappingPlacements(data.teamId, data.userId, {
-              date: data.date,
-              endDate,
-            }),
-            { date: data.date, endDate },
-          ),
-          data.title,
-          now(),
-          req.user.id,
-        );
-        setTags(data.id, data.tagIds, data.checkedTagIds);
+        return summary(previous.id);
       }
-      return summary(data.id);
+      const titles = db
+        .prepare(
+          "SELECT title FROM calendar_entries WHERE team_id=? AND user_id IS ? AND deleted_at IS NULL",
+        )
+        .all(source.team_id, source.user_id)
+        .map((row) => row.title);
+      return createEntry(
+        {
+          id: data.id,
+          teamId: source.team_id,
+          userId: source.user_id,
+          date: source.date,
+          endDate: source.end_date,
+          title: nextCalendarCopyTitle(source.title, titles),
+          tagIds: tagIdsFor(source.id),
+          checkedTagIds: checkedTagIdsFor(source.id),
+        },
+        req.user.id,
+      );
     });
     res.status(201).json(entry);
   });
@@ -1137,14 +1188,23 @@ export function installCalendarRoutes(
     });
     res.json(result);
   });
+  const documentKey = (req) => `calendar:${req.params.id}`;
+  app.get("/api/calendar/entries/:id/document/events", (req, res) =>
+    documentEvents.subscribe(req, res, documentKey(req), (request) => ({
+      ...document(entryAccess(request.user, request.params.id)),
+      entry: summary(request.params.id),
+    })),
+  );
   app.get("/api/calendar/entries/:id/document", (req, res) =>
-    res.json(document(entryAccess(req.user, req.params.id))),
+    res.json(
+      documentEvents.stamp(document(entryAccess(req.user, req.params.id))),
+    ),
   );
   app.put("/api/calendar/entries/:id/document", (req, res) => {
     const data = saveSchema.parse(req.body);
     const result = transaction(db, () => {
       const row = entryAccess(req.user, req.params.id, true);
-      const current = document(row);
+      const current = documentEvents.stamp(document(row));
       const hash = createHash("sha256")
         .update(JSON.stringify(data))
         .digest("hex");
@@ -1196,7 +1256,7 @@ export function installCalendarRoutes(
         entry: summary(row.id),
       };
     });
-    res.json(result);
+    res.json(documentEvents.publish(documentKey(req), result));
   });
   app.get("/api/calendar/tasks/:id", (req, res) =>
     res.json({ task: taskAccess(req.user, req.params.id) }),

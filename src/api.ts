@@ -1,5 +1,8 @@
 import { stringify, unpack } from "../shared/compact.js";
 
+// Distinguish this page from other tabs, including tabs signed in as the same user.
+export const clientId = crypto.randomUUID();
+
 export class ApiError extends Error {
   status: number;
   details: any;
@@ -30,6 +33,7 @@ export async function api<T = any>(
         ? { "Content-Type": "application/json" }
         : {}),
       "X-Requested-With": "WeeklyPlan",
+      "X-Client-ID": clientId,
       ...(cached ? { "If-None-Match": cached.etag } : {}),
       ...options.headers,
     },

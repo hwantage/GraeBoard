@@ -66,6 +66,15 @@ async function create(page: Page, title: string, date = todayKey()) {
   await page.getByRole("textbox", { name: "새 일정 제목" }).fill(title);
   await page.getByRole("button", { name: "일정 만들기", exact: true }).click();
   await expect(
+    page.getByRole("dialog", { name: "일정 추가", exact: true }),
+  ).toHaveCount(0);
+  await expect(entryDialog(page)).toHaveCount(0);
+  await calendar(page)
+    .locator(".calendar-entry-card")
+    .filter({ hasText: title })
+    .first()
+    .click();
+  await expect(
     entryDialog(page).getByRole("textbox", { name: "일정 문서 리치 편집" }),
   ).toBeVisible();
 }
@@ -1345,7 +1354,9 @@ test("저장 실패 중 닫기와 전환은 입력을 버리지 않고 재시도
   await entryDialog(page)
     .getByRole("button", { name: "저장 다시 시도", exact: true })
     .click();
-  await expect(entryDialog(page).getByRole("status")).toHaveText("저장됨");
+  await expect(entryDialog(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
   await close(page);
   await calendar(page)
     .getByRole("button", { name: /저장 실패 검증/ })
@@ -1358,19 +1369,27 @@ test("본문 충돌은 서버와 내 입력을 함께 보여 주며 명시적 �
   page,
 }) => {
   const entry = await seedEntry(page, "충돌 검증");
-  await enter(page);
-  await calendar(page)
-    .getByRole("button", { name: "충돌 검증", exact: true })
-    .click();
-  await raw(page);
   await request(page, `/calendar/entries/${entry.id}/document`, "PUT", {
-    markdown: "다른 창에서 저장",
+    markdown: "처음 문서",
     expectedRevision: 0,
     operationId: randomUUID(),
   });
+  await enter(page);
+  await page
+    .locator(`[data-entry-id="${entry.id}"] .calendar-entry-card`)
+    .first()
+    .click();
+  await raw(page);
+  await source(page).dispatchEvent("compositionstart");
   await source(page).fill("현재 창의 미저장 입력");
+  await request(page, `/calendar/entries/${entry.id}/document`, "PUT", {
+    markdown: "다른 창에서 저장",
+    expectedRevision: 1,
+    operationId: randomUUID(),
+  });
+  await source(page).dispatchEvent("compositionend");
   await expect(entryDialog(page).getByRole("alert")).toContainText(
-    "다른 사용자가 일정을 수정",
+    "같은 부분이 서로 다르게 수정",
   );
   await entryDialog(page)
     .getByRole("button", { name: "닫기", exact: true })
@@ -1385,7 +1404,9 @@ test("본문 충돌은 서버와 내 입력을 함께 보여 주며 명시적 �
   await entryDialog(page)
     .getByRole("button", { name: "내 입력으로 최신 문서 교체", exact: true })
     .click();
-  await expect(entryDialog(page).getByRole("status")).toHaveText("저장됨");
+  await expect(entryDialog(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
   await close(page);
   expect(
     (await request(page, `/calendar/entries/${entry.id}/document`)).markdown,
@@ -1724,7 +1745,9 @@ test("늦은 제목 저장 응답이 더 최신인 본문 미리보기와 삭제
     await held;
     await raw(page);
     await source(page).fill("먼저 도착한 최신 본문 미리보기");
-    await expect(entryDialog(page).getByRole("status")).toHaveText("저장됨");
+    await expect(entryDialog(page).locator(".document-save-state")).toHaveText(
+      "저장됨",
+    );
     release();
     await close(page);
     const card = calendar(page).getByRole("button", {
@@ -1802,7 +1825,7 @@ test("캘린더의 이미지 붙여넣기는 공통 업로더로 해당 팀에 �
   await expect(entryDialog(page).locator("img[src]")).toBeVisible();
 });
 
-test("새 일정 초안을 임시 보관할 수 없으면 닫기를 막고 서버 저장 후에는 정상적으로 연다", async ({
+test("새 일정 초안을 임시 보관할 수 없으면 닫기를 막고 서버 저장 후에는 캘린더로 돌아간다", async ({
   page,
 }) => {
   await enter(page);
@@ -1835,11 +1858,9 @@ test("새 일정 초안을 임시 보관할 수 없으면 닫기를 막고 서�
   await dialog
     .getByRole("button", { name: "일정 만들기", exact: true })
     .click();
-  await expect(
-    entryDialog(page).getByRole("textbox", { name: "일정 문서 리치 편집" }),
-  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(entryDialog(page)).toHaveCount(0);
   await page.evaluate(() => (window as any).restoreCalendarStorage());
-  await close(page);
   await expect(
     calendar(page).getByRole("button", {
       name: "임시 보관 실패해도 유지",
@@ -2736,9 +2757,9 @@ test("일정 추가는 제목에 바로 입력하고 한글 조합 뒤 Enter로 
   } finally {
     release();
   }
-  await expect(entryDialog(page)).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(entryDialog(page)).toHaveCount(0);
   expect(writes).toBe(1);
-  await close(page);
   await expect(
     calendar(page).getByRole("button", {
       name: "바로 입력한 일정",

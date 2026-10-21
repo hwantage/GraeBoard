@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 import { todayKey } from "../../shared/domain.js";
+import { THEMES } from "../../shared/themes.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 const workspace = (page: Page) =>
@@ -164,7 +165,7 @@ test("세 캘린더 보기와 일정·태그 팝업이 다크 테마를 공유�
   );
   await expect(detail.getByLabel("일정 제목", { exact: true })).toHaveCSS(
     "background-color",
-    sheetColor,
+    "rgba(0, 0, 0, 0)",
   );
   await detail
     .getByRole("button", { name: "Markdown 원문", exact: true })
@@ -208,12 +209,20 @@ test("테마 저장소를 사용할 수 없어도 전환과 홈 이동이 동작
     const read = Storage.prototype.getItem,
       write = Storage.prototype.setItem;
     Storage.prototype.getItem = function (key) {
-      if (key === "weekly-plan:calendar-theme")
+      if (
+        ["weekly-plan:calendar-theme", "weekly-plan:calendar-palette"].includes(
+          key,
+        )
+      )
         throw new Error("storage unavailable");
       return read.call(this, key);
     };
     Storage.prototype.setItem = function (key, value) {
-      if (key === "weekly-plan:calendar-theme")
+      if (
+        ["weekly-plan:calendar-theme", "weekly-plan:calendar-palette"].includes(
+          key,
+        )
+      )
         throw new Error("storage unavailable");
       return write.call(this, key, value);
     };
@@ -225,10 +234,146 @@ test("테마 저장소를 사용할 수 없어도 전환과 홈 이동이 동작
     .getByRole("button", { name: "어두운 테마로 전환", exact: true })
     .click();
   await expect(workspace(page)).toHaveAttribute("data-calendar-theme", "dark");
+  await page.getByLabel("캘린더 테마", { exact: true }).selectOption("mint");
+  await expect(workspace(page)).toHaveAttribute(
+    "data-calendar-palette",
+    "mint",
+  );
   await page
     .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "연간 업무", exact: true }),
   ).toBeVisible();
+});
+
+test("기존 다섯 팔레트를 밝기와 독립적으로 선택하고 새로고침 뒤 유지하며 팀 설정을 바꾸지 않는다", async ({
+  page,
+}, info) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  const before = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  const annualBackground = await page
+    .locator(".main-workspace")
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  await enter(page);
+  const picker = page.getByLabel("캘린더 테마", { exact: true });
+  const board = calendar(page).locator(".calendar-board");
+  const pickerBox = (await picker.boundingBox())!;
+  const toggleBox = (await page
+    .getByRole("button", { name: "어두운 테마로 전환", exact: true })
+    .boundingBox())!;
+  expect(pickerBox.x + pickerBox.width).toBeLessThanOrEqual(toggleBox.x);
+  for (const theme of THEMES) {
+    await picker.selectOption(theme.id);
+    await expect(workspace(page)).toHaveAttribute(
+      "data-calendar-palette",
+      theme.id,
+    );
+    expect(
+      await workspace(page).evaluate((el) =>
+        getComputedStyle(el).getPropertyValue("--accent").trim(),
+      ),
+    ).toBe(theme.accent);
+    expect(
+      await board.evaluate((el) => getComputedStyle(el, "::before").display),
+    ).toBe("none");
+    await expect(board).toHaveCSS("border-top-width", "1px");
+    await page
+      .getByRole("button", { name: "어두운 테마로 전환", exact: true })
+      .click();
+    await expect(workspace(page)).toHaveAttribute(
+      "data-calendar-theme",
+      "dark",
+    );
+    await expect(picker).toHaveValue(theme.id);
+    await page
+      .getByRole("button", { name: "밝은 테마로 전환", exact: true })
+      .click();
+    if (theme.id === "mint")
+      await page.screenshot({
+        path: info.outputPath("calendar-mint-light.png"),
+        animations: "disabled",
+        fullPage: true,
+      });
+  }
+  await picker.selectOption("sky");
+  await page.screenshot({
+    path: info.outputPath("calendar-sky-light.png"),
+    animations: "disabled",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "어두운 테마로 전환", exact: true })
+    .click();
+  await page.reload();
+  await expect(picker).toHaveValue("sky");
+  await expect(workspace(page)).toHaveAttribute("data-calendar-theme", "dark");
+  await page.screenshot({
+    path: info.outputPath("calendar-sky-dark.png"),
+    animations: "disabled",
+    fullPage: true,
+  });
+  await page
+    .locator(`[data-entry-id="${entryId}"] .calendar-entry-card`)
+    .first()
+    .click();
+  const detail = page.getByRole("dialog", { name: "캘린더 일정", exact: true });
+  await expect(detail.getByLabel("일정 제목", { exact: true })).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(
+    detail.getByRole("textbox", { name: "일정 문서 리치 편집" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: info.outputPath("calendar-sky-detail.png"),
+    animations: "disabled",
+  });
+  await detail.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const control of [
+    picker,
+    page.getByRole("button", { name: "밝은 테마로 전환", exact: true }),
+    page.getByRole("button", { name: "캘린더 닫기", exact: true }),
+  ]) {
+    const box = (await control.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
+  await page.screenshot({
+    path: info.outputPath("calendar-sky-mobile.png"),
+    animations: "disabled",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
+    .click();
+  await expect(page.locator(".workspace")).not.toHaveAttribute(
+    "data-calendar-palette",
+  );
+  await expect(page.locator(".main-workspace")).toHaveCSS(
+    "background-color",
+    annualBackground,
+  );
+  await enter(page);
+  await expect(picker).toHaveValue("sky");
+  await picker.selectOption("cartoon");
+  await expect(board).toHaveCSS("border-top-width", "2px");
+  expect(
+    await board.evaluate((el) => getComputedStyle(el, "::before").display),
+  ).not.toBe("none");
+  const after = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  expect(
+    after.teams.find((team: { id: string }) => team.id === teamId).settings,
+  ).toEqual(
+    before.teams.find((team: { id: string }) => team.id === teamId).settings,
+  );
 });

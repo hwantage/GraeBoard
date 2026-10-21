@@ -68,9 +68,7 @@ export function useCalendarData(
           const result = loaded[query.userId ?? "team"];
           return [
             query.userId,
-            result?.key === keyFor(query) && result.reload === reload
-              ? result
-              : undefined,
+            result?.key === keyFor(query) ? result : undefined,
           ];
         }),
       ),

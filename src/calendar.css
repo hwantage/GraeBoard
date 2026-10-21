@@ -15,6 +15,9 @@
   --calendar-week-paper: #fff8e7;
   --calendar-card-hover: #c9eeb9;
   --calendar-shadow: var(--ink);
+  --calendar-outline: var(--ink);
+  --calendar-border-width: 1.5px;
+  --calendar-strong-border-width: 2px;
   --calendar-ring: #c4b79e;
   --calendar-on-sun: var(--ink);
   --calendar-on-mint: var(--ink);
@@ -22,8 +25,8 @@
   --ink: #26201a;
   --muted: #716454;
   --line: #ded2bb;
-  --accent: #a53c1c;
-  --accent-strong: #843017;
+  --accent: #645c50;
+  --accent-strong: #453f36;
   --accent-soft: #fff0bd;
   --accent-surface: #fff7e7;
   --accent-border: #9b8463;
@@ -42,8 +45,8 @@
   --ink: oklch(93% 0.025 80);
   --muted: oklch(76% 0.025 75);
   --line: oklch(40% 0.022 75);
-  --accent: oklch(75% 0.15 45);
-  --accent-strong: oklch(83% 0.12 48);
+  --accent: oklch(75% 0.025 75);
+  --accent-strong: oklch(83% 0.025 75);
   --accent-pastel: oklch(35% 0.055 72);
   --accent-soft: oklch(30% 0.055 72);
   --accent-surface: oklch(27% 0.025 70);
@@ -61,6 +64,86 @@
   --calendar-on-mint: oklch(20% 0.04 145);
   --calendar-on-orange: oklch(20% 0.03 38);
 }
+/* Reuse the team palettes with flat surfaces; brightness stays independent. */
+.workspace[data-screen="calendar"][data-calendar-palette]:not(
+    [data-calendar-palette="cartoon"]
+  ) {
+  --accent: var(--calendar-palette-accent);
+  --accent-strong: var(--calendar-palette-accent-strong);
+  --accent-pastel: var(--calendar-palette-accent-pastel);
+  --accent-soft: var(--calendar-palette-accent-soft);
+  --accent-surface: var(--calendar-palette-accent-surface);
+  --accent-border: var(--calendar-palette-accent-border);
+  --ink: #293c42;
+  --muted: #718087;
+  --line: color-mix(in srgb, var(--accent-border) 40%, #e5e9eb);
+  --calendar-paper: var(--accent-surface);
+  --calendar-sheet: #fff;
+  --calendar-sun: var(--accent-soft);
+  --calendar-mint: var(--accent-pastel);
+  --calendar-orange: var(--accent-pastel);
+  --calendar-outside: var(--accent-surface);
+  --calendar-outside-ink: var(--muted);
+  --calendar-today: var(--accent-soft);
+  --calendar-week-paper: color-mix(
+    in srgb,
+    var(--accent-soft) 50%,
+    var(--calendar-sheet)
+  );
+  --calendar-card-hover: var(--accent-soft);
+  --calendar-shadow: transparent;
+  --calendar-outline: var(--line);
+  --calendar-border-width: 1px;
+  --calendar-strong-border-width: 1px;
+  --calendar-on-sun: var(--ink);
+  --calendar-on-mint: var(--ink);
+  --calendar-on-orange: var(--ink);
+}
+.workspace[data-screen="calendar"][data-calendar-theme="dark"][data-calendar-palette]:not(
+    [data-calendar-palette="cartoon"]
+  ) {
+  --ink: #e7ecee;
+  --muted: #aab5bb;
+  --line: #3c484e;
+  --calendar-paper: #171c20;
+  --calendar-sheet: #20282c;
+  --accent: color-mix(in srgb, var(--calendar-palette-accent) 55%, white);
+  --accent-strong: color-mix(
+    in srgb,
+    var(--calendar-palette-accent) 35%,
+    white
+  );
+  --accent-pastel: color-mix(
+    in srgb,
+    var(--calendar-palette-accent) 28%,
+    var(--calendar-sheet)
+  );
+  --accent-soft: color-mix(
+    in srgb,
+    var(--calendar-palette-accent) 20%,
+    var(--calendar-sheet)
+  );
+  --accent-surface: color-mix(
+    in srgb,
+    var(--calendar-palette-accent) 12%,
+    var(--calendar-sheet)
+  );
+  --accent-border: color-mix(
+    in srgb,
+    var(--calendar-palette-accent-border) 35%,
+    var(--calendar-sheet)
+  );
+}
+.workspace[data-calendar-palette]:not([data-calendar-palette="cartoon"])
+  .calendar-board::before,
+.workspace[data-calendar-palette]:not([data-calendar-palette="cartoon"])
+  .calendar-board::after {
+  display: none;
+}
+.workspace[data-calendar-palette]:not([data-calendar-palette="cartoon"])
+  .year-badge {
+  transform: none;
+}
 .workspace[data-screen="calendar"] .main-workspace {
   padding-inline: 28px;
   background: var(--calendar-paper);
@@ -68,7 +151,7 @@
 .workspace[data-screen="calendar"] .topbar {
   min-height: 54px;
   gap: 16px;
-  border-bottom: 1.5px solid var(--ink);
+  border-bottom: var(--calendar-border-width) solid var(--calendar-outline);
 }
 .workspace[data-screen="calendar"] .topbar .button {
   min-height: 30px;
@@ -77,7 +160,7 @@
   color: var(--ink);
 }
 .workspace[data-screen="calendar"] .topbar .button.active {
-  border-color: var(--ink);
+  border-color: var(--calendar-outline);
   background: var(--calendar-mint);
 }
 .workspace[data-screen="calendar"]
@@ -88,12 +171,17 @@
   height: 34px;
   margin-left: 0;
   padding: 0;
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 50%;
   background: var(--calendar-sheet);
 }
-.workspace[data-screen="calendar"] .topbar .calendar-theme-toggle {
+.workspace[data-screen="calendar"] .topbar .calendar-theme-select {
   margin-left: auto;
+  width: 108px;
+  flex-shrink: 0;
+  color: var(--ink);
+  background-color: var(--calendar-sheet);
+  border-color: var(--accent-border);
 }
 .workspace[data-screen="calendar"] .topbar .team-select {
   background-color: var(--calendar-sheet);
@@ -101,7 +189,7 @@
   border-color: var(--accent-border);
 }
 .calendar-workspace .button {
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 8px;
   background: var(--calendar-sheet);
   color: var(--ink);
@@ -112,7 +200,7 @@
 }
 .calendar-workspace .button:hover:not(:disabled) {
   background: var(--accent-soft);
-  border-color: var(--ink);
+  border-color: var(--calendar-outline);
   box-shadow: 2px 2px 0 var(--calendar-shadow);
 }
 .calendar-workspace .button.active {
@@ -121,7 +209,7 @@
   box-shadow: 2px 2px 0 var(--calendar-shadow);
 }
 .calendar-workspace .modal {
-  border: 2px solid var(--ink);
+  border: var(--calendar-strong-border-width) solid var(--calendar-outline);
   border-radius: 14px;
   background: var(--calendar-sheet);
   color: var(--ink);
@@ -152,7 +240,7 @@
   gap: 14px;
 }
 .calendar-heading .year-badge {
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 6px;
   padding: 4px 9px;
   background: var(--calendar-sun);
@@ -182,7 +270,7 @@
 .calendar-view-options .button:last-child {
   width: 34px;
   padding: 0;
-  border-color: var(--ink);
+  border-color: var(--calendar-outline);
   border-radius: 50%;
 }
 .calendar-board .calendar-toolbar {
@@ -236,7 +324,7 @@
 }
 .calendar-workspace .calendar-period-control .button {
   width: 30px;
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 50%;
   background: var(--calendar-sheet);
   color: var(--ink);
@@ -359,7 +447,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border-top: 2px solid var(--ink);
+  border-top: var(--calendar-strong-border-width) solid var(--calendar-outline);
   border-radius: 0 0 13px 13px;
   background: var(--calendar-sheet);
   isolation: isolate;
@@ -394,7 +482,7 @@
   top: 0;
   z-index: 3;
   background: var(--calendar-paper);
-  border-bottom: 1.5px solid var(--ink);
+  border-bottom: var(--calendar-border-width) solid var(--calendar-outline);
 }
 .calendar-grid-header > div {
   padding: 12px 10px;
@@ -517,7 +605,7 @@
   padding: 14px 16px;
   background: var(--calendar-mint);
   color: var(--calendar-on-mint);
-  border-block: 1.5px solid var(--ink);
+  border-block: var(--calendar-border-width) solid var(--calendar-outline);
 }
 .calendar-member {
   display: flex;
@@ -554,7 +642,7 @@
 }
 .calendar-member-navigation .calendar-period-control {
   height: 32px;
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 999px;
   background: var(--calendar-sheet);
 }
@@ -634,11 +722,9 @@
   font-size: 9px;
 }
 .is-today .calendar-date time {
-  background: var(--calendar-orange);
-  color: var(--calendar-on-orange);
-  border: 1.5px solid var(--ink);
-  border-radius: 7px;
-  box-shadow: 1.5px 1.5px 0 var(--calendar-shadow);
+  background: #ff9b8f;
+  color: #281b19;
+  border-radius: 999px;
 }
 .calendar-date .button {
   padding: 2px;
@@ -721,7 +807,7 @@
   cursor: grab;
   text-align: left;
   padding: 5px 11px;
-  border: 1.5px solid var(--ink);
+  border: var(--calendar-border-width) solid var(--calendar-outline);
   border-radius: 7px;
   background: var(--calendar-tag-bg, var(--calendar-mint));
   color: var(--ink);
@@ -739,7 +825,8 @@
   box-shadow: 3px 3px 0 var(--calendar-shadow);
 }
 .calendar-entry-card strong {
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
@@ -807,7 +894,7 @@
 }
 .calendar-workspace .calendar-board {
   position: relative;
-  border: 2px solid var(--ink);
+  border: var(--calendar-strong-border-width) solid var(--calendar-outline);
   border-radius: 16px;
   background: var(--calendar-sheet);
   box-shadow: 5px 5px 0 var(--calendar-shadow);
@@ -820,7 +907,7 @@
   top: -12px;
   width: 11px;
   height: 24px;
-  border: 2px solid var(--ink);
+  border: var(--calendar-strong-border-width) solid var(--calendar-outline);
   border-radius: 7px;
   background: var(--calendar-paper);
   box-shadow: inset -3px 0 0 var(--calendar-ring);
@@ -876,6 +963,18 @@
 .calendar-entry-heading {
   padding: 16px 28px;
 }
+.calendar-entry-modal > header > .modal-heading {
+  flex: 1;
+  min-width: 0;
+}
+.calendar-workspace .calendar-entry-modal > header > .button {
+  color: var(--ink);
+}
+.calendar-entry-footer {
+  flex-shrink: 0;
+  padding: 8px 28px;
+  border-top: 1px solid var(--line);
+}
 .calendar-range-editor label {
   display: flex;
   flex-direction: column;
@@ -883,15 +982,17 @@
   font-size: 11px;
   color: var(--muted);
 }
-.calendar-entry-title {
+.workspace[data-screen="calendar"] .calendar-entry-modal .calendar-entry-title {
   width: 100%;
   color: var(--ink);
-  padding: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
   font-size: 20px;
   font-weight: 600;
-}
-.calendar-entry-title[readonly] {
-  border-color: transparent;
 }
 .calendar-range-editor {
   margin-top: 14px;
@@ -1001,9 +1102,6 @@
   .cell-date-days
   button[aria-pressed="true"] {
   color: var(--calendar-on-orange);
-}
-.workspace[data-calendar-theme="dark"] .calendar-entry-title[readonly] {
-  border-color: transparent;
 }
 .workspace[data-calendar-theme="dark"] :is(.toast, .toast-action) {
   color: var(--calendar-on-orange);

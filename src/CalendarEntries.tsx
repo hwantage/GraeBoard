@@ -1,4 +1,9 @@
-import { useMemo, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useMemo,
+  type KeyboardEvent,
+  type PointerEvent,
+  type MouseEvent,
+} from "react";
 import { busyProps } from "./busyProps";
 import { addDays, moveCalendarRange } from "../shared/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
@@ -32,6 +37,7 @@ export default function CalendarEntries({
   changingId,
   savingId,
   onOpen,
+  onContextMenu,
   onDragStart,
   onRangeChange,
   onOrderChange,
@@ -49,6 +55,7 @@ export default function CalendarEntries({
   changingId?: string;
   savingId?: string;
   onOpen: (entry: CalendarEntry) => void;
+  onContextMenu: (event: MouseEvent<HTMLElement>, entry: CalendarEntry) => void;
   onDragStart: (
     event: PointerEvent<HTMLButtonElement>,
     entry: CalendarEntry,
@@ -159,6 +166,11 @@ export default function CalendarEntries({
         aria-hidden={isPreview || undefined}
         aria-busy={savingId === item.id || undefined}
         aria-label={`${item.title} · ${item.date} ~ ${item.endDate}`}
+        onContextMenu={
+          isPreview || disabled || readOnly
+            ? undefined
+            : (event) => onContextMenu(event, item)
+        }
         className={`calendar-entry-segment${before ? " continues-before" : ""}${after ? " continues-after" : ""}${isSource ? " is-drag-source" : ""}${isPreview ? " is-drag-preview" : ""}${!isSource && changingId === item.id ? " is-changing" : ""}`}
         style={{
           ...(entryTags[0] ? calendarTagStyle(entryTags[0].color) : {}),

@@ -1,3 +1,4 @@
+import useResourceSync from "./useResourceSync";
 import {
   useEffect,
   useLayoutEffect,
@@ -20,6 +21,11 @@ import { api, ApiError, send } from "./api";
 import { busyProps } from "./busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
 import Select from "./Select";
+import GridHeaderMenu from "./GridHeaderMenu";
+import {
+  deleteCalendarEntry,
+  saveCalendarEntryTags,
+} from "./calendar-entry-actions";
 import { RowPanel } from "./Panels";
 import { UndoToast } from "./Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
@@ -62,6 +68,7 @@ import type {
   CalendarEntry,
   CalendarEntryUpdate,
   CalendarTag,
+  CalendarEntryDeletion,
   WeeklyItem,
   WeeklyAddResult,
 } from "./calendar-types";
@@ -114,6 +121,17 @@ export default function Calendar({
     weekStart: string;
   } | null>(null);
   const [entry, setEntry] = useState<CalendarEntry | null>(null);
+  const [entryMenu, setEntryMenu] = useState<{
+    entry: CalendarEntry;
+    x: number;
+    y: number;
+    anchor: HTMLElement;
+  } | null>(null);
+  const [tagEntry, setTagEntry] = useState<CalendarEntry | null>(null);
+  const copyRequest = useRef<{ source: CalendarEntry; id: string } | null>(
+    null,
+  );
+  const deleteRequests = useRef(new Map<string, string>());
   const [deleted, setDeleted] = useState<{
     entry: CalendarEntry;
     deletionId: string;
@@ -151,17 +169,19 @@ export default function Calendar({
   const tagsFor = (ownerId: string | null) =>
     tagCatalogs.get(ownerId) || EMPTY_TAGS;
   const monthlyOwner = view === "shared" ? null : memberId;
-  const tagOwner = entry
-    ? entry.userId
-    : creating
-      ? creating.userId
-      : view === "shared"
-        ? null
-        : view === "month"
-          ? memberId
-          : members.some((m) => m.id === user.id)
-            ? user.id
-            : memberId;
+  const tagOwner = tagEntry
+    ? tagEntry.userId
+    : entry
+      ? entry.userId
+      : creating
+        ? creating.userId
+        : view === "shared"
+          ? null
+          : view === "month"
+            ? memberId
+            : members.some((m) => m.id === user.id)
+              ? user.id
+              : memberId;
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
     if (view !== "team")
@@ -196,9 +216,17 @@ export default function Calendar({
     (item, range, lane) => void saveRange({ entry: item, range, lane }),
   );
   const locked = pending || !!rangeChange || !!dragging.drag;
+  useResourceSync(`/teams/${team.id}`, async () => {
+    if (locked || busy.current) return false;
+    setReload((value) => value + 1);
+    setContextAttempt((value) => value + 1);
+    return true;
+  });
   const undoBlocked =
     locked ||
     !!entry ||
+    !!tagEntry ||
+    !!entryMenu ||
     !!task ||
     !!creating ||
     showDays ||
@@ -211,6 +239,10 @@ export default function Calendar({
     return () => clearTimeout(timer);
   }, [deleted, undoBlocked]);
   useEffect(() => setDeleted(null), [team.id, user.id]);
+  useEffect(() => {
+    setEntryMenu(null);
+    setTagEntry(null);
+  }, [scope]);
   useEffect(() => {
     if (!rangeChange) return;
     const unload = (event: BeforeUnloadEvent) => {
@@ -260,6 +292,8 @@ export default function Calendar({
     onBusyChange(
       locked ||
         !!entry ||
+        !!tagEntry ||
+        !!entryMenu ||
         !!task ||
         !!creating ||
         showDays ||
@@ -271,6 +305,8 @@ export default function Calendar({
   }, [
     locked,
     entry,
+    tagEntry,
+    entryMenu,
     task,
     creating,
     showDays,
@@ -437,6 +473,17 @@ export default function Calendar({
         ),
       };
     });
+    setTagEntry((previous) =>
+      previous && previous.userId === tagOwner
+        ? {
+            ...previous,
+            tagIds: previous.tagIds.filter((id) => available.has(id)),
+            checkedTagIds: previous.checkedTagIds.filter((id) =>
+              checkable.has(id),
+            ),
+          }
+        : previous,
+    );
     setCreating((previous) =>
       previous && previous.userId === tagOwner
         ? {
@@ -471,6 +518,75 @@ export default function Calendar({
       busy.current = false;
       if (alive.current) setPending(false);
     }
+  }
+  function entryDeleted(
+    removed: CalendarEntry,
+    { deletionId, placements, layout }: CalendarEntryDeletion,
+  ) {
+    const positions = new Map(placements.map((item) => [item.id, item.lane]));
+    updateData((previous, query) =>
+      query.userId !== removed.userId
+        ? previous
+        : {
+            ...previous,
+            layout: mergeCalendarLayout(previous.layout, layout, removed.id),
+            entries: previous.entries
+              .filter((item) => item.id !== removed.id)
+              .map((item) => {
+                const lane = positions.get(item.id);
+                return lane === undefined || lane === item.lane
+                  ? item
+                  : { ...item, lane };
+              }),
+          },
+    );
+    setDeleted({ entry: removed, deletionId });
+    onNotify("");
+    setEntry(null);
+  }
+  async function duplicateEntry(source: CalendarEntry) {
+    if (!writable(source.userId)) return;
+    if (copyRequest.current?.source.id !== source.id)
+      copyRequest.current = { source, id: crypto.randomUUID() };
+    const copy = copyRequest.current;
+    await action(async () => {
+      const saved = await send<CalendarEntry>(
+        `/calendar/entries/${copy.source.id}/copy`,
+        { id: copy.id },
+      );
+      upsert(saved);
+      copyRequest.current = null;
+    });
+  }
+  async function removeEntry(source: CalendarEntry) {
+    if (!writable(source.userId)) return;
+    const deletionId =
+      deleteRequests.current.get(source.id) || crypto.randomUUID();
+    deleteRequests.current.set(source.id, deletionId);
+    await action(async () => {
+      const result = await deleteCalendarEntry(source, deletionId);
+      if (!alive.current) return;
+      entryDeleted(source, result);
+      deleteRequests.current.delete(source.id);
+    });
+  }
+  async function updateEntryTags(source: CalendarEntry, ids: string[]) {
+    await action(async () => {
+      try {
+        const saved = await saveCalendarEntryTags(source, ids);
+        upsert(saved);
+        setTagEntry(saved);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          const latest = await api<CalendarEntry>(
+            `/calendar/entries/${source.id}`,
+          );
+          upsert(latest);
+          setTagEntry(latest);
+        }
+        throw error;
+      }
+    });
   }
   async function restoreEntry() {
     if (!deleted || undoBlocked || busy.current) return;
@@ -657,6 +773,24 @@ export default function Calendar({
       setError("새 일정을 임시 보관할 수 없습니다. 저장 후 닫아 주세요.");
     }
   }
+  function saveCreating() {
+    if (!creating || locked || !creating.title.trim() || composingTitle.current)
+      return;
+    void action(async () => {
+      const saved = await send<CalendarEntry>("/calendar/entries", {
+        ...creating,
+        teamId: team.id,
+      });
+      if (!alive.current) return;
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {
+        /* The server save succeeded. */
+      }
+      upsert(saved);
+      setCreating(null);
+    });
+  }
   const dayCell = (date: string, ownerId: string | null, column: number) => (
     <div
       key={date}
@@ -791,6 +925,16 @@ export default function Calendar({
           changingId={rangeChange?.entry.id || dragging.drag?.id}
           savingId={pending ? rangeChange?.entry.id : undefined}
           onOpen={setEntry}
+          onContextMenu={(event, item) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setEntryMenu({
+              entry: item,
+              x: event.clientX,
+              y: event.clientY,
+              anchor: event.currentTarget,
+            });
+          }}
           onDragStart={dragging.start}
           canClick={dragging.canClick}
           onRangeChange={(item, range) =>
@@ -1265,10 +1409,97 @@ export default function Calendar({
           onClose={() => setShowRule(false)}
         />
       )}
+      {entryMenu && (
+        <GridHeaderMenu
+          x={entryMenu.x}
+          y={entryMenu.y}
+          title={entryMenu.entry.title}
+          anchor={entryMenu.anchor}
+          scrollContainer={scroll.current}
+          onClose={(restore) => {
+            if (restore)
+              entryMenu.anchor
+                .querySelector<HTMLButtonElement>(".calendar-entry-card")
+                ?.focus({ preventScroll: true });
+            setEntryMenu(null);
+          }}
+          actions={[
+            {
+              label: "일정 복제",
+              disabled: locked,
+              run: () => void duplicateEntry(entryMenu.entry),
+            },
+            {
+              label: "태그 설정",
+              disabled: locked,
+              run: () => {
+                setError("");
+                setTagEntry(entryMenu.entry);
+              },
+            },
+            {
+              label: "일정 삭제",
+              danger: true,
+              disabled: locked,
+              run: () => void removeEntry(entryMenu.entry),
+            },
+          ]}
+        />
+      )}
+      {tagEntry && (
+        <Modal
+          title="일정 태그"
+          onClose={() => {
+            if (!pending) setTagEntry(null);
+          }}
+        >
+          <strong>{tagEntry.title}</strong>
+          <CalendarTagPicker
+            userId={tagEntry.userId}
+            tags={tagsFor(tagEntry.userId)}
+            value={tagEntry.tagIds}
+            checkedIds={tagEntry.checkedTagIds}
+            disabled={locked}
+            onChange={(ids) => void updateEntryTags(tagEntry, ids)}
+            onCheckChange={(tagId, checked) =>
+              void action(async () => {
+                setTagEntry(
+                  applyCalendarTagCheck(tagEntry, {
+                    tagId,
+                    checked,
+                    updatedAt: tagEntry.updatedAt,
+                  }),
+                );
+                try {
+                  const change = await saveCalendarTagCheck(
+                    tagEntry,
+                    tagId,
+                    checked,
+                  );
+                  const saved = applyCalendarTagCheck(tagEntry, change);
+                  upsert(saved);
+                  setTagEntry(saved);
+                } catch (error) {
+                  setTagEntry(tagEntry);
+                  throw error;
+                }
+              })
+            }
+            onManage={() => setShowTags(true)}
+          />
+          <ErrorNote error={error} />
+        </Modal>
+      )}
       {creating && (
         <Modal
           title="일정 추가"
           initialFocus={createTitle}
+          onOutsideClick={() => {
+            if (locked || composingTitle.current) return;
+            if (creating.title.trim()) saveCreating();
+            else if (creating.tagIds.length) createTitle.current?.focus();
+            else setCreating(null);
+          }}
           onClose={() => {
             if (pending) return;
             if (creating.title || creating.tagIds.length) {
@@ -1288,23 +1519,7 @@ export default function Calendar({
             className="calendar-create-form"
             onSubmit={(event) => {
               event.preventDefault();
-              if (locked || !creating.title.trim() || composingTitle.current)
-                return;
-              void action(async () => {
-                const saved = await send<CalendarEntry>("/calendar/entries", {
-                  ...creating,
-                  teamId: team.id,
-                });
-                if (!alive.current) return;
-                try {
-                  sessionStorage.removeItem(draftKey);
-                } catch {
-                  /* The server save succeeded. */
-                }
-                upsert(saved);
-                setCreating(null);
-                setEntry(saved);
-              });
+              saveCreating();
             }}
             onKeyDown={(event) => {
               if (
@@ -1337,6 +1552,7 @@ export default function Calendar({
                   composingTitle.current = false;
                 }}
                 aria-label="새 일정 제목"
+                {...busyProps(locked)}
                 maxLength={120}
                 value={creating.title}
                 onChange={(e) => {
@@ -1371,8 +1587,8 @@ export default function Calendar({
             />
             <ErrorNote error={error} />
             <p className="calendar-hint">
-              제목을 저장한 뒤 공통 문서 편집기에서 내용을 작성합니다. 닫아도
-              입력한 제목은 이 브라우저 탭에 보관됩니다.
+              제목을 입력한 뒤 바깥을 클릭하면 일정이 저장됩니다. 닫기 버튼과
+              Esc는 입력을 이 브라우저 탭에 보관합니다.
             </p>
             <Button disabled={locked || !creating.title.trim()} type="submit">
               일정 만들기
@@ -1390,34 +1606,7 @@ export default function Calendar({
           readOnly={!writable(entry.userId)}
           onSaved={upsert}
           onClose={() => setEntry(null)}
-          onDeleted={(removed, { deletionId, placements, layout }) => {
-            const positions = new Map(
-              placements.map((item) => [item.id, item.lane]),
-            );
-            updateData((previous, query) =>
-              query.userId !== removed.userId
-                ? previous
-                : {
-                    ...previous,
-                    layout: mergeCalendarLayout(
-                      previous.layout,
-                      layout,
-                      removed.id,
-                    ),
-                    entries: previous.entries
-                      .filter((item) => item.id !== removed.id)
-                      .map((item) => {
-                        const lane = positions.get(item.id);
-                        return lane === undefined || lane === item.lane
-                          ? item
-                          : { ...item, lane };
-                      }),
-                  },
-            );
-            setDeleted({ entry: removed, deletionId });
-            onNotify("");
-            setEntry(null);
-          }}
+          onDeleted={entryDeleted}
         />
       )}
       {deleted && (

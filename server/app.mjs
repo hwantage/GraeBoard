@@ -107,6 +107,8 @@ import {
 import { installTransferRoutes } from "./transfer.mjs";
 import { saveSettings } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
+import { installResourceEvents } from "./resource-events.mjs";
+import { createDocumentEvents } from "./document-events.mjs";
 import { createCellEvents } from "./cell-events.mjs";
 import { storeCellOperation, replayCellOperation } from "./cell-operations.mjs";
 import {
@@ -195,7 +197,7 @@ export function createApp({
   app.use(
     compression({
       filter: (req, res) =>
-        req.path !== "/api/cells/events" && compression.filter(req, res),
+        !req.path.endsWith("/events") && compression.filter(req, res),
     }),
   );
   app.use(cookieParser());
@@ -443,6 +445,18 @@ export function createApp({
       ),
     ];
   }
+  const refreshUser = (req) => {
+    const row = db
+      .prepare(
+        "SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires_at>? AND u.active=1",
+      )
+      .get(sessionHash(req.cookies.weekly_session), Date.now());
+    requireThat(row, 401, "로그인이 필요합니다.");
+    return userWithTeams(db, row);
+  };
+  const documentEvents = createDocumentEvents(refreshUser);
+  app.locals.documentEvents = documentEvents;
+  installResourceEvents(app, { db, documentEvents, teamAccess });
   installReorderRoute(app, { db, taskAccess, teamAccess });
   app.post("/api/auth/logout", (req, res) => {
     transaction(db, () => {
@@ -592,17 +606,20 @@ export function createApp({
     });
   });
   const { memoImageAccess } = installAnnualMemoRoutes(app, {
+    documentEvents,
     db,
     teamAccess,
     documentImagesDir,
   });
   installTaskDocumentRoutes(app, {
+    documentEvents,
     db,
     taskAccess,
     teamAccess,
     documentImagesDir,
   });
   const { calendarImageAccess } = installCalendarRoutes(app, {
+    documentEvents,
     db,
     teamAccess,
     managedTeam,
@@ -617,17 +634,14 @@ export function createApp({
     teamAccess,
     managedTeam,
     documentImagesDir,
-    refreshUser: (req) => {
-      const row = db
-        .prepare(
-          "SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires_at>? AND u.active=1",
-        )
-        .get(sessionHash(req.cookies.weekly_session), Date.now());
-      requireThat(row, 401, "로그인이 필요합니다.");
-      return userWithTeams(db, row);
-    },
+    refreshUser,
   });
-  installReportDocumentRoutes(app, { db, teamAccess, documentImagesDir });
+  installReportDocumentRoutes(app, {
+    db,
+    teamAccess,
+    documentImagesDir,
+    documentEvents,
+  });
   installDocumentBrowserRoutes(app, {
     db,
     teamAccess,
@@ -991,20 +1005,7 @@ export function createApp({
     });
     // Publish only after COMMIT. A replayed operation returns above and cannot
     // emit twice. Cell records retain their versions/styles; no View is sent.
-    const valueChanges = new Set(
-      d.changes
-        .filter((c) => c.value !== undefined)
-        .map((c) => `${c.taskId}:${c.key}`),
-    );
-    cellEvents.publish(
-      {
-        ...response,
-        cells: response.cells.filter((c) =>
-          valueChanges.has(`${c.taskId}:${c.key}`),
-        ),
-      },
-      eventTasks,
-    );
+    cellEvents.publish(response, eventTasks);
     res.json(response);
   });
   app.patch("/api/tasks/:id", (req, res) => {

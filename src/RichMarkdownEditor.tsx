@@ -395,6 +395,7 @@ function tableCellPaste(ctx: Ctx, text: string) {
 type Props = {
   label?: string;
   initialMarkdown: string;
+  remoteMarkdown?: { markdown: string; sequence: number };
   readOnly: boolean;
   saveStatus?: ReactNode;
   onChange: (markdown: string) => void;
@@ -406,6 +407,8 @@ type Props = {
 export default function RichMarkdownEditor(props: Props) {
   const root = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Editor | null>(null);
+  const applyingRemote = useRef(false);
+  const appliedRemote = useRef(props.remoteMarkdown);
   const latest = useRef(props);
   latest.current = props;
   const [ready, setReady] = useState(false);
@@ -650,7 +653,12 @@ export default function RichMarkdownEditor(props: Props) {
                     setInTable(isInTable(view.state));
                     setCanDeleteRow(deleteTableRow(view.state));
                   }
-                  if (active && initialized && !view.state.doc.eq(previous.doc))
+                  if (
+                    active &&
+                    initialized &&
+                    !applyingRemote.current &&
+                    !view.state.doc.eq(previous.doc)
+                  )
                     latest.current.onChange(
                       ctx.get(serializerCtx)(view.state.doc),
                     );
@@ -697,6 +705,37 @@ export default function RichMarkdownEditor(props: Props) {
       if (editor.status === "Created") void editor.destroy();
     };
   }, []);
+  useEffect(() => {
+    if (
+      !ready ||
+      !props.remoteMarkdown ||
+      appliedRemote.current === props.remoteMarkdown
+    )
+      return;
+    appliedRemote.current = props.remoteMarkdown;
+    try {
+      applyingRemote.current = true;
+      editorRef.current?.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const doc = checkMarkdown(ctx, props.remoteMarkdown!.markdown);
+        const start = view.state.doc.content.findDiffStart(doc.content);
+        if (start === null) return;
+        const end = view.state.doc.content.findDiffEnd(doc.content)!;
+        const overlap = start - Math.min(end.a, end.b);
+        const oldEnd = end.a + Math.max(0, overlap);
+        const newEnd = end.b + Math.max(0, overlap);
+        view.dispatch(
+          view.state.tr
+            .replace(start, oldEnd, doc.slice(start, newEnd))
+            .setMeta("addToHistory", false),
+        );
+      });
+    } catch (error) {
+      latest.current.onUnsupported((error as Error).message);
+    } finally {
+      applyingRemote.current = false;
+    }
+  }, [ready, props.remoteMarkdown]);
   useEffect(() => {
     editorRef.current?.action((ctx) =>
       ctx.get(editorViewCtx).setProps({ editable: () => !props.readOnly }),

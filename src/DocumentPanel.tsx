@@ -1,3 +1,4 @@
+import useResourceSync from "./useResourceSync";
 import {
   forwardRef,
   useEffect,
@@ -103,6 +104,62 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const readOnly = props.readOnly || !!props.emptyUntilSaved;
     const label = props.label || "업무 문서";
     const current = documents.find((doc) => doc.id === selected);
+    const listState = useRef({
+      busy,
+      renaming,
+      renamePending,
+      confirmDelete,
+      key: "",
+    });
+    listState.current = {
+      busy,
+      renaming,
+      renamePending,
+      confirmDelete,
+      key: documents.map((doc) => `${doc.id}:${doc.title}`).join("|"),
+    };
+    useResourceSync(props.emptyUntilSaved ? null : path, async (signal) => {
+      if (busy || renaming || renamePending || confirmDelete) return false;
+      const before = listState.current.key;
+      const result = await api<{ documents: DocumentInfo[] }>(path, { signal });
+      if (signal.aborted) return true;
+      const state = listState.current;
+      if (
+        state.key !== before ||
+        state.busy ||
+        state.renaming ||
+        state.renamePending ||
+        state.confirmDelete
+      )
+        return false;
+      // Preserve an open removed page and its local draft until the user leaves;
+      // its body stream shows the existing access/deletion error.
+      setDocuments((previous) => {
+        const removed = previous.filter(
+          (item) =>
+            visited.includes(item.id) &&
+            !result.documents.some((doc) => doc.id === item.id),
+        );
+        return [...result.documents, ...removed];
+      });
+      if (!selected && result.documents.length) {
+        setSelected(result.documents[0].id);
+        setVisited((previous) => [
+          ...new Set([...previous, result.documents[0].id]),
+        ]);
+      }
+      if (
+        result.documents.length &&
+        (props.inline || result.documents.some((doc) => doc.hasContent))
+      ) {
+        setOpened(true);
+        const target = result.documents.some((doc) => doc.id === selected)
+          ? selected
+          : result.documents[0].id;
+        setVisited((previous) => [...new Set([...previous, target])]);
+      }
+      return true;
+    });
     const documentOrder = documents.map((doc) => doc.id).join(":");
     const inlineDocumentsVisible =
       !!props.inline && documentsLoaded && documents.length > 0;
@@ -806,6 +863,28 @@ export default forwardRef<DocumentPanelHandle, Props>(
                         draftKey={props.draftKey(doc.id)}
                         label={label}
                         readOnly={readOnly}
+                        live={selected === doc.id}
+                        onRemoteDocument={(result) => {
+                          setDocuments((previous) =>
+                            previous.map((item) =>
+                              item.id === doc.id
+                                ? {
+                                    ...item,
+                                    revision: result.revision,
+                                    updatedAt: result.updatedAt,
+                                  }
+                                : item,
+                            ),
+                          );
+                          const metadata = result as DocumentResult;
+                          // Conflict responses contain the body but no task summary.
+                          if (
+                            typeof metadata.hasDocument === "boolean" &&
+                            typeof metadata.documentCount === "number" &&
+                            typeof metadata.taskUpdatedAt === "string"
+                          )
+                            props.onSaved(metadata);
+                        }}
                         emptyUntilSaved={props.emptyUntilSaved}
                         saveDocument={async (input) => {
                           const result = await send<DocumentResult>(

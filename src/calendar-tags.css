@@ -1,6 +1,7 @@
 .calendar-tag-chip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 0 7px;
   border: 1px solid var(--calendar-tag-border);
@@ -9,7 +10,10 @@
   color: var(--calendar-tag-ink);
   font-size: 11px;
   font-weight: 600;
-  line-height: 18px;
+  height: 20px;
+  box-sizing: border-box;
+  line-height: 1;
+  text-box-trim: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -17,6 +21,8 @@
   vertical-align: middle;
 }
 .calendar-tag-chip > span {
+  text-box-trim: none;
+  line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -31,9 +37,12 @@
 .calendar-check-tag:has(input[aria-disabled="true"]) {
   cursor: default;
 }
-.calendar-check-tag input {
-  width: 12px;
-  height: 12px;
+.calendar-check-tag input[type="checkbox"] {
+  width: 11px;
+  height: 11px;
+  min-width: 11px;
+  min-height: 11px;
+  padding: 0;
   margin: 0;
   flex-shrink: 0;
   accent-color: var(--calendar-tag-ink);
@@ -47,7 +56,8 @@
   pointer-events: none;
 }
 .calendar-tag-selected > .calendar-check-tag {
-  padding: 3px 7px;
+  height: 24px;
+  padding: 0 8px;
   border: 0;
   background: transparent;
   font-size: 12px;
@@ -86,12 +96,23 @@
 .calendar-tag-selected {
   display: inline-flex;
   align-items: center;
+  height: 26px;
+  box-sizing: border-box;
   border: 1px solid var(--calendar-tag-border);
   border-radius: 999px;
   max-width: 100%;
   overflow: hidden;
   background: var(--calendar-tag-chip);
   color: var(--calendar-tag-ink);
+}
+.calendar-tag-sortable {
+  display: inline-flex;
+  max-width: 100%;
+  touch-action: none;
+}
+.calendar-tag-sortable[data-dragging] {
+  position: relative;
+  z-index: 6;
 }
 .calendar-tag-selected button {
   display: inline-flex;
@@ -101,10 +122,13 @@
   border-radius: 0;
   background: transparent;
   color: inherit;
-  padding: 3px 8px;
+  height: 24px;
+  padding: 0 8px;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1;
+  text-box-trim: none;
   overflow-wrap: anywhere;
   text-align: left;
   cursor: pointer;

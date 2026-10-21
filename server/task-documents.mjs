@@ -102,7 +102,7 @@ const saveSchema = z
 
 export function installTaskDocumentRoutes(
   app,
-  { db, taskAccess, documentImagesDir },
+  { db, taskAccess, documentImagesDir, documentEvents },
 ) {
   const summary = (task) => {
     const documents = db
@@ -136,6 +136,14 @@ export function installTaskDocumentRoutes(
       actorId,
     );
   }
+  app.get("/api/tasks/:id/documents/events", (req, res) =>
+    documentEvents.watch(
+      req,
+      res,
+      `list:/api/tasks/${req.params.id}/documents`,
+      (request) => taskAccess(request.user, request.params.id),
+    ),
+  );
   app.get("/api/tasks/:id/documents", (req, res) => {
     const task = taskAccess(req.user, req.params.id);
     res.json({
@@ -203,7 +211,9 @@ export function installTaskDocumentRoutes(
     res.json(
       transaction(db, () => {
         const task = taskAccess(req.user, req.params.id, true);
-        const current = getTaskDocument(db, task.id, docId);
+        const current = documentEvents.stamp(
+          getTaskDocument(db, task.id, docId),
+        );
         requireThat(
           current.title === data.expectedTitle || current.title === data.title,
           409,
@@ -232,7 +242,9 @@ export function installTaskDocumentRoutes(
     res.json(
       transaction(db, () => {
         const task = taskAccess(req.user, req.params.id, true);
-        const current = getTaskDocument(db, task.id, docId);
+        const current = documentEvents.stamp(
+          getTaskDocument(db, task.id, docId),
+        );
         requireThat(
           current.revision === data.expectedRevision,
           409,
@@ -252,6 +264,19 @@ export function installTaskDocumentRoutes(
       }),
     );
   });
+  const documentKey = (req) =>
+    `task:${req.params.id}:${req.params.documentId || DEFAULT_DOCUMENT_ID}`;
+  function readDocument(req) {
+    const task = taskAccess(req.user, req.params.id);
+    return {
+      ...getTaskDocument(
+        db,
+        task.id,
+        documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
+      ),
+      ...summary(task),
+    };
+  }
   for (const path of [
     "/api/tasks/:id/document",
     "/api/tasks/:id/documents/:documentId",
@@ -259,13 +284,20 @@ export function installTaskDocumentRoutes(
     app.get(path, (req, res) => {
       taskAccess(req.user, req.params.id);
       res.json(
-        getTaskDocument(
-          db,
-          req.params.id,
-          documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
+        documentEvents.stamp(
+          getTaskDocument(
+            db,
+            req.params.id,
+            documentIdSchema.parse(
+              req.params.documentId || DEFAULT_DOCUMENT_ID,
+            ),
+          ),
         ),
       );
     });
+    app.get(`${path}/events`, (req, res) =>
+      documentEvents.subscribe(req, res, documentKey(req), readDocument),
+    );
     app.put(path, (req, res) => {
       const data = saveSchema.parse(req.body);
       const docId = documentIdSchema.parse(
@@ -273,7 +305,9 @@ export function installTaskDocumentRoutes(
       );
       const result = transaction(db, () => {
         const task = taskAccess(req.user, req.params.id, true);
-        const current = getTaskDocument(db, task.id, docId);
+        const current = documentEvents.stamp(
+          getTaskDocument(db, task.id, docId),
+        );
         const hash = createHash("sha256")
           .update(JSON.stringify(data))
           .digest("hex");
@@ -340,7 +374,7 @@ export function installTaskDocumentRoutes(
         }
         return { ...getTaskDocument(db, task.id, docId), ...summary(task) };
       });
-      res.json(result);
+      res.json(documentEvents.publish(documentKey(req), result));
     });
   }
 }

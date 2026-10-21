@@ -47,6 +47,93 @@ const deletionFor = (entry) => ({
   expectedCheckedTagIds: entry.checkedTagIds,
 });
 
+test("일정 복제는 월 밖의 이름·동시 요청·재시도를 고려해 번호를 붙이고 본문 없이 태그를 보존한다", async (t) => {
+  const f = await fixture(t);
+  const tag = (
+    await f.req(`/calendar/teams/${f.teamId}/tags`, "POST", {
+      id: randomUUID(),
+      name: "확인",
+      color: "green",
+      kind: "check",
+    })
+  ).data;
+  const source = (
+    await f.req("/calendar/entries", "POST", {
+      id: randomUUID(),
+      teamId: f.teamId,
+      userId: f.people.member.id,
+      date: "2026-10-12",
+      endDate: "2026-10-14",
+      title: "팀 회의",
+      tagIds: [tag.id],
+      checkedTagIds: [tag.id],
+    })
+  ).data;
+  await f.req(`/calendar/entries/${source.id}/document`, "PUT", {
+    markdown: "복제하지 않을 본문",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await f.create("2026-09-01", "member", "팀 회의 (1)");
+  const path = `/calendar/entries/${source.id}/copy`,
+    id = randomUUID();
+  for (const role of ["viewer", "second", "outsider"])
+    assert.equal(
+      (await f.req(path, "POST", { id: randomUUID() }, role)).status,
+      403,
+    );
+  assert.equal((await f.req(path, "POST", { id: source.id })).status, 400);
+  const first = await f.req(path, "POST", { id });
+  assert.equal(first.status, 201);
+  assert.equal(first.data.title, "팀 회의 (2)");
+  for (const key of ["date", "endDate", "tagIds", "checkedTagIds"])
+    assert.deepEqual(first.data[key], source[key]);
+  assert.equal(
+    (await f.req(`/calendar/entries/${id}/document`)).data.markdown,
+    "",
+  );
+  const copies = await Promise.all(
+    Array.from({ length: 4 }, () => f.req(path, "POST", { id: randomUUID() })),
+  );
+  assert.deepEqual(copies.map((r) => r.data.title).sort(), [
+    "팀 회의 (3)",
+    "팀 회의 (4)",
+    "팀 회의 (5)",
+    "팀 회의 (6)",
+  ]);
+  assert.deepEqual(await f.req(path, "POST", { id }), first);
+  const again = await f.req(`/calendar/entries/${id}/copy`, "POST", {
+    id: randomUUID(),
+  });
+  assert.equal(again.data.title, "팀 회의 (7)");
+  const long = (
+    await f.create("2026-10-12", "member", "가".repeat(115) + "📝abc")
+  ).data;
+  const shortened = await f.req(`/calendar/entries/${long.id}/copy`, "POST", {
+    id: randomUUID(),
+  });
+  assert.equal(shortened.status, 201);
+  assert.equal(shortened.data.title, "가".repeat(115) + " (1)");
+  assert.equal(shortened.data.title.isWellFormed(), true);
+  const shared = (
+    await f.req("/calendar/entries", "POST", {
+      id: randomUUID(),
+      teamId: f.teamId,
+      userId: null,
+      date: "2026-10-12",
+      title: "팀 회의",
+    })
+  ).data;
+  const sharedCopy = await f.req(
+    `/calendar/entries/${shared.id}/copy`,
+    "POST",
+    { id: randomUUID() },
+    "viewer",
+  );
+  assert.equal(sharedCopy.status, 201);
+  assert.equal(sharedCopy.data.title, "팀 회의 (1)");
+});
+
 test("일정 즉시 삭제·실행취소는 본문·태그·체크·상대 순서를 보존하고 권한과 재시도를 검사한다", async (t) => {
   const f = await fixture(t);
   const tag = (
@@ -301,6 +388,7 @@ async function fixture(t, date = Date.UTC(2026, 9, 17, 3)) {
   await once(server, "listening");
   t.after(async () => {
     app.locals.cellEvents.close();
+    app.locals.documentEvents.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     db.close();
@@ -386,6 +474,7 @@ async function fixture(t, date = Date.UTC(2026, 9, 17, 3)) {
       },
     });
   return {
+    baseURL: `http://127.0.0.1:${server.address().port}/api`,
     dir,
     path,
     db,
@@ -3041,4 +3130,90 @@ test("체크 태그의 생성 초기값·유형 변경·삭제는 유효한 체�
   assert.deepEqual(latest.tagIds, []);
   assert.deepEqual(latest.checkedTagIds, []);
   assert.equal(latest.title, input.title);
+});
+
+test("캘린더 문서 SSE는 저장·재연결 시 최신 본문을 전달하고 팀 권한 회수 후 차단한다", async (t) => {
+  const f = await fixture(t);
+  const entry = (await f.create()).data;
+  const path = `/calendar/entries/${entry.id}/document`;
+  assert.equal(
+    (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
+    403,
+  );
+  async function connect(person = "viewer") {
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    const response = await fetch(`${f.baseURL}${path}/events`, {
+      signal: controller.signal,
+      headers: {
+        Cookie: `weekly_session=${f.people[person].token}`,
+        "Accept-Encoding": "gzip",
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-encoding"), null);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    return {
+      close: () => controller.abort(),
+      next: async () => {
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        try {
+          while (true) {
+            const boundary = buffer.indexOf("\n\n");
+            if (boundary >= 0) {
+              const frame = buffer.slice(0, boundary);
+              buffer = buffer.slice(boundary + 2);
+              const event = frame.match(/^event: (.+)$/m)?.[1];
+              if (event)
+                return {
+                  event,
+                  data: JSON.parse(frame.match(/^data: (.+)$/m)[1]),
+                };
+            } else {
+              const chunk = await reader.read();
+              assert.ok(!chunk.done, "stream ended before event");
+              buffer += decoder.decode(chunk.value, { stream: true });
+            }
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+      },
+    };
+  }
+  const stream = await connect();
+  assert.equal((await stream.next()).data.revision, 0);
+  const memberStream = await connect("member");
+  assert.equal((await memberStream.next()).data.revision, 0);
+  const save = (markdown, revision) =>
+    f.req(path, "PUT", {
+      markdown,
+      expectedRevision: revision,
+      operationId: randomUUID(),
+    });
+  await save("실시간 첫 입력", 0);
+  const update = await stream.next();
+  assert.equal(update.event, "document");
+  assert.equal(update.data.markdown, "실시간 첫 입력");
+  assert.equal(update.data.entry.id, entry.id);
+  assert.deepEqual(await memberStream.next(), update);
+  stream.close();
+  await save("재연결 전 수정", 1);
+  assert.equal((await memberStream.next()).data.markdown, "재연결 전 수정");
+  const reconnect = await connect();
+  assert.equal((await reconnect.next()).data.markdown, "재연결 전 수정");
+  f.db
+    .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+    .run(f.teamId, f.people.viewer.id);
+  await save("권한 회수 후 비공개 입력", 2);
+  assert.deepEqual(await reconnect.next(), {
+    event: "access-revoked",
+    data: {},
+  });
+  assert.equal(
+    (await memberStream.next()).data.markdown,
+    "권한 회수 후 비공개 입력",
+  );
 });

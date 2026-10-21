@@ -63,7 +63,7 @@ export function installAnnualMemoRoutes(app, options) {
 // Memo metadata and references are relational; no memo edit rewrites the sheet BLOB.
 function installMemoRoutes(
   app,
-  { db, documentImagesDir, table, base, scope: resolveScope },
+  { db, documentImagesDir, documentEvents, table, base, scope: resolveScope },
 ) {
   const isReport = table === "report_memos";
   const ownerColumns = isReport ? ["report_id"] : ["team_id", "year"];
@@ -123,6 +123,9 @@ function installMemoRoutes(
     row(req, context);
     return context.teamId;
   };
+  app.get(`${base}/events`, (req, res) =>
+    documentEvents.watch(req, res, `list:${req.path.slice(0, -7)}`, scope),
+  );
   app.get(base, (req, res) => res.json({ documents: list(scope(req)) }));
   app.post(base, (req, res) => {
     const data = createDocumentSchema.parse(req.body);
@@ -218,8 +221,14 @@ function installMemoRoutes(
       }),
     );
   });
+  const documentKey = (req) =>
+    `${table}:${ownerArgs(scope(req)).join(":")}:${req.params.documentId}`;
+  const readDocument = (req) => document(row(req, scope(req)));
+  app.get(`${base}/:documentId/events`, (req, res) =>
+    documentEvents.subscribe(req, res, documentKey(req), readDocument),
+  );
   app.get(`${base}/:documentId`, (req, res) =>
-    res.json(document(row(req, scope(req)))),
+    res.json(documentEvents.stamp(readDocument(req))),
   );
   app.patch(`${base}/:documentId`, (req, res) => {
     const data = renameDocumentSchema.parse(req.body);
@@ -243,61 +252,60 @@ function installMemoRoutes(
   });
   app.put(`${base}/:documentId`, (req, res) => {
     const data = saveSchema.parse(req.body);
-    res.json(
-      transaction(db, () => {
-        const context = scope(req, true),
-          memo = row(req, context);
-        const current = document(memo);
-        const hash = createHash("sha256")
-          .update(JSON.stringify(data))
-          .digest("hex");
-        const replay =
-          memo.operation_id === data.operationId &&
-          memo.actor_id === req.user.id &&
-          memo.request_hash === hash;
-        requireThat(
-          replay || current.revision === data.expectedRevision,
-          409,
-          "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
-          { current },
+    const saved = transaction(db, () => {
+      const context = scope(req, true),
+        memo = row(req, context);
+      const current = documentEvents.stamp(document(memo));
+      const hash = createHash("sha256")
+        .update(JSON.stringify(data))
+        .digest("hex");
+      const replay =
+        memo.operation_id === data.operationId &&
+        memo.actor_id === req.user.id &&
+        memo.request_hash === hash;
+      requireThat(
+        replay || current.revision === data.expectedRevision,
+        409,
+        "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
+        { current },
+      );
+      if (!replay && current.markdown !== data.markdown) {
+        validateDocumentImages(
+          data.markdown,
+          context.teamId,
+          documentImagesDir,
         );
-        if (!replay && current.markdown !== data.markdown) {
-          validateDocumentImages(
-            data.markdown,
-            context.teamId,
-            documentImagesDir,
-          );
-          const versionId = storeDocumentVersion(db, {
-            teamId: context.teamId,
-            documentId: memo.document_identity,
-            markdown: data.markdown,
-            actorId: req.user.id,
-          });
-          db.prepare(
-            `UPDATE ${table} SET version_id=?,has_content=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE ${where} AND id=?`,
-          ).run(
-            versionId,
-            Number(hasDocumentContent(data.markdown)),
-            now(),
-            req.user.id,
-            data.operationId,
-            hash,
-            ...ownerArgs(context),
-            memo.id,
-          );
-          memoAudit(
-            req,
-            context,
-            "memo",
-            memo.id,
-            { revision: memo.revision },
-            { year: context.year, revision: memo.revision + 1 },
-          );
-          pruneDocumentVersions(db, context.teamId, [memo.version_id]);
-        }
-        return document(row(req, context));
-      }),
-    );
+        const versionId = storeDocumentVersion(db, {
+          teamId: context.teamId,
+          documentId: memo.document_identity,
+          markdown: data.markdown,
+          actorId: req.user.id,
+        });
+        db.prepare(
+          `UPDATE ${table} SET version_id=?,has_content=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE ${where} AND id=?`,
+        ).run(
+          versionId,
+          Number(hasDocumentContent(data.markdown)),
+          now(),
+          req.user.id,
+          data.operationId,
+          hash,
+          ...ownerArgs(context),
+          memo.id,
+        );
+        memoAudit(
+          req,
+          context,
+          "memo",
+          memo.id,
+          { revision: memo.revision },
+          { year: context.year, revision: memo.revision + 1 },
+        );
+        pruneDocumentVersions(db, context.teamId, [memo.version_id]);
+      }
+      return document(row(req, context));
+    });
+    res.json(documentEvents.publish(documentKey(req), saved));
   });
   app.delete(`${base}/:documentId`, (req, res) => {
     const data = z

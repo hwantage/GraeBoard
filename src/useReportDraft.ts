@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { applyReportOperation } from "../shared/report-editing.js";
-import { send } from "./api";
+import { rebaseReportCells } from "../shared/report-sync.js";
+import { api, ApiError, send } from "./api";
 import type {
   Cell,
   CellChange,
@@ -225,6 +226,47 @@ export default function useReportDraft(teamId: string, actorId: string) {
     const current = ref.current;
     if (current) update({ ...current, report: { ...current.report, name } });
   }
+  function receive(report: Report, duringSave = false) {
+    const current = ref.current;
+    if (!current || current.report.id !== report.id) return true;
+    if (current.report.revision === report.revision) {
+      if (current.report.name !== report.name) rename(report.name);
+      // Document metadata is deliberately excluded from the sheet revision.
+      const tasks = new Map(current.tasks.map((task) => [task.id, task]));
+      for (const task of report.tasks) {
+        const previous = tasks.get(task.id);
+        if (
+          previous &&
+          (!!previous.hasDocument !== !!task.hasDocument ||
+            (previous.documentCount || 0) !== (task.documentCount || 0))
+        )
+          updateDocument(task.id, !!task.hasDocument, task.documentCount || 0);
+      }
+      return true;
+    }
+    if (running.current && !duringSave) return false;
+    const merged = rebaseReportCells(
+      current.report.tasks,
+      report.tasks,
+      current.operations,
+      {
+        teamId,
+        actorId,
+        year: report.year,
+        settings: report.settings,
+      },
+    );
+    if (!merged) return false;
+    retryBatch.current = null;
+    update({
+      ...current,
+      report,
+      tasks: merged.tasks,
+      history: merged.history,
+      cursor: merged.history.length - 1,
+    });
+    return true;
+  }
   function save(): Promise<Report | null> {
     if (running.current) return running.current;
     setError("");
@@ -249,11 +291,24 @@ export default function useReportDraft(teamId: string, actorId: string) {
           };
           retryBatch.current = batch;
           const sequence = documentSequence.current;
-          const saved = await send<Report>(
-            `/reports/${current.report.id}`,
-            batch.data,
-            "PATCH",
-          );
+          let saved: Report;
+          try {
+            saved = await send<Report>(
+              `/reports/${current.report.id}`,
+              batch.data,
+              "PATCH",
+            );
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 409) {
+              const remote = await api<Report>(`/reports/${current.report.id}`);
+              if (
+                remote.revision !== current.report.revision &&
+                receive(remote, true)
+              )
+                continue;
+            }
+            throw error;
+          }
           if (ref.current?.report.id !== current.report.id) return saved;
           const latest = ref.current;
           const operations = latest.operations.slice(
@@ -328,6 +383,7 @@ export default function useReportDraft(teamId: string, actorId: string) {
     saving,
     error,
     begin,
+    receive,
     apply,
     updateDocument,
     preserveDocuments,

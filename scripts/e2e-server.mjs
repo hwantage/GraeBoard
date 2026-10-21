@@ -40,6 +40,7 @@ const app = createApp({
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     app.locals.cellEvents.close();
+    app.locals.documentEvents.close();
     server.close(() => {
       db.close();
       rmSync(dir, { recursive: true, force: true });

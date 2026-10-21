@@ -353,8 +353,8 @@ test("동일한 값·서식 저장은 셀·버전·업무시각·감사 기록�
   assert.equal(mixed.data.cells.length, 2);
   assert.deepEqual(
     events.at(-1).cells.map((c) => c.key),
-    ["title"],
-    "no-op 제외 후에도 값 변경만 SSE로 전달한다",
+    ["title", "2026-01-12"],
+    "no-op을 제외하고 값과 개별 서식 변경을 SSE로 전달한다",
   );
   const unchanged = getTask(f.db, task.id);
   const conflict = await f.save([

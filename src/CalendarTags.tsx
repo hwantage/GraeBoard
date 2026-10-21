@@ -1,4 +1,23 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
 import { Plus, Square, SquareCheck, Tags, Trash2, X } from "lucide-react";
 import {
   CALENDAR_TAG_COLORS,
@@ -95,6 +114,58 @@ export function CalendarCheckTag({
   );
 }
 
+function SortableCalendarTag({
+  tag,
+  disabled,
+  onMove,
+  children,
+}: {
+  tag: CalendarTag;
+  disabled: boolean;
+  onMove: (offset: number) => void;
+  children: ReactNode;
+}) {
+  const { setNodeRef, listeners, transform, transition, isDragging } =
+    useSortable({ id: tag.id, disabled });
+  return (
+    <span
+      ref={setNodeRef}
+      className="calendar-tag-sortable"
+      data-tag-id={tag.id}
+      data-dragging={isDragging || undefined}
+      title={
+        disabled
+          ? undefined
+          : "드래그하여 태그 순서 이동 · Alt+왼쪽/오른쪽 방향키"
+      }
+      style={{
+        transform: transform
+          ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+          : undefined,
+        transition,
+      }}
+      onPointerDownCapture={(event) => {
+        if ((event.target as Element).closest("input, [data-tag-remove]"))
+          return;
+        listeners?.onPointerDown?.(event);
+      }}
+      onKeyDownCapture={(event) => {
+        if (
+          disabled ||
+          !event.altKey ||
+          !["ArrowLeft", "ArrowRight"].includes(event.key)
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        onMove(event.key === "ArrowLeft" ? -1 : 1);
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function CalendarTagPicker({
   userId,
   tags,
@@ -117,8 +188,20 @@ export function CalendarTagPicker({
   readOnly?: boolean;
 }) {
   const choices = useRef<HTMLDetailsElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
   useEffect(() => {
-    const dismiss = (event: PointerEvent) => {
+    if (!dragging) return;
+    const keepDialogOpen = (event: KeyboardEvent) => {
+      if (event.key === "Escape") event.preventDefault();
+    };
+    document.addEventListener("keydown", keepDialogOpen, true);
+    return () => document.removeEventListener("keydown", keepDialogOpen, true);
+  }, [dragging]);
+  useEffect(() => {
+    const dismiss = (event: MouseEvent) => {
       if (
         choices.current?.open &&
         !choices.current.contains(event.target as Node)
@@ -132,10 +215,12 @@ export function CalendarTagPicker({
       choices.current.open = false;
       choices.current.querySelector("summary")?.focus();
     };
-    document.addEventListener("pointerdown", dismiss);
+    // Closing an inline list on pointerdown moves the submit button before
+    // pointerup. Wait for the click so the original control receives it.
+    document.addEventListener("click", dismiss);
     document.addEventListener("keydown", escape, true);
     return () => {
-      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("click", dismiss);
       document.removeEventListener("keydown", escape, true);
     };
   }, []);
@@ -147,131 +232,169 @@ export function CalendarTagPicker({
       value.includes(id) ? value.filter((item) => item !== id) : [...value, id],
     );
   return (
-    <fieldset className="calendar-tag-picker" aria-label="태그">
-      <div className="calendar-tag-selection">
-        {selected.map((tag, index) =>
-          readOnly ? (
-            tag.kind === "check" ? (
-              <CalendarCheckTag
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      autoScroll={false}
+      accessibility={{
+        screenReaderInstructions: {
+          draggable: "드래그 또는 Alt와 좌우 방향키로 태그 순서를 바꿉니다.",
+        },
+      }}
+      onDragStart={() => setDragging(true)}
+      onDragCancel={() => setDragging(false)}
+      onDragEnd={({ active, over }) => {
+        setDragging(false);
+        if (disabled || readOnly || !over || active.id === over.id) return;
+        const from = value.indexOf(String(active.id)),
+          to = value.indexOf(String(over.id));
+        if (from >= 0 && to >= 0) onChange(arrayMove(value, from, to));
+      }}
+    >
+      <SortableContext items={value} strategy={rectSortingStrategy}>
+        <fieldset className="calendar-tag-picker" aria-label="태그">
+          <div className="calendar-tag-selection">
+            {selected.map((tag, index) => (
+              <SortableCalendarTag
                 key={tag.id}
                 tag={tag}
-                checked={checkedIds.includes(tag.id)}
-                readOnly
-              />
-            ) : (
-              <CalendarTagChip key={tag.id} tag={tag} />
-            )
-          ) : (
-            <span
-              key={tag.id}
-              className="calendar-tag-selected"
-              style={calendarTagStyle(tag.color)}
-            >
-              {tag.kind === "check" ? (
-                <CalendarCheckTag
-                  tag={tag}
-                  checked={checkedIds.includes(tag.id)}
-                  disabled={disabled}
-                  onChange={(checked) => onCheckChange(tag.id, checked)}
-                />
-              ) : (
-                <button
-                  type="button"
-                  {...busyProps(disabled)}
-                  title={
-                    index === 0
-                      ? `${tag.name} · 배경색 적용 중`
-                      : `${tag.name} 색상을 배경에 적용`
-                  }
-                  aria-label={
-                    index === 0
-                      ? `${tag.name} · 배경색 적용 중`
-                      : `${tag.name} 색상을 배경에 적용`
-                  }
-                  aria-pressed={index === 0}
-                  onClick={() =>
-                    onChange([tag.id, ...value.filter((id) => id !== tag.id)])
-                  }
-                >
-                  {tag.name}
-                </button>
-              )}
-              <button
-                type="button"
-                {...busyProps(disabled)}
-                aria-label={`${tag.name} 태그 제거`}
-                onClick={() => toggle(tag.id)}
+                disabled={disabled || readOnly}
+                onMove={(offset) => {
+                  const target = index + offset;
+                  if (target >= 0 && target < value.length)
+                    onChange(arrayMove(value, index, target));
+                }}
               >
-                <X size={11} />
-              </button>
-            </span>
-          ),
-        )}
-        {!selected.length && readOnly && (
-          <span className="calendar-tag-empty">태그 없음</span>
-        )}
-        {!readOnly && (
-          <details ref={choices} className="calendar-tag-choices">
-            <summary
-              onClick={(event) => {
-                if (disabled) event.preventDefault();
-              }}
-              aria-disabled={disabled || undefined}
-            >
-              <Plus size={12} aria-hidden="true" />
-              태그 선택
-            </summary>
-            <div className="calendar-tag-options">
-              {tags.map((tag) => (
-                <button
-                  key={tag.id}
-                  type="button"
-                  className="calendar-tag-option"
-                  title={`${tag.name} 태그`}
-                  aria-label={`${tag.name} 태그`}
-                  aria-pressed={value.includes(tag.id)}
-                  {...busyProps(
-                    disabled,
-                    !value.includes(tag.id) &&
-                      value.length >= CALENDAR_TAG_LIMIT,
-                  )}
-                  onClick={() => toggle(tag.id)}
-                >
-                  <CalendarTagChip
-                    tag={tag}
-                    checked={checkedIds.includes(tag.id)}
-                  />
-                </button>
-              ))}
-              {!tags.length && (
-                <span className="calendar-tag-empty">
-                  {calendarTagManagerLabel(userId)}에서 첫 태그를 만들어 보세요.
-                </span>
-              )}
-              <div className="calendar-tag-options-actions">
-                <button
-                  type="button"
-                  className="calendar-tag-manage"
-                  {...busyProps(disabled)}
-                  onClick={() => {
-                    if (choices.current) {
-                      choices.current.open = false;
-                      choices.current
-                        .querySelector("summary")
-                        ?.focus({ preventScroll: true });
-                    }
-                    onManage();
+                {readOnly ? (
+                  tag.kind === "check" ? (
+                    <CalendarCheckTag
+                      key={tag.id}
+                      tag={tag}
+                      checked={checkedIds.includes(tag.id)}
+                      readOnly
+                    />
+                  ) : (
+                    <CalendarTagChip key={tag.id} tag={tag} />
+                  )
+                ) : (
+                  <span
+                    key={tag.id}
+                    className="calendar-tag-selected"
+                    style={calendarTagStyle(tag.color)}
+                  >
+                    {tag.kind === "check" ? (
+                      <CalendarCheckTag
+                        tag={tag}
+                        checked={checkedIds.includes(tag.id)}
+                        disabled={disabled}
+                        onChange={(checked) => onCheckChange(tag.id, checked)}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        {...busyProps(disabled)}
+                        title={
+                          index === 0
+                            ? `${tag.name} · 배경색 적용 중`
+                            : `${tag.name} 색상을 배경에 적용`
+                        }
+                        aria-label={
+                          index === 0
+                            ? `${tag.name} · 배경색 적용 중`
+                            : `${tag.name} 색상을 배경에 적용`
+                        }
+                        aria-pressed={index === 0}
+                        onClick={() =>
+                          onChange([
+                            tag.id,
+                            ...value.filter((id) => id !== tag.id),
+                          ])
+                        }
+                      >
+                        {tag.name}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-tag-remove
+                      {...busyProps(disabled)}
+                      aria-label={`${tag.name} 태그 제거`}
+                      onClick={() => toggle(tag.id)}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                )}
+              </SortableCalendarTag>
+            ))}
+            {!selected.length && readOnly && (
+              <span className="calendar-tag-empty">태그 없음</span>
+            )}
+            {!readOnly && (
+              <details ref={choices} className="calendar-tag-choices">
+                <summary
+                  onClick={(event) => {
+                    if (disabled) event.preventDefault();
                   }}
+                  aria-disabled={disabled || undefined}
                 >
-                  <Tags size={12} aria-hidden="true" />
-                  {calendarTagManagerLabel(userId)}
-                </button>
-              </div>
-            </div>
-          </details>
-        )}
-      </div>
-    </fieldset>
+                  <Plus size={12} aria-hidden="true" />
+                  태그 선택
+                </summary>
+                <div className="calendar-tag-options">
+                  {tags.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      className="calendar-tag-option"
+                      title={`${tag.name} 태그`}
+                      aria-label={`${tag.name} 태그`}
+                      aria-pressed={value.includes(tag.id)}
+                      {...busyProps(
+                        disabled,
+                        !value.includes(tag.id) &&
+                          value.length >= CALENDAR_TAG_LIMIT,
+                      )}
+                      onClick={() => toggle(tag.id)}
+                    >
+                      <CalendarTagChip
+                        tag={tag}
+                        checked={checkedIds.includes(tag.id)}
+                      />
+                    </button>
+                  ))}
+                  {!tags.length && (
+                    <span className="calendar-tag-empty">
+                      {calendarTagManagerLabel(userId)}에서 첫 태그를 만들어
+                      보세요.
+                    </span>
+                  )}
+                  <div className="calendar-tag-options-actions">
+                    <button
+                      type="button"
+                      className="calendar-tag-manage"
+                      {...busyProps(disabled)}
+                      onClick={() => {
+                        if (choices.current) {
+                          choices.current.open = false;
+                          choices.current
+                            .querySelector("summary")
+                            ?.focus({ preventScroll: true });
+                        }
+                        onManage();
+                      }}
+                    >
+                      <Tags size={12} aria-hidden="true" />
+                      {calendarTagManagerLabel(userId)}
+                    </button>
+                  </div>
+                </div>
+              </details>
+            )}
+          </div>
+        </fieldset>
+      </SortableContext>
+    </DndContext>
   );
 }
 

@@ -15,6 +15,10 @@ import { api, ApiError } from "./api";
 import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
 import { MAX_IMAGE_BYTES } from "../shared/document-images.js";
 import { MAX_DOCUMENT_BYTES, documentBytes } from "../shared/task-documents.js";
+import {
+  mergeDocument,
+  mapDocumentPosition,
+} from "../shared/document-merge.js";
 import type { TaskDocument } from "./types";
 import "./task-document.css";
 
@@ -57,6 +61,8 @@ export type SharedDocumentEditorProps = {
   controlsTarget: HTMLDivElement | null;
   readOnly: boolean;
   emptyUntilSaved?: boolean;
+  live?: boolean;
+  onRemoteDocument?: (document: TaskDocument) => void;
   saveDocument: (input: DocumentWrite) => Promise<TaskDocument>;
   onCloseWithDraft?: () => void;
   onLoadingChange: (loading: boolean) => void;
@@ -97,6 +103,12 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     const [conflict, setConflict] = useState<TaskDocument | null>(null);
     const [loadAttempt, setLoadAttempt] = useState(0);
     const [uploadCount, setUploadCount] = useState(0);
+    const [remoteMarkdown, setRemoteMarkdown] = useState<{
+      markdown: string;
+      sequence: number;
+    }>();
+    const sourceInput = useRef<HTMLTextAreaElement>(null);
+    const pendingRemote = useRef<TaskDocument | null>(null);
     const loading = !loaded
       ? !error
       : mode === "rich" && !editorReady && !editorFailed;
@@ -125,6 +137,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const storageKey = props.draftKey;
     const path = props.path;
+    const live = props.live !== false && !props.emptyUntilSaved;
     const label = props.label || "업무 문서";
     function persist() {
       try {
@@ -157,6 +170,109 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       if (!composing.current && !blocked.current)
         timer.current = setTimeout(() => void flush(), 700);
     }
+    function displayRemote(value: string) {
+      const input = sourceInput.current;
+      const selection =
+        input && document.activeElement === input
+          ? {
+              start: mapDocumentPosition(
+                current.current.markdown,
+                value,
+                input.selectionStart,
+              ),
+              end: mapDocumentPosition(
+                current.current.markdown,
+                value,
+                input.selectionEnd,
+              ),
+              direction: input.selectionDirection,
+              scrollTop: input.scrollTop,
+            }
+          : null;
+      current.current.markdown = value;
+      setMarkdown(value);
+      setRemoteMarkdown((previous) => ({
+        markdown: value,
+        sequence: (previous?.sequence || 0) + 1,
+      }));
+      if (input && selection)
+        requestAnimationFrame(() => {
+          if (!input.isConnected) return;
+          input.setSelectionRange(
+            selection.start,
+            selection.end,
+            selection.direction,
+          );
+          input.scrollTop = selection.scrollTop;
+        });
+    }
+    function mergeRemote(remote: TaskDocument) {
+      const state = current.current;
+      if (
+        remote.sync &&
+        state.base.sync &&
+        remote.sync.session === state.base.sync.session &&
+        remote.sync.sequence <= state.base.sync.sequence
+      )
+        return true;
+      if (remote.revision === state.base.revision) {
+        state.base = remote;
+        latest.current.onRemoteDocument?.(remote);
+        return true;
+      }
+      const merged = mergeDocument(
+        state.base.markdown,
+        state.markdown,
+        remote.markdown,
+      );
+      if (merged === null) {
+        blocked.current = true;
+        setConflict(remote);
+        setError(
+          "같은 부분이 서로 다르게 수정되었습니다. 입력은 보존됩니다. 최신 문서와 비교해 주세요.",
+        );
+        setStatus("저장하지 못함 · 입력 보존됨");
+        return false;
+      }
+      state.base = remote;
+      state.operationId = undefined;
+      state.submitted = undefined;
+      if (merged !== state.markdown) displayRemote(merged);
+      latest.current.onRemoteDocument?.(remote);
+      persist();
+      setStatus(merged === remote.markdown ? "저장됨" : "저장 대기");
+      return true;
+    }
+    function receiveRemote(remote: TaskDocument) {
+      if (
+        !initialized.current ||
+        saving.current ||
+        composing.current ||
+        uploads.current ||
+        blocked.current
+      ) {
+        if (
+          !pendingRemote.current?.sync ||
+          !remote.sync ||
+          remote.sync.session !== pendingRemote.current.sync.session ||
+          remote.sync.sequence > pendingRemote.current.sync.sequence
+        )
+          pendingRemote.current = remote;
+        return;
+      }
+      if (
+        mergeRemote(remote) &&
+        current.current.markdown !== current.current.base.markdown
+      )
+        schedule();
+    }
+    function drainRemote() {
+      const remote = pendingRemote.current;
+      pendingRemote.current = null;
+      if (remote) receiveRemote(remote);
+    }
+    const receive = useRef(receiveRemote);
+    receive.current = receiveRemote;
     async function flush(explicit = false): Promise<boolean> {
       if (timer.current) clearTimeout(timer.current);
       if (composing.current || uploads.current) return false;
@@ -196,11 +312,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             operationId,
           });
           // Keep edits typed during the request. Only the saved base advances.
-          state.base = {
-            markdown: result.markdown,
-            revision: result.revision,
-            updatedAt: result.updatedAt,
-          };
+          state.base = result;
           state.operationId = undefined;
           state.submitted = undefined;
           persist();
@@ -211,6 +323,16 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           }
           return true;
         } catch (e) {
+          if (
+            e instanceof ApiError &&
+            e.status === 409 &&
+            e.details?.current &&
+            mergeRemote(e.details.current)
+          ) {
+            setError("");
+            setConflict(null);
+            return true;
+          }
           blocked.current = true;
           persist();
           if (mounted.current) {
@@ -222,6 +344,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           return false;
         } finally {
           saving.current = null;
+          drainRemote();
         }
       })();
       saving.current = request;
@@ -282,6 +405,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
               : "저장됨",
           );
           persist();
+          drainRemote();
           if (restored && !blocked.current) schedule();
         })
         .catch((e) => {
@@ -296,6 +420,25 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         if (timer.current) clearTimeout(timer.current);
       };
     }, [path, props.emptyUntilSaved, loadAttempt]);
+    useEffect(() => {
+      if (!live || !loaded) return;
+      const events = new EventSource(`/api${path}/events`);
+      events.addEventListener("document", (event: MessageEvent) => {
+        try {
+          receive.current(JSON.parse(event.data));
+        } catch {
+          /* reconnect sends a fresh snapshot */
+        }
+      });
+      events.addEventListener("access-revoked", () => {
+        events.close();
+        blocked.current = true;
+        setError(
+          "문서 접근 권한이 변경되었거나 문서가 삭제되었습니다. 입력은 보존됩니다.",
+        );
+      });
+      return () => events.close();
+    }, [path, live, loaded]);
     useEffect(() => {
       const beforeUnload = (event: BeforeUnloadEvent) => {
         if (
@@ -332,6 +475,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     function uploading(count: number) {
       uploads.current = count;
       if (mounted.current) setUploadCount(count);
+      if (!count) drainRemote();
     }
     const saveState = uploadCount
       ? "이미지 업로드 중…"
@@ -369,6 +513,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         }}
         onCompositionEnd={() => {
           composing.current = false;
+          drainRemote();
           schedule();
         }}
       >
@@ -454,6 +599,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           {loaded &&
             (mode === "source" ? (
               <textarea
+                ref={sourceInput}
                 className="document-source"
                 aria-label={`${label} Markdown 원문`}
                 spellCheck={false}
@@ -471,6 +617,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                   <RichMarkdownEditor
                     label={`${label} 리치 편집`}
                     initialMarkdown={current.current.markdown}
+                    remoteMarkdown={remoteMarkdown}
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
                     onChange={change}

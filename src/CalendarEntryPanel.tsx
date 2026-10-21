@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button, ErrorNote, Modal } from "./components";
 import { api, ApiError, send } from "./api";
+import {
+  deleteCalendarEntry,
+  saveCalendarEntryTags,
+} from "./calendar-entry-actions";
 import DocumentEditor, { type DocumentHandle } from "./DocumentEditor";
 import DocumentLoading from "./DocumentLoading";
 import CalendarRangeEditor, {
@@ -160,11 +164,7 @@ export default function CalendarEntryPanel({
     setTagError("");
     setTagIds(next);
     try {
-      const saved = await send<CalendarEntry>(
-        path,
-        { tagIds: next, expectedTagIds: current.current.tagIds },
-        "PATCH",
-      );
+      const saved = await saveCalendarEntryTags(current.current, next);
       current.current = {
         ...current.current,
         tagIds: saved.tagIds,
@@ -321,19 +321,9 @@ export default function CalendarEntryPanel({
         (editor.current && !(await editor.current.flush()))
       )
         return;
-      const result = await send<CalendarEntryDeletion>(
-        path,
-        {
-          deletionId: deletionId.current,
-          expectedUpdatedAt: current.current.updatedAt,
-          expectedRevision: current.current.revision,
-          expectedTitle: current.current.title,
-          expectedDate: current.current.date,
-          expectedEndDate: current.current.endDate,
-          expectedTagIds: current.current.tagIds,
-          expectedCheckedTagIds: current.current.checkedTagIds,
-        },
-        "DELETE",
+      const result = await deleteCalendarEntry(
+        current.current,
+        deletionId.current,
       );
       try {
         sessionStorage.removeItem(titleKey);
@@ -353,33 +343,13 @@ export default function CalendarEntryPanel({
       title="캘린더 일정"
       className="task-detail-modal calendar-entry-modal"
       onClose={() => void close()}
-      headerActions={
-        !readOnly && (
-          <div
-            className="task-detail-actions"
-            role="group"
-            aria-label="일정 동작"
-          >
-            <Button
-              className="danger"
-              tooltip="일정 삭제"
-              disabled={!ready || busy}
-              onClick={() => void remove()}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              <span className="task-detail-action-label">일정 삭제</span>
-            </Button>
-          </div>
-        )
-      }
-    >
-      <div className="calendar-entry-heading" inert={busy && leaving.current}>
+      titleContent={
         <input
           className="calendar-entry-title"
           aria-label="일정 제목"
           maxLength={120}
           value={title}
-          readOnly={readOnly || !ready}
+          readOnly={readOnly || !ready || (busy && leaving.current)}
           onChange={(e) => {
             draft.current = e.target.value;
             setTitle(e.target.value);
@@ -397,6 +367,9 @@ export default function CalendarEntryPanel({
             if (!blocked.current) void saveTitle();
           }}
         />
+      }
+    >
+      <div className="calendar-entry-heading" inert={busy && leaving.current}>
         {ready && (
           <CalendarRangeEditor
             ref={rangeEditor}
@@ -490,6 +463,22 @@ export default function CalendarEntryPanel({
               path={`${path}/document`}
               draftKey={`weekly-plan:calendar-document:${userId}:${entry.teamId}:${entry.userId}:${entry.id}`}
               label="일정 문서"
+              live
+              onRemoteDocument={(data) => {
+                const remote = data as CalendarDocument;
+                if (Number(remote.revision) < current.current.revision) return;
+                current.current = {
+                  ...current.current,
+                  revision: Number(remote.revision),
+                  preview: remote.entry?.preview ?? current.current.preview,
+                  updatedAt:
+                    remote.updatedAt &&
+                    remote.updatedAt > current.current.updatedAt
+                      ? remote.updatedAt
+                      : current.current.updatedAt,
+                };
+                onSaved(current.current);
+              }}
               controlsTarget={controls}
               readOnly={readOnly}
               onLoadingChange={setLoading}
@@ -519,6 +508,18 @@ export default function CalendarEntryPanel({
             />
           </div>
         </div>
+      )}
+      {!readOnly && (
+        <footer className="calendar-entry-footer">
+          <Button
+            className="danger"
+            disabled={!ready || busy}
+            onClick={() => void remove()}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            일정 삭제
+          </Button>
+        </footer>
       )}
     </Modal>
   );

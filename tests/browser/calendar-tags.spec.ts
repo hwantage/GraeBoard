@@ -43,6 +43,18 @@ const addEntry = (page: Page, title: string, tagIds: string[], days = 0) =>
     endDate: addDays(todayKey(), days),
     tagIds,
   });
+async function openCreated(page: Page, title: string) {
+  await expect(
+    page.getByRole("dialog", { name: "일정 추가", exact: true }),
+  ).toHaveCount(0);
+  await expect(detail(page)).toHaveCount(0);
+  await page
+    .locator(".calendar-entry-card")
+    .filter({ hasText: title })
+    .first()
+    .click();
+  await expect(detail(page)).toBeVisible();
+}
 async function closeDetail(page: Page) {
   await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
   await expect(detail(page)).toHaveCount(0);
@@ -269,6 +281,7 @@ test("팀 월간 보기에서 일반 팀원이 공용 태그·일정을 만들�
     .getByRole("button", { name: "공용 완료 태그", exact: true })
     .click();
   await creating.getByLabel("새 일정 제목").press("Enter");
+  await openCreated(page, "함께 관리하는 일정");
   await expect(detail(page)).toBeVisible();
   await closeDetail(page);
   const listing = await request(
@@ -530,6 +543,7 @@ test("태그 관리의 고정 10색과 일정 생성의 복수 선택·Enter·�
     contentType: "image/png",
   });
   await creating.getByLabel("새 일정 제목", { exact: true }).press("Enter");
+  await openCreated(page, "태그가 있는 하루 일정");
   await expect(
     detail(page).getByLabel("일정 제목", { exact: true }),
   ).toHaveValue("태그가 있는 하루 일정");
@@ -874,6 +888,7 @@ test("좁은 화면의 일정 추가 안에서 태그를 관리하고 작성 중
     .getByRole("button", { name: "모바일 검토 태그", exact: true })
     .click();
   await creating.getByLabel("새 일정 제목", { exact: true }).press("Enter");
+  await openCreated(page, "작성 중인 제목");
   await expect(
     detail(page).getByRole("button", {
       name: "모바일 검토 · 배경색 적용 중",
@@ -931,6 +946,7 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
     .getByRole("checkbox", { name: "완료 체크", exact: true })
     .check();
   await creating.getByLabel("새 일정 제목").press("Enter");
+  await openCreated(page, "체크한 일정");
   await expect(
     detail(page).getByRole("checkbox", { name: "완료 체크", exact: true }),
   ).toBeChecked();
@@ -948,7 +964,8 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
     3,
   );
   const label = await addTag(page, "회의", "purple");
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
+  // Reload after API seeding so remote seed notifications are not counted as local UI writes.
+  await page.reload();
   const checks = (id: string) =>
     page
       .locator(`[data-entry-id="${id}"]`)
@@ -1146,7 +1163,9 @@ test("체크 실패는 복원하고 늦은 제목·본문 저장 응답은 체�
       (await request(page, `/calendar/entries/${entry.id}`)).checkedTagIds,
     ).toEqual([tag.id]);
     release();
-    await expect(detail(page).getByRole("status")).toHaveText("저장됨");
+    await expect(detail(page).locator(".document-save-state")).toHaveText(
+      "저장됨",
+    );
     await expect(check).toBeChecked();
     await closeDetail(page);
     await expect(box).toBeChecked();
@@ -1235,7 +1254,7 @@ test("일정 상세를 간결하게 표시하고 즉시 삭제·실행취소로 
     checked: true,
     expectedChecked: false,
   });
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
+  await page.reload();
   await expect(card(page, entry.id)).toBeVisible();
   const reads: string[] = [];
   page.on("request", (req) => {

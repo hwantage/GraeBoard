@@ -241,7 +241,7 @@ test("셀 저장 후 SSE로 변경 셀을 전달하고 HTTP 스냅샷과 같은 
   assert.equal(unchanged.headers.get("x-cell-event-id"), event.id);
 });
 
-test("충돌·롤백·중복 재시도와 개인 View·서식만 저장한 작업은 값 알림을 추가하지 않는다", async (t) => {
+test("충돌·롤백·중복 재시도와 개인 View는 제외하고 셀 서식도 재전송한다", async (t) => {
   const f = await fixture(t);
   const cursor = (await f.snapshot()).headers.get("x-cell-event-id");
   const operationId = randomUUID();
@@ -309,8 +309,9 @@ test("충돌·롤백·중복 재시도와 개인 View·서식만 저장한 작�
   assert.deepEqual(ownViews.body.views, []);
   const replay = await f.stream(cursor);
   assert.equal((await replay.next()).data.cells[0].value, "성공");
+  assert.deepEqual((await replay.next()).data.cells, styled.body.cells);
   assert.equal((await replay.next()).type, "ready");
-  assert.equal(replay.all.filter((e) => e.type === "cells").length, 1);
+  assert.equal(replay.all.filter((e) => e.type === "cells").length, 2);
 });
 
 test("Last-Event-ID 이후 누락된 변경만 재전송하며 팀·연도 범위를 분리한다", async (t) => {

@@ -432,16 +432,24 @@ test("제목 직접 입력은 한글 조합 중 저장하지 않고 느린 응�
 });
 
 test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대로 밝히고 문서·도구를 함께 표시한다", async ({
-  page,
+  page: authenticatedPage,
+  browser,
 }, info) => {
   await save(
-    page,
+    authenticatedPage,
     taskIds[0],
     "# 긴 문서\n\n" + "불러오는 동안에도 창 크기를 유지합니다.\n\n".repeat(60),
   );
+  const storageState = await authenticatedPage.context().storageState();
   for (const width of [1366, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.reload();
+    // Isolate module caches: WebKit can reuse an already evaluated editor across
+    // reloads even while the test holds its subsequent network request.
+    const context = await browser.newContext({
+      storageState,
+      baseURL: new URL(authenticatedPage.url()).origin,
+      viewport: { width, height: 900 },
+    });
+    const page = await context.newPage();
     let releaseChunk!: () => void,
       releaseBody!: () => void,
       releaseEditor!: () => void;
@@ -471,6 +479,8 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
     });
     const bodyRequested = page.waitForRequest(bodyPattern);
     const editorRequested = page.waitForRequest(editorPattern);
+    // Install gates before navigation so WebKit preloads cannot bypass them.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.evaluate(() => {
       const frames: {
         controls: boolean;
@@ -621,6 +631,7 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
     await page.unroute(chunkPattern);
     await page.unroute(editorPattern);
     await page.unroute(bodyPattern);
+    await context.close();
   }
 });
 
@@ -786,9 +797,13 @@ test("실패·재시도·동시 수정·응답 대기 중 입력을 보존하고
   reject = false;
   await detail(page).getByRole("button", { name: "저장 다시 시도" }).click();
   await expect(detail(page).getByText("저장됨", { exact: true })).toBeVisible();
-  await save(page, taskIds[0], "다른 사용자 수정", 1);
+  await source(page).dispatchEvent("compositionstart");
   await source(page).fill("내 충돌 입력");
-  await expect(detail(page).getByRole("alert")).toContainText("다른 사용자가");
+  await save(page, taskIds[0], "다른 사용자 수정", 1);
+  await source(page).dispatchEvent("compositionend");
+  await expect(detail(page).getByRole("alert")).toContainText(
+    /같은 부분|다른 사용자가/,
+  );
   await detail(page).getByText("최신 서버 문서 확인", { exact: false }).click();
   await expect(detail(page).locator(".document-conflict pre")).toHaveText(
     "다른 사용자 수정",
@@ -2517,6 +2532,9 @@ test("이미지 붙여넣기·업로드 대기·원문 왕복·스냅샷과 보�
   await page
     .getByRole("tab", { name: "이미지 보관 보고본", exact: true })
     .click();
+  await expect(
+    page.getByRole("tab", { name: "이미지 보관 보고본", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await open(page);
   await expect(rich(page)).toHaveAttribute("contenteditable", "true");
   await expect(img).toBeVisible();
@@ -2929,4 +2947,19 @@ test("문서 제목 탭과 리치 도구는 긴 문서에서 고정되고 이미
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
   ).toBe(markdown);
+});
+
+test("빈 문서 안내를 열어 둔 상태에서도 다른 사용자의 첫 본문이 자동으로 나타난다", async ({
+  page,
+}) => {
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"]`)
+    .click({ button: "right" });
+  await expect(
+    detail(page).getByRole("button", { name: "문서 작성", exact: true }),
+  ).toBeVisible();
+  await save(page, taskIds[0], "다른 사용자가 처음 작성한 본문");
+  await expect(rich(page)).toContainText("다른 사용자가 처음 작성한 본문", {
+    timeout: 3000,
+  });
 });

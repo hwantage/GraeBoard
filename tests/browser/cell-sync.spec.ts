@@ -431,3 +431,35 @@ test("만료된 SSE 커서는 스냅샷으로 복구하면서 입력 중인 내�
     release();
   }
 });
+
+test("개별 셀 서식도 전체 목록 조회 없이 상대 브라우저에 반영한다", async ({
+  page,
+}) => {
+  await openPeer();
+  await peer.route("**/api/tasks?**", (route) => route.abort());
+  const tasks = (
+    await (
+      await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+    )
+      .json()
+      .then(unpack)
+  ).tasks;
+  const current = tasks.find((task: any) => task.id === ids[0]);
+  await post(page.request, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: ids[0],
+        key: "title",
+        expectedVersion: current.cells.title.version,
+        style: { backgroundColor: "#ffe0e0" },
+      },
+    ],
+  });
+  await expect(cell(peer, ids[0])).toHaveCSS(
+    "background-color",
+    "rgb(255, 224, 224)",
+    { timeout: 3000 },
+  );
+});

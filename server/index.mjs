@@ -17,6 +17,7 @@ const server = app.listen(port, host, () =>
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     app.locals.cellEvents.close();
+    app.locals.documentEvents.close();
     server.close(() => {
       app.locals.db.close();
       process.exit(0);

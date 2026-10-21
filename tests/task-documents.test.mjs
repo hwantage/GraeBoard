@@ -38,6 +38,11 @@ import {
   reportDocumentIndex,
 } from "../server/reports.mjs";
 
+// Transport ordering changes on each read; saved content must remain identical.
+function withoutSync({ sync: _sync, ...document }) {
+  return document;
+}
+
 test("큰 사본의 목록 캐시와 별개로 문서 조회·저장의 메타데이터 캐시를 재사용한다", async (t) => {
   const f = await fixture(t);
   await f.save("캐시 검증 본문");
@@ -331,6 +336,7 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
   await once(server, "listening");
   t.after(async () => {
     app.locals.cellEvents.close();
+    app.locals.documentEvents.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
     db.close();
@@ -411,6 +417,7 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
     dir,
     path,
     images,
+    baseURL: `http://127.0.0.1:${server.address().port}/api`,
     task,
     unassigned,
     teamId,
@@ -425,7 +432,7 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
 test("문서 API: 권한·UTF-8 크기·자료형·버전·재시도·목록 메타데이터", async (t) => {
   const f = await fixture(t),
     route = `/tasks/${f.task.id}/document`;
-  assert.deepEqual((await f.req(route)).data, {
+  assert.deepEqual(withoutSync((await f.req(route)).data), {
     id: "main",
     title: "문서 1",
     markdown: "",
@@ -455,8 +462,10 @@ test("문서 API: 권한·UTF-8 크기·자료형·버전·재시도·목록 메
   assert.equal(saved.data.hasDocument, true);
   assert.equal(saved.data.documentCount, 1);
   assert.deepEqual(
-    (await f.save(markdown, 0, "member", f.task.id, operationId)).data,
-    saved.data,
+    withoutSync(
+      (await f.save(markdown, 0, "member", f.task.id, operationId)).data,
+    ),
+    withoutSync(saved.data),
   );
   const auditCount = () =>
     f.db
@@ -634,7 +643,10 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   const saved = await f.req(path, "PUT", body);
   assert.equal(saved.status, 200);
   assert.notEqual(saved.data.revision, initial.revision);
-  assert.deepEqual((await f.req(path, "PUT", body)).data, saved.data);
+  assert.deepEqual(
+    withoutSync((await f.req(path, "PUT", body)).data),
+    withoutSync(saved.data),
+  );
   const conflict = await f.req(path, "PUT", {
     ...body,
     operationId: randomUUID(),
@@ -2050,7 +2062,10 @@ test("연간 메모는 팀·연도별로 분리하고 권한·충돌·재시도�
   const saved = await f.req(path, "PUT", save, "member");
   assert.equal(saved.status, 200);
   assert.equal(saved.data.revision, 1);
-  assert.deepEqual((await f.req(path, "PUT", save, "member")).data, saved.data);
+  assert.deepEqual(
+    withoutSync((await f.req(path, "PUT", save, "member")).data),
+    withoutSync(saved.data),
+  );
   const conflict = await f.req(path, "PUT", {
     ...save,
     operationId: randomUUID(),
@@ -2193,7 +2208,10 @@ test("연간 메모 순서는 권한과 전체 목록을 검증하고 동시 변
     (await f.req(`${base}/reorder`, "POST", payload, "member")).data,
     saved.data,
   );
-  assert.deepEqual((await f.req(`${base}/${ids[0]}`)).data, before);
+  assert.deepEqual(
+    withoutSync((await f.req(`${base}/${ids[0]}`)).data),
+    withoutSync(before),
+  );
   const stale = await f.req(`${base}/reorder`, "POST", {
     ids: [...ids].reverse(),
     expectedIds: ids,
@@ -2247,7 +2265,10 @@ test("연간 메모 순서는 권한과 전체 목록을 검증하고 동시 변
     ).status,
     200,
   );
-  assert.deepEqual((await f.req(`${base}/${ids[0]}`)).data, before);
+  assert.deepEqual(
+    withoutSync((await f.req(`${base}/${ids[0]}`)).data),
+    withoutSync(before),
+  );
 });
 
 test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전을 공유하며 사본의 최신 참조로 재복사한다", async (t) => {
@@ -2592,4 +2613,134 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
     f.db.prepare("SELECT 1 FROM document_versions WHERE id=?").get(versionId),
     undefined,
   );
+});
+
+for (const kind of ["task", "report-task", "memo", "report-memo"]) {
+  test(`${kind} 문서 SSE는 별도 문서 격리·UUID/숫자 순서·재연결·권한 회수를 보장한다`, async (t) => {
+    const { documentStream } = await import("./document-events-helper.mjs");
+    const f = await fixture(t);
+    const reportId = await f.report();
+    const memoId = randomUUID();
+    const collection =
+      kind === "memo"
+        ? `/teams/${f.teamId}/years/2026/memos`
+        : `/reports/${reportId}/memos`;
+    if (kind.endsWith("memo"))
+      assert.equal(
+        (await f.req(collection, "POST", { id: memoId })).status,
+        201,
+      );
+    const path =
+      kind === "task"
+        ? `/tasks/${f.task.id}/documents/main`
+        : kind === "report-task"
+          ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
+          : `${collection}/${memoId}`;
+    assert.equal(
+      (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
+      403,
+    );
+    const connect = () =>
+      documentStream(t, f.baseURL, path, f.people.viewer.token);
+    const stream = await connect();
+    const initial = (await stream.next()).data;
+    const first = await f.req(path, "PUT", {
+      markdown: "첫 본문",
+      expectedRevision: initial.revision,
+      operationId: randomUUID(),
+    });
+    assert.equal(first.status, 200);
+    const remote = (await stream.next()).data;
+    assert.equal(remote.markdown, "첫 본문");
+    assert.ok(remote.sync.sequence > initial.sync.sequence);
+    assert.deepEqual(remote.sync, first.data.sync);
+    assert.equal(
+      typeof remote.revision,
+      kind === "report-task" ? "string" : "number",
+    );
+    // Copies are isolated even where their source task/document IDs match.
+    const otherPath =
+      kind === "task"
+        ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
+        : `/tasks/${f.task.id}/documents/main`;
+    assert.equal((await f.req(otherPath)).data.markdown, "");
+    stream.close();
+    const second = await f.req(path, "PUT", {
+      markdown: "재연결 본문",
+      expectedRevision: remote.revision,
+      operationId: randomUUID(),
+    });
+    const reconnected = await connect();
+    assert.equal((await reconnected.next()).data.markdown, "재연결 본문");
+    f.db
+      .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+      .run(f.teamId, f.people.viewer.id);
+    await f.req(path, "PUT", {
+      markdown: "비공개",
+      expectedRevision: second.data.revision,
+      operationId: randomUUID(),
+    });
+    assert.equal((await reconnected.next()).event, "access-revoked");
+  });
+}
+
+test("팀·사본·문서 목록 변경 알림은 권한을 검사하고 실패와 개인 보기는 제외한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  const path = `/teams/${f.teamId}`;
+  assert.equal(
+    (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
+    403,
+  );
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    path,
+    f.people.viewer.token,
+  );
+  const initial = (await stream.next()).data.revision;
+  await f.req(`/tasks/${f.task.id}`, "PATCH", {
+    updatedAt: "stale",
+    years: [2026, 2027],
+  });
+  await f.req("/views", "PUT", {
+    teamId: f.teamId,
+    name: "__current",
+    data: defaultView(2026),
+  });
+  const unchanged = await documentStream(
+    t,
+    f.baseURL,
+    path,
+    f.people.viewer.token,
+  );
+  assert.equal((await unchanged.next()).data.revision, initial);
+  const collection = `/tasks/${f.task.id}/documents`;
+  const list = await documentStream(
+    t,
+    f.baseURL,
+    collection,
+    f.people.viewer.token,
+  );
+  await list.next();
+  const documentId = randomUUID();
+  await f.req(collection, "POST", { id: documentId }, "lead", {
+    "X-Client-ID": "test-client",
+  });
+  assert.equal((await list.next()).data.clientId, "test-client");
+  assert.equal((await stream.next()).data.clientId, "test-client");
+  assert.equal((await unchanged.next()).data.clientId, "test-client");
+  const reportId = await f.report();
+  const report = await documentStream(
+    t,
+    f.baseURL,
+    `/reports/${reportId}`,
+    f.people.viewer.token,
+  );
+  await report.next();
+  await f.req(`/reports/${reportId}/name`, "PATCH", {
+    name: "다른 이름",
+    expectedName: "보존 보고본",
+  });
+  assert.equal((await report.next()).event, "document");
 });

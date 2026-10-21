@@ -8,7 +8,7 @@ import SheetTabs from "./SheetTabs";
 import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
 import useWorkspaceRoute from "./useWorkspaceRoute";
 import useCalendarTheme from "./useCalendarTheme";
-import { getTheme, themeVariables } from "../shared/themes.js";
+import { THEMES, getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";
 import { copyRowFormatting, resetCellStyle } from "../shared/formatting.js";
@@ -100,6 +100,7 @@ import {
 } from "./components";
 import SettingsPanel from "./SettingsPanel";
 import Toast, { UndoToast, useToast } from "./Toast";
+import useResourceSync from "./useResourceSync";
 import useReportDraft from "./useReportDraft";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
@@ -647,51 +648,94 @@ function Workspace({
         return next;
       })
       .catch((e) => setError(e.message));
-  const refresh = useCallback(async () => {
-    if (!teamId) return;
-    const key = `${teamId}:${year}`,
-      scope = taskScopeRef.current,
-      epoch = mutationEpoch.current,
-      remote = remoteEpoch.current;
-    try {
-      const [r, latestBoot] = await Promise.all([
-        api(taskQuery(teamId, year, viewRef.current.startMonth)),
-        api<Bootstrap>("/bootstrap"),
-      ]);
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!teamId) return true;
+      if (pendingRef.current || failedRef.current || editorRef.current)
+        return false;
+      const key = `${teamId}:${year}`,
+        scope = taskScopeRef.current,
+        epoch = mutationEpoch.current,
+        remote = remoteEpoch.current;
+      try {
+        const [r, latestBoot] = await Promise.all([
+          api(taskQuery(teamId, year, viewRef.current.startMonth), { signal }),
+          api<Bootstrap>("/bootstrap", { signal }),
+        ]);
+        if (
+          boardKey.current === key &&
+          taskScopeRef.current === scope &&
+          epoch === mutationEpoch.current &&
+          remote === remoteEpoch.current &&
+          !pendingRef.current &&
+          !failedRef.current &&
+          !editorRef.current
+        ) {
+          tasksRef.current = r.tasks;
+          setTasks(r.tasks);
+          if (!cellEventCursor.current) cellEventCursor.current = r.cellEventId;
+          setLoadedScope(scope);
+          // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
+          if (JSON.stringify(latestBoot) !== bootJsonRef.current)
+            onBootstrap(latestBoot);
+          return true;
+        }
+        return false;
+      } catch (e) {
+        if (e instanceof ApiError && [403, 404].includes(e.status)) {
+          try {
+            const latest = await api<Bootstrap>("/bootstrap");
+            if (
+              boardKey.current === key &&
+              !latest.teams.some((t) => t.id === teamId)
+            ) {
+              onBootstrap(latest);
+              return;
+            }
+          } catch {}
+        }
+        if (boardKey.current !== key || taskScopeRef.current !== scope) return;
+        if (!signal?.aborted) setError((e as Error).message);
+        return true;
+      }
+    },
+    [teamId, year],
+  );
+  useResourceSync(
+    screen === "annual" && ready
+      ? report
+        ? `/reports/${report.id}`
+        : `/teams/${teamId}`
+      : null,
+    async (signal) => {
+      const current = reportRef.current;
+      if (!current) return (await refresh(signal)) !== false;
       if (
-        boardKey.current === key &&
-        taskScopeRef.current === scope &&
-        epoch === mutationEpoch.current &&
-        remote === remoteEpoch.current &&
-        !pendingRef.current &&
-        !failedRef.current &&
-        !editorRef.current
-      ) {
-        tasksRef.current = r.tasks;
-        setTasks(r.tasks);
-        if (!cellEventCursor.current) cellEventCursor.current = r.cellEventId;
-        setLoadedScope(scope);
-        // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
-        if (JSON.stringify(latestBoot) !== bootJsonRef.current)
-          onBootstrap(latestBoot);
+        pendingRef.current ||
+        failedRef.current ||
+        editorRef.current ||
+        reportDraft.saving ||
+        !!reportDraft.error
+      )
+        return false;
+      try {
+        const before = reportDraft.ref.current?.report;
+        const remote = await api<Report>(`/reports/${current.id}`, { signal });
+        if (signal.aborted || reportRef.current?.id !== current.id) return true;
+        if (reportDraft.ref.current?.report !== before) return false;
+        return reportDraft.receive(remote);
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          [401, 403, 404].includes(error.status)
+        ) {
+          setError(error.message);
+          return true;
+        }
+        throw error;
       }
-    } catch (e) {
-      if (e instanceof ApiError && [403, 404].includes(e.status)) {
-        try {
-          const latest = await api<Bootstrap>("/bootstrap");
-          if (
-            boardKey.current === key &&
-            !latest.teams.some((t) => t.id === teamId)
-          ) {
-            onBootstrap(latest);
-            return;
-          }
-        } catch {}
-      }
-      if (boardKey.current !== key || taskScopeRef.current !== scope) return;
-      setError((e as Error).message);
-    }
-  }, [teamId, year]);
+    },
+  );
   const refreshFilters = useCallback(async () => {
     const revision = filterSaveRevision.current;
     await filterSaveQueue.current;
@@ -2582,6 +2626,10 @@ function Workspace({
       data-calendar-theme={
         screen === "calendar" ? calendarTheme.theme : undefined
       }
+      data-calendar-palette={
+        screen === "calendar" ? calendarTheme.palette : undefined
+      }
+      style={screen === "calendar" ? calendarTheme.style : undefined}
     >
       <main
         className="main-workspace"
@@ -2786,6 +2834,21 @@ function Workspace({
           )}
           {screen === "calendar" ? (
             <>
+              <Select
+                className="calendar-theme-select"
+                aria-label="캘린더 테마"
+                value={calendarTheme.palette}
+                onChange={(event) =>
+                  calendarTheme.selectPalette(event.target.value)
+                }
+              >
+                <option value="cartoon">카툰</option>
+                {THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.name}
+                  </option>
+                ))}
+              </Select>
               <Button
                 className="calendar-theme-toggle"
                 title={

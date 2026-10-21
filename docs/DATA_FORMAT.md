@@ -371,7 +371,15 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 `GET /api/calendar/tasks?teamId=…&userId=…&weekStart=…&q=…&offset=…`는 주간 목록에 추가할 같은 팀의 활성 업무를 연도·상태·담당자 제한 없이 검색합니다. 제목·연도·해당 주 추가 여부를 50개씩 반환하며 `nextOffset`이 `null`이면 마지막 페이지입니다. `POST /api/calendar/weekly`는 `{teamId,userId,weekStart,taskIds}`로 최대 100개 업무를 과거·현재·미래의 주에 연결합니다. 대상 개인 일정의 수정 권한과 모든 업무 ID를 한 번에 검증하며 중복 연결·재시도는 기존 기록을 유지합니다. `POST /api/calendar/import`는 서울 날짜 기준 이번 주에만 허용하고, 팀원(`owner`) 값이 대상 `userId`인 업무 중 설정한 기준에 맞는 업무를 추가합니다. 지원자·검토자로만 참여한 업무는 제외합니다. 두 저장 경로는 `{added,existing,weekly}`를 반환하므로 해당 소유자·주의 목록만 병합하며 전체 캘린더를 재조회하지 않습니다. 두 경로 모두 원본 업무를 복제하거나 수정하지 않습니다.
 
+`POST /api/calendar/entries/:id/copy`는 `{id: 새 UUID}`로 일정의 기간·태그 순서·체크를 복제하고 본문은 비워 둡니다. 제목은 같은 팀·소유자의 활성 일정과 겹치지 않는 `(1)`, `(2)` 번호를 서버 트랜잭션에서 결정하며 120자 안에서 보존합니다. 동일 UUID 재시도는 기존 생성 결과를 반환합니다. 기존 개인·공용 일정의 수정 권한을 그대로 사용합니다.
+
 체크 태그의 상태는 태그 정의가 아닌 일정별 연결에 저장합니다. 일정 응답의 `checkedTagIds`는 체크된 태그 ID이며 생성 시에도 지정할 수 있습니다. 지정되지 않은 태그나 일반 태그의 체크는 거절합니다. `PATCH /api/calendar/entries/:id/tags/:tagId`에 `{checked, expectedChecked}`를 보내면 해당 체크만 저장하고 `{tagId, checked, updatedAt}`를 반환합니다. 같은 값의 재시도는 중복 변경 없이 처리합니다. 태그 순서·색상·이름 변경 시 체크는 유지하며, 일정에서 제거했다 다시 지정하거나 유형을 일반 태그로 바꾸면 체크는 해제됩니다. 체크는 일정 수정 권한을 따르고 제목·기간·본문 저장과 독립적으로 병합합니다.
+
+## 실시간 동기화
+
+모든 Markdown 단일 문서 GET 경로에 `/events`를 붙이면 `document` SSE로 최신 본문을 받습니다. 원본 업무(`/tasks/:id/documents/:documentId`), 사본 업무(`/reports/:id/tasks/:taskId/documents/:documentId`), 원본 연간 메모(`/teams/:teamId/years/:year/memos/:documentId`), 사본 메모(`/reports/:reportId/memos/:documentId`), 캘린더(`/calendar/entries/:id/document`)를 지원하며 `/api` 접두어를 사용합니다. 업무의 기존 단일 `/document` 경로도 지원합니다. 조회·저장·충돌 응답의 문서와 SSE 스냅샷에 `sync: {session,sequence}`를 추가합니다. 이 값은 프로세스 메모리의 전송 순서이며 DB·백업·반출에는 저장하지 않습니다. 숫자 revision과 사본 문서의 UUID revision은 그대로 유지합니다. 연결·재연결 시 최신 문서를 보내며 세션·팀 접근·삭제 상태를 전송마다 다시 확인합니다. 접근을 잃으면 `access-revoked`로 종료합니다. 독립 수정은 합쳐 기존 PUT으로 저장하고 겹치는 충돌은 입력을 보존합니다. SQLite v29·JSON v6·백업 형식과 일정별 `tagIds` 순서 저장은 바꾸지 않습니다.
+
+팀·사본 시트와 문서 목록의 `/events`는 성공한 변경 뒤 재조회를 알립니다. 셀 값은 기존 `/api/cells/events` 델타 전송을 계속 사용합니다. 원격 조회가 개인 필터·열 너비·스크롤 또는 미저장 입력을 덮어쓰지 않도록 클라이언트에서 적용 시점을 조정합니다.
 
 ## 연간 업무 메모
 

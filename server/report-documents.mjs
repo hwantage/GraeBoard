@@ -75,7 +75,7 @@ const saveSchema = z
 
 export function installReportDocumentRoutes(
   app,
-  { db, teamAccess, documentImagesDir },
+  { db, teamAccess, documentImagesDir, documentEvents },
 ) {
   function reportAccess(req, write = false) {
     const row = db
@@ -176,6 +176,14 @@ export function installReportDocumentRoutes(
     }
     res.json({ tasks: result });
   });
+  app.get(base + "/documents/events", (req, res) =>
+    documentEvents.watch(
+      req,
+      res,
+      `list:/api/reports/${req.params.id}/tasks/${req.params.taskId}/documents`,
+      access,
+    ),
+  );
   app.get(base + "/documents", (req, res) => {
     const { task } = access(req);
     res.json({
@@ -299,87 +307,93 @@ export function installReportDocumentRoutes(
       }),
     );
   });
+  const documentKey = (req) =>
+    `report-task:${req.params.id}:${req.params.taskId}:${req.params.documentId || DEFAULT_DOCUMENT_ID}`;
+  function readDocument(req) {
+    const { task } = access(req);
+    return {
+      ...reportTaskDocument(
+        db,
+        task,
+        documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
+      ),
+      ...result(task),
+    };
+  }
   for (const path of [base + "/document", base + "/documents/:documentId"]) {
     app.get(path, (req, res) => {
-      const { task } = access(req);
-      res.json(
-        reportTaskDocument(
-          db,
-          task,
-          documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
-        ),
-      );
+      res.json(documentEvents.stamp(readDocument(req)));
     });
+    app.get(`${path}/events`, (req, res) =>
+      documentEvents.subscribe(req, res, documentKey(req), readDocument),
+    );
     app.put(path, (req, res) => {
       const data = saveSchema.parse(req.body);
       const docId = documentIdSchema.parse(
         req.params.documentId || DEFAULT_DOCUMENT_ID,
       );
-      res.json(
-        transaction(db, () => {
-          const state = access(req, true);
-          const { row, task } = state;
-          const current = reportTaskDocument(db, task, docId);
-          const target = `${row.id}:${task.id}:${docId}`;
-          const requestHash = createHash("sha256")
-            .update(JSON.stringify(data))
-            .digest("hex");
-          const last = db
-            .prepare(
-              "SELECT after_json FROM audit WHERE team_id=? AND action='report-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
-            )
-            .get(row.team_id, target, req.user.id);
-          const previous = last && parse(last.after_json);
-          const replay =
-            previous?.operationId === data.operationId &&
-            previous.requestHash === requestHash &&
-            previous.revision === current.revision;
-          requireThat(
-            replay || current.revision === data.expectedRevision,
-            409,
-            "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
-            { current },
-          );
-          let saved = task;
-          if (!replay && current.markdown !== data.markdown) {
-            validateDocumentImages(
-              data.markdown,
-              row.team_id,
-              documentImagesDir,
-            );
-            const docs = task.documents || [];
-            const existing = docs.find((doc) => doc.id === docId);
-            const document = {
-              ...existing,
-              id: docId,
-              title: current.title,
-              markdown: data.markdown,
-            };
-            saved = existing
-              ? persistBody(state, document, req.user.id)
-              : persist(state, [...docs, document], req.user.id);
-            audit(
-              db,
-              req.user.id,
-              row.team_id,
-              "report-document",
-              target,
-              { revision: current.revision },
-              {
-                revision: reportTaskDocument(db, saved, docId).revision,
-                operationId: data.operationId,
-                requestHash,
-              },
-            );
-          }
-          return {
-            ...reportTaskDocument(db, saved, docId),
-            hasDocument: !!saved.hasDocument,
-            documentCount: saved.documents?.length || 0,
-            taskUpdatedAt: task.updatedAt,
+      const saved = transaction(db, () => {
+        const state = access(req, true);
+        const { row, task } = state;
+        const current = documentEvents.stamp(
+          reportTaskDocument(db, task, docId),
+        );
+        const target = `${row.id}:${task.id}:${docId}`;
+        const requestHash = createHash("sha256")
+          .update(JSON.stringify(data))
+          .digest("hex");
+        const last = db
+          .prepare(
+            "SELECT after_json FROM audit WHERE team_id=? AND action='report-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+          )
+          .get(row.team_id, target, req.user.id);
+        const previous = last && parse(last.after_json);
+        const replay =
+          previous?.operationId === data.operationId &&
+          previous.requestHash === requestHash &&
+          previous.revision === current.revision;
+        requireThat(
+          replay || current.revision === data.expectedRevision,
+          409,
+          "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
+          { current },
+        );
+        let saved = task;
+        if (!replay && current.markdown !== data.markdown) {
+          validateDocumentImages(data.markdown, row.team_id, documentImagesDir);
+          const docs = task.documents || [];
+          const existing = docs.find((doc) => doc.id === docId);
+          const document = {
+            ...existing,
+            id: docId,
+            title: current.title,
+            markdown: data.markdown,
           };
-        }),
-      );
+          saved = existing
+            ? persistBody(state, document, req.user.id)
+            : persist(state, [...docs, document], req.user.id);
+          audit(
+            db,
+            req.user.id,
+            row.team_id,
+            "report-document",
+            target,
+            { revision: current.revision },
+            {
+              revision: reportTaskDocument(db, saved, docId).revision,
+              operationId: data.operationId,
+              requestHash,
+            },
+          );
+        }
+        return {
+          ...reportTaskDocument(db, saved, docId),
+          hasDocument: !!saved.hasDocument,
+          documentCount: saved.documents?.length || 0,
+          taskUpdatedAt: task.updatedAt,
+        };
+      });
+      res.json(documentEvents.publish(documentKey(req), saved));
     });
   }
 }

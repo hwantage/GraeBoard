@@ -60,9 +60,11 @@ export function Modal({
   title,
   help,
   titleAction,
+  titleContent,
   headerActions,
   children,
   onClose,
+  onOutsideClick,
   wide = false,
   className = "",
   initialFocus,
@@ -70,18 +72,21 @@ export function Modal({
   title: string;
   help?: string;
   titleAction?: ReactNode;
+  titleContent?: ReactNode;
   headerActions?: ReactNode;
   children: ReactNode;
   onClose: () => void;
+  onOutsideClick?: () => void;
   wide?: boolean;
   className?: string;
   initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const backdropPress = useRef(false);
   const titleId = useId();
   const hasHelp = !!help;
-  const hasHeaderActions = !!headerActions || !!titleAction;
+  const hasHeaderActions = !!headerActions || !!titleAction || !!titleContent;
   useEffect(() => {
     const opener =
       document.activeElement instanceof HTMLElement
@@ -111,12 +116,27 @@ export function Modal({
         onClose();
       }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        if (e.target === ref.current && backdropPress.current)
+          (onOutsideClick || onClose)();
+        backdropPress.current = false;
+      }}
+      onPointerDownCapture={(e) => {
+        backdropPress.current = e.target === ref.current && e.button === 0;
+      }}
+      onPointerUpCapture={(e) => {
+        backdropPress.current =
+          backdropPress.current && e.target === ref.current;
+      }}
+      onPointerCancel={() => {
+        backdropPress.current = false;
       }}
     >
       <header>
         <div className="modal-heading">
-          <h2 id={titleId}>{title}</h2>
+          <h2 id={titleId} hidden={!!titleContent}>
+            {title}
+          </h2>
+          {titleContent}
           {titleAction}
           {help && (
             <button
