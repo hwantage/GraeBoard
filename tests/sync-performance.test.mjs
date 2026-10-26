@@ -14,15 +14,17 @@ import { randomUUID } from "node:crypto";
 test("two-team performance fixture verifies simultaneous Git heads and bulk-paste SSE without hiding a failed job", async () => {
   const result = await runTwoTeamPerformance({
     rows: 40,
-    secondaryRows: 10,
+    secondaryRows: 20,
     clients: 3,
     users: 3,
     rounds: 2,
+    bulkValueBytes: 8000,
     includeScheduled: false,
   });
   assert.equal(result.simultaneous.bothTeamHeadsVerified, true);
-  assert.equal(result.bulkPaste.cells, 20);
+  assert.equal(result.bulkPaste.cells, 40);
   assert.equal(result.bulkPaste.deliveredClients, 3);
+  assert.equal(result.bulkPaste.resetRefetchClients, 3);
   assert.ok(result.simultaneous.samples >= 6);
   assert.equal(result.scheduled, null);
 });

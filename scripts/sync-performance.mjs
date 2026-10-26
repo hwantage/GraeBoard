@@ -191,6 +191,9 @@ export async function performanceFixture({
     deliveries = new Map(),
     observedCells = new Map(),
     documentCommitted = new Map(),
+    snapshotExpectations = new Map(),
+    snapshotClients = new Map(),
+    snapshotFailures = new Map(),
     controllers = [];
   const notify = app.locals.documentEvents.notify;
   app.locals.documentEvents.notify = (key) => {
@@ -228,6 +231,52 @@ export async function performanceFixture({
             while ((index = buffer.indexOf("\n\n")) >= 0) {
               const frame = buffer.slice(0, index);
               buffer = buffer.slice(index + 2);
+              if (frame.includes("event: reset")) {
+                for (const [operationId, expected] of snapshotExpectations) {
+                  if (expected.teamId !== target.teamId) continue;
+                  if (!snapshotClients.has(operationId))
+                    snapshotClients.set(operationId, new Set());
+                  const received = snapshotClients.get(operationId);
+                  if (received.has(i)) continue;
+                  received.add(i);
+                  void fetch(
+                    `${origin}/api/tasks?teamId=${target.teamId}&year=2026`,
+                    { headers: { cookie: "weekly_session=" + tokens[i] } },
+                  )
+                    .then(async (response) => {
+                      if (!response.ok)
+                        throw new Error(
+                          "Reset snapshot request failed " + response.status,
+                        );
+                      const snapshot = unpack(await response.json()),
+                        tasks = new Map(
+                          snapshot.tasks.map((task) => [task.id, task]),
+                        );
+                      if (
+                        !expected.changes.every(
+                          (change) =>
+                            tasks.get(change.taskId)?.cells[change.key]
+                              ?.value === change.value &&
+                            tasks.get(change.taskId)?.cells[change.key]
+                              ?.version >=
+                              change.expectedVersion + 1,
+                        )
+                      )
+                        throw new Error(
+                          "Reset snapshot did not contain the committed bulk paste",
+                        );
+                      if (!deliveries.has(operationId))
+                        deliveries.set(operationId, []);
+                      deliveries
+                        .get(operationId)
+                        .push(performance.now() - committed.get(operationId));
+                    })
+                    .catch((error) =>
+                      snapshotFailures.set(operationId, error.message),
+                    );
+                }
+                continue;
+              }
               if (!frame.includes("event: cells")) continue;
               const line = frame
                 .split("\n")
@@ -375,6 +424,9 @@ export async function performanceFixture({
     controllers,
     observedCells,
     documentCommitted,
+    snapshotExpectations,
+    snapshotClients,
+    snapshotFailures,
     app,
     transport,
     api,
@@ -390,6 +442,7 @@ export async function runTwoTeamPerformance({
   clients = 30,
   users = 100,
   rounds = 30,
+  bulkValueBytes = 0,
   includeScheduled = true,
   log = () => {},
 } = {}) {
@@ -425,11 +478,15 @@ export async function runTwoTeamPerformance({
           fixture.db
             .prepare("SELECT version FROM cells WHERE task_id=? AND key=?")
             .get(taskId, key)?.version || 0,
-        value: "Two-team bulk " + index,
+        value: "Two-team bulk " + index + "x".repeat(bulkValueBytes),
       };
     });
     const running = (async () => {
       const started = performance.now();
+      fixture.snapshotExpectations.set(operationId, {
+        teamId: secondary.teamId,
+        changes,
+      });
       const response = await fixture.api("/cells/batch", {
         operationId,
         createdAt: new Date().toISOString(),
@@ -446,13 +503,20 @@ export async function runTwoTeamPerformance({
         (fixture.deliveries.get(operationId)?.length || 0) < clients
       )
         throw new Error(
-          "Two-team bulk paste did not persist and reach all SSE clients",
+          "Two-team bulk paste did not persist and reach all clients: " +
+            (fixture.snapshotFailures.get(operationId) ||
+              "missing delta or reset snapshot"),
         );
+      fixture.snapshotExpectations.delete(operationId);
       bulkPaste = {
         cells: count,
-        requestToResponseAndSseMs: performance.now() - started,
-        commitToAllSseMs: Math.max(...fixture.deliveries.get(operationId)),
+        requestToResponseAndDeliveryMs: performance.now() - started,
+        commitToAllClientsMs: Math.max(...fixture.deliveries.get(operationId)),
         deliveredClients: clients,
+        resetRefetchClients:
+          fixture.snapshotClients.get(operationId)?.size || 0,
+        delivery:
+          "cell SSE delta or size-limit reset followed by verified HTTP snapshot refetch",
       };
       await Promise.all(
         [fixture.teamId, secondary.teamId].map((teamId) =>
@@ -965,6 +1029,7 @@ export async function runSyncPerformance({
       linkedSteady = aggregate(linkedRuns);
     const degradationPercent =
       (linkedSteady.saveP95Ms / warmBaseline.saveP95Ms - 1) * 100;
+    log({ steadyPairs, warmBaseline, linkedSteady, degradationPercent });
     log("Measuring two teams, a 2000-cell paste and actual scheduled cycles");
     const twoTeams = await runTwoTeamPerformance({
       rows,
@@ -1043,6 +1108,8 @@ export async function runSyncPerformance({
           twoTeams.simultaneous,
           twoTeams.scheduled,
         ].every((x) => x.commitToAllSseP95Ms < 1000),
+        bulkPasteAllClientsUnder1000Ms:
+          twoTeams.bulkPaste.commitToAllClientsMs < 1000,
       },
       limitations: [
         "Steady acceptance aggregates raw samples from three alternating-order paired runs; event-loop p95 is the worst constituent run.",
