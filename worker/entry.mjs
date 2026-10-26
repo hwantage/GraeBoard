@@ -18,7 +18,7 @@ import { profileSwitchRoutes } from "./profile-switch.mjs";
 import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
 import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
-import { runTeam, scheduled } from "./sync.mjs";
+import { runTeam, refreshTeam, scheduled } from "./sync.mjs";
 import { profileFor } from "./config.mjs";
 import { R2ImageStore } from "./images.mjs";
 const security = {
@@ -83,9 +83,7 @@ async function pullFirst(ctx, teamId) {
   const team = await ctx.team(teamId, { allowUnready: true });
   if (team.status !== "active" || !team.profile_id) return;
   const profile = profileFor(ctx.env, team.profile_id, teamId);
-  const promise = runTeam(ctx.env, profile, { receiveOnly: true }).catch(
-    () => {},
-  );
+  const promise = refreshTeam(ctx.env, profile).catch(() => {});
   ctx.execution?.waitUntil(promise);
   await Promise.race([
     promise,
@@ -247,10 +245,9 @@ export function createWorker({
                   team.profile_id
                 )
                   execution.waitUntil(
-                    runTeam(
-                      env,
-                      profileFor(env, team.profile_id, team.id),
-                    ).catch(() => {}),
+                    runTeam(env, profileFor(env, team.profile_id, team.id), {
+                      updateStatus: false,
+                    }).catch(() => {}),
                   );
             return json(result, 200, headers);
           }

@@ -116,9 +116,10 @@ export function retentionView(db, teamId) {
   };
 }
 
-export function installRetentionBoundary(app, { db }) {
+export function installRetentionBoundary(app, { db, taskRequestsHandled = false }) {
   app.use("/api", (req, res, next) => {
     const path = req.path;
+    if (taskRequestsHandled && ((req.method === "GET" && path === "/tasks") || (req.method === "POST" && path === "/cells/batch"))) return next();
     if (/^\/(?:admin|auth)\//.test(path) || /\/sync(?:\/|$)/.test(path))
       return next();
     let teamId = req.query.teamId || req.body?.teamId;

@@ -74,9 +74,12 @@ export async function eventResponse(
         const write = (channel, event, data, id) => {
           if (stopped) return;
           const content = typeof data === "string" ? data : stringify(data);
-          const text = multiplex
-            ? `event: stream\ndata: ${JSON.stringify({ id: channel.id, event, data: content, ...(id ? { lastEventId: id } : {}) })}\n\n`
-            : `${id ? `id: ${id}\n` : ""}event: ${event}\ndata: ${content}\n\n`;
+          const text =
+            multiplex && event === "closed"
+              ? `event: closed\ndata: ${JSON.stringify({ id: channel.id })}\n\n`
+              : multiplex
+                ? `event: stream\ndata: ${JSON.stringify({ id: channel.id, event, data: content, ...(id ? { lastEventId: id } : {}) })}\n\n`
+                : `${id ? `id: ${id}\n` : ""}event: ${event}\ndata: ${content}\n\n`;
           assert(text.length <= 1024 * 1024, 503, "이벤트가 너무 큽니다.");
           controller.enqueue(encoder.encode(text));
         };

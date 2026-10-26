@@ -133,6 +133,41 @@ test("a cached image is not sufficient when the remote archive history was repla
   assert.equal(f.store.readExclusions().length, 0);
 });
 
+test("audit-only image references are protected until explicit history cleanup", async (t) => {
+  const f = fixture(t),
+    url = f.image("audit-only"),
+    id = randomUUID();
+  f.db
+    .prepare(
+      "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'report-edit',?,?,?)",
+    )
+    .run(
+      id,
+      f.teamId,
+      f.actorId,
+      randomUUID(),
+      json({ deletedTasks: [{ documents: [{ markdown: `![old](${url})` }] }] }),
+      "2025-01-01T00:00:00Z",
+    );
+  const protectedPreview = await f.service.preview(
+    { kind: "images" },
+    f.actorId,
+  );
+  assert.equal(protectedPreview.images.count, 0);
+  assert.ok(
+    protectedPreview.protected.some(
+      (row) => row.reason.includes("복원 이력") && row.count === 1,
+    ),
+  );
+  f.db.prepare("DELETE FROM audit WHERE id=?").run(id);
+  const afterHistoryCleanup = await f.service.preview(
+    { kind: "images" },
+    f.actorId,
+  );
+  assert.equal(afterHistoryCleanup.images.count, 1);
+  assert.notEqual(afterHistoryCleanup.revision, protectedPreview.revision);
+});
+
 test("T11 local cleanup protects shared, pending, conflicting, recent and unarchived image references", async (t) => {
   const f = fixture(t),
     removable = f.image("remove"),

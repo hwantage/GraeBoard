@@ -96,6 +96,7 @@ export class DataSession {
     this.cache = new Map();
     this.lists = new Map();
     this.changes = new Map();
+    this.eventKinds = new Set();
   }
   async get(entity, key) {
     const id = entityId(entity, key);
@@ -331,6 +332,7 @@ export class DataSession {
     );
   }
   async event(kind, payload) {
+    this.eventKinds.add(kind);
     await this.tx.query(
       "INSERT INTO site_events(team_id,kind,payload,created_at) VALUES($1,$2,$3,$4)",
       [this.teamId, kind, canonical(payload), new Date().toISOString()],
@@ -350,101 +352,111 @@ export async function withData(
     limits = capacityLimits(),
   } = {},
 ) {
-  return database.withTeamTransaction(teamId, async (tx) => {
-    {
-      const job = await tx.query(
-        "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled') LIMIT 1",
-        [teamId],
-      );
-      assert(
-        !job.rows.length,
-        409,
-        "팀 자료 정리 중입니다. 입력을 보존한 뒤 다시 저장하세요.",
-      );
-    }
-    if (write && body?.year !== undefined)
-      assert(
-        !(
-          await tx.query(
-            "SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$2",
-            [teamId, canonical([String(body.year)])],
-          )
-        ).rows.length,
-        409,
-        "이 사이트에서 제외된 연도입니다. 먼저 복원하세요.",
-      );
-    const operationId = body?.operationId;
-    if (write && operationId) {
-      const previous = (
-        await tx.query(
-          "SELECT * FROM site_operations WHERE team_id=$1 AND op_id=$2",
-          [teamId, operationId],
-        )
-      ).rows[0];
-      if (previous) {
+  return database.withTeamTransaction(
+    teamId,
+    async (tx) => {
+      {
+        const job = await tx.query(
+          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled') LIMIT 1",
+          [teamId],
+        );
         assert(
-          previous.actor_id === actorId &&
-            previous.request_hash === digest(body),
+          !job.rows.length,
           409,
-          "같은 요청 ID에 다른 내용을 저장할 수 없습니다.",
+          "팀 자료 정리 중입니다. 입력을 보존한 뒤 다시 저장하세요.",
         );
-        return JSON.parse(previous.response);
       }
-    }
-    const session = new DataSession(tx, teamId, { limits }),
-      result = await work(session);
-    if (write) {
-      if (validateImages)
-        await validateImages(
-          [...session.changes.values()]
-            .filter((c) => !c.after.deleted)
-            .map((c) => c.after.payload),
+      if (write && body?.year !== undefined)
+        assert(
+          !(
+            await tx.query(
+              "SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$2",
+              [teamId, canonical([String(body.year)])],
+            )
+          ).rows.length,
+          409,
+          "이 사이트에서 제외된 연도입니다. 먼저 복원하세요.",
         );
-      await session.capture(actorId);
-      if (session.changes.size) {
-        await tx.query(
-          "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
-          [
-            crypto.randomUUID(),
-            teamId,
-            actorId,
-            action,
-            action === "format"
-              ? body.operationId
-              : [...session.changes.keys()][0],
-            canonical(
-              [...session.changes.values()].map((c) => ({
+      const operationId = body?.operationId;
+      if (write && operationId) {
+        const previous = (
+          await tx.query(
+            "SELECT * FROM site_operations WHERE team_id=$1 AND op_id=$2",
+            [teamId, operationId],
+          )
+        ).rows[0];
+        if (previous) {
+          assert(
+            previous.actor_id === actorId &&
+              previous.request_hash === digest(body),
+            409,
+            "같은 요청 ID에 다른 내용을 저장할 수 없습니다.",
+          );
+          return JSON.parse(previous.response);
+        }
+      }
+      const session = new DataSession(tx, teamId, { limits }),
+        result = await work(session);
+      if (write) {
+        if (validateImages)
+          await validateImages(
+            [...session.changes.values()]
+              .filter((c) => !c.after.deleted)
+              .map((c) => c.after.payload),
+          );
+        await session.capture(actorId);
+        if (session.changes.size) {
+          await tx.query(
+            "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+            [
+              crypto.randomUUID(),
+              teamId,
+              actorId,
+              action,
+              action === "format"
+                ? body.operationId
+                : [...session.changes.keys()][0],
+              canonical(
+                [...session.changes.values()].map((c) => ({
+                  entity: c.entity,
+                  key: c.key,
+                  before: c.before?.payload ?? null,
+                  after: c.after?.payload ?? null,
+                })),
+              ),
+              new Date().toISOString(),
+            ],
+          );
+          // A complete cell delta already carries revisions and task timestamps.
+          // Adding a structural event here would reset every cell subscriber.
+          if (!(
+            session.eventKinds.has("cells") &&
+            [...session.changes.values()].every((c) => c.entity === "cell")
+          ))
+            await session.event("changed", {
+              teamId,
+              entities: [...session.changes.values()].map((c) => ({
                 entity: c.entity,
                 key: c.key,
-                before: c.before?.payload ?? null,
-                after: c.after?.payload ?? null,
               })),
-            ),
-            new Date().toISOString(),
-          ],
-        );
-        await session.event("changed", {
-          teamId,
-          entities: [...session.changes.values()].map((c) => ({
-            entity: c.entity,
-            key: c.key,
-          })),
-          actorId,
-        });
+              actorId,
+            });
+        }
+        if (operationId)
+          await tx.query(
+            "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at) VALUES($1,$2,$3,$4,$5,$6)",
+            [
+              teamId,
+              operationId,
+              actorId,
+              digest(body),
+              canonical(result),
+              new Date().toISOString(),
+            ],
+          );
       }
-      if (operationId)
-        await tx.query(
-          "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at) VALUES($1,$2,$3,$4,$5,$6)",
-          [
-            teamId,
-            operationId,
-            actorId,
-            digest(body),
-            canonical(result),
-            new Date().toISOString(),
-          ],
-        );
-    }
-    return result;
-  });
+      return result;
+    },
+    { readOnly: !write },
+  );
 }

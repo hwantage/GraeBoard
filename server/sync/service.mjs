@@ -1,11 +1,17 @@
+import { combineFileEntries } from "./file-entries.mjs";
+import { loadCheckpoint, snapshotCounts } from "./checkpoint.mjs";
+import { ProtocolError, protocolValidation } from "./errors.mjs";
 import { encodeSnapshot, decodeSnapshot } from "./snapshot.mjs";
 import { randomUUID } from "node:crypto";
 import { canonical, digest, stateHash } from "./protocol.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 const decode = (bytes, limit = 128 * 1024 * 1024) => {
   if (!bytes || bytes.byteLength > limit)
-    throw new Error("Synchronization JSON exceeds byte budget");
-  return JSON.parse(new TextDecoder().decode(bytes));
+    throw new ProtocolError(
+      "SYNC_FORMAT",
+      "Synchronization JSON exceeds byte budget",
+    );
+  return protocolValidation(() => JSON.parse(new TextDecoder().decode(bytes)));
 };
 const snapshotPath = (path) =>
   /^snapshots\/[a-zA-Z0-9-]+\.json(?:\.gz)?$/.test(path || "");
@@ -66,7 +72,10 @@ export class SyncService {
       commit.parents.length !== (parent ? 1 : 0) ||
       (parent && commit.parents[0] !== parent)
     )
-      throw new Error("Non-linear synchronization history");
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Non-linear synchronization history",
+      );
     if (
       commit.files.some(
         (f) =>
@@ -75,10 +84,13 @@ export class SyncService {
           !allowedPath(f.path),
       )
     )
-      throw new Error("Unsupported repository file");
+      throw new ProtocolError("SYNC_FORMAT", "Unsupported repository file");
     return commit;
   }
   async readChain(head, after) {
+    if (head === after) return [];
+    if (this.transport.readRange)
+      return this.transport.readRange(head, after, this.maxCommits);
     const chain = [];
     let oid = head;
     while (oid && oid !== after) {
@@ -88,12 +100,18 @@ export class SyncService {
         );
       const c = await this.transport.readCommit(oid);
       if (c.parents.length > 1)
-        throw new Error("Merge commit is not permitted");
+        throw new ProtocolError(
+          "SYNC_HISTORY",
+          "Merge commit is not permitted",
+        );
       chain.push(c);
       oid = c.parents[0] || null;
     }
     if (after && oid !== after)
-      throw new Error("Remote history rewritten; recovery required");
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Remote history rewritten; recovery required",
+      );
     return chain.reverse();
   }
   async verifyFiles(commit, parent) {
@@ -103,20 +121,38 @@ export class SyncService {
     const old = new Map(previous.files.map((f) => [f.path, f.oid]));
     for (const f of commit.files) {
       if (old.has(f.path) && old.get(f.path) !== f.oid)
-        throw new Error("Immutable repository file changed");
+        throw new ProtocolError(
+          "SYNC_INTEGRITY",
+          "Immutable repository file changed",
+        );
       old.delete(f.path);
     }
-    if (old.size) throw new Error("Immutable repository file removed");
+    if (old.size)
+      throw new ProtocolError(
+        "SYNC_INTEGRITY",
+        "Immutable repository file removed",
+      );
     const paths = new Set(previous.files.map((f) => f.path));
     return commit.files.filter((f) => !paths.has(f.path));
   }
-  async receive(link) {
-    const head = await this.transport.readHead();
+  async receive(link, observedHead, useCheckpoint = false) {
+    const head =
+      observedHead === undefined
+        ? await this.transport.readHead()
+        : observedHead;
     if (!head) {
       if (link.canonical_head)
-        throw new Error("Synchronization branch was deleted");
+        throw new ProtocolError(
+          "SYNC_HISTORY",
+          "Synchronization branch was deleted",
+        );
       return link;
     }
+    if (
+      (link.mode === "importing" && !link.canonical_head) ||
+      (useCheckpoint && ["importing", "recovery"].includes(link.mode))
+    )
+      link = await loadCheckpoint(this, link, head);
     const chain = await this.readChain(head, link.canonical_head);
     let state = await this.store.readState();
     for (const commit of chain.slice(0, this.maxCommits)) {
@@ -124,13 +160,15 @@ export class SyncService {
       const parent = link.canonical_head || null;
       await this.checkCommit(commit.oid, parent);
       const added = await this.verifyFiles(commit, parent);
+      const verifiedImages = new Map();
+      let imageBytes = 0;
       for (const file of added) {
         if (!/^(objects|images)\//.test(file.path)) continue;
         if (
           file.path.startsWith("images/") &&
           !file.path.startsWith("images/" + this.identity.teamId + "/")
         )
-          throw new Error("Foreign image object");
+          throw new ProtocolError("SYNC_FORMAT", "Foreign image object");
         const bytes = await this.transport.readFile(commit.oid, file.path),
           expected = file.path
             .split("/")
@@ -141,7 +179,17 @@ export class SyncService {
             (file.path.startsWith("images/") ? 10 : 64) * 1024 * 1024 ||
           digest(bytes) !== expected
         )
-          throw new Error("Repository object content hash or size mismatch");
+          throw new ProtocolError(
+            "SYNC_INTEGRITY",
+            "Repository object content hash or size mismatch",
+          );
+        if (
+          file.path.startsWith("images/") &&
+          imageBytes + bytes.byteLength <= 8 * 1024 * 1024
+        ) {
+          verifiedImages.set(file.path, bytes);
+          imageBytes += bytes.byteLength;
+        }
       }
       const manifest = decode(
         await this.transport.readFile(commit.oid, "manifest.json"),
@@ -155,69 +203,117 @@ export class SyncService {
         manifest.bootstrapId !== link.bootstrap_id ||
         !snapshotPath(manifest.genesis)
       )
-        throw new Error("Repository identity mismatch");
+        throw new ProtocolError(
+          "SYNC_IDENTITY",
+          "Repository identity mismatch",
+        );
       let operations = [];
       if (!parent) {
         if (
           !manifest.genesis ||
           added.some((f) => f.path.startsWith("events/"))
         )
-          throw new Error("Invalid genesis");
+          throw new ProtocolError("SYNC_FORMAT", "Invalid genesis");
         const bytes = await this.transport.readFile(
           commit.oid,
           manifest.genesis,
         );
         if (digest(bytes) !== manifest.genesisHash)
-          throw new Error("Genesis checksum mismatch");
-        const bundle = this.snapshotDecoder(bytes);
-        state = validateSnapshot(bundle.state, this.identity);
+          throw new ProtocolError(
+            "SYNC_INTEGRITY",
+            "Genesis checksum mismatch",
+          );
+        const bundle = protocolValidation(() => this.snapshotDecoder(bytes));
+        state = protocolValidation(() =>
+          validateSnapshot(bundle.state, this.identity),
+        );
         if (stateHash(state) !== bundle.hash)
-          throw new Error("Genesis state checksum mismatch");
+          throw new ProtocolError(
+            "SYNC_INTEGRITY",
+            "Genesis state checksum mismatch",
+          );
         operations = Object.keys(state.receipts);
       } else {
         const events = added.filter((f) => f.path.startsWith("events/"));
-        if (events.length !== 1) throw new Error("Expected one event envelope");
+        if (events.length !== 1)
+          throw new ProtocolError("SYNC_FORMAT", "Expected one event envelope");
         const envelope = decode(
           await this.transport.readFile(commit.oid, events[0].path),
           64 * 1024 * 1024,
         );
         if (envelope.parent !== parent || envelope.protocol !== 1)
-          throw new Error("Invalid event parent");
+          throw new ProtocolError("SYNC_FORMAT", "Invalid event parent");
         if (envelope.kind === "checkpoint") {
           if (
             !snapshotPath(envelope.path) ||
             envelope.atCommit !== parent ||
             envelope.resultHash !== stateHash(state)
           )
-            throw new Error("Invalid checkpoint");
-          const snap = this.snapshotDecoder(
-            await this.transport.readFile(commit.oid, envelope.path),
+            throw new ProtocolError("SYNC_FORMAT", "Invalid checkpoint");
+          const snapshotBytes = await this.transport.readFile(
+            commit.oid,
+            envelope.path,
           );
-          validateSnapshot(snap.state, this.identity);
+          const snap = protocolValidation(() =>
+            this.snapshotDecoder(snapshotBytes),
+          );
+          if (
+            envelope.checkpointVersion === 1 &&
+            (envelope.reducer !== 1 ||
+              envelope.teamId !== this.identity.teamId ||
+              envelope.repoId !== this.identity.repoId ||
+              envelope.bootstrapId !== link.bootstrap_id ||
+              envelope.snapshotHash !== digest(snapshotBytes) ||
+              canonical(envelope.counts) !==
+                canonical(snapshotCounts(snap.state)))
+          )
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
+              "Checkpoint manifest checksum or identity mismatch",
+            );
+          protocolValidation(() => validateSnapshot(snap.state, this.identity));
           if (
             snap.atCommit !== parent ||
             stateHash(snap.state) !== envelope.resultHash
           )
-            throw new Error("Invalid checkpoint snapshot");
+            throw new ProtocolError(
+              "SYNC_FORMAT",
+              "Invalid checkpoint snapshot",
+            );
         } else if (envelope.kind === "operations") {
           if (
             !Array.isArray(envelope.operations) ||
             !envelope.operations.length ||
             envelope.operations.length > this.maxOperations
           )
-            throw new Error("Operation envelope exceeds count budget");
-          state = reduceMany(state, envelope.operations, this.identity);
+            throw new ProtocolError(
+              "SYNC_FORMAT",
+              "Operation envelope exceeds count budget",
+            );
+          state = protocolValidation(() =>
+            reduceMany(state, envelope.operations, this.identity),
+          );
           operations = envelope.operations.map((op) => op.opId);
           if (stateHash(state) !== envelope.resultHash)
-            throw new Error("Reducer result checksum mismatch");
-        } else throw new Error("Unsupported event kind");
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
+              "Reducer result checksum mismatch",
+            );
+        } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
-      await this.images?.receive?.(state, commit.oid, this.transport);
+      await this.images?.receive?.(state, commit.oid, this.transport, {
+        added,
+        verifiedImages,
+      });
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
       });
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
+    }
+    if (link.mode === "importing" && link.canonical_head === head) {
+      await this.store.finishImport?.(head);
+      link = await this.store.readLink();
     }
     return link;
   }
@@ -225,6 +321,12 @@ export class SyncService {
     const head = await this.transport.readHead();
     if (head) return this.receive(link);
     const bundle = await this.store.bootstrap();
+    protocolValidation(() => validateSnapshot(bundle.state, this.identity));
+    if (stateHash(bundle.state) !== bundle.hash)
+      throw new ProtocolError(
+        "SYNC_INTEGRITY",
+        "Bootstrap state checksum mismatch",
+      );
     const bytes = encodeSnapshot(bundle);
     const manifest = {
       protocol: 1,
@@ -234,29 +336,40 @@ export class SyncService {
       genesis: "snapshots/genesis.json.gz",
       genesisHash: digest(bytes),
     };
-    const files = {
-      "manifest.json": canonical(manifest),
-      "snapshots/genesis.json.gz": bytes,
-      ...((await this.images?.publish?.(bundle.state)) || {}),
-    };
+    const files = combineFileEntries(
+      {
+        "manifest.json": canonical(manifest),
+        "snapshots/genesis.json.gz": bytes,
+      },
+      this.images?.publish?.(bundle.state, {
+        parent: null,
+        transport: this.transport,
+      }),
+    );
     const oid = await this.transport.createCandidate(null, files);
     await this.store.saveBootstrap?.({ oid, bundleHash: digest(bytes) });
     await this.transport.publish(oid, null);
     return this.receive(link);
   }
-  async cycle({ initialize = false, receiveOnly = false } = {}) {
+  async cycle({
+    initialize = false,
+    receiveOnly = false,
+    updateStatus = true,
+    observedHead,
+    loadCheckpoint: useCheckpoint = false,
+  } = {}) {
     const owner = randomUUID();
     if (!(await this.store.acquire(owner))) return { busy: true };
     try {
       let link = await this.store.readLink();
       if (!link) return { mode: "unlinked" };
       if (["disconnected", "paused"].includes(link.mode)) {
-        await this.status(link);
+        if (updateStatus) await this.status(link);
         return { mode: link.mode };
       }
       if (initialize && link.mode === "initializing")
         link = await this.initialize(link);
-      else link = await this.receive(link);
+      else link = await this.receive(link, observedHead, useCheckpoint);
       if (!receiveOnly && link.mode !== "recovery")
         for (let attempt = 0; attempt < 4; attempt++) {
           const pending = operationBatch(
@@ -278,10 +391,15 @@ export class SyncService {
             operations: pending,
             resultHash: stateHash(state),
           };
-          const files = {
-            ["events/" + randomUUID() + ".json"]: canonical(event),
-            ...((await this.images?.publish?.(state)) || {}),
-          };
+          const files = combineFileEntries(
+            {
+              ["events/" + randomUUID() + ".json"]: canonical(event),
+            },
+            this.images?.publish?.(state, {
+              parent,
+              transport: this.transport,
+            }),
+          );
           const oid = await this.transport.createCandidate(parent, files);
           try {
             await this.transport.publish(oid, parent);
@@ -292,11 +410,11 @@ export class SyncService {
           link = await this.receive(await this.store.readLink());
           if (link.canonical_head === oid) break;
         }
-      await this.status(link);
+      if (updateStatus) await this.status(link);
       await this.store.setError?.(null);
       return { head: link.canonical_head };
     } catch (error) {
-      await this.store.setError?.(error.message);
+      await this.store.setError?.(error);
       throw error;
     } finally {
       await this.store.release(owner);
@@ -366,8 +484,16 @@ export class SyncService {
       if (link?.mode !== "active" || !link.canonical_head)
         throw new Error("Checkpoint requires an active reconciled connection");
       const state = await this.store.readState();
+      const bytes = encodeSnapshot({ atCommit: link.canonical_head, state });
       const envelope = {
         protocol: 1,
+        reducer: 1,
+        checkpointVersion: 1,
+        teamId: this.identity.teamId,
+        repoId: this.identity.repoId,
+        bootstrapId: link.bootstrap_id,
+        snapshotHash: digest(bytes),
+        counts: snapshotCounts(state),
         kind: "checkpoint",
         parent: link.canonical_head,
         atCommit: link.canonical_head,
@@ -375,7 +501,7 @@ export class SyncService {
         resultHash: stateHash(state),
       };
       const oid = await this.transport.createCandidate(link.canonical_head, {
-        [path]: encodeSnapshot({ atCommit: link.canonical_head, state }),
+        [path]: bytes,
         ["events/" + randomUUID() + ".json"]: canonical(envelope),
       });
       await this.transport.publish(oid, link.canonical_head);

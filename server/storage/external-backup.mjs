@@ -17,6 +17,7 @@ import {
 import { canonical, digest, entityId } from "../sync/protocol.mjs";
 import { imageReferences, activeImageReferences } from "../sync/retention.mjs";
 import { project } from "../sync/reducer.mjs";
+import { unfinishedJobError } from "./backup-recovery.mjs";
 
 const CONTROL_TABLES = [
   "control_meta",
@@ -151,15 +152,13 @@ export function stateFrom(bundle) {
 async function guardBackup(adapter, teamId) {
   const id = randomUUID();
   await adapter.withTeamTransaction(teamId, async (tx) => {
-    if (
-      (
-        await tx.query(
-          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
-          [teamId],
-        )
-      ).rows.length
-    )
-      throw new Error("Another maintenance job is active");
+    const unfinished = (
+      await tx.query(
+        "SELECT job_id,team_id,kind FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
+        [teamId],
+      )
+    ).rows[0];
+    if (unfinished) throw unfinishedJobError(unfinished);
     await tx.query(
       "INSERT INTO site_maintenance_jobs(job_id,team_id,kind,phase,manifest,progress,created_at) VALUES($1,$2,'backup','running','{}','{}',$3)",
       [id, teamId, new Date().toISOString()],

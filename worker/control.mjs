@@ -234,7 +234,9 @@ export class RequestContext {
         )
       : [];
     const database = databaseFor(this.env, profile);
-    await assertDatabaseCapacity(database, teamId, capacityLimits(this.env));
+    if (options.write)
+      await assertDatabaseCapacity(database, teamId, capacityLimits(this.env));
+    let businessChanged = false;
     const result = await withData(
       database,
       teamId,
@@ -246,7 +248,9 @@ export class RequestContext {
           ])
             if (!(await s.get("person", [person.id])))
               await s.put("person", [person.id], { name: person.name });
-        return work(s);
+        const value = await work(s);
+        businessChanged = s.changes.size > 0;
+        return value;
       },
       {
         ...options,
@@ -258,7 +262,7 @@ export class RequestContext {
           ),
       },
     );
-    if (options.write) this.changedTeams.add(teamId);
+    if (businessChanged) this.changedTeams.add(teamId);
     return result;
   }
   async locate(entity, id, { write = false } = {}) {
@@ -304,8 +308,11 @@ export class RequestContext {
                 avatarInitials: "",
                 avatarImage: "",
               });
-            for (const task of await s.list("task"))
-              for (const year of task.payload.years || []) years.add(year);
+            const result = await s.tx.query(
+              "SELECT DISTINCT y.value::integer AS year FROM site_entities s CROSS JOIN LATERAL jsonb_array_elements_text(s.payload::jsonb->'years') y(value) WHERE s.team_id=$1 AND s.entity='task' AND s.deleted=0",
+              [row.id],
+            );
+            for (const item of result.rows) years.add(item.year);
           });
         } catch {
           connectionError = "팀 업무 DB 연결을 확인하세요.";

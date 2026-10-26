@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:postgres": "node scripts/test-postgres.mjs",
     "test:e2e": "playwright test",
     "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
     "admin": "node --env-file-if-exists=.env scripts/admin.mjs",

@@ -33,11 +33,12 @@ export function serviceFor(env, profile, link, options = {}) {
   const limits = capacityLimits(env),
     database = databaseFor(env, profile),
     transport = boundedTransport(
-      new GitHubApiTransport({
-        repository: profile.repository,
-        token: env[profile.githubSecret],
-        maxBlobBytes: 10 * 1024 * 1024,
-      }),
+      options.transport ||
+        new GitHubApiTransport({
+          repository: profile.repository,
+          token: env[profile.githubSecret],
+          maxBlobBytes: 10 * 1024 * 1024,
+        }),
       limits,
     ),
     images = new R2ImageStore(env[profile.bucketBinding], profile.teamId),
@@ -54,9 +55,9 @@ export function serviceFor(env, profile, link, options = {}) {
         : {}),
     },
     images: {
-      publish: (state) => {
+      publish: (state, context) => {
         assertStateCapacity(state, limits);
-        return adapter.publish(state);
+        return adapter.publish(state, context);
       },
       receive: (state, ...args) => {
         assertStateCapacity(state, limits);
@@ -71,10 +72,76 @@ export function serviceFor(env, profile, link, options = {}) {
     checkpoint: () => exclusiveSync(() => service.checkpoint()),
   };
 }
-export async function runTeam(env, profile, { receiveOnly = false } = {}) {
+// A persisted per-team deadline coalesces browser focus, polling and pre-edit
+// refreshes across isolates. It is advanced before network I/O, including errors.
+// Foreground checks never read/publish status branches or load C for an equal head.
+export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
+  const database = databaseFor(env, profile);
+  const snapshot = await database.withTeamTransaction(
+    profile.teamId,
+    async (tx) => ({
+      link: await tx.sync.readLink(),
+      refresh: (
+        await tx.query(
+          "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
+          [profile.teamId],
+        )
+      ).rows[0],
+    }),
+    { readOnly: true },
+  );
+  const eligible = (link) =>
+    link?.mode === "active" &&
+    link.installation_id === env.INSTALLATION_ID &&
+    (!link.lease_owner || Number(link.lease_until) < now);
+  if (!eligible(snapshot.link))
+    return { mode: snapshot.link?.mode || "unlinked" };
+  if (Number(JSON.parse(snapshot.refresh?.payload || "{}").nextAt || 0) > now)
+    return { throttled: true };
+  const link = await database.withTeamTransaction(
+    profile.teamId,
+    async (tx) => {
+      const current = await tx.sync.readLink();
+      if (!eligible(current)) return null;
+      const row = (
+        await tx.query(
+          "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
+          [profile.teamId],
+        )
+      ).rows[0];
+      if (Number(JSON.parse(row?.payload || "{}").nextAt || 0) > now)
+        return null;
+      await tx.query(
+        "INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'syncRefresh','[]',$2,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
+        [profile.teamId, canonical({ nextAt: now + 30000 })],
+      );
+      return current;
+    },
+  );
+  if (!link) return { throttled: true };
+  const transport = new GitHubApiTransport({
+    repository: profile.repository,
+    token: env[profile.githubSecret],
+    maxBlobBytes: 10 * 1024 * 1024,
+  });
+  const head = await transport.readHead();
+  if (head === link.canonical_head) return { changed: false, head };
+  return serviceFor(env, profile, link, { transport }).run({
+    receiveOnly: true,
+    updateStatus: false,
+    observedHead: head,
+  });
+}
+export async function runTeam(
+  env,
+  profile,
+  { receiveOnly = false, updateStatus = true } = {},
+) {
   const db = databaseFor(env, profile),
     link = await db.readLink(profile.teamId);
   if (!link) return { mode: "unlinked" };
+  if (!updateStatus && !["active", "importing"].includes(link.mode))
+    return { mode: link.mode };
   if (!env.INSTALLATION_ID || link.installation_id !== env.INSTALLATION_ID) {
     await db.withTeamTransaction(profile.teamId, (tx) =>
       tx.query(
@@ -84,7 +151,10 @@ export async function runTeam(env, profile, { receiveOnly = false } = {}) {
     );
     return { mode: "recovery" };
   }
-  const result = await serviceFor(env, profile, link).run({ receiveOnly });
+  const result = await serviceFor(env, profile, link).run({
+    receiveOnly,
+    updateStatus,
+  });
   const latest = await db.readLink(profile.teamId);
   if (latest.mode === "active") {
     const transport = new GitHubApiTransport({

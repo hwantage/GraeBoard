@@ -1,3 +1,4 @@
+import { isRecoveryError, normalizeSyncError } from "../server/sync/errors.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import {
@@ -67,28 +68,35 @@ export function boundStore(
             409,
             "동기화 실행 소유권이 바뀌었습니다.",
           );
+          assertStateCapacity(state, limits, projection.pending);
           await materialize(tx, teamId, projection);
-          if (link.mode === "importing")
-            await tx.query(
-              "UPDATE team_sync_links SET mode='active' WHERE team_id=$1",
-              [teamId],
-            );
         },
         options,
       );
     },
+    finishImport: (head) =>
+      call(async (tx) => {
+        const link = await tx.sync.readLink();
+        assert(
+          link?.lease_owner === owner && link.canonical_head === head,
+          409,
+          "가져오기 실행 또는 기준 커서가 바뀌었습니다.",
+        );
+        if (link.mode === "importing")
+          await tx.query(
+            "UPDATE team_sync_links SET mode='active' WHERE team_id=$1",
+            [teamId],
+          );
+      }),
     setError: (error) =>
       call((tx) =>
         tx.query(
           "UPDATE team_sync_links SET last_error=$2,updated_at=$3,mode=CASE WHEN $4 THEN 'recovery' ELSE mode END WHERE team_id=$1",
           [
             teamId,
-            error,
+            normalizeSyncError(error)?.message || null,
             new Date().toISOString(),
-            !!error &&
-              /rewrit|immutable|identity|different|foreign|mismatch|merge commit|unsupported|invalid snapshot|genesis|snapshot hash|state hash|operation payload/i.test(
-                error,
-              ),
+            isRecoveryError(error),
           ],
         ),
       ),

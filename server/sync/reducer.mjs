@@ -64,11 +64,15 @@ export function mergeMarkdown(base, current, desired) {
   return text + base.slice(offset);
 }
 export function validateSnapshot(state, identity) {
+  const plain = (value) =>
+    value && Object.getPrototypeOf(value) === Object.prototype;
+  const token = (value) =>
+    typeof value === "string" && value.length > 0 && value.length <= 512;
   if (
-    !state ||
-    !state.entities ||
-    !state.receipts ||
-    !state.conflicts ||
+    !plain(state) ||
+    !plain(state.entities) ||
+    !plain(state.receipts) ||
+    !plain(state.conflicts) ||
     Object.keys(state).some(
       (key) => !["entities", "receipts", "conflicts"].includes(key),
     )
@@ -77,8 +81,8 @@ export function validateSnapshot(state, identity) {
   for (const [key, record] of Object.entries(state.entities)) {
     if (
       key !== entityId(record.entity, record.key) ||
-      typeof record.generation !== "string" ||
-      typeof record.version !== "string" ||
+      !token(record.generation) ||
+      !token(record.version) ||
       typeof record.deleted !== "boolean"
     )
       throw new Error("Invalid canonical record");
@@ -91,8 +95,34 @@ export function validateSnapshot(state, identity) {
   }
   for (const [id, conflict] of Object.entries(state.conflicts)) {
     validateOperation(conflict.operation, identity);
-    if (id !== conflict.operation.opId)
+    if (
+      id !== conflict.operation.opId ||
+      conflict.conflictId !== id ||
+      conflict.opId !== id ||
+      !plain(conflict.current) ||
+      typeof conflict.reason !== "string" ||
+      (conflict.resolution !== null && !token(conflict.resolution))
+    )
       throw new Error("Invalid conflict identity");
+    for (const [key, record] of Object.entries(conflict.current)) {
+      if (record === null) continue;
+      if (
+        !plain(record) ||
+        key !== entityId(record.entity, record.key) ||
+        !token(record.generation) ||
+        !token(record.version) ||
+        typeof record.deleted !== "boolean"
+      )
+        throw new Error("Invalid conflict base record");
+      validateEntityPayload(
+        record.entity,
+        record.key,
+        record.payload,
+        identity.teamId,
+      );
+    }
+    if (conflict.resolution && !state.receipts[conflict.resolution])
+      throw new Error("Missing conflict resolution receipt");
   }
   for (const [id, receipt] of Object.entries(state.receipts))
     if (
@@ -100,7 +130,14 @@ export function validateSnapshot(state, identity) {
       !["applied", "noop", "conflict", "dependency-blocked"].includes(
         receipt.result,
       ) ||
-      !/^[a-f0-9]{64}$/.test(receipt.payloadHash)
+      !/^[a-f0-9]{64}$/.test(receipt.payloadHash) ||
+      !plain(receipt.outputTokens) ||
+      !Object.values(receipt.outputTokens).every(token) ||
+      (["conflict", "dependency-blocked"].includes(receipt.result)
+        ? receipt.conflictId !== id ||
+          !state.conflicts[id] ||
+          digest(state.conflicts[id].operation) !== receipt.payloadHash
+        : receipt.conflictId !== null)
     )
       throw new Error("Invalid receipt");
   const reason = validateState(state.entities);

@@ -15,8 +15,13 @@ import { Pool } from "pg";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { materialize, boundStore } from "../worker/sync.mjs";
-import { emptyState, entityId, digest } from "../server/sync/protocol.mjs";
+import { materialize, boundStore, refreshTeam } from "../worker/sync.mjs";
+import {
+  emptyState,
+  entityId,
+  digest,
+  canonical,
+} from "../server/sync/protocol.mjs";
 import {
   normalizeSettings,
   DEFAULT_SETTINGS,
@@ -24,6 +29,12 @@ import {
 } from "../shared/domain.js";
 import { THEME_IDS } from "../shared/themes.js";
 import { unpack } from "../shared/compact.js";
+import { ProtocolError } from "../server/sync/errors.mjs";
+import {
+  databaseCapacity,
+  assertStateCapacity,
+  assertDatabaseCapacity,
+} from "../worker/capacity.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 test(
   "Worker real PostgreSQL API: setup, invitation, all shared domains, atomic retries, tenant isolation and events",
@@ -34,6 +45,17 @@ test(
       socket = join(directory, "socket");
     mkdirSync(socket);
     let started = false;
+    const nativeFetch = globalThis.fetch,
+      unexpectedNetwork = [];
+    let networkHandler;
+    globalThis.fetch = async (input, init) => {
+      if (networkHandler) {
+        try { return await networkHandler(input, init); }
+        catch (error) { unexpectedNetwork.push(String(input)); throw error; }
+      }
+      unexpectedNetwork.push(String(input));
+      throw new Error("Unexpected network in Worker API fixture: " + input);
+    };
     const command = (bin, args) => {
       const r = spawnSync(join(pgBin, bin), args, { encoding: "utf8" });
       assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -65,7 +87,7 @@ test(
       started = true;
       const root = new Pool({ connectionString: dbname("postgres") });
       pools.push(root);
-      for (const db of ["control", "team", "replacement"])
+      for (const db of ["control", "team", "replacement", "capacity"])
         await root.query("CREATE DATABASE " + db);
       const control = new Pool({ connectionString: dbname("control") }),
         team = new Pool({ connectionString: dbname("team") });
@@ -510,13 +532,67 @@ test(
         await request("/tasks?teamId=" + teamId + "&year=2026")
       ).body;
       assert.equal(latestTasks.cellEventId.startsWith("pg:"), true);
+      // A cell save produces its delta without a structural reset (M2), including
+      // replay from the exact snapshot cursor consumed by the real broker.
+      const delta = await request("/cells/batch", {
+        operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        changes: [
+          {
+            taskId: task.id,
+            key: "2026-10-26",
+            expectedVersion: 0,
+            value: "SSE delta",
+          },
+        ],
+      });
+      assert.equal(delta.status, 200);
+      const events = await worker.fetch(
+        new Request(env.APP_ORIGIN + "/api/events", {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "WeeklyPlan",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            streams: [
+              {
+                id: 3,
+                path: `/api/cells/events?teamId=${teamId}`,
+                lastEventId: latestTasks.cellEventId,
+              },
+              {
+                id: 7,
+                path: `/api/tasks/${task.id}/documents/${randomUUID()}/events`,
+              },
+            ],
+          }),
+        }),
+        env,
+        { waitUntil: (p) => work.push(p) },
+      );
+      const eventReader = events.body.getReader();
+      let eventText = "";
+      while (!eventText.includes("event: closed")) {
+        const next = await eventReader.read();
+        assert.equal(next.done, false);
+        eventText += new TextDecoder().decode(next.value);
+      }
+      await eventReader.cancel();
+      assert.match(eventText, /"event":"cells"/);
+      assert.doesNotMatch(eventText, /"event":"reset"/);
+      assert.match(eventText, /event: closed\ndata: \{"id":7\}/);
+      assert.doesNotMatch(eventText, /"event":"closed"/);
+      const formattingTasks = (
+        await request("/tasks?teamId=" + teamId + "&year=2026")
+      ).body;
       const formatting = await request("/cells/batch", {
         operationId: randomUUID(),
         createdAt: new Date().toISOString(),
         format: {
           teamId,
           expectedRevision: 0,
-          expectedTasks: { [task.id]: latestTasks.tasks[0].updatedAt },
+          expectedTasks: { [task.id]: formattingTasks.tasks[0].updatedAt },
           scopes: [{ rows: [task.id], keys: ["title"], style: { bold: true } }],
         },
       });
@@ -550,7 +626,10 @@ test(
         ),
         true,
       );
-      const cellHistory = history.entries.find((e) => e.action === "cells"),
+      const cellHistory = history.entries.find(
+          (e) =>
+            e.action === "cells" && e.before.some((c) => c.key === "title"),
+        ),
         currentTask = (await request("/tasks?teamId=" + teamId + "&year=2026"))
           .body.tasks[0];
       assert.equal(
@@ -743,6 +822,244 @@ test(
         409,
       );
       await Promise.allSettled(work);
+      // The PostgreSQL aggregate and in-memory capacity metric are byte-identical.
+      await guardedStore.setError(
+        new Error("temporary foreign key constraint identity mismatch"),
+      );
+      assert.equal(
+        (await adapter.readLink(teamId)).mode,
+        "paused",
+        "transient error words never quarantine a team",
+      );
+      await guardedStore.setError(
+        new ProtocolError("SYNC_HISTORY", "remote rewrite"),
+      );
+      assert.equal((await adapter.readLink(teamId)).mode, "recovery");
+      await team.query(
+        "UPDATE graeboard.team_sync_links SET mode='paused' WHERE team_id=$1",
+        [teamId],
+      );
+      await guardedStore.setError(null);
+      const capacityState = await adapter.readState(teamId),
+        capacityPending = await adapter.readPending(teamId);
+      const exactCapacity = assertStateCapacity(
+        capacityState,
+        undefined,
+        capacityPending,
+      );
+      assert.deepEqual(await databaseCapacity(adapter, teamId), exactCapacity);
+      await assertDatabaseCapacity(adapter, teamId, {
+        maxBytes: exactCapacity.bytes,
+        maxEntities: exactCapacity.entities,
+      });
+      await assert.rejects(
+        assertDatabaseCapacity(adapter, teamId, {
+          maxBytes: exactCapacity.bytes - 1,
+          maxEntities: exactCapacity.entities,
+        }),
+        { code: "EXTERNAL_SYNC_CAPACITY" },
+      );
+      // Reproduce the former near-4MiB mismatch with thousands of actual PG
+      // rows, then read the committed state through the production HTTP route.
+      const capacityPool = new Pool({ connectionString: dbname("capacity") });
+      pools.push(capacityPool);
+      await migratePostgres(capacityPool, {
+        scope: "team",
+        initialize: true,
+        teamId,
+      });
+      const nearLimit = structuredClone(capacityState),
+        generation = randomUUID(),
+        version = randomUUID();
+      const addCapacity = (entity, key, payload) => {
+        nearLimit.entities[entityId(entity, key)] = {
+          entity,
+          key,
+          payload,
+          generation,
+          version,
+          deleted: false,
+        };
+      };
+      addCapacity(
+        "task",
+        [task.id],
+        JSON.parse(
+          (
+            await team.query(
+              "SELECT payload FROM graeboard.site_entities WHERE entity='task' AND entity_key=$1",
+              [JSON.stringify([task.id])],
+            )
+          ).rows[0].payload,
+        ),
+      );
+      for (let i = 0; i < 7000; i++)
+        addCapacity("cell", [task.id, "capacity-" + i], {
+          value: i === 0 ? '한글 \" quote\nline\t\\ slash' : "x".repeat(80),
+          style: {},
+        });
+      const room =
+        4 * 1024 * 1024 - 8192 - assertStateCapacity(nearLimit).bytes;
+      assert.ok(room > 0);
+      addCapacity("document", ["task", task.id, "main"], {
+        title: "Boundary",
+        position: 0,
+        markdown: "x".repeat(room),
+      });
+      const nearDatabase = new PostgresDatabase(capacityPool, { teamId }),
+        nearStore = boundStore(nearDatabase, teamId);
+      await nearDatabase.withTeamTransaction(teamId, (tx) =>
+        tx.sync.writeLink({
+          repo_id: repoId,
+          bootstrap_id: randomUUID(),
+          installation_id: installationId,
+          writer_epoch: randomUUID(),
+          profile_id: "a",
+          mode: "paused",
+          updated_at: new Date().toISOString(),
+        }),
+      );
+      assert.equal(await nearStore.acquire("capacity-commit"), true);
+      await nearStore.commitCanonical(null, "c".repeat(40), nearLimit, []);
+      await nearStore.release("capacity-commit");
+      const nearSize = assertStateCapacity(nearLimit);
+      assert.ok(nearSize.bytes > 3.98 * 1024 * 1024);
+      assert.deepEqual(await databaseCapacity(nearDatabase, teamId), nearSize);
+      await assertDatabaseCapacity(nearDatabase, teamId);
+      const normalBinding = env.PG_TEAM_A;
+      env.PG_TEAM_A = { connectionString: dbname("capacity") };
+      try {
+        assert.equal(
+          (await request("/tasks?teamId=" + teamId + "&year=2026")).status,
+          200,
+        );
+        assert.equal(
+          (await request("/bootstrap")).body.teams[0].connectionError,
+          undefined,
+        );
+      } finally {
+        env.PG_TEAM_A = normalBinding;
+      }
+      env.SYNC_MAX_STATE_BYTES = 1024;
+      assert.equal(
+        (await request("/tasks?teamId=" + teamId + "&year=2026")).status,
+        200,
+        "capacity overflow remains readable",
+      );
+      assert.equal(
+        (await request("/bootstrap")).body.teams[0].connectionError,
+        undefined,
+      );
+      assert.equal((await request(`/teams/${teamId}/sync`)).status, 200);
+      const capacityBefore = (await adapter.readPending(teamId)).map(digest);
+      assert.equal(
+        (
+          await request("/tasks", {
+            teamId,
+            year: 2026,
+            fields: { title: "Over limit" },
+          })
+        ).status,
+        413,
+      );
+      assert.deepEqual(
+        (await adapter.readPending(teamId)).map(digest),
+        capacityBefore,
+      );
+      delete env.SYNC_MAX_STATE_BYTES;
+
+      // Reads do not wait behind the advisory write lock held by a sync apply.
+      const held = await team.connect();
+      await held.query("BEGIN");
+      await held.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        teamId,
+      ]);
+      try {
+        const result = await Promise.race([
+          request("/tasks?teamId=" + teamId + "&year=2026"),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Read blocked on sync write lock")),
+              1500,
+            ),
+          ),
+        ]);
+        assert.equal(result.status, 200);
+      } finally {
+        await held.query("ROLLBACK");
+        held.release();
+      }
+
+      // Repeated UI polling plus pre-edit refreshes share one persistent deadline.
+      let headChecks = 0;
+      networkHandler = async (input, init = {}) => {
+        const url = new URL(typeof input === "string" ? input : input.url);
+        assert.equal(url.origin, "https://api.github.com");
+        assert.equal(
+          url.pathname,
+          "/repos/example/private-data/git/ref/heads/sync-v1",
+        );
+        assert.equal(init.method || "GET", "GET");
+        headChecks++;
+        return Response.json({ object: { sha: "a".repeat(40) } });
+      };
+      await team.query(
+        "UPDATE graeboard.team_sync_links SET mode='active' WHERE team_id=$1",
+        [teamId],
+      );
+      for (let i = 0; i < 8; i++) {
+        assert.equal(
+          (await request("/tasks?teamId=" + teamId + "&year=2026")).status,
+          200,
+        );
+        assert.equal(
+          (await request(`/teams/${teamId}/sync/refresh`, {})).status,
+          200,
+        );
+      }
+      assert.deepEqual((await request("/cells/batch", op)).body, saved.body);
+      await Promise.allSettled(work);
+      assert.equal(
+        headChecks,
+        1,
+        "no status refs, duplicate publish or canonical loads for unchanged foreground head",
+      );
+      await team.query(
+        "UPDATE graeboard.site_entities SET payload='{\"nextAt\":0}' WHERE entity='syncRefresh'",
+      );
+      const installedProfile = JSON.parse(env.SYNC_PROFILES)[0];
+      await Promise.all([
+        refreshTeam(env, installedProfile),
+        refreshTeam(env, installedProfile),
+      ]);
+      assert.equal(
+        headChecks,
+        2,
+        "concurrent isolates claim only one next head check",
+      );
+      await Promise.allSettled(work);
+      networkHandler = undefined;
+      await team.query(
+        "UPDATE graeboard.team_sync_links SET mode='paused',lease_owner='expired',lease_until=1 WHERE team_id=$1",
+        [teamId],
+      );
+      assert.equal(
+        (await request(`/teams/${teamId}/sync/pause`, {})).status,
+        200,
+      );
+      assert.equal((await adapter.readLink(teamId)).lease_owner, null);
+      await team.query(
+        "UPDATE graeboard.team_sync_links SET lease_owner='live',lease_until=$2 WHERE team_id=$1",
+        [teamId, Date.now() + 60000],
+      );
+      assert.equal(
+        (await request(`/teams/${teamId}/sync/disconnect`, {})).status,
+        409,
+      );
+      await team.query(
+        "UPDATE graeboard.team_sync_links SET lease_owner='expired',lease_until=1 WHERE team_id=$1",
+        [teamId],
+      );
       // Resume after every bounded migration chunk, preserving all local pending data.
       const replacement = new Pool({ connectionString: dbname("replacement") });
       pools.push(replacement);
@@ -837,6 +1154,50 @@ test(
           .cells.title.value,
         "Saved outside",
       );
+      const abandonedBackup = randomUUID(),
+        beforeBackup = await destination.readSnapshot(teamId);
+      await destination.withTeamTransaction(teamId, (tx) =>
+        tx.query(
+          "INSERT INTO site_maintenance_jobs(job_id,team_id,kind,phase,manifest,progress,created_at) VALUES($1,$2,'backup','running','{}','{}',$3)",
+          [abandonedBackup, teamId, new Date().toISOString()],
+        ),
+      );
+      assert.equal(
+        (
+          await request(`/admin/teams/${teamId}/maintenance/recover`, {
+            jobId: abandonedBackup,
+          })
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(`/admin/teams/${teamId}/maintenance/recover`, {
+            jobId: abandonedBackup,
+            dryRun: true,
+          })
+        ).body.dryRun,
+        true,
+      );
+      assert.equal(
+        (
+          await request(`/admin/teams/${teamId}/maintenance/recover`, {
+            jobId: abandonedBackup,
+            confirmedDrained: true,
+          })
+        ).body.phase,
+        "cancelled",
+      );
+      const afterBackup = await destination.readSnapshot(teamId);
+      for (const key of [
+        "entities",
+        "pending",
+        "receipts",
+        "conflicts",
+        "exclusions",
+        "connection",
+      ])
+        assert.deepEqual(afterBackup[key], beforeBackup[key]);
       // A persisted old maintenance owner is never cleared by expiry alone.
       const jobId = randomUUID();
       await destination.withTeamTransaction(teamId, (tx) =>
@@ -878,7 +1239,13 @@ test(
         409,
       );
       await Promise.allSettled(work);
+      assert.deepEqual(
+        unexpectedNetwork,
+        [],
+        "no unexpected live HTTP calls, including swallowed background failures",
+      );
     } finally {
+      globalThis.fetch = nativeFetch;
       await Promise.all(pools.map((p) => p.end()));
       if (started)
         spawnSync(

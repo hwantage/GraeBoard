@@ -9,8 +9,9 @@ import {
 } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { randomUUID, createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { randomUUID, createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { unfinishedJobError } from "../server/storage/backup-recovery.mjs";
 import {
   databaseImageUrls,
   documentImagesDirectory,
@@ -38,17 +39,38 @@ export function backupDatabase(
   let guard;
   const jobs = [];
   try {
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='site_maintenance_jobs'").get()) {
+    if (
+      db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='site_maintenance_jobs'",
+        )
+        .get()
+    ) {
       guard = new DatabaseSync(source);
-      guard.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+      guard.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
       try {
-        for (const link of guard.prepare('SELECT team_id FROM team_sync_links').all()) {
+        for (const link of guard
+          .prepare("SELECT team_id FROM team_sync_links")
+          .all()) {
+          const unfinished = guard
+            .prepare(
+              "SELECT job_id,team_id,kind FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
+            )
+            .get(link.team_id);
+          if (unfinished) throw unfinishedJobError(unfinished);
           const jobId = randomUUID();
-          guard.prepare("INSERT INTO site_maintenance_jobs VALUES(?,?,'backup','running','{}','{}',?)").run(jobId, link.team_id, new Date().toISOString());
+          guard
+            .prepare(
+              "INSERT INTO site_maintenance_jobs VALUES(?,?,'backup','running','{}','{}',?)",
+            )
+            .run(jobId, link.team_id, new Date().toISOString());
           jobs.push(jobId);
         }
-        guard.exec('COMMIT');
-      } catch (error) { guard.exec('ROLLBACK'); throw error; }
+        guard.exec("COMMIT");
+      } catch (error) {
+        guard.exec("ROLLBACK");
+        throw error;
+      }
     }
     db.exec("PRAGMA busy_timeout=10000");
     db.prepare("VACUUM INTO ?").run(temporary);
@@ -64,23 +86,51 @@ export function backupDatabase(
       const urls = databaseImageUrls(verify);
       for (const url of urls) {
         let bytes;
-        try { bytes = readDocumentImage(documentImagesDir, url); }
-        catch (error) {
+        try {
+          bytes = readDocumentImage(documentImagesDir, url);
+        } catch (error) {
           // A locally excluded canonical image may live only in the verified
           // Git archive. Read the backup's fixed head, never repopulate live files.
-          const teamId = url.split('/')[3];
-          const link = jobs.length && verify.prepare('SELECT profile_id,canonical_head FROM team_sync_links WHERE team_id=?').get(teamId);
+          const teamId = url.split("/")[3];
+          const link =
+            jobs.length &&
+            verify
+              .prepare(
+                "SELECT profile_id,canonical_head FROM team_sync_links WHERE team_id=?",
+              )
+              .get(teamId);
           if (!link?.canonical_head) throw error;
-          bytes = execFileSync('git', ['-C', resolve(process.env.GRAEBOARD_SYNC_DIR || 'data/sync', link.profile_id), 'show', `${link.canonical_head}:${url.replace('/api/document-images/', 'images/')}`], { maxBuffer: 11 * 1024 * 1024, timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
-          if (createHash('sha256').update(bytes).digest('hex') !== url.split('/').at(-1).replace('.webp', '')) throw new Error('Archived image integrity failure');
+          bytes = execFileSync(
+            "git",
+            [
+              "-C",
+              resolve(
+                process.env.GRAEBOARD_SYNC_DIR || "data/sync",
+                link.profile_id,
+              ),
+              "show",
+              `${link.canonical_head}:${url.replace("/api/document-images/", "images/")}`,
+            ],
+            {
+              maxBuffer: 11 * 1024 * 1024,
+              timeout: 30000,
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          if (
+            createHash("sha256").update(bytes).digest("hex") !==
+            url.split("/").at(-1).replace(".webp", "")
+          )
+            throw new Error("Archived image integrity failure");
         }
-        writeDocumentImage(
-          temporaryImages,
-          url,
-          bytes,
-        );
+        writeDocumentImage(temporaryImages, url, bytes);
       }
-      for (const job of jobs) verify.prepare("UPDATE site_maintenance_jobs SET phase='complete' WHERE job_id=? AND kind='backup'").run(job);
+      for (const job of jobs)
+        verify
+          .prepare(
+            "UPDATE site_maintenance_jobs SET phase='complete' WHERE job_id=? AND kind='backup'",
+          )
+          .run(job);
     } finally {
       verify.close();
     }
@@ -95,7 +145,12 @@ export function backupDatabase(
     throw e;
   } finally {
     if (guard) {
-      for (const job of jobs) guard.prepare("UPDATE site_maintenance_jobs SET phase='complete' WHERE job_id=? AND kind='backup'").run(job);
+      for (const job of jobs)
+        guard
+          .prepare(
+            "UPDATE site_maintenance_jobs SET phase='complete' WHERE job_id=? AND kind='backup'",
+          )
+          .run(job);
       guard.close();
     }
     db.close();

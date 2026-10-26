@@ -1,9 +1,10 @@
+import { recoverBackupJob } from "../server/storage/backup-recovery.mjs";
 import {
   MaintenanceService,
   maintenanceRevision,
 } from "../server/sync/maintenance.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
-import { retentionKey } from "../server/sync/retention.mjs";
+import { imageReferences, retentionKey } from "../server/sync/retention.mjs";
 import { databaseFor } from "./data.mjs";
 import { profileFor } from "./config.mjs";
 import { materialize } from "./sync.mjs";
@@ -30,6 +31,27 @@ export function maintenanceAdapter(db, teamId) {
     ),
   });
   const transaction = (fn) => db.withTeamTransaction(teamId, fn);
+  const snapshotIn = async (tx) => {
+    const recoveryImages = new Set();
+    let after = "";
+    for (;;) {
+      const rows = (
+        await tx.query(
+          "SELECT id,payload FROM site_audit WHERE team_id=$1 AND id>$2 ORDER BY id LIMIT 100",
+          [teamId, after],
+        )
+      ).rows;
+      for (const row of rows)
+        for (const url of imageReferences(row.payload, teamId))
+          recoveryImages.add(url);
+      if (rows.length < 100) break;
+      after = rows.at(-1).id;
+    }
+    return {
+      ...localSnapshot(await tx.sync.readSnapshot()),
+      recoveryImages: [...recoveryImages].sort(),
+    };
+  };
   const read = async (tx, id) =>
     decode(
       (
@@ -51,7 +73,7 @@ export function maintenanceAdapter(db, teamId) {
       ],
     );
   return {
-    snapshot: async () => localSnapshot(await db.readSnapshot(teamId)),
+    snapshot: () => transaction(snapshotIn),
     listJob: () =>
       transaction(async (tx) =>
         decode(
@@ -100,7 +122,7 @@ export function maintenanceAdapter(db, teamId) {
           409,
           "진행 중인 정리 작업이 있습니다.",
         );
-        const snapshot = localSnapshot(await tx.sync.readSnapshot());
+        const snapshot = await snapshotIn(tx);
         assert(
           ["active", "paused"].includes(snapshot.connection?.mode),
           409,
@@ -178,12 +200,14 @@ export function maintenanceAdapter(db, teamId) {
               remove.revision,
             ],
           );
-        const snapshot = localSnapshot(await tx.sync.readSnapshot());
-        await materialize(tx, teamId, {
-          state: snapshot,
-          pending: snapshot.pending,
-          exclusions: snapshot.exclusions,
-        });
+        if (add || remove) {
+          const snapshot = localSnapshot(await tx.sync.readSnapshot());
+          await materialize(tx, teamId, {
+            state: snapshot,
+            pending: snapshot.pending,
+            exclusions: snapshot.exclusions,
+          });
+        }
         current.phase = phase;
         await save(tx, current);
       }),
@@ -303,6 +327,23 @@ export async function maintenanceRoutes(ctx, path, method, body) {
       400,
       "이전 실행의 종료 확인이 필요합니다.",
     );
+    const kind = await db.withTeamTransaction(
+      team.id,
+      async (tx) =>
+        (
+          await tx.query(
+            "SELECT kind FROM site_maintenance_jobs WHERE team_id=$1 AND job_id=$2",
+            [team.id, body.jobId],
+          )
+        ).rows[0]?.kind,
+      { readOnly: true },
+    );
+    if (kind === "backup")
+      return recoverBackupJob(db, team.id, body.jobId, {
+        dryRun: body.dryRun === true,
+        confirmedDrained: body.confirmedDrained === true,
+        actorId: ctx.user.id,
+      });
     return db.withTeamTransaction(team.id, async (tx) => {
       const row = (
           await tx.query(

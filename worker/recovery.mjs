@@ -113,6 +113,7 @@ export async function recoveryRoutes(ctx, path, method, body) {
           expectedHead: link.canonical_head,
           previousMode: link.mode,
           confirmedDrained: true,
+          loadCheckpoint: body.loadCheckpoint === true,
         },
         now = new Date().toISOString();
       await tx.query(
@@ -209,7 +210,11 @@ export async function recoveryRoutes(ctx, path, method, body) {
     const link = await db.readLink(team.id);
     await serviceFor(ctx.env, profile, link, {
       maintenanceJobId: job.jobId,
-    }).run({ receiveOnly: true });
+    }).run({
+      receiveOnly: true,
+      updateStatus: false,
+      loadCheckpoint: job.manifest.loadCheckpoint === true,
+    });
     const current = await db.readLink(team.id),
       transport = new GitHubApiTransport({
         repository: profile.repository,

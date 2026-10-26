@@ -184,6 +184,174 @@ const ok = (result) => {
   );
   return result.data;
 };
+
+test("initial publication preserves valid tombstones for API-created tags and documents deleted while paused", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  assert.equal(a.app.locals.sync.store(teamId).readLink().mode, "paused");
+  const task = ok(
+    await a.api("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "initialization" },
+    }),
+  ).task;
+  const tag = ok(
+    await a.api(`/calendar/teams/${teamId}/tags`, {
+      id: randomUUID(),
+      name: "created then deleted",
+      color: "gray",
+    }),
+  );
+  ok(
+    await a.api(
+      `/calendar/tags/${tag.id}`,
+      { expectedRevision: tag.revision },
+      "DELETE",
+    ),
+  );
+  const documentId = randomUUID();
+  ok(
+    await a.api(`/tasks/${task.id}/documents`, {
+      id: documentId,
+      title: "temporary",
+    }),
+  );
+  const documentPath = `/tasks/${task.id}/documents/${documentId}`;
+  ok(
+    await a.api(
+      documentPath,
+      {
+        markdown: "last valid body",
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+      "PUT",
+    ),
+  );
+  ok(
+    await a.api(
+      documentPath,
+      { expectedRevision: ok(await a.api(documentPath)).revision },
+      "DELETE",
+    ),
+  );
+  const pendingIds = a.app.locals.sync
+    .store(teamId)
+    .readPending()
+    .map((op) => op.opId);
+  assert.ok(pendingIds.length >= 5);
+  assert.equal(await a.transport.readHead(), null);
+  await joinPeer(a, b, teamId);
+  const state = a.app.locals.sync.store(teamId).readState();
+  assert.equal(
+    stateHash(state),
+    stateHash(b.app.locals.sync.store(teamId).readState()),
+  );
+  for (const site of [a, b]) {
+    const snapshot = site.app.locals.sync.store(teamId).readState();
+    const tombstone = Object.values(snapshot.entities).find(
+      (row) => row.entity === "document" && row.key.at(-1) === documentId,
+    );
+    assert.equal(tombstone.deleted, true);
+    assert.equal(tombstone.payload.markdown, "last valid body");
+    assert.equal(
+      Object.values(snapshot.entities).find(
+        (row) => row.entity === "tag" && row.key[0] === tag.id,
+      ).deleted,
+      true,
+    );
+    assert.equal(
+      site.db
+        .prepare("SELECT COUNT(*) AS n FROM calendar_tags WHERE id=?")
+        .get(tag.id).n,
+      0,
+    );
+    assert.equal(
+      site.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM task_documents WHERE task_id=? AND id=?",
+        )
+        .get(task.id, documentId).n,
+      0,
+    );
+    assert.equal(site.app.locals.sync.store(teamId).readLink().mode, "active");
+    assert.ok(pendingIds.every((id) => snapshot.receipts[id]));
+    assert.equal(site.app.locals.sync.store(teamId).readPending().length, 0);
+  }
+  const head = await a.transport.readHead();
+  await a.app.locals.sync.get(teamId).run();
+  assert.equal(await a.transport.readHead(), head);
+});
+
+test("conflict resolution projects immediately and a follow-up API edit depends on it before any publication", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  const task = ok(
+    await a.api("/tasks", { teamId, year: 2026, fields: { title: "base" } }),
+  ).task;
+  await joinPeer(a, b, teamId);
+  const save = (site, value) =>
+    site.api("/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [
+        {
+          taskId: task.id,
+          key: "title",
+          value,
+          expectedVersion: getTask(site.db, task.id).cells.title.version,
+        },
+      ],
+    });
+  ok(await save(a, "inside"));
+  ok(await save(b, "outside preserved"));
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  await a.app.locals.sync.get(teamId).run();
+  const conflict = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts`),
+  ).conflicts.find((row) => !row.resolved);
+  assert.ok(conflict);
+  const beforeHead = await b.transport.readHead();
+  const resolution = ok(
+    await b.api(
+      `/teams/${teamId}/sync/conflicts/${conflict.conflictId}/resolve`,
+      {
+        choice: "submitted",
+        expectedHead: conflict.expectedHead,
+      },
+    ),
+  );
+  assert.equal(getTask(b.db, task.id).cells.title.value, "outside preserved");
+  assert.equal(
+    await b.transport.readHead(),
+    beforeHead,
+    "Resolution must project before Git runs",
+  );
+  ok(await save(b, "follow-up edit"));
+  const pending = b.app.locals.sync.store(teamId).readPending();
+  assert.equal(pending.length, 2);
+  assert.ok(pending[1].dependsOn.includes(resolution.opId));
+  assert.equal(
+    pending[1].changes.find((row) => row.entity === "cell").base.value,
+    "outside preserved",
+  );
+  await b.app.locals.sync.get(teamId).run();
+  await a.app.locals.sync.get(teamId).run();
+  for (const site of [a, b]) {
+    assert.equal(getTask(site.db, task.id).cells.title.value, "follow-up edit");
+    assert.equal(site.app.locals.sync.store(teamId).readPending().length, 0);
+    assert.equal(
+      Object.values(
+        site.app.locals.sync.store(teamId).readState().conflicts,
+      ).filter((row) => !row.resolution).length,
+      0,
+    );
+  }
+  assert.equal(
+    stateHash(a.app.locals.sync.store(teamId).readState()),
+    stateHash(b.app.locals.sync.store(teamId).readState()),
+  );
+});
 test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inactive references and local-only preferences", async (t) => {
   const { a, b, teamId, userId } = await fixture(t);
   const task = ok(

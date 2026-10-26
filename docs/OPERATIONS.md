@@ -54,6 +54,12 @@ npm run build
 | `APP_ORIGIN`          | 없음                      | 프록시 뒤 실제 서비스 Origin, 예: `https://graeboard.example.com`  |
 | `COOKIE_SECURE`       | `0`과 같은 동작           | HTTPS에서는 `1`                                                    |
 | `TRUST_PROXY`         | `0`과 같은 동작           | 신뢰하는 프록시가 정확히 하나일 때 `1`                             |
+| `GRAEBOARD_INSTALLATION_ID` | 없음 | 내부 설치의 고정 UUID. 복구 사본에 활성 원본 ID를 재사용하지 않음 |
+| `GRAEBOARD_SYNC_PROFILES` | `[]` | 팀·프로필·Git 저장소·토큰 환경변수 이름을 연결하는 JSON 배열 |
+| `GRAEBOARD_SYNC_DIR` | `data/sync` | 프로필별 bare Git clone 상위 경로. 운영에서는 릴리스 밖 절대 경로 |
+| `GRAEBOARD_SYNC_KEY` | 없음 | 암호화용 32바이트 키의 base64 값. DB·백업과 별도 비밀 보관 |
+| `GRAEBOARD_SYNC_KEY_ID` | `default` | 암호화 키 식별자 |
+| `GRAEBOARD_SHUTDOWN_TIMEOUT_MS` | `30000` | HTTP·동기화 종료 대기 상한(ms), 100~600000. 초과하면 P를 지우지 않고 exit 1 |
 
 `NODE_ENV=production`으로 외부 주소에 바인딩하고 계정이 아직 없으면 `SETUP_TOKEN`이 필요합니다. 루프백 주소 뒤에 프록시를 두는 경우에도 첫 설정을 공개하기 전에 토큰을 지정하거나, 로컬에서 먼저 관리자를 생성하세요. 임의 토큰은 `openssl rand -hex 32` 등으로 생성하여 `.env` 또는 서버의 비밀 설정에 보관합니다. 첫 설정 완료 후 제거할 수 있습니다.
 
@@ -150,6 +156,8 @@ npm run backup -- backups/manual.sqlite
 
 백업은 `VACUUM INTO`로 실행 중인 SQLite의 일관된 사본을 생성하고 `integrity_check`를 수행한 뒤 그 사본에서 참조한 이미지도 모읍니다. 실행 중인 DB 본체 파일만 복사하면 WAL에 남은 변경이 누락될 수 있습니다. 업데이트 직전의 최종 백업은 서버와 다른 쓰기 작업을 중지한 뒤 생성합니다.
 
+동기화 팀의 백업·논리 이관에는 같은 `GRAEBOARD_SYNC_DIR`과 Git CLI도 필요합니다. clone은 `<GRAEBOARD_SYNC_DIR>/<profileId>`이며 `team-a-internal` 프로필의 예는 `/srv/graeboard/data/sync/team-a-internal`입니다. L로 회수한 이미지 바이트는 백업 DB의 고정 Git head를 이 clone에서 읽어 검증합니다. 야간 작업에도 같은 절대 경로·실행 권한·`git` PATH를 설정하고, 캐시라는 이유로 디렉터리를 삭제하지 않습니다. clone·객체·Git 실행 파일 누락은 백업 실패이며 불완전 묶음을 완전 백업으로 취급하지 않습니다.
+
 복구 훈련은 운영 데이터와 분리된 새 경로에서 수행합니다. 다음은 현재 버전의 백업을 임시 DB와 **별도 이미지 폴더**로 복구하는 예시입니다. 실제 운영 복구 경로는 승인된 복구 계획에 맞게 지정합니다.
 
 ```sh
@@ -216,3 +224,5 @@ unset GRAEBOARD_RESET_PASSWORD
 - 동기화된 팀을 영구 삭제하려면 전송·백업을 완료하고 연결을 해제합니다. 미전송 변경이나 실행 중인 정리·백업이 있으면 삭제를 거절합니다. Git 이력은 이 동작으로 삭제되지 않습니다.
 - 오래된 원격 반영 상태는 현재 완료로 표시하지 않습니다. Git 게시와 반대편 적용을 각각 확인합니다. 강제 push·브랜치 삭제·저장소 신원 변경은 자동 초기화하지 않고 복구 점검 상태로 중단합니다.
 - 로컬 정리는 DB의 전체 공유 본문을 보존합니다. 화면 제외와 실제 이미지 파일 회수 범위는 구분되며 Git의 물리 용량은 줄지 않습니다.
+
+SIGTERM/SIGINT는 새 접속·구독을 차단하고 진행 중 HTTP 요청과 동기화를 기다립니다. 종료 상한을 넘으면 비정상 종료 코드 1을 기록하고 프로세스를 종료하며 미전송 명령을 삭제하지 않습니다. 이때 응답을 못 받은 요청은 결과를 재조회하고, 중단된 동기화·정리·백업의 소유권은 실제 이전 실행 종료를 확인한 뒤 복구 절차로 처리합니다. 초기 게시·수동 실행은 완료까지 HTTP 응답을 기다리므로 프록시 시간 초과를 작업 취소로 해석하지 말고 상태를 다시 조회합니다.

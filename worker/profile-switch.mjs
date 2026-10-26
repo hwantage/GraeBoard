@@ -208,7 +208,15 @@ export async function resumeProfileSwitch(env, id) {
         "정리 또는 백업이 끝난 뒤 다시 시도하세요.",
       );
       const link = await tx.sync.readLink();
-      assert(link && !link.lease_owner, 409, "동기화 완료 후 다시 시도하세요.");
+      assert(
+        link && (!link.lease_owner || Number(link.lease_until) < Date.now()),
+        409,
+        "동기화 완료 후 다시 시도하세요.",
+      );
+      await tx.query(
+        "UPDATE team_sync_links SET lease_owner=NULL,lease_until=NULL WHERE team_id=$1",
+        [job.teamId],
+      );
       assert(
         !(
           await tx.query(

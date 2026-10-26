@@ -72,12 +72,18 @@ export function activeImageReferences(
 ) {
   const urls = new Set();
   for (const record of Object.values(projected))
-    if (!record.deleted && !isExcluded(record, projected, retentions)) {
+    if (record.deleted || !isExcluded(record, projected, retentions)) {
       for (const url of imageReferences(record.payload, teamId)) urls.add(url);
     }
   for (const url of imageReferences(
     {
       pending,
+      // Deleted documents can be restored from Git or local audit history.
+      // Neither reference is necessarily present in the current visible rows.
+      tombstones: Object.values(state.entities || {}).filter(
+        (record) => record.deleted,
+      ),
+      recoveryImages: state.recoveryImages || [],
       conflicts: Object.values(state.conflicts || {}).filter(
         (conflict) => !conflict.resolution,
       ),

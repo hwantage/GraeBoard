@@ -123,6 +123,17 @@ Cloudflare Dashboard의 **Hyperdrive → Create configuration**에서 Supabase�
 
 **모든 Hyperdrive의 query caching을 끕니다.** 권한·revision·outbox는 변경 직후 최신값을 읽어야 합니다. SELECT 캐시는 DB 쓰기 후 자동 무효화되지 않으며 캐시를 꺼도 연결 풀링은 유지됩니다. [Hyperdrive query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
 
+Dashboard에서 만든 각 Hyperdrive ID에 대해 다음 명령을 실행하면 기존 연결 비밀번호를 명령 인자에 넣지 않고 캐시를 끌 수 있습니다. ID는 실제 값으로 바꾸고 관리 DB와 모든 팀 DB에 반복합니다. 새 구성을 CLI로 만들 경우에도 `wrangler hyperdrive create`의 `--caching-disabled` 옵션을 지정합니다. [공식 Wrangler Hyperdrive 명령](https://developers.cloudflare.com/hyperdrive/reference/wrangler-commands/)
+
+```sh
+npx wrangler hyperdrive update ACTUAL_CONTROL_HYPERDRIVE_ID --caching-disabled
+npx wrangler hyperdrive update ACTUAL_TEAM_A_HYPERDRIVE_ID --caching-disabled
+npx wrangler hyperdrive get ACTUAL_CONTROL_HYPERDRIVE_ID
+npx wrangler hyperdrive get ACTUAL_TEAM_A_HYPERDRIVE_ID
+```
+
+조회 결과의 caching 설정이 disabled인지 확인합니다. `wrangler.jsonc`의 binding 선언만으로 query cache가 꺼지지는 않습니다.
+
 | 자원            | Dashboard 작업                     | Worker에 연결할 이름 | 정상 결과                          |
 | --------------- | ---------------------------------- | -------------------- | ---------------------------------- |
 | 관리 Hyperdrive | 관리 프로젝트에 연결, 캐시 끄기    | `PG_CONTROL`         | control 버전 1 조회                |
@@ -166,6 +177,46 @@ npx wrangler secret put GIT_TEAM_A
     "githubSecret": "GIT_TEAM_A"
   }
 ]
+```
+
+팀 A를 연결한 전체 `wrangler.jsonc` 예는 다음과 같습니다. ID·도메인·UUID·저장소는 모두 예시이며 실제 설치 값으로 바꿉니다. Hyperdrive `id`에는 프로젝트 ID가 아닌 위 단계의 Hyperdrive ID를 넣고, `bucket_name`에는 실제 비공개 bucket 이름을 넣습니다. `GIT_TEAM_A` 값은 앞 절의 Secret에만 등록합니다. [Wrangler binding 설정](https://developers.cloudflare.com/workers/wrangler/configuration/)
+
+```jsonc
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "graeboard",
+  "main": "worker/entry.mjs",
+  "compatibility_date": "2026-10-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "images": { "binding": "IMAGES" },
+  "triggers": { "crons": ["* * * * *"] },
+  "hyperdrive": [
+    { "binding": "PG_CONTROL", "id": "REPLACE_WITH_CONTROL_HYPERDRIVE_ID" },
+    { "binding": "PG_TEAM_A", "id": "REPLACE_WITH_TEAM_A_HYPERDRIVE_ID" }
+  ],
+  "r2_buckets": [
+    { "binding": "R2_TEAM_A", "bucket_name": "graeboard-team-a-images" }
+  ],
+  "vars": {
+    "APP_ORIGIN": "https://board.example.com",
+    "ACCESS_ISSUER": "https://your-team.cloudflareaccess.com",
+    "ACCESS_AUDIENCE": "REPLACE_WITH_GRAEBOARD_APP_AUDIENCE",
+    "INSTALLATION_ID": "REPLACE_WITH_EXTERNAL_INSTALLATION_UUID",
+    "PEER_INSTALLATION_ID": "REPLACE_WITH_INTERNAL_INSTALLATION_UUID",
+    "SITE_NAME": "외부 사이트",
+    "SYNC_MAX_STATE_BYTES": "4194304",
+    "SYNC_MAX_ENTITIES": "12000",
+    "SYNC_PROFILES": "[{\"profileId\":\"team-a-prod\",\"name\":\"팀 A 외부\",\"teamId\":\"11111111-1111-4111-8111-111111111111\",\"repository\":\"example/graeboard-team-a-data\",\"databaseBinding\":\"PG_TEAM_A\",\"bucketBinding\":\"R2_TEAM_A\",\"githubSecret\":\"GIT_TEAM_A\"}]"
+  }
+}
 ```
 
 팀 UUID·프로필 ID·DB binding·bucket·저장소는 다른 팀과 중복 사용할 수 없습니다. 같은 팀의 교체용 프로필은 아래 `replaces` 절차로만 선언합니다. `PG_CONTROL`을 팀 DB로 지정하지 않습니다. 프로필에는 비밀 원문이 없으며 앱은 브라우저가 보낸 임의 DB URL·bucket 이름으로 연결하지 않습니다.
@@ -216,7 +267,7 @@ npm run build:worker
 6. 본문·이미지·팀 신원 검증이 끝난 팀을 사용자에게 공개하고, 사용자 계정의 팀 역할을 설정합니다.
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
 
-`로컬 저장`, `Git 반영`, `상대 서버 반영`은 서로 다른 단계입니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 현재 확인 불가로 표시합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
+`로컬 저장`, `Git 반영`, `상대 반영 확인`은 서로 다른 단계입니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 현재 확인 불가로 표시합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
 
 ## 10. 내부 서버 설정
 
@@ -249,6 +300,8 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 
 입력 파일에는 토큰 원문만 넣고 파일 권한을 제한합니다. 명령은 표준 입력을 읽어 AES-256-GCM 암호문과 키 ID를 `sync_credentials`에 저장하며 토큰을 출력하지 않습니다. 등록 후 서버를 재시작해 새 자격증명을 읽습니다. 암호화 등록값이 있으면 해당 프로필의 `tokenEnv`보다 우선합니다. 키를 잃으면 암호문을 복원할 수 없으므로 발급처에서 토큰을 다시 발급해야 합니다. 키를 변경할 때는 서비스를 중지하고 모든 토큰을 새 키로 다시 등록한 뒤 시작하며 이전 백업에 필요한 이전 키는 별도 보존합니다.
 
+`GRAEBOARD_SYNC_DIR`은 내부 bare Git clone을 보관하는 상위 경로이며 기본값은 실행 디렉터리 기준 `data/sync`입니다. 운영에서는 `/srv/graeboard/data/sync`처럼 릴리스 밖 절대 경로를 사용합니다. 각 clone은 `<GRAEBOARD_SYNC_DIR>/<profileId>`에 만들어지므로 위 프로필의 경로는 `/srv/graeboard/data/sync/team-a-internal`입니다. 서버·백업·이관 실행 계정에 같은 설정, 디렉터리 권한, Git CLI 실행 PATH를 제공합니다. L로 회수한 이미지는 백업·이관 때 이 clone의 고정 Git head에서 읽으므로 임의로 지우거나 다른 릴리스의 상대 경로로 바꾸지 않습니다.
+
 ## 11. 연결 검사와 오류 진단
 
 | 화면·증상               | 먼저 확인할 것                                        | 보존할 상태                           |
@@ -264,6 +317,10 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 | 복구 점검 필요          | 원격 이력 변경·DB 복사·restore 여부                   | 강제 push·새 genesis로 덮지 않음      |
 
 연결 검사는 PG에서 검사 쓰기를 롤백하고 R2에서 자신이 만든 임시 객체만 제거합니다. Git 검사도 실제 업무 이력을 수정하는 용도로 사용하지 않습니다. 초기 게시 대기·가져오기 대기는 정상 동기화 완료를 뜻하지 않습니다.
+
+외부 `/api/health`도 Access 인증과 앱에 초대된 활성 계정 검사를 거칩니다. 내부의 공개 health와 다르므로 모니터링도 허용된 인증 경로로 구성합니다.
+
+외부의 진입·포커스·편집 전 최신화는 팀별 30초 간격으로 원격 head를 확인하고 변경이 있을 때 수신합니다. 이 보조 요청은 상태 브랜치를 조회·게시하지 않으며 상태 확인은 Cron이 담당합니다. 따라서 여러 화면의 조회 횟수를 GitHub 전체 동기화 횟수로 늘리지 않습니다. 실제 GitHub 요청 한도·네트워크 지연은 운영 계정에서 별도 확인합니다.
 
 ## 12. 정리·중단·복구
 
@@ -284,6 +341,8 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 
 외부 Worker에서 같은 상황이 생기면 Cron을 중지하고 해당 팀의 유지보수 차단을 유지한 채, 이전 Worker 실행과 업로드가 실제로 모두 끝났음을 운영 로그·실행 관리에서 확인합니다. 경과 시간만으로 종료됐다고 판단하지 않습니다. 이후 인증된 시스템 관리자 요청으로 `POST /api/admin/teams/:id/maintenance/recover`에 `{jobId, dryRun:true}`를 보내 대상을 확인하고 `{jobId, confirmedDrained:true}`로 남은 소유권을 해제합니다. 이 API도 C/P/L·작업 기록·편집 차단을 보존합니다. 정리 화면에서 작업을 이어서 끝낸 뒤 Cron과 접근을 재개합니다.
 
+삭제 표식과 로컬 복원 이력이 참조하는 이미지도 보호합니다. 정리한 사이트에서 새 사본을 만들면 현재 제공되는 연도·업무·문서만 새 사본으로 공유하며 숨긴 원본은 삭제하지 않습니다. 숨긴 내용까지 복사하려면 먼저 보관본을 복원합니다.
+
 공유 기준본의 본문·메타데이터는 DB에 남습니다. 이 기능은 R2/파일 이미지 공간과 앱 제공 범위를 정리하며 DB 전체 내용을 비우는 기능이 아닙니다. 자동 TTL·Git 이력 재작성은 제공하지 않습니다.
 
 일시정지는 로컬 저장과 변경 캡처를 계속하며 Git 통신을 중단합니다. 연결 해제는 미전송 변경·충돌을 보존하고 전송을 중단합니다. 복구한 DB는 자동 발신하지 않고 복구 점검으로 시작해야 합니다. 원격 head·opId 처리 여부를 대조하고 새 writer 세대를 준비한 뒤 재개합니다. 관리 DB, 팀 DB, 이미지, 미전송 변경은 각각 보존하며 팀 DB 복구로 공통 계정·권한을 덮어쓰지 않습니다.
@@ -297,13 +356,15 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 
 복구 점검은 기존 pending의 ID·payload를 유지하고 원격 receipt와 수신 이력을 대조합니다. 실행 중 데이터를 Git에 게시하지 않으며 성공 후 상태는 **일시정지**입니다. 앱에서 미전송 변경·충돌·복원한 이미지와 마지막 수신을 확인한 다음 **재개**로 명시적으로 발신을 허용합니다. 원격 이력 자체가 바뀌었거나 검증이 실패하면 복구 점검을 유지하고 강제 push나 새 genesis로 덮지 않습니다.
 
+새 사이트 합류·명시 드레인 복구는 설정된 비공개 Git 저장소의 인증된 작성자를 신뢰하고 checkpoint를 사용할 수 있습니다. 해시·스키마·개수·식별자·ancestry를 검증하지만 checkpoint 이전 reducer 이력을 처음부터 다시 계산하지는 않습니다. 저장소 쓰기 권한은 이 신뢰 경계를 포함하므로 허용한 서버/운영 계정으로 제한합니다. 정상 실행 중인 사이트는 커밋별 검증·재생을 계속합니다. 자세한 기준은 [동기화 규약](SYNC_PROTOCOL.md#최초-게시checkpoint복구)에 설명합니다.
+
 ### 외부 PostgreSQL 복구를 끝내는 절차
 
 `sync:recover` 명령은 내부 SQLite 전용입니다. `restore:external` 또는 논리 이관 후에는 아래 외부 API 절차를 사용합니다. 복구한 팀을 **처음 가져오기**로 다시 초기화하지 않습니다.
 
 1. 이전 Worker의 해당 팀 쓰기·Cron·업로드 실행을 모두 종료하고 원본 DB/R2와 백업을 보존합니다. 복구한 control/team DB와 R2를 새 binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
 2. 복구한 control DB의 시스템 관리자 Google 계정으로 공식 `APP_ORIGIN`에 로그인합니다. **설정 → 시스템 → 서비스 연결**에서 복구한 자원을 검사하고, 팀 연결에 복구 대상 프로필을 선택합니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
-3. `GET /api/admin/teams/:id/maintenance/uploads/recover`로 남은 업로드 실행을 확인합니다. 이전 실행이 끝났음을 확인한 ID만 `POST` 같은 경로에 `{ "confirmedDrained": true, "leaseIds": ["확인한-ID"] }`로 해제합니다. 이 작업은 시간 경과만으로 자동 수행하지 않습니다. 미완료 정리·백업 작업도 먼저 앞 절의 복구 절차로 끝냅니다.
+3. `GET /api/admin/teams/:id/maintenance/uploads/recover`로 남은 업로드 실행을 확인합니다. 이전 실행이 끝났음을 확인한 ID만 `POST` 같은 경로에 `{ "confirmedDrained": true, "leaseIds": ["확인한-ID"] }`로 해제합니다. 이 작업은 시간 경과만으로 자동 수행하지 않습니다. 미완료 정리는 앞 절의 복구 절차로 이어서 완료합니다. 중단된 백업은 `POST /api/admin/teams/:id/maintenance/recover`의 `{ "jobId": "확인한-ID", "dryRun": true }`로 확인하고, 이전 백업 실행이 종료된 뒤 `{ "jobId": "확인한-ID", "confirmedDrained": true }`로 guard를 `cancelled` 처리합니다. 시간 경과만으로 해제하지 않습니다. C/P/L/head와 부분 백업 파일은 보존되며 부분 파일은 완전 백업이 아닙니다. 이후 백업은 새 출력 경로에 만듭니다.
 4. `GET /api/teams/:id/sync`의 `canonicalHead`와 현재 프로필·설치 UUID를 확인합니다. 같은 origin의 인증된 관리자 요청으로 `POST /api/admin/teams/:id/sync/recover`에 다음 내용을 보냅니다. `expectedHead`는 실제 조회한 값이며 최초 커서가 없으면 JSON `null`입니다.
 
 ```json
@@ -322,7 +383,18 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 
 공개 전에는 허용 Google 계정, 미허용 계정, 다른 서비스에만 허용된 계정, 다른 팀 계정, 공식 주소 이외의 우회 주소를 확인합니다. 실제 계정의 GitHub 접근·Supabase TLS·R2 권한·Images 변환과 정상 내부망의 성능은 배포 환경에서 별도 확인하고 결과를 운영 기록에 남깁니다.
 
+중단된 내부 백업도 이전 프로세스가 종료되었음을 확인한 뒤 기존 복구 명령으로 guard만 해제할 수 있습니다. 부분 파일은 검사·보관하고 새 출력 경로로 다시 백업합니다. CLI는 부분 파일을 자동 삭제하지 않습니다.
+
+```sh
+npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.sqlite --job-id '확인한-jobId' --dry-run
+npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.sqlite --job-id '확인한-jobId' --confirm-drained
+```
+
+외부 PG 백업의 관리 API를 사용할 수 없으면 같은 확인 뒤 `--engine postgres --url-env PG_TEAM_URL --team-id '실제-팀-UUID' --job-id '확인한-jobId'`에 `--dry-run` 또는 `--confirm-drained`를 사용합니다. URL 원문은 명령 인자로 넣지 않습니다.
+
 ## 13. SQLite와 PostgreSQL 사이의 논리 이관
+
+현재 공통 DatabaseAdapter는 동기화 상태와 트랜잭션 계약을 감쌉니다. 일반 업무 API는 내부 SQLite 관계형 저장과 외부 PG `site_entities` 저장을 각각 구현하므로 설정 하나로 실행 DB 엔진을 바꾸는 기능은 없습니다. 이 절은 서버를 멈추고 별도 대상으로 데이터를 옮기는 논리 이관이며, 엔진 독립 업무 서비스 요구와 구분해야 합니다.
 
 `transfer`는 팀의 ID, 현재 제공본, canonical C, pending P, 제외 목록 L, 충돌, 영수증, 객체와 revision을 보존하는 운영 도구입니다. 로그인 비밀번호·세션·팀 권한은 팀 논리 묶음에 넣지 않습니다. SQLite의 이전 문서 버전·감사 이력·개인 설정처럼 엔진별 표현이 다른 자료는 비공유 보관 레코드로 함께 유지하며, 엔진을 다시 바꿀 때도 버리지 않습니다. 새 SQLite 사용자 참조는 비활성 표시 계정으로 만들고 기존 계정의 권한은 자동으로 올리지 않습니다. 외부 공통 계정과 팀 권한은 control DB에서 별도로 확인합니다.
 
@@ -330,7 +402,7 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 
 ```sh
 npm run transfer -- --action export --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite --team-id '실제-팀-UUID' --file /private/team-transfer.json --dry-run
-npm run transfer -- --action export --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite --team-id '실제-팀-UUID' --file /private/team-transfer.json --freeze --images-dir /srv/graeboard/data/document-images --git-directory /srv/graeboard/data/sync/team-a
+npm run transfer -- --action export --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite --team-id '실제-팀-UUID' --file /private/team-transfer.json --freeze --images-dir /srv/graeboard/data/document-images --git-directory /srv/graeboard/data/sync/team-a-internal
 ```
 
 `--freeze`는 해당 팀의 편집을 유지보수 상태로 막고 동기화를 일시정지합니다. 이미지가 있는 팀은 JSON 옆의 `team-transfer.json.assets` 디렉터리도 함께 생성합니다. 두 항목을 같이 보관·전달하며 이미지 묶음은 DB 묶음의 해시에 연결됩니다. 미전송 문서 이미지도 로컬 저장소에서 읽고, 로컬에서 제외된 이미지는 고정 Git head에서 읽습니다. 누락 이미지를 건너뛰어 성공 처리하지 않습니다. 출력된 `jobId`를 보관합니다. 실패 후 같은 동결 상태로 다시 내보낼 때는 `--freeze` 대신 `--job-id '출력된-jobId'`를 사용하고 새 출력 파일 경로를 지정합니다. 기존 파일과 기존 대상 데이터를 덮어쓰지 않습니다.
@@ -416,16 +488,18 @@ PGSERVICE=graeboard-team-a pg_dump --format=custom --file=/private/team-a.dump
 
 ## 15. 외부 Worker의 검증된 용량 범위
 
-이 구현의 외부 동기화 한도는 압축 해제한 snapshot과 처리 중인 공유 상태·미전송 명령에 대해 **4 MiB**, 공유 엔티티 **12,000개**입니다. receipts와 충돌 보관도 상태 용량에 포함됩니다. 행 하나에 여러 셀·문서가 있으므로 엔티티 개수를 업무 행 수로 해석하지 않습니다. DB에서는 payload와 식별자 비용을 합산해 보수적으로 검사합니다. `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`를 기본값으로 사용하며 환경변수로 더 낮출 수 있습니다. 검증된 상한을 넘겨 설정할 수 없습니다.
+이 구현의 외부 동기화 한도는 압축 해제한 snapshot과 처리 중인 공유 상태·미전송 명령에 대해 **4 MiB**, 공유 엔티티 **12,000개**입니다. receipts와 충돌 보관도 상태 용량에 포함됩니다. 행 하나에 여러 셀·문서가 있으므로 엔티티 개수를 업무 행 수로 해석하지 않습니다. DB 검사와 commit 전 검사는 같은 canonical UTF-8 직렬화 기준으로 엔티티·receipt·충돌·P의 바이트를 합산합니다. `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`를 기본값으로 사용하며 환경변수로 더 낮출 수 있습니다. 검증된 상한을 넘겨 설정할 수 없습니다.
 
-초과하면 `413 / EXTERNAL_SYNC_CAPACITY` 또는 관리자 동기화 오류로 중단하고 마지막 정상 canonical cursor·P·L을 보존합니다. gzip snapshot은 JSON 파싱 전에 압축 해제 크기를 제한하고, Git blob도 스트리밍 중 크기를 제한합니다. 한 isolate에서는 동기화 계산을 하나씩 실행하며 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 데이터로 덮어쓰거나 부분 가져오기 성공으로 표시하지 않습니다. 사이트 정리는 C나 receipts를 축소하지 않으므로 이 동기화 한도를 늘리는 수단이 아닙니다.
+초과하면 새 편집·발신·수신 적용은 `413 / EXTERNAL_SYNC_CAPACITY` 또는 관리자 동기화 오류로 중단하고 마지막 정상 canonical cursor·P·L을 보존합니다. 기존 자료 조회·백업·일시정지 등 복구 접근은 유지합니다. gzip snapshot은 JSON 파싱 전에 압축 해제 크기를 제한하고, Git blob도 스트리밍 중 크기를 제한합니다. 한 isolate에서는 동기화 계산을 하나씩 실행하며 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 데이터로 덮어쓰거나 부분 가져오기 성공으로 표시하지 않습니다. 사이트 정리는 C나 receipts를 축소하지 않으므로 이 동기화 한도를 늘리는 수단이 아닙니다.
 
-`tests/worker-capacity.test.mjs`는 실제 workerd에서 공유 `SyncService`의 gzip bootstrap·reducer·후속 커밋 적용을 실행합니다. 한글 값이 있는 1,000개 업무와 업무당 6셀, 문서·삭제표식·receipts·충돌을 포함한 총 7,023개 엔티티의 약 3.44 MiB snapshot을 적용했고 후속 변경까지 2개 커밋을 처리했습니다. 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 한 번도 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아니라 그 fixture의 결과입니다. 실제 Worker의 boundStore·materialize·imageSync도 명시적인 SQL 행 메모리 모델과 R2 바이트 저장소로 실행하며 미전송 명령 2개와 이미지 보존을 검사합니다. canonical 쓰기·이미지 projection·500개 행 materialize 경계와 요청 완료 후 inspector heap을 표본 측정합니다. 표본 최대치는 연속 측정한 순간 최대 메모리나 운영 서비스 지연을 보장하지 않으며 wall time에는 표본 수집 시간이 포함됩니다. 재현 명령은 다음과 같습니다.
+`tests/worker-capacity.test.mjs`는 실제 workerd에서 공유 `SyncService`의 gzip bootstrap·reducer·후속 커밋 적용을 실행합니다. 한글 값이 있는 1,000개 업무와 업무당 6셀, 문서·삭제표식·receipts·충돌을 포함한 총 7,023개 엔티티의 약 3.44 MiB snapshot을 적용했고 후속 변경까지 2개 커밋을 처리했습니다. 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 한 번도 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아니라 그 fixture의 결과입니다. 실제 Worker의 boundStore·materialize·imageSync도 명시적인 SQL 행 메모리 모델과 R2 바이트 저장소로 실행하며 미전송 명령 2개와 이미지 보존을 검사합니다. canonical 쓰기·이미지 projection·500개 행 materialize 경계와 요청 완료 후 inspector heap을 표본 측정합니다. 표본 최대치는 연속 측정한 순간 최대 메모리나 운영 서비스 지연을 보장하지 않으며 wall time에는 표본 수집 시간이 포함됩니다. 2026-10-27 보관 fixture에서 used heap+backing의 표본 최대는 58,077,600바이트, V8 `totalSize` 최대는 111,542,272바이트(약 106.4 MiB), 요청 완료 후 `totalSize`는 93,618,176바이트였습니다. `totalSize`는 V8가 확보한 heap 크기로 used heap이나 전체 프로세스 RSS와 다릅니다. 메모리 테스트는 SQL 문자열을 처리하는 in-memory 행 모델, fixture 진입점, 가짜 GitHub/R2를 사용하며 운영 번들·Hyperdrive·실제 PG 드라이버 연결의 메모리를 포함하지 않습니다. 배포 전 실제 PG 경로와 동시 요청을 Workers Metrics/Logs로 다시 확인해야 합니다. 재현 명령은 다음과 같습니다.
 
 ```sh
 node --test tests/worker-capacity.test.mjs tests/worker-runtime.test.mjs
 ```
 
 Cloudflare의 공식 한도는 isolate당 메모리 128 MB이며 동시 요청이 이 메모리를 공유합니다. Workers Free CPU 한도는 요청당 10 ms, Paid의 1시간 미만 주기 Cron은 CPU 30초이므로 이 동기화를 Free 요금제로 안정 운영할 수 있다고 보장하지 않습니다. 로컬 wall time을 클라우드 CPU 사용량으로 해석하지 않습니다. 실제 사용량은 Workers Metrics/Logs에서 측정하고 사용 요금제를 선택해야 합니다. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+
+일반 외부 조회는 read-only PG 트랜잭션을 사용해 쓰기용 advisory lock을 잡지 않습니다. 다만 외부 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. 변경 엔티티만 계산하는 증분 저장 최적화나 실제 운영 외부 저장 p95 측정은 이 검증에 포함되지 않습니다.
 
 내부 서버의 10,000행 SQLite 성능 시험과 Node 프로세스에서 수행한 PostgreSQL 저장 어댑터 스트레스 시험은 이 외부 Worker 용량 검증과 별도입니다. 그 결과를 Cloudflare에서 10,000행이 지원된다는 근거로 사용하지 않습니다. 실제 Cloudflare·Supabase·GitHub·Images 운영 자원으로 배포한 시험은 이 로컬 검증에 포함되지 않습니다.

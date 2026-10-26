@@ -96,6 +96,8 @@ export function createNodeBackground({
   databasePath,
   timeoutMs = 600000,
   onMutation,
+  onExit = () => {},
+  workerUrl = new URL("./background-worker.mjs", import.meta.url),
 } = {}) {
   databasePath ||= db
     ?.prepare("PRAGMA database_list")
@@ -105,10 +107,7 @@ export function createNodeBackground({
     throw new Error(
       "Background SQLite snapshots require a file-backed database",
     );
-  const worker = new Worker(
-    new URL("./background-worker.mjs", import.meta.url),
-    { workerData: { databasePath } },
-  );
+  const worker = new Worker(workerUrl, { workerData: { databasePath } });
   const pending = new Map();
   let sequence = 0,
     closed = false;
@@ -123,6 +122,7 @@ export function createNodeBackground({
     if (mutation) {
       Promise.resolve()
         .then(() => {
+          if (closed) throw new Error("Synchronization worker is closed");
           if (!onMutation)
             throw new Error("Background mutation bridge is not installed");
           return onMutation(mutation);
@@ -157,9 +157,13 @@ export function createNodeBackground({
     closed = true;
     if (pending.size)
       failAll(new Error(`Synchronization worker exited (${code})`));
+    onExit(code);
   });
   worker.unref();
   return {
+    get closed() {
+      return closed;
+    },
     compute(request) {
       if (closed)
         return Promise.reject(new Error("Synchronization worker is closed"));

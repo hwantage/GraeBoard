@@ -1,10 +1,13 @@
+import { project } from "./reducer.mjs";
+import { isExcluded } from "./retention.mjs";
+import { isRecoveryError } from "./errors.mjs";
 import { profileToken } from "./credentials.mjs";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { transaction, getTasksById } from "../db.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
-import { materialize } from "./entities.mjs";
+import { materialize, readEntity } from "./entities.mjs";
 import { installCapture } from "./capture.mjs";
 import {
   createNodeBackground,
@@ -20,8 +23,7 @@ import { retentionView } from "./visibility.mjs";
 export function imageReferences(state) {
   const markdowns = [];
   for (const e of Object.values(state.entities))
-    if (e.entity === "document" && !e.deleted)
-      markdowns.push(e.payload.markdown);
+    if (e.entity === "document") markdowns.push(e.payload.markdown);
   for (const c of Object.values(state.conflicts))
     if (!c.resolution)
       for (const change of c.operation.changes)
@@ -221,10 +223,7 @@ export function createNodeSync({
     )
       throw new Error("Synchronization lease changed");
     if (action === "error") {
-      const recovery =
-        /history rewritten|branch was deleted|identity mismatch|Unsupported|checksum|Immutable|Non-linear|Merge commit|Invalid genesis|Foreign/i.test(
-          data.message || "",
-        );
+      const recovery = isRecoveryError(data);
       db.prepare(
         "UPDATE team_sync_links SET last_error=?,updated_at=?,mode=CASE WHEN ? THEN 'recovery' ELSE mode END,remote_status=CASE WHEN ? THEN NULL ELSE remote_status END WHERE team_id=?",
       ).run(
@@ -235,6 +234,13 @@ export function createNodeSync({
         teamId,
       );
       if (recovery) capture.refresh();
+      return;
+    }
+    if (action === "finish-import") {
+      db.prepare(
+        "UPDATE team_sync_links SET mode='active' WHERE team_id=? AND mode='importing' AND canonical_head=?",
+      ).run(teamId, data.head);
+      capture.refresh();
       return;
     }
     if (action === "status") {
@@ -327,7 +333,7 @@ export function createNodeSync({
         );
         raw.advanceHead(expectedHead, newHead, prepared.hash);
         db.prepare(
-          "UPDATE team_sync_links SET mode=CASE WHEN mode IN ('initializing','importing') THEN 'active' ELSE mode END,last_published_at=CASE WHEN ? THEN ? ELSE last_published_at END,lease_until=? WHERE team_id=?",
+          "UPDATE team_sync_links SET mode=CASE WHEN mode='initializing' THEN 'active' ELSE mode END,last_published_at=CASE WHEN ? THEN ? ELSE last_published_at END,lease_until=? WHERE team_id=?",
         ).run(
           Number(
             prepared.outboxHashes.length > 0 || link.mode === "initializing",
@@ -343,7 +349,29 @@ export function createNodeSync({
     return { head: newHead, changed: changed.length };
   }
   function getBackground() {
-    return (background ||= createNodeBackground({ db, onMutation: mutation }));
+    if (!background || background.closed) {
+      const leases = new Map();
+      background = createNodeBackground({
+        db,
+        onMutation: async (request) => {
+          const result = await mutation(request);
+          if (request.action === "acquire" && result)
+            leases.set(request.teamId, request.owner);
+          if (request.action === "release") leases.delete(request.teamId);
+          return result;
+        },
+        timeoutMs: options.backgroundTimeoutMs,
+        ...(options.backgroundWorkerUrl
+          ? { workerUrl: options.backgroundWorkerUrl }
+          : {}),
+        onExit() {
+          // Only release leases after termination, never while a previous worker
+          // could still submit a canonical mutation.
+          for (const [teamId, owner] of leases) store(teamId).release(owner);
+        },
+      });
+    }
+    return background;
   }
   function get(teamId) {
     if (services.has(teamId)) return services.get(teamId);
@@ -388,6 +416,16 @@ export function createNodeSync({
       if (running) return running;
       running = getBackground()
         .compute({ kind: "service", config, action, options: runOptions })
+        .catch((error) => {
+          if (!stopped) {
+            const recovery = isRecoveryError(error);
+            db.prepare(
+              "UPDATE team_sync_links SET last_error=?,mode=CASE WHEN ? THEN 'recovery' ELSE mode END,remote_status=CASE WHEN ? THEN NULL ELSE remote_status END WHERE team_id=?",
+            ).run(error.message, Number(recovery), Number(recovery), teamId);
+            if (recovery) capture.refresh();
+          }
+          throw error;
+        })
         .finally(() => (running = null));
       return running;
     };
@@ -400,7 +438,11 @@ export function createNodeSync({
     return service;
   }
   function schedule(teamId, delay = 60000) {
-    if (options.schedule === false || stopped || timers.has(teamId)) return;
+    if (options.schedule === false || stopped) return;
+    const deadline = Date.now() + delay,
+      previous = timers.get(teamId);
+    if (previous && previous.deadline <= deadline) return;
+    if (previous) clearTimeout(previous.timer);
     const timer = setTimeout(async () => {
       timers.delete(teamId);
       try {
@@ -413,7 +455,7 @@ export function createNodeSync({
       }
     }, delay);
     timer.unref();
-    timers.set(teamId, timer);
+    timers.set(teamId, { timer, deadline });
   }
   for (const l of db
     .prepare("SELECT team_id FROM team_sync_links WHERE mode<>'disconnected'")
@@ -432,12 +474,12 @@ export function createNodeSync({
       services.delete(teamId);
       capture.refresh();
     },
-    close() {
+    async close() {
       stopped = true;
-      for (const timer of timers.values()) clearTimeout(timer);
+      for (const { timer } of timers.values()) clearTimeout(timer);
       timers.clear();
+      await background?.close();
       for (const [teamId, owner] of ownedLeases) store(teamId).release(owner);
-      return background?.close();
     },
   };
 }
@@ -818,7 +860,26 @@ export function installSyncRoutes(
       resolves: frontier,
     });
     validateOperation(op, { teamId, repoId: link.repo_id });
-    transaction(db, () => s.enqueue(op));
+    let changed;
+    sync.capture.without(() =>
+      transaction(db, () => {
+        s.enqueue(op);
+        const entities = project(state, s.readPending()).entities;
+        const exclusions = s.readExclusions(link.installation_id);
+        const visible = {},
+          previous = {};
+        for (const [key, record] of Object.entries(entities)) {
+          if (isExcluded(record, entities, exclusions)) continue;
+          visible[key] = record;
+          previous[key] = readEntity(db, teamId, record.entity, record.key);
+        }
+        changed = materialize(db, teamId, visible, previous, {
+          actorId: req.user.id,
+        });
+      }),
+    );
+    sync.capture.refresh();
+    sync.notify(teamId, changed);
     sync.schedule(teamId, 100);
     res.json({ ok: true, opId: op.opId });
   });

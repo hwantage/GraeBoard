@@ -12,7 +12,7 @@ import {
 import { GitHubApiTransport } from "./git.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { beginProfileSwitch } from "./profile-switch.mjs";
-import { runTeam, importTeam } from "./sync.mjs";
+import { runTeam, refreshTeam, importTeam } from "./sync.mjs";
 
 export async function serviceStatus(ctx, { check = false } = {}) {
   ctx.admin();
@@ -456,9 +456,8 @@ export async function adminRoutes(ctx, path, method, body) {
       });
     }
     if (["run", "pull", "refresh"].includes(sync[2])) {
-      await runTeam(ctx.env, p, {
-        receiveOnly: ["pull", "refresh"].includes(sync[2]) || body.receiveOnly,
-      });
+      if (["pull", "refresh"].includes(sync[2])) await refreshTeam(ctx.env, p);
+      else await runTeam(ctx.env, p, { receiveOnly: body.receiveOnly });
       return syncStatus(ctx, teamId);
     }
     if (sync[2] === "enable") {
@@ -490,7 +489,11 @@ export async function adminRoutes(ctx, path, method, body) {
       await db.withTeamTransaction(teamId, async (tx) => {
         const link = await tx.sync.readLink();
         assert(link, 409, "동기화 연결이 없습니다.");
-        assert(!link.lease_owner, 409, "동기화가 진행 중입니다.");
+        assert(
+          !link.lease_owner || Number(link.lease_until) < Date.now(),
+          409,
+          "동기화가 진행 중입니다.",
+        );
         assert(
           !(
             await tx.query(
@@ -507,11 +510,12 @@ export async function adminRoutes(ctx, path, method, body) {
           "복구 또는 연결 해제 상태는 자동 재개할 수 없습니다.",
         );
         await tx.query(
-          "UPDATE team_sync_links SET mode=$2,updated_at=$3 WHERE team_id=$1",
+          "UPDATE team_sync_links SET mode=$2,updated_at=$3,lease_owner=NULL,lease_until=NULL WHERE team_id=$1",
           [teamId, modes[sync[2]], new Date().toISOString()],
         );
       });
-      await runTeam(ctx.env, p).catch(() => {});
+      // The next Cron publishes status; administrative state changes do not
+      // start an additional full Git cycle in the foreground.
       return syncStatus(ctx, teamId);
     }
   }

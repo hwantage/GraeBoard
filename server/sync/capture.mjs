@@ -1,3 +1,4 @@
+import { HttpError } from "../validation.mjs";
 import { LINK_METADATA_COLUMNS } from "../storage/team-store.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readEntity } from "./entities.mjs";
@@ -59,6 +60,16 @@ const detectors = {
 };
 export function installCapture(db, { onPending = () => {} } = {}) {
   const requestActor = new AsyncLocalStorage();
+  const triggerDefinitions = new Map();
+  let triggersEnabled = false,
+    failure = null;
+  function reconcileTriggers() {
+    const enabled = links.size > 0;
+    if (enabled === triggersEnabled || !triggerDefinitions.size) return;
+    for (const [name, sql] of triggerDefinitions)
+      db.exec(enabled ? sql : `DROP TRIGGER IF EXISTS temp.${name}`);
+    triggersEnabled = enabled;
+  }
   let active = false,
     suppressed = 0,
     before = new Map(),
@@ -121,6 +132,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       "SELECT payload FROM sync_outbox WHERE status<>'acknowledged' ORDER BY local_seq",
     ).all())
       rememberPending(JSON.parse(r.payload));
+    reconcileTriggers();
   };
   refresh();
   const record = (teamId, entity, key) => {
@@ -133,9 +145,10 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND kind<>'backup' AND phase NOT IN ('complete','cancelled')",
         ).get(teamId)
       )
-        throw new Error(
+        throw (failure = new HttpError(
+          409,
           "팀 데이터 정리가 진행 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
-        );
+        ));
       checkedTeams.add(teamId);
     }
     const value = readEntity(reader, teamId, entity, key);
@@ -173,6 +186,19 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           ?.team_id;
     if (teamId) {
       record(teamId, entity, key);
+      // Report edits replace the parent JSON before rebuilding document rows.
+      // Capture child titles/order/body while their original parent still exists;
+      // a later document DELETE trigger can no longer read that before-image.
+      if (table === "reports")
+        for (const child of prepare(
+          "SELECT task_id,document_id FROM report_documents WHERE report_id=?",
+        ).all(row.id))
+          record(teamId, "document", [
+            "report",
+            row.id,
+            child.task_id,
+            child.document_id,
+          ]);
       if (table === "calendar_entries")
         record(teamId, "document", ["calendar", row.id, "main"]);
     }
@@ -219,17 +245,24 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         table === "tasks" && event === "UPDATE"
           ? ` WHEN ${["id", "team_id", "years", "position", "deleted_at", "default_style", "row_style", "created_by", "created_at"].map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}`
           : "";
-      db.exec(
+      triggerDefinitions.set(
+        `sync_detect_${table}_${event}`,
         `CREATE TEMP TRIGGER IF NOT EXISTS sync_detect_${table}_${event} BEFORE ${event} ON main.${table}${when} BEGIN SELECT graeboard_sync_before('${table}',json_object(${keep.map((c) => `'${c}',${prefix}.${c}`).join(",")})); END`,
       );
     }
   }
+  reconcileTriggers();
   const capture = {
+    get failure() {
+      return failure;
+    },
     withActor(actorId, work) {
       return requestActor.run(actorId, work);
     },
     begin() {
-      active = true;
+      failure = null;
+      active = links.size > 0;
+      if (!active) return;
       before = new Map();
       actors = new Map();
       created = [];
@@ -256,10 +289,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         const actorRef =
           requestActor.getStore() ||
           actors.get(teamId) ||
-          prepare(
-            "SELECT user_id FROM memberships WHERE team_id=? LIMIT 1",
-          ).get(teamId)?.user_id ||
-          prepare("SELECT id FROM users LIMIT 1").get()?.id;
+          `system:${link.installation_id}`;
         // Referenced people are display-only and are captured in the same command
         // before content can reference a newly registered local person.
         people ||= prepare("SELECT id,name FROM users").all();
@@ -307,7 +337,13 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       active = false;
       for (const op of created) {
         rememberPending(op);
-        onPending(op.teamId);
+        // The local transaction has committed; a scheduling failure must not
+        // turn a durable save into a misleading HTTP failure. P remains durable.
+        try {
+          onPending(op.teamId);
+        } catch (error) {
+          console.error("Sync scheduling failed:", error.message);
+        }
       }
       before.clear();
       created = [];

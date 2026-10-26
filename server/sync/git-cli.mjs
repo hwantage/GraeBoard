@@ -1,8 +1,10 @@
+import { fileEntries } from "./file-entries.mjs";
+import { ProtocolError } from "./errors.mjs";
 import { GitHubApiTransport } from "./github-api.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, delimiter, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 const exec = promisify(execFile);
 export function repositoryUrl(value) {
@@ -15,13 +17,22 @@ export function repositoryUrl(value) {
   return `https://github.com/${match[1]}/${match[2]}`;
 }
 export class GitCliTransport {
-  constructor({ directory, repository, token, allowLocal = false }) {
+  constructor({
+    directory,
+    repository,
+    token,
+    allowLocal = false,
+    localTimeoutMs = 30000,
+    networkTimeoutMs = 300000,
+  }) {
     this.directory = resolve(directory);
     this.repository = allowLocal
       ? resolve(repository)
       : repositoryUrl(repository);
     this.token = token;
     this.ready = null;
+    this.localTimeoutMs = localTimeoutMs;
+    this.networkTimeoutMs = networkTimeoutMs;
   }
   async init() {
     if (!this.ready)
@@ -40,8 +51,10 @@ export class GitCliTransport {
     return this.ready;
   }
   async git(args, { input, index } = {}) {
+    const network = ["fetch", "push", "ls-remote"].includes(args[0]);
+    const timeout = network ? this.networkTimeoutMs : this.localTimeoutMs;
     const env = {
-      PATH: process.env.PATH,
+      PATH: dirname(process.execPath) + delimiter + (process.env.PATH || ""),
       LANG: "C",
       GIT_TERMINAL_PROMPT: "0",
       GIT_CONFIG_NOSYSTEM: "1",
@@ -59,10 +72,20 @@ export class GitCliTransport {
         return await new Promise((resolve, reject) => {
           const child = execFile(
             "git",
-            ["-C", this.directory, "-c", "http.followRedirects=false", ...args],
+            [
+              "-C",
+              this.directory,
+              "-c",
+              "http.followRedirects=false",
+              "-c",
+              "http.lowSpeedLimit=1",
+              "-c",
+              "http.lowSpeedTime=120",
+              ...args,
+            ],
             {
               env,
-              timeout: 30000,
+              timeout,
               maxBuffer: 128 * 1024 * 1024,
               encoding: "buffer",
             },
@@ -76,10 +99,20 @@ export class GitCliTransport {
       return (
         await exec(
           "git",
-          ["-C", this.directory, "-c", "http.followRedirects=false", ...args],
+          [
+            "-C",
+            this.directory,
+            "-c",
+            "http.followRedirects=false",
+            "-c",
+            "http.lowSpeedLimit=1",
+            "-c",
+            "http.lowSpeedTime=120",
+            ...args,
+          ],
           {
             env,
-            timeout: 30000,
+            timeout,
             maxBuffer: 128 * 1024 * 1024,
             encoding: "buffer",
           },
@@ -147,7 +180,7 @@ export class GitCliTransport {
     try {
       if (parent) await this.git(["read-tree", parent], { index });
       else await this.git(["read-tree", "--empty"], { index });
-      for (const [path, data] of Object.entries(files)) {
+      for await (const [path, data] of fileEntries(files)) {
         if (!/^[a-zA-Z0-9/_.-]+$/.test(path) || path.split("/").includes(".."))
           throw new Error("Invalid candidate path");
         const oid = (
@@ -199,6 +232,38 @@ export class GitCliTransport {
       return { head: await this.readHead(), fixture: true };
     const repository = this.repository.replace("https://github.com/", "");
     return new GitHubApiTransport({ repository, token: this.token }).check();
+  }
+  async latestSnapshot(head) {
+    return (
+      (await this.git(["log", "-1", "--format=%H", head, "--", "snapshots"]))
+        .toString()
+        .trim() || null
+    );
+  }
+  async readRange(head, after, limit) {
+    if (head === after) return [];
+    if (after && !(await this.verifyReachable(after, head)))
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Remote history rewritten; recovery required",
+      );
+    // rev-list is one local subprocess. --max-count before --reverse would
+    // select the newest commits, so select the earliest lines after reversal.
+    const ids = (
+      await this.git([
+        "rev-list",
+        "--reverse",
+        after ? `${after}..${head}` : head,
+      ])
+    )
+      .toString()
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .slice(0, limit);
+    const commits = [];
+    for (const oid of ids) commits.push(await this.readCommit(oid));
+    return commits;
   }
   async verifyReachable(ancestor, head) {
     if (!ancestor) return true;

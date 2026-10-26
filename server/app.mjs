@@ -1,3 +1,5 @@
+import { TaskBusinessService } from "./storage/task-service.mjs";
+import { SqliteTaskRepository } from "./storage/sqlite-tasks.mjs";
 import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
 import { installMaintenanceRoutes } from "./sync/maintenance-sqlite.mjs";
 import { installRetentionBoundary, retentionView } from "./sync/visibility.mjs";
@@ -44,13 +46,9 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
-import {
-  normalizeCellStyle,
-  copyRowFormatting,
-  taskAuditSnapshot,
-} from "../shared/formatting.js";
-import { applyFormatting, replayFormatOperation } from "./formatting.mjs";
-import { pack, unpack, styleNormalizer, sameStyle } from "../shared/compact.js";
+import { copyRowFormatting, taskAuditSnapshot } from "../shared/formatting.js";
+import { applyFormatting } from "./formatting.mjs";
+import { pack, unpack } from "../shared/compact.js";
 import {
   openDatabase,
   id,
@@ -71,7 +69,6 @@ import {
   touchTasks,
   getTask,
   getTasks,
-  getTasksById,
   insertTask,
   transaction,
   audit,
@@ -80,7 +77,6 @@ import {
 import {
   HttpError,
   requireThat,
-  batchSchema,
   yearSchema,
   periodScopeSchema,
   dateSchema,
@@ -114,11 +110,7 @@ import { createTaskCache } from "./task-cache.mjs";
 import { installResourceEvents } from "./resource-events.mjs";
 import { createDocumentEvents } from "./document-events.mjs";
 import { createCellEvents } from "./cell-events.mjs";
-import { storeCellOperation, replayCellOperation } from "./cell-operations.mjs";
-import {
-  installHistoryCleanupRoutes,
-  validateCellRequestTime,
-} from "./history-cleanup.mjs";
+import { installHistoryCleanupRoutes } from "./history-cleanup.mjs";
 import { installReorderRoute } from "./reorder.mjs";
 import { installSystemAuditRoutes } from "./system-audit.mjs";
 import { insertionPosition } from "./task-position.mjs";
@@ -172,6 +164,7 @@ export function createApp({
   allowSetup = true,
   rateLimits = true,
   cellEventOptions,
+  taskRepository,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
 } = {}) {
@@ -422,6 +415,22 @@ export function createApp({
       requireThat(canEdit(user, t), 403, "이 업무를 편집할 권한이 없습니다.");
     return t;
   }
+  const tasksRepository =
+    taskRepository ||
+    new SqliteTaskRepository({
+      db,
+      control: { teamAccess, taskAccess },
+      cachedTasks,
+      cellEvents,
+    });
+  app.locals.taskRepository = tasksRepository;
+  const taskService = (req) =>
+    new TaskBusinessService(
+      typeof taskRepository === "function"
+        ? taskRepository(req.user, req)
+        : tasksRepository,
+      req.user,
+    );
   function teamUsers(teamId) {
     return usersWithTeams(
       db,
@@ -505,7 +514,7 @@ export function createApp({
     sync,
     documentImagesDir,
   });
-  installRetentionBoundary(app, { db });
+  installRetentionBoundary(app, { db, taskRequestsHandled: true });
   installEventStreams(app);
   installResourceEvents(app, { db, documentEvents, teamAccess });
   installReorderRoute(app, { db, taskAccess, teamAccess });
@@ -619,34 +628,28 @@ export function createApp({
       years: [...years].sort((a, b) => b - a),
     });
   });
-  app.get("/api/tasks", (req, res) => {
-    const teamId = String(req.query.teamId || "");
-    teamAccess(req.user, teamId);
-    const period = periodScopeSchema.parse(req.query);
-    const year = periodYears(period.year, period.startMonth);
-    const deleted = req.query.deleted === "1";
-    if (deleted)
-      requireThat(
-        canManageTeam(req.user, teamId),
-        403,
-        "팀장만 삭제한 업무를 조회할 수 있습니다.",
-      );
-    const etag = cachedTasks.etag(teamId, year, deleted);
-    res.set("ETag", etag);
-    // The snapshot and cursor are captured synchronously in this process.
-    res.set("X-Cell-Event-ID", cellEvents.cursor());
-    res.vary("Accept-Encoding");
-    if (req.get("If-None-Match") === etag) return res.status(304).end();
-    const cached = cachedTasks(teamId, year, deleted, etag);
-    if (req.retention?.active) {
-      return res.json(unpack(JSON.parse(cached.body.toString("utf8"))));
-    }
-    res.type("application/json");
-    if (req.acceptsEncodings("gzip")) {
-      res.set("Content-Encoding", "gzip");
-      return res.send(cached.gzip);
-    }
-    res.send(cached.body);
+  app.get("/api/tasks", (req, res, next) => {
+    const send = (result) => {
+      res.set("ETag", result.etag);
+      res.set("X-Cell-Event-ID", result.cellEventId);
+      res.vary("Accept-Encoding");
+      if (result.notModified) return res.status(304).end();
+      if (result.data) return res.json(result.data);
+      const cached = result.encoded;
+      if (req.retention?.active)
+        return res.json(unpack(JSON.parse(cached.body.toString("utf8"))));
+      res.type("application/json");
+      if (req.acceptsEncodings("gzip")) {
+        res.set("Content-Encoding", "gzip");
+        return res.send(cached.gzip);
+      }
+      return res.send(cached.body);
+    };
+    const result = taskService(req).query(req.query, {
+      ifNoneMatch: req.get("If-None-Match"),
+    });
+    if (result?.then) return result.then(send, next);
+    send(result);
   });
   registerEventRoute(app, "/api/cells/events", (req, res) => {
     const teamId = String(req.query.teamId || "");
@@ -885,169 +888,10 @@ export function createApp({
     });
     res.status(201).json({ task });
   });
-  app.post("/api/cells/batch", (req, res) => {
-    const d = batchSchema.parse(req.body);
-    validateCellRequestTime(d.createdAt);
-    const old = db
-      .prepare("SELECT * FROM operations WHERE id=?")
-      .get(d.operationId);
-    if (old) {
-      requireThat(
-        old.actor_id === req.user.id,
-        403,
-        "다른 사용자의 작업입니다.",
-      );
-      const replay =
-        parse(old.response)?.kind === "format-audit"
-          ? replayFormatOperation(db, old)
-          : replayCellOperation(db, old);
-      if (replay.formatTeamId) teamAccess(req.user, replay.formatTeamId);
-      for (const taskId of new Set(replay.cells.map((c) => c.taskId)))
-        taskAccess(req.user, taskId, false, true);
-      return res.json(replay);
-    }
-    if (d.format) {
-      const team = teamAccess(req.user, d.format.teamId);
-      const visibility = retentionView(db, team.id);
-      for (const scope of d.format.scopes || [])
-        for (const taskId of scope.rows || [])
-          visibility.requireVisible("task", [taskId]);
-      return res.json(
-        transaction(db, () => applyFormatting(db, req.user, d, team)),
-      );
-    }
-    let eventTasks;
-    const response = transaction(db, () => {
-      const seen = new Set();
-      for (const change of d.changes) {
-        const ck = `${change.taskId}:${change.key}`;
-        requireThat(
-          !seen.has(ck),
-          400,
-          "한 작업에서 같은 셀을 중복 수정할 수 없습니다.",
-        );
-        seen.add(ck);
-      }
-      // 업무와 팀은 각각 한 번씩만 읽는다. 수천 셀 배치에서 업무마다 조회하지 않는다.
-      const taskIds = [...new Set(d.changes.map((c) => c.taskId))];
-      const tasks = new Map(
-        getTasksById(db, taskIds)
-          .filter((t) => !t.deletedAt)
-          .map((t) => [t.id, t]),
-      );
-      eventTasks = tasks;
-      requireThat(
-        taskIds.every((taskId) => tasks.has(taskId)),
-        404,
-        "업무를 찾을 수 없습니다.",
-      );
-      const teams = new Map(),
-        visibility = new Map();
-      for (const task of tasks.values()) {
-        if (!visibility.has(task.teamId))
-          visibility.set(task.teamId, retentionView(db, task.teamId));
-        visibility.get(task.teamId).requireVisible("task", [task.id]);
-        if (!teams.has(task.teamId))
-          teams.set(task.teamId, teamAccess(req.user, task.teamId));
-        requireThat(
-          canEdit(req.user, task),
-          403,
-          "이 업무를 편집할 권한이 없습니다.",
-        );
-      }
-      const before = [],
-        after = [];
-      const normalize = styleNormalizer();
-      for (const change of d.changes) {
-        const task = tasks.get(change.taskId),
-          team = teams.get(task.teamId);
-        const previous = task.cells[change.key] ?? {
-          value: "",
-          style: {},
-          version: 0,
-        };
-        validateCellValue(
-          db,
-          task.teamId,
-          change.key,
-          change.value,
-          team.settings,
-          previous.value,
-        );
-        requireThat(
-          previous.version === change.expectedVersion,
-          409,
-          "다른 사용자가 이 셀을 수정했습니다. 최신 내용을 확인한 뒤 다시 적용하세요.",
-          {
-            taskId: task.id,
-            key: change.key,
-            current: previous,
-            attempted: change,
-          },
-        );
-        const value =
-          change.value === undefined ? previous.value : change.value;
-        if (change.style !== undefined)
-          requireThat(
-            (change.expectedFormatRevision ?? 0) ===
-              (task.formatting?.revision ?? 0),
-            409,
-            "공통 서식이 변경되었습니다. 최신 내용을 확인한 뒤 다시 적용하세요.",
-          );
-        const style =
-          change.style === undefined
-            ? previous.style
-            : change.rawStyle
-              ? change.style
-              : task.formatting?.rules.length || task.rowStyle
-                ? normalizeCellStyle(task, change.key, change.style)
-                : normalize(change.style, task.defaultStyle);
-        if (
-          (value === previous.value ||
-            (Array.isArray(value) &&
-              Array.isArray(previous.value) &&
-              value.length === previous.value.length &&
-              value.every((v, i) => v === previous.value[i]))) &&
-          sameStyle(style, previous.style)
-        )
-          continue;
-        before.push({ taskId: task.id, key: change.key, ...previous });
-        after.push({
-          taskId: task.id,
-          key: change.key,
-          value,
-          style,
-          version: previous.version + 1,
-        });
-      }
-      const put = upsertCellStatement(db);
-      for (const c of after)
-        put.run(c.taskId, c.key, c.value, c.style, c.version);
-      pruneStyles(
-        db,
-        before.map((c) => c.style),
-      );
-      const updatedAt = touchTasks(db, [
-        ...new Set(after.map((c) => tasks.get(c.taskId))),
-      ]);
-      const result = {
-        cells: after,
-        before,
-        operationId: d.operationId,
-        savedAt: now(),
-        updatedAt,
-        ...(tasks.size &&
-        new Set([...tasks.values()].map((t) => t.teamId)).size === 1
-          ? { formatRevision: [...tasks.values()][0].formatting?.revision ?? 0 }
-          : {}),
-      };
-      storeCellOperation(db, req.user.id, result, tasks);
-      return result;
-    });
-    // Publish only after COMMIT. A replayed operation returns above and cannot
-    // emit twice. Cell records retain their versions/styles; no View is sent.
-    cellEvents.publish(response, eventTasks);
-    res.json(response);
+  app.post("/api/cells/batch", (req, res, next) => {
+    const result = taskService(req).saveBatch(req.body);
+    if (result?.then) return result.then((value) => res.json(value), next);
+    res.json(result);
   });
   app.patch("/api/tasks/:id", (req, res) => {
     const d = z

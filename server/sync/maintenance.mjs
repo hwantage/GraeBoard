@@ -27,6 +27,7 @@ export function maintenanceRevision(snapshot) {
     pending: snapshot.pending,
     conflicts: snapshot.conflicts,
     exclusions: snapshot.exclusions,
+    recoveryImages: snapshot.recoveryImages || [],
     head: link?.canonical_head || null,
     generation: link?.generation || 0,
     profile: link?.profile_id || null,
@@ -205,7 +206,7 @@ export class MaintenanceService {
       );
       if (request.kind !== "images" && !scopeUrls.has(image.url)) continue;
       if (protectedUrls.has(image.url)) {
-        protect("현재 문서·대기 작업·미해결 충돌이 참조");
+        protect("현재 문서·복원 이력·대기 작업·미해결 충돌이 참조");
         continue;
       }
       if (

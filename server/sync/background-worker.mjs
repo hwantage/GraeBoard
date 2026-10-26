@@ -3,11 +3,12 @@ import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { allEntities, readEntity } from "./entities.mjs";
 import { canonical, digest, entityId, equal, stateHash } from "./protocol.mjs";
-import { reduceMany, project } from "./reducer.mjs";
+import { reduceMany, project, validateSnapshot } from "./reducer.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
 import { prepareStatePatch } from "../storage/team-store.mjs";
 import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
+import { normalizeSyncError, protocolValidation } from "./errors.mjs";
 import { SyncService } from "./service.mjs";
 import { existsSync } from "node:fs";
 import {
@@ -75,13 +76,18 @@ function compute(request) {
       const bootstrap = store.readBootstrap();
       if (bootstrap) {
         const saved = decodeStoredSnapshot(bootstrap);
-        if (saved.state)
+        if (saved.state) {
+          validateSnapshot(saved.state, {
+            teamId: link.team_id,
+            repoId: link.repo_id,
+          });
           return {
             bundle: saved,
             bundleJson: bootstrap,
             guard,
             cutoff: saved.cutoff ?? null,
           };
+        }
       }
       const state = {
         entities: allEntities(db, link),
@@ -89,19 +95,23 @@ function compute(request) {
         conflicts: {},
       };
       const pending = store.readPendingRows();
+      const missing = new Set();
       for (const { operation: op } of pending) {
         const outputTokens = {};
         for (const change of op.changes) {
           const key = entityId(change.entity, change.key);
-          if (!state.entities[key])
+          if (!state.entities[key] || missing.has(key)) {
+            missing.add(key);
             state.entities[key] = {
               entity: change.entity,
               key: change.key,
               generation: change.generation,
               version: op.opId,
-              payload: change.base,
+              payload:
+                change.desired || change.base || state.entities[key]?.payload,
               deleted: true,
             };
+          }
           outputTokens[key] = state.entities[key].version;
         }
         state.receipts[op.opId] = {
@@ -112,6 +122,7 @@ function compute(request) {
           outputTokens,
         };
       }
+      validateSnapshot(state, { teamId: link.team_id, repoId: link.repo_id });
       const cutoff = pending.at(-1)?.local_seq || 0;
       const bundle = { state, hash: stateHash(state), cutoff };
       return {
@@ -206,8 +217,7 @@ function mutate(action, teamId, owner, data) {
 function references(state) {
   const markdowns = [];
   for (const e of Object.values(state.entities))
-    if (e.entity === "document" && !e.deleted)
-      markdowns.push(e.payload.markdown);
+    if (e.entity === "document") markdowns.push(e.payload.markdown);
   for (const c of Object.values(state.conflicts))
     if (!c.resolution)
       for (const change of c.operation.changes)
@@ -277,8 +287,16 @@ function serviceFor(config) {
         }
       }
     },
-    setError(message) {
-      return mutate("error", teamId, owner, { message });
+    setError(error) {
+      return mutate(
+        "error",
+        teamId,
+        owner,
+        normalizeSyncError(error) || { message: null },
+      );
+    },
+    finishImport(head) {
+      return mutate("finish-import", teamId, owner, { head });
     },
     saveRemoteStatus(value) {
       return mutate("status", teamId, owner, { serialized: canonical(value) });
@@ -286,7 +304,12 @@ function serviceFor(config) {
   };
   const transport = new GitCliTransport(config.transport);
   const images = {
-    publish(state) {
+    async *publish(state, { parent, transport } = {}) {
+      const inherited = new Set(
+        parent
+          ? (await transport.readCommit(parent)).files.map((f) => f.path)
+          : [],
+      );
       const pending = raw.readPending(),
         link = raw.readLink();
       const active = activeImageReferences(
@@ -296,8 +319,9 @@ function serviceFor(config) {
         project(state, pending).entities,
         teamId,
       );
-      const files = {};
       for (const url of references(state)) {
+        const path = url.replace("/api/document-images/", "images/");
+        if (inherited.has(path)) continue;
         if (!url.startsWith(`/api/document-images/${teamId}/`))
           throw new Error("Foreign image reference");
         if (
@@ -305,12 +329,10 @@ function serviceFor(config) {
           !active.has(url)
         )
           continue;
-        files[url.replace("/api/document-images/", "images/")] =
-          readDocumentImage(documentImagesDir, url);
+        yield [path, readDocumentImage(documentImagesDir, url)];
       }
-      return files;
     },
-    async receive(state, oid, remote) {
+    async receive(state, oid, remote, { verifiedImages = new Map() } = {}) {
       const pending = raw.readPending(),
         link = raw.readLink();
       const active = activeImageReferences(
@@ -322,7 +344,8 @@ function serviceFor(config) {
       );
       const install = async (url, required) => {
         const path = url.replace("/api/document-images/", "images/");
-        const bytes = await remote.readFile(oid, path);
+        const bytes =
+          verifiedImages.get(path) || (await remote.readFile(oid, path));
         if (
           !bytes ||
           digest(bytes) !== path.split("/").at(-1).replace(".webp", "") ||
@@ -331,7 +354,6 @@ function serviceFor(config) {
           throw new Error("Invalid image content hash or size");
         if (required) writeDocumentImage(documentImagesDir, url, bytes);
       };
-      for (const url of references(state)) await install(url, active.has(url));
       for (const url of active)
         if (!existsSync(documentImagePath(documentImagesDir, url)))
           await install(url, true);

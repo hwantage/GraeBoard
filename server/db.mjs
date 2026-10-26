@@ -99,9 +99,10 @@ export function transaction(db, work) {
     db.syncCapture?.committed();
     return r;
   } catch (e) {
+    const failure = db.syncCapture?.failure || e;
     if(!committed)db.exec("ROLLBACK");
     db.syncCapture?.rollback();
-    throw e;
+    throw failure;
   }
 }
 // API에 내보내는 사용자 객체: 프로필과 함께 소속 팀·팀 내 권한을 담는다.

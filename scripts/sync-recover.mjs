@@ -105,7 +105,9 @@ export async function recoverSync({
       // Keep original pending IDs/payloads, reconcile remote receipts, and never
       // publish data during recovery. Resuming is a separate explicit action.
       for (let attempt = 0; attempt < 100; attempt++) {
-        await sync.get(teamId).run({ receiveOnly: true });
+        await sync
+          .get(teamId)
+          .run({ receiveOnly: true, loadCheckpoint: attempt === 0 });
         if (
           store.readLink().canonical_head ===
           (await sync.get(teamId).transport.readHead())

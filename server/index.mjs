@@ -12,7 +12,7 @@ if (
   process.exit(1);
 }
 const server = app.listen(port, host, () =>
-  console.log(`GraeBoard: http://${host}:${port}`),
+  console.log(`GraeBoard: http://${host}:${server.address().port}`),
 );
 let stopping = false;
 server.prependListener("request", (_request, response) => {
@@ -25,6 +25,21 @@ server.prependListener("request", (_request, response) => {
 async function shutdown() {
   if (stopping) return;
   stopping = true;
+  const configuredTimeout = Number(process.env.GRAEBOARD_SHUTDOWN_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isFinite(configuredTimeout) &&
+    configuredTimeout >= 100 &&
+    configuredTimeout <= 600000
+      ? configuredTimeout
+      : 30000;
+  const deadline = setTimeout(() => {
+    console.error(
+      "서버 종료 대기 시간을 초과했습니다. 미전송 변경은 DB에 보존되며 종료 후 복구 점검이 필요합니다.",
+    );
+    server.closeAllConnections();
+    process.exit(1);
+  }, timeoutMs);
+  deadline.unref();
   // Stop accepting connections before closing subscriptions. A multiplexed
   // request may still be awaiting its next channel, so hub shutdown is terminal.
   const closed = new Promise((resolve, reject) =>
@@ -34,6 +49,7 @@ async function shutdown() {
   app.locals.documentEvents.shutdown();
   server.closeIdleConnections();
   await Promise.all([closed, app.locals.sync.close()]);
+  clearTimeout(deadline);
   app.locals.db.close();
   process.exit(0);
 }

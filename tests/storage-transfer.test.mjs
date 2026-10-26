@@ -48,6 +48,9 @@ import {
 } from "../server/sync/protocol.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
+import { backupDatabase } from "../scripts/backup.mjs";
+import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
+import { recoverBackupJob } from "../server/storage/backup-recovery.mjs";
 
 function sourceFixture(dir) {
   const db = openDatabase(join(dir, "source.sqlite")),
@@ -217,6 +220,108 @@ function sourceFixture(dir) {
     state,
   };
 }
+
+test("M5 abandoned SQLite backup guard requires drained confirmation and releases backup and transfer without changing C/P/L", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-backup-recovery-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const f = sourceFixture(dir);
+  t.after(() => f.db.close());
+  const images = join(dir, "images"),
+    destination = join(dir, "new-backup.sqlite"),
+    partial = join(dir, "abandoned.sqlite.partial"),
+    jobId = randomUUID();
+  for (const [url, bytes] of [
+    [f.archivedUrl, f.archivedBytes],
+    [f.activeUrl, f.activeBytes],
+    [f.pendingUrl, f.pendingBytes],
+  ])
+    writeDocumentImage(images, url, bytes);
+  writeFileSync(partial, "not a verified backup");
+  f.db
+    .prepare(
+      "INSERT INTO site_maintenance_jobs VALUES(?,?,'backup','running',?,?,'now')",
+    )
+    .run(
+      jobId,
+      f.teamId,
+      canonical({ destination: partial }),
+      canonical({ lastCopied: "kept" }),
+    );
+  const before = f.adapter.readSnapshot(f.teamId),
+    link = f.adapter.readLink(f.teamId);
+  assert.throws(
+    () =>
+      backupDatabase(join(dir, "source.sqlite"), destination, {
+        documentImagesDir: images,
+      }),
+    (error) =>
+      error.code === "ACTIVE_MAINTENANCE_JOB" &&
+      error.jobId === jobId &&
+      error.message.includes(jobId),
+  );
+  await assert.rejects(freezeTeam(f.adapter, f.teamId), /maintenance job/);
+  assert.throws(
+    () => recoverMaintenanceJob(f.db, { jobId }),
+    /confirm-drained/,
+  );
+  const dry = recoverMaintenanceJob(f.db, { jobId, dryRun: true });
+  assert.equal(dry.phase, "cancelled");
+  assert.equal(
+    f.db
+      .prepare("SELECT phase FROM site_maintenance_jobs WHERE job_id=?")
+      .get(jobId).phase,
+    "running",
+  );
+  const command = spawnSync(
+    process.execPath,
+    [
+      "scripts/sync-maintenance-recover.mjs",
+      "--database",
+      join(dir, "source.sqlite"),
+      "--job-id",
+      jobId,
+      "--confirm-drained",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(command.status, 0, command.stderr);
+  assert.equal(JSON.parse(command.stdout).phase, "cancelled");
+  const recovered = f.db
+    .prepare("SELECT * FROM site_maintenance_jobs WHERE job_id=?")
+    .get(jobId);
+  assert.deepEqual(JSON.parse(recovered.manifest), { destination: partial });
+  assert.equal(JSON.parse(recovered.progress).lastCopied, "kept");
+  assert.equal(readFileSync(partial, "utf8"), "not a verified backup");
+  assert.deepEqual(f.adapter.readLink(f.teamId), link);
+  for (const key of [
+    "entities",
+    "pending",
+    "receipts",
+    "conflicts",
+    "exclusions",
+  ])
+    assert.deepEqual(f.adapter.readSnapshot(f.teamId)[key], before[key]);
+  assert.equal(
+    f.db
+      .prepare(
+        "SELECT COUNT(*) n FROM site_events WHERE kind='site-maintenance-recovery' AND json_extract(payload,'$.jobId')=?",
+      )
+      .get(jobId).n,
+    1,
+  );
+  assert.throws(
+    () => recoverMaintenanceJob(f.db, { jobId, confirmedDrained: true }),
+    /unfinished/,
+  );
+  assert.equal(
+    backupDatabase(join(dir, "source.sqlite"), destination, {
+      documentImagesDir: images,
+    }),
+    destination,
+  );
+  const transferJob = await freezeTeam(f.adapter, f.teamId);
+  await releaseTransfer(f.adapter, f.teamId, transferJob);
+});
 
 test("SQLite logical export freezes writes, verifies checksums and restores exact protocol and revision state", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "gb-transfer-"));
@@ -582,6 +687,83 @@ test("actual PostgreSQL roundtrip and complete R2/Git backup preserve C/P/L and 
     },
   };
   const output = join(dir, "backup");
+  const staleJob = randomUUID(),
+    beforeRecovery = await postgres.readSnapshot(f.teamId),
+    beforeLink = await postgres.readLink(f.teamId);
+  await postgres.withTeamTransaction(f.teamId, (tx) =>
+    tx.query(
+      "INSERT INTO site_maintenance_jobs VALUES($1,$2,'backup','running',$3,$4,$5)",
+      [
+        staleJob,
+        f.teamId,
+        canonical({ destination: "old.partial" }),
+        canonical({ lastCopied: "preserved" }),
+        new Date().toISOString(),
+      ],
+    ),
+  );
+  await assert.rejects(
+    backupExternal({
+      control,
+      teams: [{ adapter: postgres, teamId: f.teamId, images, git }],
+      destination: output,
+    }),
+    (error) =>
+      error.code === "ACTIVE_MAINTENANCE_JOB" && error.jobId === staleJob,
+  );
+  await assert.rejects(
+    recoverBackupJob(postgres, f.teamId, staleJob),
+    /confirm drained/,
+  );
+  await assert.rejects(
+    recoverBackupJob(postgres, randomUUID(), staleJob, {
+      confirmedDrained: true,
+    }),
+    /identity mismatch/,
+  );
+  assert.equal(
+    (await recoverBackupJob(postgres, f.teamId, staleJob, { dryRun: true }))
+      .dryRun,
+    true,
+  );
+  const command = spawnSync(
+    process.execPath,
+    [
+      "scripts/sync-maintenance-recover.mjs",
+      "--engine",
+      "postgres",
+      "--url-env",
+      "PG_RECOVERY_TEST_URL",
+      "--team-id",
+      f.teamId,
+      "--job-id",
+      staleJob,
+      "--confirm-drained",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PG_RECOVERY_TEST_URL: `postgresql://${encodeURIComponent(process.env.USER)}@localhost/team_source?host=${encodeURIComponent(dir)}&port=5432`,
+      },
+    },
+  );
+  assert.equal(command.status, 0, command.stderr);
+  assert.equal(JSON.parse(command.stdout).phase, "cancelled");
+  assert.deepEqual(await postgres.readLink(f.teamId), beforeLink);
+  const afterRecovery = await postgres.readSnapshot(f.teamId);
+  for (const key of [
+    "entities",
+    "pending",
+    "receipts",
+    "conflicts",
+    "exclusions",
+  ])
+    assert.deepEqual(afterRecovery[key], beforeRecovery[key]);
+  await assert.rejects(
+    recoverBackupJob(postgres, f.teamId, staleJob, { confirmedDrained: true }),
+    /unfinished backup/,
+  );
   await backupExternal({
     control,
     teams: [{ adapter: postgres, teamId: f.teamId, images, git }],

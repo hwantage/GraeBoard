@@ -191,13 +191,16 @@ export async function documentRoutes(ctx, path, method, body, query) {
     assert(ctx.env.IMAGES, 503, "Images binding을 설정하세요.");
     const leaseId = crypto.randomUUID(),
       db = databaseFor(ctx.env, profile);
-    await ctx.data(teamId, (s) =>
-      s.put(
-        "uploadLease",
-        [leaseId],
-        { startedAt: new Date().toISOString(), actorId: ctx.user.id },
-        { shared: false },
-      ),
+    await ctx.data(
+      teamId,
+      (s) =>
+        s.put(
+          "uploadLease",
+          [leaseId],
+          { startedAt: new Date().toISOString(), actorId: ctx.user.id },
+          { shared: false },
+        ),
+      { write: true, allowViewer: scope.allowViewer },
     );
     try {
       const form = await ctx.request.formData(),

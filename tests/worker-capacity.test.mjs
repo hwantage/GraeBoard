@@ -239,6 +239,16 @@ test(
           ...result,
           heap: memory,
           samples: samples.slice(sampleStart),
+          sampledMaxTotalSize: Math.max(
+            ...samples.slice(sampleStart).map((s) => s.totalSize),
+            memory.totalSize,
+          ),
+          sampledMaxTotalAndBacking: Math.max(
+            ...samples
+              .slice(sampleStart)
+              .map((s) => s.totalSize + (s.backingStorageSize || 0)),
+            memory.totalSize + (memory.backingStorageSize || 0),
+          ),
           sampledMaxUsedAndBacking: Math.max(
             ...samples
               .slice(sampleStart)
@@ -275,7 +285,7 @@ test(
             .version,
         productionDeploymentTested: false,
         heapMeasurement:
-          "Inspector samples at canonical writes, image projection and materialization batches plus after invocation; sampled maximum is not continuous peak or resident memory; wall time includes sampling overhead",
+          "Inspector samples at canonical writes, image projection and materialization batches plus after invocation; sampled maximum is not continuous peak or resident memory; totalSize is V8 allocated heap capacity (distinct from live usedSize); excludes production bundle/PG driver; wall time includes sampling overhead",
         scope:
           "Real workerd SyncService, boundStore, materialize and imageSync with explicit SQL row-allocation model and R2 byte store, pending/receipts/conflicts/tombstones; excludes actual cloud/network latency",
         officialLimits:

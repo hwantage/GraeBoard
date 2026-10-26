@@ -6,6 +6,10 @@ import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { assertSqliteHistory } from "../server/migrations/sqlite.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
+import {
+  abandonedBackup,
+  recoverBackupJob,
+} from "../server/storage/backup-recovery.mjs";
 
 export function recoverMaintenanceJob(
   db,
@@ -21,12 +25,35 @@ export function recoverMaintenanceJob(
     const row = db
       .prepare("SELECT * FROM site_maintenance_jobs WHERE job_id=?")
       .get(jobId);
-    if (
-      !row ||
-      ["complete", "cancelled"].includes(row.phase) ||
-      row.kind === "backup"
-    )
-      throw new Error("An unfinished cleanup or restore job is required.");
+    if (!row || ["complete", "cancelled"].includes(row.phase))
+      throw new Error(
+        "An unfinished cleanup, restore or backup job is required.",
+      );
+    if (row.kind === "backup") {
+      const { result, progress } = abandonedBackup(row, {
+        confirmedDrained,
+        dryRun,
+      });
+      if (dryRun) {
+        db.exec("ROLLBACK");
+        return result;
+      }
+      db.prepare(
+        "UPDATE site_maintenance_jobs SET phase='cancelled',progress=? WHERE job_id=?",
+      ).run(canonical(progress), jobId);
+      // CLI execution has no authenticated application user. Keep its durable
+      // recovery record in job.progress and emit a system event without falsely
+      // attributing it to an arbitrary users row required by the audit FK.
+      db.prepare(
+        "INSERT INTO site_events(team_id,kind,payload,created_at) VALUES(?,'site-maintenance-recovery',?,?)",
+      ).run(
+        row.team_id,
+        canonical({ ...result, recovery: progress.recovery }),
+        progress.recovery.recoveredAt,
+      );
+      db.exec("COMMIT");
+      return result;
+    }
     const manifest = JSON.parse(row.manifest),
       progress = JSON.parse(row.progress);
     if (manifest.preview || !progress.owner)
@@ -78,10 +105,13 @@ export function recoverMaintenanceJob(
   }
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
     options: {
       database: { type: "string" },
+      engine: { type: "string", default: "sqlite" },
+      "url-env": { type: "string" },
+      "team-id": { type: "string" },
       "job-id": { type: "string" },
       "confirm-drained": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
@@ -91,10 +121,39 @@ function main() {
   });
   if (values.help) {
     console.log(
-      "Usage: npm run sync:maintenance-recover -- --database /absolute/file.sqlite --job-id JOB_ID --dry-run\nApply only after every old executor has stopped: replace --dry-run with --confirm-drained.\nThis clears abandoned executor ownership while preserving the active job guard, manifest, C, P, L and progress. Restart the app and resume the job in site maintenance.",
+      "Usage: npm run sync:maintenance-recover -- --database /absolute/file.sqlite --job-id JOB_ID --dry-run\nPostgreSQL backup guard: --engine postgres --url-env PG_TEAM_URL --team-id TEAM_ID --job-id JOB_ID --dry-run\nApply only after every old executor has stopped: replace --dry-run with --confirm-drained.\nCleanup/restore keeps its guard and can resume in the maintenance screen. An abandoned backup guard is cancelled; its partial files are not a valid backup. Preserve or remove those partial files separately, then start a new backup at a new destination. C, P, L and existing backup files are unchanged.",
     );
     return;
   }
+  if (values.engine === "postgres") {
+    if (!values["url-env"] || !values["team-id"] || !values["job-id"])
+      throw new Error("PostgreSQL requires --url-env, --team-id and --job-id.");
+    const { openTransferDatabase } = await import("./transfer.mjs");
+    const resource = await openTransferDatabase({
+      engine: "postgres",
+      urlEnv: values["url-env"],
+    });
+    try {
+      console.log(
+        JSON.stringify(
+          await recoverBackupJob(
+            resource.adapter,
+            values["team-id"],
+            values["job-id"],
+            {
+              confirmedDrained: values["confirm-drained"],
+              dryRun: values["dry-run"],
+            },
+          ),
+        ),
+      );
+    } finally {
+      await resource.close();
+    }
+    return;
+  }
+  if (values.engine !== "sqlite")
+    throw new Error("Choose --engine sqlite or postgres.");
   if (
     !values.database ||
     !isAbsolute(values.database) ||
@@ -123,10 +182,8 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
-  }
+  });
 }

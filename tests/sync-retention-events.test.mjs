@@ -1,11 +1,14 @@
 import express from "express";
 import sharp from "sharp";
-import { installDocumentImageRoutes } from "../server/document-images.mjs";
+import {
+  installDocumentImageRoutes,
+  documentImagePath,
+} from "../server/document-images.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
@@ -86,6 +89,211 @@ const ok = (result) => {
   );
   return result.data;
 };
+
+test("document exclusion and restore invalidate conditional task snapshots", async (t) => {
+  const f = await fixture(t);
+  const task = ok(
+    await f.api("/tasks", {
+      teamId: f.teamId,
+      year: 2026,
+      fields: { title: "badge" },
+    }),
+  ).task;
+  ok(
+    await f.api(
+      `/tasks/${task.id}/document`,
+      { markdown: "body", expectedRevision: 0, operationId: randomUUID() },
+      "PUT",
+    ),
+  );
+  ok(
+    await f.api(
+      `/admin/teams/${f.teamId}/connection`,
+      { profileId: "test", expectedRevision: 0 },
+      "PUT",
+    ),
+  );
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  const tasks = (etag) =>
+    fetch(`${f.baseURL}/api/tasks?teamId=${f.teamId}&year=2026`, {
+      headers: {
+        Cookie: `weekly_session=${f.token}`,
+        ...(etag ? { "If-None-Match": etag } : {}),
+      },
+    });
+  const initial = await tasks(),
+    before = initial.headers.get("etag");
+  assert.equal(unpack(await initial.json()).tasks[0].documentCount, 1);
+  assert.equal((await tasks(before)).status, 304);
+  const key = ["task", task.id, "main"],
+    store = f.app.locals.sync.store(f.teamId);
+  const path = `/admin/teams/${f.teamId}/maintenance`;
+  const preview = ok(
+    await f.api(path + "/preview", {
+      kind: "document",
+      entity: "document",
+      key,
+      generation:
+        store.readState().entities[entityId("document", key)].generation,
+    }),
+  );
+  ok(await f.api(path + "/execute", { token: preview.token, confirmed: true }));
+  const excluded = await tasks(before),
+    hidden = excluded.headers.get("etag");
+  assert.equal(excluded.status, 200);
+  assert.notEqual(hidden, before);
+  assert.equal(unpack(await excluded.json()).tasks[0].documentCount, 0);
+  const retention = ok(await f.api(path)).retention[0];
+  ok(
+    await f.api(path + "/restore", {
+      retentionId: retention.id,
+      expectedRevision: retention.revision,
+    }),
+  );
+  const restored = await tasks(hidden);
+  assert.equal(restored.status, 200);
+  assert.notEqual(restored.headers.get("etag"), hidden);
+  assert.equal(unpack(await restored.json()).tasks[0].documentCount, 1);
+});
+
+test("unused-image cleanup preserves a deleted report document through Git and audit restore without resetting cells", async (t) => {
+  const f = await fixture(t);
+  const task = ok(
+    await f.api("/tasks", {
+      teamId: f.teamId,
+      year: 2026,
+      fields: { title: "source" },
+    }),
+  ).task;
+  const report = ok(
+    await f.api("/reports", {
+      teamId: f.teamId,
+      year: 2026,
+      name: "restore image",
+      referenceDate: "2026-10-27",
+      taskIds: [task.id],
+      view: defaultView(2026),
+    }),
+  );
+  const docPath = `/reports/${report.id}/tasks/${task.id}/document`;
+  const bytes = await sharp({
+    create: { width: 1, height: 1, channels: 3, background: "#f09234" },
+  })
+    .png()
+    .toBuffer();
+  const form = new FormData();
+  form.append("image", new Blob([bytes], { type: "image/png" }), "image.png");
+  const upload = await fetch(f.baseURL + "/api" + docPath + "/images", {
+    method: "POST",
+    headers: {
+      Cookie: `weekly_session=${f.token}`,
+      "X-Requested-With": "WeeklyPlan",
+    },
+    body: form,
+  });
+  assert.equal(upload.status, 201);
+  const image = unpack(await upload.json());
+  const markdown = `![restorable](${image.url})`;
+  ok(
+    await f.api(
+      docPath,
+      { markdown, expectedRevision: 0, operationId: randomUUID() },
+      "PUT",
+    ),
+  );
+  ok(
+    await f.api(
+      `/admin/teams/${f.teamId}/connection`,
+      { profileId: "test", expectedRevision: 0 },
+      "PUT",
+    ),
+  );
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  const current = ok(await f.api(`/reports/${report.id}`));
+  const deleted = ok(
+    await f.api(
+      `/reports/${report.id}`,
+      {
+        operationId: randomUUID(),
+        revision: current.revision,
+        operations: [
+          { kind: "delete", at: new Date().toISOString(), taskIds: [task.id] },
+        ],
+      },
+      "PATCH",
+    ),
+  );
+  await f.app.locals.sync.get(f.teamId).run();
+  const tombstone = f.app.locals.sync.store(f.teamId).readState().entities[
+    entityId("document", ["report", report.id, task.id, "main"])
+  ];
+  assert.equal(
+    tombstone.deleted,
+    true,
+    JSON.stringify({
+      tombstone,
+      pending: f.app.locals.sync.store(f.teamId).readPending(),
+      conflicts: f.app.locals.sync.store(f.teamId).readState().conflicts,
+    }),
+  );
+  const old = new Date(Date.now() - 2 * 86400000);
+  utimesSync(
+    documentImagePath(join(f.directory, "images"), image.url),
+    old,
+    old,
+  );
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    "/api/cells",
+    f.token,
+    `?teamId=${f.teamId}&year=2026&after=${encodeURIComponent(f.app.locals.cellEvents.cursor())}`,
+  );
+  assert.equal((await stream.next()).event, "ready");
+  const path = `/admin/teams/${f.teamId}/maintenance`;
+  const preview = ok(await f.api(path + "/preview", { kind: "images" }));
+  assert.equal(
+    preview.images.count,
+    0,
+    "Restorable tombstone/audit references must survive unused-image cleanup",
+  );
+  assert.ok(
+    preview.protected.some(
+      (row) => row.reason.includes("복원 이력") && row.count === 1,
+    ),
+  );
+  ok(await f.api(path + "/execute", { token: preview.token, confirmed: true }));
+  ok(
+    await f.api("/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [
+        {
+          taskId: task.id,
+          key: "title",
+          value: "SSE barrier",
+          expectedVersion: getTask(f.db, task.id).cells.title.version,
+        },
+      ],
+    }),
+  );
+  assert.equal(
+    (await stream.next()).event,
+    "cells",
+    "Images-only cleanup must not reset an existing cell subscription",
+  );
+  stream.close();
+  const entry = ok(
+    await f.api(`/audit?teamId=${f.teamId}&sheetId=${report.id}`),
+  ).entries.find((row) => row.restorableTaskIds.length);
+  ok(await f.api(`/audit/${entry.id}/restore`, { revision: deleted.revision }));
+  assert.equal(ok(await f.api(docPath)).markdown, markdown);
+  const restored = await fetch(f.baseURL + image.url, {
+    headers: { Cookie: `weekly_session=${f.token}` },
+  });
+  assert.equal(restored.status, 200);
+  assert.ok((await restored.arrayBuffer()).byteLength > 0);
+});
 
 test("local cleanup revokes open and new multiplexed document subscriptions for every owner; restore preserves bodies", async (t) => {
   const f = await fixture(t);

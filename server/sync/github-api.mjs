@@ -1,3 +1,5 @@
+import { fileEntries } from "./file-entries.mjs";
+import { ProtocolError } from "./errors.mjs";
 const assert = (condition, status, message) => {
   if (!condition) throw Object.assign(new Error(message), { status });
 };
@@ -160,7 +162,7 @@ export class GitHubApiTransport {
   }
   async createCandidate(parent, files, message = "GraeBoard sync") {
     const entries = [];
-    for (const [path, value] of Object.entries(files)) {
+    for await (const [path, value] of fileEntries(files)) {
       assert(
         !path.startsWith("/") &&
           !path.split("/").includes("..") &&
@@ -214,16 +216,62 @@ export class GitHubApiTransport {
       throw error;
     }
   }
+  async compare(ancestor, head, limit = 1) {
+    if (![ancestor, head].every((oid) => /^[a-f0-9]{40}$/.test(oid)))
+      throw new ProtocolError("SYNC_FORMAT", "Invalid Git ancestry identity");
+    return this.request(
+      `/compare/${ancestor}...${head}?per_page=${limit}&page=1`,
+    );
+  }
   async verifyReachable(ancestor, head) {
-    if (!ancestor) return true;
-    for (let count = 0; head && count < 10000; count++) {
-      if (head === ancestor) return true;
-      const c = await this.readCommit(head);
-      if (c.parents.length > 1)
-        throw new Error("Merge commits are not supported");
-      head = c.parents[0] || null;
+    if (!ancestor || ancestor === head) return true;
+    if (!head) return false;
+    const result = await this.compare(ancestor, head);
+    return (
+      ["ahead", "identical"].includes(result.status) &&
+      result.merge_base_commit?.sha === ancestor
+    );
+  }
+  async latestSnapshot(head) {
+    const commits = await this.request(
+      `/commits?sha=${head}&path=snapshots&per_page=1`,
+    );
+    return commits[0]?.sha || null;
+  }
+  async readRange(head, after, limit) {
+    if (head === after) return [];
+    if (!after) {
+      // The immutable genesis path identifies the root in one bounded request,
+      // without walking a long history backwards before making progress.
+      const roots = await this.request(
+        `/commits?sha=${head}&path=snapshots%2Fgenesis.json.gz&per_page=1`,
+      );
+      if (!roots.length)
+        throw new ProtocolError(
+          "SYNC_HISTORY",
+          "Missing synchronization genesis",
+        );
+      const root = await this.readCommit(roots[0].sha);
+      if (root.parents.length)
+        throw new ProtocolError(
+          "SYNC_HISTORY",
+          "Genesis was modified after publication",
+        );
+      return [root];
     }
-    return false;
+    const range = await this.compare(after, head, Math.min(limit, 100));
+    if (
+      !["ahead", "identical"].includes(range.status) ||
+      range.merge_base_commit?.sha !== after
+    )
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Remote history rewritten; recovery required",
+      );
+    const result = [];
+    for (const commit of range.commits.slice(0, limit))
+      result.push(await this.readCommit(commit.sha));
+    return result;
   }
   async check() {
     const repo = await this.request("");

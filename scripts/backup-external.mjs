@@ -45,7 +45,7 @@ if (
 )
   main().catch((error) => {
     console.error(
-      error.code
+      error.code && error.code !== "ACTIVE_MAINTENANCE_JOB"
         ? "External backup failed (" + error.code + ")"
         : error.message,
     );

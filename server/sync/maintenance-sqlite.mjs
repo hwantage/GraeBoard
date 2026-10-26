@@ -12,6 +12,7 @@ import { canonical, entityId } from "./protocol.mjs";
 import { project } from "./reducer.mjs";
 import { MaintenanceService, maintenanceRevision } from "./maintenance.mjs";
 import { requireThat } from "../validation.mjs";
+import { imageReferences } from "./retention.mjs";
 
 const parseJob = (row) =>
   row
@@ -30,10 +31,18 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
     db.syncCapture
       ? db.syncCapture.without(() => transaction(db, work))
       : transaction(db, work);
-  const snapshot = () => ({
-    ...store.readSnapshot(),
-    exclusions: store.readExclusions(siteId),
-  });
+  const snapshot = () => {
+    const recoveryImages = new Set();
+    for (const row of db
+      .prepare("SELECT before_json,after_json FROM audit WHERE team_id=?")
+      .iterate(teamId))
+      for (const url of imageReferences(row, teamId)) recoveryImages.add(url);
+    return {
+      ...store.readSnapshot(),
+      exclusions: store.readExclusions(siteId),
+      recoveryImages: [...recoveryImages].sort(),
+    };
+  };
   const readJob = (id) =>
     parseJob(
       db
@@ -193,6 +202,12 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
         // Application rows stay in place. Advance existing edit versions so a
         // tab opened before cleanup cannot overwrite a later restored document.
         materialize(db, teamId, records);
+        // Document visibility affects badges in the task snapshot without a
+        // task-row write, so its conditional GET validator must advance too.
+        if (add || remove)
+          db.prepare(
+            "UPDATE team_revisions SET version=version+1 WHERE team_id=?",
+          ).run(teamId);
         store.appendEvent("retention", {
           jobId: job.jobId,
           action: remove ? "restore" : "exclude",
@@ -201,7 +216,8 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
         job.phase = phase;
         save(job);
       });
-      sync?.notify?.(teamId, keys, { retentionChanged: true });
+      if (add || remove)
+        sync?.notify?.(teamId, keys, { retentionChanged: true });
     },
     finishChunk(job, owner) {
       run(() => {

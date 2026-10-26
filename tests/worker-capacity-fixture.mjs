@@ -43,13 +43,21 @@ function databaseFixture(teamId, initial, probe) {
         {
           entities: data.entities.size,
           bytes:
-            [
-              ...data.entities.values(),
-              ...data.receipts.values(),
-              ...data.conflicts.values(),
-            ].reduce((n, v) => n + Buffer.byteLength(v), 0) +
+            64 +
+            [data.entities, data.receipts, data.conflicts].reduce(
+              (total, records) => {
+                for (const [key, serialized] of records)
+                  total +=
+                    Buffer.byteLength(JSON.stringify(key)) +
+                    Buffer.byteLength(serialized) +
+                    2;
+                return total;
+              },
+              0,
+            ) +
             data.pending.reduce(
-              (n, v) => n + Buffer.byteLength(canonical(v)),
+              (total, operation) =>
+                total + Buffer.byteLength(canonical(operation)),
               0,
             ),
         },

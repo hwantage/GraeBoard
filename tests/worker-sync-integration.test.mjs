@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -16,7 +22,7 @@ import { stateHash, digest, entityId } from "../server/sync/protocol.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { runTeam } from "../worker/sync.mjs";
+import { runTeam, scheduled } from "../worker/sync.mjs";
 import { profileFor } from "../worker/config.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 function githubEmulator(directory) {
@@ -44,7 +50,7 @@ function githubEmulator(directory) {
       }
     };
   let loseNextPublish = false;
-  const calls = [];
+  const calls = [], unexpectedCalls = [];
   const fetcher = async (url, init = {}) => {
     const parsed = new URL(url);
     assert.equal(parsed.origin, "https://api.github.com");
@@ -57,6 +63,55 @@ function githubEmulator(directory) {
     calls.push({ path, method });
     if (!path)
       return Response.json({ private: true, id: 1, default_branch: "main" });
+    if (path.startsWith("/compare/")) {
+      const [base, target] = path.slice(9).split("...");
+      let merge;
+      try {
+        merge = text(["merge-base", base, target]);
+      } catch {
+        return Response.json({}, { status: 404 });
+      }
+      const hashes = text(["rev-list", "--reverse", `${base}..${target}`])
+          .split("\n")
+          .filter(Boolean),
+        size = Number(parsed.searchParams.get("per_page") || 30),
+        page = Number(parsed.searchParams.get("page") || 1);
+      return Response.json({
+        status:
+          base === target
+            ? "identical"
+            : merge === base
+              ? "ahead"
+              : merge === target
+                ? "behind"
+                : "diverged",
+        merge_base_commit: { sha: merge },
+        total_commits: hashes.length,
+        commits: hashes.slice((page - 1) * size, page * size).map((sha) => ({
+          sha,
+          parents: text(["show", "-s", "--format=%P", sha])
+            .split(" ")
+            .filter(Boolean)
+            .map((sha) => ({ sha })),
+        })),
+      });
+    }
+    if (path === "/commits") {
+      const args = [
+        "log",
+        "--format=%H",
+        `--max-count=${Number(parsed.searchParams.get("per_page") || 30)}`,
+        parsed.searchParams.get("sha") || "main",
+      ];
+      if (parsed.searchParams.has("path"))
+        args.push("--", parsed.searchParams.get("path"));
+      return Response.json(
+        text(args)
+          .split("\n")
+          .filter(Boolean)
+          .map((sha) => ({ sha })),
+      );
+    }
     if (path.startsWith("/git/ref/")) {
       const oid = head("refs/" + path.slice(9));
       return oid
@@ -162,11 +217,13 @@ function githubEmulator(directory) {
       }
       return Response.json({ object: { sha: body.sha } });
     }
+    unexpectedCalls.push({ method, path });
     throw new Error("Unexpected GitHub API " + method + " " + path);
   };
   return {
     fetch: fetcher,
     calls,
+    unexpectedCalls,
     loseNext() {
       loseNextPublish = true;
     },
@@ -242,11 +299,17 @@ test(
         }),
         main = github.text(["commit-tree", tree, "-m", "init"]);
       github.text(["update-ref", "refs/heads/main", main]);
-      globalThis.fetch = (input, init) =>
-        new URL(typeof input === "string" ? input : input.url).origin ===
-        "https://api.github.com"
-          ? github.fetch(typeof input === "string" ? input : input.url, init)
-          : nativeFetch(input, init);
+      globalThis.fetch = (input, init) => {
+        const url = new URL(typeof input === "string" ? input : input.url);
+        if (url.origin === "https://api.github.com")
+          return github.fetch(url.href, init);
+        assert.equal(
+          url.hostname,
+          "127.0.0.1",
+          "unexpected live HTTP in integration fixture",
+        );
+        return nativeFetch(input, init);
+      };
       command("initdb", [
         "-D",
         pgData,
@@ -430,11 +493,39 @@ test(
         ),
       );
       ok(await inside(`/teams/${teamId}/sync/enable`, {}));
+      const genesisBlob = github.text([
+        "rev-parse",
+        "refs/heads/sync-v1:snapshots/genesis.json.gz",
+      ]);
+      ok(
+        await inside("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            {
+              taskId: task.id,
+              key: "2026-10-19",
+              expectedVersion: 0,
+              value: "Checkpoint prefix",
+            },
+          ],
+        }),
+      );
+      await app.locals.sync.get(teamId).run();
+      ok(await inside(`/teams/${teamId}/sync/checkpoint`, {}));
+      const beforeImportCalls = github.calls.length;
       let imported = ok(
         await outside("/admin/sync/import", { teamId, profileId: "outside" }),
       );
       await drain();
       assert.equal(imported.phase, "complete");
+      assert.equal(
+        github.calls
+          .slice(beforeImportCalls)
+          .some((call) => call.path === "/git/blobs/" + genesisBlob),
+        false,
+        "new PG site loads verified checkpoint instead of replaying genesis",
+      );
       assert.equal(
         ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks[0]
           .cells.title.value,
@@ -678,6 +769,42 @@ test(
           .length,
         0,
       );
+      assert.equal(
+        images.objects.size,
+        1,
+        "restorable local audit still protects the image",
+      );
+      // Expire synthetic audit records through the actual history-cleanup API,
+      // then reclaim the image which is now referenced only by excluded data.
+      await team.query(
+        "UPDATE graeboard.site_audit SET created_at='2026-01-01T00:00:00.000Z'",
+      );
+      const historyPreview = ok(
+        await outside(
+          `/admin/history-cleanup?scopeId=${teamId}&beforeDate=2026-10-20`,
+        ),
+      );
+      ok(
+        await outside("/admin/history-cleanup", {
+          token: historyPreview.token,
+          confirmed: true,
+        }),
+      );
+      const unused = ok(
+        await outside(maintenance + "/preview", { kind: "images" }),
+      );
+      let imagesCleanup = ok(
+        await outside(maintenance + "/execute", {
+          token: unused.token,
+          confirmed: true,
+        }),
+      );
+      while (imagesCleanup.hasMore)
+        imagesCleanup = ok(
+          await outside(maintenance + "/resume", {
+            jobId: imagesCleanup.jobId,
+          }),
+        );
       assert.equal(images.objects.size, 0);
       assert.equal(
         ok(await inside("/tasks?teamId=" + teamId + "&year=2026")).tasks.length,
@@ -981,6 +1108,172 @@ test(
         stateHash(app.locals.sync.store(teamId).readState()),
         stateHash(await pgStore.readState(teamId)),
       );
+      // Real production Worker routes + real PG state, with failing bound storage.
+      // Unlike the old isolated fault subprocess, these failures are on this
+      // application's actual save / scheduled-sync path.
+      ok(await outside(`/teams/${teamId}/sync/pause`, {}));
+      current = ok(
+        await outside("/tasks?teamId=" + teamId + "&year=2026"),
+      ).tasks.find((r) => r.id === task.id);
+      ok(
+        await outside("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            {
+              taskId: task.id,
+              key: "title",
+              expectedVersion: current.cells.title.version,
+              value: "Pending across external faults",
+            },
+          ],
+        }),
+      );
+      await Promise.allSettled(work);
+      const preservedPending = (await pgStore.readPending(teamId)).map(digest),
+        preservedHead = (await pgStore.readLink(teamId)).canonical_head;
+      assert.equal(preservedPending.length, 1);
+      const faultStartedAt = new Date().toISOString();
+      const healthyPG = env.PG_TEAM;
+      env.PG_TEAM = {
+        connectionString: "postgresql://unavailable@127.0.0.1:1/unavailable",
+      };
+      assert.equal(
+        (
+          await outside("/tasks", {
+            teamId,
+            year: 2026,
+            fields: { title: "Failed PG save" },
+          })
+        ).status,
+        500,
+      );
+      assert.equal(
+        (await outside("/admin/users")).status,
+        200,
+        "control store stays accessible during team PG outage",
+      );
+      await assert.rejects(runTeam(env, p));
+      await scheduled(env);
+      assert.equal(
+        (await pgStore.readLink(teamId)).canonical_head,
+        preservedHead,
+      );
+      assert.deepEqual(
+        (await pgStore.readPending(teamId)).map(digest),
+        preservedPending,
+      );
+      env.PG_TEAM = healthyPG;
+      const healthyHead = images.head;
+      let failedR2Calls = 0;
+      images.head = async () => {
+        failedR2Calls++;
+        throw Object.assign(new Error("fixture R2 unavailable"), {
+          status: 503,
+        });
+      };
+      const originalDocument = ok(await outside(`/tasks/${task.id}/document`));
+      const failedSave = await outside(
+        `/tasks/${task.id}/document`,
+        {
+          operationId: randomUUID(),
+          expectedRevision: originalDocument.revision,
+          markdown: originalDocument.markdown + "\nR2 failure must roll back",
+        },
+        "PUT",
+      );
+      assert.equal(failedSave.status, 503);
+      assert.equal(
+        ok(await outside(`/tasks/${task.id}/document`)).revision,
+        originalDocument.revision,
+      );
+      assert.deepEqual(
+        (await pgStore.readPending(teamId)).map(digest),
+        preservedPending,
+      );
+      const internalCurrent = getTask(db, task.id);
+      ok(
+        await inside("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            {
+              taskId: task.id,
+              key: "2026-11-02",
+              expectedVersion:
+                internalCurrent.cells["2026-11-02"]?.version || 0,
+              value: "Inbound during R2 outage",
+            },
+          ],
+        }),
+      );
+      await app.locals.sync.get(teamId).run();
+      ok(await outside(`/teams/${teamId}/sync/resume`, {}));
+      await assert.rejects(runTeam(env, p), /R2 unavailable/);
+      await scheduled(env);
+      assert.ok(
+        failedR2Calls >= 3,
+        "save and scheduled receiver actually reached failed R2 binding",
+      );
+      assert.equal(
+        (await pgStore.readLink(teamId)).canonical_head,
+        preservedHead,
+      );
+      assert.deepEqual(
+        (await pgStore.readPending(teamId)).map(digest),
+        preservedPending,
+      );
+      images.head = healthyHead;
+      await scheduled(env);
+      await app.locals.sync.get(teamId).run();
+      assert.equal((await pgStore.readPending(teamId)).length, 0);
+      assert.equal(
+        getTask(db, task.id).cells.title.value,
+        "Pending across external faults",
+      );
+      assert.equal(
+        ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks.find(
+          (r) => r.id === task.id,
+        ).cells["2026-11-02"].value,
+        "Inbound during R2 outage",
+      );
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
+      assert.deepEqual(github.unexpectedCalls, [], "swallowed unexpected GitHub API calls also fail the fixture");
+      if (process.env.WORKER_FAULT_REPORT)
+        writeFileSync(
+          process.env.WORKER_FAULT_REPORT,
+          JSON.stringify(
+            {
+              scenario: "worker-pg-r2-faults",
+              verified: true,
+              runtime:
+                "Production Worker modules invoked in Node; temporary real PostgreSQL; Git CLI/Data API on one local bare repository",
+              faultInjection:
+                "Unavailable team PG connection binding and R2 binding HEAD throwing 503; no live cloud services",
+              internalPerformanceCoupled: false,
+              scope:
+                "This small SQLite/Worker peer fixture is separate from a concurrently measured 10k internal app; it does not prove a coupled 10k external outage",
+              faultStartedAt,
+              completedAt: new Date().toISOString(),
+              failedR2Calls,
+              checks: {
+                pgSaveRejected: true,
+                teamPgCronFailed: true,
+                controlAccessible: true,
+                r2SaveRolledBack: true,
+                r2CronFailed: true,
+                pendingBytesPreserved: true,
+                canonicalCursorPreserved: true,
+                recoveredCronConverged: true,
+              },
+            },
+            null,
+            2,
+          ) + "\n",
+        );
     } finally {
       await Promise.allSettled(work);
       globalThis.fetch = nativeFetch;
