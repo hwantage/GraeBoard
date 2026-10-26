@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir, cpus, totalmem } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -31,6 +37,7 @@ export async function performanceFixture({
   rows = 10000,
   clients = 30,
   users = 100,
+  secondaryRows = 0,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-perf-")),
     databasePath = join(dir, "data.sqlite"),
@@ -42,12 +49,35 @@ export async function performanceFixture({
     tokens = [],
     taskIds = [],
     stamp = new Date().toISOString();
+  const secondary = secondaryRows
+    ? {
+        teamId: randomUUID(),
+        taskIds: [],
+        rows: secondaryRows,
+        profileId: "benchmark-secondary",
+        remote: join(dir, "secondary.git"),
+      }
+    : null;
+  if (secondary)
+    execFileSync("git", ["init", "--bare", secondary.remote], {
+      stdio: "ignore",
+    });
+  const targets = [
+    { teamId, taskIds, rows, profileId: "benchmark", remote },
+    ...(secondary ? [secondary] : []),
+  ];
   transaction(db, () => {
     db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
       teamId,
       "Sync performance",
       json({ ...DEFAULT_SETTINGS, properties: sampleProperties() }),
     );
+    if (secondary)
+      db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
+        secondary.teamId,
+        "Secondary performance",
+        json({ ...DEFAULT_SETTINGS, properties: sampleProperties() }),
+      );
     const ids = [];
     for (let i = 0; i < Math.max(users, clients); i++) {
       const id = randomUUID(),
@@ -57,7 +87,11 @@ export async function performanceFixture({
       db.prepare(
         "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,'!','admin',?)",
       ).run(id, "perf" + i, "검증" + i, stamp);
-      db.prepare("INSERT INTO memberships VALUES(?,?,'lead')").run(id, teamId);
+      for (const target of targets)
+        db.prepare("INSERT INTO memberships VALUES(?,?,'lead')").run(
+          id,
+          target.teamId,
+        );
       db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
         createHash("sha256").update(token).digest("hex"),
         id,
@@ -69,29 +103,38 @@ export async function performanceFixture({
       ),
       cell = upsertCellStatement(db),
       weeks = weeksForYear(2026);
-    for (let i = 0; i < rows; i++) {
-      const id = randomUUID();
-      taskIds.push(id);
-      add.run(id, teamId, "[2026]", i, ids[i % ids.length], stamp, stamp);
-      for (const [key, value] of Object.entries({
-        title: "업무 " + i,
-        description: "한글 일정 성능 검증",
-        owner: ids[i % ids.length],
-        supporters: [],
-        status: "status-progress",
-        category: "category-ux",
-      }))
-        cell.run(id, key, value, {}, 1);
-      for (let w = 0; w < 60; w++)
-        if ((i * 7 + w) % 10 < 3)
-          cell.run(
-            id,
-            weeks[w % weeks.length].key,
-            "진행 · 검토",
-            { backgroundColor: "#d1eee6" },
-            1,
-          );
-    }
+    for (const target of targets)
+      for (let i = 0; i < target.rows; i++) {
+        const id = randomUUID();
+        target.taskIds.push(id);
+        add.run(
+          id,
+          target.teamId,
+          "[2026]",
+          i,
+          ids[i % ids.length],
+          stamp,
+          stamp,
+        );
+        for (const [key, value] of Object.entries({
+          title: "업무 " + i,
+          description: "한글 일정 성능 검증",
+          owner: ids[i % ids.length],
+          supporters: [],
+          status: "status-progress",
+          category: "category-ux",
+        }))
+          cell.run(id, key, value, {}, 1);
+        for (let w = 0; w < 60; w++)
+          if ((i * 7 + w) % 10 < 3)
+            cell.run(
+              id,
+              weeks[w % weeks.length].key,
+              "진행 · 검토",
+              { backgroundColor: "#d1eee6" },
+              1,
+            );
+      }
   });
   const documentTaskId = taskIds.at(-1),
     documentActor = db.prepare("SELECT id FROM users LIMIT 1").get().id;
@@ -116,18 +159,30 @@ export async function performanceFixture({
     repository: remote,
     allowLocal: true,
   });
+  if (secondary)
+    secondary.transport = new GitCliTransport({
+      directory: join(dir, "secondary-cache.git"),
+      repository: secondary.remote,
+      allowLocal: true,
+    });
+  const runtimeOptions = {
+    installationId: randomUUID(),
+    profiles: targets.map((target) => ({
+      profileId: target.profileId,
+      teamId: target.teamId,
+      repository: "local/" + target.profileId,
+    })),
+    transports: {
+      benchmark: transport,
+      ...(secondary ? { "benchmark-secondary": secondary.transport } : {}),
+    },
+    schedule: false,
+  };
   const app = createApp({
     db,
     rateLimits: false,
     documentImagesDir: join(dir, "images"),
-    syncOptions: {
-      installationId: randomUUID(),
-      profiles: [
-        { profileId: "benchmark", teamId, repository: "local/benchmark" },
-      ],
-      transports: { benchmark: transport },
-      schedule: false,
-    },
+    syncOptions: runtimeOptions,
   });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
@@ -147,51 +202,54 @@ export async function performanceFixture({
     committed.set(result.operationId, performance.now());
     return publish(result, tasks);
   };
-  for (let i = 0; i < clients; i++) {
-    const controller = new AbortController();
-    controllers.push(controller);
-    const response = await fetch(
-      `${origin}/api/cells/events?teamId=${teamId}&year=2026`,
-      {
-        headers: { cookie: "weekly_session=" + tokens[i] },
-        signal: controller.signal,
-      },
-    );
-    if (!response.ok)
-      throw new Error("SSE connection failed " + response.status);
-    let buffer = "";
-    const reader = response.body.getReader(),
-      decoder = new TextDecoder();
-    void (async () => {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let index;
-          while ((index = buffer.indexOf("\n\n")) >= 0) {
-            const frame = buffer.slice(0, index);
-            buffer = buffer.slice(index + 2);
-            if (!frame.includes("event: cells")) continue;
-            const line = frame.split("\n").find((v) => v.startsWith("data: "));
-            const payload = unpack(JSON.parse(line.slice(6))),
-              start = committed.get(payload.operationId);
-            for (const cell of payload.cells || []) {
-              const key = JSON.stringify([cell.taskId, cell.key, cell.value]);
-              observedCells.set(key, (observedCells.get(key) || 0) + 1);
-            }
-            if (start !== undefined) {
-              const times = deliveries.get(payload.operationId) || [];
-              times.push(performance.now() - start);
-              deliveries.set(payload.operationId, times);
+  for (const target of targets)
+    for (let i = 0; i < clients; i++) {
+      const controller = new AbortController();
+      controllers.push(controller);
+      const response = await fetch(
+        `${origin}/api/cells/events?teamId=${target.teamId}&year=2026`,
+        {
+          headers: { cookie: "weekly_session=" + tokens[i] },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok)
+        throw new Error("SSE connection failed " + response.status);
+      let buffer = "";
+      const reader = response.body.getReader(),
+        decoder = new TextDecoder();
+      void (async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let index;
+            while ((index = buffer.indexOf("\n\n")) >= 0) {
+              const frame = buffer.slice(0, index);
+              buffer = buffer.slice(index + 2);
+              if (!frame.includes("event: cells")) continue;
+              const line = frame
+                .split("\n")
+                .find((v) => v.startsWith("data: "));
+              const payload = unpack(JSON.parse(line.slice(6))),
+                start = committed.get(payload.operationId);
+              for (const cell of payload.cells || []) {
+                const key = JSON.stringify([cell.taskId, cell.key, cell.value]);
+                observedCells.set(key, (observedCells.get(key) || 0) + 1);
+              }
+              if (start !== undefined) {
+                const times = deliveries.get(payload.operationId) || [];
+                times.push(performance.now() - start);
+                deliveries.set(payload.operationId, times);
+              }
             }
           }
+        } catch (error) {
+          if (error.name !== "AbortError") throw error;
         }
-      } catch (error) {
-        if (error.name !== "AbortError") throw error;
-      }
-    })();
-  }
+      })();
+    }
   const api = async (path, body, client = 0) => {
     const response = await fetch(origin + "/api" + path, {
       method: body ? "POST" : "GET",
@@ -270,8 +328,9 @@ export async function performanceFixture({
     Object.defineProperty(result, "timings", { value: { saves, sse } });
     return result;
   }
-  const setLink = (mode) => {
-    const store = app.locals.sync.store(teamId),
+  const setLink = (mode, targetId = teamId) => {
+    const target = targets.find((value) => value.teamId === targetId);
+    const store = app.locals.sync.store(targetId),
       old = store.readLink();
     store.writeLink(
       old
@@ -281,7 +340,7 @@ export async function performanceFixture({
             bootstrap_id: randomUUID(),
             installation_id: app.locals.sync.installationId,
             writer_epoch: randomUUID(),
-            profile_id: "benchmark",
+            profile_id: target.profileId,
             mode,
             updated_at: stamp,
           },
@@ -301,6 +360,10 @@ export async function performanceFixture({
   return {
     dir,
     databasePath,
+    secondary,
+    runtimeOptions,
+    deliveries,
+    committed,
     remote,
     db,
     teamId,
@@ -321,10 +384,200 @@ export async function performanceFixture({
   };
 }
 
+export async function runTwoTeamPerformance({
+  rows = 10000,
+  secondaryRows = 1000,
+  clients = 30,
+  users = 100,
+  rounds = 30,
+  includeScheduled = true,
+  log = () => {},
+} = {}) {
+  const fixture = await performanceFixture({
+      rows,
+      secondaryRows,
+      clients,
+      users,
+    }),
+    secondary = fixture.secondary;
+  try {
+    for (const teamId of [fixture.teamId, secondary.teamId])
+      fixture.setLink("initializing", teamId);
+    await Promise.all(
+      [fixture.teamId, secondary.teamId].map((teamId) =>
+        fixture.app.locals.sync.get(teamId).run({ initialize: true }),
+      ),
+    );
+    let done = false,
+      failure,
+      bulkPaste;
+    const start = performance.now(),
+      operationId = randomUUID(),
+      count = Math.min(2000, secondary.taskIds.length * 2),
+      week = weeksForYear(2026)[0].key;
+    const changes = Array.from({ length: count }, (_, index) => {
+      const taskId = secondary.taskIds[Math.floor(index / 2)],
+        key = index % 2 ? week : "title";
+      return {
+        taskId,
+        key,
+        expectedVersion:
+          fixture.db
+            .prepare("SELECT version FROM cells WHERE task_id=? AND key=?")
+            .get(taskId, key)?.version || 0,
+        value: "Two-team bulk " + index,
+      };
+    });
+    const running = (async () => {
+      const started = performance.now();
+      const response = await fixture.api("/cells/batch", {
+        operationId,
+        createdAt: new Date().toISOString(),
+        changes,
+      });
+      const deadline = Date.now() + 5000;
+      while (
+        (fixture.deliveries.get(operationId)?.length || 0) < clients &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (
+        response.cells.length !== count ||
+        (fixture.deliveries.get(operationId)?.length || 0) < clients
+      )
+        throw new Error(
+          "Two-team bulk paste did not persist and reach all SSE clients",
+        );
+      bulkPaste = {
+        cells: count,
+        requestToResponseAndSseMs: performance.now() - started,
+        commitToAllSseMs: Math.max(...fixture.deliveries.get(operationId)),
+        deliveredClients: clients,
+      };
+      await Promise.all(
+        [fixture.teamId, secondary.teamId].map((teamId) =>
+          fixture.app.locals.sync.get(teamId).run(),
+        ),
+      );
+      if (fixture.app.locals.sync.store(secondary.teamId).readPending().length)
+        throw new Error(
+          "Secondary bulk paste was not acknowledged by the simultaneous sync run",
+        );
+      for (const [teamId, transport] of [
+        [fixture.teamId, fixture.transport],
+        [secondary.teamId, secondary.transport],
+      ]) {
+        if (
+          fixture.app.locals.sync.store(teamId).readLink().canonical_head !==
+          (await transport.readHead())
+        )
+          throw new Error("Two-team canonical and Git heads did not converge");
+      }
+    })()
+      .catch((error) => {
+        failure = error;
+      })
+      .finally(() => {
+        done = true;
+      });
+    const simultaneous = await fixture.measure(rounds, {
+      until: () => done,
+      pauseMs: 30,
+    });
+    await running;
+    if (failure) throw failure;
+    simultaneous.jobMs = performance.now() - start;
+    simultaneous.bothTeamHeadsVerified = true;
+    log({ twoTeamSimultaneous: simultaneous, bulkPaste });
+    let scheduled = null;
+    if (includeScheduled) {
+      const started = performance.now(),
+        cycles = { primary: [], secondary: [] };
+      let runningCount = 0;
+      for (const [name, teamId] of [
+        ["primary", fixture.teamId],
+        ["secondary", secondary.teamId],
+      ]) {
+        const service = fixture.app.locals.sync.get(teamId),
+          run = service.run;
+        service.run = async (options) => {
+          const record = { startMs: performance.now() - started };
+          runningCount++;
+          try {
+            const result = await run(options);
+            record.busy = !!result?.busy;
+            return result;
+          } catch (error) {
+            record.error = error.message;
+            throw error;
+          } finally {
+            record.finishMs = performance.now() - started;
+            runningCount--;
+            cycles[name].push(record);
+          }
+        };
+      }
+      fixture.runtimeOptions.schedule = true;
+      // No further writes target the secondary team, so its actual default
+      // 60-second timer cannot be replaced by a save-debounce timer. Primary
+      // team edits exercise the real 1.5-second debounce concurrently.
+      fixture.app.locals.sync.schedule(fixture.teamId);
+      fixture.app.locals.sync.schedule(secondary.teamId);
+      scheduled = await fixture.measure(rounds, {
+        pauseMs: 30,
+        until: () => {
+          const elapsed = performance.now() - started;
+          if (elapsed > 180000)
+            throw new Error(
+              "Scheduled two-team performance exceeded its bounded observation period",
+            );
+          return (
+            elapsed >= 65000 &&
+            !runningCount &&
+            cycles.primary.some((c) => !c.error && !c.busy) &&
+            cycles.secondary.some((c) => !c.error && !c.busy)
+          );
+        },
+      });
+      Object.assign(scheduled, {
+        durationMs: performance.now() - started,
+        idleIntervalMs: 60000,
+        saveDebounceMs: 1500,
+        cycles,
+        secondaryFirstStartMs: cycles.secondary[0]?.startMs,
+      });
+      if (
+        scheduled.secondaryFirstStartMs < 59000 ||
+        !cycles.secondary.length ||
+        cycles.primary.some((c) => c.error) ||
+        cycles.secondary.some((c) => c.error)
+      )
+        throw new Error(
+          "Scheduled cycle timing or completion was not verified",
+        );
+      log({ scheduledTwoTeams: scheduled });
+      fixture.runtimeOptions.schedule = false;
+      fixture.setLink("paused");
+      fixture.setLink("paused", secondary.teamId);
+    }
+    return {
+      primaryTasks: rows,
+      secondaryTasks: secondaryRows,
+      sharedUsers: users,
+      clientsPerTeam: clients,
+      simultaneous,
+      bulkPaste,
+      scheduled,
+    };
+  } finally {
+    await fixture.close();
+  }
+}
+
 export async function runSyncPerformance({
   rows = 10000,
   clients = 30,
-  rounds = 20,
+  rounds = 30,
   users = 100,
   log = () => {},
 } = {}) {
@@ -389,7 +642,55 @@ export async function runSyncPerformance({
     renameSync(fixture.remote + ".offline", fixture.remote);
     if (!offline.error) throw new Error("Git failure scenario did not fail");
     log({ offline });
-    log("Measuring external PostgreSQL and R2 outages through completion");
+    log(
+      "Measuring a delayed real Git upload-pack while internal saves continue",
+    );
+    const delayedScript = join(fixture.dir, "delayed-upload-pack"),
+      delayedCalls = join(fixture.dir, "upload-pack-calls"),
+      uploadPack = join(
+        execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(),
+        "git-upload-pack",
+      ),
+      quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+    writeFileSync(
+      delayedScript,
+      "#!/bin/sh\nprintf x >> " +
+        quote(delayedCalls) +
+        "\n/bin/sleep 3\nexec " +
+        quote(uploadPack) +
+        ' "$@"\n',
+      { mode: 0o700 },
+    );
+    await fixture.transport.git([
+      "config",
+      "remote.origin.uploadpack",
+      delayedScript,
+    ]);
+    let delayedGit;
+    try {
+      delayedGit = await duringJob(() =>
+        fixture.app.locals.sync.get(fixture.teamId).run(),
+      );
+    } finally {
+      await fixture.transport.git([
+        "config",
+        "--unset",
+        "remote.origin.uploadpack",
+      ]);
+    }
+    delayedGit.uploadPackInvocations = readFileSync(
+      delayedCalls,
+      "utf8",
+    ).length;
+    if (!delayedGit.uploadPackInvocations)
+      throw new Error("Delayed real Git upload-pack was not exercised");
+    delayedGit.delayPerInvocationMs = 3000;
+    delayedGit.transport =
+      "real local Git upload-pack with explicit 3s server-process delay; not a remote bandwidth measurement";
+    log({ delayedGit });
+    log(
+      "Measuring actual Worker fault/retry scenario alongside independent internal availability",
+    );
     let faultResult;
     const externalFaults = await duringJob(
       () =>
@@ -425,7 +726,8 @@ export async function runSyncPerformance({
     if (
       !faultResult?.verified ||
       !faultResult.pgUnavailable ||
-      !faultResult.r2Unavailable
+      !faultResult.r2Unavailable ||
+      faultResult.internalPerformanceCoupled !== false
     )
       throw new Error("External dependency faults were not verified");
     Object.assign(externalFaults, faultResult);
@@ -663,8 +965,37 @@ export async function runSyncPerformance({
       linkedSteady = aggregate(linkedRuns);
     const degradationPercent =
       (linkedSteady.saveP95Ms / warmBaseline.saveP95Ms - 1) * 100;
+    log("Measuring two teams, a 2000-cell paste and actual scheduled cycles");
+    const twoTeams = await runTwoTeamPerformance({
+      rows,
+      clients,
+      users,
+      rounds,
+      log,
+    });
     return {
       measuredAt: new Date().toISOString(),
+      provenance: {
+        sourceCommit:
+          process.env.SYNC_PERF_SOURCE_COMMIT ||
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim(),
+        harnessCommit: process.env.SYNC_PERF_HARNESS_COMMIT || null,
+        isolatedSnapshot: process.env.SYNC_PERF_ISOLATED === "1",
+        harnessSha256: Object.fromEntries(
+          [
+            "scripts/sync-performance.mjs",
+            "scripts/sync-fault-performance.mjs",
+            "scripts/sync-peer-performance.mjs",
+            "scripts/sync-import-performance.mjs",
+            "tests/sync-performance.test.mjs",
+          ].map((path) => [
+            path,
+            createHash("sha256").update(readFileSync(path)).digest("hex"),
+          ]),
+        ),
+      },
       environment: {
         node: process.version,
         cpu: cpus()[0].model,
@@ -686,6 +1017,7 @@ export async function runSyncPerformance({
       bootstrap,
       active,
       offline,
+      delayedGit,
       externalFaults,
       backupConcurrent,
       inbound,
@@ -693,6 +1025,7 @@ export async function runSyncPerformance({
       steadyPairs,
       warmBaseline,
       linkedSteady,
+      twoTeams,
       degradationPercent,
       acceptance: {
         saveP95DegradationWithin10Percent: degradationPercent <= 10,
@@ -701,15 +1034,20 @@ export async function runSyncPerformance({
           bootstrap,
           active,
           offline,
+          delayedGit,
           externalFaults,
           backupConcurrent,
           inbound,
           initialImport,
           linkedSteady,
+          twoTeams.simultaneous,
+          twoTeams.scheduled,
         ].every((x) => x.commitToAllSseP95Ms < 1000),
       },
       limitations: [
         "Steady acceptance aggregates raw samples from three alternating-order paired runs; event-loop p95 is the worst constituent run.",
+        "Paired steady runs disable scheduling and measure capture-only overhead; separate two-team scheduled measurement uses actual 60s idle timers and 1.5s save debounce.",
+        "Worker PG/R2 faults use a separate supported-size actual API/Cron fixture in parallel with the independent 10k internal server; they are not a coupled 10k remote outage.",
         "The 10k PostgreSQL import is explicitly Node-only adapter stress with raised internal test limits; production Worker capacity rejects this dataset before advancing its cursor.",
         "SSE arrival is measured at real HTTP clients; browser DOM paint is verified separately.",
         "This is a synthetic temporary database; no production database, remote or deployment is used.",
@@ -725,7 +1063,7 @@ if (
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   const rows = Number(process.env.SYNC_PERF_ROWS || 10000),
-    rounds = Number(process.env.SYNC_PERF_ROUNDS || 20);
+    rounds = Number(process.env.SYNC_PERF_ROUNDS || 30);
   const report = await runSyncPerformance({ rows, rounds, log: console.log });
   const path = resolve(
     process.env.SYNC_PERF_OUTPUT || "docs/validation/sync-performance.json",

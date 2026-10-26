@@ -1,58 +1,48 @@
-import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
-import { S3ImageStore } from "../server/storage/external-backup.mjs";
-
-let attempts = 0;
-const server = createServer((_req, res) => {
-  attempts++;
-  res.writeHead(503, { "content-type": "application/xml" });
-  res.end(
-    "<Error><Code>ServiceUnavailable</Code><Message>synthetic R2 outage</Message></Error>",
-  );
-});
-server.listen(0, "127.0.0.1");
-await new Promise((resolve) => server.once("listening", resolve));
-const pool = new Pool({
-    host: "/tmp/graeboard-unavailable-" + randomUUID(),
-    database: "unavailable",
-    connectionTimeoutMillis: 1000,
-  }),
-  teamId = randomUUID();
-const images = new S3ImageStore({
-  endpoint: `http://127.0.0.1:${server.address().port}`,
-  bucket: "synthetic",
-  teamId,
-  accessKeyId: "synthetic-not-a-real-key",
-  secretAccessKey: "synthetic-not-a-real-secret",
-});
+// Real Worker API/Cron failures run in their own supported-size fixture. The
+// caller measures an independent internal app; this is not a coupled 10k peer.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+const dir = mkdtempSync("/tmp/gb-worker-fault-perf-"),
+  report = join(dir, "verified.json");
 try {
-  let pgError, r2Error;
-  await Promise.all([
-    pool
-      .query("SELECT 1")
-      .catch((error) => (pgError = error.code || error.message)),
-    images
-      .read(`/api/document-images/${teamId}/${"0".repeat(64)}.webp`)
-      .catch((error) => (r2Error = error.name)),
-  ]);
-  if (!pgError || !r2Error || !attempts)
-    throw new Error("External dependency fault did not occur");
+  const child = spawn(
+    process.execPath,
+    ["--test", "tests/worker-sync-integration.test.mjs"],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, WORKER_FAULT_REPORT: report },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += chunk));
+  child.stderr.on("data", (chunk) => (output += chunk));
+  const code = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  if (code !== 0)
+    throw new Error(
+      "Actual Worker fault integration failed: " + output.slice(-12000),
+    );
+  const result = JSON.parse(readFileSync(report, "utf8"));
+  if (
+    !result.verified ||
+    result.internalPerformanceCoupled !== false ||
+    !Object.values(result.checks || {}).length ||
+    !Object.values(result.checks).every((value) => value === true)
+  )
+    throw new Error("Actual Worker fault assertions were not verified");
   console.log(
     JSON.stringify({
+      ...result,
       pgUnavailable: true,
-      pgError,
       r2Unavailable: true,
-      r2Error,
-      r2HttpAttempts: attempts,
-      verified: true,
       fixture:
-        "unavailable local PostgreSQL socket; real S3 HTTP client against loopback503 server",
+        "actual supported-size Worker PG/R2 faults in parallel with independent 10k internal availability; different application/data fixtures",
     }),
   );
 } finally {
-  images.close();
-  await pool.end();
-  server.closeAllConnections();
-  await new Promise((resolve) => server.close(resolve));
+  rmSync(dir, { recursive: true, force: true });
 }

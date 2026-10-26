@@ -1,12 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import {
+  performanceFixture,
+  runTwoTeamPerformance,
+} from "../scripts/sync-performance.mjs";
 import {
   createNodeBackground,
   assertSnapshotGuard,
 } from "../server/sync/node-background.mjs";
 import { entityId } from "../server/sync/protocol.mjs";
 import { randomUUID } from "node:crypto";
+
+test("two-team performance fixture verifies simultaneous Git heads and bulk-paste SSE without hiding a failed job", async () => {
+  const result = await runTwoTeamPerformance({
+    rows: 40,
+    secondaryRows: 10,
+    clients: 3,
+    users: 3,
+    rounds: 2,
+    includeScheduled: false,
+  });
+  assert.equal(result.simultaneous.bothTeamHeadsVerified, true);
+  assert.equal(result.bulkPaste.cells, 20);
+  assert.equal(result.bulkPaste.deliveredClients, 3);
+  assert.ok(result.simultaneous.samples >= 6);
+  assert.equal(result.scheduled, null);
+});
 
 test("background WAL snapshot, concurrent capture, ACK and real SSE preserve internal saves", async (t) => {
   const f = await performanceFixture({ rows: 60, clients: 3, users: 3 });
