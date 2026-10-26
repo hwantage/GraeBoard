@@ -147,6 +147,8 @@ SQLite의 삭제 공간은 이후 쓰기에 재사용되지만 파일 크기는 
 
 기본 백업은 `backups/graeboard-시각.sqlite`에 생성합니다. 서버와 같은 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 사용하고, 백업 대상 DB와 호환되는 릴리스의 도구로 실행합니다. `.env`가 자동으로 읽히는지뿐 아니라 서비스에 직접 지정한 환경 변수와 일치하는지도 확인합니다.
 
+**백업 범위:** `npm run backup`은 `DB_PATH`의 SQLite와 그 DB가 참조하는 이미지만 보관합니다. Node의 팀 업무 repository를 PostgreSQL로 선택했다면 PG 자료와 PG에만 참조된 파일 이미지는 포함하지 않습니다. 현재 **SQLite control + PG 팀 업무 + FileImageStore 조합 전체의 일관된 오프라인 백업·복구 절차는 제공하지 않습니다.** `backup:external`·`restore:external`과 PG `transfer --resources`는 R2 설정을 요구하므로 이 파일 이미지 조합의 대체 절차도 아닙니다. 일반 업무 저장 계약의 교체 검증과 이 조합의 운영 복구 준비를 구분하며, SQLite 백업 성공을 전체 사이트 백업 성공으로 기록하지 않습니다. 이 조합을 운영에 사용하기 전에는 control·모든 팀 DB·전체 파일 이미지·동기화 신원/복구 상태를 함께 보존하고 새 격리 자원으로 복원하는 별도 절차와 검증이 필요합니다.
+
 ```sh
 npm run backup
 npm run backup -- backups/manual.sqlite
