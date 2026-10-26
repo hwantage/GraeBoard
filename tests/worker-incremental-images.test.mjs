@@ -136,7 +136,19 @@ test("Worker image adapter transfers only missing content across 30 inherited im
   assert.equal(counts.reads, 0);
   const first = await lazy.next();
   assert.equal(first.done, false);
-  assert.equal(counts.reads, 1, "new images are read one at a time, not aggregated in memory");
+  assert.equal(
+    counts.reads,
+    1,
+    "new images are read one at a time, not aggregated in memory",
+  );
   await lazy.return();
   assert.equal(counts.reads, 1);
+  // A deleted-only reference remains in immutable Git history but is not an
+  // instruction to hydrate a site's live R2 objects on the next receive.
+  state.entities[entityId("document", ["task", taskId, "main"])].deleted = true;
+  objects.clear();
+  const beforeDeletedReceive = { ...counts };
+  await adapter.receive(state, "head", transport);
+  assert.deepEqual(counts, beforeDeletedReceive);
+  assert.equal(objects.size, 0);
 });

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createApp } from "../server/app.mjs";
-import { unpack } from "../shared/compact.js";
+import { parseCompact, unpack } from "../shared/compact.js";
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
 import { PostgresControlRepository } from "../server/storage/postgres-control.mjs";
 import { createPostgresBusinessStorage } from "../server/storage/business-storage.mjs";
@@ -12,6 +12,60 @@ import {
 } from "./business-storage-fixture.mjs";
 const rejected = (work, status) =>
   assert.rejects(Promise.resolve().then(work), (e) => e.status === status);
+async function cellStream(t, base, path, cookie, after, multiplex = false) {
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const response = await fetch(base + (multiplex ? "/api/events" : path), {
+    method: multiplex ? "POST" : "GET",
+    signal: controller.signal,
+    headers: {
+      Cookie: cookie,
+      "Content-Type": "application/json",
+      "X-Requested-With": "WeeklyPlan",
+    },
+    ...(multiplex
+      ? {
+          body: JSON.stringify({
+            streams: [{ id: 7, path, lastEventId: after }],
+          }),
+        }
+      : {}),
+  });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader(),
+    decoder = new TextDecoder();
+  let buffer = "";
+  return {
+    async next(type) {
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      try {
+        for (;;) {
+          let end;
+          while ((end = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            let event = frame.match(/^event: (.+)$/m)?.[1];
+            if (!event) continue;
+            let data = parseCompact(frame.match(/^data: (.+)$/m)?.[1] || "{}"),
+              id = frame.match(/^id: (.+)$/m)?.[1];
+            if (event === "stream") {
+              assert.equal(data.id, 7);
+              id = data.lastEventId;
+              event = data.event;
+              data = parseCompact(data.data);
+            }
+            if (event === type) return { id, data };
+          }
+          const chunk = await reader.read();
+          assert.equal(chunk.done, false, "SSE ended before " + type);
+          buffer += decoder.decode(chunk.value, { stream: true });
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
 async function contract(f, service) {
   const initial = await service.bootstrap();
   assert.ok(initial.teams.some((t) => t.id === f.teamId));
@@ -152,7 +206,7 @@ test("M6 PostgreSQL Access control obeys same commands and atomically rolls back
   );
 });
 
-test("M6 Node password/control stays SQLite while all team services use PostgreSQL without any PG control binding or identity mirror", async (t) => {
+test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cell SSE without a PG control mirror, denies viewer writes and revokes live streams", async (t) => {
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
@@ -257,6 +311,22 @@ test("M6 Node password/control stays SQLite while all team services use PostgreS
   assert.equal(login.status, 200, JSON.stringify(login.data));
   const memberCookie = login.headers.get("set-cookie").split(";")[0];
   assert.ok(memberCookie.startsWith("weekly_session="));
+  const viewerInput = {
+    ...memberInput,
+    username: "node-pg-viewer@example.test",
+    name: "Node PG viewer",
+    memberships: [{ teamId: f.teamId, role: "viewer" }],
+  };
+  const viewer = await api("/api/admin/users", "POST", viewerInput);
+  assert.equal(viewer.status, 201, JSON.stringify(viewer.data));
+  const viewerLogin = await api(
+    "/api/auth/login",
+    "POST",
+    { username: viewerInput.username, password: viewerInput.password },
+    "",
+  );
+  assert.equal(viewerLogin.status, 200, JSON.stringify(viewerLogin.data));
+  const viewerCookie = viewerLogin.headers.get("set-cookie").split(";")[0];
   const snap = await api(
     `/api/tasks?teamId=${f.teamId}&year=2029`,
     "GET",
@@ -277,10 +347,22 @@ test("M6 Node password/control stays SQLite while all team services use PostgreS
   );
   assert.equal(response.status, 201, JSON.stringify(response.data));
   const task = response.data.task;
-  const save = await api(
-    "/api/cells/batch",
-    "POST",
-    {
+  const viewerSnapshot = await api(
+      `/api/tasks?teamId=${f.teamId}&year=2029`,
+      "GET",
+      undefined,
+      viewerCookie,
+    ),
+    after = viewerSnapshot.headers.get("x-cell-event-id");
+  assert.equal(viewerSnapshot.status, 200, JSON.stringify(viewerSnapshot.data));
+  assert.ok(viewerSnapshot.data.tasks.some((row) => row.id === task.id));
+  assert.match(after, /^pg:/);
+  const eventPath = `/api/cells/events?teamId=${f.teamId}&year=2029&after=${after}`,
+    dedicated = await cellStream(t, base, eventPath, memberCookie, after),
+    multiplex = await cellStream(t, base, eventPath, memberCookie, after, true);
+  await dedicated.next("ready");
+  await multiplex.next("ready");
+  const command = {
       operationId: randomUUID(),
       createdAt: new Date().toISOString(),
       changes: [
@@ -292,9 +374,44 @@ test("M6 Node password/control stays SQLite while all team services use PostgreS
         },
       ],
     },
+    storedState = async () =>
+      (
+        await pg.pool.query(
+          "SELECT (SELECT payload FROM graeboard.site_entities WHERE entity='cell' AND entity_key=$1) payload, (SELECT count(*) FROM graeboard.site_operations) operations, (SELECT count(*) FROM graeboard.site_audit) audit, (SELECT count(*) FROM graeboard.site_events) events, (SELECT count(*) FROM graeboard.sync_outbox) pending",
+          [JSON.stringify([task.id, "title"])],
+        )
+      ).rows[0];
+  const beforeDenied = await storedState(),
+    viewerSave = await api("/api/cells/batch", "POST", command, viewerCookie);
+  assert.ok([403, 404].includes(viewerSave.status), JSON.stringify(viewerSave));
+  assert.deepEqual(
+    await storedState(),
+    beforeDenied,
+    "viewer denial must not change PG data, replay, audit, events or pending",
+  );
+  const save = await api("/api/cells/batch", "POST", command, memberCookie);
+  assert.equal(save.status, 200, JSON.stringify(save.data));
+  const dedicatedEvent = await dedicated.next("cells"),
+    multiplexEvent = await multiplex.next("cells");
+  assert.deepEqual(dedicatedEvent.data.cells, save.data.cells);
+  assert.deepEqual(multiplexEvent.data.cells, save.data.cells);
+  assert.equal(dedicatedEvent.id, multiplexEvent.id);
+  assert.match(dedicatedEvent.id, /^pg:/);
+  const latestSnapshot = await api(
+    `/api/tasks?teamId=${f.teamId}&year=2029`,
+    "GET",
+    undefined,
     memberCookie,
   );
-  assert.equal(save.status, 200, JSON.stringify(save.data));
+  assert.equal(
+    latestSnapshot.headers.get("x-cell-event-id"),
+    dedicatedEvent.id,
+  );
+  assert.equal(
+    latestSnapshot.data.tasks.find((row) => row.id === task.id).cells.title
+      .version,
+    save.data.cells[0].version,
+  );
   assert.equal(
     f.db.prepare("SELECT COUNT(*) n FROM tasks").get().n,
     0,
@@ -365,6 +482,8 @@ test("M6 Node password/control stays SQLite while all team services use PostgreS
     clearTimeout(deadline);
   }
   assert.match(frames, /access-revoked/);
+  assert.equal((await dedicated.next("access-revoked")).data.status, 403);
+  assert.equal((await multiplex.next("access-revoked")).data.status, 403);
   assert.equal(
     (await pg.control.query("SELECT to_regclass('graeboard.users') name"))
       .rows[0].name,

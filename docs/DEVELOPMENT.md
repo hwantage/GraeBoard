@@ -308,7 +308,7 @@ Node와 Worker의 ordinary API는 `server/storage/`의 도메인 서비스에 re
 | HistoryBusinessService / AdminHistoryBusinessService     | 팀 이력·복원, 관리자 감사 검색·상세, 사이트 이력 정리                                                           |
 | DocumentBrowserBusinessService / TransferBusinessService | 문서 탐색, CSV/XLSX/JSON 내보내기, 실제 업로드 미리보기·적용·재시도                                             |
 
-`createApp()`의 기본값은 SQLite입니다. 서버 설정에서 팀 업무 저장소를 PG로 선택하는 예시는 다음과 같습니다. `env`에는 **서버 전용** 팀 PG binding과 팀 UUID에 대응하는 SYNC_PROFILES를 지정합니다. 내부 Node에서는 PG_CONTROL·R2·Git token을 이 업무 저장소 설정에 요구하지 않습니다. 사용자 입력으로 repository나 연결 문자열을 선택하지 않습니다.
+`createApp()`의 기본값은 SQLite입니다. 서버 설정에서 팀 업무 저장소를 PG로 선택하는 예시는 다음과 같습니다. `env`에는 **서버 전용** 팀 PG binding과 팀 UUID에 대응하는 SYNC_PROFILES를 지정합니다. PG 업무 저장소 선택은 서버 전체에 적용되며 팀별 SQLite/PG 혼합 선택은 지원하지 않습니다. 사용할 모든 활성 팀에 해당 팀 UUID의 `SYNC_PROFILES` 항목과 PG binding을 준비해야 합니다. 프로필이 없는 팀은 `unconfigured`로 분류되고 해당 팀의 업무 요청은 HTTP 409로 거절됩니다. 내부 Node에서는 PG_CONTROL·R2·Git token을 이 업무 저장소 설정에 요구하지 않습니다. 사용자 입력으로 repository나 연결 문자열을 선택하지 않습니다.
 
 ```js
 import { createApp } from "./server/app.mjs";
