@@ -15,6 +15,8 @@ import { MaintenanceService, maintenanceRevision } from "./maintenance.mjs";
 import { requireThat } from "../validation.mjs";
 import { auditImageReferences } from "./retention.mjs";
 
+class PreparationChanged extends Error {}
+
 const parseJob = (row) =>
   row
     ? {
@@ -34,12 +36,9 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
       : transaction(db, work);
   const fence = () =>
     `${db.prepare("PRAGMA data_version").get().data_version}:${db.prepare("SELECT total_changes() AS value").get().value}`;
-  const unchanged = (expected) =>
-    requireThat(
-      fence() === expected,
-      409,
-      "자료가 변경되었습니다. 정리 미리보기를 다시 확인하세요.",
-    );
+  const unchanged = (expected) => {
+    if (fence() !== expected) throw new PreparationChanged();
+  };
   const prepareSnapshot = async () => {
     const observed = fence();
     const current = {
@@ -67,7 +66,25 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
     current.recoveryImages = [...recoveryImages].sort();
     return { current, observed };
   };
-  const snapshot = async () => (await prepareSnapshot()).current;
+  const withStablePreparation = async (work) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await work(await prepareSnapshot());
+      } catch (error) {
+        // The fence covers this whole SQLite database, including unrelated
+        // teams and sessions. Rebuild all references after a transient write;
+        // never retry a stale team revision or another business rejection.
+        if (!(error instanceof PreparationChanged)) throw error;
+        if (attempt < 2) await yieldEventLoop();
+      }
+    }
+    requireThat(
+      false,
+      409,
+      "서버의 다른 작업으로 정리 준비 중 자료가 계속 변경됩니다. 잠시 후 다시 시도하세요.",
+    );
+  };
+  const snapshot = () => withStablePreparation(({ current }) => current);
   const readJob = (id) =>
     parseJob(
       db
@@ -126,52 +143,53 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
       );
     },
     async begin(input, { actorId, now, revision }) {
-      const { current, observed } = await prepareSnapshot();
-      const currentRevision = maintenanceRevision(current);
-      return run(() => {
-        // Other connections can commit after preparation but before this write
-        // lock. Both external commits and local writes invalidate the prepared
-        // references before a persistent maintenance guard can be activated.
-        unchanged(observed);
-        const job = readJob(input.jobId);
-        requireThat(
-          job?.phase === "cancelled" &&
-            job.manifest.preview &&
-            job.manifest.actorId === actorId &&
-            job.manifest.expiresAt >= now,
-          409,
-          "미리보기가 만료되었거나 이미 실행되었습니다.",
-        );
-        requireThat(
-          !db
-            .prepare(
-              "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
-            )
-            .get(teamId),
-          409,
-          "다른 정리 또는 백업 작업이 실행 중입니다.",
-        );
-        requireThat(
-          !current.connection?.lease_owner ||
-            current.connection.lease_until < now,
-          409,
-          "동기화 실행이 끝난 후 다시 시도하세요.",
-        );
-        requireThat(
-          current.connection &&
-            ["active", "paused"].includes(current.connection.mode),
-          409,
-          "연결 상태를 확인한 후 다시 시도하세요.",
-        );
-        requireThat(
-          currentRevision === revision,
-          409,
-          "자료가 변경되었습니다. 정리 미리보기를 다시 확인하세요.",
-        );
-        job.manifest.preview = false;
-        job.phase = job.kind === "restore" ? "restoring" : "verifying";
-        save(job);
-        return job;
+      return withStablePreparation(({ current, observed }) => {
+        const currentRevision = maintenanceRevision(current);
+        return run(() => {
+          // Other connections can commit after preparation but before this write
+          // lock. Both external commits and local writes invalidate the prepared
+          // references before a persistent maintenance guard can be activated.
+          unchanged(observed);
+          const job = readJob(input.jobId);
+          requireThat(
+            job?.phase === "cancelled" &&
+              job.manifest.preview &&
+              job.manifest.actorId === actorId &&
+              job.manifest.expiresAt >= now,
+            409,
+            "미리보기가 만료되었거나 이미 실행되었습니다.",
+          );
+          requireThat(
+            !db
+              .prepare(
+                "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
+              )
+              .get(teamId),
+            409,
+            "다른 정리 또는 백업 작업이 실행 중입니다.",
+          );
+          requireThat(
+            !current.connection?.lease_owner ||
+              current.connection.lease_until < now,
+            409,
+            "동기화 실행이 끝난 후 다시 시도하세요.",
+          );
+          requireThat(
+            current.connection &&
+              ["active", "paused"].includes(current.connection.mode),
+            409,
+            "연결 상태를 확인한 후 다시 시도하세요.",
+          );
+          requireThat(
+            currentRevision === revision,
+            409,
+            "자료가 변경되었습니다. 정리 미리보기를 다시 확인하세요.",
+          );
+          job.manifest.preview = false;
+          job.phase = job.kind === "restore" ? "restoring" : "verifying";
+          save(job);
+          return job;
+        });
       });
     },
     claim(id, owner, now) {

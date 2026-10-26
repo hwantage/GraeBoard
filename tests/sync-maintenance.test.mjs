@@ -606,3 +606,178 @@ test("SQLite maintenance rejects a new recovery reference committed after prepar
     "fresh preview protects the newly committed recovery reference",
   );
 });
+
+function seedPagedAudit(f) {
+  const insert = f.db.prepare(
+    "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'document','history','{}',?)",
+  );
+  for (let i = 0; i < 101; i++)
+    insert.run(randomUUID(), f.teamId, f.actorId, "2025-01-01T00:00:00Z");
+}
+function onAuditPreparation(db, callback) {
+  const original = db.prepare.bind(db);
+  let preparations = 0;
+  db.prepare = (sql) => {
+    const statement = original(sql);
+    if (sql.includes("before_json,after_json FROM audit")) {
+      const all = statement.all.bind(statement);
+      statement.all = (...args) => {
+        const rows = all(...args);
+        if (args[1] === 0) callback(++preparations);
+        return rows;
+      };
+    }
+    return statement;
+  };
+  return () => preparations;
+}
+
+test("SQLite cleanup retries transient other-team and session writes on the same connection", async (t) => {
+  const f = fixture(t),
+    url = f.image("unused during unrelated local writes");
+  seedPagedAudit(f);
+  const sessionId = randomUUID();
+  f.db
+    .prepare("INSERT INTO sessions VALUES(?,?,?)")
+    .run(sessionId, f.actorId, Date.now() + 60000);
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  const preparations = onAuditPreparation(f.db, (attempt) => {
+    if (attempt === 1)
+      setImmediate(() =>
+        f.db
+          .prepare("INSERT INTO teams VALUES(?,?,?)")
+          .run(randomUUID(), "Other team", json(DEFAULT_SETTINGS)),
+      );
+    if (attempt === 2)
+      setImmediate(() =>
+        f.db
+          .prepare("UPDATE sessions SET expires_at=expires_at+1 WHERE token=?")
+          .run(sessionId),
+      );
+  });
+  const result = await f.service.execute(
+    { token: preview.token, confirmed: true },
+    f.actorId,
+  );
+  assert.equal(result.phase, "complete");
+  assert.equal(
+    preparations(),
+    3,
+    "both unrelated writes require a fresh preparation, then activation succeeds",
+  );
+  assert.equal(f.files.has(url), false);
+});
+
+test("SQLite cleanup retries an unrelated commit from another connection before the guard", async (t) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "graeboard-maintenance-unrelated-"),
+  );
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const f = fixture(t, { databasePath: join(directory, "site.sqlite") });
+  const concurrent = openDatabase(join(directory, "site.sqlite"));
+  t.after(() => concurrent.close());
+  const url = f.image("unused during unrelated external commit");
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  const preparations = onAuditPreparation(f.db, () => {});
+  const originalExec = f.db.exec.bind(f.db);
+  let raced = false;
+  f.db.exec = (sql) => {
+    if (!raced && /^BEGIN IMMEDIATE/.test(sql)) {
+      raced = true;
+      concurrent
+        .prepare("INSERT INTO teams VALUES(?,?,?)")
+        .run(randomUUID(), "Other connection team", json(DEFAULT_SETTINGS));
+    }
+    return originalExec(sql);
+  };
+  const result = await f.service.execute(
+    { token: preview.token, confirmed: true },
+    f.actorId,
+  );
+  assert.equal(result.phase, "complete");
+  assert.equal(raced, true);
+  assert.equal(preparations(), 2);
+  assert.equal(f.files.has(url), false);
+});
+
+test("SQLite cleanup retries preparation but rejects a newly recoverable own-team image", async (t) => {
+  const f = fixture(t),
+    url = f.image("own team newly recoverable");
+  seedPagedAudit(f);
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  assert.equal(preview.images.count, 1);
+  const preparations = onAuditPreparation(f.db, (attempt) => {
+    if (attempt === 1)
+      setImmediate(() =>
+        f.db
+          .prepare(
+            "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'document','new recovery',?,?)",
+          )
+          .run(
+            randomUUID(),
+            f.teamId,
+            f.actorId,
+            json({ markdown: `![recover](${url})` }),
+            "2025-01-01T00:00:00Z",
+          ),
+      );
+  });
+  await assert.rejects(
+    f.service.execute({ token: preview.token, confirmed: true }, f.actorId),
+    (error) => error.status === 409 && /미리보기/.test(error.message),
+  );
+  assert.equal(
+    preparations(),
+    2,
+    "stable changed team revision is not retried as unrelated contention",
+  );
+  assert.equal(f.adapter.listJob(), null);
+  assert.equal(f.files.has(url), true);
+  assert.equal(
+    (await f.service.preview({ kind: "images" }, f.actorId)).images.count,
+    0,
+  );
+});
+
+test("SQLite cleanup stops after three unstable attempts without deleting or consuming the preview", async (t) => {
+  const f = fixture(t),
+    url = f.image("busy server must retain");
+  const sessionId = randomUUID();
+  f.db
+    .prepare("INSERT INTO sessions VALUES(?,?,?)")
+    .run(sessionId, f.actorId, Date.now() + 60000);
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  const originalExec = f.db.exec.bind(f.db);
+  let attempts = 0;
+  f.db.exec = (sql) => {
+    if (/^BEGIN IMMEDIATE/.test(sql)) {
+      attempts++;
+      f.db
+        .prepare("UPDATE sessions SET expires_at=expires_at+1 WHERE token=?")
+        .run(sessionId);
+    }
+    return originalExec(sql);
+  };
+  await assert.rejects(
+    f.service.execute({ token: preview.token, confirmed: true }, f.actorId),
+    (error) =>
+      error.status === 409 &&
+      /서버/.test(error.message) &&
+      !/미리보기/.test(error.message),
+  );
+  assert.equal(attempts, 3);
+  assert.equal(f.adapter.listJob(), null);
+  assert.equal(f.adapter.readJob(preview.token).manifest.preview, true);
+  assert.equal(f.files.has(url), true);
+  f.db.exec = originalExec;
+  assert.equal(
+    (
+      await f.service.execute(
+        { token: preview.token, confirmed: true },
+        f.actorId,
+      )
+    ).phase,
+    "complete",
+  );
+  assert.equal(f.files.has(url), false);
+});
