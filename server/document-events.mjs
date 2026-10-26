@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 // Only revision/cursor metadata is retained; document bodies stay in the DB.
 export function createDocumentEvents(refreshUser) {
   const session = randomUUID();
-  let sequence = 0;
+  let sequence = 0,
+    shuttingDown = false;
   const channels = new Map();
   const versions = new Map();
   const remember = (key, value) => {
@@ -34,6 +35,7 @@ export function createDocumentEvents(refreshUser) {
       this.publish(key, { revision: ++sequence, clientId });
     },
     subscribe(req, res, key, read) {
+      if (shuttingDown) return res.end();
       read(req); // Reject unauthorized subscriptions before opening the stream.
       res.set({
         "Content-Type": "text/event-stream; charset=utf-8",
@@ -122,6 +124,10 @@ export function createDocumentEvents(refreshUser) {
     close() {
       for (const clients of channels.values())
         for (const client of [...clients]) client.close();
+    },
+    shutdown() {
+      shuttingDown = true;
+      this.close();
     },
   };
 }

@@ -3,7 +3,7 @@ import { Plus, Users, History, ScrollText } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
-import { api } from "./api";
+import { api, isExternalSite } from "./api";
 import { Modal, ErrorNote } from "./components";
 import Toast, { useToast } from "./Toast";
 import DefaultStyleManager from "./DefaultStyleManager";
@@ -13,18 +13,23 @@ import UserAccounts from "./UserAccounts";
 import HistoryCleanup from "./HistoryCleanup";
 import SystemAuditLog from "./SystemAuditLog";
 import { teamRoleNames } from "./roles";
+import TeamSyncSettings from "./TeamSyncSettings";
+import ServiceConnections from "./ServiceConnections";
+import SiteMaintenance from "./SiteMaintenance";
 
 const teamTabs = [
   ["general", "일반"],
   ["members", "구성원"],
   ["properties", "속성"],
   ["format", "기본 서식"],
+  ["sync", "동기화"],
 ] as const;
 type TeamTab = (typeof teamTabs)[number][0];
 type SettingsTarget =
   | { kind: "team"; id: string; tab: TeamTab }
   | { kind: "new-team" }
   | { kind: "history-cleanup" }
+  | { kind: "service-connections" }
   | { kind: "audit" }
   | { kind: "users" };
 
@@ -43,7 +48,7 @@ export default function SettingsPanel({
   onRefresh,
 }: {
   user: User;
-  team: Team;
+  team?: Team;
   // 보드가 이미 받아 둔 팀·사용자. 저장 뒤에는 onRefresh가 최신 값을 돌려준다.
   teams: Team[];
   users: User[];
@@ -67,11 +72,14 @@ export default function SettingsPanel({
   const users = isAdmin ? (adminData?.users ?? []) : boardUsers;
   const [selection, setSelection] = useState<SettingsTarget>(
     () =>
-      (canManageTeam(user, team.id)
+      (team && canManageTeam(user, team.id)
         ? { kind: "team", id: team.id, tab: "general" }
-        : firstTeam(teams)) || { kind: "users" },
+        : firstTeam(teams)) || {
+        kind: isExternalSite() ? "service-connections" : "users",
+      },
   );
   const [error, setError] = useState("");
+  const [cleanupTab, setCleanupTab] = useState<"history" | "site">("history");
   const [message, setMessage] = useToast();
   const loadAdminData = () =>
     isAdmin
@@ -145,7 +153,7 @@ export default function SettingsPanel({
                 </li>
               );
             })}
-            {isAdmin && (
+            {isAdmin && !isExternalSite() && (
               <li>
                 <button
                   type="button"
@@ -164,6 +172,19 @@ export default function SettingsPanel({
             <>
               <h3 id="settings-system-heading">시스템</h3>
               <ul aria-labelledby="settings-system-heading">
+                <li>
+                  <button
+                    type="button"
+                    aria-current={
+                      selection.kind === "service-connections"
+                        ? "page"
+                        : undefined
+                    }
+                    onClick={() => select({ kind: "service-connections" })}
+                  >
+                    <span className="settings-nav-name">서비스 연결</span>
+                  </button>
+                </li>
                 <li>
                   <button
                     type="button"
@@ -220,7 +241,7 @@ export default function SettingsPanel({
                   <h3>{selectedTeam.name}</h3>
                   <p>
                     이 팀에만 적용되는 설정입니다
-                    {selectedTeam.id === team.id ? " · 지금 보고 있는 팀" : ""}
+                    {selectedTeam.id === team?.id ? " · 지금 보고 있는 팀" : ""}
                   </p>
                 </div>
               </div>
@@ -285,6 +306,14 @@ export default function SettingsPanel({
                     onSaved={saved}
                   />
                 )}
+                {selection.tab === "sync" && (
+                  <TeamSyncSettings
+                    key={selectedTeam.id}
+                    team={selectedTeam}
+                    user={user}
+                    onMessage={setMessage}
+                  />
+                )}
               </div>
             </>
           )}
@@ -315,7 +344,49 @@ export default function SettingsPanel({
             />
           )}
           {isAdmin && selection.kind === "history-cleanup" && (
-            <HistoryCleanup initialTeamId={team.id} />
+            <>
+              <div
+                className="settings-tabs"
+                role="tablist"
+                aria-label="정리 종류"
+              >
+                <button
+                  id="cleanup-history-tab"
+                  role="tab"
+                  aria-selected={cleanupTab === "history"}
+                  aria-controls="cleanup-history-panel"
+                  onClick={() => setCleanupTab("history")}
+                >
+                  변경 이력
+                </button>
+                <button
+                  id="cleanup-site-tab"
+                  role="tab"
+                  aria-selected={cleanupTab === "site"}
+                  aria-controls="cleanup-site-panel"
+                  onClick={() => setCleanupTab("site")}
+                >
+                  연도·문서·이미지
+                </button>
+              </div>
+              <div
+                role="tabpanel"
+                id={`cleanup-${cleanupTab}-panel`}
+                aria-labelledby={`cleanup-${cleanupTab}-tab`}
+              >
+                {cleanupTab === "history" ? (
+                  <HistoryCleanup initialTeamId={team?.id || ""} />
+                ) : (
+                  <SiteMaintenance
+                    teams={teams}
+                    initialTeamId={team?.id || teams[0]?.id || ""}
+                  />
+                )}
+              </div>
+            </>
+          )}
+          {isAdmin && selection.kind === "service-connections" && (
+            <ServiceConnections onRefresh={saved} />
           )}
           {isAdmin && selection.kind === "audit" && (
             <SystemAuditLog users={users} teams={teams} />

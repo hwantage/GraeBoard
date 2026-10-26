@@ -166,6 +166,8 @@ export type View = {
   columnVisibility?: Record<string, boolean>;
 };
 export type Bootstrap = {
+  authMode?: "access";
+  site?: "internal" | "external";
   user: User;
   users: User[];
   teams: Team[];

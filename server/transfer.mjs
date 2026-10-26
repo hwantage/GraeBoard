@@ -1,3 +1,4 @@
+import { retentionView } from './sync/visibility.mjs';
 import { exportDocumentImages } from "./document-images.mjs";
 import { memoContents } from "./memo-storage.mjs";
 import { reportDocumentContents, readReport } from "./document-storage.mjs";
@@ -706,6 +707,8 @@ export function installTransferRoutes(
     let tasks = report
       ? report.tasks
       : getTasks(db, d.teamId, periodYears(d.year, startMonth));
+    const visibility = retentionView(db, d.teamId);
+    tasks = visibility.tasks(tasks, reportRow?.id);
     if (d.scope === "view") {
       const selected = new Set(d.taskIds);
       const taskMap = new Map(tasks.map((t) => [t.id, t]));
@@ -786,14 +789,21 @@ export function installTransferRoutes(
             ...v,
             data: viewLayout(parse(v.data)),
           }));
-    const documentTasks = report
+    const documentTasks = visibility.tasks(report
       ? reportDocumentContents(db, { ...report, tasks }).tasks
-      : withTaskDocuments(db, tasks);
-    const memos = memoContents(db, {
+      : withTaskDocuments(db, tasks), reportRow?.id);
+    const memos = visibility.documents(memoContents(db, {
       reportId: reportRow?.id,
       teamId: d.teamId,
       year: d.year,
-    });
+    }), reportRow ? ['reportMemo',reportRow.id] : ['annual',String(d.year)]);
+    for (const saved of reports) {
+      const original = db.prepare('SELECT id FROM reports WHERE team_id=? AND name=?').get(d.teamId,saved.name);
+      if (original) {
+        saved.data.tasks = visibility.tasks(saved.data.tasks,original.id);
+        saved.data.memos = visibility.documents(saved.data.memos,['reportMemo',original.id]);
+      }
+    }
     const documentImages = exportDocumentImages(documentImagesDir, [
       ...memos.map((memo) => memo.markdown),
       ...reports.flatMap((report) =>

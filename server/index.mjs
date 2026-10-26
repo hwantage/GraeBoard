@@ -14,12 +14,33 @@ if (
 const server = app.listen(port, host, () =>
   console.log(`GraeBoard: http://${host}:${port}`),
 );
+let stopping = false;
+server.prependListener("request", (_request, response) => {
+  response.once("finish", () => {
+    // A request already in progress can become idle after close() reaped the
+    // previous idle sockets. Reap again only after its response has finished.
+    if (stopping) setImmediate(() => server.closeIdleConnections());
+  });
+});
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  // Stop accepting connections before closing subscriptions. A multiplexed
+  // request may still be awaiting its next channel, so hub shutdown is terminal.
+  const closed = new Promise((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+  app.locals.cellEvents.shutdown();
+  app.locals.documentEvents.shutdown();
+  server.closeIdleConnections();
+  await Promise.all([closed, app.locals.sync.close()]);
+  app.locals.db.close();
+  process.exit(0);
+}
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
-    app.locals.cellEvents.close();
-    app.locals.documentEvents.close();
-    server.close(() => {
-      app.locals.db.close();
-      process.exit(0);
+    void shutdown().catch((error) => {
+      console.error("서버 종료에 실패했습니다.", error.message);
+      process.exit(1);
     });
   });

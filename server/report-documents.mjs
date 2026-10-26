@@ -1,3 +1,4 @@
+import { retentionView } from "./sync/visibility.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -84,6 +85,7 @@ export function installReportDocumentRoutes(
       .get(req.params.id);
     requireThat(row, 404, "사본을 찾을 수 없습니다.");
     teamAccess(req.user, row.team_id);
+    retentionView(db, row.team_id).requireVisible("report", [row.id]);
     if (write)
       requireThat(
         canContribute(req.user, row.team_id),
@@ -311,7 +313,13 @@ export function installReportDocumentRoutes(
   const documentKey = (req) =>
     `report-task:${req.params.id}:${req.params.taskId}:${req.params.documentId || DEFAULT_DOCUMENT_ID}`;
   function readDocument(req) {
-    const { task } = access(req);
+    const { row, task } = access(req);
+    retentionView(db, row.team_id).requireVisible("document", [
+      "report",
+      row.id,
+      task.id,
+      documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
+    ]);
     return {
       ...reportTaskDocument(
         db,

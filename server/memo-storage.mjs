@@ -2,14 +2,16 @@
 // own independent rows, and later edits replace only the destination reference.
 export function copyReportMemos(
   db,
-  { reportId, sourceId, teamId, year, actorId },
+  { reportId, sourceId, teamId, year, actorId, visibleDocument },
 ) {
   const table = sourceId ? "report_memos" : "annual_memos";
   const where = sourceId ? "report_id=?" : "team_id=? AND year=?";
+  const args=sourceId?[sourceId]:[teamId,year];
+  const ids=visibleDocument?db.prepare(`SELECT id FROM ${table} WHERE ${where}`).all(...args).map(row=>row.id).filter(visibleDocument):null;
   db.prepare(
     `INSERT INTO report_memos(report_id,id,title,position,version_id,has_content,revision,updated_at,actor_id)
-    SELECT ?,id,title,position,version_id,has_content,0,updated_at,? FROM ${table} WHERE ${where}`,
-  ).run(reportId, actorId, ...(sourceId ? [sourceId] : [teamId, year]));
+    SELECT ?,id,title,position,version_id,has_content,0,updated_at,? FROM ${table} WHERE ${where}${ids?' AND id IN (SELECT value FROM json_each(?))':''}`,
+  ).run(reportId, actorId, ...args,...(ids?[JSON.stringify(ids)]:[]));
 }
 
 // Bodies are materialized only for explicit JSON export, never for opening a sheet.

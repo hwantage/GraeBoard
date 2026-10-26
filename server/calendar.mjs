@@ -1,3 +1,4 @@
+import { retentionView } from "./sync/visibility.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -113,9 +114,9 @@ export function installCalendarRoutes(
     requireThat(
       db
         .prepare(
-          "SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND m.user_id=? AND u.active=1",
+          "SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND m.user_id=? AND u.active=1 UNION SELECT 1 FROM sync_person_refs WHERE team_id=? AND person_id=?",
         )
-        .get(teamId, userId),
+        .get(teamId, userId, teamId, userId),
       404,
       "현재 팀의 활성 구성원을 선택하세요.",
     );
@@ -156,8 +157,14 @@ export function installCalendarRoutes(
         }
       : { propertyId: "", values: [], mode: "include", revision: 0 };
   }
+  function visibleEntry(row, visibility = retentionView(db, row.teamId)) {
+    const entry = entryJson(row);
+    if (visibility.hidden("document", ["calendar", row.id, "main"]))
+      entry.preview = "";
+    return entry;
+  }
   function summary(id) {
-    return entryJson(
+    return visibleEntry(
       db
         .prepare(`SELECT ${entryColumns} FROM calendar_entries WHERE id=?`)
         .get(id),
@@ -169,7 +176,7 @@ export function installCalendarRoutes(
         `SELECT w.user_id AS userId,w.week_start AS weekStart,w.task_id AS taskId,w.title AS savedTitle,w.imported_at AS importedAt,t.deleted_at,t.id AS found,c.value AS currentTitle
       FROM calendar_weekly_items w LEFT JOIN tasks t ON t.id=w.task_id AND t.team_id=w.team_id LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
       WHERE w.team_id=? AND w.week_start BETWEEN ? AND ?${userId ? " AND w.user_id=?" : ""}
-      AND w.user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND u.active=1)
+      AND (w.user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND u.active=1) OR EXISTS (SELECT 1 FROM sync_person_refs p WHERE p.team_id=w.team_id AND p.person_id=w.user_id))
       ORDER BY w.week_start,w.imported_at,w.task_id`,
       )
       .all(
@@ -413,6 +420,11 @@ export function installCalendarRoutes(
     );
   }
   function document(row) {
+    retentionView(db, row.team_id).requireVisible("document", [
+      "calendar",
+      row.id,
+      "main",
+    ]);
     return {
       markdown: readDocumentVersion(db, row.version_id)?.markdown || "",
       revision: row.revision,
@@ -444,9 +456,9 @@ export function installCalendarRoutes(
       db,
       db
         .prepare(
-          "SELECT u.* FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=? AND u.active=1 ORDER BY u.name,u.id",
+          "SELECT u.* FROM users u WHERE (u.active=1 AND u.id IN (SELECT user_id FROM memberships WHERE team_id=?)) OR u.id IN (SELECT person_id FROM sync_person_refs WHERE team_id=?) ORDER BY u.name,u.id",
         )
-        .all(team.id),
+        .all(team.id, team.id),
     );
     const rule = ruleFor(team.id);
     res.json({
@@ -671,13 +683,14 @@ export function installCalendarRoutes(
     const users =
       query.scope === "team"
         ? " AND user_id IS NULL"
-        : " AND user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND u.active=1)";
+        : " AND (user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND u.active=1) OR EXISTS (SELECT 1 FROM sync_person_refs p WHERE p.team_id=calendar_entries.team_id AND p.person_id=calendar_entries.user_id))";
+    const visibility = retentionView(db, query.teamId);
     const entries = db
       .prepare(
         `SELECT ${entryColumns} FROM calendar_entries WHERE team_id=? AND deleted_at IS NULL AND end_date>=? AND date<=?${query.userId ? " AND user_id=?" : ""}${users} ORDER BY date,updated_at,id`,
       )
       .all(...args, ...(query.scope === "team" ? [] : [query.teamId]))
-      .map(entryJson);
+      .map((row) => visibleEntry(row, visibility));
     const weekly =
       query.scope === "team"
         ? []
@@ -1056,9 +1069,11 @@ export function installCalendarRoutes(
       "다른 사용자가 제목을 수정했습니다. 입력을 복사한 뒤 일정을 다시 열어 확인하세요.",
       { currentTitle: row.title },
     );
-    db.prepare(
-      "UPDATE calendar_entries SET title=?,updated_at=? WHERE id=?",
-    ).run(data.title, nextStamp(row), row.id);
+    transaction(db, () => {
+      db.prepare(
+        "UPDATE calendar_entries SET title=?,updated_at=? WHERE id=?",
+      ).run(data.title, nextStamp(row), row.id);
+    });
     res.json(summary(row.id));
   });
   app.patch("/api/calendar/entries/:id/tags/:tagId", (req, res) => {
@@ -1266,7 +1281,14 @@ export function installCalendarRoutes(
     res.json({ task: taskAccess(req.user, req.params.id) }),
   );
   return {
-    calendarImageAccess: (req) =>
-      entryAccess(req.user, req.params.id, true).team_id,
+    calendarImageAccess: (req) => {
+      const row = entryAccess(req.user, req.params.id, true);
+      retentionView(db, row.team_id).requireVisible("document", [
+        "calendar",
+        row.id,
+        "main",
+      ]);
+      return row.team_id;
+    },
   };
 }

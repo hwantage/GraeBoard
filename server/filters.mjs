@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { savedFilter, propertiesFor, teamRole } from "../shared/domain.js";
-import { id, json, now, parse } from "./db.mjs";
+import { id, json, now, parse, transaction } from "./db.mjs";
 import { requireThat, savedFilterSchema } from "./validation.mjs";
 
 const nameSchema = z.string().trim().min(1).max(60);
@@ -122,6 +122,7 @@ export function installFilterRoutes(app, { db, teamAccess }) {
         "SELECT id FROM saved_filters WHERE team_id=? AND scope=? AND owner_id IS ? AND name=?",
       )
       .get(team.id, d.scope, owner, d.name);
+    transaction(db, () => {
     if (existing)
       db.prepare("UPDATE saved_filters SET data=?,updated_at=? WHERE id=?").run(
         json(data),
@@ -132,6 +133,7 @@ export function installFilterRoutes(app, { db, teamAccess }) {
       db.prepare(
         "INSERT INTO saved_filters(id,team_id,scope,owner_id,name,data,updated_at) VALUES(?,?,?,?,?,?,?)",
       ).run(id(), team.id, d.scope, owner, d.name, json(data), now());
+    });
     res.json({ ok: true });
   });
   app.patch("/api/filters/:id", (req, res) => {
@@ -155,14 +157,14 @@ export function installFilterRoutes(app, { db, teamAccess }) {
         "같은 구분에 같은 이름의 필터가 이미 있습니다.",
       );
     const data = d.data === undefined ? row.data : json(validate(d.data, team));
-    db.prepare(
+    transaction(db, () => db.prepare(
       "UPDATE saved_filters SET name=?,data=?,updated_at=? WHERE id=?",
-    ).run(d.name ?? row.name, data, now(), row.id);
+    ).run(d.name ?? row.name, data, now(), row.id));
     res.json({ ok: true });
   });
   app.delete("/api/filters/:id", (req, res) => {
     const { row } = editable(req);
-    db.prepare("DELETE FROM saved_filters WHERE id=?").run(row.id);
+    transaction(db, () => db.prepare("DELETE FROM saved_filters WHERE id=?").run(row.id));
     res.json({ ok: true });
   });
 }

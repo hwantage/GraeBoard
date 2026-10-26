@@ -43,7 +43,16 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import { api, send, ApiError, taskQuery } from "./api";
+import {
+  api,
+  send,
+  ApiError,
+  taskQuery,
+  logout,
+  refreshExternalTeam,
+  setActiveSyncTeam,
+} from "./api";
+import TeamSyncIndicator from "./TeamSyncIndicator";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
 import { subscribeCellChanges } from "./cell-sync";
 import {
@@ -321,6 +330,30 @@ function Workspace({
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
+  useEffect(() => {
+    setActiveSyncTeam(teamId);
+    if (boot.authMode !== "access" || !teamId) return;
+    const pull = () => {
+      if (document.visibilityState !== "hidden")
+        void refreshExternalTeam(teamId, true).catch(() => {});
+    };
+    pull();
+    window.addEventListener("focus", pull);
+    document.addEventListener("visibilitychange", pull);
+    const beforeEdit = (event: FocusEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("input,textarea,[contenteditable='true']")
+      )
+        void refreshExternalTeam(teamId).catch(() => {});
+    };
+    document.addEventListener("focusin", beforeEdit);
+    return () => {
+      window.removeEventListener("focus", pull);
+      document.removeEventListener("visibilitychange", pull);
+      document.removeEventListener("focusin", beforeEdit);
+    };
+  }, [teamId, boot.authMode]);
   const [toast, setToast] = useToast();
   const filterNameInput = useRef<HTMLInputElement>(null);
   const filterSaveQueue = useRef(Promise.resolve());
@@ -608,7 +641,10 @@ function Workspace({
     } catch {}
   }, [teamId, year, user.id]);
   useEffect(() => {
-    if (teamId && !boot.teams.some((t) => t.id === teamId)) {
+    if (
+      (!teamId && boot.teams.length) ||
+      (teamId && !boot.teams.some((t) => t.id === teamId))
+    ) {
       boardKey.current = "";
       if (viewTimer.current) clearTimeout(viewTimer.current);
       viewTimer.current = null;
@@ -2669,14 +2705,25 @@ function Workspace({
           action={
             <Button
               onClick={async () => {
-                await send("/auth/logout", {});
-                onLogout();
+                if (await logout()) onLogout();
               }}
             >
               로그아웃
             </Button>
           }
         />
+        {user.systemRole === "admin" && (
+          <Button onClick={() => setPanel("settings")}>설정</Button>
+        )}
+        {panel === "settings" && (
+          <SettingsPanel
+            user={user}
+            teams={boot.teams}
+            users={boot.users}
+            onClose={() => setPanel("")}
+            onRefresh={refreshBoot}
+          />
+        )}
       </main>
     );
   async function closeDocumentBrowser() {
@@ -2943,6 +2990,13 @@ function Workspace({
           ) : (
             <SaveStatus pending={pending > 0} failed={!!failed} />
           )}
+          {teamId && (
+            <TeamSyncIndicator
+              teamId={teamId}
+              saving={pending > 0}
+              failed={!!failed}
+            />
+          )}
           {screen === "calendar" ? (
             <>
               <Select
@@ -3031,8 +3085,10 @@ function Workspace({
                 onProfile={() =>
                   void navigateWorkspace(() => setPanel("profile"))
                 }
-                onPassword={() =>
-                  void navigateWorkspace(() => setPanel("password"))
+                onPassword={
+                  boot.authMode === "access"
+                    ? undefined
+                    : () => void navigateWorkspace(() => setPanel("password"))
                 }
                 logoutDisabled={
                   calendarBusy ||
@@ -3051,8 +3107,7 @@ function Workspace({
                     return;
                   await navigateWorkspace(async () => {
                     flushView();
-                    await send("/auth/logout", {});
-                    onLogout();
+                    if (await logout()) onLogout();
                   });
                 }}
               />

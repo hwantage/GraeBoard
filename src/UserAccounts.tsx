@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import Select from "./Select";
 import AvatarEditor from "./AvatarEditor";
-import { send } from "./api";
+import { send, isExternalSite } from "./api";
 import { Avatar, Button, ErrorNote } from "./components";
 import { systemRoleNames, teamRoleNames } from "./roles";
 import type { Team, User } from "./types";
@@ -222,7 +222,9 @@ function UserForm({
               // 바꾼 경우에만 보내 기존 아이디를 건드리지 않는다.
               username:
                 loginId && loginId !== initial.username ? loginId : undefined,
-              password: String(f.get("initialPassword") || "") || undefined,
+              password: isExternalSite()
+                ? undefined
+                : String(f.get("initialPassword") || "") || undefined,
               systemRole: f.get("systemRole"),
               active,
               color: profile.color,
@@ -297,17 +299,19 @@ function UserForm({
             </small>
           )}
         </label>
-        <label>
-          {editing ? "비밀번호 재설정 (비워두면 유지)" : "초기 비밀번호"}
-          <input
-            type="password"
-            name="initialPassword"
-            required={!editing}
-            minLength={10}
-            maxLength={128}
-            autoComplete="off"
-          />
-        </label>
+        {!isExternalSite() && (
+          <label>
+            {editing ? "비밀번호 재설정 (비워두면 유지)" : "초기 비밀번호"}
+            <input
+              type="password"
+              name="initialPassword"
+              required={!editing}
+              minLength={10}
+              maxLength={128}
+              autoComplete="off"
+            />
+          </label>
+        )}
         <label>
           시스템 권한
           <Select name="systemRole" defaultValue={initial.systemRole}>

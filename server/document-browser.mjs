@@ -1,3 +1,4 @@
+import { retentionView } from "./sync/visibility.mjs";
 import { z } from "zod";
 import { parse } from "./db.mjs";
 import { yearSchema, requireThat } from "./validation.mjs";
@@ -81,6 +82,58 @@ export function installDocumentBrowserRoutes(
       WHERE r.team_id=? AND r.year=? GROUP BY r.id ORDER BY r.created_at DESC,r.id`,
       )
       .all(s.teamId, s.year);
+    const visibility = retentionView(db, s.teamId);
+    if (visibility.active) {
+      // Keep the source badges consistent with the filtered document pages.
+      // The usual path retains its aggregate-only queries when L is empty.
+      const counts = new Map([
+        ["live", { tasks: new Set(), documents: 0 }],
+        ...reports.map((report) => [
+          report.id,
+          { tasks: new Set(), documents: 0 },
+        ]),
+      ]);
+      for (const row of db
+        .prepare(
+          `SELECT t.id AS taskId,d.id AS documentId FROM tasks t
+         JOIN task_documents d ON d.task_id=t.id WHERE ${liveWhere}`,
+        )
+        .all(s.teamId, s.year)) {
+        if (visibility.hidden("document", ["task", row.taskId, row.documentId]))
+          continue;
+        const count = counts.get("live");
+        count.tasks.add(row.taskId);
+        count.documents++;
+      }
+      for (const row of db
+        .prepare(
+          `SELECT d.report_id AS reportId,d.task_id AS taskId,d.document_id AS documentId
+         FROM report_documents d JOIN reports r ON r.id=d.report_id
+         WHERE r.team_id=? AND r.year=?`,
+        )
+        .all(s.teamId, s.year)) {
+        if (
+          visibility.hidden("document", [
+            "report",
+            row.reportId,
+            row.taskId,
+            row.documentId,
+          ])
+        )
+          continue;
+        const count = counts.get(row.reportId);
+        count.tasks.add(row.taskId);
+        count.documents++;
+      }
+      const liveCount = counts.get("live");
+      live.taskCount = liveCount.tasks.size;
+      live.documentCount = liveCount.documents;
+      for (const report of reports) {
+        const count = counts.get(report.id);
+        report.taskCount = count.tasks.size;
+        report.documentCount = count.documents;
+      }
+    }
     res.json({ sources: [{ id: "live", name: "원본", ...live }, ...reports] });
   });
   app.get("/api/document-browser/tasks", (req, res) => {
@@ -155,6 +208,11 @@ export function installDocumentBrowserRoutes(
           }),
         }));
     }
+    const visibility = retentionView(db, s.teamId);
+    tasks = visibility.years.has(String(s.year))
+      ? []
+      : visibility.tasks(tasks, source === "live" ? undefined : source);
+    tasks = tasks.filter((task) => task.documents.length);
     const groupBy = propertiesFor(settings).some((p) => p.id === s.groupBy)
       ? s.groupBy
       : "";

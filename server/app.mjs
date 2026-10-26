@@ -1,3 +1,6 @@
+import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
+import { installMaintenanceRoutes } from "./sync/maintenance-sqlite.mjs";
+import { installRetentionBoundary, retentionView } from "./sync/visibility.mjs";
 import { installEventStreams, registerEventRoute } from "./event-streams.mjs";
 import {
   documentImagesDirectory,
@@ -169,6 +172,7 @@ export function createApp({
   allowSetup = true,
   rateLimits = true,
   cellEventOptions,
+  syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
 } = {}) {
   const app = express();
@@ -413,6 +417,7 @@ export function createApp({
       "업무를 찾을 수 없습니다.",
     );
     teamAccess(user, t.teamId);
+    retentionView(db, t.teamId).requireVisible("task", [taskId]);
     if (edit)
       requireThat(canEdit(user, t), 403, "이 업무를 편집할 권한이 없습니다.");
     return t;
@@ -474,6 +479,33 @@ export function createApp({
   };
   const documentEvents = createDocumentEvents(refreshUser);
   app.locals.documentEvents = documentEvents;
+  const sync = createNodeSync({
+    db,
+    documentImagesDir,
+    documentEvents,
+    cellEvents,
+    clearTeam: cachedTasks.clearTeam,
+    options: syncOptions,
+  });
+  app.locals.sync = sync;
+  app.use("/api", (req, res, next) =>
+    sync.capture.withActor(req.user?.id, next),
+  );
+  installSyncRoutes(app, {
+    db,
+    teamAccess,
+    managedTeam,
+    requireSystemAdmin,
+    sync,
+  });
+  installMaintenanceRoutes(app, {
+    db,
+    requireSystemAdmin,
+    teamAccess,
+    sync,
+    documentImagesDir,
+  });
+  installRetentionBoundary(app, { db });
   installEventStreams(app);
   installResourceEvents(app, { db, documentEvents, teamAccess });
   installReorderRoute(app, { db, taskAccess, teamAccess });
@@ -606,6 +638,9 @@ export function createApp({
     res.vary("Accept-Encoding");
     if (req.get("If-None-Match") === etag) return res.status(304).end();
     const cached = cachedTasks(teamId, year, deleted, etag);
+    if (req.retention?.active) {
+      return res.json(unpack(JSON.parse(cached.body.toString("utf8"))));
+    }
     res.type("application/json");
     if (req.acceptsEncodings("gzip")) {
       res.set("Content-Encoding", "gzip");
@@ -729,7 +764,10 @@ export function createApp({
         "같은 팀의 업무만 복제할 수 있습니다.",
       );
       ({ cells, defaultStyle, rowStyle = {} } = copyRowFormatting(source));
-      documents = withTaskDocuments(db, [source])[0].documents;
+      documents = retentionView(db, source.teamId).documents(
+        withTaskDocuments(db, [source])[0].documents,
+        ["task", source.id],
+      );
       // 복제본은 등록자가 담당자가 되고 지원자는 비운다.
       for (const k of new Set([
         ...["owner", "supporters"].filter(defined),
@@ -870,6 +908,10 @@ export function createApp({
     }
     if (d.format) {
       const team = teamAccess(req.user, d.format.teamId);
+      const visibility = retentionView(db, team.id);
+      for (const scope of d.format.scopes || [])
+        for (const taskId of scope.rows || [])
+          visibility.requireVisible("task", [taskId]);
       return res.json(
         transaction(db, () => applyFormatting(db, req.user, d, team)),
       );
@@ -899,8 +941,12 @@ export function createApp({
         404,
         "업무를 찾을 수 없습니다.",
       );
-      const teams = new Map();
+      const teams = new Map(),
+        visibility = new Map();
       for (const task of tasks.values()) {
+        if (!visibility.has(task.teamId))
+          visibility.set(task.teamId, retentionView(db, task.teamId));
+        visibility.get(task.teamId).requireVisible("task", [task.id]);
         if (!teams.has(task.teamId))
           teams.set(task.teamId, teamAccess(req.user, task.teamId));
         requireThat(
@@ -1021,7 +1067,11 @@ export function createApp({
       db.prepare(
         "UPDATE tasks SET years=?,position=?,updated_at=? WHERE id=?",
       ).run(
-        json(d.years || task.years),
+        json(
+          d.years
+            ? retentionView(db, task.teamId).preserveYears(task.years, d.years)
+            : task.years,
+        ),
         d.position ?? task.position,
         nextTaskStamp(task.updatedAt),
         task.id,
@@ -1295,6 +1345,8 @@ export function createApp({
             view: d.view,
             settings: team.settings,
           };
+      const visibility = retentionView(db, d.teamId);
+      data.tasks = visibility.tasks(data.tasks, source?.id);
       db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
         reportId,
         d.teamId,
@@ -1312,6 +1364,17 @@ export function createApp({
         teamId: d.teamId,
         year: d.year,
         actorId: req.user.id,
+        ...(visibility.active
+          ? {
+              visibleDocument: (documentId) =>
+                !visibility.hidden(
+                  "document",
+                  source
+                    ? ["reportMemo", source.id, documentId]
+                    : ["annual", String(d.year), documentId],
+                ),
+            }
+          : {}),
       });
       audit(db, req.user.id, d.teamId, "report", reportId, undefined, {
         name: d.name,
@@ -1383,6 +1446,8 @@ export function createApp({
       "사본을 삭제할 권한이 없습니다.",
     );
     const ids = [...new Set(d.ids)];
+    const visibility = retentionView(db, d.teamId);
+    ids.forEach((id) => visibility.requireVisible("report", [id]));
     transaction(db, () => {
       const rows = db
         .prepare(

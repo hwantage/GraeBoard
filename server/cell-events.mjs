@@ -19,6 +19,7 @@ export function createCellEvents(
     floor = 0,
     bytes = 0,
     heartbeat;
+  let shuttingDown = false;
   const authorized = db.prepare(`
     SELECT EXISTS (SELECT 1 FROM teams t WHERE t.id=?
       AND (u.system_role='admin' OR EXISTS (
@@ -27,6 +28,23 @@ export function createCellEvents(
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token=? AND s.expires_at>? AND u.active=1
   `);
+  const exclusions = db.prepare(
+    "SELECT entity_key FROM site_retention WHERE team_id=? AND kind='year'",
+  );
+  const excludedByTeam = new Map(),
+    invalidated = new Map();
+  function excludedYears(teamId) {
+    if (!excludedByTeam.has(teamId))
+      excludedByTeam.set(
+        teamId,
+        new Set(
+          exclusions
+            .all(teamId)
+            .map((row) => String(JSON.parse(row.entity_key)[0])),
+        ),
+      );
+    return excludedByTeam.get(teamId);
+  }
   const cursor = () => `${epoch}:${sequence}`;
   function remove(client) {
     clients.delete(client);
@@ -64,7 +82,12 @@ export function createCellEvents(
     return `id: ${eventId}\nevent: ${type}\ndata: ${data}\n\n`;
   }
   function messageFor(entry, client) {
-    const matches = client.scopes.filter((scope) => entry.messages.has(scope));
+    const excluded = excludedYears(client.teamId);
+    if (excluded.has(client.years[0])) return;
+    const matches = client.scopes.filter(
+      (scope, index) =>
+        !excluded.has(client.years[index]) && entry.messages.has(scope),
+    );
     if (!matches.length) return;
     const eventId = `${epoch}:${entry.sequence}`;
     const data = matches.map((scope) => entry.messages.get(scope));
@@ -87,6 +110,7 @@ export function createCellEvents(
       : frame("cells", merged, eventId);
   }
   function subscribe(req, res, { teamId, year, token }) {
+    if (shuttingDown) return res.end();
     const years = Array.isArray(year) ? year : [year];
     const client = {
       res,
@@ -94,6 +118,7 @@ export function createCellEvents(
       token,
       scope: `${teamId}:${years}`,
       scopes: years.map((y) => `${teamId}:${y}`),
+      years: years.map(String),
     };
     res.set({
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -113,6 +138,7 @@ export function createCellEvents(
       !/^\d+$/.test(position || "") ||
       !Number.isSafeInteger(since) ||
       since < floor ||
+      since < (invalidated.get(teamId) || 0) ||
       since > sequence
     ) {
       write(client, frame("reset", "{}", cursor()));
@@ -180,11 +206,50 @@ export function createCellEvents(
       if (message) write(client, message);
     }
   }
+  function invalidateTeam(teamId) {
+    excludedByTeam.delete(teamId);
+    // Reload before any subsequent synchronous publish. Ordinary saves reuse
+    // this small scope cache; cleanup/restore explicitly invalidate it.
+    excludedYears(teamId);
+    sequence++;
+    invalidated.set(teamId, sequence);
+    const prefix = `${teamId}:`;
+    for (let index = history.length - 1; index >= 0; index--) {
+      const entry = history[index];
+      for (const [scope, data] of entry.messages) {
+        if (!scope.startsWith(prefix)) continue;
+        const removed = Buffer.byteLength(
+          frame(
+            data === null ? "reset" : "cells",
+            data ?? "{}",
+            `${epoch}:${entry.sequence}`,
+          ),
+        );
+        entry.messages.delete(scope);
+        entry.bytes -= removed;
+        bytes -= removed;
+      }
+      if (!entry.messages.size) history.splice(index, 1);
+    }
+    const reset = frame("reset", "{}", cursor());
+    for (const client of clients)
+      if (client.teamId === teamId) write(client, reset);
+  }
   function close() {
     for (const client of clients) client.res.end();
     clients.clear();
     clearInterval(heartbeat);
     heartbeat = undefined;
   }
-  return { cursor, subscribe, publish, close };
+  return {
+    cursor,
+    subscribe,
+    publish,
+    invalidateTeam,
+    close,
+    shutdown() {
+      shuttingDown = true;
+      close();
+    },
+  };
 }

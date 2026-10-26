@@ -12,7 +12,7 @@ export default function AccountMenu({
 }: {
   user: User;
   onProfile: () => void;
-  onPassword: () => void;
+  onPassword?: () => void;
   onLogout: () => Promise<void>;
   logoutDisabled: boolean;
 }) {
@@ -109,16 +109,18 @@ export default function AccountMenu({
           >
             <UserRound size={16} aria-hidden="true" /> 프로필
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              close(true);
-              onPassword();
-            }}
-          >
-            <KeyRound size={16} aria-hidden="true" /> 비밀번호 변경
-          </button>
+          {onPassword && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close(true);
+                onPassword();
+              }}
+            >
+              <KeyRound size={16} aria-hidden="true" /> 비밀번호 변경
+            </button>
+          )}
           <div className="account-menu-divider" role="separator" />
           <button
             type="button"

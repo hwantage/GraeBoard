@@ -1,3 +1,4 @@
+import { retentionView } from "./sync/visibility.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -211,7 +212,7 @@ export function installTaskDocumentRoutes(
     const docId = documentIdSchema.parse(req.params.documentId);
     res.json(
       transaction(db, () => {
-        const task = taskAccess(req.user, req.params.id, true);
+        const task = documentAccess(req, true);
         const current = documentEvents.stamp(
           getTaskDocument(db, task.id, docId),
         );
@@ -242,7 +243,7 @@ export function installTaskDocumentRoutes(
       .parse(req.body);
     res.json(
       transaction(db, () => {
-        const task = taskAccess(req.user, req.params.id, true);
+        const task = documentAccess(req, true);
         const current = documentEvents.stamp(
           getTaskDocument(db, task.id, docId),
         );
@@ -267,8 +268,19 @@ export function installTaskDocumentRoutes(
   });
   const documentKey = (req) =>
     `task:${req.params.id}:${req.params.documentId || DEFAULT_DOCUMENT_ID}`;
+  function documentAccess(req, edit = false) {
+    const task = taskAccess(req.user, req.params.id, edit);
+    retentionView(db, task.teamId).requireVisible("document", [
+      "task",
+      task.id,
+      documentIdSchema.parse(req.params.documentId || DEFAULT_DOCUMENT_ID),
+    ]);
+    return task;
+  }
   function readDocument(req) {
-    const task = taskAccess(req.user, req.params.id);
+    // Multiplexed subscriptions invoke this reader directly, and each emission
+    // must observe exclusions added after the connection was established.
+    const task = documentAccess(req);
     return {
       ...getTaskDocument(
         db,
@@ -283,7 +295,7 @@ export function installTaskDocumentRoutes(
     "/api/tasks/:id/documents/:documentId",
   ]) {
     app.get(path, (req, res) => {
-      taskAccess(req.user, req.params.id);
+      documentAccess(req);
       res.json(
         documentEvents.stamp(
           getTaskDocument(
@@ -305,7 +317,7 @@ export function installTaskDocumentRoutes(
         req.params.documentId || DEFAULT_DOCUMENT_ID,
       );
       const result = transaction(db, () => {
-        const task = taskAccess(req.user, req.params.id, true);
+        const task = documentAccess(req, true);
         const current = documentEvents.stamp(
           getTaskDocument(db, task.id, docId),
         );

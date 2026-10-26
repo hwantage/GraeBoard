@@ -1,3 +1,4 @@
+import { retentionView } from "./sync/visibility.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -91,6 +92,12 @@ function installMemoRoutes(
   }
   function row(req, context) {
     const id = z.string().uuid().parse(req.params.documentId);
+    retentionView(db, context.teamId).requireVisible("document", [
+      ...(isReport
+        ? ["reportMemo", context.reportId]
+        : ["annual", String(context.year)]),
+      id,
+    ]);
     const memo = db
       .prepare(
         `SELECT m.*,v.document_id AS document_identity FROM ${table} m JOIN document_versions v ON v.id=m.version_id WHERE ${memoWhere} AND m.id=?`,
@@ -191,6 +198,28 @@ function installMemoRoutes(
         const context = scope(req, true);
         const documents = list(context);
         const currentIds = documents.map((doc) => doc.id);
+        const visibility = retentionView(db, context.teamId);
+        if (visibility.active) {
+          const owner = isReport
+            ? ["reportMemo", context.reportId]
+            : ["annual", String(context.year)];
+          const hidden = new Set(
+            documents
+              .filter((doc) =>
+                visibility.hidden("document", [...owner, doc.id]),
+              )
+              .map((doc) => doc.id),
+          );
+          const restoreHidden = (values) => {
+            const visible = [...values];
+            return currentIds
+              .map((id) => (hidden.has(id) ? id : visible.shift()))
+              .concat(visible)
+              .filter(Boolean);
+          };
+          data.ids = restoreHidden(data.ids);
+          data.expectedIds = restoreHidden(data.expectedIds);
+        }
         const sameMembers =
           data.ids.length === currentIds.length &&
           data.ids.every((id) => currentIds.includes(id));
