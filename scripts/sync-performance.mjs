@@ -4,6 +4,7 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
+  statSync,
 } from "node:fs";
 import { tmpdir, cpus, totalmem } from "node:os";
 import { join, resolve } from "node:path";
@@ -1004,6 +1005,18 @@ export async function runSyncPerformance({
         fixture.setLink(linked ? "active" : "disconnected");
         await fixture.measure(3);
         const measured = await fixture.measure(rounds);
+        // Diagnostic reads occur after the segment's save/SSE/lag measurement.
+        measured.afterSegment = {
+          pendingCount: fixture.db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM sync_outbox WHERE team_id=? AND status<>'acknowledged'",
+            )
+            .get(fixture.teamId).count,
+          databaseBytes: statSync(fixture.databasePath).size,
+          walBytes:
+            statSync(fixture.databasePath + "-wal", { throwIfNoEntry: false })
+              ?.size || 0,
+        };
         result[linked ? "linked" : "unlinked"] = measured;
         (linked ? linkedRuns : unlinkedRuns).push(measured);
       }
@@ -1088,6 +1101,30 @@ export async function runSyncPerformance({
       inbound,
       initialImport,
       steadyPairs,
+      // Expose the existing samples only after every timed phase has finished.
+      // measure() keeps them non-enumerable so intermediate logging is unchanged.
+      rawPairedTimings: steadyPairs.map((pair) => ({
+        order: pair.order,
+        burstSize: clients,
+        sampleOrder:
+          "HTTP completion order within each sequential Promise.all burst; save/SSE indices align",
+        burstRanges: Array.from(
+          { length: pair.unlinked.timings.saves.length / clients },
+          (_, index) => ({
+            burst: index + 1,
+            startInclusive: index * clients,
+            endExclusive: (index + 1) * clients,
+          }),
+        ),
+        unlinked: {
+          saveMs: pair.unlinked.timings.saves,
+          commitToAllSseMs: pair.unlinked.timings.sse,
+        },
+        linked: {
+          saveMs: pair.linked.timings.saves,
+          commitToAllSseMs: pair.linked.timings.sse,
+        },
+      })),
       warmBaseline,
       linkedSteady,
       twoTeams,
@@ -1113,6 +1150,7 @@ export async function runSyncPerformance({
       },
       limitations: [
         "Steady acceptance aggregates raw samples from three alternating-order paired runs; event-loop p95 is the worst constituent run.",
+        "Paired requests are clustered in sequential client bursts, not independent repeats; default runs have 90 bursts of 30 requests per mode. afterSegment pending/database/WAL metadata is read outside the timed segment.",
         "Paired steady runs disable scheduling and measure capture-only overhead; separate two-team scheduled measurement uses actual 60s idle timers and 1.5s save debounce.",
         "Worker PG/R2 faults use a separate supported-size actual API/Cron fixture in parallel with the independent 10k internal server; they are not a coupled 10k remote outage.",
         "The 10k PostgreSQL import is explicitly Node-only adapter stress with raised internal test limits; production Worker capacity rejects this dataset before advancing its cursor.",

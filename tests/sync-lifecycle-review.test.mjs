@@ -8,7 +8,13 @@ import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createApp } from "../server/app.mjs";
-import { openDatabase, getTask, json, transaction } from "../server/db.mjs";
+import {
+  openDatabase,
+  getTask,
+  json,
+  transaction,
+  touchTasks,
+} from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
@@ -247,7 +253,7 @@ test("M4 maintenance guard returns HTTP 409, rolls back business/outbox writes a
   assert.equal(f.store.readPending().length, 1);
 });
 
-test("M14 unlinked and disconnected sites have no shared-write capture triggers; verified relink refresh reinstalls them", async (t) => {
+test("M14 cached business writes capture atomically across unlinked, linked, disconnected and relinked trigger schemas", async (t) => {
   const f = await fixture(t, { connected: false });
   const triggers = () =>
     f.db
@@ -256,6 +262,8 @@ test("M14 unlinked and disconnected sites have no shared-write capture triggers;
       )
       .all();
   assert.deepEqual(triggers(), []);
+  // Prime the business UPSERT, style lookup, timestamp and audit statements
+  // before any capture triggers exist. Later requests reuse those programs.
   ok(await f.api("/cells/batch", f.command("unlinked save")));
   assert.equal(f.store.readPending().length, 0);
   ok(
@@ -269,6 +277,21 @@ test("M14 unlinked and disconnected sites have no shared-write capture triggers;
   assert.ok(installed.length > 0);
   ok(await f.api("/cells/batch", f.command("linked save")));
   assert.equal(f.store.readPending().length, 1);
+  const linked = f.store.readPending()[0];
+  const cell = linked.changes.find((change) => change.entity === "cell");
+  assert.deepEqual(cell.key, [f.task.id, "title"]);
+  assert.equal(cell.base.value, "unlinked save");
+  assert.equal(cell.desired.value, "linked save");
+  assert.equal(linked.actorRef, f.userId);
+  assert.equal(
+    linked.changes.some((change) => change.entity === "task"),
+    false,
+    "The cell save's task timestamp must not create a shared task change",
+  );
+  const oldStamp = getTask(f.db, f.task.id).updatedAt;
+  transaction(f.db, () => touchTasks(f.db, [getTask(f.db, f.task.id)]));
+  assert.notEqual(getTask(f.db, f.task.id).updatedAt, oldStamp);
+  assert.equal(f.store.readPending().length, 1);
   ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
   assert.deepEqual(triggers(), []);
   ok(await f.api("/cells/batch", f.command("disconnected save")));
@@ -280,6 +303,112 @@ test("M14 unlinked and disconnected sites have no shared-write capture triggers;
   assert.deepEqual(triggers(), installed);
   ok(await f.api("/cells/batch", f.command("relinked save")));
   assert.equal(f.store.readPending().length, 2);
+  assert.equal(
+    f.store.readPending()[1].changes.find((change) => change.entity === "cell")
+      .base.value,
+    "disconnected save",
+  );
+  // UPDATE OF must still capture shared task fields, including scripts using
+  // the same transaction boundary as ordinary business commands.
+  const beforeTask = getTask(f.db, f.task.id);
+  transaction(f.db, () =>
+    f.db
+      .prepare("UPDATE tasks SET years=?,position=? WHERE id=?")
+      .run(json([2026, 2027]), beforeTask.position + 10, f.task.id),
+  );
+  const taskChange = f.store.readPending().at(-1).changes;
+  assert.equal(f.store.readPending().length, 3);
+  assert.equal(taskChange.length, 1);
+  assert.equal(taskChange[0].entity, "task");
+  assert.deepEqual(taskChange[0].base.years, beforeTask.years);
+  assert.deepEqual(taskChange[0].desired.years, [2026, 2027]);
+  assert.equal(taskChange[0].desired.position, beforeTask.position + 10);
+
+  const snapshot = () => ({
+    task: getTask(f.db, f.task.id),
+    pending: f.db
+      .prepare("SELECT op_id,payload FROM sync_outbox ORDER BY local_seq")
+      .all(),
+    audit: f.db.prepare("SELECT * FROM audit ORDER BY id").all(),
+    operations: f.db.prepare("SELECT * FROM operations ORDER BY id").all(),
+    cursor: f.app.locals.cellEvents.cursor(),
+  });
+  const beforeFailure = snapshot(),
+    command = f.command("retry after outbox failure");
+  f.db.exec(`CREATE TEMP TRIGGER fail_outbox_insert BEFORE INSERT ON sync_outbox
+    BEGIN SELECT RAISE(ABORT, 'injected outbox failure'); END`);
+  const rejected = await f.api("/cells/batch", command);
+  assert.equal(rejected.status, 500);
+  assert.deepEqual(snapshot(), beforeFailure);
+  f.db.exec("DROP TRIGGER fail_outbox_insert");
+  ok(await f.api("/cells/batch", command));
+  assert.equal(
+    getTask(f.db, f.task.id).cells.title.value,
+    command.changes[0].value,
+  );
+  assert.equal(f.store.readPending().length, 4);
+  assert.equal(
+    f.store
+      .readPending()
+      .at(-1)
+      .changes.find((change) => change.entity === "cell").desired.value,
+    command.changes[0].value,
+  );
+  const committed = snapshot();
+  ok(await f.api("/cells/batch", command));
+  assert.deepEqual(
+    snapshot(),
+    committed,
+    "A retry must not duplicate any writes or events",
+  );
+});
+
+test("Cached style statements do not retain pruned style IDs across business commands", async (t) => {
+  const f = await fixture(t, { connected: false });
+  const red = { color: "#dc2626" },
+    blue = { color: "#2563eb" };
+  const saveStyle = async (key, style) => {
+    const task = getTask(f.db, f.task.id);
+    ok(
+      await f.api("/cells/batch", {
+        operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        changes: [
+          {
+            taskId: f.task.id,
+            key,
+            style,
+            expectedVersion: task.cells[key]?.version ?? 0,
+            expectedFormatRevision: task.formatting?.revision ?? 0,
+          },
+        ],
+      }),
+    );
+  };
+  const styleId = (key) =>
+    f.db
+      .prepare("SELECT style_id FROM cells WHERE task_id=? AND key=?")
+      .get(f.task.id, key).style_id;
+  await saveStyle("title", red);
+  const firstId = styleId("title");
+  await saveStyle("title", {});
+  assert.equal(
+    f.db.prepare("SELECT id FROM styles WHERE id=?").get(firstId),
+    undefined,
+  );
+  // A different cell keeps the replacement style live while the earlier style
+  // is requested again, exposing any cached data/object -> stale ID mapping.
+  await saveStyle("owner", blue);
+  assert.equal(
+    styleId("owner"),
+    firstId,
+    "SQLite reused the pruned highest row ID",
+  );
+  await saveStyle("title", red);
+  assert.notEqual(styleId("title"), styleId("owner"));
+  const saved = getTask(f.db, f.task.id);
+  assert.deepEqual(saved.cells.title.style, red);
+  assert.deepEqual(saved.cells.owner.style, blue);
 });
 
 test("L17 scheduling failure after COMMIT does not fail HTTP saves and script actors are explicit system identities", async (t) => {

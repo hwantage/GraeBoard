@@ -28,6 +28,17 @@ import {
 
 import { normalizeCellStyle } from "../shared/formatting.js";
 
+// Reuse compiled programs on this connection, including its capture triggers.
+// Do not reuse query results or style-to-ID mappings across business commands.
+const statementCaches = new WeakMap();
+function cachedStatement(db, sql) {
+  let statements = statementCaches.get(db);
+  if (!statements) statementCaches.set(db, (statements = new Map()));
+  let statement = statements.get(sql);
+  if (!statement) statements.set(sql, (statement = db.prepare(sql)));
+  return statement;
+}
+
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
 export const SCHEMA_VERSION = SQLITE_VERSION;
 export const id = () => randomUUID();
@@ -160,10 +171,11 @@ export function replaceTeamMembers(db, teamId, rows) {
 export function styleWriter(db) {
   const known = new Map([["{}", 0]]);
   const objects = new WeakMap();
-  const insert = db.prepare(
+  const insert = cachedStatement(
+    db,
     "INSERT INTO styles(data) VALUES(?) ON CONFLICT(data) DO NOTHING",
   );
-  const find = db.prepare("SELECT id FROM styles WHERE data=?");
+  const find = cachedStatement(db, "SELECT id FROM styles WHERE data=?");
   return (style) => {
     if (objects.has(style)) return objects.get(style);
     const data = JSON.stringify(compactStyle(style));
@@ -179,7 +191,8 @@ export function styleWriter(db) {
 
 export function upsertCellStatement(db) {
   const intern = styleWriter(db);
-  const put = db.prepare(
+  const put = cachedStatement(
+    db,
     "INSERT INTO cells(task_id,key,value,style_id,version) VALUES(?,?,?,?,?) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style_id=excluded.style_id,version=excluded.version",
   );
   return {
@@ -203,7 +216,7 @@ export function pruneStyles(db, candidates) {
 }
 // 업무의 수정 시각을 이전 값보다 뒤로 올린다. 같은 밀리초에 바뀌어도 값이 달라진다.
 export function touchTasks(db, tasks) {
-  const put = db.prepare("UPDATE tasks SET updated_at=? WHERE id=?");
+  const put = cachedStatement(db, "UPDATE tasks SET updated_at=? WHERE id=?");
   const stamps = {};
   for (const t of tasks) {
     stamps[t.id] = nextTaskStamp(t.updatedAt);
@@ -476,7 +489,7 @@ export function* initialCells(cells, defaultStyle = {}) {
 }
 export function audit(db, actorId, teamId, action, target, before, after) {
   const auditId = id();
-  db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)").run(
+  cachedStatement(db, "INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)").run(
     auditId,
     teamId,
     actorId,

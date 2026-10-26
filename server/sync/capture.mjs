@@ -241,13 +241,27 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       );
       // Cell writes touch the task's local updated_at on every save. It is not
       // shared task content and must not trigger two complete task/style reads.
-      const when =
-        table === "tasks" && event === "UPDATE"
-          ? ` WHEN ${["id", "team_id", "years", "position", "deleted_at", "default_style", "row_style", "created_by", "created_at"].map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}`
+      const taskColumns = [
+          "id",
+          "team_id",
+          "years",
+          "position",
+          "deleted_at",
+          "default_style",
+          "row_style",
+          "created_by",
+          "created_at",
+        ],
+        taskUpdate = table === "tasks" && event === "UPDATE",
+        detectedEvent = taskUpdate
+          ? `UPDATE OF ${taskColumns.join(",")}`
+          : event,
+        when = taskUpdate
+          ? ` WHEN ${taskColumns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}`
           : "";
       triggerDefinitions.set(
         `sync_detect_${table}_${event}`,
-        `CREATE TEMP TRIGGER IF NOT EXISTS sync_detect_${table}_${event} BEFORE ${event} ON main.${table}${when} BEGIN SELECT graeboard_sync_before('${table}',json_object(${keep.map((c) => `'${c}',${prefix}.${c}`).join(",")})); END`,
+        `CREATE TEMP TRIGGER IF NOT EXISTS sync_detect_${table}_${event} BEFORE ${detectedEvent} ON main.${table}${when} BEGIN SELECT graeboard_sync_before('${table}',json_object(${keep.map((c) => `'${c}',${prefix}.${c}`).join(",")})); END`,
       );
     }
   }
