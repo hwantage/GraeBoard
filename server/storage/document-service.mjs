@@ -94,12 +94,14 @@ const scopeSchema = z.discriminatedUnion("kind", [
 
 // Ordinary document commands have no request, response, SQL or engine branches.
 // Repositories authorize and commit versions, audit, pending operations and events
-// together. Calling a synchronous SQLite repository never creates a Promise.
+// together. Pure SQLite reads remain synchronous; image document saves prepare
+// their Markdown outside the writer before committing synchronously.
 export class DocumentBusinessService {
-  constructor(repository, user, { documentEvents } = {}) {
+  constructor(repository, user, { documentEvents, refreshUser } = {}) {
     this.repository = repository;
     this.user = user;
     this.documentEvents = documentEvents;
+    this.refreshUser = refreshUser;
   }
   list(scope, { content = false } = {}) {
     return this.repository.list(this.user, scopeSchema.parse(scope), {
@@ -164,6 +166,7 @@ export class DocumentBusinessService {
     return withDocumentImageReferences(() => {
       const result = this.repository[method](this.user, scope, body, {
         clientId: this.clientId,
+        refreshUser: this.refreshUser,
       });
       const events = this.documentEvents;
       // Optional process-local delivery port runs only after repository commit.

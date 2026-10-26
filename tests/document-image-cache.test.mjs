@@ -2,16 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { channel } from "node:diagnostics_channel";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createDocumentImageReferenceCache,
   documentImageUrls,
   withDocumentImageReferences,
+  withPreparedDocumentImageReferences,
 } from "../shared/document-image-references.js";
 import { createApp } from "../server/app.mjs";
-import { openDatabase, insertTask, json } from "../server/db.mjs";
+import { createDocumentImagePreparation } from "../server/document-image-preparation.mjs";
+import { openDatabase, insertTask, json, transaction } from "../server/db.mjs";
 import { storeDocumentVersion } from "../server/document-storage.mjs";
 import { getTaskDocument } from "../server/task-documents.mjs";
 import {
@@ -191,10 +194,14 @@ const ok = (response) => {
   );
   return response.data;
 };
-async function fixture(t, { linked = true, coldBody = false } = {}) {
+async function fixture(
+  t,
+  { linked = true, coldBody = false, extraTasks = 0, memory = false } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), "graeboard-image-cache-")),
     images = join(directory, "images"),
-    db = openDatabase(join(directory, "data.sqlite")),
+    databasePath = memory ? ":memory:" : join(directory, "data.sqlite"),
+    db = openDatabase(databasePath),
     teamId = randomUUID(),
     otherTeam = randomUUID(),
     actorId = randomUUID(),
@@ -217,7 +224,12 @@ async function fixture(t, { linked = true, coldBody = false } = {}) {
     actorId,
     Date.now() + 600000,
   );
-  const taskIds = [teamId, teamId, otherTeam].map(
+  const taskIds = [
+    teamId,
+    teamId,
+    otherTeam,
+    ...Array(extraTasks).fill(teamId),
+  ].map(
     (id) =>
       insertTask(db, {
         teamId: id,
@@ -320,6 +332,7 @@ async function fixture(t, { linked = true, coldBody = false } = {}) {
   };
   t.after(async () => {
     await app.locals.sync.close();
+    await app.locals.documentPreparation?.close();
     app.locals.cellEvents.shutdown();
     app.locals.documentEvents.shutdown();
     await new Promise((resolve) => server.close(resolve));
@@ -333,6 +346,7 @@ async function fixture(t, { linked = true, coldBody = false } = {}) {
     teamId,
     actorId,
     otherTeam,
+    databasePath,
     taskIds,
     original,
     imageUrl,
@@ -346,7 +360,7 @@ async function fixture(t, { linked = true, coldBody = false } = {}) {
 }
 
 for (const linked of [false, true])
-  test(`actual ${linked ? "linked" : "unlinked"} 64KiB document saves perform zero AST parses inside SQLite writer transactions`, async (t) => {
+  test(`actual ${linked ? "linked" : "unlinked"} 64KiB cold and changed document saves perform zero AST parses on the main thread`, async (t) => {
     const f = await fixture(t, { linked, coldBody: true }),
       events = parses(t, f.writer);
     const first = largeBody(f.imageUrl);
@@ -354,8 +368,8 @@ for (const linked of [false, true])
     ok(await f.save(first));
     assert.equal(
       events.length,
-      linked ? 2 : 1,
-      "linked cold base is parsed before BEGIN; unlinked saves need only desired",
+      0,
+      "cold document extraction runs in the real background worker",
     );
     assert.equal(events.filter((event) => event.writer).length, 0);
     assert.ok(
@@ -366,8 +380,8 @@ for (const linked of [false, true])
     ok(await f.save(second));
     assert.equal(
       events.length,
-      linked ? 3 : 2,
-      "continuous save reuses previous extraction and parses only the new desired body",
+      0,
+      "a new desired body also parses off the main thread",
     );
     assert.equal(events.filter((event) => event.writer).length, 0);
     assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, second);
@@ -388,7 +402,7 @@ test("cached document syntax never caches team authorization or file existence",
     events = parses(t, f.writer),
     body = markdownFor(f.imageUrl);
   ok(await f.save(body));
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 0);
   assert.equal(
     (await f.save(body, { taskId: f.taskIds[2] })).status,
     400,
@@ -397,7 +411,7 @@ test("cached document syntax never caches team authorization or file existence",
   assert.equal(getTaskDocument(f.db, f.taskIds[2]).markdown, "");
   assert.equal(
     events.length,
-    1,
+    0,
     "foreign-team rejection used cached syntax, not a reparsing workaround",
   );
   rmSync(documentImagePath(f.images, f.imageUrl));
@@ -407,27 +421,33 @@ test("cached document syntax never caches team authorization or file existence",
     "fresh file check rejects a removed image on a different document",
   );
   assert.equal(getTaskDocument(f.db, f.taskIds[1]).markdown, "");
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 0);
   writeDocumentImage(f.images, f.imageUrl, f.bytes);
   f.db
     .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
     .run(f.teamId, f.actorId);
   assert.equal((await f.save(body, { taskId: f.taskIds[1] })).status, 403);
   assert.equal(f.store.readPending().length, 1);
-  const workerStore = new R2ImageStore({ head: async () => null }, f.teamId);
-  await assert.rejects(
-    workerStore.validate(body),
-    (error) => error.status === 400,
-  );
-  assert.throws(
-    () => imageReferences({ markdown: body }, f.otherTeam),
-    (error) => error.status === 400,
-  );
-  assert.equal(
-    events.length,
-    1,
-    "Worker shares extraction but performs its own team and storage validation",
-  );
+  const beforeDirectChecks = events.length;
+  await withDocumentImageReferences(async () => {
+    documentImageUrls(body);
+    const afterWarm = events.length;
+    const workerStore = new R2ImageStore({ head: async () => null }, f.teamId);
+    await assert.rejects(
+      workerStore.validate(body),
+      (error) => error.status === 400,
+    );
+    assert.throws(
+      () => imageReferences({ markdown: body }, f.otherTeam),
+      (error) => error.status === 400,
+    );
+    assert.equal(
+      events.length,
+      afterWarm,
+      "Worker shares extraction but performs its own team and storage validation",
+    );
+  });
+  assert.ok(events.length <= beforeDirectChecks + 1);
 });
 
 test("failed capture flush rolls back document, audit and P; cached retry rechecks file and permission", async (t) => {
@@ -456,7 +476,7 @@ test("failed capture flush rolls back document, audit and P; cached retry rechec
   }
   assert.deepEqual(counts(), before);
   assert.deepEqual({ ...getTaskDocument(f.db, f.taskIds[0]) }, original);
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 0);
   rmSync(documentImagePath(f.images, f.imageUrl));
   assert.equal((await f.save(body, { operationId })).status, 400);
   assert.deepEqual(counts(), before);
@@ -476,7 +496,7 @@ test("failed capture flush rolls back document, audit and P; cached retry rechec
   assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
   assert.equal(ok(await f.save(body, request)).revision, saved.revision);
   assert.deepEqual(counts(), after, "successful retry remains idempotent");
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 0);
   assert.equal(events.filter((event) => event.writer).length, 0);
 });
 
@@ -545,3 +565,406 @@ test("cached extraction cannot bypass untrusted operation base, desired or snaps
     "every strict validator rejects using the same cached extraction",
   );
 });
+
+// Hold the real worker response, rather than faking parser output or relying on
+// elapsed time. Every race occurs after parsing and before the repository commit.
+async function duringPreparation(f, body, mutate) {
+  const provider = f.app.locals.documentPreparation;
+  assert.equal(typeof provider?.prepare, "function");
+  const prepare = provider.prepare;
+  let enter,
+    release,
+    intercepted = false;
+  const entered = new Promise((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  provider.prepare = async (...args) => {
+    const result = await prepare.apply(provider, args);
+    if (!intercepted) {
+      intercepted = true;
+      enter({ markdowns: args[0], result });
+      await gate;
+    }
+    return result;
+  };
+  const pending = f.save(body);
+  let failure;
+  try {
+    const prepared = await Promise.race([
+      entered,
+      pending.then((response) => {
+        throw new Error(
+          "Save completed before real worker preparation: " +
+            JSON.stringify(response),
+        );
+      }),
+    ]);
+    assert.equal(f.writer(), false);
+    assert.equal(
+      f.transactions(),
+      0,
+      "preparation did not acquire SQLite's writer",
+    );
+    assert.ok(
+      prepared.result.some(
+        (row) => row.markdown === body && row.urls.includes(f.imageUrl),
+      ),
+    );
+    await mutate(prepared);
+  } catch (error) {
+    failure = error;
+  } finally {
+    release();
+    provider.prepare = prepare;
+  }
+  const result = await pending;
+  if (failure) throw failure;
+  return result;
+}
+
+test(
+  "prepared cold save remains off-main-thread after more than eight other documents evict recent extraction entries",
+  { timeout: 15000 },
+  async (t) => {
+    const f = await fixture(t, { coldBody: true, extraTasks: 10 }),
+      events = parses(t, f.writer);
+    const body = largeBody(f.imageUrl);
+    const response = await duringPreparation(f, body, async () => {
+      for (const taskId of f.taskIds.slice(3))
+        ok(await f.save(largeBody(f.imageUrl), { taskId }));
+      assert.equal(
+        getTaskDocument(f.db, f.taskIds[0]).markdown,
+        f.original,
+        "first save is still waiting",
+      );
+      assert.equal(
+        events.length,
+        0,
+        "all unrelated cold HTTP saves also use the worker",
+      );
+    });
+    ok(response);
+    assert.equal(
+      events.length,
+      0,
+      "prepared exact texts are pinned independently of the recent LRU",
+    );
+    assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
+    assert.equal(f.store.readPending().length, 11);
+  },
+);
+
+for (const cause of ["membership", "session", "file"])
+  test(
+    `async document preflight rechecks ${cause} before commit`,
+    { timeout: 15000 },
+    async (t) => {
+      const f = await fixture(t, { coldBody: true }),
+        events = parses(t, f.writer);
+      const counts = () =>
+        Object.fromEntries(
+          ["audit", "document_versions", "sync_outbox"].map((table) => [
+            table,
+            f.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,
+          ]),
+        );
+      const before = counts();
+      const response = await duringPreparation(
+        f,
+        largeBody(f.imageUrl),
+        async () => {
+          if (cause === "membership")
+            f.db
+              .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+              .run(f.teamId, f.actorId);
+          else if (cause === "session")
+            f.db.prepare("DELETE FROM sessions WHERE user_id=?").run(f.actorId);
+          else rmSync(documentImagePath(f.images, f.imageUrl));
+        },
+      );
+      assert.equal(
+        response.status,
+        cause === "membership" ? 403 : cause === "session" ? 401 : 400,
+        JSON.stringify(response),
+      );
+      assert.deepEqual(counts(), before);
+      assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, f.original);
+      assert.equal(events.length, 0);
+    },
+  );
+
+for (const bumpRevision of [true, false])
+  test(
+    `async document preflight rejects a real second-connection body change ${bumpRevision ? "with a new revision" : "at the same revision"} without parsing it under the writer`,
+    { timeout: 15000 },
+    async (t) => {
+      const f = await fixture(t, { coldBody: true }),
+        events = parses(t, f.writer);
+      const newer = largeBody(f.imageUrl),
+        desired = largeBody(f.imageUrl);
+      const response = await duringPreparation(f, desired, async () => {
+        const second = openDatabase(f.databasePath);
+        try {
+          transaction(second, () => {
+            const version = storeDocumentVersion(second, {
+              teamId: f.teamId,
+              documentId: `${f.taskIds[0]}:main`,
+              markdown: newer,
+              actorId: f.actorId,
+            });
+            second
+              .prepare(
+                `UPDATE task_documents SET version_id=?,revision=revision+${bumpRevision ? 1 : 0},updated_at=? WHERE task_id=? AND id='main'`,
+              )
+              .run(version, new Date().toISOString(), f.taskIds[0]);
+          });
+        } finally {
+          second.close();
+        }
+      });
+      assert.equal(response.status, 409, JSON.stringify(response));
+      assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, newer);
+      assert.equal(f.store.readPending().length, 0);
+      assert.equal(
+        events.length,
+        0,
+        "newer unprepared text must not trigger AST fallback inside the failed save",
+      );
+    },
+  );
+
+test(
+  "in-memory SQLite ordinary document saves use the same off-main-thread parser without a database-file dependency",
+  { timeout: 15000 },
+  async (t) => {
+    const f = await fixture(t, { linked: false, memory: true }),
+      events = parses(t, f.writer);
+    const body = largeBody(f.imageUrl);
+    ok(await f.save(body));
+    assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
+    assert.equal(events.length, 0);
+  },
+);
+
+for (const [name, fault, code] of [
+  ["crash", "throw new Error('parser fixture crash');", "CRASH"],
+  [
+    "invalid reply",
+    "parentPort.postMessage({id: request.id, hashes: request.items.map(() => 'incorrect'), urls: request.items.map(() => [])});",
+    "INVALID_REPLY",
+  ],
+  ["timeout", "/* Deliberately do not answer this message. */", "TIMEOUT"],
+])
+  test(
+    `actual document HTTP parser ${name} preserves all state and permits retry with the same operation ID`,
+    { timeout: 15000 },
+    async (t) => {
+      const f = await fixture(t, { coldBody: true }),
+        events = parses(t, f.writer),
+        provider = f.app.locals.documentPreparation,
+        prepare = provider.prepare;
+      const directory = mkdtempSync(
+        join(tmpdir(), "graeboard-http-parser-fault-"),
+      );
+      const file = join(directory, "worker.mjs");
+      writeFileSync(
+        file,
+        `import { parentPort } from 'node:worker_threads';
+parentPort.on('message', request => { ${fault} });\n`,
+      );
+      const faulty = createDocumentImagePreparation({
+        workerUrl: pathToFileURL(file),
+        timeoutMs: name === "timeout" ? 300 : 3000,
+      });
+      const beforeBody = { ...getTaskDocument(f.db, f.taskIds[0]) },
+        body = largeBody(f.imageUrl),
+        request = {
+          operationId: randomUUID(),
+          expectedRevision: beforeBody.revision,
+        };
+      const counts = () =>
+        Object.fromEntries(
+          ["audit", "document_versions", "sync_outbox"].map((table) => [
+            table,
+            f.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,
+          ]),
+        );
+      const before = counts();
+      let failure;
+      provider.prepare = async (markdowns) => {
+        try {
+          return await faulty.prepare(markdowns);
+        } catch (error) {
+          failure = error;
+          throw error;
+        }
+      };
+      try {
+        const response = await f.save(body, request);
+        assert.equal(response.status, 503, JSON.stringify(response));
+        assert.equal(failure?.code, `DOCUMENT_IMAGE_PREPARATION_${code}`);
+        assert.deepEqual(counts(), before);
+        assert.deepEqual(
+          { ...getTaskDocument(f.db, f.taskIds[0]) },
+          beforeBody,
+        );
+        assert.equal(
+          f.transactions(),
+          0,
+          "failed parser never enters the writer",
+        );
+        assert.equal(
+          events.length,
+          0,
+          "parser failure has no synchronous fallback",
+        );
+      } finally {
+        provider.prepare = prepare;
+        await faulty.close();
+        rmSync(directory, { recursive: true, force: true });
+      }
+      const saved = ok(await f.save(body, request));
+      assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
+      assert.equal(f.store.readPending().length, 1);
+      const after = counts();
+      assert.equal(ok(await f.save(body, request)).revision, saved.revision);
+      assert.deepEqual(
+        counts(),
+        after,
+        "same operation retry remains idempotent",
+      );
+      assert.equal(events.length, 0);
+    },
+  );
+
+test("prepared extraction pins only the two real worker texts and cannot fall back to an AST parse inside commit", async (t) => {
+  const service = createDocumentImagePreparation();
+  t.after(() => service.close());
+  const url = urlFor(),
+    current = markdownFor(url),
+    desired = markdownFor(url),
+    unexpected = markdownFor(url),
+    afterSuccess = markdownFor(url),
+    events = parses(t);
+  const entries = await service.prepare([current, desired]);
+  assert.equal(events.length, 0);
+  assert.throws(
+    () =>
+      withPreparedDocumentImageReferences(entries, () => {
+        assert.deepEqual(documentImageUrls(current), [url]);
+        assert.deepEqual(documentImageUrls(desired), [url]);
+        documentImageUrls(unexpected);
+      }),
+    /preparation does not match the current body/,
+  );
+  assert.equal(
+    events.length,
+    0,
+    "unexpected text fails before any main-thread AST work",
+  );
+  assert.deepEqual(documentImageUrls(unexpected), [url]);
+  assert.equal(
+    events.length,
+    1,
+    "failed commit scope is gone on return to its caller",
+  );
+  assert.equal(
+    withPreparedDocumentImageReferences(entries, () => {
+      assert.deepEqual(documentImageUrls(current), [url]);
+      return 42;
+    }),
+    42,
+  );
+  assert.deepEqual(documentImageUrls(afterSuccess), [url]);
+  assert.equal(
+    events.length,
+    2,
+    "successful commit scope is also gone on return",
+  );
+});
+
+test(
+  "overlapping identical HTTP saves both succeed while committing one document, audit and outbox operation",
+  { timeout: 15000 },
+  async (t) => {
+    const f = await fixture(t, { coldBody: true }),
+      events = parses(t, f.writer),
+      provider = f.app.locals.documentPreparation,
+      prepare = provider.prepare,
+      body = largeBody(f.imageUrl),
+      beforeBody = { ...getTaskDocument(f.db, f.taskIds[0]) },
+      request = {
+        operationId: randomUUID(),
+        expectedRevision: beforeBody.revision,
+      };
+    const counts = () =>
+      Object.fromEntries(
+        ["audit", "document_versions", "sync_outbox"].map((table) => [
+          table,
+          f.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,
+        ]),
+      );
+    const before = counts();
+    const gates = Array.from({ length: 2 }, () => {
+      let enter, release;
+      const entered = new Promise((resolve) => {
+        enter = resolve;
+      });
+      const wait = new Promise((resolve) => {
+        release = resolve;
+      });
+      return { entered, enter, wait, release };
+    });
+    let index = 0;
+    provider.prepare = async (...args) => {
+      const gate = gates[index++];
+      assert.ok(gate, "only the two expected preparation calls occur");
+      const result = await prepare.apply(provider, args);
+      gate.enter(result);
+      await gate.wait;
+      return result;
+    };
+    const pending = [];
+    let first, second, afterFirst;
+    try {
+      pending.push(f.save(body, request));
+      await gates[0].entered;
+      pending.push(f.save(body, request));
+      await gates[1].entered;
+      assert.deepEqual({ ...getTaskDocument(f.db, f.taskIds[0]) }, beforeBody);
+      assert.equal(
+        f.transactions(),
+        0,
+        "both requests prepared before either commit",
+      );
+      gates[0].release();
+      first = ok(await pending[0]);
+      afterFirst = counts();
+      gates[1].release();
+      second = ok(await pending[1]);
+    } finally {
+      for (const gate of gates) gate.release();
+      provider.prepare = prepare;
+      await Promise.allSettled(pending);
+    }
+    assert.equal(second.revision, first.revision);
+    assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
+    const after = counts();
+    assert.deepEqual(
+      after,
+      afterFirst,
+      "replay creates no version, audit or outbox row",
+    );
+    for (const table of ["audit", "sync_outbox"])
+      assert.equal(
+        after[table],
+        before[table] + 1,
+        `one ${table} record commits`,
+      );
+    assert.equal(f.store.readPending().length, 1);
+    assert.equal(events.length, 0);
+  },
+);

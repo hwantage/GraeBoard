@@ -107,6 +107,7 @@ export function createDocumentImageReferenceCache({
 }
 const recentReferences = createDocumentImageReferenceCache();
 const referenceScope = new AsyncLocalStorage();
+const preparedReferences = new AsyncLocalStorage();
 const parseEvents = channel("graeboard.document-images.parse");
 const noImages = Object.freeze([]);
 export function documentImageUrls(markdown) {
@@ -115,6 +116,16 @@ export function documentImageUrls(markdown) {
     !markdown.includes("/api/document-images/")
   )
     return noImages;
+  const prepared = preparedReferences.getStore();
+  if (prepared) {
+    // Only the exact strings extracted by the Node parser worker are pinned.
+    // An unexpected body must never fall back to parsing inside the writer.
+    if (!prepared.has(markdown))
+      throw new Error(
+        "Document image preparation does not match the current body",
+      );
+    return prepared.get(markdown);
+  }
   const scope = referenceScope.getStore();
   const cached = scope?.get(markdown) || recentReferences.get(markdown);
   if (cached) {
@@ -127,6 +138,34 @@ export function documentImageUrls(markdown) {
   recentReferences.set(markdown, urls);
   scope?.set(markdown, urls);
   return urls;
+}
+
+// Internal Node commit boundary: entries come from the app-owned parser worker,
+// never a request field. Pin extraction (not authorization/validation success)
+// until this synchronous commit finishes, independently of the recent LRU/TTL.
+export function withPreparedDocumentImageReferences(entries, work) {
+  if (!Array.isArray(entries) || entries.length > 2)
+    throw new Error("Invalid document image preparation");
+  const prepared = new Map();
+  for (const { markdown, urls } of entries) {
+    if (
+      typeof markdown !== "string" ||
+      !Array.isArray(urls) ||
+      urls.some((url) => typeof url !== "string")
+    )
+      throw new Error("Invalid document image preparation");
+    prepared.set(markdown, Object.freeze([...urls]));
+  }
+  return preparedReferences.run(prepared, () => {
+    try {
+      const result = work();
+      if (result?.then)
+        throw new Error("Prepared document commit must be synchronous");
+      return result;
+    } finally {
+      prepared.clear();
+    }
+  });
 }
 
 // Synchronous SQLite callers stay synchronous. Async PG commands retain their

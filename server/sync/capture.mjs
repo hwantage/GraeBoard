@@ -272,9 +272,6 @@ export function installCapture(db, { onPending = () => {} } = {}) {
   }
   reconcileTriggers();
   const capture = {
-    capturesTeam(teamId) {
-      return links.has(teamId);
-    },
     get failure() {
       return failure;
     },

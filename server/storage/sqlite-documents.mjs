@@ -1,7 +1,14 @@
-import { documentImageUrls } from "../../shared/document-image-references.js";
+import { withPreparedDocumentImageReferences } from "../../shared/document-image-references.js";
 import { calendarPreview } from "./calendar-service.mjs";
 import { createHash } from "node:crypto";
-import { audit, now, parse, transaction, touchTasks } from "../db.mjs";
+import {
+  audit,
+  now,
+  parse,
+  transaction,
+  touchTasks,
+  userWithTeams,
+} from "../db.mjs";
 import { requireThat } from "../validation.mjs";
 import { canContribute } from "../../shared/domain.js";
 import {
@@ -45,8 +52,20 @@ import {
 // Relational document storage. Ordinary writes use the application transaction,
 // including capture before COMMIT; no synchronization replay transaction is used.
 export class SqliteDocumentRepository {
-  constructor({ db, control, documentImagesDir, documentEvents }) {
-    Object.assign(this, { db, control, documentImagesDir, documentEvents });
+  constructor({
+    db,
+    control,
+    documentImagesDir,
+    documentEvents,
+    documentPreparation,
+  }) {
+    Object.assign(this, {
+      db,
+      control,
+      documentImagesDir,
+      documentEvents,
+      documentPreparation,
+    });
   }
   access(user, scope, write = false) {
     const db = this.db;
@@ -643,204 +662,232 @@ export class SqliteDocumentRepository {
     this.invalidate(context, { clientId });
     return result;
   }
-  save(user, scope, data, { clientId } = {}) {
-    // Prepare pure extraction before acquiring SQLite's single writer. Re-read
-    // authorization/current revision below; a concurrent changed body is a cache
-    // miss and still receives full protocol validation in the transaction.
+  async save(user, scope, data, { clientId, refreshUser } = {}) {
+    // Parse both exact bodies off the main event loop, before the single writer.
+    // Include base even while unlinked: linking may change during preparation.
     const preparedContext = this.access(user, scope, true);
+    const actorId = user.id;
     const prepared = this.body(preparedContext, {
       summary: false,
     });
-    if (prepared.markdown !== data.markdown) {
-      if (this.db.syncCapture?.capturesTeam(preparedContext.teamId))
-        documentImageUrls(prepared.markdown);
-      documentImageUrls(data.markdown);
-    }
+    const references = await this.documentPreparation.prepare([
+      prepared.markdown,
+      data.markdown,
+    ]);
+    // Request authentication/membership may have changed while the worker ran.
+    // Direct repository callers have no session, but still reload active role
+    // and memberships from the control database immediately before commit.
+    const identity = refreshUser
+      ? refreshUser()
+      : userWithTeams(
+          this.db,
+          this.db
+            .prepare("SELECT * FROM users WHERE id=? AND active=1")
+            .get(user.id),
+        );
+    user = identity?.then ? await identity : identity;
+    requireThat(user && user.id === actorId, 401, "로그인이 필요합니다.");
     let context,
       presence = false,
       changed = false;
-    const result = this.run(user, () => {
-      context = this.access(user, scope, true);
-      const current = this.body(context, { summary: false }),
-        hash = createHash("sha256").update(JSON.stringify(data)).digest("hex");
-      let previous, replay;
-      if (scope.kind === "task")
-        previous = this.db
-          .prepare(
-            "SELECT operation_id,request_hash,actor_id,version_id FROM task_documents WHERE task_id=? AND id=?",
-          )
-          .get(scope.taskId, scope.documentId);
-      else if (scope.kind === "calendar") previous = context.row;
-      else if (scope.kind === "report") {
-        const last = this.db
-          .prepare(
-            "SELECT after_json FROM audit WHERE team_id=? AND action='report-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
-          )
-          .get(
-            context.teamId,
-            `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
-            user.id,
-          );
-        const value = last && parse(last.after_json);
-        replay =
-          value?.operationId === data.operationId &&
-          value.requestHash === hash &&
-          value.revision === current.revision;
-      } else previous = this.memo(context, scope.documentId);
-      if (scope.kind !== "report")
-        replay =
-          previous?.operation_id === data.operationId &&
-          previous.actor_id === user.id &&
-          previous.request_hash === hash;
-      requireDocumentRevision(current, data, replay);
-      if (!replay && current.markdown !== data.markdown) {
-        changed = true;
-        validateDocumentImages(
-          data.markdown,
-          context.teamId,
-          this.documentImagesDir,
+    const result = withPreparedDocumentImageReferences(references, () =>
+      this.run(user, () => {
+        context = this.access(user, scope, true);
+        const current = this.body(context, { summary: false }),
+          hash = createHash("sha256")
+            .update(JSON.stringify(data))
+            .digest("hex");
+        let previous, replay;
+        if (scope.kind === "task")
+          previous = this.db
+            .prepare(
+              "SELECT operation_id,request_hash,actor_id,version_id FROM task_documents WHERE task_id=? AND id=?",
+            )
+            .get(scope.taskId, scope.documentId);
+        else if (scope.kind === "calendar") previous = context.row;
+        else if (scope.kind === "report") {
+          const last = this.db
+            .prepare(
+              "SELECT after_json FROM audit WHERE team_id=? AND action='report-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            )
+            .get(
+              context.teamId,
+              `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
+              user.id,
+            );
+          const value = last && parse(last.after_json);
+          replay =
+            value?.operationId === data.operationId &&
+            value.requestHash === hash &&
+            value.revision === current.revision;
+        } else previous = this.memo(context, scope.documentId);
+        if (scope.kind !== "report")
+          replay =
+            previous?.operation_id === data.operationId &&
+            previous.actor_id === user.id &&
+            previous.request_hash === hash;
+        requireDocumentRevision(current, data, replay);
+        // A concurrent identical command may already have committed while this
+        // request prepared. Preserve exact actor/operation/hash replay; only a
+        // new write must still match the body whose extraction we pinned.
+        requireThat(
+          replay ||
+            (context.teamId === preparedContext.teamId &&
+              current.revision === prepared.revision &&
+              current.markdown === prepared.markdown),
+          409,
+          "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
+          { current },
         );
-        presence =
-          hasDocumentContent(current.markdown) !==
-          hasDocumentContent(data.markdown);
-        if (scope.kind === "report") {
-          const docs = context.task.documents || [],
-            existing = docs.find((doc) => doc.id === scope.documentId),
-            document = {
-              ...existing,
-              id: scope.documentId,
-              title: current.title,
-              markdown: data.markdown,
-            };
-          this.persistReport(
-            context,
-            [...docs, document],
-            user.id,
-            existing ? document : undefined,
-          );
-          audit(
-            this.db,
-            user.id,
+        if (!replay && current.markdown !== data.markdown) {
+          changed = true;
+          validateDocumentImages(
+            data.markdown,
             context.teamId,
-            "report-document",
-            `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
-            { revision: current.revision },
-            {
-              revision: reportTaskDocument(
-                this.db,
-                context.task,
-                scope.documentId,
-              ).revision,
-              operationId: data.operationId,
-              requestHash: hash,
-            },
+            this.documentImagesDir,
           );
-        } else {
-          const version = storeDocumentVersion(this.db, {
-            teamId: context.teamId,
-            documentId:
-              scope.kind === "calendar"
-                ? `calendar:${scope.entryId}`
-                : previous?.document_identity ||
-                  readDocumentVersion(this.db, previous?.version_id)
-                    ?.documentId ||
-                  `${scope.taskId}:${scope.documentId}`,
-            markdown: data.markdown,
-            actorId: user.id,
-          });
-          if (scope.kind === "task") {
-            const updatedAt = now();
-            this.db
-              .prepare(
-                `INSERT INTO task_documents(task_id,id,title,version_id,has_content,revision,updated_at,actor_id,operation_id,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id,id) DO UPDATE SET version_id=excluded.version_id,has_content=excluded.has_content,revision=excluded.revision,updated_at=excluded.updated_at,actor_id=excluded.actor_id,operation_id=excluded.operation_id,request_hash=excluded.request_hash`,
-              )
-              .run(
-                scope.taskId,
-                scope.documentId,
-                current.title,
-                version,
-                Number(hasDocumentContent(data.markdown)),
-                current.revision + 1,
-                updatedAt,
-                user.id,
-                data.operationId,
-                hash,
-              );
-            touchTasks(this.db, [context.task]);
+          presence =
+            hasDocumentContent(current.markdown) !==
+            hasDocumentContent(data.markdown);
+          if (scope.kind === "report") {
+            const docs = context.task.documents || [],
+              existing = docs.find((doc) => doc.id === scope.documentId),
+              document = {
+                ...existing,
+                id: scope.documentId,
+                title: current.title,
+                markdown: data.markdown,
+              };
+            this.persistReport(
+              context,
+              [...docs, document],
+              user.id,
+              existing ? document : undefined,
+            );
             audit(
               this.db,
               user.id,
               context.teamId,
-              "document",
-              scope.taskId,
-              {
-                documentId: scope.documentId,
-                revision: current.revision,
-                bytes: Buffer.byteLength(current.markdown),
-              },
-              {
-                documentId: scope.documentId,
-                revision: current.revision + 1,
-                bytes: Buffer.byteLength(data.markdown),
-                updatedAt,
-              },
-            );
-            pruneDocumentVersions(this.db, context.teamId);
-          } else if (scope.kind === "calendar") {
-            const preview = calendarPreview(data.markdown);
-            const updatedAt = new Date(
-              Math.max(Date.now(), Date.parse(previous.updated_at) + 1),
-            ).toISOString();
-            this.db
-              .prepare(
-                "UPDATE calendar_entries SET version_id=?,preview=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE id=?",
-              )
-              .run(
-                version,
-                preview,
-                updatedAt,
-                user.id,
-                data.operationId,
-                hash,
-                scope.entryId,
-              );
-            pruneDocumentVersions(
-              this.db,
-              context.teamId,
-              previous.version_id ? [previous.version_id] : [],
-            );
-            context.row = context.port.entryAccess(user, scope.entryId);
-          } else {
-            this.db
-              .prepare(
-                `UPDATE ${context.table} SET version_id=?,has_content=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE ${context.where} AND id=?`,
-              )
-              .run(
-                version,
-                Number(hasDocumentContent(data.markdown)),
-                now(),
-                user.id,
-                data.operationId,
-                hash,
-                ...context.args,
-                scope.documentId,
-              );
-            this.memoAudit(
-              user,
-              context,
-              "memo",
-              scope.documentId,
+              "report-document",
+              `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
               { revision: current.revision },
-              { year: context.year, revision: current.revision + 1 },
+              {
+                revision: reportTaskDocument(
+                  this.db,
+                  context.task,
+                  scope.documentId,
+                ).revision,
+                operationId: data.operationId,
+                requestHash: hash,
+              },
             );
-            pruneDocumentVersions(this.db, context.teamId, [
-              previous.version_id,
-            ]);
+          } else {
+            const version = storeDocumentVersion(this.db, {
+              teamId: context.teamId,
+              documentId:
+                scope.kind === "calendar"
+                  ? `calendar:${scope.entryId}`
+                  : previous?.document_identity ||
+                    readDocumentVersion(this.db, previous?.version_id)
+                      ?.documentId ||
+                    `${scope.taskId}:${scope.documentId}`,
+              markdown: data.markdown,
+              actorId: user.id,
+            });
+            if (scope.kind === "task") {
+              const updatedAt = now();
+              this.db
+                .prepare(
+                  `INSERT INTO task_documents(task_id,id,title,version_id,has_content,revision,updated_at,actor_id,operation_id,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id,id) DO UPDATE SET version_id=excluded.version_id,has_content=excluded.has_content,revision=excluded.revision,updated_at=excluded.updated_at,actor_id=excluded.actor_id,operation_id=excluded.operation_id,request_hash=excluded.request_hash`,
+                )
+                .run(
+                  scope.taskId,
+                  scope.documentId,
+                  current.title,
+                  version,
+                  Number(hasDocumentContent(data.markdown)),
+                  current.revision + 1,
+                  updatedAt,
+                  user.id,
+                  data.operationId,
+                  hash,
+                );
+              touchTasks(this.db, [context.task]);
+              audit(
+                this.db,
+                user.id,
+                context.teamId,
+                "document",
+                scope.taskId,
+                {
+                  documentId: scope.documentId,
+                  revision: current.revision,
+                  bytes: Buffer.byteLength(current.markdown),
+                },
+                {
+                  documentId: scope.documentId,
+                  revision: current.revision + 1,
+                  bytes: Buffer.byteLength(data.markdown),
+                  updatedAt,
+                },
+              );
+              pruneDocumentVersions(this.db, context.teamId);
+            } else if (scope.kind === "calendar") {
+              const preview = calendarPreview(data.markdown);
+              const updatedAt = new Date(
+                Math.max(Date.now(), Date.parse(previous.updated_at) + 1),
+              ).toISOString();
+              this.db
+                .prepare(
+                  "UPDATE calendar_entries SET version_id=?,preview=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE id=?",
+                )
+                .run(
+                  version,
+                  preview,
+                  updatedAt,
+                  user.id,
+                  data.operationId,
+                  hash,
+                  scope.entryId,
+                );
+              pruneDocumentVersions(
+                this.db,
+                context.teamId,
+                previous.version_id ? [previous.version_id] : [],
+              );
+              context.row = context.port.entryAccess(user, scope.entryId);
+            } else {
+              this.db
+                .prepare(
+                  `UPDATE ${context.table} SET version_id=?,has_content=?,revision=revision+1,updated_at=?,actor_id=?,operation_id=?,request_hash=? WHERE ${context.where} AND id=?`,
+                )
+                .run(
+                  version,
+                  Number(hasDocumentContent(data.markdown)),
+                  now(),
+                  user.id,
+                  data.operationId,
+                  hash,
+                  ...context.args,
+                  scope.documentId,
+                );
+              this.memoAudit(
+                user,
+                context,
+                "memo",
+                scope.documentId,
+                { revision: current.revision },
+                { year: context.year, revision: current.revision + 1 },
+              );
+              pruneDocumentVersions(this.db, context.teamId, [
+                previous.version_id,
+              ]);
+            }
           }
         }
-      }
-      return this.body(context);
-    });
+        return this.body(context);
+      }),
+    );
     this.invalidate(context, {
       clientId,
       presence: ["task", "report"].includes(scope.kind)

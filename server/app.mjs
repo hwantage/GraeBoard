@@ -7,6 +7,7 @@ import { installReportServiceRoutes } from "./report-service-routes.mjs";
 import { SqliteReportRepository } from "./storage/sqlite-reports.mjs";
 import { DocumentBusinessService } from "./storage/document-service.mjs";
 import { SqliteDocumentRepository } from "./storage/sqlite-documents.mjs";
+import { createDocumentImagePreparation } from "./document-image-preparation.mjs";
 import { installDocumentBusinessRoutes } from "./document-business-routes.mjs";
 import { TaskBusinessService } from "./storage/task-service.mjs";
 import { SqliteTaskRepository } from "./storage/sqlite-tasks.mjs";
@@ -580,6 +581,10 @@ export function createApp({
     options: syncOptions,
   });
   app.locals.sync = sync;
+  const documentPreparation = createDocumentImagePreparation();
+  app.locals.documentPreparation = documentPreparation;
+  const closeSync = sync.close.bind(sync);
+  sync.close = () => Promise.all([closeSync(), documentPreparation.close()]);
   app.use("/api", (req, res, next) =>
     sync.capture.withActor(req.user?.id, next),
   );
@@ -605,6 +610,7 @@ export function createApp({
       control: { teamAccess, taskAccess },
       documentImagesDir,
       documentEvents,
+      documentPreparation,
     });
   app.locals.documentRepository = documentsRepository;
   const documentService = (req) =>
@@ -613,7 +619,7 @@ export function createApp({
         ? documentRepository(req.user, req)
         : documentsRepository,
       req.user,
-      { documentEvents },
+      { documentEvents, refreshUser: () => refreshUser(req) },
     );
   installControlBusinessRoutes(app, {
     repository: controlsRepository,
