@@ -1,3 +1,4 @@
+import { withDocumentImageReferences } from "../../shared/document-image-references.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import {
@@ -160,23 +161,25 @@ export class DocumentBusinessService {
     return this.write("reorder", target, reorderSchema.parse(body));
   }
   write(method, scope, body) {
-    const result = this.repository[method](this.user, scope, body, {
-      clientId: this.clientId,
+    return withDocumentImageReferences(() => {
+      const result = this.repository[method](this.user, scope, body, {
+        clientId: this.clientId,
+      });
+      const events = this.documentEvents;
+      // Optional process-local delivery port runs only after repository commit.
+      // PostgreSQL's durable event row already belongs to that same transaction.
+      if (!events || this.repository.documentEvents === events) return result;
+      const deliver = (value) => {
+        const collection = documentCollectionKey(scope);
+        if (collection && method !== "save")
+          events.invalidate(collection, this.clientId);
+        if (method === "remove") events.notify(documentEventKey(scope));
+        return method === "save"
+          ? events.publish(documentEventKey(scope), value)
+          : value;
+      };
+      return result?.then ? result.then(deliver) : deliver(result);
     });
-    const events = this.documentEvents;
-    // Optional process-local delivery port runs only after repository commit.
-    // PostgreSQL's durable event row already belongs to that same transaction.
-    if (!events || this.repository.documentEvents === events) return result;
-    const deliver = (value) => {
-      const collection = documentCollectionKey(scope);
-      if (collection && method !== "save")
-        events.invalidate(collection, this.clientId);
-      if (method === "remove") events.notify(documentEventKey(scope));
-      return method === "save"
-        ? events.publish(documentEventKey(scope), value)
-        : value;
-    };
-    return result?.then ? result.then(deliver) : deliver(result);
   }
   readBatch(reportId, taskIds) {
     return this.repository.readBatch(

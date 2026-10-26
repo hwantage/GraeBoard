@@ -1,3 +1,4 @@
+import { documentImageUrls } from "../../shared/document-image-references.js";
 import { calendarPreview } from "./calendar-service.mjs";
 import { createHash } from "node:crypto";
 import { audit, now, parse, transaction, touchTasks } from "../db.mjs";
@@ -643,6 +644,18 @@ export class SqliteDocumentRepository {
     return result;
   }
   save(user, scope, data, { clientId } = {}) {
+    // Prepare pure extraction before acquiring SQLite's single writer. Re-read
+    // authorization/current revision below; a concurrent changed body is a cache
+    // miss and still receives full protocol validation in the transaction.
+    const preparedContext = this.access(user, scope, true);
+    const prepared = this.body(preparedContext, {
+      summary: false,
+    });
+    if (prepared.markdown !== data.markdown) {
+      if (this.db.syncCapture?.capturesTeam(preparedContext.teamId))
+        documentImageUrls(prepared.markdown);
+      documentImageUrls(data.markdown);
+    }
     let context,
       presence = false,
       changed = false;
