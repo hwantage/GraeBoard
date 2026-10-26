@@ -40,25 +40,27 @@ npm start
 
 기본 저장 위치는 `data/weekly-plan.sqlite`와 `data/document-images`입니다. 운영에서는 릴리스 교체로 경로가 달라지지 않도록 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 지정하고 기존 `.env`를 유지합니다. 저장소에는 실제 계정·업무 데이터·데이터베이스·백업·환경 비밀값을 포함하지 않습니다.
 
-| 명령 | 동작 |
-| --- | --- |
-| `npm run dev` | Node.js 파일 감시와 Vite 개발 서버 실행. 화면 `5173`, API `4310` |
-| `npm run build` | TypeScript 검사와 프런트엔드 운영 빌드. 결과는 `dist/` |
+| 명령                          | 동작                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| `npm run dev`                 | Node.js 파일 감시와 Vite 개발 서버 실행. 화면 `5173`, API `4310`                |
+| `npm run build`               | TypeScript 검사와 프런트엔드 운영 빌드. 결과는 `dist/`                          |
 | `npm start` / `npm run start` | Node.js 서버가 API와 빌드된 `dist/`를 `4310`에서 제공. 자동 빌드·파일 감시 없음 |
 
 포트는 기본값입니다. 운영은 `npm run build` 후 `npm start`로 실행합니다. 빌드에는 개발 의존성도 필요하므로 설치 시 `--include=dev`를 지정합니다. `dist/`에는 프런트엔드만 포함되므로 Node.js 서버·공유 코드·런타임 의존성도 필요합니다. `npm start` 자체는 `NODE_ENV=production`을 설정하지 않으므로 `.env` 또는 프로세스 환경에 지정합니다. 개발 서버는 운영 DB와 분리한 작업 경로·설정에서 실행합니다.
 
 ## 문서
 
-| 문서 | 내용 |
-| --- | --- |
-| [사용 안내](docs/USER_GUIDE.md) | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본 |
-| [운영 안내](docs/OPERATIONS.md) | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트 |
-| [개발 안내](docs/DEVELOPMENT.md) | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위 |
-| [데이터 형식과 API](docs/DATA_FORMAT.md) | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
-| [DB 변경 지침](docs/DATABASE_CHANGES.md) | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존 |
-| [프로젝트 작업 규칙](AGENTS.md) | 핵심 작업 원칙과 작업별 문서 안내 |
-| [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록 |
+| 문서                                                | 내용                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| [사용 안내](docs/USER_GUIDE.md)                     | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본              |
+| [운영 안내](docs/OPERATIONS.md)                     | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트        |
+| [개발 안내](docs/DEVELOPMENT.md)                    | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위           |
+| [데이터 형식과 API](docs/DATA_FORMAT.md)            | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
+| [클라우드 설치 안내](docs/CLOUD_SETUP.md)           | 내부 SQLite·외부 Worker/Supabase, Access·Git·R2 설정과 복구 |
+| [동기화 프로토콜](docs/SYNC_PROTOCOL.md)            | 확정 이력·미전송·사이트별 정리·충돌 규칙                    |
+| [DB 변경 지침](docs/DATABASE_CHANGES.md)            | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존    |
+| [프로젝트 작업 규칙](AGENTS.md)                     | 핵심 작업 원칙과 작업별 문서 안내                           |
+| [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록                            |
 
 ## 검증
 

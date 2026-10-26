@@ -14,41 +14,41 @@
 
 ## 구조
 
-| 경로 | 역할 |
-| --- | --- |
-| `src/App.tsx` | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태 |
-| `src/cell-sync.ts`, `cell-updates.js` | SSE 연결·복구, 셀 버전 비교와 변경 병합 |
-| `src/PeriodPicker.tsx` | 2행 월·주차 표, 연속 드래그·키보드 범위 선택 |
-| `src/Grid.tsx` | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그 |
-| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx` | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택 |
-| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts` | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기 |
-| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx` | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식 |
-| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `task-document.css` | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집 |
-| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js` | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시 |
-| `server/document-images.mjs` | 문서 이미지 변환·저장·권한·백업 참조 |
-| `src/AnnualMemoPanel.tsx`, `server/annual-memos.mjs`, `server/memo-storage.mjs` | 원본·사본 연간 메모, 본문 공유와 독립 편집 |
-| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js` | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동 |
-| `src/CalendarTags.tsx`, `shared/calendar-tags.js` | 개인·공용 태그와 체크 상태 |
-| `src/SheetTabs.tsx`, `useReportDraft.ts` | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도 |
-| `src/Panels.tsx`, `components.tsx` | 업무 상세, 이관·반출, 로그인과 공통 UI |
-| `src/TaskPropertyEditor.tsx` | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도 |
-| `shared/domain.js`, `coreProperties.js` | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화 |
-| `shared/fonts.js`, `themes.js` | 지원 글꼴·크기·폴백과 팀 테마 변수 |
-| `server/app.mjs` | 인증·권한, 업무·보기·스냅샷·관리 API 연결 |
-| `shared/compact.js` | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화 |
-| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs` | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
-| `server/db.mjs`, `validation.mjs` | SQLite 초기화, 저장 모델과 입력 검증 |
-| `server/filters.mjs` | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사 |
-| `server/settings.mjs`, `reorder.mjs`, `team-deletion.mjs` | 설정 변환, 업무 순서 저장, 팀 데이터의 원자적 삭제 |
-| `server/transfer.mjs`, `archive.mjs` | XLSX 분석·이관·반출과 압축 파일 제한 검사 |
-| `server/task-cache.mjs` | 팀 조회 캐시와 변경 무효화 |
-| `server/system-audit.mjs`, `src/SystemAuditLog.tsx` | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회 |
-| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts` | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유 |
-| `server/cell-events.mjs` | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사 |
-| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts` | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구 |
-| `server/cell-operations.mjs` | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성 |
-| `scripts/` | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지 |
-| `tests/` | API·권한·동시 수정·이관·백업·브라우저 검증 |
+| 경로                                                                                                                | 역할                                                               |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `src/App.tsx`                                                                                                       | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                 |
+| `src/cell-sync.ts`, `cell-updates.js`                                                                               | SSE 연결·복구, 셀 버전 비교와 변경 병합                            |
+| `src/PeriodPicker.tsx`                                                                                              | 2행 월·주차 표, 연속 드래그·키보드 범위 선택                       |
+| `src/Grid.tsx`                                                                                                      | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그                |
+| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx`                                                                  | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택                          |
+| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts`                                                               | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기             |
+| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx` | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식                    |
+| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `task-document.css`                | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집        |
+| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js`                              | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시              |
+| `server/document-images.mjs`                                                                                        | 문서 이미지 변환·저장·권한·백업 참조                               |
+| `src/AnnualMemoPanel.tsx`, `server/annual-memos.mjs`, `server/memo-storage.mjs`                                     | 원본·사본 연간 메모, 본문 공유와 독립 편집                         |
+| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js`                                              | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동               |
+| `src/CalendarTags.tsx`, `shared/calendar-tags.js`                                                                   | 개인·공용 태그와 체크 상태                                         |
+| `src/SheetTabs.tsx`, `useReportDraft.ts`                                                                            | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도                    |
+| `src/Panels.tsx`, `components.tsx`                                                                                  | 업무 상세, 이관·반출, 로그인과 공통 UI                             |
+| `src/TaskPropertyEditor.tsx`                                                                                        | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도                  |
+| `shared/domain.js`, `coreProperties.js`                                                                             | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화       |
+| `shared/fonts.js`, `themes.js`                                                                                      | 지원 글꼴·크기·폴백과 팀 테마 변수                                 |
+| `server/app.mjs`                                                                                                    | 인증·권한, 업무·보기·스냅샷·관리 API 연결                          |
+| `shared/compact.js`                                                                                                 | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화         |
+| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs`                                          | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
+| `server/db.mjs`, `validation.mjs`                                                                                   | SQLite 초기화, 저장 모델과 입력 검증                               |
+| `server/filters.mjs`                                                                                                | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사              |
+| `server/settings.mjs`, `reorder.mjs`, `team-deletion.mjs`                                                           | 설정 변환, 업무 순서 저장, 팀 데이터의 원자적 삭제                 |
+| `server/transfer.mjs`, `archive.mjs`                                                                                | XLSX 분석·이관·반출과 압축 파일 제한 검사                          |
+| `server/task-cache.mjs`                                                                                             | 팀 조회 캐시와 변경 무효화                                         |
+| `server/system-audit.mjs`, `src/SystemAuditLog.tsx`                                                                 | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회              |
+| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts`                                       | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유      |
+| `server/cell-events.mjs`                                                                                            | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사            |
+| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`               | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구    |
+| `server/cell-operations.mjs`                                                                                        | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성         |
+| `scripts/`                                                                                                          | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지                  |
+| `tests/`                                                                                                            | API·권한·동시 수정·이관·백업·브라우저 검증                         |
 
 프런트엔드는 React·TypeScript·Vite, API는 Express, 저장소는 Node 내장 SQLite를 사용합니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
 
@@ -65,10 +65,10 @@ Vite는 `5173`, API는 `4310` 포트를 사용합니다. 개발 프록시는 `/a
 
 개발용 `.env`를 만들 때는 `.env.example`을 참고하고 `DB_PATH`와 `DOCUMENT_IMAGES_DIR`가 개발 전용 경로인지 확인합니다. 이미 있는 `.env`는 덮어쓰지 않습니다. 예시 계정과 업무는 비어 있는 개발 DB의 최초 설정에서 선택하여 생성할 수 있습니다. 실제 운영 파일을 테스트 픽스처로 사용하지 않습니다.
 
-| 명령 | 실행 내용 |
-| --- | --- |
-| `npm run dev` | API의 파일 변경 감시와 Vite 개발 서버를 함께 실행 |
-| `npm run build` | TypeScript 검사와 프런트엔드 배포 빌드. 결과는 `dist/` |
+| 명령            | 실행 내용                                                                     |
+| --------------- | ----------------------------------------------------------------------------- |
+| `npm run dev`   | API의 파일 변경 감시와 Vite 개발 서버를 함께 실행                             |
+| `npm run build` | TypeScript 검사와 프런트엔드 배포 빌드. 결과는 `dist/`                        |
 | `npm run start` | Node API 서버 실행. API와 준비된 `dist/`를 함께 제공하며 빌드는 수행하지 않음 |
 
 운영은 빌드한 프런트엔드와 서버 소스·런타임 의존성을 함께 배포합니다. `dist/`만으로는 인증·업무 저장·문서·캘린더 API가 동작하지 않습니다. `start`가 `NODE_ENV=production`을 자동 설정하지 않으므로 운영 `.env` 또는 서비스 환경에서 지정합니다. 기존 운영 환경의 업데이트는 [운영 안내](OPERATIONS.md)의 절차를 따릅니다.
@@ -109,7 +109,7 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 주차 기본 경계선은 `settings.weekBorders`에 저장하며 `shared/borders.js`의 `weekBoundaryStyles`와 `withWeekBoundaries`로 실제 표시·반출 열의 첫 날짜와 마지막 날짜에 적용합니다. 같은 경계를 공유하는 두 셀을 함께 계산하며, 셀이나 행·열에 직접 지정한 선이 경계선보다 우선합니다. `null`·`none`이나 업무 기본 서식에서 상속된 선은 주차 경계선을 가리지 않습니다. 원본 셀 서식은 수정하지 않으며 그리드의 머리글·셀·텍스트 넘침 경계와 XLSX에서 같은 계산을 사용합니다. 셀 클립보드는 저장된 서식만 복사합니다.
 
-이번 주 기본 좌우 테두리는 선택 설정 `settings.currentWeekBorders`를 같은 `weekBoundaryStyles` 계산에 전달합니다. 실제 표시·반출 열 중 한국 시간의 월요일 키에만 적용하며, 설정한 방향은 양 끝 경계선보다 우선합니다. 직접 지정한 셀·행·열·이웃 셀의 선은 기존 `withWeekBoundaries` 경로로 우선합니다. `Grid`와 `PeriodPicker`는 `useTodayKey`로 한국 시간 자정과 탭 복귀 시 날짜를 갱신하므로, 자동 조회가 없는 사본에서도 이번 주 표시가 이동합니다. 기존 `teams.settings` JSON에 선택 필드만 추가하며 SQLite v29·JSON v6, 셀·이력·사본의 기존 읽기 호환성을 유지하고 데이터 변환은 하지 않습니다.
+이번 주 기본 좌우 테두리는 선택 설정 `settings.currentWeekBorders`를 같은 `weekBoundaryStyles` 계산에 전달합니다. 실제 표시·반출 열 중 한국 시간의 월요일 키에만 적용하며, 설정한 방향은 양 끝 경계선보다 우선합니다. 직접 지정한 셀·행·열·이웃 셀의 선은 기존 `withWeekBoundaries` 경로로 우선합니다. `Grid`와 `PeriodPicker`는 `useTodayKey`로 한국 시간 자정과 탭 복귀 시 날짜를 갱신하므로, 자동 조회가 없는 사본에서도 이번 주 표시가 이동합니다. 기존 `teams.settings` JSON에 선택 필드만 추가하며 SQLite v30·JSON v6, 셀·이력·사본의 기존 읽기 호환성을 유지하고 데이터 변환은 하지 않습니다.
 
 `shared/compact.js`의 서식 사전을 HTTP 요청·응답, SSE, JSON 반출, 이력·스냅샷에 공통 적용합니다. DB는 `styles` 테이블을 `cells.style_id`·`tasks.default_style`·`tasks.row_style`·`format_rules.style_id`에서 참조합니다. 새 셀의 빈 내용과 불필요한 서식은 생략하되, 삭제·실행취소 후에도 기존 셀 버전은 유지합니다. `tests/compact-storage.test.mjs`는 실제 생성 API, 3,180셀 범위 저장, 공통 사전 크기, 서식 정리 후 이력 복원·재시도, 변경 없는 요청과 충돌, 잘못된 압축 참조를 검증합니다.
 
@@ -134,9 +134,9 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 커밋 전 전체 리뷰에서는 `1543a6e`와 최종 코드를 같은 임시 데이터로 교차 측정했습니다. 한 셀 240회·2,000셀 100회(각 6회 준비 실행 제외)의 HTTP 요청·응답 시간이며, 2,000셀 작업의 이력·재시도 본문 저장량은 약 50% 줄었습니다.
 
 | 셀 수 | 저장 중앙값, 변경 전 → 후 | P95, 변경 전 → 후 |
-| --- | --- | --- |
-| 1 | 2.14 → 2.14ms | 2.58 → 2.95ms |
-| 2,000 | 46.11 → 38.72ms | 50.02 → 43.74ms |
+| ----- | ------------------------- | ----------------- |
+| 1     | 2.14 → 2.14ms             | 2.58 → 2.95ms     |
+| 2,000 | 46.11 → 38.72ms           | 50.02 → 43.74ms   |
 
 리뷰 중 열 너비 드래그마다 셀 표시 서식이 다시 만들어지는 것을 수정했습니다. 표시 서식은 너비와 독립적인 열 키와 업무·경계선이 바뀔 때만 계산합니다. 2,000행·Chromium CPU 4배 감속 조건에서 드래그 단계 중앙값은 수정 전 42ms에서 34ms로 줄어 기준 커밋의 34ms와 같았습니다. 셀 선택 중앙값도 기준 커밋과 최종 코드 모두 33ms였습니다. 별도 1만 행·45.5MB 스냅샷 샘플의 gzip 압축은 level 9의 534~546ms·1.60MB에서 level 1의 64~67ms·2.42MB로 바뀌었습니다. 이 수치는 로컬 합성 데이터 측정이며 압축 시간은 스냅샷 API 전체 응답 시간이 아닙니다.
 
@@ -162,11 +162,11 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 2026-10-14 공식 문서·저장소·npm 메타데이터를 비교해 MIT 라이선스의 **Milkdown 7.22.3**을 선택했습니다. [공식 소개](https://milkdown.dev/docs/guide/why-milkdown), [설치와 Kit 사용법](https://milkdown.dev/docs/guide/getting-started), [소스·라이선스](https://github.com/Milkdown/milkdown), [유지보수 이력](https://github.com/Milkdown/milkdown/releases)을 확인했습니다. ProseMirror의 편집·IME·history와 Remark의 Markdown 파이프라인을 사용하며, 공식 CommonMark·GFM 확장 및 명령 API를 연결합니다. React peer dependency를 요구하지 않는 Kit 인스턴스를 React 19 effect에서 생성·정리하고 TypeScript/Vite 빌드로 확인합니다. 자체 contenteditable 엔진은 만들지 않습니다.
 
-| 후보 | 공식 자료에서 확인한 차이 | 판단 |
-| --- | --- | --- |
-| Milkdown Kit 7.22.3 | MIT, TypeScript, ProseMirror/Remark, CommonMark·GFM 확장, 선택적 플러그인 | Markdown 원본과 리치 편집을 중심에 두기 적합. 앱의 기존 버튼·팀 테마·접근성 이름을 사용 |
-| Tiptap React 3.32.0 | MIT 코어, React 19 peer 지원, ProseMirror 기반. [공식 Markdown 확장](https://tiptap.dev/docs/editor/markdown)은 beta로 명시 | 양방향 확장은 가능하지만 현재 Markdown 지원의 제한을 추가 관리해야 함 |
-| BlockNote 0.55.0 | MPL-2.0 코어/React, React 19 지원, 기본 블록 UI 제공. [Markdown export](https://www.blocknotejs.org/docs/features/export/markdown)는 lossy로 명시 | 블록 JSON 중심 구조가 Markdown 원본 보존 요구와 덜 맞음 |
+| 후보                | 공식 자료에서 확인한 차이                                                                                                                         | 판단                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Milkdown Kit 7.22.3 | MIT, TypeScript, ProseMirror/Remark, CommonMark·GFM 확장, 선택적 플러그인                                                                         | Markdown 원본과 리치 편집을 중심에 두기 적합. 앱의 기존 버튼·팀 테마·접근성 이름을 사용 |
+| Tiptap React 3.32.0 | MIT 코어, React 19 peer 지원, ProseMirror 기반. [공식 Markdown 확장](https://tiptap.dev/docs/editor/markdown)은 beta로 명시                       | 양방향 확장은 가능하지만 현재 Markdown 지원의 제한을 추가 관리해야 함                   |
+| BlockNote 0.55.0    | MPL-2.0 코어/React, React 19 지원, 기본 블록 UI 제공. [Markdown export](https://www.blocknotejs.org/docs/features/export/markdown)는 lossy로 명시 | 블록 JSON 중심 구조가 Markdown 원본 보존 요구와 덜 맞음                                 |
 
 세 후보 모두 오픈소스의 필요한 편집 기능은 제공하지만, 한국어 OS IME 품질이나 접근성 전체를 패키지 설명만으로 보장하지 않았습니다. 선택한 에디터에 한글 조합·붙여넣기·실행취소·버튼/체크박스/모드의 키보드 경로를 실제 브라우저로 검증합니다. 후보 전체의 완성 번들 크기를 같은 UI로 벤치마크한 것은 아닙니다. 채택한 구성의 번들은 빌드 청크와 초기 네트워크 요청으로 측정합니다. 패키지 설치 크기는 실제 브라우저 전송량과 구분합니다.
 
@@ -263,7 +263,7 @@ npm run licenses
 
 특정 규모만 실행하려면 `npm run performance:stress -- 10000:30`처럼 `업무수:일정점유율`을 전달합니다. 결과는 `docs/validation/load-test-results.json`, 화면은 같은 폴더에 저장합니다. Node.js 22.13.0 이상과 설치된 Chromium이 필요하며, 2만 업무 시나리오는 수 GB의 메모리를 사용하므로 운영 서버와 분리해 실행합니다. 30개 HTTP 세션과 한 브라우저의 검증이며, 30개 브라우저 동시 사용이나 사내 네트워크의 지연시간을 측정하는 검사는 아닙니다.
 
-검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 현재 인증은 로컬 계정·세션 방식이며 SSO 연동과 모바일 전용 UX는 구현·검증 범위에 포함되지 않습니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
+검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 내부 인증은 로컬 계정·세션 방식이며 외부는 전용 Cloudflare Access JWT와 앱 사용자·팀 권한을 검증합니다. 실제 Cloudflare Access/Images/Supabase 계정 배포와 모바일 전용 UX는 로컬 검증과 구분합니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
 
 ## 저장소 범위
 
@@ -274,3 +274,19 @@ npm run licenses
 초기 저장소 등록 시점의 검증(2026-10-09): 빌드 성공, API·도메인·백업 검사 **43건**, Chromium·Firefox·WebKit의 **45개 흐름 × 3종 = 135건** 통과. 임시 DB를 이용한 로그인 화면·브라우저 제목·메뉴·하단의 그래보드 표기와 XLSX·CSV·JSON 파일명, 엑셀 작성자 정보도 확인했습니다.
 
 2026-10-18 로컬 합성 데이터에서 표시 일정 한 개를 반복 이동했습니다. 해당 사용자의 무관한 과거 일정 1만 개에서 요청부터 JSON 읽기까지 중앙값은 약 30→3ms, 5만 개에서는 약 159→3ms였습니다. 5만 개의 위치를 모두 반환하던 응답은 영향받는 위치 한 개와 좌표만 반환해 압축 해제한 JSON 기준 약 2.75MB→515바이트로 줄었습니다. 메모리 SQLite·로컬 HTTP·준비 실행 제외 후 6회 측정이며 운영 장비와 네트워크의 지연 보장은 아닙니다. 상세 수치는 `docs/validation/calendar-layout-performance-20261018.json`에 있습니다. 화면 밖 연결 구간·개인/공용 분리·1천 개의 무관한 이력 제외·160개 연쇄 확장과 재시도는 API 회귀 테스트로, 세 캘린더 보기의 미리보기/저장 행 일치는 브라우저 회귀 테스트로 검증합니다.
+
+## 외부 동기화 개발·검증
+
+[설치 안내](CLOUD_SETUP.md)와 [프로토콜](SYNC_PROTOCOL.md)을 기준으로 `server/sync/`, `server/storage/`, `worker/`를 함께 변경합니다. 내부 `transaction`은 동기 콜백만 허용하고, PG는 하나의 client에서 모든 await·COMMIT·rollback을 끝냅니다. Node의 timer는 readonly SQLite worker에서 Git·병합·해시·재투영을 수행하고 메인 쓰기 경계에서 현재 head·로컬 변경·L·작업 guard를 다시 검사합니다. 사이트 이벤트는 commit 뒤 기존 SSE 경로로 전달합니다.
+
+```sh
+npm test
+npm run build
+npm run build:worker
+npm run test:e2e -- tests/browser/data-sync.spec.ts
+npm run performance:sync
+```
+
+PG 테스트는 임시 서버를 직접 실행하며 `TEST_PG_BIN=/PostgreSQL/bin npm test`로 바이너리 경로를 지정할 수 있습니다. 실제 서버가 없으면 성공으로 건너뛰지 않고 필요한 환경을 안내합니다. Worker API 테스트는 임시 control/team PG와 실제 JWT 검증, 대역 R2/Images/GitHub HTTP를 사용합니다. Git CLI 경합·복구 테스트는 임시 bare 저장소를 사용합니다. 실제 cloud 변환 품질·도메인/Access policy·rate limit·운영 DB는 별도 검증 대상입니다.
+
+`performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.

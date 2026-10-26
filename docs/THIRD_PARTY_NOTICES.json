@@ -2,6 +2,144 @@
   "generatedFrom": "package-lock.json",
   "packages": [
     {
+      "name": "@aws-sdk/checksums",
+      "version": "3.1001.5",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/client-s3",
+      "version": "3.1156.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/core",
+      "version": "3.978.5",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-env",
+      "version": "3.972.76",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-http",
+      "version": "3.972.78",
+      "license": "Apache-2.0",
+      "noticeFiles": []
+    },
+    {
+      "name": "@aws-sdk/credential-provider-ini",
+      "version": "3.973.21",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-login",
+      "version": "3.972.83",
+      "license": "Apache-2.0",
+      "noticeFiles": []
+    },
+    {
+      "name": "@aws-sdk/credential-provider-node",
+      "version": "3.972.88",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-process",
+      "version": "3.972.76",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-sso",
+      "version": "3.973.20",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/credential-provider-web-identity",
+      "version": "3.972.82",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/middleware-sdk-s3",
+      "version": "3.972.81",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/nested-clients",
+      "version": "3.997.50",
+      "license": "Apache-2.0",
+      "noticeFiles": []
+    },
+    {
+      "name": "@aws-sdk/signature-v4-multi-region",
+      "version": "3.996.49",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/token-providers",
+      "version": "3.1155.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/types",
+      "version": "3.975.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws-sdk/xml-builder",
+      "version": "3.972.41",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@aws/lambda-invoke-store",
+      "version": "0.3.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "@babel/helper-string-parser",
       "version": "7.29.7",
       "license": "MIT",
@@ -432,6 +570,54 @@
       ]
     },
     {
+      "name": "@smithy/core",
+      "version": "3.37.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@smithy/credential-provider-imds",
+      "version": "4.5.2",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@smithy/fetch-http-handler",
+      "version": "5.8.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@smithy/node-http-handler",
+      "version": "4.13.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@smithy/signature-v4",
+      "version": "5.7.4",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "@smithy/types",
+      "version": "4.19.0",
+      "license": "Apache-2.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "@tanstack/react-virtual",
       "version": "3.14.13",
       "license": "MIT",
@@ -736,6 +922,14 @@
     {
       "name": "body-parser",
       "version": "2.3.0",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "bowser",
+      "version": "2.14.1",
       "license": "MIT",
       "noticeFiles": [
         "LICENSE"
@@ -1854,6 +2048,14 @@
       "noticeFiles": []
     },
     {
+      "name": "jose",
+      "version": "6.2.13",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE.md"
+      ]
+    },
+    {
       "name": "jszip",
       "version": "3.10.2",
       "license": "(MIT OR GPL-3.0-or-later)",
@@ -2670,6 +2872,66 @@
       ]
     },
     {
+      "name": "pg",
+      "version": "8.23.1",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-cloudflare",
+      "version": "1.4.1",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-connection-string",
+      "version": "2.14.1",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-int8",
+      "version": "1.0.1",
+      "license": "ISC",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-pool",
+      "version": "3.14.0",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-protocol",
+      "version": "1.16.1",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0",
+      "license": "MIT",
+      "noticeFiles": []
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5",
+      "license": "MIT",
+      "noticeFiles": []
+    },
+    {
       "name": "picocolors",
       "version": "1.1.1",
       "license": "ISC",
@@ -2691,6 +2953,38 @@
       "license": "MIT",
       "noticeFiles": [
         "LICENSE"
+      ]
+    },
+    {
+      "name": "postgres-array",
+      "version": "2.0.0",
+      "license": "MIT",
+      "noticeFiles": [
+        "license"
+      ]
+    },
+    {
+      "name": "postgres-bytea",
+      "version": "1.0.1",
+      "license": "MIT",
+      "noticeFiles": [
+        "license"
+      ]
+    },
+    {
+      "name": "postgres-date",
+      "version": "1.0.7",
+      "license": "MIT",
+      "noticeFiles": [
+        "license"
+      ]
+    },
+    {
+      "name": "postgres-interval",
+      "version": "1.2.0",
+      "license": "MIT",
+      "noticeFiles": [
+        "license"
       ]
     },
     {
@@ -3212,6 +3506,14 @@
       ]
     },
     {
+      "name": "split2",
+      "version": "4.2.0",
+      "license": "ISC",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "statuses",
       "version": "2.0.2",
       "license": "MIT",
@@ -3591,6 +3893,14 @@
     {
       "name": "xmlchars",
       "version": "2.2.0",
+      "license": "MIT",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "xtend",
+      "version": "4.0.2",
       "license": "MIT",
       "noticeFiles": [
         "LICENSE"
