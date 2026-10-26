@@ -1,5 +1,3 @@
-import { project } from "./reducer.mjs";
-import { isExcluded } from "./retention.mjs";
 import { isRecoveryError } from "./errors.mjs";
 import { profileToken } from "./credentials.mjs";
 import { randomUUID } from "node:crypto";
@@ -7,15 +5,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { transaction, getTasksById } from "../db.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
-import { materialize, readEntity } from "./entities.mjs";
+import { materialize } from "./entities.mjs";
 import { installCapture } from "./capture.mjs";
 import {
   createNodeBackground,
   assertSnapshotGuard,
 } from "./node-background.mjs";
 import { GitCliTransport, repositoryUrl } from "./git-cli.mjs";
-import { canonical, entityId, validateOperation } from "./protocol.mjs";
-import { makeOperation } from "./operations.mjs";
+import { canonical } from "./protocol.mjs";
 import { documentImageUrls } from "../document-images.mjs";
 import { requireThat } from "../validation.mjs";
 import { retentionView } from "./visibility.mjs";
@@ -373,6 +370,77 @@ export function createNodeSync({
     }
     return background;
   }
+  async function resolveConflict(teamId, request, beforeCommit = () => {}) {
+    const raw = store(teamId);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const prepared = await getBackground().compute({
+        kind: "resolve",
+        teamId,
+        ...request,
+      });
+      await options.onResolvePrepared?.({
+        ...prepared.metrics,
+        attempt,
+        operation: prepared.operation,
+      });
+      // Refresh authorization after the worker yielded. This callback must be
+      // synchronous so no other writer can run between authorization and commit.
+      beforeCommit();
+      const started = performance.now();
+      let changed;
+      try {
+        capture.without(() =>
+          transaction(db, () => {
+            requireThat(!stopped, 409, "동기화 서버가 종료 중입니다.");
+            assertSnapshotGuard(db, teamId, prepared.guard, {
+              touched: prepared.touched,
+            });
+            const link = raw.readLink();
+            requireThat(
+              link &&
+                ["active", "paused"].includes(link.mode) &&
+                link.installation_id === installationId &&
+                link.writer_epoch === prepared.link.writer_epoch,
+              409,
+              "동기화 연결 상태를 다시 확인하세요.",
+            );
+            requireThat(
+              !prepared.guard.maintenance,
+              409,
+              "팀 데이터 정리가 진행 중입니다.",
+            );
+            raw.enqueue(prepared.operation);
+            changed = materialize(
+              db,
+              teamId,
+              prepared.changedEntities,
+              prepared.previous,
+              { actorId: request.actorRef },
+            );
+          }),
+        );
+      } catch (error) {
+        if (error.code !== "SYNC_SNAPSHOT_CHANGED") throw error;
+        if (attempt < 2) continue;
+        requireThat(
+          false,
+          409,
+          "동시 변경이 있습니다. 최신 상태에서 다시 해결하세요.",
+        );
+      }
+      const commitMs = performance.now() - started;
+      capture.enqueued(prepared.operation);
+      notify(teamId, changed);
+      schedule(teamId, 100);
+      options.onResolveCommitted?.({
+        ...prepared.metrics,
+        attempt,
+        commitMs,
+        changed: changed.length,
+      });
+      return { ok: true, opId: prepared.operation.opId };
+    }
+  }
   function get(teamId) {
     if (services.has(teamId)) return services.get(teamId);
     const link = sqliteTeamStore(db, teamId).readLink();
@@ -466,6 +534,7 @@ export function createNodeSync({
     installationId,
     store,
     get,
+    resolveConflict,
     capture,
     safeProfile,
     schedule,
@@ -486,7 +555,7 @@ export function createNodeSync({
 
 export function installSyncRoutes(
   app,
-  { db, teamAccess, managedTeam, requireSystemAdmin, sync },
+  { db, teamAccess, managedTeam, requireSystemAdmin, refreshUser, sync },
 ) {
   const id = (req) => req.params.id;
   const status = (teamId) => {
@@ -802,87 +871,26 @@ export function installSyncRoutes(
       })),
     });
   });
-  app.post("/api/teams/:id/sync/conflicts/:conflictId/resolve", (req, res) => {
-    managedTeam(req.user, id(req));
-    const teamId = id(req),
-      s = sync.store(teamId),
-      link = s.readLink(),
-      state = s.readState(),
-      conflict = state.conflicts[req.params.conflictId];
-    requireThat(
-      conflict && !conflict.resolution,
-      404,
-      "충돌을 찾을 수 없습니다.",
-    );
-    requireThat(
-      req.body.expectedHead === link.canonical_head,
-      409,
-      "최신 공유본을 다시 확인하세요.",
-    );
-    const before = {},
-      after = {};
-    for (const [i, c] of conflict.operation.changes.entries()) {
-      const key = entityId(c.entity, c.key);
-      before[key] = state.entities[key] || null;
-      after[key] =
-        req.body.choice === "current"
-          ? before[key]
-          : {
-              ...(before[key] || c),
-              entity: c.entity,
-              key: c.key,
-              payload:
-                req.body.choice === "edited"
-                  ? Array.isArray(req.body.desired)
-                    ? req.body.desired[i]
-                    : req.body.desired
-                  : c.desired,
-              deleted: c.action === "delete",
-            };
-    }
-    const frontier = req.body.frontier || [conflict.opId];
-    requireThat(
-      frontier.includes(conflict.opId) &&
-        frontier.every((x) => state.conflicts[x]),
-      400,
-      "해결 범위를 확인하세요.",
-    );
-    requireThat(
-      ["current", "submitted", "edited"].includes(req.body.choice),
-      400,
-      "해결 방법을 선택하세요.",
-    );
-    const op = makeOperation({
-      link,
-      actorRef: req.user.id,
-      before,
-      after,
-      resolves: frontier,
-    });
-    validateOperation(op, { teamId, repoId: link.repo_id });
-    let changed;
-    sync.capture.without(() =>
-      transaction(db, () => {
-        s.enqueue(op);
-        const entities = project(state, s.readPending()).entities;
-        const exclusions = s.readExclusions(link.installation_id);
-        const visible = {},
-          previous = {};
-        for (const [key, record] of Object.entries(entities)) {
-          if (isExcluded(record, entities, exclusions)) continue;
-          visible[key] = record;
-          previous[key] = readEntity(db, teamId, record.entity, record.key);
-        }
-        changed = materialize(db, teamId, visible, previous, {
-          actorId: req.user.id,
-        });
-      }),
-    );
-    sync.capture.refresh();
-    sync.notify(teamId, changed);
-    sync.schedule(teamId, 100);
-    res.json({ ok: true, opId: op.opId });
-  });
+  app.post(
+    "/api/teams/:id/sync/conflicts/:conflictId/resolve",
+    async (req, res) => {
+      const teamId = id(req);
+      managedTeam(req.user, teamId);
+      const result = await sync.resolveConflict(
+        teamId,
+        {
+          conflictId: req.params.conflictId,
+          expectedHead: req.body.expectedHead,
+          choice: req.body.choice,
+          desired: req.body.desired,
+          frontier: req.body.frontier,
+          actorRef: req.user.id,
+        },
+        () => managedTeam(refreshUser(req), teamId),
+      );
+      res.json(result);
+    },
+  );
   app.post("/api/admin/sync/import", (req, res) => {
     requireSystemAdmin(req.user);
     res

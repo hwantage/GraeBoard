@@ -2,7 +2,16 @@ import { encodeStoredSnapshot, decodeStoredSnapshot } from "./snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { allEntities, readEntity } from "./entities.mjs";
-import { canonical, digest, entityId, equal, stateHash } from "./protocol.mjs";
+import {
+  canonical,
+  digest,
+  entityId,
+  equal,
+  stateHash,
+  validateOperation,
+} from "./protocol.mjs";
+import { makeOperation } from "./operations.mjs";
+import { HttpError, requireThat } from "../validation.mjs";
 import { reduceMany, project, validateSnapshot } from "./reducer.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
 import { prepareStatePatch } from "../storage/team-store.mjs";
@@ -17,7 +26,11 @@ import {
   readDocumentImage,
   writeDocumentImage,
 } from "../document-images.mjs";
-import { activeImageReferences, isExcluded } from "./retention.mjs";
+import {
+  activeImageReferences,
+  installImageReferences,
+  isExcluded,
+} from "./retention.mjs";
 
 const db = new DatabaseSync(workerData.databasePath, { readOnly: true });
 db.exec(
@@ -42,6 +55,119 @@ function snapshot(teamId, work) {
 }
 
 function compute(request) {
+  if (request.kind === "resolve")
+    return snapshot(request.teamId, ({ store, guard, link }) => {
+      const started = performance.now(),
+        state = store.readState();
+      const conflict = state.conflicts[request.conflictId];
+      requireThat(
+        conflict && !conflict.resolution,
+        404,
+        "충돌을 찾을 수 없습니다.",
+      );
+      requireThat(
+        request.expectedHead === link.canonical_head,
+        409,
+        "최신 공유본을 다시 확인하세요.",
+      );
+      requireThat(
+        ["current", "submitted", "edited"].includes(request.choice),
+        400,
+        "해결 방법을 선택하세요.",
+      );
+      const frontier = request.frontier || [conflict.opId];
+      requireThat(
+        Array.isArray(frontier) &&
+          frontier.includes(conflict.opId) &&
+          frontier.every(
+            (id) =>
+              typeof id === "string" &&
+              Object.hasOwn(state.conflicts, id) &&
+              !state.conflicts[id].resolution,
+          ),
+        400,
+        "해결 범위를 확인하세요.",
+      );
+      const before = {},
+        after = {},
+        candidates = new Set(),
+        touched = new Set();
+      const touch = (change) => {
+        candidates.add(entityId(change.entity, change.key));
+        for (const payload of [change.base, change.desired])
+          for (const key of interferenceKeys(
+            change.entity,
+            change.key,
+            payload,
+          ))
+            touched.add(key);
+      };
+      for (const id of frontier)
+        for (const change of state.conflicts[id].operation.changes)
+          touch(change);
+      for (const [i, change] of conflict.operation.changes.entries()) {
+        const key = entityId(change.entity, change.key);
+        before[key] = state.entities[key] || null;
+        after[key] =
+          request.choice === "current"
+            ? before[key]
+            : {
+                ...(before[key] || change),
+                entity: change.entity,
+                key: change.key,
+                payload:
+                  request.choice === "edited"
+                    ? Array.isArray(request.desired)
+                      ? request.desired[i]
+                      : request.desired
+                    : change.desired,
+                deleted: change.action === "delete",
+              };
+      }
+      const operation = makeOperation({
+        link,
+        actorRef: request.actorRef,
+        before,
+        after,
+        resolves: frontier,
+      });
+      try {
+        validateOperation(operation, {
+          teamId: request.teamId,
+          repoId: link.repo_id,
+        });
+      } catch (error) {
+        throw new HttpError(400, error.message);
+      }
+      const pending = store.readPending();
+      for (const op of pending)
+        for (const change of op.changes)
+          candidates.add(entityId(change.entity, change.key));
+      for (const change of operation.changes) touch(change);
+      const projected = project(state, [...pending, operation]);
+      const exclusions = store.readExclusions(link.installation_id);
+      const prepared = projectionPatch(
+        request.teamId,
+        projected.entities,
+        candidates,
+        exclusions,
+        touched,
+        true,
+      );
+      return {
+        ...prepared,
+        operation,
+        guard,
+        link,
+        metrics: {
+          candidateCount: candidates.size,
+          readEntityCount: prepared.readEntityCount,
+          domainSelectCount: prepared.domainSelectCount,
+          changedEntityCount: Object.keys(prepared.changedEntities).length,
+          prepareMs: performance.now() - started,
+        },
+      };
+    });
   if (request.kind === "reduce") {
     const previous = request.state;
     const state = reduceMany(
@@ -149,35 +275,13 @@ function compute(request) {
       for (const row of pendingRows)
         for (const change of row.operation.changes)
           candidates.add(entityId(change.entity, change.key));
-      const projected = project(state, pending),
-        changedEntities = {},
-        previous = {},
-        touched = new Set();
-      for (const key of candidates) {
-        const record = projected.entities[key];
-        if (!record) continue;
-        if (isExcluded(record, projected.entities, exclusions)) continue;
-        const current = readEntity(
-          db,
-          request.teamId,
-          record.entity,
-          record.key,
-        );
-        if (record.deleted && (!current || current.payload?.deletedAt))
-          continue;
-        if (
-          !equal(record.payload, current?.payload) ||
-          !!record.deleted !== !!current?.deleted
-        ) {
-          changedEntities[key] = record;
-          if (current) previous[key] = current;
-          for (const dependency of [
-            ...interferenceKeys(record.entity, record.key, record.payload),
-            ...interferenceKeys(record.entity, record.key, current?.payload),
-          ])
-            touched.add(dependency);
-        }
-      }
+      const projected = project(state, pending);
+      const prepared = projectionPatch(
+        request.teamId,
+        projected.entities,
+        candidates,
+        exclusions,
+      );
       const outboxHashes = pendingRows
         .filter((row) => acknowledged.has(row.op_id))
         .map((row) => {
@@ -189,8 +293,7 @@ function compute(request) {
           return { opId: row.op_id, hash };
         });
       return {
-        changedEntities,
-        previous,
+        ...prepared,
         held: projected.held,
         exclusions,
         guard,
@@ -198,10 +301,70 @@ function compute(request) {
         patch,
         hash: stateHash(state),
         outboxHashes,
-        touched: [...touched],
       };
     });
   throw new Error("Unsupported background calculation kind");
+}
+
+// Both remote replay and local resolutions prepare only potentially affected
+// domain rows in the readonly worker snapshot. C and all P remain available to
+// the reducer for dependency, conflict and uniqueness validation.
+function projectionPatch(
+  teamId,
+  entities,
+  candidates,
+  exclusions,
+  touched = new Set(),
+  measureReads = false,
+) {
+  const changedEntities = {},
+    previous = {};
+  let readEntityCount = 0,
+    domainSelectCount = 0;
+  const reader = measureReads
+    ? {
+        prepare(sql) {
+          const statement = db.prepare(sql);
+          return Object.fromEntries(
+            ["get", "all"].map((method) => [
+              method,
+              (...args) => {
+                domainSelectCount++;
+                return statement[method](...args);
+              },
+            ]),
+          );
+        },
+      }
+    : db;
+  for (const key of candidates) {
+    const record = entities[key];
+    if (!record || isExcluded(record, entities, exclusions)) continue;
+    readEntityCount++;
+    const current = readEntity(reader, teamId, record.entity, record.key);
+    if (record.deleted && (!current || current.payload?.deletedAt)) continue;
+    if (
+      !equal(record.payload, current?.payload) ||
+      !!record.deleted !== !!current?.deleted
+    ) {
+      changedEntities[key] = record;
+      if (current) previous[key] = current;
+      for (const payload of [record.payload, current?.payload])
+        for (const dependency of interferenceKeys(
+          record.entity,
+          record.key,
+          payload,
+        ))
+          touched.add(dependency);
+    }
+  }
+  return {
+    changedEntities,
+    previous,
+    touched: [...touched],
+    readEntityCount,
+    domainSelectCount,
+  };
 }
 
 let mutationSequence = 0;
@@ -335,7 +498,7 @@ function serviceFor(config) {
     async receive(state, oid, remote, { verifiedImages = new Map() } = {}) {
       const pending = raw.readPending(),
         link = raw.readLink();
-      const active = activeImageReferences(
+      const active = installImageReferences(
         state,
         pending,
         raw.readExclusions(link.installation_id),
@@ -391,7 +554,7 @@ parentPort.on("message", async ({ id, request, mutationId, result, error }) => {
   } catch (error) {
     parentPort.postMessage({
       id,
-      error: { message: error.message, code: error.code },
+      error: { message: error.message, code: error.code, status: error.status },
     });
   }
 });

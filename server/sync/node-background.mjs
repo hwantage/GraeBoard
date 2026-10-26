@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { HttpError } from "../validation.mjs";
 
 export function snapshotGuard(db, teamId) {
   const link = db
@@ -144,7 +145,12 @@ export function createNodeBackground({
     clearTimeout(entry.timer);
     if (error)
       entry.reject(
-        Object.assign(new Error(error.message), { code: error.code }),
+        Object.assign(
+          [400, 404, 409].includes(error.status)
+            ? new HttpError(error.status, error.message)
+            : new Error(error.message),
+          { code: error.code },
+        ),
       );
     else entry.resolve(result);
     if (!pending.size) worker.unref();

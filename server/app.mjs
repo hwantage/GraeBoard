@@ -588,6 +588,7 @@ export function createApp({
     teamAccess,
     managedTeam,
     requireSystemAdmin,
+    refreshUser,
     sync,
   });
   installMaintenanceRoutes(app, {
