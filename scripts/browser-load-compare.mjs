@@ -107,6 +107,7 @@ const report = {
       "Import each backend's own db/domain/app modules by absolute URL and use that backend's cwd/dist.",
       "Identical deterministic UUID/token streams and initial timestamp in the two synthetic fixtures; password hashing remains the backend implementation.",
       "Redirect legacy report directory into temporary fixture storage; stop just before legacy Chromium launch.",
+      "Preserve the legacy preparation's existing raw read/cache/save arrays after its timed work; each consecutive 30 samples is one burst, not 30 independent experiments.",
     ],
   },
   backends: {},
@@ -228,6 +229,7 @@ const nextFixtureCommand=async()=>{while(!fixtureCommands.length)await new Promi
       settingsSha256:createHash('sha256').update(JSON.stringify(settings)).digest('hex'),
       conflictWinnerValue:lastTask.cells.description.value,rows:finalTasks.length,
       storedCells:result.storedCells,scheduleColumns:weeks.length,legacyPreparation:result,
+      legacyRawTimings:{readMs:readTimes,unchangedMs:cachedTimes,saveMs:writeTimes,samplesPerBurst:30,burstCount:3},
       fixtureProcess:process.pid,serverProcess:server.pid
     }});
     let restartCount=0;
