@@ -1,3 +1,12 @@
+import { z } from "zod";
+import { yearSchema } from "../validation.mjs";
+import {
+  createTaskSchema,
+  updateTaskSchema,
+  taskVersionsSchema,
+  reorderTaskSchema,
+  saveViewSchema,
+} from "./task-command-schema.mjs";
 import { batchSchema, periodScopeSchema, requireThat } from "../validation.mjs";
 import { normalizeCellStyle } from "../../shared/formatting.js";
 import { sameStyle } from "../../shared/compact.js";
@@ -20,9 +29,27 @@ export function validateCellCommandTime(createdAt, time = Date.now()) {
 // atomic audit/idempotency/outbox and event delivery; no SQL escapes to callers.
 // A synchronous repository stays synchronous, including the SQLite transaction.
 export class TaskBusinessService {
-  constructor(repository, user) {
+  constructor(repository, user, ports) {
     this.repository = repository;
     this.user = user;
+    this.documentEvents = ports?.documentEvents;
+    this.clientId = ports?.clientId;
+  }
+  mutate(command, ...args) {
+    if (!this.documentEvents || !this.repository.resourceChanges)
+      return this.repository[command](this.user, ...args);
+    const before = this.repository.resourceRevision(),
+      result = this.repository[command](this.user, ...args);
+    const committed = (value) => {
+      for (const key of this.repository.resourceChanges(
+        before,
+        command,
+        args[0],
+      ))
+        this.documentEvents.invalidate(key, this.clientId);
+      return value;
+    };
+    return result?.then ? result.then(committed) : committed(result);
   }
   query(query, { ifNoneMatch } = {}) {
     const values =
@@ -38,7 +65,76 @@ export class TaskBusinessService {
   saveBatch(body) {
     const request = batchSchema.parse(body);
     validateCellCommandTime(request.createdAt);
-    return this.repository.saveBatch(this.user, request);
+    if (!this.documentEvents)
+      return this.repository.saveBatch(this.user, request);
+    return this.mutate("saveBatch", request);
+  }
+  create(body) {
+    const request = createTaskSchema.parse(body);
+    periodScopeSchema.parse(request);
+    return this.mutate("create", request);
+  }
+  update(taskId, body) {
+    return this.mutate(
+      "update",
+      z.string().uuid().parse(taskId),
+      updateTaskSchema.parse(body),
+    );
+  }
+  remove(body) {
+    return this.mutate("remove", taskVersionsSchema.parse(body).tasks);
+  }
+  removeOne(taskId, body = {}) {
+    return this.mutate("remove", [
+      { id: z.string().uuid().parse(taskId), updatedAt: body.updatedAt },
+    ]);
+  }
+  restore(body) {
+    return this.mutate("restore", taskVersionsSchema.parse(body).tasks);
+  }
+  restoreOne(taskId, body = {}) {
+    const request = z
+      .object({ updatedAt: z.string().datetime().optional() })
+      .parse(body);
+    return this.mutate("restore", [
+      { id: z.string().uuid().parse(taskId), ...request },
+    ]);
+  }
+  reorder(body) {
+    const request = reorderTaskSchema.parse(body);
+    periodScopeSchema.parse(request);
+    return this.mutate("reorder", request);
+  }
+  readViews(query) {
+    return this.repository.readViews(this.user, {
+      teamId: z.string().uuid().parse(query.teamId),
+      year: yearSchema.parse(query.year),
+    });
+  }
+  saveView(body) {
+    return this.mutate("saveView", saveViewSchema.parse(body));
+  }
+  getMany(ids, options) {
+    return this.repository.getMany(
+      this.user,
+      z.array(z.string().uuid()).max(20000).parse(ids),
+      options,
+    );
+  }
+  locate(id, options) {
+    return this.repository.locate(
+      this.user,
+      z.string().uuid().parse(id),
+      options,
+    );
+  }
+  subscribe(query, port) {
+    const period = periodScopeSchema.parse(query);
+    return this.repository.subscribe(
+      this.user,
+      { teamId: String(query.teamId || ""), ...period },
+      port,
+    );
   }
 }
 

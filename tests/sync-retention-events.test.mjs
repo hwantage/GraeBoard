@@ -552,6 +552,7 @@ test("image upload rechecks exact document exclusion after asynchronous decoding
     .toBuffer();
   const user = { id: f.userId, systemRole: "admin", teams: [] };
   const app = express();
+  app.locals.documentService = f.app.locals.documentService;
   let excludeAfterDecode;
   app.use((req, _res, next) => {
     req.user = user;

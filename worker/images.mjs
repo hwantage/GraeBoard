@@ -132,8 +132,11 @@ export class R2ImageStore {
     return `images/${this.teamId}/${match[2]}.webp`;
   }
   async read(url) {
-    const o = await this.bucket.get(this.key(url));
+    const o = await this.getObject(url);
     return o ? new Uint8Array(await o.arrayBuffer()) : null;
+  }
+  getObject(url) {
+    return this.bucket.get(this.key(url));
   }
   async has(url) {
     return !!(await this.bucket.head(this.key(url)));

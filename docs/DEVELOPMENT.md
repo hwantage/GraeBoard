@@ -14,41 +14,41 @@
 
 ## 구조
 
-| 경로                                                                                                                | 역할                                                               |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `src/App.tsx`                                                                                                       | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                 |
-| `src/cell-sync.ts`, `cell-updates.js`                                                                               | SSE 연결·복구, 셀 버전 비교와 변경 병합                            |
-| `src/PeriodPicker.tsx`                                                                                              | 2행 월·주차 표, 연속 드래그·키보드 범위 선택                       |
-| `src/Grid.tsx`                                                                                                      | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그                |
-| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx`                                                                  | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택                          |
-| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts`                                                               | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기             |
-| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx` | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식                    |
-| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `task-document.css`                | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집        |
-| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js`                              | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시              |
-| `server/document-images.mjs`                                                                                        | 문서 이미지 변환·저장·권한·백업 참조                               |
-| `src/AnnualMemoPanel.tsx`, `server/annual-memos.mjs`, `server/memo-storage.mjs`                                     | 원본·사본 연간 메모, 본문 공유와 독립 편집                         |
-| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js`                                              | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동               |
-| `src/CalendarTags.tsx`, `shared/calendar-tags.js`                                                                   | 개인·공용 태그와 체크 상태                                         |
-| `src/SheetTabs.tsx`, `useReportDraft.ts`                                                                            | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도                    |
-| `src/Panels.tsx`, `components.tsx`                                                                                  | 업무 상세, 이관·반출, 로그인과 공통 UI                             |
-| `src/TaskPropertyEditor.tsx`                                                                                        | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도                  |
-| `shared/domain.js`, `coreProperties.js`                                                                             | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화       |
-| `shared/fonts.js`, `themes.js`                                                                                      | 지원 글꼴·크기·폴백과 팀 테마 변수                                 |
-| `server/app.mjs`                                                                                                    | 인증·권한, 업무·보기·스냅샷·관리 API 연결                          |
-| `shared/compact.js`                                                                                                 | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화         |
-| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs`                                          | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
-| `server/db.mjs`, `validation.mjs`                                                                                   | SQLite 초기화, 저장 모델과 입력 검증                               |
-| `server/filters.mjs`                                                                                                | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사              |
-| `server/settings.mjs`, `reorder.mjs`, `team-deletion.mjs`                                                           | 설정 변환, 업무 순서 저장, 팀 데이터의 원자적 삭제                 |
-| `server/transfer.mjs`, `archive.mjs`                                                                                | XLSX 분석·이관·반출과 압축 파일 제한 검사                          |
-| `server/task-cache.mjs`                                                                                             | 팀 조회 캐시와 변경 무효화                                         |
-| `server/system-audit.mjs`, `src/SystemAuditLog.tsx`                                                                 | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회              |
-| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts`                                       | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유      |
-| `server/cell-events.mjs`                                                                                            | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사            |
-| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`               | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구    |
-| `server/cell-operations.mjs`                                                                                        | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성         |
-| `scripts/`                                                                                                          | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지                  |
-| `tests/`                                                                                                            | API·권한·동시 수정·이관·백업·브라우저 검증                         |
+| 경로                                                                                                                                                   | 역할                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `src/App.tsx`                                                                                                                                          | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                 |
+| `src/cell-sync.ts`, `cell-updates.js`                                                                                                                  | SSE 연결·복구, 셀 버전 비교와 변경 병합                            |
+| `src/PeriodPicker.tsx`                                                                                                                                 | 2행 월·주차 표, 연속 드래그·키보드 범위 선택                       |
+| `src/Grid.tsx`                                                                                                                                         | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그                |
+| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx`                                                                                                     | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택                          |
+| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts`                                                                                                  | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기             |
+| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx`                                    | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식                    |
+| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `task-document.css`                                                   | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집        |
+| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js`                                                                 | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시              |
+| `server/document-images.mjs`                                                                                                                           | 문서 이미지 변환·저장·권한·백업 참조                               |
+| `src/AnnualMemoPanel.tsx`, `server/storage/document-service.mjs`, `server/memo-storage.mjs`                                                            | 원본·사본 연간 메모, 본문 공유와 독립 편집                         |
+| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js`                                                                                 | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동               |
+| `src/CalendarTags.tsx`, `shared/calendar-tags.js`                                                                                                      | 개인·공용 태그와 체크 상태                                         |
+| `src/SheetTabs.tsx`, `useReportDraft.ts`                                                                                                               | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도                    |
+| `src/Panels.tsx`, `components.tsx`                                                                                                                     | 업무 상세, 이관·반출, 로그인과 공통 UI                             |
+| `src/TaskPropertyEditor.tsx`                                                                                                                           | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도                  |
+| `shared/domain.js`, `coreProperties.js`                                                                                                                | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화       |
+| `shared/fonts.js`, `themes.js`                                                                                                                         | 지원 글꼴·크기·폴백과 팀 테마 변수                                 |
+| `server/app.mjs`                                                                                                                                       | 인증·권한, 업무·보기·스냅샷·관리 API 연결                          |
+| `shared/compact.js`                                                                                                                                    | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화         |
+| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs`                                                                             | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
+| `server/db.mjs`, `validation.mjs`                                                                                                                      | SQLite 초기화, 저장 모델과 입력 검증                               |
+| `server/filters.mjs`                                                                                                                                   | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사              |
+| `server/settings.mjs`, `storage/task-command-rules.mjs`, `storage/sqlite-task-commands.mjs`, `storage/postgres-task-commands.mjs`, `team-deletion.mjs` | 설정 변환, 공통 업무 명령 검증과 엔진별 원자적 변경, 팀 삭제       |
+| `server/transfer.mjs`, `archive.mjs`                                                                                                                   | XLSX 분석·이관·반출과 압축 파일 제한 검사                          |
+| `server/task-cache.mjs`                                                                                                                                | 팀 조회 캐시와 변경 무효화                                         |
+| `server/system-audit.mjs`, `src/SystemAuditLog.tsx`                                                                                                    | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회              |
+| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts`                                                                          | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유      |
+| `server/cell-events.mjs`                                                                                                                               | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사            |
+| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`                                                  | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구    |
+| `server/cell-operations.mjs`                                                                                                                           | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성         |
+| `scripts/`                                                                                                                                             | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지                  |
+| `tests/`                                                                                                                                               | API·권한·동시 수정·이관·백업·브라우저 검증                         |
 
 프런트엔드는 React·TypeScript·Vite, API는 Express, 저장소는 Node 내장 SQLite를 사용합니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
 
@@ -186,7 +186,7 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 사본 본문 자동 저장은 `report_documents`의 해당 참조만 갱신하고 이전 본문 버전만 정리합니다. 문서 조회용 행 ID·제목 인덱스는 압축 BLOB 해시로 무효화하며, 셀·본문을 보관하지 않는 16MiB 예산의 캐시를 사용합니다. 표를 해제한 뒤에는 `readReport`로 최신 문서 참조를 합쳐야 합니다. 여러 행 삭제·실행취소는 `POST /api/reports/:id/documents/batch`로 최대 100개 행씩 읽고 실행취소 이력을 한 번에 갱신합니다. 응답 본문 합계는 8MiB에서 다음 행으로 나누되 한 행의 문서는 분할하지 않으며, 클라이언트는 반환된 행 수부터 이어 읽습니다. 화면에서 문서가 없어 보이는 행도 함께 조회해 다른 사용자의 최근 저장을 보존합니다.
 
-사본 메모는 `server/memo-storage.mjs`의 참조 복사와 `server/annual-memos.mjs`의 공통 편집 경로를 사용합니다. 사본 표를 읽거나 저장할 때 메모 본문을 읽거나 표 BLOB에 포함하지 않습니다. 테스트는 복사 전후 `document_versions` 수, 공유 참조 ID, 메모 편집 전후 표 BLOB·revision 동일성, 재복사·재시도·권한·충돌·정리·이미지·JSON 반출·백업과 화면의 닫힌 상태 복사·저장 직후 재복사·원본 분리를 검증합니다.
+사본 메모는 `server/memo-storage.mjs`의 참조 복사와 `DocumentBusinessService`의 공통 편집 경로를 사용합니다. 사본 표를 읽거나 저장할 때 메모 본문을 읽거나 표 BLOB에 포함하지 않습니다. 테스트는 복사 전후 `document_versions` 수, 공유 참조 ID, 메모 편집 전후 표 BLOB·revision 동일성, 재복사·재시도·권한·충돌·정리·이미지·JSON 반출·백업과 화면의 닫힌 상태 복사·저장 직후 재복사·원본 분리를 검증합니다.
 
 업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 전체 너비의 제목 버튼과 별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 복원된 열린 상태에서는 표를 아래로 이동하지 않으며, 직접 아코디언을 열었을 때만 `scrollOnOpen`으로 문서를 보여 줍니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올리거나 dialog가 열리면 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
 
@@ -292,3 +292,49 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 `performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
 
 안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.
+
+## 업무 저장소 계약
+
+Node와 Worker의 ordinary API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.
+
+| 계약                                                     | 실제 명령 범위                                                                                                  |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| TaskBusinessService                                      | 조회/ETag, 셀 배치·서식·재시도, 생성/복제/수정/삭제/복원/순서, 개인 보기                                        |
+| DocumentBusinessService                                  | 원본/사본 문서, 연간/사본 메모, 일정 Markdown, 제목/순서/본문 CAS, 이미지 접근 권한과 선택된 저장소의 읽기/쓰기 |
+| ReportBusinessService                                    | 사본 생성·복사·이름·행/셀/서식 편집·삭제·revision                                                               |
+| CalendarBusinessService                                  | 일정·태그·배치·주간 업무·자동 가져오기·개인 규칙                                                                |
+| SettingsBusinessService / FilterBusinessService          | 팀 설정·이름/테마, 셀 종류 변환, 보기/필터 정규화, 공유/개인 필터·선택 상태                                     |
+| ControlBusinessService                                   | bootstrap·참조 인물/연도, 프로필, 사용자·팀·멤버십 관리                                                         |
+| HistoryBusinessService / AdminHistoryBusinessService     | 팀 이력·복원, 관리자 감사 검색·상세, 사이트 이력 정리                                                           |
+| DocumentBrowserBusinessService / TransferBusinessService | 문서 탐색, CSV/XLSX/JSON 내보내기, 실제 업로드 미리보기·적용·재시도                                             |
+
+`createApp()`의 기본값은 SQLite입니다. 서버 설정에서 팀 업무 저장소를 PG로 선택하는 예시는 다음과 같습니다. `env`에는 **서버 전용** 팀 PG binding과 팀 UUID에 대응하는 SYNC_PROFILES를 지정합니다. 내부 Node에서는 PG_CONTROL·R2·Git token을 이 업무 저장소 설정에 요구하지 않습니다. 사용자 입력으로 repository나 연결 문자열을 선택하지 않습니다.
+
+```js
+import { createApp } from "./server/app.mjs";
+import { createPostgresBusinessStorage } from "./server/storage/business-storage.mjs";
+const app = createApp({
+  db: controlDatabase,
+  documentImagesDir: imageDirectory,
+  storage: createPostgresBusinessStorage({
+    env: {
+      PG_TEAM_A: { connectionString: process.env.PG_TEAM_A_URL },
+      SYNC_PROFILES: [
+        {
+          profileId: "team-a",
+          teamId: originalTeamUuid,
+          databaseBinding: "PG_TEAM_A",
+        },
+      ],
+    },
+  }),
+});
+```
+
+이 예시에서 Node 계정·비밀번호·쿠키 세션·멤버십·시스템 감사 이력은 하나의 SQLite control DB에 남습니다. PostgreSQL에 계정·팀 권한을 복제하지 않으며 SQLite 멤버십 철회는 PG 업무 SSE에도 반영됩니다. bootstrap은 이 control 정보와 선택한 팀 DB의 현재 설정·연도를 조합합니다. 팀 이력 정리는 PG에서 수행하고 관리 감사 기록은 SQLite에 남기며, Node의 정리 미리보기 토큰은 서버 메모리에 보관합니다.
+
+Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)`를 사용합니다. 두 호스트 모두 상태·pending **4 MiB**와 공유 엔티티 **12,000개**가 기본 상한이며 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`는 더 낮출 수만 있습니다. 쓰기 전 DB 용량 검사와 commit 전 상태 검사에서 이 한도를 적용합니다. 기본 SQLite 업무 경로의 10,000행 성능 시험이나 PG 어댑터 직접 호출 시험은 이 PG 업무 API가 10,000행을 지원한다는 근거가 아닙니다. [용량 범위](CLOUD_SETUP.md#15-postgresql-업무-저장소의-한도와-worker-검증-범위)를 함께 확인합니다.
+
+이미지 변환과 저장소도 DB 엔진과 독립적입니다. 내부 Node는 sharp와 `FileImageStore`, 외부 Worker는 Cloudflare Images와 `R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. 다른 호스트 저장소가 필요하면 factory의 `imageStoreFor(teamId)` 포트에 `read/has/install/remove/validate/getObject` 계약을 갖춘 구현을 주입할 수 있습니다. Git 실행기 설정은 논리 팀 자료 이관과 별도로 관리합니다. 운영 중 DB를 설정 한 줄로 옮기거나 인증 자료를 자동 복제하는 기능은 아닙니다.
+
+`tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 같은 서비스에 두 실제 엔진을 넣어 permission/CAS/replay/L/late rollback을 비교합니다. Node PG-only HTTP 검사는 SQLite에 업무/사본을 남기지 않으며 셀·문서·사본·팀 SSE와 멤버십 철회를 검사합니다. PG_CONTROL·R2·Git binding 없이 기본 파일 이미지 업로드→본문 저장→이미지 조회→JSON 반출과 관리 이력 정리도 검증합니다. SQLite 검사에는 반환값이 Promise로 바뀌지 않았는지, 저장 후 별도 연결에서 P와 본문이 동시에 보이는지, 커밋 전 실패에 이벤트가 없는지도 포함됩니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.

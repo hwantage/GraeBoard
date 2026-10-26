@@ -1,5 +1,5 @@
 import { assert } from "./access.mjs";
-export function profiles(env) {
+export function profiles(env, { databaseOnly = false } = {}) {
   let parsed;
   try {
     parsed =
@@ -38,12 +38,14 @@ export function profiles(env) {
     assert(
       /^[a-zA-Z0-9_-]{1,80}$/.test(v.profileId) &&
         /^[a-f0-9-]{36}$/i.test(v.teamId) &&
-        /^[\w.-]+\/[\w.-]+$/.test(repo) &&
-        !repo.includes(".."),
+        (databaseOnly ||
+          (/^[\w.-]+\/[\w.-]+$/.test(repo) && !repo.includes(".."))),
       503,
       "연결 프로필 식별자가 올바르지 않습니다.",
     );
-    for (const binding of [v.databaseBinding, v.bucketBinding, v.githubSecret])
+    for (const binding of databaseOnly
+      ? [v.databaseBinding]
+      : [v.databaseBinding, v.bucketBinding, v.githubSecret])
       assert(
         /^[A-Z][A-Z0-9_]{1,80}$/.test(binding),
         503,
@@ -52,7 +54,7 @@ export function profiles(env) {
     for (const [set, val] of [
       [ids, v.profileId],
       [dbs, v.databaseBinding],
-      [buckets, v.bucketBinding],
+      ...(databaseOnly ? [] : [[buckets, v.bucketBinding]]),
     ]) {
       assert(
         !set.has(val),
@@ -75,7 +77,8 @@ export function profiles(env) {
       assert(
         ancestor &&
           ancestor.teamId === p.teamId &&
-          ancestor.repository.toLowerCase() === p.repository.toLowerCase() &&
+          (databaseOnly ||
+            ancestor.repository.toLowerCase() === p.repository.toLowerCase()) &&
           ancestor.profileId !== p.profileId,
         503,
         "교체 프로필은 같은 팀과 저장소의 기존 프로필을 지정해야 합니다.",
@@ -90,7 +93,8 @@ export function profiles(env) {
           "같은 팀은 명시적인 교체 프로필만 추가할 수 있습니다.",
         );
         assert(
-          p.repository.toLowerCase() !== q.repository.toLowerCase() ||
+          databaseOnly ||
+            p.repository.toLowerCase() !== q.repository.toLowerCase() ||
             p.teamId === q.teamId,
           503,
           "다른 팀은 저장소를 공유할 수 없습니다.",
@@ -99,15 +103,15 @@ export function profiles(env) {
   }
   return result;
 }
-export function profileFor(env, id, teamId) {
-  const p = profiles(env).find(
+export function profileFor(env, id, teamId, { databaseOnly = false } = {}) {
+  const p = profiles(env, { databaseOnly }).find(
     (p) => p.profileId === id && p.teamId === teamId,
   );
   assert(p, 503, "설치된 팀 연결 프로필을 선택하세요.");
   assert(
     env[p.databaseBinding]?.connectionString &&
-      env[p.bucketBinding] &&
-      typeof env[p.githubSecret] === "string",
+      (databaseOnly ||
+        (env[p.bucketBinding] && typeof env[p.githubSecret] === "string")),
     503,
     "팀 자원 binding 또는 Secret을 확인하세요.",
   );

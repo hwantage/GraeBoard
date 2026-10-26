@@ -14,6 +14,7 @@ export function createCellEvents(
 ) {
   const epoch = randomUUID(),
     clients = new Set(),
+    external = new Set(),
     history = [];
   let sequence = 0,
     floor = 0,
@@ -240,6 +241,9 @@ export function createCellEvents(
     clients.clear();
     clearInterval(heartbeat);
     heartbeat = undefined;
+    for (const response of external)
+      if (!response.writableEnded) response.end();
+    external.clear();
   }
   return {
     cursor,
@@ -247,6 +251,15 @@ export function createCellEvents(
     publish,
     invalidateTeam,
     close,
+    registerExternal(response) {
+      if (shuttingDown) {
+        response.end();
+        return false;
+      }
+      external.add(response);
+      response.on("close", () => external.delete(response));
+      return true;
+    },
     shutdown() {
       shuttingDown = true;
       close();

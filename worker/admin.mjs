@@ -1,3 +1,5 @@
+import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
+import { PostgresAdminHistoryRepository } from "../server/storage/postgres-admin-history.mjs";
 import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import { canonical, entityId, digest } from "../server/sync/protocol.mjs";
 import { reduce, reduceMany } from "../server/sync/reducer.mjs";
@@ -226,7 +228,13 @@ async function checkTeam(ctx, teamId) {
     checks,
   };
 }
-export async function adminRoutes(ctx, path, method, body) {
+export async function adminRoutes(
+  ctx,
+  path,
+  method,
+  body,
+  query = new URL(ctx.request.url).searchParams,
+) {
   if (path === "/admin/service-connections" && method === "GET")
     return serviceStatus(ctx);
   if (path === "/admin/service-connections/check" && method === "POST")
@@ -519,35 +527,12 @@ export async function adminRoutes(ctx, path, method, body) {
       return syncStatus(ctx, teamId);
     }
   }
-  if (path === "/admin/audit" && method === "GET") {
-    ctx.admin();
-    return controlTransaction(ctx.env, async (tx) => ({
-      entries: (
-        await tx.query(
-          "SELECT id,actor_id,action,target,created_at FROM control_audit ORDER BY created_at DESC,id DESC LIMIT 50",
-        )
-      ).rows.map((r) => ({
-        id: r.id,
-        actorId: r.actor_id,
-        action: r.action,
-        target: r.target,
-        createdAt: r.created_at,
-      })),
-      nextCursor: null,
-    }));
-  }
+  const history = new AdminHistoryBusinessService(
+    new PostgresAdminHistoryRepository({ context: ctx }),
+    ctx.user,
+  );
+  if (path === "/admin/audit" && method === "GET") return history.audit(query);
   const audit = /^\/admin\/audit\/([^/]+)$/.exec(path);
-  if (audit && method === "GET") {
-    ctx.admin();
-    return controlTransaction(ctx.env, async (tx) => {
-      const row = (
-        await tx.query("SELECT payload FROM control_audit WHERE id=$1", [
-          audit[1],
-        ])
-      ).rows[0];
-      assert(row, 404, "감사 로그를 찾을 수 없습니다.");
-      return { before: null, after: JSON.parse(row.payload) };
-    });
-  }
+  if (audit && method === "GET") return history.auditEntry(audit[1]);
   return undefined;
 }

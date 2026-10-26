@@ -82,8 +82,8 @@ checkpoint는 정확한 canonical head의 C와 receipts·충돌·객체를 보�
 
 성능은 같은 장비·합성 데이터·동시 세션에서 미연결과 활성 상태를 비교합니다. 초기 목표는 내부 저장 p95 증가 10% 이내와 commit 후 다른 화면 반영 p95 1초 이내입니다. Git/R2/외부 DB 장애 및 대량 수신·백업 중 결과도 따로 기록하며 과거 측정 수치를 현재 릴리스 결과로 재사용하지 않습니다.
 
-## 외부 실행 자원 경계
+## PostgreSQL 업무 저장소와 외부 실행 자원 경계
 
-Worker는 프로토콜의 논리 형식과 별도로 4 MiB 압축 해제 snapshot/상태·pending 예산 및 12,000개 엔티티 상한을 적용합니다. 원격 바이트·압축 해제 크기, 저장된 크기, reducer 결과를 commit 전에 검사하고 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 환경변수는 이 검증된 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다.
+프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 Node와 Worker 모두 같은 `RequestContext.data`·`capacityLimits(env)`를 통해 상태·pending 4 MiB 및 공유 엔티티 12,000개 상한을 적용합니다. 두 호스트의 쓰기는 DB 크기와 commit 전 상태를 검사합니다. 외부 Worker 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 Node PG나 Worker의 지원 규모를 뜻하지 않습니다.
 
-`tests/worker-capacity.test.mjs`는 실제 workerd의 bootstrap과 후속 reducer를 측정하며, `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL Worker API가 같은 bare Git에 CLI와 GitHub Data API로 참여하도록 검증합니다. 전자는 실제 runtime과 크기 제한을, 후자는 엔진 간 자료·이미지·경합·복구를 검증합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [외부 설치 안내의 검증된 용량 범위](CLOUD_SETUP.md#15-외부-worker의-검증된-용량-범위)에 기록합니다.
+`tests/worker-capacity.test.mjs`는 실제 workerd의 bootstrap과 후속 reducer를 측정하며, `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL Worker API가 같은 bare Git에 CLI와 GitHub Data API로 참여하도록 검증합니다. 전자는 실제 runtime과 크기 제한을, 후자는 엔진 간 자료·이미지·경합·복구를 검증합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-postgresql-업무-저장소의-한도와-worker-검증-범위)에 기록합니다.

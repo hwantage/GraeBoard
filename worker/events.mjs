@@ -1,3 +1,5 @@
+import { PostgresTaskRepository } from "../server/storage/postgres-tasks.mjs";
+import { periodScopeSchema } from "../server/validation.mjs";
 import { stringify } from "../shared/compact.js";
 import { assert } from "./access.mjs";
 import { authenticate } from "./control.mjs";
@@ -42,6 +44,10 @@ export async function eventResponse(
       teamId = url.searchParams.get("teamId");
       type = "cells";
       await ctx.team(teamId);
+      periodScopeSchema.parse({
+        year: new Date().getFullYear(),
+        ...Object.fromEntries(url.searchParams),
+      });
     } else {
       let m;
       if ((m = /^\/teams\/([^/]+)$/.exec(path))) {
@@ -101,6 +107,35 @@ export async function eventResponse(
             for (const channel of channels) {
               if (channel.closed) continue;
               try {
+                if (channel.type === "cells") {
+                  const batch = await new PostgresTaskRepository({
+                    context: ctx,
+                  }).readEvents(
+                    ctx.user,
+                    {
+                      teamId: channel.teamId,
+                      ...periodScopeSchema.parse({
+                        year: new Date().getFullYear(),
+                        ...Object.fromEntries(channel.url.searchParams),
+                      }),
+                    },
+                    channel.cursor,
+                  );
+                  if (batch.reset) write(channel, "reset", {}, batch.cursor);
+                  else
+                    for (const event of batch.events)
+                      write(channel, "cells", event.payload, event.cursor);
+                  if (
+                    channel.lastRevision === null ||
+                    (!batch.reset &&
+                      !batch.events.length &&
+                      batch.cursor !== channel.cursor)
+                  )
+                    write(channel, "ready", {}, batch.cursor);
+                  channel.lastRevision = batch.cursor;
+                  channel.cursor = batch.cursor;
+                  continue;
+                }
                 await ctx.team(channel.teamId);
                 let snapshot = batches.get(channel.teamId);
                 if (!snapshot) {
@@ -114,39 +149,7 @@ export async function eventResponse(
                   batches.set(channel.teamId, snapshot);
                 }
                 const eventId = "pg:" + snapshot.cursor;
-                if (channel.type === "cells") {
-                  const after = /^pg:(\d+)$/.exec(channel.cursor);
-                  if (!after || Number(after[1]) > snapshot.cursor) {
-                    write(channel, "reset", {}, eventId);
-                  } else if (channel.cursor !== eventId) {
-                    const rows = await ctx.data(
-                      channel.teamId,
-                      async (s) =>
-                        (
-                          await s.tx.query(
-                            "SELECT kind,payload,cursor FROM site_events WHERE team_id=$1 AND cursor>$2 ORDER BY cursor LIMIT 513",
-                            [channel.teamId, Number(after[1])],
-                          )
-                        ).rows,
-                    );
-                    if (
-                      rows.length > 512 ||
-                      rows.some((r) => r.kind !== "cells")
-                    )
-                      write(channel, "reset", {}, eventId);
-                    else
-                      for (const row of rows)
-                        write(
-                          channel,
-                          "cells",
-                          JSON.parse(row.payload),
-                          "pg:" + row.cursor,
-                        );
-                  }
-                  if (channel.lastRevision === null)
-                    write(channel, "ready", {}, eventId);
-                  channel.lastRevision = snapshot.cursor;
-                } else if (
+                if (
                   channel.cursor !== eventId ||
                   channel.lastRevision === null
                 ) {

@@ -1,6 +1,7 @@
-import { canManageTeam } from "../../shared/domain.js";
+import { PostgresTaskCommands } from "./postgres-task-commands.mjs";
+import { canManageTeam, periodYears } from "../../shared/domain.js";
 import { scopeKey, scopeMatches } from "../../shared/formatting.js";
-import { styleNormalizer } from "../../shared/compact.js";
+import { styleNormalizer, stringify } from "../../shared/compact.js";
 import { validateCellValue } from "../validation.mjs";
 import { equal, digest } from "../sync/protocol.mjs";
 import { assert } from "../../worker/access.mjs";
@@ -11,12 +12,120 @@ import {
   settingsFor,
   assignable,
   requireTask,
+  excludedYears,
 } from "../../worker/task-view.mjs";
 import { prepareCellChange } from "./task-service.mjs";
+import { subscribePostgresEvents } from "./postgres-events.mjs";
 
-export class PostgresTaskRepository {
+export class PostgresTaskRepository extends PostgresTaskCommands {
   constructor({ context }) {
+    super();
     this.context = context;
+  }
+  resourceRevision() {
+    return this.context.lastCommittedChange?.sequence || 0;
+  }
+  resourceChanges(since, command, request) {
+    const change = this.context.lastCommittedChange;
+    if (
+      !change ||
+      change.sequence <= since ||
+      command === "saveView" ||
+      (command === "saveBatch" && !request.format)
+    )
+      return [];
+    return ["team:" + change.teamId];
+  }
+  subscribe(user, scope, port) {
+    return subscribePostgresEvents({
+      user,
+      ...port,
+      read: (currentUser, cursor) =>
+        this.readEvents(currentUser, scope, cursor),
+    });
+  }
+  readEvents(user, { teamId, year, startMonth }, cursor) {
+    const ctx = this.context;
+    assert(
+      user.id === ctx.user.id,
+      403,
+      "요청 사용자 정보가 일치하지 않습니다.",
+    );
+    ctx.user = user;
+    ctx.teamCache.clear();
+    return ctx.data(teamId, async (s) => {
+      const current = Number(
+          (
+            await s.tx.query(
+              "SELECT COALESCE(MAX(cursor),0) AS cursor FROM site_events WHERE team_id=$1",
+              [teamId],
+            )
+          ).rows[0].cursor,
+        ),
+        after = /^pg:(\d+)$/.exec(cursor),
+        eventId = "pg:" + current;
+      if (
+        !after ||
+        !Number.isSafeInteger(Number(after[1])) ||
+        Number(after[1]) > current
+      )
+        return { cursor: eventId, reset: true, events: [] };
+      const rows = (
+        await s.tx.query(
+          "SELECT kind,payload,cursor FROM site_events WHERE team_id=$1 AND cursor>$2 ORDER BY cursor LIMIT 513",
+          [teamId, Number(after[1])],
+        )
+      ).rows;
+      if (
+        rows.length > 512 ||
+        rows.some((row) => row.kind !== "cells") ||
+        (rows.length && Number(rows[0].cursor) > Number(after[1]) + 1)
+      )
+        return { cursor: eventId, reset: true, events: [] };
+      const hidden = await excludedYears(s),
+        years = periodYears(year, startMonth),
+        events = [];
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload),
+          cells = [];
+        if (!hidden.has(year))
+          for (const cell of payload.cells) {
+            const task = await s.get("task", [cell.taskId]);
+            if (
+              task &&
+              !task.deleted &&
+              !task.payload.deletedAt &&
+              task.payload.years.some(
+                (value) => years.includes(value) && !hidden.has(value),
+              )
+            )
+              cells.push(cell);
+          }
+        if (cells.length)
+          events.push({
+            cursor: "pg:" + row.cursor,
+            payload: {
+              ...payload,
+              cells,
+              updatedAt: Object.fromEntries(
+                [...new Set(cells.map((cell) => cell.taskId))].map((id) => [
+                  id,
+                  payload.updatedAt?.[id],
+                ]),
+              ),
+            },
+          });
+      }
+      if (
+        events.some(
+          (event) =>
+            new TextEncoder().encode(stringify(event.payload)).length >
+            256 * 1024,
+        )
+      )
+        return { cursor: eventId, reset: true, events: [] };
+      return { cursor: eventId, reset: false, events };
+    });
   }
   query(user, { teamId, year, startMonth, deleted, ifNoneMatch }) {
     const ctx = this.context;
@@ -266,7 +375,12 @@ export class PostgresTaskRepository {
               }
             : {}),
         };
-        if (cells.length) await s.event("cells", result);
+        if (cells.length)
+          await s.event("cells", {
+            cells,
+            operationId: d.operationId,
+            updatedAt,
+          });
         return result;
       },
       { write: true, body: d, action: d.format ? "format" : "cells" },

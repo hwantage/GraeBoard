@@ -20,7 +20,8 @@ import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
 import { runTeam, refreshTeam, scheduled } from "./sync.mjs";
 import { profileFor } from "./config.mjs";
-import { R2ImageStore } from "./images.mjs";
+import { DocumentBusinessService } from "../server/storage/document-service.mjs";
+import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
 const security = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "same-origin",
@@ -182,12 +183,11 @@ export function createWorker({
           path,
         );
         if (image && method === "GET") {
-          const team = await ctx.team(image[1]),
-            profile = profileFor(env, team.profile_id, team.id),
-            store = new R2ImageStore(env[profile.bucketBinding], team.id),
-            object = await store.bucket.get(store.key("/api" + path));
-          assert(object, 404, "문서 이미지를 찾을 수 없습니다.");
-          return new Response(object.body, {
+          const stream = await new DocumentBusinessService(
+            new PostgresDocumentRepository({ context: ctx }),
+            ctx.user,
+          ).readImage("/api" + path, { stream: true });
+          return new Response(stream, {
             headers: { ...security, "Content-Type": "image/webp" },
           });
         }

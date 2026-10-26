@@ -50,7 +50,8 @@ function githubEmulator(directory) {
       }
     };
   let loseNextPublish = false;
-  const calls = [], unexpectedCalls = [];
+  const calls = [],
+    unexpectedCalls = [];
   const fetcher = async (url, init = {}) => {
     const parsed = new URL(url);
     assert.equal(parsed.origin, "https://api.github.com");
@@ -591,6 +592,17 @@ test(
       assert.equal(
         uploaded,
         `/api/document-images/${teamId}/${digest(webp)}.webp`,
+      );
+      const externalImage = await worker.fetch(
+        new Request(env.APP_ORIGIN + uploaded),
+        env,
+        { waitUntil: (p) => work.push(p) },
+      );
+      assert.equal(externalImage.status, 200);
+      assert.equal(externalImage.headers.get("content-type"), "image/webp");
+      assert.equal(
+        digest(new Uint8Array(await externalImage.arrayBuffer())),
+        digest(webp),
       );
       const document = ok(await outside(`/tasks/${task.id}/document`));
       ok(
@@ -1241,7 +1253,11 @@ test(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
       );
-      assert.deepEqual(github.unexpectedCalls, [], "swallowed unexpected GitHub API calls also fail the fixture");
+      assert.deepEqual(
+        github.unexpectedCalls,
+        [],
+        "swallowed unexpected GitHub API calls also fail the fixture",
+      );
       if (process.env.WORKER_FAULT_REPORT)
         writeFileSync(
           process.env.WORKER_FAULT_REPORT,

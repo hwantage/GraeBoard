@@ -194,16 +194,16 @@ npx wrangler secret put GIT_TEAM_A
     "directory": "./dist",
     "binding": "ASSETS",
     "run_worker_first": true,
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
   },
   "images": { "binding": "IMAGES" },
   "triggers": { "crons": ["* * * * *"] },
   "hyperdrive": [
     { "binding": "PG_CONTROL", "id": "REPLACE_WITH_CONTROL_HYPERDRIVE_ID" },
-    { "binding": "PG_TEAM_A", "id": "REPLACE_WITH_TEAM_A_HYPERDRIVE_ID" }
+    { "binding": "PG_TEAM_A", "id": "REPLACE_WITH_TEAM_A_HYPERDRIVE_ID" },
   ],
   "r2_buckets": [
-    { "binding": "R2_TEAM_A", "bucket_name": "graeboard-team-a-images" }
+    { "binding": "R2_TEAM_A", "bucket_name": "graeboard-team-a-images" },
   ],
   "vars": {
     "APP_ORIGIN": "https://board.example.com",
@@ -214,8 +214,8 @@ npx wrangler secret put GIT_TEAM_A
     "SITE_NAME": "외부 사이트",
     "SYNC_MAX_STATE_BYTES": "4194304",
     "SYNC_MAX_ENTITIES": "12000",
-    "SYNC_PROFILES": "[{\"profileId\":\"team-a-prod\",\"name\":\"팀 A 외부\",\"teamId\":\"11111111-1111-4111-8111-111111111111\",\"repository\":\"example/graeboard-team-a-data\",\"databaseBinding\":\"PG_TEAM_A\",\"bucketBinding\":\"R2_TEAM_A\",\"githubSecret\":\"GIT_TEAM_A\"}]"
-  }
+    "SYNC_PROFILES": "[{\"profileId\":\"team-a-prod\",\"name\":\"팀 A 외부\",\"teamId\":\"11111111-1111-4111-8111-111111111111\",\"repository\":\"example/graeboard-team-a-data\",\"databaseBinding\":\"PG_TEAM_A\",\"bucketBinding\":\"R2_TEAM_A\",\"githubSecret\":\"GIT_TEAM_A\"}]",
+  },
 }
 ```
 
@@ -394,7 +394,9 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 
 ## 13. SQLite와 PostgreSQL 사이의 논리 이관
 
-현재 공통 DatabaseAdapter는 동기화 상태와 트랜잭션 계약을 감쌉니다. 일반 업무 API는 내부 SQLite 관계형 저장과 외부 PG `site_entities` 저장을 각각 구현하므로 설정 하나로 실행 DB 엔진을 바꾸는 기능은 없습니다. 이 절은 서버를 멈추고 별도 대상으로 데이터를 옮기는 논리 이관이며, 엔진 독립 업무 서비스 요구와 구분해야 합니다.
+일반 업무 API는 `server/storage/*-service.mjs`의 같은 명령 계약과 SQLite/PostgreSQL repository를 사용합니다. Node `createApp({storage: createPostgresBusinessStorage({env})})`는 **팀 업무 저장소**를 PG로 선택하고 내부 비밀번호·세션·사용자·멤버십의 원본은 같은 SQLite control에 유지합니다. PG control 사용자/권한을 미러할 필요가 없습니다. 외부 Worker는 Access+PG control과 같은 업무 계약을 사용합니다. 인증과 control을 분리해 Node 로그인은 SQLite인데 관리자 쓰기만 PG로 보내는 구성은 시작 시 거절합니다. Node 비밀번호/세션까지 모두 PG로 옮기는 제품은 제공하지 않으며, 향후 그 변경에는 별도 auth/control adapter와 이관이 필요합니다.
+
+엔진 변경 시 먼저 이 절의 논리 이관과 이미지 검증을 완료하고 서버의 팀 repository 설정을 바꾸어 다시 시작합니다. 실행 중인 트랜잭션을 다른 DB로 전환하지 않습니다. 이미지 저장소는 DB provider와 독립적입니다. Node의 PG 팀 업무는 기본 파일 저장소를 사용하고 외부 Worker는 R2를 사용하며, 업로드·조회·본문 검증은 동일한 ImageStore 포트를 사용합니다. Git 백그라운드 실행기와 인증은 호스트별 포트이므로 팀 논리 이관에 암묵적으로 포함되지 않습니다. 이 설정은 Node의 기본 SQLite 동기화 실행기를 PG 실행기로 바꾸는 배포 명령이 아닙니다. 자세한 연결 예시와 검사 범위는 [개발 안내의 업무 저장소 계약](DEVELOPMENT.md#업무-저장소-계약)을 참고하세요.
 
 `transfer`는 팀의 ID, 현재 제공본, canonical C, pending P, 제외 목록 L, 충돌, 영수증, 객체와 revision을 보존하는 운영 도구입니다. 로그인 비밀번호·세션·팀 권한은 팀 논리 묶음에 넣지 않습니다. SQLite의 이전 문서 버전·감사 이력·개인 설정처럼 엔진별 표현이 다른 자료는 비공유 보관 레코드로 함께 유지하며, 엔진을 다시 바꿀 때도 버리지 않습니다. 새 SQLite 사용자 참조는 비활성 표시 계정으로 만들고 기존 계정의 권한은 자동으로 올리지 않습니다. 외부 공통 계정과 팀 권한은 control DB에서 별도로 확인합니다.
 
@@ -428,7 +430,7 @@ DB_PATH=/private/new-site.sqlite DOCUMENT_IMAGES_DIR=/private/new-site-images HO
 npm run transfer -- --action import --engine sqlite --database /private/new-site.sqlite --file /private/team-transfer.json --images-dir /private/new-site-images
 ```
 
-가져오기는 JSON과 모든 이미지의 해시·팀 경계·행 상태를 검사하고 DB 변경 실패 시 롤백합니다. `--images-dir`는 내부 파일 저장소, `--resources`는 다음 절의 R2 리소스 설정을 지정합니다. 활성 자료·pending·미해결 충돌의 이미지부터 설치하고 L로 제외된 이미지는 sidecar에 남깁니다. 이미 있는 대상 이미지는 같은 해시인지 확인하며 다른 내용으로 덮어쓰지 않습니다. 외부 Worker의 별도 실행 용량 한도는 논리 이관 성공으로 늘어나지 않으므로 프로필 전환 전에 배포 절의 한도를 확인합니다. 대상은 새 writer 세대와 **복구 점검 필요** 상태로 시작합니다. `--installation-id '새-설치-UUID'`를 지정하면 해당 원본 설치의 L도 새 설치로 옮깁니다. 기존 원본을 보관하고, 대상의 ID·본문·버전·pending·충돌·이미지를 확인한 뒤 앞 절의 복구 대조와 연결 프로필 전환을 진행합니다. 새 대상에서 저장을 시작했다면 원본을 단순 재개하지 않습니다.
+가져오기는 JSON과 모든 이미지의 해시·팀 경계·행 상태를 검사하고 DB 변경 실패 시 롤백합니다. `--images-dir`는 내부 파일 저장소, `--resources`는 다음 절의 R2 리소스 설정을 지정합니다. 활성 자료·pending·미해결 충돌의 이미지부터 설치하고 L로 제외된 이미지는 sidecar에 남깁니다. 이미 있는 대상 이미지는 같은 해시인지 확인하며 다른 내용으로 덮어쓰지 않습니다. PostgreSQL을 사용하는 Node와 외부 Worker의 팀 업무 저장소 한도는 논리 이관 성공으로 늘어나지 않으므로 프로필 전환 전에 15절의 한도를 확인합니다. 대상은 새 writer 세대와 **복구 점검 필요** 상태로 시작합니다. `--installation-id '새-설치-UUID'`를 지정하면 해당 원본 설치의 L도 새 설치로 옮깁니다. 기존 원본을 보관하고, 대상의 ID·본문·버전·pending·충돌·이미지를 확인한 뒤 앞 절의 복구 대조와 연결 프로필 전환을 진행합니다. 새 대상에서 저장을 시작했다면 원본을 단순 재개하지 않습니다.
 
 원본 편집 차단을 해제해야 할 때만 다음 명령을 사용합니다. 이 명령 이후에도 Git 동기화는 일시정지 상태이며 별도 확인 후 재개합니다.
 
@@ -486,11 +488,11 @@ PGSERVICE=graeboard-control pg_dump --format=custom --file=/private/control.dump
 PGSERVICE=graeboard-team-a pg_dump --format=custom --file=/private/team-a.dump
 ```
 
-## 15. 외부 Worker의 검증된 용량 범위
+## 15. PostgreSQL 업무 저장소의 한도와 Worker 검증 범위
 
-이 구현의 외부 동기화 한도는 압축 해제한 snapshot과 처리 중인 공유 상태·미전송 명령에 대해 **4 MiB**, 공유 엔티티 **12,000개**입니다. receipts와 충돌 보관도 상태 용량에 포함됩니다. 행 하나에 여러 셀·문서가 있으므로 엔티티 개수를 업무 행 수로 해석하지 않습니다. DB 검사와 commit 전 검사는 같은 canonical UTF-8 직렬화 기준으로 엔티티·receipt·충돌·P의 바이트를 합산합니다. `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`를 기본값으로 사용하며 환경변수로 더 낮출 수 있습니다. 검증된 상한을 넘겨 설정할 수 없습니다.
+이 구현의 **PostgreSQL 팀 업무 저장소는 내부 Node와 외부 Worker 모두** 공유 상태·미전송 명령에 대해 **4 MiB**, 공유 엔티티 **12,000개** 한도를 적용합니다. Node의 `createPostgresBusinessStorage`도 Worker와 같은 `RequestContext.data`·`capacityLimits(env)`를 사용하므로 파일 이미지를 쓰거나 Node에서 실행해도 이 한도가 해제되지 않습니다. receipts와 충돌 보관도 상태 용량에 포함됩니다. 행 하나에 여러 셀·문서가 있으므로 엔티티 개수를 업무 행 수로 해석하지 않습니다. DB 검사와 commit 전 검사는 같은 canonical UTF-8 직렬화 기준으로 엔티티·receipt·충돌·P의 바이트를 합산합니다. 두 호스트의 서버 설정 `env`는 `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`를 기본값으로 사용하며 더 낮출 수만 있습니다. 기본 SQLite 업무 경로에는 이 PG 한도를 적용하지 않습니다.
 
-초과하면 새 편집·발신·수신 적용은 `413 / EXTERNAL_SYNC_CAPACITY` 또는 관리자 동기화 오류로 중단하고 마지막 정상 canonical cursor·P·L을 보존합니다. 기존 자료 조회·백업·일시정지 등 복구 접근은 유지합니다. gzip snapshot은 JSON 파싱 전에 압축 해제 크기를 제한하고, Git blob도 스트리밍 중 크기를 제한합니다. 한 isolate에서는 동기화 계산을 하나씩 실행하며 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 데이터로 덮어쓰거나 부분 가져오기 성공으로 표시하지 않습니다. 사이트 정리는 C나 receipts를 축소하지 않으므로 이 동기화 한도를 늘리는 수단이 아닙니다.
+두 PG 호스트의 새 편집은 한도 초과 시 `413 / EXTERNAL_SYNC_CAPACITY`로 중단하며 기존 C/P/L을 보존합니다. 외부 Worker의 발신·수신에도 같은 상태 한도를 적용하고, 원격 snapshot은 JSON 파싱 전에 압축 해제 크기를 제한하며 Git blob도 스트리밍 중 크기를 제한합니다. 동기화 거절 시 마지막 정상 canonical cursor를 유지하며 기존 자료 조회·백업·일시정지 등 복구 접근은 유지합니다. Worker 한 isolate에서는 동기화 계산을 하나씩 실행하고 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 데이터로 덮어쓰거나 부분 가져오기 성공으로 표시하지 않습니다. 사이트 정리는 C나 receipts를 축소하지 않으므로 이 한도를 늘리는 수단이 아닙니다.
 
 `tests/worker-capacity.test.mjs`는 실제 workerd에서 공유 `SyncService`의 gzip bootstrap·reducer·후속 커밋 적용을 실행합니다. 한글 값이 있는 1,000개 업무와 업무당 6셀, 문서·삭제표식·receipts·충돌을 포함한 총 7,023개 엔티티의 약 3.44 MiB snapshot을 적용했고 후속 변경까지 2개 커밋을 처리했습니다. 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 한 번도 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아니라 그 fixture의 결과입니다. 실제 Worker의 boundStore·materialize·imageSync도 명시적인 SQL 행 메모리 모델과 R2 바이트 저장소로 실행하며 미전송 명령 2개와 이미지 보존을 검사합니다. canonical 쓰기·이미지 projection·500개 행 materialize 경계와 요청 완료 후 inspector heap을 표본 측정합니다. 표본 최대치는 연속 측정한 순간 최대 메모리나 운영 서비스 지연을 보장하지 않으며 wall time에는 표본 수집 시간이 포함됩니다. 2026-10-27 보관 fixture에서 used heap+backing의 표본 최대는 58,077,600바이트, V8 `totalSize` 최대는 111,542,272바이트(약 106.4 MiB), 요청 완료 후 `totalSize`는 93,618,176바이트였습니다. `totalSize`는 V8가 확보한 heap 크기로 used heap이나 전체 프로세스 RSS와 다릅니다. 메모리 테스트는 SQL 문자열을 처리하는 in-memory 행 모델, fixture 진입점, 가짜 GitHub/R2를 사용하며 운영 번들·Hyperdrive·실제 PG 드라이버 연결의 메모리를 포함하지 않습니다. 배포 전 실제 PG 경로와 동시 요청을 Workers Metrics/Logs로 다시 확인해야 합니다. 재현 명령은 다음과 같습니다.
 
@@ -500,6 +502,6 @@ node --test tests/worker-capacity.test.mjs tests/worker-runtime.test.mjs
 
 Cloudflare의 공식 한도는 isolate당 메모리 128 MB이며 동시 요청이 이 메모리를 공유합니다. Workers Free CPU 한도는 요청당 10 ms, Paid의 1시간 미만 주기 Cron은 CPU 30초이므로 이 동기화를 Free 요금제로 안정 운영할 수 있다고 보장하지 않습니다. 로컬 wall time을 클라우드 CPU 사용량으로 해석하지 않습니다. 실제 사용량은 Workers Metrics/Logs에서 측정하고 사용 요금제를 선택해야 합니다. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 
-일반 외부 조회는 read-only PG 트랜잭션을 사용해 쓰기용 advisory lock을 잡지 않습니다. 다만 외부 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. 변경 엔티티만 계산하는 증분 저장 최적화나 실제 운영 외부 저장 p95 측정은 이 검증에 포함되지 않습니다.
+두 PG 호스트의 일반 조회는 read-only PG 트랜잭션을 사용해 쓰기용 advisory lock을 잡지 않습니다. 다만 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. 변경 엔티티만 계산하는 증분 저장 최적화나 실제 운영 PG 저장 p95 측정은 이 검증에 포함되지 않습니다.
 
-내부 서버의 10,000행 SQLite 성능 시험과 Node 프로세스에서 수행한 PostgreSQL 저장 어댑터 스트레스 시험은 이 외부 Worker 용량 검증과 별도입니다. 그 결과를 Cloudflare에서 10,000행이 지원된다는 근거로 사용하지 않습니다. 실제 Cloudflare·Supabase·GitHub·Images 운영 자원으로 배포한 시험은 이 로컬 검증에 포함되지 않습니다.
+내부 서버의 10,000행 SQLite 성능 시험과 Node 프로세스에서 수행한 PostgreSQL 저장 어댑터 스트레스 시험은 이 업무 API 한도 및 외부 Worker 용량 검증과 별도입니다. SQLite 시험이나 어댑터 직접 호출 결과를 Node PG 또는 Cloudflare Worker에서 10,000행을 지원한다는 근거로 사용하지 않습니다. 실제 Cloudflare·Supabase·GitHub·Images 운영 자원으로 배포한 시험은 이 로컬 검증에 포함되지 않습니다.

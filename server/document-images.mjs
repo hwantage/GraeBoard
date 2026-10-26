@@ -1,5 +1,4 @@
-import { retentionView } from "./sync/visibility.mjs";
-import { canContribute } from "../shared/domain.js";
+import { documentRouteScope } from "../shared/document-routes.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -23,7 +22,6 @@ import {
   documentImageSource,
 } from "../shared/document-images.js";
 import { requireThat } from "./validation.mjs";
-import { reportDocumentTasks } from "./document-storage.mjs";
 
 export const documentImagesDirectory = () =>
   resolve(process.env.DOCUMENT_IMAGES_DIR || "data/document-images");
@@ -163,101 +161,29 @@ export function databaseImageUrls(db) {
   ];
 }
 
-export function installDocumentImageRoutes(
-  app,
-  {
-    db,
-    taskAccess,
-    teamAccess,
-    managedTeam,
-    documentImagesDir,
-    refreshUser,
-    calendarImageAccess,
-    memoImageAccess,
-  },
-) {
-  function available(teamId) {
-    requireThat(
-      !db
-        .prepare(
-          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled') AND kind<>'backup'",
-        )
-        .get(teamId),
-      409,
-      "팀 자료 정리 중입니다. 잠시 후 다시 저장하세요.",
-    );
-  }
+export function installDocumentImageRoutes(app, { refreshUser }) {
+  const access = (req) =>
+    app.locals
+      .documentService(req)
+      .imageAccess(documentRouteScope(req.path.slice(4, -7)));
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0 },
   }).single("image");
-  const liveAccess = (req) => {
-    const task = taskAccess(req.user, req.params.id, true);
-    retentionView(db, task.teamId).requireVisible("document", [
-      "task",
-      task.id,
-      req.params.documentId || "main",
-    ]);
-    if (req.params.documentId && req.params.documentId !== "main")
-      requireThat(
-        db
-          .prepare("SELECT 1 FROM task_documents WHERE task_id=? AND id=?")
-          .get(task.id, req.params.documentId),
-        404,
-        "문서를 찾을 수 없습니다.",
-      );
-    return task.teamId;
-  };
-  const reportImageWriteAccess = (req) => {
-    const row = db
-      .prepare("SELECT * FROM reports WHERE id=?")
-      .get(req.params.id);
-    requireThat(row, 404, "사본을 찾을 수 없습니다.");
-    teamAccess(req.user, row.team_id);
-    retentionView(db, row.team_id).requireVisible("document", [
-      "report",
-      row.id,
-      req.params.taskId,
-      req.params.documentId || "main",
-    ]);
-    requireThat(
-      canContribute(req.user, row.team_id),
-      403,
-      "사본에 이미지를 추가할 권한이 없습니다.",
-    );
-    requireThat(
-      reportDocumentTasks(db, row, [req.params.taskId])?.some(
-        (task) =>
-          task.id === req.params.taskId &&
-          (!req.params.documentId ||
-            req.params.documentId === "main" ||
-            task.documents?.some((doc) => doc.id === req.params.documentId)),
-      ),
-      404,
-      "사본에서 해당 업무를 찾지 못했습니다.",
-    );
-    return row.team_id;
-  };
-  for (const [route, access] of [
-    [
-      "/api/teams/:teamId/years/:year/memos/:documentId/images",
-      memoImageAccess,
-    ],
-    ["/api/reports/:reportId/memos/:documentId/images", memoImageAccess],
-    ["/api/calendar/entries/:id/document/images", calendarImageAccess],
-    ["/api/tasks/:id/document/images", liveAccess],
-    ["/api/tasks/:id/documents/:documentId/images", liveAccess],
-    ["/api/reports/:id/tasks/:taskId/document/images", reportImageWriteAccess],
-    [
-      "/api/reports/:id/tasks/:taskId/documents/:documentId/images",
-      reportImageWriteAccess,
-    ],
+  for (const route of [
+    "/api/teams/:teamId/years/:year/memos/:documentId/images",
+    "/api/reports/:reportId/memos/:documentId/images",
+    "/api/calendar/entries/:id/document/images",
+    "/api/tasks/:id/document/images",
+    "/api/tasks/:id/documents/:documentId/images",
+    "/api/reports/:id/tasks/:taskId/document/images",
+    "/api/reports/:id/tasks/:taskId/documents/:documentId/images",
   ]) {
     app.post(
       route,
       (req, _res, next) => {
-        available(access(req));
-        next();
+        const value = access(req);
+        return value?.then ? value.then(() => next(), next) : next();
       },
       (req, res, next) =>
         upload(req, res, (error) => {
@@ -312,21 +238,19 @@ export function installDocumentImageRoutes(
         }
         // Decoding is asynchronous: recheck the session, membership and task
         // ownership after it finishes, before publishing a file.
-        req.user = refreshUser(req);
-        const teamId = access(req);
-        available(teamId);
-        const hash = createHash("sha256").update(bytes).digest("hex");
-        const url = `/api/document-images/${teamId}/${hash}.webp`;
-        writeDocumentImage(documentImagesDir, url, bytes);
-        res.status(201).json({ url });
+        const refreshed = refreshUser(req);
+        req.user = refreshed?.then ? await refreshed : refreshed;
+        const stored = app.locals
+          .documentService(req)
+          .putImage(documentRouteScope(req.path.slice(4, -7)), bytes);
+        res.status(201).json(stored?.then ? await stored : stored);
       },
     );
   }
-  app.get("/api/document-images/:teamId/:file", (req, res) => {
+  app.get("/api/document-images/:teamId/:file", (req, res, next) => {
     const url = `/api/document-images/${req.params.teamId}/${req.params.file}`;
-    const path = documentImagePath(documentImagesDir, url);
-    teamAccess(req.user, req.params.teamId);
-    requireThat(existsSync(path), 404, "문서 이미지를 찾을 수 없습니다.");
-    res.type("image/webp").sendFile(path, { cacheControl: false });
+    const bytes = app.locals.documentService(req).readImage(url);
+    const send = (value) => res.type("image/webp").send(Buffer.from(value));
+    return bytes?.then ? bytes.then(send, next) : send(bytes);
   });
 }

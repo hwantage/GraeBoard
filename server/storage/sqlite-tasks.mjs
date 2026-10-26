@@ -1,3 +1,4 @@
+import { SqliteTaskCommands } from "./sqlite-task-commands.mjs";
 import {
   transaction,
   parse,
@@ -18,9 +19,24 @@ import {
 import { retentionView } from "../sync/visibility.mjs";
 import { prepareCellChange } from "./task-service.mjs";
 
-export class SqliteTaskRepository {
-  constructor({ db, control, cachedTasks, cellEvents }) {
-    Object.assign(this, { db, control, cachedTasks, cellEvents });
+export class SqliteTaskRepository extends SqliteTaskCommands {
+  constructor({ db, control, cachedTasks, cellEvents, documentImagesDir }) {
+    super();
+    Object.assign(this, {
+      db,
+      control,
+      cachedTasks,
+      cellEvents,
+      documentImagesDir,
+    });
+  }
+  subscribe(user, { teamId, year, startMonth }, { request, response, token }) {
+    this.control.teamAccess(user, teamId);
+    return this.cellEvents.subscribe(request, response, {
+      teamId,
+      year: periodYears(year, startMonth),
+      token,
+    });
   }
   query(user, { teamId, year, startMonth, deleted, ifNoneMatch }) {
     this.control.teamAccess(user, teamId);

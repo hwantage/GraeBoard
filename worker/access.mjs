@@ -2,13 +2,8 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { timingSafeEqual } from "node:crypto";
 
 const keySets = new Map();
-export class HttpError extends Error {
-  constructor(status, message, details) {
-    super(message);
-    this.status = status;
-    this.details = details;
-  }
-}
+import { HttpError } from "../server/validation.mjs";
+export { HttpError };
 export const assert = (condition, status, message, details) => {
   if (!condition) throw new HttpError(status, message, details);
 };

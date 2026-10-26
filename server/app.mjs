@@ -1,3 +1,13 @@
+import { installControlBusinessRoutes } from "./control-business-routes.mjs";
+import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
+import { installTaskBusinessRoutes } from "./task-business-routes.mjs";
+import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
+import { SqliteHistoryRepository } from "./storage/sqlite-history.mjs";
+import { installReportServiceRoutes } from "./report-service-routes.mjs";
+import { SqliteReportRepository } from "./storage/sqlite-reports.mjs";
+import { DocumentBusinessService } from "./storage/document-service.mjs";
+import { SqliteDocumentRepository } from "./storage/sqlite-documents.mjs";
+import { installDocumentBusinessRoutes } from "./document-business-routes.mjs";
 import { TaskBusinessService } from "./storage/task-service.mjs";
 import { SqliteTaskRepository } from "./storage/sqlite-tasks.mjs";
 import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
@@ -10,9 +20,7 @@ import {
   validateDocumentImages,
   removeTeamDocumentImages,
 } from "./document-images.mjs";
-import { installReportDocumentRoutes } from "./report-documents.mjs";
 import { copyReportMemos } from "./memo-storage.mjs";
-import { installAnnualMemoRoutes } from "./annual-memos.mjs";
 import { installCalendarRoutes } from "./calendar.mjs";
 import { installDocumentBrowserRoutes } from "./document-browser.mjs";
 import {
@@ -21,21 +29,14 @@ import {
   pruneDocumentVersions,
   readReport,
 } from "./document-storage.mjs";
-import {
-  installTaskDocumentRoutes,
-  withTaskDocuments,
-} from "./task-documents.mjs";
+import { withTaskDocuments } from "./task-documents.mjs";
 import { installFilterRoutes } from "./filters.mjs";
 import {
   auditSheetSql,
   deletedReportTasks,
   restoreReportTasks,
 } from "./sheet-history.mjs";
-import {
-  installReportEditingRoutes,
-  reportResponse,
-  reportRevision,
-} from "./report-editing.mjs";
+import { reportResponse, reportRevision } from "./report-editing.mjs";
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
@@ -105,13 +106,12 @@ import {
   periodYears,
 } from "../shared/domain.js";
 import { installTransferRoutes } from "./transfer.mjs";
-import { saveSettings } from "./settings.mjs";
+import { installSettingsRoutes } from "./settings.mjs";
 import { createTaskCache } from "./task-cache.mjs";
 import { installResourceEvents } from "./resource-events.mjs";
 import { createDocumentEvents } from "./document-events.mjs";
 import { createCellEvents } from "./cell-events.mjs";
 import { installHistoryCleanupRoutes } from "./history-cleanup.mjs";
-import { installReorderRoute } from "./reorder.mjs";
 import { installSystemAuditRoutes } from "./system-audit.mjs";
 import { insertionPosition } from "./task-position.mjs";
 import { deleteTeam } from "./team-deletion.mjs";
@@ -164,10 +164,37 @@ export function createApp({
   allowSetup = true,
   rateLimits = true,
   cellEventOptions,
+  storage = {},
+  controlRepository,
   taskRepository,
+  adminHistoryRepository,
+  reportRepository,
+  calendarRepository,
+  settingsRepository,
+  filterRepository,
+  documentRepository,
+  historyRepository,
+  browserRepository,
+  transferRepository,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
 } = {}) {
+  // Repository factories are server configuration, never request input.
+  controlRepository ??= storage.control;
+  taskRepository ??= storage.tasks;
+  reportRepository ??= storage.reports;
+  calendarRepository ??= storage.calendar;
+  settingsRepository ??= storage.settings;
+  filterRepository ??= storage.filters;
+  documentRepository ??= storage.documents;
+  historyRepository ??= storage.history;
+  browserRepository ??= storage.browser;
+  transferRepository ??= storage.transfer;
+  adminHistoryRepository ??= storage.adminHistory;
+  if (controlRepository && controlRepository.authenticationMode !== "password")
+    throw new TypeError(
+      "Node password authentication requires a matching SQLite control repository; PostgreSQL Access control belongs to the Worker host",
+    );
   const app = express();
   const cachedTasks = createTaskCache(db);
   const cellEvents = createCellEvents(db, cellEventOptions);
@@ -379,7 +406,25 @@ export function createApp({
       sessionCookie(res, token);
     }
     req.user = userWithTeams(db, u);
-    next();
+    if (!controlRepository) return next();
+    try {
+      const selected =
+        typeof controlRepository === "function"
+          ? controlRepository(req.user, req)
+          : controlRepository;
+      const resolved = selected.resolveUser
+        ? selected.resolveUser(req.user.id)
+        : req.user;
+      if (resolved && typeof resolved.then === "function")
+        return resolved.then((user) => {
+          req.user = user;
+          next();
+        }, next);
+      req.user = resolved;
+      next();
+    } catch (error) {
+      next(error);
+    }
   });
   function teamAccess(user, teamId) {
     requireThat(
@@ -400,8 +445,8 @@ export function createApp({
   function requireSystemAdmin(user) {
     requireThat(isSystemAdmin(user), 403, "시스템 관리자 권한이 필요합니다.");
   }
-  installHistoryCleanupRoutes(app, { db, requireSystemAdmin });
-  installSystemAuditRoutes(app, { db, requireSystemAdmin });
+  installHistoryCleanupRoutes(app, { db, repository: adminHistoryRepository });
+  installSystemAuditRoutes(app, { db, repository: adminHistoryRepository });
   function taskAccess(user, taskId, edit = false, includeDeleted = false) {
     const t = getTask(db, taskId);
     requireThat(
@@ -415,22 +460,31 @@ export function createApp({
       requireThat(canEdit(user, t), 403, "이 업무를 편집할 권한이 없습니다.");
     return t;
   }
-  const tasksRepository =
-    taskRepository ||
-    new SqliteTaskRepository({
-      db,
-      control: { teamAccess, taskAccess },
-      cachedTasks,
-      cellEvents,
-    });
+  const sqliteTasksRepository = new SqliteTaskRepository({
+    db,
+    control: { teamAccess, taskAccess },
+    cachedTasks,
+    cellEvents,
+    documentImagesDir,
+  });
+  const tasksRepository = taskRepository || sqliteTasksRepository;
   app.locals.taskRepository = tasksRepository;
-  const taskService = (req) =>
-    new TaskBusinessService(
+  const configuredTaskServices = taskRepository ? new WeakMap() : null;
+  const taskService = (req) => {
+    if (configuredTaskServices?.has(req))
+      return configuredTaskServices.get(req);
+    const service = new TaskBusinessService(
       typeof taskRepository === "function"
         ? taskRepository(req.user, req)
         : tasksRepository,
       req.user,
+      taskRepository
+        ? { documentEvents, clientId: req.get("X-Client-ID")?.slice(0, 64) }
+        : undefined,
     );
+    configuredTaskServices?.set(req, service);
+    return service;
+  };
   function teamUsers(teamId) {
     return usersWithTeams(
       db,
@@ -484,10 +538,39 @@ export function createApp({
       )
       .get(sessionHash(req.cookies.weekly_session), Date.now());
     requireThat(row, 401, "로그인이 필요합니다.");
-    return userWithTeams(db, row);
+    const identity = userWithTeams(db, row);
+    if (!controlRepository) return identity;
+    const selected =
+      typeof controlRepository === "function"
+        ? controlRepository(identity, req)
+        : controlRepository;
+    return selected.resolveUser ? selected.resolveUser(identity.id) : identity;
   };
   const documentEvents = createDocumentEvents(refreshUser);
   app.locals.documentEvents = documentEvents;
+  storage.configure?.({
+    db,
+    teamAccess,
+    taskAccess,
+    managedTeam,
+    requireSystemAdmin,
+    referencedUsers,
+    documentImagesDir,
+    cachedTasks,
+    documentEvents,
+  });
+  const controlsRepository =
+    controlRepository ||
+    new SqliteControlRepository({
+      db,
+      teamAccess,
+      managedTeam,
+      requireSystemAdmin,
+      referencedUsers,
+      documentImagesDir,
+      cachedTasks,
+    });
+  app.locals.controlRepository = controlsRepository;
   const sync = createNodeSync({
     db,
     documentImagesDir,
@@ -514,10 +597,111 @@ export function createApp({
     sync,
     documentImagesDir,
   });
+  const documentsRepository =
+    documentRepository ||
+    new SqliteDocumentRepository({
+      db,
+      control: { teamAccess, taskAccess },
+      documentImagesDir,
+      documentEvents,
+    });
+  app.locals.documentRepository = documentsRepository;
+  const documentService = (req) =>
+    new DocumentBusinessService(
+      typeof documentRepository === "function"
+        ? documentRepository(req.user, req)
+        : documentsRepository,
+      req.user,
+      { documentEvents },
+    );
+  installControlBusinessRoutes(app, {
+    repository: controlsRepository,
+    documentEvents,
+    refreshUser,
+    cellEvents,
+  });
+  installDocumentBusinessRoutes(app, {
+    service: documentService,
+    documentEvents,
+  });
+  installDocumentImageRoutes(app, { refreshUser });
+  const reportsRepository =
+    reportRepository ||
+    new SqliteReportRepository({
+      db,
+      teamAccess,
+      referencedUsers,
+      documentImagesDir,
+      documentEvents,
+    });
+  app.locals.reportRepository = reportsRepository;
+  installReportServiceRoutes(app, {
+    repository: reportsRepository,
+    documentEvents,
+    refreshUser,
+    cellEvents,
+  });
+  const historiesRepository =
+    historyRepository ||
+    new SqliteHistoryRepository({
+      db,
+      control: { teamAccess, taskAccess, managedTeam, restoreTaskRows },
+      documentEvents,
+    });
+  app.locals.historyRepository = historiesRepository;
+  installHistoryServiceRoutes(app, { repository: historiesRepository });
+  const { calendarImageAccess, calendarDocumentAccess } = installCalendarRoutes(
+    app,
+    {
+      repository: calendarRepository,
+      documentEvents,
+      db,
+      teamAccess,
+      managedTeam,
+      taskAccess,
+      documentImagesDir,
+    },
+  );
+  if (documentsRepository instanceof SqliteDocumentRepository)
+    documentsRepository.control.calendarDocuments = calendarDocumentAccess;
+  installDocumentBrowserRoutes(app, {
+    repository: browserRepository,
+    db,
+    teamAccess,
+    taskAccess,
+    teamUsers,
+    referencedUsers,
+  });
+  installTransferRoutes(app, {
+    repository: transferRepository,
+    db,
+    teamAccess,
+    managedTeam,
+    assignableUsers,
+    referencedUsers,
+    documentImagesDir,
+  });
+  installSettingsRoutes(app, {
+    repository: settingsRepository,
+    db,
+    managedTeam,
+    documentEvents,
+  });
+  installFilterRoutes(app, {
+    repository: filterRepository,
+    db,
+    teamAccess,
+    documentEvents,
+  });
   installRetentionBoundary(app, { db, taskRequestsHandled: true });
   installEventStreams(app);
-  installResourceEvents(app, { db, documentEvents, teamAccess });
-  installReorderRoute(app, { db, taskAccess, teamAccess });
+  installResourceEvents(app, {
+    db,
+    documentEvents,
+    teamAccess,
+    taskRequestsHandled: (req) =>
+      !!taskRepository && !!taskService(req).repository.resourceChanges,
+  });
   app.post("/api/auth/logout", (req, res) => {
     transaction(db, () => {
       db.prepare("DELETE FROM sessions WHERE token=?").run(
@@ -531,53 +715,7 @@ export function createApp({
     res.clearCookie("weekly_session", { path: "/" });
     res.json({ ok: true });
   });
-  app.patch("/api/auth/profile", (req, res) => {
-    const d = z
-      .object({ name: string(50).optional(), ...profileFields })
-      .strict()
-      .refine(
-        (value) => Object.keys(value).length > 0,
-        "변경할 프로필을 입력하세요.",
-      )
-      .parse(req.body);
-    const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user.id);
-    const next = {
-      name: d.name ?? u.name,
-      color: d.color ?? u.color,
-      avatarInitials: d.avatarInitials ?? u.avatar_initials,
-      avatarImage: d.avatarImage ?? u.avatar_image,
-    };
-    transaction(db, () => {
-      db.prepare(
-        "UPDATE users SET name=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
-      ).run(next.name, next.color, next.avatarInitials, next.avatarImage, u.id);
-      audit(
-        db,
-        u.id,
-        null,
-        "profile",
-        u.id,
-        {
-          name: u.name,
-          color: u.color,
-          avatarInitials: u.avatar_initials,
-          hasAvatarImage: !!u.avatar_image,
-        },
-        {
-          name: next.name,
-          color: next.color,
-          avatarInitials: next.avatarInitials,
-          hasAvatarImage: !!next.avatarImage,
-        },
-      );
-    });
-    res.json({
-      user: userWithTeams(
-        db,
-        db.prepare("SELECT * FROM users WHERE id=?").get(u.id),
-      ),
-    });
-  });
+
   app.post("/api/auth/password", (req, res) => {
     const d = z
       .object({
@@ -602,32 +740,7 @@ export function createApp({
     issueSession(res, u.id);
     res.json({ ok: true });
   });
-  app.get("/api/bootstrap", (req, res) => {
-    // 시스템 관리자는 소속이 없어도 모든 팀에 들어갈 수 있다.
-    const teamIds = isSystemAdmin(req.user)
-      ? db
-          .prepare("SELECT id FROM teams ORDER BY name")
-          .all()
-          .map((t) => t.id)
-      : req.user.teamIds;
-    const teams = teamIds.map((t) => teamAccess(req.user, t));
-    const users = new Map();
-    teams.forEach((t) =>
-      referencedUsers(t.id).forEach((u) => users.set(u.id, u)),
-    );
-    const years = new Set([Number(todayKey().slice(0, 4))]);
-    for (const team of teams)
-      for (const t of db
-        .prepare("SELECT DISTINCT years FROM tasks WHERE team_id=?")
-        .all(team.id))
-        parse(t.years, []).forEach((y) => years.add(y));
-    res.json({
-      user: req.user,
-      teams,
-      users: [...users.values()],
-      years: [...years].sort((a, b) => b - a),
-    });
-  });
+
   app.get("/api/tasks", (req, res, next) => {
     const send = (result) => {
       res.set("ETag", result.etag);
@@ -652,1215 +765,25 @@ export function createApp({
     send(result);
   });
   registerEventRoute(app, "/api/cells/events", (req, res) => {
-    const teamId = String(req.query.teamId || "");
-    teamAccess(req.user, teamId);
-    const period = periodScopeSchema.parse(req.query);
-    const year = periodYears(period.year, period.startMonth);
-    cellEvents.subscribe(req, res, {
-      teamId,
-      year,
+    return taskService(req).subscribe(req.query, {
+      request: req,
+      response: res,
       token: sessionHash(req.cookies.weekly_session),
+      refreshUser: () => refreshUser(req),
+      register: cellEvents.registerExternal,
     });
   });
-  const { memoImageAccess } = installAnnualMemoRoutes(app, {
-    documentEvents,
-    db,
-    teamAccess,
-    documentImagesDir,
-  });
-  installTaskDocumentRoutes(app, {
-    documentEvents,
-    db,
-    taskAccess,
-    teamAccess,
-    documentImagesDir,
-  });
-  const { calendarImageAccess } = installCalendarRoutes(app, {
-    documentEvents,
-    db,
-    teamAccess,
-    managedTeam,
-    taskAccess,
-    documentImagesDir,
-  });
-  installDocumentImageRoutes(app, {
-    calendarImageAccess,
-    memoImageAccess,
-    db,
-    taskAccess,
-    teamAccess,
-    managedTeam,
-    documentImagesDir,
-    refreshUser,
-  });
-  installReportDocumentRoutes(app, {
-    db,
-    teamAccess,
-    documentImagesDir,
-    documentEvents,
-  });
-  installDocumentBrowserRoutes(app, {
-    db,
-    teamAccess,
-    taskAccess,
-    teamUsers,
-    referencedUsers,
-  });
-  app.post("/api/tasks", (req, res) => {
-    const d = z
-      .object({
-        teamId: z.string().uuid(),
-        year: yearSchema,
-        startMonth: z.number().int().min(1).max(12).default(1),
-        fields: z.record(z.string(), z.any()).default({}),
-        sourceId: z.string().uuid().optional(),
-        copiedRow: copiedRowSchema.optional(),
-        insertAt: z
-          .object({
-            taskId: z.string().uuid(),
-            updatedAt: z.string(),
-            placement: z.enum(["before", "after"]),
-          })
-          .strict()
-          .optional(),
-      })
-      .refine((d) => !d.sourceId || !d.copiedRow, "복사할 행을 확인하세요.")
-      .parse(req.body);
-    const team = teamAccess(req.user, d.teamId);
-    periodScopeSchema.parse(d);
-    requireThat(
-      canContribute(req.user, d.teamId),
-      403,
-      "등록 권한이 없습니다.",
-    );
-    // 팀에 소속되지 않은 시스템 관리자는 담당자가 될 수 없으므로 비워 둔다.
-    const self = isAssignable(req.user, d.teamId) ? req.user.id : "";
-    const blankCreation = !d.sourceId && !d.copiedRow;
-    const blankInsertion = d.insertAt && blankCreation;
-    // 신규 업무는 팀원·상태를 포함해 속성을 비운다. 명시한 값은 fields로 받는다.
-    const fields = {
-      ...Object.fromEntries(
-        propertiesFor(team.settings)
-          .map((p) => [
-            p.id,
-            p.id === "title"
-              ? "새 업무"
-              : p.id === "owner" && d.sourceId
-                ? self
-                : emptyPropertyValue(p),
-          ])
-          .filter(([, v]) => v !== "" && (!Array.isArray(v) || v.length > 0)),
-      ),
-      ...d.fields,
-    };
-    const defined = (key) =>
-      propertiesFor(team.settings).some((p) => p.id === key);
-    let cells = {},
-      defaultStyle = team.settings.defaultStyle,
-      rowStyle = {},
-      documents;
-    if (d.sourceId) {
-      const source = taskAccess(req.user, d.sourceId);
-      requireThat(
-        source.teamId === d.teamId,
-        400,
-        "같은 팀의 업무만 복제할 수 있습니다.",
-      );
-      ({ cells, defaultStyle, rowStyle = {} } = copyRowFormatting(source));
-      documents = retentionView(db, source.teamId).documents(
-        withTaskDocuments(db, [source])[0].documents,
-        ["task", source.id],
-      );
-      // 복제본은 등록자가 담당자가 되고 지원자는 비운다.
-      for (const k of new Set([
-        ...["owner", "supporters"].filter(defined),
-        ...Object.keys(d.fields),
-      ]))
-        cells = {
-          ...cells,
-          [k]: {
-            value: k === "supporters" ? [] : (fields[k] ?? ""),
-            style: cells[k]?.style || {},
-          },
-        };
-    }
-    if (d.copiedRow) {
-      cells = { ...d.copiedRow.cells };
-      defaultStyle = d.copiedRow.defaultStyle;
-      rowStyle = d.copiedRow.rowStyle || {};
-      documents = d.copiedRow.documents;
-      for (const document of documents || [])
-        validateDocumentImages(document.markdown, d.teamId, documentImagesDir);
-      // 복사한 뒤 보관된 속성·선택값이나 팀을 떠난 담당자처럼 지금은 고를 수
-      // 없는 값만 빼고 나머지 행 내용은 붙여넣는다.
-      const archived = new Set(
-        propertiesFor(team.settings, true)
-          .filter((p) => p.archived)
-          .map((p) => p.id),
-      );
-      for (const [key, c] of Object.entries(cells)) {
-        if (archived.has(key)) {
-          delete cells[key];
-          continue;
-        }
-        requireThat(
-          validCellKey(key, team.settings),
-          400,
-          "지원하지 않는 셀입니다.",
-        );
-        try {
-          validateCellValue(db, d.teamId, key, c.value, team.settings);
-        } catch (e) {
-          if (!(e instanceof HttpError) || e.status !== 400) throw e;
-          delete cells[key];
-        }
-      }
-    }
-    for (const [k, v] of Object.entries(fields))
-      validateCellValue(db, d.teamId, k, v, team.settings);
-    const task = transaction(db, () => {
-      let position;
-      if (d.insertAt) {
-        const target = taskAccess(req.user, d.insertAt.taskId);
-        requireThat(
-          target.teamId === d.teamId &&
-            target.years.some((y) =>
-              periodYears(d.year, d.startMonth).includes(y),
-            ),
-          400,
-          "같은 팀과 연도의 행을 선택하세요.",
-        );
-        requireThat(
-          target.updatedAt === d.insertAt.updatedAt,
-          409,
-          "기준 행이 변경되었습니다. 새로고침 후 다시 선택하세요.",
-        );
-        if (blankInsertion) {
-          // 빈 행 삽입은 기준 행의 서식만 상속한다. 값은 새 업무 기본값이나
-          // 묶음에서 전달한 값을 유지하고, 숨긴 열·빈 주차 서식도 보존한다.
-          const copied = copyRowFormatting(target);
-          defaultStyle = copied.defaultStyle;
-          rowStyle = copied.rowStyle || {};
-          const properties = new Map(
-            propertiesFor(team.settings).map((p) => [p.id, p]),
-          );
-          for (const [key, c] of Object.entries(copied.cells)) {
-            if (
-              !Object.keys(c.style).length ||
-              !validCellKey(key, team.settings)
-            )
-              continue;
-            cells[key] = {
-              value: fields[key] ?? emptyPropertyValue(properties.get(key)),
-              style: c.style,
-            };
-          }
-        }
-        position = insertionPosition(
-          db,
-          d.teamId,
-          periodYears(d.year, d.startMonth),
-          target.id,
-          d.insertAt.placement,
-        );
-      }
-      const t = insertTask(db, {
-        teamId: d.teamId,
-        year: d.year,
-        actorId: req.user.id,
-        fields,
-        cells,
-        defaultStyle,
-        rowStyle,
-        documents,
-        position,
-      });
-      audit(
-        db,
-        req.user.id,
-        d.teamId,
-        "create",
-        t.id,
-        undefined,
-        taskAuditSnapshot(t),
-      );
-      return t;
-    });
-    res.status(201).json({ task });
-  });
+
+  installTaskBusinessRoutes(app, { service: taskService });
   app.post("/api/cells/batch", (req, res, next) => {
     const result = taskService(req).saveBatch(req.body);
     if (result?.then) return result.then((value) => res.json(value), next);
     res.json(result);
   });
-  app.patch("/api/tasks/:id", (req, res) => {
-    const d = z
-      .object({
-        updatedAt: z.string(),
-        years: z.array(yearSchema).min(1).max(101).optional(),
-        position: z.number().finite().optional(),
-      })
-      .parse(req.body);
-    const task = taskAccess(req.user, req.params.id, true);
-    requireThat(
-      d.updatedAt === task.updatedAt,
-      409,
-      "업무가 변경되었습니다. 새로고침 후 다시 시도하세요.",
-    );
-    const updated = transaction(db, () => {
-      db.prepare(
-        "UPDATE tasks SET years=?,position=?,updated_at=? WHERE id=?",
-      ).run(
-        json(
-          d.years
-            ? retentionView(db, task.teamId).preserveYears(task.years, d.years)
-            : task.years,
-        ),
-        d.position ?? task.position,
-        nextTaskStamp(task.updatedAt),
-        task.id,
-      );
-      const after = getTask(db, task.id);
-      audit(
-        db,
-        req.user.id,
-        task.teamId,
-        "task",
-        task.id,
-        taskAuditSnapshot(task),
-        taskAuditSnapshot(after),
-      );
-      return after;
-    });
-    res.json({ task: updated });
-  });
-  const taskVersionsSchema = z.object({
-    tasks: z
-      .array(
-        z.object({
-          id: z.string().uuid(),
-          updatedAt: z.string().datetime(),
-        }),
-      )
-      .min(1)
-      .max(20000)
-      .refine((tasks) => new Set(tasks.map((t) => t.id)).size === tasks.length),
-  });
-  function deleteTaskRows(user, versions) {
-    return transaction(db, () => {
-      const tasks = versions.map(({ id, updatedAt }) => {
-        const task = taskAccess(user, id, true);
-        requireThat(
-          updatedAt === task.updatedAt,
-          409,
-          "업무가 변경되었습니다. 확인 후 다시 삭제하세요.",
-        );
-        return task;
-      });
-      requireThat(
-        tasks.every((t) => t.teamId === tasks[0].teamId),
-        400,
-        "같은 시트의 업무를 선택하세요.",
-      );
-      const updatedAt = {};
-      for (const task of tasks) {
-        updatedAt[task.id] = nextTaskStamp(task.updatedAt);
-        const deletedAt = now();
-        db.prepare("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?").run(
-          deletedAt,
-          updatedAt[task.id],
-          task.id,
-        );
-        audit(
-          db,
-          user.id,
-          task.teamId,
-          "delete",
-          task.id,
-          taskAuditSnapshot(task),
-          { deletedAt, updatedAt: updatedAt[task.id] },
-        );
-      }
-      return { ok: true, updatedAt };
-    });
-  }
   function restoreTaskRows(user, versions) {
-    return transaction(db, () => {
-      const tasks = versions.map(({ id, updatedAt }) => {
-        const task = taskAccess(user, id, false, true);
-        requireThat(canEdit(user, task), 403, "업무를 복구할 권한이 없습니다.");
-        requireThat(
-          task.deletedAt &&
-            (updatedAt === undefined || updatedAt === task.updatedAt),
-          409,
-          "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
-        );
-        return task;
-      });
-      requireThat(
-        tasks.every((t) => t.teamId === tasks[0].teamId),
-        400,
-        "같은 시트의 업무를 선택하세요.",
-      );
-      for (const task of tasks) {
-        db.prepare(
-          "UPDATE tasks SET deleted_at=NULL,updated_at=? WHERE id=?",
-        ).run(nextTaskStamp(task.updatedAt), task.id);
-        audit(db, user.id, task.teamId, "restore", task.id, undefined, {
-          restored: true,
-        });
-      }
-      return { tasks: tasks.map((task) => getTask(db, task.id)) };
-    });
+    return sqliteTasksRepository.restore(user, versions);
   }
-  app.post("/api/tasks/delete", (req, res) => {
-    res.json(
-      deleteTaskRows(req.user, taskVersionsSchema.parse(req.body).tasks),
-    );
-  });
-  app.post("/api/tasks/restore", (req, res) => {
-    res.json(
-      restoreTaskRows(req.user, taskVersionsSchema.parse(req.body).tasks),
-    );
-  });
-  app.delete("/api/tasks/:id", (req, res) => {
-    const result = deleteTaskRows(req.user, [
-      { id: req.params.id, updatedAt: req.body.updatedAt },
-    ]);
-    res.json({ ok: true, updatedAt: result.updatedAt[req.params.id] });
-  });
-  app.post("/api/tasks/:id/restore", (req, res) => {
-    const { updatedAt } = z
-      .object({ updatedAt: z.string().datetime().optional() })
-      .parse(req.body ?? {});
-    const result = restoreTaskRows(req.user, [
-      { id: req.params.id, updatedAt },
-    ]);
-    res.json({ task: result.tasks[0] });
-  });
-  app.get("/api/views", (req, res) => {
-    const teamId = String(req.query.teamId);
-    const team = teamAccess(req.user, teamId);
-    const year = yearSchema.parse(req.query.year);
-    res.json({
-      views: db
-        .prepare(
-          "SELECT * FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
-        )
-        .all(req.user.id, teamId, year)
-        .map((v) => ({
-          id: v.id,
-          name: v.name,
-          data: viewLayout(normalizeView(parse(v.data), team.settings)),
-          updatedAt: v.updated_at,
-        })),
-    });
-  });
-  app.put("/api/views", (req, res) => {
-    const d = z
-      .object({
-        teamId: z.string().uuid(),
-        name: z.literal("__current"),
-        data: viewSchema,
-      })
-      .parse(req.body);
-    const team = teamAccess(req.user, d.teamId);
-    const keys = fieldsFor(team.settings).map((f) => f.key);
-    requireThat(
-      (d.data.visibleFields || []).every((k) => keys.includes(k)),
-      400,
-      "이 팀의 표시 열을 선택하세요.",
-    );
-    requireThat(
-      !d.data.groupBy ||
-        propertiesFor(team.settings).some((p) => p.id === d.data.groupBy),
-      400,
-      "이 팀의 묶음 속성을 선택하세요.",
-    );
-    requireThat(
-      [
-        ...Object.keys(d.data.propertyFilters || {}),
-        ...Object.keys(d.data.propertyFilterModes || {}),
-      ].every((key) => propertiesFor(team.settings).some((p) => p.id === key)),
-      400,
-      "이 팀의 속성 필터를 선택하세요.",
-    );
-    db.prepare(
-      "INSERT INTO views VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,team_id,year,name) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",
-    ).run(
-      id(),
-      req.user.id,
-      d.teamId,
-      d.data.year,
-      d.name,
-      json(viewLayout(d.data)),
-      now(),
-    );
-    res.json({ ok: true });
-  });
-  installFilterRoutes(app, { db, teamAccess });
-  installReportEditingRoutes(app, { db, teamAccess, documentImagesDir });
-  app.get("/api/reports", (req, res) => {
-    const teamId = String(req.query.teamId);
-    teamAccess(req.user, teamId);
-    res.json({
-      reports: db
-        .prepare(
-          "SELECT r.id,r.name,r.year,r.reference_date AS referenceDate,r.created_at AS createdAt,u.name AS author FROM reports r JOIN users u ON r.created_by=u.id WHERE r.team_id=? ORDER BY r.created_at DESC",
-        )
-        .all(teamId),
-    });
-  });
-  app.post("/api/reports", (req, res) => {
-    const d = z
-      .object({
-        id: z.string().uuid().optional(),
-        teamId: z.string().uuid(),
-        year: yearSchema,
-        name: reportNameSchema,
-        sourceId: z.string().uuid().optional(),
-        referenceDate: dateSchema,
-        view: viewSchema,
-        taskIds: z.array(z.string().uuid()).max(20000),
-      })
-      .parse(req.body);
-    const team = teamAccess(req.user, d.teamId);
-    requireThat(
-      canContribute(req.user, d.teamId),
-      403,
-      "사본을 만들 권한이 없습니다.",
-    );
-    const reportId = d.id || id();
-    const requestHash = createHash("sha256")
-      .update(JSON.stringify(d))
-      .digest("hex");
-    const replay = () => {
-      const existing = db
-        .prepare("SELECT * FROM reports WHERE id=?")
-        .get(reportId);
-      if (existing) {
-        const last = db
-          .prepare(
-            "SELECT after_json FROM audit WHERE action='report' AND target=? AND actor_id=?",
-          )
-          .get(reportId, req.user.id);
-        requireThat(
-          existing.team_id === d.teamId &&
-            existing.created_by === req.user.id &&
-            parse(last?.after_json)?.requestHash === requestHash,
-          409,
-          "사본 생성 요청이 변경되었습니다. 새 이름으로 다시 시도하세요.",
-        );
-        return true;
-      }
-      return false;
-    };
-    if (replay()) return res.status(201).json({ id: reportId });
-    requireThat(
-      d.view.year === d.year,
-      400,
-      "보고 연도와 보기의 연도가 일치해야 합니다.",
-    );
-    const selected = new Set(d.sourceId ? [] : d.taskIds),
-      tasks = selected.size
-        ? getTasks(db, d.teamId, periodYears(d.year, d.view.startMonth)).filter(
-            (t) => selected.has(t.id),
-          )
-        : [];
-    requireThat(
-      tasks.length === selected.size,
-      409,
-      "일부 업무가 변경 또는 삭제되었습니다. 새로고침 후 다시 저장하세요.",
-    );
-    transaction(db, () => {
-      if (replay()) return;
-      requireUniqueReportName(db, d.teamId, d.name);
-      const source = d.sourceId
-        ? db
-            .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-            .get(d.sourceId, d.teamId)
-        : null;
-      requireThat(!d.sourceId || source, 404, "사본을 찾을 수 없습니다.");
-      const data = source
-        ? readReport(db, source)
-        : {
-            tasks: withTaskDocumentReferences(db, tasks),
-            users: referencedUsers(d.teamId),
-            view: d.view,
-            settings: team.settings,
-          };
-      const visibility = retentionView(db, d.teamId);
-      data.tasks = visibility.tasks(data.tasks, source?.id);
-      db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
-        reportId,
-        d.teamId,
-        source ? source.year : d.year,
-        d.name,
-        d.referenceDate,
-        req.user.id,
-        now(),
-        encodeReport(data),
-      );
-      syncReportDocuments(db, reportId, data.tasks);
-      copyReportMemos(db, {
-        reportId,
-        sourceId: source?.id,
-        teamId: d.teamId,
-        year: d.year,
-        actorId: req.user.id,
-        ...(visibility.active
-          ? {
-              visibleDocument: (documentId) =>
-                !visibility.hidden(
-                  "document",
-                  source
-                    ? ["reportMemo", source.id, documentId]
-                    : ["annual", String(d.year), documentId],
-                ),
-            }
-          : {}),
-      });
-      audit(db, req.user.id, d.teamId, "report", reportId, undefined, {
-        name: d.name,
-        count: data.tasks.length,
-        requestHash,
-      });
-    });
-    res.status(201).json({ id: reportId });
-  });
-  app.patch("/api/reports/:id/name", (req, res) => {
-    const data = z
-      .object({ name: reportNameSchema, expectedName: z.string().max(120) })
-      .strict()
-      .parse(req.body);
-    res.json(
-      transaction(db, () => {
-        const row = db
-          .prepare("SELECT * FROM reports WHERE id=?")
-          .get(req.params.id);
-        requireThat(row, 404, "사본을 찾을 수 없습니다.");
-        teamAccess(req.user, row.team_id);
-        requireThat(
-          canContribute(req.user, row.team_id),
-          403,
-          "사본 이름을 바꿀 권한이 없습니다.",
-        );
-        requireThat(
-          row.name === data.expectedName || row.name === data.name,
-          409,
-          "사본 이름이 변경되었습니다. 목록을 다시 불러오세요.",
-        );
-        if (row.name !== data.name)
-          requireUniqueReportName(db, row.team_id, data.name);
-        db.prepare("UPDATE reports SET name=? WHERE id=?").run(
-          data.name,
-          row.id,
-        );
-        audit(
-          db,
-          req.user.id,
-          row.team_id,
-          "report-rename",
-          row.id,
-          { name: row.name },
-          { name: data.name },
-        );
-        return { id: row.id, name: data.name };
-      }),
-    );
-  });
-  app.get("/api/reports/:id", (req, res) => {
-    const r = db.prepare("SELECT * FROM reports WHERE id=?").get(req.params.id);
-    requireThat(r, 404, "사본을 찾을 수 없습니다.");
-    teamAccess(req.user, r.team_id);
-    res.json(reportResponse(db, r));
-  });
-  app.delete("/api/reports", (req, res) => {
-    const d = z
-      .object({
-        teamId: z.string().uuid(),
-        ids: z.array(z.string().uuid()).min(1).max(20000),
-      })
-      .strict()
-      .parse(req.body);
-    teamAccess(req.user, d.teamId);
-    requireThat(
-      canContribute(req.user, d.teamId),
-      403,
-      "사본을 삭제할 권한이 없습니다.",
-    );
-    const ids = [...new Set(d.ids)];
-    const visibility = retentionView(db, d.teamId);
-    ids.forEach((id) => visibility.requireVisible("report", [id]));
-    transaction(db, () => {
-      const rows = db
-        .prepare(
-          `SELECT id,name,reference_date AS referenceDate FROM reports WHERE team_id=? AND id IN (${ids.map(() => "?").join(",")})`,
-        )
-        .all(d.teamId, ...ids);
-      requireThat(
-        rows.length === ids.length,
-        404,
-        "일부 사본을 찾을 수 없습니다. 목록을 새로 열어 확인하세요.",
-      );
-      const remove = db.prepare("DELETE FROM reports WHERE id=? AND team_id=?");
-      for (const row of rows) {
-        remove.run(row.id, d.teamId);
-        audit(db, req.user.id, d.teamId, "report-delete", row.id, {
-          name: row.name,
-          referenceDate: row.referenceDate,
-        });
-      }
-      pruneDocumentVersions(db, d.teamId);
-    });
-    res.json({ ok: true });
-  });
-  app.get("/api/audit", (req, res) => {
-    const teamId = String(req.query.teamId);
-    teamAccess(req.user, teamId);
-    const limit = z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(200)
-      .parse(req.query.limit || 100);
-    const taskId = req.query.taskId
-      ? z.string().uuid().parse(req.query.taskId)
-      : null;
-    const sheetId =
-      req.query.sheetId === undefined
-        ? null
-        : z
-            .union([z.literal("original"), z.string().uuid()])
-            .parse(req.query.sheetId);
-    if (sheetId && sheetId !== "original")
-      requireThat(
-        db
-          .prepare("SELECT id FROM reports WHERE id=? AND team_id=?")
-          .get(sheetId, teamId),
-        404,
-        "사본을 찾을 수 없습니다.",
-      );
-    if (taskId && (!sheetId || sheetId === "original"))
-      requireThat(
-        taskAccess(req.user, taskId, false, true).teamId === teamId,
-        403,
-        "같은 팀의 업무를 선택하세요.",
-      );
-    const rows = db
-      .prepare(
-        `SELECT a.*,u.name AS actor, ${auditSheetSql} AS report_id FROM audit a JOIN users u ON a.actor_id=u.id WHERE a.team_id=?
-          AND (? IS NULL OR COALESCE(${auditSheetSql},'original')=?)
-          AND (? IS NULL OR a.target=? OR EXISTS(SELECT 1 FROM json_each(CASE WHEN a.action='cells' THEN COALESCE(json_extract(a.after_json,'$.$data'),a.after_json) ELSE '[]' END) c WHERE json_extract(c.value,'$.taskId')=?) OR (a.action='format' AND EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(a.after_json,'$.$data.taskIds'),json_extract(a.after_json,'$.taskIds'),'[]')) t WHERE t.value=?))) ORDER BY a.created_at DESC,a.rowid DESC LIMIT ?`,
-      )
-      .all(teamId, sheetId, sheetId, taskId, taskId, taskId, taskId, limit);
-    const reports = new Map();
-    const reportSnapshots = new Map();
-    for (const row of rows) {
-      if (!row.report_id || reports.has(row.report_id)) continue;
-      reports.set(
-        row.report_id,
-        db
-          .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-          .get(row.report_id, teamId),
-      );
-    }
-    res.json({
-      entries: rows.map((r) => {
-        const before = parse(r.before_json),
-          after = parse(r.after_json);
-        const report = reports.get(r.report_id);
-        if (before?.deletedTasks && report && !reportSnapshots.has(report.id))
-          reportSnapshots.set(report.id, decodeReport(report.data));
-        const task =
-          r.action === "delete" &&
-          db
-            .prepare("SELECT deleted_at AS deletedAt FROM tasks WHERE id=?")
-            .get(r.target);
-        const latestDeletion =
-          task?.deletedAt &&
-          db
-            .prepare(
-              "SELECT id FROM audit WHERE team_id=? AND action='delete' AND target=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
-            )
-            .get(teamId, r.target);
-        return {
-          id: r.id,
-          actor: r.actor,
-          actorId: r.actor_id,
-          action: r.action,
-          target: r.target,
-          before,
-          after,
-          sheet: {
-            id: r.report_id || "original",
-            name: r.report_id
-              ? report?.name || after?.name || before?.name || "삭제된 사본"
-              : "원본",
-          },
-          restorableTaskIds:
-            r.action === "delete" && latestDeletion?.id === r.id
-              ? [r.target]
-              : r.action === "report-edit" && before?.deletedTasks && report
-                ? deletedReportTasks(db, r, reportSnapshots.get(report.id)).map(
-                    (t) => t.id,
-                  )
-                : [],
-          createdAt: r.created_at,
-        };
-      }),
-    });
-  });
-  app.post("/api/audit/:id/restore", (req, res) => {
-    const entry = db
-      .prepare("SELECT * FROM audit WHERE id=?")
-      .get(req.params.id);
-    requireThat(entry, 404, "이력을 찾을 수 없습니다.");
-    if (entry.action === "report-edit") {
-      teamAccess(req.user, entry.team_id);
-      return res.json(
-        restoreReportTasks(db, req.user, entry, req.body.revision),
-      );
-    }
-    const team = managedTeam(
-      req.user,
-      entry.team_id,
-      "팀장만 이전 내용을 복원할 수 있습니다.",
-    );
-    if (entry.action === "delete") {
-      const latest = db
-        .prepare(
-          "SELECT id FROM audit WHERE team_id=? AND action='delete' AND target=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
-        )
-        .get(entry.team_id, entry.target);
-      requireThat(
-        latest?.id === entry.id,
-        409,
-        "이후 삭제 이력이 있습니다. 최신 이력에서 복구하세요.",
-      );
-      const task = taskAccess(req.user, entry.target, false, true);
-      return res.json(
-        restoreTaskRows(req.user, [
-          {
-            id: task.id,
-            updatedAt: parse(entry.after_json)?.updatedAt || task.updatedAt,
-          },
-        ]),
-      );
-    }
-    if (entry.action === "format") {
-      const expectedRevision = z
-        .number()
-        .int()
-        .nonnegative()
-        .parse(req.body.formatRevision);
-      const expectedCells = z
-        .record(z.string(), z.number().int().nonnegative())
-        .parse(req.body.versions);
-      const request = {
-        operationId: id(),
-        createdAt: now(),
-        format: {
-          teamId: entry.team_id,
-          expectedRevision,
-          restore: entry.target,
-          expectedCells,
-        },
-      };
-      return res.json(
-        transaction(db, () =>
-          applyFormatting(db, req.user, request, team, entry),
-        ),
-      );
-    }
-    requireThat(
-      entry.action === "cells",
-      400,
-      "셀 변경 이력만 이 화면에서 복원할 수 있습니다.",
-    );
-    const expected = z
-      .record(z.string(), z.number().int())
-      .parse(req.body.versions);
-    const before = parse(entry.before_json, []);
-    const restored = transaction(db, () => {
-      const prev = [],
-        after = [],
-        tasks = new Map();
-      for (const c of before) {
-        if (!tasks.has(c.taskId))
-          tasks.set(c.taskId, taskAccess(req.user, c.taskId, true));
-        const task = tasks.get(c.taskId);
-        const current = task.cells[c.key] ?? {
-          value: "",
-          style: {},
-          version: 0,
-        };
-        requireThat(
-          expected[`${c.taskId}:${c.key}`] === current.version,
-          409,
-          "복구 대상이 변경되었습니다. 최신 이력을 다시 확인하세요.",
-        );
-        prev.push({ taskId: c.taskId, key: c.key, ...current });
-        after.push({
-          ...c,
-          version: current.version + 1,
-        });
-      }
-      const put = upsertCellStatement(db);
-      for (const c of after)
-        put.run(c.taskId, c.key, c.value, c.style, c.version);
-      pruneStyles(
-        db,
-        prev.map((c) => c.style),
-      );
-      touchTasks(db, [...tasks.values()]);
-      audit(db, req.user.id, entry.team_id, "cells", id(), prev, after);
-      return after;
-    });
-    res.json({ cells: restored });
-  });
-  app.patch("/api/teams/:id/settings", (req, res) => {
-    const team = managedTeam(req.user, req.params.id);
-    const settings = saveSettings(db, team, req.body, req.user.id);
-    res.json({ settings });
-  });
-  app.get("/api/admin/users", (req, res) => {
-    requireSystemAdmin(req.user);
-    res.json({
-      users: usersWithTeams(
-        db,
-        db.prepare("SELECT * FROM users ORDER BY created_at").all(),
-      ),
-      teams: db
-        .prepare("SELECT * FROM teams ORDER BY name")
-        .all()
-        .map((t) => ({ ...t, settings: teamSettings(t) })),
-    });
-  });
-  function setUserMemberships(userId, memberships) {
-    for (const m of memberships)
-      requireThat(
-        db.prepare("SELECT id FROM teams WHERE id=?").get(m.teamId),
-        400,
-        "팀을 확인하세요.",
-      );
-    replaceUserMemberships(db, userId, memberships);
-  }
-  app.post("/api/admin/users", (req, res) => {
-    requireSystemAdmin(req.user);
-    const d = credentials
-      .extend({
-        name: string(50),
-        ...profileFields,
-        active: z.boolean().default(true),
-        systemRole: systemRoles.default("user"),
-        memberships: userMembershipRowsSchema.default([]),
-      })
-      .parse(req.body);
-    const userId = id();
-    transaction(db, () => {
-      requireThat(
-        !db
-          .prepare("SELECT id FROM users WHERE username=? COLLATE NOCASE")
-          .get(d.username),
-        409,
-        "이미 사용 중인 아이디(이메일)입니다.",
-      );
-      db.prepare(
-        "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,?,?,?)",
-      ).run(
-        userId,
-        d.username,
-        d.name,
-        passwordHash(d.password),
-        d.systemRole,
-        now(),
-      );
-      db.prepare(
-        "UPDATE users SET active=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
-      ).run(
-        d.active ? 1 : 0,
-        d.color || "#177b70",
-        d.avatarInitials || "",
-        d.avatarImage || "",
-        userId,
-      );
-      setUserMemberships(userId, d.memberships);
-      audit(db, req.user.id, null, "user-create", userId, undefined, {
-        name: d.name,
-        systemRole: d.systemRole,
-        memberships: d.memberships,
-      });
-    });
-    res.status(201).json({
-      user: userWithTeams(
-        db,
-        db.prepare("SELECT * FROM users WHERE id=?").get(userId),
-      ),
-    });
-  });
-  app.patch("/api/admin/users/:id", (req, res) => {
-    requireSystemAdmin(req.user);
-    const d = z
-      .object({
-        name: string(50),
-        ...profileFields,
-        // 생략한 시스템 권한·팀 소속은 그대로 둔다.
-        systemRole: systemRoles.optional(),
-        active: z.boolean(),
-        memberships: userMembershipRowsSchema.optional(),
-        // 생략하면 아이디를 유지한다. 기존 비이메일 아이디도 이메일로 바꿀 수 있다.
-        username: loginId.optional(),
-        password: credentials.shape.password.optional(),
-      })
-      .parse(req.body);
-    const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.params.id);
-    requireThat(u, 404, "사용자를 찾을 수 없습니다.");
-    const before = userWithTeams(db, u);
-    const systemRole = d.systemRole ?? before.systemRole;
-    transaction(db, () => {
-      if (
-        u.active &&
-        u.system_role === "admin" &&
-        (!d.active || systemRole !== "admin")
-      )
-        requireThat(
-          db
-            .prepare(
-              "SELECT COUNT(*) AS n FROM users WHERE system_role='admin' AND active=1",
-            )
-            .get().n > 1,
-          400,
-          "마지막 시스템 관리자는 해제할 수 없습니다.",
-        );
-      if (d.username && d.username !== u.username.toLowerCase()) {
-        requireThat(
-          !db
-            .prepare(
-              "SELECT id FROM users WHERE username=? COLLATE NOCASE AND id<>?",
-            )
-            .get(d.username, u.id),
-          409,
-          "이미 사용 중인 아이디(이메일)입니다.",
-        );
-        db.prepare("UPDATE users SET username=? WHERE id=?").run(
-          d.username,
-          u.id,
-        );
-      }
-      db.prepare(
-        "UPDATE users SET name=?,system_role=?,active=?,password=?,color=?,avatar_initials=?,avatar_image=? WHERE id=?",
-      ).run(
-        d.name,
-        systemRole,
-        d.active ? 1 : 0,
-        d.password ? passwordHash(d.password) : u.password,
-        d.color ?? u.color,
-        d.avatarInitials ?? u.avatar_initials,
-        d.avatarImage ?? u.avatar_image,
-        u.id,
-      );
-      if (d.memberships) setUserMemberships(u.id, d.memberships);
-      if (!d.active || d.password)
-        db.prepare("DELETE FROM sessions WHERE user_id=?").run(u.id);
-      audit(
-        db,
-        req.user.id,
-        null,
-        "user-update",
-        u.id,
-        {
-          username: before.username,
-          name: before.name,
-          systemRole: before.systemRole,
-          active: before.active,
-          teamRoles: before.teamRoles,
-        },
-        {
-          username: d.username ?? before.username,
-          name: d.name,
-          systemRole,
-          active: d.active,
-          teamRoles: d.memberships
-            ? Object.fromEntries(d.memberships.map((m) => [m.teamId, m.role]))
-            : before.teamRoles,
-        },
-      );
-    });
-    res.json({ ok: true });
-  });
-  function teamMembers(teamId) {
-    return db
-      .prepare(
-        "SELECT user_id AS userId,role FROM memberships WHERE team_id=? ORDER BY rowid",
-      )
-      .all(teamId);
-  }
-  function setTeamMembers(teamId, members) {
-    const current = new Set(teamMembers(teamId).map((m) => m.userId));
-    for (const m of members) {
-      const u = db.prepare("SELECT active FROM users WHERE id=?").get(m.userId);
-      requireThat(u, 400, "등록된 사용자를 선택하세요.");
-      // 이미 소속된 비활성 사용자는 남겨 둘 수 있지만 새로 추가할 수는 없다.
-      requireThat(
-        u.active || current.has(m.userId),
-        400,
-        "비활성 사용자는 팀에 추가할 수 없습니다.",
-      );
-    }
-    replaceTeamMembers(db, teamId, members);
-  }
-  app.get("/api/teams/:id/members", (req, res) => {
-    const team = managedTeam(req.user, req.params.id);
-    // 팀장은 기존 사용자를 팀에 추가할 수 있으므로 전체 사용자 목록이 필요하다.
-    // 다른 팀 소속이나 시스템 권한은 시스템 관리자 화면에서만 보여 준다.
-    res.json({
-      members: teamMembers(team.id),
-      users: db
-        .prepare("SELECT * FROM users ORDER BY name")
-        .all()
-        .map((u) => ({
-          id: u.id,
-          username: u.username,
-          name: u.name,
-          active: !!u.active,
-          color: u.color,
-          avatarInitials: u.avatar_initials || "",
-          avatarImage: u.avatar_image || "",
-        })),
-    });
-  });
-  app.put("/api/teams/:id/members", (req, res) => {
-    const team = managedTeam(req.user, req.params.id);
-    const d = z
-      .object({
-        members: teamMemberRowsSchema,
-        // 화면이 보고 있던 목록. 그 사이 다른 사람이 바꿨으면 덮어쓰지 않는다.
-        previous: teamMemberRowsSchema.optional(),
-      })
-      .strict()
-      .parse(req.body);
-    const key = (list) =>
-      list
-        .map((m) => `${m.userId}:${m.role}`)
-        .sort()
-        .join(",");
-    transaction(db, () => {
-      const before = teamMembers(team.id);
-      requireThat(
-        !d.previous || key(d.previous) === key(before),
-        409,
-        "다른 사용자가 구성원을 변경했습니다. 최신 목록을 확인한 뒤 다시 시도하세요.",
-      );
-      setTeamMembers(team.id, d.members);
-      audit(
-        db,
-        req.user.id,
-        team.id,
-        "team-members",
-        team.id,
-        before,
-        d.members,
-      );
-    });
-    res.json({ members: teamMembers(team.id) });
-  });
-  const teamSchema = z.object({
-    name: string(80),
-    theme: z.enum(THEME_IDS).optional(),
-  });
-  app.post("/api/admin/teams", (req, res) => {
-    requireSystemAdmin(req.user);
-    const d = teamSchema
-      .extend({
-        templateTeamId: z.string().uuid().optional(),
-        members: teamMemberRowsSchema.default([]),
-      })
-      .parse(req.body);
-    const teamId = id();
-    const template = d.templateTeamId
-      ? db
-          .prepare("SELECT settings FROM teams WHERE id=?")
-          .get(d.templateTeamId)
-      : null;
-    requireThat(
-      !d.templateTeamId || template,
-      404,
-      "복사할 팀 양식을 찾을 수 없습니다.",
-    );
-    const initialSettings = template
-      ? teamSettings(template)
-      : DEFAULT_SETTINGS;
-    transaction(db, () => {
-      db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
-        teamId,
-        d.name,
-        json({
-          ...initialSettings,
-          theme: d.theme ?? initialSettings.theme,
-          revision: 0,
-        }),
-      );
-      setTeamMembers(teamId, d.members);
-      audit(db, req.user.id, teamId, "team-create", teamId, undefined, d);
-    });
-    res.status(201).json({ id: teamId });
-  });
-  app.patch("/api/teams/:id", (req, res) => {
-    const team = managedTeam(req.user, req.params.id);
-    const d = teamSchema
-      .extend({ settingsRevision: z.number().int().nonnegative().optional() })
-      .parse(req.body);
-    const settings = team.settings;
-    const themeChanged = d.theme !== undefined && d.theme !== settings.theme;
-    if (themeChanged && d.settingsRevision !== undefined)
-      requireThat(
-        d.settingsRevision === (settings.revision || 0),
-        409,
-        "팀 설정이 변경되었습니다. 관리 화면을 다시 열어 최신 설정을 확인하세요.",
-      );
-    transaction(db, () => {
-      db.prepare("UPDATE teams SET name=? WHERE id=?").run(d.name, team.id);
-      if (themeChanged)
-        db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
-          json({
-            ...settings,
-            theme: d.theme,
-            revision: (settings.revision || 0) + 1,
-          }),
-          team.id,
-        );
-      audit(
-        db,
-        req.user.id,
-        team.id,
-        "team-update",
-        team.id,
-        { id: team.id, name: team.name, theme: settings.theme },
-        { ...d, theme: d.theme ?? settings.theme },
-      );
-    });
-    res.json({ ok: true });
-  });
-  app.delete("/api/admin/teams/:id", (req, res) => {
-    requireSystemAdmin(req.user);
-    const teamId = z.string().uuid().parse(req.params.id);
-    z.object({ confirmed: z.literal(true) })
-      .strict()
-      .parse(req.body);
-    const result = deleteTeam(db, teamId, req.user.id);
-    removeTeamDocumentImages(documentImagesDir, teamId);
-    cachedTasks.clearTeam(teamId);
-    res.json(result);
-  });
-  installTransferRoutes(app, {
-    db,
-    teamAccess,
-    managedTeam,
-    assignableUsers,
-    referencedUsers,
-    documentImagesDir,
-  });
+
   app.use("/api", (_req, res) =>
     res.status(404).json({ error: "요청한 API를 찾을 수 없습니다." }),
   );

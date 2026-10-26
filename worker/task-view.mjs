@@ -3,7 +3,6 @@ import {
   normalizeSettings,
   periodYears,
 } from "../shared/domain.js";
-import { controlTransaction } from "./data.mjs";
 import { assert } from "./access.mjs";
 export const stamp = (row) =>
   new Date(Number(row?.revision) || 0).toISOString();
@@ -115,17 +114,10 @@ export async function taskList(
   );
 }
 export async function assignable(ctx, teamId) {
-  return controlTransaction(
-    ctx.env,
-    async (tx) =>
-      new Set(
-        (
-          await tx.query(
-            "SELECT u.id FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=$1 AND u.active=TRUE AND m.role IN ('lead','member')",
-            [teamId],
-          )
-        ).rows.map((r) => r.id),
-      ),
+  return new Set(
+    (await ctx.controlStore.members(teamId, { activeOnly: true }))
+      .filter((user) => ["lead", "member"].includes(user.role))
+      .map((user) => user.id),
   );
 }
 export function requireTask(row) {

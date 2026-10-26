@@ -126,11 +126,20 @@ export class DataSession {
     entity,
     key,
     payload,
-    { deleted = false, shared = ENTITIES.has(entity) } = {},
+    {
+      deleted = false,
+      shared = ENTITIES.has(entity),
+      locallyHidden = false,
+    } = {},
   ) {
     const id = entityId(entity, key),
       before = await this.get(entity, key);
-    if (before && equal(before.payload, payload) && before.deleted === deleted)
+    const storedDeleted = deleted || locallyHidden;
+    if (
+      before &&
+      equal(before.payload, payload) &&
+      before.deleted === storedDeleted
+    )
       return before;
     if (shared && !this.changes.has(id))
       this.changes.set(id, { entity, key, before });
@@ -147,10 +156,10 @@ export class DataSession {
         JSON.stringify(key),
         canonical(payload),
         revision,
-        deleted ? 1 : 0,
+        storedDeleted ? 1 : 0,
       ],
     );
-    const after = { entity, key, payload, revision, deleted };
+    const after = { entity, key, payload, revision, deleted: storedDeleted };
     if (this.lists.has(entity)) {
       const rows = this.lists.get(entity),
         index = rows.findIndex((r) => entityId(r.entity, r.key) === id);
@@ -158,7 +167,12 @@ export class DataSession {
       else rows[index] = after;
     }
     this.cache.set(id, after);
-    if (shared) this.changes.get(id).after = after;
+    // Settings conversion edits the canonical value without removing its local
+    // retention overlay. Reads/cache keep hidden rows hidden; capture sees C/P.
+    if (shared)
+      this.changes.get(id).after = locallyHidden
+        ? { ...after, deleted }
+        : after;
     return after;
   }
   async touch(entity, key) {
