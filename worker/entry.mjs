@@ -18,7 +18,7 @@ import { profileSwitchRoutes } from "./profile-switch.mjs";
 import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
 import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
-import { runTeam, refreshTeam, scheduled } from "./sync.mjs";
+import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
 import { profileFor } from "./config.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
@@ -128,6 +128,7 @@ async function mutationTeam(ctx, path, body) {
 export function createWorker({
   verify = verifyAccess,
   onError = () => {},
+  publish = schedulePublish,
 } = {}) {
   return {
     async fetch(original, env, execution = { waitUntil() {} }) {
@@ -245,9 +246,10 @@ export function createWorker({
                   team.profile_id
                 )
                   execution.waitUntil(
-                    runTeam(env, profileFor(env, team.profile_id, team.id), {
-                      updateStatus: false,
-                    }).catch(() => {}),
+                    publish(
+                      env,
+                      profileFor(env, team.profile_id, team.id),
+                    ).catch(() => {}),
                   );
             return json(result, 200, headers);
           }

@@ -29,6 +29,91 @@ export { imageSync } from "./sync-images.mjs";
 import { boundStore } from "./sync-store.mjs";
 import { imageSync } from "./sync-images.mjs";
 
+const PUBLISH_DELAY_MS = 2000;
+const PUBLISH_INTERVAL_MS = 5000;
+async function schedulingState(tx, teamId) {
+  const row = (
+    await tx.query(
+      "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
+      [teamId],
+    )
+  ).rows[0];
+  return JSON.parse(row?.payload || "{}");
+}
+async function saveSchedulingState(tx, teamId, state) {
+  await tx.query(
+    "INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'syncRefresh','[]',$2,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
+    [teamId, canonical(state)],
+  );
+}
+async function publishWindow(tx, env, profile) {
+  const link = await tx.sync.readLink();
+  if (link?.mode !== "active" || link.installation_id !== env.INSTALLATION_ID)
+    return { mode: link?.mode || "unlinked" };
+  const pending = (
+    await tx.query(
+      "SELECT created_at FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq LIMIT 1",
+      [profile.teamId],
+    )
+  ).rows[0];
+  if (!pending) return { pending: false };
+  const state = await schedulingState(tx, profile.teamId);
+  return {
+    state,
+    // The first durable outbox row starts a fixed window. Later writes cannot
+    // postpone it indefinitely. The claimed cooldown survives isolate loss.
+    deadline: Math.max(
+      Date.parse(pending.created_at) + PUBLISH_DELAY_MS,
+      Number(state.publishAfter || 0),
+    ),
+  };
+}
+export function createPublisher({
+  now = () => Date.now(),
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  const running = new WeakMap();
+  return function schedulePublish(env, profile) {
+    let teams = running.get(env);
+    if (!teams) running.set(env, (teams = new Map()));
+    const key = `${profile.teamId}/${profile.profileId}`;
+    if (teams.has(key)) return teams.get(key);
+    const promise = (async () => {
+      const database = databaseFor(env, profile);
+      const window = await database.withTeamTransaction(
+        profile.teamId,
+        (tx) => publishWindow(tx, env, profile),
+        { readOnly: true },
+      );
+      if (window.deadline === undefined) return window;
+      if (window.deadline > now())
+        await wait(Math.min(window.deadline - now(), PUBLISH_INTERVAL_MS));
+      const claim = await database.withTeamTransaction(
+        profile.teamId,
+        async (tx) => {
+          const current = await publishWindow(tx, env, profile);
+          if (current.deadline === undefined) return current;
+          if (current.deadline > now()) return { throttled: true };
+          // Advance before network I/O, including errors or a busy sync lease.
+          // The team transaction serializes competing isolate timer callbacks.
+          await saveSchedulingState(tx, profile.teamId, {
+            ...current.state,
+            publishAfter: now() + PUBLISH_INTERVAL_MS,
+          });
+          return null;
+        },
+      );
+      if (claim) return claim;
+      return runTeam(env, profile, { updateStatus: false });
+    })().finally(() => teams.delete(key));
+    teams.set(key, promise);
+    return promise;
+  };
+}
+// Timers are an optimization, never the delivery guarantee: scheduled() and
+// explicit runTeam() bypass this cooldown and recover every durable pending row.
+export const schedulePublish = createPublisher();
+
 export function serviceFor(env, profile, link, options = {}) {
   const limits = capacityLimits(env),
     database = databaseFor(env, profile),
@@ -103,18 +188,12 @@ export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
     async (tx) => {
       const current = await tx.sync.readLink();
       if (!eligible(current)) return null;
-      const row = (
-        await tx.query(
-          "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
-          [profile.teamId],
-        )
-      ).rows[0];
-      if (Number(JSON.parse(row?.payload || "{}").nextAt || 0) > now)
-        return null;
-      await tx.query(
-        "INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'syncRefresh','[]',$2,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
-        [profile.teamId, canonical({ nextAt: now + 30000 })],
-      );
+      const state = await schedulingState(tx, profile.teamId);
+      if (Number(state.nextAt || 0) > now) return null;
+      await saveSchedulingState(tx, profile.teamId, {
+        ...state,
+        nextAt: now + 30000,
+      });
       return current;
     },
   );
