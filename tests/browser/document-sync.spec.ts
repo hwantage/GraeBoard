@@ -87,13 +87,16 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
       const label = memo ? "연간 업무 메모" : "업무 문서";
       const source = (p: Page) =>
         p.getByRole("textbox", { name: `${label} Markdown 원문`, exact: true });
+      async function selectReport(p: Page) {
+        const tab = p.getByRole("tab", { name: "동기화 사본", exact: true });
+        await tab.click();
+        // Selection follows report loading and its task-dialog reset.
+        await expect(tab).toHaveAttribute("aria-selected", "true");
+      }
       async function open(p: Page) {
         await p.goto("/");
         await p.getByLabel("팀 선택").selectOption(team.id);
-        if (reportId)
-          await p
-            .getByRole("tab", { name: "동기화 사본", exact: true })
-            .click();
+        if (reportId) await selectReport(p);
         if (memo)
           await p
             .getByRole("button", {
@@ -207,10 +210,7 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
         peer.getByRole("textbox", { name: `${label} 리치 편집`, exact: true }),
       ).toContainText("추가 문단");
       await peer.reload();
-      if (reportId)
-        await peer
-          .getByRole("tab", { name: "동기화 사본", exact: true })
-          .click();
+      if (reportId) await selectReport(peer);
       if (memo)
         await expect(
           peer.getByRole("button", {

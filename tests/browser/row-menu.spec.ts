@@ -1,5 +1,5 @@
 import { unpack } from "../../shared/compact.js";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { defaultView, weeksForYear } from "../../shared/domain.js";
 
@@ -184,6 +184,9 @@ test("행 삭제 알림은 후속 편집을 되돌리는 버튼으로 남지 않
   await page.getByRole("menuitem", { name: "행 삭제", exact: true }).click();
   const toast = page.locator(".toast");
   await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
+  // The delete response shows the toast before its task-list refresh settles.
+  // Start the next edit only after that completed deletion is visible.
+  await expect(page.locator(`[data-row-id="${taskIds[0]}"]`)).toHaveCount(0);
   await editTitle(page, taskIds[1], "삭제 이후 편집");
   await expect(toast).toHaveCount(0);
   await page
@@ -195,6 +198,160 @@ test("행 삭제 알림은 후속 편집을 되돌리는 버튼으로 남지 않
     "셋째 업무",
   ]);
   await expect(toast.getByRole("button")).toHaveCount(0);
+});
+
+test("삭제 응답 뒤 목록 재조회가 지연되어도 후속 편집 실행취소는 삭제 행을 되살리지 않는다", async ({
+  page,
+}) => {
+  const deletedId = taskIds[0];
+  const editedId = taskIds[1];
+  let deletedVersion: string | undefined;
+  const restoreRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /^\/api\/tasks\/(?:[^/]+\/)?restore$/.test(
+        new URL(request.url()).pathname,
+      )
+    )
+      restoreRequests.push(request.url());
+  });
+
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let heldRefreshes = 0;
+  const pendingRoutes: Promise<void>[] = [];
+  const tasksPattern = "**/api/tasks?**";
+  const holdDeletedSnapshot = (route: Route) => {
+    const pending = (async () => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (
+        request.method() !== "GET" ||
+        url.searchParams.get("teamId") !== teamId ||
+        url.searchParams.get("deleted") === "1"
+      ) {
+        await route.fallback();
+        return;
+      }
+      const headers = { ...request.headers() };
+      delete headers["if-none-match"];
+      const response = await route.fetch({ headers });
+      const data = unpack(await response.json());
+      if (
+        response.ok() &&
+        !data.tasks.some((task: { id: string }) => task.id === deletedId)
+      ) {
+        heldRefreshes++;
+        await refreshGate;
+      }
+      await route.fulfill({ response });
+    })();
+    pendingRoutes.push(pending);
+    return pending;
+  };
+  await page.route(tasksPattern, holdDeletedSnapshot);
+  try {
+    await menu(page, deletedId);
+    const [deletedResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/tasks/delete") &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("menuitem", { name: "행 삭제", exact: true }).click(),
+    ]);
+    expect(deletedResponse.ok(), await deletedResponse.text()).toBeTruthy();
+    const deletion = unpack(await deletedResponse.json());
+    deletedVersion = deletion.updatedAt[deletedId];
+    const toast = page.locator(".toast");
+    await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
+    await expect.poll(() => heldRefreshes).toBeGreaterThan(0);
+
+    // Start the next edit while every post-delete list response is still held.
+    await editTitle(page, editedId, "지연된 목록 이후 편집");
+    await expect(toast).toHaveCount(0);
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/cells/batch") && response.ok(),
+      ),
+      page
+        .locator('.format-toolbar[aria-label="셀 서식 도구"]')
+        .getByRole("button", { name: "실행취소", exact: true })
+        .click(),
+    ]);
+    await expect(page.locator(`[data-cell="${editedId}:title"]`)).toHaveText(
+      "둘째 업무",
+    );
+
+    // APIRequestContext bypasses page routing: inspect the committed server state
+    // without releasing the browser's delayed task-list responses.
+    const currentResponse = await page.request.get(
+      `/api/tasks?teamId=${teamId}&year=2026`,
+    );
+    expect(currentResponse.ok()).toBeTruthy();
+    const current = unpack(await currentResponse.json());
+    expect(current.tasks.map((task: { id: string }) => task.id)).toEqual([
+      editedId,
+      taskIds[2],
+    ]);
+    expect(
+      current.tasks.find((task: { id: string }) => task.id === editedId).cells
+        .title.value,
+    ).toBe("둘째 업무");
+    const deletedTasksResponse = await page.request.get(
+      `/api/tasks?teamId=${teamId}&year=2026&deleted=1`,
+    );
+    expect(deletedTasksResponse.ok()).toBeTruthy();
+    const deletedTasks = unpack(await deletedTasksResponse.json());
+    expect(deletedTasks.tasks.map((task: { id: string }) => task.id)).toEqual([
+      deletedId,
+    ]);
+    expect(deletedTasks.tasks[0].deletedAt).toBeTruthy();
+    expect(deletedTasks.tasks[0].updatedAt).toBe(deletion.updatedAt[deletedId]);
+    expect(restoreRequests).toEqual([]);
+    await expect(page.locator(`[data-row-id="${deletedId}"]`)).toHaveCount(0);
+    await expect(page.locator('[data-column="title"]')).toHaveText([
+      "둘째 업무",
+      "셋째 업무",
+    ]);
+  } finally {
+    releaseRefresh();
+    await page.unroute(tasksPattern, holdDeletedSnapshot);
+    await Promise.all(pendingRoutes);
+  }
+
+  // Releasing an older snapshot must not undo the cell undo or revive the row.
+  const [settledCurrentResponse, settledDeletedResponse] = await Promise.all([
+    page.request.get(`/api/tasks?teamId=${teamId}&year=2026`),
+    page.request.get(`/api/tasks?teamId=${teamId}&year=2026&deleted=1`),
+  ]);
+  expect(settledCurrentResponse.ok()).toBeTruthy();
+  expect(settledDeletedResponse.ok()).toBeTruthy();
+  const settledCurrent = unpack(await settledCurrentResponse.json());
+  const settledDeleted = unpack(await settledDeletedResponse.json());
+  expect(settledCurrent.tasks.map((task: { id: string }) => task.id)).toEqual([
+    editedId,
+    taskIds[2],
+  ]);
+  expect(
+    settledCurrent.tasks.find((task: { id: string }) => task.id === editedId)
+      .cells.title.value,
+  ).toBe("둘째 업무");
+  expect(settledDeleted.tasks.map((task: { id: string }) => task.id)).toEqual([
+    deletedId,
+  ]);
+  expect(settledDeleted.tasks[0].deletedAt).toBeTruthy();
+  expect(settledDeleted.tasks[0].updatedAt).toBe(deletedVersion);
+  await expect(page.locator(`[data-row-id="${deletedId}"]`)).toHaveCount(0);
+  await expect(page.locator('[data-column="title"]')).toHaveText([
+    "둘째 업무",
+    "셋째 업무",
+  ]);
+  expect(restoreRequests).toEqual([]);
 });
 
 test("다중 행 삭제는 숨긴 행을 제외하고 선택한 보이는 행만 삭제한다", async ({

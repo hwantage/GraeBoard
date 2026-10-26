@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { CalendarData } from "./calendar-types";
 
@@ -17,11 +17,15 @@ export function useCalendarData(
   reload: number,
 ) {
   const [loaded, setLoaded] = useState<Record<string, LoadedCalendar>>({});
+  const generation = useRef(0);
+  const mutations = useRef(0);
+  const deferred = useRef(new Set<() => void>());
   const keyFor = (query: CalendarQuery) =>
     `${teamId}:${query.userId}:${query.from}:${query.to}`;
 
   useEffect(() => {
     const controller = new AbortController();
+    const reads = new Set<() => void>();
     // Keep one range per visible member. Navigating one member reuses the
     // others' completed requests; unfinished requests are safely restarted.
     setLoaded((previous) =>
@@ -38,26 +42,51 @@ export function useCalendarData(
       const previous = loaded[owner];
       if (previous?.key === key && previous.reload === reload && previous.data)
         continue;
-      void api<CalendarData>(
-        `/calendar?${new URLSearchParams({ teamId, from: query.from, to: query.to, ...(query.userId === null ? { scope: "team" } : { userId: query.userId }) })}`,
-        { signal: controller.signal },
-      )
-        .then((data) => {
-          if (controller.signal.aborted) return;
-          setLoaded((current) => ({
-            ...current,
-            [owner]: { key, query, reload, data },
-          }));
-        })
-        .catch((error: Error) => {
-          if (controller.signal.aborted) return;
-          setLoaded((current) => ({
-            ...current,
-            [owner]: { key, query, reload, error: error.message },
-          }));
-        });
+      const read = () => {
+        if (controller.signal.aborted) return;
+        if (mutations.current) {
+          deferred.current.add(read);
+          return;
+        }
+        deferred.current.delete(read);
+        const startedAt = generation.current;
+        void api<CalendarData>(
+          `/calendar?${new URLSearchParams({ teamId, from: query.from, to: query.to, ...(query.userId === null ? { scope: "team" } : { userId: query.userId }) })}`,
+          { signal: controller.signal },
+        )
+          .then((data) => {
+            if (controller.signal.aborted) return;
+            // A local edit may have committed after this GET captured its
+            // snapshot. Reconcile only after the entire mutation settles, so
+            // neither a stale result nor its retry replaces optimistic input.
+            if (startedAt !== generation.current || mutations.current) {
+              read();
+              return;
+            }
+            setLoaded((current) => ({
+              ...current,
+              [owner]: { key, query, reload, data },
+            }));
+          })
+          .catch((error: Error) => {
+            if (controller.signal.aborted) return;
+            if (startedAt !== generation.current || mutations.current) {
+              read();
+              return;
+            }
+            setLoaded((current) => ({
+              ...current,
+              [owner]: { key, query, reload, error: error.message },
+            }));
+          });
+      };
+      reads.add(read);
+      read();
     }
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      for (const read of reads) deferred.current.delete(read);
+    };
     // Loaded results deliberately do not trigger new requests.
   }, [teamId, queries, reload]);
 
@@ -89,6 +118,7 @@ export function useCalendarData(
   function updateData(
     update: (data: CalendarData, query: CalendarQuery) => CalendarData,
   ) {
+    generation.current++;
     setLoaded((previous) => {
       let next = previous;
       for (const [id, result] of Object.entries(previous)) {
@@ -101,5 +131,13 @@ export function useCalendarData(
       return next;
     });
   }
-  return { data, schedules, updateData };
+  function beginMutation() {
+    mutations.current++;
+    generation.current++;
+  }
+  function endMutation() {
+    if (!mutations.current || --mutations.current) return;
+    for (const read of [...deferred.current]) read();
+  }
+  return { data, schedules, updateData, beginMutation, endMutation };
 }

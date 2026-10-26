@@ -196,11 +196,8 @@ export default function Calendar({
       return { userId: member.id, from, to: addDays(from, 6) };
     });
   }, [members, memberId, view, weeks, memberWeeks, today]);
-  const { data, schedules, updateData } = useCalendarData(
-    team.id,
-    queries,
-    reload,
-  );
+  const { data, schedules, updateData, beginMutation, endMutation } =
+    useCalendarData(team.id, queries, reload);
   const loadError =
     view !== "team" ? schedules.get(monthlyOwner)?.error || "" : "";
   const scope = `${team.id}:${view}:${JSON.stringify(queries)}`;
@@ -507,6 +504,7 @@ export default function Calendar({
   async function action(work: () => Promise<void>) {
     if (busy.current) return;
     busy.current = true;
+    beginMutation();
     setPending(true);
     setError("");
     try {
@@ -515,6 +513,7 @@ export default function Calendar({
       if (alive.current) setError((e as Error).message);
     } finally {
       busy.current = false;
+      endMutation();
       if (alive.current) setPending(false);
     }
   }

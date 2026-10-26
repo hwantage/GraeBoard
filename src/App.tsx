@@ -1927,6 +1927,13 @@ function Workspace({
       );
       const nextEntry = { ...entry, deletedVersions: updatedAt };
       if (boardKey.current !== submittedBoard) return;
+      // A subsequent edit can invalidate the list refresh. Apply the confirmed
+      // deletion now, while retaining any newer remote restoration already seen.
+      const remaining = tasksRef.current.filter(
+        (task) => !updatedAt[task.id] || task.updatedAt > updatedAt[task.id],
+      );
+      tasksRef.current = remaining;
+      setTasks(remaining);
       recordTaskResult(entry, mode, nextEntry);
       setSelection(null);
       const message =
