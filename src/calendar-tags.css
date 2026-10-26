@@ -4,7 +4,6 @@
   justify-content: center;
   gap: 4px;
   padding: 0 7px;
-  border: 1px solid var(--calendar-tag-border);
   border-radius: 999px;
   background: var(--calendar-tag-chip);
   color: var(--calendar-tag-ink);
@@ -98,7 +97,6 @@
   align-items: center;
   height: 26px;
   box-sizing: border-box;
-  border: 1px solid var(--calendar-tag-border);
   border-radius: 999px;
   max-width: 100%;
   overflow: hidden;

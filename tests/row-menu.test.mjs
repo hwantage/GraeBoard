@@ -115,7 +115,7 @@ test("다중 삭제·복구는 권한·버전·팀을 검사하고 실패하면 
       member,
     )
   ).data.task;
-  assert.equal((await remove([own, tasks[0]], member)).status, 403);
+  assert.equal((await remove([own, tasks[0]], viewer)).status, 403);
   assert.equal((await rows(teamId)).length, 4);
   await request("/cells/batch", {
     operationId: randomUUID(),
@@ -140,7 +140,7 @@ test("다중 삭제·복구는 권한·버전·팀을 검사하고 실패하면 
   assert.equal((await remove(current)).status, 500);
   db.exec("DROP TRIGGER fail_bulk_delete");
   assert.equal((await rows(teamId)).length, 4);
-  const deleted = await remove(current);
+  const deleted = await remove(current, member);
   assert.equal(deleted.status, 200);
   assert.deepEqual(
     (await rows(teamId)).map((t) => t.id),
@@ -163,7 +163,7 @@ test("다중 삭제·복구는 권한·버전·팀을 검사하고 실패하면 
   );
   assert.equal((await rows(teamId)).length, 1);
   assert.equal(
-    (await request("/tasks/restore", { tasks: restoring })).status,
+    (await request("/tasks/restore", { tasks: restoring }, member)).status,
     200,
   );
   assert.equal((await rows(teamId)).length, 4);
@@ -239,7 +239,7 @@ test("행 위·아래 삽입은 위치를 저장하고 권한·팀·연도·기�
   assert.equal((await rows(teamId))[0].id, own.data.task.id);
 });
 
-test("팀원은 직접 삽입한 미지정 행을 편집하고 다른 사람의 미지정 행은 편집하지 못한다", async () => {
+test("팀원은 작성자·담당자와 관계없이 행을 삽입하고 편집한다", async () => {
   const {
     teamId,
     tasks: [source],
@@ -280,21 +280,28 @@ test("팀원은 직접 삽입한 미지정 행을 편집하고 다른 사람의 
     (await edit(own.data.task, "title", "미지정 업무 입력")).status,
     200,
   );
-  assert.equal((await edit(own.data.task, "owner", memberId)).status, 403);
+  assert.equal((await edit(own.data.task, "owner", memberId)).status, 200);
   const otherRow = await insert({}, admin);
   assert.equal(
     (await edit(otherRow.data.task, "title", "타인 업무 수정")).status,
-    403,
+    200,
   );
   assert.equal((await insert({ owner: memberId })).status, 201);
   assert.equal((await insert({ owner: "" })).status, 201);
-  assert.equal((await insert({ owner: adminId })).status, 403);
+  assert.equal((await insert({ owner: adminId })).status, 201);
   assert.equal(
-    (await edit(own.data.task, "owner", adminId, admin)).status,
+    (
+      await edit(
+        (await rows(teamId)).find((row) => row.id === own.data.task.id),
+        "owner",
+        adminId,
+        admin,
+      )
+    ).status,
     200,
   );
   const assigned = (await rows(teamId)).find((t) => t.id === own.data.task.id);
-  assert.equal((await edit(assigned, "title", "배정 후 수정")).status, 403);
+  assert.equal((await edit(assigned, "title", "배정 후 수정")).status, 200);
 });
 
 test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값만 유지한다", async () => {
@@ -426,7 +433,7 @@ test("위·아래 삽입은 서식만 상속하고 선택값은 묶음 기준값
   assert.equal(cell(plain.data.task, "owner").value, "");
 });
 
-test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하고 담당자 권한을 지킨다", async () => {
+test("행 붙여넣기는 팀원도 복사 당시 값·일정·서식·담당자를 보존한다", async () => {
   const {
     teamId,
     tasks: [a],
@@ -465,7 +472,7 @@ test("행 붙여넣기는 복사 당시 값·일정·기본 서식을 보존하�
   }
   const own = await paste(copiedRow, member);
   assert.equal(own.status, 201);
-  assert.equal(own.data.task.cells.owner.value, memberId);
+  assert.equal(own.data.task.cells.owner.value, adminId);
   assert.equal((await paste(copiedRow, viewer)).status, 403);
   assert.equal(
     (

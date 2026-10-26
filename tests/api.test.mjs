@@ -564,6 +564,169 @@ test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범�
   assert.equal(sheet.getCell("B2").border?.right, undefined);
 });
 
+test("이번 주 테두리는 설정·사본·JSON에 보존하고 XLSX에서 직접 지정선과 주 변경을 따른다", async (t) => {
+  // Sunday UTC is already Monday in Seoul.
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-03-08T15:00:00Z"),
+  });
+  const tid = (await post("/admin/teams", { name: "이번 주 테두리" })).data.id;
+  let settings = (await request("/admin/users")).data.teams.find(
+    (team) => team.id === tid,
+  ).settings;
+  const created = (
+    await post("/tasks", {
+      teamId: tid,
+      year: 2026,
+      fields: { title: "이번 주 표시" },
+    })
+  ).data.task;
+  const before = getTask(db, created.id);
+  const save = (body) =>
+    request(`/teams/${tid}/settings`, { method: "PATCH", body });
+  const edge = { style: "thick", color: "#2255aa" };
+  const currentWeekBorders = {
+    left: { style: "dashed", color: "#339966" },
+    right: { style: "double", color: "#bb3344" },
+  };
+  const saved = await save({
+    ...settings,
+    weekBorders: { left: edge, right: edge },
+    currentWeekBorders,
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.data.settings.currentWeekBorders, currentWeekBorders);
+  assert.equal((await save({ ...settings, currentWeekBorders })).status, 409);
+  settings = saved.data.settings;
+  for (const invalid of [
+    { left: { style: "invalid", color: "#339966" } },
+    { right: { style: "solid", color: "red" } },
+    { top: edge },
+    null,
+  ])
+    assert.equal(
+      (await save({ ...settings, currentWeekBorders: invalid })).status,
+      400,
+    );
+  const omitted = { ...settings };
+  delete omitted.currentWeekBorders;
+  settings = (await save(omitted)).data.settings;
+  assert.deepEqual(settings.currentWeekBorders, currentWeekBorders);
+  const copied = await post("/admin/teams", {
+    name: "이번 주 양식",
+    templateTeamId: tid,
+  });
+  assert.deepEqual(
+    (await request("/admin/users")).data.teams.find(
+      (team) => team.id === copied.data.id,
+    ).settings.currentWeekBorders,
+    currentWeekBorders,
+  );
+  const report = await post("/reports", {
+    teamId: tid,
+    year: 2026,
+    name: "이번 주 사본",
+    referenceDate: "2026-03-09",
+    taskIds: [created.id],
+    view: defaultView(2026),
+  });
+  assert.equal(report.status, 201);
+  const exportData = async (keys, format = "xlsx") => {
+    const response = await post("/export", {
+      teamId: tid,
+      year: 2026,
+      scope: "view",
+      taskIds: [created.id],
+      keys,
+      format,
+    });
+    assert.equal(response.status, 200);
+    if (format === "json") return response.data;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(response.data);
+    return workbook.worksheets[0];
+  };
+  const keys = ["title", "2026-03-02", "2026-03-09", "2026-03-16", "status"];
+  let sheet = await exportData(keys);
+  for (const row of [1, 2]) {
+    assert.equal(sheet.getCell(`B${row}`).border.left.style, "thick");
+    assert.equal(sheet.getCell(`C${row}`).border.left.style, "dashed");
+    assert.equal(sheet.getCell(`C${row}`).border.right.color.argb, "FFBB3344");
+    assert.equal(sheet.getCell(`D${row}`).border.right.style, "thick");
+  }
+  assert.deepEqual(
+    (await exportData(keys, "json")).team.settings.currentWeekBorders,
+    currentWeekBorders,
+  );
+  assert.deepEqual(getTask(db, created.id), before);
+  // A single displayed week has both range edges, but current-week lines win.
+  sheet = await exportData(["title", "2026-03-09", "status"]);
+  assert.equal(sheet.getCell("B2").border.left.style, "dashed");
+  assert.equal(sheet.getCell("B2").border.right.style, "double");
+  const manual = { style: "solid", color: "#112233" };
+  const changed = await batch([
+    {
+      taskId: created.id,
+      key: "2026-03-09",
+      expectedVersion: 0,
+      style: { borderLeft: manual },
+    },
+    {
+      taskId: created.id,
+      key: "2026-03-16",
+      expectedVersion: 0,
+      style: { borderLeft: manual },
+    },
+  ]);
+  assert.equal(changed.status, 200);
+  sheet = await exportData(keys);
+  assert.equal(sheet.getCell("C2").border.left.style, "thin");
+  assert.equal(sheet.getCell("C2").border.right, undefined);
+  assert.equal(sheet.getCell("D2").border.left.color.argb, "FF112233");
+  // Clearing either side of a shared edge restores the configured defaults.
+  assert.equal(
+    (
+      await batch(
+        ["2026-03-09", "2026-03-16"].map((key) => ({
+          taskId: created.id,
+          key,
+          expectedVersion: getTask(db, created.id).cells[key].version,
+          style: {
+            borderLeft: null,
+            borderRight: { style: "none", color: "#000000" },
+          },
+        })),
+      )
+    ).status,
+    200,
+  );
+  sheet = await exportData(keys);
+  assert.equal(sheet.getCell("C2").border.left.style, "dashed");
+  assert.equal(sheet.getCell("C2").border.right.style, "double");
+  const beforeDateChange = getTask(db, created.id);
+  t.mock.timers.setTime(new Date("2026-03-15T15:00:00Z").getTime());
+  sheet = await exportData(keys);
+  assert.equal(sheet.getCell("C2").border?.left, undefined);
+  assert.equal(sheet.getCell("C2").border?.right, undefined);
+  assert.equal(sheet.getCell("D2").border.left.style, "dashed");
+  assert.equal(sheet.getCell("D2").border.right.style, "double");
+  // Hiding the current week never moves its line onto another week.
+  sheet = await exportData(["title", "2026-03-02", "2026-03-09", "status"]);
+  assert.equal(sheet.getCell("C2").border.right.style, "thick");
+  assert.deepEqual(getTask(db, created.id), beforeDateChange);
+  settings = (await save({ ...settings, currentWeekBorders: {} })).data
+    .settings;
+  assert.deepEqual(settings.currentWeekBorders, {});
+  assert.deepEqual(
+    (await request(`/reports/${report.data.id}`)).data.settings
+      .currentWeekBorders,
+    currentWeekBorders,
+  );
+  sheet = await exportData(keys);
+  assert.equal(sheet.getCell("D2").border?.left, undefined);
+  assert.equal(sheet.getCell("D2").border.right.style, "thick");
+});
+
 test("기본 테두리 해제는 저장·JSON·XLSX에서 상속된 선을 다시 적용하지 않는다", async () => {
   const tid = (await post("/admin/teams", { name: "기본 테두리 해제" })).data
     .id;
@@ -1618,12 +1781,11 @@ test("서버가 다른 팀과 열람자 권한을 차단한다", async () => {
     403,
   );
 });
-test("팀원은 담당 업무를 편집하고 담당자 변경은 관리자에게 제한한다", async () => {
+test("팀원은 담당 여부와 관계없이 같은 팀의 업무를 편집한다", async () => {
   assert.equal(
     (await batch([change("description", "팀원이 입력")], member)).status,
     200,
   );
-  assert.equal((await batch([change("owner", "")], member)).status, 403);
   const own = (
     await post("/tasks", {
       teamId,
@@ -1645,7 +1807,7 @@ test("팀원은 담당 업무를 편집하고 담당자 변경은 관리자에�
         member,
       )
     ).status,
-    403,
+    200,
   );
 });
 test("신규 업무는 팀원·상태를 비우며 작성자는 미지정 업무를 편집할 수 있다", async () => {
@@ -1691,7 +1853,7 @@ test("신규 업무는 팀원·상태를 비우며 작성자는 미지정 업무
         member,
       )
     ).status,
-    403,
+    201,
   );
   const assigned = await post("/tasks", {
     teamId,
@@ -3197,7 +3359,6 @@ test("여러 행 이동은 기존 순서와 제외된 행을 유지하고 모든
     assert.equal((await post("/tasks/reorder", body, cookie)).status, status);
     assert.deepEqual(await read(), initial);
   };
-  await noChange(payload([0, 2]), 403, mover);
   await noChange(payload(), 403, viewer);
   await noChange(payload([0, 5]), 400);
   await noChange(payload([0, 0]), 400);
@@ -3208,7 +3369,7 @@ test("여러 행 이동은 기존 순서와 제외된 행을 유지하고 모든
   stale.tasks[1].updatedAt = "stale";
   await noChange(stale, 409);
   await noChange({ ...payload(), targetUpdatedAt: "stale" }, 409);
-  const moved = await post("/tasks/reorder", payload());
+  const moved = await post("/tasks/reorder", payload(), mover);
   assert.equal(moved.status, 200);
   assert.deepEqual(
     moved.data.tasks.map((t) => t.cells.title.value),

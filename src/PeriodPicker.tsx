@@ -4,12 +4,12 @@ import {
   visibleWeeks,
   weeksForPeriod,
   periodMonths,
-  todayKey,
 } from "../shared/domain.js";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./components";
 import type { View } from "./types";
 import { trackPointerDrag } from "./trackPointerDrag";
+import { useTodayKey } from "./useTodayKey";
 
 type Unit = "month" | "week";
 type Drag = { unit: Unit; anchor: number; end: number; pointerId: number };
@@ -46,7 +46,7 @@ export default function PeriodPicker({
     [weeks, year, view.startMonth],
   );
   const root = useRef<HTMLDivElement>(null);
-  const today = todayKey();
+  const today = useTodayKey();
   const dragRef = useRef<Drag | null>(null);
   const stopDrag = useRef<(() => void) | null>(null);
   const keyboardAnchor = useRef<{ unit: Unit; index: number } | null>(null);

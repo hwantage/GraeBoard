@@ -76,20 +76,25 @@ test.beforeEach(async ({ page, browser }) => {
   for (const p of [page, peer]) {
     await p.addInitScript(
       ({ teamId }) => {
-        // Inspect the real EventSource events, independently of the React UI.
+        // Inspect real worker events, independently of the React UI.
         (window as any).__sseEvents = [];
-        const Native = window.EventSource;
-        window.EventSource = class extends Native {
-          constructor(url: string | URL, options?: EventSourceInit) {
+        const Native = window.SharedWorker;
+        if (!Native) return;
+        window.SharedWorker = class extends Native {
+          constructor(url: string | URL, options?: string | WorkerOptions) {
             super(url, options);
-            for (const name of ["ready", "cells", "reset"])
-              this.addEventListener(name, (e) =>
+            this.port.addEventListener("message", (e) => {
+              const message = e.data;
+              if (
+                message.kind === "event" &&
+                ["ready", "cells", "reset"].includes(message.event)
+              )
                 (window as any).__sseEvents.push({
-                  type: name,
-                  data: JSON.parse((e as MessageEvent).data),
+                  type: message.event,
+                  data: JSON.parse(message.data),
                   teamId,
-                }),
-              );
+                });
+            });
           }
         };
       },
@@ -309,7 +314,7 @@ test("수정 없이 편집을 닫으면 원격 변경을 이전 값으로 덮어
   expect(writes).toBe(0);
 });
 
-test("담당자 변경으로 편집 권한을 잃어도 작성 중인 입력을 버리지 않는다", async ({
+test("담당자가 다른 사람으로 변경되어도 팀원은 작성 중인 입력을 저장할 수 있다", async ({
   page,
 }) => {
   const changed = await page.request.patch(`/api/admin/users/${peerId}`, {
@@ -325,7 +330,7 @@ test("담당자 변경으로 편집 권한을 잃어도 작성 중인 입력을 
   await cell(peer, ids[0]).dblclick();
   await peer
     .locator(".inline-editor textarea")
-    .fill("권한 변경 전 작성한 내용");
+    .fill("담당자 변경 전 작성한 내용");
   const boot = await (
     await page.request.get("/api/bootstrap")
   )
@@ -339,11 +344,9 @@ test("담당자 변경으로 편집 권한을 잃어도 작성 중인 입력을 
     timeout: 3000,
   });
   await peer.locator(".inline-editor textarea").press("Enter");
-  await expect(peer.locator(".inline-editor textarea")).toHaveValue(
-    "권한 변경 전 작성한 내용",
-  );
-  await expect(peer.getByRole("alert")).toContainText("편집 권한이 변경");
-  await expect(cell(page, ids[0])).toHaveText("첫 업무");
+  await expect(peer.locator(".inline-editor textarea")).toHaveCount(0);
+  await expect(cell(peer, ids[0])).toHaveText("담당자 변경 전 작성한 내용");
+  await expect(cell(page, ids[0])).toHaveText("담당자 변경 전 작성한 내용");
 });
 
 test("이전 저장 응답이 늦게 도착해도 SSE로 받은 후속 변경을 되돌리지 않는다", async ({
@@ -391,15 +394,23 @@ test("만료된 SSE 커서는 스냅샷으로 복구하면서 입력 중인 내�
   const connected = new Promise<void>((resolve) => {
     intercepted = resolve;
   });
+  // Exercise the same broker in its fallback so Playwright can intercept the
+  // request and inject an expired cursor (SharedWorker requests bypass routes).
+  await peer.addInitScript(() => {
+    Object.defineProperty(window, "SharedWorker", { value: undefined });
+  });
   let first = true;
-  await peer.route("**/api/cells/events?**", async (route) => {
-    if (!first) return route.continue();
+  await peer.route("**/api/events", async (route) => {
+    const { streams } = route.request().postDataJSON();
+    const cells = streams.find((stream: any) =>
+      stream.path.startsWith("/api/cells/events?"),
+    );
+    if (!first || !cells) return route.continue();
     first = false;
     intercepted();
     await gate;
-    const url = new URL(route.request().url());
-    url.searchParams.set("after", "previous-server:1");
-    await route.continue({ url: url.toString() });
+    cells.lastEventId = "previous-server:1";
+    await route.continue({ postData: JSON.stringify({ streams }) });
   });
   try {
     await peer.goto("/");
@@ -418,7 +429,6 @@ test("만료된 SSE 커서는 스냅샷으로 복구하면서 입력 중인 내�
       "연결 복구 중인 입력",
     );
     expect(await currentView(peer)).toEqual(view);
-    await waitReady(peer);
     await save(page, [{ id: ids[2], value: "복구 후 실시간 변경" }]);
     await expect(cell(peer, ids[2])).toHaveText("복구 후 실시간 변경", {
       timeout: 3000,
@@ -462,4 +472,23 @@ test("개별 셀 서식도 전체 목록 조회 없이 상대 브라우저에 �
     "rgb(255, 224, 224)",
     { timeout: 3000 },
   );
+});
+
+test("공유 SSE 재연결은 채널의 마지막 커서부터 누락 셀을 받는다", async ({
+  page,
+}) => {
+  await openPeer();
+  // Full polling cannot hide a missing replay cursor in this regression.
+  await peer.route("**/api/tasks?**", (route) => route.abort());
+  await save(page, [{ id: ids[0], value: "연결 중 최신 셀" }]);
+  await expect(cell(peer, ids[0])).toHaveText("연결 중 최신 셀");
+  await peerContext.setOffline(true);
+  try {
+    await save(page, [{ id: ids[0], value: "단절 중 최신 셀" }]);
+  } finally {
+    await peerContext.setOffline(false);
+  }
+  await expect(cell(peer, ids[0])).toHaveText("단절 중 최신 셀");
+  await save(page, [{ id: ids[2], value: "다시 연결된 실시간 셀" }]);
+  await expect(cell(peer, ids[2])).toHaveText("다시 연결된 실시간 셀");
 });

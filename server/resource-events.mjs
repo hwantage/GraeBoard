@@ -1,15 +1,16 @@
+import { registerEventRoute } from "./event-streams.mjs";
 import { hasDocumentContent } from "../shared/task-documents.js";
 import { requireThat } from "./validation.mjs";
 
 // Publish invalidations only after successful mutations. Bodies stay on their
 // existing authorized GET routes; cells retain their compact delta stream.
 export function installResourceEvents(app, { db, documentEvents, teamAccess }) {
-  app.get("/api/teams/:id/events", (req, res) =>
+  registerEventRoute(app, "/api/teams/:id/events", (req, res) =>
     documentEvents.watch(req, res, `team:${req.params.id}`, (request) =>
       teamAccess(request.user, request.params.id),
     ),
   );
-  app.get("/api/reports/:id/events", (req, res) =>
+  registerEventRoute(app, "/api/reports/:id/events", (req, res) =>
     documentEvents.watch(req, res, `report:${req.params.id}`, (request) => {
       const row = db
         .prepare("SELECT team_id FROM reports WHERE id=?")

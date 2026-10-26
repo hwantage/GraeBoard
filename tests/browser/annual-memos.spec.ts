@@ -3,6 +3,108 @@ import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
+test("메모 아코디언은 저장 실패 시 열린 상태를 보존하고 로컬 저장소 없이도 조작할 수 있다", async ({
+  page,
+}, info) => {
+  await page.request.post("/api/auth/login", {
+    headers,
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  const team = unpack(
+    await (
+      await page.request.post("/api/admin/teams", {
+        headers,
+        data: {
+          name: `메모 아코디언 ${randomUUID().slice(0, 8)}`,
+          members: [{ userId: boot.user.id, role: "lead" }],
+        },
+      })
+    ).json(),
+  );
+  const id = randomUUID();
+  const path = `/api/teams/${team.id}/years/2026/memos`;
+  await page.request.post(path, {
+    headers,
+    data: { id, title: "저장할 메모" },
+  });
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const toggle = memos.locator(".toggle-memos");
+  const key = `weekly-plan:memo-open:${boot.user.id}:${team.id}:2026`;
+  await toggle.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const contentId = await toggle.getAttribute("aria-controls");
+  await expect(page.locator(`[id="${contentId}"]`)).toBeVisible();
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toBeVisible();
+  await memos
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  const source = memos.getByRole("textbox", {
+    name: "연간 업무 메모 Markdown 원문",
+  });
+  await page.route(`**${path}/${id}`, (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "메모 저장 실패" }),
+        })
+      : route.continue(),
+  );
+  await source.fill("# 닫기 전에 저장할 내용");
+  await toggle.click();
+  await expect(memos.getByRole("alert")).toContainText("메모 저장 실패");
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(source).toHaveValue("# 닫기 전에 저장할 내용");
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    "true",
+  );
+  await page.screenshot({
+    path: info.outputPath("memo-accordion-save-failed.png"),
+  });
+  await page.unroute(`**${path}/${id}`);
+  await memos
+    .getByRole("button", { name: "저장 다시 시도", exact: true })
+    .click();
+  await expect(memos.getByRole("alert")).toHaveCount(0);
+  await toggle.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(`[id="${contentId}"]`)).toBeHidden();
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    "false",
+  );
+  expect(
+    unpack(await (await page.request.get(`${path}/${id}`)).json()).markdown,
+  ).toBe("# 닫기 전에 저장할 내용");
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) {
+      if (key.startsWith("weekly-plan:memo-open:"))
+        throw new DOMException("blocked", "SecurityError");
+      return get.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("weekly-plan:memo-open:"))
+        throw new DOMException("blocked", "SecurityError");
+      set.call(this, key, value);
+    };
+  });
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.press("Enter");
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toContainText("닫기 전에 저장할 내용");
+  await toggle.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
 test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를 가로로 편집한다", async ({
   page,
 }, info) => {
@@ -52,19 +154,28 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   const tab = (name: string) => memos.getByRole("tab", { name, exact: true });
   const openMemos = async () => {
     const toggle = memos.getByRole("button", {
-      name: "꼬리 메모 열기",
+      name: "꼬리 메모",
+      expanded: false,
       exact: true,
     });
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await toggle.click();
+    await toggle.scrollIntoViewIfNeeded();
+    const row = (await toggle.boundingBox())!;
+    expect(row.width).toBeCloseTo((await memos.boundingBox())!.width, 0);
+    // The empty space near the right edge must toggle the whole accordion.
+    await toggle.click({ position: { x: row.width - 60, y: row.height / 2 } });
     await expect(
-      memos.getByRole("button", { name: "꼬리 메모 닫기", exact: true }),
+      memos.getByRole("button", {
+        name: "꼬리 메모",
+        expanded: true,
+        exact: true,
+      }),
     ).toHaveAttribute("aria-expanded", "true");
   };
   const toggle = memos.locator(".toggle-memos");
   const plus = memos.locator(".memo-add-document");
   await expect(page.locator(`[data-cell="${task.id}:title"]`)).toBeVisible();
-  await expect(toggle).toHaveText("꼬리 메모 열기");
+  await expect(toggle).toHaveText("꼬리 메모");
   await expect(rail).toHaveCount(0);
   expect(memoRequests).toHaveLength(0);
   await expect(
@@ -164,7 +275,7 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   );
   await source("연간 회의록").fill("# 전환 직전 저장");
   await memos
-    .getByRole("button", { name: "꼬리 메모 닫기", exact: true })
+    .getByRole("button", { name: "꼬리 메모", expanded: true, exact: true })
     .click();
   await expect(rail).toHaveCount(0);
   const savedList = unpack(
@@ -184,23 +295,25 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
     ).json(),
   );
   expect(saved.markdown).toBe("# 전환 직전 저장");
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(rail).toHaveCount(0);
   await openMemos();
   await expect(rich("연간 회의록")).toContainText("전환 직전 저장");
   await expect(memos.getByRole("tab")).toHaveCount(3);
   await page.getByLabel("팀 선택").selectOption(boot.teams[0].id);
   await expect(memos.getByRole("tab")).toHaveCount(0);
   await page.getByLabel("팀 선택").selectOption(team.id);
-  await openMemos();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(rich("연간 회의록")).toContainText("전환 직전 저장");
   await expect(rich("메모 2")).toContainText("두 번째 메모");
   await page.getByRole("button", { name: "다음 연도", exact: true }).click();
   await expect(memos.getByRole("tab")).toHaveCount(0);
   await page.getByRole("button", { name: "이전 연도", exact: true }).click();
-  await openMemos();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(tab("연간 회의록")).toBeVisible();
   await page.reload();
-  await expect(rail).toHaveCount(0);
-  await openMemos();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(rich("연간 회의록")).toContainText("전환 직전 저장");
   await card("연간 회의록")
     .getByRole("button", { name: "Markdown 원문", exact: true })
@@ -231,7 +344,8 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   expect(heading.y + heading.height).toBeLessThan(bodyBox.y);
   for (const name of ["메모 3", "메모 2", "연간 회의록"]) {
     await tab(name).click();
-    await card(name)
+    await memos
+      .getByRole("tablist")
       .getByRole("button", { name: `${name} 메뉴`, exact: true })
       .click();
     await memos
@@ -244,8 +358,7 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   await plus.click();
   await expect(rich("메모 1")).toBeVisible();
   await page.reload();
-  await expect(rail).toHaveCount(0);
-  await openMemos();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(rich("메모 1")).toBeVisible();
 });
 
@@ -276,7 +389,9 @@ test("메모 탭 드래그·취소·키보드 이동은 문서 배치와 저장�
   await page.getByLabel("팀 선택").selectOption(team.id);
   const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
   const open = async () =>
-    memos.getByRole("button", { name: "꼬리 메모 열기", exact: true }).click();
+    memos
+      .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+      .click();
   await expect(page.locator('[role="grid"]')).toHaveAttribute(
     "aria-rowcount",
     "1",
@@ -318,7 +433,7 @@ test("메모 탭 드래그·취소·키보드 이동은 문서 배치와 저장�
   );
   expect(saved.markdown).toBe("# 드래그 직전 입력");
   await memos
-    .getByRole("button", { name: "꼬리 메모 닫기", exact: true })
+    .getByRole("button", { name: "꼬리 메모", expanded: true, exact: true })
     .click();
   await open();
   await expect(tabs).toHaveText(["메모 3", "메모 1", "메모 2"]);
@@ -339,7 +454,10 @@ test("메모 탭 드래그·취소·키보드 이동은 문서 배치와 저장�
   await tab("메모 3").press("Alt+ArrowLeft");
   await expect(tabs).toHaveText(["메모 3", "메모 1", "메모 2"]);
   await page.reload();
-  await open();
+  await expect(memos.locator(".toggle-memos")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await expect(tabs).toHaveText(["메모 3", "메모 1", "메모 2"]);
   await expect(titles).toHaveText(["메모 3", "메모 1", "메모 2"]);
   for (let index = 4; index <= 12; index++) {
@@ -349,7 +467,7 @@ test("메모 탭 드래그·취소·키보드 이동은 문서 배치와 저장�
     });
   }
   await memos
-    .getByRole("button", { name: "꼬리 메모 닫기", exact: true })
+    .getByRole("button", { name: "꼬리 메모", expanded: true, exact: true })
     .click();
   await open();
   await expect(tabs).toHaveCount(12);
@@ -429,7 +547,9 @@ test("접힌 메모도 사본에 포함하고 사본 재복사 직전 입력을 
     exact: true,
   });
   const open = async () =>
-    memos.getByRole("button", { name: "꼬리 메모 열기", exact: true }).click();
+    memos
+      .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+      .click();
   const card = (name: string) =>
     memos.getByRole("tabpanel", { name, exact: true });
   const rich = (name: string) =>
@@ -448,7 +568,11 @@ test("접힌 메모도 사본에 포함하고 사본 재복사 직전 입력을 
       sheets.getByRole("tab", { name, exact: true }),
     ).toHaveAttribute("aria-selected", "true");
     await expect(
-      memos.getByRole("button", { name: "꼬리 메모 열기", exact: true }),
+      memos.getByRole("button", {
+        name: "꼬리 메모",
+        expanded: false,
+        exact: true,
+      }),
     ).toBeVisible();
   };
   await expect(memos.getByRole("tabpanel")).toHaveCount(0);
@@ -482,7 +606,10 @@ test("접힌 메모도 사본에 포함하고 사본 재복사 직전 입력을 
   await sheets
     .getByRole("tab", { name: "메모 포함 사본", exact: true })
     .click();
-  await open();
+  await expect(memos.locator(".toggle-memos")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await expect(rich("사본 회의록")).toContainText("사본 재복사 직전 입력");
   await sheets.getByRole("tab", { name: "원본", exact: true }).click();
   await open();
@@ -490,7 +617,10 @@ test("접힌 메모도 사본에 포함하고 사본 재복사 직전 입력을 
   await expect(rich("메모 1")).toContainText("원본의 회의 기록");
   await page.reload();
   await sheets.getByRole("tab", { name: "메모 재사본", exact: true }).click();
-  await open();
+  await expect(memos.locator(".toggle-memos")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await expect(rich("사본 회의록")).toContainText("재사본에서만 변경");
 });
 
@@ -590,17 +720,7 @@ test("메모를 열 때 빈 상태의 버튼 위치를 유지하고 문서가 �
           `${width}px ${index} ${key}`,
         ).toBeLessThan(0.1);
       }
-      const lineVisible = await memos
-        .locator(".document-tabs")
-        .evaluate((element) => {
-          const style = getComputedStyle(element);
-          return (
-            style.borderBottomStyle !== "none" &&
-            parseFloat(style.borderBottomWidth) > 0 &&
-            style.borderBottomColor !== "rgba(0, 0, 0, 0)"
-          );
-        });
-      expect(lineVisible).toBe(opened);
+      await expect(memos.locator(".document-tabs")).toHaveCount(opened ? 1 : 0);
     }
   }
   const memoPath = `/api/teams/${team.id}/years/2026/memos`;
@@ -622,6 +742,15 @@ test("메모를 열 때 빈 상태의 버튼 위치를 유지하고 문서가 �
       await toggle.click();
       const memo = memos.getByRole("tabpanel", { name: "하단 문서" });
       await expect(memo).toBeVisible();
+      await expect(toggle).toBeInViewport();
+      const headerBox = (await toggle.boundingBox())!;
+      const tabsBox = (await memos.locator(".document-tabs").boundingBox())!;
+      expect(headerBox.y).toBeGreaterThanOrEqual(
+        (await grid.boundingBox())!.y + 31,
+      );
+      expect(tabsBox.y).toBeGreaterThanOrEqual(
+        headerBox.y + headerBox.height - 1,
+      );
       await expect
         .poll(() =>
           grid.evaluate(
@@ -683,7 +812,9 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   await page.getByLabel("팀 선택").selectOption(team.id);
   const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
   const open = () =>
-    memos.getByRole("button", { name: "꼬리 메모 열기", exact: true }).click();
+    memos
+      .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+      .click();
   const card = (name: string) =>
     memos.getByRole("tabpanel", { name, exact: true });
   const select = (name: string) =>
@@ -738,12 +869,19 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   await page.mouse.up();
   await expect.poll(() => width("회의 기록")).toBeCloseTo(initial - 140, 0);
   await page.reload();
-  await open();
+  await expect(memos.locator(".toggle-memos")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await expect.poll(() => width("회의 기록")).toBeCloseTo(initial - 140, 0);
   expect(await width("다음 할 일")).toBeCloseTo(rightWidth, 0);
   expect(widthWrites).toEqual([]);
-  // Each card's arrow acts on that card, including an initially unselected one.
-  await card("다음 할 일")
+  // Each tab's arrow acts on that document, including an initially unselected one.
+  await expect(
+    memos.locator(".memo-document-heading [aria-haspopup=menu]"),
+  ).toHaveCount(0);
+  await memos
+    .getByRole("tablist")
     .getByRole("button", { name: "다음 할 일 메뉴", exact: true })
     .click();
   await expect(card("다음 할 일")).toHaveAttribute("data-selected", "true");
@@ -751,6 +889,16 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
     "border-left-width",
     "1px",
   );
+  const menu = memos.getByRole("menu", { name: "문서 메뉴", exact: true });
+  await expect(menu).toBeVisible();
+  await memos.screenshot({ path: info.outputPath("tail-memo-tab-menu.png") });
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  const menuTrigger = memos
+    .getByRole("tablist")
+    .getByRole("button", { name: "다음 할 일 메뉴", exact: true });
+  await expect(menuTrigger).toBeFocused();
+  await menuTrigger.press("Enter");
   await memos.getByRole("menuitem", { name: "문서 이름 변경" }).click();
   const input = memos.getByRole("textbox", { name: "문서 제목", exact: true });
   await input.fill("후속 작업");
@@ -792,7 +940,8 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
     .toBeLessThan(120);
   expect(await sheet.evaluate((el) => el.scrollLeft)).toBe(sheetLeft);
   await memos.screenshot({ path: info.outputPath("tail-memo-layout.png") });
-  await card("후속 작업")
+  await memos
+    .getByRole("tablist")
     .getByRole("button", { name: "후속 작업 메뉴", exact: true })
     .click();
   await memos.getByRole("menuitem", { name: "문서 삭제", exact: true }).click();
@@ -805,5 +954,17 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
+  await memos
+    .getByRole("tablist")
+    .getByRole("button", { name: "회의 기록 메뉴", exact: true })
+    .click();
+  const popupBox = (await menu.boundingBox())!;
+  expect(popupBox.x).toBeGreaterThanOrEqual(0);
+  expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(390);
+  await menu
+    .getByRole("menuitem", { name: "문서 이름 변경", exact: true })
+    .click();
+  await expect(input).toHaveValue("회의 기록");
+  await input.press("Escape");
   await memos.screenshot({ path: info.outputPath("tail-memo-mobile.png") });
 });

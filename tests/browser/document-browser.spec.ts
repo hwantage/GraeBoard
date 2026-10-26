@@ -872,7 +872,9 @@ test("문서 제목 변경·추가·삭제와 사본 속성 변경은 탐색과 
     sheet(page).locator(".document-browser-source-toggle"),
   ).toContainText("문서 4개");
   await detail(page)
-    .getByRole("button", { name: "문서 메뉴", exact: true })
+    .locator(".document-tab-item")
+    .last()
+    .getByRole("button", { name: / 메뉴$/ })
     .click();
   await detail(page)
     .getByRole("menuitem", { name: "문서 삭제", exact: true })

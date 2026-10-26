@@ -1,3 +1,4 @@
+import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validateDocumentImages } from "./document-images.mjs";
@@ -136,7 +137,7 @@ export function installTaskDocumentRoutes(
       actorId,
     );
   }
-  app.get("/api/tasks/:id/documents/events", (req, res) =>
+  registerEventRoute(app, "/api/tasks/:id/documents/events", (req, res) =>
     documentEvents.watch(
       req,
       res,
@@ -295,7 +296,7 @@ export function installTaskDocumentRoutes(
         ),
       );
     });
-    app.get(`${path}/events`, (req, res) =>
+    registerEventRoute(app, `${path}/events`, (req, res) =>
       documentEvents.subscribe(req, res, documentKey(req), readDocument),
     );
     app.put(path, (req, res) => {

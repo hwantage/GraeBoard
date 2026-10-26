@@ -113,7 +113,6 @@ export const TaskDetailContent = forwardRef<
     user: User;
     users: User[];
     readOnly?: boolean;
-    reportMode?: boolean;
     documentReport?: { id: string; isNew: boolean };
     initialDocumentId?: string;
     onDocumentSelected?: (id: string) => void;
@@ -130,7 +129,6 @@ export const TaskDetailContent = forwardRef<
     user,
     users,
     readOnly,
-    reportMode,
     documentReport,
     initialDocumentId,
     onDocumentSelected,
@@ -142,9 +140,7 @@ export const TaskDetailContent = forwardRef<
   },
   ref,
 ) {
-  const editable =
-    !readOnly &&
-    (reportMode ? canContribute(user, task.teamId) : canEdit(user, task));
+  const editable = !readOnly && canEdit(user, task);
   const documentRef = useRef<DocumentPanelHandle>(null);
   const propertyRef = useRef<PropertyEditorHandle>(null);
   const [documentLoading, setDocumentLoading] = useState(true);
@@ -242,9 +238,7 @@ export function RowPanel({
   onSaveProperty: (request: PropertySaveRequest) => Promise<SavedCell[]>;
   onAction?: (action: string) => void;
 }) {
-  const editable =
-    !readOnly &&
-    (reportMode ? canContribute(user, task.teamId) : canEdit(user, task));
+  const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [documentFullPage, setDocumentFullPage] = useState(false);
   const leaving = useRef(false);
@@ -335,7 +329,6 @@ export function RowPanel({
         user={user}
         users={users}
         readOnly={readOnly}
-        reportMode={reportMode}
         documentReport={documentReport}
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={onSaveProperty}

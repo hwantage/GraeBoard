@@ -571,7 +571,10 @@ test("공통 서식은 권한·팀 경계를 검사하고 다른 사용자의 �
       expectedTasks: { [a.id]: getTask(f.db, a.id).updatedAt },
     },
   };
-  assert.equal((await f.request("/cells/batch", request, member)).status, 403);
+  const edited = await f.request("/cells/batch", request, member);
+  assert.equal(edited.status, 200);
+  request.operationId = randomUUID();
+  request.format.expectedRevision = edited.data.formatRevision;
   assert.equal(
     (
       await f.request(
@@ -598,7 +601,7 @@ test("공통 서식은 권한·팀 경계를 검사하고 다른 사용자의 �
           format: {
             teamId: f.teamId,
             restore: saved.data.operationId,
-            expectedRevision: saved.data.formatRevision,
+            expectedRevision: edited.data.formatRevision,
           },
         },
         member,
@@ -626,7 +629,7 @@ test("공통 서식은 권한·팀 경계를 검사하고 다른 사용자의 �
   );
   assert.equal(
     readFormatting(f.db, f.teamId).revision,
-    saved.data.formatRevision,
+    edited.data.formatRevision,
   );
 });
 

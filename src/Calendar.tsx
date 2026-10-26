@@ -11,8 +11,8 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   Plus,
-  RefreshCw,
   SlidersHorizontal,
   Tags,
   Users,
@@ -20,7 +20,6 @@ import {
 import { api, ApiError, send } from "./api";
 import { busyProps } from "./busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
-import Select from "./Select";
 import GridHeaderMenu from "./GridHeaderMenu";
 import {
   deleteCalendarEntry,
@@ -1010,19 +1009,6 @@ export default function Calendar({
             <CalendarDays size={13} />팀 월간 보기
           </Button>
           <Button
-            active={view === "month"}
-            aria-pressed={view === "month"}
-            {...busyProps(locked)}
-            onClick={() => {
-              if (!weeks.includes(navigationWeek))
-                setMonth(addDays(navigationWeek, 3).slice(0, 7));
-              setView("month");
-            }}
-          >
-            <CalendarDays size={13} />
-            개인 월간 보기
-          </Button>
-          <Button
             active={view === "team"}
             aria-pressed={view === "team"}
             {...busyProps(locked)}
@@ -1037,8 +1023,40 @@ export default function Calendar({
           >
             <Users size={13} />팀 주간 일정 보기
           </Button>
+          <Button
+            active={view === "month"}
+            aria-pressed={view === "month"}
+            {...busyProps(locked)}
+            onClick={() => {
+              if (!weeks.includes(navigationWeek))
+                setMonth(addDays(navigationWeek, 3).slice(0, 7));
+              setView("month");
+            }}
+          >
+            <CalendarDays size={13} />
+            개인 월간 보기
+          </Button>
         </div>
         <div className="heading-actions calendar-view-options">
+          {manageable && view !== "shared" && (
+            <Button
+              {...busyProps(locked, !context)}
+              onClick={() =>
+                void action(async () => {
+                  const latest = await api<CalendarContext>(
+                    `/calendar/teams/${team.id}`,
+                  );
+                  if (alive.current) {
+                    setContext(latest);
+                    setShowRule(true);
+                  }
+                })
+              }
+            >
+              <ListFilter size={13} />
+              주간 할 일 기준
+            </Button>
+          )}
           <Button
             {...busyProps(locked, !context || tagOwner === "")}
             onClick={() => setShowTags(true)}
@@ -1053,16 +1071,6 @@ export default function Calendar({
           >
             <SlidersHorizontal size={13} />
             표시 요일
-          </Button>
-          <Button
-            title="캘린더 새로고침"
-            {...busyProps(locked)}
-            onClick={() => {
-              setContextAttempt((n) => n + 1);
-              setReload((n) => n + 1);
-            }}
-          >
-            <RefreshCw size={13} />
           </Button>
         </div>
       </div>
@@ -1130,33 +1138,31 @@ export default function Calendar({
                     <ChevronRight size={15} />
                   </Button>
                 </div>
-                <Button
-                  className="calendar-today-control"
-                  title="오늘"
-                  {...busyProps(locked)}
-                  onClick={() => {
-                    setMonth(today.slice(0, 7));
-                    setTodayJump((n) => n + 1);
-                  }}
-                >
-                  오늘
-                </Button>
+                {view === "month" && (
+                  <div
+                    className="calendar-owner-list"
+                    role="group"
+                    aria-label="캘린더 팀원"
+                  >
+                    {members.map((member) => (
+                      <Button
+                        key={member.id}
+                        className="calendar-owner-button"
+                        data-member-id={member.id}
+                        tooltip={member.name}
+                        data-tooltip-tone="black"
+                        active={memberId === member.id}
+                        aria-pressed={memberId === member.id}
+                        {...busyProps(locked, !context)}
+                        onClick={() => setMemberId(member.id)}
+                      >
+                        <Avatar user={member} small />
+                        <span>{member.name}</span>
+                      </Button>
+                    ))}
+                  </div>
+                )}
               </div>
-              {view === "month" && (
-                <Select
-                  className="calendar-owner"
-                  aria-label="캘린더 팀원"
-                  value={memberId}
-                  {...busyProps(locked, !context)}
-                  onChange={(e) => setMemberId(e.target.value)}
-                >
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
             </>
           ) : (
             <div className="calendar-team-overview">
@@ -1170,22 +1176,17 @@ export default function Calendar({
                 숨긴 요일에 일정 {hiddenCount}개
               </Button>
             )}
-            {manageable && view !== "shared" && (
+            {view !== "team" && (
               <Button
-                {...busyProps(locked, !context)}
-                onClick={() =>
-                  void action(async () => {
-                    const latest = await api<CalendarContext>(
-                      `/calendar/teams/${team.id}`,
-                    );
-                    if (alive.current) {
-                      setContext(latest);
-                      setShowRule(true);
-                    }
-                  })
-                }
+                className="calendar-today-control"
+                title="오늘"
+                {...busyProps(locked)}
+                onClick={() => {
+                  setMonth(today.slice(0, 7));
+                  setTodayJump((n) => n + 1);
+                }}
               >
-                주간 할 일 기준
+                오늘
               </Button>
             )}
           </div>

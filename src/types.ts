@@ -135,6 +135,7 @@ export type Settings = {
   defaultDensity?: "comfortable" | "compact" | "dense";
   weekHeader?: { color?: string; backgroundColor?: string };
   weekBorders?: { left?: Border; right?: Border };
+  currentWeekBorders?: { left?: Border; right?: Border };
   theme?: ThemeId;
   properties?: Property[];
   revision?: number;

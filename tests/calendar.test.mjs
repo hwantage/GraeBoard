@@ -3132,88 +3132,67 @@ test("체크 태그의 생성 초기값·유형 변경·삭제는 유효한 체�
   assert.equal(latest.title, input.title);
 });
 
-test("캘린더 문서 SSE는 저장·재연결 시 최신 본문을 전달하고 팀 권한 회수 후 차단한다", async (t) => {
-  const f = await fixture(t);
-  const entry = (await f.create()).data;
-  const path = `/calendar/entries/${entry.id}/document`;
-  assert.equal(
-    (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
-    403,
-  );
-  async function connect(person = "viewer") {
-    const controller = new AbortController();
-    t.after(() => controller.abort());
-    const response = await fetch(`${f.baseURL}${path}/events`, {
-      signal: controller.signal,
-      headers: {
-        Cookie: `weekly_session=${f.people[person].token}`,
-        "Accept-Encoding": "gzip",
-      },
+for (const transport of ["direct", "shared"])
+  test(`${transport} 캘린더 문서 SSE는 저장·재연결 시 최신 본문을 전달하고 팀 권한 회수 후 차단한다`, async (t) => {
+    const f = await fixture(t);
+    const entry = (await f.create()).data;
+    const path = `/calendar/entries/${entry.id}/document`;
+    assert.equal(
+      (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
+      403,
+    );
+    async function connect(person = "viewer") {
+      const { documentStream } = await import("./document-events-helper.mjs");
+      if (transport === "direct")
+        return documentStream(t, f.baseURL, path, f.people[person].token);
+      const stream = await documentStream(
+        t,
+        f.baseURL,
+        "",
+        f.people[person].token,
+        "",
+        { streams: [{ id: 1, path: `/api${path}/events` }] },
+      );
+      return {
+        close: stream.close,
+        async next() {
+          const { event, data } = await stream.next();
+          assert.equal(event, "stream");
+          return { event: data.event, data: JSON.parse(data.data) };
+        },
+      };
+    }
+    const stream = await connect();
+    assert.equal((await stream.next()).data.revision, 0);
+    const memberStream = await connect("member");
+    assert.equal((await memberStream.next()).data.revision, 0);
+    const save = (markdown, revision) =>
+      f.req(path, "PUT", {
+        markdown,
+        expectedRevision: revision,
+        operationId: randomUUID(),
+      });
+    await save("실시간 첫 입력", 0);
+    const update = await stream.next();
+    assert.equal(update.event, "document");
+    assert.equal(update.data.markdown, "실시간 첫 입력");
+    assert.equal(update.data.entry.id, entry.id);
+    assert.deepEqual(await memberStream.next(), update);
+    stream.close();
+    await save("재연결 전 수정", 1);
+    assert.equal((await memberStream.next()).data.markdown, "재연결 전 수정");
+    const reconnect = await connect();
+    assert.equal((await reconnect.next()).data.markdown, "재연결 전 수정");
+    f.db
+      .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+      .run(f.teamId, f.people.viewer.id);
+    await save("권한 회수 후 비공개 입력", 2);
+    assert.deepEqual(await reconnect.next(), {
+      event: "access-revoked",
+      data: { status: 403 },
     });
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-encoding"), null);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    return {
-      close: () => controller.abort(),
-      next: async () => {
-        const timeout = setTimeout(() => controller.abort(), 3000);
-        try {
-          while (true) {
-            const boundary = buffer.indexOf("\n\n");
-            if (boundary >= 0) {
-              const frame = buffer.slice(0, boundary);
-              buffer = buffer.slice(boundary + 2);
-              const event = frame.match(/^event: (.+)$/m)?.[1];
-              if (event)
-                return {
-                  event,
-                  data: JSON.parse(frame.match(/^data: (.+)$/m)[1]),
-                };
-            } else {
-              const chunk = await reader.read();
-              assert.ok(!chunk.done, "stream ended before event");
-              buffer += decoder.decode(chunk.value, { stream: true });
-            }
-          }
-        } finally {
-          clearTimeout(timeout);
-        }
-      },
-    };
-  }
-  const stream = await connect();
-  assert.equal((await stream.next()).data.revision, 0);
-  const memberStream = await connect("member");
-  assert.equal((await memberStream.next()).data.revision, 0);
-  const save = (markdown, revision) =>
-    f.req(path, "PUT", {
-      markdown,
-      expectedRevision: revision,
-      operationId: randomUUID(),
-    });
-  await save("실시간 첫 입력", 0);
-  const update = await stream.next();
-  assert.equal(update.event, "document");
-  assert.equal(update.data.markdown, "실시간 첫 입력");
-  assert.equal(update.data.entry.id, entry.id);
-  assert.deepEqual(await memberStream.next(), update);
-  stream.close();
-  await save("재연결 전 수정", 1);
-  assert.equal((await memberStream.next()).data.markdown, "재연결 전 수정");
-  const reconnect = await connect();
-  assert.equal((await reconnect.next()).data.markdown, "재연결 전 수정");
-  f.db
-    .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
-    .run(f.teamId, f.people.viewer.id);
-  await save("권한 회수 후 비공개 입력", 2);
-  assert.deepEqual(await reconnect.next(), {
-    event: "access-revoked",
-    data: {},
+    assert.equal(
+      (await memberStream.next()).data.markdown,
+      "권한 회수 후 비공개 입력",
+    );
   });
-  assert.equal(
-    (await memberStream.next()).data.markdown,
-    "권한 회수 후 비공개 입력",
-  );
-});

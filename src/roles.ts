@@ -13,6 +13,6 @@ export const teamRoleNames: Record<TeamRole, string> = {
 export const teamRoleOrder: TeamRole[] = ["lead", "member", "viewer"];
 export const teamRoleHelp: Record<TeamRole, string> = {
   lead: "팀 설정·구성원 관리, 모든 업무 편집",
-  member: "업무 등록, 담당·지원 업무 편집",
+  member: "모든 업무·문서·꼬리 메모 편집",
   viewer: "조회·내보내기만 가능",
 };

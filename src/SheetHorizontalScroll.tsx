@@ -8,11 +8,17 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
   useLayoutEffect(() => {
     const bar = rail.current!;
     const sheet = bar.parentElement!;
+    let mirroredLeft = bar.scrollLeft;
     const fromSheet = () => {
       if (bar.scrollLeft !== sheet.scrollLeft)
         bar.scrollLeft = sheet.scrollLeft;
+      // The rail may clamp its scroll position to a slightly smaller maximum.
+      // Its queued scroll event must not feed that adjustment back into the sheet.
+      mirroredLeft = bar.scrollLeft;
     };
     const fromBar = () => {
+      if (bar.scrollLeft === mirroredLeft) return;
+      mirroredLeft = bar.scrollLeft;
       if (sheet.scrollLeft !== bar.scrollLeft)
         sheet.scrollLeft = bar.scrollLeft;
     };
@@ -89,7 +95,6 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
       role="group"
       tabIndex={overflow ? 0 : -1}
       aria-hidden={!overflow}
-      style={{ height: overflow ? 14 : 0 }}
       onKeyDown={(event) => event.stopPropagation()}
     >
       <div style={{ width, height: 1 }} />

@@ -1,4 +1,5 @@
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
+import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
 import { explicitStyle, rowFontSize } from "../shared/formatting.js";
 import {
@@ -53,7 +54,7 @@ import {
   displayValueFor,
   value,
   textLinks,
-  todayKey,
+  mondayOf,
   propertiesFor,
   groupValue,
   textMode,
@@ -318,15 +319,27 @@ export default function Grid({
     preview.style.transform = `translate3d(${Math.max(8, Math.min(x + 18, window.innerWidth - preview.offsetWidth - 8))}px, ${Math.max(8, Math.min(y + 18, window.innerHeight - preview.offsetHeight - 8))}px, 0)`;
   }
   useLayoutEffect(positionRowDragPreview, [rowDrag]);
-  const today = todayKey();
+  const today = useTodayKey();
+  const currentWeek = mondayOf(today);
   // Width previews change only the resized column, not the cell border layout.
   const columnKeys = useMemo(
     () => baseColumns.map((column) => column.key),
     [baseColumns],
   );
   const boundaryStyles = useMemo(
-    () => weekBoundaryStyles(columnKeys, settings.weekBorders),
-    [columnKeys, settings.weekBorders],
+    () =>
+      weekBoundaryStyles(
+        columnKeys,
+        settings.weekBorders,
+        settings.currentWeekBorders,
+        currentWeek,
+      ),
+    [
+      columnKeys,
+      settings.weekBorders,
+      settings.currentWeekBorders,
+      currentWeek,
+    ],
   );
   const columnGaps = useMemo(() => {
     const visible = new Set(columns.map((c) => c.key));
@@ -2130,10 +2143,12 @@ const GridCell = memo(function GridCell({
     s = displayStyle;
   const text = displayValueFor(property, current.value, users);
   const documentCount = task.documentCount ?? task.documents?.length ?? 0;
-  const showDocumentCount = documentCount > 1;
-  const documentLabel = showDocumentCount
-    ? `문서 ${documentCount}개 열기`
-    : "문서 열기";
+  const showDocumentCount = !!task.hasDocument && documentCount > 1;
+  const documentLabel = !task.hasDocument
+    ? "상세 열기"
+    : showDocumentCount
+      ? `문서 ${documentCount}개 열기`
+      : "문서 열기";
   const choice = property?.kind === "option" || property?.kind === "member";
   const editableChoice =
     choice &&
@@ -2141,6 +2156,8 @@ const GridCell = memo(function GridCell({
     editable &&
     (!["owner", "supporters"].includes(c.key) || canEditPeople);
   const editing = !!editor;
+  const showDetailAction =
+    c.key === "title" && !editing && (!presentation || task.hasDocument);
   const prepareText =
     focused &&
     editable &&
@@ -2229,14 +2246,18 @@ const GridCell = memo(function GridCell({
   return (
     <div
       role="gridcell"
-      aria-label={prepareText && !editing ? text || undefined : undefined}
+      aria-label={
+        (prepareText || c.key === "title") && !editing
+          ? text || undefined
+          : undefined
+      }
       aria-selected={selection !== null}
       data-selection-edges={selection || undefined}
       data-cell={`${task.id}:${c.key}`}
       data-task-id={task.id}
       data-column={c.key}
       data-text-mode={mode}
-      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
+      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${showDetailAction ? "has-detail-action" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
       title={text || undefined}
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
@@ -2249,10 +2270,10 @@ const GridCell = memo(function GridCell({
         if (!presentation) actions.rowMenu(task);
       }}
     >
-      {c.key === "title" && task.hasDocument && !editing && (
+      {showDetailAction && (
         <button
           type="button"
-          className="task-document-indicator"
+          className={`task-document-indicator${task.hasDocument ? "" : " is-empty"}`}
           disabled={presentation}
           aria-label={`${text || "제목 없는 업무"} ${documentLabel}`}
           data-tooltip={`업무 ${documentLabel}`}

@@ -1,3 +1,4 @@
+import { installEventStreams, registerEventRoute } from "./event-streams.mjs";
 import {
   documentImagesDirectory,
   installDocumentImageRoutes,
@@ -473,6 +474,7 @@ export function createApp({
   };
   const documentEvents = createDocumentEvents(refreshUser);
   app.locals.documentEvents = documentEvents;
+  installEventStreams(app);
   installResourceEvents(app, { db, documentEvents, teamAccess });
   installReorderRoute(app, { db, taskAccess, teamAccess });
   app.post("/api/auth/logout", (req, res) => {
@@ -611,7 +613,7 @@ export function createApp({
     }
     res.send(cached.body);
   });
-  app.get("/api/cells/events", (req, res) => {
+  registerEventRoute(app, "/api/cells/events", (req, res) => {
     const teamId = String(req.query.teamId || "");
     teamAccess(req.user, teamId);
     const period = periodScopeSchema.parse(req.query);
@@ -705,9 +707,7 @@ export function createApp({
             p.id,
             p.id === "title"
               ? "새 업무"
-              : p.id === "owner" &&
-                  (d.sourceId ||
-                    (d.copiedRow && !canManageTeam(req.user, d.teamId)))
+              : p.id === "owner" && d.sourceId
                 ? self
                 : emptyPropertyValue(p),
           ])
@@ -750,13 +750,6 @@ export function createApp({
       documents = d.copiedRow.documents;
       for (const document of documents || [])
         validateDocumentImages(document.markdown, d.teamId, documentImagesDir);
-      // A member may create only their own task, even when copying another row.
-      if (!canManageTeam(req.user, d.teamId))
-        for (const key of ["owner", "supporters"].filter(defined))
-          cells[key] = {
-            value: key === "owner" ? self : [],
-            style: cells[key]?.style || {},
-          };
       // 복사한 뒤 보관된 속성·선택값이나 팀을 떠난 담당자처럼 지금은 고를 수
       // 없는 값만 빼고 나머지 행 내용은 붙여넣는다.
       const archived = new Set(
@@ -784,12 +777,6 @@ export function createApp({
     }
     for (const [k, v] of Object.entries(fields))
       validateCellValue(db, d.teamId, k, v, team.settings);
-    if (!canManageTeam(req.user, d.teamId))
-      requireThat(
-        fields.owner === req.user.id || (blankCreation && !fields.owner),
-        403,
-        "본인 책임 업무로 등록하세요.",
-      );
     const task = transaction(db, () => {
       let position;
       if (d.insertAt) {
@@ -928,15 +915,6 @@ export function createApp({
       for (const change of d.changes) {
         const task = tasks.get(change.taskId),
           team = teams.get(task.teamId);
-        if (
-          change.value !== undefined &&
-          ["owner", "supporters"].includes(change.key)
-        )
-          requireThat(
-            canManageTeam(req.user, task.teamId),
-            403,
-            "담당자 변경은 팀장 권한이 필요합니다.",
-          );
         const previous = task.cells[change.key] ?? {
           value: "",
           style: {},
@@ -1116,11 +1094,7 @@ export function createApp({
     return transaction(db, () => {
       const tasks = versions.map(({ id, updatedAt }) => {
         const task = taskAccess(user, id, false, true);
-        requireThat(
-          canManageTeam(user, task.teamId) || canEdit(user, task),
-          403,
-          "업무를 복구할 권한이 없습니다.",
-        );
+        requireThat(canEdit(user, task), 403, "업무를 복구할 권한이 없습니다.");
         requireThat(
           task.deletedAt &&
             (updatedAt === undefined || updatedAt === task.updatedAt),
@@ -1988,6 +1962,9 @@ export function createApp({
     );
   }
   app.use((err, req, res, _next) => {
+    // Changing worker subscriptions cancels the previous read-only POST,
+    // sometimes before its JSON body has finished arriving.
+    if (req.path === "/api/events" && err.type === "request.aborted") return;
     if (err.type === "entity.parse.failed")
       return res.status(400).json({ error: "JSON 입력 형식을 확인하세요." });
     if (err instanceof z.ZodError)

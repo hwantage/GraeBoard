@@ -85,6 +85,7 @@ export default function Tooltip() {
       id={id}
       role="tooltip"
       className="instant-tooltip"
+      data-tone={target.dataset.tooltipTone}
       style={position}
     >
       {text}

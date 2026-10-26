@@ -237,7 +237,7 @@ export default function PropertiesManager({
           </details>
         )}
         {selected === WEEK_COLUMNS.id && (
-          <section className="property-editor" aria-label="주차 날짜 배치 안내">
+          <section className="property-editor" aria-label="주차 날짜 설정">
             <h3>주차 날짜</h3>
             <fieldset className="week-header-colors" disabled={busy}>
               <legend>머리글 색</legend>
@@ -292,7 +292,49 @@ export default function PropertiesManager({
               표시합니다.
             </p>
             <fieldset className="week-boundary-settings" disabled={busy}>
-              <legend>기본 경계선</legend>
+              <legend>이번 주 기본 테두리</legend>
+              <p className="field-help">
+                이번 주 열의 머리글과 모든 업무 셀에 적용합니다. 주가 바뀌면 새
+                이번 주로 이동하며, 이번 주가 숨겨져 있으면 표시하지 않습니다.
+              </p>
+              <div className="week-boundary-controls">
+                {(
+                  [
+                    ["left", "이번 주 왼쪽 테두리"],
+                    ["right", "이번 주 오른쪽 테두리"],
+                  ] as const
+                ).map(([side, label]) => (
+                  <BorderControls
+                    key={side}
+                    label={label}
+                    value={settings.currentWeekBorders?.[side]}
+                    allowNone
+                    onChange={(border) => {
+                      setSettings((s) => ({
+                        ...s,
+                        currentWeekBorders: {
+                          ...s.currentWeekBorders,
+                          [side]: border,
+                        },
+                      }));
+                      setMessage("");
+                      setError("");
+                    }}
+                  />
+                ))}
+              </div>
+              <p className="field-help">
+                한쪽만 표시하려면 다른 쪽은 없음으로 두세요. 셀이나 행·열에
+                별도로 그린 선이 우선하고, 지우면 기본 테두리가 표시됩니다. 표시
+                구간 양 끝과 겹치면 이번 주 테두리가 우선합니다.
+              </p>
+            </fieldset>
+            <fieldset className="week-boundary-settings" disabled={busy}>
+              <legend>표시 구간 양 끝 경계선</legend>
+              <p className="field-help">
+                현재 보이는 첫 날짜의 왼쪽과 마지막 날짜의 오른쪽에 적용합니다.
+                기간을 바꾸거나 날짜 열을 숨기면 새 경계로 이동합니다.
+              </p>
               <div className="week-boundary-controls">
                 {(
                   [
@@ -317,10 +359,8 @@ export default function PropertiesManager({
                 ))}
               </div>
               <p className="field-help">
-                현재 보이는 첫 날짜의 왼쪽과 마지막 날짜의 오른쪽에 적용합니다.
-                기간을 바꾸거나 날짜 열을 숨기면 새 경계로 이동하며, 셀에서
-                별도로 그린 선이 우선합니다. 셀 테두리를 지우면 기본 경계선이
-                표시됩니다.
+                셀이나 행·열에 별도로 그린 선이 우선합니다. 셀 테두리를 지우면
+                기본 경계선이 표시됩니다.
               </p>
             </fieldset>
             <p className="field-help">
@@ -420,7 +460,7 @@ export default function PropertiesManager({
             </div>
             {["owner", "supporters"].includes(property.id) && (
               <p className="field-help">
-                팀원·지원자는 업무 편집 권한과 연결된 Member 속성입니다.
+                팀원·지원자는 업무 담당자를 지정하는 Member 속성입니다.
                 이름·표시·순서는 변경할 수 있으며 기본 팀원 속성은 삭제할 수
                 없습니다.{" "}
                 {property.id === "owner"

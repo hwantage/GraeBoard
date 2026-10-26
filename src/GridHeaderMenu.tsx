@@ -67,7 +67,9 @@ export default function GridHeaderMenu({
       event.stopPropagation();
       close.current(true);
     };
-    // Ignore a scroll event queued before opening; only a new movement closes it.
+    // Only movement of the menu's scroll container/ancestors dismisses it.
+    // A linked scrollbar can emit a delayed event after opening without moving
+    // the anchor; its real movement also triggers the container's scroll event.
     const scrollPositions = new Map<EventTarget, [number, number]>([
       [document, [window.scrollX, window.scrollY]],
       [window, [window.scrollX, window.scrollY]],
@@ -86,7 +88,10 @@ export default function GridHeaderMenu({
           ? [target.scrollLeft, target.scrollTop]
           : [window.scrollX, window.scrollY];
       const previous = scrollPositions.get(target);
-      if (previous && previous[0] === current[0] && previous[1] === current[1])
+      if (
+        !previous ||
+        (previous[0] === current[0] && previous[1] === current[1])
+      )
         return;
       outside(event);
     };

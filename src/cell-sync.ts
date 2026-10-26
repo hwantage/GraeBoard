@@ -1,3 +1,4 @@
+import { EventStream, retryableRejection } from "./event-stream";
 import { api, ApiError, taskQuery } from "./api";
 import { parseCompact } from "../shared/compact.js";
 import type { Task } from "./types";
@@ -26,7 +27,7 @@ export function subscribeCellChanges({
     recovering = false,
     retryDelay = 1000;
   let accessLost = false;
-  let source: EventSource | undefined;
+  let source: EventStream | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let flush: ReturnType<typeof setTimeout> | undefined;
   let queued: CellUpdates[] = [];
@@ -35,7 +36,7 @@ export function subscribeCellChanges({
   const abort = new AbortController();
   function connect(after: string) {
     if (stopped) return;
-    source = new EventSource(
+    source = new EventStream(
       `/api/cells/events?${new URLSearchParams({ teamId, year: String(year), ...(startMonth > 1 ? { startMonth: "2" } : {}), after })}`,
     );
     source.addEventListener("cells", (event: MessageEvent) => {
@@ -70,15 +71,32 @@ export function subscribeCellChanges({
         void recover();
       }
     });
+    source.addEventListener("ready", () => {
+      if (!recovering) retryDelay = 1000;
+    });
+    source.addEventListener("rejected", (event: MessageEvent) => {
+      if (retryableRejection(event.data)) {
+        source?.close();
+        scheduleRecovery();
+      } else stop();
+    });
     source.addEventListener("reset", () => void recover());
     source.addEventListener("access-revoked", () => {
       void recover();
     });
     source.onerror = () => {
-      // EventSource reconnects transient failures with Last-Event-ID. A rejected
+      // The shared stream replays transient failures from its cursor. A rejected
       // HTTP connection (e.g. an expired session) needs a fresh authenticated GET.
-      if (source?.readyState === EventSource.CLOSED) void recover();
+      if (source?.readyState === EventSource.CLOSED) scheduleRecovery();
     };
+  }
+  function scheduleRecovery() {
+    if (stopped || recovering || retry) return;
+    retry = setTimeout(() => {
+      retry = undefined;
+      void recover();
+    }, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 30000);
   }
   async function recover() {
     if (stopped || recovering) return;
@@ -99,7 +117,6 @@ export function subscribeCellChanges({
       onSnapshot(snapshot.tasks);
       recovering = false;
       accessLost = false;
-      retryDelay = 1000;
       connect(snapshot.cellEventId);
     } catch (e) {
       recovering = false;
@@ -112,8 +129,7 @@ export function subscribeCellChanges({
           return;
         }
       }
-      retry = setTimeout(() => void recover(), retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 30000);
+      scheduleRecovery();
     }
   }
   function stop() {

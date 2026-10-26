@@ -20,9 +20,16 @@ export const BORDER_SIDES = ["Top", "Right", "Bottom", "Left"];
  * Date boundaries follow the displayed/exported columns, never a stored date.
  * @param {string[]} keys
  * @param {import("../src/types").Settings["weekBorders"]} borders
+ * @param {import("../src/types").Settings["currentWeekBorders"]} currentBorders
+ * @param {string} currentWeek Monday key in the same timezone as the week highlight.
  * @returns {Map<string, import("../src/types").Style>}
  */
-export function weekBoundaryStyles(keys, borders = {}) {
+export function weekBoundaryStyles(
+  keys,
+  borders = {},
+  currentBorders = {},
+  currentWeek = "",
+) {
   const dates = keys.filter((key) => /^\d{4}-\d{2}-\d{2}$/.test(key));
   const styles = new Map();
   if (!dates.length) return styles;
@@ -36,6 +43,21 @@ export function weekBoundaryStyles(keys, borders = {}) {
         ...styles.get(key),
         [side === "left" ? "borderLeft" : "borderRight"]: border,
       });
+  }
+  // The current week is a specific date column, never the nearest visible one.
+  // Its defaults override range edges only on sides with a configured line.
+  if (dates.includes(currentWeek)) {
+    for (const [side, property] of [
+      ["left", "borderLeft"],
+      ["right", "borderRight"],
+    ]) {
+      const border = currentBorders[side];
+      if (border && border.style !== "none")
+        styles.set(currentWeek, {
+          ...styles.get(currentWeek),
+          [property]: border,
+        });
+    }
   }
   return styles;
 }

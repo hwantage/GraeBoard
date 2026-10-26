@@ -10,14 +10,7 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import {
-  Plus,
-  MoreHorizontal,
-  ChevronDown,
-  Pencil,
-  Trash2,
-  FileText,
-} from "lucide-react";
+import { Plus, ChevronDown, Pencil, Trash2, FileText } from "lucide-react";
 import { api, send, ApiError } from "./api";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import { Button, ErrorNote } from "./components";
@@ -55,7 +48,6 @@ type Props = Pick<
   initialDocumentId?: string;
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
-  leading?: ReactNode;
   label?: string;
 };
 type RenameDraft = { document: DocumentInfo; title: string };
@@ -112,6 +104,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const readOnly = props.readOnly || !!props.emptyUntilSaved;
     const label = props.label || "업무 문서";
     const current = documents.find((doc) => doc.id === selected);
+    const menuDocument = documents.find((doc) => doc.id === menu);
     const listState = useRef({
       busy,
       renaming,
@@ -181,13 +174,47 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const tabScroll = tabReorder.root;
     useLayoutEffect(() => {
       if (!menu || readOnly) return;
+      if (!menuDocument) {
+        setMenu(null);
+        return;
+      }
+      const popup = menuRoot.current;
+      const bar = tablist.current;
+      const scroll = tabScroll.current;
+      if (!popup || !bar || !scroll) return;
+      // Keep the popup outside the horizontally scrolling tab list, as in SheetTabs.
+      const place = () => {
+        const trigger = menuTrigger.current;
+        if (!trigger?.isConnected) return;
+        const target = trigger.getBoundingClientRect();
+        const viewport = scroll.getBoundingClientRect();
+        if (target.right <= viewport.left || target.left >= viewport.right) {
+          setMenu(null);
+          return;
+        }
+        const barBox = bar.getBoundingClientRect();
+        const scale = barBox.width / bar.offsetWidth || 1;
+        const left =
+          (target.right - barBox.left) / scale -
+          bar.clientLeft -
+          popup.offsetWidth;
+        popup.style.left = `${Math.max(4, Math.min(left, bar.clientWidth - popup.offsetWidth - 4))}px`;
+      };
+      place();
+      const observer = new ResizeObserver(place);
+      observer.observe(bar);
+      observer.observe(scroll);
+      observer.observe(popup);
+      scroll.addEventListener("scroll", place);
+      window.addEventListener("resize", place);
       menuRoot.current
         ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
         ?.focus();
       const outside = (event: Event) => {
         if (
           event.target instanceof Node &&
-          !menuRoot.current?.contains(event.target)
+          !menuRoot.current?.contains(event.target) &&
+          !menuTrigger.current?.contains(event.target)
         )
           setMenu(null);
       };
@@ -209,11 +236,14 @@ export default forwardRef<DocumentPanelHandle, Props>(
       document.addEventListener("pointerdown", outside, true);
       document.addEventListener("keydown", keydown, true);
       return () => {
+        observer.disconnect();
+        scroll.removeEventListener("scroll", place);
+        window.removeEventListener("resize", place);
         cancelAnimationFrame(focusFrame);
         document.removeEventListener("pointerdown", outside, true);
         document.removeEventListener("keydown", keydown, true);
       };
-    }, [menu, readOnly]);
+    }, [menu, menuDocument?.id, readOnly]);
     useEffect(() => {
       const controller = new AbortController();
       setError("");
@@ -313,10 +343,12 @@ export default forwardRef<DocumentPanelHandle, Props>(
       return () => element.removeEventListener("wheel", wheel);
     }, [opened]);
     useLayoutEffect(() => {
-      document.getElementById(`${id}-${selected}-tab`)?.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-      });
+      document
+        .getElementById(`${id}-${selected}-tab`)
+        ?.parentElement?.scrollIntoView({
+          block: "nearest",
+          inline: "nearest",
+        });
     }, [opened, selected, documentOrder]);
     function scrollToDocument(documentId: string) {
       const rail = documentScroll.current;
@@ -569,65 +601,10 @@ export default forwardRef<DocumentPanelHandle, Props>(
         setBusy(false);
       }
     }
-    function documentMenu(doc: DocumentInfo) {
-      if (readOnly) return null;
-      const expanded = menu === doc.id;
-      return (
-        <div
-          className="document-tab-menu"
-          ref={expanded ? menuRoot : undefined}
-        >
-          <Button
-            ref={expanded ? menuTrigger : undefined}
-            tooltip={props.inline ? `${doc.title} 메뉴` : "문서 메뉴"}
-            aria-haspopup="menu"
-            aria-controls={expanded ? `${id}-menu` : undefined}
-            aria-expanded={expanded}
-            disabled={busy}
-            onClick={() => {
-              if (expanded) setMenu(null);
-              else
-                void select(doc.id, false).then((saved) => {
-                  if (saved) setMenu(doc.id);
-                });
-            }}
-          >
-            {props.inline ? (
-              <ChevronDown size={14} />
-            ) : (
-              <MoreHorizontal size={16} />
-            )}
-          </Button>
-          {expanded && (
-            <div id={`${id}-menu`} role="menu" aria-label="문서 메뉴">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => void startRename(doc)}
-              >
-                <Pencil size={14} />
-                문서 이름 변경
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setConfirmDelete(true);
-                  setMenu(null);
-                }}
-              >
-                <Trash2 size={14} />
-                문서 삭제
-              </button>
-            </div>
-          )}
-        </div>
-      );
-    }
     if (!opened && !props.inline)
       return (
         <section
-          className={`task-documents ${props.inline ? "annual-memos" : ""}`}
+          className="task-documents"
           aria-label={`${label} 목록`}
           onKeyDown={(event) => event.stopPropagation()}
           onCopy={(event) => event.stopPropagation()}
@@ -675,14 +652,13 @@ export default forwardRef<DocumentPanelHandle, Props>(
       );
     return (
       <section
-        className={`task-documents ${props.inline ? "annual-memos" : ""}`}
-        aria-label={`${label} 목록`}
+        className="task-documents"
+        aria-label={props.inline ? undefined : `${label} 목록`}
         onKeyDown={(event) => event.stopPropagation()}
         onCopy={(event) => event.stopPropagation()}
         onPaste={(event) => event.stopPropagation()}
       >
         <div className="document-tabs" ref={tablist}>
-          {props.inline && props.leading}
           <div
             className="document-tablist"
             ref={tabScroll}
@@ -693,6 +669,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
               <div
                 className="document-tab-item"
                 key={doc.id}
+                data-selected={selected === doc.id || undefined}
                 {...(props.inline ? tabReorder.itemProps(doc.id) : {})}
               >
                 {renaming?.document.id === doc.id ? (
@@ -814,6 +791,31 @@ export default forwardRef<DocumentPanelHandle, Props>(
                     </span>
                   </button>
                 )}
+                {!readOnly && renaming?.document.id !== doc.id && (
+                  <button
+                    type="button"
+                    className="document-tab-menu-trigger"
+                    aria-label={`${doc.title} 메뉴`}
+                    data-tooltip={`${doc.title} 메뉴`}
+                    aria-haspopup="menu"
+                    aria-controls={menu === doc.id ? `${id}-menu` : undefined}
+                    aria-expanded={menu === doc.id}
+                    disabled={busy}
+                    onClick={(event) => {
+                      const trigger = event.currentTarget;
+                      if (menu === doc.id) setMenu(null);
+                      else
+                        void select(doc.id).then((saved) => {
+                          if (saved) {
+                            menuTrigger.current = trigger;
+                            setMenu(doc.id);
+                          }
+                        });
+                    }}
+                  >
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -833,8 +835,32 @@ export default forwardRef<DocumentPanelHandle, Props>(
           )}
           <div className="document-tab-actions">
             {!props.inline && <div ref={setControlsTarget} />}
-            {!props.inline && current && documentMenu(current)}
           </div>
+          {!readOnly && menuDocument && (
+            <div className="document-tab-menu" ref={menuRoot}>
+              <div id={`${id}-menu`} role="menu" aria-label="문서 메뉴">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void startRename(menuDocument)}
+                >
+                  <Pencil size={14} />
+                  문서 이름 변경
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setConfirmDelete(true);
+                    setMenu(null);
+                  }}
+                >
+                  <Trash2 size={14} />
+                  문서 삭제
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         {confirmDelete && (
           <div className="document-delete-confirm" role="alert">
@@ -870,7 +896,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 tabId={`${id}-${doc.id}-tab`}
                 documentId={doc.id}
                 title={doc.title}
-                menu={props.inline ? documentMenu(doc) : null}
                 widthKey={`${props.draftKey(doc.id)}:width`}
                 inline={!!props.inline}
                 selected={selected === doc.id}
@@ -971,7 +996,6 @@ function DocumentPage({
   tabId,
   documentId,
   title,
-  menu,
   widthKey,
   inline,
   selected,
@@ -984,7 +1008,6 @@ function DocumentPage({
   tabId: string;
   documentId: string;
   title: string;
-  menu: ReactNode;
   widthKey: string;
   inline: boolean;
   selected: boolean;
@@ -1043,7 +1066,6 @@ function DocumentPage({
           <span className="memo-document-title" title={title}>
             {title}
           </span>
-          {menu}
           <div className="memo-document-controls" ref={setCardControls} />
         </div>
       )}

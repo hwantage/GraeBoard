@@ -30,6 +30,7 @@ import {
   weeksForPeriod,
   periodYears,
   mondayOf,
+  todayKey,
   dateKey,
   displayValue,
   cell,
@@ -605,7 +606,12 @@ export async function makeWorkbook(tasks, keys, users, year, settings) {
   };
   const argb = (hex) => "FF" + hex.slice(1).toUpperCase();
   const { color, backgroundColor } = settings.weekHeader || {};
-  const boundaryStyles = weekBoundaryStyles(keys, settings.weekBorders);
+  const boundaryStyles = weekBoundaryStyles(
+    keys,
+    settings.weekBorders,
+    settings.currentWeekBorders,
+    mondayOf(todayKey()),
+  );
   keys.forEach((key, i) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
     const header = ws.getRow(1).getCell(i + 1);

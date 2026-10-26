@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 import { defaultView } from "../../shared/domain.js";
@@ -118,14 +118,125 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
 });
 
+test("팀원은 다른 담당자의 표·상세 문서·담당자와 꼬리 메모를 함께 수정한다", async ({
+  page,
+  browser,
+}, info) => {
+  const boot = await get(page, "/bootstrap");
+  const original = (
+    await get(page, `/tasks?teamId=${teamId}&year=2026`)
+  ).tasks.find((task: any) => task.id === taskIds[0]);
+  await post(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: original.id,
+        key: "owner",
+        value: boot.user.id,
+        expectedVersion: original.cells.owner?.version ?? 0,
+      },
+    ],
+  });
+  await save(page, original.id, "# 담당자가 작성한 문서");
+  const memoBase = `/teams/${teamId}/years/2026/memos`;
+  const memoId = randomUUID();
+  await post(page, memoBase, { id: memoId, title: "공동 꼬리 메모" });
+  const username = `task-member-${randomUUID()}@example.com`;
+  const member = (
+    await post(page, "/admin/users", {
+      username,
+      password: "local-member-password",
+      name: "공동 편집 팀원",
+      memberships: [{ teamId, role: "member" }],
+    })
+  ).user;
+  const context = await browser.newContext({
+    baseURL: info.project.use.baseURL,
+    viewport: { width: 1366, height: 900 },
+  });
+  try {
+    const peer = await context.newPage();
+    await post(peer, "/auth/login", {
+      username,
+      password: "local-member-password",
+    });
+    await peer.goto("/");
+    await peer.getByLabel("팀 선택").selectOption(teamId);
+    const titleCell = peer.locator(`[data-cell="${original.id}:title"]`);
+    await expect(titleCell).toHaveText("첫 문서 업무");
+    await titleCell.dblclick();
+    await peer
+      .locator(".inline-editor textarea")
+      .fill("팀원이 함께 수정한 작업");
+    await peer.locator(".inline-editor textarea").press("Enter");
+    await expect(titleCell).toHaveText("팀원이 함께 수정한 작업");
+    await open(peer, original.id);
+    await expect(rich(peer)).toBeEditable();
+    await raw(peer);
+    await source(peer).fill("# 다른 담당자의 문서를 팀원이 수정");
+    await editTitle(peer, "상세 팝업에서도 공동 편집");
+    await detail(peer)
+      .getByRole("button", { name: "팀원 수정", exact: true })
+      .click();
+    await detail(peer)
+      .getByRole("listbox", { name: "팀원 편집", exact: true })
+      .getByRole("option", { name: member.name, exact: true })
+      .click();
+    await detail(peer).screenshot({
+      path: info.outputPath("member-shared-task.png"),
+    });
+    await close(peer);
+    const stored = (
+      await get(page, `/tasks?teamId=${teamId}&year=2026`)
+    ).tasks.find((task: any) => task.id === original.id);
+    expect(stored.cells.title.value).toBe("상세 팝업에서도 공동 편집");
+    expect(stored.cells.owner.value).toBe(member.id);
+    expect(
+      (await get(page, `/tasks/${original.id}/documents/main`)).markdown,
+    ).toBe("# 다른 담당자의 문서를 팀원이 수정");
+    const memos = peer.getByRole("region", { name: "연간 업무 메모 목록" });
+    await memos
+      .getByRole("button", { name: "꼬리 메모", exact: true, expanded: false })
+      .click();
+    const memo = memos.getByRole("tabpanel", {
+      name: "공동 꼬리 메모",
+      exact: true,
+    });
+    await expect(
+      memo.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+    ).toBeEditable();
+    await memo
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    await memo
+      .getByRole("textbox", { name: "연간 업무 메모 Markdown 원문" })
+      .fill("# 작성자와 관계없이 공동 기록");
+    await memos
+      .getByRole("button", { name: "꼬리 메모", exact: true, expanded: true })
+      .click();
+    expect((await get(page, `${memoBase}/${memoId}`)).markdown).toBe(
+      "# 작성자와 관계없이 공동 기록",
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("문서가 없는 업무는 캐릭터 안내에서 명시적으로 작성을 시작하고 저장 후 바로 연다", async ({
   page,
+  browserName,
 }, info) => {
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
-  await page
-    .locator(`[data-cell="${taskIds[0]}:title"]`)
-    .click({ button: "right" });
+  await page.mouse.move(0, 0);
+  await expect(icon(page)).toHaveCSS("opacity", "0");
+  await page.locator(`[data-row-id="${taskIds[0]}"] .row-select`).focus();
+  await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
+  await expect(icon(page)).toBeFocused();
+  await expect(icon(page)).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Enter");
+  await expect(detail(page)).toBeVisible();
   const start = detail(page).getByRole("button", {
     name: "문서 작성",
     exact: true,
@@ -157,9 +268,17 @@ test("문서가 없는 업무는 캐릭터 안내에서 명시적으로 작성�
     });
   }
   await close(page);
-  await page
-    .locator(`[data-cell="${taskIds[0]}:title"]`)
-    .click({ button: "right" });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.getByRole("button", { name: "업무 추가", exact: true }).focus();
+  await page.locator(`[data-cell="${taskIds[0]}:owner"]`).hover();
+  await expect(icon(page)).toHaveCSS("opacity", "0.55");
+  await page.locator(`[data-cell="${taskIds[0]}:title"]`).screenshot({
+    path: info.outputPath("empty-task-detail-hint.png"),
+  });
+  await icon(page).hover();
+  await expect(page.getByRole("tooltip")).toHaveText("업무 상세 열기");
+  await expect(icon(page)).toHaveCSS("opacity", "1");
+  await icon(page).click();
   await expect(start).toBeVisible();
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents`)).documents[0].revision,
@@ -714,7 +833,8 @@ test("문서 생성·Markdown 왕복·자동 저장·아이콘·재열기·새�
   page.on("request", (r) => requests.push(r.url()));
   await page.reload();
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
-  await expect(icon(page)).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await expect(icon(page)).toHaveCSS("opacity", "0");
   expect(
     requests.filter((url) =>
       /RichMarkdownEditor|TaskDocumentPanel|\/document/.test(url),
@@ -767,7 +887,9 @@ test("문서 생성·Markdown 왕복·자동 저장·아이콘·재열기·새�
   await raw(page);
   await source(page).fill("");
   await close(page);
-  await expect(icon(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "업무 추가", exact: true }).focus();
+  await page.mouse.move(0, 0);
+  await expect(icon(page)).toHaveCSS("opacity", "0");
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
   ).toBe("");
@@ -1732,7 +1854,9 @@ for (const copy of [false, true])
         .getByRole("tab", { name: "문서 개수 사본", exact: true })
         .click();
     const count = icon(page).locator(".task-document-count");
+    await page.mouse.move(0, 0);
     await expect(icon(page)).toBeVisible();
+    await expect(icon(page)).toHaveCSS("opacity", "1");
     await expect(count).toHaveCount(0);
     await expect(
       icon(page, taskIds[1]).locator(".task-document-count"),
@@ -1797,9 +1921,10 @@ for (const copy of [false, true])
     await page.setViewportSize({ width: 1366, height: 900 });
     await icon(page).click();
     for (const n of [2, 1]) {
-      await detail(page).getByRole("tab").last().click();
       await detail(page)
-        .getByRole("button", { name: "문서 메뉴", exact: true })
+        .locator(".document-tab-item")
+        .last()
+        .getByRole("button", { name: / 메뉴$/ })
         .click();
       await detail(page)
         .getByRole("menuitem", { name: "문서 삭제", exact: true })
@@ -2294,10 +2419,6 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
     ).toBeFocused();
   }
   await page.keyboard.press(tab);
-  await expect(
-    detail(page).getByRole("button", { name: "문서 메뉴", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press(tab);
   await expect(source(page)).toBeFocused();
   const expand = detail(page).locator(":scope > header").getByRole("button", {
     name: "문서 전체 페이지로 보기",
@@ -2587,6 +2708,194 @@ test("잘못된 이미지 붙여넣기는 안내하고 본문을 유지하며 �
   ).toContain("유지할 본문");
 });
 
+test("두 문서의 탭 제목을 입력 중 번갈아 더블클릭해도 저장·전환·닫기가 응답한다", async ({
+  page,
+  browserName,
+}, info) => {
+  test.setTimeout(60000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await save(page, taskIds[0], "유지할 첫 문서 본문");
+  await post(page, `/tasks/${taskIds[0]}/documents`, { id: randomUUID() });
+  await post(page, `/teams/${teamId}/years/2026/memos`, {
+    id: randomUUID(),
+    title: "연결 검증 메모",
+  });
+  await page.reload();
+  const otherPage = await page.context().newPage();
+  await otherPage.goto("/");
+  await otherPage.getByLabel("팀 선택").selectOption(teamId);
+  await expect(
+    otherPage.locator(`[data-cell="${taskIds[0]}:title"]`),
+  ).toBeVisible();
+  // A memo and task detail must also share the sheet's connection in one page.
+  await page
+    .getByRole("button", { name: "꼬리 메모", exact: true, expanded: false })
+    .click();
+  await expect(
+    page.getByRole("textbox", {
+      name: "연간 업무 메모 리치 편집",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await open(page);
+  await expect(detail(page).getByRole("tab")).toHaveCount(2);
+  await expect(rich(page)).toBeVisible();
+  const tabs = detail(page).getByRole("tablist");
+  const input = tabs.getByRole("textbox", { name: "문서 제목", exact: true });
+  const ime =
+    browserName === "chromium"
+      ? await page.context().newCDPSession(page)
+      : null;
+  for (const width of [1366, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (let round = 0; round < 20; round++) {
+      const index = round % 2;
+      await test.step(`${width}px에서 ${round}회차 ${index + 1}번째 탭 이름 수정`, async () => {
+        await tabs
+          .locator(".document-tab-item")
+          .nth(index)
+          .getByRole("tab")
+          .dblclick({ delay: 120 });
+        await expect(input).toBeFocused();
+        await input.fill("");
+        await input.pressSequentially(`반복 편집 ${index} `);
+        await input.fill("문서 제목을 길게 수정합니다 ".repeat(3));
+        await input.fill(`${width} 작업 ${index}-${round}`);
+        if (ime) {
+          await input.press("End");
+          for (const text of ["ㅈ", "제", "제목"])
+            await ime.send("Input.imeSetComposition", {
+              text,
+              selectionStart: text.length,
+              selectionEnd: text.length,
+            });
+        }
+      });
+    }
+    if (ime) await ime.send("Input.insertText", { text: "제목" });
+    await input.press("Enter");
+    await expect(input).toHaveCount(0);
+  }
+  await info.attach("page-errors", {
+    body: JSON.stringify(errors),
+    contentType: "application/json",
+  });
+  expect(errors).toEqual([]);
+  await close(page);
+  await open(page);
+  await expect(tabs.getByRole("tab")).toHaveCount(2);
+  await expect(rich(page)).toContainText("유지할 첫 문서 본문");
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/__test/streams")).json()).length,
+    )
+    .toBe(1);
+  const saved = await get(page, `/tasks/${taskIds[0]}/documents`);
+  expect(saved.documents.map((doc: any) => doc.title)).toEqual([
+    expect.stringContaining("390 작업 0-18"),
+    expect.stringContaining("390 작업 1-19"),
+  ]);
+});
+
+test("업무 상세와 꼬리 메모 탭은 제목 편집 높이·내용에 맞춘 폭·화살표 색상을 공유한다", async ({
+  page,
+}, info) => {
+  await post(page, `/teams/${teamId}/years/2026/memos`, {
+    id: randomUUID(),
+    title: "문서 1",
+  });
+  async function checkTabs(root: Locator, name: string) {
+    await page.evaluate(() => document.fonts.ready);
+    const header = root.locator(".document-tabs");
+    const body = root.locator(".document-page:not([hidden])").first();
+    const geometry = async () => {
+      const bar = (await header.boundingBox())!;
+      return {
+        height: bar.height,
+        bodyOffset: (await body.boundingBox())!.y - bar.y,
+      };
+    };
+    const before = await geometry();
+    await root.getByRole("tab", { name: "문서 1", exact: true }).dblclick();
+    const input = root.getByRole("textbox", { name: "문서 제목", exact: true });
+    await expect(input).toBeFocused();
+    const widths: number[] = [];
+    for (const title of ["문서 1", "짧음", "가".repeat(50), "", "공통 제목"]) {
+      await input.fill(title);
+      const width = (await input.boundingBox())!.width;
+      const expectedWidth = await root
+        .locator(".document-tab-title-measure")
+        .evaluate((el) => {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const style = getComputedStyle(el);
+          return (
+            range.getBoundingClientRect().width +
+            parseFloat(style.paddingLeft) +
+            parseFloat(style.paddingRight) +
+            parseFloat(style.borderLeftWidth) +
+            parseFloat(style.borderRightWidth)
+          );
+        });
+      expect
+        .soft(width, `${name}: '${title}' 입력 폭`)
+        .toBeCloseTo(expectedWidth, 0);
+      expect
+        .soft(await geometry(), `${name}: 제목 편집 중 높이와 본문 위치`)
+        .toEqual(before);
+      widths.push(width);
+    }
+    await header.screenshot({
+      path: info.outputPath(`${name}-editing-tab.png`),
+    });
+    await input.press("Enter");
+    await expect(
+      root.getByRole("tab", { name: "공통 제목", exact: true }),
+    ).toBeFocused();
+    expect
+      .soft(await geometry(), `${name}: 제목 저장 후 높이와 본문 위치`)
+      .toEqual(before);
+    await root
+      .getByRole("button", {
+        name: name === "task" ? "문서 추가" : "메모 추가",
+        exact: true,
+      })
+      .click();
+    await expect(root.getByRole("tab")).toHaveCount(2);
+    for (const arrow of await header
+      .locator(".document-tab-menu-trigger")
+      .all()) {
+      await page.mouse.move(0, 0);
+      const colors = () =>
+        arrow.evaluate((el) => {
+          const style = getComputedStyle(el);
+          return { color: style.color, background: style.backgroundColor };
+        });
+      const beforeHover = await colors();
+      await arrow.hover();
+      expect
+        .soft(await colors(), `${name}: 화살표 hover 색상`)
+        .toEqual(beforeHover);
+    }
+    return widths;
+  }
+  await open(page);
+  const taskWidths = await checkTabs(detail(page), "task");
+  await close(page);
+  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  await memos.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toBeVisible();
+  const memoWidths = await checkTabs(memos, "memo");
+  for (let index = 0; index < taskWidths.length; index++)
+    expect
+      .soft(taskWidths[index], "팝업과 메모의 동일 제목 입력 폭")
+      .toBeCloseTo(memoWidths[index], 0);
+});
+
 test("탭 안의 제목 편집은 한글 조합·취소·저장 실패와 닫기 중 입력을 보존한다", async ({
   page,
 }) => {
@@ -2672,7 +2981,7 @@ test("탭 안의 제목 편집은 한글 조합·취소·저장 실패와 닫기
   ).toBeFocused();
   expect(writes).toBe(1);
   await detail(page)
-    .getByRole("button", { name: "문서 메뉴", exact: true })
+    .getByRole("button", { name: "한글 문서 메뉴", exact: true })
     .click();
   await detail(page)
     .getByRole("menuitem", { name: "문서 이름 변경", exact: true })
@@ -2734,11 +3043,22 @@ test("탭 안의 제목 편집은 한글 조합·취소·저장 실패와 닫기
 
 test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫히고 상세는 유지된다", async ({
   page,
+  browserName,
 }) => {
   await save(page, taskIds[0], "메뉴 밖의 본문");
+  const secondId = randomUUID();
+  await post(page, `/tasks/${taskIds[0]}/documents`, {
+    id: secondId,
+    title: "둘째 문서",
+  });
   await open(page);
-  const trigger = detail(page).getByRole("button", {
-    name: "문서 메뉴",
+  const tabs = detail(page).getByRole("tablist");
+  await expect(tabs.getByRole("button", { name: / 메뉴$/ })).toHaveCount(2);
+  await expect(
+    detail(page).locator(".document-tab-actions [aria-haspopup=menu]"),
+  ).toHaveCount(0);
+  const trigger = tabs.getByRole("button", {
+    name: "문서 1 메뉴",
     exact: true,
   });
   const menu = detail(page).getByRole("menu", {
@@ -2749,7 +3069,10 @@ test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫�
     name: "문서 이름 변경",
     exact: true,
   });
-  await trigger.click();
+  await tabs.getByRole("tab", { name: "문서 1", exact: true }).focus();
+  await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(rename).toBeFocused();
   await rich(page).getByText("메뉴 밖의 본문", { exact: true }).click();
   await expect(menu).toHaveCount(0);
@@ -2779,6 +3102,43 @@ test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫�
   await expect(menu).toBeVisible();
   await trigger.click();
   await expect(menu).toHaveCount(0);
+  // An inactive tab's menu saves the current draft, then targets its own document.
+  await raw(page);
+  await source(page).fill("메뉴 이동 직전 입력");
+  await tabs
+    .getByRole("button", { name: "둘째 문서 메뉴", exact: true })
+    .click();
+  await expect(
+    tabs.getByRole("tab", { name: "둘째 문서", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+  ).toBe("메뉴 이동 직전 입력");
+  await rename.click();
+  const title = detail(page).getByRole("textbox", {
+    name: "문서 제목",
+    exact: true,
+  });
+  await title.fill("이름 바꾼 둘째");
+  await title.press("Enter");
+  await tabs.getByRole("tab", { name: "문서 1", exact: true }).click();
+  await tabs
+    .getByRole("button", { name: "이름 바꾼 둘째 메뉴", exact: true })
+    .click();
+  await menu.getByRole("menuitem", { name: "문서 삭제", exact: true }).click();
+  await expect(detail(page).getByRole("alert")).toContainText(
+    "‘이름 바꾼 둘째’ 문서를 삭제할까요?",
+  );
+  await detail(page)
+    .getByRole("button", { name: "문서 삭제", exact: true })
+    .click();
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await expect(source(page)).toHaveValue("메뉴 이동 직전 입력");
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents`)).documents.map(
+      (doc: { id: string }) => doc.id,
+    ),
+  ).toEqual(["main"]);
 });
 
 test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막으며 도구는 같은 줄에 남는다", async ({
@@ -2866,6 +3226,39 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     })
     .toBe(true);
   await expect(controls).toHaveCount(1);
+  const lastMenu = strip.getByRole("button", {
+    name: "설계 검토와 회의 기록 9 메뉴",
+    exact: true,
+  });
+  await lastMenu.click();
+  const popup = detail(page).getByRole("menu", {
+    name: "문서 메뉴",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  const popupBox = (await popup.boundingBox())!;
+  expect(popupBox.x).toBeGreaterThanOrEqual(0);
+  expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(390);
+  for (const item of await popup.getByRole("menuitem").all()) {
+    expect(
+      await item.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return el.contains(
+          document.elementFromPoint(
+            box.x + box.width / 2,
+            box.y + box.height / 2,
+          ),
+        );
+      }),
+    ).toBe(true);
+  }
+  await detail(page).screenshot({
+    path: info.outputPath("document-tab-menu-mobile.png"),
+  });
+  await strip.evaluate((el) => {
+    el.scrollLeft = 0;
+  });
+  await expect(popup).toHaveCount(0);
   await last.press("F2");
   const input = header.getByRole("textbox", { name: "문서 제목", exact: true });
   await input.fill("긴 제목을 탭에서 바로 수정합니다 ".repeat(3));
@@ -2962,4 +3355,320 @@ test("빈 문서 안내를 열어 둔 상태에서도 다른 사용자의 첫 �
   await expect(rich(page)).toContainText("다른 사용자가 처음 작성한 본문", {
     timeout: 3000,
   });
+});
+
+test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고 첫 탭 종료·재접속을 복구한다", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await save(page, taskIds[0], "공유 첫 본문");
+  await save(page, taskIds[1], "다른 업무 본문");
+  const tabs = [page];
+  const connections = async () =>
+    await (await page.request.get("/__test/streams")).json();
+  const cell = (tab: Page) => tab.locator(`[data-cell="${taskIds[0]}:title"]`);
+  for (let i = 1; i < 8; i++) {
+    const tab = await page.context().newPage();
+    tabs.push(tab);
+    await tab.goto("/");
+    await tab.getByLabel("팀 선택").selectOption(teamId);
+    await expect(cell(tab)).toBeVisible();
+    if (i === 1)
+      await expect.poll(async () => (await connections()).length).toBe(1);
+  }
+  await expect
+    .poll(async () => (await connections())[0]?.streams.length)
+    .toBe(2);
+  await open(tabs[1], taskIds[0]);
+  await open(tabs[2], taskIds[1]);
+  await expect(rich(tabs[1])).toContainText("공유 첫 본문");
+  await expect(rich(tabs[2])).toContainText("다른 업무 본문");
+  await open(tabs[3], taskIds[0]);
+  await expect
+    .poll(async () => (await connections())[0]?.streams.length)
+    .toBe(6);
+  await raw(tabs[1]);
+  await source(tabs[1]).fill("여덟 탭에서도 저장되는 본문");
+  await expect(rich(tabs[3])).toContainText("여덟 탭에서도 저장되는 본문");
+  await expect(rich(tabs[2])).toHaveText("다른 업무 본문");
+  await tabs[1].getByRole("tab", { name: "문서 1", exact: true }).dblclick();
+  const title = tabs[1].getByRole("textbox", {
+    name: "문서 제목",
+    exact: true,
+  });
+  await title.fill("여러 탭 제목 변경");
+  await title.press("Enter");
+  await expect(
+    tabs[3].getByRole("tab", { name: "여러 탭 제목 변경", exact: true }),
+  ).toBeVisible();
+  await page.close(); // The page which originally created the worker is gone.
+  await tabs[2].close(); // Its private document subscriptions must disappear.
+  await expect
+    .poll(async () => (await connections())[0]?.streams.length)
+    .toBe(4);
+  const changeCell = async (value: string) => {
+    const data = await get(tabs[1], `/tasks?teamId=${teamId}&year=2026`);
+    await post(tabs[1], "/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [
+        {
+          taskId: taskIds[0],
+          key: "title",
+          value,
+          expectedVersion: data.tasks.find(
+            (task: any) => task.id === taskIds[0],
+          ).cells.title.version,
+        },
+      ],
+    });
+  };
+  await changeCell("첫 탭 종료 후 실시간 변경");
+  await expect(cell(tabs[7])).toHaveText("첫 탭 종료 후 실시간 변경");
+  // Periodic full polling must not hide a broken replay connection.
+  await tabs[7].route("**/api/tasks?**", (route) => route.abort());
+  await tabs[1].request.post("/__test/streams/disconnect");
+  await changeCell("연결 단절 중 변경");
+  // Development proxies may keep the downstream open; the broker also detects
+  // missing server heartbeats, independently of the worker's page heartbeat.
+  await expect
+    .poll(async () => (await connections()).length, { timeout: 50000 })
+    .toBe(1);
+  await expect(cell(tabs[7])).toHaveText("연결 단절 중 변경");
+  // Page lifecycle cleanup and return preserve subscriptions and cursors.
+  await tabs[7].evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    ),
+  );
+  await changeCell("복귀 시 복구할 변경");
+  await tabs[7].evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    ),
+  );
+  await expect(cell(tabs[7])).toHaveText("복귀 시 복구할 변경");
+  for (const tab of tabs.filter((tab) => !tab.isClosed())) await tab.close();
+  await expect.poll(async () => (await connections()).length).toBe(0);
+});
+
+test("SharedWorker를 사용할 수 없어도 한 페이지의 문서 저장과 실시간 연결은 유지한다", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "SharedWorker", { value: undefined });
+  });
+  await page.reload();
+  await save(page, taskIds[0], "폴백 기존 본문");
+  await open(page);
+  await raw(page);
+  await source(page).fill("폴백에서도 저장");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toBe("폴백에서도 저장");
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/__test/streams")).json()).length,
+    )
+    .toBe(1);
+  await close(page);
+});
+
+test("SharedWorker가 종료되어도 화면 복귀 시 연결과 본문 동기화를 복구한다", async ({
+  page,
+  browser,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "실제 worker 종료는 CDP로 검증한다");
+  await save(page, taskIds[0], "종료 전 본문");
+  await open(page);
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/__test/streams")).json()).length,
+    )
+    .toBe(1);
+  const pageSession = await page.context().newCDPSession(page);
+  const { targetInfo } = await pageSession.send("Target.getTargetInfo");
+  const session = await browser.newBrowserCDPSession();
+  const { targetInfos } = await session.send("Target.getTargets");
+  const worker = targetInfos.find(
+    (target: any) =>
+      target.type === "shared_worker" &&
+      target.browserContextId === targetInfo.browserContextId &&
+      target.url.includes("event-stream.worker"),
+  );
+  expect(worker).toBeDefined();
+  expect(
+    (await session.send("Target.closeTarget", { targetId: worker!.targetId }))
+      .success,
+  ).toBeTruthy();
+  await save(page, taskIds[0], "종료 중 변경 본문", 1);
+  await page.bringToFront();
+  // Simulate the elapsed heartbeat deadline without a 45-second test sleep.
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 46000;
+    document.dispatchEvent(new Event("visibilitychange"));
+    Date.now = now;
+  });
+  await expect(rich(page)).toContainText("종료 중 변경 본문");
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/__test/streams")).json()).length,
+    )
+    .toBe(1);
+  await session.detach();
+  await pageSession.detach();
+});
+
+test("다른 탭의 상세 열기·문서 전환은 현재 탭의 시트 재조회와 본문 재전송을 만들지 않는다", async ({
+  page,
+}, info) => {
+  await save(page, taskIds[0], "관찰할 본문");
+  await save(page, taskIds[1], "전환할 본문");
+  const second = randomUUID();
+  await post(page, `/tasks/${taskIds[1]}/documents`, {
+    id: second,
+    title: "전환 문서",
+  });
+  const peer = await page.context().newPage();
+  await peer.addInitScript(() => {
+    // Isolate subscription-triggered requests from the independent safety poll.
+    const interval = window.setInterval.bind(window);
+    window.setInterval = (handler, timeout, ...args) =>
+      interval(timeout === 7000 ? () => {} : handler, timeout, ...args);
+    const Native = window.SharedWorker;
+    (window as any).__streamObservation = { documents: [], opens: 0 };
+    window.SharedWorker = class extends Native {
+      constructor(...args: ConstructorParameters<typeof SharedWorker>) {
+        super(...args);
+        this.port.addEventListener("message", (event) => {
+          const message = event.data;
+          const observation = (window as any).__streamObservation;
+          if (message.kind === "event" && message.event === "document")
+            observation.documents.push(message);
+          if (message.kind === "state" && message.readyState === 1)
+            observation.opens++;
+        });
+      }
+    };
+  });
+  await peer.goto("/");
+  await peer.getByLabel("팀 선택").selectOption(teamId);
+  await open(peer, taskIds[0]);
+  await expect(rich(peer)).toHaveText("관찰할 본문");
+  const observed = () =>
+    peer.evaluate(() => (window as any).__streamObservation);
+  await expect
+    .poll(async () => (await observed()).documents.length)
+    .toBeGreaterThan(0);
+  await peer.waitForTimeout(500);
+  await peer.evaluate(() => {
+    (window as any).__streamObservation.documents = [];
+  });
+  const requests: string[] = [];
+  peer.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      request.method() === "GET" &&
+      ["/api/tasks", "/api/bootstrap", "/api/reports"].includes(path)
+    )
+      requests.push(path);
+  });
+  async function churn(action: () => Promise<void>) {
+    const before = (await observed()).opens;
+    await action();
+    await expect
+      .poll(async () => (await observed()).opens)
+      .toBeGreaterThan(before);
+    await peer.waitForTimeout(500);
+  }
+  await churn(() => open(page, taskIds[1]));
+  await churn(async () => {
+    await detail(page)
+      .getByRole("tab", { name: "전환 문서", exact: true })
+      .click();
+    await expect(
+      detail(page).getByRole("tab", { name: "전환 문서", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+  await churn(() => close(page));
+  await churn(() => open(page, taskIds[0])); // A new listener to the peer's existing body channel.
+  await close(page);
+  await peer.waitForTimeout(500);
+  const result = {
+    requests,
+    documentFrames: (await observed()).documents.length,
+  };
+  await info.attach("two-tab-network.json", {
+    body: JSON.stringify(result, null, 2),
+    contentType: "application/json",
+  });
+  expect(result).toEqual({ requests: [], documentFrames: 0 });
+  await expect(rich(peer)).toHaveText("관찰할 본문");
+  await peer.close();
+});
+
+test("문서 메뉴를 여는 저장 대기 중 원격 삭제되어도 패널이 유지된다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "삭제 경합 전 본문");
+  const second = randomUUID();
+  const collection = `/tasks/${taskIds[0]}/documents`;
+  await post(page, collection, { id: second, title: "원격 삭제할 문서" });
+  await open(page);
+  await raw(page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let saving = false;
+  await page.route(`**/api${collection}/main`, async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    saving = true;
+    await gate;
+    await route.continue();
+  });
+  try {
+    await source(page).fill("삭제 경합 중 보존할 본문");
+    await detail(page)
+      .getByRole("button", { name: "원격 삭제할 문서 메뉴", exact: true })
+      .click();
+    await expect.poll(() => saving).toBe(true);
+    const removed = await page.request.delete(`/api${collection}/${second}`, {
+      headers,
+      data: { expectedRevision: 0 },
+    });
+    expect(removed.ok(), await removed.text()).toBeTruthy();
+    await expect(
+      detail(page).getByRole("tab", { name: "원격 삭제할 문서", exact: true }),
+    ).toHaveCount(0);
+    release();
+    await expect
+      .poll(async () => (await get(page, `${collection}/main`)).markdown)
+      .toBe("삭제 경합 중 보존할 본문");
+    await detail(page)
+      .getByRole("tab", { name: "문서 1", exact: true })
+      .click();
+    await expect(source(page)).toHaveValue("삭제 경합 중 보존할 본문");
+    await detail(page)
+      .getByRole("button", { name: "문서 1 메뉴", exact: true })
+      .click();
+    await expect(
+      detail(page).getByRole("menu", { name: "문서 메뉴", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await close(page);
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+  }
 });

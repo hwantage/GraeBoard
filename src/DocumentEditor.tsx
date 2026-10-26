@@ -1,4 +1,9 @@
 import {
+  EventStream,
+  retryableRejection,
+  streamErrorStatus,
+} from "./event-stream";
+import {
   Component,
   forwardRef,
   lazy,
@@ -422,7 +427,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     }, [path, props.emptyUntilSaved, loadAttempt]);
     useEffect(() => {
       if (!live || !loaded) return;
-      const events = new EventSource(`/api${path}/events`);
+      const events = new EventStream(`/api${path}/events`);
       events.addEventListener("document", (event: MessageEvent) => {
         try {
           receive.current(JSON.parse(event.data));
@@ -430,12 +435,20 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           /* reconnect sends a fresh snapshot */
         }
       });
-      events.addEventListener("access-revoked", () => {
+      const denied = () => {
         events.close();
         blocked.current = true;
         setError(
           "문서 접근 권한이 변경되었거나 문서가 삭제되었습니다. 입력은 보존됩니다.",
         );
+      };
+      events.addEventListener("access-revoked", (event: MessageEvent) => {
+        // Session loss uses the existing save/reauthentication flow. Preserve
+        // editing and the subscription held by this mounted document.
+        if (streamErrorStatus(event.data) !== 401) denied();
+      });
+      events.addEventListener("rejected", (event: MessageEvent) => {
+        if (!retryableRejection(event.data)) denied();
       });
       return () => events.close();
     }, [path, live, loaded]);

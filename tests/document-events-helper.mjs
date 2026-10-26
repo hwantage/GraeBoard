@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 
-export async function documentStream(t, baseURL, path, token) {
+export async function documentStream(
+  t,
+  baseURL,
+  path,
+  token,
+  query = "",
+  body,
+) {
   const controller = new AbortController();
   t.after(() => controller.abort());
-  const response = await fetch(`${baseURL}${path}/events`, {
+  const response = await fetch(`${baseURL}${path}/events${query}`, {
     signal: controller.signal,
-    headers: { Cookie: `weekly_session=${token}`, "Accept-Encoding": "gzip" },
+    ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+    headers: {
+      Cookie: `weekly_session=${token}`,
+      "Accept-Encoding": "gzip",
+      ...(body
+        ? {
+            "Content-Type": "application/json",
+            "X-Requested-With": "WeeklyPlan",
+          }
+        : {}),
+    },
   });
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-encoding"), null);

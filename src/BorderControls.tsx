@@ -45,25 +45,29 @@ export default function BorderControls({
           )}
         </Select>
       </label>
-      <label>
-        색상
-        <input
-          type="color"
-          aria-label={`${label} 색상`}
-          value={defaultSelected ? "#e7eded" : border.color}
-          disabled={defaultSelected}
-          onChange={(e) => onChange({ ...border, color: e.target.value })}
-        />
-      </label>
-      <span
-        className="border-line-preview"
-        aria-hidden="true"
-        style={{
-          borderBottom: defaultSelected
-            ? "1px solid #e7eded"
-            : borderCSS(border),
-        }}
-      />
+      {(defaultSelected || border.style !== "none") && (
+        <>
+          <label>
+            색상
+            <input
+              type="color"
+              aria-label={`${label} 색상`}
+              value={defaultSelected ? "#e7eded" : border.color}
+              disabled={defaultSelected}
+              onChange={(e) => onChange({ ...border, color: e.target.value })}
+            />
+          </label>
+          <span
+            className="border-line-preview"
+            aria-hidden="true"
+            style={{
+              borderBottom: defaultSelected
+                ? "1px solid #e7eded"
+                : borderCSS(border),
+            }}
+          />
+        </>
+      )}
     </fieldset>
   );
 }

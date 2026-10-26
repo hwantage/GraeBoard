@@ -413,6 +413,7 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
     );
   }
   return {
+    app,
     db,
     dir,
     path,
@@ -429,6 +430,119 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
   };
 }
 
+test("팀원은 담당하지 않은 연간 업무와 문서를 공동 편집하고 열람자·외부인은 수정하지 못한다", async (t) => {
+  const f = await fixture(t);
+  const task = f.unassigned;
+  const batch = {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      ["title", "함께 수정한 업무"],
+      ["owner", f.people.supporter.id],
+      ["supporters", [f.people.lead.id]],
+      ["2026-10-05", "공동 진행 내용"],
+    ].map(([key, value]) => ({
+      taskId: task.id,
+      key,
+      value,
+      expectedVersion: task.cells[key]?.version ?? 0,
+    })),
+  };
+  for (const role of ["viewer", "outsider"])
+    assert.equal(
+      (await f.req("/cells/batch", "POST", batch, role)).status,
+      403,
+    );
+  assert.equal(
+    (await f.req("/cells/batch", "POST", batch, "member")).status,
+    200,
+  );
+  const changed = getTask(f.db, task.id);
+  for (const { key, value } of batch.changes)
+    assert.deepEqual(changed.cells[key].value, value);
+
+  const base = `/tasks/${task.id}/documents`;
+  const documentId = randomUUID();
+  const docPath = `${base}/${documentId}`;
+  for (const role of ["viewer", "outsider"])
+    assert.equal(
+      (await f.req(base, "POST", { id: documentId, title: "공동 문서" }, role))
+        .status,
+      403,
+    );
+  assert.equal(
+    (
+      await f.req(
+        base,
+        "POST",
+        { id: documentId, title: "공동 문서" },
+        "member",
+      )
+    ).status,
+    201,
+  );
+  const content = {
+    markdown: "# 다른 담당자의 업무에도 함께 기록",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  };
+  for (const role of ["viewer", "outsider"])
+    assert.equal((await f.req(docPath, "PUT", content, role)).status, 403);
+  assert.equal((await f.req(docPath, "PUT", content, "member")).status, 200);
+  assert.equal((await f.req(docPath)).data.markdown, content.markdown);
+  assert.equal(
+    (
+      await f.req(
+        docPath,
+        "PATCH",
+        { title: "함께 쓴 문서", expectedTitle: "공동 문서" },
+        "member",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.req(docPath, "DELETE", { expectedRevision: 1 }, "member")).status,
+    200,
+  );
+
+  const saved = getTask(f.db, task.id);
+  assert.equal(
+    (
+      await f.req(
+        `/tasks/${task.id}`,
+        "PATCH",
+        { updatedAt: saved.updatedAt, years: [2026, 2027] },
+        "member",
+      )
+    ).status,
+    200,
+  );
+  const deletion = { updatedAt: getTask(f.db, task.id).updatedAt };
+  for (const role of ["viewer", "outsider"])
+    assert.equal(
+      (await f.req(`/tasks/${task.id}`, "DELETE", deletion, role)).status,
+      403,
+    );
+  assert.equal(
+    (await f.req(`/tasks/${task.id}`, "DELETE", deletion, "member")).status,
+    200,
+  );
+  const restore = { updatedAt: getTask(f.db, task.id).updatedAt };
+  for (const role of ["viewer", "outsider"])
+    assert.equal(
+      (await f.req(`/tasks/${task.id}/restore`, "POST", restore, role)).status,
+      403,
+    );
+  assert.equal(
+    (await f.req(`/tasks/${task.id}/restore`, "POST", restore, "member"))
+      .status,
+    200,
+  );
+  assert.equal(getTask(f.db, task.id).deletedAt, null);
+  assert.equal(getTask(f.db, task.id).cells.title.value, "함께 수정한 업무");
+});
+
 test("문서 API: 권한·UTF-8 크기·자료형·버전·재시도·목록 메타데이터", async (t) => {
   const f = await fixture(t),
     route = `/tasks/${f.task.id}/document`;
@@ -444,10 +558,6 @@ test("문서 API: 권한·UTF-8 크기·자료형·버전·재시도·목록 메
   assert.equal((await f.req(route, "GET", undefined, "outsider")).status, 403);
   assert.equal((await f.save("금지", 0, "viewer")).status, 403);
   assert.equal((await f.save("금지", 0, "outsider")).status, 403);
-  assert.equal(
-    (await f.save("금지", 0, "member", f.unassigned.id)).status,
-    403,
-  );
   for (const markdown of [
     null,
     {},
@@ -881,7 +991,6 @@ test("이미지 업로드는 권한·실제 형식·크기를 검사하고 팀�
   };
   for (const role of ["viewer", "outsider"])
     assert.equal((await upload(role)).status, 403);
-  assert.equal((await upload("member", f.unassigned.id)).status, 403);
   assert.equal((await upload(null)).status, 401);
   assert.equal(
     existsSync(f.images),
@@ -903,6 +1012,7 @@ test("이미지 업로드는 권한·실제 형식·크기를 검사하고 팀�
   const first = await upload();
   assert.equal(first.status, 201);
   const url = first.data.url;
+  assert.equal((await upload("member", f.unassigned.id)).data.url, url);
   assert.match(
     url,
     new RegExp(`^/api/document-images/${f.teamId}/[a-f0-9]{64}\\.webp$`),
@@ -2074,8 +2184,14 @@ test("연간 메모는 팀·연도별로 분리하고 권한·충돌·재시도�
   assert.equal(conflict.status, 409);
   assert.equal(conflict.data.details.current.markdown, save.markdown);
   assert.equal(
-    (await f.req(path, "PATCH", { title: "회의록", expectedTitle: "메모 1" }))
-      .status,
+    (
+      await f.req(
+        path,
+        "PATCH",
+        { title: "회의록", expectedTitle: "메모 1" },
+        "supporter",
+      )
+    ).status,
     200,
   );
   assert.equal(
@@ -2099,7 +2215,7 @@ test("연간 메모는 팀·연도별로 분리하고 권한·충돌·재시도�
     403,
   );
   assert.equal(
-    (await f.req(path, "DELETE", { expectedRevision: 1 })).status,
+    (await f.req(path, "DELETE", { expectedRevision: 1 }, "supporter")).status,
     200,
   );
   assert.equal((await f.req(path)).status, 404);
@@ -2615,74 +2731,94 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
   );
 });
 
-for (const kind of ["task", "report-task", "memo", "report-memo"]) {
-  test(`${kind} 문서 SSE는 별도 문서 격리·UUID/숫자 순서·재연결·권한 회수를 보장한다`, async (t) => {
-    const { documentStream } = await import("./document-events-helper.mjs");
-    const f = await fixture(t);
-    const reportId = await f.report();
-    const memoId = randomUUID();
-    const collection =
-      kind === "memo"
-        ? `/teams/${f.teamId}/years/2026/memos`
-        : `/reports/${reportId}/memos`;
-    if (kind.endsWith("memo"))
+for (const transport of ["direct", "shared"])
+  for (const kind of ["task", "report-task", "memo", "report-memo"]) {
+    test(`${transport} ${kind} 문서 SSE는 별도 문서 격리·UUID/숫자 순서·재연결·권한 회수를 보장한다`, async (t) => {
+      const { documentStream } = await import("./document-events-helper.mjs");
+      const f = await fixture(t);
+      const reportId = await f.report();
+      const memoId = randomUUID();
+      const collection =
+        kind === "memo"
+          ? `/teams/${f.teamId}/years/2026/memos`
+          : `/reports/${reportId}/memos`;
+      if (kind.endsWith("memo"))
+        assert.equal(
+          (await f.req(collection, "POST", { id: memoId })).status,
+          201,
+        );
+      const path =
+        kind === "task"
+          ? `/tasks/${f.task.id}/documents/main`
+          : kind === "report-task"
+            ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
+            : `${collection}/${memoId}`;
       assert.equal(
-        (await f.req(collection, "POST", { id: memoId })).status,
-        201,
+        (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
+        403,
       );
-    const path =
-      kind === "task"
-        ? `/tasks/${f.task.id}/documents/main`
-        : kind === "report-task"
+      const connect = async () => {
+        if (transport === "direct")
+          return documentStream(t, f.baseURL, path, f.people.viewer.token);
+        const stream = await documentStream(
+          t,
+          f.baseURL,
+          "",
+          f.people.viewer.token,
+          "",
+          { streams: [{ id: 1, path: `/api${path}/events` }] },
+        );
+        return {
+          close: stream.close,
+          async next() {
+            const { event, data } = await stream.next();
+            assert.equal(event, "stream");
+            assert.equal(data.id, 1);
+            return { event: data.event, data: JSON.parse(data.data) };
+          },
+        };
+      };
+      const stream = await connect();
+      const initial = (await stream.next()).data;
+      const first = await f.req(path, "PUT", {
+        markdown: "첫 본문",
+        expectedRevision: initial.revision,
+        operationId: randomUUID(),
+      });
+      assert.equal(first.status, 200);
+      const remote = (await stream.next()).data;
+      assert.equal(remote.markdown, "첫 본문");
+      assert.ok(remote.sync.sequence > initial.sync.sequence);
+      assert.deepEqual(remote.sync, first.data.sync);
+      assert.equal(
+        typeof remote.revision,
+        kind === "report-task" ? "string" : "number",
+      );
+      // Copies are isolated even where their source task/document IDs match.
+      const otherPath =
+        kind === "task"
           ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
-          : `${collection}/${memoId}`;
-    assert.equal(
-      (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
-      403,
-    );
-    const connect = () =>
-      documentStream(t, f.baseURL, path, f.people.viewer.token);
-    const stream = await connect();
-    const initial = (await stream.next()).data;
-    const first = await f.req(path, "PUT", {
-      markdown: "첫 본문",
-      expectedRevision: initial.revision,
-      operationId: randomUUID(),
+          : `/tasks/${f.task.id}/documents/main`;
+      assert.equal((await f.req(otherPath)).data.markdown, "");
+      stream.close();
+      const second = await f.req(path, "PUT", {
+        markdown: "재연결 본문",
+        expectedRevision: remote.revision,
+        operationId: randomUUID(),
+      });
+      const reconnected = await connect();
+      assert.equal((await reconnected.next()).data.markdown, "재연결 본문");
+      f.db
+        .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+        .run(f.teamId, f.people.viewer.id);
+      await f.req(path, "PUT", {
+        markdown: "비공개",
+        expectedRevision: second.data.revision,
+        operationId: randomUUID(),
+      });
+      assert.equal((await reconnected.next()).event, "access-revoked");
     });
-    assert.equal(first.status, 200);
-    const remote = (await stream.next()).data;
-    assert.equal(remote.markdown, "첫 본문");
-    assert.ok(remote.sync.sequence > initial.sync.sequence);
-    assert.deepEqual(remote.sync, first.data.sync);
-    assert.equal(
-      typeof remote.revision,
-      kind === "report-task" ? "string" : "number",
-    );
-    // Copies are isolated even where their source task/document IDs match.
-    const otherPath =
-      kind === "task"
-        ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
-        : `/tasks/${f.task.id}/documents/main`;
-    assert.equal((await f.req(otherPath)).data.markdown, "");
-    stream.close();
-    const second = await f.req(path, "PUT", {
-      markdown: "재연결 본문",
-      expectedRevision: remote.revision,
-      operationId: randomUUID(),
-    });
-    const reconnected = await connect();
-    assert.equal((await reconnected.next()).data.markdown, "재연결 본문");
-    f.db
-      .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
-      .run(f.teamId, f.people.viewer.id);
-    await f.req(path, "PUT", {
-      markdown: "비공개",
-      expectedRevision: second.data.revision,
-      operationId: randomUUID(),
-    });
-    assert.equal((await reconnected.next()).event, "access-revoked");
-  });
-}
+  }
 
 test("팀·사본·문서 목록 변경 알림은 권한을 검사하고 실패와 개인 보기는 제외한다", async (t) => {
   const { documentStream } = await import("./document-events-helper.mjs");
@@ -2744,3 +2880,521 @@ test("팀·사본·문서 목록 변경 알림은 권한을 검사하고 실패�
   });
   assert.equal((await report.next()).event, "document");
 });
+
+test(`POST 공유 SSE는 셀·목록·본문을 분리 전달하고 커서 복구·개별 권한 회수를 유지한다`, async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  const docPath = `/tasks/${f.task.id}/documents/main`;
+  await f.save("공유 연결 본문");
+  const snapshot = await f.req(`/tasks?teamId=${f.teamId}&year=2026`);
+  const subscriptions = [
+    {
+      id: 1,
+      path: `/api/cells/events?teamId=${f.teamId}&year=2026&after=${snapshot.headers.get("X-Cell-Event-ID")}`,
+    },
+    { id: 2, path: `/api/tasks/${f.task.id}/documents/events` },
+    { id: 3, path: `/api${docPath}/events` },
+    { id: 4, path: `/api/teams/${randomUUID()}/events` },
+  ];
+  const connect = () =>
+    documentStream(t, f.baseURL, "", f.people.viewer.token, "", {
+      streams: subscriptions,
+    });
+  const stream = await connect();
+  const initial = [];
+  for (let i = 0; i < 5; i++) initial.push(await stream.next());
+  assert.deepEqual(
+    initial.map(({ event, data }) => [event, data.id, data.event]),
+    [
+      ["stream", 1, "ready"],
+      ["stream", 2, "document"],
+      ["stream", 3, "document"],
+      ["stream", 4, "access-revoked"],
+      ["closed", 4, undefined],
+    ],
+  );
+  assert.equal(JSON.parse(initial[2].data.data).markdown, "공유 연결 본문");
+  const rename = await f.req(docPath, "PATCH", {
+    title: "변경 제목",
+    expectedTitle: "문서 1",
+  });
+  assert.equal(rename.status, 200);
+  const list = (await stream.next()).data;
+  assert.equal(list.id, 2);
+  assert.equal(list.event, "document");
+  const changeCell = (value) =>
+    f.req("/cells/batch", "POST", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [
+        {
+          taskId: f.task.id,
+          key: "title",
+          value,
+          expectedVersion: getTask(f.db, f.task.id).cells.title.version,
+        },
+      ],
+    });
+  assert.equal((await changeCell("연결 중 변경")).status, 200);
+  const cell = (await stream.next()).data;
+  assert.equal(cell.id, 1);
+  assert.equal(cell.event, "cells");
+  assert.equal(unpack(JSON.parse(cell.data)).cells[0].value, "연결 중 변경");
+  stream.close();
+  assert.equal((await changeCell("연결 단절 중 변경")).status, 200);
+  subscriptions[0].lastEventId = cell.lastEventId;
+  subscriptions.pop();
+  const reconnected = await connect();
+  const replayed = (await reconnected.next()).data;
+  assert.equal(replayed.event, "cells");
+  assert.equal(
+    unpack(JSON.parse(replayed.data)).cells[0].value,
+    "연결 단절 중 변경",
+  );
+  assert.notEqual(replayed.lastEventId, cell.lastEventId);
+  assert.equal((await reconnected.next()).data.event, "ready");
+  assert.equal((await reconnected.next()).data.id, 2);
+  assert.equal((await reconnected.next()).data.id, 3);
+  f.db
+    .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
+    .run(f.teamId, f.people.viewer.id);
+  assert.equal((await f.save("회수 이후 비공개 본문", 1)).status, 200);
+  const denied = await reconnected.next();
+  assert.equal(denied.data.id, 3);
+  assert.equal(denied.data.event, "access-revoked");
+  assert.deepEqual(JSON.parse(denied.data.data), { status: 403 });
+  assert.equal((await reconnected.next()).event, "closed");
+  assert.equal((await changeCell("회수 이후 비공개 셀")).status, 200);
+  const cellDenied = (await reconnected.next()).data;
+  assert.equal(cellDenied.event, "access-revoked");
+  assert.deepEqual(JSON.parse(cellDenied.data), { status: 403 });
+  assert.equal((await reconnected.next()).event, "closed");
+});
+
+test("공유 SSE는 인증과 구독 경로·중복·개수 제한을 검사한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  const valid = { id: 1, path: `/api/tasks/${f.task.id}/documents/events` };
+  const request = (streams, role = "lead") =>
+    f.req("/events", "POST", { streams }, role);
+  assert.equal((await request([valid], null)).status, 401);
+  for (const streams of [
+    [],
+    [valid, valid],
+    Array.from({ length: 257 }, (_, id) => ({ ...valid, id })),
+    [{ id: 1, path: "/api/bootstrap" }],
+    [{ id: 1, path: "/api/events" }],
+    [{ id: 1, path: "https://example.com/api/events" }],
+    [{ ...valid, lastEventId: "a".repeat(129) }],
+    [{ id: 1, path: "/api/teams/%E0%A4%A/events" }],
+  ])
+    assert.equal((await request(streams)).status, 400);
+  const denied = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.outsider.token,
+    "",
+    { streams: [valid] },
+  );
+  assert.equal((await denied.next()).data.event, "access-revoked");
+  assert.equal((await denied.next()).event, "closed");
+  await assert.rejects(denied.next(), /stream ended before event/);
+});
+
+test("POST 공유 SSE는 긴 구독 목록을 URL 없이 받고 인증·출처·개수 제한을 유지한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  const subscriptions = Array.from({ length: 70 }, (_, id) => ({
+    id,
+    path: `/api/tasks/${f.task.id}/documents/events?unused=${"x".repeat(100)}`,
+  }));
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.viewer.token,
+    "",
+    { streams: subscriptions },
+  );
+  for (let id = 0; id < subscriptions.length; id++) {
+    const message = await stream.next();
+    assert.equal(message.event, "stream");
+    assert.equal(message.data.id, id);
+    assert.equal(message.data.event, "document");
+  }
+  assert.equal(
+    (await f.req("/events", "POST", { streams: subscriptions }, null)).status,
+    401,
+  );
+  assert.equal(
+    (
+      await f.req("/events", "POST", { streams: subscriptions }, "lead", {
+        "X-Requested-With": "",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.req("/events", "POST", {
+        streams: Array.from({ length: 257 }, (_, id) => ({
+          ...subscriptions[0],
+          id,
+        })),
+      })
+    ).status,
+    400,
+  );
+});
+
+test("공유 SSE의 큰 초기 본문은 버퍼를 비우며 모두 전달하고 연결 중단 후 구독을 정리한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  const markdown = "가".repeat(85000);
+  await f.save(markdown);
+  const subscriptions = Array.from({ length: 70 }, (_, id) => ({
+    id,
+    path: `/api/tasks/${f.task.id}/documents/main/events`,
+  }));
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.viewer.token,
+    "",
+    { streams: subscriptions },
+  );
+  for (let id = 0; id < subscriptions.length; id++) {
+    const message = await stream.next();
+    assert.equal(message.event, "stream");
+    assert.equal(message.data.id, id);
+    assert.equal(JSON.parse(message.data.data).markdown, markdown);
+  }
+  stream.close();
+  const reconnect = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.viewer.token,
+    "",
+    { streams: [subscriptions[0]] },
+  );
+  assert.equal(
+    JSON.parse((await reconnect.next()).data.data).markdown,
+    markdown,
+  );
+});
+
+test("공유 SSE 재구독은 변경 없는 시트·목록·본문을 생략하고 무구독 중 변경은 보존한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  await f.save("최초 본문");
+  const subscriptions = [
+    { id: 1, path: `/api/teams/${f.teamId}/events` },
+    { id: 2, path: `/api/tasks/${f.task.id}/documents/events` },
+    { id: 3, path: `/api/tasks/${f.task.id}/documents/main/events` },
+  ];
+  const connect = (streams) =>
+    documentStream(t, f.baseURL, "", f.people.viewer.token, "", { streams });
+  const first = await connect(subscriptions);
+  for (const subscription of subscriptions) {
+    const frame = (await first.next()).data;
+    assert.equal(frame.id, subscription.id);
+    assert.ok(frame.lastEventId);
+    subscription.lastEventId = frame.lastEventId;
+  }
+  first.close();
+  f.app.locals.documentEvents.close(); // Ensure there are no remaining hub listeners.
+  const sentinel = {
+    id: 4,
+    path: `/api/tasks/${f.unassigned.id}/documents/main/events`,
+  };
+  const resumed = await connect([...subscriptions, sentinel]);
+  assert.equal(
+    (await resumed.next()).data.id,
+    4,
+    "변경 없는 세 채널은 초기 프레임이 없다",
+  );
+  await f.save("연결 중 갱신", 1);
+  const changed = (await resumed.next()).data;
+  assert.equal(changed.id, 3);
+  assert.equal(JSON.parse(changed.data).markdown, "연결 중 갱신");
+  subscriptions[2].lastEventId = changed.lastEventId;
+  resumed.close();
+  f.app.locals.documentEvents.close();
+  await f.req(`/tasks/${f.task.id}/documents/main`, "PATCH", {
+    title: "무구독 중 이름 변경",
+    expectedTitle: "문서 1",
+  });
+  await f.save("무구독 중 본문 갱신", 2);
+  const reconnect = await connect(subscriptions);
+  const frames = [];
+  for (let i = 0; i < 3; i++) frames.push((await reconnect.next()).data);
+  assert.deepEqual(
+    frames.map((f) => f.id),
+    [1, 2, 3],
+  );
+  assert.equal(JSON.parse(frames[2].data).markdown, "무구독 중 본문 갱신");
+});
+
+test("공유 SSE의 잘못된 조회 조건과 핸들러 오류는 해당 채널만 거부한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const { registerEventRoute } = await import("../server/event-streams.mjs");
+  const f = await fixture(t);
+  registerEventRoute(f.app, "/api/failure/events", async () => {
+    throw new Error("fixture failure");
+  });
+  for (const status of [401, 403, 404])
+    registerEventRoute(f.app, `/api/denied-${status}/events`, async () => {
+      throw Object.assign(new Error("fixture access failure"), { status });
+    });
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.viewer.token,
+    "",
+    {
+      streams: [
+        { id: 1, path: `/api/cells/events?teamId=${f.teamId}&year=invalid` },
+        { id: 2, path: "/api/failure/events" },
+        { id: 4, path: "/api/denied-401/events" },
+        { id: 5, path: "/api/denied-403/events" },
+        { id: 6, path: "/api/denied-404/events" },
+        { id: 3, path: `/api/tasks/${f.task.id}/documents/main/events` },
+      ],
+    },
+  );
+  for (const [id, status] of [
+    [1, 400],
+    [2, 500],
+    [4, 401],
+    [5, 403],
+    [6, 404],
+  ]) {
+    const failure = (await stream.next()).data;
+    assert.equal(failure.id, id);
+    assert.equal(
+      failure.event,
+      [401, 403, 404].includes(status) ? "access-revoked" : "rejected",
+    );
+    assert.equal(JSON.parse(failure.data).status, status);
+    assert.deepEqual(await stream.next(), { event: "closed", data: { id } });
+  }
+  assert.equal((await stream.next()).data.id, 3);
+  await f.save("정상 채널은 계속 수신");
+  assert.equal(
+    JSON.parse((await stream.next()).data.data).markdown,
+    "정상 채널은 계속 수신",
+  );
+});
+
+test("공유 SSE의 400 응답은 거부된 구독 ID를 식별하며 요청 프로토타입을 유지한다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const { registerEventRoute } = await import("../server/event-streams.mjs");
+  const f = await fixture(t);
+  registerEventRoute(f.app, "/api/request-check/:id/events", (req, res) => {
+    assert.equal(req.app, f.app);
+    assert.equal(typeof req.once, "function");
+    assert.equal(typeof req.ip, "string");
+    assert.ok(req.accepts("json"));
+    assert.equal(req.header("X-Requested-With"), "WeeklyPlan");
+    assert.equal(req.params.id, "한글");
+    assert.equal(req.query.check, "yes");
+    assert.equal(req.path, "/api/request-check/%ED%95%9C%EA%B8%80/events");
+    assert.equal(req.get("Last-Event-ID"), "cursor:1");
+    res.write('event: document\ndata: {"ok":true}\n\n');
+  });
+  const valid = {
+    id: 1,
+    path: "/api/request-check/%ED%95%9C%EA%B8%80/events?check=yes",
+    lastEventId: "cursor:1",
+  };
+  for (const invalid of [
+    { id: 2, path: "/api/bootstrap" },
+    { id: 2, path: "/api/teams/%E0%A4%A/events" },
+    { id: 2, path: "/api/events" },
+    { ...valid, id: 2, lastEventId: "x".repeat(129) },
+  ]) {
+    const result = await f.req("/events", "POST", {
+      streams: [valid, invalid],
+    });
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.data.rejectedIds, [2]);
+  }
+  const stream = await documentStream(
+    t,
+    f.baseURL,
+    "",
+    f.people.viewer.token,
+    "",
+    { streams: [valid] },
+  );
+  assert.deepEqual(JSON.parse((await stream.next()).data.data), { ok: true });
+  assert.equal(
+    (await f.req("/events")).status,
+    404,
+    "미사용 GET 집계 경로는 제거한다",
+  );
+});
+
+test("허브 종료의 단독 closed 뒤 커서로 다시 구독하면 셀·시트·문서 동기화가 복구된다", async (t) => {
+  const { documentStream } = await import("./document-events-helper.mjs");
+  const f = await fixture(t);
+  await f.save("종료 전 본문");
+  const response = await f.req(`/tasks?teamId=${f.teamId}&year=2026`);
+  const snapshot = response.data;
+  const subscriptions = [
+    {
+      id: 1,
+      path: `/api/cells/events?teamId=${f.teamId}&year=2026`,
+      lastEventId: response.headers.get("X-Cell-Event-ID"),
+    },
+    { id: 2, path: `/api/teams/${f.teamId}/events` },
+    { id: 3, path: `/api/tasks/${f.task.id}/documents/events` },
+    { id: 4, path: `/api/tasks/${f.task.id}/documents/main/events` },
+  ];
+  const connect = () =>
+    documentStream(t, f.baseURL, "", f.people.viewer.token, "", {
+      streams: subscriptions,
+    });
+  const before = await connect();
+  for (let i = 0; i < subscriptions.length; i++) {
+    const frame = await before.next();
+    assert.equal(frame.event, "stream");
+    subscriptions.find((s) => s.id === frame.data.id).lastEventId =
+      frame.data.lastEventId;
+  }
+  f.app.locals.cellEvents.close();
+  f.app.locals.documentEvents.close();
+  const closed = [];
+  for (let i = 0; i < subscriptions.length; i++)
+    closed.push(await before.next());
+  assert.deepEqual(
+    closed,
+    subscriptions.map(({ id }) => ({ event: "closed", data: { id } })),
+  );
+  await assert.rejects(before.next(), /stream ended before event/);
+  const after = await connect();
+  assert.equal((await after.next()).data.event, "ready");
+  const current = snapshot.tasks.find((task) => task.id === f.task.id).cells
+    .title;
+  assert.equal(
+    (
+      await f.req("/cells/batch", "POST", {
+        operationId: randomUUID(),
+        createdAt: now(),
+        changes: [
+          {
+            taskId: f.task.id,
+            key: "title",
+            value: "종료 후 셀 변경",
+            expectedVersion: current.version,
+          },
+        ],
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await f.save("종료 후 본문", 1)).status, 200);
+  assert.equal(
+    (
+      await f.req(`/tasks/${f.task.id}/documents/main`, "PATCH", {
+        title: "종료 후 문서 제목",
+        expectedTitle: "문서 1",
+      })
+    ).status,
+    200,
+  );
+  const recovered = new Map();
+  while (recovered.size < subscriptions.length) {
+    const frame = (await after.next()).data;
+    recovered.set(frame.id, frame);
+  }
+  assert.equal(recovered.get(1).event, "cells");
+  assert.equal(JSON.parse(recovered.get(4).data).markdown, "종료 후 본문");
+  assert.deepEqual([...recovered.keys()].sort(), [1, 2, 3, 4]);
+});
+
+for (const status of [401, 403]) {
+  test(`열린 공유 SSE는 ${status === 401 ? "세션 만료" : "팀 접근 상실"}를 access-revoked ${status}로 구분한다`, async (t) => {
+    const { documentStream } = await import("./document-events-helper.mjs");
+    const f = await fixture(t);
+    const snapshot = await f.req(`/tasks?teamId=${f.teamId}&year=2026`);
+    const streams = [
+      {
+        id: 1,
+        path: `/api/cells/events?teamId=${f.teamId}&year=2026`,
+        lastEventId: snapshot.headers.get("X-Cell-Event-ID"),
+      },
+      { id: 2, path: `/api/teams/${f.teamId}/events` },
+      { id: 3, path: `/api/tasks/${f.task.id}/documents/events` },
+      { id: 4, path: `/api/tasks/${f.task.id}/documents/main/events` },
+    ];
+    const stream = await documentStream(
+      t,
+      f.baseURL,
+      "",
+      f.people.viewer.token,
+      "",
+      { streams },
+    );
+    for (const { id } of streams) {
+      const initial = await stream.next();
+      assert.equal(initial.event, "stream");
+      assert.equal(initial.data.id, id);
+    }
+    if (status === 401)
+      f.db
+        .prepare("UPDATE sessions SET expires_at=? WHERE user_id=?")
+        .run(Date.now() - 1, f.people.viewer.id);
+    else
+      f.db
+        .prepare("DELETE FROM memberships WHERE user_id=? AND team_id=?")
+        .run(f.people.viewer.id, f.teamId);
+    // Writes from a different, still authorized session exercise each hub's
+    // per-send authorization without sleeping through a heartbeat interval.
+    assert.equal(
+      (
+        await f.req("/cells/batch", "POST", {
+          operationId: randomUUID(),
+          createdAt: now(),
+          changes: [
+            {
+              taskId: f.task.id,
+              key: "title",
+              value: "접근 상실 뒤 변경",
+              expectedVersion: getTask(f.db, f.task.id).cells.title.version,
+            },
+          ],
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await f.save("접근 상실 뒤 본문")).status, 200);
+    assert.equal(
+      (
+        await f.req(`/tasks/${f.task.id}/documents`, "POST", {
+          id: randomUUID(),
+          title: "다음 문서",
+        })
+      ).status,
+      201,
+    );
+    const revoked = [],
+      closed = [];
+    for (let i = 0; i < streams.length * 2; i++) {
+      const frame = await stream.next();
+      if (frame.event === "closed") closed.push(frame.data.id);
+      else {
+        assert.equal(frame.data.event, "access-revoked");
+        assert.deepEqual(JSON.parse(frame.data.data), { status });
+        revoked.push(frame.data.id);
+      }
+    }
+    assert.deepEqual(revoked.sort(), [1, 2, 3, 4]);
+    assert.deepEqual(closed.sort(), [1, 2, 3, 4]);
+    await assert.rejects(stream.next(), /stream ended before event/);
+  });
+}

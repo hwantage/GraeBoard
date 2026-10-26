@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { THEMES } from "../../shared/themes.js";
 import {
   defaultView,
+  todayKey,
+  mondayOf,
   weeksForYear,
   visibleWeeks,
   cell,
@@ -1076,6 +1078,190 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
   await expect(headers.last()).not.toHaveCSS("border-right-style", "dashed");
 });
 
+test("이번 주 테두리는 양 끝 경계선과 구분해 설정하고 직접 지정선을 지우면 복원한다", async ({
+  page,
+}, info) => {
+  const now = new Date();
+  await page.clock.setFixedTime(now);
+  const currentKey = mondayOf(todayKey());
+  const shiftWeek = (offset: number) =>
+    new Date(Date.parse(`${currentKey}T12:00:00Z`) + offset * 604800000)
+      .toISOString()
+      .slice(0, 10);
+  const previousKey = shiftWeek(-1),
+    nextKey = shiftWeek(1);
+  await page.reload();
+  await chooseWeeks(page, previousKey, nextKey);
+  const readTasks = async () =>
+    (
+      await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      )
+        .json()
+        .then(unpack)
+    ).tasks;
+  const before = await readTasks();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  await page.locator(".week-column-select").click();
+  await expect(
+    page.getByRole("group", { name: "표시 구간 양 끝 경계선", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "이번 주 기본 테두리", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("이번 주 왼쪽 테두리 스타일", { exact: true }),
+  ).toHaveValue("none");
+  await expect(
+    page.getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true }),
+  ).toHaveValue("none");
+  await page
+    .getByLabel("왼쪽 경계선 스타일", { exact: true })
+    .selectOption("solid");
+  await page.getByLabel("왼쪽 경계선 색상", { exact: true }).fill("#2255aa");
+  await page
+    .getByLabel("오른쪽 경계선 스타일", { exact: true })
+    .selectOption("solid");
+  await page.getByLabel("오른쪽 경계선 색상", { exact: true }).fill("#2255aa");
+  await page
+    .getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true })
+    .selectOption("double");
+  await page
+    .getByLabel("이번 주 오른쪽 테두리 색상", { exact: true })
+    .fill("#bb3344");
+  await page.screenshot({ path: info.outputPath("current-week-settings.png") });
+  await page.getByRole("button", { name: "속성 저장", exact: true }).click();
+  await expect(
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  const header = page.locator(`[data-header-key="${currentKey}"]`);
+  await expect(header).toHaveClass(/this-week/);
+  await expect(header).toHaveCSS("border-right-style", "double");
+  await expect(header).not.toHaveCSS("border-left-style", "double");
+  for (const id of taskIds) {
+    await expect(page.locator(`[data-cell="${id}:${currentKey}"]`)).toHaveCSS(
+      "border-right-color",
+      "rgb(187, 51, 68)",
+    );
+    await expect(page.locator(`[data-cell="${id}:${previousKey}"]`)).toHaveCSS(
+      "border-left-color",
+      "rgb(34, 85, 170)",
+    );
+    await expect(page.locator(`[data-cell="${id}:${nextKey}"]`)).toHaveCSS(
+      "border-right-color",
+      "rgb(34, 85, 170)",
+    );
+  }
+  expect(await readTasks()).toEqual(before);
+  // Reload after the view save; settings must survive without touching cells.
+  await expect
+    .poll(async () => {
+      const { views } = await readPreferences(page, teamId);
+      return views.find((view: any) => view.name === "__current")?.data
+        .fromWeek;
+    })
+    .toBe(previousKey);
+  await page.reload();
+  await expect(header).toHaveCSS("border-right-style", "double");
+  const current = page.locator(`[data-cell="${taskIds[0]}:${currentKey}"]`);
+  const neighbor = page.locator(`[data-cell="${taskIds[0]}:${nextKey}"]`);
+  await current.click();
+  await applyBorders(page, "오른쪽 테두리", "solid", "#339966");
+  await expect(current).toHaveCSS("border-right-color", "rgb(51, 153, 102)");
+  await expect(current).toHaveCSS("border-right-width", "1px");
+  await applyBorders(page, "테두리 지우기");
+  await expect(current).toHaveCSS("border-right-style", "double");
+  await neighbor.click();
+  await applyBorders(page, "왼쪽 테두리", "dashed", "#339966");
+  await expect(neighbor).toHaveCSS("border-left-color", "rgb(51, 153, 102)");
+  await expect(current).toHaveCSS("border-right-width", "0px");
+  await page.getByRole("button", { name: "실행취소", exact: true }).click();
+  await expect(current).toHaveCSS("border-right-style", "double");
+  await page.screenshot({ path: info.outputPath("current-week-grid.png") });
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "속성", exact: true }).click();
+  await page.locator(".week-column-select").click();
+  await expect(
+    page.getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true }),
+  ).toHaveValue("double");
+  await page
+    .getByLabel("이번 주 왼쪽 테두리 스타일", { exact: true })
+    .selectOption("dashed");
+  await page
+    .getByLabel("이번 주 왼쪽 테두리 색상", { exact: true })
+    .fill("#2255aa");
+  await page
+    .getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true })
+    .selectOption("none");
+  await page.getByRole("button", { name: "속성 저장", exact: true }).click();
+  await expect(
+    page.getByText("속성이 저장되었습니다.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(current).toHaveCSS("border-left-style", "dashed");
+  await expect(current).toHaveCSS("border-left-color", "rgb(34, 85, 170)");
+  await expect(current).not.toHaveCSS("border-right-style", "double");
+});
+
+test("이번 주 양쪽 테두리는 한국 시간 자정에 이동하고 숨김·기간 선택을 따른다", async ({
+  page,
+}) => {
+  const settings = (
+    await (await page.request.get("/api/bootstrap")).json().then(unpack)
+  ).teams.find((team: any) => team.id === teamId).settings;
+  const response = await page.request.patch(`/api/teams/${teamId}/settings`, {
+    headers: { "X-Requested-With": "WeeklyPlan" },
+    data: {
+      ...settings,
+      currentWeekBorders: {
+        left: { style: "dashed", color: "#2255aa" },
+        right: { style: "double", color: "#bb3344" },
+      },
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  await page.clock.install({ time: new Date("2026-03-08T14:50:00Z") });
+  await page.reload();
+  await marchWeeks(page);
+  const currentHeader = page.locator(".week-heading.this-week");
+  await expect(currentHeader).toHaveAttribute("data-header-key", "2026-03-02");
+  await expect(currentHeader).toHaveCSS("border-left-style", "dashed");
+  await page.clock.fastForward(10 * 60 * 1000);
+  await expect(currentHeader).toHaveAttribute("data-header-key", "2026-03-09");
+  await expect(
+    page.locator('.period-week[aria-current="date"]'),
+  ).toHaveAttribute("data-week", "2026-03-09");
+  const current = page.locator(`[data-cell="${taskIds[0]}:2026-03-09"]`);
+  await expect(current).toHaveCSS("border-left-style", "dashed");
+  await expect(current).toHaveCSS("border-right-style", "double");
+  await expect(
+    page.locator(`[data-cell="${taskIds[0]}:2026-03-02"]`),
+  ).not.toHaveCSS("border-right-style", "double");
+  await currentHeader.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "열 숨기기", exact: true }).click();
+  await expect(currentHeader).toHaveCount(0);
+  await expect(current).toHaveCount(0);
+  for (const key of ["2026-03-02", "2026-03-16"]) {
+    await expect(
+      page.locator(`[data-cell="${taskIds[0]}:${key}"]`),
+    ).not.toHaveCSS("border-left-style", "dashed");
+    await expect(
+      page.locator(`[data-cell="${taskIds[0]}:${key}"]`),
+    ).not.toHaveCSS("border-right-style", "double");
+  }
+  await chooseWeeks(page, "2026-03-09");
+  await expect(current).toHaveCSS("border-left-style", "dashed");
+  await expect(current).toHaveCSS("border-right-style", "double");
+  await chooseWeeks(page, "2026-03-16");
+  await expect(current).toHaveCount(0);
+  await expect(page.locator(".week-heading")).not.toHaveCSS(
+    "border-right-style",
+    "double",
+  );
+});
+
 test("주차 기본 경계선은 기존 테두리 지우기·없음·업무 기본선이 있어도 날짜 필터를 따른다", async ({
   page,
 }, info) => {
@@ -2002,7 +2188,7 @@ test("속성을 주차 날짜 오른쪽으로 옮기면 마지막 날짜 뒤에 
   );
   await page.locator(".week-column-select").click();
   await expect(
-    page.getByRole("region", { name: "주차 날짜 배치 안내" }),
+    page.getByRole("region", { name: "주차 날짜 설정" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "선택 속성 삭제", exact: true }),
@@ -4889,23 +5075,269 @@ test("늦게 도착한 조회 응답이 저장한 입력을 덮어쓰지 않는�
   await page.unroute("**/api/tasks?**");
   await expect(cell).toHaveText("조회보다 나중에 저장한 입력");
 });
-test("로그인 만료 후 같은 계정으로 재인증하고 미저장 입력을 복구한다", async ({
-  page,
-}) => {
-  await page.context().clearCookies();
-  const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
-  await cell.dblclick();
-  await page.locator(".inline-editor textarea").fill("로그인 만료 중 입력");
-  await page.locator(".inline-editor textarea").press("Enter");
-  await page.getByRole("button", { name: "입력 확인" }).click();
-  await expect(page.locator(".failed-input")).toContainText(
-    "로그인 만료 중 입력",
-  );
-  await page.getByLabel("계정 비밀번호").fill("local-test-only-password");
-  await page.getByRole("button", { name: "로그인 후 재시도" }).click();
-  await expect(cell).toHaveText("로그인 만료 중 입력");
-  await expect(page.locator("dialog")).toHaveCount(0);
-});
+for (const connectedExpiry of [false, true]) {
+  test(`${connectedExpiry ? "연결 중 세션 만료" : "로그인 만료"} 후 같은 계정으로 재인증하고 두 탭의 입력과 문서·사본 동기화를 복구한다`, async ({
+    page,
+  }, info) => {
+    test.setTimeout(60000);
+    const documentPath = `/api/tasks/${taskIds[1]}/documents/main`;
+    const memoCollection = `/teams/${teamId}/years/2026/memos`;
+    const memoId = randomUUID();
+    const memoPath = `/api${memoCollection}/${memoId}`;
+    const saveDocument = async (
+      path: string,
+      markdown: string,
+      expectedRevision: number,
+    ) => {
+      const response = await page.request.put(path, {
+        headers: { "X-Requested-With": "WeeklyPlan" },
+        data: { markdown, expectedRevision, operationId: randomUUID() },
+      });
+      expect(response.ok(), await response.text()).toBeTruthy();
+    };
+    await saveDocument(documentPath, "재인증 전 본문", 0);
+    await post(page, memoCollection, { id: memoId, title: "재인증 메모" });
+    await saveDocument(memoPath, "재인증 전 메모", 0);
+    // Both pages retain their mounted editor/collection subscriptions through
+    // expiration. No safety polling may mask broken SSE recovery.
+    await page.context().addInitScript(() => {
+      const interval = window.setInterval.bind(window);
+      window.setInterval = (handler, timeout, ...args) =>
+        interval(timeout === 7000 ? () => {} : handler, timeout, ...args);
+      (window as any).__closedStreams = [];
+      (window as any).__sessionLosses = [];
+      (window as any).__streamPaths = {};
+      (window as any).__reauthIdentity = crypto.randomUUID();
+      const Native = window.SharedWorker;
+      window.SharedWorker = class extends Native {
+        constructor(...args: ConstructorParameters<typeof SharedWorker>) {
+          super(...args);
+          const send = this.port.postMessage.bind(this.port);
+          this.port.postMessage = (message: any) => {
+            if (message.kind === "sync")
+              for (const stream of message.streams)
+                (window as any).__streamPaths[stream.id] = stream.path;
+            send(message);
+          };
+          this.port.addEventListener("message", (event) => {
+            if (event.data.kind === "state" && event.data.readyState === 2)
+              (window as any).__closedStreams.push(event.data.id);
+            if (
+              event.data.kind === "event" &&
+              event.data.event === "access-revoked"
+            )
+              (window as any).__sessionLosses.push({
+                ...JSON.parse(event.data.data),
+                path: (window as any).__streamPaths[event.data.id],
+              });
+          });
+        }
+      };
+    });
+    await page.reload(); // Instrumentation/setup only, before session expiration.
+    await expect(
+      page.locator(`[data-cell="${taskIds[0]}:title"]`),
+    ).toBeVisible();
+    const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+    await memos
+      .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+      .click();
+    await memos
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    const memoSource = memos.getByRole("textbox", {
+      name: "연간 업무 메모 Markdown 원문",
+      exact: true,
+    });
+    await expect(memoSource).toHaveValue("재인증 전 메모");
+    const peer = await page.context().newPage();
+    try {
+      await peer.goto("/");
+      await peer.getByLabel("팀 선택").selectOption(teamId);
+      await peer
+        .locator(`[data-cell="${taskIds[1]}:title"]`)
+        .click({ button: "right" });
+      await peer
+        .getByRole("dialog")
+        .getByRole("button", { name: "Markdown 원문", exact: true })
+        .click();
+      const source = peer.getByRole("textbox", {
+        name: "업무 문서 Markdown 원문",
+        exact: true,
+      });
+      await expect(source).toHaveValue("재인증 전 본문");
+      const identities = await Promise.all(
+        [page, peer].map((target) =>
+          target.evaluate(() => (window as any).__reauthIdentity),
+        ),
+      );
+      if (connectedExpiry) {
+        // Only expire this session row. Do not close the active connection or
+        // advance a mocked clock: real server heartbeats must emit the 401s.
+        expect(
+          (await page.request.post("/__test/streams/expire-session")).ok(),
+        ).toBeTruthy();
+        for (const [target, bodyPath] of [
+          [page, memoPath],
+          [peer, documentPath],
+        ] as const) {
+          const paths = [
+            `/api/teams/${teamId}/events`,
+            `${bodyPath.substring(0, bodyPath.lastIndexOf("/"))}/events`,
+            `${bodyPath}/events`,
+          ];
+          await expect
+            .poll(
+              () =>
+                target.evaluate(
+                  (required) =>
+                    required.every((path) =>
+                      (window as any).__sessionLosses.some(
+                        (loss: any) =>
+                          loss.path === path && loss.status === 401,
+                      ),
+                    ),
+                  paths,
+                ),
+              { timeout: 18000 },
+            )
+            .toBe(true);
+          expect(
+            await target.evaluate(() =>
+              (window as any).__sessionLosses.every(
+                (data: any) => data.status === 401,
+              ),
+            ),
+          ).toBe(true);
+        }
+      } else {
+        // Preserve the existing request-level 401 case alongside live expiry.
+        expect(
+          (await page.request.post("/__test/streams/disconnect")).ok(),
+        ).toBeTruthy();
+        await page.context().clearCookies();
+      }
+      for (const target of [page, peer]) {
+        await expect
+          .poll(() =>
+            target.evaluate(() => (window as any).__closedStreams.length),
+          )
+          .toBeGreaterThan(0);
+        await expect(
+          target.getByText(
+            "문서 접근 권한이 변경되었거나 문서가 삭제되었습니다. 입력은 보존됩니다.",
+            { exact: true },
+          ),
+        ).toHaveCount(0);
+      }
+      const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+      await cell.dblclick();
+      await page.locator(".inline-editor textarea").fill("로그인 만료 중 입력");
+      await page.locator(".inline-editor textarea").press("Enter");
+      await page.getByRole("button", { name: "입력 확인" }).click();
+      await expect(page.locator(".failed-input")).toContainText(
+        "로그인 만료 중 입력",
+      );
+      await page.getByLabel("계정 비밀번호").fill("1234");
+      await page.getByRole("button", { name: "로그인 후 재시도" }).click();
+      await expect(cell).toHaveText("로그인 만료 중 입력");
+      await expect(page.locator("dialog")).toHaveCount(0);
+      await expect(
+        peer.locator(`[data-cell="${taskIds[0]}:title"]`),
+      ).toHaveText("로그인 만료 중 입력", { timeout: 15000 });
+      await saveDocument(documentPath, "재인증 뒤 본문", 1);
+      await saveDocument(memoPath, "재인증 뒤 메모", 1);
+      await post(page, `/tasks/${taskIds[1]}/documents`, {
+        id: randomUUID(),
+        title: "재인증 뒤 문서",
+      });
+      await post(page, memoCollection, {
+        id: randomUUID(),
+        title: "재인증 뒤 메모 탭",
+      });
+      const added = await post(page, "/tasks", {
+        teamId,
+        year: 2026,
+        fields: { title: "재인증 뒤 새 업무" },
+      });
+      await post(page, "/reports", {
+        teamId,
+        year: 2026,
+        name: "재인증 뒤 사본",
+        referenceDate: "2026-10-26",
+        view: defaultView(2026),
+        taskIds: [taskIds[1]],
+      });
+      await expect(source).toHaveValue("재인증 뒤 본문");
+      await expect(memoSource).toHaveValue("재인증 뒤 메모");
+      await expect(
+        peer.getByRole("tab", { name: "재인증 뒤 문서", exact: true }),
+      ).toBeVisible();
+      await expect(
+        memos.getByRole("tab", { name: "재인증 뒤 메모 탭", exact: true }),
+      ).toBeVisible();
+      for (const target of [page, peer]) {
+        await expect(
+          target.locator(`[data-cell="${added.task.id}:title"]`),
+        ).toHaveText("재인증 뒤 새 업무");
+        await expect(
+          target.locator(".sheet-tabs").getByRole("tab", {
+            name: "재인증 뒤 사본",
+            exact: true,
+            includeHidden: true,
+          }),
+        ).toHaveCount(1);
+      }
+      // A false access-denied flag would leave the editor visible but suppress
+      // autosave even after login. Check real writes from both mounted editors.
+      await source.fill("재인증 뒤 직접 편집한 본문");
+      await memoSource.fill("재인증 뒤 직접 편집한 메모");
+      for (const [path, markdown] of [
+        [documentPath, "재인증 뒤 직접 편집한 본문"],
+        [memoPath, "재인증 뒤 직접 편집한 메모"],
+      ])
+        await expect
+          .poll(
+            async () => (await (await page.request.get(path)).json()).markdown,
+          )
+          .toBe(markdown);
+      const after = await Promise.all(
+        [page, peer].map((target) =>
+          target.evaluate(() => (window as any).__reauthIdentity),
+        ),
+      );
+      expect(after).toEqual(identities);
+      await info.attach("reauth-recovery.json", {
+        body: JSON.stringify(
+          {
+            path: connectedExpiry
+              ? "live-access-revoked-401"
+              : "request-http-401",
+            pages: 2,
+            reloads: 0,
+            safetyPollDisabled: true,
+            recovered: [
+              "cells",
+              "team-sheet",
+              "document-list",
+              "document-body",
+              "memo-list",
+              "memo-body",
+              "report-tabs",
+              "editor-autosave",
+            ],
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+    } finally {
+      await peer.close();
+    }
+  });
+}
+
 test("팀·연도 전환과 기간 선택은 표의 맨 왼쪽에서 시작한다", async ({
   page,
 }) => {
@@ -5860,19 +6292,18 @@ test("옵션을 키보드로 확정한 뒤 방향키로 셀 이동을 계속한�
   ).toHaveClass(/focused/);
 });
 
-test("모든 셀과 날짜 셀은 편집·넘침·밀도에 관계없이 좌우 여백 4px를 사용한다", async ({
+test("셀은 좌우 여백 4px를 유지하고 작업명은 상세 버튼 공간을 확보한다", async ({
   page,
 }) => {
   const title = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   const week = page.locator(`[data-cell="${taskIds[0]}:2025-12-29"]`);
-  for (const target of [
-    title,
-    week,
-    page.locator(".week-heading").first(),
-    title.locator(".cell-overflow-content"),
-  ]) {
+  for (const target of [week, page.locator(".week-heading").first()]) {
     await expect(target).toHaveCSS("padding-left", "4px");
     await expect(target).toHaveCSS("padding-right", "4px");
+  }
+  for (const target of [title, title.locator(".cell-overflow-content")]) {
+    await expect(target).toHaveCSS("padding-left", "4px");
+    await expect(target).toHaveCSS("padding-right", "24px");
   }
   await week.dblclick();
   await expect(week.getByRole("textbox")).toHaveCSS("padding-left", "4px");
@@ -6875,6 +7306,8 @@ test("헤더의 속성 다중 필터·월 드래그 선택을 저장한다", asy
     { index: 0, key: pid, value: "a" },
     { index: 1, key: pid, value: "b" },
     { index: 2, key: pid, value: "c" },
+    // New tasks have no status by default; the filter below explicitly selects 예정.
+    { index: 0, key: "status", value: "status-planned" },
     { index: 1, key: "status", value: "status-progress" },
     { index: 2, key: "status", value: "status-progress" },
   ]);
@@ -8062,6 +8495,26 @@ test("빈 속성·값에 바로 입력하고 15자 제한과 하단 속성 삭�
     .getByRole("button", { name: "검토 프로젝트 복원", exact: true })
     .click();
   await expect(name).toHaveValue("검토 프로젝트");
+});
+
+test("열 메뉴는 가로 스크롤바의 늦은 동기화 이벤트를 무시하고 실제 이동 때 닫힌다", async ({
+  page,
+}) => {
+  const grid = page.getByRole("grid");
+  const rail = page.getByRole("group", { name: "업무 표 가로 스크롤" });
+  await page.locator('[data-header-key="title"]').click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "작업 열 메뉴", exact: true });
+  await expect(menu).toBeVisible();
+  // The scrollbar may finish mirroring the sheet after the menu has opened.
+  await rail.dispatchEvent("scroll");
+  await expect(menu).toBeVisible();
+  await rail.evaluate((element) => {
+    element.scrollLeft = 200;
+  });
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollLeft))
+    .toBe(200);
+  await expect(menu).toHaveCount(0);
 });
 
 test("열 머리글 메뉴로 묶음을 바꾸고 저장·키보드 선택·해제를 처리한다", async ({
@@ -10530,4 +10983,151 @@ test("기본 툴바의 셀 확대율은 편집과 크기 조절에 적용되고 
     .poll(async () => (await cell.boundingBox())!.width)
     .toBeCloseTo(original.width + 40, 0);
   await page.screenshot({ path: info.outputPath("base-zoom-toolbar.png") });
+});
+
+test("캘린더만 열린 두 탭은 새 시트 구독 없이 로그인 성공 신호로 세션을 복구한다", async ({
+  page,
+}, info) => {
+  test.setTimeout(60000);
+  const boot = await (
+    await page.request.get("/api/bootstrap")
+  )
+    .json()
+    .then(unpack);
+  await page.context().addInitScript(() => {
+    (window as any).__calendarIdentity = crypto.randomUUID();
+    (window as any).__calendarExpired = false;
+    (window as any).__resumeSent = false;
+    const Native = window.SharedWorker;
+    window.SharedWorker = class extends Native {
+      constructor(...args: ConstructorParameters<typeof SharedWorker>) {
+        super(...args);
+        const send = this.port.postMessage.bind(this.port);
+        this.port.postMessage = (message: any) => {
+          if (message.kind === "resume") (window as any).__resumeSent = true;
+          send(message);
+        };
+        this.port.addEventListener("message", (event) => {
+          if (
+            event.data.kind === "event" &&
+            event.data.event === "access-revoked" &&
+            JSON.parse(event.data.data).status === 401
+          )
+            (window as any).__calendarExpired = true;
+        });
+      }
+    };
+  });
+  const peer = await page.context().newPage();
+  let login: Page | undefined;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    for (const target of [page, peer]) {
+      await target.goto("/calendar");
+      await target.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+      await expect(
+        target
+          .getByRole("region", { name: "캘린더", exact: true })
+          .locator(".calendar-grid"),
+      ).toBeVisible();
+    }
+    const active = async () =>
+      (await (await page.request.get("/__test/streams")).json()).flatMap(
+        (connection: any) => connection.streams,
+      );
+    const teamPath = `/api/teams/${teamId}/events`;
+    await expect
+      .poll(async () => (await active()).map((s: any) => s.path))
+      .toEqual([teamPath]);
+    const before = await active();
+    const identities = await Promise.all(
+      [page, peer].map((target) =>
+        target.evaluate(() => (window as any).__calendarIdentity),
+      ),
+    );
+    expect(
+      (await page.request.post("/__test/streams/expire-session")).ok(),
+    ).toBeTruthy();
+    for (const target of [page, peer])
+      await expect
+        .poll(() => target.evaluate(() => (window as any).__calendarExpired), {
+          timeout: 18000,
+        })
+        .toBe(true);
+    // The login page has no subscriptions. Hold bootstrap after login so no
+    // newly mounted workspace can accidentally revive these two calendar tabs.
+    login = await page.context().newPage();
+    await login.goto("/calendar");
+    await expect(
+      login.getByRole("button", { name: "로그인", exact: true }),
+    ).toBeVisible();
+    await login.route("**/api/bootstrap", async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await login
+      .getByLabel("아이디(이메일)", { exact: true })
+      .fill("test@somansa.com");
+    await login.getByLabel("비밀번호", { exact: true }).fill("1234");
+    await Promise.all([
+      login.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/auth/login") && response.ok(),
+      ),
+      login.getByRole("button", { name: "로그인", exact: true }).click(),
+    ]);
+    await expect
+      .poll(() => login!.evaluate(() => (window as any).__resumeSent))
+      .toBe(true);
+    await expect
+      .poll(async () => (await active()).map((s: any) => s.path))
+      .toEqual([teamPath]);
+    const resumed = await active();
+    expect(resumed[0].id).not.toBe(before[0].id);
+    await post(page, "/calendar/entries", {
+      id: randomUUID(),
+      teamId,
+      userId: boot.user.id,
+      date: todayKey(),
+      title: "시트 없이 재인증 뒤 일정",
+    });
+    for (const target of [page, peer]) {
+      await expect(target).toHaveURL(/\/calendar$/);
+      await expect(
+        target
+          .locator(".calendar-entry-card")
+          .filter({ hasText: "시트 없이 재인증 뒤 일정" }),
+      ).toBeVisible();
+    }
+    expect(
+      await Promise.all(
+        [page, peer].map((target) =>
+          target.evaluate(() => (window as any).__calendarIdentity),
+        ),
+      ),
+    ).toEqual(identities);
+    await expect(login.locator(".auth-page")).toBeVisible();
+    await info.attach("calendar-session-recovery.json", {
+      body: JSON.stringify(
+        {
+          calendars: 2,
+          reloads: 0,
+          screenChanges: 0,
+          loginPageSubscriptions: 0,
+          activePaths: resumed.map((s: any) => s.path),
+          receivedCalendarChange: true,
+        },
+        null,
+        2,
+      ),
+      contentType: "application/json",
+    });
+  } finally {
+    release();
+    await login?.close();
+    await peer.close();
+  }
 });

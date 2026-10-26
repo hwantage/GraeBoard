@@ -138,7 +138,6 @@ test("개인 태그 목록과 변경은 팀원별로 독립적이고 공용 태�
     name: "공용 전용",
     color: "blue",
   });
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
   await page.getByRole("button", { name: "팀 주간 일정 보기" }).click();
   for (const entry of entries)
     await expect(
@@ -204,7 +203,10 @@ test("개인 태그 목록과 변경은 팀원별로 독립적이고 공용 태�
   await page
     .getByRole("button", { name: "개인 월간 보기", exact: true })
     .click();
-  await page.getByLabel("캘린더 팀원").selectOption(other.id);
+  await page
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${other.id}"]`)
+    .click();
   await openManager(page);
   await expect(
     manager(page).getByRole("button", { name: "검토 완료 1개 일정" }),
@@ -598,7 +600,6 @@ test("태그 색상·이름 변경과 삭제는 월간·팀 주간의 하루·�
     [first.id, second.id],
     2,
   );
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
   for (const entry of [day, multi])
     await expect(card(page, entry.id)).toHaveCSS(
       "background-color",
@@ -732,7 +733,6 @@ test("일정 태그 저장 실패를 알리고 지연된 태그 저장이 동시
   const tag = await addTag(page, "검토", "blue");
   const otherTag = await addTag(page, "긴급", "red");
   const entry = await addEntry(page, "원래 제목", []);
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
   await card(page, entry.id).click();
   const path = `**/api/calendar/entries/${entry.id}`;
   await page.route(path, async (route) => {
@@ -1095,7 +1095,6 @@ test("체크 실패는 복원하고 늦은 제목·본문 저장 응답은 체�
     kind: "check",
   });
   const entry = await addEntry(page, "동시 체크", [tag.id]);
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
   const box = page
     .locator(`[data-entry-id="${entry.id}"]`)
     .getByRole("checkbox", { name: "검토 완료 체크", exact: true })
@@ -1222,7 +1221,10 @@ test("열람자는 체크 태그의 상태를 볼 수 있지만 변경할 수 �
   await page.reload();
   await expect(page).toHaveURL(/\/calendar$/);
   await expect(page.locator(".calendar-grid")).toBeVisible();
-  await page.getByLabel("캘린더 팀원").selectOption(userId);
+  await page
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${userId}"]`)
+    .click();
   const box = page
     .locator(`[data-entry-id="${entry.id}"]`)
     .getByRole("checkbox", { name: "완료 체크", exact: true })
@@ -1378,7 +1380,6 @@ test("삭제와 실행취소 응답이 유실되어도 오류를 표시하고 �
   page,
 }) => {
   const entry = await addEntry(page, "응답 유실 복원", []);
-  await page.getByRole("button", { name: "캘린더 새로고침" }).click();
   await card(page, entry.id).click();
   const path = `**/api/calendar/entries/${entry.id}`;
   const deletionIds: string[] = [];

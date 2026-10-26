@@ -155,14 +155,7 @@ export function isAssignable(user, teamId) {
   return ["lead", "member"].includes(teamRole(user, teamId));
 }
 export function canEdit(user, task) {
-  return (
-    !!user &&
-    (canManageTeam(user, task.teamId) ||
-      (teamRole(user, task.teamId) === "member" &&
-        (value(task, "owner") === user.id ||
-          (!value(task, "owner") && task.createdBy === user.id) ||
-          (value(task, "supporters") || []).includes(user.id))))
-  );
+  return canContribute(user, task.teamId);
 }
 export const PROPERTY_DISPLAYS = ["text", "round", "square", "dot", "emoji"];
 export const PROPERTY_KINDS = ["option", "text", "date", "number", "member"];

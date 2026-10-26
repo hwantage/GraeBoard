@@ -14,6 +14,7 @@ import {
   CircleHelp,
 } from "lucide-react";
 import { api, send } from "./api";
+import { resumeSession } from "./event-stream";
 import { BrandLockup, Grae } from "./Brand";
 import { inkFor } from "./color";
 import type { Bootstrap, User } from "./types";
@@ -201,6 +202,7 @@ export function SessionLogin({
         setError("");
         try {
           await send("/auth/login", { username, password });
+          resumeSession();
           setPassword("");
           await onSuccess();
         } catch (e) {
@@ -278,6 +280,7 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
           ]),
         ),
       );
+      resumeSession();
       onLogin(await api("/bootstrap"));
     } catch (e) {
       setError((e as Error).message);

@@ -20,6 +20,10 @@ import { z } from "zod";
 import { THEME_IDS } from "../shared/themes.js";
 import { expandStyle } from "../shared/compact.js";
 
+const weekBordersSchema = z
+  .object({ left: borderSchema.optional(), right: borderSchema.optional() })
+  .strict();
+
 const settingsSchema = z
   .object({
     theme: z.enum(THEME_IDS).optional(),
@@ -28,10 +32,8 @@ const settingsSchema = z
     defaultStyle: styleSchema.optional(),
     defaultDensity: z.enum(["comfortable", "compact", "dense"]).optional(),
     weekHeader: weekHeaderSchema.optional(),
-    weekBorders: z
-      .object({ left: borderSchema.optional(), right: borderSchema.optional() })
-      .strict()
-      .optional(),
+    weekBorders: weekBordersSchema.optional(),
+    currentWeekBorders: weekBordersSchema.optional(),
   })
   .strict();
 
@@ -71,7 +73,7 @@ export function saveSettings(db, team, input, actorId) {
     requireThat(
       p.kind === "member" && !!p.multiple === (p.id === "supporters"),
       400,
-      "팀원·지원자는 업무 편집 권한과 연결된 Member 속성입니다. 기본 팀원 속성은 삭제할 수 없습니다.",
+      "팀원·지원자는 업무 담당자를 지정하는 Member 속성입니다. 기본 팀원 속성은 삭제할 수 없습니다.",
     );
   for (const p of properties) {
     const old = previous.properties.find((o) => o.id === p.id);
@@ -94,6 +96,7 @@ export function saveSettings(db, team, input, actorId) {
     defaultDensity: data.defaultDensity ?? previous.defaultDensity,
     weekHeader: data.weekHeader ?? previous.weekHeader,
     weekBorders: data.weekBorders ?? previous.weekBorders,
+    currentWeekBorders: data.currentWeekBorders ?? previous.currentWeekBorders,
     revision: (previous.revision || 0) + 1,
   };
   transaction(db, () => {

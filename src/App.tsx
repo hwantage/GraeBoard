@@ -1661,16 +1661,7 @@ function Workspace({
       return false;
     }
     if (!(report ? canAdd : canEdit(user, task))) {
-      setError(
-        "본인의 책임·지원 업무 또는 관리 권한이 있는 업무를 선택하세요.",
-      );
-      return false;
-    }
-    if (
-      ["owner", "supporters"].includes(p.key) &&
-      !(report ? canAdd : canManage)
-    ) {
-      setError("담당자 변경은 팀 관리자에게 요청하세요.");
+      setError("이 업무를 편집할 권한이 없습니다.");
       return false;
     }
     if (
@@ -2339,13 +2330,7 @@ function Workspace({
     const copy = command === "paste" ? copiedRow : null;
     const height = copy ? copy.height : view.rowHeights[target.id];
     const groupKey = view.groupBy;
-    // 팀원 묶음에서도 본인 또는 미지정인 경우 같은 묶음을 유지한다.
-    const inheritGroup =
-      !!groupKey &&
-      (canManage ||
-        !["owner", "supporters"].includes(groupKey) ||
-        (groupKey === "owner" &&
-          (!value(target, "owner") || value(target, "owner") === user.id)));
+    const inheritGroup = !!groupKey;
     const fields =
       !copy && inheritGroup ? { [groupKey]: value(target, groupKey) } : {};
     const keepGroup = copy
@@ -3445,7 +3430,7 @@ function Workspace({
                   footer={
                     !presentation ? (
                       <AnnualMemoPanel
-                        key={`${teamId}:${report?.id || year}`}
+                        key={`${user.id}:${teamId}:${report?.id || year}`}
                         ref={annualMemoRef}
                         teamId={teamId}
                         year={year}
@@ -3455,7 +3440,7 @@ function Workspace({
                       />
                     ) : undefined
                   }
-                  canEditPeople={report ? canAdd : canManage}
+                  canEditPeople={canAdd}
                   selection={selection}
                   settings={settings}
                   editor={editor}

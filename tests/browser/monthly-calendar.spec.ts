@@ -941,7 +941,10 @@ test("개인 요일 설정은 재로그인 후 유지되고 숨긴 날짜 보존
       exact: true,
     }),
   ).toHaveCount(0);
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(userId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${userId}"]`)
+    .click();
   await expect(
     calendar(page).getByRole("button", { name: /일정 추가/ }),
   ).toHaveCount(0);
@@ -1442,9 +1445,15 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
       }
     } else await route.continue();
   });
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(memberId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${memberId}"]`)
+    .click();
   await started;
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(userId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${userId}"]`)
+    .click();
   release();
   await expect(
     calendar(page).getByRole("button", {
@@ -1478,26 +1487,37 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
     fullPage: true,
   });
   // macOS WebKit uses Option+Tab to include buttons in keyboard navigation.
-  await calendar(page)
-    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
-    .press(
-      browserName === "webkit" && process.platform === "darwin"
-        ? "Alt+Tab"
-        : "Tab",
-    );
-  await expect(
+  const tabKey =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  let current = calendar(page).getByRole("button", {
+    name: "팀 월간 보기",
+    exact: true,
+  });
+  const nextControls = [
+    calendar(page).getByRole("button", {
+      name: "팀 주간 일정 보기",
+      exact: true,
+    }),
+    calendar(page).getByRole("button", { name: "개인 월간 보기", exact: true }),
+    calendar(page).getByRole("button", {
+      name: "주간 할 일 기준",
+      exact: true,
+    }),
     calendar(page).getByRole("button", { name: "개인 태그 관리", exact: true }),
-  ).toBeFocused();
+  ];
+  for (const next of nextControls) {
+    await current.press(tabKey);
+    await expect(next).toBeFocused();
+    current = next;
+  }
   await page.screenshot({
     path: info.outputPath("calendar-toolbar-focus.png"),
   });
   await calendar(page)
     .getByRole("button", { name: "개인 태그 관리", exact: true })
-    .press(
-      browserName === "webkit" && process.platform === "darwin"
-        ? "Alt+Tab"
-        : "Tab",
-    );
+    .press(tabKey);
   await expect(
     calendar(page).getByRole("button", { name: "내 표시 요일 설정" }),
   ).toBeFocused();
@@ -1510,6 +1530,22 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
   await expect(
     calendar(page).getByRole("button", { name: "내 표시 요일 설정" }),
   ).toBeFocused();
+  current = calendar(page).getByRole("button", { name: "내 표시 요일 설정" });
+  for (const next of [
+    calendar(page).getByRole("button", { name: "이전 달", exact: true }),
+    calendar(page).getByLabel("캘린더 연도", { exact: true }),
+    calendar(page).getByLabel("표시 월", { exact: true }),
+    calendar(page).getByRole("button", { name: "다음 달", exact: true }),
+    ...(await calendar(page)
+      .getByRole("group", { name: "캘린더 팀원" })
+      .getByRole("button")
+      .all()),
+    calendar(page).getByRole("button", { name: "오늘", exact: true }),
+  ]) {
+    await current.press(tabKey);
+    await expect(next).toBeFocused();
+    current = next;
+  }
 });
 
 test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 조회 범위를 유지한다", async ({
@@ -1613,14 +1649,20 @@ test("제목 충돌과 닫아 둔 본문 초안은 다시 열 때 복원되며 �
     .getByRole("button", { name: "초안 보관하고 닫기", exact: true })
     .click();
   await expect(entryDialog(page)).toHaveCount(0);
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(memberId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${memberId}"]`)
+    .click();
   await calendar(page)
     .getByRole("button", { name: "서연의 별도 일정", exact: true })
     .click();
   await raw(page);
   await expect(source(page)).toHaveValue("");
   await close(page);
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(userId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${userId}"]`)
+    .click();
   fail = false;
   await calendar(page)
     .getByRole("button", { name: "내가 쓴 제목", exact: true })
@@ -3699,7 +3741,12 @@ test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변�
   await expect(
     page.getByRole("button", { name: "캘린더 닫기", exact: true }),
   ).toBeDisabled();
-  await expect(calendar(page).getByLabel("캘린더 팀원")).toBeDisabled();
+  const ownerButtons = calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .getByRole("button");
+  await expect(ownerButtons).toHaveCount(2);
+  for (const button of await ownerButtons.all())
+    await expect(button).toBeDisabled();
   await expectRange(page, entry.id, "2026-10-13", "2026-10-20");
   fail = false;
   await calendar(page)
@@ -3713,7 +3760,10 @@ test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변�
   });
   await page.reload();
   await enter(page);
-  await calendar(page).getByLabel("캘린더 팀원").selectOption(userId);
+  await calendar(page)
+    .getByRole("group", { name: "캘린더 팀원" })
+    .locator(`[data-member-id="${userId}"]`)
+    .click();
   await expect(segment(page, entry.id)).toHaveCount(2);
   await expect(
     segment(page, entry.id).locator(".calendar-range-handle"),

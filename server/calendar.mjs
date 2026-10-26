@@ -1,3 +1,4 @@
+import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { audit, json, now, parse, transaction, usersWithTeams } from "./db.mjs";
@@ -1189,11 +1190,14 @@ export function installCalendarRoutes(
     res.json(result);
   });
   const documentKey = (req) => `calendar:${req.params.id}`;
-  app.get("/api/calendar/entries/:id/document/events", (req, res) =>
-    documentEvents.subscribe(req, res, documentKey(req), (request) => ({
-      ...document(entryAccess(request.user, request.params.id)),
-      entry: summary(request.params.id),
-    })),
+  registerEventRoute(
+    app,
+    "/api/calendar/entries/:id/document/events",
+    (req, res) =>
+      documentEvents.subscribe(req, res, documentKey(req), (request) => ({
+        ...document(entryAccess(request.user, request.params.id)),
+        entry: summary(request.params.id),
+      })),
   );
   app.get("/api/calendar/entries/:id/document", (req, res) =>
     res.json(

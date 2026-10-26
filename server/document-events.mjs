@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 
 // Transport cursors are process-local, independent of numeric/UUID DB revisions.
-// A fresh snapshot on reconnect also covers writes by another server process.
+// Only revision/cursor metadata is retained; document bodies stay in the DB.
 export function createDocumentEvents(refreshUser) {
   const session = randomUUID();
   let sequence = 0;
   const channels = new Map();
   const versions = new Map();
+  const remember = (key, value) => {
+    versions.delete(key);
+    versions.set(key, value);
+    // Eviction is safe: a missing cursor causes an authoritative snapshot.
+    if (versions.size > 10000) versions.delete(versions.keys().next().value);
+    return value;
+  };
   const stamp = (document) => ({
     ...document,
     sync: { session, sequence: ++sequence },
@@ -16,16 +23,15 @@ export function createDocumentEvents(refreshUser) {
     watch(req, res, key, authorize) {
       this.subscribe(req, res, key, (request) => {
         authorize(request);
-        return { revision: versions.get(key) || 0 };
+        return { revision: versions.get(key)?.revision || 0 };
       });
     },
     notify(key) {
       for (const client of channels.get(key) || []) client.send();
     },
     invalidate(key, clientId) {
-      if (!channels.has(key)) return;
-      versions.set(key, ++sequence);
-      this.publish(key, { revision: sequence, clientId });
+      // Track writes even between connections, when the last listener is gone.
+      this.publish(key, { revision: ++sequence, clientId });
     },
     subscribe(req, res, key, read) {
       read(req); // Reject unauthorized subscriptions before opening the stream.
@@ -38,6 +44,7 @@ export function createDocumentEvents(refreshUser) {
       res.flushHeaders();
       res.write("retry: 1500\n\n");
       let revision;
+      let cursor = req.get("Last-Event-ID") || "";
       let closed = false;
       const clients = channels.get(key) || new Set();
       channels.set(key, clients);
@@ -48,7 +55,6 @@ export function createDocumentEvents(refreshUser) {
         clients.delete(client);
         if (!clients.size) {
           channels.delete(key);
-          versions.delete(key);
         }
         res.end();
       };
@@ -61,17 +67,31 @@ export function createDocumentEvents(refreshUser) {
           return close();
         try {
           // Never reuse membership/session state captured when connecting.
-          const current = read({ ...req, user: refreshUser(req) });
+          const current = read(
+            Object.assign(Object.create(req), { user: refreshUser(req) }),
+          );
           if (revision !== current.revision) {
-            res.write(
-              snapshot?.revision === current.revision
-                ? snapshot.message
-                : `event: document\ndata: ${JSON.stringify(stamp(current))}\n\n`,
-            );
+            let version = versions.get(key);
+            if (!version || version.revision !== current.revision)
+              version = remember(key, {
+                revision: current.revision,
+                sequence: ++sequence,
+              });
+            const eventId = `${session}:${version.sequence}`;
+            if (cursor !== eventId)
+              res.write(
+                snapshot?.revision === current.revision
+                  ? snapshot.message
+                  : `id: ${eventId}\nevent: document\ndata: ${JSON.stringify({ ...current, sync: { session, sequence: version.sequence } })}\n\n`,
+              );
+            else res.write(": keep-alive\n\n");
+            cursor = eventId;
             revision = current.revision;
           } else res.write(": keep-alive\n\n");
-        } catch {
-          res.write("event: access-revoked\ndata: {}\n\n");
+        } catch (error) {
+          res.write(
+            `event: access-revoked\ndata: ${JSON.stringify({ status: error?.status || 403 })}\n\n`,
+          );
           close();
         }
       };
@@ -84,12 +104,16 @@ export function createDocumentEvents(refreshUser) {
     },
     publish(key, document) {
       const result = stamp(document);
+      remember(key, {
+        revision: result.revision,
+        sequence: result.sync.sequence,
+      });
       const clients = channels.get(key);
       if (clients?.size) {
         // Encode once per write, while checking each subscriber's access.
         const snapshot = {
           revision: result.revision,
-          message: `event: document\ndata: ${JSON.stringify(result)}\n\n`,
+          message: `id: ${session}:${result.sync.sequence}\nevent: document\ndata: ${JSON.stringify(result)}\n\n`,
         };
         for (const client of clients) client.send(snapshot);
       }

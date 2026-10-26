@@ -1490,6 +1490,8 @@ small {
   bottom: 0;
   z-index: 16;
   width: 100%;
+  /* Keep the same gap above memos when horizontal scrolling is unnecessary. */
+  height: 14px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -4995,6 +4997,9 @@ body.row-reordering * {
   border-color: var(--accent);
 }
 
+.instant-tooltip[data-tone="black"] {
+  background: #1b1b1b;
+}
 .instant-tooltip {
   position: fixed;
   z-index: 10000;
@@ -5029,10 +5034,12 @@ body.row-reordering * {
   opacity: 0.85;
 }
 
-.sheet-cell.task-title.has-document {
+.sheet-cell.task-title.has-document,
+.sheet-cell.task-title.has-detail-action {
   padding-right: 24px;
 }
-.sheet-cell.has-document .cell-overflow-content {
+.sheet-cell.has-document .cell-overflow-content,
+.sheet-cell.has-detail-action .cell-overflow-content {
   padding-right: 24px;
 }
 .sheet-cell.task-title.has-document-count,
@@ -5061,6 +5068,20 @@ body.row-reordering * {
 .sheet-cell .task-document-indicator:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+.sheet-cell .task-document-indicator.is-empty {
+  opacity: 0;
+  pointer-events: none;
+}
+.sheet-row:hover .task-document-indicator.is-empty,
+.sheet-cell.focused .task-document-indicator.is-empty,
+.sheet-cell:focus-within .task-document-indicator.is-empty {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+.sheet-cell .task-document-indicator.is-empty:hover,
+.sheet-cell .task-document-indicator.is-empty:focus-visible {
+  opacity: 1;
 }
 .sheet-cell.has-document-count .task-document-indicator {
   width: 34px;

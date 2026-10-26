@@ -1,3 +1,4 @@
+import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { audit, now, transaction } from "./db.mjs";
@@ -123,7 +124,7 @@ function installMemoRoutes(
     row(req, context);
     return context.teamId;
   };
-  app.get(`${base}/events`, (req, res) =>
+  registerEventRoute(app, `${base}/events`, (req, res) =>
     documentEvents.watch(req, res, `list:${req.path.slice(0, -7)}`, scope),
   );
   app.get(base, (req, res) => res.json({ documents: list(scope(req)) }));
@@ -224,7 +225,7 @@ function installMemoRoutes(
   const documentKey = (req) =>
     `${table}:${ownerArgs(scope(req)).join(":")}:${req.params.documentId}`;
   const readDocument = (req) => document(row(req, scope(req)));
-  app.get(`${base}/:documentId/events`, (req, res) =>
+  registerEventRoute(app, `${base}/:documentId/events`, (req, res) =>
     documentEvents.subscribe(req, res, documentKey(req), readDocument),
   );
   app.get(`${base}/:documentId`, (req, res) =>

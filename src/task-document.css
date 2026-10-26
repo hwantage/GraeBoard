@@ -538,6 +538,7 @@
   display: flex;
   flex-shrink: 0;
   min-width: 0;
+  height: 40px;
 }
 .document-tablist [role="tab"] {
   display: inline-flex;
@@ -561,11 +562,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.document-tablist [role="tab"]:focus-visible {
+.document-tablist [role="tab"]:focus-visible,
+.document-tab-menu-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -3px;
 }
 .document-tab-title-editor {
+  position: relative;
   display: inline-grid;
   grid-template-columns: 14px auto;
   column-gap: 5px;
@@ -574,6 +577,7 @@
   border-bottom: 2px solid var(--accent);
   background: var(--accent-soft, #eaf5f2);
   font-size: 13px;
+  line-height: 18px;
   font-weight: 600;
   color: var(--accent);
 }
@@ -582,7 +586,7 @@
 }
 .document-tab-title-input,
 .document-tab-title-measure {
-  grid-area: 1 / 2;
+  grid-area: 1 / 2 / 2 / 3;
   font: inherit;
   padding: 4px 6px;
   border: 1px solid transparent;
@@ -593,22 +597,25 @@
   overflow: hidden;
 }
 .document-tab-title-input {
-  width: 0;
-  min-width: 100%;
+  /* The measured text owns the grid track; modal form widths cannot size it. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
   box-sizing: border-box;
   border-color: var(--accent);
   border-radius: 4px;
   background: white;
   color: var(--accent);
 }
-.document-tablist [role="tab"][aria-selected="true"] {
+.document-tablist [role="tab"][aria-selected="true"],
+.document-tab-item[data-selected] .document-tab-menu-trigger {
   border-bottom-color: var(--accent);
   background: var(--accent-soft, #eaf5f2);
   color: var(--accent);
   font-weight: 600;
 }
-.document-tabs > .button,
-.document-tab-menu > .button {
+.document-tabs > .button {
   flex-shrink: 0;
   border: 0;
   background: transparent;
@@ -623,13 +630,22 @@
   margin-left: auto;
   padding-left: 8px;
 }
+.document-tab-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  padding: 0 4px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+}
 .document-tab-menu {
-  position: relative;
+  position: absolute;
+  top: 100%;
+  z-index: 1;
 }
 .document-tab-menu [role="menu"] {
-  position: absolute;
-  right: 0;
-  top: 100%;
   min-width: 140px;
   padding: 4px;
   background: white;
@@ -681,6 +697,7 @@
 }
 
 .annual-memos {
+  --memo-accordion-height: 40px;
   position: sticky;
   left: 0;
   width: 100%;
@@ -689,35 +706,48 @@
   background: white;
 }
 .annual-memos .document-tabs {
-  top: 32px;
-}
-.annual-memos-collapsed .document-tabs {
-  border-bottom-color: transparent;
+  top: calc(32px + var(--memo-accordion-height));
 }
 .annual-memos .document-rich-tools {
   top: 0;
 }
+.memo-accordion-heading {
+  position: sticky;
+  top: 32px;
+  z-index: 6;
+  margin: 0;
+}
 .annual-memos .toggle-memos {
-  position: static;
-  flex-shrink: 0;
-  margin: 0 6px 0 0;
-  min-height: 32px;
-  padding: 6px 12px;
-  border: 1px solid var(--document-accent);
-  background: var(--document-accent);
-  color: white;
+  display: flex;
+  width: 100%;
+  min-height: var(--memo-accordion-height);
+  margin: 0;
+  padding: 10px 12px;
+  justify-content: flex-start;
+  text-align: left;
+  border: 0;
+  border-block: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--document-accent) 6%, white);
+  color: var(--document-accent);
   font-size: 13px;
   line-height: 18px;
   font-weight: 700;
 }
 .annual-memos .toggle-memos:hover:not(:disabled),
 .annual-memos .toggle-memos[aria-expanded="true"] {
-  border-color: var(--document-accent);
-  background: color-mix(in srgb, var(--document-accent) 85%, black);
+  background: color-mix(in srgb, var(--document-accent) 10%, white);
 }
 .annual-memos .toggle-memos:focus-visible {
   outline-color: currentColor;
   outline-offset: -3px;
+}
+.memo-accordion-icon {
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--muted);
+  color: white;
 }
 .document-pages {
   display: flex;
@@ -743,7 +773,7 @@
   width: min(var(--memo-width, 800px), 100%);
   min-width: 0;
   min-height: 360px;
-  height: clamp(360px, 60dvh, 600px);
+  height: clamp(360px, calc(60dvh - var(--memo-accordion-height)), 600px);
   gap: 8px;
 }
 .memo-document-body {
@@ -833,17 +863,6 @@
 }
 .memo-document-controls {
   margin-left: auto;
-}
-.memo-document-heading .document-tab-menu > .button {
-  padding: 3px;
-  min-height: 24px;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-.memo-document-heading .document-tab-menu [role="menu"] {
-  left: 0;
-  right: auto;
 }
 .memo-width-handle {
   position: absolute;

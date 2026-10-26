@@ -1107,7 +1107,6 @@ export default function DocumentBrowser({
                   }
                   user={boot.user}
                   users={detail.users}
-                  reportMode={selected.source !== "live"}
                   documentReport={
                     selected.source === "live"
                       ? undefined

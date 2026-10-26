@@ -1,11 +1,16 @@
+import {
+  EventStream,
+  retryableRejection,
+  streamErrorStatus,
+} from "./event-stream";
 import { clientId } from "./api";
 import { useEffect, useRef } from "react";
 
 // One stream per resource in this tab; callers coalesce bursts and defer while
-// local writes are in flight. Reconnect always triggers an authoritative GET.
+// local writes are in flight. A reconnect invalidates only if its cursor changed.
 const subscriptions = new Map<
   string,
-  { source: EventSource; listeners: Set<(initial?: boolean) => void> }
+  { source: EventStream; listeners: Set<(initial?: boolean) => void> }
 >();
 export default function useResourceSync(
   path: string | null,
@@ -43,7 +48,7 @@ export default function useResourceSync(
     let subscription = subscriptions.get(path);
     const connected = !!subscription;
     if (!subscription) {
-      const source = new EventSource(`/api${path}/events`);
+      const source = new EventStream(`/api${path}/events`);
       const listeners = new Set<(initial?: boolean) => void>();
       let initial = true;
       subscription = { source, listeners };
@@ -57,9 +62,16 @@ export default function useResourceSync(
         for (const listener of listeners) listener(initial);
         initial = false;
       });
-      source.addEventListener("access-revoked", () => {
+      const denied = () => {
         source.close();
         for (const listener of listeners) listener();
+      };
+      source.addEventListener("access-revoked", (event: MessageEvent) => {
+        // Keep the subscription so reauthentication in another tab revives it.
+        if (streamErrorStatus(event.data) !== 401) denied();
+      });
+      source.addEventListener("rejected", (event: MessageEvent) => {
+        if (!retryableRejection(event.data)) denied();
       });
     }
     subscription.listeners.add(schedule);

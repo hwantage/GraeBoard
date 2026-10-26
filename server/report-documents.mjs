@@ -1,3 +1,4 @@
+import { registerEventRoute } from "./event-streams.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { transaction, audit, parse } from "./db.mjs";
@@ -176,7 +177,7 @@ export function installReportDocumentRoutes(
     }
     res.json({ tasks: result });
   });
-  app.get(base + "/documents/events", (req, res) =>
+  registerEventRoute(app, base + "/documents/events", (req, res) =>
     documentEvents.watch(
       req,
       res,
@@ -324,7 +325,7 @@ export function installReportDocumentRoutes(
     app.get(path, (req, res) => {
       res.json(documentEvents.stamp(readDocument(req)));
     });
-    app.get(`${path}/events`, (req, res) =>
+    registerEventRoute(app, `${path}/events`, (req, res) =>
       documentEvents.subscribe(req, res, documentKey(req), readDocument),
     );
     app.put(path, (req, res) => {

@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
@@ -12,7 +13,59 @@ const app = createApp({
     rateLimits: false,
     documentImagesDir: join(dir, "images"),
   }),
-  server = app.listen(port, "127.0.0.1", async () => {
+  activeStreams = new Set(),
+  server = createServer((req, res) => {
+    // Test-server-only observation/control; never installed by createApp/start.
+    const own = () =>
+      [...activeStreams].filter(
+        (entry) => entry.req.headers.cookie === req.headers.cookie,
+      );
+    if (req.headers.cookie && req.url === "/__test/streams") {
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify(
+          own().map(({ req: request }) => ({
+            method: request.method,
+            streams: request.body?.streams || [],
+          })),
+        ),
+      );
+      return;
+    }
+    if (
+      req.headers.cookie &&
+      req.url === "/__test/streams/disconnect" &&
+      req.method === "POST"
+    ) {
+      for (const entry of own()) entry.res.destroy();
+      res.end("ok");
+      return;
+    }
+    if (
+      req.headers.cookie &&
+      req.url === "/__test/streams/expire-session" &&
+      req.method === "POST"
+    ) {
+      const token = own()[0]?.req.cookies?.weekly_session;
+      if (!token) {
+        res.writeHead(409).end("No active session stream");
+        return;
+      }
+      db.prepare("UPDATE sessions SET expires_at=? WHERE token=?").run(
+        Date.now() - 1,
+        createHash("sha256").update(token).digest("hex"),
+      );
+      // Keep the wire open; the real hub heartbeat must detect expiration.
+      res.end("ok");
+      return;
+    }
+    if (req.url.split("?")[0] === "/api/events") {
+      const entry = { req, res };
+      activeStreams.add(entry);
+      res.on("close", () => activeStreams.delete(entry));
+    }
+    app(req, res);
+  }).listen(port, "127.0.0.1", async () => {
     const setup = await fetch(`http://127.0.0.1:${port}/api/auth/setup`, {
       method: "POST",
       headers: {

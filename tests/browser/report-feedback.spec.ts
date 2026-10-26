@@ -513,10 +513,10 @@ test("문서 삭제는 선택한 문서에만 적용하고 마지막 문서를 �
     modal(page).getByRole("tab", { name: "문서 2", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await (await source(page)).fill("남는 본문");
-  await modal(page).getByRole("tab", { name: "문서 1", exact: true }).click();
-  async function remove() {
+  async function remove(title: string) {
     await modal(page)
-      .getByRole("button", { name: "문서 메뉴", exact: true })
+      .getByRole("tablist")
+      .getByRole("button", { name: `${title} 메뉴`, exact: true })
       .click();
     await modal(page)
       .getByRole("menuitem", { name: "문서 삭제", exact: true })
@@ -525,12 +525,12 @@ test("문서 삭제는 선택한 문서에만 적용하고 마지막 문서를 �
       .getByRole("button", { name: "문서 삭제", exact: true })
       .click();
   }
-  await remove();
+  await remove("문서 1");
   await expect(modal(page).getByRole("tab")).toHaveCount(1);
   await expect(
     modal(page).getByRole("textbox", { name: "업무 문서 Markdown 원문" }),
   ).toHaveValue("남는 본문");
-  await remove();
+  await remove("문서 2");
   await expect(
     modal(page).getByRole("tab", { name: "문서 1", exact: true }),
   ).toBeVisible();

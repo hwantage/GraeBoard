@@ -20,12 +20,12 @@ export function createCellEvents(
     bytes = 0,
     heartbeat;
   const authorized = db.prepare(`
-    SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id
-    JOIN teams t ON t.id=?
-    WHERE s.token=? AND s.expires_at>? AND u.active=1
+    SELECT EXISTS (SELECT 1 FROM teams t WHERE t.id=?
       AND (u.system_role='admin' OR EXISTS (
         SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.team_id=t.id
-      ))
+      ))) AS allowed
+    FROM sessions s JOIN users u ON u.id=s.user_id
+    WHERE s.token=? AND s.expires_at>? AND u.active=1
   `);
   const cursor = () => `${epoch}:${sequence}`;
   function remove(client) {
@@ -36,8 +36,11 @@ export function createCellEvents(
     }
   }
   function allowed(client) {
-    if (authorized.get(client.teamId, client.token, Date.now())) return true;
-    client.res.end("event: access-revoked\ndata: {}\n\n");
+    const access = authorized.get(client.teamId, client.token, Date.now());
+    if (access?.allowed) return true;
+    client.res.end(
+      `event: access-revoked\ndata: ${JSON.stringify({ status: access ? 403 : 401 })}\n\n`,
+    );
     remove(client);
     return false;
   }
