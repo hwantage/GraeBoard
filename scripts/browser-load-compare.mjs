@@ -82,6 +82,8 @@ const report = {
     modeOrder: ["browser-cold", "browser-warm", "server-cold"],
     readiness:
       'page.goto(base); first [data-column="title"] visible; grid aria-rowcount="10001" (the unchanged legacy condition)',
+    domReadinessDiagnostic:
+      "Independent performance.now markers from a MutationObserver coalesced to one requestAnimationFrame per relevant mutation, plus DOMContentLoaded/load checks. The first title must have a nonzero bounding rect and computed visibility other than hidden/collapse; the first role=grid must have aria-rowcount10001, with no extra grid visibility requirement. This approximates the legacy selectors/visibility and may lag DOM mutation until the next frame; it is not a replacement for Playwright's visibility implementation, legacy readyMs, or acceptance. The existing post-assertion page.evaluate records the browser clock for comparison; all incomplete CDP requests remain preserved.",
     authentication:
       "The legacy seeded weekly_session cookie is installed before navigation; no POST login is measured. Bootstrap remains inside navigation.",
     backendCondition:
@@ -424,6 +426,82 @@ async function openBrowser(backend) {
       for (const entry of list.getEntries())
         window.__browserComparisonLongTasks.push(entry.toJSON());
     }).observe({ type: "longtask", buffered: true });
+    const readiness = (window.__browserComparisonDomReadiness = {
+      firstTitleVisibleAt: null,
+      gridRowCountAt: null,
+      bothAt: null,
+      checks: 0,
+      relevantMutationBatches: 0,
+      observerWorkMs: 0,
+      completed: false,
+    });
+    let frame = null;
+    const schedule = () => {
+      if (readiness.completed || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const started = performance.now();
+        readiness.checks++;
+        const title = document.querySelector('[data-column="title"]');
+        const box = title?.getBoundingClientRect();
+        const visibility = title && getComputedStyle(title).visibility;
+        const titleVisible =
+          !!box &&
+          box.width > 0 &&
+          box.height > 0 &&
+          visibility !== "hidden" &&
+          visibility !== "collapse";
+        const grid = document.querySelector('[role="grid"]');
+        const gridReady = grid?.getAttribute("aria-rowcount") === "10001";
+        const observedAt = performance.now();
+        if (titleVisible && readiness.firstTitleVisibleAt === null) {
+          readiness.firstTitleVisibleAt = observedAt;
+          readiness.firstTitleGeometry = {
+            width: box.width,
+            height: box.height,
+            visibility,
+          };
+        }
+        if (gridReady && readiness.gridRowCountAt === null)
+          readiness.gridRowCountAt = observedAt;
+        if (titleVisible && gridReady) {
+          readiness.bothAt = observedAt;
+          readiness.completed = true;
+          observer.disconnect();
+          window.removeEventListener("DOMContentLoaded", schedule);
+          window.removeEventListener("load", schedule);
+        }
+        readiness.observerWorkMs += performance.now() - started;
+      });
+    };
+    const observer = new MutationObserver((records) => {
+      if (
+        records.some(
+          ({ target }) =>
+            target === document.documentElement ||
+            document.body?.contains(target),
+        )
+      ) {
+        readiness.relevantMutationBatches++;
+        schedule();
+      }
+    });
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        "class",
+        "style",
+        "hidden",
+        "aria-rowcount",
+        "data-column",
+        "role",
+      ],
+    });
+    window.addEventListener("DOMContentLoaded", schedule, { once: true });
+    window.addEventListener("load", schedule, { once: true });
+    schedule();
   });
   const page = await context.newPage();
   page.setDefaultTimeout(30000);
@@ -528,7 +606,17 @@ async function navigate(
         .getEntriesByType("paint")
         .map((entry) => entry.toJSON()),
       longTasks: window.__browserComparisonLongTasks,
+      domReadiness: window.__browserComparisonDomReadiness,
     }));
+    const observedReady = sample.performance.domReadiness?.bothAt;
+    sample.domReadinessDiagnostic = {
+      observedReadyMs: observedReady ?? null,
+      browserNowAfterLegacyAssertions: sample.performance.capturedAt,
+      observerToLegacyReadbackMs:
+        observedReady == null
+          ? null
+          : sample.performance.capturedAt - observedReady,
+    };
     sample.network = [...state.requests.values()].map((request) => ({
       ...request,
       completed: !!request.completed,
