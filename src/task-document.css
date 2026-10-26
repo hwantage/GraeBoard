@@ -316,6 +316,11 @@
   border: 0;
   border-radius: 0;
 }
+.task-detail-footer {
+  flex-shrink: 0;
+  padding: 8px 28px;
+  border-top: 1px solid var(--line);
+}
 .document-full-page .modal-body > * {
   width: min(1120px, 100%);
   margin-inline: auto;
@@ -697,7 +702,7 @@
 }
 
 .annual-memos {
-  --memo-accordion-height: 40px;
+  --memo-accordion-height: var(--sheet-toolbar-height);
   position: sticky;
   left: 0;
   width: 100%;
@@ -720,23 +725,24 @@
 .annual-memos .toggle-memos {
   display: flex;
   width: 100%;
+  height: var(--memo-accordion-height);
   min-height: var(--memo-accordion-height);
   margin: 0;
-  padding: 10px 12px;
+  padding: 3px 12px;
   justify-content: flex-start;
   text-align: left;
   border: 0;
   border-block: 1px solid var(--line);
   border-radius: 0;
-  background: color-mix(in srgb, var(--document-accent) 6%, white);
-  color: var(--document-accent);
-  font-size: 13px;
+  background: var(--accent-surface);
+  color: var(--accent-strong);
+  font-size: 11px;
   line-height: 18px;
   font-weight: 700;
 }
 .annual-memos .toggle-memos:hover:not(:disabled),
 .annual-memos .toggle-memos[aria-expanded="true"] {
-  background: color-mix(in srgb, var(--document-accent) 10%, white);
+  background: var(--accent-soft);
 }
 .annual-memos .toggle-memos:focus-visible {
   outline-color: currentColor;
@@ -746,8 +752,8 @@
   flex-shrink: 0;
   padding: 2px;
   border-radius: 50%;
-  background: var(--muted);
-  color: white;
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
 }
 .document-pages {
   display: flex;

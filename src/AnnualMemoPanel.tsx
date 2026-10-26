@@ -29,6 +29,7 @@ export default forwardRef<
   });
   const [closing, setClosing] = useState(false);
   const panel = useRef<DocumentPanelHandle>(null);
+  const scrollOnOpen = useRef(false);
   const contentId = useId();
   const ToggleIcon = opened ? ChevronUp : ChevronDown;
   useImperativeHandle(ref, () => ({
@@ -48,6 +49,7 @@ export default forwardRef<
   async function toggle() {
     if (closing) return;
     if (!opened) {
+      scrollOnOpen.current = true;
       rememberOpened(true);
       return;
     }
@@ -68,10 +70,10 @@ export default forwardRef<
           disabled={closing}
           onClick={() => void toggle()}
         >
-          <FileText size={17} aria-hidden="true" />
+          <FileText size={14} aria-hidden="true" />
           꼬리 메모
           <ToggleIcon
-            size={18}
+            size={16}
             strokeWidth={2.5}
             className="memo-accordion-icon"
             aria-hidden="true"
@@ -83,6 +85,7 @@ export default forwardRef<
           <DocumentPanel
             ref={panel}
             inline
+            scrollOnOpen={scrollOnOpen.current}
             label="연간 업무 메모"
             path={
               reportId

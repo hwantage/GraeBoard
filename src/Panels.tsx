@@ -308,16 +308,6 @@ export function RowPanel({
                 </span>
               </Button>
             )}
-            {editable && (
-              <Button
-                className="danger"
-                tooltip="업무 삭제"
-                onClick={() => act("delete")}
-              >
-                <Trash2 size={16} aria-hidden="true" />
-                <span className="task-detail-action-label">업무 삭제</span>
-              </Button>
-            )}
           </div>
         )
       }
@@ -336,6 +326,14 @@ export function RowPanel({
         onRetryCopySave={onRetryCopySave}
         onCloseWithDraft={() => void leave(onClose, true)}
       />
+      {onAction && editable && (
+        <footer className="task-detail-footer">
+          <Button className="danger" onClick={() => act("delete")}>
+            <Trash2 size={14} aria-hidden="true" />
+            업무 삭제
+          </Button>
+        </footer>
+      )}
     </Modal>
   );
 }

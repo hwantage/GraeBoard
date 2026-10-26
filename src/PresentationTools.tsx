@@ -262,7 +262,13 @@ export default function PresentationTools({
     };
     cancelRef.current = () => finish(true);
     finishRef.current = () => finish();
+    const interactiveTarget = (event: Event) =>
+      event.target instanceof Element &&
+      !!event.target.closest(
+        ".annual-memos, .task-document-indicator, dialog[open]",
+      );
     const down = (event: PointerEvent) => {
+      if (interactiveTarget(event)) return;
       if (
         event.button !== 0 ||
         !event.isPrimary ||
@@ -382,6 +388,7 @@ export default function PresentationTools({
       hidePointer();
     };
     const block = (event: Event) => {
+      if (interactiveTarget(event)) return;
       const link =
         event.target instanceof Element && event.target.closest("a[href]");
       if (
@@ -397,6 +404,7 @@ export default function PresentationTools({
       event.stopPropagation();
     };
     const keyboard = (event: KeyboardEvent) => {
+      if (interactiveTarget(event)) return;
       if (
         event.key === "Enter" &&
         event.target instanceof Element &&

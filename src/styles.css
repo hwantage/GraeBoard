@@ -18,6 +18,7 @@
   --snapshot-accent: #66539c;
   --document-accent: #621b43;
   --document-icon-gap: 6px;
+  --sheet-toolbar-height: 36px;
   --accent-muted: color-mix(in srgb, var(--accent) 60%, #76828b);
   --accent-selection: color-mix(in srgb, var(--accent) 12%, transparent);
   --accent-ruler: color-mix(in srgb, var(--accent) 35%, transparent);
@@ -1169,10 +1170,15 @@ small {
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
   overflow-x: auto;
-  min-height: 36px;
+  min-height: var(--sheet-toolbar-height);
 }
 .toolbar-add-task {
   flex-shrink: 0;
+}
+.sheet-scroll[data-format-painting] .sheet-cell,
+.sheet-scroll[data-format-painting] .sheet-header,
+.sheet-scroll[data-format-painting] .row-number {
+  cursor: crosshair;
 }
 .toolbar-group {
   display: flex;
@@ -4070,29 +4076,57 @@ body.row-reordering * {
 .presentation-mode .sheet-scroll {
   overflow-anchor: none;
 }
-.presentation-mode .sheet-scroll:not([data-presentation-tool="cursor"]) {
+.presentation-mode:not(:has(dialog[open]))
+  .sheet-scroll:not([data-presentation-tool="cursor"]) {
   touch-action: none;
 }
-.presentation-mode .sheet-scroll:not([data-presentation-tool="cursor"]),
-.presentation-mode .sheet-scroll:not([data-presentation-tool="cursor"]) * {
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll:not([data-presentation-tool="cursor"]),
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll:not([data-presentation-tool="cursor"])
+  * {
   cursor: crosshair;
 }
-.presentation-mode .sheet-scroll[data-presentation-tool="cursor"],
-.presentation-mode .sheet-scroll[data-presentation-tool="cursor"] * {
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll[data-presentation-tool="cursor"],
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll[data-presentation-tool="cursor"]
+  * {
   cursor: default;
 }
-.presentation-mode .sheet-scroll[data-presentation-tool="eraser"],
-.presentation-mode .sheet-scroll[data-presentation-tool="eraser"] * {
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll[data-presentation-tool="eraser"],
+.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+  .sheet-scroll[data-presentation-tool="eraser"]
+  * {
   cursor: none;
 }
-.presentation-mode[data-presentation-laser="true"],
-.presentation-mode[data-presentation-laser="true"] *,
-.presentation-mode[data-presentation-laser="true"] .sheet-scroll,
-.presentation-mode[data-presentation-laser="true"] .sheet-scroll * {
+.presentation-mode[data-presentation-laser="true"]:not(
+    :has(dialog[open], .annual-memos:hover)
+  ),
+.presentation-mode[data-presentation-laser="true"]:not(
+    :has(dialog[open], .annual-memos:hover)
+  )
+  *,
+.presentation-mode[data-presentation-laser="true"]:not(
+    :has(dialog[open], .annual-memos:hover)
+  )
+  .sheet-scroll,
+.presentation-mode[data-presentation-laser="true"]:not(
+    :has(dialog[open], .annual-memos:hover)
+  )
+  .sheet-scroll
+  * {
   cursor: none;
 }
-.presentation-mode:not([data-presentation-laser="true"]) .sheet-scroll a[href] {
+.presentation-mode:not([data-presentation-laser="true"])
+  .sheet-scroll
+  :is(a[href], .task-document-indicator) {
   cursor: pointer;
+}
+.presentation-mode:has(dialog[open], .annual-memos:hover)
+  .presentation-pointer {
+  display: none;
 }
 .presentation-mode .sheet-cell.selected::after,
 .presentation-mode .sheet-cell.focused::before {

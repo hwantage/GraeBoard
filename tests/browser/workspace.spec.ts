@@ -6467,7 +6467,14 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await aligned();
   const actions = dialog.getByRole("group", { name: "업무 동작", exact: true });
   const headerActionsFit = async () => {
-    await expect(dialog.locator("footer")).toHaveCount(0);
+    await expect(
+      actions.getByRole("button", { name: "업무 삭제", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      dialog
+        .locator("footer")
+        .getByRole("button", { name: "업무 삭제", exact: true }),
+    ).toBeVisible();
     const headingBox = (await dialog
       .getByRole("heading", {
         name: "업무 상세",
@@ -7887,9 +7894,14 @@ test("상단은 한 줄이고 발표 모드에서 전용 도구와 표를 표시
   expect(box.y).toBe(toolsBox.height);
   expect(box.width).toBe(1366);
   expect(box.height).toBe(900 - toolsBox.height);
-  await expect(grid.locator("button,.column-resizer,.row-resizer")).toHaveCount(
-    0,
-  );
+  await expect(
+    grid.locator(
+      "button:not(.annual-memos button),.column-resizer,.row-resizer",
+    ),
+  ).toHaveCount(0);
+  await expect(
+    grid.getByRole("button", { name: "꼬리 메모", exact: true }),
+  ).toBeVisible();
   await expect(page.locator('[data-column="title"]')).toHaveText(rows);
   await expect(page.locator(".group-heading")).toHaveText(groups);
   await first.dblclick();
@@ -7977,6 +7989,9 @@ test("보기모드에서 색상·펜·도형·지우개·실행취소·확대 �
     await page.mouse.move(x2, y2, { steps: 12 });
     await page.mouse.up();
   };
+  const first = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+  const firstBox = (await first.boundingBox())!;
+  const drawingY = firstBox.y + firstBox.height / 2;
   await page.mouse.move(500, 200);
   await expect(page.locator(".presentation-pointer.laser i")).toBeVisible();
   await draw(500, 200, 600, 210);
@@ -7988,7 +8003,8 @@ test("보기모드에서 색상·펜·도형·지우개·실행취소·확대 �
     await expect(
       toolbar.getByRole("button", { name: "펜", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await draw(500, 200 + 30 * i, 600, 210 + 30 * i);
+    // Keep the five strokes on a table row, above the interactive memo footer.
+    await draw(500 + 140 * i, drawingY, 600 + 140 * i, drawingY + 10);
   }
   await expect(annotations).toHaveCount(5);
   expect(
@@ -8024,7 +8040,6 @@ test("보기모드에서 색상·펜·도형·지우개·실행취소·확대 �
   await expect(annotations).toHaveCount(0);
   await page.keyboard.press("ControlOrMeta+z");
   await expect(annotations).toHaveCount(8);
-  const first = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   const originalWidth = (await first.boundingBox())!.width;
   await toolbar.getByRole("button", { name: "확대", exact: true }).click();
   await toolbar.getByRole("button", { name: "확대", exact: true }).click();
@@ -8094,10 +8109,14 @@ test("보기모드 레이저를 켜고 끄며 크기와 확대율을 직접 조�
     exact: true,
   });
   const pointer = page.locator(".presentation-pointer.laser i");
-  await page.mouse.move(550, 250);
+  // Draw on the sheet cells; the memo accordion below them is interactive.
+  const drawingY =
+    (await page.locator(`[data-cell="${taskIds[0]}:title"]`).boundingBox())!.y +
+    16;
+  await page.mouse.move(550, drawingY);
   await expect(pointer).toBeVisible();
   await expect(pointer).toHaveCSS("width", "14px");
-  for (let i = 0; i < 3; i++) await page.mouse.click(550 + i * 30, 250);
+  for (let i = 0; i < 3; i++) await page.mouse.click(550 + i * 30, drawingY);
   await expect(laser).toHaveAttribute("aria-pressed", "true");
   await expect(pointer).toBeVisible();
   // 툴바로 옮겨도 레이저를 유지하며, 같은 버튼을 다시 눌러 해제한다.
@@ -8105,7 +8124,7 @@ test("보기모드 레이저를 켜고 끄며 크기와 확대율을 직접 조�
   await expect(pointer).toBeVisible();
   await laser.click();
   await expect(laser).toHaveAttribute("aria-pressed", "false");
-  await page.mouse.click(550, 250);
+  await page.mouse.click(550, drawingY);
   await expect(pointer).toBeHidden();
   await expect(grid).toHaveCSS("cursor", "default");
   await expect(page.locator("[data-annotation]")).toHaveCount(0);
@@ -8124,12 +8143,12 @@ test("보기모드 레이저를 켜고 끄며 크기와 확대율을 직접 조�
 
   const pen = toolbar.getByRole("button", { name: "펜", exact: true });
   await pen.click();
-  await page.mouse.move(500, 240);
+  await page.mouse.move(500, drawingY);
   await expect(laser).toHaveAttribute("aria-pressed", "true");
   await expect(pointer).toBeVisible();
   await expect(grid).toHaveCSS("cursor", "none");
   await page.mouse.down();
-  await page.mouse.move(650, 290, { steps: 10 });
+  await page.mouse.move(650, drawingY + 20, { steps: 10 });
   await page.mouse.up();
   const marks = page.locator("[data-annotation]:not([data-draft])");
   await expect(marks).toHaveCount(1);
@@ -8137,11 +8156,11 @@ test("보기모드 레이저를 켜고 끄며 크기와 확대율을 직접 조�
   await laser.click();
   await expect(laser).toHaveAttribute("aria-pressed", "false");
   await expect(pen).toHaveAttribute("aria-pressed", "true");
-  await page.mouse.move(700, 240);
+  await page.mouse.move(700, drawingY);
   await expect(pointer).toBeHidden();
   await expect(grid).toHaveCSS("cursor", "crosshair");
   await page.mouse.down();
-  await page.mouse.move(800, 290, { steps: 5 });
+  await page.mouse.move(800, drawingY + 20, { steps: 5 });
   await page.mouse.up();
   await expect(marks).toHaveCount(2);
   await laser.click();
@@ -9609,6 +9628,118 @@ test("저장된 필터의 이름은 선택된 입력창에서 수정하고 조�
   ).toHaveCount(0);
   await page.screenshot({ path: info.outputPath("saved-filter-rename.png") });
 });
+
+for (const copy of [false, true]) {
+  test(`${copy ? "사본" : "원본"}의 저장된 필터 선택은 맨 위·저장은 현재 위치를 유지한다`, async ({
+    page,
+  }) => {
+    const groups = [
+      { name: "예정 모음", status: "status-planned", firstId: "" },
+      { name: "완료 모음", status: "status-completed", firstId: "" },
+    ];
+    // Both results remain taller than the viewport, so row removal alone
+    // cannot reset the scroll position to zero.
+    for (const group of groups) {
+      for (let i = 0; i < 30; i++) {
+        const { task } = await post(page, "/tasks", {
+          teamId,
+          year: 2026,
+          fields: { title: `${group.name} ${i + 1}`, status: group.status },
+        });
+        taskIds.push(task.id);
+        if (!i) group.firstId = task.id;
+      }
+      const saved = await writePreferences(page, {
+        data: {
+          teamId,
+          name: group.name,
+          data: { propertyFilters: { status: [group.status] } },
+        },
+      });
+      expect(saved.ok(), await saved.text()).toBeTruthy();
+    }
+    if (copy)
+      await post(page, "/reports", {
+        teamId,
+        year: 2026,
+        name: "필터 스크롤 사본",
+        referenceDate: "2026-10-26",
+        view: defaultView(2026),
+        taskIds,
+      });
+    await page.reload();
+    const grid = page.getByRole("grid");
+    const scrollDown = async () => {
+      await grid.evaluate((el) => {
+        el.scrollLeft = 240;
+        el.scrollTop = 350;
+      });
+      await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(350);
+      await expect.poll(() => grid.evaluate((el) => el.scrollLeft)).toBe(240);
+    };
+    if (copy) {
+      await scrollDown();
+      await page
+        .getByRole("tab", { name: "필터 스크롤 사본", exact: true })
+        .click();
+      await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(0);
+    }
+    // Re-selecting the current item also starts at the first result.
+    for (const [index, group] of [
+      groups[0],
+      groups[1],
+      groups[1],
+      groups[0],
+    ].entries()) {
+      await scrollDown();
+      await page
+        .getByRole("button", { name: "저장된 필터", exact: true })
+        .click();
+      const choice = page.locator(".saved-views").getByRole("button", {
+        name: group.name,
+        exact: true,
+      });
+      if (index === 2) await choice.press("Enter");
+      else await choice.click();
+      await expect(
+        page
+          .getByRole("region", { name: "필터 보기", exact: true })
+          .locator("strong"),
+      ).toHaveText(group.name);
+      await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(0);
+      await expect.poll(() => grid.evaluate((el) => el.scrollLeft)).toBe(240);
+      await expect(
+        page.locator(`[data-cell="${group.firstId}:title"]`),
+      ).toBeInViewport();
+    }
+    await scrollDown();
+    await page
+      .getByRole("button", { name: "저장된 필터", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "현재 필터 저장", exact: true })
+      .click();
+    const saveDialog = page.getByRole("dialog", {
+      name: "필터 저장",
+      exact: true,
+    });
+    await saveDialog.getByLabel("필터 이름").fill("위치를 유지할 필터");
+    await saveDialog.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(saveDialog).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("region", { name: "필터 보기", exact: true })
+        .locator("strong"),
+    ).toHaveText("위치를 유지할 필터");
+    await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(350);
+    await expect.poll(() => grid.evaluate((el) => el.scrollLeft)).toBe(240);
+    if (copy) {
+      await page.getByRole("tab", { name: "원본", exact: true }).click();
+      await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(350);
+      await expect.poll(() => grid.evaluate((el) => el.scrollLeft)).toBe(240);
+    }
+  });
+}
 
 test("저장된 필터는 열 조건만 저장하고 적용·해제할 때 현재 숨김과 배치를 유지한다", async ({
   page,

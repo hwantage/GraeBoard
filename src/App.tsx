@@ -119,6 +119,7 @@ import AccountMenu from "./AccountMenu";
 import ProfilePanel from "./ProfilePanel";
 import FindBar from "./FindBar";
 import type { ClipboardMatrix } from "./clipboard";
+import { STYLE_KEYS } from "../shared/compact.js";
 import {
   appendHistory,
   rebaseHistory,
@@ -273,6 +274,10 @@ function Workspace({
       value: SavedCell["value"];
     } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
+    [formatBrush, setFormatBrush] = useState<{
+      styles: Style[][];
+      repeat: boolean;
+    } | null>(null),
     [error, setError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
     [undoToast, setUndoToast] = useState<
@@ -312,6 +317,7 @@ function Workspace({
       taskId?: string;
       id: number;
       preserveHorizontalScroll?: boolean;
+      scrollTop?: number;
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -560,8 +566,25 @@ function Workspace({
     }
   }, [presentation]);
   useEffect(() => {
+    setFormatBrush(null);
+  }, [teamId, year, report?.id, presentation, screen]);
+  useEffect(() => {
+    if (!formatBrush) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (workspaceRef.current?.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      setFormatBrush(null);
+    };
+    // The drag tracker consumes Escape at window capture, before React events.
+    window.addEventListener("keydown", cancel, true);
+    return () => window.removeEventListener("keydown", cancel, true);
+  }, [formatBrush]);
+  useEffect(() => {
     if (!presentation) return;
     const exit = (e: KeyboardEvent) => {
+      // Let the topmost dialog handle Escape before leaving presentation mode.
+      if (workspaceRef.current?.querySelector("dialog[open]")) return;
       if (
         e.target instanceof Element &&
         e.target.closest(".presentation-toolbar input")
@@ -1149,7 +1172,7 @@ function Workspace({
     activeSavedFilter,
     rememberSelectedFilter,
   ]);
-  function applySavedFilter(filter: SavedFilter) {
+  function applySavedFilter(filter: SavedFilter, { scrollToTop = true } = {}) {
     const filters = savedFilter(filter.data, settings);
     changeView({
       propertyFilters: filters.propertyFilters,
@@ -1157,6 +1180,13 @@ function Workspace({
     });
     rememberSelectedFilter(filter.id);
     setViewMenu(false);
+    if (scrollToTop)
+      setJump((previous) => ({
+        key: null,
+        id: Math.max(Date.now(), (previous?.id || 0) + 1),
+        preserveHorizontalScroll: true,
+        scrollTop: 0,
+      }));
   }
   function clearFilters() {
     changeView({ propertyFilters: {}, propertyFilterModes: {} });
@@ -1460,6 +1490,11 @@ function Workspace({
       setUndoStack(appendHistory(undoStack, result));
     }
   }
+  function rejectPendingChanges() {
+    if (!pendingRef.current) return false;
+    setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
+    return true;
+  }
   function submitChanges(
     build: () => CellChange[],
     mode: Failed["mode"] = "normal",
@@ -1493,10 +1528,7 @@ function Workspace({
       }
     }
     if (report || presentation || failedRef.current) return false;
-    if (pendingRef.current) {
-      setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
-      return false;
-    }
+    if (rejectPendingChanges()) return false;
     const submittedBoard = boardKey.current;
     mutationEpoch.current++;
     pendingRef.current++;
@@ -1572,12 +1604,106 @@ function Workspace({
       setError((e as Error).message);
     }
   }
+  function copyFormat(repeat: boolean) {
+    if (formatBrush && !repeat) {
+      setFormatBrush(null);
+      return;
+    }
+    if (!editable || pending || editor || presentation) return;
+    try {
+      if (selection?.areas?.length)
+        throw new Error("서식을 복사할 때는 하나의 연속된 영역을 선택하세요.");
+      selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS);
+      if (!range || !count) return;
+      const styles = matchingTasks.slice(range.r1, range.r2 + 1).map((task) =>
+        columnOrder.slice(range.c1, range.c2 + 1).map(({ key }) => {
+          const source = cell(task, key).style;
+          // Missing properties must also replace the destination's inherited style.
+          return structuredClone(
+            Object.fromEntries(
+              Object.keys(STYLE_KEYS).map((name) => [
+                name,
+                source[name as keyof Style] ?? null,
+              ]),
+            ),
+          ) as Style;
+        }),
+      );
+      setFormatBrush({ styles, repeat });
+      requestAnimationFrame(() =>
+        workspaceRef.current
+          ?.querySelector<HTMLElement>(".sheet-scroll")
+          ?.focus({ preventScroll: true }),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  function paintFormat(target: Selection | null) {
+    if (!formatBrush || !target || editor || presentation || failed) return;
+    if (!report && rejectPendingChanges()) return;
+    try {
+      const { styles, repeat } = formatBrush;
+      const ranges = rangesOf(target, matchingTasks, columnOrder);
+      if (!ranges.length) return;
+      if (
+        styles.length === 1 &&
+        styles[0].length === 1 &&
+        applyCommonStyle(styles[0][0], false, undefined, target)
+      ) {
+        if (!repeat) setFormatBrush(null);
+        return;
+      }
+      const changes = new Map<string, { point: Point; style: Style }>();
+      for (const range of ranges) {
+        const single =
+          range.r1 === range.r2 &&
+          range.c1 === range.c2 &&
+          (!range.kind || range.kind === "cells");
+        const r2 = single ? range.r1 + styles.length - 1 : range.r2;
+        const c2 = single ? range.c1 + styles[0].length - 1 : range.c2;
+        if (r2 >= matchingTasks.length || c2 >= columnOrder.length)
+          throw new Error(
+            "서식을 적용할 범위가 표를 벗어납니다. 더 작은 범위를 선택하세요.",
+          );
+        for (let r = range.r1; r <= r2; r++)
+          for (let c = range.c1; c <= c2; c++) {
+            const point = {
+              taskId: matchingTasks[r].id,
+              key: columnOrder[c].key,
+            };
+            changes.set(`${point.taskId}:${point.key}`, {
+              point,
+              style:
+                styles[(r - range.r1) % styles.length][
+                  (c - range.c1) % styles[0].length
+                ],
+            });
+            if (changes.size > MAX_STYLE_CELLS)
+              throw new Error(
+                `한 번에 ${MAX_STYLE_CELLS.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
+              );
+          }
+      }
+      if (
+        mutate(
+          [...changes.values()].map(({ point }) => point),
+          (task, key) => ({ style: changes.get(`${task.id}:${key}`)!.style }),
+        ) &&
+        !repeat
+      )
+        setFormatBrush(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   function applyCommonStyle(
     part: Partial<Style>,
     reset = false,
     border?: { preset: BorderPreset; border: Border | null },
+    target = selection,
   ) {
-    const ranges = rangesOf(selection, matchingTasks, columnOrder);
+    const ranges = rangesOf(target, matchingTasks, columnOrder);
     if (!ranges.length || ranges.some((r) => !r.kind || r.kind === "cells"))
       return false;
     const scopes = formatScopes(
@@ -3244,6 +3370,9 @@ function Workspace({
                     </Button>
                   }
                   style={selectedCell?.style || {}}
+                  formatPainting={!!formatBrush}
+                  canCopyFormat={!editor}
+                  onPaintFormat={copyFormat}
                   disabled={!editable || !!pending}
                   onStyle={(s) => applyStyle(s)}
                   onBorder={applyBorder}
@@ -3428,17 +3557,17 @@ function Workspace({
                   canAdd={canAdd}
                   addTaskLabel={addTaskLabel}
                   footer={
-                    !presentation ? (
-                      <AnnualMemoPanel
-                        key={`${user.id}:${teamId}:${report?.id || year}`}
-                        ref={annualMemoRef}
-                        teamId={teamId}
-                        year={year}
-                        userId={user.id}
-                        readOnly={!canAdd || (!!report && !editingReport)}
-                        reportId={report?.id}
-                      />
-                    ) : undefined
+                    <AnnualMemoPanel
+                      key={`${user.id}:${teamId}:${report?.id || year}`}
+                      ref={annualMemoRef}
+                      teamId={teamId}
+                      year={year}
+                      userId={user.id}
+                      readOnly={
+                        presentation || !canAdd || (!!report && !editingReport)
+                      }
+                      reportId={report?.id}
+                    />
                   }
                   canEditPeople={canAdd}
                   selection={selection}
@@ -3491,6 +3620,8 @@ function Workspace({
                     return true;
                   }}
                   onSelect={setSelection}
+                  formatPainting={!!formatBrush}
+                  onPaintFormat={paintFormat}
                   onEdit={beginEdit}
                   onPaste={paste}
                   onClear={clearCells}
@@ -3579,7 +3710,7 @@ function Workspace({
           task={allTasks.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
           user={user}
-          readOnly={!!report && (!editingReport || !canAdd)}
+          readOnly={presentation || (!!report && (!editingReport || !canAdd))}
           reportMode={!!report}
           copySaveError={report ? reportDraft.error : undefined}
           onRetryCopySave={() => void reportDraft.save().catch(() => {})}
@@ -3695,7 +3826,7 @@ function Workspace({
               setPending(pendingRef.current);
             }
           }}
-          onAction={detailAction}
+          onAction={presentation ? undefined : detailAction}
         />
       )}
       {panel === "export" && (
@@ -3828,7 +3959,7 @@ function Workspace({
                     (v) =>
                       v.name === viewName.trim() && v.scope === filterScope,
                   );
-                  if (filter) applySavedFilter(filter);
+                  if (filter) applySavedFilter(filter, { scrollToTop: false });
                 }
                 setFilterNameDialog(null);
                 setViewName("");

@@ -205,6 +205,8 @@ export default function Grid({
   copyEditable = false,
   readOnly = false,
   presentation = false,
+  formatPainting = false,
+  onPaintFormat,
   jump,
 }: {
   zoom?: number;
@@ -250,20 +252,44 @@ export default function Grid({
   copyEditable?: boolean;
   readOnly?: boolean;
   presentation?: boolean;
+  formatPainting?: boolean;
+  onPaintFormat?: (selection: Selection | null) => void;
   jump: {
     key: string | null;
     taskId?: string;
     id: number;
     preserveHorizontalScroll?: boolean;
+    scrollTop?: number;
   } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const focusTarget = useRef(selection?.focus);
+  const latestSelection = useRef(selection);
+  latestSelection.current = selection;
+  const paint = useRef(onPaintFormat);
+  paint.current = onPaintFormat;
+  const stopFormatDrag = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!formatPainting) stopFormatDrag.current?.();
+    return () => stopFormatDrag.current?.();
+  }, [formatPainting]);
+  function startFormatDrag(event: React.PointerEvent) {
+    if (!formatPainting) return;
+    stopFormatDrag.current?.();
+    stopFormatDrag.current = trackPointerDrag(event, {
+      onMove: () => {},
+      onEnd: (_, cancelled) => {
+        stopFormatDrag.current = null;
+        if (!cancelled) paint.current?.(latestSelection.current);
+      },
+    });
+  }
   focusTarget.current = selection?.focus;
   function onSelect(next: Selection | null) {
     // 포커스 이벤트는 선택 변경의 렌더보다 먼저 발생할 수 있다.
     // 곧 제거될 이전 셀의 입력창으로 포커스가 돌아가지 않게 한다.
     focusTarget.current = next?.focus;
+    latestSelection.current = next;
     onSelectionChange(next);
   }
   const appliedJump = useRef<number | null>(null);
@@ -714,7 +740,9 @@ export default function Grid({
   useLayoutEffect(() => {
     if (jump && ref.current && appliedJump.current !== jump.id) {
       if (jump.key === null) {
-        ref.current.scrollLeft = 0;
+        if (!jump.preserveHorizontalScroll) ref.current.scrollLeft = 0;
+        if (jump.scrollTop !== undefined)
+          ref.current.scrollTop = jump.scrollTop;
         appliedJump.current = jump.id;
         return;
       }
@@ -850,6 +878,7 @@ export default function Grid({
         ? selection?.areas
         : undefined;
     const anchor = selectHeader(kind, index, e.shiftKey, additive);
+    startFormatDrag(e);
     const origin = { x: e.clientX, y: e.clientY };
     let x = e.clientX,
       y = e.clientY,
@@ -1159,6 +1188,8 @@ export default function Grid({
     });
   }
   function keyboard(e: KeyboardEvent) {
+    if (e.target instanceof Element && e.target.closest(".annual-memos"))
+      return;
     const prepared =
       e.target instanceof Element && !!e.target.closest(".cell-input-ready");
     if (
@@ -1171,11 +1202,19 @@ export default function Grid({
     )
       return;
     if (e.key === "Escape") {
+      // App can render brush cancellation before this handler runs. Respect
+      // its prevented Escape without blocking the menu's document listener.
+      if (e.defaultPrevented || formatPainting) return;
       onSelect(null);
       ref.current?.focus({ preventScroll: true });
       return;
     }
     if (!selection || !tasks.length) return;
+    if (formatPainting && e.key === "Enter") {
+      e.preventDefault();
+      onPaintFormat?.(selection);
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === "a") {
       e.preventDefault();
       onSelect({
@@ -1228,7 +1267,7 @@ export default function Grid({
       el?.scrollIntoView({ block: "nearest", inline: "nearest" });
       return;
     }
-    if (readOnly) return;
+    if (readOnly || formatPainting) return;
     if (e.key === "Enter" || e.key === "F2") {
       e.preventDefault();
       onEdit(selection.focus);
@@ -1332,6 +1371,7 @@ export default function Grid({
       dragOrigin.current = { x: e.clientX, y: e.clientY };
       e.preventDefault();
       pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
+      startFormatDrag(e);
     },
     dragSelect(e, point) {
       const start = dragOrigin.current;
@@ -1346,7 +1386,7 @@ export default function Grid({
         return;
       onSelect({ ...selection, focus: point });
     },
-    edit: (point, initial) => onEdit(point, initial),
+    edit: (point, initial) => !formatPainting && onEdit(point, initial),
     memberOptions: () => assignableUsers,
     rowMenu: (task) => onRowMenu(task),
     finish,
@@ -1398,6 +1438,7 @@ export default function Grid({
         aria-readonly={readOnly}
         className={`sheet-scroll${footer ? " has-sheet-footer" : ""}`}
         data-density={density}
+        data-format-painting={formatPainting || undefined}
         onFocus={(e) => {
           if (e.target !== e.currentTarget || editor) return;
           const input = e.currentTarget.querySelector<HTMLTextAreaElement>(
@@ -1440,7 +1481,7 @@ export default function Grid({
           }
         }}
         onPaste={(e) => {
-          if (editor || readOnly || !selection) return;
+          if (editor || readOnly || formatPainting || !selection) return;
           e.preventDefault();
           try {
             onPaste(readClipboard(e.clipboardData));
@@ -1469,14 +1510,16 @@ export default function Grid({
                 aria-label="모든 셀 선택"
                 disabled={!tasks.length}
                 onClick={() => {
-                  onSelect({
+                  const next: Selection = {
                     kind: "all",
                     anchor: { taskId: tasks[0].id, key: columns[0].key },
                     focus: {
                       taskId: tasks.at(-1)!.id,
                       key: columns.at(-1)!.key,
                     },
-                  });
+                  };
+                  onSelect(next);
+                  if (formatPainting) onPaintFormat?.(next);
                   ref.current?.focus();
                 }}
               >
@@ -1655,7 +1698,7 @@ export default function Grid({
                   user={user}
                   canEditPeople={canEditPeople}
                   copyEditable={copyEditable}
-                  readOnly={readOnly}
+                  readOnly={readOnly || formatPainting}
                   presentation={presentation}
                   sorted={sorted}
                   spans={spans}
@@ -2274,7 +2317,6 @@ const GridCell = memo(function GridCell({
         <button
           type="button"
           className={`task-document-indicator${task.hasDocument ? "" : " is-empty"}`}
-          disabled={presentation}
           aria-label={`${text || "제목 없는 업무"} ${documentLabel}`}
           data-tooltip={`업무 ${documentLabel}`}
           onPointerDown={(e) => e.stopPropagation()}

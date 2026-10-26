@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Maximize2, Minimize2, Trash2 } from "lucide-react";
 import { Button, ErrorNote, Modal } from "./components";
 import { api, ApiError, send } from "./api";
 import {
@@ -56,6 +56,7 @@ export default function CalendarEntryPanel({
   const [ready, setReady] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [documentFullPage, setDocumentFullPage] = useState(false);
   const deletionId = useRef(crypto.randomUUID());
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
   const editor = useRef<DocumentHandle>(null);
@@ -341,32 +342,54 @@ export default function CalendarEntryPanel({
   return (
     <Modal
       title="캘린더 일정"
-      className="task-detail-modal calendar-entry-modal"
+      className={`task-detail-modal calendar-entry-modal${documentFullPage ? " document-full-page" : ""}`}
+      titleAction={
+        <Button
+          tooltip={
+            documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
+          }
+          className="document-expand"
+          aria-pressed={documentFullPage}
+          onClick={() => setDocumentFullPage((value) => !value)}
+        >
+          {documentFullPage ? (
+            <Minimize2 size={16} aria-hidden="true" />
+          ) : (
+            <Maximize2 size={16} aria-hidden="true" />
+          )}
+        </Button>
+      }
       onClose={() => void close()}
       titleContent={
-        <input
-          className="calendar-entry-title"
-          aria-label="일정 제목"
-          maxLength={120}
-          value={title}
-          readOnly={readOnly || !ready || (busy && leaving.current)}
-          onChange={(e) => {
-            draft.current = e.target.value;
-            setTitle(e.target.value);
-            persist();
-            if (timer.current) clearTimeout(timer.current);
-            if (!composing.current && !blocked.current)
-              timer.current = setTimeout(() => void saveTitle(), 700);
-          }}
-          onCompositionStart={() => {
-            composing.current = true;
-            if (timer.current) clearTimeout(timer.current);
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-            if (!blocked.current) void saveTitle();
-          }}
-        />
+        <span className="calendar-entry-title-editor">
+          <span className="calendar-entry-title-measure" aria-hidden="true">
+            {title || "일정 제목"}
+          </span>
+          <input
+            className="calendar-entry-title"
+            aria-label="일정 제목"
+            placeholder="일정 제목"
+            maxLength={120}
+            value={title}
+            readOnly={readOnly || !ready || (busy && leaving.current)}
+            onChange={(e) => {
+              draft.current = e.target.value;
+              setTitle(e.target.value);
+              persist();
+              if (timer.current) clearTimeout(timer.current);
+              if (!composing.current && !blocked.current)
+                timer.current = setTimeout(() => void saveTitle(), 700);
+            }}
+            onCompositionStart={() => {
+              composing.current = true;
+              if (timer.current) clearTimeout(timer.current);
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+              if (!blocked.current) void saveTitle();
+            }}
+          />
+        </span>
       }
     >
       <div className="calendar-entry-heading" inert={busy && leaving.current}>
@@ -510,7 +533,7 @@ export default function CalendarEntryPanel({
         </div>
       )}
       {!readOnly && (
-        <footer className="calendar-entry-footer">
+        <footer className="task-detail-footer calendar-entry-footer">
           <Button
             className="danger"
             disabled={!ready || busy}

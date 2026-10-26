@@ -11,6 +11,7 @@ import {
   AlignCenter,
   AlignRight,
   PaintBucket,
+  PaintRoller,
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "./types";
 import BorderMenu from "./BorderMenu";
@@ -79,6 +80,9 @@ export default function Toolbar({
   zoom,
   onZoom,
   label = "셀 서식 도구",
+  formatPainting,
+  canCopyFormat = true,
+  onPaintFormat,
 }: {
   style: Style;
   disabled: boolean;
@@ -94,6 +98,9 @@ export default function Toolbar({
   zoom?: number;
   onZoom?: (zoom: number) => void;
   label?: string;
+  formatPainting?: boolean;
+  canCopyFormat?: boolean;
+  onPaintFormat?: (repeat: boolean) => void;
 }) {
   const paletteId = useId();
   return (
@@ -106,6 +113,19 @@ export default function Toolbar({
         <Button tooltip="재실행" disabled={!canRedo} onClick={onRedo}>
           <Redo2 size={16} />
         </Button>
+        {onPaintFormat && (
+          <button
+            type="button"
+            className={`button${formatPainting ? " active" : ""}`}
+            aria-label="서식 복사"
+            data-tooltip="서식 복사 (두 번 클릭: 연속 적용 · Esc: 취소)"
+            aria-pressed={!!formatPainting}
+            disabled={disabled || !canCopyFormat}
+            onClick={(event) => onPaintFormat(event.detail > 1)}
+          >
+            <PaintRoller size={16} aria-hidden="true" />
+          </button>
+        )}
       </div>
       <div className="toolbar-group">
         <FormatSelect

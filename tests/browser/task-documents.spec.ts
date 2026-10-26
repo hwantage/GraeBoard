@@ -305,14 +305,12 @@ test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 �
     const body = detail(page).locator(".modal-body");
     await expect
       .poll(async () => {
-        const area = (await body.boundingBox())!;
+        const footer = (await detail(page).locator("footer").boundingBox())!;
         const input = (await source(page).boundingBox())!;
         const bottomMargin = await source(page).evaluate((el) =>
           parseFloat(getComputedStyle(el).marginBottom),
         );
-        return Math.abs(
-          input.y + input.height + bottomMargin - area.y - area.height,
-        );
+        return Math.abs(input.y + input.height + bottomMargin - footer.y);
       })
       .toBeLessThan(2);
     expect(

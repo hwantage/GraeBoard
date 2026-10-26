@@ -48,6 +48,7 @@ type Props = Pick<
   initialDocumentId?: string;
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
+  scrollOnOpen?: boolean;
   label?: string;
 };
 type RenameDraft = { document: DocumentInfo; title: string };
@@ -343,12 +344,19 @@ export default forwardRef<DocumentPanelHandle, Props>(
       return () => element.removeEventListener("wheel", wheel);
     }, [opened]);
     useLayoutEffect(() => {
-      document
-        .getElementById(`${id}-${selected}-tab`)
-        ?.parentElement?.scrollIntoView({
-          block: "nearest",
-          inline: "nearest",
-        });
+      const rail = tabScroll.current;
+      const tab = document.getElementById(
+        `${id}-${selected}-tab`,
+      )?.parentElement;
+      if (!rail || !tab) return;
+      const bounds = rail.getBoundingClientRect();
+      const item = tab.getBoundingClientRect();
+      const scale = bounds.width / rail.offsetWidth || 1;
+      // Keep the tab visible without moving the surrounding sheet vertically.
+      if (item.left < bounds.left)
+        rail.scrollLeft += (item.left - bounds.left) / scale;
+      else if (item.right > bounds.right)
+        rail.scrollLeft += (item.right - bounds.right) / scale;
     }, [opened, selected, documentOrder]);
     function scrollToDocument(documentId: string) {
       const rail = documentScroll.current;
@@ -366,10 +374,12 @@ export default forwardRef<DocumentPanelHandle, Props>(
       if (props.inline && navigateDocument.current) scrollToDocument(selected);
     }, [selected, documentOrder, props.inline]);
     useLayoutEffect(() => {
-      if (!inlineDocumentsVisible) return;
+      // Only an explicit accordion opening should reveal the documents.
+      // Restoring an open sheet must preserve its own scroll position.
+      if (!inlineDocumentsVisible || !props.scrollOnOpen) return;
       const grid = documentScroll.current?.closest(".sheet-scroll");
       grid?.scrollTo({ top: grid.scrollHeight });
-    }, [inlineDocumentsVisible]);
+    }, [inlineDocumentsVisible, props.scrollOnOpen]);
     useEffect(() => {
       const rail = documentScroll.current;
       if (!props.inline || !rail) return;

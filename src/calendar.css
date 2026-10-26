@@ -994,10 +994,11 @@
 .calendar-workspace .calendar-entry-modal > header > .button {
   color: var(--ink);
 }
-.calendar-entry-footer {
-  flex-shrink: 0;
-  padding: 8px 28px;
-  border-top: 1px solid var(--line);
+.workspace[data-screen="calendar"]
+  .calendar-entry-modal
+  > header
+  .document-expand:not(:hover) {
+  background: transparent;
 }
 .calendar-range-editor label {
   display: flex;
@@ -1006,7 +1007,24 @@
   font-size: 11px;
   color: var(--muted);
 }
+.calendar-entry-title-editor {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.calendar-entry-title-measure {
+  visibility: hidden;
+  white-space: pre;
+  overflow: hidden;
+  padding-right: 2px;
+}
 .workspace[data-screen="calendar"] .calendar-entry-modal .calendar-entry-title {
+  /* Match the document tab editors: text sizes the title, keeping its action adjacent. */
+  position: absolute;
+  inset: 0;
   width: 100%;
   color: var(--ink);
   padding: 0;
