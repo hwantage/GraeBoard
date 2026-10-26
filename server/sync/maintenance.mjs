@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { digest, entityId } from "./protocol.mjs";
 import { project } from "./reducer.mjs";
 import {
-  activeImageReferences,
+  protectedImageReferences,
   imageReferences,
   isExcluded,
   retentionId,
@@ -186,7 +186,7 @@ export class MaintenanceService {
         !isExcluded(record, projection, snapshot.exclusions) &&
         isExcluded(record, projection, after),
     );
-    const protectedUrls = activeImageReferences(
+    const protectedUrls = protectedImageReferences(
       snapshot,
       snapshot.pending,
       after,

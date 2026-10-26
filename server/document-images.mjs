@@ -12,45 +12,17 @@ import {
 import { resolve, join, dirname } from "node:path";
 import multer from "multer";
 import sharp from "sharp";
-import { unified } from "unified";
-import remarkParse from "remark-parse";
-import remarkGfm from "remark-gfm";
+import { documentImageUrls } from "../shared/document-image-references.js";
+export { documentImageUrls } from "../shared/document-image-references.js";
 import {
   DOCUMENT_IMAGE_PATTERN,
   MAX_IMAGE_BYTES,
   isDocumentImage,
-  documentImageSource,
 } from "../shared/document-images.js";
 import { requireThat } from "./validation.mjs";
 
 export const documentImagesDirectory = () =>
   resolve(process.env.DOCUMENT_IMAGES_DIR || "data/document-images");
-const markdownParser = unified().use(remarkParse).use(remarkGfm);
-export function documentImageUrls(markdown) {
-  if (!markdown?.includes("/api/document-images/")) return [];
-  const tree = markdownParser.parse(markdown);
-  const definitions = new Map();
-  const visit = (node, fn) => {
-    fn(node);
-    node.children?.forEach((child) => visit(child, fn));
-  };
-  visit(tree, (node) => {
-    if (node.type === "definition" && !definitions.has(node.identifier))
-      definitions.set(node.identifier, node.url);
-  });
-  const urls = new Set();
-  visit(tree, (node) => {
-    const url =
-      node.type === "image"
-        ? node.url
-        : node.type === "imageReference"
-          ? definitions.get(node.identifier)
-          : null;
-    if (url?.startsWith("/api/document-images/"))
-      urls.add(documentImageSource(url) || url);
-  });
-  return [...urls];
-}
 export function documentImagePath(directory, url) {
   const parts = DOCUMENT_IMAGE_PATTERN.exec(url);
   requireThat(

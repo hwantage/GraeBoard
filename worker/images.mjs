@@ -2,7 +2,9 @@ import { digest } from "../server/sync/protocol.mjs";
 import {
   MAX_IMAGE_BYTES,
   DOCUMENT_IMAGE_PATTERN,
+  isDocumentImage,
 } from "../shared/document-images.js";
+import { documentPayloadImageUrls } from "../shared/document-image-references.js";
 import { assert } from "./access.mjs";
 
 export function stillImage(bytes) {
@@ -100,26 +102,16 @@ export async function convertImage(file, images) {
   return { bytes: output, hash: digest(output) };
 }
 export function imageReferences(value, teamId) {
-  const refs = new Set();
-  const pending = [value];
-  while (pending.length) {
-    const current = pending.pop();
-    if (typeof current === "string") {
-      for (const m of current.matchAll(
-        /\/api\/document-images\/[^\s"'\\<>()[\]]+/g,
-      )) {
-        const parsed = DOCUMENT_IMAGE_PATTERN.exec(m[0]);
-        assert(
-          parsed && parsed[1] === teamId,
-          400,
-          "다른 팀의 이미지나 올바르지 않은 이미지 주소입니다.",
-        );
-        refs.add(`/api/document-images/${teamId}/${parsed[2]}.webp`);
-      }
-    } else if (current && typeof current === "object")
-      for (const child of Object.values(current)) pending.push(child);
+  const refs = documentPayloadImageUrls(value);
+  for (const url of refs) {
+    const parsed = DOCUMENT_IMAGE_PATTERN.exec(url);
+    assert(
+      parsed && isDocumentImage(url) && parsed[1] === teamId,
+      400,
+      "다른 팀의 이미지나 올바르지 않은 이미지 주소입니다.",
+    );
   }
-  return [...refs];
+  return refs;
 }
 export class R2ImageStore {
   constructor(bucket, teamId) {

@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { setImmediate as yieldEventLoop } from "node:timers/promises";
 import { transaction } from "../db.mjs";
 import {
   documentImagePath,
@@ -12,7 +13,7 @@ import { canonical, entityId } from "./protocol.mjs";
 import { project } from "./reducer.mjs";
 import { MaintenanceService, maintenanceRevision } from "./maintenance.mjs";
 import { requireThat } from "../validation.mjs";
-import { imageReferences } from "./retention.mjs";
+import { auditImageReferences } from "./retention.mjs";
 
 const parseJob = (row) =>
   row
@@ -31,18 +32,42 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
     db.syncCapture
       ? db.syncCapture.without(() => transaction(db, work))
       : transaction(db, work);
-  const snapshot = () => {
-    const recoveryImages = new Set();
-    for (const row of db
-      .prepare("SELECT before_json,after_json FROM audit WHERE team_id=?")
-      .iterate(teamId))
-      for (const url of imageReferences(row, teamId)) recoveryImages.add(url);
-    return {
+  const fence = () =>
+    `${db.prepare("PRAGMA data_version").get().data_version}:${db.prepare("SELECT total_changes() AS value").get().value}`;
+  const unchanged = (expected) =>
+    requireThat(
+      fence() === expected,
+      409,
+      "자료가 변경되었습니다. 정리 미리보기를 다시 확인하세요.",
+    );
+  const prepareSnapshot = async () => {
+    const observed = fence();
+    const current = {
       ...store.readSnapshot(),
       exclusions: store.readExclusions(siteId),
-      recoveryImages: [...recoveryImages].sort(),
     };
+    const recoveryImages = new Set();
+    const query = db.prepare(
+      "SELECT rowid,before_json,after_json FROM audit WHERE team_id=? AND rowid>? ORDER BY rowid LIMIT 100",
+    );
+    let after = 0;
+    for (;;) {
+      // Finish each SELECT before yielding. No write transaction or live SQLite
+      // iterator spans the yield, so ordinary saves can continue during scans.
+      const rows = query.all(teamId, after);
+      for (const row of rows)
+        for (const url of auditImageReferences(row, teamId))
+          recoveryImages.add(url);
+      if (rows.length < 100) break;
+      after = rows.at(-1).rowid;
+      await yieldEventLoop();
+      unchanged(observed);
+    }
+    unchanged(observed);
+    current.recoveryImages = [...recoveryImages].sort();
+    return { current, observed };
   };
+  const snapshot = async () => (await prepareSnapshot()).current;
   const readJob = (id) =>
     parseJob(
       db
@@ -100,10 +125,15 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
           ),
       );
     },
-    begin(input, { actorId, now, revision }) {
+    async begin(input, { actorId, now, revision }) {
+      const { current, observed } = await prepareSnapshot();
+      const currentRevision = maintenanceRevision(current);
       return run(() => {
-        const job = readJob(input.jobId),
-          current = snapshot();
+        // Other connections can commit after preparation but before this write
+        // lock. Both external commits and local writes invalidate the prepared
+        // references before a persistent maintenance guard can be activated.
+        unchanged(observed);
+        const job = readJob(input.jobId);
         requireThat(
           job?.phase === "cancelled" &&
             job.manifest.preview &&
@@ -134,7 +164,7 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
           "연결 상태를 확인한 후 다시 시도하세요.",
         );
         requireThat(
-          maintenanceRevision(current) === revision,
+          currentRevision === revision,
           409,
           "자료가 변경되었습니다. 정리 미리보기를 다시 확인하세요.",
         );

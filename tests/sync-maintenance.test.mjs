@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDatabase, json } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
@@ -22,7 +25,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
 
 function fixture(t, options = {}) {
-  const db = openDatabase(":memory:"),
+  const db = openDatabase(options.databasePath || ":memory:"),
     teamId = randomUUID(),
     siteId = randomUUID(),
     actorId = randomUUID();
@@ -493,4 +496,113 @@ test("L generation and multi-year rules are identical for internal and external 
     {},
   );
   assert.equal(urls.size, 0);
+});
+
+test("SQLite maintenance scans paged audit history with event-loop yields before taking its write lock", async (t) => {
+  const f = fixture(t),
+    url = f.image("old audit reference");
+  const insert = f.db.prepare(
+    "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'document',?,?,?)",
+  );
+  for (let i = 0; i < 250; i++)
+    insert.run(
+      randomUUID(),
+      f.teamId,
+      f.actorId,
+      "history",
+      json({ markdown: `![old](${url})` }),
+      "2025-01-01T00:00:00Z",
+    );
+  let writing = false,
+    scans = 0,
+    yielded = false;
+  const originalExec = f.db.exec.bind(f.db),
+    originalPrepare = f.db.prepare.bind(f.db);
+  f.db.exec = (sql) => {
+    if (/^BEGIN IMMEDIATE/.test(sql)) writing = true;
+    const result = originalExec(sql);
+    if (/^(COMMIT|ROLLBACK)/.test(sql)) writing = false;
+    return result;
+  };
+  f.db.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    if (sql.includes("before_json,after_json FROM audit")) {
+      const all = statement.all.bind(statement);
+      statement.all = (...args) => {
+        assert.equal(
+          writing,
+          false,
+          "audit scan must not run inside BEGIN IMMEDIATE",
+        );
+        scans++;
+        return all(...args);
+      };
+    }
+    return statement;
+  };
+  const timer = new Promise((resolve) =>
+    setImmediate(() => {
+      yielded = true;
+      resolve();
+    }),
+  );
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  assert.equal(yielded, true, "history preparation yields before it finishes");
+  assert.equal(preview.images.count, 0);
+  const result = await f.service.execute(
+    { token: preview.token, confirmed: true },
+    f.actorId,
+  );
+  assert.equal(result.phase, "complete");
+  assert.ok(scans >= 6, "preview and activation both check all history pages");
+  assert.ok(f.files.has(url));
+  await timer;
+});
+
+test("SQLite maintenance rejects a new recovery reference committed after preparation but before the guard", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "graeboard-maintenance-fence-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const f = fixture(t, { databasePath: join(directory, "site.sqlite") });
+  const concurrent = openDatabase(join(directory, "site.sqlite"));
+  t.after(() => concurrent.close());
+  const url = f.image("newly restorable image");
+  const preview = await f.service.preview({ kind: "images" }, f.actorId);
+  assert.equal(preview.images.count, 1);
+  const originalExec = f.db.exec.bind(f.db);
+  let raced = false;
+  f.db.exec = (sql) => {
+    if (!raced && /^BEGIN IMMEDIATE/.test(sql)) {
+      raced = true;
+      concurrent
+        .prepare(
+          "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'document',?,?,?)",
+        )
+        .run(
+          randomUUID(),
+          f.teamId,
+          f.actorId,
+          "restorable",
+          json({ markdown: `![old](${url})` }),
+          "2025-01-01T00:00:00Z",
+        );
+    }
+    return originalExec(sql);
+  };
+  await assert.rejects(
+    f.service.execute({ token: preview.token, confirmed: true }, f.actorId),
+    (error) => error.status === 409,
+  );
+  assert.equal(raced, true);
+  assert.equal(
+    f.adapter.listJob(),
+    null,
+    "stale activation never leaves a write guard or starts deleting",
+  );
+  assert.ok(f.files.has(url));
+  const retry = await f.service.preview({ kind: "images" }, f.actorId);
+  assert.equal(
+    retry.images.count,
+    0,
+    "fresh preview protects the newly committed recovery reference",
+  );
 });

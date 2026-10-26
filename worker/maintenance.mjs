@@ -4,7 +4,10 @@ import {
   maintenanceRevision,
 } from "../server/sync/maintenance.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
-import { imageReferences, retentionKey } from "../server/sync/retention.mjs";
+import {
+  auditImageReferences,
+  retentionKey,
+} from "../server/sync/retention.mjs";
 import { databaseFor } from "./data.mjs";
 import { profileFor } from "./config.mjs";
 import { materialize } from "./sync.mjs";
@@ -42,7 +45,7 @@ export function maintenanceAdapter(db, teamId) {
         )
       ).rows;
       for (const row of rows)
-        for (const url of imageReferences(row.payload, teamId))
+        for (const url of auditImageReferences(row.payload, teamId))
           recoveryImages.add(url);
       if (rows.length < 100) break;
       after = rows.at(-1).id;

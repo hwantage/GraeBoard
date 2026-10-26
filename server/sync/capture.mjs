@@ -3,7 +3,12 @@ import { LINK_METADATA_COLUMNS } from "../storage/team-store.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readEntity } from "./entities.mjs";
 import { makeOperation } from "./operations.mjs";
-import { entityId, initialToken, canonical } from "./protocol.mjs";
+import {
+  entityId,
+  initialToken,
+  canonical,
+  validateOperation,
+} from "./protocol.mjs";
 
 // TEMP triggers are a transaction-local change detector, never the replication
 // protocol. The first domain before-image and final after-image coalesce normal
@@ -333,6 +338,14 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           getPrior: (key) => prior.get(teamId + key)?.opId,
         });
         if (operation) {
+          try {
+            validateOperation(operation, { teamId, repoId: link.repo_id });
+          } catch (error) {
+            throw new HttpError(
+              400,
+              "동기화할 자료 형식을 확인하세요. " + error.message,
+            );
+          }
           // Hashing and Git preparation happen in the background. The immutable
           // JSON and ID are already durable with the business transaction.
           prepare(
@@ -361,6 +374,11 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       }
       before.clear();
       created = [];
+    },
+    // The caller has already committed its explicit operation. Update only the
+    // dependency cache; transaction rollback and scheduling remain its owner's.
+    enqueued(operation) {
+      rememberPending(operation);
     },
     rollback() {
       active = false;

@@ -1,6 +1,6 @@
 import { digest } from "../server/sync/protocol.mjs";
 import { project } from "../server/sync/reducer.mjs";
-import { isExcluded as excluded } from "../server/sync/retention.mjs";
+import { installImageReferences } from "../server/sync/retention.mjs";
 import { imageReferences, stillImage } from "./images.mjs";
 import { assert } from "./access.mjs";
 export function imageSync(database, profile, r2) {
@@ -35,24 +35,13 @@ export function imageSync(database, profile, r2) {
         { readOnly: true },
       );
       const projection = project(state, snapshot.pending),
-        active = new Set();
-      for (const e of Object.values(projection.entities))
-        if (
-          !e.deleted &&
-          !excluded(e, projection.entities, snapshot.exclusions)
-        )
-          for (const url of imageReferences(e.payload, profile.teamId))
-            active.add(url);
-      for (const url of imageReferences(
-        {
-          pending: snapshot.pending,
-          conflicts: Object.values(state.conflicts).filter(
-            (c) => !c.resolution,
-          ),
-        },
-        profile.teamId,
-      ))
-        active.add(url);
+        active = installImageReferences(
+          state,
+          snapshot.pending,
+          snapshot.exclusions,
+          projection.entities,
+          profile.teamId,
+        );
       // The shared service verifies newly introduced immutable files once.
       // Existing R2 content-addressed objects need no repeated Git download.
       for (const url of active) {

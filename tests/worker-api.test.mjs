@@ -50,8 +50,12 @@ test(
     let networkHandler;
     globalThis.fetch = async (input, init) => {
       if (networkHandler) {
-        try { return await networkHandler(input, init); }
-        catch (error) { unexpectedNetwork.push(String(input)); throw error; }
+        try {
+          return await networkHandler(input, init);
+        } catch (error) {
+          unexpectedNetwork.push(String(input));
+          throw error;
+        }
       }
       unexpectedNetwork.push(String(input));
       throw new Error("Unexpected network in Worker API fixture: " + input);
@@ -304,6 +308,87 @@ test(
         "PUT",
       );
       assert.equal(docSaved.body.markdown, "Worker document");
+      // R2-1: only actual Markdown image nodes carry dependencies. Plain cell
+      // text may contain foreign-looking paths without poisoning durable P.
+      const foreignImage = `/api/document-images/${randomUUID()}/${"a".repeat(64)}.webp`;
+      let titleVersion = saved.body.cells[0].version;
+      for (const value of [
+        foreignImage,
+        `![literal](${foreignImage})`,
+        "Saved outside",
+      ]) {
+        const changed = await request("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            {
+              taskId: task.id,
+              key: "title",
+              value,
+              expectedVersion: titleVersion,
+            },
+          ],
+        });
+        assert.equal(changed.status, 200, JSON.stringify(changed.body));
+        titleVersion = changed.body.cells[0].version;
+      }
+      const imageBoundaryBefore = canonical(await adapter.readSnapshot(teamId));
+      const auditBefore = (
+        await team.query("SELECT COUNT(*) n FROM graeboard.site_audit")
+      ).rows[0].n;
+      for (const markdown of [
+        `![foreign](${foreignImage})`,
+        `![foreign][pic]\n\n[pic]: ${foreignImage}`,
+      ]) {
+        const rejected = await request(
+          `/tasks/${task.id}/document`,
+          {
+            operationId: randomUUID(),
+            expectedRevision: docSaved.body.revision,
+            markdown,
+          },
+          "PUT",
+        );
+        assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
+      }
+      assert.equal(
+        canonical(await adapter.readSnapshot(teamId)),
+        imageBoundaryBefore,
+        "foreign actual image rejection preserves domain state and P atomically",
+      );
+      assert.equal(
+        (await team.query("SELECT COUNT(*) n FROM graeboard.site_audit"))
+          .rows[0].n,
+        auditBefore,
+      );
+      assert.equal(
+        (await request(`/tasks/${task.id}/document`)).body.markdown,
+        "Worker document",
+      );
+      // R2-5: old audit text is untrusted historical data, never a cross-team
+      // dependency or a reason for an administrator listing to fail.
+      await team.query(
+        "INSERT INTO graeboard.site_audit VALUES($1,$2,$3,'edit',$4,$5,$6)",
+        [
+          randomUUID(),
+          teamId,
+          adminId,
+          task.id,
+          JSON.stringify({
+            value: foreignImage,
+            markdown: `![old](${foreignImage})`,
+          }),
+          new Date().toISOString(),
+        ],
+      );
+      const maintenanceListing = await request(
+        `/admin/teams/${teamId}/maintenance`,
+      );
+      assert.equal(
+        maintenanceListing.status,
+        200,
+        JSON.stringify(maintenanceListing.body),
+      );
       const memoId = randomUUID();
       assert.equal(
         (await request(`/teams/${teamId}/years/2026/memos`, { id: memoId }))
@@ -628,7 +713,10 @@ test(
       );
       const cellHistory = history.entries.find(
           (e) =>
-            e.action === "cells" && e.before.some((c) => c.key === "title"),
+            e.action === "cells" &&
+            e.before.some(
+              (c) => c.key === "title" && c.value === "Worker task",
+            ),
         ),
         currentTask = (await request("/tasks?teamId=" + teamId + "&year=2026"))
           .body.tasks[0];

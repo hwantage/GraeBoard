@@ -1,4 +1,10 @@
 import { canonical, entityId } from "./protocol.mjs";
+import { documentPayloadImageUrls } from "../../shared/document-image-references.js";
+import {
+  DOCUMENT_IMAGE_PATTERN,
+  documentImageSource,
+  isDocumentImage,
+} from "../../shared/document-images.js";
 
 export const retentionKey = (row) => row.key || JSON.parse(row.entity_key);
 export const retentionId = (row) =>
@@ -47,23 +53,37 @@ export function isExcluded(record, state, retentions = []) {
 // URLs are content-addressed. Keep this parser free of Node image/DB dependencies
 // so the internal server and Worker apply the same protection rules.
 export function imageReferences(value, teamId) {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  const urls = [
-    ...new Set(
-      text.match(
-        /\/api\/document-images\/[a-zA-Z0-9_-]+\/[a-f0-9]{64}\.webp/g,
-      ) || [],
-    ),
-  ];
-  if (
-    teamId &&
-    urls.some((url) => !url.startsWith(`/api/document-images/${teamId}/`))
-  )
-    throw new Error("Foreign team image reference");
+  const urls = documentPayloadImageUrls(value);
+  for (const url of urls)
+    if (
+      !isDocumentImage(url) ||
+      (teamId && DOCUMENT_IMAGE_PATTERN.exec(url)?.[1] !== teamId)
+    )
+      throw new Error("Foreign or invalid image reference");
   return urls;
 }
 
-export function activeImageReferences(
+// Historical audit rows can include arbitrary cell/title strings and older
+// serialized shapes. Conservatively protect valid own-team files, but a foreign
+// URL in that free text must never abort maintenance or protect another tenant.
+export function auditImageReferences(value, teamId) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return [
+    ...new Set(
+      (
+        text?.match(
+          /\/api\/document-images\/[a-zA-Z0-9_-]+\/[a-f0-9]{64}\.webp/g,
+        ) || []
+      ).filter(
+        (url) =>
+          isDocumentImage(url) &&
+          DOCUMENT_IMAGE_PATTERN.exec(url)?.[1] === teamId,
+      ),
+    ),
+  ];
+}
+
+export function installImageReferences(
   state,
   pending,
   retentions,
@@ -72,18 +92,12 @@ export function activeImageReferences(
 ) {
   const urls = new Set();
   for (const record of Object.values(projected))
-    if (record.deleted || !isExcluded(record, projected, retentions)) {
+    if (!record.deleted && !isExcluded(record, projected, retentions)) {
       for (const url of imageReferences(record.payload, teamId)) urls.add(url);
     }
   for (const url of imageReferences(
     {
       pending,
-      // Deleted documents can be restored from Git or local audit history.
-      // Neither reference is necessarily present in the current visible rows.
-      tombstones: Object.values(state.entities || {}).filter(
-        (record) => record.deleted,
-      ),
-      recoveryImages: state.recoveryImages || [],
       conflicts: Object.values(state.conflicts || {}).filter(
         (conflict) => !conflict.resolution,
       ),
@@ -93,3 +107,36 @@ export function activeImageReferences(
     urls.add(url);
   return urls;
 }
+
+// Cleanup and backup restoration retain recoverable local bytes. Receiving a
+// Git commit uses installImageReferences instead: historical deletion alone is
+// not a reason to download an image into the current site's live image store.
+export function activeImageReferences(
+  state,
+  pending,
+  retentions,
+  projected = state.entities,
+  teamId,
+) {
+  const urls = installImageReferences(
+    state,
+    pending,
+    retentions,
+    projected,
+    teamId,
+  );
+  for (const record of [
+    ...Object.values(state.entities || {}),
+    ...Object.values(projected),
+  ])
+    if (record.deleted && !isExcluded(record, projected, retentions))
+      for (const url of imageReferences(record.payload, teamId)) urls.add(url);
+  for (const url of state.recoveryImages || [])
+    if (
+      isDocumentImage(url) &&
+      (!teamId || DOCUMENT_IMAGE_PATTERN.exec(url)?.[1] === teamId)
+    )
+      urls.add(documentImageSource(url));
+  return urls;
+}
+export const protectedImageReferences = activeImageReferences;

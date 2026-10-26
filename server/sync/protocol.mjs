@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { documentImageUrls } from "../../shared/document-image-references.js";
+import {
+  DOCUMENT_IMAGE_PATTERN,
+  isDocumentImage,
+} from "../../shared/document-images.js";
 export const PROTOCOL = 1;
 export const ENTITIES = new Set([
   "team",
@@ -259,11 +264,13 @@ export function validateEntityPayload(entity, key, payload, teamId) {
     if (payload.data.tasks.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team report row");
   }
-  for (const url of JSON.stringify(payload).matchAll(
-    /\/api\/document-images\/([^/"\\]+)\/([^"\\\s#)]+)/g,
-  ))
-    if (url[1] !== teamId || !/^[a-f0-9]{64}\.webp$/.test(url[2]))
-      throw new Error("Foreign or invalid image reference");
+  if (entity === "document")
+    for (const url of documentImageUrls(payload.markdown))
+      if (
+        !isDocumentImage(url) ||
+        DOCUMENT_IMAGE_PATTERN.exec(url)?.[1] !== teamId
+      )
+        throw new Error("Foreign or invalid image reference");
 }
 export function validateOperation(op, identity) {
   if (
@@ -336,11 +343,6 @@ export function validateOperation(op, identity) {
       )
     )
       throw new Error("Private team setting in shared payload");
-    for (const url of JSON.stringify(c.desired).matchAll(
-      /\/api\/document-images\/([^/"\\]+)\/([^"\\\s#)]+)/g,
-    ))
-      if (url[1] !== op.teamId || !/^[a-f0-9]{64}\.webp$/.test(url[2]))
-        throw new Error("Foreign or invalid image reference");
   }
   if (Buffer.byteLength(canonical(op)) > 64 * 1024 * 1024)
     throw new Error("Operation exceeds protocol byte budget");
