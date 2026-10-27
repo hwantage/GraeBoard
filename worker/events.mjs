@@ -9,7 +9,11 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function eventResponse(
   ctx,
   streams,
-  { multiplex = true, pollMs = 1000, lifetimeMs = 60000 } = {},
+  {
+    multiplex = true,
+    pollMs = ctx.env.EVENT_STREAM_POLL_MS || 1000,
+    lifetimeMs = ctx.env.EVENT_STREAM_LIFETIME_MS || 60000,
+  } = {},
 ) {
   assert(
     Array.isArray(streams) &&
@@ -101,7 +105,7 @@ export async function eventResponse(
               401,
               "로그인이 만료되었습니다.",
             );
-            ctx.user = await authenticate(ctx.env, ctx.identity);
+            ctx.user = await authenticate(ctx.env, ctx.identity, ctx.request);
             ctx.teamCache.clear();
             const batches = new Map();
             for (const channel of channels) {

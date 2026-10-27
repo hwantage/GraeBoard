@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
+import { setupGuideHtml } from "../shared/setup-guide.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Reuse the existing pure workbook parser/exporter verbatim. Their server module
 // also imports SQLite and sharp, so generate only this dependency-free section.
@@ -26,15 +27,10 @@ if (
 ) {
   await generateTransferCore();
   await mkdir(resolve(root, "dist"), { recursive: true });
-  const guide = (await readFile(resolve(root, "docs/CLOUD_SETUP.md"), "utf8"))
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  const guide = await readFile(resolve(root, "docs/CLOUD_SETUP.md"), "utf8");
   await writeFile(
     resolve(root, "dist/CLOUD_SETUP.html"),
-    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GraeBoard Cloud Setup</title><style>body{max-width:80ch;margin:2rem auto;padding:1rem;font:16px/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><pre>' +
-      guide +
-      "</pre>",
+    setupGuideHtml(guide),
   );
   if (!process.argv.includes("--generate-only")) {
     const run = spawnSync(

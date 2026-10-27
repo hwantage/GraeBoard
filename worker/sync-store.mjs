@@ -70,6 +70,13 @@ export function boundStore(
           );
           assertStateCapacity(state, limits, projection.pending);
           await materialize(tx, teamId, projection);
+          // A received commit may acknowledge our own outbox after a lost
+          // publish response. Only that evidence marks a local write published.
+          if (ack.length)
+            await tx.query(
+              "UPDATE team_sync_links SET last_published_at=$2 WHERE team_id=$1 AND EXISTS (SELECT 1 FROM sync_outbox WHERE team_id=$1 AND op_id=ANY($3::text[]) AND status='acknowledged')",
+              [teamId, new Date().toISOString(), ack],
+            );
         },
         options,
       );

@@ -14,6 +14,8 @@
 
 ## 구조
 
+외부 런타임은 `edge/main.mjs`(Supabase/Deno) → `edge/handler.mjs` → 기존 `worker/entry.mjs`의 API·repository를 재사용합니다. `worker/gateway.mjs`는 Cloudflare에서 HTTP 전달·정적 파일·R2/Images binding을 담당합니다. `scripts/build-edge.mjs`가 공통 모듈과 고정 버전 npm import를 묶습니다. `tests/edge-gateway.test.mjs`는 실제 workerd 전달/자원 경계를, `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → PostgreSQL 및 내부 SQLite/Git 흐름을 확인합니다. Deno 호환성은 생성 함수의 실행과 실제 Supabase 배포로 별도 확인합니다.
+
 | 경로                                                                                                                                                   | 역할                                                               |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
 | `src/App.tsx`                                                                                                                                          | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                 |
@@ -283,6 +285,7 @@ npm run licenses
 npm test
 npm run build
 npm run build:worker
+npm run build:edge
 npm run build:pages
 npm run test:e2e -- tests/browser/data-sync.spec.ts
 npm run performance:sync
@@ -342,7 +345,7 @@ Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)
 
 ## 팀별 외부 설치와 계정 연결
 
-Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → 기존 Worker의 경로입니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
+Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. 종전 전체 Worker도 복구용 진입점으로 유지합니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
 
 신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v31에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
 

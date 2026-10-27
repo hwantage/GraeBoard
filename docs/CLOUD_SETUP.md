@@ -2,7 +2,41 @@
 
 [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [동기화 규약](SYNC_PROTOCOL.md)
 
-이 안내는 내부 Node/SQLite 서버와 외부 Cloudflare Worker/Supabase 서버를 연결하는 관리자를 위한 절차입니다. 운영 자원 생성·배포·운영 DB 변환은 대상과 점검 시간이 승인된 뒤 수행합니다. 개발 환경의 검증과 실제 클라우드 계정의 연결 검사는 서로 다른 단계입니다.
+이 안내는 내부 Node/SQLite 서버와 외부 Supabase Edge Functions 서버를 연결하는 관리자를 위한 절차입니다. Cloudflare Pages 주소·Access Google 로그인·R2 이미지는 유지합니다. 운영 자원 생성·배포·운영 DB 변환은 대상과 점검 시간이 승인된 뒤 수행합니다. 개발 환경의 검증과 실제 클라우드 계정의 연결 검사는 서로 다른 단계입니다.
+
+## Supabase Edge Functions 배포
+
+업무 API·Access JWT 검증·계정 및 팀 권한·Git 동기화는 Supabase의 `graeboard` 함수에서 실행합니다. Pages의 `GRAEBOARD_BACKEND` binding은 `worker/gateway.mjs`를 실행하는 별도 gateway Worker를 가리킵니다. Gateway에는 DB·Git 토큰이 필요하지 않습니다. 정적 화면은 Edge에서 Access JWT 검증을 통과한 뒤 제공하며, API 응답·계정 쿠키·SSE 스트림은 그대로 전달합니다.
+
+R2와 Images native binding은 gateway에 남습니다. Edge가 서버 전용 Secret으로 gateway의 `/_resources/` 경로를 호출합니다. 이 경로는 비밀값 확인과 해당 팀의 이미지/검사 키 범위를 검사하며 브라우저에는 Secret을 전달하지 않습니다. 업무·문서 조회와 Git 연산은 Worker에서 실행하지 않습니다.
+
+Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다.
+
+기존 설치 이전에는 **DB migration이 없습니다**. site v2·team v1, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 기존 Worker는 새 경로 검증이 끝날 때까지 복구용으로 보관하고, 기존 Cron은 중단하여 중복 실행을 피합니다. 아래 Hyperdrive 및 전체 Worker 배포 절차는 종전 런타임을 유지하는 설치에 해당합니다.
+
+인터넷에 연결된 운영자 환경에서 다음 순서로 배포합니다. 내부 Node 서버는 이 환경 파일을 읽지 않으며 GitHub만 접속합니다.
+
+1. Supabase 관리 토큰으로 CLI를 인증합니다. 프로젝트의 anon/publishable 키와 관리 토큰은 다릅니다. 토큰은 저장소에 포함하지 않는 파일 또는 운영자 환경 변수에 보관합니다.
+2. `npm run build`, `npm run build:worker -- --generate-only`, `npm run build:edge`를 실행합니다. Edge 빌드는 기존 API 모듈을 묶고 설치된 lockfile의 npm 버전을 고정합니다. 생성된 `supabase/functions/graeboard/index.mjs`는 커밋하지 않습니다.
+3. `wrangler.gateway.jsonc`를 복사해 실제 Pages origin·팀 UUID·bucket·Edge URL·Worker 이름을 지정합니다. gateway를 배포하고 독립적인 난수 Secret 두 개를 등록합니다: `GRAEBOARD_GATEWAY_SECRET`(gateway → Edge), `GRAEBOARD_RESOURCE_SECRET`(Edge → R2/Images gateway). 둘 다 32바이트 이상의 난수를 사용합니다. gateway의 `workers.dev` 주소는 자원 호출용이며 일반 화면/API는 설정된 Pages origin만 허용합니다.
+4. Supabase Edge Secrets에 다음 값을 등록합니다. JSON 변수는 JSON 자체를 값으로 저장하며 역슬래시로 이중 escape하지 않습니다. `supabase secrets set --env-file 운영자전용파일 --project-ref 프로젝트ID`로 등록할 경우 `SYNC_PROFILES=[{"profileId":...}]`처럼 한 줄로 저장합니다. 관리 토큰을 함수 Secrets에 넣지 않습니다.
+
+| Edge 설정 | 값 |
+| --- | --- |
+| `GRAEBOARD_SITE` | `external` |
+| `APP_ORIGIN`, `ACCESS_ISSUER`, `ACCESS_AUDIENCE` | 기존 Pages와 Access 앱 설정 |
+| `SITE_NAME`, `SITE_TEAM_ID`, `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | 기존 외부 설치 값 그대로 |
+| `SYNC_PROFILES`, `GIT_TEAM` | 기존 팀 프로필 및 팀 전용 GitHub 토큰. DB binding `PG_SITE`, bucket binding `R2_TEAM` |
+| `SYNC_MAX_STATE_BYTES`, `SYNC_MAX_ENTITIES` | 기존 용량 제한 |
+| `GRAEBOARD_GATEWAY_SECRET` | gateway와 같은 전달용 Secret |
+| `RESOURCE_ORIGIN`, `GRAEBOARD_RESOURCE_SECRET` | gateway의 HTTPS `workers.dev` origin, 같은 자원용 Secret |
+| `GRAEBOARD_DATABASE_URL` | 선택 사항. 전용 앱 역할의 PostgreSQL 접속 URL. 생략 시 Supabase가 제공하는 `SUPABASE_DB_URL` 사용 |
+
+5. `npx supabase functions deploy graeboard --project-ref 프로젝트ID --use-api`를 실행합니다. `supabase/config.toml`의 `verify_jwt=false`는 Supabase Auth 검증 대신 gateway Secret 및 Cloudflare Access JWT·앱 계정·팀 권한을 직접 검증하기 위한 설정입니다. 이 검증 코드를 제거한 함수를 공개하지 않습니다.
+6. Pages Production/Preview의 `GRAEBOARD_BACKEND`를 새 gateway로 바꾸고 Pages를 재배포합니다. Google 로그인, 업무/문서 조회·저장, R2 이미지, 두 방향 Git 반영, 로그아웃·권한 철회를 확인합니다. 실패하면 Pages binding을 이전 Worker로 되돌리고 Pages를 다시 배포합니다. DB를 이전 백업으로 덮어쓰지 않습니다.
+7. 검증 후 gateway에 `* * * * *` Cron을 설정하면 Edge의 인증된 scheduler 경로를 호출합니다. 실제 Git 작업은 Edge `waitUntil`에서 실행하며 기존 lease와 outbox로 중복 적용을 막습니다. 크기·커밋·operation 묶음 제한을 유지하고 실행 로그에서 CPU·시간 초과와 미전송 상태를 확인합니다. Free의 호출량·CPU·메모리 한도는 별개이므로 무제한 동작으로 간주하지 않습니다.
+
+운영자 점검용 함수가 있다면 검증 후 제거합니다. 새 팀도 이 경로로 배포할 수 있으며, 이하의 DB 초기화·팀 Git·Google Access·계정 연결 절차는 동일합니다. [Edge 배포](https://supabase.com/docs/guides/functions/deploy), [Edge 실행 제한](https://supabase.com/docs/guides/functions/limits)
 
 ## 1. 준비할 자원
 
@@ -12,13 +46,13 @@
 | --- | --- |
 | 내부 공통 | 기존 Node/SQLite 서버·이미지 경로·Git CLI |
 | 외부 연결 팀마다 | 비공개 GitHub 데이터 저장소 하나 |
-| 외부 연결 팀마다 | Cloudflare Pages 접속 주소·비공개 Worker + Static Assets 앱·Google 전용 Access 앱 |
-| 외부 연결 팀마다 | Supabase 프로젝트 하나와 Hyperdrive 하나 |
+| 외부 연결 팀마다 | Cloudflare Pages 접속 주소·gateway Worker + Static Assets·Google 전용 Access 앱 |
+| 외부 연결 팀마다 | Supabase 프로젝트 하나와 `graeboard` Edge Function |
 | 외부 연결 팀마다 | 비공개 R2 bucket·Images binding |
 
 외부 연결 팀이 N개면 Supabase 프로젝트도 N개입니다. 한 프로젝트 안의 `graeboard`는 업무 자료, `graeboard_site`는 그 팀의 사용자·연결 승인·설정 정보를 보관합니다. 별도 공통 관리 프로젝트는 만들지 않습니다. 기존에 빈 관리용 프로젝트를 만들었다면 그 프로젝트를 해당 팀 전용으로 사용할 수 있습니다.
 
-외부 접속 주소는 팀별 Pages의 `https://프로젝트.pages.dev`를 사용할 수 있습니다. `functions/[[path]].js`가 모든 요청을 `GRAEBOARD_BACKEND` Service binding으로 비공개 Worker에 전달합니다. Worker가 정적 화면·API·인증·Hyperdrive·R2·Cron을 처리하므로 기존 권한 검사와 동기화 경로를 재사용합니다. 브라우저의 주소·요청 본문·Access JWT·계정 쿠키·SSE 스트림은 그대로 유지합니다. `public/_routes.json`은 정적 파일도 이 경로를 거치게 합니다. 연결이 없거나 Worker에 도달하지 못하면 JSON 503을 반환하며 Pages의 정적 HTML로 대체하지 않습니다.
+외부 접속 주소는 팀별 Pages의 `https://프로젝트.pages.dev`를 사용할 수 있습니다. `functions/[[path]].js`가 모든 요청을 `GRAEBOARD_BACKEND` Service binding으로 gateway에 전달합니다. gateway는 API를 Supabase Edge Function으로 전달하고, 정적 파일도 Edge의 Access 검증 후 제공합니다. 브라우저의 주소·요청 본문·Access JWT·계정 쿠키·SSE 스트림은 그대로 유지합니다. `public/_routes.json`은 정적 파일도 이 경로를 거치게 합니다. 연결이 없으면 JSON 503을 반환하며 Pages의 정적 HTML로 대체하지 않습니다.
 
 팀이 추가되면 Pages·Worker·DB·bucket·Access 앱을 각각 준비합니다. 기존 자체 도메인에서 Worker에 직접 접속하는 배포도 유지합니다.
 
@@ -28,7 +62,7 @@
 
 내부망 서버의 외부 접속은 팀 GitHub 저장소만 허용합니다. Supabase·Hyperdrive·R2·Cloudflare 관리 API로 내부 서버가 직접 접속하지 않습니다. 외부 DB 초기화와 배포는 인터넷에 연결된 별도 운영 환경에서 수행하고, DB 비밀번호·외부 설정 키를 내부 서버의 환경 파일에 저장하지 않습니다. 로컬 Node/SQLite를 내부망으로 시험할 때도 같은 경계를 지킵니다.
 
-`binding`은 Worker에 설치한 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다.
+`binding`은 Worker에 설치한 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다. 아래 표는 종전 전체 Worker 배포의 설정입니다. Edge 배포의 변수·Secret 위치는 위의 Edge 배포 표를 따릅니다.
 
 | 값                     | 입력 위치          | 의미                                            |
 | ---------------------- | ------------------ | ----------------------------------------------- |

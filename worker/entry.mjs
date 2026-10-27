@@ -224,9 +224,9 @@ export function createWorker({
           });
         }
         if (path === "/events" && method === "POST")
-          return eventResponse(ctx, body.streams);
+          return await eventResponse(ctx, body.streams);
         if (path.endsWith("/events") && method === "GET")
-          return eventResponse(
+          return await eventResponse(
             ctx,
             [
               {

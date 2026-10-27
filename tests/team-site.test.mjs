@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { Pool } from "pg";
+import sharp from "sharp";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import { openDatabase, json } from "../server/db.mjs";
@@ -22,6 +23,8 @@ import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { createWorker } from "../worker/entry.mjs";
+import { createEdgeHandler } from "../edge/handler.mjs";
+import { createGateway } from "../worker/gateway.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
 import { refreshSetupKeys } from "../worker/setup-keys.mjs";
@@ -392,7 +395,9 @@ test(
       INSTALLATION_ID: siteId,
       PEER_INSTALLATION_ID: sourceId,
       SITE_TEAM_ID: teamId,
-      PG_SITE: { connectionString: url },
+      PG_SITE: { connectionString: url, pool },
+      GRAEBOARD_GATEWAY_SECRET: "fixture-gateway-secret-with-enough-entropy",
+      GRAEBOARD_EDGE_URL: "https://fixture.supabase.co/functions/v1/graeboard",
       R2_TEAM: bucket(),
       GIT_TOKEN: "fixture-secret",
       SYNC_PROFILES: JSON.stringify([profile]),
@@ -418,6 +423,12 @@ test(
       }),
       onError: (error) => errors.push(error),
     });
+    const edge = createEdgeHandler({
+      env,
+      app: worker,
+      execution: { waitUntil: (promise) => work.push(promise) },
+    });
+    const gateway = createGateway({ fetcher: edge });
     const outside = async (
       google,
       path,
@@ -439,7 +450,7 @@ test(
         env: {
           GRAEBOARD_BACKEND: {
             fetch: (request) =>
-              worker.fetch(request, env, {
+              gateway.fetch(request, env, {
                 waitUntil: (promise) => work.push(promise),
               }),
           },
@@ -676,6 +687,66 @@ test(
         await outside("member-google", `/tasks?teamId=${teamId}&year=2026`),
       ).tasks[0].id,
       task.id,
+    );
+    const subscription = await gateway.fetch(
+      new Request(env.APP_ORIGIN + "/api/events", {
+        method: "POST",
+        headers: {
+          "test-google": "member-google",
+          "X-Requested-With": "WeeklyPlan",
+          "Content-Type": "application/json",
+          Cookie: cookies.get("member-google"),
+        },
+        body: JSON.stringify({
+          streams: [
+            { id: 1, path: `/api/cells/events?teamId=${teamId}&year=2026` },
+          ],
+        }),
+      }),
+      env,
+    );
+    assert.equal(subscription.status, 200);
+    const reader = subscription.body.getReader();
+    const firstEvent = new TextDecoder().decode((await reader.read()).value);
+    await reader.cancel();
+    assert.doesNotMatch(firstEvent, /access-revoked|rejected/);
+    assert.match(firstEvent, /"event":"(ready|reset|cells)"/);
+    // Conversion rechecks account membership with the same site session cookie.
+    const png = await sharp({
+      create: { width: 4, height: 4, channels: 4, background: "#207a70" },
+    })
+      .png()
+      .toBuffer();
+    const webp = await sharp(png).webp().toBuffer();
+    env.IMAGES = {
+      info: async () => ({ format: "image/png", width: 4, height: 4 }),
+      input: () => ({
+        transform: () => ({
+          output: async () => ({ response: () => new Response(webp) }),
+        }),
+      }),
+    };
+    const imageForm = new FormData();
+    imageForm.set(
+      "image",
+      new File([png], "fixture.png", { type: "image/png" }),
+    );
+    const imageResponse = await gateway.fetch(
+      new Request(env.APP_ORIGIN + `/api/tasks/${task.id}/document/images`, {
+        method: "POST",
+        headers: {
+          "test-google": "member-google",
+          "X-Requested-With": "WeeklyPlan",
+          Cookie: cookies.get("member-google"),
+        },
+        body: imageForm,
+      }),
+      env,
+    );
+    assert.equal(imageResponse.status, 200, await imageResponse.clone().text());
+    assert.equal(
+      (await imageResponse.json()).url,
+      `/api/document-images/${teamId}/${createHash("sha256").update(webp).digest("hex")}.webp`,
     );
     assert.equal(
       (await outside("member-google", `/tasks?teamId=${otherTeam}&year=2026`))

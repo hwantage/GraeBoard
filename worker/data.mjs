@@ -27,12 +27,17 @@ export function poolFor(binding, scope = "control", { site = false } = {}) {
   return {
     site,
     async connect() {
-      const client = new pg.Client({
-        connectionString: binding.connectionString,
-        connectionTimeoutMillis: 10000,
-        statement_timeout: 15000,
-      });
-      await client.connect();
+      const client = binding.pool
+        ? await binding.pool.connect()
+        : new pg.Client({
+            connectionString: binding.connectionString,
+            connectionTimeoutMillis: 10000,
+            statement_timeout: 15000,
+          });
+      if (!binding.pool) await client.connect();
+      const release = binding.pool
+        ? client.release.bind(client)
+        : () => client.end();
       try {
         const rows = (
           await client.query(
@@ -43,13 +48,13 @@ export function poolFor(binding, scope = "control", { site = false } = {}) {
           allowPreviousSite: true,
         });
       } catch (error) {
-        await client.end();
+        await release(error);
         if (error.status) throw error;
         throw Object.assign(new Error("DB 스키마 연결을 확인하세요."), {
           status: 503,
         });
       }
-      client.release = () => client.end();
+      client.release = release;
       return client;
     },
   };

@@ -290,6 +290,7 @@ test(
       );
       await drain();
       assert.equal(imported.phase, "complete");
+      assert.equal((await pgStore.readLink(teamId)).last_published_at, null);
       assert.equal(
         github.calls
           .slice(beforeImportCalls)
@@ -340,6 +341,12 @@ test(
       await runTeam(env, p);
       await app.locals.sync.get(teamId).run();
       assert.equal(getTask(db, task.id).cells.title.value, "From PostgreSQL");
+      assert.ok(
+        Number.isFinite(
+          Date.parse((await pgStore.readLink(teamId)).last_published_at),
+        ),
+        "verified own outbox acknowledgement records Git publication time",
+      );
       const png = await sharp({
           create: { width: 10, height: 8, channels: 4, background: "#345678" },
         })

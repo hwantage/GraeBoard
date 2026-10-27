@@ -78,7 +78,7 @@ export async function documentRoutes(ctx, path, method, body, query) {
       const form = await ctx.request.formData(),
         file = form.get("image"),
         converted = await convertImage(file, ctx.env.IMAGES);
-      ctx.user = await authenticate(ctx.env, ctx.identity);
+      ctx.user = await authenticate(ctx.env, ctx.identity, ctx.request);
       ctx.teamCache.clear();
       const refreshed = await ctx.team(teamId);
       assert(

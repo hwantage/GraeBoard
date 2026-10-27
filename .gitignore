@@ -3,6 +3,8 @@ node_modules/
 dist/
 dist-worker/
 dist-pages/
+supabase/functions/graeboard/index.mjs
+supabase/.temp/
 .wrangler/
 *.tsbuildinfo
 
