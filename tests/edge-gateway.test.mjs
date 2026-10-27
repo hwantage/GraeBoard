@@ -6,6 +6,34 @@ import { build } from "esbuild";
 import { createEdgeHandler } from "../edge/handler.mjs";
 import { verifyAccess } from "../worker/access.mjs";
 import { resourceBindings } from "../edge/resources.mjs";
+import { createGateway } from "../worker/gateway.mjs";
+
+test("gateway restores HTML only for an authorized setup guide", async () => {
+  const env = {
+    APP_ORIGIN: "https://board.pages.dev",
+    GRAEBOARD_EDGE_URL: "https://fixture.supabase.co/functions/v1/graeboard",
+    GRAEBOARD_GATEWAY_SECRET: "g".repeat(64),
+  };
+  for (const [path, status, expected] of [
+    ["/api/admin/service-connections/guide", 200, "text/html"],
+    ["/api/admin/service-connections/guide", 403, "text/plain"],
+    ["/api/bootstrap", 200, "text/plain"],
+  ]) {
+    const gateway = createGateway({
+      fetcher: async () =>
+        new Response("guide", {
+          status,
+          headers: { "Content-Type": "text/plain" },
+        }),
+    });
+    const response = await gateway.fetch(
+      new Request(env.APP_ORIGIN + path),
+      env,
+    );
+    assert.equal(response.status, status);
+    assert.ok(response.headers.get("content-type").startsWith(expected));
+  }
+});
 
 test("workerd gateway and Edge enforce Access on assets, origin, secrets, cookies and streaming", async () => {
   const env = {

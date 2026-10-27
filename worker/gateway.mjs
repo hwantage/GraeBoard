@@ -167,8 +167,27 @@ export function createGateway({
           return await resource(request, env);
         if (url.origin !== env.APP_ORIGIN)
           return failure(403, "이 주소에서는 서비스를 사용할 수 없습니다.");
-        if (url.pathname.startsWith("/api/"))
-          return await forward(request, env, url.pathname + url.search);
+        if (url.pathname.startsWith("/api/")) {
+          const response = await forward(
+            request,
+            env,
+            url.pathname + url.search,
+          );
+          // Supabase rewrites HTML to text/plain. Restore only this known,
+          // escaped static guide after the API has verified administrator access.
+          if (
+            url.pathname === "/api/admin/service-connections/guide" &&
+            request.method === "GET" &&
+            response.status === 200
+          ) {
+            const headers = new Headers(response.headers);
+            headers.set("Content-Type", "text/html; charset=utf-8");
+            headers.set("Content-Security-Policy", csp);
+            headers.set("Cache-Control", "no-store");
+            return new Response(response.body, { headers });
+          }
+          return response;
+        }
         if (!["GET", "HEAD"].includes(request.method))
           return new Response(null, { status: 405 });
         const auth = await forward(
