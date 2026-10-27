@@ -4,6 +4,93 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
+import { build } from "esbuild";
+
+test("GitHub transport uses the native workerd fetch to read team data", async () => {
+  const head = "a".repeat(40),
+    tree = "b".repeat(40),
+    blob = "c".repeat(40);
+  const manifest = { teamId: "fixture-team", repoId: "fixture-repo" };
+  const bundled = await build({
+    stdin: {
+      contents: `import { GitHubApiTransport } from './server/sync/github-api.mjs';
+        export default { async fetch() {
+          try {
+            const git = new GitHubApiTransport({ repository: 'fixture/team', token: 'fixture-token' });
+            const head = await git.readHead();
+            const bytes = await git.readFile(head, 'manifest.json');
+            return Response.json({ head, manifest: JSON.parse(new TextDecoder().decode(bytes)) });
+          } catch (error) { return Response.json({ error: error.message }, { status: 500 }); }
+        } };`,
+      resolveDir: process.cwd(),
+      sourcefile: "github-runtime-test.mjs",
+    },
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    external: ["node:*"],
+  });
+  let requests = 0,
+    redirect = false;
+  const runtime = new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      script: bundled.outputFiles[0].text,
+      compatibilityDate: "2026-10-23",
+      compatibilityFlags: ["nodejs_compat"],
+      outboundService: async (request) => {
+        requests++;
+        assert.equal(
+          request.headers.get("authorization"),
+          "Bearer fixture-token",
+        );
+        const url = new URL(request.url);
+        assert.equal(url.origin, "https://api.github.com");
+        if (redirect)
+          return new Response(null, {
+            status: 302,
+            headers: { Location: "https://untrusted.example.com/" },
+          });
+        if (url.pathname.endsWith("/git/ref/heads/sync-v1"))
+          return Response.json({ object: { sha: head } });
+        if (url.pathname.endsWith("/git/commits/" + head))
+          return Response.json({ tree: { sha: tree }, parents: [] });
+        if (url.pathname.endsWith("/git/trees/" + tree))
+          return Response.json({
+            tree: [
+              {
+                path: "manifest.json",
+                sha: blob,
+                mode: "100644",
+                type: "blob",
+              },
+            ],
+          });
+        if (url.pathname.endsWith("/git/blobs/" + blob))
+          return new Response(JSON.stringify(manifest));
+        throw new Error("Unexpected request " + url.pathname);
+      },
+    }),
+  );
+  try {
+    const response = await runtime.dispatchFetch(
+      "https://runtime.example.com/",
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.deepEqual(await response.json(), { head, manifest });
+    assert.equal(requests, 4);
+    redirect = true;
+    const rejected = await runtime.dispatchFetch(
+      "https://runtime.example.com/",
+    );
+    assert.equal(rejected.status, 500);
+    assert.match((await rejected.json()).error, /redirects are not allowed/);
+    assert.equal(requests, 5, "the redirect must not forward the GitHub token");
+  } finally {
+    await runtime.dispose();
+  }
+});
 
 test(
   "bundled Pages gateway reaches the private Worker in workerd and authenticates all paths before assets",

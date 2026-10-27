@@ -9,7 +9,7 @@ export class GitHubApiTransport {
   constructor({
     repository,
     token,
-    fetch: fetcher = fetch,
+    fetch: fetcher = globalThis.fetch.bind(globalThis),
     maxRequests = 600,
     maxBlobBytes = 64 * 1024 * 1024,
   }) {
@@ -36,7 +36,7 @@ export class GitHubApiTransport {
       `https://api.github.com/repos/${this.repository}${path}`,
       {
         method,
-        redirect: "error",
+        redirect: "manual",
         headers: {
           Authorization: `Bearer ${this.token}`,
           Accept: raw
@@ -49,6 +49,11 @@ export class GitHubApiTransport {
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(20000),
       },
+    );
+    assert(
+      response.status < 300 || response.status >= 400,
+      502,
+      "GitHub redirects are not allowed",
     );
     if (missing && response.status === 404) return null;
     if (
