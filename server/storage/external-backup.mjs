@@ -29,6 +29,13 @@ const CONTROL_TABLES = [
   "control_jobs",
   "control_audit",
 ];
+const SITE_TABLES = [
+  "control_meta",
+  "site_meta",
+  ...CONTROL_TABLES.slice(1),
+  "access_requests",
+];
+const controlTables = (site) => (site ? SITE_TABLES : CONTROL_TABLES);
 const imageKey = (teamId, url) => {
   if (
     !new RegExp(
@@ -178,7 +185,7 @@ export async function exportControl(adapter) {
   return adapter.withControlTransaction(
     async (tx) => {
       const tables = {};
-      for (const table of CONTROL_TABLES)
+      for (const table of controlTables(adapter.site))
         tables[table] = (await tx.query(`SELECT * FROM ${table}`)).rows
           .map(portableRow)
           .sort((a, b) => canonical(a).localeCompare(canonical(b)));
@@ -200,13 +207,19 @@ export async function backupExternal({ control, teams, destination }) {
   try {
     const manifest = {
       format: "graeboard-external-backup",
-      version: 1,
+      version: control?.site ? 2 : 1,
       createdAt: new Date().toISOString(),
       control: null,
       teams: [],
     };
     if (control) {
       const data = await exportControl(control);
+      if (
+        control.site &&
+        (teams.length !== 1 ||
+          teams[0].teamId !== data.tables.site_meta[0]?.team_id)
+      )
+        throw new Error("Site backup requires its single bound team");
       await writeFile(
         join(partial, "control.json"),
         JSON.stringify(data) + "\n",
@@ -284,7 +297,7 @@ export async function readExternalBackup(directory) {
     { hash, ...body } = manifest;
   if (
     manifest.format !== "graeboard-external-backup" ||
-    manifest.version !== 1 ||
+    ![1, 2].includes(manifest.version) ||
     portableHash(body) !== hash
   )
     throw new Error("External backup manifest checksum mismatch");
@@ -336,11 +349,11 @@ export async function readExternalBackup(directory) {
       throw new Error("Control backup checksum mismatch");
     if (
       Object.keys(control.tables).some(
-        (table) => !CONTROL_TABLES.includes(table),
+        (table) => !controlTables(manifest.version === 2).includes(table),
       )
     )
       throw new Error("Invalid control backup table");
-    for (const table of CONTROL_TABLES) {
+    for (const table of controlTables(manifest.version === 2)) {
       if (!Array.isArray(control.tables[table]))
         throw new Error("Missing control backup table");
       for (const row of control.tables[table])
@@ -348,6 +361,17 @@ export async function readExternalBackup(directory) {
           throw new Error("Invalid control backup column");
     }
   }
+  if (
+    manifest.version === 2 &&
+    (!control ||
+      control.tables.site_meta.length !== 1 ||
+      teams.length !== 1 ||
+      teams[0].bundle.payload.teamId !== control.tables.site_meta[0].team_id ||
+      control.tables.teams.some(
+        (row) => row.id !== control.tables.site_meta[0].team_id,
+      ))
+  )
+    throw new Error("Site backup must contain exactly its bound team");
   return { manifest, teams, control };
 }
 export async function restoreExternal({
@@ -357,6 +381,43 @@ export async function restoreExternal({
   dryRun = false,
 }) {
   const backup = await readExternalBackup(source);
+  if (!!control?.site !== (backup.manifest.version === 2))
+    throw new Error("Site and legacy backup layouts cannot be interchanged");
+  if (control) {
+    if (!backup.control) throw new Error("Control snapshot is absent");
+    await control.withControlTransaction(
+      async (tx) => {
+        if (control.site) {
+          const bound = (
+            await tx.query("SELECT team_id FROM site_meta WHERE singleton=1")
+          ).rows[0]?.team_id;
+          if (
+            bound !== backup.control.tables.site_meta[0].team_id ||
+            teams.length !== 1 ||
+            teams[0].teamId !== bound
+          )
+            throw new Error("Site restore team identity mismatch");
+        }
+        if (
+          (
+            await tx.query(
+              "SELECT 1 FROM control_jobs WHERE id=$1 AND kind='external-restore' AND phase='complete'",
+              ["restore-" + backup.manifest.hash],
+            )
+          ).rows.length
+        )
+          return;
+        for (const table of controlTables(control.site).filter(
+          (name) => !["control_meta", "site_meta"].includes(name),
+        ))
+          if ((await tx.query(`SELECT 1 FROM ${table} LIMIT 1`)).rows.length)
+            throw new Error(
+              "Control restore requires an empty initialized control DB",
+            );
+      },
+      { readOnly: true },
+    );
+  }
   for (const target of teams)
     if (
       !backup.teams.some(
@@ -412,15 +473,16 @@ export async function restoreExternal({
         ).rows.length
       )
         return;
-      for (const table of CONTROL_TABLES.filter(
-        (name) => name !== "control_meta",
+      for (const table of controlTables(control.site).filter(
+        (name) => !["control_meta", "site_meta"].includes(name),
       ))
         if ((await tx.query(`SELECT 1 FROM ${table} LIMIT 1`)).rows.length)
           throw new Error(
             "Control restore requires an empty initialized control DB",
           );
       await tx.query("DELETE FROM control_meta");
-      for (const table of CONTROL_TABLES)
+      if (control.site) await tx.query("DELETE FROM site_meta");
+      for (const table of controlTables(control.site))
         for (const row of backup.control.tables[table] || []) {
           const values = databaseRow(row),
             keys = Object.keys(values);
@@ -432,6 +494,8 @@ export async function restoreExternal({
       await tx.query(
         "UPDATE teams SET status='unconnected',config_revision=config_revision+1",
       );
+      if (control.site)
+        await tx.query("UPDATE site_meta SET directory_checked_at=0");
       await tx.query(
         "INSERT INTO control_jobs(id,kind,phase,payload,created_at) VALUES($1,'external-restore','complete',$2,$3)",
         [

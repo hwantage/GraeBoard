@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, send } from "./api";
+import { api, send, isTeamSite } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import Toast, { useToast } from "./Toast";
@@ -75,7 +75,11 @@ export default function ServiceConnections({
       <div className="settings-team-header">
         <div>
           <h3>서비스 연결</h3>
-          <p>공통 서비스와 설치된 팀 자원을 확인합니다.</p>
+          <p>
+            {isTeamSite()
+              ? "이 팀의 서비스와 저장소를 확인합니다."
+              : "공통 서비스와 설치된 팀 자원을 확인합니다."}
+          </p>
         </div>
       </div>
       <ErrorNote error={error} />
@@ -98,7 +102,7 @@ export default function ServiceConnections({
               <dd>{service.appOrigin || "미설정"}</dd>
             </div>
             <div>
-              <dt>관리 데이터베이스</dt>
+              <dt>{isTeamSite() ? "팀 데이터베이스" : "관리 데이터베이스"}</dt>
               <dd>
                 {service.database.provider} · v{service.database.version} ·{" "}
                 {service.database.status}

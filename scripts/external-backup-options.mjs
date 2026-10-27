@@ -8,6 +8,14 @@ export async function externalResources(file, { restore = false } = {}) {
   const config = JSON.parse(readFileSync(file, "utf8")),
     opened = [],
     stores = [];
+  if (config.site) {
+    if (config.control || config.teams)
+      throw new Error(
+        "Use site or legacy control/teams configuration, not both",
+      );
+    config.control = { urlEnv: config.site.urlEnv, site: true };
+    config.teams = [config.site];
+  }
   try {
     let control;
     if (config.control) {
@@ -15,6 +23,7 @@ export async function externalResources(file, { restore = false } = {}) {
         engine: "postgres",
         urlEnv: config.control.urlEnv,
         scope: "control",
+        site: !!config.control.site,
       });
       opened.push(resource);
       control = resource.adapter;

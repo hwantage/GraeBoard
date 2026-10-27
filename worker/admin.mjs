@@ -8,7 +8,7 @@ import { profiles, profileFor } from "./config.mjs";
 import {
   controlTransaction,
   databaseFor,
-  poolFor,
+  controlPool,
   DataSession,
 } from "./data.mjs";
 import { GitHubApiTransport } from "./git.mjs";
@@ -22,7 +22,7 @@ export async function serviceStatus(ctx, { check = false } = {}) {
     checks = [];
   let database;
   try {
-    database = await new PostgresDatabase(poolFor(ctx.env.PG_CONTROL), {
+    database = await new PostgresDatabase(controlPool(ctx.env), {
       scope: "control",
     }).health();
     if (check)

@@ -28,6 +28,7 @@ export async function openTransferDatabase({
   database,
   urlEnv,
   scope = "team",
+  site = false,
 }) {
   if (engine === "sqlite") {
     if (!database || !existsSync(database))
@@ -50,7 +51,7 @@ export async function openTransferDatabase({
   if (engine !== "postgres" || !urlEnv || !process.env[urlEnv])
     throw new Error("Specify postgres --url-env containing a database URL");
   const pool = new Pool({ connectionString: process.env[urlEnv], max: 2 }),
-    adapter = new PostgresDatabase(pool, { scope });
+    adapter = new PostgresDatabase(pool, { scope, site });
   try {
     await adapter.health();
   } catch (error) {

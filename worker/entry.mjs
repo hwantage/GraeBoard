@@ -19,7 +19,8 @@ import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
 import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
 import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
-import { profileFor } from "./config.mjs";
+import { profileFor, siteTeamId } from "./config.mjs";
+import { siteAuthRoute, accessRequestRoutes } from "./site-auth.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
 const security = {
@@ -165,11 +166,21 @@ export function createWorker({
             assert(false, 400, "JSON 요청을 확인하세요.");
           }
         }
+        const siteAuth = await siteAuthRoute(
+          env,
+          identity,
+          request,
+          path,
+          method,
+          body,
+        );
+        if (siteAuth)
+          return json(siteAuth.body, siteAuth.status || 200, siteAuth.headers);
         if (path === "/setup" && method === "GET")
           return json(await setupStatus(env, identity));
         if (path === "/auth/setup" && method === "POST")
           return json(await setup(env, identity, body), 201);
-        const user = await authenticate(env, identity),
+        const user = await authenticate(env, identity, request),
           ctx = new RequestContext(env, user, identity, request, execution);
         if (path === "/health") return json({ ok: true, site: "external" });
         if (path === "/admin/service-connections/guide") {
@@ -210,12 +221,15 @@ export function createWorker({
           await pullFirst(ctx, url.searchParams.get("teamId"));
         if (["POST", "PUT", "PATCH", "DELETE"].includes(method))
           await pullFirst(ctx, await mutationTeam(ctx, path, body));
+        if (siteTeamId(env))
+          ctx.user = await authenticate(env, identity, request);
         const routes = [
           controlRoutes,
           adminRoutes,
           recoveryRoutes,
           auditRoutes,
           historyCleanupRoutes,
+          accessRequestRoutes,
           profileSwitchRoutes,
           maintenanceRoutes,
           taskRoutes,

@@ -5,6 +5,7 @@ import LoadingState from "./LoadingState";
 import Select from "./Select";
 import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
+import { canManageTeam } from "../shared/domain.js";
 
 export type ResourceProfile = {
   profileId: string;
@@ -139,7 +140,7 @@ export default function TeamSyncSettings({
   user: User;
   onMessage: (message: string) => void;
 }) {
-  const admin = user.systemRole === "admin";
+  const admin = canManageTeam(user, team.id);
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [profileId, setProfileId] = useState("");

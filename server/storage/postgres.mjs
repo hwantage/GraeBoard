@@ -5,10 +5,13 @@ import {
   prepareStatePatch,
 } from "./team-store.mjs";
 import { digest } from "../sync/protocol.mjs";
-import { POSTGRES_CHECKSUMS } from "./schema-version.mjs";
+import { POSTGRES_CHECKSUMS, postgresLayout } from "./schema-version.mjs";
 
 export class PostgresDatabase extends DatabaseAdapter {
-  constructor(pool, { scope = "team", teamId = null } = {}) {
+  constructor(
+    pool,
+    { scope = "team", teamId = null, site = pool.site || false } = {},
+  ) {
     super();
     if (!["team", "control"].includes(scope))
       throw new Error("Invalid PostgreSQL scope");
@@ -16,6 +19,8 @@ export class PostgresDatabase extends DatabaseAdapter {
     this.scope = scope;
     this.teamId = teamId;
     this.engine = "postgres";
+    this.site = site;
+    Object.assign(this, postgresLayout(scope, site));
   }
   async transaction(work, { teamId, readOnly = false, retries = 0 } = {}) {
     if (
@@ -39,7 +44,9 @@ export class PostgresDatabase extends DatabaseAdapter {
             : "BEGIN",
         );
         begun = true;
-        await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+        await client.query(
+          `SET LOCAL search_path TO ${this.schema}, pg_catalog`,
+        );
         if (!readOnly)
           await client.query(
             "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
@@ -151,14 +158,14 @@ export class PostgresDatabase extends DatabaseAdapter {
     try {
       const rows = (
         await client.query(
-          "SELECT scope,version,checksum FROM graeboard.schema_migrations ORDER BY version",
+          `SELECT scope,version,checksum FROM ${this.schema}.schema_migrations ORDER BY version`,
         )
       ).rows;
       if (
         rows.length !== 1 ||
-        rows[0].scope !== this.scope ||
+        rows[0].scope !== this.migrationScope ||
         rows[0].version !== 1 ||
-        rows[0].checksum !== POSTGRES_CHECKSUMS[this.scope]
+        rows[0].checksum !== POSTGRES_CHECKSUMS[this.migrationScope]
       )
         throw new Error("PostgreSQL schema scope/version/checksum mismatch");
       if (this.scope === "team" && this.teamId) {

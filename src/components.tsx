@@ -13,11 +13,14 @@ import {
   LockKeyhole,
   CircleHelp,
 } from "lucide-react";
-import { api, send, isExternalSite } from "./api";
+import { api, send, isExternalSite, isTeamSite } from "./api";
 import { resumeSession } from "./event-stream";
 import { BrandLockup, Grae } from "./Brand";
 import { inkFor } from "./color";
 import type { Bootstrap, User } from "./types";
+import ExternalAccountLogin, {
+  type AccountStatus,
+} from "./ExternalAccountLogin";
 
 export function Button({
   children,
@@ -198,8 +201,9 @@ export function SessionLogin({
     return (
       <div>
         <p className="field-help">
-          입력을 이 화면에 보존했습니다. 새 창에서 {username} 계정으로 Google
-          로그인을 확인한 뒤 다시 시도하세요.
+          {isTeamSite()
+            ? `입력을 이 화면에 보존했습니다. 새 창에서 Google 로그인 후 사내 계정 ${username}을 선택하고 다시 시도하세요.`
+            : `입력을 이 화면에 보존했습니다. 새 창에서 ${username} 계정으로 Google 로그인을 확인한 뒤 다시 시도하세요.`}
         </p>
         <div className="form-actions">
           <Button
@@ -297,12 +301,7 @@ export function Avatar({
   );
 }
 export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
-  const [setup, setSetup] = useState<{
-      required: boolean;
-      tokenRequired: boolean;
-      authMode?: "access";
-      email?: string;
-    } | null>(null),
+  const [setup, setSetup] = useState<AccountStatus | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -380,21 +379,31 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
         <div className="auth-card">
           <BrandLockup className="auth-mobile-brand" />
           <h2>
-            {setup?.required
-              ? access
-                ? "외부 공간 관리자 등록"
-                : "우리 팀의 공간 만들기"
-              : "다시 만나 반가워요"}
+            {setup?.accountLinking
+              ? setup.required
+                ? "팀장 계정 연결"
+                : "사내 계정 연결"
+              : setup?.required
+                ? access
+                  ? "외부 공간 관리자 등록"
+                  : "우리 팀의 공간 만들기"
+                : "다시 만나 반가워요"}
           </h2>
           <p>
-            {setup?.required
-              ? "관리자 계정을 만들고 업무 기록을 시작하세요."
-              : access
-                ? "Google로 확인한 계정으로 업무 공간에 접속합니다."
-                : "계정으로 로그인해 이번 주 업무를 확인하세요."}
+            {setup?.accountLinking
+              ? setup.required
+                ? "Google 계정을 사내 팀장 계정에 연결하세요."
+                : "사내 계정을 선택하고 팀장에게 연결 승인을 요청하세요."
+              : setup?.required
+                ? "관리자 계정을 만들고 업무 기록을 시작하세요."
+                : access
+                  ? "Google로 확인한 계정으로 업무 공간에 접속합니다."
+                  : "계정으로 로그인해 이번 주 업무를 확인하세요."}
           </p>
           {!setup && !error ? (
             <LoaderCircle className="spin" />
+          ) : setup?.accountLinking ? (
+            <ExternalAccountLogin initial={setup} onLogin={onLogin} />
           ) : (
             <form onSubmit={submit}>
               {setup?.required && (

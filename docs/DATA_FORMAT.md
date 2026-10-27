@@ -16,7 +16,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `expo
 | JSON 반출 형식     | v6                           | `server/transfer.mjs`의 `schemaVersion`; DB 버전과 별개           |
 | DB 백업 복구       | v29·v30 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
 | 기존 DB 업그레이드 | 명시적 v29 → v30 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
-| 외부 PostgreSQL    | control/team 각각 v1         | 전용 `graeboard` 스키마와 checksum 이력, 팀 DB UUID 검증          |
+| 외부 PostgreSQL | 팀별 site v1 + team v1, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control/team v1 호환 |
 
 실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v30 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29는 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
@@ -400,6 +400,18 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 `sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 최대 128MiB 해제/64MiB 전송 크기를 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
-SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 외부 control DB의 계정·권한·팀 profile 선택과 팀 DB의 표시용 `{id,name}` 사람 참조는 분리합니다. 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정은 Git에 포함하지 않습니다.
+SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
 
 `site_entity_revisions`는 정리·복원 후에도 수정 번호를 증가시킵니다. 로컬 정리는 앱의 전체 업무 행과 C를 보존하며 화면 및 이미지 저장소에만 적용됩니다. 일반 저장에서 누락된 숨김 연도·문서를 공유 삭제로 해석하지 않습니다. 사용자 명시 삭제와 별개의 기능입니다.
+
+## 팀별 외부 사이트 계정과 승인
+
+내부 SQLite v30은 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Worker·R2·Supabase에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v1)는 기존 업무 형식을 유지하고 `graeboard_site`(site v1)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
+
+`sync-directory/<사내 installation UUID>`의 `directory.json`은 `graeboard-team-directory` v1입니다. root는 `format/version/teamId/installationId/repoId/members`, 구성원은 `id/name/email/active/role`만 허용합니다. 최대 1,000명·512KiB이며 비밀번호·사내 세션·다른 팀 소속·전체 관리자 역할을 포함하지 않습니다. 사내 현재 멤버십만 추출하며 업무 이력의 과거 작성자는 표시 참조로만 남습니다. Google 신원과 승인 결과는 외부 DB에만 보관합니다.
+
+내부는 정상 동기화 주기마다 구성원 변경을 게시하며 업무 일시정지 상태에도 구성원 갱신을 유지합니다. 외부는 1분 Cron, 진입/포커스 시 30초 간격 확인, 계정 연결/승인 시 강제 확인으로 최신 Git 이력을 적용합니다. 이름·이메일·역할·활성 상태를 트랜잭션으로 반영하고 탈퇴/비활성 계정의 Google 연결·접속 세션을 철회합니다. 재가입은 다시 승인이 필요합니다. 재작성된 Git 이력·다른 팀 자료는 거절합니다. 통신 실패 시 마지막 정상 상태를 유지하므로 사내 변경은 다음 성공한 동기화부터 적용됩니다.
+
+Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 설치 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
+
+신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마만 추가할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v2는 승인·Google 연결을 보존하되 세션을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.

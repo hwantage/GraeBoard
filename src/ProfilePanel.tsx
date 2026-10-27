@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { api } from "./api";
+import { api, isTeamSite } from "./api";
 import AvatarEditor from "./AvatarEditor";
 import { Button, ErrorNote, Modal } from "./components";
 import type { User } from "./types";
@@ -57,6 +57,7 @@ export default function ProfilePanel({
             <input
               ref={nameInput}
               value={profile.name}
+              readOnly={isTeamSite()}
               required
               maxLength={50}
               autoComplete="name"

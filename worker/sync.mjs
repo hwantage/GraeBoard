@@ -20,6 +20,7 @@ import { R2ImageStore, imageReferences, stillImage } from "./images.mjs";
 import { DataSession, databaseFor, controlTransaction } from "./data.mjs";
 import { profiles, profileFor } from "./config.mjs";
 import { assert } from "./access.mjs";
+import { refreshDirectory } from "./directory.mjs";
 import { isExcluded } from "../server/sync/retention.mjs";
 
 export const excluded = isExcluded;
@@ -161,6 +162,7 @@ export function serviceFor(env, profile, link, options = {}) {
 // refreshes across isolates. It is advanced before network I/O, including errors.
 // Foreground checks never read/publish status branches or load C for an equal head.
 export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
+  await refreshDirectory(env).catch(() => {});
   const database = databaseFor(env, profile);
   const snapshot = await database.withTeamTransaction(
     profile.teamId,
@@ -270,6 +272,14 @@ export async function runTeam(
   return result;
 }
 export async function scheduled(env) {
+  try {
+    await refreshDirectory(env, { force: true });
+  } catch (error) {
+    console.error(
+      "GraeBoard team directory synchronization failed",
+      error.status || "directory",
+    );
+  }
   const teams = await controlTransaction(
     env,
     async (tx) =>

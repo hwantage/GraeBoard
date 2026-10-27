@@ -8,9 +8,12 @@ import { migratePostgres } from "../server/migrations/postgres.mjs";
 const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/path.sqlite [--dry-run] [--initialize]
        npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL --initialize [--dry-run]
        npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id <existing-uuid> --initialize [--dry-run]
+       npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id <existing-uuid> --initialize [--dry-run]
 
 SQLite supports released v29 → v30, or a new empty database with --initialize.
 PostgreSQL initializes the dedicated graeboard schema at control/team version 1.
+The site scope atomically initializes graeboard_site and graeboard in one database for one external team.
+For an existing team v1 database, omit --initialize to add only graeboard_site and preserve business data.
 --dry-run never commits; SQLite missing-file initialization is validated in memory.
 The PostgreSQL URL is read from the named environment variable, never a command argument.
 Stop application writers and make a verified backup before an approved operational migration.

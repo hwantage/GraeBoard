@@ -14,10 +14,12 @@ export class ApiError extends Error {
 }
 const taskResponses = new Map<string, { etag: string; data: unknown }>();
 let externalSite = false;
+let teamSite = false;
 let activeSyncTeam = "";
 const pulls = new Map<string, Promise<void>>();
 const lastPull = new Map<string, number>();
 export const isExternalSite = () => externalSite;
+export const isTeamSite = () => teamSite;
 export const setActiveSyncTeam = (teamId: string) => {
   activeSyncTeam = teamId;
 };
@@ -107,8 +109,10 @@ export async function api<T = any>(
   }
   if (response.headers.get("content-disposition")) return response as T;
   const data = unpack(await response.json());
-  if (["/bootstrap", "/setup"].includes(path))
+  if (["/bootstrap", "/setup"].includes(path)) {
     externalSite = data.authMode === "access";
+    teamSite = data.accountLinking === true;
+  }
   if (
     options.method &&
     !["GET", "HEAD"].includes(options.method) &&

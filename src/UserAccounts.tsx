@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import Select from "./Select";
 import AvatarEditor from "./AvatarEditor";
-import { send, isExternalSite } from "./api";
+import { send, isExternalSite, isTeamSite } from "./api";
 import { Avatar, Button, ErrorNote } from "./components";
 import { systemRoleNames, teamRoleNames } from "./roles";
 import type { Team, User } from "./types";
@@ -52,8 +52,9 @@ export default function UserAccounts({
         <div>
           <h3>사용자 계정</h3>
           <p>
-            로그인 계정과 시스템 권한을 관리합니다. 팀 소속과 팀 내 권한은 각
-            팀의 구성원 탭에서 정합니다.
+            {isTeamSite()
+              ? "사내에서 동기화한 팀 계정입니다. Google 계정 연결은 팀의 구성원 탭에서 승인합니다."
+              : "로그인 계정과 시스템 권한을 관리합니다. 팀 소속과 팀 내 권한은 각 팀의 구성원 탭에서 정합니다."}
           </p>
         </div>
       </div>
@@ -71,13 +72,15 @@ export default function UserAccounts({
         <span className="list-count" aria-live="polite">
           {needle ? `${shown.length}명 / ` : ""}전체 {users.length}명
         </span>
-        <Button
-          aria-expanded={!!edit && !edit.id}
-          onClick={() => setEdit({ systemRole: "user", active: true })}
-        >
-          <Plus size={16} />
-          사용자 추가
-        </Button>
+        {!isTeamSite() && (
+          <Button
+            aria-expanded={!!edit && !edit.id}
+            onClick={() => setEdit({ systemRole: "user", active: true })}
+          >
+            <Plus size={16} />
+            사용자 추가
+          </Button>
+        )}
       </div>
       {edit && !edit.id && form}
       <div className="settings-table-scroll">
@@ -129,7 +132,11 @@ export default function UserAccounts({
                         )}
                       </div>
                     </td>
-                    <td>{systemRoleNames[u.systemRole]}</td>
+                    <td>
+                      {isTeamSite() && u.systemRole === "admin"
+                        ? "팀 사이트 관리자"
+                        : systemRoleNames[u.systemRole]}
+                    </td>
                     <td>
                       <span
                         className={`status-pill ${u.active ? "" : "inactive"}`}
@@ -138,14 +145,16 @@ export default function UserAccounts({
                       </span>
                     </td>
                     <td>
-                      <Button
-                        title={`${u.name} 사용자 수정`}
-                        aria-expanded={editing}
-                        active={editing}
-                        onClick={() => setEdit(editing ? null : u)}
-                      >
-                        {editing ? "닫기" : "수정"}
-                      </Button>
+                      {!isTeamSite() && (
+                        <Button
+                          title={`${u.name} 사용자 수정`}
+                          aria-expanded={editing}
+                          active={editing}
+                          onClick={() => setEdit(editing ? null : u)}
+                        >
+                          {editing ? "닫기" : "수정"}
+                        </Button>
+                      )}
                     </td>
                   </tr>
                   {editing && (

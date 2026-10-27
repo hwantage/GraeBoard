@@ -356,7 +356,7 @@ test("미연결 팀은 기존 설정과 함께 동기화 상태·서비스 설�
   ).toBeVisible();
 });
 
-test("팀장은 자기 팀 상태만 관리하며 공통 자원·프로필 설정은 볼 수 없다", async ({
+test("팀장은 자기 팀 연결을 설정하며 공통 자원과 다른 팀은 볼 수 없다", async ({
   page,
 }) => {
   await post(page, "/admin/users", {
@@ -378,7 +378,7 @@ test("팀장은 자기 팀 상태만 관리하며 공통 자원·프로필 설�
     settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
   ).toContainText("미연결");
   await expect(settings.getByLabel("연결 프로필", { exact: true })).toHaveCount(
-    0,
+    1,
   );
   await expect(
     settings.getByRole("button", { name: "서비스 연결", exact: true }),
@@ -393,7 +393,7 @@ test("팀장은 자기 팀 상태만 관리하며 공통 자원·프로필 설�
     (
       await page.request.get(`${base}/api/admin/teams/${teamId}/connection`)
     ).status(),
-  ).toBe(403);
+  ).toBe(200);
   expect(
     (await page.request.get(`${base}/api/teams/${otherTeamId}/sync`)).status(),
   ).toBe(403);
@@ -508,4 +508,209 @@ test("사이트 정리 미리보기는 팀 전환 때 폐기하고 늦은 이전
   await expect(
     settings.getByRole("button", { name: "이 서버에서 정리", exact: true }),
   ).toHaveCount(0);
+});
+
+test("팀 사이트에서 사내 계정을 선택하고 승인 대기 후 접속한다", async ({
+  page,
+}, info) => {
+  const bootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  let selected = false,
+    status = "unlinked";
+  const accounts = () => ({
+    required: false,
+    tokenRequired: false,
+    authMode: "access",
+    accountLinking: true,
+    email: "personal@gmail.test",
+    accounts: [
+      {
+        id: bootstrap.user.id,
+        name: "사내 계정",
+        username: "internal@example.test",
+        role: "member",
+        status,
+      },
+    ],
+  });
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      status: selected ? 200 : 401,
+      json: selected
+        ? { ...bootstrap, authMode: "access", accountLinking: true }
+        : { error: "계정 선택 필요" },
+    }),
+  );
+  await page.route("**/api/setup", (route) =>
+    route.fulfill({ json: accounts() }),
+  );
+  await page.route("**/api/auth/accounts", (route) =>
+    route.fulfill({ json: accounts() }),
+  );
+  await page.route("**/api/auth/link-request", async (route) => {
+    expect(unpack(route.request().postDataJSON())).toEqual({
+      userId: bootstrap.user.id,
+    });
+    status = "pending";
+    await route.fulfill({ json: { status } });
+  });
+  await page.route("**/api/auth/select-account", async (route) => {
+    expect(status).toBe("approved");
+    expect(unpack(route.request().postDataJSON())).toEqual({
+      userId: bootstrap.user.id,
+    });
+    selected = true;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.reload();
+  await expect(page.getByLabel("Google 계정", { exact: true })).toHaveValue(
+    "personal@gmail.test",
+  );
+  await expect(page.getByLabel("비밀번호", { exact: true })).toHaveCount(0);
+  await page
+    .getByLabel("연결할 사내 계정", { exact: true })
+    .selectOption(bootstrap.user.id);
+  await page
+    .getByRole("button", { name: "연결 승인 요청", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "팀장의 연결 승인을 기다리고 있습니다.",
+  );
+  await expect(
+    page.getByRole("button", { name: "연결 승인 요청", exact: true }),
+  ).toBeDisabled();
+  await page.screenshot({
+    path: info.outputPath("account-pending.png"),
+    fullPage: true,
+  });
+  status = "approved";
+  await page
+    .getByRole("button", { name: "선택한 계정으로 접속", exact: true })
+    .click({ timeout: 10000 });
+  await expect(page.getByLabel("팀 선택")).toBeVisible();
+});
+
+test("외부 팀장은 연결 신청을 승인하고 구성원 정보는 읽기만 한다", async ({
+  page,
+}, info) => {
+  const bootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  let state = "pending";
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      json: { ...bootstrap, authMode: "access", accountLinking: true },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/access-requests`, (route) =>
+    route.fulfill({
+      json: {
+        requests: [
+          {
+            id: "request-1",
+            userId: bootstrap.user.id,
+            email: "member@gmail.test",
+            name: "연결할 사내 계정",
+            username: "internal@example.test",
+            status: state,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(
+    `**/api/teams/${teamId}/access-requests/request-1/approve`,
+    async (route) => {
+      state = "approved";
+      await route.fulfill({ json: { ok: true } });
+    },
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "구성원", exact: true }).click();
+  const section = settings.getByRole("region", {
+    name: "Google 계정 연결",
+    exact: true,
+  });
+  await expect(section).toContainText("member@gmail.test");
+  await expect(
+    settings.getByRole("button", { name: "구성원 추가", exact: true }),
+  ).toHaveCount(0);
+  await section.getByRole("button", { name: "승인", exact: true }).click();
+  await expect(section).toContainText("연결됨");
+  await expect(
+    section.getByRole("button", { name: "연결 해제", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: info.outputPath("account-approved.png"),
+    fullPage: true,
+  });
+});
+
+test("팀 사이트 최초 팀장은 사내 계정과 설정 키로 연결한다", async ({
+  page,
+}) => {
+  const bootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  let connected = false;
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      status: connected ? 200 : 401,
+      json: connected
+        ? { ...bootstrap, authMode: "access", accountLinking: true }
+        : { error: "최초 연결 필요" },
+    }),
+  );
+  await page.route("**/api/setup", (route) =>
+    route.fulfill({
+      json: {
+        required: true,
+        tokenRequired: true,
+        authMode: "access",
+        accountLinking: true,
+        email: "lead@gmail.test",
+        accounts: [
+          {
+            id: bootstrap.user.id,
+            name: "사내 팀장",
+            username: "lead@internal.test",
+            role: "lead",
+            status: "unlinked",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/auth/setup", async (route) => {
+    expect(unpack(route.request().postDataJSON())).toEqual({
+      userId: bootstrap.user.id,
+      setupToken: "installation-test-key",
+    });
+    connected = true;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "팀장 계정 연결", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("연결할 사내 팀장 계정", { exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "팀장 계정 연결", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("연결할 사내 팀장 계정", { exact: true })
+    .selectOption(bootstrap.user.id);
+  await page
+    .getByLabel("초기 설정 키", { exact: true })
+    .fill("installation-test-key");
+  await page
+    .getByRole("button", { name: "팀장 계정 연결", exact: true })
+    .click();
+  await expect(page.getByLabel("팀 선택")).toBeVisible();
 });

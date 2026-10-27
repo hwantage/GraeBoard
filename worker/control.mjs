@@ -8,7 +8,8 @@ import {
 } from "../shared/domain.js";
 import { assert, verifySetupToken, HttpError } from "./access.mjs";
 import { controlTransaction, databaseFor, withData } from "./data.mjs";
-import { profiles, profileFor } from "./config.mjs";
+import { profiles, profileFor, siteTeamId } from "./config.mjs";
+import { authenticateSite } from "./site-auth.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { profileFields } from "../server/profiles.mjs";
 import { z } from "zod";
@@ -18,7 +19,8 @@ import {
   userRecord,
 } from "../server/storage/control-store.mjs";
 export { userRecord } from "../server/storage/control-store.mjs";
-export async function authenticate(env, identity) {
+export async function authenticate(env, identity, request) {
+  if (siteTeamId(env)) return authenticateSite(env, identity, request);
   return controlTransaction(env, async (tx) => {
     const found = (
       await tx.query(
@@ -163,6 +165,13 @@ export class RequestContext {
     teamId,
     { write = false, manage = false, allowUnready = false } = {},
   ) {
+    const siteTeam = siteTeamId(this.env);
+    if (siteTeam)
+      assert(
+        teamId === siteTeam && this.user.teamIds.includes(teamId),
+        403,
+        "이 사이트의 팀만 사용할 수 있습니다.",
+      );
     assert(
       this.user.systemRole === "admin" || this.user.teamIds.includes(teamId),
       403,

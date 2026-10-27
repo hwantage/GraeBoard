@@ -515,7 +515,7 @@ export function createNodeSync({
       timers.delete(teamId);
       try {
         const link = store(teamId).readLink();
-        if (["active", "initializing"].includes(link?.mode))
+        if (["active", "initializing", "paused"].includes(link?.mode))
           await get(teamId).run({ initialize: link.mode === "initializing" });
       } catch {
       } finally {
@@ -649,8 +649,7 @@ export function installSyncRoutes(
       );
   });
   app.get("/api/admin/teams/:id/connection", (req, res) => {
-    requireSystemAdmin(req.user);
-    teamAccess(req.user, id(req));
+    managedTeam(req.user, id(req));
     const l = sync.store(id(req)).readLink();
     res.json({
       profileId: l?.profile_id || "",
@@ -661,8 +660,7 @@ export function installSyncRoutes(
     });
   });
   app.put("/api/admin/teams/:id/connection", async (req, res) => {
-    requireSystemAdmin(req.user);
-    teamAccess(req.user, id(req));
+    managedTeam(req.user, id(req));
     const teamId = id(req),
       profile = sync.profiles.find(
         (p) => p.profileId === req.body.profileId && p.teamId === teamId,
@@ -802,8 +800,6 @@ export function installSyncRoutes(
   ])
     app.post("/api/teams/:id/sync/" + action, async (req, res) => {
       managedTeam(req.user, id(req));
-      if (["enable", "disconnect"].includes(action))
-        requireSystemAdmin(req.user);
       const teamId = id(req),
         link = sync.store(teamId).readLink();
       requireThat(link, 400, "연결 프로필을 선택하세요.");

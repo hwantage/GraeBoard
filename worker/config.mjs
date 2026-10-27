@@ -1,4 +1,15 @@
 import { assert } from "./access.mjs";
+export function siteTeamId(env) {
+  if (!env.PG_SITE) return null;
+  assert(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      env.SITE_TEAM_ID || "",
+    ),
+    503,
+    "외부 사이트의 팀 UUID를 확인하세요.",
+  );
+  return env.SITE_TEAM_ID;
+}
 export function profiles(env, { databaseOnly = false } = {}) {
   let parsed;
   try {
@@ -14,6 +25,13 @@ export function profiles(env, { databaseOnly = false } = {}) {
     503,
     "연결 프로필 설정을 확인하세요.",
   );
+  const siteTeam = siteTeamId(env);
+  if (siteTeam)
+    assert(
+      parsed.length === 1,
+      503,
+      "외부 사이트에는 한 팀만 연결할 수 있습니다.",
+    );
   const ids = new Set(),
     dbs = new Set(),
     buckets = new Set();
@@ -35,6 +53,12 @@ export function profiles(env, { databaseOnly = false } = {}) {
       repository: repo,
       ...(p.replaces ? { replaces: p.replaces } : {}),
     };
+    if (siteTeam)
+      assert(
+        v.teamId === siteTeam && v.databaseBinding === "PG_SITE" && !v.replaces,
+        503,
+        "이 사이트에 지정된 팀과 데이터베이스만 연결할 수 있습니다.",
+      );
     assert(
       /^[a-zA-Z0-9_-]{1,80}$/.test(v.profileId) &&
         /^[a-f0-9-]{36}$/i.test(v.teamId) &&

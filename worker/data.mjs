@@ -4,7 +4,11 @@ import {
   capacityLimits,
   CapacityError,
 } from "./capacity.mjs";
-import { POSTGRES_CHECKSUMS } from "../server/storage/schema-version.mjs";
+import {
+  POSTGRES_CHECKSUMS,
+  postgresLayout,
+} from "../server/storage/schema-version.mjs";
+import { siteTeamId } from "./config.mjs";
 import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import {
   canonical,
@@ -17,9 +21,11 @@ import {
 import { reduceMany, reduce } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
 
-export function poolFor(binding, scope = "control") {
+export function poolFor(binding, scope = "control", { site = false } = {}) {
   assert(binding?.connectionString, 503, "PostgreSQL binding을 확인하세요.");
+  const { schema, migrationScope } = postgresLayout(scope, site);
   return {
+    site,
     async connect() {
       const client = new pg.Client({
         connectionString: binding.connectionString,
@@ -30,14 +36,14 @@ export function poolFor(binding, scope = "control") {
       try {
         const rows = (
           await client.query(
-            "SELECT scope,version,checksum FROM graeboard.schema_migrations ORDER BY version",
+            `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
           )
         ).rows;
         assert(
           rows.length === 1 &&
-            rows[0].scope === scope &&
+            rows[0].scope === migrationScope &&
             Number(rows[0].version) === 1 &&
-            rows[0].checksum === POSTGRES_CHECKSUMS[scope],
+            rows[0].checksum === POSTGRES_CHECKSUMS[migrationScope],
           503,
           "DB 마이그레이션 버전 또는 무결성을 확인하세요.",
         );
@@ -54,15 +60,40 @@ export function poolFor(binding, scope = "control") {
   };
 }
 export function databaseFor(env, profile) {
+  const team = siteTeamId(env);
+  if (team)
+    assert(
+      profile.teamId === team && profile.databaseBinding === "PG_SITE",
+      403,
+      "이 사이트의 팀만 사용할 수 있습니다.",
+    );
   return new PostgresDatabase(poolFor(env[profile.databaseBinding], "team"), {
     teamId: profile.teamId,
   });
 }
+export function controlPool(env) {
+  return poolFor(env.PG_SITE || env.PG_CONTROL, "control", {
+    site: !!siteTeamId(env),
+  });
+}
 export async function controlTransaction(env, work, { write = false } = {}) {
-  const client = await poolFor(env.PG_CONTROL).connect();
+  const team = siteTeamId(env);
+  const client = await controlPool(env).connect();
   try {
     await client.query("BEGIN");
-    await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+    await client.query(
+      `SET LOCAL search_path TO ${team ? "graeboard_site" : "graeboard"}, pg_catalog`,
+    );
+    if (team) {
+      const row = (
+        await client.query("SELECT team_id FROM site_meta WHERE singleton=1")
+      ).rows[0];
+      assert(
+        row?.team_id === team,
+        503,
+        "외부 사이트 DB의 팀 UUID가 일치하지 않습니다.",
+      );
+    }
     if (write)
       await client.query(
         "SELECT revision FROM control_meta WHERE singleton=1 FOR UPDATE",

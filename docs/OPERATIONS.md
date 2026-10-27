@@ -219,10 +219,10 @@ unset GRAEBOARD_RESET_PASSWORD
 
 ## 내부·외부 Git 동기화 운영
 
-리소스 생성, Hyperdrive·R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 계정 권한을 Git으로 복제하지 않으며 외부 사용자는 앱에서 별도로 등록합니다.
+리소스 생성, Hyperdrive·R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 외부 연결 팀마다 Worker·Git·R2·Supabase 프로젝트를 따로 운영합니다. 그 팀의 이름·이메일·활성 상태·팀 역할은 구성원 브랜치로 내부에서 계속 반영합니다. 팀장이 최초 연결하고 다른 사용자의 사내 계정 선택 요청을 승인합니다. 비밀번호·사내 세션·다른 팀 소속·전체 관리자 권한은 전송하지 않습니다.
 
 - 일시정지는 로컬 저장과 미전송 캡처를 유지합니다. 연결 해제 뒤 자료는 로컬로만 저장되므로 다시 연결하기 전에 `sync:recover`로 차이를 보존·대조합니다.
-- SQLite 복구와 외부 PG/R2 복구는 별도 명령입니다. `backup:external`·`restore:external`·`transfer -- --help`의 실제 입력과 제한을 설치 안내에서 확인합니다. 외부 control DB와 팀 DB, 이미지 bundle을 함께 보관합니다.
+- SQLite 복구와 외부 PG/R2 복구는 별도 명령입니다. `backup:external`·`restore:external`·`transfer -- --help`의 실제 입력과 제한을 설치 안내에서 확인합니다. 한 프로젝트의 site/team 스키마와 이미지 bundle을 함께 보관합니다. 승인·Google 연결은 복원하고 접속 세션은 새로 만듭니다. 기존 분리형 control/team 백업 v1은 해당 형식으로 계속 복구합니다.
 - 동기화된 팀을 영구 삭제하려면 전송·백업을 완료하고 연결을 해제합니다. 미전송 변경이나 실행 중인 정리·백업이 있으면 삭제를 거절합니다. Git 이력은 이 동작으로 삭제되지 않습니다.
 - 오래된 원격 반영 상태는 현재 완료로 표시하지 않습니다. Git 게시와 반대편 적용을 각각 확인합니다. 강제 push·브랜치 삭제·저장소 신원 변경은 자동 초기화하지 않고 복구 점검 상태로 중단합니다.
 - 로컬 정리는 DB의 전체 공유 본문을 보존합니다. 화면 제외와 실제 이미지 파일 회수 범위는 구분되며 Git의 물리 용량은 줄지 않습니다.

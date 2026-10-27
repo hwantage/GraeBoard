@@ -283,6 +283,7 @@ npm run licenses
 npm test
 npm run build
 npm run build:worker
+npm run build:pages
 npm run test:e2e -- tests/browser/data-sync.spec.ts
 npm run performance:sync
 ```
@@ -338,3 +339,11 @@ Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)
 이미지 변환과 저장소도 DB 엔진과 독립적입니다. 내부 Node는 sharp와 `FileImageStore`, 외부 Worker는 Cloudflare Images와 `R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. 다른 호스트 저장소가 필요하면 factory의 `imageStoreFor(teamId)` 포트에 `read/has/install/remove/validate/getObject` 계약을 갖춘 구현을 주입할 수 있습니다. Git 실행기 설정은 논리 팀 자료 이관과 별도로 관리합니다. 운영 중 DB를 설정 한 줄로 옮기거나 인증 자료를 자동 복제하는 기능은 아닙니다.
 
 `tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 같은 서비스에 두 실제 엔진을 넣어 permission/CAS/replay/L/late rollback을 비교합니다. Node PG-only HTTP 검사는 SQLite에 업무/사본을 남기지 않으며 셀·문서·사본·팀 SSE와 멤버십 철회를 검사합니다. PG_CONTROL·R2·Git binding 없이 기본 파일 이미지 업로드→본문 저장→이미지 조회→JSON 반출과 관리 이력 정리도 검증합니다. SQLite 검사에는 반환값이 Promise로 바뀌지 않았는지, 저장 후 별도 연결에서 P와 본문이 동시에 보이는지, 커밋 전 실패에 이벤트가 없는지도 포함됩니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
+
+## 팀별 외부 설치와 계정 연결
+
+Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → 기존 Worker의 경로입니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
+
+신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v30에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
+
+`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 Worker fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v2의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/Worker 빌드, 세 브라우저의 해당 흐름을 사용합니다. 실제 Google/Cloudflare/Supabase 배포 검증은 별도입니다.

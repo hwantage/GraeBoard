@@ -6,38 +6,43 @@
 
 ## 1. 준비할 자원
 
-사용자는 하나의 외부 주소에서 Google로 로그인하고 팀을 선택합니다. 공통 관리 DB는 사용자·팀 권한·연결 선택을 보관합니다. 각 팀의 업무 DB, 이미지 bucket, Git 저장소는 분리합니다.
+사내에서는 모든 팀을 기존 SQLite DB 하나에서 관리합니다. 외부 접근이 필요한 팀만 동기화를 켜며, 각 팀이 독립된 외부 사이트를 운영합니다.
 
-| 범위   | 준비할 것                                          | 예시 이름                                |
-| ------ | -------------------------------------------------- | ---------------------------------------- |
-| 공통   | Cloudflare Worker 앱과 외부 HTTPS 주소             | `graeboard`, `https://board.example.com` |
-| 공통   | 기존 Zero Trust 조직 안의 GraeBoard 전용 Access 앱 | `GraeBoard`                              |
-| 공통   | Supabase PostgreSQL 관리 프로젝트 1개              | `graeboard-control`                      |
-| 팀마다 | Supabase PostgreSQL 업무 프로젝트 1개              | `graeboard-team-a`                       |
-| 팀마다 | 비공개 Cloudflare R2 bucket                        | `graeboard-team-a-images`                |
-| 팀마다 | 비공개 GitHub 데이터 저장소                        | `example/graeboard-team-a-data`          |
-| 내부   | 기존 DB·이미지 경로, 지원 Node와 Git CLI           | 릴리스 밖 절대 경로                      |
+| 범위 | 준비할 것 |
+| --- | --- |
+| 내부 공통 | 기존 Node/SQLite 서버·이미지 경로·Git CLI |
+| 외부 연결 팀마다 | 비공개 GitHub 데이터 저장소 하나 |
+| 외부 연결 팀마다 | Cloudflare Pages 접속 주소·비공개 Worker + Static Assets 앱·Google 전용 Access 앱 |
+| 외부 연결 팀마다 | Supabase 프로젝트 하나와 Hyperdrive 하나 |
+| 외부 연결 팀마다 | 비공개 R2 bucket·Images binding |
 
-팀이 N개라면 Supabase 프로젝트는 N+1개입니다. 프로젝트 수·compute·이미지 변환량에 따라 비용이 달라집니다. 생성 전에 [Supabase 요금](https://supabase.com/pricing), [Cloudflare Images 요금](https://developers.cloudflare.com/images/pricing/), [R2 요금](https://developers.cloudflare.com/r2/pricing/)을 확인하세요. 이 안내는 특정 무료 한도를 보장하지 않습니다.
+외부 연결 팀이 N개면 Supabase 프로젝트도 N개입니다. 한 프로젝트 안의 `graeboard`는 업무 자료, `graeboard_site`는 그 팀의 사용자·연결 승인·설정 정보를 보관합니다. 별도 공통 관리 프로젝트는 만들지 않습니다. 기존에 빈 관리용 프로젝트를 만들었다면 그 프로젝트를 해당 팀 전용으로 사용할 수 있습니다.
 
-내부 서버는 GitHub HTTPS에 연결합니다. 내부에 외부 PostgreSQL 비밀번호나 R2 키를 복사하지 않습니다. 개발자의 맥북은 배포 준비에 사용하며, 외부 업무 데이터의 운영 저장소로 사용하지 않습니다.
+외부 접속 주소는 팀별 Pages의 `https://프로젝트.pages.dev`를 사용할 수 있습니다. `functions/[[path]].js`가 모든 요청을 `GRAEBOARD_BACKEND` Service binding으로 비공개 Worker에 전달합니다. Worker가 정적 화면·API·인증·Hyperdrive·R2·Cron을 처리하므로 기존 권한 검사와 동기화 경로를 재사용합니다. 브라우저의 주소·요청 본문·Access JWT·계정 쿠키·SSE 스트림은 그대로 유지합니다. `public/_routes.json`은 정적 파일도 이 경로를 거치게 합니다. 연결이 없거나 Worker에 도달하지 못하면 JSON 503을 반환하며 Pages의 정적 HTML로 대체하지 않습니다.
+
+팀이 추가되면 Pages·Worker·DB·bucket·Access 앱을 각각 준비합니다. 기존 자체 도메인에서 Worker에 직접 접속하는 배포도 유지합니다.
+
+내부 서버에는 팀별 Git 토큰만 등록하며 외부 DB 비밀번호·R2 키는 복사하지 않습니다. 자원 이용 조건은 [Supabase](https://supabase.com/pricing), [Cloudflare Workers](https://developers.cloudflare.com/workers/platform/pricing/), [R2](https://developers.cloudflare.com/r2/pricing/)에서 확인합니다.
 
 ## 2. 값을 어디에 입력하는가
+
+내부망 서버의 외부 접속은 팀 GitHub 저장소만 허용합니다. Supabase·Hyperdrive·R2·Cloudflare 관리 API로 내부 서버가 직접 접속하지 않습니다. 외부 DB 초기화와 배포는 인터넷에 연결된 별도 운영 환경에서 수행하고, DB 비밀번호·외부 설정 키를 내부 서버의 환경 파일에 저장하지 않습니다. 로컬 Node/SQLite를 내부망으로 시험할 때도 같은 경계를 지킵니다.
 
 `binding`은 Worker에 설치한 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다.
 
 | 값                     | 입력 위치          | 의미                                            |
 | ---------------------- | ------------------ | ----------------------------------------------- |
 | `APP_ORIGIN`           | Worker 변수        | 경로 없는 외부 HTTPS origin 하나                |
+| `GRAEBOARD_BACKEND` | Pages Service binding | 같은 팀의 비공개 Worker |
 | `ACCESS_ISSUER`        | Worker 변수        | `https://조직이름.cloudflareaccess.com`         |
 | `ACCESS_AUDIENCE`      | Worker 변수        | GraeBoard 전용 Access 앱의 Application Audience |
-| `PG_CONTROL`           | Hyperdrive binding | 공통 관리 DB                                    |
-| `PG_TEAM_A`            | Hyperdrive binding | 팀 A 업무 DB                                    |
+| `PG_SITE` | Hyperdrive binding | 해당 팀의 단일 Supabase 프로젝트 |
+| `SITE_TEAM_ID` | Worker 변수 | 기존 내부 팀 UUID |
 | `R2_TEAM_A`            | R2 binding         | 팀 A 비공개 bucket                              |
 | `IMAGES`               | Images binding     | 업로드 이미지를 WebP로 변환                     |
 | `GIT_TEAM_A`           | Worker Secret      | 해당 팀 저장소만 허용한 GitHub 토큰             |
 | `SYNC_PROFILES`        | Worker 변수        | 팀 UUID와 설치된 binding·Secret 이름의 연결     |
-| `SETUP_TOKEN`          | Worker Secret      | 최초 관리자 등록에 사용하는 1회 설정 키         |
+| `SETUP_TOKEN`          | Worker Secret      | 최초 팀장 연결에 사용하는 1회 설정 키         |
 | `INSTALLATION_ID`      | Worker 변수        | 외부 설치의 고정 UUID, DB 복구 사본과 구분      |
 | `PEER_INSTALLATION_ID` | Worker 변수        | 적용 확인을 받을 내부 설치 UUID                 |
 
@@ -76,76 +81,58 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 
 접속 재개 전 되돌릴 때는 이전 릴리스와 검증된 DB·이미지 백업을 **새 경로**에 복구합니다. 접속 재개 후에는 새 저장과 outbox가 생길 수 있으므로 현재 DB·원격 head부터 보존하고 복구 계획을 다시 정합니다. 상세 백업 명령은 [운영 안내](OPERATIONS.md#백업과-복구)를 따릅니다.
 
-## 4. Supabase 관리 DB와 팀 DB 만들기
+## 4. Supabase 팀 프로젝트 하나 만들기
 
-Supabase Dashboard에서 관리용 프로젝트를 먼저 만들고 팀마다 업무용 프로젝트를 추가합니다. 서로 다른 팀에 같은 업무 프로젝트를 연결하지 않습니다. 각 프로젝트의 **Connect → Direct connection**에서 host, port, database를 복사합니다. Project URL과 publishable/anon/service_role API key는 이 연결에 사용하지 않습니다. [Supabase 연결 안내](https://supabase.com/docs/guides/database/connecting-to-postgres)
+팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. 이 앱은 Hyperdrive를 통해 PostgreSQL에 연결하므로 Supabase Data API와 Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
 
-마이그레이션 역할과 평상시 앱 역할을 구분합니다. 비밀번호가 포함된 연결 URL은 명령 인자가 아닌 환경 변수로 전달합니다. 다음 예시는 Bash/Zsh에서 입력 내용을 표시하지 않고 읽습니다.
-
-```sh
-read -s PG_CONTROL_URL
-export PG_CONTROL_URL
-npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL --initialize --dry-run
-npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL --initialize
-unset PG_CONTROL_URL
-```
-
-팀 업무 DB는 기존 내부 팀 UUID를 사용합니다. 예시 UUID를 그대로 사용하지 말고 실제 연결할 내부 팀의 ID로 바꾸세요. 팀 이름만 같고 ID가 다른 팀을 새로 만들지 않습니다.
+아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
 
 ```sh
-read -s PG_TEAM_URL
-export PG_TEAM_URL
-npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id 11111111-1111-4111-8111-111111111111 --team-name '팀 A' --initialize --dry-run
-npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id 11111111-1111-4111-8111-111111111111 --team-name '팀 A' --initialize
-unset PG_TEAM_URL
+read -s PG_SITE_URL
+export PG_SITE_URL
+npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id 11111111-1111-4111-8111-111111111111 --team-name '팀 A' --initialize --dry-run
+npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id 11111111-1111-4111-8111-111111111111 --team-name '팀 A' --initialize
+unset PG_SITE_URL
 ```
 
-관리·팀 스키마는 각각 버전 1이며 `graeboard` schema에 설치합니다. SQLite의 v30과 별개입니다. dry-run은 트랜잭션을 롤백하므로 스키마를 남기지 않습니다. 기존 관리 DB에 팀 migration을 적용하거나 기존 다른 팀 UUID를 덮어쓰는 작업은 거절됩니다.
+이 명령은 `graeboard`의 team v1과 `graeboard_site`의 site v1을 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite v30은 이번 변경으로 변환하지 않습니다.
 
-DB 관리자가 `graeboard_app` LOGIN 역할을 만들고 안전한 비밀번호 입력 기능으로 비밀번호를 지정합니다. 아래 권한은 각 프로젝트에서 migration 역할로 실행합니다. `ALTER DEFAULT PRIVILEGES`도 향후 migration을 실행할 동일 역할로 실행해야 합니다.
+기존 분리형 설치의 **team v1 DB**를 전환할 때는 백업과 쓰기 중단 후 같은 명령에서 `--initialize`를 빼고 실행합니다. 기존 업무 스키마·ID·C/P/L을 그대로 두고 site 스키마만 추가합니다. 기존 공통 control DB는 건드리지 않습니다. 그 DB의 계정·Google 연결을 가져오지 않으며, 내부 구성원 동기화 후 팀장 최초 연결과 팀원 승인을 다시 합니다. 이전 외부 계정 ID로 작성한 업무의 표시 참조는 이력으로 보존합니다. 기존 control DB 자체에 site migration을 적용하는 것은 거절합니다.
+
+DB 관리자가 별도 `graeboard_app` LOGIN 역할과 비밀번호를 준비하고 migration 역할로 다음 권한을 부여합니다. 향후 migration도 동일 역할로 실행합니다.
 
 ```sql
-GRANT USAGE ON SCHEMA graeboard TO graeboard_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA graeboard TO graeboard_app;
--- 보존한 local_seq/cursor를 가져온 뒤 setval로 재설정하므로 UPDATE도 필요합니다.
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA graeboard TO graeboard_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard
+GRANT USAGE ON SCHEMA graeboard, graeboard_site TO graeboard_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA graeboard, graeboard_site TO graeboard_app;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA graeboard, graeboard_site TO graeboard_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard, graeboard_site
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO graeboard_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard
+ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard, graeboard_site
   GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO graeboard_app;
 ```
 
-앱 역할에는 schema 소유권·superuser·새 role 생성 권한을 주지 않습니다. Supabase 프로젝트의 다른 schema·Auth·Data API 설정을 동기화 설치를 위해 일괄 변경하지 않습니다.
+앱 역할에는 schema 소유권·superuser·새 role 생성 권한을 주지 않습니다. 기존 분리형 `PG_CONTROL` + 팀 DB 설치는 호환 경로로 유지하지만 신규 설치의 기본 구성은 `PG_SITE`입니다.
 
 ## 5. Hyperdrive, R2, Images 연결
 
-Cloudflare Dashboard의 **Hyperdrive → Create configuration**에서 Supabase의 Direct connection과 `graeboard_app` 계정을 등록합니다. 관리용·각 팀용을 각각 만들고 ID를 기록합니다. Hyperdrive가 풀링하므로 Supabase transaction/session pooler 주소를 이 경로에 겹치지 않습니다. [Cloudflare Supabase 연결 예시](https://developers.cloudflare.com/hyperdrive/examples/connect-to-postgres/postgres-database-providers/supabase/)
+팀 Supabase 프로젝트의 Direct connection과 `graeboard_app` 계정으로 Hyperdrive **하나**를 만듭니다. Hyperdrive가 풀링하므로 Supabase pooler 주소를 이 경로에 겹치지 않습니다. [Cloudflare의 Supabase 연결 안내](https://developers.cloudflare.com/hyperdrive/examples/connect-to-postgres/postgres-database-providers/supabase/)
 
-**모든 Hyperdrive의 query caching을 끕니다.** 권한·revision·outbox는 변경 직후 최신값을 읽어야 합니다. SELECT 캐시는 DB 쓰기 후 자동 무효화되지 않으며 캐시를 꺼도 연결 풀링은 유지됩니다. [Hyperdrive query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
-
-Dashboard에서 만든 각 Hyperdrive ID에 대해 다음 명령을 실행하면 기존 연결 비밀번호를 명령 인자에 넣지 않고 캐시를 끌 수 있습니다. ID는 실제 값으로 바꾸고 관리 DB와 모든 팀 DB에 반복합니다. 새 구성을 CLI로 만들 경우에도 `wrangler hyperdrive create`의 `--caching-disabled` 옵션을 지정합니다. [공식 Wrangler Hyperdrive 명령](https://developers.cloudflare.com/hyperdrive/reference/wrangler-commands/)
+계정 철회·revision·outbox를 최신으로 읽도록 **query caching을 끕니다**. 설정 파일의 binding 선언만으로 캐시가 꺼지지는 않습니다. [Hyperdrive query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
 
 ```sh
-npx wrangler hyperdrive update ACTUAL_CONTROL_HYPERDRIVE_ID --caching-disabled
-npx wrangler hyperdrive update ACTUAL_TEAM_A_HYPERDRIVE_ID --caching-disabled
-npx wrangler hyperdrive get ACTUAL_CONTROL_HYPERDRIVE_ID
-npx wrangler hyperdrive get ACTUAL_TEAM_A_HYPERDRIVE_ID
+npx wrangler hyperdrive update ACTUAL_SITE_HYPERDRIVE_ID --caching-disabled
+npx wrangler hyperdrive get ACTUAL_SITE_HYPERDRIVE_ID
 ```
 
-조회 결과의 caching 설정이 disabled인지 확인합니다. `wrangler.jsonc`의 binding 선언만으로 query cache가 꺼지지는 않습니다.
+| 자원 | Worker binding | 설정 |
+| --- | --- | --- |
+| 팀 Hyperdrive | `PG_SITE` | 팀 프로젝트, 캐시 끄기 |
+| 비공개 R2 bucket | `R2_TEAM_A` | 해당 팀 전용, public access 끄기 |
+| Images | `IMAGES` | 이미지 변환 |
 
-| 자원            | Dashboard 작업                     | Worker에 연결할 이름 | 정상 결과                          |
-| --------------- | ---------------------------------- | -------------------- | ---------------------------------- |
-| 관리 Hyperdrive | 관리 프로젝트에 연결, 캐시 끄기    | `PG_CONTROL`         | control 버전 1 조회                |
-| 팀 Hyperdrive   | 해당 팀 프로젝트에 연결, 캐시 끄기 | `PG_TEAM_A`          | 원래 팀 UUID 일치                  |
-| R2 bucket       | 팀 전용 비공개 bucket 생성         | `R2_TEAM_A`          | public URL 없이 앱에서 이미지 조회 |
-| Images          | Images 기능과 이용 조건 확인       | `IMAGES`             | PNG/JPEG/WebP 업로드 변환          |
+이미지는 앱의 권한 검사를 거쳐 `/api/document-images/...`로 제공합니다. R2 native binding에는 S3 access key가 필요 없습니다. [R2 binding](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 
-R2의 public access를 켜거나 사용자에게 bucket URL을 전달하지 않습니다. 이미지는 앱의 팀 권한을 검사하는 `/api/document-images/...` 경로로 제공합니다. R2 native binding은 별도 S3 access key가 필요 없습니다. [R2 Workers binding](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
-
-외부 이미지는 Images binding으로 변환한 뒤 R2에 저장합니다. 지원 입력은 10MiB·4천만 화소 이하 PNG/JPEG/WebP **정지 이미지**이며 최대 4096px 안으로 줄여 WebP로 저장합니다. Worker에서 Node의 native `sharp`를 실행하지 않습니다. [Images binding](https://developers.cloudflare.com/images/optimization/binding/)
-
-실제 계정에서 업로드·회전된 사진·용량 초과·애니메이션 거절·이미지 조회를 확인하세요. 로컬 모의 binding 테스트만으로 서비스의 과금·한도·전체 변환 동작을 검증했다고 판단하지 않습니다.
+Images binding은 10MiB·4천만 화소 이하 PNG/JPEG/WebP 정지 이미지를 최대 4096px WebP로 변환합니다. 실제 계정에서 업로드·회전·용량 초과·애니메이션 거절·조회도 확인합니다. [Images binding](https://developers.cloudflare.com/images/optimization/binding/)
 
 ## 6. 팀별 GitHub 저장소와 토큰
 
@@ -161,9 +148,9 @@ npx wrangler secret put GIT_TEAM_A
 
 이 명령은 토큰을 대화형 입력으로 받습니다. Secret 변경도 새 Worker version·배포에 영향을 줄 수 있으므로 변경 대상과 배포 시점을 확인합니다. [Workers Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
 
-## 7. 하나의 Worker에 팀 프로필 등록
+## 7. 팀 전용 Worker에 프로필 하나 등록
 
-저장소의 `wrangler.jsonc`를 기준으로 실제 Hyperdrive ID·bucket 이름·도메인을 입력합니다. `PG_CONTROL`, 팀별 `PG_TEAM_A`·`R2_TEAM_A`, `IMAGES`, `ASSETS` binding을 같은 Worker에 선언합니다. `SYNC_PROFILES`는 다음 배열을 JSON 문자열로 설정합니다.
+저장소의 `wrangler.jsonc`를 복사해 팀의 도메인·Hyperdrive ID·bucket·UUID를 입력합니다. `SITE_TEAM_ID`와 프로필의 `teamId`는 내부 팀 UUID와 같아야 하며 `databaseBinding`은 `PG_SITE`입니다. 팀 사이트에 여러 프로필·다른 팀·`replaces`를 넣으면 거절합니다.
 
 ```json
 [
@@ -172,76 +159,40 @@ npx wrangler secret put GIT_TEAM_A
     "name": "팀 A 외부",
     "teamId": "11111111-1111-4111-8111-111111111111",
     "repository": "example/graeboard-team-a-data",
-    "databaseBinding": "PG_TEAM_A",
+    "databaseBinding": "PG_SITE",
     "bucketBinding": "R2_TEAM_A",
     "githubSecret": "GIT_TEAM_A"
   }
 ]
 ```
 
-팀 A를 연결한 전체 `wrangler.jsonc` 예는 다음과 같습니다. ID·도메인·UUID·저장소는 모두 예시이며 실제 설치 값으로 바꿉니다. Hyperdrive `id`에는 프로젝트 ID가 아닌 위 단계의 Hyperdrive ID를 넣고, `bucket_name`에는 실제 비공개 bucket 이름을 넣습니다. `GIT_TEAM_A` 값은 앞 절의 Secret에만 등록합니다. [Wrangler binding 설정](https://developers.cloudflare.com/workers/wrangler/configuration/)
+위 배열을 `SYNC_PROFILES`에 JSON 문자열로 지정하고 같은 이름의 R2 binding·Git Secret을 등록합니다. `INSTALLATION_ID`는 이 팀 외부 사이트의 고정 UUID, `PEER_INSTALLATION_ID`는 사내 서버의 고정 설치 UUID입니다. `APP_ORIGIN`·`ACCESS_ISSUER`·`ACCESS_AUDIENCE`도 이 팀 사이트의 값을 사용합니다.
 
-```jsonc
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "graeboard",
-  "main": "worker/entry.mjs",
-  "compatibility_date": "2026-10-23",
-  "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": false,
-  "preview_urls": false,
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS",
-    "run_worker_first": true,
-    "not_found_handling": "single-page-application",
-  },
-  "images": { "binding": "IMAGES" },
-  "triggers": { "crons": ["* * * * *"] },
-  "hyperdrive": [
-    { "binding": "PG_CONTROL", "id": "REPLACE_WITH_CONTROL_HYPERDRIVE_ID" },
-    { "binding": "PG_TEAM_A", "id": "REPLACE_WITH_TEAM_A_HYPERDRIVE_ID" },
-  ],
-  "r2_buckets": [
-    { "binding": "R2_TEAM_A", "bucket_name": "graeboard-team-a-images" },
-  ],
-  "vars": {
-    "APP_ORIGIN": "https://board.example.com",
-    "ACCESS_ISSUER": "https://your-team.cloudflareaccess.com",
-    "ACCESS_AUDIENCE": "REPLACE_WITH_GRAEBOARD_APP_AUDIENCE",
-    "INSTALLATION_ID": "REPLACE_WITH_EXTERNAL_INSTALLATION_UUID",
-    "PEER_INSTALLATION_ID": "REPLACE_WITH_INTERNAL_INSTALLATION_UUID",
-    "SITE_NAME": "외부 사이트",
-    "SYNC_MAX_STATE_BYTES": "4194304",
-    "SYNC_MAX_ENTITIES": "12000",
-    "SYNC_PROFILES": "[{\"profileId\":\"team-a-prod\",\"name\":\"팀 A 외부\",\"teamId\":\"11111111-1111-4111-8111-111111111111\",\"repository\":\"example/graeboard-team-a-data\",\"databaseBinding\":\"PG_TEAM_A\",\"bucketBinding\":\"R2_TEAM_A\",\"githubSecret\":\"GIT_TEAM_A\"}]",
-  },
-}
-```
+정적 화면에도 인증을 적용하도록 `assets.run_worker_first: true`, `workers_dev: false`, `preview_urls: false`를 유지합니다. Pages에서 연결할 Worker는 별도 공개 주소가 필요 없습니다. `APP_ORIGIN`에는 사용자 접속 주소(예: `https://graeboard.pages.dev`)를 지정합니다. Cron은 `* * * * *`입니다. 외부 사이트의 DB·bucket을 교체할 때는 점검 중 새 자원에 백업을 복구하고 검증한 뒤 같은 팀 프로필의 binding을 전환합니다. 실행 중 다른 팀 DB로 바꾸지 않습니다. [Wrangler 설정](https://developers.cloudflare.com/workers/wrangler/configuration/)
 
-팀 UUID·프로필 ID·DB binding·bucket·저장소는 다른 팀과 중복 사용할 수 없습니다. 같은 팀의 교체용 프로필은 아래 `replaces` 절차로만 선언합니다. `PG_CONTROL`을 팀 DB로 지정하지 않습니다. 프로필에는 비밀 원문이 없으며 앱은 브라우저가 보낸 임의 DB URL·bucket 이름으로 연결하지 않습니다.
-
-정적 화면도 인증을 거치도록 `assets.run_worker_first: true`를 유지합니다. `workers_dev: false`, `preview_urls: false`를 유지하고 Worker는 요청 origin이 `APP_ORIGIN`과 같은지도 검사합니다. `assets.not_found_handling`은 `single-page-application`, Cron은 `* * * * *`입니다. [Static Assets 라우팅](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/), [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
-
-팀을 추가할 때는 자원·binding·Secret·프로필 설정을 추가하고 같은 앱을 다시 배포합니다. URL이나 앱을 팀마다 새로 만들지 않습니다. 기존 binding의 대상을 실행 중 임의로 바꾸어 다른 DB를 가리키게 하지 않습니다.
-
-외부 팀 DB·bucket을 교체할 때는 새 DB를 같은 팀 UUID로 migration하고 새 전용 bucket을 만든 뒤, 기존 프로필을 남겨 둔 상태로 새 프로필에 `"replaces": "기존-프로필-ID"`를 지정합니다. 새 프로필은 같은 팀·Git 저장소를 가리키고 DB·bucket binding은 분리해야 합니다. 백업과 이전 실행자 종료를 확인한 뒤 **팀 → 동기화**에서 새 프로필을 선택하고 **자료 이관 후 연결 변경**을 실행합니다. 앱은 본문·이미지·미전송 변경·사이트 제외 상태를 옮기고 검증한 뒤 활성 연결을 전환합니다. 중단·실패 때 기존 자원과 작업 기록을 보존하며 **이어서 연결 이관**으로 재개합니다. 새 연결에서 업무·이미지·미전송 입력을 확인하기 전에는 기존 프로필·DB·bucket을 제거하지 않습니다.
-
-이관 API는 `POST /api/admin/teams/:id/connection/switch`의 `{profileId, expectedRevision}`와 `POST /api/admin/teams/:id/connection/switch/:jobId/resume`입니다. 관리자 화면이 이 API를 호출하며, 진행 중 작업은 연결 조회의 `switchJob`으로 복구합니다.
+기존 분리형 설치에서만 다중 프로필과 `replaces`를 통한 온라인 교체 경로를 유지합니다.
 
 ## 8. GraeBoard 전용 Google Access
 
+Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Enable access policy**로 시작합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Worker에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
+
 1. 기존 Zero Trust 조직에서 **Access controls → Applications → Add an application → Self-hosted**를 선택합니다.
 2. GraeBoard의 `APP_ORIGIN` 호스트 전체를 대상으로 별도 앱을 만듭니다.
-3. 해당 앱에만 적용하는 Allow 정책을 만들고 GraeBoard 사용자를 이메일·그룹으로 지정합니다.
-4. 기존 Google IdP를 선택합니다. 다른 서비스의 넓은 Allow 정책을 그대로 공유하지 않습니다.
+3. 해당 팀 앱에만 적용하는 Allow 정책을 만들고 그 팀의 Google 사용자·그룹을 지정합니다.
+4. 이 앱의 로그인 방법은 Google IdP만 허용하고 OTP·다른 IdP·Bypass는 사용하지 않습니다. 다른 서비스의 넓은 Allow 정책을 공유하지 않습니다.
 5. 조직 team domain을 `ACCESS_ISSUER`, 이 앱의 Application Audience를 `ACCESS_AUDIENCE`에 등록합니다.
 
 조직 전체 Users 목록은 공통으로 남습니다. 이 구성에서 분리하는 것은 GraeBoard 접근 정책과 앱의 사용자·팀 권한입니다. [Self-hosted Access 앱](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
 
 Worker는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
-최초 관리자 등록 전에 `SETUP_TOKEN`을 24자 이상 예측 불가능한 값으로 등록합니다. 최초 관리자는 Access를 통과하고 설정 키를 확인한 뒤 등록하며, 등록 완료 후 초기화 경로는 닫힙니다. 설치를 마치면 설정 키를 제거합니다. 외부에서 별도 로컬 비밀번호 로그인은 사용하지 않습니다. 이후 사용자는 **시스템 → 사용자 계정**에서 등록하고 팀 역할을 부여합니다. 조직 Users 목록의 다른 계정은 자동 등록하지 않습니다.
+최초 연결 전 `SETUP_TOKEN`을 24자 이상의 임의 Secret으로 등록합니다. 팀장은 Google 로그인 후 **사내 팀장 계정을 선택하고 초기 설정 키로 연결**합니다. 완료 후 초기 설정 경로는 닫히며 Secret을 제거할 수 있습니다.
+
+이후 사용자는 Google 로그인 → 해당 팀의 사내 계정 선택 → 연결 신청 → 승인 대기 순서로 진행합니다. 팀장은 **설정 → 팀 → 구성원 → Google 계정 연결**에서 승인·거절·연결 해제를 처리합니다. 승인된 계정만 접속할 수 있으며 마지막으로 연결된 팀장의 연결은 다른 팀장을 연결하기 전까지 해제할 수 없습니다. 이름이나 이메일이 같다는 이유로 자동 연결하지 않습니다. 인증 신원은 검증된 Access의 `(issuer, subject)`에 연결하고 선택 세션도 그 신원에 묶습니다.
+
+구성원·활성 상태·팀 역할은 사내에서 계속 반영합니다. 외부에서 사용자 생성·팀원 추가/탈퇴·역할 변경·사내 이름 변경은 하지 않습니다. 비밀번호·사내 세션·다른 팀 소속·사내 시스템 관리자 권한은 가져오지 않습니다. 해당 팀의 활성 팀장에게만 이 외부 사이트의 관리 권한을 부여합니다. 외부에는 아이디/비밀번호 로그인과 Supabase Auth 로그인이 없습니다.
+
+사내 인사 변경으로 연결된 활성 팀장이 한 명도 없어진 경우, 운영자가 `SETUP_TOKEN`을 다시 등록하고 새 팀장이 같은 연결 절차를 수행합니다. 기존 팀원 연결은 보존하며 기존 Google 연결을 다른 계정으로 강제 덮어쓰지 않습니다.
 
 최초 관리자를 특정 계정으로 제한하려면 `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SUBJECT` Secret을 설정할 수 있습니다. subject는 Access가 확인한 계정 식별자이며 임의 이메일 문자열로 대신하지 않습니다. 이 제한을 사용해도 설치 토큰 검사는 유지됩니다.
 
@@ -253,9 +204,17 @@ Worker는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 �
 npm ci --include=dev
 npm run build
 npm run build:worker
+npm run build:pages
 ```
 
-빌드 성공은 클라우드 연결 성공과 별개입니다. 운영 배포가 승인된 경우에만 설정·Access 정책·DB 버전·Secret을 확인한 뒤 `npx wrangler deploy`로 배포합니다. Custom Domain에는 `APP_ORIGIN`과 동일한 호스트를 연결합니다. [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+빌드 성공은 클라우드 연결 성공과 별개입니다. 운영 배포가 승인된 경우에만 설정·Access 정책·DB 버전·Secret을 확인한 뒤 팀 설정으로 `npx wrangler deploy`를 실행합니다. Pages 방식에서는 다음을 추가로 확인합니다.
+
+1. Pages의 소스 저장소는 앱 소스 저장소이고 팀 데이터 Git 저장소와 다릅니다. 검증할 코드를 커밋·푸시한 뒤 **Production branch**를 해당 브랜치로 지정합니다. 그래야 `프로젝트.pages.dev`에 그 코드가 배포됩니다. preview 브랜치 배포만으로 운영 주소의 코드가 바뀌지 않습니다.
+2. 빌드 명령은 `npm run build`, 출력은 `dist`, root directory는 저장소 루트, 빌드 변수는 `NODE_VERSION=22`입니다. Cloudflare가 루트 `functions/`를 별도로 빌드합니다. 루트 `wrangler.jsonc`는 백엔드 Worker용이며 Pages 설정은 대시보드에서 관리합니다. 여기에 `pages_build_output_dir`를 섞어 넣지 않습니다.
+3. 먼저 같은 브랜치로 백엔드 Worker를 배포하고 Pages의 **Settings → Bindings → Service binding**에 `GRAEBOARD_BACKEND`를 등록해 그 Worker를 선택합니다. Pages에는 DB·Git 비밀을 복사하지 않습니다. Service binding 변경 후 Pages를 다시 배포합니다.
+4. Pages 전체 경로가 Worker로 전달되는지, Google 인증 전에는 화면·API·정적 파일이 거절되는지, 쿠키와 POST·이미지·SSE 응답이 유지되는지 확인합니다. Worker가 없는 초기 Pages 배포는 JSON 503이며 연동 완료 상태가 아닙니다.
+
+Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
 최초 연결 순서는 다음과 같습니다.
 
@@ -263,8 +222,8 @@ npm run build:worker
 2. 내부 서버의 팀 연결 프로필과 설치 식별자를 준비하고 서버를 시작합니다.
 3. 내부 **설정 → 팀 → 동기화**에서 설치된 프로필을 선택해 **연결 저장**을 누릅니다.
 4. **연결 검사** 결과를 확인한 뒤 **초기 게시**를 실행합니다. 초기 게시 중 새 내부 편집도 대기 변경으로 보존됩니다.
-5. 외부 **설정 → 시스템 → 서비스 연결**에서 공통 연결 검사 후 같은 UUID의 프로필로 **팀 가져오기**를 실행합니다. 이미 업무가 있는 DB를 초기화해 덮어쓰지 않습니다.
-6. 본문·이미지·팀 신원 검증이 끝난 팀을 사용자에게 공개하고, 사용자 계정의 팀 역할을 설정합니다.
+5. 내부 초기 게시에 팀 구성원 정보도 포함됐는지 확인하고, 외부에서 팀장 계정을 최초 연결합니다. **설정 → 시스템 → 서비스 연결**에서 연결 검사 후 **팀 가져오기**를 실행합니다. 기존 업무를 초기화해 덮어쓰지 않습니다.
+6. 본문·이미지·팀 신원을 확인한 뒤 팀원에게 주소를 전달하고, 각자의 연결 신청을 팀장이 승인합니다. 역할은 사내에서 설정합니다.
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
 
 `로컬 저장`, `Git 반영`, `상대 반영 확인`은 서로 다른 단계입니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 현재 확인 불가로 표시합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
@@ -290,7 +249,7 @@ npm run build:worker
 
 내부 설정은 서비스 실행 계정만 읽을 수 있는 환경 파일·비밀 보관소에 등록합니다. 토큰이 URL·Git config·프로세스 인자·로그에 들어가지 않게 합니다. 앱 화면에는 등록 여부와 프로필 이름만 표시합니다. 기존 `.env`를 예제 파일로 덮어쓰지 않습니다.
 
-`peerInstallationId`에는 외부의 `INSTALLATION_ID`를, 외부의 `PEER_INSTALLATION_ID`에는 내부의 `GRAEBOARD_INSTALLATION_ID`를 넣습니다. 상대 설치 ID가 없으면 Git 게시까지 확인할 수 있지만 상대 서버 적용을 확인할 수 없습니다. UUID는 설치별로 한 번 만들고 서버 환경에 유지하며 팀마다 바꾸지 않습니다.
+`peerInstallationId`에는 외부의 `INSTALLATION_ID`를, 외부의 `PEER_INSTALLATION_ID`에는 내부의 `GRAEBOARD_INSTALLATION_ID`를 넣습니다. 상대 설치 ID가 없으면 Git 게시까지 확인할 수 있지만 상대 서버 적용을 확인할 수 없습니다. 사내 설치 UUID는 서버 공통으로 유지하고, 외부 설치 UUID는 각 팀 사이트마다 따로 발급합니다.
 
 내부 토큰을 DB에 암호화해 등록하려면 별도 비밀 보관소에 32바이트 임의 키의 base64 값인 `GRAEBOARD_SYNC_KEY`와 키 이름 `GRAEBOARD_SYNC_KEY_ID`를 준비합니다. 키 이름의 기본값은 `default`입니다. 키는 DB·백업 bundle과 분리해 보관하고 실행 계정만 읽을 수 있게 합니다. `GRAEBOARD_SYNC_PROFILES`를 설정한 뒤 서비스 실행 계정과 같은 DB 경로로 다음 명령을 실행합니다.
 
@@ -306,19 +265,19 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 
 | 화면·증상               | 먼저 확인할 것                                        | 보존할 상태                           |
 | ----------------------- | ----------------------------------------------------- | ------------------------------------- |
-| 관리 DB 오류            | `PG_CONTROL` 대상, control migration, 앱 역할·TLS     | 팀 DB를 초기화하지 않음               |
+| 관리 DB 오류            | `PG_SITE` 대상, site migration, 앱 역할·TLS     | 팀 DB를 초기화하지 않음               |
 | 팀 DB 신원 불일치       | 내부 UUID, team migration의 UUID, 프로필 binding      | 기존 업무·연결 유지                   |
 | Git 인증/권한 실패      | 토큰 만료·Contents 쓰기 권한·조직 승인·private 저장소 | outbox 유지, 토큰만 교체              |
 | R2 검사 실패            | 선택 팀 bucket·binding·PUT/GET/DELETE 권한            | 다른 bucket을 지우지 않음             |
 | 이미지 변환 실패        | `IMAGES` binding·사용량·입력 포맷/화소                | 문서 입력 보존 후 재업로드            |
 | Access 401              | 이 앱 AUD·정확한 발급자·로그인 만료                   | 다른 서비스 토큰 재사용 금지          |
-| Access는 통과했는데 403 | 앱 활성 계정·초대·팀 역할                             | 조직 전체 사용자를 자동 추가하지 않음 |
+| Access는 통과했는데 403 | 사내 활성 계정·연결 승인·팀 역할                             | 조직 전체 사용자를 자동 추가하지 않음 |
 | 오래된 내부 확인        | 내부 실행 상태·Git 통신·복구 모드                     | 마지막 확인과 현재 상태 구분          |
 | 복구 점검 필요          | 원격 이력 변경·DB 복사·restore 여부                   | 강제 push·새 genesis로 덮지 않음      |
 
 연결 검사는 PG에서 검사 쓰기를 롤백하고 R2에서 자신이 만든 임시 객체만 제거합니다. Git 검사도 실제 업무 이력을 수정하는 용도로 사용하지 않습니다. 초기 게시 대기·가져오기 대기는 정상 동기화 완료를 뜻하지 않습니다.
 
-외부 `/api/health`도 Access 인증과 앱에 초대된 활성 계정 검사를 거칩니다. 내부의 공개 health와 다르므로 모니터링도 허용된 인증 경로로 구성합니다.
+외부 `/api/health`도 Access 인증과 팀장이 연결을 승인한 활성 계정 검사를 거칩니다. 내부의 공개 health와 다르므로 모니터링도 허용된 인증 경로로 구성합니다.
 
 외부의 진입·포커스·편집 전 최신화는 팀별 30초 간격으로 원격 head를 확인하고 변경이 있을 때 수신합니다. 이 보조 요청은 상태 브랜치를 조회·게시하지 않으며 상태 확인은 Cron이 담당합니다. 따라서 여러 화면의 조회 횟수를 GitHub 전체 동기화 횟수로 늘리지 않습니다. 실제 GitHub 요청 한도·네트워크 지연은 운영 계정에서 별도 확인합니다.
 
@@ -349,7 +308,7 @@ L로 제외하지 않은 삭제 표식과 로컬 복원 이력이 참조하는 �
 
 공유 기준본의 본문·메타데이터는 DB에 남습니다. 이 기능은 R2/파일 이미지 공간과 앱 제공 범위를 정리하며 DB 전체 내용을 비우는 기능이 아닙니다. 자동 TTL·Git 이력 재작성은 제공하지 않습니다.
 
-일시정지는 로컬 저장과 변경 캡처를 계속하며 Git 통신을 중단합니다. 연결 해제는 미전송 변경·충돌을 보존하고 전송을 중단합니다. 복구한 DB는 자동 발신하지 않고 복구 점검으로 시작해야 합니다. 원격 head·opId 처리 여부를 대조하고 새 writer 세대를 준비한 뒤 재개합니다. 관리 DB, 팀 DB, 이미지, 미전송 변경은 각각 보존하며 팀 DB 복구로 공통 계정·권한을 덮어쓰지 않습니다.
+일시정지는 로컬 저장과 변경 캡처를 계속하며 업무 자료의 Git 송수신을 중단합니다. 팀 구성원·권한 갱신과 상태 확인은 계속합니다. 연결 해제는 미전송 변경·충돌을 보존하고 전송을 중단합니다. 복구한 DB는 자동 발신하지 않고 복구 점검으로 시작해야 합니다. 원격 head·opId 처리 여부를 대조하고 새 writer 세대를 준비한 뒤 재개합니다. 팀 프로젝트의 업무·계정 승인 스키마와 이미지·미전송 변경을 함께 보존합니다. 업무만 논리 복구할 때는 계정·승인을 덮어쓰지 않습니다.
 
 내부 DB 복구나 내부 연결 프로필 교체 후에는 원래 서버와 복구 사본의 쓰기 프로세스를 모두 중지하고 검증한 백업을 확보합니다. 대상 DB 경로·팀 UUID·이미지 경로와 서버 환경의 `GRAEBOARD_INSTALLATION_ID`, `GRAEBOARD_SYNC_PROFILES`를 확인한 뒤 다음 명령을 사용합니다. 내부 연결 교체는 일시정지·작업 종료 후 같은 팀의 보관 이력이 있는 저장소에만 허용하며 곧바로 발신하지 않습니다.
 
@@ -366,8 +325,8 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 
 `sync:recover` 명령은 내부 SQLite 전용입니다. `restore:external` 또는 논리 이관 후에는 아래 외부 API 절차를 사용합니다. 복구한 팀을 **처음 가져오기**로 다시 초기화하지 않습니다.
 
-1. 이전 Worker의 해당 팀 쓰기·Cron·업로드 실행을 모두 종료하고 원본 DB/R2와 백업을 보존합니다. 복구한 control/team DB와 R2를 새 binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
-2. 복구한 control DB의 시스템 관리자 Google 계정으로 공식 `APP_ORIGIN`에 로그인합니다. **설정 → 시스템 → 서비스 연결**에서 복구한 자원을 검사하고, 팀 연결에 복구 대상 프로필을 선택합니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
+1. 이전 Worker의 해당 팀 쓰기·Cron·업로드 실행을 모두 종료하고 원본 DB/R2와 백업을 보존합니다. 복구한 팀 사이트 DB와 R2를 새 binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
+2. 복구한 승인 정보에 연결된 팀장의 Google 계정으로 공식 `APP_ORIGIN`에 로그인하고 사내 계정을 선택합니다. **설정 → 시스템 → 서비스 연결**에서 복구한 자원을 검사하고, 팀 연결에 복구 대상 프로필을 선택합니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
 3. `GET /api/admin/teams/:id/maintenance/uploads/recover`로 남은 업로드 실행을 확인합니다. 이전 실행이 끝났음을 확인한 ID만 `POST` 같은 경로에 `{ "confirmedDrained": true, "leaseIds": ["확인한-ID"] }`로 해제합니다. 이 작업은 시간 경과만으로 자동 수행하지 않습니다. 미완료 정리는 앞 절의 복구 절차로 이어서 완료합니다. 중단된 백업은 `POST /api/admin/teams/:id/maintenance/recover`의 `{ "jobId": "확인한-ID", "dryRun": true }`로 확인하고, 이전 백업 실행이 종료된 뒤 `{ "jobId": "확인한-ID", "confirmedDrained": true }`로 guard를 `cancelled` 처리합니다. 시간 경과만으로 해제하지 않습니다. C/P/L/head와 부분 백업 파일은 보존되며 부분 파일은 완전 백업이 아닙니다. 이후 백업은 새 출력 경로에 만듭니다.
 4. `GET /api/teams/:id/sync`의 `canonicalHead`와 현재 프로필·설치 UUID를 확인합니다. 같은 origin의 인증된 관리자 요청으로 `POST /api/admin/teams/:id/sync/recover`에 다음 내용을 보냅니다. `expectedHead`는 실제 조회한 값이며 최초 커서가 없으면 JSON `null`입니다.
 
@@ -394,7 +353,7 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.sqlite --job-id '확인한-jobId' --confirm-drained
 ```
 
-외부 PG 백업의 관리 API를 사용할 수 없으면 같은 확인 뒤 `--engine postgres --url-env PG_TEAM_URL --team-id '실제-팀-UUID' --job-id '확인한-jobId'`에 `--dry-run` 또는 `--confirm-drained`를 사용합니다. URL 원문은 명령 인자로 넣지 않습니다.
+외부 PG 백업의 관리 API를 사용할 수 없으면 같은 확인 뒤 `--engine postgres --url-env PG_SITE_URL --team-id '실제-팀-UUID' --job-id '확인한-jobId'`에 `--dry-run` 또는 `--confirm-drained`를 사용합니다. URL 원문은 명령 인자로 넣지 않습니다.
 
 ## 13. SQLite와 PostgreSQL 사이의 논리 이관
 
@@ -404,7 +363,7 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 
 Node의 **SQLite control + PG 팀 업무 + 파일 이미지** 조합은 일반 업무 저장·권한·이벤트·이미지 계약까지 검증했으며, 이 조합 전체의 일관된 오프라인 백업/복구 절차는 현재 제공하지 않습니다. `npm run backup`은 SQLite와 SQLite가 참조한 이미지만 읽고 PG 자료·PG에만 참조된 파일 이미지는 포함하지 않습니다. 아래 PG `transfer --resources`와14절 외부 백업 명령은 R2 전용 설정을 사용하므로 Node 파일 이미지 조합에도 그대로 적용된다고 해석하지 않습니다. 운영 적용 전에 별도 복구 절차가 필요한 범위는 [백업과 복구](OPERATIONS.md#백업과-복구)에 명시합니다.
 
-`transfer`는 팀의 ID, 현재 제공본, canonical C, pending P, 제외 목록 L, 충돌, 영수증, 객체와 revision을 보존하는 운영 도구입니다. 로그인 비밀번호·세션·팀 권한은 팀 논리 묶음에 넣지 않습니다. SQLite의 이전 문서 버전·감사 이력·개인 설정처럼 엔진별 표현이 다른 자료는 비공유 보관 레코드로 함께 유지하며, 엔진을 다시 바꿀 때도 버리지 않습니다. 새 SQLite 사용자 참조는 비활성 표시 계정으로 만들고 기존 계정의 권한은 자동으로 올리지 않습니다. 외부 공통 계정과 팀 권한은 control DB에서 별도로 확인합니다.
+`transfer`는 팀의 ID, 현재 제공본, canonical C, pending P, 제외 목록 L, 충돌, 영수증, 객체와 revision을 보존하는 운영 도구입니다. 로그인 비밀번호·세션·팀 권한은 팀 논리 묶음에 넣지 않습니다. SQLite의 이전 문서 버전·감사 이력·개인 설정처럼 엔진별 표현이 다른 자료는 비공유 보관 레코드로 함께 유지하며, 엔진을 다시 바꿀 때도 버리지 않습니다. 새 SQLite 사용자 참조는 비활성 표시 계정으로 만들고 기존 계정의 권한은 자동으로 올리지 않습니다. 외부 팀 구성원과 Google 연결 승인은 같은 프로젝트의 site 스키마에서 별도로 확인합니다.
 
 먼저 원본 DB·이미지 전체 백업을 확보하고 진행 중 동기화·정리·업로드가 끝났는지 확인합니다. 다음 예시의 경로와 팀 UUID를 실제 값으로 바꿉니다. `--dry-run`은 내보낼 행 수와 해시를 확인하며 원본을 동결하지 않습니다.
 
@@ -418,11 +377,11 @@ npm run transfer -- --action export --engine sqlite --database /srv/graeboard/da
 PostgreSQL 대상은 앞 절의 team migration으로 동일 팀 UUID의 빈 DB를 먼저 준비합니다. 연결 URL은 지정한 환경변수에만 보관합니다.
 
 ```sh
-npm run transfer -- --action import --engine postgres --url-env PG_TEAM_URL --file /private/team-transfer.json --dry-run
-npm run transfer -- --action import --engine postgres --url-env PG_TEAM_URL --file /private/team-transfer.json --profile-id team-a-new --resources /private/graeboard-restore-resources.json
+npm run transfer -- --action import --engine postgres --url-env PG_SITE_URL --file /private/team-transfer.json --dry-run
+npm run transfer -- --action import --engine postgres --url-env PG_SITE_URL --file /private/team-transfer.json --profile-id team-a-new --resources /private/graeboard-restore-resources.json
 ```
 
-PostgreSQL에서 내보낼 때는 `--engine postgres --url-env PG_TEAM_URL --resources /private/graeboard-backup-resources.json`을 사용합니다. SQLite로 가져올 때는 신규 파일을 명시적으로 초기화한 뒤 가져옵니다. 빈 SQLite 파일에는 묶음의 팀을 하나의 트랜잭션 안에서 생성합니다.
+PostgreSQL에서 내보낼 때는 `--engine postgres --url-env PG_SITE_URL --resources /private/graeboard-backup-resources.json`을 사용합니다. SQLite로 가져올 때는 신규 파일을 명시적으로 초기화한 뒤 가져옵니다. 빈 SQLite 파일에는 묶음의 팀을 하나의 트랜잭션 안에서 생성합니다.
 
 ```sh
 npm run migrate -- --engine sqlite --database /private/new-site.sqlite --initialize
@@ -444,55 +403,45 @@ npm run transfer -- --action import --engine sqlite --database /private/new-site
 npm run transfer -- --action release --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite --team-id '실제-팀-UUID' --job-id '출력된-jobId'
 ```
 
-## 14. 외부 control·팀 DB·R2를 함께 백업하고 복구하기
+## 14. 팀 사이트 DB·승인 정보·R2 백업과 복구
 
-`backup:external`은 공통 control DB, 선택한 팀 DB의 C/P/L과 현재 제공본, 팀 R2 이미지 및 Git 보관 이미지가 포함된 검증 가능한 디렉터리를 만듭니다. 각 DB는 일관된 읽기 snapshot으로 고정하며, 서로 다른 PostgreSQL 프로젝트 전체를 하나의 트랜잭션으로 취급하지 않습니다. DB schema 자체와 PostgreSQL role은 앞 절의 migration·권한 설정으로 별도 준비합니다.
+팀 사이트 백업 v2는 한 팀의 `graeboard` 업무 C/P/L·제공본, `graeboard_site` 사용자·승인·Google 연결, R2 및 고정 Git head의 보관 이미지를 포함합니다. 접속 세션 토큰은 포함하지 않습니다. 작업 중에는 사용자 쓰기·Cron·계정 승인을 중지하여 업무와 권한 snapshot 사이의 변경을 막습니다.
 
-아래 JSON을 저장소 밖 `/private/graeboard-backup-resources.json`에 저장합니다. UUID·계정 ID·bucket·저장소·경로는 실제 리소스로 바꾸고, 비밀 값 대신 환경변수 이름만 넣습니다. `control`은 공통 DB를 백업할 때 넣으며 `teams`에는 팀마다 한 항목을 추가합니다.
+저장소 밖에 다음 JSON을 만들고 실제 자원·경로로 바꿉니다. 비밀값은 환경 변수로 주입합니다.
 
 ```json
 {
-  "control": { "urlEnv": "PG_CONTROL_URL" },
-  "teams": [
-    {
-      "teamId": "실제-팀-UUID",
-      "urlEnv": "PG_TEAM_URL",
-      "endpoint": "https://실제-계정-ID.r2.cloudflarestorage.com",
-      "bucket": "graeboard-team-a",
-      "accessKeyEnv": "R2_ACCESS_KEY_ID",
-      "secretKeyEnv": "R2_SECRET_ACCESS_KEY",
-      "repository": "소유자/비공개-팀-저장소",
-      "gitDirectory": "/private/graeboard-git-cache/team-a",
-      "githubTokenEnv": "GITHUB_TOKEN"
-    }
-  ]
+  "site": {
+    "teamId": "실제-팀-UUID",
+    "urlEnv": "PG_SITE_URL",
+    "endpoint": "https://실제-계정-ID.r2.cloudflarestorage.com",
+    "bucket": "graeboard-team-a-images",
+    "accessKeyEnv": "R2_ACCESS_KEY_ID",
+    "secretKeyEnv": "R2_SECRET_ACCESS_KEY",
+    "repository": "소유자/비공개-팀-저장소",
+    "gitDirectory": "/private/graeboard-git-cache/team-a",
+    "githubTokenEnv": "GITHUB_TOKEN"
+  }
 }
 ```
 
-보호된 환경 파일이나 비밀 관리 도구로 `PG_CONTROL_URL`, `PG_TEAM_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `GITHUB_TOKEN` 값을 주입합니다. R2는 bucket 범위의 객체 읽기 권한, 복구 대상은 객체 쓰기 권한도 필요합니다. 이 도구는 bucket·프로젝트·저장소를 생성하지 않습니다. S3 연결 설정은 [Cloudflare의 공식 AWS SDK v3 예제](https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js-v3/)와 같습니다.
-
 ```sh
-npm run backup:external -- --config /private/graeboard-backup-resources.json --output /private/backup-2026-10-27 --dry-run
-npm run backup:external -- --config /private/graeboard-backup-resources.json --output /private/backup-2026-10-27
+npm run backup:external -- --config /private/graeboard-backup-resources.json --output /private/team-backup --dry-run
+npm run backup:external -- --config /private/graeboard-backup-resources.json --output /private/team-backup
 ```
 
-연결 dry-run 후 실제 백업은 해당 팀의 정리 작업과 겹치지 않도록 영속 백업 작업을 기록합니다. DB snapshot이 가리키는 이미지를 복사하며, L로 인해 R2에서 지운 이미지는 그 snapshot의 정확한 Git commit에서 백업 디렉터리로 직접 읽습니다. 누락·해시 불일치는 완전 백업 성공으로 처리하지 않습니다. 원본 R2에 보관 이미지를 다시 올리지 않습니다. 완료 전에는 `.partial` 디렉터리를 사용하고 완료 후 이름을 바꿉니다. 결과 파일은 비공개 권한으로 생성되며 control 묶음에는 공통 사용자·권한 정보가 있으므로 접근을 제한합니다.
-
-복구할 때는 서비스 binding에 아직 연결하지 않은 새 control/team DB와 새 R2 bucket을 준비합니다. 앞 절의 migration을 적용하고 새 환경변수 이름·endpoint·bucket·`profileId`·필요한 `installationId`가 있는 별도 설정 파일을 만듭니다. 기존 DB나 bucket 경로를 재사용하지 않습니다.
+복구 대상은 아직 서비스에 연결하지 않은 새 팀 프로젝트·R2입니다. 같은 팀 UUID로 `--scope site --initialize`를 적용하고 대상 자원용 설정 파일에 `profileId`·`installationId`를 지정합니다. 같은 DB를 가리키는 site 설정 한 항목만 사용합니다.
 
 ```sh
-npm run restore:external -- --config /private/graeboard-restore-resources.json --input /private/backup-2026-10-27 --dry-run
-npm run restore:external -- --config /private/graeboard-restore-resources.json --input /private/backup-2026-10-27
+npm run restore:external -- --config /private/graeboard-restore-resources.json --input /private/team-backup --dry-run
+npm run restore:external -- --config /private/graeboard-restore-resources.json --input /private/team-backup
 ```
 
-복구 dry-run은 전체 manifest·팀 자료·이미지 체크섬을 검증합니다. 실제 복구는 빈 대상에만 수행하고 새 writer 세대 및 복구 점검 상태를 설정합니다. control의 팀 연결은 미연결로 시작합니다. L은 유지하며 실제 제공·pending·미해결 충돌에 필요한 이미지만 새 R2에 설치합니다. 제외된 보관 이미지는 백업 안에 유지됩니다. 여러 DB 중 일부를 복구한 뒤 실패한 경우 같은 백업으로 재실행할 수 있습니다. 완료 마커와 pending을 대조해 이미 복구한 동일 대상을 건너뛰며, 대상에서 새 저장이 생겼으면 덮어쓰지 않고 중단합니다.
+dry-run은 manifest·모든 자료/이미지 해시·대상 DB 형식·팀 UUID·빈 대상 여부를 검사합니다. 복구는 승인·Google 연결을 보존하고 접속 세션은 재사용하지 않습니다. 내부 구성원 정보를 다시 받아 현재 권한을 확인한 뒤 로그인합니다. 업무 동기화는 recovery 상태, 팀 연결은 미연결로 시작하므로 앞 절의 복구 점검을 마친 뒤 접속을 재개합니다. 중간 실패 후 같은 백업으로 재실행할 수 있으며 새 저장이 생긴 대상은 덮어쓰지 않습니다.
 
-엔진 고유의 PostgreSQL 백업을 추가 보관하려면 보호된 libpq service/password 파일을 설정한 뒤 control과 각 팀에 `pg_dump`를 각각 실행합니다. 이 SQL/아카이브 백업에는 R2 이미지가 포함되지 않으므로 위 이미지 묶음을 대체하지 않습니다. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)와 [libpq의 PGSERVICE·PGPASSFILE 설정](https://www.postgresql.org/docs/current/libpq-envars.html)을 참고합니다.
+기존 분리형 백업 v1은 `{ "control": { "urlEnv": "..." }, "teams": [...] }` 설정과 기존 DB로 계속 복구합니다. v1과 site v2를 서로 바꾸어 복원하지 않습니다. 기존 팀 DB를 site로 전환할 때는 v1 복구·검증을 마친 업무 DB에 4절의 추가 migration을 수행합니다.
 
-```sh
-PGSERVICE=graeboard-control pg_dump --format=custom --file=/private/control.dump
-PGSERVICE=graeboard-team-a pg_dump --format=custom --file=/private/team-a.dump
-```
+기존 릴리스로 돌아갈 때는 쓰기 중단 상태에서 보존한 이전 control·team DB/이미지 백업과 이전 설정을 함께 복구합니다. site 스키마를 삭제하거나 migration checksum을 고쳐 다운그레이드하지 않습니다. 접속 재개 후 되돌리면 백업 이후 업무·승인이 사라질 수 있으므로 현재 자료를 먼저 보존하고 변경분 이관 계획을 정합니다. PostgreSQL 자체 백업은 `pg_dump`로 프로젝트 하나를 보관할 수 있지만 R2는 포함하지 않습니다. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)
 
 ## 15. PostgreSQL 업무 저장소의 한도와 Worker 검증 범위
 

@@ -19,6 +19,7 @@ import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
 import { normalizeSyncError, protocolValidation } from "./errors.mjs";
 import { SyncService } from "./service.mjs";
+import { publishDirectory } from "./directory.mjs";
 import { existsSync } from "node:fs";
 import {
   documentImagePath,
@@ -528,6 +529,25 @@ function serviceFor(config) {
     identity: config.identity,
     images,
   });
+  service.publishDirectory = async () => {
+    const link = raw.readLink();
+    if (!link?.canonical_head || !["active", "paused"].includes(link.mode))
+      return;
+    const members = db
+      .prepare(
+        "SELECT u.id,u.name,u.username AS email,u.active,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=? ORDER BY u.id",
+      )
+      .all(teamId)
+      .map((row) => ({ ...row, active: !!row.active }));
+    await publishDirectory(transport, {
+      format: "graeboard-team-directory",
+      version: 1,
+      teamId,
+      installationId: link.installation_id,
+      repoId: link.repo_id,
+      members,
+    });
+  };
   services.set(config.serviceKey, service);
   return service;
 }
@@ -546,9 +566,14 @@ parentPort.on("message", async ({ id, request, mutationId, result, error }) => {
   try {
     const result =
       request.kind === "service"
-        ? await serviceFor(request.config)[
-            request.action === "checkpoint" ? "checkpoint" : "run"
-          ](request.options || {})
+        ? await serviceFor(request.config)
+            [request.action === "checkpoint" ? "checkpoint" : "run"](
+              request.options || {},
+            )
+            .finally(async () => {
+              if (request.action !== "checkpoint")
+                await serviceFor(request.config).publishDirectory();
+            })
         : compute(request);
     parentPort.postMessage({ id, result });
   } catch (error) {

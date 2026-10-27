@@ -4,12 +4,23 @@ import { controlTransaction } from "../../worker/data.mjs";
 import { userRecord } from "../../worker/control.mjs";
 import { profileSchema, memberPickerUser } from "./control-service.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
+import { siteTeamId } from "../../worker/config.mjs";
+import { authenticateSite } from "../../worker/site-auth.mjs";
 export class PostgresControlRepository {
   constructor({ context }) {
     this.context = context;
     this.authenticationMode = "access";
   }
   resolveUser(userId) {
+    if (siteTeamId(this.context.env))
+      return authenticateSite(
+        this.context.env,
+        this.context.identity,
+        this.context.request,
+      ).then((user) => {
+        assert(user.id === userId, 401, "선택한 계정이 변경되었습니다.");
+        return user;
+      });
     return controlTransaction(this.context.env, async (tx) => {
       const row = (await tx.query("SELECT * FROM users WHERE id=$1", [userId]))
         .rows[0];
@@ -125,10 +136,33 @@ export async function bootstrapFromTeamStores(ctx) {
     years: [...years].sort((a, b) => b - a),
     ...(ctx.hostAuthMode === "password"
       ? {}
-      : { authMode: "access", site: "external" }),
+      : {
+          authMode: "access",
+          site: "external",
+          accountLinking: !!siteTeamId(ctx.env),
+        }),
   };
 }
 async function execute(ctx, command, body, targetId) {
+  if (siteTeamId(ctx.env)) {
+    assert(
+      ![
+        "createUser",
+        "updateUser",
+        "replaceMembers",
+        "createTeam",
+        "deleteTeam",
+      ].includes(command),
+      403,
+      "팀 구성원과 권한은 사내에서 관리합니다.",
+    );
+    if (command === "profile" && body.name !== undefined)
+      assert(
+        body.name === ctx.user.name,
+        403,
+        "이름은 사내 계정에서 변경하세요.",
+      );
+  }
   if (command === "profile") {
     body = profileSchema.parse(body);
     return controlTransaction(
