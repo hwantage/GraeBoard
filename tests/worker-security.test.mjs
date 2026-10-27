@@ -15,6 +15,31 @@ import {
 import { digest } from "../server/sync/protocol.mjs";
 import sharp from "sharp";
 
+test("unexpected Worker failures are logged without exposing their details in the response", async (t) => {
+  const logged = [];
+  t.mock.method(console, "error", (...values) => logged.push(values));
+  const worker = createWorker({
+    verify: async () => {
+      throw Object.assign(new Error("private database failure"), {
+        code: "08006",
+      });
+    },
+  });
+  const response = await worker.fetch(
+    new Request("https://board.example.com/api/setup"),
+    {
+      APP_ORIGIN: "https://board.example.com",
+    },
+  );
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), {
+    error: "서비스 연결을 확인한 뒤 다시 시도하세요.",
+  });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0][1].code, "08006");
+  assert.equal(logged[0][1].message, "private database failure");
+});
+
 test("Access verifies signature, issuer, audience, expiry and invited-human identity before assets", async () => {
   const env = {
     APP_ORIGIN: "https://board.example.com",

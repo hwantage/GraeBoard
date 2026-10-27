@@ -339,6 +339,14 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
       setBusy(false);
     }
   }
+  if (!setup && error)
+    return (
+      <Empty
+        title="서버에 연결할 수 없습니다"
+        description={error}
+        action={<Button onClick={() => location.reload()}>다시 연결</Button>}
+      />
+    );
   return (
     <main className="auth-page">
       <section className="auth-story">

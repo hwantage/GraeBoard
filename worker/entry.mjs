@@ -128,7 +128,14 @@ async function mutationTeam(ctx, path, body) {
 }
 export function createWorker({
   verify = verifyAccess,
-  onError = () => {},
+  onError = (error) => {
+    if ((error.status || 500) >= 500)
+      console.error("GraeBoard Worker request failed", {
+        name: error.name,
+        code: error.code,
+        message: error.message,
+      });
+  },
   publish = schedulePublish,
 } = {}) {
   return {
