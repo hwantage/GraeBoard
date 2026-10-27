@@ -762,7 +762,7 @@ function Workspace({
     [teamId, year],
   );
   useResourceSync(
-    screen === "annual" && ready
+    screen === "annual" && ready && !teamUnavailable
       ? report
         ? `/reports/${report.id}`
         : `/teams/${teamId}`
@@ -3751,7 +3751,10 @@ function Workspace({
                 taskIds={allTasks.map((task) => task.id)}
                 active={report}
                 canEdit={canAdd}
-                disabled={!ready || !!pending || !!failed || !!editor}
+                available={!teamUnavailable}
+                disabled={
+                  teamUnavailable || !ready || !!pending || !!failed || !!editor
+                }
                 status={
                   report
                     ? reportDraft.error

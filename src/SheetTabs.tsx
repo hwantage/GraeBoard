@@ -26,6 +26,7 @@ export default function SheetTabs({
   taskIds,
   active,
   canEdit,
+  available,
   disabled,
   status,
   onSelect,
@@ -39,6 +40,7 @@ export default function SheetTabs({
   taskIds: string[];
   active: Report | null;
   canEdit: boolean;
+  available: boolean;
   disabled: boolean;
   status: string;
   onSelect: (id: string | null) => Promise<void>;
@@ -68,7 +70,7 @@ export default function SheetTabs({
   const [scrollable, setScrollable] = useState({ left: false, right: false });
   const createId = useRef<string>("");
   const root = useRef<HTMLDivElement>(null);
-  useResourceSync(`/teams/${teamId}`, async (signal) => {
+  useResourceSync(available ? `/teams/${teamId}` : null, async (signal) => {
     if (busy || renaming || dialog) return false;
     const result = await api<{ reports: CopyInfo[] }>(
       `/reports?teamId=${teamId}`,
@@ -86,6 +88,9 @@ export default function SheetTabs({
   }
   useEffect(() => {
     let cancelled = false;
+    setCopies([]);
+    setError("");
+    if (!available) return;
     api<{ reports: CopyInfo[] }>(`/reports?teamId=${teamId}`)
       .then((r) => {
         if (!cancelled) setCopies(r.reports);
@@ -96,7 +101,7 @@ export default function SheetTabs({
     return () => {
       cancelled = true;
     };
-  }, [teamId]);
+  }, [teamId, available]);
   function updateScroll() {
     const el = tabScroll.current;
     if (!el) return;
