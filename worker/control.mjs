@@ -1,4 +1,5 @@
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
+import { deploymentSite } from "../shared/site-mode.js";
 import { PostgresControlRepository } from "../server/storage/postgres-control.mjs";
 import { assertDatabaseCapacity, capacityLimits } from "./capacity.mjs";
 import {
@@ -79,6 +80,7 @@ export async function setupStatus(env, identity) {
       needsSetup: !row.setup_complete,
       setup: !row.setup_complete,
       authMode: "access",
+      site: deploymentSite(env, "external"),
       email: identity.email,
     };
   });

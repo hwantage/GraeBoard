@@ -352,3 +352,5 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → 기존 Worke
 팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30 보존·원자적 v31 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
 
 외부 `Team.status`가 준비되지 않았으면 업무 조회 대신 가져오기 안내를 표시하고, 같은 팀의 상태가 active로 바뀌면 필터/보기/업무 조회를 다시 시작합니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
+
+배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, Worker는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.

@@ -1,4 +1,5 @@
 import { refreshSetupKeys } from "./setup-keys.mjs";
+import { deploymentSite } from "../shared/site-mode.js";
 import { setupKeyId } from "../server/sync/setup-keys.mjs";
 import { controlTransaction } from "./data.mjs";
 import { siteTeamId } from "./config.mjs";
@@ -90,6 +91,7 @@ async function accounts(env, identity) {
       required: setupRequired,
       tokenRequired: setupRequired,
       authMode: "access",
+      site: deploymentSite(env, "external"),
       accountLinking: true,
       email: identity.email,
       accounts: rows

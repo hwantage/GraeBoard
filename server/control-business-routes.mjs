@@ -3,7 +3,7 @@ import { registerEventRoute } from "./event-streams.mjs";
 
 export function installControlBusinessRoutes(
   app,
-  { repository, documentEvents, refreshUser, cellEvents },
+  { repository, documentEvents, refreshUser, cellEvents, site = "internal" },
 ) {
   const repo = (req) =>
     typeof repository === "function" ? repository(req.user, req) : repository;
@@ -22,12 +22,14 @@ export function installControlBusinessRoutes(
   ])
     app[method](path, (req, res, next) => {
       try {
+        const respond = (value) =>
+          res
+            .status(status)
+            .json(command === "bootstrap" ? { ...value, site } : value);
         const result = service(req).execute(command, req.body, req.params.id);
         if (result && typeof result.then === "function")
-          return result
-            .then((value) => res.status(status).json(value))
-            .catch(next);
-        res.status(status).json(result);
+          return result.then(respond).catch(next);
+        respond(result);
       } catch (error) {
         next(error);
       }

@@ -453,17 +453,20 @@ export default function TeamSyncSettings({
               >
                 연결 검사
               </Button>
-              {admin && !initialized && status.mode !== "disconnected" && (
-                <Button
-                  className="primary"
-                  {...busyProps(busy, !status.profileId || !check?.ready)}
-                  onClick={() =>
-                    void perform("enable", "초기 게시를 시작했습니다.")
-                  }
-                >
-                  초기 게시
-                </Button>
-              )}
+              {admin &&
+                !isExternalSite() &&
+                !initialized &&
+                status.mode !== "disconnected" && (
+                  <Button
+                    className="primary"
+                    {...busyProps(busy, !status.profileId || !check?.ready)}
+                    onClick={() =>
+                      void perform("enable", "초기 게시를 시작했습니다.")
+                    }
+                  >
+                    초기 게시
+                  </Button>
+                )}
               {linked && initialized && (
                 <Button
                   {...busyProps(

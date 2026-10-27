@@ -32,6 +32,7 @@
 
 | 값                     | 입력 위치          | 의미                                            |
 | ---------------------- | ------------------ | ----------------------------------------------- |
+| `GRAEBOARD_SITE` | Worker 변수 | `external`. 내부 Node의 `.env`에는 `internal` |
 | `APP_ORIGIN`           | Worker 변수        | 경로 없는 외부 HTTPS origin 하나                |
 | `GRAEBOARD_BACKEND` | Pages Service binding | 같은 팀의 비공개 Worker |
 | `ACCESS_ISSUER`        | Worker 변수        | `https://조직이름.cloudflareaccess.com`         |

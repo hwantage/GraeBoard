@@ -313,6 +313,11 @@ export async function adminRoutes(
       manage: method !== "GET" && !["pull", "refresh"].includes(sync[2]),
       allowUnready: true,
     });
+    assert(
+      sync[2] !== "enable",
+      403,
+      "초기 게시는 내부 서버에서만 가능합니다. 외부에서는 서비스 연결의 팀 가져오기를 사용하세요.",
+    );
     if (!sync[2]) return syncStatus(ctx, teamId);
     if (sync[2] === "check") return checkTeam(ctx, teamId);
     const team = await ctx.team(teamId, { allowUnready: true }),
@@ -468,14 +473,6 @@ export async function adminRoutes(
       if (["pull", "refresh"].includes(sync[2])) await refreshTeam(ctx.env, p);
       else await runTeam(ctx.env, p, { receiveOnly: body.receiveOnly });
       return syncStatus(ctx, teamId);
-    }
-    if (sync[2] === "enable") {
-      ctx.admin();
-      return importTeam(ctx, {
-        teamId,
-        profileId: p.profileId,
-        name: team.name,
-      });
     }
     if (sync[2] === "checkpoint") {
       const { serviceFor } = await import("./sync.mjs"),

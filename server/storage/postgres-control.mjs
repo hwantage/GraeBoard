@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS } from "../../shared/domain.js";
+import { deploymentSite } from "../../shared/site-mode.js";
 import { assert } from "../../worker/access.mjs";
 import { controlTransaction } from "../../worker/data.mjs";
 import { userRecord } from "../../worker/control.mjs";
@@ -138,7 +139,7 @@ export async function bootstrapFromTeamStores(ctx) {
       ? {}
       : {
           authMode: "access",
-          site: "external",
+          site: deploymentSite(ctx.env, "external"),
           accountLinking: !!siteTeamId(ctx.env),
         }),
   };

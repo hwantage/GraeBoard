@@ -1,4 +1,5 @@
 import { installControlBusinessRoutes } from "./control-business-routes.mjs";
+import { deploymentSite } from "../shared/site-mode.js";
 import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
 import { installTaskBusinessRoutes } from "./task-business-routes.mjs";
 import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
@@ -160,7 +161,7 @@ const userMembershipRowsSchema = z
   );
 const sessionHash = (t) => createHash("sha256").update(t).digest("hex");
 export function createApp({
-  db = openDatabase(),
+  db,
   staticDir = resolve("dist"),
   allowSetup = true,
   rateLimits = true,
@@ -180,6 +181,8 @@ export function createApp({
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
 } = {}) {
+  const site = deploymentSite(process.env, "internal");
+  db ??= openDatabase();
   // Repository factories are server configuration, never request input.
   controlRepository ??= storage.control;
   taskRepository ??= storage.tasks;
@@ -267,10 +270,11 @@ export function createApp({
     next();
   });
   app.get("/api/health", (_req, res) =>
-    res.json({ status: "ok", version: "0.1.0" }),
+    res.json({ status: "ok", version: "0.1.0", site }),
   );
   app.get("/api/setup", (_req, res) =>
     res.json({
+      site,
       required: db.prepare("SELECT COUNT(*) AS n FROM users").get().n === 0,
       tokenRequired: !!process.env.SETUP_TOKEN,
     }),
@@ -622,6 +626,7 @@ export function createApp({
       { documentEvents, refreshUser: () => refreshUser(req) },
     );
   installControlBusinessRoutes(app, {
+    site,
     repository: controlsRepository,
     documentEvents,
     refreshUser,

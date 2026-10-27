@@ -110,7 +110,10 @@ export async function api<T = any>(
   if (response.headers.get("content-disposition")) return response as T;
   const data = unpack(await response.json());
   if (["/bootstrap", "/setup"].includes(path)) {
-    externalSite = data.authMode === "access";
+    // Explicit host mode wins; authMode supports older deployed servers only.
+    externalSite =
+      data.site === "external" ||
+      (data.site !== "internal" && data.authMode === "access");
     teamSite = data.accountLinking === true;
   }
   if (

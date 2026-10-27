@@ -384,6 +384,7 @@ test(
       githubSecret: "GIT_TOKEN",
     };
     const env = {
+      GRAEBOARD_SITE: "external",
       APP_ORIGIN: "https://graeboard.pages.dev",
       ACCESS_ISSUER: "https://fixture.cloudflareaccess.com",
       ACCESS_AUDIENCE: "fixture",
@@ -568,6 +569,28 @@ test(
     await app.locals.sync.get(teamId).run();
     const consumed = success(await inside(`/teams/${teamId}/setup-key`)).key;
     assert.ok(consumed.usedAt && consumed.appliedAt);
+    assert.equal(
+      success(await outside("lead-google", "/setup")).site,
+      "external",
+    );
+    assert.equal(
+      success(await outside("lead-google", "/bootstrap")).site,
+      "external",
+    );
+    const beforeEnable = await transport.readHead();
+    const externalEnable = await outside(
+      "lead-google",
+      `/teams/${teamId}/sync/enable`,
+      { GRAEBOARD_SITE: "internal" },
+    );
+    assert.equal(externalEnable.status, 403);
+    assert.match(externalEnable.body.error, /초기 게시는 내부 서버에서만/);
+    assert.equal(await transport.readHead(), beforeEnable);
+    assert.equal(
+      (await pool.query("SELECT count(*) n FROM graeboard.team_sync_links"))
+        .rows[0].n,
+      "0",
+    );
     assert.equal(
       success(await outside("lead-google", "/bootstrap")).user.id,
       lead,

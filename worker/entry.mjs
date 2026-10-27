@@ -1,4 +1,5 @@
 import { syncSetupKeyStatus } from "./setup-keys.mjs";
+import { deploymentSite } from "../shared/site-mode.js";
 import { pack, unpack } from "../shared/compact.js";
 import { assertOrigin, verifyAccess, assert } from "./access.mjs";
 import {
@@ -142,6 +143,7 @@ export function createWorker({
   return {
     async fetch(original, env, execution = { waitUntil() {} }) {
       try {
+        deploymentSite(env, "external");
         assertOrigin(original, env);
         const identity = await verify(original, env);
         const url = new URL(original.url),
@@ -312,6 +314,7 @@ export function createWorker({
       }
     },
     async scheduled(_controller, env, ctx) {
+      deploymentSite(env, "external");
       ctx.waitUntil(scheduled(env));
       if (siteTeamId(env))
         ctx.waitUntil(syncSetupKeyStatus(env).catch(onError));

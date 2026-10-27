@@ -50,6 +50,7 @@ npm run build
 | `DB_PATH`             | `data/weekly-plan.sqlite` | 데이터베이스 위치. 절대 경로 또는 실행 디렉터리 기준 상대 경로     |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
+| `GRAEBOARD_SITE` | Node: `internal`, Worker: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
 | `SETUP_TOKEN`         | 없음                      | 최초 관리자 생성 시 확인할 설정 키                                 |
 | `APP_ORIGIN`          | 없음                      | 프록시 뒤 실제 서비스 Origin, 예: `https://graeboard.example.com`  |
 | `COOKIE_SECURE`       | `0`과 같은 동작           | HTTPS에서는 `1`                                                    |
@@ -60,6 +61,8 @@ npm run build
 | `GRAEBOARD_SYNC_KEY` | 없음 | 암호화용 32바이트 키의 base64 값. DB·백업과 별도 비밀 보관 |
 | `GRAEBOARD_SYNC_KEY_ID` | `default` | 암호화 키 식별자 |
 | `GRAEBOARD_SHUTDOWN_TIMEOUT_MS` | `30000` | HTTP·동기화 종료 대기 상한(ms), 100~600000. 초과하면 P를 지우지 않고 exit 1 |
+
+내부 Node 서버에는 `GRAEBOARD_SITE=internal`, 외부 Worker에는 `GRAEBOARD_SITE=external`을 지정합니다. 이 값은 `NODE_ENV`의 개발·운영 구분이나 접속 주소와 무관하며 네트워크 방화벽 설정을 대신하지 않습니다. 기존 설치에서 생략하면 호스트의 고정 역할을 사용합니다. Node에 external을 지정하거나 Worker에 internal을 지정하면 다른 인증 방식으로 전환하지 않고 설정 오류로 중단합니다. 서버는 `/api/setup`·`/api/bootstrap`의 `site`로 화면에 역할을 알립니다. 내부만 초기 게시와 팀장 연결 키 발급을 제공하며 외부의 최초 연결은 서비스 연결의 팀 가져오기를 사용합니다. 외부 `/sync/enable` 요청은 403으로 거절합니다.
 
 `NODE_ENV=production`으로 외부 주소에 바인딩하고 계정이 아직 없으면 `SETUP_TOKEN`이 필요합니다. 루프백 주소 뒤에 프록시를 두는 경우에도 첫 설정을 공개하기 전에 토큰을 지정하거나, 로컬에서 먼저 관리자를 생성하세요. 임의 토큰은 `openssl rand -hex 32` 등으로 생성하여 `.env` 또는 서버의 비밀 설정에 보관합니다. 첫 설정 완료 후 제거할 수 있습니다.
 

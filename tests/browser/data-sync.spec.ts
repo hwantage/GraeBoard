@@ -338,6 +338,48 @@ test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된
   expect(resumed).toBe(2);
 });
 
+test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 숨기고 팀 가져오기를 제공한다", async ({
+  page,
+}) => {
+  const bootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: { ...bootstrap, site: "external" } }),
+  );
+  await page.route("**/api/admin/service-connections", (route) =>
+    route.fulfill({
+      json: {
+        site: "external",
+        siteName: "외부 팀",
+        database: { provider: "postgres", version: 2, status: "ok" },
+        profiles: [
+          { profileId: "outside", teamId, name: "외부 자원", ready: true },
+        ],
+      },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await expect(
+    settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
+  ).toContainText("미연결");
+  await expect(
+    settings.getByRole("button", { name: "초기 게시", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("region", { name: "팀장 연결 키", exact: true }),
+  ).toHaveCount(0);
+  await settings
+    .getByRole("button", { name: "서비스 연결", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "팀 가져오기", exact: true }),
+  ).toBeEnabled();
+});
+
 test("미연결 팀은 기존 설정과 함께 동기화 상태·서비스 설치 안내를 조회한다", async ({
   page,
 }) => {
@@ -553,7 +595,12 @@ test("팀 사이트에서 사내 계정을 선택하고 승인 대기 후 접속
     route.fulfill({
       status: selected ? 200 : 401,
       json: selected
-        ? { ...bootstrap, authMode: "access", accountLinking: true }
+        ? {
+            ...bootstrap,
+            site: "external",
+            authMode: "access",
+            accountLinking: true,
+          }
         : { error: "계정 선택 필요" },
     }),
   );
@@ -615,7 +662,12 @@ test("외부 팀장은 연결 신청을 승인하고 구성원 정보는 읽기�
   let state = "pending";
   await page.route("**/api/bootstrap", (route) =>
     route.fulfill({
-      json: { ...bootstrap, authMode: "access", accountLinking: true },
+      json: {
+        ...bootstrap,
+        site: "external",
+        authMode: "access",
+        accountLinking: true,
+      },
     }),
   );
   await page.route(`**/api/teams/${teamId}/access-requests`, (route) =>
@@ -676,7 +728,12 @@ test("팀 사이트 최초 팀장은 사내 계정과 설정 키로 연결한다
     route.fulfill({
       status: connected ? 200 : 401,
       json: connected
-        ? { ...bootstrap, authMode: "access", accountLinking: true }
+        ? {
+            ...bootstrap,
+            site: "external",
+            authMode: "access",
+            accountLinking: true,
+          }
         : { error: "최초 연결 필요" },
     }),
   );

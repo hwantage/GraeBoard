@@ -67,6 +67,15 @@ const change = (key, value, version) => ({
   expectedVersion: version ?? getTask(db, task.id).cells[key]?.version ?? 0,
 });
 
+test("내부 서버는 설정과 bootstrap에 배포 환경을 알리고 요청 헤더로 바꿀 수 없다", async () => {
+  for (const path of ["/health", "/setup", "/bootstrap"])
+    assert.equal(
+      (await request(path, { headers: { GRAEBOARD_SITE: "external" } })).data
+        .site,
+      "internal",
+    );
+});
+
 test("로그인은 30일 유지하고 하루 단위로 갱신하며 만료·로그아웃·계정 해제를 존중한다", async () => {
   const account = {
     username: `session-${randomUUID()}@example.com`,
