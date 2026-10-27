@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   baseSql,
+  syncSql,
+  syncChecksum,
   migrateSqlite,
   assertSqliteHistory,
   assertSqliteIntegrity,
@@ -65,7 +67,7 @@ function shape(db) {
     .all();
 }
 
-test("v29 → v30 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
+test("v29 → v31 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
   const upgraded = legacy(),
     fresh = new DatabaseSync(":memory:");
   try {
@@ -113,7 +115,7 @@ test("migration DDL/history/version roll back together and the same migration ca
 });
 
 test("unsupported versions, occupied version zero, malformed v29 and altered history are rejected without resetting data", () => {
-  for (const version of [0, 28, 31]) {
+  for (const version of [0, 28, 32]) {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(
@@ -191,7 +193,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
     assert.equal(existsSync(missing), false);
     result = run("--db", path);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).to, 30);
+    assert.equal(JSON.parse(result.stdout).to, 31);
     result = run("--database", path);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).applied, false);
@@ -206,5 +208,44 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("released v30 upgrades atomically to v31, retaining the original migration checksum and all rows", () => {
+  const db = legacy();
+  try {
+    db.exec(syncSql);
+    db.prepare("INSERT INTO schema_migrations VALUES(30,?,?)").run(
+      syncChecksum,
+      "original-time",
+    );
+    db.exec("PRAGMA user_version=30");
+    const before = contents(db);
+    assert.equal(migrateSqlite(db, { dryRun: true }).to, 31);
+    assert.deepEqual(contents(db), before);
+    assert.throws(
+      () =>
+        migrateSqlite(db, {
+          afterDdl(version) {
+            if (version === 31) throw new Error("interrupted31");
+          },
+        }),
+      /interrupted31/,
+    );
+    assert.equal(sqliteVersion(db), 30);
+    assert.deepEqual(contents(db), before);
+    migrateSqlite(db);
+    for (const [table, rows] of Object.entries(before))
+      if (table !== "schema_migrations")
+        assert.deepEqual(contents(db)[table], rows, table);
+    assert.deepEqual(
+      db.prepare("SELECT * FROM schema_migrations WHERE version=30").get(),
+      before.schema_migrations[0],
+    );
+    assertSqliteHistory(db);
+    assertSqliteIntegrity(db);
+    assert.equal(migrateSqlite(db).applied, false);
+  } finally {
+    db.close();
   }
 });

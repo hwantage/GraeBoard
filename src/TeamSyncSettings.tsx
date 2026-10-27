@@ -1,3 +1,4 @@
+import TeamSetupKey from "./TeamSetupKey";
 import { useEffect, useRef, useState } from "react";
 import { api, send, isExternalSite } from "./api";
 import { Button, ErrorNote } from "./components";
@@ -515,6 +516,16 @@ export default function TeamSyncSettings({
             </p>
           )}
           <ConnectionChecks result={check} />
+          {!isExternalSite() && user.teamRoles[team.id] === "lead" && (
+            <TeamSetupKey
+              key={team.id}
+              teamId={team.id}
+              enabled={
+                initialized && ["active", "paused"].includes(status.mode)
+              }
+              onMessage={onMessage}
+            />
+          )}
           {conflicts.filter((conflict) => !conflict.resolved).length > 0 && (
             <section aria-label="충돌 보관함">
               <h4>충돌 보관함</h4>

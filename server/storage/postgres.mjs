@@ -5,7 +5,7 @@ import {
   prepareStatePatch,
 } from "./team-store.mjs";
 import { digest } from "../sync/protocol.mjs";
-import { POSTGRES_CHECKSUMS, postgresLayout } from "./schema-version.mjs";
+import { postgresHistoryVersion, postgresLayout } from "./schema-version.mjs";
 
 export class PostgresDatabase extends DatabaseAdapter {
   constructor(
@@ -161,13 +161,7 @@ export class PostgresDatabase extends DatabaseAdapter {
           `SELECT scope,version,checksum FROM ${this.schema}.schema_migrations ORDER BY version`,
         )
       ).rows;
-      if (
-        rows.length !== 1 ||
-        rows[0].scope !== this.migrationScope ||
-        rows[0].version !== 1 ||
-        rows[0].checksum !== POSTGRES_CHECKSUMS[this.migrationScope]
-      )
-        throw new Error("PostgreSQL schema scope/version/checksum mismatch");
+      const version = postgresHistoryVersion(rows, this.migrationScope);
       if (this.scope === "team" && this.teamId) {
         const row = (
           await client.query(
@@ -180,7 +174,7 @@ export class PostgresDatabase extends DatabaseAdapter {
       return {
         engine: this.engine,
         scope: this.scope,
-        version: 1,
+        version,
         ready: true,
       };
     } finally {

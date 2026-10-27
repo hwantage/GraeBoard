@@ -111,7 +111,7 @@ export default function ExternalAccountLogin({
       </label>
       {status.required && (
         <label>
-          초기 설정 키
+          팀장 연결 키
           <input
             type="password"
             name="setupToken"

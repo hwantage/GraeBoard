@@ -412,6 +412,7 @@ function Workspace({
     view?: View;
   } | null>(null);
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
+  const teamUnavailable = !!team?.status && team.status !== "active";
   const reportDraft = useReportDraft(teamId, user.id);
   const editingReport = !!report && reportDraft.draft?.report.id === report.id;
   const addTaskLabel = report ? "사본에 업무 추가" : "업무 추가";
@@ -829,6 +830,7 @@ function Workspace({
     setSelectedSavedFilterId("");
     setFilterNameDialog(null);
     currentFilters.current = { teamId, data: {}, selectedId: "" };
+    if (teamUnavailable) return;
     filterLoad.current = filterSaveQueue.current
       .then(() => api(`/filters?teamId=${teamId}`))
       .then((r) => {
@@ -840,9 +842,9 @@ function Workspace({
     return () => {
       cancelled = true;
     };
-  }, [teamId, user.id]);
+  }, [teamId, user.id, teamUnavailable]);
   useEffect(() => {
-    if (!teamId) return;
+    if (!teamId || teamUnavailable) return;
     const key = `${teamId}:${year}`;
     let cancelled = false;
     boardKey.current = key;
@@ -907,7 +909,7 @@ function Workspace({
       viewSaver.current?.();
       viewSaver.current = null;
     };
-  }, [teamId, year]);
+  }, [teamId, year, teamUnavailable]);
   useEffect(() => {
     if (
       !loaded ||
@@ -3599,7 +3601,41 @@ function Workspace({
                   <Button onClick={() => setPanel("failed")}>입력 확인</Button>
                 </div>
               )}
-              {!ready ? (
+              {teamUnavailable ? (
+                <Empty
+                  title={
+                    team.status === "unconnected"
+                      ? "팀 자료를 가져와 주세요"
+                      : "팀 연결을 확인해 주세요"
+                  }
+                  description={
+                    canManageTeam(user, team.id)
+                      ? "설정 → 시스템 → 서비스 연결에서 ‘팀 가져오기’를 실행하세요."
+                      : "팀장이 업무 자료를 가져온 뒤 사용할 수 있습니다."
+                  }
+                  action={
+                    canManageTeam(user, team.id) ? (
+                      <Button onClick={() => setPanel("settings")}>
+                        설정 열기
+                      </Button>
+                    ) : (
+                      <Button onClick={() => location.reload()}>
+                        다시 확인
+                      </Button>
+                    )
+                  }
+                />
+              ) : !ready && loaded && error ? (
+                <Empty
+                  title="업무를 불러오지 못했습니다"
+                  description={
+                    error || "서비스 연결을 확인한 뒤 다시 시도하세요."
+                  }
+                  action={
+                    <Button onClick={() => location.reload()}>다시 연결</Button>
+                  }
+                />
+              ) : !ready ? (
                 <LoadingState
                   className="board-loading"
                   label="업무를 불러오는 중"

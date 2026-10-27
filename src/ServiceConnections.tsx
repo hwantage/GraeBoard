@@ -161,48 +161,44 @@ export default function ServiceConnections({
                   <th scope="col">팀</th>
                   <th scope="col">저장소</th>
                   <th scope="col">자원</th>
-                  {service.site === "external" && (
-                    <th scope="col">최초 연결</th>
-                  )}
                 </tr>
               </thead>
               <tbody>
                 {service.profiles.map((profile) => (
                   <tr key={profile.profileId}>
-                    <th scope="row">{profile.name || profile.profileId}</th>
+                    <th scope="row">
+                      {profile.name || profile.profileId}
+                      {service.site === "external" && (
+                        <div className="form-actions">
+                          <Button
+                            {...busyProps(busy, profile.ready === false)}
+                            onClick={() =>
+                              void action(
+                                "/admin/sync/import",
+                                {
+                                  profileId: profile.profileId,
+                                  teamId: profile.teamId,
+                                },
+                                "팀 가져오기를 실행했습니다.",
+                                true,
+                              )
+                            }
+                          >
+                            팀 가져오기
+                          </Button>
+                        </div>
+                      )}
+                    </th>
                     <td>{profile.teamId}</td>
                     <td>{profile.repository || "미설정"}</td>
                     <td>
                       {resource(profile.database)} · {resource(profile.images)}
                     </td>
-                    {service.site === "external" && (
-                      <td>
-                        <Button
-                          {...busyProps(busy, profile.ready === false)}
-                          onClick={() =>
-                            void action(
-                              "/admin/sync/import",
-                              {
-                                profileId: profile.profileId,
-                                teamId: profile.teamId,
-                              },
-                              "팀 가져오기를 실행했습니다.",
-                              true,
-                            )
-                          }
-                        >
-                          팀 가져오기
-                        </Button>
-                      </td>
-                    )}
                   </tr>
                 ))}
                 {!service.profiles.length && (
                   <tr>
-                    <td
-                      colSpan={service.site === "external" ? 5 : 4}
-                      className="table-empty"
-                    >
+                    <td colSpan={4} className="table-empty">
                       설치된 팀 연결 프로필이 없습니다.
                     </td>
                   </tr>

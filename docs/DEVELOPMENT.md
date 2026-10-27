@@ -344,6 +344,11 @@ Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)
 
 Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → 기존 Worker의 경로입니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
 
-신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v30에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
+신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v31에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
 
-`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 Worker fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v2의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/Worker 빌드, 세 브라우저의 해당 흐름을 사용합니다. 실제 Google/Cloudflare/Supabase 배포 검증은 별도입니다.
+`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 Worker fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v3의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/Worker 빌드, 세 브라우저의 해당 흐름을 사용합니다. 실제 Google/Cloudflare/Supabase 배포 검증은 별도입니다.
+
+
+팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30 보존·원자적 v31 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
+
+외부 `Team.status`가 준비되지 않았으면 업무 조회 대신 가져오기 안내를 표시하고, 같은 팀의 상태가 active로 바뀌면 필터/보기/업무 조회를 다시 시작합니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.

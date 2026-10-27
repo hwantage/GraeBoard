@@ -1,3 +1,4 @@
+import { postgresHistoryVersion } from "../storage/schema-version.mjs";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
@@ -19,6 +20,18 @@ export const postgresMigrations = Object.fromEntries(
     ];
   }),
 );
+
+export const siteKeyMigration = (() => {
+  const sql = readFileSync(
+    new URL("./postgres/002-site-setup-keys.sql", import.meta.url),
+    "utf8",
+  );
+  return {
+    version: 2,
+    sql,
+    checksum: createHash("sha256").update(sql).digest("hex"),
+  };
+})();
 
 export async function inspectPostgres(client, scope) {
   if (!postgresMigrations[scope])
@@ -45,17 +58,7 @@ export async function inspectPostgres(client, scope) {
       `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
     )
   ).rows;
-  if (
-    rows.length !== 1 ||
-    rows[0].scope !== scope ||
-    rows[0].version !== POSTGRES_VERSION
-  )
-    throw new Error(
-      "Unsupported PostgreSQL scope/version or incomplete migration history",
-    );
-  if (rows[0].checksum !== postgresMigrations[scope].checksum)
-    throw new Error("PostgreSQL migration checksum mismatch");
-  return rows[0].version;
+  return postgresHistoryVersion(rows, scope, { allowPreviousSite: true });
 }
 
 export async function migratePostgres(
@@ -197,13 +200,24 @@ async function migrateSite(
         ).rows[0];
       if (site?.team_id !== teamId || team?.team_id !== teamId)
         throw new Error("PostgreSQL site/team identity mismatch");
-      await client.query("ROLLBACK");
+      if (from < 2) {
+        await client.query(
+          "SET LOCAL search_path TO graeboard_site, pg_catalog",
+        );
+        await client.query(siteKeyMigration.sql);
+        await afterDdl?.(client);
+        await client.query(
+          "INSERT INTO schema_migrations VALUES('site',2,$1,$2)",
+          [siteKeyMigration.checksum, new Date().toISOString()],
+        );
+      }
+      await client.query(dryRun ? "ROLLBACK" : "COMMIT");
       return {
         engine: "postgres",
         scope: "site",
         from,
-        to: from,
-        applied: false,
+        to: 2,
+        applied: from < 2 && !dryRun,
         dryRun,
       };
     }
@@ -248,13 +262,19 @@ async function migrateSite(
       "INSERT INTO graeboard_site.site_meta(singleton,team_id) VALUES(1,$1)",
       [teamId],
     );
+    await client.query("SET LOCAL search_path TO graeboard_site, pg_catalog");
+    await client.query(siteKeyMigration.sql);
+    await client.query("INSERT INTO schema_migrations VALUES('site',2,$1,$2)", [
+      siteKeyMigration.checksum,
+      new Date().toISOString(),
+    ]);
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     return {
       engine: "postgres",
       scope: "site",
       from: 0,
-      to: 1,
+      to: 2,
       applied: !dryRun,
       dryRun,
     };

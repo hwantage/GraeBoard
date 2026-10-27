@@ -42,7 +42,7 @@
 | `IMAGES`               | Images binding     | 업로드 이미지를 WebP로 변환                     |
 | `GIT_TEAM_A`           | Worker Secret      | 해당 팀 저장소만 허용한 GitHub 토큰             |
 | `SYNC_PROFILES`        | Worker 변수        | 팀 UUID와 설치된 binding·Secret 이름의 연결     |
-| `SETUP_TOKEN`          | Worker Secret      | 최초 팀장 연결에 사용하는 1회 설정 키         |
+| 팀장 연결 키 | 내부 팀 설정에서 발급 | 검증 해시만 GitHub를 통해 Supabase로 전달 |
 | `INSTALLATION_ID`      | Worker 변수        | 외부 설치의 고정 UUID, DB 복구 사본과 구분      |
 | `PEER_INSTALLATION_ID` | Worker 변수        | 적용 확인을 받을 내부 설치 UUID                 |
 
@@ -50,9 +50,9 @@
 
 DB 비밀번호는 Hyperdrive에, GitHub 토큰은 Secret에 보관합니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
 
-## 3. SQLite v29를 v30으로 올리기
+## 3. SQLite v29·v30을 v31로 올리기
 
-실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30**입니다. 일반 서버 시작은 기존 v29 DB를 자동 변환하지 않습니다.
+실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31**입니다. 일반 서버 시작은 기존 v29·v30 DB를 자동 변환하지 않습니다.
 
 1. 기존 릴리스로 DB와 문서 이미지 백업을 만들고 별도 경로에 복구해 확인합니다.
 2. 운영 적용 때는 서버와 다른 DB 쓰기 작업을 중지합니다.
@@ -95,7 +95,7 @@ npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-i
 unset PG_SITE_URL
 ```
 
-이 명령은 `graeboard`의 team v1과 `graeboard_site`의 site v1을 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite v30은 이번 변경으로 변환하지 않습니다.
+이 명령은 `graeboard`의 team v1과 `graeboard_site`의 site v2를 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite는 v31로 별도 변환합니다.
 
 기존 분리형 설치의 **team v1 DB**를 전환할 때는 백업과 쓰기 중단 후 같은 명령에서 `--initialize`를 빼고 실행합니다. 기존 업무 스키마·ID·C/P/L을 그대로 두고 site 스키마만 추가합니다. 기존 공통 control DB는 건드리지 않습니다. 그 DB의 계정·Google 연결을 가져오지 않으며, 내부 구성원 동기화 후 팀장 최초 연결과 팀원 승인을 다시 합니다. 이전 외부 계정 ID로 작성한 업무의 표시 참조는 이력으로 보존합니다. 기존 control DB 자체에 site migration을 적용하는 것은 거절합니다.
 
@@ -186,15 +186,15 @@ Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General →
 
 Worker는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
-최초 연결 전 `SETUP_TOKEN`을 24자 이상의 임의 Secret으로 등록합니다. 팀장은 Google 로그인 후 **사내 팀장 계정을 선택하고 초기 설정 키로 연결**합니다. 완료 후 초기 설정 경로는 닫히며 Secret을 제거할 수 있습니다.
+내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 Worker `SETUP_TOKEN` 등록은 필요하지 않습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
 
 이후 사용자는 Google 로그인 → 해당 팀의 사내 계정 선택 → 연결 신청 → 승인 대기 순서로 진행합니다. 팀장은 **설정 → 팀 → 구성원 → Google 계정 연결**에서 승인·거절·연결 해제를 처리합니다. 승인된 계정만 접속할 수 있으며 마지막으로 연결된 팀장의 연결은 다른 팀장을 연결하기 전까지 해제할 수 없습니다. 이름이나 이메일이 같다는 이유로 자동 연결하지 않습니다. 인증 신원은 검증된 Access의 `(issuer, subject)`에 연결하고 선택 세션도 그 신원에 묶습니다.
 
 구성원·활성 상태·팀 역할은 사내에서 계속 반영합니다. 외부에서 사용자 생성·팀원 추가/탈퇴·역할 변경·사내 이름 변경은 하지 않습니다. 비밀번호·사내 세션·다른 팀 소속·사내 시스템 관리자 권한은 가져오지 않습니다. 해당 팀의 활성 팀장에게만 이 외부 사이트의 관리 권한을 부여합니다. 외부에는 아이디/비밀번호 로그인과 Supabase Auth 로그인이 없습니다.
 
-사내 인사 변경으로 연결된 활성 팀장이 한 명도 없어진 경우, 운영자가 `SETUP_TOKEN`을 다시 등록하고 새 팀장이 같은 연결 절차를 수행합니다. 기존 팀원 연결은 보존하며 기존 Google 연결을 다른 계정으로 강제 덮어쓰지 않습니다.
+사내 인사 변경으로 연결된 활성 팀장이 한 명도 없어진 경우, 새 팀장이 내부 설정에서 자신의 연결 키를 발급하고 같은 연결 절차를 수행합니다. 기존 팀원 연결은 보존하며 기존 Google 연결을 다른 계정으로 강제 덮어쓰지 않습니다.
 
-최초 관리자를 특정 계정으로 제한하려면 `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SUBJECT` Secret을 설정할 수 있습니다. subject는 Access가 확인한 계정 식별자이며 임의 이메일 문자열로 대신하지 않습니다. 이 제한을 사용해도 설치 토큰 검사는 유지됩니다.
+최초 관리자를 특정 계정으로 제한하려면 `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_SUBJECT` Secret을 설정할 수 있습니다. subject는 Access가 확인한 계정 식별자이며 임의 이메일 문자열로 대신하지 않습니다. 이 제한을 사용해도 팀장 연결 키 검사는 유지됩니다.
 
 ## 9. 빌드·배포·첫 팀 연결
 
@@ -405,7 +405,7 @@ npm run transfer -- --action release --engine sqlite --database /srv/graeboard/d
 
 ## 14. 팀 사이트 DB·승인 정보·R2 백업과 복구
 
-팀 사이트 백업 v2는 한 팀의 `graeboard` 업무 C/P/L·제공본, `graeboard_site` 사용자·승인·Google 연결, R2 및 고정 Git head의 보관 이미지를 포함합니다. 접속 세션 토큰은 포함하지 않습니다. 작업 중에는 사용자 쓰기·Cron·계정 승인을 중지하여 업무와 권한 snapshot 사이의 변경을 막습니다.
+팀 사이트 백업 v3는 한 팀의 `graeboard` 업무 C/P/L·제공본, `graeboard_site` 사용자·승인·Google 연결, R2 및 고정 Git head의 보관 이미지를 포함합니다. 접속 세션 토큰은 포함하지 않습니다. 작업 중에는 사용자 쓰기·Cron·계정 승인을 중지하여 업무와 권한 snapshot 사이의 변경을 막습니다.
 
 저장소 밖에 다음 JSON을 만들고 실제 자원·경로로 바꿉니다. 비밀값은 환경 변수로 주입합니다.
 

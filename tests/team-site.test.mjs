@@ -1,6 +1,14 @@
+import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  cpSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -16,6 +24,8 @@ import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
+import { refreshSetupKeys } from "../worker/setup-keys.mjs";
+import { portableHash } from "../server/storage/logical-format.mjs";
 import { profiles } from "../worker/config.mjs";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import {
@@ -322,7 +332,30 @@ test(
       }),
     ).task;
     success(await inside(`/teams/${teamId}/sync/enable`, {}));
+    assert.equal(
+      (await inside(`/teams/${teamId}/setup-key`, {}, "POST", member)).status,
+      403,
+    );
+    assert.equal(
+      (await inside(`/teams/${teamId}/setup-key`, {}, "POST", outsider)).status,
+      403,
+    );
+    let issuedToken = success(
+      await inside(`/teams/${teamId}/setup-key`, {}),
+    ).token;
+    const supersededToken = issuedToken;
+    issuedToken = success(await inside(`/teams/${teamId}/setup-key`, {})).token;
+    assert.doesNotMatch(
+      JSON.stringify(success(await inside(`/teams/${teamId}/setup-key`))),
+      /gbk_|tokenHash|token_hash/,
+    );
     await app.locals.sync.get(teamId).run();
+    const keyHead = await transport.readHead("sync-setup/" + sourceId);
+    const keyJson = (await transport.readFile(keyHead, "keys.json")).toString();
+    assert.ok(
+      !keyJson.includes(issuedToken) && !keyJson.includes(supersededToken),
+    );
+    assert.equal(JSON.parse(keyJson).keys.length, 1);
     const head = await transport.readHead("sync-directory/" + sourceId);
     const directory = JSON.parse(
       (await transport.readFile(head, "directory.json")).toString(),
@@ -429,7 +462,7 @@ test(
       (
         await outside("lead-google", "/auth/setup", {
           userId: member,
-          setupToken: env.SETUP_TOKEN,
+          setupToken: issuedToken,
         })
       ).status,
       403,
@@ -443,12 +476,98 @@ test(
       ).status,
       403,
     );
-    success(
-      await outside("lead-google", "/auth/setup", {
-        userId: lead,
-        setupToken: env.SETUP_TOKEN,
-      }),
+    assert.equal(
+      (
+        await outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: supersededToken,
+        })
+      ).status,
+      403,
     );
+    assert.equal(
+      (
+        await outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: env.SETUP_TOKEN,
+        })
+      ).status,
+      403,
+    );
+    success(await inside(`/teams/${teamId}/setup-key`, undefined, "DELETE"));
+    await app.locals.sync.get(teamId).run();
+    assert.equal(
+      (
+        await outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: issuedToken,
+        })
+      ).status,
+      403,
+    );
+    issuedToken = success(await inside(`/teams/${teamId}/setup-key`, {})).token;
+    await app.locals.sync.get(teamId).run();
+    await refreshSetupKeys(env);
+    const keyId = issuedToken.split(".")[0].slice(4);
+    const expiresAt = (
+      await pool.query(
+        "SELECT expires_at FROM graeboard_site.setup_link_keys WHERE id=$1",
+        [keyId],
+      )
+    ).rows[0].expires_at;
+    await pool.query(
+      "UPDATE graeboard_site.setup_link_keys SET expires_at=$2 WHERE id=$1",
+      [keyId, new Date(Date.now() - 1000).toISOString()],
+    );
+    assert.equal(
+      (
+        await outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: issuedToken,
+        })
+      ).status,
+      403,
+    );
+    await pool.query(
+      "UPDATE graeboard_site.setup_link_keys SET expires_at=$2 WHERE id=$1",
+      [keyId, expiresAt],
+    );
+    const parallel = await Promise.all(
+      [1, 2].map(() =>
+        outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: issuedToken,
+        }),
+      ),
+    );
+    assert.deepEqual(parallel.map((r) => r.status).sort(), [201, 409]);
+    const linkedIdentity = (
+      await pool.query(
+        "SELECT * FROM graeboard_site.access_identities WHERE user_id=$1",
+        [lead],
+      )
+    ).rows[0];
+    await pool.query(
+      "DELETE FROM graeboard_site.access_identities WHERE user_id=$1",
+      [lead],
+    );
+    assert.equal(
+      (
+        await outside("lead-google", "/auth/setup", {
+          userId: lead,
+          setupToken: issuedToken,
+        })
+      ).status,
+      403,
+    );
+    await pool.query(
+      "INSERT INTO graeboard_site.access_identities VALUES($1,$2,$3)",
+      [linkedIdentity.issuer, linkedIdentity.subject, lead],
+    );
+    await Promise.allSettled(work);
+    await app.locals.sync.get(teamId).run();
+    const consumed = success(await inside(`/teams/${teamId}/setup-key`)).key;
+    assert.ok(consumed.usedAt && consumed.appliedAt);
     assert.equal(
       success(await outside("lead-google", "/bootstrap")).user.id,
       lead,
@@ -581,7 +700,7 @@ test(
       destination: backup,
     });
     const snapshot = await readExternalBackup(backup);
-    assert.equal(snapshot.manifest.version, 2);
+    assert.equal(snapshot.manifest.version, 3);
     assert.equal(snapshot.control.tables.access_requests.length, 2);
     assert.equal(snapshot.control.tables.access_sessions, undefined);
     await pool.query("CREATE DATABASE restored");
@@ -655,6 +774,69 @@ test(
       );
     } finally {
       await restoredPool.end();
+    }
+    // Released site v2 backups have the same rows but no setup-key tables.
+    const oldBackup = join(dir, "backup-v2");
+    cpSync(backup, oldBackup, { recursive: true });
+    const oldControl = JSON.parse(
+      readFileSync(join(oldBackup, "control.json")),
+    );
+    delete oldControl.tables.setup_link_keys;
+    delete oldControl.tables.setup_key_state;
+    oldControl.hash = portableHash(oldControl.tables);
+    writeFileSync(join(oldBackup, "control.json"), JSON.stringify(oldControl));
+    const { hash: oldHash, ...oldManifest } = JSON.parse(
+      readFileSync(join(oldBackup, "manifest.json")),
+    );
+    oldManifest.version = 2;
+    oldManifest.control.hash = portableHash(oldControl);
+    writeFileSync(
+      join(oldBackup, "manifest.json"),
+      JSON.stringify({ ...oldManifest, hash: portableHash(oldManifest) }),
+    );
+    await pool.query("CREATE DATABASE restored_v2");
+    restoreUrl.pathname = "/restored_v2";
+    const oldPool = new Pool({ connectionString: restoreUrl.href });
+    try {
+      await migratePostgres(oldPool, {
+        scope: "site",
+        initialize: true,
+        teamId,
+      });
+      await restoreExternal({
+        source: oldBackup,
+        control: new PostgresDatabase(oldPool, {
+          scope: "control",
+          site: true,
+        }),
+        teams: [
+          {
+            adapter: new PostgresDatabase(oldPool, { teamId }),
+            teamId,
+            images,
+            profileId: "outside",
+            installationId: siteId,
+          },
+        ],
+      });
+      assert.equal(
+        (
+          await oldPool.query(
+            "SELECT count(*) n FROM graeboard_site.access_identities",
+          )
+        ).rows[0].n,
+        "2",
+      );
+      assert.equal(
+        (
+          await oldPool.query(
+            "SELECT count(*) n FROM graeboard_site.setup_link_keys",
+          )
+        ).rows[0].n,
+        "0",
+      );
+    } finally {
+      await oldPool.end();
     }
     db.prepare(
       "INSERT INTO users(id,username,name,password,created_at) VALUES(?,?,?,'private-added-hash',?)",
@@ -790,10 +972,21 @@ test(
       ).status,
       403,
     );
+    const newLeaderSession = randomUUID();
+    tokens.set(added, newLeaderSession);
+    db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
+      createHash("sha256").update(newLeaderSession).digest("hex"),
+      added,
+      Date.now() + 86400000,
+    );
+    issuedToken = success(
+      await inside(`/teams/${teamId}/setup-key`, {}, "POST", added),
+    ).token;
+    await app.locals.sync.get(teamId).run();
     success(
       await outside("new-google", "/auth/setup", {
         userId: added,
-        setupToken: env.SETUP_TOKEN,
+        setupToken: issuedToken,
       }),
     );
     success(
@@ -826,7 +1019,7 @@ test(
     success(await inside(`/teams/${teamId}/sync/pause`, {}, "POST", outsider));
     await refreshDirectory(env, { force: true });
     assert.equal((await outside("member-google", "/bootstrap")).status, 401);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 30);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 31);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(
       db.prepare("PRAGMA integrity_check").get().integrity_check,
@@ -837,5 +1030,71 @@ test(
       "Private other team",
     );
     assert.deepEqual(github.unexpectedCalls, []);
+  },
+);
+
+test(
+  "site v1 -> v2 SQL and CLI preserve identity/approvals, roll back failure and reject foreign sites",
+  { skip },
+  async (t) => {
+    const { pool } = await database(t),
+      teamId = randomUUID();
+    await migratePostgres(pool, { scope: "site", initialize: true, teamId });
+    await pool.query(
+      "DROP TABLE graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version=2",
+    );
+    await pool.query(
+      "INSERT INTO graeboard_site.users(id,username,email,name,created_at) VALUES('lead','lead','lead','Kept','today'); INSERT INTO graeboard_site.access_identities VALUES('issuer','subject','lead')",
+    );
+    const before = (
+      await pool.query("SELECT * FROM graeboard_site.access_identities")
+    ).rows;
+    await assert.rejects(
+      migratePostgres(pool, {
+        scope: "site",
+        teamId,
+        afterDdl() {
+          throw new Error("injected31");
+        },
+      }),
+      /injected31/,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT to_regclass('graeboard_site.setup_link_keys') AS name",
+        )
+      ).rows[0].name,
+      null,
+    );
+    await migratePostgres(pool, { scope: "site", teamId, dryRun: true });
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT MAX(version) AS v FROM graeboard_site.schema_migrations",
+        )
+      ).rows[0].v,
+      1,
+    );
+    const client = await pool.connect();
+    try {
+      await assert.rejects(
+        client.query(siteKeyMigrationSql(randomUUID())),
+        /identity mismatch/,
+      );
+      await client.query("ROLLBACK");
+      await client.query(siteKeyMigrationSql(teamId));
+      await client.query(siteKeyMigrationSql(teamId));
+    } finally {
+      client.release();
+    }
+    assert.deepEqual(
+      (await pool.query("SELECT * FROM graeboard_site.access_identities")).rows,
+      before,
+    );
+    assert.equal(
+      (await migratePostgres(pool, { scope: "site", teamId })).to,
+      2,
+    );
   },
 );

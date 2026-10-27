@@ -99,6 +99,21 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   await expect(
     settings.getByRole("button", { name: "일시정지", exact: true }),
   ).toBeEnabled();
+  await settings
+    .getByRole("button", { name: "팀장 연결 키 발급", exact: true })
+    .click();
+  const keyInput = settings.getByLabel("발급된 연결 키");
+  await expect(keyInput).toHaveValue(/^gbk_/);
+  const firstKey = await keyInput.inputValue();
+  await settings
+    .getByRole("button", { name: "연결 키 재발급", exact: true })
+    .click();
+  await expect(keyInput).not.toHaveValue(firstKey);
+  await settings.getByRole("button", { name: "키 폐기", exact: true }).click();
+  await expect(keyInput).toHaveCount(0);
+  await expect(
+    settings.getByRole("region", { name: "팀장 연결 키", exact: true }),
+  ).toContainText("폐기됨");
   const head = await transports.local.readHead();
   expect(head).toBeTruthy();
   await settings.getByRole("button", { name: "일시정지", exact: true }).click();
@@ -146,7 +161,7 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   expect(await transports.local.readHead()).toBe(head);
 });
 test.afterEach(async () => {
-  app.locals.sync?.close?.();
+  await app.locals.sync?.close?.();
   app.locals.cellEvents.close();
   app.locals.documentEvents?.close?.();
   server.closeAllConnections();
@@ -707,7 +722,7 @@ test("팀 사이트 최초 팀장은 사내 계정과 설정 키로 연결한다
     .getByLabel("연결할 사내 팀장 계정", { exact: true })
     .selectOption(bootstrap.user.id);
   await page
-    .getByLabel("초기 설정 키", { exact: true })
+    .getByLabel("팀장 연결 키", { exact: true })
     .fill("installation-test-key");
   await page
     .getByRole("button", { name: "팀장 계정 연결", exact: true })

@@ -1,3 +1,5 @@
+import { refreshSetupKeys } from "./setup-keys.mjs";
+import { setupKeyId } from "../server/sync/setup-keys.mjs";
 import { controlTransaction } from "./data.mjs";
 import { siteTeamId } from "./config.mjs";
 import { refreshDirectory } from "./directory.mjs";
@@ -104,7 +106,7 @@ async function accounts(env, identity) {
 }
 
 // All these routes still require a verified Cloudflare Access JWT in entry.mjs.
-// Only the initial team lead can bypass approval, using the installation secret.
+// Initial team leads prove control of their intranet account with a one-use key.
 export async function siteAuthRoute(
   env,
   identity,
@@ -139,6 +141,7 @@ export async function siteAuthRoute(
   )
     return null;
   await refreshDirectory(env, { force: true });
+  if (path === "/auth/setup") await refreshSetupKeys(env, { required: true });
   return controlTransaction(
     env,
     async (tx) => {
@@ -155,10 +158,26 @@ export async function siteAuthRoute(
           409,
           "초기 설정이 이미 완료되었습니다.",
         );
+        const keyId = setupKeyId(body.setupToken);
+        const key =
+          keyId &&
+          (
+            await tx.query(
+              "SELECT * FROM setup_link_keys WHERE id=$1 FOR UPDATE",
+              [keyId],
+            )
+          ).rows[0];
         assert(
-          verifySetupToken(body.setupToken, env.SETUP_TOKEN),
+          key &&
+            key.team_id === teamId &&
+            key.user_id === user.id &&
+            !key.revoked_at &&
+            !key.used_at &&
+            Date.parse(key.issued_at) <= Date.now() &&
+            Date.parse(key.expires_at) > Date.now() &&
+            verifySetupToken(digest(body.setupToken), key.token_hash),
           403,
-          "일회용 설치 토큰을 확인하세요.",
+          "연결 키의 대상 계정·만료·사용 여부를 확인하세요. 필요하면 내부 팀 설정에서 다시 발급하세요.",
         );
         assert(
           !env.BOOTSTRAP_ADMIN_EMAIL ||
@@ -190,6 +209,10 @@ export async function siteAuthRoute(
           409,
           "이미 다른 Google 계정에 연결되어 있습니다.",
         );
+        await tx.query("UPDATE setup_link_keys SET used_at=$2 WHERE id=$1", [
+          keyId,
+          new Date().toISOString(),
+        ]);
         await tx.query(
           "INSERT INTO access_identities VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
           [identity.issuer, identity.subject, user.id],

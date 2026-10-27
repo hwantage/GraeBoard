@@ -1,3 +1,4 @@
+import { syncSetupKeyStatus } from "./setup-keys.mjs";
 import { pack, unpack } from "../shared/compact.js";
 import { assertOrigin, verifyAccess, assert } from "./access.mjs";
 import {
@@ -181,8 +182,18 @@ export function createWorker({
           method,
           body,
         );
-        if (siteAuth)
+        if (siteAuth) {
+          if (
+            siteTeamId(env) &&
+            ["/setup", "/auth/setup", "/auth/accounts"].includes(path)
+          )
+            execution.waitUntil(
+              syncSetupKeyStatus(env, { force: path === "/auth/setup" }).catch(
+                onError,
+              ),
+            );
           return json(siteAuth.body, siteAuth.status || 200, siteAuth.headers);
+        }
         if (path === "/setup" && method === "GET")
           return json(await setupStatus(env, identity));
         if (path === "/auth/setup" && method === "POST")
@@ -250,6 +261,12 @@ export function createWorker({
         for (const route of routes) {
           const result = await route(ctx, path, method, body, url.searchParams);
           if (result !== undefined) {
+            if (path === "/bootstrap" && siteTeamId(env))
+              execution.waitUntil(
+                syncSetupKeyStatus(env, {
+                  force: path === "/auth/setup",
+                }).catch(onError),
+              );
             if (result instanceof Response) return result;
             let headers = {};
             if (path === "/tasks" && method === "GET") {
@@ -296,6 +313,8 @@ export function createWorker({
     },
     async scheduled(_controller, env, ctx) {
       ctx.waitUntil(scheduled(env));
+      if (siteTeamId(env))
+        ctx.waitUntil(syncSetupKeyStatus(env).catch(onError));
     },
   };
 }

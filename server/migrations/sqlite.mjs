@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SQLITE_VERSION = 30;
+export const SQLITE_VERSION = 31;
 export const baseSql = readFileSync(
   new URL("./sqlite/029-base.sql", import.meta.url),
   "utf8",
@@ -12,6 +12,16 @@ export const syncSql = readFileSync(
   "utf8",
 );
 export const syncChecksum = createHash("sha256").update(syncSql).digest("hex");
+
+export const keySql = readFileSync(
+  new URL("./sqlite/031-setup-keys.sql", import.meta.url),
+  "utf8",
+);
+export const keyChecksum = createHash("sha256").update(keySql).digest("hex");
+const migrations = [
+  { version: 30, sql: syncSql, checksum: syncChecksum },
+  { version: 31, sql: keySql, checksum: keyChecksum },
+];
 
 // Read the released v29 definition, never the current application's initializer.
 // Checking the actual shape prevents a mislabeled/partially converted DB from
@@ -53,8 +63,8 @@ export function assertSqliteBaseline(db) {
 export function sqliteVersion(db) {
   return db.prepare("PRAGMA user_version").get().user_version;
 }
-export function assertSqliteHistory(db) {
-  if (sqliteVersion(db) !== SQLITE_VERSION)
+export function assertSqliteHistory(db, { version = SQLITE_VERSION } = {}) {
+  if (![30, 31].includes(version) || sqliteVersion(db) !== version)
     throw new Error(
       "DB migration required: npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
     );
@@ -69,9 +79,13 @@ export function assertSqliteHistory(db) {
   const rows = db
     .prepare("SELECT version,checksum FROM schema_migrations ORDER BY version")
     .all();
-  if (rows.length !== 1 || rows[0].version !== SQLITE_VERSION)
+  const expected = migrations.filter((m) => m.version <= version);
+  if (
+    rows.length !== expected.length ||
+    rows.some((row, i) => row.version !== expected[i].version)
+  )
     throw new Error("Unsupported or incomplete SQLite migration history");
-  if (rows[0].checksum !== syncChecksum)
+  if (rows.some((row, i) => row.checksum !== expected[i].checksum))
     throw new Error("SQLite migration checksum mismatch");
 }
 export function assertSqliteIntegrity(db) {
@@ -93,7 +107,7 @@ export function migrateSqlite(
     assertSqliteIntegrity(db);
     return { from, to: from, applied: false };
   }
-  if (from !== 29 && from !== 0)
+  if (![0, 29, 30].includes(from))
     throw new Error(`Unsupported SQLite version ${from}; data preserved`);
   if (from === 0) {
     if (
@@ -109,6 +123,7 @@ export function migrateSqlite(
     if (!initialize) throw new Error("Empty database requires --initialize");
   }
   if (from === 29) assertSqliteBaseline(db);
+  if (from === 30) assertSqliteHistory(db, { version: 30 });
   assertSqliteIntegrity(db);
   if (dryRun) {
     assertSqliteIntegrity(db);
@@ -117,7 +132,7 @@ export function migrateSqlite(
       to: SQLITE_VERSION,
       applied: false,
       dryRun: true,
-      checksum: syncChecksum,
+      checksum: keyChecksum,
     };
   }
   db.exec("BEGIN IMMEDIATE");
@@ -126,21 +141,23 @@ export function migrateSqlite(
     if (sqliteVersion(db) !== from)
       throw new Error("Database changed during migration; retry");
     if (from === 0) db.exec(baseSql);
-    db.exec(syncSql);
-    const hook = afterDdl?.();
-    if (hook && typeof hook.then === "function")
-      throw new Error("SQLite migration hooks must be synchronous");
-    db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(
-      SQLITE_VERSION,
-      syncChecksum,
-      new Date().toISOString(),
-    );
-    db.exec(`PRAGMA user_version=${SQLITE_VERSION}`);
+    for (const migration of migrations.filter((m) => m.version > from)) {
+      db.exec(migration.sql);
+      const hook = afterDdl?.(migration.version);
+      if (hook && typeof hook.then === "function")
+        throw new Error("SQLite migration hooks must be synchronous");
+      db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(
+        migration.version,
+        migration.checksum,
+        new Date().toISOString(),
+      );
+      db.exec(`PRAGMA user_version=${migration.version}`);
+    }
     assertSqliteIntegrity(db);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return { from, to: SQLITE_VERSION, applied: true, checksum: syncChecksum };
+  return { from, to: SQLITE_VERSION, applied: true, checksum: keyChecksum };
 }

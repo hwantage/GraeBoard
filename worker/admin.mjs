@@ -4,7 +4,7 @@ import { PostgresDatabase } from "../server/storage/postgres.mjs";
 import { canonical, entityId, digest } from "../server/sync/protocol.mjs";
 import { reduce, reduceMany } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
-import { profiles, profileFor } from "./config.mjs";
+import { profiles, profileFor, siteTeamId } from "./config.mjs";
 import {
   controlTransaction,
   databaseFor,
@@ -24,6 +24,7 @@ export async function serviceStatus(ctx, { check = false } = {}) {
   try {
     database = await new PostgresDatabase(controlPool(ctx.env), {
       scope: "control",
+      site: !!siteTeamId(ctx.env),
     }).health();
     if (check)
       await controlTransaction(ctx.env, async (tx) => {

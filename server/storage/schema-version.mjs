@@ -12,3 +12,32 @@ export function postgresLayout(scope, site = false) {
     ? { schema: "graeboard_site", migrationScope: "site" }
     : { schema: "graeboard", migrationScope: scope };
 }
+
+export const SITE_KEY_CHECKSUM =
+  "36ac6929900353521f57dda03ab45d11066ad869329d5efa4bcea251029974ad";
+export function postgresHistoryVersion(
+  rows,
+  scope,
+  { allowPreviousSite = false } = {},
+) {
+  const expected = [
+    POSTGRES_CHECKSUMS[scope],
+    ...(scope === "site" ? [SITE_KEY_CHECKSUM] : []),
+  ];
+  const length =
+    allowPreviousSite && scope === "site" && rows.length === 1
+      ? 1
+      : expected.length;
+  if (
+    !POSTGRES_CHECKSUMS[scope] ||
+    rows.length !== length ||
+    rows.some(
+      (row, index) =>
+        row.scope !== scope ||
+        Number(row.version) !== index + 1 ||
+        row.checksum !== expected[index],
+    )
+  )
+    throw new Error("PostgreSQL schema scope/version/checksum mismatch");
+  return length;
+}

@@ -5,7 +5,7 @@ import {
   CapacityError,
 } from "./capacity.mjs";
 import {
-  POSTGRES_CHECKSUMS,
+  postgresHistoryVersion,
   postgresLayout,
 } from "../server/storage/schema-version.mjs";
 import { siteTeamId } from "./config.mjs";
@@ -39,14 +39,9 @@ export function poolFor(binding, scope = "control", { site = false } = {}) {
             `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
           )
         ).rows;
-        assert(
-          rows.length === 1 &&
-            rows[0].scope === migrationScope &&
-            Number(rows[0].version) === 1 &&
-            rows[0].checksum === POSTGRES_CHECKSUMS[migrationScope],
-          503,
-          "DB 마이그레이션 버전 또는 무결성을 확인하세요.",
-        );
+        client.schemaVersion = postgresHistoryVersion(rows, migrationScope, {
+          allowPreviousSite: true,
+        });
       } catch (error) {
         await client.end();
         if (error.status) throw error;

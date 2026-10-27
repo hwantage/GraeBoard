@@ -35,7 +35,10 @@ const SITE_TABLES = [
   ...CONTROL_TABLES.slice(1),
   "access_requests",
 ];
-const controlTables = (site) => (site ? SITE_TABLES : CONTROL_TABLES);
+const controlTables = (site, keys = true) =>
+  site
+    ? [...SITE_TABLES, ...(keys ? ["setup_link_keys", "setup_key_state"] : [])]
+    : CONTROL_TABLES;
 const imageKey = (teamId, url) => {
   if (
     !new RegExp(
@@ -207,7 +210,7 @@ export async function backupExternal({ control, teams, destination }) {
   try {
     const manifest = {
       format: "graeboard-external-backup",
-      version: control?.site ? 2 : 1,
+      version: control?.site ? 3 : 1,
       createdAt: new Date().toISOString(),
       control: null,
       teams: [],
@@ -297,7 +300,7 @@ export async function readExternalBackup(directory) {
     { hash, ...body } = manifest;
   if (
     manifest.format !== "graeboard-external-backup" ||
-    ![1, 2].includes(manifest.version) ||
+    ![1, 2, 3].includes(manifest.version) ||
     portableHash(body) !== hash
   )
     throw new Error("External backup manifest checksum mismatch");
@@ -349,11 +352,17 @@ export async function readExternalBackup(directory) {
       throw new Error("Control backup checksum mismatch");
     if (
       Object.keys(control.tables).some(
-        (table) => !controlTables(manifest.version === 2).includes(table),
+        (table) =>
+          !controlTables(manifest.version >= 2, manifest.version >= 3).includes(
+            table,
+          ),
       )
     )
       throw new Error("Invalid control backup table");
-    for (const table of controlTables(manifest.version === 2)) {
+    for (const table of controlTables(
+      manifest.version >= 2,
+      manifest.version >= 3,
+    )) {
       if (!Array.isArray(control.tables[table]))
         throw new Error("Missing control backup table");
       for (const row of control.tables[table])
@@ -362,7 +371,7 @@ export async function readExternalBackup(directory) {
     }
   }
   if (
-    manifest.version === 2 &&
+    manifest.version >= 2 &&
     (!control ||
       control.tables.site_meta.length !== 1 ||
       teams.length !== 1 ||
@@ -381,7 +390,7 @@ export async function restoreExternal({
   dryRun = false,
 }) {
   const backup = await readExternalBackup(source);
-  if (!!control?.site !== (backup.manifest.version === 2))
+  if (!!control?.site !== backup.manifest.version >= 2)
     throw new Error("Site and legacy backup layouts cannot be interchanged");
   if (control) {
     if (!backup.control) throw new Error("Control snapshot is absent");
@@ -494,8 +503,13 @@ export async function restoreExternal({
       await tx.query(
         "UPDATE teams SET status='unconnected',config_revision=config_revision+1",
       );
-      if (control.site)
+      if (control.site) {
         await tx.query("UPDATE site_meta SET directory_checked_at=0");
+        await tx.query(
+          "UPDATE setup_link_keys SET revoked_at=COALESCE(revoked_at,$1) WHERE used_at IS NULL",
+          [new Date().toISOString()],
+        );
+      }
       await tx.query(
         "INSERT INTO control_jobs(id,kind,phase,payload,created_at) VALUES($1,'external-restore','complete',$2,$3)",
         [

@@ -141,7 +141,12 @@ export type Settings = {
   revision?: number;
   defaultStyle?: Style;
 };
-export type Team = { id: string; name: string; settings: Settings };
+export type Team = {
+  id: string;
+  name: string;
+  settings: Settings;
+  status?: "unconnected" | "importing" | "active" | "maintenance";
+};
 export type FilterMode = "include" | "exclude";
 export type View = {
   year: number;

@@ -1,3 +1,5 @@
+import { installSetupKeyRoutes, syncSetupKeys } from "./setup-key-issuer.mjs";
+import { SQLITE_VERSION } from "../migrations/sqlite.mjs";
 import { isRecoveryError } from "./errors.mjs";
 import { profileToken } from "./credentials.mjs";
 import { randomUUID } from "node:crypto";
@@ -484,6 +486,16 @@ export function createNodeSync({
       if (running) return running;
       running = getBackground()
         .compute({ kind: "service", config, action, options: runOptions })
+        .then(async (result) => {
+          if (!stopped && action === "run")
+            await syncSetupKeys(
+              db,
+              teamId,
+              transport,
+              profile.peerInstallationId,
+            );
+          return result;
+        })
         .catch((error) => {
           if (!stopped) {
             const recovery = isRecoveryError(error);
@@ -501,6 +513,7 @@ export function createNodeSync({
       transport,
       run: (runOptions) => request("run", runOptions),
       checkpoint: () => request("checkpoint"),
+      idle: () => running,
     };
     services.set(teamId, service);
     return service;
@@ -548,6 +561,9 @@ export function createNodeSync({
       for (const { timer } of timers.values()) clearTimeout(timer);
       timers.clear();
       await background?.close();
+      await Promise.allSettled(
+        [...services.values()].map((service) => service.idle()),
+      );
       for (const [teamId, owner] of ownedLeases) store(teamId).release(owner);
     },
   };
@@ -557,6 +573,7 @@ export function installSyncRoutes(
   app,
   { db, teamAccess, managedTeam, requireSystemAdmin, refreshUser, sync },
 ) {
+  installSetupKeyRoutes(app, { db, sync, teamAccess });
   const id = (req) => req.params.id;
   const status = (teamId) => {
     const store = sync.store(teamId),
@@ -604,7 +621,7 @@ export function installSyncRoutes(
     res.json({
       site: "internal",
       access: { issuer: "", audience: "", configured: false },
-      database: { provider: "SQLite", version: 30, status: "ok" },
+      database: { provider: "SQLite", version: SQLITE_VERSION, status: "ok" },
       siteName: "내부 서버",
       runtime: "internal",
       appOrigin: process.env.APP_ORIGIN || "",
@@ -612,7 +629,7 @@ export function installSyncRoutes(
       guideUrl: "/api/admin/service-connections/guide",
       profiles: sync.profiles.map(sync.safeProfile),
       checks: [
-        { name: "SQLite", status: "ok", message: "v30" },
+        { name: "SQLite", status: "ok", message: `v${SQLITE_VERSION}` },
         {
           name: "설치 식별자",
           status: sync.installationId ? "ok" : "pending",
@@ -628,7 +645,7 @@ export function installSyncRoutes(
     res.json({
       ready: !!sync.installationId,
       checks: [
-        { name: "SQLite", status: "ok", message: "v30" },
+        { name: "SQLite", status: "ok", message: `v${SQLITE_VERSION}` },
         {
           name: "설치 식별자",
           status: sync.installationId ? "ok" : "pending",

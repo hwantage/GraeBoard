@@ -51,7 +51,7 @@ test("설정 조회 실패 시 비밀번호 로그인을 표시하지 않고 재
     page.getByRole("heading", { name: "팀장 계정 연결" }),
   ).toBeVisible();
   await expect(page.getByLabel("연결할 사내 팀장 계정")).toBeVisible();
-  await expect(page.getByLabel("초기 설정 키")).toBeVisible();
+  await expect(page.getByLabel("팀장 연결 키")).toBeVisible();
   await expect(page.getByLabel("비밀번호", { exact: true })).toHaveCount(0);
 });
 

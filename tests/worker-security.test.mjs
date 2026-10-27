@@ -218,7 +218,7 @@ test("GitHub transport uses one parent, non-force refs and verifies ambiguous ra
     const path = new URL(url).pathname,
       body = init.body ? JSON.parse(init.body) : null;
     calls.push({ path, init, body });
-    assert.equal(init.redirect, "error");
+    assert.equal(init.redirect, "manual");
     assert.equal(init.headers.Authorization, "Bearer test-secret");
     if (path.endsWith("/git/commits/" + parent))
       return Response.json({ parents: [], tree: { sha: "d".repeat(40) } });
@@ -264,6 +264,29 @@ test("GitHub transport uses one parent, non-force refs and verifies ambiguous ra
     calls.some((c) => c.init.body?.includes("test-secret")),
     false,
   );
+});
+
+test("GitHub transport rejects redirects without following them or exposing credentials", async () => {
+  let requests = 0;
+  const transport = new GitHubApiTransport({
+    repository: "owner/private-data",
+    token: "redirect-test-secret",
+    fetch: async (url, init) => {
+      requests++;
+      assert.equal(new URL(url).origin, "https://api.github.com");
+      assert.equal(init.redirect, "manual");
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "https://untrusted.example/" },
+      });
+    },
+  });
+  await assert.rejects(transport.readHead(), (error) => {
+    assert.equal(error.status, 502);
+    assert.equal(error.message.includes("redirect-test-secret"), false);
+    return /redirects are not allowed/.test(error.message);
+  });
+  assert.equal(requests, 1);
 });
 
 test("Worker image normalization uses private streams, static WebP bytes and team content hashes", async () => {
