@@ -3,6 +3,29 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { GitHubApiTransport } from "../server/sync/github-api.mjs";
 
+test("an empty GitHub repository has no head, while other conflicts remain errors", async () => {
+  let response = () =>
+    Response.json({ message: "Git Repository is empty." }, { status: 409 });
+  const transport = new GitHubApiTransport({
+    repository: "fixture/team",
+    token: "fixture",
+    fetch: async () => response(),
+  });
+  assert.equal(await transport.readHead("main"), null);
+  assert.equal(await transport.readHead(), null);
+  await assert.rejects(
+    transport.readCommit("a".repeat(40)),
+    (error) => error.status === 409,
+  );
+  for (const body of [
+    JSON.stringify({ message: "Another conflict" }),
+    "invalid JSON",
+  ]) {
+    response = () => new Response(body, { status: 409 });
+    await assert.rejects(transport.readHead(), (error) => error.status === 409);
+  }
+});
+
 test("GitHub 429/403 abort the cycle with retry metadata and a bounded next attempt", async () => {
   for (const status of [429, 403]) {
     let calls = 0;

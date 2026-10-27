@@ -103,6 +103,64 @@ async function fixture(t) {
   );
   return { a, b, teamId, userId, dir };
 }
+test("connection check reports an empty GitHub repository and succeeds after its first commit", async (t) => {
+  const { a, teamId } = await fixture(t);
+  a.transport.repository = "https://github.com/fixture/team";
+  const fetcher = globalThis.fetch,
+    calls = [];
+  let state = "empty";
+  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+    if (!String(url).startsWith("https://api.github.com/"))
+      return fetcher(url, init);
+    const path = new URL(url).pathname.replace("/repos/fixture/team", "");
+    calls.push({ path, method: init.method });
+    if (!path)
+      return Response.json({ private: true, id: 1, default_branch: "main" });
+    if (path === "/git/ref/heads/main") {
+      if (state === "ready")
+        return Response.json({ object: { sha: "a".repeat(40) } });
+      return Response.json(
+        {
+          message:
+            state === "empty"
+              ? "Git Repository is empty."
+              : "private upstream failure",
+        },
+        { status: 409 },
+      );
+    }
+    if (path === "/git/ref/heads/sync-v1")
+      return Response.json({}, { status: 404 });
+    if (path === "/git/refs" && init.method === "POST")
+      return Response.json({}, { status: 201 });
+    if (
+      path.startsWith("/git/refs/heads/graeboard-probe/") &&
+      init.method === "DELETE"
+    )
+      return new Response(null, { status: 204 });
+    throw new Error("Unexpected GitHub request " + path);
+  });
+  const route = `/teams/${teamId}/sync/check`;
+  const empty = await a.api(route, {});
+  assert.equal(empty.status, 400);
+  assert.equal(
+    empty.data.error,
+    "GitHub에서 README를 만들어 저장소를 초기화하세요.",
+  );
+  assert.ok(calls.every((call) => call.method === "GET"));
+  state = "conflict";
+  const conflict = await a.api(route, {});
+  assert.equal(conflict.status, 500);
+  assert.doesNotMatch(conflict.data.error, /README|private upstream/);
+  state = "ready";
+  const ready = await a.api(route, {});
+  assert.equal(ready.status, 200, JSON.stringify(ready.data));
+  assert.equal(ready.data.ready, true);
+  assert.ok(calls.some((call) => call.method === "POST"));
+  assert.ok(calls.some((call) => call.method === "DELETE"));
+  assert.equal(a.app.locals.sync.store(teamId).readLink().canonical_head, null);
+});
+
 test("actual API capture, genesis, two-way Git replay, idempotency and same-cell conflict preserve submissions", async (t) => {
   const { a, b, teamId } = await fixture(t);
   const task = await a.api("/tasks", {

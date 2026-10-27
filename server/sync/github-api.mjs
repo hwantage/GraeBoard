@@ -1,5 +1,6 @@
 import { fileEntries } from "./file-entries.mjs";
 import { ProtocolError } from "./errors.mjs";
+import { requireThat } from "../validation.mjs";
 const assert = (condition, status, message) => {
   if (!condition) throw Object.assign(new Error(message), { status });
 };
@@ -50,6 +51,16 @@ export class GitHubApiTransport {
       },
     );
     if (missing && response.status === 404) return null;
+    if (
+      missing &&
+      method === "GET" &&
+      path.startsWith("/git/ref/heads/") &&
+      response.status === 409
+    ) {
+      // GitHub returns 409 instead of 404 before the repository's first commit.
+      const failure = await response.json().catch(() => null);
+      if (failure?.message === "Git Repository is empty.") return null;
+    }
     if (!response.ok) {
       const error = new Error(`GitHub request failed (${response.status})`);
       error.status = response.status;
@@ -275,10 +286,14 @@ export class GitHubApiTransport {
   }
   async check() {
     const repo = await this.request("");
-    assert(repo.private === true, 400, "팀 데이터 저장소는 비공개여야 합니다.");
+    requireThat(
+      repo.private === true,
+      400,
+      "팀 데이터 저장소는 비공개여야 합니다.",
+    );
     const branch = "graeboard-probe/" + crypto.randomUUID(),
       head = await this.readHead(repo.default_branch);
-    assert(head, 400, "GitHub에서 README를 만들어 저장소를 초기화하세요.");
+    requireThat(head, 400, "GitHub에서 README를 만들어 저장소를 초기화하세요.");
     await this.request("/git/refs", {
       method: "POST",
       body: { ref: "refs/heads/" + branch, sha: head },
