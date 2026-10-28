@@ -222,9 +222,9 @@ unset GRAEBOARD_RESET_PASSWORD
 
 ## 내부·외부 Git 동기화 운영
 
-외부 API의 기본 실행 환경은 Supabase Edge Functions입니다. Cloudflare gateway는 정적 화면·요청 전달·R2/Images 처리만 수행하며 내부 Node는 `GRAEBOARD_SITE=internal`과 GitHub 접속만 유지합니다. `npm run build:edge`로 만든 함수를 배포하고 Pages binding을 gateway로 연결합니다. 기존 Worker에서의 이전은 동일 DB·계정 세션·설치 UUID를 유지하며 schema migration이 없습니다. 배포 설정·Secret 분리·전환과 복구 순서는 [Edge 배포](CLOUD_SETUP.md#supabase-edge-functions-배포)를 따릅니다. 업무 요청 외의 자동 동기화는 gateway Cron이 Edge를 호출하며, Cloudflare와 Supabase 양쪽 실행 로그를 확인합니다.
+외부 API의 기본 실행 환경은 Supabase Edge Functions입니다. Cloudflare gateway는 정적 화면·요청 전달·R2/Images 처리만 수행하며 내부 Node는 `GRAEBOARD_SITE=internal`과 GitHub 접속만 유지합니다. `npm run build:edge`로 만든 함수를 배포하고 Pages binding을 gateway로 연결합니다. 기존 Worker에서의 이전은 동일 DB·계정 세션·설치 UUID를 유지하며 schema migration이 없습니다. 배포 설정·Secret 분리·전환과 복구 순서는 [Edge 배포](CLOUD_SETUP.md#supabase-edge-functions-배포)를 따릅니다. Hyperdrive는 사용하지 않으며 이전 Worker 이름은 gateway 전달용으로만 유지합니다. 업무 요청 외의 자동 동기화는 gateway Cron이 Edge를 호출하며, Cloudflare와 Supabase 양쪽 실행 로그를 확인합니다.
 
-리소스 생성, Hyperdrive·R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 외부 연결 팀마다 Worker·Git·R2·Supabase 프로젝트를 따로 운영합니다. 그 팀의 이름·이메일·활성 상태·팀 역할은 구성원 브랜치로 내부에서 계속 반영합니다. 팀장이 최초 연결하고 다른 사용자의 사내 계정 선택 요청을 승인합니다. 비밀번호·사내 세션·다른 팀 소속·전체 관리자 권한은 전송하지 않습니다.
+리소스 생성, Edge의 PostgreSQL 직접 연결과 gateway의 R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 외부 연결 팀마다 Worker·Git·R2·Supabase 프로젝트를 따로 운영합니다. 그 팀의 이름·이메일·활성 상태·팀 역할은 구성원 브랜치로 내부에서 계속 반영합니다. 팀장이 최초 연결하고 다른 사용자의 사내 계정 선택 요청을 승인합니다. 비밀번호·사내 세션·다른 팀 소속·전체 관리자 권한은 전송하지 않습니다.
 
 - 일시정지는 로컬 저장과 미전송 캡처를 유지합니다. 연결 해제 뒤 자료는 로컬로만 저장되므로 다시 연결하기 전에 `sync:recover`로 차이를 보존·대조합니다.
 - SQLite 복구와 외부 PG/R2 복구는 별도 명령입니다. `backup:external`·`restore:external`·`transfer -- --help`의 실제 입력과 제한을 설치 안내에서 확인합니다. 한 프로젝트의 site/team 스키마와 이미지 bundle을 함께 보관합니다. 승인·Google 연결은 복원하고 접속 세션은 새로 만듭니다. 기존 분리형 control/team 백업 v1은 해당 형식으로 계속 복구합니다.

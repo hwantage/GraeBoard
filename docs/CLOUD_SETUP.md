@@ -6,13 +6,13 @@
 
 ## Supabase Edge Functions 배포
 
-업무 API·Access JWT 검증·계정 및 팀 권한·Git 동기화는 Supabase의 `graeboard` 함수에서 실행합니다. Pages의 `GRAEBOARD_BACKEND` binding은 `worker/gateway.mjs`를 실행하는 별도 gateway Worker를 가리킵니다. Gateway에는 DB·Git 토큰이 필요하지 않습니다. 정적 화면은 Edge에서 Access JWT 검증을 통과한 뒤 제공하며, API 응답·계정 쿠키·SSE 스트림은 그대로 전달합니다.
+업무 API·Access JWT 검증·계정 및 팀 권한·Git 동기화는 Supabase의 `graeboard` 함수에서 실행합니다. Pages의 `GRAEBOARD_BACKEND` binding은 `worker/gateway.mjs`를 실행하는 별도 gateway Worker를 가리킵니다. Gateway에는 DB·Git 토큰과 Hyperdrive binding이 필요하지 않습니다. Edge의 `pg.Pool`이 `GRAEBOARD_DATABASE_URL` 또는 Supabase 기본 `SUPABASE_DB_URL`로 PostgreSQL에 직접 연결합니다. 프로필의 `PG_SITE`는 이 연결을 가리키는 내부 이름이며 Cloudflare Hyperdrive 자원이 아닙니다. 정적 화면은 Edge에서 Access JWT 검증을 통과한 뒤 제공하며, API 응답·계정 쿠키·SSE 스트림은 그대로 전달합니다.
 
 R2와 Images native binding은 gateway에 남습니다. Edge가 서버 전용 Secret으로 gateway의 `/_resources/` 경로를 호출합니다. 이 경로는 비밀값 확인과 해당 팀의 이미지/검사 키 범위를 검사하며 브라우저에는 Secret을 전달하지 않습니다. 업무·문서 조회와 Git 연산은 Worker에서 실행하지 않습니다.
 
 Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다.
 
-기존 설치 이전에는 **DB migration이 없습니다**. site v2·team v1, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 기존 Worker는 새 경로 검증이 끝날 때까지 복구용으로 보관하고, 기존 Cron은 중단하여 중복 실행을 피합니다. 아래 Hyperdrive 및 전체 Worker 배포 절차는 종전 런타임을 유지하는 설치에 해당합니다.
+기존 설치 이전에는 **DB migration이 없습니다**. site v2·team v1, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 저장소 루트 `wrangler.jsonc`는 런타임 호환성 테스트용이며 운영 배포에 사용하지 않습니다.
 
 인터넷에 연결된 운영자 환경에서 다음 순서로 배포합니다. 내부 Node 서버는 이 환경 파일을 읽지 않으며 GitHub만 접속합니다.
 
@@ -33,7 +33,7 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 | `GRAEBOARD_DATABASE_URL` | 선택 사항. 전용 앱 역할의 PostgreSQL 접속 URL. 생략 시 Supabase가 제공하는 `SUPABASE_DB_URL` 사용 |
 
 5. `npx supabase functions deploy graeboard --project-ref 프로젝트ID --use-api`를 실행합니다. `supabase/config.toml`의 `verify_jwt=false`는 Supabase Auth 검증 대신 gateway Secret 및 Cloudflare Access JWT·앱 계정·팀 권한을 직접 검증하기 위한 설정입니다. 이 검증 코드를 제거한 함수를 공개하지 않습니다.
-6. Pages Production/Preview의 `GRAEBOARD_BACKEND`를 새 gateway로 바꾸고 Pages를 재배포합니다. Google 로그인, 업무/문서 조회·저장, R2 이미지, 두 방향 Git 반영, 로그아웃·권한 철회를 확인합니다. 실패하면 Pages binding을 이전 Worker로 되돌리고 Pages를 다시 배포합니다. DB를 이전 백업으로 덮어쓰지 않습니다.
+6. Pages Production/Preview의 `GRAEBOARD_BACKEND`를 새 gateway로 바꾸고 Pages를 재배포합니다. Google 로그인, 업무/문서 조회·저장, R2 이미지, 두 방향 Git 반영, 로그아웃·권한 철회를 확인합니다. 문제가 생기면 검증된 gateway와 Edge 함수 버전을 함께 재배포합니다. Hyperdrive를 쓰던 전체 Worker로 되돌리거나 DB를 이전 백업으로 덮어쓰지 않습니다.
 7. 검증 후 gateway에 `* * * * *` Cron을 설정하면 Edge의 인증된 scheduler 경로를 호출합니다. 실제 Git 작업은 Edge `waitUntil`에서 실행하며 기존 lease와 outbox로 중복 적용을 막습니다. 크기·커밋·operation 묶음 제한을 유지하고 실행 로그에서 CPU·시간 초과와 미전송 상태를 확인합니다. Free의 호출량·CPU·메모리 한도는 별개이므로 무제한 동작으로 간주하지 않습니다.
 
 운영자 점검용 함수가 있다면 검증 후 제거합니다. 새 팀도 이 경로로 배포할 수 있으며, 이하의 DB 초기화·팀 Git·Google Access·계정 연결 절차는 동일합니다. [Edge 배포](https://supabase.com/docs/guides/functions/deploy), [Edge 실행 제한](https://supabase.com/docs/guides/functions/limits)
@@ -62,28 +62,25 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 내부망 서버의 외부 접속은 팀 GitHub 저장소만 허용합니다. Supabase·Hyperdrive·R2·Cloudflare 관리 API로 내부 서버가 직접 접속하지 않습니다. 외부 DB 초기화와 배포는 인터넷에 연결된 별도 운영 환경에서 수행하고, DB 비밀번호·외부 설정 키를 내부 서버의 환경 파일에 저장하지 않습니다. 로컬 Node/SQLite를 내부망으로 시험할 때도 같은 경계를 지킵니다.
 
-`binding`은 Worker에 설치한 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다. 아래 표는 종전 전체 Worker 배포의 설정입니다. Edge 배포의 변수·Secret 위치는 위의 Edge 배포 표를 따릅니다.
+`binding`은 실행 환경에서 제공하는 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다.
 
-| 값                     | 입력 위치          | 의미                                            |
-| ---------------------- | ------------------ | ----------------------------------------------- |
-| `GRAEBOARD_SITE` | Worker 변수 | `external`. 내부 Node의 `.env`에는 `internal` |
-| `APP_ORIGIN`           | Worker 변수        | 경로 없는 외부 HTTPS origin 하나                |
-| `GRAEBOARD_BACKEND` | Pages Service binding | 같은 팀의 비공개 Worker |
-| `ACCESS_ISSUER`        | Worker 변수        | `https://조직이름.cloudflareaccess.com`         |
-| `ACCESS_AUDIENCE`      | Worker 변수        | GraeBoard 전용 Access 앱의 Application Audience |
-| `PG_SITE` | Hyperdrive binding | 해당 팀의 단일 Supabase 프로젝트 |
-| `SITE_TEAM_ID` | Worker 변수 | 기존 내부 팀 UUID |
-| `R2_TEAM_A`            | R2 binding         | 팀 A 비공개 bucket                              |
-| `IMAGES`               | Images binding     | 업로드 이미지를 WebP로 변환                     |
-| `GIT_TEAM_A`           | Worker Secret      | 해당 팀 저장소만 허용한 GitHub 토큰             |
-| `SYNC_PROFILES`        | Worker 변수        | 팀 UUID와 설치된 binding·Secret 이름의 연결     |
+| 값 | 입력 위치 | 의미 |
+| --- | --- | --- |
+| `GRAEBOARD_SITE` | Edge Secret | `external`. 내부 Node의 `.env`에는 `internal` |
+| `APP_ORIGIN` | Edge Secret·gateway 변수 | 경로 없는 외부 HTTPS origin 하나 |
+| `GRAEBOARD_BACKEND` | Pages Service binding | 같은 팀의 gateway Worker |
+| `ACCESS_ISSUER`, `ACCESS_AUDIENCE` | Edge Secret | Google Access 발급자와 앱 Audience |
+| `GRAEBOARD_DATABASE_URL` | Edge Secret (선택) | 전용 앱 역할의 PostgreSQL 주소. 생략 시 `SUPABASE_DB_URL` |
+| `SITE_TEAM_ID` | Edge Secret·gateway 변수 | 기존 내부 팀 UUID |
+| `R2_TEAM`, `IMAGES` | gateway binding | 팀 비공개 bucket과 이미지 변환 |
+| `GIT_TEAM` | Edge Secret | 해당 팀 저장소만 허용한 GitHub 토큰 |
+| `SYNC_PROFILES` | Edge Secret | 팀 UUID와 내부 `PG_SITE`·`R2_TEAM`·`GIT_TEAM` 이름의 연결 |
 | 팀장 연결 키 | 내부 팀 설정에서 발급 | 검증 해시만 GitHub를 통해 Supabase로 전달 |
-| `INSTALLATION_ID`      | Worker 변수        | 외부 설치의 고정 UUID, DB 복구 사본과 구분      |
-| `PEER_INSTALLATION_ID` | Worker 변수        | 적용 확인을 받을 내부 설치 UUID                 |
+| `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | Edge Secret | 외부 및 내부 설치의 고정 UUID |
 
 `ACCESS_TEAM_DOMAIN`과 `ACCESS_AUD`도 발급자·Audience의 호환 이름입니다. 한 설치에서는 한 가지 이름을 일관되게 사용하세요. 발급자에는 `https://`를 포함하고 끝에 `/`를 붙이지 않습니다.
 
-DB 비밀번호는 Hyperdrive에, GitHub 토큰은 Secret에 보관합니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
+전용 DB 접속 URL과 GitHub 토큰은 Supabase Edge Secrets에 보관합니다. Supabase 기본 `SUPABASE_DB_URL`을 사용할 때는 별도 DB Secret을 만들지 않습니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
 
 ## 3. SQLite v29·v30을 v31로 올리기
 
@@ -118,7 +115,7 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 
 ## 4. Supabase 팀 프로젝트 하나 만들기
 
-팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. 이 앱은 Hyperdrive를 통해 PostgreSQL에 연결하므로 Supabase Data API와 Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
+팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. Edge Function은 PostgreSQL에 직접 연결하므로 Hyperdrive·Supabase Data API·Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
 
 아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
 
@@ -148,21 +145,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard, graeboard_site
 
 앱 역할에는 schema 소유권·superuser·새 role 생성 권한을 주지 않습니다. 기존 분리형 `PG_CONTROL` + 팀 DB 설치는 호환 경로로 유지하지만 신규 설치의 기본 구성은 `PG_SITE`입니다.
 
-## 5. Hyperdrive, R2, Images 연결
+## 5. R2, Images 연결
 
-팀 Supabase 프로젝트의 Direct connection과 `graeboard_app` 계정으로 Hyperdrive **하나**를 만듭니다. Hyperdrive가 풀링하므로 Supabase pooler 주소를 이 경로에 겹치지 않습니다. [Cloudflare의 Supabase 연결 안내](https://developers.cloudflare.com/hyperdrive/examples/connect-to-postgres/postgres-database-providers/supabase/)
+Hyperdrive를 생성하지 않습니다. DB 연결은 Supabase Edge에만 설정하고 gateway에는 다음 자원만 연결합니다.
 
-계정 철회·revision·outbox를 최신으로 읽도록 **query caching을 끕니다**. 설정 파일의 binding 선언만으로 캐시가 꺼지지는 않습니다. [Hyperdrive query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/)
-
-```sh
-npx wrangler hyperdrive update ACTUAL_SITE_HYPERDRIVE_ID --caching-disabled
-npx wrangler hyperdrive get ACTUAL_SITE_HYPERDRIVE_ID
-```
-
-| 자원 | Worker binding | 설정 |
+| 자원 | gateway binding | 설정 |
 | --- | --- | --- |
-| 팀 Hyperdrive | `PG_SITE` | 팀 프로젝트, 캐시 끄기 |
-| 비공개 R2 bucket | `R2_TEAM_A` | 해당 팀 전용, public access 끄기 |
+| 비공개 R2 bucket | `R2_TEAM` | 해당 팀 전용, public access 끄기 |
 | Images | `IMAGES` | 이미지 변환 |
 
 이미지는 앱의 권한 검사를 거쳐 `/api/document-images/...`로 제공합니다. R2 native binding에는 S3 access key가 필요 없습니다. [R2 binding](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
@@ -175,17 +164,11 @@ GitHub에서 팀별 **Private repository**를 만들고 README를 추가해 `mai
 
 GitHub **Settings → Developer settings → Personal access tokens → Fine-grained tokens**에서 해당 저장소 하나만 선택하고 **Contents: Read and write**를 허용합니다. 조직 승인, 발급 계정의 저장소 권한, 만료일도 확인합니다. 내부와 외부용 토큰은 구분해 관리할 수 있습니다. [GitHub PAT 안내](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
 
-외부 토큰은 Worker의 Secret `GIT_TEAM_A`에 등록합니다. 앱 소스 저장소·배포 관리 토큰과 팀 데이터 저장소 토큰을 구분합니다. 토큰 값을 저장소 URL이나 명령 인자에 넣지 않습니다.
+외부 토큰은 Supabase Edge Secret `GIT_TEAM`에 등록합니다. 관리자가 읽을 수 있는 전용 환경 파일에 저장한 뒤 `supabase secrets set --env-file 운영자전용파일 --project-ref 프로젝트ID`로 등록합니다. 토큰 값을 소스·저장소 URL·명령 인자에 넣지 않습니다. 앱 소스 저장소·배포 관리 토큰과 팀 데이터 저장소 토큰을 구분합니다. gateway에는 GitHub 토큰을 등록하지 않습니다.
 
-```sh
-npx wrangler secret put GIT_TEAM_A
-```
+## 7. 팀 전용 Edge 함수에 프로필 하나 등록
 
-이 명령은 토큰을 대화형 입력으로 받습니다. Secret 변경도 새 Worker version·배포에 영향을 줄 수 있으므로 변경 대상과 배포 시점을 확인합니다. [Workers Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
-
-## 7. 팀 전용 Worker에 프로필 하나 등록
-
-저장소의 `wrangler.jsonc`를 복사해 팀의 도메인·Hyperdrive ID·bucket·UUID를 입력합니다. `SITE_TEAM_ID`와 프로필의 `teamId`는 내부 팀 UUID와 같아야 하며 `databaseBinding`은 `PG_SITE`입니다. 팀 사이트에 여러 프로필·다른 팀·`replaces`를 넣으면 거절합니다.
+Supabase Edge의 `SYNC_PROFILES`에 프로필 하나를 등록합니다. `SITE_TEAM_ID`와 프로필의 `teamId`는 내부 팀 UUID와 같아야 하며 `databaseBinding`은 Edge의 직접 연결인 `PG_SITE`입니다. 팀 사이트에 여러 프로필·다른 팀·`replaces`를 넣으면 거절합니다.
 
 ```json
 [
@@ -195,21 +178,21 @@ npx wrangler secret put GIT_TEAM_A
     "teamId": "11111111-1111-4111-8111-111111111111",
     "repository": "example/graeboard-team-a-data",
     "databaseBinding": "PG_SITE",
-    "bucketBinding": "R2_TEAM_A",
-    "githubSecret": "GIT_TEAM_A"
+    "bucketBinding": "R2_TEAM",
+    "githubSecret": "GIT_TEAM"
   }
 ]
 ```
 
-위 배열을 `SYNC_PROFILES`에 JSON 문자열로 지정하고 같은 이름의 R2 binding·Git Secret을 등록합니다. `INSTALLATION_ID`는 이 팀 외부 사이트의 고정 UUID, `PEER_INSTALLATION_ID`는 사내 서버의 고정 설치 UUID입니다. `APP_ORIGIN`·`ACCESS_ISSUER`·`ACCESS_AUDIENCE`도 이 팀 사이트의 값을 사용합니다.
+위 배열을 Edge Secret `SYNC_PROFILES`에 JSON 문자열로 지정합니다. Edge는 `R2_TEAM` 자원 어댑터로 gateway의 같은 이름 bucket을 사용하고 `GIT_TEAM` Secret으로 GitHub에 연결합니다. `INSTALLATION_ID`는 이 팀 외부 사이트의 고정 UUID, `PEER_INSTALLATION_ID`는 사내 서버의 고정 설치 UUID입니다. `APP_ORIGIN`·`ACCESS_ISSUER`·`ACCESS_AUDIENCE`도 이 팀 사이트의 값을 사용합니다.
 
-정적 화면에도 인증을 적용하도록 `assets.run_worker_first: true`, `workers_dev: false`, `preview_urls: false`를 유지합니다. Pages에서 연결할 Worker는 별도 공개 주소가 필요 없습니다. `APP_ORIGIN`에는 사용자 접속 주소(예: `https://graeboard.pages.dev`)를 지정합니다. Cron은 `* * * * *`입니다. 외부 사이트의 DB·bucket을 교체할 때는 점검 중 새 자원에 백업을 복구하고 검증한 뒤 같은 팀 프로필의 binding을 전환합니다. 실행 중 다른 팀 DB로 바꾸지 않습니다. [Wrangler 설정](https://developers.cloudflare.com/workers/wrangler/configuration/)
+gateway는 `wrangler.gateway.jsonc`로 배포하며 `assets.run_worker_first: true`와 `preview_urls: false`를 유지합니다. Edge의 자원 호출을 위해 gateway의 `workers.dev` 주소는 활성화하지만 일반 화면/API는 `APP_ORIGIN` 호스트만 허용합니다. `APP_ORIGIN`에는 사용자 접속 주소(예: `https://graeboard.pages.dev`)를 지정합니다. gateway Cron은 `* * * * *`이며 DB·Git 작업은 Edge에서 실행합니다. 외부 DB·bucket 교체는 점검 중 백업 복구와 검증 후 같은 팀 설정을 전환하며 실행 중 다른 팀 DB로 바꾸지 않습니다.
 
 기존 분리형 설치에서만 다중 프로필과 `replaces`를 통한 온라인 교체 경로를 유지합니다.
 
 ## 8. GraeBoard 전용 Google Access
 
-Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Enable access policy**로 시작합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Worker에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
+Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Enable access policy**로 시작합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Edge에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
 
 1. 기존 Zero Trust 조직에서 **Access controls → Applications → Add an application → Self-hosted**를 선택합니다.
 2. GraeBoard의 `APP_ORIGIN` 호스트 전체를 대상으로 별도 앱을 만듭니다.
@@ -219,7 +202,7 @@ Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General →
 
 조직 전체 Users 목록은 공통으로 남습니다. 이 구성에서 분리하는 것은 GraeBoard 접근 정책과 앱의 사용자·팀 권한입니다. [Self-hosted Access 앱](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
 
-Worker는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+Edge는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
 내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 Worker `SETUP_TOKEN` 등록은 필요하지 않습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
 
@@ -238,15 +221,16 @@ Worker는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 �
 ```sh
 npm ci --include=dev
 npm run build
-npm run build:worker
+npm run build:worker -- --generate-only
+npm run build:edge
 npm run build:pages
 ```
 
-빌드 성공은 클라우드 연결 성공과 별개입니다. 운영 배포가 승인된 경우에만 설정·Access 정책·DB 버전·Secret을 확인한 뒤 팀 설정으로 `npx wrangler deploy`를 실행합니다. Pages 방식에서는 다음을 추가로 확인합니다.
+빌드 성공은 클라우드 연결 성공과 별개입니다. 운영 배포가 승인된 경우에만 설정·Access 정책·DB 버전·Secret을 확인한 뒤 위 Edge 배포 절차에 따라 gateway 설정으로 `npx wrangler deploy --config 팀-gateway-설정파일`과 Supabase 함수 배포를 실행합니다. Pages 방식에서는 다음을 추가로 확인합니다.
 
 1. Pages의 소스 저장소는 앱 소스 저장소이고 팀 데이터 Git 저장소와 다릅니다. 검증할 코드를 커밋·푸시한 뒤 **Production branch**를 해당 브랜치로 지정합니다. 그래야 `프로젝트.pages.dev`에 그 코드가 배포됩니다. preview 브랜치 배포만으로 운영 주소의 코드가 바뀌지 않습니다.
-2. 빌드 명령은 `npm run build`, 출력은 `dist`, root directory는 저장소 루트, 빌드 변수는 `NODE_VERSION=22`입니다. Cloudflare가 루트 `functions/`를 별도로 빌드합니다. 루트 `wrangler.jsonc`는 백엔드 Worker용이며 Pages 설정은 대시보드에서 관리합니다. 여기에 `pages_build_output_dir`를 섞어 넣지 않습니다.
-3. 먼저 같은 브랜치로 백엔드 Worker를 배포하고 Pages의 **Settings → Bindings → Service binding**에 `GRAEBOARD_BACKEND`를 등록해 그 Worker를 선택합니다. Pages에는 DB·Git 비밀을 복사하지 않습니다. Service binding 변경 후 Pages를 다시 배포합니다.
+2. 빌드 명령은 `npm run build`, 출력은 `dist`, root directory는 저장소 루트, 빌드 변수는 `NODE_VERSION=22`입니다. Cloudflare가 루트 `functions/`를 별도로 빌드합니다. 루트 `wrangler.jsonc`는 런타임 테스트용이며 gateway에는 `wrangler.gateway.jsonc`에서 준비한 팀 설정을 사용합니다. Pages 설정은 대시보드에서 관리합니다. 여기에 `pages_build_output_dir`를 섞어 넣지 않습니다.
+3. 먼저 같은 브랜치로 Edge 함수와 gateway를 배포하고 Pages의 **Settings → Bindings → Service binding**에 `GRAEBOARD_BACKEND`를 등록해 그 Worker를 선택합니다. Pages에는 DB·Git 비밀을 복사하지 않습니다. Service binding 변경 후 Pages를 다시 배포합니다.
 4. Pages 전체 경로가 Worker로 전달되는지, Google 인증 전에는 화면·API·정적 파일이 거절되는지, 쿠키와 POST·이미지·SSE 응답이 유지되는지 확인합니다. Worker가 없는 초기 Pages 배포는 JSON 503이며 연동 완료 상태가 아닙니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.

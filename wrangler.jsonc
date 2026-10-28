@@ -1,4 +1,6 @@
 {
+  // Runtime compatibility tests only (npm run build:worker).
+  // Deploy production with wrangler.gateway.jsonc and Supabase Edge Functions.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "graeboard",
   "main": "worker/entry.mjs",
@@ -13,7 +15,7 @@
     "not_found_handling": "single-page-application",
   },
   "images": { "binding": "IMAGES" },
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": { "crons": [] },
   "vars": {
     "GRAEBOARD_SITE": "external",
     "APP_ORIGIN": "https://board.example.com",
@@ -27,11 +29,6 @@
     "PEER_INSTALLATION_ID": "replace-with-internal-installation-uuid",
     "SYNC_PROFILES": "[{\"profileId\":\"team-prod\",\"name\":\"팀 외부\",\"teamId\":\"11111111-1111-4111-8111-111111111111\",\"repository\":\"example/team-data\",\"databaseBinding\":\"PG_SITE\",\"bucketBinding\":\"R2_TEAM\",\"githubSecret\":\"GIT_TEAM\"}]",
   },
-  // Replace the local example ID before deployment. Hyperdrive caching must
-  // be disabled. Each team deploys its own Worker and single Supabase project.
-  "hyperdrive": [
-    { "binding": "PG_SITE", "id": "00000000000000000000000000000000" },
-  ],
   "r2_buckets": [
     { "binding": "R2_TEAM", "bucket_name": "replace-with-team-private-bucket" },
   ],

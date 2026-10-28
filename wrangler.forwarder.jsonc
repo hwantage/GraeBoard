@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "graeboard-backend",
+  "main": "worker/forwarder.mjs",
+  "compatibility_date": "2026-10-23",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": { "crons": [] },
+  "services": [
+    { "binding": "GRAEBOARD_BACKEND", "service": "graeboard-gateway" },
+  ],
+}

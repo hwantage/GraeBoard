@@ -345,7 +345,7 @@ Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)
 
 ## 팀별 외부 설치와 계정 연결
 
-Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. 종전 전체 Worker도 복구용 진입점으로 유지합니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
+Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. `worker/forwarder.mjs`는 이전 Worker 이름으로 들어오는 Service binding을 같은 gateway에 전달합니다. Hyperdrive binding과 이전 Cron은 제거하며 루트 `wrangler.jsonc`는 호환성 테스트 빌드용입니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
 
 신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v31에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
 
