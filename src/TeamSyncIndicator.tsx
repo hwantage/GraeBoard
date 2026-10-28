@@ -100,7 +100,7 @@ export default function TeamSyncIndicator({
       title={detail}
     >
       {problem ? (
-        <span className="tag">{problem}</span>
+        <span className="tag team-sync-problem">{problem}</span>
       ) : (
         stages.map((stage, index) => (
           <span

@@ -2111,6 +2111,10 @@ body.row-reordering * {
   color: #1d4ed8;
   background: #e8f0ff;
 }
+.team-sync-problem {
+  color: #a43e58;
+  background: #fce8ee;
+}
 @media (max-width: 720px) {
   .topbar:has(.team-sync-indicator) {
     height: auto;
