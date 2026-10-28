@@ -339,6 +339,13 @@ test("initial publication preserves valid tombstones for API-created tags and do
   const head = await a.transport.readHead();
   await a.app.locals.sync.get(teamId).run();
   assert.equal(await a.transport.readHead(), head);
+  ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
+  ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
+  assert.equal(
+    a.app.locals.sync.store(teamId).readPending().length,
+    0,
+    "Missing rows for existing tombstones must not produce new deletions",
+  );
 });
 
 test("conflict resolution projects immediately and a follow-up API edit depends on it before any publication", async (t) => {
@@ -642,6 +649,15 @@ test("T20 local document/year exclusions survive normal saves, resync and explic
     0,
   );
   assert.equal((await a.api(`/tasks/${task.id}/document`)).status, 409);
+  const retained = store.readExclusions();
+  ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
+  ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
+  assert.equal(
+    store.readPending().length,
+    0,
+    "Locally retained documents are not shared deletions",
+  );
+  assert.deepEqual(store.readExclusions(), retained);
   assert.equal(
     ok(await b.api(`/tasks/${task.id}/document`)).markdown,
     "retained body",
@@ -747,6 +763,138 @@ test("T1/T12 two real CLI writers race, replay checkpoint plus tail, and converg
     stateHash(a.app.locals.sync.store(teamId).readState()),
     stateHash(b.app.locals.sync.store(teamId).readState()),
   );
+});
+
+test("HTTP reconnect preserves pending IDs, offline cells and memo bodies, then merges peer edits through real Git", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  const task = ok(
+    await a.api("/tasks", { teamId, year: 2026, fields: { title: "base" } }),
+  ).task;
+  const memoId = randomUUID(),
+    memoPath = `/teams/${teamId}/years/2026/memos/${memoId}`;
+  ok(
+    await a.api(`/teams/${teamId}/years/2026/memos`, {
+      id: memoId,
+      title: "꼬리 메모",
+    }),
+  );
+  await joinPeer(a, b, teamId);
+  const edit = (site, key, value) =>
+    site.api("/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [
+        {
+          taskId: task.id,
+          key,
+          value,
+          expectedVersion: getTask(site.db, task.id).cells[key]?.version || 0,
+        },
+      ],
+    });
+  ok(await edit(a, "title", "pending before disconnect"));
+  const store = a.app.locals.sync.store(teamId),
+    pending = store.readPending();
+  ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
+  const original = store.readLink();
+  ok(await edit(a, "title", "saved while disconnected"));
+  ok(
+    await a.api(
+      memoPath,
+      {
+        markdown: "해제 중 저장한 꼬리 메모",
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+      "PUT",
+    ),
+  );
+  assert.deepEqual(store.readPending(), pending);
+  ok(await edit(b, "2026-10-26", "peer changed while disconnected"));
+  await b.app.locals.sync.get(teamId).run();
+  const result = ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
+  assert.equal(result.mode, "active");
+  assert.equal(
+    store.readLink().canonical_head,
+    original.canonical_head,
+    "Reconnect must not reset or replace C",
+  );
+  assert.equal(store.readLink().writer_epoch, original.writer_epoch);
+  assert.deepEqual(store.readPending().slice(0, pending.length), pending);
+  assert.equal(store.readPending().length, pending.length + 1);
+  assert.ok(store.readPending().at(-1).dependsOn.includes(pending[0].opId));
+  const preserved = store.readPending();
+  assert.equal(
+    (await a.api(`/teams/${teamId}/sync/reconnect`, {})).status,
+    409,
+  );
+  assert.deepEqual(
+    store.readPending(),
+    preserved,
+    "Duplicate click must not recapture changes",
+  );
+  ok(await edit(a, "title", "saved immediately after reconnect"));
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  for (const site of [a, b]) {
+    assert.equal(
+      getTask(site.db, task.id).cells.title.value,
+      "saved immediately after reconnect",
+    );
+    assert.equal(
+      getTask(site.db, task.id).cells["2026-10-26"].value,
+      "peer changed while disconnected",
+    );
+    assert.equal(
+      ok(await site.api(memoPath)).markdown,
+      "해제 중 저장한 꼬리 메모",
+    );
+    assert.equal(site.app.locals.sync.store(teamId).readPending().length, 0);
+  }
+  assert.equal(
+    stateHash(store.readState()),
+    stateHash(b.app.locals.sync.store(teamId).readState()),
+  );
+});
+
+test("reconnecting same-cell offline edits preserves the peer value and the submitted conflict", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  const task = ok(
+    await a.api("/tasks", { teamId, year: 2026, fields: { title: "base" } }),
+  ).task;
+  await joinPeer(a, b, teamId);
+  ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
+  for (const [site, value] of [
+    [a, "internal offline"],
+    [b, "external online"],
+  ])
+    ok(
+      await site.api("/cells/batch", {
+        operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        changes: [
+          {
+            taskId: task.id,
+            key: "title",
+            value,
+            expectedVersion: getTask(site.db, task.id).cells.title.version,
+          },
+        ],
+      }),
+    );
+  await b.app.locals.sync.get(teamId).run();
+  ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  const conflicts = ok(
+    await a.api(`/teams/${teamId}/sync/conflicts`),
+  ).conflicts;
+  assert.equal(conflicts.length, 1);
+  assert.ok(
+    conflicts[0].desired.some((value) => value.value === "internal offline"),
+  );
+  assert.equal(getTask(a.db, task.id).cells.title.value, "external online");
+  assert.equal(getTask(b.db, task.id).cells.title.value, "external online");
 });
 
 test("T13/T15 copied installation is fenced; drained receipt reconciliation resumes paused; rewritten history keeps last good C", async (t) => {

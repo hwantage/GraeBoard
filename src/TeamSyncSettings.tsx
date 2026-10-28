@@ -40,6 +40,7 @@ export type SyncStatus = {
   siteId?: string;
   siteName?: string;
   profileId?: string;
+  canReconnect?: boolean;
   canonicalHead?: string | null;
   pending: number;
   conflicts: number;
@@ -152,6 +153,7 @@ export default function TeamSyncSettings({
   const [editing, setEditing] = useState<Conflict | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState("");
   const [switchJob, setSwitchJob] = useState<SwitchJob | null>(null);
   const switchStop = useRef(false);
@@ -197,6 +199,7 @@ export default function TeamSyncSettings({
   async function perform(action: string, message: string, body: unknown = {}) {
     if (busy) return;
     setBusy(true);
+    setReconnecting(action === "reconnect");
     setError("");
     onMessage("");
     try {
@@ -207,8 +210,12 @@ export default function TeamSyncSettings({
       if (live.current) onMessage(message);
     } catch (e) {
       if (live.current) setError((e as Error).message);
+      if (action === "reconnect") await load(undefined, true).catch(() => {});
     } finally {
-      if (live.current) setBusy(false);
+      if (live.current) {
+        setBusy(false);
+        setReconnecting(false);
+      }
     }
   }
   async function resolve(
@@ -281,6 +288,8 @@ export default function TeamSyncSettings({
   const linked = status && !["unlinked", "disconnected"].includes(status.mode);
   const initialized = !!status?.canonicalHead;
   const external = isExternalSite();
+  const canReconnect =
+    !external && status?.mode === "disconnected" && status.canReconnect;
   const needsRecovery =
     status?.mode === "disconnected" || status?.mode === "recovery";
   const replacing =
@@ -356,27 +365,40 @@ export default function TeamSyncSettings({
           </div>
           {needsRecovery && (
             <div className="team-sync-recovery" role="note">
-              <strong>다시 연결하려면 복구 점검이 필요합니다.</strong>
-              <p>
-                {status.mode === "disconnected"
-                  ? "연결 해제 동안 저장한 변경을"
-                  : "저장 자료와 Git 공유본을"}{" "}
-                대조해야 하므로 프로필 저장이나 연결 검사만으로는 재연결되지
-                않습니다. 서버 관리자가 쓰기를 중지하고 백업한 뒤{" "}
-                {external ? "외부 서버" : "내부 서버"} 복구 점검을 완료하면, 이
-                화면에서 <b>재개</b>할 수 있습니다.
-              </p>
-              <p>
-                잠시 동기화를 멈출 때는 <b>일시정지 → 재개</b>를 사용하세요.
-              </p>
-              {user.systemRole === "admin" && (
-                <a
-                  href="/api/admin/service-connections/guide"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  설치 안내의 복구 절차 보기
-                </a>
+              {canReconnect ? (
+                <>
+                  <strong>동기화 연결이 해제되어 있습니다.</strong>
+                  <p>
+                    <b>다시 연결</b>을 누르면 해제 중 저장한 내용을 보존하고
+                    기존 프로필로 연결합니다. 서버를 종료하거나 명령어를 실행할
+                    필요가 없습니다.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <strong>다시 연결하려면 복구 점검이 필요합니다.</strong>
+                  <p>
+                    {status.mode === "disconnected"
+                      ? "연결 해제 동안 저장한 변경을"
+                      : "저장 자료와 Git 공유본을"}{" "}
+                    대조해야 하므로 프로필 저장이나 연결 검사만으로는 재연결되지
+                    않습니다. 서버 관리자가 쓰기를 중지하고 백업한 뒤{" "}
+                    {external ? "외부 서버" : "내부 서버"} 복구 점검을 완료하면,
+                    이 화면에서 <b>재개</b>할 수 있습니다.
+                  </p>
+                  <p>
+                    잠시 동기화를 멈출 때는 <b>일시정지 → 재개</b>를 사용하세요.
+                  </p>
+                  {user.systemRole === "admin" && (
+                    <a
+                      href="/api/admin/service-connections/guide"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      설치 안내의 복구 절차 보기
+                    </a>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -511,6 +533,22 @@ export default function TeamSyncSettings({
                 >
                   연결 검사
                 </Button>
+                {admin && canReconnect && (
+                  <Button
+                    className="primary"
+                    {...busyProps(busy)}
+                    onClick={() =>
+                      void perform(
+                        "reconnect",
+                        initialized
+                          ? "연결을 복원했습니다. 동기화가 자동으로 이어집니다."
+                          : "연결을 복원했습니다. 연결 검사 후 초기 게시를 진행하세요.",
+                      )
+                    }
+                  >
+                    {reconnecting ? "다시 연결 중…" : "다시 연결"}
+                  </Button>
+                )}
                 {admin &&
                   !external &&
                   !initialized &&
@@ -575,8 +613,10 @@ export default function TeamSyncSettings({
               </div>
               {admin && linked && (
                 <p className="field-help">
-                  잠시 멈출 때는 일시정지를 사용하세요. 연결 해제 후에는 서버
-                  복구 점검이 필요합니다.
+                  잠시 멈출 때는 일시정지를 사용하세요.{" "}
+                  {external
+                    ? "연결 해제 후에는 서버 복구 점검이 필요합니다."
+                    : "연결을 해제한 뒤에는 다시 연결 버튼으로 이어갈 수 있습니다."}
                 </p>
               )}
             </div>

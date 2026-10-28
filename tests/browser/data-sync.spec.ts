@@ -168,7 +168,7 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     .getByRole("button", { name: "연결 해제", exact: true })
     .click();
   await expect(settings.getByRole("note")).toContainText(
-    "다시 연결하려면 복구 점검이 필요합니다.",
+    "동기화 연결이 해제되어 있습니다.",
   );
   await expect(
     settings.getByRole("button", { name: "연결 저장", exact: true }),
@@ -184,6 +184,34 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     settings.getByRole("table", { name: "연결 검사 결과" }),
   ).toContainText("정상");
   expect(app.locals.sync.store(teamId).readLink().mode).toBe("disconnected");
+  const offlineMemo = randomUUID();
+  await post(page, `/teams/${teamId}/years/2026/memos`, {
+    id: offlineMemo,
+    title: "연결 해제 중 작성한 메모",
+  });
+  await settings
+    .getByRole("button", { name: "다시 연결", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "일시정지", exact: true }),
+  ).toBeEnabled();
+  await expect(settings.getByRole("note")).toHaveCount(0);
+  await settings
+    .getByRole("button", { name: "지금 동기화", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "지금 동기화", exact: true }),
+  ).toBeEnabled();
+  const shared = app.locals.sync.store(teamId).readState();
+  expect(
+    Object.values(shared.entities).some(
+      (record: any) =>
+        record.entity === "document" &&
+        record.key.at(-1) === offlineMemo &&
+        record.payload.title === "연결 해제 중 작성한 메모",
+    ),
+  ).toBeTruthy();
+  expect(app.locals.sync.store(teamId).readPending()).toHaveLength(0);
 });
 test.afterEach(async () => {
   await app.locals.sync?.close?.();

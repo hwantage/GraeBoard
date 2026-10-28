@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createApp } from "../server/app.mjs";
@@ -207,6 +208,164 @@ for (const worker of ["timeout", "exit"])
       );
     }
   });
+
+test("reconnect retries a concurrent document save and another SQLite writer before committing", async (t) => {
+  const f = await fixture(t);
+  const memoId = randomUUID(),
+    memoPath = `/teams/${f.teamId}/years/2026/memos/${memoId}`;
+  ok(
+    await f.api(`/teams/${f.teamId}/years/2026/memos`, {
+      id: memoId,
+      title: "before",
+    }),
+  );
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
+  const databasePath = f.db
+    .prepare("PRAGMA database_list")
+    .all()
+    .find((row) => row.name === "main").file;
+  let attempts = 0;
+  f.options.onReconnectPrepared = async ({ attempt }) => {
+    attempts++;
+    if (attempt === 0)
+      ok(
+        await f.api(
+          memoPath,
+          {
+            markdown: "saved during reconnection",
+            expectedRevision: 0,
+            operationId: randomUUID(),
+          },
+          "PUT",
+        ),
+      );
+    if (attempt === 1) {
+      const second = new DatabaseSync(databasePath);
+      try {
+        second
+          .prepare("UPDATE annual_memos SET title=? WHERE id=?")
+          .run("another handle", memoId);
+      } finally {
+        second.close();
+      }
+    }
+  };
+  ok(await f.api(`/teams/${f.teamId}/sync/reconnect`, {}));
+  assert.equal(attempts, 3);
+  const changes = f.store.readPending().flatMap((op) => op.changes);
+  const memo = changes.find(
+    (row) => row.entity === "document" && row.key.at(-1) === memoId,
+  );
+  assert.equal(memo.desired.markdown, "saved during reconnection");
+  assert.equal(memo.desired.title, "another handle");
+  assert.equal(f.store.readPending().length, 1);
+});
+
+test("reconnect rolls back failed capture and rejects recovery, foreign identity, busy leases and revoked managers", async (t) => {
+  const f = await fixture(t);
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
+  ok(await f.api("/cells/batch", f.command("offline edit")));
+  const before = f.store.readLink();
+  const reconnect = () => f.api(`/teams/${f.teamId}/sync/reconnect`, {});
+  f.db.exec(
+    "CREATE TEMP TRIGGER fail_reconnect BEFORE INSERT ON sync_outbox BEGIN SELECT RAISE(ABORT,'injected failure'); END",
+  );
+  assert.equal((await reconnect()).status, 500);
+  assert.deepEqual(f.store.readLink(), before);
+  assert.equal(f.store.readPending().length, 0);
+  assert.equal(getTask(f.db, f.task.id).cells.title.value, "offline edit");
+  f.db.exec("DROP TRIGGER fail_reconnect");
+  const originalFields = Object.fromEntries(
+    Object.entries(before).filter(([key]) => key !== "team_id"),
+  );
+  for (const patch of [
+    { mode: "recovery" },
+    { installation_id: randomUUID() },
+    { lease_owner: "another-writer", lease_until: Date.now() + 60000 },
+  ]) {
+    f.store.writeLink({ ...originalFields, ...patch });
+    assert.equal((await reconnect()).status, 409);
+    assert.equal(f.store.readPending().length, 0);
+  }
+  f.store.writeLink(originalFields);
+  f.options.onReconnectPrepared = () => {
+    f.db
+      .prepare("UPDATE users SET system_role='user' WHERE id=?")
+      .run(f.userId);
+    f.db
+      .prepare("UPDATE memberships SET role='member' WHERE user_id=?")
+      .run(f.userId);
+  };
+  assert.equal((await reconnect()).status, 403);
+  assert.equal(f.store.readLink().mode, "disconnected");
+  assert.equal(f.store.readPending().length, 0);
+  delete f.options.onReconnectPrepared;
+  f.db
+    .prepare("UPDATE memberships SET role='lead' WHERE user_id=?")
+    .run(f.userId);
+  ok(await reconnect());
+  assert.equal(f.store.readLink().mode, "active");
+  assert.equal(f.store.readPending().length, 1);
+});
+
+test("reconnect before initial publication preserves edits and waits for explicit initial publication", async (t) => {
+  const f = await fixture(t);
+  ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
+  ok(await f.api("/cells/batch", f.command("before initial publication")));
+  const pending = f.store.readPending();
+  const status = ok(await f.api(`/teams/${f.teamId}/sync/reconnect`, {}));
+  assert.equal(status.mode, "paused");
+  assert.equal(await f.transport.readHead(), null);
+  assert.deepEqual(f.store.readPending().slice(0, pending.length), pending);
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  assert.equal(f.store.readPending().length, 0);
+  assert.equal(
+    getTask(f.db, f.task.id).cells.title.value,
+    "before initial publication",
+  );
+});
+
+test("reconnect automatically publishes saved edits without a second run request", async (t) => {
+  const f = await fixture(t);
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
+  ok(await f.api("/cells/batch", f.command("automatically published")));
+  f.options.schedule = true;
+  ok(await f.api(`/teams/${f.teamId}/sync/reconnect`, {}));
+  await until(
+    () =>
+      f.store.readPending().length === 0 &&
+      Object.values(f.store.readState().entities).some(
+        (row) =>
+          row.entity === "cell" &&
+          row.payload.value === "automatically published",
+      ),
+    "Reconnect must schedule the real Git runner without another UI action",
+  );
+  assert.equal(await f.transport.readHead(), f.store.readLink().canonical_head);
+});
+
+test("reconnect under continued edits stays disconnected and can be retried without losing input", async (t) => {
+  const f = await fixture(t);
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  ok(await f.api(`/teams/${f.teamId}/sync/disconnect`, {}));
+  f.options.onReconnectPrepared = async ({ attempt }) => {
+    ok(await f.api("/cells/batch", f.command(`concurrent edit ${attempt}`)));
+  };
+  const result = await f.api(`/teams/${f.teamId}/sync/reconnect`, {});
+  assert.equal(result.status, 409);
+  assert.match(result.data.error, /다른 사용자가 자료를 저장 중/);
+  assert.equal(f.store.readLink().mode, "disconnected");
+  assert.equal(f.store.readPending().length, 0);
+  assert.equal(getTask(f.db, f.task.id).cells.title.value, "concurrent edit 2");
+  delete f.options.onReconnectPrepared;
+  ok(await f.api(`/teams/${f.teamId}/sync/reconnect`, {}));
+  await f.app.locals.sync.get(f.teamId).run();
+  assert.equal(f.store.readPending().length, 0);
+  assert.equal(getTask(f.db, f.task.id).cells.title.value, "concurrent edit 2");
+});
 
 test("M10 a pending save replaces the later periodic deadline and publishes without a manual run", async (t) => {
   const f = await fixture(t);

@@ -372,6 +372,90 @@ export function createNodeSync({
     }
     return background;
   }
+  async function reconnect(teamId, actorRef, beforeCommit = () => {}) {
+    const raw = store(teamId);
+    const assertReconnect = () => {
+      const link = raw.readLink();
+      requireThat(!stopped, 409, "동기화 서버가 종료 중입니다.");
+      requireThat(
+        link?.mode === "disconnected",
+        409,
+        "연결 상태가 변경되었습니다. 새로고침한 뒤 확인하세요.",
+      );
+      requireThat(
+        link.installation_id === installationId,
+        409,
+        "서버 식별자가 변경되었습니다. 관리자에게 복구 점검을 요청하세요.",
+      );
+      requireThat(
+        !link.lease_owner,
+        409,
+        "이전 동기화가 마무리 중입니다. 잠시 후 다시 연결하세요.",
+      );
+      requireThat(
+        !db
+          .prepare(
+            "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
+          )
+          .get(teamId),
+        409,
+        "정리·백업 작업이 진행 중입니다. 완료 후 다시 연결하세요.",
+      );
+      return link;
+    };
+    assertReconnect();
+    // Resolve the existing profile before changing state, without creating a new
+    // runner/capture hook or resetting the canonical cursor and pending IDs.
+    get(teamId);
+    const revision = () =>
+      JSON.stringify([
+        db.prepare("SELECT total_changes() AS n").get().n,
+        db.prepare("PRAGMA data_version").get().data_version,
+      ]);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const originalRevision = revision();
+      const prepared = await getBackground().compute({
+        kind: "reconnect",
+        teamId,
+        actorRef,
+      });
+      await options.onReconnectPrepared?.({ attempt });
+      beforeCommit();
+      try {
+        capture.without(() =>
+          transaction(db, () => {
+            assertReconnect();
+            assertSnapshotGuard(db, teamId, prepared.guard);
+            // Disconnected writes are not in P. Detect changes to documents and
+            // other domains as well as tasks, including writes by another handle.
+            if (revision() !== originalRevision)
+              throw Object.assign(
+                new Error("Local data changed during reconnection"),
+                { code: "SYNC_SNAPSHOT_CHANGED" },
+              );
+            if (prepared.operation) raw.enqueue(prepared.operation);
+            raw.writeLink({
+              mode: prepared.link.canonical_head ? "active" : "paused",
+              generation: prepared.link.generation + 1,
+              remote_status: null,
+              last_error: null,
+            });
+          }),
+        );
+      } catch (error) {
+        if (error.code !== "SYNC_SNAPSHOT_CHANGED") throw error;
+        if (attempt < 2) continue;
+        requireThat(
+          false,
+          409,
+          "다른 사용자가 자료를 저장 중입니다. 입력은 보존되어 있으니 잠시 후 다시 연결하세요.",
+        );
+      }
+      capture.refresh();
+      schedule(teamId, 100);
+      return;
+    }
+  }
   async function resolveConflict(teamId, request, beforeCommit = () => {}) {
     const raw = store(teamId);
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -548,6 +632,7 @@ export function createNodeSync({
     store,
     get,
     resolveConflict,
+    reconnect,
     capture,
     safeProfile,
     schedule,
@@ -584,6 +669,9 @@ export function installSyncRoutes(
       siteId: link.installation_id,
       siteName: "내부 서버",
       profileId: link.profile_id,
+      canReconnect:
+        link.mode === "disconnected" &&
+        link.installation_id === sync.installationId,
       canonicalHead: link.canonical_head,
       pending: db
         .prepare(
@@ -770,6 +858,14 @@ export function installSyncRoutes(
   app.get("/api/teams/:id/sync", (req, res) => {
     teamAccess(req.user, id(req));
     res.json(status(id(req)));
+  });
+  app.post("/api/teams/:id/sync/reconnect", async (req, res) => {
+    const teamId = id(req);
+    managedTeam(req.user, teamId);
+    await sync.reconnect(teamId, req.user.id, () =>
+      managedTeam(refreshUser(req), teamId),
+    );
+    res.json(status(teamId));
   });
   app.post("/api/teams/:id/sync/check", async (req, res) => {
     managedTeam(req.user, id(req));

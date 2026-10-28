@@ -56,6 +56,46 @@ function snapshot(teamId, work) {
 }
 
 function compute(request) {
+  if (request.kind === "reconnect")
+    return snapshot(request.teamId, ({ store, guard, link }) => {
+      requireThat(
+        link.mode === "disconnected",
+        409,
+        "연결 상태가 변경되었습니다.",
+      );
+      const pending = store.readPending(),
+        before = project(store.readState(), pending).entities,
+        after = allEntities(db, link),
+        exclusions = store.readExclusions(link.installation_id);
+      for (const [key, previous] of Object.entries(before)) {
+        // Local retention and unused person references are not shared deletions.
+        // Keep already deleted records as tombstones when their rows are absent.
+        if (isExcluded(previous, before, exclusions)) delete after[key];
+        else if (!after[key])
+          after[key] =
+            previous.deleted || previous.entity === "person" ? previous : null;
+      }
+      const operation = makeOperation({
+        link,
+        actorRef: request.actorRef,
+        before,
+        after,
+        prior: Object.fromEntries(
+          pending.flatMap((op) =>
+            op.changes.map((change) => [
+              entityId(change.entity, change.key),
+              op.opId,
+            ]),
+          ),
+        ),
+      });
+      if (operation)
+        validateOperation(operation, {
+          teamId: link.team_id,
+          repoId: link.repo_id,
+        });
+      return { operation, guard, link };
+    });
   if (request.kind === "resolve")
     return snapshot(request.teamId, ({ store, guard, link }) => {
       const started = performance.now(),
