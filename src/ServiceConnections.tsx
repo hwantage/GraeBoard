@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  BookOpen,
+  Database,
+  GitBranch,
+  Image,
+  Plug,
+  Server,
+  ShieldCheck,
+} from "lucide-react";
 import { api, send, isTeamSite } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import Toast, { useToast } from "./Toast";
 import { busyProps } from "./busyProps";
+import type { Team } from "./types";
+import "./service-connections.css";
 import {
   ConnectionChecks,
   type ConnectionCheck,
@@ -23,8 +34,10 @@ type Service = {
 const resource = (value: ResourceProfile["database"]) =>
   typeof value === "string" ? value : value?.provider || "미설치";
 export default function ServiceConnections({
+  teams,
   onRefresh,
 }: {
+  teams: Team[];
   onRefresh: () => Promise<unknown>;
 }) {
   const [service, setService] = useState<Service | null>(null);
@@ -71,8 +84,11 @@ export default function ServiceConnections({
     }
   }
   return (
-    <section className="settings-section" aria-label="서비스 연결">
-      <div className="settings-team-header">
+    <section
+      className="settings-section service-connections"
+      aria-label="서비스 연결"
+    >
+      <div className="settings-team-header service-connections-header">
         <div>
           <h3>서비스 연결</h3>
           <p>
@@ -81,51 +97,8 @@ export default function ServiceConnections({
               : "공통 서비스와 설치된 팀 자원을 확인합니다."}
           </p>
         </div>
-      </div>
-      <ErrorNote error={error} />
-      <Toast message={message} />
-      {!service && !error && (
-        <LoadingState label="서비스 연결을 확인하고 있습니다." />
-      )}
-      {service && (
-        <>
-          <dl className="role-legend">
-            <div>
-              <dt>현재 서버</dt>
-              <dd>
-                {service.siteName} ·{" "}
-                {service.site === "internal" ? "내부" : "외부"}
-              </dd>
-            </div>
-            <div>
-              <dt>서비스 주소</dt>
-              <dd>{service.appOrigin || "미설정"}</dd>
-            </div>
-            <div>
-              <dt>{isTeamSite() ? "팀 데이터베이스" : "관리 데이터베이스"}</dt>
-              <dd>
-                {service.database.provider} · v{service.database.version} ·{" "}
-                {service.database.status}
-              </dd>
-            </div>
-            {service.site === "external" && (
-              <>
-                <div>
-                  <dt>Google Access</dt>
-                  <dd>{service.access?.configured ? "설정됨" : "미설정"}</dd>
-                </div>
-                <div>
-                  <dt>발급자</dt>
-                  <dd>{service.access?.issuer || "미설정"}</dd>
-                </div>
-                <div>
-                  <dt>앱 Audience</dt>
-                  <dd>{service.access?.audience || "미설정"}</dd>
-                </div>
-              </>
-            )}
-          </dl>
-          <div className="form-actions">
+        {service && (
+          <div className="service-connections-actions">
             <Button
               {...busyProps(busy)}
               onClick={() =>
@@ -136,6 +109,7 @@ export default function ServiceConnections({
                 )
               }
             >
+              <Plug size={15} aria-hidden="true" />
               공통 연결 검사
             </Button>
             <a
@@ -143,70 +117,178 @@ export default function ServiceConnections({
               target="_blank"
               rel="noreferrer"
             >
+              <BookOpen size={15} aria-hidden="true" />
               설치 안내
             </a>
+          </div>
+        )}
+      </div>
+      <ErrorNote error={error} />
+      <Toast message={message} />
+      {!service && !error && (
+        <LoadingState label="서비스 연결을 확인하고 있습니다." />
+      )}
+      {service && (
+        <>
+          <div className="service-connections-overview">
+            <div className="service-connections-heading">
+              <h4>
+                <Server size={16} aria-hidden="true" />
+                현재 서버
+              </h4>
+              <span className="settings-role-badge">
+                {service.site === "internal" ? "내부망" : "외부망"}
+              </span>
+            </div>
+            <dl className="service-connections-facts">
+              <div>
+                <dt>서버 이름</dt>
+                <dd>{service.siteName}</dd>
+              </div>
+              <div>
+                <dt>서비스 주소</dt>
+                <dd>{service.appOrigin || "미설정"}</dd>
+              </div>
+              <div>
+                <dt>
+                  {isTeamSite() ? "팀 데이터베이스" : "관리 데이터베이스"}
+                </dt>
+                <dd>
+                  <span>{service.database.provider}</span>
+                  <span className="service-connections-secondary">
+                    v{service.database.version}
+                  </span>
+                  <span
+                    className={`service-connections-state ${service.database.status === "ok" ? "is-ready" : ""}`}
+                  >
+                    {service.database.status === "ok"
+                      ? "정상"
+                      : service.database.status}
+                  </span>
+                </dd>
+              </div>
+              {service.site === "external" && (
+                <div>
+                  <dt>Google 로그인</dt>
+                  <dd>{service.access?.configured ? "설정됨" : "미설정"}</dd>
+                </div>
+              )}
+            </dl>
+            {service.site === "external" && (
+              <details className="service-connections-details">
+                <summary>
+                  <ShieldCheck size={14} aria-hidden="true" />
+                  로그인 연결 정보
+                </summary>
+                <dl className="service-connections-facts">
+                  <div>
+                    <dt>발급자</dt>
+                    <dd>{service.access?.issuer || "미설정"}</dd>
+                  </div>
+                  <div>
+                    <dt>앱 Audience</dt>
+                    <dd>{service.access?.audience || "미설정"}</dd>
+                  </div>
+                </dl>
+              </details>
+            )}
           </div>
           {busy && (
             <p className="field-help" role="status">
               처리 중…
             </p>
           )}
-          <ConnectionChecks result={check} />
-          <h4>설치된 팀 연결 프로필</h4>
-          <div className="settings-table-scroll">
-            <table className="settings-table">
-              <thead>
-                <tr>
-                  <th scope="col">프로필</th>
-                  <th scope="col">팀</th>
-                  <th scope="col">저장소</th>
-                  <th scope="col">자원</th>
-                </tr>
-              </thead>
-              <tbody>
-                {service.profiles.map((profile) => (
-                  <tr key={profile.profileId}>
-                    <th scope="row">
-                      {profile.name || profile.profileId}
-                      {service.site === "external" && (
-                        <div className="form-actions">
-                          <Button
-                            {...busyProps(busy, profile.ready === false)}
-                            onClick={() =>
-                              void action(
-                                "/admin/sync/import",
-                                {
-                                  profileId: profile.profileId,
-                                  teamId: profile.teamId,
-                                },
-                                "팀 가져오기를 실행했습니다.",
-                                true,
-                              )
-                            }
-                          >
-                            팀 가져오기
-                          </Button>
-                        </div>
-                      )}
-                    </th>
-                    <td>{profile.teamId}</td>
-                    <td>{profile.repository || "미설정"}</td>
-                    <td>
-                      {resource(profile.database)} · {resource(profile.images)}
-                    </td>
-                  </tr>
-                ))}
-                {!service.profiles.length && (
-                  <tr>
-                    <td colSpan={4} className="table-empty">
-                      설치된 팀 연결 프로필이 없습니다.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+          {check && (
+            <div className="service-connections-checks">
+              <ConnectionChecks result={check} />
+            </div>
+          )}
+          <div className="service-connections-profiles">
+            <div className="service-connections-heading">
+              <h4>
+                <GitBranch size={16} aria-hidden="true" />
+                설치된 팀 연결 프로필
+              </h4>
+              <span className="list-count">{service.profiles.length}</span>
+            </div>
+            {service.profiles.map((profile) => (
+              <article
+                className="service-connection-profile"
+                key={profile.profileId}
+                aria-label={profile.name || profile.profileId}
+              >
+                <div className="service-connection-profile-header">
+                  <div>
+                    <h5>{profile.name || profile.profileId}</h5>
+                    {teams.find((team) => team.id === profile.teamId)?.name && (
+                      <p>
+                        {teams.find((team) => team.id === profile.teamId)!.name}
+                      </p>
+                    )}
+                  </div>
+                  {service.site === "external" && (
+                    <Button
+                      {...busyProps(busy, profile.ready === false)}
+                      onClick={() =>
+                        void action(
+                          "/admin/sync/import",
+                          {
+                            profileId: profile.profileId,
+                            teamId: profile.teamId,
+                          },
+                          "팀 가져오기를 실행했습니다.",
+                          true,
+                        )
+                      }
+                    >
+                      팀 가져오기
+                    </Button>
+                  )}
+                </div>
+                <dl className="service-connections-facts">
+                  <div>
+                    <dt>Git 저장소</dt>
+                    <dd>{profile.repository || "미설정"}</dd>
+                  </div>
+                </dl>
+                <dl className="service-connection-resources">
+                  <div>
+                    <dt>
+                      <Database size={14} aria-hidden="true" />
+                      업무 데이터베이스
+                    </dt>
+                    <dd>{resource(profile.database)}</dd>
+                  </div>
+                  <div>
+                    <dt>
+                      <Image size={14} aria-hidden="true" />
+                      이미지 저장소
+                    </dt>
+                    <dd>{resource(profile.images)}</dd>
+                  </div>
+                </dl>
+                <details className="service-connections-details">
+                  <summary>연결 식별 정보</summary>
+                  <dl className="service-connections-facts">
+                    <div>
+                      <dt>프로필 ID</dt>
+                      <dd>{profile.profileId}</dd>
+                    </div>
+                    <div>
+                      <dt>팀 ID</dt>
+                      <dd>{profile.teamId}</dd>
+                    </div>
+                  </dl>
+                </details>
+              </article>
+            ))}
+            {!service.profiles.length && (
+              <p className="service-connections-empty">
+                설치된 팀 연결 프로필이 없습니다.
+              </p>
+            )}
           </div>
-          <details>
+          <details className="service-connections-details service-connections-help">
             <summary>공통 설정과 팀 설정</summary>
             <p className="field-help">
               외부 서비스 주소와 Google 로그인은 한 번 설정합니다. 각 팀에는

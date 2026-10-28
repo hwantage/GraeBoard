@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Plus, Users, History, ScrollText } from "lucide-react";
+import { Plus, Users, History, ScrollText, Plug } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
@@ -176,19 +176,6 @@ export default function SettingsPanel({
                   <button
                     type="button"
                     aria-current={
-                      selection.kind === "service-connections"
-                        ? "page"
-                        : undefined
-                    }
-                    onClick={() => select({ kind: "service-connections" })}
-                  >
-                    <span className="settings-nav-name">서비스 연결</span>
-                  </button>
-                </li>
-                <li>
-                  <button
-                    type="button"
-                    aria-current={
                       selection.kind === "users" ? "page" : undefined
                     }
                     onClick={() => select({ kind: "users" })}
@@ -219,6 +206,20 @@ export default function SettingsPanel({
                   >
                     <History size={15} aria-hidden="true" />
                     <span className="settings-nav-name">변경 이력 정리</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    aria-current={
+                      selection.kind === "service-connections"
+                        ? "page"
+                        : undefined
+                    }
+                    onClick={() => select({ kind: "service-connections" })}
+                  >
+                    <Plug size={15} aria-hidden="true" />
+                    <span className="settings-nav-name">서비스 연결</span>
                   </button>
                 </li>
               </ul>
@@ -386,7 +387,7 @@ export default function SettingsPanel({
             </>
           )}
           {isAdmin && selection.kind === "service-connections" && (
-            <ServiceConnections onRefresh={saved} />
+            <ServiceConnections teams={teams} onRefresh={saved} />
           )}
           {isAdmin && selection.kind === "audit" && (
             <SystemAuditLog users={users} teams={teams} />

@@ -1,0 +1,180 @@
+.settings-section.service-connections {
+  max-width: none;
+}
+.service-connections-header {
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.service-connections-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.service-connections-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.service-connections-overview {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.service-connections-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.service-connections .service-connections-heading h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.service-connections-heading > .settings-role-badge {
+  margin-left: auto;
+}
+.service-connections-heading svg,
+.service-connection-resources svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.service-connections-facts {
+  margin: 12px 0 0;
+}
+.service-connections-facts > div {
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr);
+  gap: 16px;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.service-connections-facts dt,
+.service-connections-secondary {
+  color: var(--muted);
+}
+.service-connections-facts dd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.service-connections-state {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #f0f3f5;
+  color: var(--muted);
+  font-size: 10px;
+}
+.service-connections-state.is-ready {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.service-connections-checks,
+.service-connections-profiles {
+  margin-top: 24px;
+}
+.service-connections-checks .settings-table caption {
+  padding-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+.service-connections-profiles > .service-connections-heading {
+  margin-bottom: 12px;
+}
+.service-connection-profile {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+.service-connection-profile-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.service-connection-profile-header > div {
+  min-width: 0;
+}
+.service-connections .service-connection-profile-header h5 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.service-connection-profile-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.service-connection-resources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f7f9f8;
+  font-size: 12px;
+}
+.service-connection-resources dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.service-connection-resources dd {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+.service-connections-details {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.service-connections-details summary {
+  width: fit-content;
+  color: var(--muted);
+  cursor: pointer;
+}
+.service-connections-details summary svg {
+  margin-right: 5px;
+  vertical-align: -2px;
+}
+.service-connections-details .service-connections-facts {
+  margin-top: 6px;
+}
+.service-connections-help {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.service-connections-empty {
+  margin: 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .service-connections-overview {
+    padding: 14px;
+  }
+  .service-connections-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .service-connection-resources {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
