@@ -11,7 +11,7 @@ import { openDatabase, getTask } from "../../server/db.mjs";
 import { unpack } from "../../shared/compact.js";
 import { todayKey } from "../../shared/domain.js";
 
-test("실제 Git 수신은 미저장 셀·문서·캘린더 입력을 보존한다", async ({
+test("실제 Git 수신은 미저장 입력을 보존하고 열린 꼬리 메모를 양방향 갱신한다", async ({
   page,
 }, info) => {
   test.setTimeout(60000);
@@ -100,6 +100,19 @@ test("실제 Git 수신은 미저장 셀·문서·캘린더 입력을 보존한�
       expectedRevision: 0,
       operationId: randomUUID(),
     });
+    const memoCollection = `/teams/${teamId}/years/${year}/memos`;
+    const memoIds = [randomUUID(), randomUUID()];
+    for (const [index, id] of memoIds.entries()) {
+      await request(local.base, memoCollection, "POST", {
+        id,
+        title: `Git 메모 ${index + 1}`,
+      });
+      await request(local.base, `${memoCollection}/${id}`, "PUT", {
+        markdown: `Git 메모 ${index + 1} 초기 본문\n`,
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      });
+    }
     const entryId = randomUUID();
     await request(local.base, "/calendar/entries", "POST", {
       id: entryId,
@@ -246,6 +259,50 @@ test("실제 Git 수신은 미저장 셀·문서·캘린더 입력을 보존한�
     await expect(documentDraft).toHaveValue(
       "첫 문단 Git 수신\n\n둘째 문단 미저장 입력\n",
     );
+
+    // Keep the same memo cards mounted on two real sites throughout Git
+    // publication/materialization. The first card is visible but unselected.
+    async function openMemos(base: string) {
+      const p = await page.context().newPage();
+      pages.push(p);
+      await p.setViewportSize({ width: 1900, height: 1000 });
+      await p.goto(base);
+      await p.getByLabel("팀 선택").selectOption(teamId);
+      const toggle = p.getByRole("button", { name: "꼬리 메모", exact: true });
+      await toggle.click();
+      const card = (index: number) =>
+        p.getByRole("tabpanel", { name: `Git 메모 ${index + 1}`, exact: true });
+      const rich = card(0).getByRole("textbox", {
+        name: "연간 업무 메모 리치 편집",
+      });
+      await expect(rich).toContainText("Git 메모 1 초기 본문");
+      await expect(
+        card(1).getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+      ).toContainText("Git 메모 2 초기 본문");
+      await p.getByRole("tab", { name: "Git 메모 2", exact: true }).click();
+      await expect(
+        p.getByRole("tab", { name: "Git 메모 1", exact: true }),
+      ).toHaveAttribute("aria-selected", "false");
+      return { rich, toggle };
+    }
+    const localMemo = await openMemos(local.base);
+    const peerMemo = await openMemos(peer.base);
+    const memoPath = `${memoCollection}/${memoIds[0]}`;
+    for (const [writer, reader, target, markdown] of [
+      [peer, local, localMemo, "상대 사이트에서 Git으로 받은 메모\n"],
+      [local, peer, peerMemo, "내부 사이트에서 Git으로 보낸 메모\n"],
+    ] as const) {
+      await request(writer.base, memoPath, "PUT", {
+        markdown,
+        expectedRevision: (await request(writer.base, memoPath)).revision,
+        operationId: randomUUID(),
+      });
+      await writer.app.locals.sync.get(teamId).run();
+      await reader.app.locals.sync.get(teamId).run({ receiveOnly: true });
+      expect((await request(reader.base, memoPath)).markdown).toBe(markdown);
+      await expect(target.rich).toContainText(markdown.trim());
+      await expect(target.toggle).toHaveAttribute("aria-expanded", "true");
+    }
     await info.attach("actual-git-draft-preservation", {
       contentType: "application/json",
       body: Buffer.from(
@@ -253,6 +310,7 @@ test("실제 Git 수신은 미저장 셀·문서·캘린더 입력을 보존한�
           beforeHead,
           receivedHead,
           draftsPreserved: ["cell", "document", "calendar"],
+          liveMemoDirections: ["peer-to-local", "local-to-peer"],
         }),
       ),
     });

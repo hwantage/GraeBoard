@@ -388,3 +388,110 @@ test("SIGTERM 재시작 뒤 두 탭의 셀·시트·문서 목록·본문·사�
     await server.dispose();
   }
 });
+
+for (const report of [false, true]) {
+  test(`${report ? "사본" : "원본"} 꼬리 메모: 선택하지 않은 열린 메모도 리치·원문에 자동 반영`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1900, height: 1000 });
+    await request(page, "/auth/login", "POST", {
+      username: "test@somansa.com",
+      password: "1234",
+    });
+    const boot = await request(page, "/bootstrap");
+    const team = await request(page, "/admin/teams", "POST", {
+      name: `메모 동시 표시 ${randomUUID().slice(0, 8)}`,
+      members: [{ userId: boot.user.id, role: "lead" }],
+    });
+    const task = (
+      await request(page, "/tasks", "POST", {
+        teamId: team.id,
+        year: 2026,
+        fields: { title: "메모 자동 반영 확인" },
+      })
+    ).task;
+    const reportId = report
+      ? (
+          await request(page, "/reports", "POST", {
+            teamId: team.id,
+            year: 2026,
+            name: "여러 메모 사본",
+            referenceDate: "2026-10-28",
+            view: defaultView(2026),
+            taskIds: [task.id],
+          })
+        ).id
+      : "";
+    const collection = reportId
+      ? `/reports/${reportId}/memos`
+      : `/teams/${team.id}/years/2026/memos`;
+    const ids = [randomUUID(), randomUUID()];
+    async function change(index: number, markdown: string) {
+      const path = `${collection}/${ids[index]}`;
+      const current = await request(page, path);
+      await request(page, path, "PUT", {
+        markdown,
+        expectedRevision: current.revision,
+        operationId: randomUUID(),
+      });
+      expect((await request(page, path)).markdown).toBe(markdown);
+    }
+    for (const [index, id] of ids.entries()) {
+      await request(page, collection, "POST", {
+        id,
+        title: `열린 메모 ${index + 1}`,
+      });
+      await change(index, `메모 ${index + 1} 원래 내용\n`);
+    }
+    await page.goto("/");
+    await page.getByLabel("팀 선택").selectOption(team.id);
+    if (reportId) {
+      const tab = page.getByRole("tab", {
+        name: "여러 메모 사본",
+        exact: true,
+      });
+      await tab.click();
+      await expect(tab).toHaveAttribute("aria-selected", "true");
+    }
+    const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+    const toggle = memos.getByRole("button", {
+      name: "꼬리 메모",
+      exact: true,
+    });
+    await toggle.click();
+    const card = (index: number) =>
+      memos.getByRole("tabpanel", {
+        name: `열린 메모 ${index + 1}`,
+        exact: true,
+      });
+    const tab = (index: number) =>
+      memos.getByRole("tab", { name: `열린 메모 ${index + 1}`, exact: true });
+    for (const index of [0, 1])
+      await expect(
+        card(index).getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+      ).toContainText(`메모 ${index + 1} 원래 내용`);
+    await card(0)
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    const source = card(0).getByRole("textbox", {
+      name: "연간 업무 메모 Markdown 원문",
+    });
+    const rich = card(1).getByRole("textbox", {
+      name: "연간 업무 메모 리치 편집",
+    });
+    await tab(1).click();
+    await expect(tab(0)).toHaveAttribute("aria-selected", "false");
+    // A peer save must reach the visible, unselected memo without a click,
+    // accordion toggle, refetch forced by the test, or page navigation.
+    await change(0, "선택하지 않은 원문 메모의 원격 변경\n");
+    await expect(source).toHaveValue("선택하지 않은 원문 메모의 원격 변경\n");
+    await tab(0).click();
+    await expect(tab(1)).toHaveAttribute("aria-selected", "false");
+    await change(1, "선택하지 않은 리치 메모의 원격 변경\n");
+    await expect(rich).toContainText("선택하지 않은 리치 메모의 원격 변경");
+    await change(1, "리치 메모의 두 번째 원격 변경\n");
+    await expect(rich).toContainText("리치 메모의 두 번째 원격 변경");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(source).toHaveValue("선택하지 않은 원문 메모의 원격 변경\n");
+  });
+}

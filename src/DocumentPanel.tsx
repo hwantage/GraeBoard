@@ -922,7 +922,8 @@ export default forwardRef<DocumentPanelHandle, Props>(
                         draftKey={props.draftKey(doc.id)}
                         label={label}
                         readOnly={readOnly}
-                        live={selected === doc.id}
+                        // Inline memo cards remain visible when another card is selected.
+                        live={!!props.inline || selected === doc.id}
                         onRemoteDocument={(result) => {
                           setDocuments((previous) =>
                             previous.map((item) =>
