@@ -176,7 +176,10 @@ export async function eventResponse(
                       "document",
                       {
                         ...payload,
-                        sync: {
+                        // Document GET/save responses use the entity revision.
+                        // Keep that sequence domain; pg:<cursor> only resumes
+                        // the transport and must not replace a document stamp.
+                        sync: payload.sync || {
                           session: "postgres",
                           sequence: snapshot.cursor,
                         },

@@ -711,6 +711,85 @@ test(
     await reader.cancel();
     assert.doesNotMatch(firstEvent, /access-revoked|rejected/);
     assert.match(firstEvent, /"event":"(ready|reset|cells)"/);
+    // Open editors compare snapshot/save sequence numbers with streamed updates.
+    // Exercise the real Edge path: entity revisions and event cursors differ.
+    const memoId = randomUUID();
+    const memoPath = `/teams/${teamId}/years/2026/memos`;
+    success(await outside("member-google", memoPath, { id: memoId }));
+    for (const path of [
+      `/tasks/${task.id}/documents/main`,
+      `${memoPath}/${memoId}`,
+    ]) {
+      await t.test(`document GET/save/SSE ordering: ${path}`, async () => {
+        const initial = success(await outside("member-google", path));
+        const stream = await gateway.fetch(
+          new Request(env.APP_ORIGIN + "/api/events", {
+            method: "POST",
+            signal: AbortSignal.timeout(10000),
+            headers: {
+              "test-google": "member-google",
+              "X-Requested-With": "WeeklyPlan",
+              "Content-Type": "application/json",
+              Cookie: cookies.get("member-google"),
+            },
+            body: JSON.stringify({
+              streams: [{ id: 2, path: `/api${path}/events` }],
+            }),
+          }),
+          env,
+        );
+        assert.equal(stream.status, 200);
+        const reader = stream.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        async function nextDocument() {
+          for (;;) {
+            const boundary = buffer.indexOf("\n\n");
+            if (boundary < 0) {
+              const chunk = await reader.read();
+              assert.equal(chunk.done, false, "document stream ended");
+              buffer += decoder.decode(chunk.value, { stream: true });
+              continue;
+            }
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const raw = frame.match(/^data: (.+)$/m)?.[1];
+            if (!raw) continue;
+            const event = JSON.parse(raw);
+            assert.equal(event.event, "document", raw);
+            return unpack(JSON.parse(event.data));
+          }
+        }
+        try {
+          const first = await nextDocument();
+          assert.deepEqual(first.sync, initial.sync);
+          let previous = initial;
+          for (const markdown of ["First remote edit", "Second remote edit"]) {
+            const saved = success(
+              await outside(
+                "member-google",
+                path,
+                {
+                  markdown,
+                  expectedRevision: previous.revision,
+                  operationId: randomUUID(),
+                },
+                "PUT",
+              ),
+            );
+            const received = await nextDocument();
+            assert.equal(received.markdown, markdown);
+            assert.equal(received.revision, saved.revision);
+            assert.deepEqual(received.sync, saved.sync);
+            assert.equal(received.sync.session, previous.sync.session);
+            assert.ok(received.sync.sequence > previous.sync.sequence);
+            previous = saved;
+          }
+        } finally {
+          await reader.cancel();
+        }
+      });
+    }
     // Conversion rechecks account membership with the same site session cookie.
     const png = await sharp({
       create: { width: 4, height: 4, channels: 4, background: "#207a70" },
