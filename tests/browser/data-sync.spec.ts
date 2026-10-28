@@ -159,6 +159,31 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   );
   expect(unpack(await restored.json()).documents[0].id).toBe(memoId);
   expect(await transports.local.readHead()).toBe(head);
+  await settings
+    .locator(".settings-nav")
+    .getByRole("button", { name: "동기화 검증팀" })
+    .click();
+  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings
+    .getByRole("button", { name: "연결 해제", exact: true })
+    .click();
+  await expect(settings.getByRole("note")).toContainText(
+    "다시 연결하려면 복구 점검이 필요합니다.",
+  );
+  await expect(
+    settings.getByRole("button", { name: "연결 저장", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", { name: "재개", exact: true }),
+  ).toHaveCount(0);
+  await expect(settings.getByLabel("연결 프로필")).toBeDisabled();
+  await settings
+    .getByRole("button", { name: "연결 검사", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("table", { name: "연결 검사 결과" }),
+  ).toContainText("정상");
+  expect(app.locals.sync.store(teamId).readLink().mode).toBe("disconnected");
 });
 test.afterEach(async () => {
   await app.locals.sync?.close?.();
@@ -484,7 +509,7 @@ test("Git 게시와 검증되지 않은 상대 상태를 실제 내부 반영으
   );
   await panel(page).getByRole("tab", { name: "동기화", exact: true }).click();
   const status = panel(page).getByLabel("동기화 상태", { exact: true });
-  await expect(status).toContainText("로컬 저장");
+  await expect(status).toContainText("내부 서버 저장");
   await expect(status).toContainText("Git 반영");
   await expect(status).toContainText("공유 대기 2건");
   await expect(status).toContainText("현재 확인 불가");

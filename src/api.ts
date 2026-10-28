@@ -1,4 +1,5 @@
 import { stringify, unpack } from "../shared/compact.js";
+import { apiErrorMessage } from "../shared/api-error-message.js";
 
 // Distinguish this page from other tabs, including tabs signed in as the same user.
 export const clientId = crypto.randomUUID();
@@ -71,19 +72,34 @@ export async function api<T = any>(
     path.startsWith("/tasks?") && (!options.method || options.method === "GET");
   const cached = cacheable ? taskResponses.get(path) : undefined;
   if (path.startsWith("/auth/")) taskResponses.clear();
-  const response = await fetch("/api" + path, {
-    credentials: "same-origin",
-    ...options,
-    headers: {
-      ...(!multipart && options.body
-        ? { "Content-Type": "application/json" }
-        : {}),
-      "X-Requested-With": "WeeklyPlan",
-      "X-Client-ID": clientId,
-      ...(cached ? { "If-None-Match": cached.etag } : {}),
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch("/api" + path, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(!multipart && options.body
+          ? { "Content-Type": "application/json" }
+          : {}),
+        "X-Requested-With": "WeeklyPlan",
+        "X-Client-ID": clientId,
+        ...(cached ? { "If-None-Match": cached.etag } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    if (options.signal?.aborted || (error as Error).name === "AbortError")
+      throw error;
+    throw new ApiError(
+      apiErrorMessage({
+        path,
+        method: options.method,
+        status: 0,
+        external: externalSite,
+      }),
+      0,
+    );
+  }
   const withCursor = (data: unknown) =>
     cacheable
       ? {
@@ -96,19 +112,45 @@ export async function api<T = any>(
     if (cacheable && [403, 404].includes(response.status))
       taskResponses.delete(path);
     let data: any;
+    let invalidResponse = false;
     try {
       data = unpack(await response.json());
     } catch {
-      data = { error: "서버에 연결할 수 없습니다." };
+      invalidResponse = true;
     }
     throw new ApiError(
-      data.error || "요청을 처리할 수 없습니다.",
+      apiErrorMessage({
+        path,
+        method: options.method,
+        status: response.status,
+        data,
+        headers: response.headers,
+        invalidResponse,
+        external: externalSite,
+      }),
       response.status,
-      data.details,
+      data?.details,
     );
   }
   if (response.headers.get("content-disposition")) return response as T;
-  const data = unpack(await response.json());
+  let data: any;
+  try {
+    data = unpack(await response.json());
+  } catch (error) {
+    if (options.signal?.aborted || (error as Error).name === "AbortError")
+      throw error;
+    throw new ApiError(
+      apiErrorMessage({
+        path,
+        method: options.method,
+        status: response.status,
+        headers: response.headers,
+        invalidResponse: true,
+        external: externalSite,
+      }),
+      response.status,
+    );
+  }
   if (["/bootstrap", "/setup"].includes(path)) {
     // Explicit host mode wins; authMode supports older deployed servers only.
     externalSite =

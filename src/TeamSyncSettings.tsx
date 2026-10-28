@@ -1,5 +1,6 @@
 import TeamSetupKey from "./TeamSetupKey";
 import { useEffect, useRef, useState } from "react";
+import { Plug, RefreshCw } from "lucide-react";
 import { api, send, isExternalSite } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
@@ -7,6 +8,7 @@ import Select from "./Select";
 import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
 import { canManageTeam } from "../shared/domain.js";
+import "./team-sync-settings.css";
 
 export type ResourceProfile = {
   profileId: string;
@@ -103,7 +105,7 @@ export function ConnectionChecks({
   if (!result) return null;
   return (
     <div className="settings-table-scroll">
-      <table className="settings-table">
+      <table className="settings-table connection-checks-table">
         <caption>연결 검사 결과</caption>
         <thead>
           <tr>
@@ -116,7 +118,7 @@ export function ConnectionChecks({
           {result.checks.map((check, index) => (
             <tr key={`${check.name}-${index}`}>
               <th scope="row">{check.name}</th>
-              <td>
+              <td className={`connection-check-result is-${check.status}`}>
                 {check.status === "ok"
                   ? "정상"
                   : check.status === "pending"
@@ -278,69 +280,112 @@ export default function TeamSyncSettings({
   );
   const linked = status && !["unlinked", "disconnected"].includes(status.mode);
   const initialized = !!status?.canonicalHead;
+  const external = isExternalSite();
+  const needsRecovery =
+    status?.mode === "disconnected" || status?.mode === "recovery";
   const replacing =
-    isExternalSite() &&
-    !!connection?.profileId &&
-    profileId !== connection.profileId;
+    external && !!connection?.profileId && profileId !== connection.profileId;
   return (
-    <section className="settings-section" aria-label={`${team.name} 동기화`}>
+    <section
+      className="settings-section team-sync-settings"
+      aria-label={`${team.name} 동기화`}
+    >
       <ErrorNote error={error} />
       {!status && !error && (
         <LoadingState label="동기화 상태를 확인하고 있습니다." />
       )}
       {status && (
         <>
-          <h4 className="list-heading">
-            {modes[status.mode] || status.mode}
-            <span className="list-count">
-              {" "}
-              · {status.siteName || "현재 서버"}
-            </span>
-          </h4>
-          <dl
-            className="role-legend"
-            aria-label="동기화 상태"
-            aria-live="polite"
-          >
-            <div>
-              <dt>로컬 저장</dt>
-              <dd>{syncTime(status.lastLocalSavedAt)}</dd>
+          <div className="team-sync-overview">
+            <div className="team-sync-heading">
+              <h4>
+                <RefreshCw size={16} aria-hidden="true" />
+                동기화 상태
+              </h4>
+              <span
+                className={`team-sync-mode ${needsRecovery || status.lastError ? "is-problem" : status.mode === "active" ? "is-active" : ""}`}
+              >
+                {modes[status.mode] || status.mode}
+              </span>
             </div>
-            <div>
-              <dt>Git 반영</dt>
-              <dd>
-                {syncTime(status.lastPublishedAt)} · 공유 대기 {status.pending}
-                건
-              </dd>
+            <p className="team-sync-site">
+              {status.siteName || "현재 서버"} ·{" "}
+              {external ? "외부망" : "내부망"}
+            </p>
+            <dl
+              className="team-sync-facts"
+              aria-label="동기화 상태"
+              aria-live="polite"
+            >
+              <div>
+                <dt>{external ? "외부 클라우드 저장" : "내부 서버 저장"}</dt>
+                <dd>{syncTime(status.lastLocalSavedAt)}</dd>
+              </div>
+              <div>
+                <dt>Git 반영</dt>
+                <dd>
+                  {syncTime(status.lastPublishedAt)}
+                  <span className="team-sync-secondary">
+                    공유 대기 {status.pending}건
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>마지막 수신</dt>
+                <dd>{syncTime(status.lastReceivedAt)}</dd>
+              </div>
+              <div>
+                <dt>{external ? "내부망 반영" : "외부망 반영"}</dt>
+                <dd>
+                  {status.remoteStatus?.verified &&
+                  status.remoteStatus.mode === "active" &&
+                  Date.now() - Date.parse(status.remoteStatus.observedAt) <
+                    180000
+                    ? `마지막 확인: ${syncTime(status.remoteStatus.observedAt)}`
+                    : status.remoteStatus
+                      ? `현재 확인 불가 · 마지막 상태: ${syncTime(status.remoteStatus.observedAt)}`
+                      : "확인 대기"}
+                </dd>
+              </div>
+              <div>
+                <dt>충돌 보관</dt>
+                <dd>{status.conflicts}건</dd>
+              </div>
+            </dl>
+            <ErrorNote error={status.lastError || ""} />
+          </div>
+          {needsRecovery && (
+            <div className="team-sync-recovery" role="note">
+              <strong>다시 연결하려면 복구 점검이 필요합니다.</strong>
+              <p>
+                {status.mode === "disconnected"
+                  ? "연결 해제 동안 저장한 변경을"
+                  : "저장 자료와 Git 공유본을"}{" "}
+                대조해야 하므로 프로필 저장이나 연결 검사만으로는 재연결되지
+                않습니다. 서버 관리자가 쓰기를 중지하고 백업한 뒤{" "}
+                {external ? "외부 서버" : "내부 서버"} 복구 점검을 완료하면, 이
+                화면에서 <b>재개</b>할 수 있습니다.
+              </p>
+              <p>
+                잠시 동기화를 멈출 때는 <b>일시정지 → 재개</b>를 사용하세요.
+              </p>
+              {user.systemRole === "admin" && (
+                <a
+                  href="/api/admin/service-connections/guide"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  설치 안내의 복구 절차 보기
+                </a>
+              )}
             </div>
-            <div>
-              <dt>마지막 수신</dt>
-              <dd>{syncTime(status.lastReceivedAt)}</dd>
-            </div>
-            <div>
-              <dt>상대 서버 반영</dt>
-              <dd>
-                {status.remoteStatus?.verified &&
-                status.remoteStatus.mode === "active" &&
-                Date.now() - Date.parse(status.remoteStatus.observedAt) < 180000
-                  ? `마지막 확인: ${syncTime(status.remoteStatus.observedAt)}`
-                  : status.remoteStatus
-                    ? `현재 확인 불가 · 마지막 상태: ${syncTime(status.remoteStatus.observedAt)}`
-                    : "확인 대기"}
-              </dd>
-            </div>
-            <div>
-              <dt>충돌 보관</dt>
-              <dd>{status.conflicts}건</dd>
-            </div>
-          </dl>
-          <ErrorNote error={status.lastError || ""} />
+          )}
           {admin && connection && (
             <form
-              className="settings-section"
+              className="team-sync-connection"
               onSubmit={async (event) => {
                 event.preventDefault();
-                if (busy || !profileId) return;
+                if (busy || !profileId || needsRecovery) return;
                 if (replacing) {
                   await migrateConnection();
                   return;
@@ -365,27 +410,52 @@ export default function TeamSyncSettings({
                 }
               }}
             >
-              <label>
-                연결 프로필
-                <Select
-                  aria-label="연결 프로필"
-                  value={profileId}
-                  {...busyProps(busy || !!switchJob?.hasMore)}
-                  onChange={(event) => {
-                    setProfileId(event.target.value);
-                    setCheck(null);
-                  }}
-                >
-                  <option value="">설치된 프로필 선택</option>
-                  {connection.profiles
-                    .filter((profile) => profile.teamId === team.id)
-                    .map((profile) => (
-                      <option key={profile.profileId} value={profile.profileId}>
-                        {profile.name || profile.profileId}
-                      </option>
-                    ))}
-                </Select>
-              </label>
+              <h4 className="team-sync-section-title">
+                <Plug size={16} aria-hidden="true" />
+                연결 설정
+              </h4>
+              <div className="team-sync-profile-controls">
+                <label>
+                  연결 프로필
+                  <Select
+                    aria-label="연결 프로필"
+                    value={profileId}
+                    {...busyProps(busy, !!switchJob?.hasMore || needsRecovery)}
+                    onChange={(event) => {
+                      setProfileId(event.target.value);
+                      setCheck(null);
+                    }}
+                  >
+                    <option value="">설치된 프로필 선택</option>
+                    {connection.profiles
+                      .filter((profile) => profile.teamId === team.id)
+                      .map((profile) => (
+                        <option
+                          key={profile.profileId}
+                          value={profile.profileId}
+                        >
+                          {profile.name || profile.profileId}
+                        </option>
+                      ))}
+                  </Select>
+                </label>
+                {!needsRecovery && (
+                  <Button
+                    type="submit"
+                    className="primary"
+                    {...busyProps(
+                      busy,
+                      !profileId ||
+                        profileId === connection.profileId ||
+                        !!switchJob?.hasMore ||
+                        (replacing &&
+                          selectedProfile?.replaces !== connection.profileId),
+                    )}
+                  >
+                    {replacing ? "자료 이관 후 연결 변경" : "연결 저장"}
+                  </Button>
+                )}
+              </div>
               {selectedProfile?.repository && (
                 <p className="field-help">
                   저장소: {selectedProfile.repository}
@@ -406,22 +476,6 @@ export default function TeamSyncSettings({
                   연결에서 설치 안내를 확인하세요.
                 </p>
               )}
-              <footer className="form-actions">
-                <Button
-                  type="submit"
-                  className="primary"
-                  {...busyProps(
-                    busy,
-                    !profileId ||
-                      profileId === connection.profileId ||
-                      !!switchJob?.hasMore ||
-                      (replacing &&
-                        selectedProfile?.replaces !== connection.profileId),
-                  )}
-                >
-                  {replacing ? "자료 이관 후 연결 변경" : "연결 저장"}
-                </Button>
-              </footer>
             </form>
           )}
           {admin && switchJob?.hasMore && (
@@ -446,70 +500,84 @@ export default function TeamSyncSettings({
             </div>
           )}
           {!switchJob?.hasMore && (
-            <div className="form-actions">
-              <Button
-                {...busyProps(busy, !status.profileId)}
-                onClick={() => void perform("check", "연결 검사를 마쳤습니다.")}
-              >
-                연결 검사
-              </Button>
-              {admin &&
-                !isExternalSite() &&
-                !initialized &&
-                status.mode !== "disconnected" && (
+            <div className="team-sync-actions-section">
+              <h4>연결 검사 및 실행</h4>
+              <div className="team-sync-actions">
+                <Button
+                  {...busyProps(busy, !status.profileId)}
+                  onClick={() =>
+                    void perform("check", "연결 검사를 마쳤습니다.")
+                  }
+                >
+                  연결 검사
+                </Button>
+                {admin &&
+                  !external &&
+                  !initialized &&
+                  status.mode !== "disconnected" && (
+                    <Button
+                      className="primary"
+                      {...busyProps(busy, !status.profileId || !check?.ready)}
+                      onClick={() =>
+                        void perform("enable", "초기 게시를 시작했습니다.")
+                      }
+                    >
+                      초기 게시
+                    </Button>
+                  )}
+                {linked && initialized && (
                   <Button
-                    className="primary"
-                    {...busyProps(busy, !status.profileId || !check?.ready)}
+                    {...busyProps(
+                      busy,
+                      status.mode === "recovery" || status.mode === "importing",
+                    )}
                     onClick={() =>
-                      void perform("enable", "초기 게시를 시작했습니다.")
+                      void perform("run", "동기화를 실행했습니다.")
                     }
                   >
-                    초기 게시
+                    지금 동기화
                   </Button>
                 )}
-              {linked && initialized && (
-                <Button
-                  {...busyProps(
-                    busy,
-                    status.mode === "recovery" || status.mode === "importing",
-                  )}
-                  onClick={() => void perform("run", "동기화를 실행했습니다.")}
-                >
-                  지금 동기화
-                </Button>
-              )}
-              {status.mode === "active" && (
-                <Button
-                  {...busyProps(busy)}
-                  onClick={() =>
-                    void perform("pause", "동기화를 일시정지했습니다.")
-                  }
-                >
-                  일시정지
-                </Button>
-              )}
-              {status.mode === "paused" && initialized && (
-                <Button
-                  {...busyProps(busy)}
-                  onClick={() =>
-                    void perform("resume", "동기화를 재개했습니다.")
-                  }
-                >
-                  재개
-                </Button>
-              )}
+                {status.mode === "active" && (
+                  <Button
+                    {...busyProps(busy)}
+                    onClick={() =>
+                      void perform("pause", "동기화를 일시정지했습니다.")
+                    }
+                  >
+                    일시정지
+                  </Button>
+                )}
+                {status.mode === "paused" && initialized && (
+                  <Button
+                    {...busyProps(busy)}
+                    onClick={() =>
+                      void perform("resume", "동기화를 재개했습니다.")
+                    }
+                  >
+                    재개
+                  </Button>
+                )}
+                {admin && linked && (
+                  <Button
+                    className="team-sync-disconnect"
+                    {...busyProps(busy)}
+                    onClick={() =>
+                      void perform(
+                        "disconnect",
+                        "미전송 변경과 충돌을 보존하고 연결을 해제했습니다.",
+                      )
+                    }
+                  >
+                    연결 해제
+                  </Button>
+                )}
+              </div>
               {admin && linked && (
-                <Button
-                  {...busyProps(busy)}
-                  onClick={() =>
-                    void perform(
-                      "disconnect",
-                      "미전송 변경과 충돌을 보존하고 연결을 해제했습니다.",
-                    )
-                  }
-                >
-                  연결 해제
-                </Button>
+                <p className="field-help">
+                  잠시 멈출 때는 일시정지를 사용하세요. 연결 해제 후에는 서버
+                  복구 점검이 필요합니다.
+                </p>
               )}
             </div>
           )}
@@ -519,7 +587,7 @@ export default function TeamSyncSettings({
             </p>
           )}
           <ConnectionChecks result={check} />
-          {!isExternalSite() && user.teamRoles[team.id] === "lead" && (
+          {!external && user.teamRoles[team.id] === "lead" && (
             <TeamSetupKey
               key={team.id}
               teamId={team.id}
