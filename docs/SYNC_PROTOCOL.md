@@ -32,7 +32,21 @@ receipt에는 `opId`, `payloadHash`, `result`, `conflictId`, `outputTokens`를 �
 
 팀 이름·업무 설정, 사람의 UUID·표시 이름, 업무, 셀, 공통 서식, 문서, 원본·사본 메모, 사본 표, 개인·공용 일정, 태그, 주간 할 일·가져오기 기준, 공용 필터, 참조 문서 이미지를 공유합니다. 사본 표는 압축 BLOB 바이트 대신 정규화한 내용으로 다룹니다. 본문 참조는 최신 관계형 참조를 사용합니다.
 
-사용자 비밀번호·세션·로그인 이름·활성 여부·시스템 역할·팀 권한, 개인 보기·개인 필터·현재 필터·캘린더 요일 설정, 자격증명, 기존 감사 로그·API 재시도 캐시는 동기화 대상이 아닙니다. 표시용 사람 참조는 로그인 권한을 주지 않습니다.
+업무 `sync-v1`에는 사용자 비밀번호·세션·로그인 이메일·활성 여부·시스템 역할·팀 권한, 개인 보기·개인 필터·현재 필터·캘린더 요일 설정, 자격증명, 기존 감사 로그·API 재시도 캐시를 포함하지 않습니다. 해당 팀의 이름·이메일·활성 상태·팀 역할은 아래 별도 구성원 브랜치로 내부에서 외부에 전달합니다. 업무의 표시용 사람 참조 자체는 로그인 권한을 주지 않습니다.
+
+## Git 브랜치별 역할
+
+모두 팀 전용 비공개 **데이터 저장소**의 브랜치이며 앱 소스·배포 브랜치와 분리합니다.
+
+| 브랜치 | 전달 방향 | 내용 |
+| --- | --- | --- |
+| `sync-v1` | 내부 ↔ 외부 | 업무·문서·메모·이미지의 확정 이력 |
+| `sync-directory/<내부 설치 UUID>` | 내부 → 외부 | 해당 팀 구성원의 UUID·이름·이메일·활성 상태·팀 역할 |
+| `sync-setup/<내부 설치 UUID>` | 내부 → 외부 | 팀장 연결 키 해시·유효기간·폐기 상태 |
+| `sync-setup-status/<외부 설치 UUID>` | 외부 → 내부 | 키의 반영·사용 확인, Google 신원 제외 |
+| `sync-status/<설치 UUID>` | 각 사이트 → 상대 | 적용 head·모드·확인 시각 |
+
+비밀번호·내부 세션·전체 시스템 관리자 권한은 전달하지 않습니다. Google 신원·외부 연결 승인·외부 접속 세션은 외부 DB에만 저장합니다. 키 원문을 Git에 넣지 않으며 [연결 키 저장 계약](DATA_FORMAT.md#팀별-외부-사이트-계정과-승인)을 따릅니다.
 
 ## 결정적 병합과 충돌
 
@@ -46,11 +60,13 @@ Markdown은 같은 삽입점의 다른 삽입과 겹치는 변경을 충돌로 �
 
 ## Git 전달과 적용 확인
 
-내부는 앱 전용 저장소의 Git CLI를, 외부 Worker는 GitHub Git Data API를 사용합니다. 발신자는 관찰한 head 하나만 부모로 후보를 만들고 강제 갱신 없이 게시합니다. 경합하면 최신 head를 받아 동일한 불변 명령으로 다시 계산합니다. push 응답이 사라지면 원격 이력과 receipt를 대조합니다.
+내부는 앱 전용 저장소의 Git CLI를, 외부 Edge는 GitHub Git Data API를 사용합니다. 발신자는 관찰한 head 하나만 부모로 후보를 만들고 강제 갱신 없이 게시합니다. 경합하면 최신 head를 받아 동일한 불변 명령으로 다시 계산합니다. push 응답이 사라지면 원격 이력과 receipt를 대조합니다.
 
 업무 이력과 별도로 `sync-status/<installationId>` 브랜치에 적용한 canonical head·사이트·writer 세대·모드·확인 시각을 게시합니다. 상태 브랜치는 reducer 입력이 아니며 상태 갱신을 보고 다시 상태를 게시하지 않습니다. 상태의 ancestry와 처리 결과가 맞을 때만 반대쪽 적용을 확인합니다. 과거 확인은 현재도 내부 서버가 실행 중임을 보장하지 않습니다.
 
-내부 기본 수신 주기는 약 60초이고 외부는 1분 Cron입니다. 외부 진입·포커스 복귀·편집 시작의 최신화는 지연을 줄이는 보조 수단이며 optimistic revision 검사와 충돌 처리를 대체하지 않습니다. 외부 게시 주기가 이미 미전송 목록을 읽은 뒤 들어온 마지막 저장은 그 주기에 포함되지 않을 수 있습니다. 해당 P는 보존되고 후속 저장 요청 또는 다음 Cron에서 다시 게시를 시도합니다. 진행 중 게시가 끝났다는 이유만으로 추가 주기를 자동 예약하지 않습니다.
+내부 기본 수신 주기는 약 60초이고 외부는 gateway가 Edge를 호출하는 1분 Cron입니다. 내부 저장 후에는 약 1.5초 뒤 게시를 예약합니다. 외부는 첫 미전송 저장부터 2초를 모으고 자동 게시 시도 사이에 최소 5초 간격을 둡니다. 외부 진입·포커스 복귀·편집 시작의 최신화는 지연을 줄이는 보조 수단이며 optimistic revision 검사와 충돌 처리를 대체하지 않습니다. 외부 게시 주기가 이미 미전송 목록을 읽은 뒤 들어온 마지막 저장은 그 주기에 포함되지 않을 수 있습니다. 해당 P는 보존되고 후속 저장 요청 또는 다음 Cron에서 다시 게시를 시도합니다. 진행 중 게시가 끝났다는 이유만으로 추가 주기를 자동 예약하지 않습니다.
+
+Git 수신으로 상대 DB가 바뀌면 그 사이트의 기존 SSE 경로가 열린 표·문서·메모에 전달합니다. 사이트 간 브라우저를 직접 연결하지 않습니다. 같은 사이트 SSE 지연과 Git 전달 지연은 별도로 측정합니다. 상단의 상대 반영 확인은 서버의 적용 상태이며 모든 브라우저의 렌더링 완료 응답이 아닙니다. 문서 본문의 버전과 SSE 재연결 커서는 [실시간 동기화 계약](DATA_FORMAT.md#실시간-동기화)을 따릅니다.
 
 ## 최초 게시·checkpoint·복구
 
@@ -90,9 +106,9 @@ SQLite 정리의 감사 이력 조회는 쓰기 트랜잭션 밖에서 100행씩
 
 ## PostgreSQL 업무 저장소와 외부 실행 자원 경계
 
-프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 Node와 Worker 모두 같은 `RequestContext.data`·`capacityLimits(env)`를 통해 상태·pending 4 MiB 및 공유 엔티티 12,000개 상한을 적용합니다. 두 호스트의 쓰기는 DB 크기와 commit 전 상태를 검사합니다. 외부 Worker 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 Node PG나 Worker의 지원 규모를 뜻하지 않습니다.
+프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 Node와 Edge 모두 같은 `RequestContext.data`·`capacityLimits(env)`를 통해 상태·pending 4 MiB 및 공유 엔티티 12,000개 상한을 적용합니다. 두 호스트의 쓰기는 DB 크기와 commit 전 상태를 검사합니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 Node PG나 Edge의 지원 규모를 뜻하지 않습니다.
 
-`tests/worker-capacity.test.mjs`는 실제 workerd의 bootstrap과 후속 reducer를 측정하며, `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL Worker API가 같은 bare Git에 CLI와 GitHub Data API로 참여하도록 검증합니다. 전자는 실제 runtime과 크기 제한을, 후자는 엔진 간 자료·이미지·경합·복구를 검증합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-postgresql-업무-저장소의-한도와-worker-검증-범위)에 기록합니다.
+`tests/worker-capacity.test.mjs`는 실제 workerd의 bootstrap과 후속 reducer를 측정하며, `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL Worker API가 같은 bare Git에 CLI와 GitHub Data API로 참여하도록 검증합니다. 전자는 Cloudflare workerd 호환 경로와 크기 제한을, 후자는 엔진 간 자료·이미지·경합·복구를 검증합니다. 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
 
 ## 팀 구성원 단방향 브랜치
 

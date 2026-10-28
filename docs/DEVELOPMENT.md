@@ -1,6 +1,6 @@
 # 그래보드 개발 안내
 
-[처음으로](../README.md) · [사용 안내](USER_GUIDE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [프로젝트 작업 규칙](../AGENTS.md)
+[처음으로](../README.md) · [구성도](ARCHITECTURE.md) · [사용 안내](USER_GUIDE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [프로젝트 작업 규칙](../AGENTS.md)
 
 그래보드는 실제 운영 중입니다. 개발·테스트 환경은 운영 DB와 문서 이미지 경로를 분리하고, 기능 변경 시 기존 운영 데이터와 저장 형식의 호환성을 확인합니다. 이 문서는 현재 저장소의 구현을 설명하며 실제 서버에 배포된 커밋·Node.js·DB 버전은 배포 전에 별도로 확인합니다.
 
@@ -49,10 +49,14 @@
 | `server/cell-events.mjs`                                                                                                                               | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사            |
 | `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`                                                  | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구    |
 | `server/cell-operations.mjs`                                                                                                                           | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성         |
+| `edge/main.mjs`, `edge/handler.mjs`, `edge/resources.mjs` | Deno 진입점·PG pool·gateway 인증·R2/Images 어댑터 |
+| `worker/entry.mjs`, `worker/events.mjs`, `worker/site-auth.mjs`, `worker/sync.mjs` | Edge에서 재사용하는 업무 API·SSE·계정 연결·Git 동기화 |
+| `worker/gateway.mjs`, `worker/forwarder.mjs`, `functions/[[path]].js` | Cloudflare 진입·정적 파일·이미지 자원·기존 binding 전달 |
+| `wrangler.gateway.jsonc`, `wrangler.forwarder.jsonc`, `supabase/config.toml` | 현재 외부 실행 환경별 배포 설정 |
 | `scripts/`                                                                                                                                             | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지                  |
 | `tests/`                                                                                                                                               | API·권한·동시 수정·이관·백업·브라우저 검증                         |
 
-프런트엔드는 React·TypeScript·Vite, API는 Express, 저장소는 Node 내장 SQLite를 사용합니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
+프런트엔드는 React·TypeScript·Vite를 사용합니다. 기본 내부 API는 Express·Node 내장 SQLite이고, 외부 API는 Supabase Edge·PostgreSQL입니다. `worker/`의 공통 업무 코드가 Cloudflare에서 실행된다는 뜻은 아닙니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
 
 ## 개발 실행
 
@@ -230,7 +234,9 @@ XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파
 - `#` 다음 여섯 자리 이슈 번호의 Redmine 링크는 현재 `shared/domain.js`의 `textLinks`에서 사내 주소를 사용합니다. 다른 설치처에 맞출 때 링크 규칙과 `tests/text-links.test.mjs`를 함께 수정합니다.
 - GraeBoard는 표시 브랜드입니다. DB 경로, 세션 쿠키, 쓰기 요청 헤더, 클립보드 MIME과 JSON 포맷 식별자는 `weekly-plan` 계열 값을 씁니다.
 
-여러 탭의 실시간 구독은 `StreamBroker`를 SharedWorker에서 실행합니다. 채널 집합·필요 커서가 같으면 살아 있는 POST 연결을 유지하고, 추가·제거 시 재연결하더라도 기존 문서·리소스의 커서를 보내 변경 없는 초기 프레임을 생략합니다. `createDocumentEvents`는 무구독 중 변경도 추적하며 본문 없이 revision·전송 순서만 최대 10,000개 키까지 보존합니다. 메타데이터 퇴출이나 서버 세대 변경은 최신 스냅샷으로 복구합니다. 각 리스너는 자기 커서 이하의 재전송을 받지 않아 새 스냅샷을 과거 셀로 되돌리지 않습니다. 종료 사유 없는 `closed`와 `rejected` 5xx는 커서를 유지한 일시 종료로 처리하고, 백오프 동안 같은 연결의 정상 채널과 같은 청크의 후속 프레임은 계속 처리합니다. 사유 없는 부분 종료 대기 중 구독 추가·제거는 연결 재시도 시각에 반영합니다. `rejected` 5xx는 해당 채널에만 1.5~30초 백오프를 두며 기한 전 POST에서 제외합니다. 정상 채널·새 구독은 10ms 묶음 처리 후 연결하고, 별도 채널 타이머가 기한에 재연결을 예약합니다. 채널이 15초 이상 유지되면 해당 채널의 지연을 초기화합니다. EOF·네트워크·heartbeat 부재와 단독 `closed`는 기존 연결 단위 백오프를 쓰며 채널 지연과 독립적입니다. 마지막 구독 제거는 즉시 정리하고, 과거 커서로 새 리스너가 합류하면 재전송을 건너뛰지 않도록 먼저 연결을 끊습니다. `access-revoked`는 `{status}`를 전달하며 401은 세션 손실, 403·404는 권한 상실·삭제입니다. 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 401 이외의 `access-revoked` 또는 비재시도 `rejected`가 선행된 종료만 해당 구독의 영구 종료입니다. 모든 리스너가 떠나면 그 키를 제거해 다음 구독은 새 채널을 만듭니다. HTTP 400의 `rejectedIds`만 종료하고 정상 채널은 실패 백오프를 늘리지 않고 다시 연결합니다. 요청 수준 HTTP 401은 전체 연결을, 연결 중 `access-revoked {status:401}`은 해당 채널을 세션 종료로 분류합니다. 문서·리소스 화면은 세션 종료에서 스트림을 닫지 않으며 문서 편집을 권한·삭제 오류로 막지 않습니다. `components.tsx`의 초기 로그인과 재인증 성공은 `resumeSession()`을 호출합니다. 워커의 `resume` 또는 페이지 내 fallback 브로커의 `resume()`이 스트림 키 변화 없이 모든 탭의 세션 종료 채널을 새 ID·보존 커서로 재승인합니다. 구독 없는 로그인 화면도 워커에 신호를 보내고 확인 응답 후 임시 포트를 닫습니다. 세션 종료 채널이 없으면 재연결하지 않습니다. 셀 복구 등 새 스트림 추가·재합류에 의한 기존 재승인도 유지합니다. 반복 전송 실패는 1.5~30초 백오프하고, 셀 스냅샷 복구와 셀의 `rejected` 5xx도 SSE `ready`를 받기 전까지 1~30초 백오프를 유지합니다. 문서·리소스 구독의 비재시도 거부는 기존 접근 거부 처리로 정리하고, 5xx 복구는 브로커가 맡습니다. 워커 대기열 4MiB 초과·리스 만료는 페이지에 즉시 재구독을 요청합니다. 미지원 환경도 같은 브로커를 페이지 안에서 사용합니다. 탭은 `EventStream` 인터페이스를 유지하므로 셀·문서·목록의 기존 동기화 호출부를 재사용합니다. 배포 시 서버와 빌드 결과를 함께 갱신하고 기존 탭을 새로고침합니다. 서로 다른 빌드의 워커 URL은 별개이므로 이전 탭은 새 워커에 자동 합류하지 않습니다.
+여러 탭의 실시간 구독은 `StreamBroker`를 SharedWorker에서 실행합니다. 채널 집합·필요 커서가 같으면 살아 있는 POST 연결을 유지하고, 추가·제거 시 재연결하더라도 기존 문서·리소스의 커서를 보내 변경 없는 초기 프레임을 생략합니다. 내부 Node의 `createDocumentEvents`는 무구독 중 변경도 추적하며 본문 없이 revision·전송 순서만 최대 10,000개 키까지 보존합니다. 메타데이터 퇴출이나 서버 세대 변경은 최신 스냅샷으로 복구합니다. 각 리스너는 자기 커서 이하의 재전송을 받지 않아 새 스냅샷을 과거 셀로 되돌리지 않습니다. 종료 사유 없는 `closed`와 `rejected` 5xx는 커서를 유지한 일시 종료로 처리하고, 백오프 동안 같은 연결의 정상 채널과 같은 청크의 후속 프레임은 계속 처리합니다. 사유 없는 부분 종료 대기 중 구독 추가·제거는 연결 재시도 시각에 반영합니다. `rejected` 5xx는 해당 채널에만 1.5~30초 백오프를 두며 기한 전 POST에서 제외합니다. 정상 채널·새 구독은 10ms 묶음 처리 후 연결하고, 별도 채널 타이머가 기한에 재연결을 예약합니다. 채널이 15초 이상 유지되면 해당 채널의 지연을 초기화합니다. EOF·네트워크·heartbeat 부재와 단독 `closed`는 기존 연결 단위 백오프를 쓰며 채널 지연과 독립적입니다. 마지막 구독 제거는 즉시 정리하고, 과거 커서로 새 리스너가 합류하면 재전송을 건너뛰지 않도록 먼저 연결을 끊습니다. `access-revoked`는 `{status}`를 전달하며 401은 세션 손실, 403·404는 권한 상실·삭제입니다. 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 401 이외의 `access-revoked` 또는 비재시도 `rejected`가 선행된 종료만 해당 구독의 영구 종료입니다. 모든 리스너가 떠나면 그 키를 제거해 다음 구독은 새 채널을 만듭니다. HTTP 400의 `rejectedIds`만 종료하고 정상 채널은 실패 백오프를 늘리지 않고 다시 연결합니다. 요청 수준 HTTP 401은 전체 연결을, 연결 중 `access-revoked {status:401}`은 해당 채널을 세션 종료로 분류합니다. 문서·리소스 화면은 세션 종료에서 스트림을 닫지 않으며 문서 편집을 권한·삭제 오류로 막지 않습니다. `components.tsx`의 초기 로그인과 재인증 성공은 `resumeSession()`을 호출합니다. 워커의 `resume` 또는 페이지 내 fallback 브로커의 `resume()`이 스트림 키 변화 없이 모든 탭의 세션 종료 채널을 새 ID·보존 커서로 재승인합니다. 구독 없는 로그인 화면도 워커에 신호를 보내고 확인 응답 후 임시 포트를 닫습니다. 세션 종료 채널이 없으면 재연결하지 않습니다. 셀 복구 등 새 스트림 추가·재합류에 의한 기존 재승인도 유지합니다. 반복 전송 실패는 1.5~30초 백오프하고, 셀 스냅샷 복구와 셀의 `rejected` 5xx도 SSE `ready`를 받기 전까지 1~30초 백오프를 유지합니다. 문서·리소스 구독의 비재시도 거부는 기존 접근 거부 처리로 정리하고, 5xx 복구는 브로커가 맡습니다. 워커 대기열 4MiB 초과·리스 만료는 페이지에 즉시 재구독을 요청합니다. 미지원 환경도 같은 브로커를 페이지 안에서 사용합니다. 탭은 `EventStream` 인터페이스를 유지하므로 셀·문서·목록의 기존 동기화 호출부를 재사용합니다. 배포 시 서버와 빌드 결과를 함께 갱신하고 기존 탭을 새로고침합니다. 서로 다른 빌드의 워커 URL은 별개이므로 이전 탭은 새 워커에 자동 합류하지 않습니다.
+
+외부 문서의 GET·PUT·충돌 응답·SSE에는 같은 PG 문서 revision 기준의 `sync`를 사용합니다. SSE 전송 커서 `pg:<site_events cursor>`와 문서 `sync.sequence`는 서로 다른 순서이므로 비교하거나 덮어쓰지 않습니다. `worker/events.mjs`는 `payload.sync`를 보존합니다. 열린 연간 메모·업무 문서에서 변경을 누락하지 않도록 실제 Edge handler → PG 조회·저장·SSE 경로와 리치/Markdown 편집 화면을 함께 확인합니다. [실시간 동기화 계약](DATA_FORMAT.md#실시간-동기화)
 
 ## 검증
 
@@ -279,7 +285,7 @@ npm run licenses
 
 ## 외부 동기화 개발·검증
 
-[설치 안내](CLOUD_SETUP.md)와 [프로토콜](SYNC_PROTOCOL.md)을 기준으로 `server/sync/`, `server/storage/`, `worker/`를 함께 변경합니다. 내부 `transaction`은 동기 콜백만 허용하고, PG는 하나의 client에서 모든 await·COMMIT·rollback을 끝냅니다. Node의 timer는 readonly SQLite worker에서 Git·병합·해시·재투영을 수행하고 메인 쓰기 경계에서 현재 head·로컬 변경·L·작업 guard를 다시 검사합니다. 사이트 이벤트는 commit 뒤 기존 SSE 경로로 전달합니다.
+[설치 안내](CLOUD_SETUP.md)와 [프로토콜](SYNC_PROTOCOL.md)을 기준으로 `server/sync/`, `server/storage/`, `worker/`, `edge/`의 호출 경로를 함께 확인합니다. 내부 `transaction`은 동기 콜백만 허용하고, PG는 하나의 client에서 모든 await·COMMIT·rollback을 끝냅니다. Node의 timer는 readonly SQLite worker에서 Git·병합·해시·재투영을 수행하고 메인 쓰기 경계에서 현재 head·로컬 변경·L·작업 guard를 다시 검사합니다. 사이트 이벤트는 commit 뒤 기존 SSE 경로로 전달합니다.
 
 ```sh
 npm test
@@ -291,7 +297,7 @@ npm run test:e2e -- tests/browser/data-sync.spec.ts
 npm run performance:sync
 ```
 
-PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서는 사용할 PG 서버 바이너리가 없으면 관련 검사를 `skip`하고 성공 종료할 수 있으므로, 종료 코드만으로 PG 검증을 주장하지 않습니다. 릴리스 검증은 `TEST_PG_BIN=/absolute/PostgreSQL/bin npm run test:postgres`를 사용합니다. 이 명령은 `postgres`, `initdb`, `pg_ctl`을 먼저 실행 확인하고 하나라도 없거나 실행할 수 없으면 테스트를 시작하기 전에 실패합니다. 준비가 확인되면 같은 경로를 모든 테스트에 전달해 전체 단위·통합 검사를 실행하며, 최종 pass/fail/skip 수도 기록합니다. Worker API 테스트는 임시 control/team PG와 실제 JWT 검증, 대역 R2/Images/GitHub HTTP를 사용합니다. Git CLI 경합·복구 테스트는 임시 bare 저장소를 사용합니다. 실제 cloud 변환 품질·도메인/Access policy·rate limit·운영 DB는 별도 검증 대상입니다.
+PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서는 사용할 PG 서버 바이너리가 없으면 관련 검사를 `skip`하고 성공 종료할 수 있으므로, 종료 코드만으로 PG 검증을 주장하지 않습니다. 릴리스 검증은 `TEST_PG_BIN=/absolute/PostgreSQL/bin npm run test:postgres`를 사용합니다. 이 명령은 `postgres`, `initdb`, `pg_ctl`을 먼저 실행 확인하고 하나라도 없거나 실행할 수 없으면 테스트를 시작하기 전에 실패합니다. 준비가 확인되면 같은 경로를 모든 테스트에 전달해 전체 단위·통합 검사를 실행하며, 최종 pass/fail/skip 수도 기록합니다. 공통 외부 API 테스트는 임시 control/team PG와 실제 JWT 검증, 대역 R2/Images/GitHub HTTP를 사용합니다. Git CLI 경합·복구 테스트는 임시 bare 저장소를 사용합니다. 실제 cloud 변환 품질·도메인/Access policy·rate limit·운영 DB는 별도 검증 대상입니다.
 
 `performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
 
@@ -299,7 +305,7 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 
 ## 업무 저장소 계약
 
-Node와 Worker의 ordinary API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.
+Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.
 
 | 계약                                                     | 실제 명령 범위                                                                                                  |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -337,9 +343,9 @@ const app = createApp({
 
 이 예시에서 Node 계정·비밀번호·쿠키 세션·멤버십·시스템 감사 이력은 하나의 SQLite control DB에 남습니다. PostgreSQL에 계정·팀 권한을 복제하지 않으며 SQLite 멤버십 철회는 PG 업무 SSE에도 반영됩니다. bootstrap은 이 control 정보와 선택한 팀 DB의 현재 설정·연도를 조합합니다. 팀 이력 정리는 PG에서 수행하고 관리 감사 기록은 SQLite에 남기며, Node의 정리 미리보기 토큰은 서버 메모리에 보관합니다.
 
-Node PG와 외부 Worker는 같은 `RequestContext.data`와 `capacityLimits(env)`를 사용합니다. 두 호스트 모두 상태·pending **4 MiB**와 공유 엔티티 **12,000개**가 기본 상한이며 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`는 더 낮출 수만 있습니다. 쓰기 전 DB 용량 검사와 commit 전 상태 검사에서 이 한도를 적용합니다. 기본 SQLite 업무 경로의 10,000행 성능 시험이나 PG 어댑터 직접 호출 시험은 이 PG 업무 API가 10,000행을 지원한다는 근거가 아닙니다. [용량 범위](CLOUD_SETUP.md#15-postgresql-업무-저장소의-한도와-worker-검증-범위)를 함께 확인합니다.
+Node PG와 외부 Edge는 같은 `RequestContext.data`와 `capacityLimits(env)`를 사용합니다. 두 호스트 모두 상태·pending **4 MiB**와 공유 엔티티 **12,000개**가 기본 상한이며 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`는 더 낮출 수만 있습니다. 쓰기 전 DB 용량 검사와 commit 전 상태 검사에서 이 한도를 적용합니다. 기본 SQLite 업무 경로의 10,000행 성능 시험이나 PG 어댑터 직접 호출 시험은 이 PG 업무 API가 10,000행을 지원한다는 근거가 아닙니다. [용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)를 함께 확인합니다.
 
-이미지 변환과 저장소도 DB 엔진과 독립적입니다. 내부 Node는 sharp와 `FileImageStore`, 외부 Worker는 Cloudflare Images와 `R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. 다른 호스트 저장소가 필요하면 factory의 `imageStoreFor(teamId)` 포트에 `read/has/install/remove/validate/getObject` 계약을 갖춘 구현을 주입할 수 있습니다. Git 실행기 설정은 논리 팀 자료 이관과 별도로 관리합니다. 운영 중 DB를 설정 한 줄로 옮기거나 인증 자료를 자동 복제하는 기능은 아닙니다.
+이미지 변환과 저장소도 DB 엔진과 독립적입니다. 내부 Node는 sharp와 `FileImageStore`, 외부 Edge는 gateway의 Cloudflare Images와 `R2ImageStore` 자원 어댑터를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. 다른 호스트 저장소가 필요하면 factory의 `imageStoreFor(teamId)` 포트에 `read/has/install/remove/validate/getObject` 계약을 갖춘 구현을 주입할 수 있습니다. Git 실행기 설정은 논리 팀 자료 이관과 별도로 관리합니다. 운영 중 DB를 설정 한 줄로 옮기거나 인증 자료를 자동 복제하는 기능은 아닙니다.
 
 `tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 같은 서비스에 두 실제 엔진을 넣어 permission/CAS/replay/L/late rollback을 비교합니다. Node PG-only HTTP 검사는 SQLite에 업무/사본을 남기지 않으며 셀·문서·사본·팀 SSE와 멤버십 철회를 검사합니다. PG_CONTROL·R2·Git binding 없이 기본 파일 이미지 업로드→본문 저장→이미지 조회→JSON 반출과 관리 이력 정리도 검증합니다. SQLite 검사에는 반환값이 Promise로 바뀌지 않았는지, 저장 후 별도 연결에서 P와 본문이 동시에 보이는지, 커밋 전 실패에 이벤트가 없는지도 포함됩니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
 
@@ -349,11 +355,11 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 
 신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v31에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
 
-`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 Worker fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v3의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/Worker 빌드, 세 브라우저의 해당 흐름을 사용합니다. 실제 Google/Cloudflare/Supabase 배포 검증은 별도입니다.
+`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 외부 API fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v3의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/gateway/Edge/Pages 빌드, 세 브라우저의 해당 흐름을 사용합니다. `tests/team-site.test.mjs`의 Edge handler는 Node 테스트 프로세스에서 실행하므로 실제 Google/Cloudflare/Supabase 배포 및 Deno 실행 검증은 별도입니다.
 
 
 팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30 보존·원자적 v31 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
 
 외부 `Team.status`가 준비되지 않았으면 업무 조회 대신 가져오기 안내를 표시하고, 같은 팀의 상태가 active로 바뀌면 필터/보기/업무 조회를 다시 시작합니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
 
-배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, Worker는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.
+배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, 외부 API는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.

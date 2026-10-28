@@ -1,6 +1,6 @@
 # 외부 서비스와 팀 동기화 설치
 
-[운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [동기화 규약](SYNC_PROTOCOL.md)
+[구성도](ARCHITECTURE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [동기화 규약](SYNC_PROTOCOL.md)
 
 이 안내는 내부 Node/SQLite 서버와 외부 Supabase Edge Functions 서버를 연결하는 관리자를 위한 절차입니다. Cloudflare Pages 주소·Access Google 로그인·R2 이미지는 유지합니다. 운영 자원 생성·배포·운영 DB 변환은 대상과 점검 시간이 승인된 뒤 수행합니다. 개발 환경의 검증과 실제 클라우드 계정의 연결 검사는 서로 다른 단계입니다.
 
@@ -12,12 +12,12 @@ R2와 Images native binding은 gateway에 남습니다. Edge가 서버 전용 Se
 
 Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다.
 
-기존 설치 이전에는 **DB migration이 없습니다**. site v2·team v1, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 저장소 루트 `wrangler.jsonc`는 런타임 호환성 테스트용이며 운영 배포에 사용하지 않습니다.
+기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 이전할 때는 **DB migration이 없습니다**. site v2·team v1, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 저장소 루트 `wrangler.jsonc`는 런타임 호환성 테스트용이며 운영 배포에 사용하지 않습니다.
 
 인터넷에 연결된 운영자 환경에서 다음 순서로 배포합니다. 내부 Node 서버는 이 환경 파일을 읽지 않으며 GitHub만 접속합니다.
 
 1. Supabase 관리 토큰으로 CLI를 인증합니다. 프로젝트의 anon/publishable 키와 관리 토큰은 다릅니다. 토큰은 저장소에 포함하지 않는 파일 또는 운영자 환경 변수에 보관합니다.
-2. `npm run build`, `npm run build:worker -- --generate-only`, `npm run build:edge`를 실행합니다. Edge 빌드는 기존 API 모듈을 묶고 설치된 lockfile의 npm 버전을 고정합니다. 생성된 `supabase/functions/graeboard/index.mjs`는 커밋하지 않습니다.
+2. `npm run build`, `npm run build:edge`를 실행합니다. Edge 빌드는 기존 API 모듈을 묶고 설치된 lockfile의 npm 버전을 고정합니다. 생성된 `supabase/functions/graeboard/index.mjs`는 커밋하지 않습니다.
 3. `wrangler.gateway.jsonc`를 복사해 실제 Pages origin·팀 UUID·bucket·Edge URL·Worker 이름을 지정합니다. gateway를 배포하고 독립적인 난수 Secret 두 개를 등록합니다: `GRAEBOARD_GATEWAY_SECRET`(gateway → Edge), `GRAEBOARD_RESOURCE_SECRET`(Edge → R2/Images gateway). 둘 다 32바이트 이상의 난수를 사용합니다. gateway의 `workers.dev` 주소는 자원 호출용이며 일반 화면/API는 설정된 Pages origin만 허용합니다.
 4. Supabase Edge Secrets에 다음 값을 등록합니다. JSON 변수는 JSON 자체를 값으로 저장하며 역슬래시로 이중 escape하지 않습니다. `supabase secrets set --env-file 운영자전용파일 --project-ref 프로젝트ID`로 등록할 경우 `SYNC_PROFILES=[{"profileId":...}]`처럼 한 줄로 저장합니다. 관리 토큰을 함수 Secrets에 넣지 않습니다.
 
@@ -54,7 +54,7 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 외부 접속 주소는 팀별 Pages의 `https://프로젝트.pages.dev`를 사용할 수 있습니다. `functions/[[path]].js`가 모든 요청을 `GRAEBOARD_BACKEND` Service binding으로 gateway에 전달합니다. gateway는 API를 Supabase Edge Function으로 전달하고, 정적 파일도 Edge의 Access 검증 후 제공합니다. 브라우저의 주소·요청 본문·Access JWT·계정 쿠키·SSE 스트림은 그대로 유지합니다. `public/_routes.json`은 정적 파일도 이 경로를 거치게 합니다. 연결이 없으면 JSON 503을 반환하며 Pages의 정적 HTML로 대체하지 않습니다.
 
-팀이 추가되면 Pages·Worker·DB·bucket·Access 앱을 각각 준비합니다. 기존 자체 도메인에서 Worker에 직접 접속하는 배포도 유지합니다.
+팀이 추가되면 Pages·gateway·Supabase 프로젝트/Edge·bucket·Access 앱을 각각 준비합니다. 기존 자체 도메인으로 gateway에 직접 접속하는 배포도 유지합니다.
 
 내부 서버에는 팀별 Git 토큰만 등록하며 외부 DB 비밀번호·R2 키는 복사하지 않습니다. 자원 이용 조건은 [Supabase](https://supabase.com/pricing), [Cloudflare Workers](https://developers.cloudflare.com/workers/platform/pricing/), [R2](https://developers.cloudflare.com/r2/pricing/)에서 확인합니다.
 
@@ -204,7 +204,7 @@ Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General →
 
 Edge는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
-내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 Worker `SETUP_TOKEN` 등록은 필요하지 않습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
+내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 외부에 `SETUP_TOKEN`을 등록할 필요가 없습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
 
 이후 사용자는 Google 로그인 → 해당 팀의 사내 계정 선택 → 연결 신청 → 승인 대기 순서로 진행합니다. 팀장은 **설정 → 팀 → 구성원 → Google 계정 연결**에서 승인·거절·연결 해제를 처리합니다. 승인된 계정만 접속할 수 있으며 마지막으로 연결된 팀장의 연결은 다른 팀장을 연결하기 전까지 해제할 수 없습니다. 이름이나 이메일이 같다는 이유로 자동 연결하지 않습니다. 인증 신원은 검증된 Access의 `(issuer, subject)`에 연결하고 선택 세션도 그 신원에 묶습니다.
 
@@ -221,7 +221,6 @@ Edge는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검�
 ```sh
 npm ci --include=dev
 npm run build
-npm run build:worker -- --generate-only
 npm run build:edge
 npm run build:pages
 ```
@@ -232,6 +231,18 @@ npm run build:pages
 2. 빌드 명령은 `npm run build`, 출력은 `dist`, root directory는 저장소 루트, 빌드 변수는 `NODE_VERSION=22`입니다. Cloudflare가 루트 `functions/`를 별도로 빌드합니다. 루트 `wrangler.jsonc`는 런타임 테스트용이며 gateway에는 `wrangler.gateway.jsonc`에서 준비한 팀 설정을 사용합니다. Pages 설정은 대시보드에서 관리합니다. 여기에 `pages_build_output_dir`를 섞어 넣지 않습니다.
 3. 먼저 같은 브랜치로 Edge 함수와 gateway를 배포하고 Pages의 **Settings → Bindings → Service binding**에 `GRAEBOARD_BACKEND`를 등록해 그 Worker를 선택합니다. Pages에는 DB·Git 비밀을 복사하지 않습니다. Service binding 변경 후 Pages를 다시 배포합니다.
 4. Pages 전체 경로가 Worker로 전달되는지, Google 인증 전에는 화면·API·정적 파일이 거절되는지, 쿠키와 POST·이미지·SSE 응답이 유지되는지 확인합니다. Worker가 없는 초기 Pages 배포는 JSON 503이며 연동 완료 상태가 아닙니다.
+
+배포 대상은 서로 독립적입니다. **Pages의 Git 자동 빌드만으로 gateway의 정적 파일이나 Edge 함수가 갱신되지는 않습니다.**
+
+| 변경 내용 | 빌드·배포 대상 |
+| --- | --- |
+| `src/`, `public/` 화면·정적 자원 | `npm run build` → 해당 `dist/`를 포함한 gateway 배포. Pages의 경로 설정도 바뀌었다면 Pages 재배포 |
+| 공통 API·`worker/` 업무 구현·`edge/` | `npm run build:edge` → Supabase `graeboard` 함수 배포 |
+| `docs/CLOUD_SETUP.md` | 앱 내 설치 안내에 포함되므로 Edge 재빌드·배포 |
+| `worker/gateway.mjs`·gateway 변수·자원 binding·Cron | gateway 배포 및 해당 환경 설정 반영 |
+| `functions/`·Pages Service binding·Production branch | Pages 배포 및 연결 확인 |
+
+같은 변경에 여러 대상이 포함되면 함께 갱신하고 배포 커밋·함수 버전·Worker 버전을 운영 기록에 남깁니다. 이전 배포에서 전달 전용 Worker를 유지한다면 그 Service binding도 같은 gateway를 가리켜야 합니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
@@ -245,7 +256,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 6. 본문·이미지·팀 신원을 확인한 뒤 팀원에게 주소를 전달하고, 각자의 연결 신청을 팀장이 승인합니다. 역할은 사내에서 설정합니다.
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
 
-`로컬 저장`, `Git 반영`, `상대 반영 확인`은 서로 다른 단계입니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 현재 확인 불가로 표시합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
+`로컬 저장`, `Git 반영`, `상대 반영 확인`은 서로 다른 단계입니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 상대 반영 완료로 표시하지 않습니다. **동기화 확인 불가**는 현재 상태 조회 자체가 실패한 경우이므로 연결과 API 오류를 확인합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
 
 ## 10. 내부 서버 설정
 
@@ -280,6 +291,23 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 
 `GRAEBOARD_SYNC_DIR`은 내부 bare Git clone을 보관하는 상위 경로이며 기본값은 실행 디렉터리 기준 `data/sync`입니다. 운영에서는 `/srv/graeboard/data/sync`처럼 릴리스 밖 절대 경로를 사용합니다. 각 clone은 `<GRAEBOARD_SYNC_DIR>/<profileId>`에 만들어지므로 위 프로필의 경로는 `/srv/graeboard/data/sync/team-a-internal`입니다. 서버·백업·이관 실행 계정에 같은 설정, 디렉터리 권한, Git CLI 실행 PATH를 제공합니다. L로 회수한 이미지는 백업·이관 때 이 clone의 고정 Git head에서 읽으므로 임의로 지우거나 다른 릴리스의 상대 경로로 바꾸지 않습니다.
 
+### GitHub 프록시가 필요한 내부 환경
+
+앱의 Git CLI는 시스템·전역 Git 설정과 일반 프록시 환경 변수를 상속하지 않습니다. 터미널의 `git`이나 브라우저는 연결되지만 앱 동기화만 실패한다면 **앱 전용 clone의 로컬 설정**을 확인합니다. clone이 생성된 뒤 실제 경로와 승인된 GitHub용 프록시 주소로 설정합니다.
+
+```sh
+git -C /srv/graeboard/data/sync/team-a-internal config --local http.https://github.com/.proxy http://proxy.example.internal:8888
+git -C /srv/graeboard/data/sync/team-a-internal config --local --get http.https://github.com/.proxy
+```
+
+프록시 주소가 바뀌면 같은 항목을 갱신하고 연결 검사·동기화를 다시 확인합니다. 직접 GitHub 연결로 돌아갈 때는 해당 항목만 제거합니다.
+
+```sh
+git -C /srv/graeboard/data/sync/team-a-internal config --local --unset-all http.https://github.com/.proxy
+```
+
+토큰을 프록시 URL이나 Git config에 넣지 않습니다. 프록시 설정도 내부의 GitHub 전용 통신 범위를 유지하며 Supabase·R2 직접 접속을 열지 않습니다.
+
 ## 11. 연결 검사와 오류 진단
 
 | 화면·증상               | 먼저 확인할 것                                        | 보존할 상태                           |
@@ -291,8 +319,15 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 | 이미지 변환 실패        | `IMAGES` binding·사용량·입력 포맷/화소                | 문서 입력 보존 후 재업로드            |
 | Access 401              | 이 앱 AUD·정확한 발급자·로그인 만료                   | 다른 서비스 토큰 재사용 금지          |
 | Access는 통과했는데 403 | 사내 활성 계정·연결 승인·팀 역할                             | 조직 전체 사용자를 자동 추가하지 않음 |
+| Git 연결 시간 초과 | 앱 clone의 GitHub 프록시 주소·접속 허용·네트워크 | 미전송 내용과 clone 보존 |
+| JSON 대신 HTML / `Unexpected token '<'` | 실제 Production branch, Pages Functions와 gateway 연결 | DB를 초기화하지 않음 |
+| 외부 JSON 503 / 외부 서버 연결 실패 | Pages binding, gateway의 Edge URL·전달 Secret, Edge 로그 | 마지막 정상 자료·입력 보존 |
+| Google 로그인 대신 JSON 401 | 운영 주소 자체의 Access 보호와 issuer/AUD. 미리보기 wildcard만 설정했는지 확인 | 다른 앱 정책을 넓히지 않음 |
+| 표는 갱신되는데 열린 메모·문서가 그대로임 | 상대 DB 반영 여부, SSE 응답과 문서 `sync` 버전, API 배포 버전 | 미저장 입력 보존, 최초 가져오기 반복 금지 |
 | 오래된 내부 확인        | 내부 실행 상태·Git 통신·복구 모드                     | 마지막 확인과 현재 상태 구분          |
 | 복구 점검 필요          | 원격 이력 변경·DB 복사·restore 여부                   | 강제 push·새 genesis로 덮지 않음      |
+
+내부는 Git 연결을, 외부는 Edge의 DB·Git·gateway 자원 경로를 각각 검사합니다. 문서 자동 반영은 [Git 전달과 SSE의 구분](ARCHITECTURE.md#저장부터-열린-화면-반영까지)을 참고합니다.
 
 연결 검사는 PG에서 검사 쓰기를 롤백하고 R2에서 자신이 만든 임시 객체만 제거합니다. Git 검사도 실제 업무 이력을 수정하는 용도로 사용하지 않습니다. 초기 게시 대기·가져오기 대기는 정상 동기화 완료를 뜻하지 않습니다.
 
@@ -300,7 +335,7 @@ npm run sync:credential -- team-a-internal < /run/secrets/graeboard-team-a-token
 
 외부의 진입·포커스·편집 전 최신화는 팀별 30초 간격으로 원격 head를 확인하고 변경이 있을 때 수신합니다. 이 보조 요청은 상태 브랜치를 조회·게시하지 않으며 상태 확인은 Cron이 담당합니다. 따라서 여러 화면의 조회 횟수를 GitHub 전체 동기화 횟수로 늘리지 않습니다. 실제 GitHub 요청 한도·네트워크 지연은 운영 계정에서 별도 확인합니다.
 
-외부 저장 뒤의 자동 게시는 팀별 첫 미전송 변경이 저장된 시각부터 2초 동안 변경을 모으고, 이후 자동 게시 시도 사이에는 최소 5초 간격을 둡니다. 연속 저장이 첫 대기 시간을 계속 연장하지 않으며, 게시 시도 시각은 DB에 남아 다른 Worker 실행에서도 간격을 지킵니다. 네트워크 오류나 실행 소유권 충돌이 생겨도 미전송 변경은 유지합니다. Worker 종료로 대기 작업이 사라지면 다음 Cron이 처리합니다. 이미 진행 중인 게시가 미전송 목록을 읽은 뒤 저장된 마지막 변경도 그 주기에 포함되지 않고 후속 저장 또는 다음 1분 Cron 주기까지 남을 수 있습니다. 변경은 미전송 상태로 보존됩니다. Cron과 사용자가 직접 실행하는 동기화는 이 자동 게시 대기 시간을 적용하지 않습니다. 이 간격은 요청을 줄이기 위한 것으로 GitHub 계정의 요청 한도나 운영 환경의 지연을 보장하지 않습니다.
+외부 저장 뒤의 자동 게시는 팀별 첫 미전송 변경이 저장된 시각부터 2초 동안 변경을 모으고, 이후 자동 게시 시도 사이에는 최소 5초 간격을 둡니다. 연속 저장이 첫 대기 시간을 계속 연장하지 않으며, 게시 시도 시각은 DB에 남아 다른 Edge 실행에서도 간격을 지킵니다. 네트워크 오류나 실행 소유권 충돌이 생겨도 미전송 변경은 유지합니다. Edge 실행 종료로 대기 작업이 사라지면 다음 Cron이 처리합니다. 이미 진행 중인 게시가 미전송 목록을 읽은 뒤 저장된 마지막 변경도 그 주기에 포함되지 않고 후속 저장 또는 다음 1분 Cron 주기까지 남을 수 있습니다. 변경은 미전송 상태로 보존됩니다. Cron과 사용자가 직접 실행하는 동기화는 이 자동 게시 대기 시간을 적용하지 않습니다. 이 간격은 요청을 줄이기 위한 것으로 GitHub 계정의 요청 한도나 운영 환경의 지연을 보장하지 않습니다.
 
 ## 12. 정리·중단·복구
 
@@ -321,7 +356,7 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 
 `--confirm-drained`는 이전 실행자가 모두 중지됐다는 운영자의 명시 확인입니다. 이 명령은 남은 소유권만 해제하고 작업 manifest·진행 위치·C/P/L과 편집 차단을 보존합니다. 앱을 다시 시작한 뒤 해당 작업을 이어서 완료하세요. 완료 표시로 강제 변경하거나 `site_retention` 행을 직접 삭제하지 않습니다.
 
-외부 Worker에서 같은 상황이 생기면 Cron을 중지하고 해당 팀의 유지보수 차단을 유지한 채, 이전 Worker 실행과 업로드가 실제로 모두 끝났음을 운영 로그·실행 관리에서 확인합니다. 경과 시간만으로 종료됐다고 판단하지 않습니다. 이후 인증된 시스템 관리자 요청으로 `POST /api/admin/teams/:id/maintenance/recover`에 `{jobId, dryRun:true}`를 보내 대상을 확인하고 `{jobId, confirmedDrained:true}`로 남은 소유권을 해제합니다. 이 API도 C/P/L·작업 기록·편집 차단을 보존합니다. 정리 화면에서 작업을 이어서 끝낸 뒤 Cron과 접근을 재개합니다.
+외부 Edge에서 같은 상황이 생기면 Cron을 중지하고 해당 팀의 유지보수 차단을 유지한 채, 이전 Edge 실행과 업로드가 실제로 모두 끝났음을 운영 로그·실행 관리에서 확인합니다. 경과 시간만으로 종료됐다고 판단하지 않습니다. 이후 인증된 시스템 관리자 요청으로 `POST /api/admin/teams/:id/maintenance/recover`에 `{jobId, dryRun:true}`를 보내 대상을 확인하고 `{jobId, confirmedDrained:true}`로 남은 소유권을 해제합니다. 이 API도 C/P/L·작업 기록·편집 차단을 보존합니다. 정리 화면에서 작업을 이어서 끝낸 뒤 Cron과 접근을 재개합니다.
 
 L로 제외하지 않은 삭제 표식과 로컬 복원 이력이 참조하는 기존 이미지도 보호하며, 삭제 뒤 시간이 지났다는 이유만으로 이 보호를 만료시키지 않습니다. 따라서 모든 삭제 이미지가 즉시 정리되는 것은 아닙니다. Git 수신은 현재 표시할 문서와 미전송 입력·미해결 충돌에 필요한 이미지만 설치하므로, 삭제 표식·이력만의 파일 또는 정리한 문서 파일을 새 수신 때 자동으로 다시 내려받지 않습니다. 과거 커밋을 순서대로 재생하는 동안 당시 살아 있던 문서의 파일을 설치하는 경우는 있습니다. 정리한 사이트에서 새 사본을 만들면 현재 제공되는 연도·업무·문서만 새 사본으로 공유하며 숨긴 원본은 삭제하지 않습니다. 숨긴 내용까지 복사하려면 먼저 보관본을 복원합니다.
 
@@ -344,7 +379,7 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 
 `sync:recover` 명령은 내부 SQLite 전용입니다. `restore:external` 또는 논리 이관 후에는 아래 외부 API 절차를 사용합니다. 복구한 팀을 **처음 가져오기**로 다시 초기화하지 않습니다.
 
-1. 이전 Worker의 해당 팀 쓰기·Cron·업로드 실행을 모두 종료하고 원본 DB/R2와 백업을 보존합니다. 복구한 팀 사이트 DB와 R2를 새 binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
+1. 이전 Edge의 해당 팀 쓰기·업로드 실행과 gateway Cron을 모두 중지하고 원본 DB/R2와 백업을 보존합니다. 복구한 팀 사이트 DB를 Edge 접속 설정에, R2를 gateway binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
 2. 복구한 승인 정보에 연결된 팀장의 Google 계정으로 공식 `APP_ORIGIN`에 로그인하고 사내 계정을 선택합니다. **설정 → 시스템 → 서비스 연결**에서 복구한 자원을 검사하고, 팀 연결에 복구 대상 프로필을 선택합니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
 3. `GET /api/admin/teams/:id/maintenance/uploads/recover`로 남은 업로드 실행을 확인합니다. 이전 실행이 끝났음을 확인한 ID만 `POST` 같은 경로에 `{ "confirmedDrained": true, "leaseIds": ["확인한-ID"] }`로 해제합니다. 이 작업은 시간 경과만으로 자동 수행하지 않습니다. 미완료 정리는 앞 절의 복구 절차로 이어서 완료합니다. 중단된 백업은 `POST /api/admin/teams/:id/maintenance/recover`의 `{ "jobId": "확인한-ID", "dryRun": true }`로 확인하고, 이전 백업 실행이 종료된 뒤 `{ "jobId": "확인한-ID", "confirmedDrained": true }`로 guard를 `cancelled` 처리합니다. 시간 경과만으로 해제하지 않습니다. C/P/L/head와 부분 백업 파일은 보존되며 부분 파일은 완전 백업이 아닙니다. 이후 백업은 새 출력 경로에 만듭니다.
 4. `GET /api/teams/:id/sync`의 `canonicalHead`와 현재 프로필·설치 UUID를 확인합니다. 같은 origin의 인증된 관리자 요청으로 `POST /api/admin/teams/:id/sync/recover`에 다음 내용을 보냅니다. `expectedHead`는 실제 조회한 값이며 최초 커서가 없으면 JSON `null`입니다.
@@ -354,7 +389,7 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
   "confirmedDrained": true,
   "expectedHead": "조회한-canonicalHead",
   "expectedProfileId": "복구-프로필-ID",
-  "installationId": "Worker의-새-INSTALLATION_ID"
+  "installationId": "Edge의-새-INSTALLATION_ID"
 }
 ```
 
@@ -376,9 +411,9 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 
 ## 13. SQLite와 PostgreSQL 사이의 논리 이관
 
-일반 업무 API는 `server/storage/*-service.mjs`의 같은 명령 계약과 SQLite/PostgreSQL repository를 사용합니다. Node `createApp({storage: createPostgresBusinessStorage({env})})`는 **팀 업무 저장소**를 PG로 선택하고 내부 비밀번호·세션·사용자·멤버십의 원본은 같은 SQLite control에 유지합니다. PG control 사용자/권한을 미러할 필요가 없습니다. 외부 Worker는 Access+PG control과 같은 업무 계약을 사용합니다. 인증과 control을 분리해 Node 로그인은 SQLite인데 관리자 쓰기만 PG로 보내는 구성은 시작 시 거절합니다. Node 비밀번호/세션까지 모두 PG로 옮기는 제품은 제공하지 않으며, 향후 그 변경에는 별도 auth/control adapter와 이관이 필요합니다.
+일반 업무 API는 `server/storage/*-service.mjs`의 같은 명령 계약과 SQLite/PostgreSQL repository를 사용합니다. Node `createApp({storage: createPostgresBusinessStorage({env})})`는 **팀 업무 저장소**를 PG로 선택하고 내부 비밀번호·세션·사용자·멤버십의 원본은 같은 SQLite control에 유지합니다. PG control 사용자/권한을 미러할 필요가 없습니다. 외부 Edge는 Access+PG control과 같은 업무 계약을 사용합니다. 인증과 control을 분리해 Node 로그인은 SQLite인데 관리자 쓰기만 PG로 보내는 구성은 시작 시 거절합니다. Node 비밀번호/세션까지 모두 PG로 옮기는 제품은 제공하지 않으며, 향후 그 변경에는 별도 auth/control adapter와 이관이 필요합니다.
 
-엔진 변경 시 먼저 이 절의 논리 이관과 이미지 검증을 완료하고 서버의 팀 repository 설정을 바꾸어 다시 시작합니다. 실행 중인 트랜잭션을 다른 DB로 전환하지 않습니다. 이미지 저장소는 DB provider와 독립적입니다. Node의 PG 팀 업무는 기본 파일 저장소를 사용하고 외부 Worker는 R2를 사용하며, 업로드·조회·본문 검증은 동일한 ImageStore 포트를 사용합니다. Git 백그라운드 실행기와 인증은 호스트별 포트이므로 팀 논리 이관에 암묵적으로 포함되지 않습니다. 이 설정은 Node의 기본 SQLite 동기화 실행기를 PG 실행기로 바꾸는 배포 명령이 아닙니다. 자세한 연결 예시와 검사 범위는 [개발 안내의 업무 저장소 계약](DEVELOPMENT.md#업무-저장소-계약)을 참고하세요.
+엔진 변경 시 먼저 이 절의 논리 이관과 이미지 검증을 완료하고 서버의 팀 repository 설정을 바꾸어 다시 시작합니다. 실행 중인 트랜잭션을 다른 DB로 전환하지 않습니다. 이미지 저장소는 DB provider와 독립적입니다. Node의 PG 팀 업무는 기본 파일 저장소를 사용하고 외부 Edge는 gateway를 통해 R2를 사용하며, 업로드·조회·본문 검증은 동일한 ImageStore 포트를 사용합니다. Git 백그라운드 실행기와 인증은 호스트별 포트이므로 팀 논리 이관에 암묵적으로 포함되지 않습니다. 이 설정은 Node의 기본 SQLite 동기화 실행기를 PG 실행기로 바꾸는 배포 명령이 아닙니다. 자세한 연결 예시와 검사 범위는 [개발 안내의 업무 저장소 계약](DEVELOPMENT.md#업무-저장소-계약)을 참고하세요.
 
 Node의 **SQLite control + PG 팀 업무 + 파일 이미지** 조합은 일반 업무 저장·권한·이벤트·이미지 계약까지 검증했으며, 이 조합 전체의 일관된 오프라인 백업/복구 절차는 현재 제공하지 않습니다. `npm run backup`은 SQLite와 SQLite가 참조한 이미지만 읽고 PG 자료·PG에만 참조된 파일 이미지는 포함하지 않습니다. 아래 PG `transfer --resources`와14절 외부 백업 명령은 R2 전용 설정을 사용하므로 Node 파일 이미지 조합에도 그대로 적용된다고 해석하지 않습니다. 운영 적용 전에 별도 복구 절차가 필요한 범위는 [백업과 복구](OPERATIONS.md#백업과-복구)에 명시합니다.
 
@@ -414,7 +449,7 @@ DB_PATH=/private/new-site.sqlite DOCUMENT_IMAGES_DIR=/private/new-site-images HO
 npm run transfer -- --action import --engine sqlite --database /private/new-site.sqlite --file /private/team-transfer.json --images-dir /private/new-site-images
 ```
 
-가져오기는 JSON과 모든 이미지의 해시·팀 경계·행 상태를 검사하고 DB 변경 실패 시 롤백합니다. `--images-dir`는 내부 파일 저장소, `--resources`는 다음 절의 R2 리소스 설정을 지정합니다. 활성 자료·pending·미해결 충돌의 이미지부터 설치하고 L로 제외된 이미지는 sidecar에 남깁니다. 이미 있는 대상 이미지는 같은 해시인지 확인하며 다른 내용으로 덮어쓰지 않습니다. PostgreSQL을 사용하는 Node와 외부 Worker의 팀 업무 저장소 한도는 논리 이관 성공으로 늘어나지 않으므로 프로필 전환 전에 15절의 한도를 확인합니다. 대상은 새 writer 세대와 **복구 점검 필요** 상태로 시작합니다. `--installation-id '새-설치-UUID'`를 지정하면 해당 원본 설치의 L도 새 설치로 옮깁니다. 기존 원본을 보관하고, 대상의 ID·본문·버전·pending·충돌·이미지를 확인한 뒤 앞 절의 복구 대조와 연결 프로필 전환을 진행합니다. 새 대상에서 저장을 시작했다면 원본을 단순 재개하지 않습니다.
+가져오기는 JSON과 모든 이미지의 해시·팀 경계·행 상태를 검사하고 DB 변경 실패 시 롤백합니다. `--images-dir`는 내부 파일 저장소, `--resources`는 다음 절의 R2 리소스 설정을 지정합니다. 활성 자료·pending·미해결 충돌의 이미지부터 설치하고 L로 제외된 이미지는 sidecar에 남깁니다. 이미 있는 대상 이미지는 같은 해시인지 확인하며 다른 내용으로 덮어쓰지 않습니다. PostgreSQL을 사용하는 Node와 외부 Edge의 팀 업무 저장소 한도는 논리 이관 성공으로 늘어나지 않으므로 프로필 전환 전에 15절의 한도를 확인합니다. 대상은 새 writer 세대와 **복구 점검 필요** 상태로 시작합니다. `--installation-id '새-설치-UUID'`를 지정하면 해당 원본 설치의 L도 새 설치로 옮깁니다. 기존 원본을 보관하고, 대상의 ID·본문·버전·pending·충돌·이미지를 확인한 뒤 앞 절의 복구 대조와 연결 프로필 전환을 진행합니다. 새 대상에서 저장을 시작했다면 원본을 단순 재개하지 않습니다.
 
 원본 편집 차단을 해제해야 할 때만 다음 명령을 사용합니다. 이 명령 이후에도 Git 동기화는 일시정지 상태이며 별도 확인 후 재개합니다.
 
@@ -462,20 +497,32 @@ dry-run은 manifest·모든 자료/이미지 해시·대상 DB 형식·팀 UUID�
 
 기존 릴리스로 돌아갈 때는 쓰기 중단 상태에서 보존한 이전 control·team DB/이미지 백업과 이전 설정을 함께 복구합니다. site 스키마를 삭제하거나 migration checksum을 고쳐 다운그레이드하지 않습니다. 접속 재개 후 되돌리면 백업 이후 업무·승인이 사라질 수 있으므로 현재 자료를 먼저 보존하고 변경분 이관 계획을 정합니다. PostgreSQL 자체 백업은 `pg_dump`로 프로젝트 하나를 보관할 수 있지만 R2는 포함하지 않습니다. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)
 
-## 15. PostgreSQL 업무 저장소의 한도와 Worker 검증 범위
+## 15. 실행 한도와 검증 범위
 
-이 구현의 **PostgreSQL 팀 업무 저장소는 내부 Node와 외부 Worker 모두** 공유 상태·미전송 명령에 대해 **4 MiB**, 공유 엔티티 **12,000개** 한도를 적용합니다. Node의 `createPostgresBusinessStorage`도 Worker와 같은 `RequestContext.data`·`capacityLimits(env)`를 사용하므로 파일 이미지를 쓰거나 Node에서 실행해도 이 한도가 해제되지 않습니다. receipts와 충돌 보관도 상태 용량에 포함됩니다. 행 하나에 여러 셀·문서가 있으므로 엔티티 개수를 업무 행 수로 해석하지 않습니다. DB 검사와 commit 전 검사는 같은 canonical UTF-8 직렬화 기준으로 엔티티·receipt·충돌·P의 바이트를 합산합니다. 두 호스트의 서버 설정 `env`는 `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`를 기본값으로 사용하며 더 낮출 수만 있습니다. 기본 SQLite 업무 경로에는 이 PG 한도를 적용하지 않습니다.
+### 애플리케이션의 PostgreSQL 용량 제한
 
-두 PG 호스트의 새 편집은 한도 초과 시 `413 / EXTERNAL_SYNC_CAPACITY`로 중단하며 기존 C/P/L을 보존합니다. 외부 Worker의 발신·수신에도 같은 상태 한도를 적용하고, 원격 snapshot은 JSON 파싱 전에 압축 해제 크기를 제한하며 Git blob도 스트리밍 중 크기를 제한합니다. 동기화 거절 시 마지막 정상 canonical cursor를 유지하며 기존 자료 조회·백업·일시정지 등 복구 접근은 유지합니다. Worker 한 isolate에서는 동기화 계산을 하나씩 실행하고 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 데이터로 덮어쓰거나 부분 가져오기 성공으로 표시하지 않습니다. 사이트 정리는 C나 receipts를 축소하지 않으므로 이 한도를 늘리는 수단이 아닙니다.
+**Node PG와 외부 Edge 모두** 공유 상태·미전송 명령에 **4 MiB**, 공유 엔티티 **12,000개** 상한을 적용합니다. 같은 `RequestContext.data`·`capacityLimits(env)`를 사용하며 `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`은 낮출 수만 있습니다. receipts·충돌·P도 canonical UTF-8 직렬화 용량에 포함합니다. 업무 행 하나에 여러 셀·문서가 있으므로 엔티티 수는 업무 행 수가 아닙니다. 기본 SQLite 업무 경로에는 이 PG 한도를 적용하지 않습니다.
 
-`tests/worker-capacity.test.mjs`는 실제 workerd에서 공유 `SyncService`의 gzip bootstrap·reducer·후속 커밋 적용을 실행합니다. 한글 값이 있는 1,000개 업무와 업무당 6셀, 문서·삭제표식·receipts·충돌을 포함한 총 7,023개 엔티티의 약 3.44 MiB snapshot을 적용했고 후속 변경까지 2개 커밋을 처리했습니다. 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 한 번도 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아니라 그 fixture의 결과입니다. 실제 Worker의 boundStore·materialize·imageSync도 명시적인 SQL 행 메모리 모델과 R2 바이트 저장소로 실행하며 미전송 명령 2개와 이미지 보존을 검사합니다. canonical 쓰기·이미지 projection·500개 행 materialize 경계와 요청 완료 후 inspector heap을 표본 측정합니다. 표본 최대치는 연속 측정한 순간 최대 메모리나 운영 서비스 지연을 보장하지 않으며 wall time에는 표본 수집 시간이 포함됩니다. 2026-10-27 M6 계약 소스(`ca4a85d`)의 보관 표본에서 1,000행 fixture의 used heap+backing의 표본 최대는 47,065,941바이트, V8 allocated `totalSize`는 98,091,008바이트, total+backing은 99,300,833바이트였습니다. 그러나 5,000행 입력을 거절하는 단계의 allocated total+backing은 **137,299,355바이트로 128 MiB를 초과**했습니다(used+backing 81,001,875바이트). 따라서 이 모델을 production 128 MiB 안전성 입증으로 사용할 수 없습니다. 이전 used+backing 58,077,600바이트·allocated totalSize 111,542,272바이트 표본도 검증 자료에 보존했습니다. `totalSize`는 V8가 확보한 heap 크기로 used heap이나 전체 프로세스 RSS와 다릅니다. 메모리 테스트는 SQL 문자열을 처리하는 in-memory 행 모델, fixture 진입점, 가짜 GitHub/R2를 사용하며 운영 번들·Hyperdrive·실제 PG 드라이버 연결의 메모리를 포함하지 않습니다. 배포 전 실제 PG 경로와 동시 요청을 Workers Metrics/Logs로 다시 확인해야 합니다. 재현 명령은 다음과 같습니다.
+새 편집은 한도 초과 시 `413 / EXTERNAL_SYNC_CAPACITY`로 중단하고 기존 C/P/L을 보존합니다. Git 발신·수신도 원격 바이트·압축 해제 snapshot·reducer 결과를 검사하고 마지막 정상 cursor를 유지합니다. 한 실행 인스턴스의 동기화 계산을 직렬화하고 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 자료로 덮어쓰거나 부분 가져오기를 성공으로 처리하지 않습니다. 사이트 정리는 C·receipts를 줄이지 않으므로 이 상한을 늘리지 않습니다.
+
+일반 PG 조회는 read-only 트랜잭션으로 쓰기용 advisory lock을 잡지 않습니다. 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. Edge 전환만으로 증분 저장 최적화나 PG 지원 규모가 달라지지는 않습니다.
+
+### 현재 운영 경로에서 확인할 제한
+
+업무 API·Git 계산은 Supabase Edge에서, HTTP 전달·정적 파일·R2/Images 처리는 Cloudflare gateway에서 실행합니다. Hyperdrive를 통한 DB 요청은 없습니다. 각 서비스의 CPU·메모리·요청량 한도는 별개이며, 네트워크 대기까지 포함한 wall time과 CPU 시간을 구분합니다. 최신 수치는 [Supabase Edge 제한](https://supabase.com/docs/guides/functions/limits)과 [Cloudflare Workers 제한](https://developers.cloudflare.com/workers/platform/limits/)을 확인합니다.
+
+Edge SSE는 2초 polling과 15초 연결 수명으로 마지막 커서부터 재연결합니다. 열린 화면이 많아지면 함수 호출·DB 조회도 늘어납니다. 배포 후 실제 동시 사용자·팀 자료로 Edge 로그, gateway 로그, PostgreSQL 연결 수, GitHub 요청량과 미전송 지연을 함께 측정합니다. 무료 요금제의 무제한 동작이나 일정한 반영 시간을 보장하지 않습니다.
+
+### 자동 검사와 과거 workerd 측정의 범위
+
+`tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PostgreSQL 경로와 내부 SQLite/Git을 연결합니다. 문서 GET·저장·SSE의 버전 일관성도 검사합니다. Node에서 호출한 Edge handler 검사는 Deno 런타임의 성능 검사가 아니므로 실제 Supabase 함수 배포와 구분합니다.
+
+`tests/worker-capacity.test.mjs`와 `tests/worker-runtime.test.mjs`는 **이전 전체 Worker 및 workerd 호환 경로**의 검사입니다. 2026-10-27 소스 `ca4a85d`의 기록에서는 1,000개 업무·총 7,023개 엔티티의 약 3.44 MiB snapshot과 후속 변경을 처리했고, 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아닙니다.
+
+당시 5,000행 거절 단계의 V8 allocated heap+backing 표본은 137,299,355바이트로 128 MiB를 넘었습니다. 이 결과를 production 메모리 안전성의 증거로 사용하지 않습니다. SQL 행 메모리 모델과 대역 GitHub/R2를 사용한 과거 측정이며, 실제 PG 연결·동시 요청·현재 Supabase/Deno 실행의 메모리와 지연은 포함하지 않습니다. 재현 명령은 다음과 같습니다.
 
 ```sh
 node --test tests/worker-capacity.test.mjs tests/worker-runtime.test.mjs
 ```
 
-Cloudflare의 공식 한도는 isolate당 메모리 128 MB이며 동시 요청이 이 메모리를 공유합니다. Workers Free CPU 한도는 요청당 10 ms, Paid의 1시간 미만 주기 Cron은 CPU 30초이므로 이 동기화를 Free 요금제로 안정 운영할 수 있다고 보장하지 않습니다. 로컬 wall time을 클라우드 CPU 사용량으로 해석하지 않습니다. 실제 사용량은 Workers Metrics/Logs에서 측정하고 사용 요금제를 선택해야 합니다. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
-
-두 PG 호스트의 일반 조회는 read-only PG 트랜잭션을 사용해 쓰기용 advisory lock을 잡지 않습니다. 다만 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. 변경 엔티티만 계산하는 증분 저장 최적화나 실제 운영 PG 저장 p95 측정은 이 검증에 포함되지 않습니다.
-
-내부 서버의 10,000행 SQLite 성능 시험과 Node 프로세스에서 수행한 PostgreSQL 저장 어댑터 스트레스 시험은 이 업무 API 한도 및 외부 Worker 용량 검증과 별도입니다. SQLite 시험이나 어댑터 직접 호출 결과를 Node PG 또는 Cloudflare Worker에서 10,000행을 지원한다는 근거로 사용하지 않습니다. 실제 Cloudflare·Supabase·GitHub·Images 운영 자원으로 배포한 시험은 이 로컬 검증에 포함되지 않습니다.
+내부 SQLite 10,000행 시험과 Node PG 저장 어댑터 직접 호출 시험도 별도 범위입니다. 그 결과를 외부 API가 같은 행 수를 지원한다는 근거로 사용하지 않습니다. 검증 커밋·환경·실행 명령·실패와 제외 범위를 [개발 안내](DEVELOPMENT.md#검증)의 운영 기록과 함께 남깁니다.

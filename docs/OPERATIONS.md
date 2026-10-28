@@ -1,12 +1,12 @@
 # 그래보드 운영 안내
 
-[처음으로](../README.md) · [개발 안내](DEVELOPMENT.md) · [데이터 형식](DATA_FORMAT.md) · [DB 변경 지침](DATABASE_CHANGES.md)
+[처음으로](../README.md) · [구성도](ARCHITECTURE.md) · [개발 안내](DEVELOPMENT.md) · [데이터 형식](DATA_FORMAT.md) · [DB 변경 지침](DATABASE_CHANGES.md)
 
 이 프로젝트는 서버 배포를 마치고 운영 중입니다. 이후 배포는 기존 DB와 문서 이미지를 보존하는 업데이트로 진행합니다. 아래 명령과 호환성 설명은 **현재 저장소의 구현** 기준이며, 실제 운영 서버의 주소·배포 커밋·Node.js 경로·DB 경로를 의미하지 않습니다.
 
 ## 실행 환경
 
-Node.js **22.13.0 이상**과 npm을 사용합니다. Node.js 16.20.2는 지원하지 않습니다. SQLite는 단일 서버의 로컬 디스크에 두고 앱은 단일 프로세스로 실행합니다. 여러 호스트나 NFS 공유 파일을 통한 동시 운영을 전제로 하지 않습니다.
+이 절의 실행 명령은 내부 Node 서버 기준입니다. 외부 Supabase Edge·Cloudflare 배포는 [클라우드 설치 안내](CLOUD_SETUP.md)를 따릅니다. 내부는 Node.js **22.13.0 이상**과 npm을 사용합니다. Node.js 16.20.2는 지원하지 않습니다. SQLite는 단일 서버의 로컬 디스크에 두고 앱은 단일 프로세스로 실행합니다. 여러 호스트나 NFS 공유 파일을 통한 동시 운영을 전제로 하지 않습니다.
 
 운영용 빌드는 새 릴리스의 작업 디렉터리에서 준비합니다. 빌드에는 TypeScript·Vite 등의 개발 의존성도 필요하므로 `npm ci --include=dev`로 설치합니다. 셸에 `NODE_ENV=production`이 설정되어 있으면 옵션 없는 `npm ci`도 개발 의존성을 생략할 수 있습니다.
 
@@ -50,8 +50,8 @@ npm run build
 | `DB_PATH`             | `data/weekly-plan.sqlite` | 데이터베이스 위치. 절대 경로 또는 실행 디렉터리 기준 상대 경로     |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
-| `GRAEBOARD_SITE` | Node: `internal`, Worker: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
-| `SETUP_TOKEN`         | 없음                      | 최초 관리자 생성 시 확인할 설정 키                                 |
+| `GRAEBOARD_SITE` | Node: `internal`, Edge: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
+| `SETUP_TOKEN`         | 없음                      | 내부 빈 DB의 최초 관리자 생성용 설정 키                                 |
 | `APP_ORIGIN`          | 없음                      | 프록시 뒤 실제 서비스 Origin, 예: `https://graeboard.example.com`  |
 | `COOKIE_SECURE`       | `0`과 같은 동작           | HTTPS에서는 `1`                                                    |
 | `TRUST_PROXY`         | `0`과 같은 동작           | 신뢰하는 프록시가 정확히 하나일 때 `1`                             |
@@ -62,13 +62,15 @@ npm run build
 | `GRAEBOARD_SYNC_KEY_ID` | `default` | 암호화 키 식별자 |
 | `GRAEBOARD_SHUTDOWN_TIMEOUT_MS` | `30000` | HTTP·동기화 종료 대기 상한(ms), 100~600000. 초과하면 P를 지우지 않고 exit 1 |
 
-내부 Node 서버에는 `GRAEBOARD_SITE=internal`, 외부 Worker에는 `GRAEBOARD_SITE=external`을 지정합니다. 이 값은 `NODE_ENV`의 개발·운영 구분이나 접속 주소와 무관하며 네트워크 방화벽 설정을 대신하지 않습니다. 기존 설치에서 생략하면 호스트의 고정 역할을 사용합니다. Node에 external을 지정하거나 Worker에 internal을 지정하면 다른 인증 방식으로 전환하지 않고 설정 오류로 중단합니다. 서버는 `/api/setup`·`/api/bootstrap`의 `site`로 화면에 역할을 알립니다. 내부만 초기 게시와 팀장 연결 키 발급을 제공하며 외부의 최초 연결은 서비스 연결의 팀 가져오기를 사용합니다. 외부 `/sync/enable` 요청은 403으로 거절합니다.
+내부 Node 서버에는 `GRAEBOARD_SITE=internal`, 외부 Edge에는 `GRAEBOARD_SITE=external`을 지정합니다. 이 값은 `NODE_ENV`의 개발·운영 구분이나 접속 주소와 무관하며 네트워크 방화벽 설정을 대신하지 않습니다. 기존 설치에서 생략하면 호스트의 고정 역할을 사용합니다. Node에 external을 지정하거나 외부 API에 internal을 지정하면 다른 인증 방식으로 전환하지 않고 설정 오류로 중단합니다. 서버는 `/api/setup`·`/api/bootstrap`의 `site`로 화면에 역할을 알립니다. 내부만 초기 게시와 팀장 연결 키 발급을 제공하며 외부의 최초 연결은 서비스 연결의 팀 가져오기를 사용합니다. 외부 `/sync/enable` 요청은 403으로 거절합니다.
 
-`NODE_ENV=production`으로 외부 주소에 바인딩하고 계정이 아직 없으면 `SETUP_TOKEN`이 필요합니다. 루프백 주소 뒤에 프록시를 두는 경우에도 첫 설정을 공개하기 전에 토큰을 지정하거나, 로컬에서 먼저 관리자를 생성하세요. 임의 토큰은 `openssl rand -hex 32` 등으로 생성하여 `.env` 또는 서버의 비밀 설정에 보관합니다. 첫 설정 완료 후 제거할 수 있습니다.
+내부 Node를 `NODE_ENV=production`으로 루프백 이외 주소에 바인딩하고 계정이 아직 없으면 `SETUP_TOKEN`이 필요합니다. 루프백 주소 뒤에 프록시를 두는 경우에도 첫 설정을 공개하기 전에 토큰을 지정하거나, 로컬에서 먼저 관리자를 생성하세요. 임의 토큰은 `openssl rand -hex 32` 등으로 생성하여 `.env` 또는 서버의 비밀 설정에 보관합니다. 첫 설정 완료 후 제거할 수 있습니다. 외부 Google 계정 연결은 이 토큰 대신 내부 팀장이 화면에서 발급한 일회용 연결 키를 사용합니다.
 
 기본 바인딩은 `http://127.0.0.1:4310`이며 서버 외부에서 직접 접속할 수 있는 주소가 아닙니다. 사용자는 실제 서비스 주소로 접속합니다. **첫 관리자·팀 생성은 빈 DB의 신규 설치에서만** 수행합니다. 기본 계정·비밀번호는 없고 예시 업무 생성은 선택 사항입니다. 예시 담당자는 로그인할 수 없는 비활성 계정입니다. 운영 업데이트 후 최초 설정 화면이 나타나면 계정을 새로 만들기 전에 DB 경로와 실행 디렉터리가 맞는지 확인합니다.
 
 운영에서는 DB와 이미지 폴더를 릴리스 경로 밖에 두고 **절대 경로**로 지정하면 릴리스 교체 시 같은 데이터를 계속 사용할 수 있습니다. 서비스 실행 계정에 해당 디렉터리의 읽기·쓰기 권한을 부여합니다. SQLite는 DB 옆에 WAL·SHM 파일을 만들므로 DB 파일뿐 아니라 상위 디렉터리도 쓸 수 있어야 합니다. `.env`와 `dist/`의 기준이 되는 서비스 작업 디렉터리는 해당 릴리스 루트로 지정합니다.
+
+외부 운영용 `.env.cloud.local` 등 비밀 파일은 인터넷에 연결된 운영자 환경에서만 읽습니다. 내부 Node의 `.env`와 구분하고 서버 실행 시 합쳐 로드하지 않습니다. 내부에는 팀 Git 토큰과 내부 설치 설정만 등록합니다. 시스템 프록시로는 연결되는데 앱 Git이 실패하면 [앱 clone의 프록시 설정](CLOUD_SETUP.md#github-프록시가-필요한-내부-환경)을 확인합니다.
 
 ### 운영 기록
 
@@ -224,7 +226,18 @@ unset GRAEBOARD_RESET_PASSWORD
 
 외부 API의 기본 실행 환경은 Supabase Edge Functions입니다. Cloudflare gateway는 정적 화면·요청 전달·R2/Images 처리만 수행하며 내부 Node는 `GRAEBOARD_SITE=internal`과 GitHub 접속만 유지합니다. `npm run build:edge`로 만든 함수를 배포하고 Pages binding을 gateway로 연결합니다. 기존 Worker에서의 이전은 동일 DB·계정 세션·설치 UUID를 유지하며 schema migration이 없습니다. 배포 설정·Secret 분리·전환과 복구 순서는 [Edge 배포](CLOUD_SETUP.md#supabase-edge-functions-배포)를 따릅니다. Hyperdrive는 사용하지 않으며 이전 Worker 이름은 gateway 전달용으로만 유지합니다. 업무 요청 외의 자동 동기화는 gateway Cron이 Edge를 호출하며, Cloudflare와 Supabase 양쪽 실행 로그를 확인합니다.
 
-리소스 생성, Edge의 PostgreSQL 직접 연결과 gateway의 R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 외부 연결 팀마다 Worker·Git·R2·Supabase 프로젝트를 따로 운영합니다. 그 팀의 이름·이메일·활성 상태·팀 역할은 구성원 브랜치로 내부에서 계속 반영합니다. 팀장이 최초 연결하고 다른 사용자의 사내 계정 선택 요청을 승인합니다. 비밀번호·사내 세션·다른 팀 소속·전체 관리자 권한은 전송하지 않습니다.
+외부 배포 산출물은 다음처럼 구분합니다. Pages 소스의 자동 빌드가 다른 대상까지 배포하지 않습니다.
+
+| 변경 대상 | 반영 방법 |
+| --- | --- |
+| 화면·정적 자원 | `npm run build` 후 `dist/`를 포함한 gateway 배포 |
+| 업무 API·앱 내 설치 안내 | `npm run build:edge` 후 Supabase 함수 배포 |
+| gateway 코드·자원·Cron | 팀 gateway 설정으로 Worker 배포 및 설정 반영 |
+| Pages Functions·Service binding | Pages 재배포 |
+
+`docs/CLOUD_SETUP.md`는 Edge 함수에 포함되어 **서비스 연결의 설치 안내**로 제공됩니다. 이 문서가 바뀌면 함수도 재빌드·배포한 뒤 `/api/admin/service-connections/guide`의 내용을 확인합니다. 나머지 Markdown 문서는 저장소에서 확인합니다. 배포별 커밋·함수/Worker 버전과 실제 활성 자원을 기록합니다.
+
+리소스 생성, Edge의 PostgreSQL 직접 연결과 gateway의 R2·Images bindings, 전용 Access 앱·Google 로그인, 비밀 토큰, 첫 관리자/팀 가져오기는 [클라우드 설치 안내](CLOUD_SETUP.md)를 순서대로 따릅니다. 내부 `GRAEBOARD_SYNC_PROFILES=[]`이면 기존 SQLite 저장·인증을 유지합니다. 외부 연결 팀마다 Pages/gateway·Git·R2·Supabase 프로젝트와 Edge 함수를 따로 운영합니다. 그 팀의 이름·이메일·활성 상태·팀 역할은 구성원 브랜치로 내부에서 계속 반영합니다. 팀장이 최초 연결하고 다른 사용자의 사내 계정 선택 요청을 승인합니다. 비밀번호·사내 세션·다른 팀 소속·전체 관리자 권한은 전송하지 않습니다.
 
 - 일시정지는 로컬 저장과 미전송 캡처를 유지합니다. 연결 해제 뒤 자료는 로컬로만 저장되므로 다시 연결하기 전에 `sync:recover`로 차이를 보존·대조합니다.
 - SQLite 복구와 외부 PG/R2 복구는 별도 명령입니다. `backup:external`·`restore:external`·`transfer -- --help`의 실제 입력과 제한을 설치 안내에서 확인합니다. 한 프로젝트의 site/team 스키마와 이미지 bundle을 함께 보관합니다. 승인·Google 연결은 복원하고 접속 세션은 새로 만듭니다. 기존 분리형 control/team 백업 v1은 해당 형식으로 계속 복구합니다.
@@ -237,6 +250,6 @@ SIGTERM/SIGINT는 새 접속·구독을 차단하고 진행 중 HTTP 요청과 �
 
 팀장 연결 키 업데이트는 SQLite v30 → v31, 외부 계정 관리 site v1 → v2이며 업무 team v1은 그대로입니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run migrate -- --engine sqlite --database 사본경로 --dry-run`과 실제 변환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 현재 버전 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본 경로를 변환하고 서버를 재시작합니다. v31에는 두 migration checksum이 필요하며 이전 v30 이력은 수정하지 않습니다.
 
-외부에는 site v1/v2를 읽을 수 있는 Worker를 먼저 배포합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 새 두 테이블과 이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
+site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 새 두 테이블과 이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
 
-기존 Google 연결은 유지됩니다. 초기 키 방식으로 되돌리기 위해 예전 Worker만 배포하지 않습니다. 접속 재개 전 실패는 백업과 대응 릴리스로 함께 복구하고, 재개 후에는 현재 데이터를 보존한 채 수정 배포를 우선합니다. 백업 복구는 백업 이후 저장을 잃을 수 있으므로 재개 후 전체 복구 전에는 그 사이 데이터를 별도 보존해야 합니다. 복구된 미사용 연결 키는 폐기하며 내부에서 재발급합니다.
+기존 Google 연결은 유지됩니다. 초기 키 방식으로 되돌리기 위해 예전 API 코드만 배포하지 않습니다. 접속 재개 전 실패는 백업과 대응 릴리스로 함께 복구하고, 재개 후에는 현재 데이터를 보존한 채 수정 배포를 우선합니다. 백업 복구는 백업 이후 저장을 잃을 수 있으므로 재개 후 전체 복구 전에는 그 사이 데이터를 별도 보존해야 합니다. 복구된 미사용 연결 키는 폐기하며 내부에서 재발급합니다.
