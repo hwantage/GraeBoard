@@ -2098,6 +2098,31 @@ body.row-reordering * {
   background: #f0f3f5;
   white-space: nowrap;
 }
+.team-sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.team-sync-stage {
+  color: #64748b;
+}
+.team-sync-stage.is-complete {
+  color: #1d4ed8;
+  background: #e8f0ff;
+}
+@media (max-width: 720px) {
+  .topbar:has(.team-sync-indicator) {
+    height: auto;
+    min-height: 38px;
+    flex-wrap: wrap;
+  }
+  .topbar .team-sync-indicator {
+    order: 1;
+    flex-basis: 100%;
+    padding-bottom: 6px;
+  }
+}
 .modal {
   width: min(520px, calc(100vw - 32px));
   max-height: 86dvh;

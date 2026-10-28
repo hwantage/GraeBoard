@@ -363,3 +363,5 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 외부 `Team.status`가 준비되지 않았으면 업무 조회 대신 가져오기 안내를 표시하고, 같은 팀의 상태가 active로 바뀌면 필터/보기/업무 조회를 다시 시작합니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
 
 배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, 외부 API는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.
+
+`TeamSyncIndicator`는 bootstrap/setup의 `site`를 읽는 기존 `isExternalSite()`로 상단 표시를 구분합니다. 내부는 정상·미전송·상대 확인 대기를 숨기되 오류·충돌·복구·중단·조회 실패를 표시하며, 최초 조회 실패도 숨기지 않습니다. 외부는 클라우드 저장·Git 반영·내부망 반영을 세 태그로 분리하고 대기/진행 중은 회색, 완료는 푸른색으로 표시합니다. 저장 중·실패에는 후속 단계도 완료로 표시하지 않습니다. 태그 숨김은 15초 주기·포커스·저장 후 상태 조회를 중단하지 않으며 팀 전환 시 이전 조회 실패 상태를 초기화합니다. `tests/browser/team-sync-indicator.spec.ts`는 같은 URL에서 서버 환경 값에 따른 표시, 오류 복구, 최초 조회 실패, 적용 확인 조건, 색상과 좁은 화면 배치를 검증합니다.

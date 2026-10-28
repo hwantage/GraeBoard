@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, isExternalSite } from "./api";
 import { syncTime, type SyncStatus } from "./TeamSyncSettings";
 
 export default function TeamSyncIndicator({
@@ -34,6 +34,7 @@ export default function TeamSyncIndicator({
       }
     };
     setStatus(null);
+    setUnavailable(false);
     void refresh();
     const timer = setInterval(refresh, 15000);
     window.addEventListener("graeboard:local-save", refresh);
@@ -45,52 +46,71 @@ export default function TeamSyncIndicator({
       window.removeEventListener("focus", refresh);
     };
   }, [teamId]);
-  if (!status || status.mode === "unlinked") return null;
-  const remote = status.remoteStatus;
+  const external = isExternalSite();
+  const problem = unavailable
+    ? "동기화 확인 불가"
+    : status?.mode === "paused"
+      ? "동기화 일시정지"
+      : status?.mode === "recovery"
+        ? "복구 점검 필요"
+        : status?.mode === "disconnected"
+          ? "동기화 연결 해제"
+          : status?.conflicts
+            ? `공유 충돌 ${status.conflicts}`
+            : status?.lastError
+              ? "동기화 오류"
+              : "";
+  if (!problem && (!external || !status || status.mode === "unlinked"))
+    return null;
+  const remote = status?.remoteStatus;
+  const stored = !saving && !failed;
+  const published = stored && !status?.pending && !!status?.lastPublishedAt;
   const reflected =
+    stored &&
     remote?.verified &&
     remote.mode === "active" &&
-    remote.appliedCanonicalHead === status.canonicalHead &&
+    remote.appliedCanonicalHead === status?.canonicalHead &&
     Date.now() - Date.parse(remote.observedAt) < 180000 &&
-    status.pending === 0;
-  const local = failed
-    ? "로컬 저장 실패"
-    : saving
-      ? "로컬 저장 중"
-      : "로컬 저장";
-  const git = status.pending
+    status?.pending === 0;
+  const storage = external ? "외부 클라우드 저장" : "내부 서버 저장";
+  const target = external ? "내부망" : "외부망";
+  const local = failed ? `${storage} 실패` : saving ? `${storage} 중` : storage;
+  const git = status?.pending
     ? `Git 대기 ${status.pending}`
-    : status.lastPublishedAt
-      ? "Git 반영"
-      : "Git 확인 대기";
-  const peer = reflected && !unavailable ? "상대 반영 확인" : "상대 확인 대기";
-  const detail = `${local} · ${git} · ${peer}\n로컬 저장: ${syncTime(status.lastLocalSavedAt)}\nGit 반영: ${syncTime(status.lastPublishedAt)}\n상대 마지막 확인: ${syncTime(remote?.observedAt)}${status.lastError ? `\n${status.lastError}` : ""}`;
+    : !stored
+      ? "Git 대기"
+      : status?.lastPublishedAt
+        ? "Git 반영"
+        : "Git 확인 대기";
+  const peer = `${target} 반영 ${reflected ? "완료" : "대기"}`;
+  const detail = status
+    ? `${storage}: ${syncTime(status.lastLocalSavedAt)}\nGit 반영: ${syncTime(status.lastPublishedAt)}\n${target} 마지막 확인: ${syncTime(remote?.observedAt)}${status.lastError ? `\n${status.lastError}` : ""}`
+    : "동기화 상태를 확인할 수 없습니다.";
+  const stages = [
+    { label: local, complete: stored },
+    { label: git, complete: published },
+    { label: peer, complete: reflected },
+  ];
   return (
     <span
-      className="tag"
-      style={{
-        minWidth: 0,
-        maxWidth: "min(24vw, 280px)",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        display: "block",
-        flexShrink: 1,
-      }}
+      className="team-sync-indicator"
       role="status"
       aria-label="팀 동기화 상태"
+      aria-atomic="true"
       title={detail}
     >
-      {unavailable
-        ? "동기화 확인 불가"
-        : status.mode === "paused"
-          ? "동기화 일시정지"
-          : status.mode === "recovery"
-            ? "복구 점검 필요"
-            : status.mode === "disconnected"
-              ? "동기화 연결 해제"
-              : status.conflicts
-                ? `공유 충돌 ${status.conflicts}`
-                : `${local} · ${git} · ${peer}`}
+      {problem ? (
+        <span className="tag">{problem}</span>
+      ) : (
+        stages.map((stage, index) => (
+          <span
+            key={index}
+            className={`tag team-sync-stage${stage.complete ? " is-complete" : ""}`}
+          >
+            {stage.label}
+          </span>
+        ))
+      )}
     </span>
   );
 }
