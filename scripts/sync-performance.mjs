@@ -1,3 +1,4 @@
+import { measureReviewScenarios } from "./sync-review-performance.mjs";
 import {
   mkdtempSync,
   rmSync,
@@ -39,6 +40,16 @@ export async function performanceFixture({
   clients = 30,
   users = 100,
   secondaryRows = 0,
+  documents = 1,
+  basicFields = [
+    "title",
+    "description",
+    "owner",
+    "supporters",
+    "status",
+    "category",
+  ],
+  scheduleColumns = 60,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-perf-")),
     databasePath = join(dir, "data.sqlite"),
@@ -125,8 +136,8 @@ export async function performanceFixture({
           status: "status-progress",
           category: "category-ux",
         }))
-          cell.run(id, key, value, {}, 1);
-        for (let w = 0; w < 60; w++)
+          if (basicFields.includes(key)) cell.run(id, key, value, {}, 1);
+        for (let w = 0; w < scheduleColumns; w++)
           if ((i * 7 + w) % 10 < 3)
             cell.run(
               id,
@@ -155,6 +166,26 @@ export async function performanceFixture({
     stamp,
     documentActor,
   );
+  for (let i = 1; i < documents; i++) {
+    const taskId = taskIds[(i - 1) % taskIds.length],
+      id = randomUUID();
+    const version = storeDocumentVersion(db, {
+      teamId,
+      documentId: JSON.stringify(["task", taskId, id]),
+      markdown: "Performance document " + i,
+      actorId: documentActor,
+    });
+    db.prepare(
+      "INSERT INTO task_documents(task_id,id,title,position,version_id,has_content,revision,updated_at,actor_id) VALUES(?,?,?,0,?,1,1,?,?)",
+    ).run(
+      taskId,
+      id,
+      "Performance document " + i,
+      version,
+      stamp,
+      documentActor,
+    );
+  }
   const transport = new GitCliTransport({
     directory: join(dir, "cache.git"),
     repository: remote,
@@ -195,6 +226,12 @@ export async function performanceFixture({
     snapshotExpectations = new Map(),
     snapshotClients = new Map(),
     snapshotFailures = new Map(),
+    clientObservations = {
+      resets: 0,
+      refetches: 0,
+      metadata: new Map(),
+      errors: [],
+    },
     controllers = [];
   const notify = app.locals.documentEvents.notify;
   app.locals.documentEvents.notify = (key) => {
@@ -233,6 +270,30 @@ export async function performanceFixture({
               const frame = buffer.slice(0, index);
               buffer = buffer.slice(index + 2);
               if (frame.includes("event: reset")) {
+                clientObservations.resets++;
+                if (
+                  ![...snapshotExpectations.values()].some(
+                    (expected) => expected.teamId === target.teamId,
+                  )
+                ) {
+                  clientObservations.refetches++;
+                  void fetch(
+                    `${origin}/api/tasks?teamId=${target.teamId}&year=2026`,
+                    {
+                      headers: { cookie: "weekly_session=" + tokens[i] },
+                    },
+                  )
+                    .then(async (response) => {
+                      if (!response.ok)
+                        throw new Error(
+                          "Client refetch failed " + response.status,
+                        );
+                      await response.arrayBuffer();
+                    })
+                    .catch((error) =>
+                      clientObservations.errors.push(error.message),
+                    );
+                }
                 for (const [operationId, expected] of snapshotExpectations) {
                   if (expected.teamId !== target.teamId) continue;
                   if (!snapshotClients.has(operationId))
@@ -240,6 +301,7 @@ export async function performanceFixture({
                   const received = snapshotClients.get(operationId);
                   if (received.has(i)) continue;
                   received.add(i);
+                  clientObservations.refetches++;
                   void fetch(
                     `${origin}/api/tasks?teamId=${target.teamId}&year=2026`,
                     { headers: { cookie: "weekly_session=" + tokens[i] } },
@@ -284,6 +346,15 @@ export async function performanceFixture({
                 .find((v) => v.startsWith("data: "));
               const payload = unpack(JSON.parse(line.slice(6))),
                 start = committed.get(payload.operationId);
+              for (const [taskId, metadata] of Object.entries(
+                payload.taskMetadata || {},
+              )) {
+                const key = JSON.stringify([taskId, metadata.position]);
+                clientObservations.metadata.set(
+                  key,
+                  (clientObservations.metadata.get(key) || 0) + 1,
+                );
+              }
               for (const cell of payload.cells || []) {
                 const key = JSON.stringify([cell.taskId, cell.key, cell.value]);
                 observedCells.set(key, (observedCells.get(key) || 0) + 1);
@@ -300,9 +371,14 @@ export async function performanceFixture({
         }
       })();
     }
-  const api = async (path, body, client = 0) => {
+  const api = async (
+    path,
+    body,
+    client = 0,
+    method = body ? "POST" : "GET",
+  ) => {
     const response = await fetch(origin + "/api" + path, {
-      method: body ? "POST" : "GET",
+      method,
       headers: {
         cookie: "weekly_session=" + tokens[client],
         "X-Requested-With": "WeeklyPlan",
@@ -316,7 +392,10 @@ export async function performanceFixture({
     return data;
   };
   let round = 0;
-  async function measure(rounds = 10, { until, pauseMs = 0 } = {}) {
+  async function measure(
+    rounds = 10,
+    { until, pauseMs = 0, targetIds = taskIds } = {},
+  ) {
     const saves = [],
       operationIds = [];
     const lag = monitorEventLoopDelay({ resolution: 10 });
@@ -325,7 +404,7 @@ export async function performanceFixture({
       await Promise.all(
         Array.from({ length: clients }, async (_, i) => {
           const operationId = randomUUID(),
-            taskId = taskIds[i % taskIds.length],
+            taskId = targetIds[i % targetIds.length],
             expectedVersion = db
               .prepare(
                 "SELECT version FROM cells WHERE task_id=? AND key='title'",
@@ -421,6 +500,7 @@ export async function performanceFixture({
     documentId,
     documentTaskId,
     origin,
+    server,
     tokens,
     controllers,
     observedCells,
@@ -428,6 +508,7 @@ export async function performanceFixture({
     snapshotExpectations,
     snapshotClients,
     snapshotFailures,
+    clientObservations,
     app,
     transport,
     api,
@@ -639,6 +720,81 @@ export async function runTwoTeamPerformance({
   }
 }
 
+function sourceTreeHash() {
+  const paths = [
+    ...new Set(
+      execFileSync(
+        "git",
+        [
+          "ls-files",
+          "-c",
+          "-o",
+          "--exclude-standard",
+          "-z",
+          "--",
+          "server",
+          "worker",
+          "shared",
+          "src",
+          "scripts",
+          "package.json",
+          "package-lock.json",
+        ],
+        { encoding: "utf8" },
+      )
+        .split("\0")
+        .filter(Boolean),
+    ),
+  ].sort();
+  const manifest = paths
+    .filter((path) => statSync(path, { throwIfNoEntry: false })?.isFile())
+    .map((path) => [
+      path,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ]);
+  return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+}
+
+export function runReviewPerformance(options = {}) {
+  const sourceTreeSha256 = sourceTreeHash();
+  return measureReviewScenarios({
+    performanceFixture,
+    percentile,
+    ...options,
+  }).then((result) => ({
+    ...result,
+    provenance: {
+      sourceTreeSha256,
+      sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim(),
+      workingTreeModified: !!execFileSync("git", ["status", "--porcelain"], {
+        encoding: "utf8",
+      }).trim(),
+      harnessSha256: Object.fromEntries(
+        [
+          "scripts/sync-performance.mjs",
+          "scripts/sync-review-performance.mjs",
+          "scripts/sync-peer-performance.mjs",
+          "scripts/sync-browser-performance.mjs",
+          "scripts/sync-merge-performance.mjs",
+        ].map((path) => [
+          path,
+          createHash("sha256").update(readFileSync(path)).digest("hex"),
+        ]),
+      ),
+    },
+    environment: {
+      node: process.version,
+      cpu: cpus()[0].model,
+      cores: cpus().length,
+      memoryGB: Math.round(totalmem() / 1024 ** 3),
+      transport:
+        "loopback HTTP + SSE; local bare Git; separate Node sync worker",
+    },
+  }));
+}
+
 export async function runSyncPerformance({
   rows = 10000,
   clients = 30,
@@ -646,6 +802,7 @@ export async function runSyncPerformance({
   users = 100,
   log = () => {},
 } = {}) {
+  const sourceTreeSha256 = sourceTreeHash();
   const fixture = await performanceFixture({ rows, clients, users });
   try {
     await fixture.measure(3);
@@ -1051,9 +1208,18 @@ export async function runSyncPerformance({
       rounds,
       log,
     });
+    const review = await runReviewPerformance({
+      rounds,
+      clients,
+      includeBrowser: true,
+      includeMerge: true,
+      log,
+    });
     return {
       measuredAt: new Date().toISOString(),
+      review,
       provenance: {
+        sourceTreeSha256,
         sourceCommit:
           process.env.SYNC_PERF_SOURCE_COMMIT ||
           execFileSync("git", ["rev-parse", "HEAD"], {
@@ -1064,6 +1230,7 @@ export async function runSyncPerformance({
         harnessSha256: Object.fromEntries(
           [
             "scripts/sync-performance.mjs",
+            "scripts/sync-review-performance.mjs",
             "scripts/sync-fault-performance.mjs",
             "scripts/sync-peer-performance.mjs",
             "scripts/sync-import-performance.mjs",
@@ -1130,6 +1297,7 @@ export async function runSyncPerformance({
       twoTeams,
       degradationPercent,
       acceptance: {
+        reviewScenariosPassed: Object.values(review.acceptance).every(Boolean),
         saveP95DegradationWithin10Percent: degradationPercent <= 10,
         allCommitToSseP95Under1000Ms: [
           baseline,
@@ -1169,7 +1337,15 @@ if (
 ) {
   const rows = Number(process.env.SYNC_PERF_ROWS || 10000),
     rounds = Number(process.env.SYNC_PERF_ROUNDS || 30);
-  const report = await runSyncPerformance({ rows, rounds, log: console.log });
+  const report =
+    process.env.SYNC_PERF_REVIEW_ONLY === "1"
+      ? await runReviewPerformance({
+          rounds,
+          includeBrowser: true,
+          includeMerge: true,
+          log: console.log,
+        })
+      : await runSyncPerformance({ rows, rounds, log: console.log });
   const path = resolve(
     process.env.SYNC_PERF_OUTPUT || "docs/validation/sync-performance.json",
   );
