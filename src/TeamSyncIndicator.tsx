@@ -72,7 +72,7 @@ export default function TeamSyncIndicator({
           : status?.conflicts
             ? `공유 충돌 ${status.conflicts}`
             : status?.lastError
-              ? "동기화 오류"
+              ? "외부 동기화 오류"
               : "";
   if (!problem && (!external || !status || status.mode === "unlinked"))
     return null;

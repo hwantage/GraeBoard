@@ -77,7 +77,7 @@ test("내부망은 정상·전송 대기를 숨기고 장애·중단만 표시�
   await refresh({ ...active(), pending: 3, remoteStatus: null });
   await expect(indicator(page)).toHaveCount(0);
   for (const [state, text] of [
-    [{ ...active(), lastError: "Git 접속 실패" }, "동기화 오류"],
+    [{ ...active(), lastError: "Git 접속 실패" }, "외부 동기화 오류"],
     [{ ...active(), conflicts: 2 }, "공유 충돌 2"],
     [{ ...active(), mode: "recovery" }, "복구 점검 필요"],
     [{ ...active(), mode: "paused" }, "동기화 일시정지"],
@@ -180,7 +180,7 @@ test("외부망은 클라우드 저장·Git·내부망 반영을 구분하고 �
     await expect(stages(page).nth(2)).toHaveCSS("color", gray);
   }
   await refresh({ ...active(), lastError: "Git 접속 실패" });
-  await expect(indicator(page)).toHaveText("동기화 오류");
+  await expect(indicator(page)).toHaveText("외부 동기화 오류");
   await expect(indicator(page)).toHaveAttribute("title", /Git 접속 실패/);
   await refresh(active());
   await expect(stages(page)).toHaveText(complete);
