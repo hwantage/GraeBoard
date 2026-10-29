@@ -10,6 +10,10 @@ type LoadedCalendar = {
   data?: CalendarData;
   error?: string;
 };
+type CalendarUpdate = (
+  data: CalendarData,
+  query: CalendarQuery,
+) => CalendarData;
 
 export function useCalendarData(
   teamId: string,
@@ -20,6 +24,7 @@ export function useCalendarData(
   const generation = useRef(0);
   const mutations = useRef(0);
   const deferred = useRef(new Set<() => void>());
+  const pendingUpdates = useRef(new Set<CalendarUpdate[]>());
   const keyFor = (query: CalendarQuery) =>
     `${teamId}:${query.userId}:${query.from}:${query.to}`;
 
@@ -50,6 +55,8 @@ export function useCalendarData(
         }
         deferred.current.delete(read);
         const startedAt = generation.current;
+        const updates: CalendarUpdate[] = [];
+        pendingUpdates.current.add(updates);
         void api<CalendarData>(
           `/calendar?${new URLSearchParams({ teamId, from: query.from, to: query.to, ...(query.userId === null ? { scope: "team" } : { userId: query.userId }) })}`,
           { signal: controller.signal },
@@ -65,7 +72,15 @@ export function useCalendarData(
             }
             setLoaded((current) => ({
               ...current,
-              [owner]: { key, query, reload, data },
+              [owner]: {
+                key,
+                query,
+                reload,
+                data: updates.reduce(
+                  (result, update) => update(result, query),
+                  data,
+                ),
+              },
             }));
           })
           .catch((error: Error) => {
@@ -78,7 +93,8 @@ export function useCalendarData(
               ...current,
               [owner]: { key, query, reload, error: error.message },
             }));
-          });
+          })
+          .finally(() => pendingUpdates.current.delete(updates));
       };
       reads.add(read);
       read();
@@ -115,10 +131,10 @@ export function useCalendarData(
       : null;
   }, [schedules]);
 
-  function updateData(
-    update: (data: CalendarData, query: CalendarQuery) => CalendarData,
-  ) {
-    generation.current++;
+  function updateData(update: CalendarUpdate) {
+    // Local merges also apply to unfinished reads. Updating a tag catalog or
+    // task title must not discard another member's valid calendar response.
+    for (const updates of pendingUpdates.current) updates.push(update);
     setLoaded((previous) => {
       let next = previous;
       for (const [id, result] of Object.entries(previous)) {

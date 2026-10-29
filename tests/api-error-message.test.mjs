@@ -62,6 +62,7 @@ test("validation and conflict messages stay intact while unknown 401 and network
     apiErrorMessage({
       path: "/admin/example",
       status: 503,
+      external: true,
       data: { error: "연결 확인 후 다시 시도하세요." },
     }),
     /연결 확인 후 다시 시도하세요.*HTTP 503/,
@@ -99,4 +100,17 @@ test("validation and conflict messages stay intact while unknown 401 and network
   });
   assert.ok(!message.includes("secret"));
   assert.ok(!message.includes("private token"));
+});
+
+test("internal server error messages keep the editor's existing wording", () => {
+  for (const status of [500, 503])
+    assert.equal(
+      apiErrorMessage({
+        path: "/calendar/tags/id",
+        method: "PUT",
+        status,
+        data: { error: "체크 저장 실패 검증" },
+      }),
+      "체크 저장 실패 검증",
+    );
 });

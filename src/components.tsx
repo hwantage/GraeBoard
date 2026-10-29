@@ -1,3 +1,4 @@
+import { useSite } from "./site-context";
 import {
   useEffect,
   useId,
@@ -13,14 +14,14 @@ import {
   LockKeyhole,
   CircleHelp,
 } from "lucide-react";
-import { api, send, isExternalSite, isTeamSite } from "./api";
+import { api, send } from "./api";
 import { resumeSession } from "./event-stream";
 import { BrandLockup, Grae } from "./Brand";
 import { inkFor } from "./color";
 import type { Bootstrap, User } from "./types";
-import ExternalAccountLogin, {
-  type AccountStatus,
-} from "./ExternalAccountLogin";
+import type { SetupStatus } from "../shared/session-contract";
+import ExternalLogin from "./ExternalLogin";
+import { siteFor } from "./site";
 
 export function Button({
   children,
@@ -194,14 +195,15 @@ export function SessionLogin({
   username: string;
   onSuccess: () => Promise<void>;
 }) {
+  const site = useSite();
   const [password, setPassword] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  if (isExternalSite())
+  if (site.external)
     return (
       <div>
         <p className="field-help">
-          {isTeamSite()
+          {site.accountLinking
             ? `입력을 이 화면에 보존했습니다. 새 창에서 Google 로그인 후 사내 계정 ${username}을 선택하고 다시 시도하세요.`
             : `입력을 이 화면에 보존했습니다. 새 창에서 ${username} 계정으로 Google 로그인을 확인한 뒤 다시 시도하세요.`}
         </p>
@@ -301,21 +303,19 @@ export function Avatar({
   );
 }
 export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
-  const [setup, setSetup] = useState<AccountStatus | null>(null),
+  const [setup, setSetup] = useState<SetupStatus | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    api("/setup")
-      .then((status) =>
-        setSetup({
-          ...status,
-          required: status.required ?? status.needsSetup,
-          tokenRequired: status.tokenRequired ?? status.authMode === "access",
-        }),
-      )
-      .catch((e) => setError(e.message));
+    const controller = new AbortController();
+    api<SetupStatus>("/setup", { signal: controller.signal })
+      .then(setSetup)
+      .catch((error: Error) => {
+        if (!controller.signal.aborted) setError(error.message);
+      });
+    return () => controller.abort();
   }, []);
-  const access = setup?.authMode === "access";
+  const site = siteFor(setup);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -387,31 +387,31 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
         <div className="auth-card">
           <BrandLockup className="auth-mobile-brand" />
           <h2>
-            {setup?.accountLinking
-              ? setup.required
+            {site.accountLinking
+              ? setup?.required
                 ? "팀장 계정 연결"
                 : "사내 계정 연결"
               : setup?.required
-                ? access
+                ? site.external
                   ? "외부 공간 관리자 등록"
                   : "우리 팀의 공간 만들기"
                 : "다시 만나 반가워요"}
           </h2>
           <p>
-            {setup?.accountLinking
-              ? setup.required
+            {site.accountLinking
+              ? setup?.required
                 ? "Google 계정을 사내 팀장 계정에 연결하세요."
                 : "사내 계정을 선택하고 팀장에게 연결 승인을 요청하세요."
               : setup?.required
                 ? "관리자 계정을 만들고 업무 기록을 시작하세요."
-                : access
+                : site.external
                   ? "Google로 확인한 계정으로 업무 공간에 접속합니다."
                   : "계정으로 로그인해 이번 주 업무를 확인하세요."}
           </p>
           {!setup && !error ? (
             <LoaderCircle className="spin" />
-          ) : setup?.accountLinking ? (
-            <ExternalAccountLogin initial={setup} onLogin={onLogin} />
+          ) : setup && site.external ? (
+            <ExternalLogin setup={setup} onLogin={onLogin} />
           ) : (
             <form onSubmit={submit}>
               {setup?.required && (
@@ -425,17 +425,15 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                       maxLength={50}
                     />
                   </label>
-                  {!access && (
-                    <label>
-                      팀 이름
-                      <input
-                        name="teamName"
-                        defaultValue="UX기획팀"
-                        required
-                        maxLength={80}
-                      />
-                    </label>
-                  )}
+                  <label>
+                    팀 이름
+                    <input
+                      name="teamName"
+                      defaultValue="UX기획팀"
+                      required
+                      maxLength={80}
+                    />
+                  </label>
                 </>
               )}
               <label>
@@ -445,9 +443,7 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                   // 로그인에서는 이메일 형식을 강제하지 않는다.
                   type={setup?.required ? "email" : "text"}
                   inputMode="email"
-                  name={access ? "email" : "username"}
-                  value={access ? setup?.email || "" : undefined}
-                  readOnly={access}
+                  name="username"
                   autoComplete="username"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -456,50 +452,44 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                   placeholder="name@company.com"
                 />
               </label>
-              {!access && (
-                <label>
-                  비밀번호
-                  <input
-                    type="password"
-                    name="password"
-                    autoComplete={
-                      setup?.required ? "new-password" : "current-password"
-                    }
-                    minLength={setup?.required ? 10 : 1}
-                    maxLength={128}
-                    placeholder={
-                      setup?.required
-                        ? "10자 이상 입력하세요"
-                        : "비밀번호를 입력하세요"
-                    }
-                    required
-                  />
-                </label>
-              )}
+              <label>
+                비밀번호
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete={
+                    setup?.required ? "new-password" : "current-password"
+                  }
+                  minLength={setup?.required ? 10 : 1}
+                  maxLength={128}
+                  placeholder={
+                    setup?.required
+                      ? "10자 이상 입력하세요"
+                      : "비밀번호를 입력하세요"
+                  }
+                  required
+                />
+              </label>
               {setup?.required && (
                 <>
-                  {!access && (
-                    <label className="checkbox">
-                      <input type="checkbox" name="sample" defaultChecked />
-                      예시 업무로 기능 살펴보기
-                    </label>
-                  )}
+                  <label className="checkbox">
+                    <input type="checkbox" name="sample" defaultChecked />
+                    예시 업무로 기능 살펴보기
+                  </label>
                   {setup.tokenRequired && (
                     <label>
                       초기 설정 키
                       <input
-                        name={access ? "setupToken" : "token"}
+                        name="token"
                         type="password"
                         autoComplete="off"
                         required
                       />
                     </label>
                   )}
-                  {!access && (
-                    <p className="field-help">
-                      예시 담당자는 로그인할 수 없는 비활성 계정으로 생성됩니다.
-                    </p>
-                  )}
+                  <p className="field-help">
+                    예시 담당자는 로그인할 수 없는 비활성 계정으로 생성됩니다.
+                  </p>
                 </>
               )}
               <ErrorNote error={error} />
@@ -507,17 +497,13 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                 {busy ? (
                   <LoaderCircle size={18} className="spin" />
                 ) : setup?.required ? (
-                  access ? (
-                    "관리자 등록"
-                  ) : (
-                    "공간 만들기"
-                  )
+                  "공간 만들기"
                 ) : (
                   "로그인"
                 )}
                 <ArrowRight size={18} />
               </button>
-              {!setup?.required && !access && (
+              {!setup?.required && (
                 <p className="field-help">
                   비밀번호를 잊었다면 시스템 관리자에게 재설정을 요청하세요.
                 </p>

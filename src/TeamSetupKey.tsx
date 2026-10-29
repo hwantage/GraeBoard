@@ -1,9 +1,8 @@
+import { syncTime } from "./sync-types";
 import { useEffect, useState } from "react";
 import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import { busyProps } from "./busyProps";
-const syncTime = (value: string) =>
-  new Date(value).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
 
 type KeyStatus = {
   id: string;

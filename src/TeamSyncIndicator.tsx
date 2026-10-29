@@ -1,6 +1,7 @@
+import { useSite } from "./site-context";
 import { useEffect, useState } from "react";
-import { api, isExternalSite } from "./api";
-import { syncTime, type SyncStatus } from "./TeamSyncSettings";
+import { api } from "./api";
+import { syncTime, type SyncStatus } from "./sync-types";
 
 export default function TeamSyncIndicator({
   teamId,
@@ -11,11 +12,15 @@ export default function TeamSyncIndicator({
   saving: boolean;
   failed: boolean;
 }) {
+  const { external } = useSite();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let running = false;
+    let unlinked = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       if (running || document.visibilityState === "hidden") return;
       running = true;
@@ -24,6 +29,7 @@ export default function TeamSyncIndicator({
           signal: controller.signal,
         });
         if (!controller.signal.aborted) {
+          unlinked = next.mode === "unlinked";
           setStatus(next);
           setUnavailable(false);
         }
@@ -35,18 +41,26 @@ export default function TeamSyncIndicator({
     };
     setStatus(null);
     setUnavailable(false);
-    void refresh();
-    const timer = setInterval(refresh, 15000);
-    window.addEventListener("graeboard:local-save", refresh);
+    const poll = async () => {
+      await refresh();
+      if (!controller.signal.aborted)
+        timer = setTimeout(poll, !external && unlinked ? 60000 : 15000);
+    };
+    const saved = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(refresh, 2000);
+    };
+    void poll();
+    if (external) window.addEventListener("graeboard:local-save", saved);
     window.addEventListener("focus", refresh);
     return () => {
       controller.abort();
-      clearInterval(timer);
-      window.removeEventListener("graeboard:local-save", refresh);
+      clearTimeout(timer);
+      clearTimeout(saveTimer);
+      if (external) window.removeEventListener("graeboard:local-save", saved);
       window.removeEventListener("focus", refresh);
     };
-  }, [teamId]);
-  const external = isExternalSite();
+  }, [teamId, external]);
   const problem = unavailable
     ? "동기화 확인 불가"
     : status?.mode === "paused"

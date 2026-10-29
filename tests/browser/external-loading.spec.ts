@@ -109,3 +109,48 @@ test("업무 조회 실패 시 로딩을 끝내고 재연결 방법을 표시한
     page.getByRole("button", { name: "다시 연결", exact: true }),
   ).toBeVisible();
 });
+
+test("내부 업무 최초 조회 실패는 7초 후 자동 복구하고 기존 비연결 상태가 보드를 차단하지 않는다", async ({
+  page,
+}) => {
+  await page.request.post("/api/auth/login", {
+    headers: { "X-Requested-With": "WeeklyPlan" },
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      json: {
+        ...boot,
+        site: "internal",
+        authMode: "access",
+        teams: boot.teams.map((team: object) => ({
+          ...team,
+          status: "unconfigured",
+        })),
+      },
+    }),
+  );
+  let reads = 0;
+  await page.route("**/api/tasks?**", (route) =>
+    ++reads === 1
+      ? route.fulfill({ status: 503, json: { error: "조회 실패 검증" } })
+      : route.continue(),
+  );
+  await page.clock.install();
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "업무를 불러오지 못했습니다" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "다시 연결", exact: true }),
+  ).toBeVisible();
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.clock.runFor(5000);
+  expect(reads).toBe(1);
+  await page.clock.runFor(3000);
+  await expect(page.getByRole("grid")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "업무를 불러오지 못했습니다" }),
+  ).toHaveCount(0);
+});

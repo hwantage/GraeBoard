@@ -1,3 +1,4 @@
+import type { SetupStatus } from "../shared/session-contract";
 import { useEffect, useId, useState } from "react";
 import { api, send } from "./api";
 import { resumeSession } from "./event-stream";
@@ -5,25 +6,11 @@ import { Button, ErrorNote } from "./components";
 import Select from "./Select";
 import type { Bootstrap } from "./types";
 
-export type AccountStatus = {
-  required: boolean;
-  tokenRequired: boolean;
-  authMode?: "access";
-  accountLinking?: boolean;
-  email?: string;
-  accounts?: {
-    id: string;
-    name: string;
-    username: string;
-    role: string;
-    status: string;
-  }[];
-};
 export default function ExternalAccountLogin({
   initial,
   onLogin,
 }: {
-  initial: AccountStatus;
+  initial: SetupStatus;
   onLogin: (data: Bootstrap) => void;
 }) {
   const [status, setStatus] = useState(initial);
@@ -40,7 +27,7 @@ export default function ExternalAccountLogin({
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
       try {
-        const next = await api<AccountStatus>("/auth/accounts", {
+        const next = await api<SetupStatus>("/auth/accounts", {
           signal: controller.signal,
         });
         if (!controller.signal.aborted) setStatus(next);
@@ -77,7 +64,7 @@ export default function ExternalAccountLogin({
             onLogin(await api<Bootstrap>("/bootstrap"));
           } else {
             await send("/auth/link-request", { userId });
-            setStatus(await api<AccountStatus>("/auth/accounts"));
+            setStatus(await api<SetupStatus>("/auth/accounts"));
           }
         } catch (e) {
           setError((e as Error).message);

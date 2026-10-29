@@ -1,9 +1,10 @@
+import { useSite } from "./site-context";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Plus, Users, History, ScrollText, Plug } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
-import { api, isExternalSite } from "./api";
+import { api } from "./api";
 import { Modal, ErrorNote } from "./components";
 import Toast, { useToast } from "./Toast";
 import DefaultStyleManager from "./DefaultStyleManager";
@@ -55,6 +56,7 @@ export default function SettingsPanel({
   onClose: () => void;
   onRefresh: () => Promise<Bootstrap | void>;
 }) {
+  const site = useSite();
   const isAdmin = user.systemRole === "admin";
   // 시스템 관리자는 팀에 속하지 않은 계정과 방금 생긴 팀까지 봐야 하므로
   // 열 때마다 전체 목록을 새로 받는다. 팀장은 보드가 받아 둔 값으로 충분하다.
@@ -75,7 +77,7 @@ export default function SettingsPanel({
       (team && canManageTeam(user, team.id)
         ? { kind: "team", id: team.id, tab: "general" }
         : firstTeam(teams)) || {
-        kind: isExternalSite() ? "service-connections" : "users",
+        kind: site.external ? "service-connections" : "users",
       },
   );
   const [error, setError] = useState("");
@@ -153,7 +155,7 @@ export default function SettingsPanel({
                 </li>
               );
             })}
-            {isAdmin && !isExternalSite() && (
+            {isAdmin && !site.external && (
               <li>
                 <button
                   type="button"

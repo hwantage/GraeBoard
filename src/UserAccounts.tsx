@@ -1,8 +1,9 @@
+import { useSite } from "./site-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import Select from "./Select";
 import AvatarEditor from "./AvatarEditor";
-import { send, isExternalSite, isTeamSite } from "./api";
+import { send } from "./api";
 import { Avatar, Button, ErrorNote } from "./components";
 import { systemRoleNames, teamRoleNames } from "./roles";
 import type { Team, User } from "./types";
@@ -20,6 +21,7 @@ export default function UserAccounts({
   onOpenTeam: (teamId: string) => void;
   onMessage: (message: string) => void;
 }) {
+  const site = useSite();
   // 수정 폼은 누른 사용자 바로 아래에 펼친다. 신규 사용자만 목록 위에 연다.
   const [edit, setEdit] = useState<Partial<User> | null>(null),
     [query, setQuery] = useState("");
@@ -52,7 +54,7 @@ export default function UserAccounts({
         <div>
           <h3>사용자 계정</h3>
           <p>
-            {isTeamSite()
+            {site.accountLinking
               ? "사내에서 동기화한 팀 계정입니다. Google 계정 연결은 팀의 구성원 탭에서 승인합니다."
               : "로그인 계정과 시스템 권한을 관리합니다. 팀 소속과 팀 내 권한은 각 팀의 구성원 탭에서 정합니다."}
           </p>
@@ -72,7 +74,7 @@ export default function UserAccounts({
         <span className="list-count" aria-live="polite">
           {needle ? `${shown.length}명 / ` : ""}전체 {users.length}명
         </span>
-        {!isTeamSite() && (
+        {!site.accountLinking && (
           <Button
             aria-expanded={!!edit && !edit.id}
             onClick={() => setEdit({ systemRole: "user", active: true })}
@@ -133,7 +135,7 @@ export default function UserAccounts({
                       </div>
                     </td>
                     <td>
-                      {isTeamSite() && u.systemRole === "admin"
+                      {site.accountLinking && u.systemRole === "admin"
                         ? "팀 사이트 관리자"
                         : systemRoleNames[u.systemRole]}
                     </td>
@@ -145,7 +147,7 @@ export default function UserAccounts({
                       </span>
                     </td>
                     <td>
-                      {!isTeamSite() && (
+                      {!site.accountLinking && (
                         <Button
                           title={`${u.name} 사용자 수정`}
                           aria-expanded={editing}
@@ -196,6 +198,7 @@ function UserForm({
     [error, setError] = useState(""),
     [active, setActive] = useState(initial.active ?? true);
   const ref = useRef<HTMLFormElement>(null);
+  const site = useSite();
   const editing = !!initial.id;
   // 이메일 형식이 아닌 기존 아이디는 비워 두면 그대로 유지한다.
   const legacyId = editing && !initial.username?.includes("@");
@@ -231,7 +234,7 @@ function UserForm({
               // 바꾼 경우에만 보내 기존 아이디를 건드리지 않는다.
               username:
                 loginId && loginId !== initial.username ? loginId : undefined,
-              password: isExternalSite()
+              password: site.external
                 ? undefined
                 : String(f.get("initialPassword") || "") || undefined,
               systemRole: f.get("systemRole"),
@@ -308,7 +311,7 @@ function UserForm({
             </small>
           )}
         </label>
-        {!isExternalSite() && (
+        {!site.external && (
           <label>
             {editing ? "비밀번호 재설정 (비워두면 유지)" : "초기 비밀번호"}
             <input

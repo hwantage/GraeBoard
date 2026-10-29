@@ -1,8 +1,9 @@
+import { useSite } from "./site-context";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, UserMinus } from "lucide-react";
 import Select from "./Select";
 import ThemePicker from "./ThemePicker";
-import { api, send, isTeamSite, type ApiError } from "./api";
+import { api, send, type ApiError } from "./api";
 import AccountLinkRequests from "./AccountLinkRequests";
 import { Avatar, Button, ErrorNote } from "./components";
 import { getTheme } from "../shared/themes.js";
@@ -152,7 +153,7 @@ export function TeamMembers({
   onSaved: () => Promise<void>;
   onMessage: Notify;
 }) {
-  const managed = isTeamSite();
+  const managed = useSite().accountLinking;
   const isAdmin = user.systemRole === "admin";
   const [members, setMembers] = useState<Member[] | null>(null),
     [people, setPeople] = useState<UserSummary[]>([]),

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { unpack } from "../../shared/compact.js";
-import type { SyncStatus } from "../../src/TeamSyncSettings";
+import type { SyncStatus } from "../../src/sync-types";
 
 const indicator = (page: Page) =>
   page.getByRole("status", { name: "팀 동기화 상태", exact: true });
@@ -91,6 +91,55 @@ test("내부망은 정상·전송 대기를 숨기고 장애·중단만 표시�
   await expect(indicator(page)).toHaveCount(0);
   await refresh({ mode: "unlinked", pending: 0, conflicts: 0 });
   await expect(indicator(page)).toHaveCount(0);
+});
+
+test("미연결 내부 팀은 저장 이벤트를 무시하고 60초마다 확인하며 비밀번호 메뉴를 유지한다", async ({
+  page,
+}) => {
+  let reads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/teams\/[^/]+\/sync$/.test(request.url())) reads++;
+  });
+  await page.clock.install();
+  await setup(page, "internal", { mode: "unlinked", pending: 0, conflicts: 0 });
+  await page.getByRole("button", { name: "내 계정", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "비밀번호 변경", exact: true }),
+  ).toBeVisible();
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  const before = reads;
+  await page.evaluate(() => {
+    for (let i = 0; i < 5; i++)
+      window.dispatchEvent(new Event("graeboard:local-save"));
+  });
+  await page.clock.runFor(45000);
+  expect(reads).toBe(before);
+  await page.clock.runFor(16000);
+  await expect.poll(() => reads).toBe(before + 1);
+});
+
+test("외부 저장 알림이 연속되면 마지막 저장 2초 후 상태를 한 번 조회한다", async ({
+  page,
+}) => {
+  let reads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/teams\/[^/]+\/sync$/.test(request.url())) reads++;
+  });
+  await page.clock.install();
+  await setup(page, "external");
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  const before = reads;
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("graeboard:local-save")),
+    );
+    await page.clock.runFor(1000);
+  }
+  expect(reads).toBe(before);
+  await page.clock.runFor(900);
+  expect(reads).toBe(before);
+  await page.clock.runFor(200);
+  await expect.poll(() => reads).toBe(before + 1);
 });
 
 test("외부망은 클라우드 저장·Git·내부망 반영을 구분하고 확인되지 않은 완료를 표시하지 않는다", async ({

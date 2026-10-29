@@ -62,11 +62,46 @@ test("내부 서버의 설정 조회가 성공하면 기존 비밀번호 로그�
     route.fulfill({ status: 401, json: { error: "로그인하세요." } }),
   );
   await page.route("**/api/setup", (route) =>
-    route.fulfill({ json: { required: false } }),
+    route.fulfill({
+      json: {
+        site: "internal",
+        authMode: "access",
+        required: false,
+        tokenRequired: false,
+      },
+    }),
   );
   await page.goto("/");
   await expect(
     page.getByLabel("아이디(이메일)", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("비밀번호", { exact: true })).toBeVisible();
+});
+
+test("내부 초기 설정은 명시된 사이트와 설정 키 필요 여부를 따른다", async ({
+  page,
+}) => {
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ status: 401, json: { error: "로그인하세요." } }),
+  );
+  await page.route("**/api/setup", (route) =>
+    route.fulfill({
+      json: {
+        site: "internal",
+        authMode: "access",
+        required: true,
+        tokenRequired: false,
+      },
+    }),
+  );
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "우리 팀의 공간 만들기" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("팀 이름", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("비밀번호", { exact: true })).toBeVisible();
+  await expect(
+    page.getByLabel("아이디(이메일)", { exact: true }),
+  ).toBeEditable();
+  await expect(page.getByLabel("초기 설정 키", { exact: true })).toHaveCount(0);
 });

@@ -1,7 +1,9 @@
+import { useSite } from "./site-context";
 import TeamSetupKey from "./TeamSetupKey";
+import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
-import { api, send, isExternalSite } from "./api";
+import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import Select from "./Select";
@@ -28,33 +30,7 @@ export type ConnectionCheck = {
     message: string;
   }[];
 };
-export type SyncStatus = {
-  mode:
-    | "unlinked"
-    | "initializing"
-    | "importing"
-    | "active"
-    | "paused"
-    | "recovery"
-    | "disconnected";
-  siteId?: string;
-  siteName?: string;
-  profileId?: string;
-  canReconnect?: boolean;
-  canonicalHead?: string | null;
-  pending: number;
-  conflicts: number;
-  lastLocalSavedAt?: string | null;
-  lastReceivedAt?: string | null;
-  lastPublishedAt?: string | null;
-  lastError?: string | null;
-  remoteStatus?: {
-    observedAt: string;
-    mode: string;
-    appliedCanonicalHead: string;
-    verified: boolean;
-  } | null;
-};
+
 type SwitchJob = {
   jobId: string;
   phase: string;
@@ -89,10 +65,7 @@ const modes: Record<SyncStatus["mode"], string> = {
   recovery: "복구 점검 필요",
   disconnected: "연결 해제",
 };
-export const syncTime = (value?: string | null) =>
-  value
-    ? new Date(value).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
-    : "아직 없음";
+
 const display = (value: unknown) =>
   typeof value === "string"
     ? value
@@ -144,6 +117,7 @@ export default function TeamSyncSettings({
   user: User;
   onMessage: (message: string) => void;
 }) {
+  const site = useSite();
   const admin = canManageTeam(user, team.id);
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -287,7 +261,7 @@ export default function TeamSyncSettings({
   );
   const linked = status && !["unlinked", "disconnected"].includes(status.mode);
   const initialized = !!status?.canonicalHead;
-  const external = isExternalSite();
+  const external = site.external;
   const canReconnect =
     !external && status?.mode === "disconnected" && status.canReconnect;
   const needsRecovery =
@@ -362,6 +336,15 @@ export default function TeamSyncSettings({
               </div>
             </dl>
             <ErrorNote error={status.lastError || ""} />
+            {status.receiptCapacity?.warning && (
+              <ErrorNote
+                error={
+                  status.receiptCapacity.blocked
+                    ? "동기화 확인 이력의 저장 한도에 도달했습니다. 기존 자료는 조회·백업할 수 있으며, 새 저장 전에 관리자 점검이 필요합니다."
+                    : "동기화 확인 이력이 저장 한도에 가까워지고 있습니다. 관리자 점검이 필요합니다."
+                }
+              />
+            )}
           </div>
           {needsRecovery && (
             <div className="team-sync-recovery" role="note">

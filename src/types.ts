@@ -170,14 +170,10 @@ export type View = {
   knownProperties?: string[];
   columnVisibility?: Record<string, boolean>;
 };
-export type Bootstrap = {
-  authMode?: "access";
-  site?: "internal" | "external";
-  user: User;
-  users: User[];
-  teams: Team[];
-  years: number[];
-};
+export type Bootstrap = import("../shared/session-contract").Bootstrap<
+  User,
+  Team
+>;
 export type Point = { taskId: string; key: string };
 export type SelectionArea = {
   anchor: Point;

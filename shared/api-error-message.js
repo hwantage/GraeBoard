@@ -19,6 +19,15 @@ function operation(path, method) {
   return `자료 ${action}`;
 }
 
+export function retryAfterMs(headers, now = Date.now()) {
+  const value = headers.get("retry-after");
+  if (!value) return 0;
+  const delay = /^\d+$/.test(value)
+    ? Number(value) * 1000
+    : Date.parse(value) - now;
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
 // Never display provider message/HTML bodies: they can contain internal SQL,
 // connection strings or login markup. Classify known codes and HTTP statuses.
 export function apiErrorMessage({
@@ -40,16 +49,13 @@ export function apiErrorMessage({
   const knownMessage = typeof body.error === "string" ? body.error : "";
   // Keep application validation/conflict messages and their existing UI flow.
   if (knownMessage && status < 500 && status !== 429) return knownMessage;
+  // The internal API already supplies the message shown by existing editors.
+  // Provider diagnostics remain classified for external requests.
+  if (knownMessage && !external && status >= 500 && !code) return knownMessage;
 
   let reason;
   if (status === 429 || code === "RATE_LIMIT_EXCEEDED") {
-    const retryAfter = headers.get("retry-after");
-    const seconds =
-      retryAfter && /^\d+$/.test(retryAfter)
-        ? Number(retryAfter)
-        : retryAfter
-          ? Math.ceil((Date.parse(retryAfter) - Date.now()) / 1000)
-          : 0;
+    const seconds = Math.ceil(retryAfterMs(headers) / 1000);
     const wait =
       Number.isFinite(seconds) && seconds > 0
         ? `${seconds}초 뒤 다시 시도하세요.`

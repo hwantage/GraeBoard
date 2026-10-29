@@ -1,3 +1,4 @@
+import { useSite } from "./site-context";
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
@@ -8,7 +9,7 @@ import {
   Server,
   ShieldCheck,
 } from "lucide-react";
-import { api, send, isTeamSite } from "./api";
+import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import Toast, { useToast } from "./Toast";
@@ -40,6 +41,7 @@ export default function ServiceConnections({
   teams: Team[];
   onRefresh: () => Promise<unknown>;
 }) {
+  const site = useSite();
   const [service, setService] = useState<Service | null>(null);
   const [check, setCheck] = useState<ConnectionCheck | null>(null);
   const [error, setError] = useState("");
@@ -92,7 +94,7 @@ export default function ServiceConnections({
         <div>
           <h3>서비스 연결</h3>
           <p>
-            {isTeamSite()
+            {site.accountLinking
               ? "이 팀의 서비스와 저장소를 확인합니다."
               : "공통 서비스와 설치된 팀 자원을 확인합니다."}
           </p>
@@ -137,7 +139,7 @@ export default function ServiceConnections({
                 현재 서버
               </h4>
               <span className="settings-role-badge">
-                {service.site === "internal" ? "내부망" : "외부망"}
+                {!site.external ? "내부망" : "외부망"}
               </span>
             </div>
             <dl className="service-connections-facts">
@@ -151,7 +153,9 @@ export default function ServiceConnections({
               </div>
               <div>
                 <dt>
-                  {isTeamSite() ? "팀 데이터베이스" : "관리 데이터베이스"}
+                  {site.accountLinking
+                    ? "팀 데이터베이스"
+                    : "관리 데이터베이스"}
                 </dt>
                 <dd>
                   <span>{service.database.provider}</span>
@@ -167,14 +171,14 @@ export default function ServiceConnections({
                   </span>
                 </dd>
               </div>
-              {service.site === "external" && (
+              {site.external && (
                 <div>
                   <dt>Google 로그인</dt>
                   <dd>{service.access?.configured ? "설정됨" : "미설정"}</dd>
                 </div>
               )}
             </dl>
-            {service.site === "external" && (
+            {site.external && (
               <details className="service-connections-details">
                 <summary>
                   <ShieldCheck size={14} aria-hidden="true" />
@@ -226,7 +230,7 @@ export default function ServiceConnections({
                       </p>
                     )}
                   </div>
-                  {service.site === "external" && (
+                  {site.external && (
                     <Button
                       {...busyProps(busy, profile.ready === false)}
                       onClick={() =>

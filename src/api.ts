@@ -1,5 +1,6 @@
 import { stringify, unpack } from "../shared/compact.js";
-import { apiErrorMessage } from "../shared/api-error-message.js";
+import { apiErrorMessage, retryAfterMs } from "../shared/api-error-message.js";
+import { siteFor } from "./site";
 
 // Distinguish this page from other tabs, including tabs signed in as the same user.
 export const clientId = crypto.randomUUID();
@@ -7,31 +8,29 @@ export const clientId = crypto.randomUUID();
 export class ApiError extends Error {
   status: number;
   details: any;
-  constructor(message: string, status: number, details?: unknown) {
+  retryAfterMs: number;
+  constructor(
+    message: string,
+    status: number,
+    details?: unknown,
+    retryAfter = 0,
+  ) {
     super(message);
     this.status = status;
     this.details = details;
+    this.retryAfterMs = retryAfter;
   }
 }
 const taskResponses = new Map<string, { etag: string; data: unknown }>();
-let externalSite = false;
-let teamSite = false;
-let activeSyncTeam = "";
+let site = siteFor(null);
 const pulls = new Map<string, Promise<void>>();
 const lastPull = new Map<string, number>();
-export const isExternalSite = () => externalSite;
-export const isTeamSite = () => teamSite;
-export const setActiveSyncTeam = (teamId: string) => {
-  activeSyncTeam = teamId;
-};
-export async function refreshExternalTeam(
-  teamId = activeSyncTeam,
-  force = false,
-) {
-  if (!externalSite || !teamId) return;
+export async function refreshExternalTeam(teamId: string) {
+  if (!site.external || !teamId) return;
   const running = pulls.get(teamId);
   if (running) return running;
-  if (!force && Date.now() - (lastPull.get(teamId) || 0) < 1500) return;
+  if (Date.now() - (lastPull.get(teamId) || 0) < 1500) return;
+  lastPull.set(teamId, Date.now());
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
   const work = api(`/teams/${teamId}/sync/refresh`, {
@@ -56,17 +55,8 @@ export async function api<T = any>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  // Refresh immediately before external edits. A Git outage must not discard
-  // local input; the normal revision/optimistic conflict check remains decisive.
-  if (
-    externalSite &&
-    options.method &&
-    !["GET", "HEAD"].includes(options.method) &&
-    !/^\/(auth|admin|events)(\/|$)/.test(path) &&
-    !path.includes("/sync/")
-  ) {
-    await refreshExternalTeam().catch(() => {});
-  }
+  // The external API pulls before reads/edits in worker/entry.mjs. Sending a
+  // separate browser preflight duplicates that work and doubles write calls.
   const multipart = options.body instanceof FormData;
   const cacheable =
     path.startsWith("/tasks?") && (!options.method || options.method === "GET");
@@ -95,7 +85,7 @@ export async function api<T = any>(
         path,
         method: options.method,
         status: 0,
-        external: externalSite,
+        external: site.external,
       }),
       0,
     );
@@ -126,10 +116,11 @@ export async function api<T = any>(
         data,
         headers: response.headers,
         invalidResponse,
-        external: externalSite,
+        external: site.external,
       }),
       response.status,
       data?.details,
+      retryAfterMs(response.headers),
     );
   }
   if (response.headers.get("content-disposition")) return response as T;
@@ -146,22 +137,20 @@ export async function api<T = any>(
         status: response.status,
         headers: response.headers,
         invalidResponse: true,
-        external: externalSite,
+        external: site.external,
       }),
       response.status,
     );
   }
   if (["/bootstrap", "/setup"].includes(path)) {
-    // Explicit host mode wins; authMode supports older deployed servers only.
-    externalSite =
-      data.site === "external" ||
-      (data.site !== "internal" && data.authMode === "access");
-    teamSite = data.accountLinking === true;
+    site = siteFor(data);
   }
   if (
     options.method &&
     !["GET", "HEAD"].includes(options.method) &&
     !path.includes("/sync/") &&
+    !path.startsWith("/auth/") &&
+    !path.startsWith("/admin/") &&
     typeof window !== "undefined"
   )
     window.dispatchEvent(new Event("graeboard:local-save"));
@@ -184,7 +173,7 @@ export const send = <T = any>(path: string, body: unknown, method = "POST") =>
   api<T>(path, { method, body: stringify(body) });
 export async function logout() {
   const result = await send<{ logoutUrl?: string }>("/auth/logout", {});
-  if (externalSite && result.logoutUrl === "/cdn-cgi/access/logout") {
+  if (site.external && result.logoutUrl === "/cdn-cgi/access/logout") {
     location.assign(result.logoutUrl);
     return false;
   }
