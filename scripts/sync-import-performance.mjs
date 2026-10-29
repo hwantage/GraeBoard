@@ -98,7 +98,7 @@ try {
       "Production external capacity guard did not preserve the empty cursor",
     );
   // Explicit Node-only stress override. Production serviceFor cannot select
-  // these limits; its hard 4MiB/12k ceiling remains unchanged and tested above.
+  // these limits; its hard 32MiB/50k ceiling remains unchanged and tested above.
   const service = new SyncService({
       transport,
       store: boundStore(db, config.teamId, {

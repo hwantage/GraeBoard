@@ -419,7 +419,7 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 ## 내부·외부 동기화 저장
 
-`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 24MiB를 검사합니다. 이벤트 파일은 4MiB, 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
+`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 4MiB, 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
 SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
 
@@ -445,4 +445,4 @@ Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 
 
 기존 v1의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 v1 백업과 v2 snapshot을 포함하며, v2 C에는 `protocol`/`[]`의 `{version:2,reducer:2}` 표식이 있습니다. v2 사본은 report 메타데이터, `reportTask(reportId,taskId)`의 행 데이터, `reportCell(reportId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 논리 이관·외부 백업 v3의 포맷과 해시 규칙은 바뀌지 않습니다.
 
-receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending 예산은 4MiB이며 공유 엔티티 상한은 12,000개입니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.
+receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending 예산은 32MiB이며 공유 엔티티 상한은 50,000개입니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.

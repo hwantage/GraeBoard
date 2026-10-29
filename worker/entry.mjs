@@ -1,4 +1,8 @@
 import { accessTokenRoutes } from "./access-tokens.mjs";
+import {
+  isSyncRequest,
+  syncErrorMessage,
+} from "../shared/sync-error-message.js";
 import { syncSetupKeyStatus } from "./setup-keys.mjs";
 import { deploymentSite } from "../shared/site-mode.js";
 import { pack, unpack } from "../shared/compact.js";
@@ -302,12 +306,16 @@ export function createWorker({
       } catch (error) {
         onError(error);
         const status = error.status || (error.name === "ZodError" ? 400 : 500);
+        const syncMessage =
+          isSyncRequest(new URL(original.url).pathname) &&
+          syncErrorMessage(error);
         return json(
           {
             error:
-              status >= 500
+              syncMessage ||
+              (status >= 500
                 ? "서비스 연결을 확인한 뒤 다시 시도하세요."
-                : error.message,
+                : error.message),
             ...(error.code === "EXTERNAL_SYNC_CAPACITY"
               ? { code: error.code }
               : {}),

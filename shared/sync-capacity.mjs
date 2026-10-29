@@ -1,7 +1,8 @@
 import { HttpError } from "./http-error.js";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 import {
-  SYNC_FILE_MAX_BYTES,
+  SYNC_STATE_MAX_BYTES,
+  SYNC_STATE_MAX_ENTITIES,
   SYNC_RECEIPT_MAX_BYTES,
   SYNC_RECEIPT_WARNING_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,
@@ -29,10 +30,14 @@ export function capacityLimits(env = {}) {
   return {
     maxBytes: number(
       "SYNC_MAX_STATE_BYTES",
-      SYNC_FILE_MAX_BYTES,
-      SYNC_FILE_MAX_BYTES,
+      SYNC_STATE_MAX_BYTES,
+      SYNC_STATE_MAX_BYTES,
     ),
-    maxEntities: number("SYNC_MAX_ENTITIES", 12000, 12000),
+    maxEntities: number(
+      "SYNC_MAX_ENTITIES",
+      SYNC_STATE_MAX_ENTITIES,
+      SYNC_STATE_MAX_ENTITIES,
+    ),
     maxReceiptBytes: SYNC_RECEIPT_MAX_BYTES,
     maxSnapshotBytes: SYNC_SNAPSHOT_MAX_BYTES,
   };

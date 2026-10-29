@@ -251,13 +251,30 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 
 최초 연결 순서는 다음과 같습니다.
 
-1. 내부 DB·이미지 백업과 팀 UUID를 확인합니다.
+1. 내부 DB·이미지 백업과 팀 UUID를 확인합니다. 기존 사내 자료를 최초 게시할 때는 [스냅샷 용량](#최초-게시-스냅샷의-용량-초과)도 먼저 확인합니다. 연결 검사 성공만으로 전체 자료의 게시·수신 가능 용량을 검증한 것은 아닙니다.
 2. 내부 서버의 팀 연결 프로필과 설치 식별자를 준비하고 서버를 시작합니다.
 3. 내부 **설정 → 팀 → 동기화**에서 설치된 프로필을 선택해 **연결 저장**을 누릅니다.
 4. **연결 검사** 결과를 확인한 뒤 **초기 게시**를 실행합니다. 초기 게시 중 새 내부 편집도 대기 변경으로 보존됩니다.
 5. 내부 초기 게시에 팀 구성원 정보도 포함됐는지 확인하고, 외부에서 팀장 계정을 최초 연결합니다. **설정 → 시스템 → 서비스 연결**에서 연결 검사 후 **팀 가져오기**를 실행합니다. 기존 업무를 초기화해 덮어쓰지 않습니다.
 6. 본문·이미지·팀 신원을 확인한 뒤 팀원에게 주소를 전달하고, 각자의 연결 신청을 팀장이 승인합니다. 역할은 사내에서 설정합니다.
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
+
+연결 저장 직후 `일시정지`, `Git 반영: 아직 없음`은 최초 게시 전 상태입니다. **연결 검사**가 성공해야 **초기 게시** 버튼이 활성화됩니다. Git 검사는 `api.github.com`에서 비공개 저장소 조회와 임시 `graeboard-probe/<UUID>` 브랜치 생성·삭제를 확인합니다. 실제 초기 게시의 `github.com` Git CLI 통신과 전체 자료·이미지 전송은 별도 단계입니다. 내부 초기 게시와 외부 가져오기를 마치기 전에는 `외부망 반영: 확인 대기`를 완료로 해석하지 않습니다.
+
+### 개발용 외부 자료를 비우고 사내 기존 팀으로 처음 연결
+
+이 절은 **사내 팀에는 기존 동기화 이력이 없고, 재사용할 외부 자원의 개발 자료 삭제가 승인된 경우**에만 적용합니다. 이미 운영 동기화 중인 팀이나 복구 사본은 [정리·중단·복구](#12-정리중단복구)를 따릅니다. 사내 SQLite와 이미지 폴더를 현재 자료의 원본으로 유지하며, 외부 초기화를 위해 사내 DB를 삭제하거나 빈 DB로 교체하지 않습니다.
+
+1. 실제 사내 `DB_PATH`·`DOCUMENT_IMAGES_DIR`, 팀 UUID, `team_sync_links`의 기존 연결 유무를 읽기 전용으로 확인합니다. 같은 팀 이름이어도 개발 팀과 사내 팀의 UUID는 다를 수 있습니다. 외부 Supabase 프로젝트·R2 bucket·Git 데이터 저장소와 삭제할 개발 팀/설치 UUID를 따로 식별합니다. 외부 백업 생략은 대상 개발 자료에 대한 명시적 승인 범위만 적용하고 사내 백업·복구 절차를 바꾸지 않습니다.
+2. 이전 개발 Node 서버와 자동 동기화를 정상 종료하고 프로세스·포트 종료를 확인합니다. 외부의 사용자 요청도 쓰기와 동기화를 시작하므로 **Cron 중지만으로는 충분하지 않습니다.** 외부 Edge API를 503 점검 응답으로 전환하고 gateway Cron을 제거합니다. 재배포 설정에도 `triggers.crons: []`를 유지합니다. Cron 제거 전파는 최대 15분이 걸릴 수 있으며 이전 요청·백그라운드 실행의 종료를 로그에서 확인한 뒤 삭제합니다. [Cron 안내](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+3. 검토된 대상 전용 SQL로 Supabase의 `graeboard`·`graeboard_site`를 초기화합니다. SQL은 **삭제할 개발 팀 UUID를 검사**하고, 최신 릴리스의 migration SQL·checksum으로 두 스키마를 같은 트랜잭션 안에서 재생성해야 합니다. 새 `site_meta`·`team_meta`에는 **사내 팀 UUID**를 넣습니다. 다른 Supabase 스키마와 프로젝트·접속 Secret은 유지합니다. 현재 릴리스의 완료 기준은 site v3, team v2, 사내 팀 UUID 일치, 앱 사용자·동기화 연결 0건입니다. 성공 후 재실행은 이전 개발 팀 UUID 검사에서 거절돼야 합니다. 기존 팀 업그레이드용 `site-key-migration-sql.mjs`는 빈 DB 재생성 도구가 아닙니다.
+4. 새 테이블에 서버용 `graeboard_app`의 스키마·테이블·sequence 권한을 복원하고 `PUBLIC`·`anon`·`authenticated`의 앱 스키마 접근을 차단합니다. 이 권한 처리를 포함한 검토된 초기화 SQL에 대해 Supabase가 RLS 선택을 표시하면 **Run without RLS**를 사용합니다. 현재 앱은 서버에서 인증·팀 권한을 검사하고 PG 전용 역할로 접근하며, RLS 정책을 만들지 않습니다. 정책 없이 RLS만 켜면 서버 역할의 조회·저장이 차단됩니다. 다른 SQL이나 공개 Data API 테이블에 이 선택을 일반화하지 않습니다. [PostgreSQL RLS](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+5. R2의 대상 bucket에서 **Settings → Empty Bucket → Empty**를 실행하고 객체가 비었는지 확인합니다. bucket과 binding은 유지합니다. 이는 외부 이미지 삭제이며 사내 이미지 폴더에는 적용하지 않습니다. [R2 비우기](https://developers.cloudflare.com/r2/buckets/delete-buckets/)
+6. 팀 **데이터 저장소**의 `sync-v1`, 이전 내부 설치의 `sync-directory/<ID>`·`sync-setup/<ID>`·`sync-status/<ID>`, 이전 외부 설치의 `sync-setup-status/<ID>`·`sync-status/<ID>`를 삭제합니다. 기본 `main`과 앱 **소스 저장소**는 유지합니다. GitHub **All** 탭에서 대상 브랜치가 사라지고 재생성되지 않는지 확인합니다. 이 절차는 동기화 브랜치를 비우는 것이며 GitHub의 모든 과거 객체를 영구 소거하는 절차가 아닙니다.
+7. 사내 설치 ID가 없으면 새 UUID를 한 번 발급해 고정합니다. 기존 사내 설치 ID가 있으면 유지합니다. 새 외부 설치 ID와 양쪽 상대 설치 ID, 프로필·`SITE_TEAM_ID`·gateway 팀 UUID를 맞춥니다. 이전 개발 서버의 프로필과 설치 ID를 그대로 복사하지 않습니다. 환경 설정만 바꾸면서 기존 DB·이미지 경로는 유지합니다.
+8. 사내에서 **연결 저장 → 연결 검사 → 초기 게시**를 완료합니다. 외부 설정과 동일 릴리스의 Edge/gateway를 반영한 뒤 사내 팀장이 연결 키를 발급하고, 외부에서 자신의 사내 계정을 연결해 **팀 가져오기**를 수행합니다. 사용자 접근은 운영자 검증 범위로 제한하고 Cron은 계속 중지합니다. 업무·문서·이미지·구성원과 양방향 반영을 검증한 뒤 Cron과 사용자 접근을 재개합니다.
+
+현재 `SyncService.initialize`의 최초 게시 형식은 protocol 1입니다. 최신 앱 배포나 외부 DB 초기화만으로 protocol 2가 되지는 않습니다. protocol 2로 운영할 경우 최초 연결 후 [명시 전환 절차](OPERATIONS.md#동기화-v2-명시-전환)를 수행합니다. 형식 전환이 용량 상한을 없애지는 않습니다.
 
 외부 화면의 `외부 클라우드 저장`, `Git 반영`, `내부망 반영 대기/내부망 반영 완료`는 서로 다른 단계이며 각각 태그로 표시합니다. 대기·진행 중은 회색, 완료는 푸른색입니다. 내부 화면은 정상·대기 태그를 숨기고 오류·충돌·복구 필요·동기화 중단만 표시합니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 상대 반영 완료로 표시하지 않습니다. **동기화 확인 불가**는 현재 상태 조회 자체가 실패한 경우이므로 연결과 API 오류를 확인합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
 
@@ -311,13 +328,94 @@ git -C /srv/graeboard/data/sync/team-a-internal config --local --unset-all http.
 
 토큰을 프록시 URL이나 Git config에 넣지 않습니다. 프록시 설정도 내부의 GitHub 전용 통신 범위를 유지하며 Supabase·R2 직접 접속을 열지 않습니다.
 
+### 사내 HTTPS 인증서와 Node·Git 신뢰 설정
+
+Node.js 22.14.0에서 연결 검사 로그가 `fetch failed`, 원인 코드가 `SELF_SIGNED_CERT_IN_CHAIN`이면 HTTPS 인증서 체인을 신뢰하지 못한 상태입니다. 사내 TLS 검사 장비의 CA가 Node의 신뢰 목록에 없을 수 있습니다. 이 단계에서는 토큰 권한의 정상 여부를 아직 판단할 수 없습니다. `git pull` 성공도 Node의 `api.github.com` 접속 성공을 보장하지 않습니다.
+
+먼저 서비스 실행 환경의 인증서 묶음을 확인합니다. RHEL 계열은 보통 `/etc/pki/tls/certs/ca-bundle.crt`, Debian 계열은 `/etc/ssl/certs/ca-certificates.crt`입니다. 이 파일에도 필요한 CA가 없으면 보안 담당자가 제공하고 확인한 사내 CA PEM 파일을 사용합니다. 접속 상대가 보내 준 인증서를 검증 없이 신뢰 목록에 추가하거나 TLS 검증을 끄지 않습니다.
+
+다음은 `tokenEnv` 환경 변수로 토큰을 등록한 설치의 읽기 전용 검사입니다. 실제 앱 디렉터리에서 **검사할 프로필 ID**를 지정합니다. `.env`를 읽지만 서버·DB를 시작하거나 변경하지 않습니다. PM2에 같은 환경 변수가 별도로 등록돼 있으면 PM2 값이 우선하므로 함께 확인합니다. DB에 암호화한 토큰을 사용하는 설치에서는 환경 변수 토큰 검사와 실제 앱 검사를 구분합니다.
+
+```sh
+GRAEBOARD_CA_BUNDLE=
+for cert in /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt
+do
+  if [ -r "$cert" ]; then
+    GRAEBOARD_CA_BUNDLE="$cert"
+    break
+  fi
+done
+
+NODE_EXTRA_CA_CERTS="$GRAEBOARD_CA_BUNDLE" GRAEBOARD_CHECK_PROFILE=team-a-internal \
+node --env-file-if-exists=.env --input-type=module <<'NODE'
+if (!process.env.NODE_EXTRA_CA_CERTS) {
+  console.error('신뢰할 CA 파일 경로를 먼저 확인하세요.');
+  process.exit(1);
+}
+const profiles = JSON.parse(process.env.GRAEBOARD_SYNC_PROFILES || '[]');
+const profile = profiles.find(p => p.profileId === process.env.GRAEBOARD_CHECK_PROFILE);
+const token = profile && process.env[profile.tokenEnv || 'GRAEBOARD_GIT_TOKEN'];
+if (!token) {
+  console.error('지정한 프로필과 토큰 등록 여부를 확인하세요.');
+  process.exit(1);
+}
+const { repositoryUrl } = await import('./server/sync/git-cli.mjs');
+const repository = repositoryUrl(profile.repository).replace('https://github.com/', '');
+try {
+  const response = await fetch(`https://api.github.com/repos/${repository}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'GraeBoard',
+    },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(20000),
+  });
+  console.log({ HTTP: response.status });
+  await response.body?.cancel();
+  if (response.status !== 200) process.exitCode = 1;
+} catch (error) {
+  console.log({ 오류종류: error.name, 원인코드: error.cause?.code || error.code || '(없음)' });
+  process.exitCode = 1;
+}
+NODE
+```
+
+`HTTP: 200`은 TLS와 저장소 조회 성공입니다. 쓰기 권한은 이후 앱의 **연결 검사**에서 확인합니다. 같은 인증서 오류가 계속되면 필요한 CA를 확인하고, 401/403/404는 토큰·저장소 접근 권한을 점검합니다. 토큰 원문과 전체 환경 변수를 로그·문의에 붙이지 않습니다.
+
+성공한 CA 경로를 **Node 시작 전의 실행 환경**에 등록합니다. Node는 `NODE_EXTRA_CA_CERTS`를 시작할 때 읽으므로 앱에서 실행 중 `process.env`를 바꾸는 방식은 적용되지 않습니다. PM2 설치의 예시는 다음과 같습니다. `3`은 실제 앱 프로세스 ID로 바꾸며, 앞서 검사한 CA 경로가 들어 있는 같은 셸에서 실행합니다. [Node.js 22.14.0](https://nodejs.org/download/release/v22.14.0/docs/api/cli.html#node_extra_ca_certsfile), [PM2 환경 갱신](https://pm2.keymetrics.io/docs/usage/process-management/)
+
+```sh
+test -r "$GRAEBOARD_CA_BUNDLE" && \
+  NODE_EXTRA_CA_CERTS="$GRAEBOARD_CA_BUNDLE" pm2 restart 3 --update-env
+pm2 save
+```
+
+ecosystem 파일로 배포 설정을 관리한다면 해당 앱의 `env.NODE_EXTRA_CA_CERTS`에도 같은 절대 경로를 반영합니다. 재부팅·재배포 후에도 서비스 실행 계정이 이 CA 파일을 읽을 수 있어야 합니다. Node 실행 중 경고를 숨기거나 `.env` 변경만으로 반영됐다고 판단하지 말고 앱 연결 검사로 확인합니다.
+
+앱의 Git CLI는 환경을 별도로 구성하며 시스템·전역 Git 설정을 읽지 않습니다. 실제 게시에도 같은 신뢰 설정이 필요하면 **선택 프로필의 bare clone**에 URL별 `sslCAInfo`를 지정합니다. 다음은 최초 연결에서 clone이 아직 없을 때도 사용할 수 있는 예시입니다. 실제 `GRAEBOARD_SYNC_DIR`·프로필 ID로 바꾸고 기존 clone을 삭제하지 않습니다. Node용 `NODE_EXTRA_CA_CERTS`를 설정했다고 Git에도 적용되는 것은 아닙니다. [Git sslCAInfo](https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpsslCAInfo)
+
+```sh
+GRAEBOARD_PROFILE_CLONE=/srv/graeboard/data/sync/team-a-internal
+if [ -r "$GRAEBOARD_CA_BUNDLE" ]; then
+  install -d -m 700 "$GRAEBOARD_PROFILE_CLONE"
+  git init --bare "$GRAEBOARD_PROFILE_CLONE"
+  git -C "$GRAEBOARD_PROFILE_CLONE" config --local \
+    http.https://github.com/.sslCAInfo "$GRAEBOARD_CA_BUNDLE"
+fi
+```
+
 ## 11. 연결 검사와 오류 진단
+
+동기화 실행 오류는 실행한 버튼 아래에 붉게 표시합니다. 알려진 용량·인증서·Git 권한·네트워크 오류는 내부 Node와 외부 Edge의 HTTP 응답에서 원인과 조치를 안내하고, 이전 버전이 저장한 영어 오류도 화면에서 같은 문구로 해석합니다. 상태 카드에는 실행 오류를 중복 표시하지 않습니다. 알 수 없는 서버 오류는 일반 안내를 유지하므로 아래 서버 로그로 원인을 확인합니다.
 
 | 화면·증상               | 먼저 확인할 것                                        | 보존할 상태                           |
 | ----------------------- | ----------------------------------------------------- | ------------------------------------- |
 | 관리 DB 오류            | `PG_SITE` 대상, site migration, 앱 역할·TLS     | 팀 DB를 초기화하지 않음               |
 | 팀 DB 신원 불일치       | 내부 UUID, team migration의 UUID, 프로필 binding      | 기존 업무·연결 유지                   |
 | Git 인증/권한 실패      | 토큰 만료·Contents 쓰기 권한·조직 승인·private 저장소 | outbox 유지, 토큰만 교체              |
+| 연결 검사 `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN` | [Node와 Git의 사내 CA 신뢰 설정](#사내-https-인증서와-nodegit-신뢰-설정), 실제 서비스 실행 환경 | TLS 검증과 기존 DB·토큰 유지 |
+| `Snapshot exceeds uncompressed byte budget` | [최초 스냅샷 용량](#최초-게시-스냅샷의-용량-초과), 종류별 엔티티 수·크기, 외부 수신 상한 | 업무·문서·사본·미전송 명령·연결 신원 보존 |
 | R2 검사 실패            | 선택 팀 bucket·binding·PUT/GET/DELETE 권한            | 다른 bucket을 지우지 않음             |
 | 이미지 변환 실패        | `IMAGES` binding·사용량·입력 포맷/화소                | 문서 입력 보존 후 재업로드            |
 | Access 401              | 이 앱 AUD·정확한 발급자·로그인 만료                   | 다른 서비스 토큰 재사용 금지          |
@@ -334,11 +432,81 @@ git -C /srv/graeboard/data/sync/team-a-internal config --local --unset-all http.
 
 연결 검사는 PG에서 검사 쓰기를 롤백하고 R2에서 자신이 만든 임시 객체만 제거합니다. Git 검사도 실제 업무 이력을 수정하는 용도로 사용하지 않습니다. 초기 게시 대기·가져오기 대기는 정상 동기화 완료를 뜻하지 않습니다.
 
+화면에 `서버에서 처리하지 못했습니다. 입력을 보존한 뒤 다시 시도하세요.`만 보이면 서버 로그의 같은 API 경로·시각을 확인합니다. PM2의 예시는 `pm2 logs 3 --err --lines 40 --nostream`입니다. SQLite의 `ExperimentalWarning`은 이 오류의 원인과 구분합니다. 로그에는 `fetch failed`까지만 남을 수 있으므로 원인 코드는 위 읽기 전용 API 검사로 확인합니다. 연결 검사 후 초기 게시가 다른 오류로 중단되면 새 오류에 해당하는 단계를 점검합니다.
+
 외부 `/api/health`도 Access 인증과 팀장이 연결을 승인한 활성 계정 검사를 거칩니다. 내부의 공개 health와 다르므로 모니터링도 허용된 인증 경로로 구성합니다.
 
 외부의 진입·포커스·편집 전 최신화는 팀별 30초 간격으로 원격 head를 확인하고 변경이 있을 때 수신합니다. 이 보조 요청은 상태 브랜치를 조회·게시하지 않으며 상태 확인은 Cron이 담당합니다. 따라서 여러 화면의 조회 횟수를 GitHub 전체 동기화 횟수로 늘리지 않습니다. 실제 GitHub 요청 한도·네트워크 지연은 운영 계정에서 별도 확인합니다.
 
 외부 저장 뒤의 자동 게시는 팀별 첫 미전송 변경이 저장된 시각부터 2초 동안 변경을 모으고, 이후 자동 게시 시도 사이에는 최소 5초 간격을 둡니다. 연속 저장이 첫 대기 시간을 계속 연장하지 않으며, 게시 시도 시각은 DB에 남아 다른 Edge 실행에서도 간격을 지킵니다. 네트워크 오류나 실행 소유권 충돌이 생겨도 미전송 변경은 유지합니다. Edge 실행 종료로 대기 작업이 사라지면 다음 Cron이 처리합니다. 이미 진행 중인 게시가 미전송 목록을 읽은 뒤 저장된 마지막 변경도 그 주기에 포함되지 않고 후속 저장 또는 다음 1분 Cron 주기까지 남을 수 있습니다. 변경은 미전송 상태로 보존됩니다. Cron과 사용자가 직접 실행하는 동기화는 이 자동 게시 대기 시간을 적용하지 않습니다. 이 간격은 요청을 줄이기 위한 것으로 GitHub 계정의 요청 한도나 운영 환경의 지연을 보장하지 않습니다.
+
+### 최초 게시 스냅샷의 용량 초과
+
+`Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
+
+게시 측과 수신 측의 상한을 함께 확인해야 합니다.
+
+| 검사 대상 | 현재 상한 | 의미 |
+| --- | --- | --- |
+| 압축 전 snapshot / 압축된 snapshot 객체 | 각각 64 MiB | 내부 bootstrap 저장과 Git snapshot 인코딩·디코딩 |
+| 외부 공유 상태·충돌·미전송 명령 | 32 MiB | 외부 `assertStateCapacity`의 상태 예산 |
+| 외부 공유 엔티티 | 50,000개 | 업무 행 외에 셀·문서·일정 등도 각각 집계 |
+| 외부 receipt | 16 MiB, 12 MiB부터 경고 | 업무 상태와 별도 예산 |
+
+이는 현재 앱이 설정한 상한이며 Supabase 요금제의 DB 용량 제한을 뜻하지 않습니다. `SYNC_MAX_STATE_BYTES`와 `SYNC_MAX_ENTITIES`는 외부 상한을 **낮추는 설정**으로, 위 값을 넘게 지정하면 설정 오류가 됩니다. 스냅샷 상한만 늘려도 외부가 수신할 수 있는 것은 아닙니다. protocol 2로 바꾸는 것만으로도 이 상한은 없어지지 않습니다.
+
+**외부 공유 상태**는 한 팀의 업무·셀·사본·문서·일정 등 동기화 기준본, 삭제 표식, 충돌 자료와 미전송 변경을 canonical UTF-8 JSON으로 계수한 크기입니다. 한 번에 보내는 파일 크기나 PostgreSQL 전체 디스크 사용량이 아닙니다. 문서 본문은 포함하고 이미지 원본 바이트는 별도 객체로 전송합니다. 이전 외부 상태 4 MiB·12,000개 상한을 32 MiB·50,000개로 상향했으며, **이벤트 파일은 계속 4 MiB**입니다. 작은 변경을 여러 이벤트로 나눠 보내도 전체 기준본 용량은 별도로 검사합니다. protocol 1에서 4 MiB보다 큰 사본 하나를 수정하는 경우에는 명령 상한에 걸릴 수 있으므로 최초 가져오기 후 [v2 전환](OPERATIONS.md#동기화-v2-명시-전환)도 확인합니다.
+
+적용 시 내부 Node와 외부 Edge를 같은 한도 구현으로 갱신합니다. 이전 `SYNC_MAX_STATE_BYTES=4194304` 또는 `SYNC_MAX_ENTITIES=12000`을 외부 환경에 명시했다면 설정을 제거해 새 기본값을 사용하거나 각각 `33554432`, `50000`으로 바꿉니다. 코드만 배포해도 명시한 낮은 설정은 유지됩니다. 이번 상향은 DB 스키마·저장 형식·프로토콜 버전을 바꾸지 않으므로 별도 DB 마이그레이션은 없습니다.
+
+진단은 실제 서버의 릴리스 디렉터리에서 다음처럼 읽기 전용으로 수행합니다. DB 절대 경로·팀 UUID를 해당 설치 값으로 바꿉니다. 이 명령은 현재 엔티티 상태를 집계하고 원문·제목·사용자 이름을 출력하지 않으며, 네트워크 요청·DB 수정·서버 시작을 하지 않습니다. 결과에는 bootstrap에서 추가하는 미전송 receipt·삭제 표식과 bundle 메타데이터가 포함되지 않으므로 **실제 게시 bundle의 정확한 크기나 외부 수신 가능 여부 판정으로 사용하지 않습니다.**
+
+```sh
+GRAEBOARD_DIAG_DB=/srv/graeboard/data/weekly-plan.sqlite \
+GRAEBOARD_DIAG_TEAM=11111111-1111-4111-8111-111111111111 \
+node --input-type=module <<'NODE'
+import { DatabaseSync } from 'node:sqlite';
+import { allEntities } from './server/sync/entities.mjs';
+import { canonical } from './server/sync/protocol.mjs';
+const db = new DatabaseSync(process.env.GRAEBOARD_DIAG_DB, { readOnly: true });
+try {
+  db.exec('PRAGMA query_only=ON; BEGIN');
+  const teamId = process.env.GRAEBOARD_DIAG_TEAM;
+  const link = db.prepare(`SELECT team_id,bootstrap_id,mode,canonical_head,
+    bootstrap_bundle IS NOT NULL AS has_bootstrap
+    FROM team_sync_links WHERE team_id=?`).get(teamId);
+  if (!link) throw new Error('선택 팀의 동기화 연결이 없습니다.');
+  const entities = allEntities(db, link);
+  const groups = new Map();
+  for (const [key, record] of Object.entries(entities)) {
+    const row = groups.get(record.entity) || { kind: record.entity, count: 0, bytes: 0 };
+    row.count++;
+    row.bytes += Buffer.byteLength(JSON.stringify(key)) + Buffer.byteLength(canonical(record)) + 2;
+    groups.set(record.entity, row);
+  }
+  console.table([...groups.values()].sort((a,b) => b.bytes-a.bytes).map(r => ({
+    kind: r.kind, count: r.count, MiB: (r.bytes/1048576).toFixed(2),
+  })));
+  console.log({
+    currentEntitiesMiB: (Buffer.byteLength(canonical({entities,receipts:{},conflicts:{}}))/1048576).toFixed(2),
+    entityCount: Object.keys(entities).length,
+    mode: link.mode,
+    hasPublishedHead: Boolean(link.canonical_head),
+    hasFrozenBootstrap: Boolean(link.has_bootstrap),
+    pending: db.prepare("SELECT count(*) AS n FROM sync_outbox WHERE team_id=? AND status<>'acknowledged'").get(teamId).n,
+  });
+} finally {
+  db.exec('ROLLBACK');
+  db.close();
+}
+NODE
+```
+
+2026-10-29 사내 적용에서는 CA 설정 후 Git·SQLite 연결 검사는 통과했으나 최초 게시가 당시 24 MiB 스냅샷 상한으로 중단됐습니다. 읽기 전용 현재 엔티티 집계는 **25.36 MiB·30,796개**였고, 주요 항목은 셀 25,612개/9.72 MiB, 사본 1개/8.77 MiB, 문서 2,315개/5.17 MiB였습니다. 당시 `mode=initializing`, 게시 head 없음, 고정 bootstrap 없음, 미전송 2건으로 확인됐습니다. 이는 연결 검사까지의 성공 기록이며 최초 게시·외부 가져오기 성공 기록이 아닙니다.
+
+용량 초과 후에는 DB·문서·사본·이미지·outbox와 연결 신원을 보존합니다. 업무 행을 삭제하거나 연결을 해제·재생성해 우회하지 않습니다. 외부 이용자 접근 제한과 Cron 중지를 유지하고, 양쪽 코드·설정을 갱신한 뒤 내부에서 연결 검사를 다시 하고 **같은 연결의 초기 게시를 재시도**합니다. 외부 가져오기가 완료되어 양쪽 head·hash, 미전송 건수, 업무·문서·이미지를 확인한 뒤 이용자 접근과 Cron을 재개합니다. 이전 한도의 실행 코드로 되돌리면 커진 스냅샷을 거절할 수 있으므로 단순 코드 롤백으로 동기화를 재개하지 않습니다.
+
+회귀 검사 `tests/sync-state-capacity.test.mjs`는 **28.76 MiB·33,021개**의 합성 자료로 실제 SQLite 최초 게시 → 로컬 Git/GitHub API 대역 → 외부 `serviceFor` → 임시 PostgreSQL 반영을 확인합니다. 9 MiB 사본과 문서 본문, 게시 전 미전송 2건의 receipt, 전체 상태 해시, 외부 HTTP 셀 저장과 내부 재수신을 검사합니다. 낮은 기존 설정의 거절 시 빈 cursor·DB 보존도 확인합니다. 이는 Node에서 외부 코드를 실행한 검증이며 실제 Supabase/Deno의 CPU·메모리 한도 내 완료를 보장하지 않습니다. 상향한 숫자는 검증 경계이지 메모리 사용량이 아닙니다. 압축 해제·JSON 파싱·해시·PG 저장 중 복사본과 동시 요청이 추가 메모리를 사용하므로 실제 환경의 초기 가져오기·후속 저장·재시도를 확인합니다.
 
 ## 12. 정리·중단·복구
 
@@ -502,7 +670,7 @@ dry-run은 manifest·모든 자료/이미지 해시·대상 DB 형식·팀 UUID�
 
 ### 애플리케이션의 PostgreSQL 용량 제한
 
-**외부 Edge는** 공유 상태·미전송 명령에 **4 MiB**, 공유 엔티티 **12,000개** 상한을 적용합니다. `RequestContext.data`·`capacityLimits(env)`를 사용하며 `SYNC_MAX_STATE_BYTES=4194304`, `SYNC_MAX_ENTITIES=12000`은 낮출 수만 있습니다. 업무·충돌·P는 canonical UTF-8 직렬화 용량에 포함하고 receipt는 별도 16MiB 예산으로 계산합니다(12MiB부터 경고). 업무 행 하나에 여러 셀·문서가 있으므로 엔티티 수는 업무 행 수가 아닙니다. 기본 SQLite 업무 경로에는 이 PG 한도를 적용하지 않습니다.
+**외부 Edge는** 공유 상태·미전송 명령에 **32 MiB**, 공유 엔티티 **50,000개** 상한을 적용합니다. `RequestContext.data`·`capacityLimits(env)`를 사용하며 `SYNC_MAX_STATE_BYTES=33554432`, `SYNC_MAX_ENTITIES=50000`은 낮출 수만 있습니다. 업무·충돌·P는 canonical UTF-8 직렬화 용량에 포함하고 receipt는 별도 16MiB 예산으로 계산합니다(12MiB부터 경고). 업무 행 하나에 여러 셀·문서가 있으므로 엔티티 수는 업무 행 수가 아닙니다. 기본 SQLite 업무 경로에는 이 PG 한도를 적용하지 않습니다.
 
 새 편집은 한도 초과 시 `413 / EXTERNAL_SYNC_CAPACITY`로 중단하고 기존 C/P/L을 보존합니다. Git 발신·수신도 원격 바이트·압축 해제 snapshot·reducer 결과를 검사하고 마지막 정상 cursor를 유지합니다. 한 실행 인스턴스의 동기화 계산을 직렬화하고 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 자료로 덮어쓰거나 부분 가져오기를 성공으로 처리하지 않습니다. 사이트 정리는 C·receipts를 줄이지 않으므로 이 상한을 늘리지 않습니다.
 
@@ -528,4 +696,4 @@ Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마�
 
 앱 내부 실행은 SQLite 전용이며, PostgreSQL 업무 API는 `worker/storage/`를 사용하는 외부 Edge 경로에서 실행합니다. 전체 업무 Worker 모드는 제거했고 gateway·forwarder는 요청 전달만 담당합니다. SQLite v32·PostgreSQL team v2 migration은 일반 outbox 인덱스만 추가하며 기존 업무·receipt·Git 이력을 정리하지 않습니다. 저장 형식 v2는 앱 배포와 별도인 [명시 전환 절차](OPERATIONS.md#동기화-v2-명시-전환)를 따릅니다.
 
-이벤트 파일은 4MiB 이내로 분할하고 snapshot은 압축·해제 각각 24MiB를 검사합니다. 외부의 업무·충돌·pending 4MiB 예산과 receipt 16MiB 예산(12MiB 경고)을 분리합니다. 과거 receipt가 한도를 넘어도 조회·반출은 가능하며 새 저장은 사전에 거절합니다. GitHub의 429·Retry-After·제한 초기화 시각은 제한된 재시도와 DB의 다음 실행 시각에 반영합니다. GET 업무 조회는 원격 Git 최신화를 백그라운드로 예약하고 기존 DB 응답을 즉시 제공합니다.
+이벤트 파일은 4MiB 이내로 분할하고 snapshot은 압축·해제 각각 64MiB를 검사합니다. 외부의 업무·충돌·pending 32MiB 예산과 receipt 16MiB 예산(12MiB 경고)을 분리합니다. 과거 receipt가 한도를 넘어도 조회·반출은 가능하며 새 저장은 사전에 거절합니다. GitHub의 429·Retry-After·제한 초기화 시각은 제한된 재시도와 DB의 다음 실행 시각에 반영합니다. GET 업무 조회는 원격 Git 최신화를 백그라운드로 예약하고 기존 DB 응답을 즉시 제공합니다.

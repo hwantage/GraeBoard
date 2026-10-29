@@ -1,6 +1,9 @@
 import { gunzipSync } from "node:zlib";
 import { canonical } from "../server/sync/protocol.mjs";
-import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync-limits.js";
+import {
+  SYNC_FILE_MAX_BYTES,
+  SYNC_SNAPSHOT_MAX_BYTES,
+} from "../shared/sync-limits.js";
 import {
   CapacityError,
   capacityLimits,
@@ -13,7 +16,9 @@ export function assertFileCapacity(path, bytes, limits = capacityLimits()) {
   if (!/^snapshots\//.test(path) && !/^events\//.test(path)) return bytes;
   if (
     bytes.byteLength >
-    (path.startsWith("snapshots/") ? SYNC_SNAPSHOT_MAX_BYTES : limits.maxBytes)
+    (path.startsWith("snapshots/")
+      ? SYNC_SNAPSHOT_MAX_BYTES
+      : Math.min(SYNC_FILE_MAX_BYTES, limits.maxBytes))
   )
     throw new CapacityError(
       "External synchronization file capacity exceeded; canonical cursor is unchanged",

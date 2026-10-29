@@ -1,3 +1,5 @@
+import { isSyncRequest, syncErrorMessage } from "./sync-error-message.js";
+
 const identifier = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value)
     ? value
@@ -47,6 +49,8 @@ export function apiErrorMessage({
     identifier(headers.get("x-request-id")) ||
     identifier(headers.get("cf-ray"));
   const knownMessage = typeof body.error === "string" ? body.error : "";
+  const syncMessage = isSyncRequest(path) && syncErrorMessage(knownMessage);
+  if (syncMessage) return syncMessage;
   // Keep application validation/conflict messages and their existing UI flow.
   if (knownMessage && status < 500 && status !== 429) return knownMessage;
   // The internal API already supplies the message shown by existing editors.
