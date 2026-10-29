@@ -18,6 +18,7 @@ import {
 import { GitCliTransport, repositoryUrl } from "./git-cli.mjs";
 
 import { requireThat } from "../../shared/validation.js";
+import { validateSyncProfiles } from "./profiles.mjs";
 
 export function createNodeSync({
   db,
@@ -34,41 +35,7 @@ export function createNodeSync({
   const services = new Map(),
     timers = new Map();
   let stopped = false;
-  const profileIds = new Set(),
-    resources = new Map();
-  for (const profile of profiles) {
-    if (
-      !/^[a-zA-Z0-9_-]{1,80}$/.test(profile.profileId) ||
-      profileIds.has(profile.profileId)
-    )
-      throw new Error("Duplicate or invalid synchronization profile");
-    profileIds.add(profile.profileId);
-    if (
-      profile.replaces &&
-      !profiles.some(
-        (old) =>
-          old.profileId === profile.replaces &&
-          old.teamId === profile.teamId &&
-          old.profileId !== profile.profileId,
-      )
-    )
-      throw new Error("Replacement profile identity mismatch");
-    if (
-      profiles.filter(
-        (other) => other.teamId === profile.teamId && !other.replaces,
-      ).length !== 1
-    )
-      throw new Error("A team requires exactly one original resource profile");
-    const repository =
-      options.transports?.[profile.profileId]?.repository ||
-      repositoryUrl(profile.repository);
-    if (
-      resources.has(repository) &&
-      resources.get(repository) !== profile.teamId
-    )
-      throw new Error("One data repository cannot belong to multiple teams");
-    resources.set(repository, profile.teamId);
-  }
+  validateSyncProfiles(profiles, options.transports);
   let background;
   const { store, releaseAll } = createNodeLeaseStores(db, installationId);
   const capacity = createReceiptCapacityGuard(db);
@@ -405,6 +372,14 @@ export function createNodeSync({
     schedule(l.team_id, 5000);
   return {
     profiles,
+    setupConfigPath:
+      options.setupConfigPath === undefined
+        ? options.profiles
+          ? null
+          : resolve(".env")
+        : options.setupConfigPath,
+    isBusy: (teamId) =>
+      !!services.get(teamId)?.idle() || !!store(teamId).readLink()?.lease_owner,
     installationId,
     store,
     get,
@@ -414,6 +389,21 @@ export function createNodeSync({
     safeProfile,
     schedule,
     notify,
+    // Install or correct a profile without restarting. Callers validate the
+    // same list first (dryRun) so a rejected profile never reaches the file.
+    apply(profile, { dryRun = false } = {}) {
+      const index = profiles.findIndex(
+        (p) => p.profileId === profile.profileId,
+      );
+      const next =
+        index < 0
+          ? [...profiles, profile]
+          : profiles.map((p, i) => (i === index ? { ...p, ...profile } : p));
+      validateSyncProfiles(next, options.transports);
+      if (dryRun) return;
+      if (index < 0) profiles.push(profile);
+      else Object.assign(profiles[index], profile);
+    },
     clear(teamId) {
       services.delete(teamId);
       capacity.clear();

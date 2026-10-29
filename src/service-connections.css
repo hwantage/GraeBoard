@@ -20,6 +20,24 @@
   gap: 5px;
   font-size: 12px;
 }
+.service-connections-setup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.service-connections-setup > label {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.service-connections-setup > .select-control {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+}
+.service-connections-setup > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .service-connections-overview {
   padding: 18px 20px;
   border: 1px solid var(--line);

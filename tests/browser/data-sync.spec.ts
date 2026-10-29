@@ -106,8 +106,13 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     title: "보관할 연도 메모",
   });
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
-  await settings.getByLabel("연결 프로필").selectOption("local");
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("로컬 검증 프로필");
+  await expect(
+    settings.getByRole("combobox", { name: "연결 프로필", exact: true }),
+  ).toHaveCount(0);
   const oldBootstrap = unpack(
     await (await page.request.get(`${base}/api/bootstrap`)).json(),
   );
@@ -165,7 +170,7 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
         ),
     );
     await settings
-      .getByRole("button", { name: "연결 저장", exact: true })
+      .getByRole("button", { name: "이 팀에 연결", exact: true })
       .click();
     await configuredBootstrapResponse;
     await expect(
@@ -280,7 +285,7 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     .locator(".settings-nav")
     .getByRole("button", { name: "동기화 검증팀" })
     .click();
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await settings
     .getByRole("button", { name: "연결 해제", exact: true })
     .click();
@@ -288,12 +293,17 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     "동기화 연결이 해제되어 있습니다.",
   );
   await expect(
-    settings.getByRole("button", { name: "연결 저장", exact: true }),
+    settings.getByRole("button", { name: "이 팀에 연결", exact: true }),
   ).toHaveCount(0);
   await expect(
     settings.getByRole("button", { name: "재개", exact: true }),
   ).toHaveCount(0);
-  await expect(settings.getByLabel("연결 프로필")).toBeDisabled();
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("로컬 검증 프로필");
+  await expect(
+    settings.getByRole("combobox", { name: "연결 프로필", exact: true }),
+  ).toHaveCount(0);
   await settings
     .getByRole("button", { name: "연결 검사", exact: true })
     .click();
@@ -393,7 +403,7 @@ test("외부 최초 관리자는 Google 계정과 설치 키로 등록하고 팀
   ).toBeVisible();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await expect(
-    panel(page).getByRole("region", { name: "서비스 연결" }),
+    panel(page).getByRole("region", { name: "외부 동기화" }),
   ).toBeVisible();
 });
 
@@ -460,7 +470,7 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await settings
     .getByRole("button", { name: "연결 검사", exact: true })
     .click();
@@ -498,7 +508,7 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
   // Opening this tab again must place the persisted old English diagnostic at
   // the same action area, without creating a second alert in the status card.
   await settings.getByRole("tab", { name: "일반", exact: true }).click();
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await expect(alert).toContainText("스냅샷 용량 한도");
   await expect(settings.getByRole("alert")).toHaveCount(1);
   await settings
@@ -638,19 +648,35 @@ test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
-  await settings.getByLabel("연결 프로필").selectOption("replacement");
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("기존 자원");
+  await expect(
+    settings.getByLabel("교체용 프로필", { exact: true }),
+  ).not.toBeVisible();
+  await settings.getByText("연결 이전·복구", { exact: true }).click();
+  await settings
+    .getByLabel("교체용 프로필", { exact: true })
+    .selectOption("replacement");
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("기존 자원");
   await settings
     .getByRole("button", { name: "자료 이관 후 연결 변경", exact: true })
     .click();
   await expect(settings.getByRole("alert")).toContainText(
     "연결 확인 후 다시 시도하세요.",
   );
-  await expect(settings.getByLabel("연결 프로필")).toHaveValue("old");
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("기존 자원");
   await settings
     .getByRole("button", { name: "이어서 연결 이관", exact: true })
     .click();
-  await expect(settings.getByLabel("연결 프로필")).toHaveValue("replacement");
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("새 자원");
   await expect(
     settings.getByRole("button", { name: "이어서 연결 이관", exact: true }),
   ).toHaveCount(0);
@@ -687,9 +713,9 @@ test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await expect(
-    settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
+    settings.getByRole("region", { name: "동기화 검증팀 외부 동기화" }),
   ).toContainText("연결 설정");
   await expect(
     settings.getByRole("button", { name: "초기 게시", exact: true }),
@@ -698,14 +724,14 @@ test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 
     settings.getByRole("region", { name: "팀장 연결 키", exact: true }),
   ).toHaveCount(0);
   await settings
-    .getByRole("button", { name: "서비스 연결", exact: true })
+    .getByRole("button", { name: "외부 동기화", exact: true })
     .click();
   await expect(
     settings.getByRole("button", { name: "팀 가져오기", exact: true }),
   ).toBeEnabled();
 });
 
-test("프로필 없는 팀은 동기화 탭·상태 요청 없이 기존 설정과 서비스 설치 안내를 사용한다", async ({
+test("프로필 없는 팀은 상태 요청 없이 설정 진입점과 서비스 설치 안내를 제공한다", async ({
   page,
 }) => {
   let syncReads = 0;
@@ -716,8 +742,8 @@ test("프로필 없는 팀은 동기화 탭·상태 요청 없이 기존 설정�
   await page.clock.install();
   const settings = panel(page);
   await expect(
-    settings.getByRole("tab", { name: "동기화", exact: true }),
-  ).toHaveCount(0);
+    settings.getByRole("tab", { name: "외부 동기화", exact: true }),
+  ).toBeVisible();
   await expect(
     settings.getByRole("tab", { name: "일반", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -726,10 +752,10 @@ test("프로필 없는 팀은 동기화 탭·상태 요청 없이 기존 설정�
   await page.clock.runFor(20000);
   expect(syncReads).toBe(0);
   await settings
-    .getByRole("button", { name: "서비스 연결", exact: true })
+    .getByRole("button", { name: "외부 동기화", exact: true })
     .click();
   await expect(
-    settings.getByRole("region", { name: "서비스 연결" }),
+    settings.getByRole("region", { name: "외부 동기화" }),
   ).toContainText("설치된 팀 연결 프로필");
   await expect(
     settings.getByRole("link", { name: "설치 안내" }),
@@ -762,7 +788,7 @@ test("프로필만 있는 팀은 연결 폼만 읽고 다른 팀으로 전환하
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await expect(settings.getByLabel("연결 프로필")).toBeVisible();
   await expect(settings.getByLabel("동기화 상태", { exact: true })).toHaveCount(
     0,
@@ -778,8 +804,8 @@ test("프로필만 있는 팀은 연결 폼만 읽고 다른 팀으로 전환하
     .getByRole("button", { name: "다른 동기화팀" })
     .click();
   await expect(
-    settings.getByRole("tab", { name: "동기화", exact: true }),
-  ).toHaveCount(0);
+    settings.getByRole("tab", { name: "외부 동기화", exact: true }),
+  ).toBeVisible();
   await expect(
     settings.getByRole("tab", { name: "일반", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -808,15 +834,15 @@ test("팀장은 자기 팀 연결을 설정하며 공통 자원과 다른 팀은
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
   await expect(
-    settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
+    settings.getByRole("region", { name: "동기화 검증팀 외부 동기화" }),
   ).toContainText("연결 설정");
   await expect(settings.getByLabel("연결 프로필", { exact: true })).toHaveCount(
     1,
   );
   await expect(
-    settings.getByRole("button", { name: "서비스 연결", exact: true }),
+    settings.getByRole("button", { name: "외부 동기화", exact: true }),
   ).toHaveCount(0);
   await expect(
     settings.getByRole("button", { name: "변경 이력 정리", exact: true }),
@@ -866,7 +892,9 @@ test("Git 게시와 검증되지 않은 상대 상태를 실제 내부 반영으
   );
   await page.reload();
   await page.getByRole("button", { name: "설정", exact: true }).click();
-  await panel(page).getByRole("tab", { name: "동기화", exact: true }).click();
+  await panel(page)
+    .getByRole("tab", { name: "외부 동기화", exact: true })
+    .click();
   const status = panel(page).getByLabel("동기화 상태", { exact: true });
   await expect(status).toContainText("내부 서버 저장");
   await expect(status).toContainText("Git 반영");

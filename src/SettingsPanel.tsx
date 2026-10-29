@@ -23,7 +23,7 @@ const teamTabs = [
   ["members", "구성원"],
   ["properties", "속성"],
   ["format", "기본 서식"],
-  ["sync", "동기화"],
+  ["sync", "외부 동기화"],
 ] as const;
 type TeamTab = (typeof teamTabs)[number][0];
 type SettingsTarget =
@@ -129,13 +129,7 @@ export default function SettingsPanel({
     });
   }, [allTeams]);
   function select(next: SettingsTarget) {
-    setSelection(
-      next.kind === "team" &&
-        next.tab === "sync" &&
-        !teams.find((item) => item.id === next.id)?.sync?.available
-        ? { ...next, tab: "general" }
-        : next,
-    );
+    setSelection(next);
     setError("");
     setMessage("");
   }
@@ -143,16 +137,7 @@ export default function SettingsPanel({
     selection.kind === "team"
       ? teams.find((t) => t.id === selection.id)
       : undefined;
-  const selectedTab =
-    selection.kind === "team"
-      ? selection.tab === "sync" && !selectedTeam?.sync?.available
-        ? "general"
-        : selection.tab
-      : null;
-  useEffect(() => {
-    if (selection.kind === "team" && selection.tab !== selectedTab)
-      setSelection({ ...selection, tab: "general" });
-  }, [selection, selectedTab]);
+  const selectedTab = selection.kind === "team" ? selection.tab : null;
   return (
     <Modal title="설정" wide className="settings-modal" onClose={onClose}>
       <div className="settings-layout">
@@ -176,7 +161,10 @@ export default function SettingsPanel({
                         kind: "team",
                         id: t.id,
                         tab:
-                          selection.kind === "team" ? selection.tab : "general",
+                          selection.kind === "team" &&
+                          (selection.tab !== "sync" || t.sync?.available)
+                            ? selection.tab
+                            : "general",
                       })
                     }
                   >
@@ -257,7 +245,7 @@ export default function SettingsPanel({
                     onClick={() => select({ kind: "service-connections" })}
                   >
                     <Plug size={15} aria-hidden="true" />
-                    <span className="settings-nav-name">서비스 연결</span>
+                    <span className="settings-nav-name">외부 동기화</span>
                   </button>
                 </li>
               </ul>
@@ -278,10 +266,6 @@ export default function SettingsPanel({
                 <span className="settings-team-dot" aria-hidden="true" />
                 <div>
                   <h3>{selectedTeam.name}</h3>
-                  <p>
-                    이 팀에만 적용되는 설정입니다
-                    {selectedTeam.id === team?.id ? " · 지금 보고 있는 팀" : ""}
-                  </p>
                 </div>
               </div>
               <div
@@ -289,22 +273,18 @@ export default function SettingsPanel({
                 role="tablist"
                 aria-label={`${selectedTeam.name} 설정`}
               >
-                {teamTabs
-                  .filter(
-                    ([key]) => key !== "sync" || selectedTeam.sync?.available,
-                  )
-                  .map(([key, label]) => (
-                    <button
-                      key={key}
-                      id={`tab-${key}`}
-                      role="tab"
-                      aria-selected={selectedTab === key}
-                      aria-controls={`panel-${key}`}
-                      onClick={() => select({ ...selection, tab: key })}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                {teamTabs.map(([key, label]) => (
+                  <button
+                    key={key}
+                    id={`tab-${key}`}
+                    role="tab"
+                    aria-selected={selectedTab === key}
+                    aria-controls={`panel-${key}`}
+                    onClick={() => select({ ...selection, tab: key })}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
               <div
                 role="tabpanel"
@@ -430,7 +410,7 @@ export default function SettingsPanel({
             </>
           )}
           {isAdmin && selection.kind === "service-connections" && (
-            <ServiceConnections teams={teams} onRefresh={saved} />
+            <ServiceConnections teams={teams} user={user} onRefresh={saved} />
           )}
           {isAdmin && selection.kind === "audit" && (
             <SystemAuditLog users={users} teams={teams} />
