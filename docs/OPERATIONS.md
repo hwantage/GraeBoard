@@ -61,6 +61,7 @@ npm run build
 | `GRAEBOARD_SYNC_KEY` | 없음 | 암호화용 32바이트 키의 base64 값. DB·백업과 별도 비밀 보관 |
 | `GRAEBOARD_SYNC_KEY_ID` | `default` | 암호화 키 식별자 |
 | `GRAEBOARD_SHUTDOWN_TIMEOUT_MS` | `30000` | HTTP·동기화 종료 대기 상한(ms), 100~600000. 초과하면 P를 지우지 않고 exit 1 |
+| `NODE_EXTRA_CA_CERTS` | 없음 | 사내 신뢰 CA PEM 파일의 절대 경로. Node 시작 전 PM2·서비스 실행 환경에 등록하고 재시작 |
 
 내부 Node 서버에는 `GRAEBOARD_SITE=internal`, 외부 Edge에는 `GRAEBOARD_SITE=external`을 지정합니다. 이 값은 `NODE_ENV`의 개발·운영 구분이나 접속 주소와 무관하며 네트워크 방화벽 설정을 대신하지 않습니다. 기존 설치에서 생략하면 호스트의 고정 역할을 사용합니다. Node에 external을 지정하거나 외부 API에 internal을 지정하면 다른 인증 방식으로 전환하지 않고 설정 오류로 중단합니다. 서버는 `/api/setup`·`/api/bootstrap`의 `site`로 화면에 역할을 알립니다. 내부만 초기 게시와 팀장 연결 키 발급을 제공하며 외부의 최초 연결은 서비스 연결의 팀 가져오기를 사용합니다. 외부 `/sync/enable` 요청은 403으로 거절합니다.
 
@@ -71,6 +72,8 @@ npm run build
 운영에서는 DB와 이미지 폴더를 릴리스 경로 밖에 두고 **절대 경로**로 지정하면 릴리스 교체 시 같은 데이터를 계속 사용할 수 있습니다. 서비스 실행 계정에 해당 디렉터리의 읽기·쓰기 권한을 부여합니다. SQLite는 DB 옆에 WAL·SHM 파일을 만들므로 DB 파일뿐 아니라 상위 디렉터리도 쓸 수 있어야 합니다. `.env`와 `dist/`의 기준이 되는 서비스 작업 디렉터리는 해당 릴리스 루트로 지정합니다.
 
 외부 운영용 `.env.cloud.local` 등 비밀 파일은 인터넷에 연결된 운영자 환경에서만 읽습니다. 내부 Node의 `.env`와 구분하고 서버 실행 시 합쳐 로드하지 않습니다. 내부에는 팀 Git 토큰과 내부 설치 설정만 등록합니다. 시스템 프록시로는 연결되는데 앱 Git이 실패하면 [앱 clone의 프록시 설정](CLOUD_SETUP.md#github-프록시가-필요한-내부-환경)을 확인합니다.
+
+사내 TLS 검사 환경에서 연결 검사가 `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN`으로 실패하면 [Node·Git의 CA 신뢰 설정](CLOUD_SETUP.md#사내-https-인증서와-nodegit-신뢰-설정)을 따릅니다. Node의 GitHub API 요청과 Git CLI 게시 경로를 각각 확인합니다. 정상 동작한 CA 경로·서비스 등록 방법을 운영 기록에 남기고 PM2 재시작·재부팅·재배포 후에도 유지합니다. TLS 검증을 끄는 방식으로 해결하지 않습니다.
 
 ### 운영 기록
 
@@ -234,6 +237,8 @@ unset GRAEBOARD_RESET_PASSWORD
 
 ## 내부·외부 Git 동기화 운영
 
+사내 기존 업무를 원본으로 두고 개발용 외부 자원을 재사용할 때는 [외부 초기화와 최초 연결](CLOUD_SETUP.md#개발용-외부-자료를-비우고-사내-기존-팀으로-처음-연결)을 따릅니다. 사내 DB·이미지를 유지하고, 삭제가 승인된 외부 자료만 대상별로 비웁니다. 연결 검사와 최초 게시·외부 수신은 별도 단계이므로 게시 전에 [스냅샷·외부 상태 용량 상한](CLOUD_SETUP.md#최초-게시-스냅샷의-용량-초과)도 확인합니다.
+
 외부 API의 기본 실행 환경은 Supabase Edge Functions입니다. Cloudflare gateway는 정적 화면·요청 전달·R2/Images 처리만 수행하며 내부 Node는 `GRAEBOARD_SITE=internal`과 GitHub 접속만 유지합니다. `npm run build:edge`로 만든 함수를 배포하고 Pages binding을 gateway로 연결합니다. 기존 Worker에서의 이전은 동일 DB·계정 세션·설치 UUID를 유지하며 schema migration이 없습니다. 배포 설정·Secret 분리·전환과 복구 순서는 [Edge 배포](CLOUD_SETUP.md#supabase-edge-functions-배포)를 따릅니다. Hyperdrive는 사용하지 않으며 이전 Worker 이름은 gateway 전달용으로만 유지합니다. 업무 요청 외의 자동 동기화는 gateway Cron이 Edge를 호출하며, Cloudflare와 Supabase 양쪽 실행 로그를 확인합니다.
 
 외부 배포 산출물은 다음처럼 구분합니다. Pages 소스의 자동 빌드가 다른 대상까지 배포하지 않습니다.
@@ -293,7 +298,7 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie
    ```
 
-3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 v1 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 v2 상태의 업무 4MiB·엔티티 12,000개 한도를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
+3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 v1 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 v2 상태의 업무 32MiB·엔티티 50,000개 한도를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
 
    ```sh
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute

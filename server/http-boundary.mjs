@@ -10,6 +10,10 @@ import { z } from "zod";
 import { pack, unpack } from "../shared/compact.js";
 import { now } from "./db.mjs";
 import { HttpError } from "../shared/validation.js";
+import {
+  isSyncRequest,
+  syncErrorMessage,
+} from "../shared/sync-error-message.js";
 
 export function installHttpBoundary(app) {
   app.disable("x-powered-by");
@@ -117,6 +121,11 @@ export function installHttpFallback(app, { staticDir }) {
         err.message,
         JSON.stringify(err.issues?.slice(0, 3) ?? err.details ?? null),
       );
+    const syncMessage = isSyncRequest(req.path) && syncErrorMessage(err);
+    if (syncMessage) {
+      console.error(`[${now()}] ${req.method} ${req.path}:`, err.message);
+      return res.status(err.status || 500).json({ error: syncMessage });
+    }
     if (err instanceof HttpError)
       return res
         .status(err.status)

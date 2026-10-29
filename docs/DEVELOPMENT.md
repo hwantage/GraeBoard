@@ -308,6 +308,10 @@ npm run performance:sync
 
 PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서는 사용할 PG 서버 바이너리가 없으면 관련 검사를 `skip`하고 성공 종료할 수 있으므로, 종료 코드만으로 PG 검증을 주장하지 않습니다. 릴리스 검증은 `TEST_PG_BIN=/absolute/PostgreSQL/bin npm run test:postgres`를 사용합니다. 이 명령은 `postgres`, `initdb`, `pg_ctl`을 먼저 실행 확인하고 하나라도 없거나 실행할 수 없으면 테스트를 시작하기 전에 실패합니다. 준비가 확인되면 같은 경로를 모든 테스트에 전달해 전체 단위·통합 검사를 실행하며, 최종 pass/fail/skip 수도 기록합니다. 공통 외부 API 테스트는 임시 control/team PG와 실제 JWT 검증, 대역 R2/Images/GitHub HTTP를 사용합니다. Git CLI 경합·복구 테스트는 임시 bare 저장소를 사용합니다. 실제 cloud 변환 품질·도메인/Access policy·rate limit·운영 DB는 별도 검증 대상입니다.
 
+공유 상태는 `shared/sync-limits.js`의 32MiB·50,000개, snapshot은 64MiB, 이벤트 파일은 4MiB, receipt는 별도 16MiB로 검사합니다. `tests/sync-state-capacity.test.mjs`는 28.76MiB·33,021개 합성 자료의 SQLite 최초 게시, 외부 `serviceFor`의 PG 가져오기, 기존 4MiB 환경값에서의 원자적 거절, HTTP 후속 저장·역방향 수신을 검증합니다. 상태·파일 예산을 결합해 이벤트 제한까지 풀리는 회귀, 미전송 변경의 임의 삭제, DB 계수와 메모리 계수의 불일치를 확인합니다. Node 테스트의 성공은 Supabase/Deno 자원 한도 내 실행 보장이 아닙니다. 형식과 스키마를 유지한 한도 상향에는 DB 버전 증가를 하지 않으며 양쪽 런타임 배포와 기존 낮은 환경값 확인이 필요합니다.
+
+2026-10-29 한도 상향·동기화 오류 표시 검증은 Node.js 22.23.1과 실제 임시 PostgreSQL 18.6에서 567건을 통과했고 실패·skip은 없었습니다. Chromium·Firefox·WebKit의 동기화 화면 검사 39건에서 버튼 아래 붉은 오류, 작은 화면 내 표시, 재진입 시 오류 보존, 성공 재시도 후 해제, 실행 성공 후 상태 조회 실패의 구분을 확인했습니다. Firefox는 이 개발 PC의 시스템 프록시가 loopback을 우회한 실패를 확인한 뒤 테스트 실행에만 `network.proxy.type=0`을 적용했습니다. 앱의 네트워크 설정은 변경하지 않았습니다. `tests/sync-error-message.test.mjs`는 내부·외부 HTTP 경계의 알려진 원인 안내와 알 수 없는 오류의 상세 정보 비공개를 검사합니다. 프런트엔드·Edge·Pages 빌드도 통과했으며 실제 사내망·Supabase 배포에서의 전송 완료는 별도 점검 대상입니다.
+
 `performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
 
 안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.

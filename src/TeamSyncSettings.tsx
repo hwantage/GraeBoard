@@ -10,6 +10,7 @@ import Select from "./Select";
 import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
 import { canManageTeam } from "../shared/domain.js";
+import { syncErrorMessage } from "../shared/sync-error-message.js";
 import "./team-sync-settings.css";
 
 export type ResourceProfile = {
@@ -70,6 +71,34 @@ const display = (value: unknown) =>
   typeof value === "string"
     ? value
     : (JSON.stringify(value, null, 2) ?? "없음");
+
+type ErrorTarget = "connection" | "actions" | `conflict:${string}`;
+const actionNames: Record<string, string> = {
+  check: "연결 검사",
+  enable: "초기 게시",
+  run: "동기화 실행",
+  reconnect: "다시 연결",
+  disconnect: "연결 해제",
+  pause: "일시정지",
+  resume: "동기화 재개",
+};
+function SyncErrorNote({
+  error,
+  reveal = false,
+}: {
+  error: string;
+  reveal?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error && reveal) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [error, reveal]);
+  return error ? (
+    <div ref={ref}>
+      <ErrorNote error={error} />
+    </div>
+  ) : null;
+}
 
 export function ConnectionChecks({
   result,
@@ -132,10 +161,18 @@ export default function TeamSyncSettings({
   const [busy, setBusy] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState("");
+  const [errorTarget, setErrorTarget] = useState<ErrorTarget>("actions");
+  const [loadError, setLoadError] = useState("");
   const [switchJob, setSwitchJob] = useState<SwitchJob | null>(null);
   const switchStop = useRef(false);
   const live = useRef(true);
   const prefix = `/teams/${team.id}/sync`;
+  function showError(target: ErrorTarget, cause: unknown, action: string) {
+    setErrorTarget(target);
+    setError(
+      `${action} 실패: ${syncErrorMessage(cause) || (cause as Error).message}`,
+    );
+  }
   async function load(
     signal?: AbortSignal,
     includeConnection = false,
@@ -151,6 +188,7 @@ export default function TeamSyncSettings({
         : Promise.resolve(null),
     ]);
     if (!live.current || signal?.aborted) return;
+    setLoadError("");
     setStatus(nextStatus);
     setConflicts(nextConflicts.conflicts);
     if (nextConnection) {
@@ -171,7 +209,7 @@ export default function TeamSyncSettings({
       try {
         await load(controller.signal, initial);
       } catch (e) {
-        if (!controller.signal.aborted) setError((e as Error).message);
+        if (!controller.signal.aborted) setLoadError((e as Error).message);
       }
       if (!controller.signal.aborted && configured)
         timer = setTimeout(() => refresh(), 5000);
@@ -184,16 +222,37 @@ export default function TeamSyncSettings({
       clearTimeout(timer);
     };
   }, [team.id, admin, configured]);
-  async function perform(action: string, message: string, body: unknown = {}) {
+  async function perform(
+    action: string,
+    message: string,
+    body: unknown = {},
+    target: ErrorTarget = "actions",
+  ) {
     if (busy) return;
     setBusy(true);
     setReconnecting(action === "reconnect");
     setError("");
+    if (action === "check") setCheck(null);
     onMessage("");
+    const actionName = actionNames[action] || "충돌 해결";
+    let refreshing = false;
     try {
       const result = await send<ConnectionCheck>(`${prefix}/${action}`, body);
       if (!live.current) return;
-      if (action === "check") setCheck(result);
+      if (action === "check") {
+        setCheck(result);
+        if (!result.ready) {
+          showError(
+            target,
+            new Error(
+              "아래 검사 결과에서 오류가 발생한 연결을 확인한 뒤 다시 검사하세요.",
+            ),
+            "연결 검사",
+          );
+          return;
+        }
+      }
+      refreshing = true;
       if (
         ["enable", "reconnect", "disconnect", "pause", "resume"].includes(
           action,
@@ -204,8 +263,16 @@ export default function TeamSyncSettings({
       await load(undefined, true, true);
       if (live.current) onMessage(message);
     } catch (e) {
-      if (live.current) setError((e as Error).message);
-      if (action === "reconnect") await load(undefined, true).catch(() => {});
+      if (live.current) {
+        showError(
+          target,
+          e,
+          refreshing ? `${actionName} 후 상태 조회` : actionName,
+        );
+        // Refresh failed initialization/status immediately; a polling failure
+        // must not replace the action's more specific diagnostic.
+        await load(undefined, true, true).catch(() => {});
+      }
     } finally {
       if (live.current) {
         setBusy(false);
@@ -223,7 +290,11 @@ export default function TeamSyncSettings({
         desired =
           typeof conflict.desired === "string" ? draft : JSON.parse(draft);
       } catch {
-        setError("적용할 내용의 형식을 확인하세요.");
+        showError(
+          `conflict:${conflict.conflictId}`,
+          new Error("적용할 내용의 형식을 확인하세요."),
+          "충돌 해결",
+        );
         return;
       }
     }
@@ -236,6 +307,7 @@ export default function TeamSyncSettings({
         expectedHead: conflict.expectedHead,
         frontier: conflict.frontier || [conflict.opId],
       },
+      `conflict:${conflict.conflictId}`,
     );
     // Keep manually edited text on a rejected or interrupted resolution.
   }
@@ -246,6 +318,7 @@ export default function TeamSyncSettings({
     onMessage("");
     switchStop.current = false;
     const path = `/admin/teams/${team.id}/connection/switch`;
+    let refreshing = false;
     try {
       let job = await send<SwitchJob>(
         resume ? `${path}/${switchJob!.jobId}/resume` : path,
@@ -262,6 +335,7 @@ export default function TeamSyncSettings({
         if (live.current) setSwitchJob(job);
       }
       if (!live.current) return;
+      refreshing = true;
       await onSaved();
       if (!live.current) return;
       await load(undefined, true, true);
@@ -272,7 +346,11 @@ export default function TeamSyncSettings({
       );
     } catch (e) {
       if (live.current) {
-        setError((e as Error).message);
+        showError(
+          "connection",
+          e,
+          refreshing ? "연결 이관 상태 조회" : "연결 이관",
+        );
         await load(undefined, true).catch(() => {});
         await onSaved().catch(() => {});
       }
@@ -297,8 +375,8 @@ export default function TeamSyncSettings({
       className="settings-section team-sync-settings"
       aria-label={`${team.name} 동기화`}
     >
-      <ErrorNote error={error} />
-      {!status && !connection && !error && (
+      <ErrorNote error={loadError} />
+      {!status && !connection && !loadError && (
         <LoadingState label="동기화 상태를 확인하고 있습니다." />
       )}
       {(status || connection) && (
@@ -314,7 +392,9 @@ export default function TeamSyncSettings({
                   <span
                     className={`team-sync-mode ${needsRecovery || status.lastError ? "is-problem" : status.mode === "active" ? "is-active" : ""}`}
                   >
-                    {modes[status.mode] || status.mode}
+                    {!busy && status.lastError && status.mode === "initializing"
+                      ? "초기 게시 실패"
+                      : modes[status.mode] || status.mode}
                   </span>
                 </div>
                 <p className="team-sync-site">
@@ -363,7 +443,6 @@ export default function TeamSyncSettings({
                     <dd>{status.conflicts}건</dd>
                   </div>
                 </dl>
-                <ErrorNote error={status.lastError || ""} />
                 {status.receiptCapacity?.warning && (
                   <ErrorNote
                     error={
@@ -429,6 +508,7 @@ export default function TeamSyncSettings({
                 setBusy(true);
                 setError("");
                 onMessage("");
+                let refreshing = false;
                 try {
                   await send(
                     `/admin/teams/${team.id}/connection`,
@@ -437,6 +517,7 @@ export default function TeamSyncSettings({
                   );
                   if (!live.current) return;
                   setCheck(null);
+                  refreshing = true;
                   await onSaved();
                   if (!live.current) return;
                   // This submit handler still holds the pre-save configured
@@ -444,7 +525,12 @@ export default function TeamSyncSettings({
                   await load(undefined, true, true);
                   onMessage("팀 연결을 저장했습니다.");
                 } catch (e) {
-                  if (live.current) setError((e as Error).message);
+                  if (live.current)
+                    showError(
+                      "connection",
+                      e,
+                      refreshing ? "연결 저장 후 상태 조회" : "연결 저장",
+                    );
                 } finally {
                   if (live.current) setBusy(false);
                 }
@@ -496,6 +582,12 @@ export default function TeamSyncSettings({
                   </Button>
                 )}
               </div>
+              {!switchJob?.hasMore && (
+                <SyncErrorNote
+                  error={errorTarget === "connection" ? error : ""}
+                  reveal
+                />
+              )}
               {selectedProfile?.repository && (
                 <p className="field-help">
                   저장소: {selectedProfile.repository}
@@ -523,7 +615,6 @@ export default function TeamSyncSettings({
               <p>
                 팀 연결 자료 이관이 진행 중입니다. 작업 ID: {switchJob.jobId}
               </p>
-              {switchJob.error && <p>{switchJob.error}</p>}
               {busy ? (
                 <Button
                   onClick={() => {
@@ -537,6 +628,14 @@ export default function TeamSyncSettings({
                   이어서 연결 이관
                 </Button>
               )}
+              <SyncErrorNote
+                error={
+                  errorTarget === "connection" && error
+                    ? error
+                    : syncErrorMessage(switchJob.error) || switchJob.error || ""
+                }
+                reveal={errorTarget === "connection" && !!error}
+              />
             </div>
           )}
           {status && !switchJob?.hasMore && (
@@ -629,6 +728,16 @@ export default function TeamSyncSettings({
                   </Button>
                 )}
               </div>
+              <SyncErrorNote
+                error={
+                  errorTarget === "actions" && error
+                    ? error
+                    : !busy && status.lastError
+                      ? `동기화 오류: ${syncErrorMessage(status.lastError) || status.lastError}`
+                      : ""
+                }
+                reveal={errorTarget === "actions" && !!error}
+              />
               {admin && linked && (
                 <p className="field-help">
                   잠시 멈출 때는 일시정지를 사용하세요.{" "}
@@ -746,6 +855,14 @@ export default function TeamSyncSettings({
                         </Button>
                       )}
                     </div>
+                    <SyncErrorNote
+                      error={
+                        errorTarget === `conflict:${conflict.conflictId}`
+                          ? error
+                          : ""
+                      }
+                      reveal
+                    />
                   </details>
                 ))}
             </section>

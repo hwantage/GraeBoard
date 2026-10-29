@@ -77,7 +77,6 @@ export default function TeamSetupKey({
         외부에서 Google 로그인 후 자신의 사내 팀장 계정을 선택하고 입력하세요.
         키는 24시간 동안 한 번만 사용할 수 있습니다.
       </p>
-      <ErrorNote error={error} />
       {key && (
         <dl className="role-legend" aria-live="polite">
           <div>
@@ -150,6 +149,7 @@ export default function TeamSetupKey({
           </Button>
         )}
       </div>
+      <ErrorNote error={error} />
       {!enabled && (
         <p className="field-help">팀 연결과 초기 게시를 먼저 완료하세요.</p>
       )}

@@ -399,6 +399,157 @@ test("외부 최초 관리자는 Google 계정과 설치 키로 등록하고 팀
 
 // The PG migration is exercised separately by Worker integration tests; this
 // test controls interrupted responses to verify the browser's durable resume UI.
+test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공 재시도 후 지운다", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1080, height: 640 });
+  const bootstrap = await configuredBootstrap(page);
+  let failed = false,
+    attempts = 0,
+    initialized = false;
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
+  await page.route(`**/api/admin/teams/${teamId}/connection`, (route) =>
+    route.fulfill({
+      json: {
+        profileId: "local",
+        revision: 1,
+        profiles: [
+          {
+            profileId: "local",
+            teamId,
+            name: "동기화 연결",
+            repository: "test/local",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: initialized ? "active" : failed ? "initializing" : "paused",
+        profileId: "local",
+        pending: initialized ? 0 : 2,
+        conflicts: 0,
+        canonicalHead: initialized ? "published" : null,
+        lastError: failed ? "Snapshot exceeds uncompressed byte budget" : null,
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({ json: { conflicts: [] } }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/check`, (route) =>
+    route.fulfill({ json: { ready: true, checks: [] } }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/enable`, (route) => {
+    attempts++;
+    failed = attempts === 1;
+    initialized = !failed;
+    return route.fulfill(
+      failed
+        ? {
+            status: 500,
+            json: { error: "Snapshot exceeds uncompressed byte budget" },
+          }
+        : { json: {} },
+    );
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await settings
+    .getByRole("button", { name: "연결 검사", exact: true })
+    .click();
+  const action = settings.getByRole("button", {
+    name: "초기 게시",
+    exact: true,
+  });
+  await action.click();
+  const alert = settings
+    .locator(".team-sync-actions-section")
+    .getByRole("alert");
+  await expect(alert).toContainText("초기 게시 실패");
+  await expect(alert).toContainText("스냅샷 용량 한도");
+  await expect(alert).toContainText("기존 자료와 미전송 변경은 보존");
+  await expect(alert).toBeInViewport({ ratio: 1 });
+  await expect(settings.getByRole("alert")).toHaveCount(1);
+  await expect(
+    settings.locator(".team-sync-overview").getByRole("alert"),
+  ).toHaveCount(0);
+  await expect(alert).toHaveCSS("color", "rgb(137, 60, 82)");
+  await expect(alert).toHaveCSS("background-color", "rgb(255, 242, 245)");
+  await expect(settings.locator(".team-sync-mode")).toHaveText(
+    "초기 게시 실패",
+  );
+  const buttonBounds = await action.boundingBox(),
+    errorBounds = await alert.boundingBox();
+  expect(errorBounds!.y).toBeGreaterThanOrEqual(
+    buttonBounds!.y + buttonBounds!.height,
+  );
+  expect(errorBounds!.y - buttonBounds!.y - buttonBounds!.height).toBeLessThan(
+    40,
+  );
+  await page.screenshot({ path: testInfo.outputPath("sync-error.png") });
+
+  // Opening this tab again must place the persisted old English diagnostic at
+  // the same action area, without creating a second alert in the status card.
+  await settings.getByRole("tab", { name: "일반", exact: true }).click();
+  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await expect(alert).toContainText("스냅샷 용량 한도");
+  await expect(settings.getByRole("alert")).toHaveCount(1);
+  await settings
+    .getByRole("button", { name: "연결 검사", exact: true })
+    .click();
+  await action.click();
+  await expect(
+    settings.getByRole("button", { name: "지금 동기화", exact: true }),
+  ).toBeEnabled();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  expect(attempts).toBe(2);
+
+  // A committed action followed by a failed status refresh must not be labelled
+  // as a failed publication, which would encourage an unnecessary repeat.
+  let failRefresh = false,
+    runs = 0;
+  await page.route(`**/api/teams/${teamId}/sync/run`, (route) => {
+    failRefresh = ++runs === 1;
+    return route.fulfill({ json: {} });
+  });
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill(
+      failRefresh
+        ? {
+            status: 503,
+            json: { error: "상태 조회 서버가 응답하지 않습니다." },
+          }
+        : {
+            json: {
+              mode: "active",
+              profileId: "local",
+              canonicalHead: "published",
+              pending: 0,
+              conflicts: 0,
+            },
+          },
+    ),
+  );
+  const run = settings.getByRole("button", {
+    name: "지금 동기화",
+    exact: true,
+  });
+  await run.click();
+  await expect(alert).toContainText("동기화 실행 후 상태 조회 실패");
+  await expect(alert).not.toContainText("동기화 실행 실패");
+  await expect(run).toBeEnabled();
+  failRefresh = false;
+  await run.click();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+});
+
 test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된 작업을 이어서 실행한다", async ({
   page,
 }) => {
