@@ -8,7 +8,7 @@ import {
 } from "../shared/document-images.js";
 
 export type ImagePreview = { src: string; alt: string };
-function iconButton(label: string, paths: string[]) {
+export function iconButton(label: string, paths: string[]) {
   const button = document.createElement("button");
   button.type = "button";
   button.setAttribute("aria-label", label);

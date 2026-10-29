@@ -4,8 +4,25 @@ import { documentImageView, type ImagePreview } from "./DocumentImageView";
 import { Button, Modal } from "./components";
 import Select from "./Select";
 import DocumentLoading from "./DocumentLoading";
+import DocumentSlashMenu, {
+  filterSlashItems,
+  slashMatch,
+  type SlashItem,
+  type SlashMatch,
+} from "./DocumentSlashMenu";
+import {
+  TOGGLE_LEVELS,
+  inToggleSummary,
+  remarkToggle,
+  setToggleCommand,
+  toggle,
+  toggleKeydown,
+  toggleSummaryView,
+  unwrapToggleCommand,
+} from "./DocumentToggle";
 import { upload, uploadConfig } from "@milkdown/kit/plugin/upload";
-import { Decoration } from "@milkdown/kit/prose/view";
+import { trailing, trailingConfig } from "@milkdown/kit/plugin/trailing";
+import { Decoration, type EditorView } from "@milkdown/kit/prose/view";
 import {
   Editor,
   rootCtx,
@@ -25,8 +42,11 @@ import {
   turnIntoTextCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
+  insertHrCommand,
   codeBlockSchema,
+  headingSchema,
   linkSchema,
+  paragraphSchema,
 } from "@milkdown/kit/preset/commonmark";
 import {
   gfm,
@@ -40,7 +60,12 @@ import {
   undoCommand,
   redoCommand,
 } from "@milkdown/kit/plugin/history";
-import { Plugin, TextSelection, type Command } from "@milkdown/kit/prose/state";
+import {
+  Plugin,
+  TextSelection,
+  type Command,
+  type EditorState,
+} from "@milkdown/kit/prose/state";
 import {
   Fragment,
   NodeRange,
@@ -73,9 +98,17 @@ import {
   List,
   ListOrdered,
   ListChecks,
+  ListCollapse,
   Table2,
   Maximize2,
   ZoomIn,
+  Pilcrow,
+  Heading1,
+  Heading2,
+  Heading3,
+  Quote,
+  SquareCode,
+  Minus,
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
@@ -196,6 +229,35 @@ const listFormatKeydown = keydownHandler({
   "Mod-Alt-8": listFormatCommand("bullet"),
 });
 
+// Keep an empty paragraph after blocks that offer no caret position below
+// them, including a paragraph that ends with an image. The doc serializer
+// already drops a final empty paragraph, so saved Markdown is unchanged.
+function needsTrailingParagraph(last: Node | null) {
+  if (!last || last.type.name === "heading") return false;
+  if (last.type.name === "paragraph")
+    return last.lastChild?.type.name === "image";
+  return true;
+}
+
+// Uploaded images land at the end of their paragraph without a visible caret.
+// Continue typing in the paragraph below, creating it when needed.
+function selectAfterImage(state: EditorState, pos: number) {
+  const $after = state.doc.resolve(pos + 1);
+  const tr = state.tr;
+  if ($after.parentOffset < $after.parent.content.size)
+    return tr.setSelection(TextSelection.create(tr.doc, $after.pos));
+  const end = $after.after();
+  const $end = state.doc.resolve(end);
+  const next = $end.nodeAfter;
+  const { paragraph } = state.schema.nodes;
+  if (next?.type === paragraph && next.content.size === 0)
+    return tr.setSelection(TextSelection.create(tr.doc, end + 1));
+  if (!$end.parent.canReplaceWith($end.index(), $end.index(), paragraph))
+    return tr.setSelection(TextSelection.create(tr.doc, $after.pos));
+  tr.insert(end, paragraph.create());
+  return tr.setSelection(TextSelection.create(tr.doc, end + 1));
+}
+
 // Milkdown keeps only a fence's language. Keep the rest of the info string
 // (```plain text, ```js filename="a.js", future mermaid options) so rich
 // editing round-trips it instead of rewriting the fence.
@@ -286,7 +348,10 @@ function semanticTree(node: any): any {
 }
 function checkMarkdown(ctx: Ctx, markdown: string) {
   const remark = ctx.get(remarkCtx);
-  const tree = remark.parse(markdown);
+  // Validate after Milkdown's remark transforms: they keep unsupported HTML
+  // as html nodes, restore serializer-generated <br /> placeholders to empty
+  // paragraphs/table cells and group toggle blocks into details nodes.
+  const tree = remark.runSync(remark.parse(markdown), markdown);
   const supported = new Set([
     "root",
     "paragraph",
@@ -307,6 +372,8 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
     "table",
     "tableRow",
     "tableCell",
+    "details",
+    "summary",
   ]);
   function visit(node: any) {
     if (
@@ -329,11 +396,8 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
   visit(tree);
   const doc = ctx.get(parserCtx)(markdown);
   const roundtrip = ctx.get(serializerCtx)(doc);
-  // Validate raw nodes first, then compare through Milkdown's own transforms.
-  // Its empty-line plugin restores serializer-generated <br /> placeholders
-  // to empty paragraphs/table cells. Raw AST comparison rejects those lines.
   if (
-    JSON.stringify(semanticTree(remark.runSync(tree, markdown))) !==
+    JSON.stringify(semanticTree(tree)) !==
     JSON.stringify(
       semanticTree(remark.runSync(remark.parse(roundtrip), roundtrip)),
     )
@@ -421,10 +485,85 @@ export default function RichMarkdownEditor(props: Props) {
   const [uploadError, setUploadError] = useState("");
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [imageZoom, setImageZoom] = useState(false);
+  type SlashState = SlashMatch & { left: number; top: number; flip: boolean };
+  const shell = useRef<HTMLDivElement>(null);
+  const [slash, setSlash] = useState<SlashState | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashRef = useRef<SlashState | null>(null);
+  const slashItemsRef = useRef<SlashItem[]>([]);
+  const slashIndexRef = useRef(0);
+  // Esc hides the menu for the "/" at this position until it is typed again.
+  const dismissedSlash = useRef<number | null>(null);
+  function closeSlash(dismiss = false) {
+    dismissedSlash.current = dismiss ? (slashRef.current?.from ?? null) : null;
+    if (!slashRef.current) return;
+    slashRef.current = null;
+    setSlash(null);
+  }
+  function applySlash(item: SlashItem) {
+    const match = slashRef.current;
+    if (!match || !editorRef.current || latest.current.readOnly) return;
+    closeSlash();
+    editorRef.current.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.delete(match.from, match.to));
+    });
+    item.run();
+  }
+  function slashKeydown(event: KeyboardEvent) {
+    const items = slashItemsRef.current;
+    if (!slashRef.current || !items.length) return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const step = event.key === "ArrowDown" ? 1 : items.length - 1;
+      slashIndexRef.current = (slashIndexRef.current + step) % items.length;
+      setSlashIndex(slashIndexRef.current);
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      applySlash(items[slashIndexRef.current] || items[0]);
+      return true;
+    }
+    if (event.key === "Escape") {
+      closeSlash(true);
+      return true;
+    }
+    return false;
+  }
+  function syncSlash(view: EditorView) {
+    const match = latest.current.readOnly ? null : slashMatch(view.state);
+    if (!match) return closeSlash();
+    if (dismissedSlash.current === match.from) return;
+    dismissedSlash.current = null;
+    const coords = view.coordsAtPos(match.from);
+    const rect = shell.current?.getBoundingClientRect();
+    if (!rect) return;
+    const flip = coords.bottom + 280 > window.innerHeight;
+    const next = {
+      ...match,
+      left: Math.max(0, Math.min(coords.left - rect.left, rect.width - 220)),
+      top: (flip ? coords.top - 4 : coords.bottom + 4) - rect.top,
+      flip,
+    };
+    const current = slashRef.current;
+    if (
+      current &&
+      (["from", "to", "query", "left", "top", "flip"] as const).every(
+        (key) => current[key] === next[key],
+      )
+    )
+      return;
+    if (current?.from !== next.from) {
+      slashIndexRef.current = 0;
+      setSlashIndex(0);
+    }
+    slashRef.current = next;
+    setSlash(next);
+  }
   useEffect(() => {
     let active = true;
     let initialized = false;
     const uploads = new Set<AbortController>();
+    const pendingImages = new Set<Node>();
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root.current);
@@ -462,6 +601,7 @@ export default function RichMarkdownEditor(props: Props) {
                   }),
                 );
               }
+              for (const node of nodes) pendingImages.add(node);
               return nodes;
             } catch (error) {
               if (active && !controller.signal.aborted)
@@ -473,6 +613,10 @@ export default function RichMarkdownEditor(props: Props) {
             }
           },
         }));
+        ctx.set(trailingConfig.key, {
+          shouldAppend: needsTrailingParagraph,
+          getNode: (state) => state.schema.nodes.paragraph.create(),
+        });
         ctx.set(editorViewOptionsCtx, {
           editable: () => !latest.current.readOnly,
           attributes: {
@@ -483,6 +627,10 @@ export default function RichMarkdownEditor(props: Props) {
             translate: "no",
           },
           handleDOMEvents: {
+            blur: () => {
+              closeSlash();
+              return false;
+            },
             click: (_view, event) => {
               const anchor = (event.target as Element).closest("a");
               if (!anchor) return false;
@@ -499,6 +647,8 @@ export default function RichMarkdownEditor(props: Props) {
           handleKeyDown: (view, event) => {
             if (latest.current.readOnly || view.composing || event.isComposing)
               return false;
+            if (slashKeydown(event)) return true;
+            if (toggleKeydown(view, event)) return true;
             if (listFormatKeydown(view, event)) return true;
             if (
               event.key !== "Enter" ||
@@ -586,6 +736,13 @@ export default function RichMarkdownEditor(props: Props) {
                   setPreview(image);
                 },
               ),
+            toggle_summary: (node, view, getPos) =>
+              toggleSummaryView(
+                node,
+                view,
+                getPos,
+                () => latest.current.readOnly,
+              ),
             html: (node) => {
               // Only attribute-free breaks become DOM elements. All other
               // HTML stays text, including nodes introduced by a DOM paste.
@@ -639,12 +796,29 @@ export default function RichMarkdownEditor(props: Props) {
       .use(commonmark)
       .use(codeBlockMetaSchema)
       .use(gfm)
+      .use(toggle)
+      .use(remarkToggle)
       .use(history)
       .use(upload)
+      .use(trailing)
       .use(
         $prose(
           (ctx) =>
             new Plugin({
+              appendTransaction: (transactions, _previous, state) => {
+                if (
+                  !pendingImages.size ||
+                  !transactions.some((tr) => tr.docChanged)
+                )
+                  return null;
+                let inserted = -1;
+                state.doc.descendants((node, pos) => {
+                  if (pendingImages.delete(node)) inserted = pos;
+                });
+                return inserted < 0
+                  ? null
+                  : selectAfterImage(state, inserted).scrollIntoView();
+              },
               view: () => ({
                 update: (view, previous) => {
                   if (active) {
@@ -652,6 +826,7 @@ export default function RichMarkdownEditor(props: Props) {
                     setCanRedo(redoDepth(view.state) > 0);
                     setInTable(isInTable(view.state));
                     setCanDeleteRow(deleteTableRow(view.state));
+                    syncSlash(view);
                   }
                   if (
                     active &&
@@ -699,6 +874,7 @@ export default function RichMarkdownEditor(props: Props) {
       });
     return () => {
       active = false;
+      pendingImages.clear();
       for (const controller of uploads) controller.abort();
       latest.current.onUploading?.(0);
       editorRef.current = null;
@@ -717,7 +893,16 @@ export default function RichMarkdownEditor(props: Props) {
       applyingRemote.current = true;
       editorRef.current?.action((ctx) => {
         const view = ctx.get(editorViewCtx);
-        const doc = checkMarkdown(ctx, props.remoteMarkdown!.markdown);
+        const parsed = checkMarkdown(ctx, props.remoteMarkdown!.markdown);
+        // Compare against the same trailing paragraph the view keeps so a
+        // caret resting there is not moved by every remote save.
+        const doc = needsTrailingParagraph(parsed.lastChild)
+          ? parsed.copy(
+              parsed.content.append(
+                Fragment.from(view.state.schema.nodes.paragraph.create()),
+              ),
+            )
+          : parsed;
         const start = view.state.doc.content.findDiffStart(doc.content);
         if (start === null) return;
         const end = view.state.doc.content.findDiffEnd(doc.content)!;
@@ -737,6 +922,7 @@ export default function RichMarkdownEditor(props: Props) {
     }
   }, [ready, props.remoteMarkdown]);
   useEffect(() => {
+    if (props.readOnly) closeSlash();
     editorRef.current?.action((ctx) =>
       ctx.get(editorViewCtx).setProps({ editable: () => !props.readOnly }),
     );
@@ -766,8 +952,87 @@ export default function RichMarkdownEditor(props: Props) {
       listFormatCommand(format)(view.state, view.dispatch, view);
     });
   }
+  // Block formats from the select and the "/" menu. A toggle summary turns
+  // back into a plain block because Milkdown's block commands cannot change
+  // it in place.
+  function setBlock(value: string) {
+    run((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const exec = (command: Command) =>
+        command(view.state, view.dispatch, view);
+      if (value.startsWith("toggle")) {
+        exec(setToggleCommand(Number(value.slice(6)) || 0));
+        return;
+      }
+      const summary = inToggleSummary(view.state);
+      if (value.startsWith("h")) {
+        const level = Number(value.slice(1));
+        if (summary)
+          exec(unwrapToggleCommand(headingSchema.type(ctx), { level }));
+        else callCommand(wrapInHeadingCommand.key, level)(ctx);
+      } else if (value === "paragraph") {
+        if (summary) exec(unwrapToggleCommand(paragraphSchema.type(ctx)));
+        else callCommand(turnIntoTextCommand.key)(ctx);
+      } else if (value === "quote")
+        callCommand(wrapInBlockquoteCommand.key)(ctx);
+      else if (value === "code") callCommand(createCodeBlockCommand.key)(ctx);
+    });
+  }
+  const slashEntries: [string, string, string, ReactNode][] = [
+    ["paragraph", "본문", "text p", <Pilcrow size={16} />],
+    ["h1", "제목 1", "heading h1", <Heading1 size={16} />],
+    ["h2", "제목 2", "heading h2", <Heading2 size={16} />],
+    ["h3", "제목 3", "heading h3", <Heading3 size={16} />],
+    ["bullet", "글머리 목록", "list ul 목록", <List size={16} />],
+    ["ordered", "번호 목록", "list ol 번호 목록", <ListOrdered size={16} />],
+    ["task", "체크리스트", "todo task check 할 일", <ListChecks size={16} />],
+    ["quote", "인용", "quote blockquote", <Quote size={16} />],
+    ["code", "코드 블록", "code pre", <SquareCode size={16} />],
+    ["table", "표", "table", <Table2 size={16} />],
+    ["hr", "구분선", "divider hr rule 구분 선", <Minus size={16} />],
+    ["toggle0", "토글", "toggle details 접기", <ListCollapse size={16} />],
+    ...TOGGLE_LEVELS.map((level): [string, string, string, ReactNode] => [
+      `toggle${level}`,
+      `토글 제목 ${level}`,
+      `toggle heading h${level} 토글제목`,
+      <ListCollapse size={16} />,
+    ]),
+    ["link", "링크", "link url", <Link size={16} />],
+  ];
+  const slashItems: SlashItem[] = slashEntries.map(
+    ([id, label, keywords, icon]) => ({
+      id,
+      label,
+      keywords,
+      icon,
+      run: () => {
+        if (id === "bullet" || id === "ordered" || id === "task")
+          setListFormat(id);
+        else if (id === "table")
+          command(insertTableCommand.key, { row: 3, col: 3 });
+        else if (id === "hr") command(insertHrCommand.key);
+        else if (id === "link") {
+          setLink("");
+          setLinkError("");
+        } else setBlock(id);
+      },
+    }),
+  );
+  const visibleSlashItems = slash
+    ? filterSlashItems(slashItems, slash.query)
+    : [];
+  slashItemsRef.current = visibleSlashItems;
+  const activeSlash = Math.min(
+    slashIndex,
+    Math.max(0, visibleSlashItems.length - 1),
+  );
+  slashIndexRef.current = activeSlash;
   return (
-    <div className="rich-document" data-loading={!ready || undefined}>
+    <div
+      className="rich-document"
+      data-loading={!ready || undefined}
+      ref={shell}
+    >
       {!ready && <DocumentLoading />}
       {uploadError && (
         <p className="document-error" role="alert">
@@ -786,17 +1051,7 @@ export default function RichMarkdownEditor(props: Props) {
               disabled={!ready}
               defaultValue=""
               onChange={(e) => {
-                const value = e.target.value;
-                if (value.startsWith("h"))
-                  command(wrapInHeadingCommand.key, Number(value.slice(1)));
-                else
-                  command(
-                    {
-                      paragraph: turnIntoTextCommand,
-                      quote: wrapInBlockquoteCommand,
-                      code: createCodeBlockCommand,
-                    }[value as "paragraph"].key,
-                  );
+                setBlock(e.target.value);
                 e.target.value = "";
               }}
             >
@@ -809,6 +1064,12 @@ export default function RichMarkdownEditor(props: Props) {
               <option value="h3">제목 3</option>
               <option value="quote">인용</option>
               <option value="code">코드 블록</option>
+              <option value="toggle0">토글</option>
+              {TOGGLE_LEVELS.map((level) => (
+                <option key={level} value={`toggle${level}`}>
+                  토글 제목 {level}
+                </option>
+              ))}
             </Select>
             {[
               ["굵게", Bold, () => command(toggleStrongCommand.key)],
@@ -967,7 +1228,33 @@ export default function RichMarkdownEditor(props: Props) {
         ref={root}
         className="document-prose"
         data-readonly={props.readOnly || undefined}
+        onMouseDown={(event) => {
+          // Clicks on the padding below the text continue at the end.
+          if (event.target !== root.current || props.readOnly) return;
+          event.preventDefault();
+          editorRef.current?.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            view.dispatch(
+              view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+            );
+            view.focus();
+          });
+        }}
       />
+      {slash && !props.readOnly && visibleSlashItems.length > 0 && (
+        <DocumentSlashMenu
+          items={visibleSlashItems}
+          active={activeSlash}
+          left={slash.left}
+          top={slash.top}
+          flip={slash.flip}
+          onHover={(index) => {
+            slashIndexRef.current = index;
+            setSlashIndex(index);
+          }}
+          onSelect={applySlash}
+        />
+      )}
       {preview && (
         <Modal
           title="이미지 크게 보기"

@@ -1397,7 +1397,8 @@ test("리치 표 셀은 선택한 글자를 교체하고 빈 셀에도 블록·H
     await expect(cells.locator("br")).toHaveCount(2);
     await expect(rich(page).locator("em, ul")).toHaveCount(0);
     await expect(rich(page).locator("table")).toHaveCount(1);
-    await expect(rich(page).locator(":scope > p")).toHaveCount(0);
+    // Only the unsaved typing line that follows a table remains.
+    await expect(rich(page).locator(":scope > p")).toHaveText([""]);
   };
   await preserved();
   await close(page);
