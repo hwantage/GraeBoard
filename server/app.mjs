@@ -102,6 +102,7 @@ export function createApp({
     referencedUsers,
     documentImagesDir,
     cachedTasks,
+    syncProfiles: () => sync.profiles,
   });
   app.locals.controlRepository = controlsRepository;
   const sync = createNodeSync({

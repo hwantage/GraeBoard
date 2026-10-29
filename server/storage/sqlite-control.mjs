@@ -58,12 +58,26 @@ function execute(
     referencedUsers,
     documentImagesDir,
     cachedTasks,
+    syncProfiles = () => [],
   },
   user,
   command,
   input,
   targetId,
 ) {
+  function responseTeam(team) {
+    const configured = !!db
+      .prepare("SELECT 1 FROM team_sync_links WHERE team_id=?")
+      .get(team.id);
+    return {
+      ...team,
+      sync: {
+        available:
+          configured || syncProfiles().some((p) => p.teamId === team.id),
+        configured,
+      },
+    };
+  }
   function setUserMemberships(userId, memberships) {
     for (const m of memberships)
       requireThat(
@@ -102,7 +116,7 @@ function execute(
           .all()
           .map((t) => t.id)
       : user.teamIds;
-    const teams = teamIds.map((t) => teamAccess(user, t));
+    const teams = teamIds.map((t) => responseTeam(teamAccess(user, t)));
     const users = new Map();
     teams.forEach((t) =>
       referencedUsers(t.id).forEach((u) => users.set(u.id, u)),
@@ -177,7 +191,7 @@ function execute(
       teams: db
         .prepare("SELECT * FROM teams ORDER BY name")
         .all()
-        .map((t) => ({ ...t, settings: teamSettings(t) })),
+        .map((t) => responseTeam({ ...t, settings: teamSettings(t) })),
     };
   }
   if (command === "createUser") {

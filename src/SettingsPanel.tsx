@@ -108,8 +108,34 @@ export default function SettingsPanel({
   useEffect(() => {
     loadAdminData().catch((e) => setError(e.message));
   }, []);
+  useEffect(() => {
+    // Bootstrap refreshes also arrive through another tab's team changes.
+    // Preserve the admin-only teams while updating shared connection signals.
+    setAdminData((current) => {
+      if (!current) return current;
+      let changed = false;
+      const teams = current.teams.map((item) => {
+        const latest = allTeams.find((candidate) => candidate.id === item.id);
+        if (
+          !latest ||
+          (item.sync?.available === latest.sync?.available &&
+            item.sync?.configured === latest.sync?.configured)
+        )
+          return item;
+        changed = true;
+        return { ...item, sync: latest.sync };
+      });
+      return changed ? { ...current, teams } : current;
+    });
+  }, [allTeams]);
   function select(next: SettingsTarget) {
-    setSelection(next);
+    setSelection(
+      next.kind === "team" &&
+        next.tab === "sync" &&
+        !teams.find((item) => item.id === next.id)?.sync?.available
+        ? { ...next, tab: "general" }
+        : next,
+    );
     setError("");
     setMessage("");
   }
@@ -117,6 +143,16 @@ export default function SettingsPanel({
     selection.kind === "team"
       ? teams.find((t) => t.id === selection.id)
       : undefined;
+  const selectedTab =
+    selection.kind === "team"
+      ? selection.tab === "sync" && !selectedTeam?.sync?.available
+        ? "general"
+        : selection.tab
+      : null;
+  useEffect(() => {
+    if (selection.kind === "team" && selection.tab !== selectedTab)
+      setSelection({ ...selection, tab: "general" });
+  }, [selection, selectedTab]);
   return (
     <Modal title="설정" wide className="settings-modal" onClose={onClose}>
       <div className="settings-layout">
@@ -253,25 +289,29 @@ export default function SettingsPanel({
                 role="tablist"
                 aria-label={`${selectedTeam.name} 설정`}
               >
-                {teamTabs.map(([key, label]) => (
-                  <button
-                    key={key}
-                    id={`tab-${key}`}
-                    role="tab"
-                    aria-selected={selection.tab === key}
-                    aria-controls={`panel-${key}`}
-                    onClick={() => select({ ...selection, tab: key })}
-                  >
-                    {label}
-                  </button>
-                ))}
+                {teamTabs
+                  .filter(
+                    ([key]) => key !== "sync" || selectedTeam.sync?.available,
+                  )
+                  .map(([key, label]) => (
+                    <button
+                      key={key}
+                      id={`tab-${key}`}
+                      role="tab"
+                      aria-selected={selectedTab === key}
+                      aria-controls={`panel-${key}`}
+                      onClick={() => select({ ...selection, tab: key })}
+                    >
+                      {label}
+                    </button>
+                  ))}
               </div>
               <div
                 role="tabpanel"
-                id={`panel-${selection.tab}`}
-                aria-labelledby={`tab-${selection.tab}`}
+                id={`panel-${selectedTab}`}
+                aria-labelledby={`tab-${selectedTab}`}
               >
-                {selection.tab === "general" && (
+                {selectedTab === "general" && (
                   <TeamGeneral
                     key={selectedTeam.id}
                     team={selectedTeam}
@@ -286,7 +326,7 @@ export default function SettingsPanel({
                     onMessage={setMessage}
                   />
                 )}
-                {selection.tab === "members" && (
+                {selectedTab === "members" && (
                   <TeamMembers
                     key={selectedTeam.id}
                     team={selectedTeam}
@@ -295,25 +335,26 @@ export default function SettingsPanel({
                     onMessage={setMessage}
                   />
                 )}
-                {selection.tab === "properties" && (
+                {selectedTab === "properties" && (
                   <PropertiesManager
                     key={selectedTeam.id}
                     team={selectedTeam}
                     onSaved={saved}
                   />
                 )}
-                {selection.tab === "format" && (
+                {selectedTab === "format" && (
                   <DefaultStyleManager
                     key={selectedTeam.id}
                     team={selectedTeam}
                     onSaved={saved}
                   />
                 )}
-                {selection.tab === "sync" && (
+                {selectedTab === "sync" && (
                   <TeamSyncSettings
                     key={selectedTeam.id}
                     team={selectedTeam}
                     user={user}
+                    onSaved={saved}
                     onMessage={setMessage}
                   />
                 )}

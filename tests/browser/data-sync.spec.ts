@@ -1,4 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type Request,
+  type Route,
+} from "@playwright/test";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,6 +30,25 @@ async function post(page: Page, path: string, data: unknown) {
   });
   expect(response.ok(), await response.text()).toBeTruthy();
   return unpack(await response.json());
+}
+async function configuredBootstrap(page: Page) {
+  const configured = (data: any) => ({
+    ...data,
+    teams: data.teams.map((team: any) =>
+      team.id === teamId
+        ? { ...team, sync: { available: true, configured: true } }
+        : team,
+    ),
+  });
+  const admin = unpack(
+    await (await page.request.get(`${base}/api/admin/users`)).json(),
+  );
+  await page.route("**/api/admin/users", (route) =>
+    route.fulfill({ json: configured(admin) }),
+  );
+  return configured(
+    unpack(await (await page.request.get(`${base}/api/bootstrap`)).json()),
+  );
 }
 test.beforeEach(async ({ page }) => {
   temporary = mkdtempSync(join(tmpdir(), "graeboard-sync-ui-"));
@@ -73,6 +98,8 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     teamId,
     repository: "test/local",
   });
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   const memoId = randomUUID();
   await post(page, `/teams/${teamId}/years/2025/memos`, {
     id: memoId,
@@ -81,9 +108,99 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   const settings = panel(page);
   await settings.getByRole("tab", { name: "동기화", exact: true }).click();
   await settings.getByLabel("연결 프로필").selectOption("local");
-  await settings
-    .getByRole("button", { name: "연결 저장", exact: true })
-    .click();
+  const oldBootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  expect(
+    oldBootstrap.teams.find((team: any) => team.id === teamId).sync.configured,
+  ).toBe(false);
+  let heldRequest!: Request;
+  let captured!: () => void;
+  let releaseOld!: () => void;
+  let releaseFollowing!: () => void;
+  let blockFollowing = false;
+  let followingActive = 0;
+  const capturedFocus = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  const oldGate = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  const followingGate = new Promise<void>((resolve) => {
+    releaseFollowing = resolve;
+  });
+  const bootstrapWork = async (route: Route) => {
+    if (!heldRequest) {
+      heldRequest = route.request();
+      captured();
+      await oldGate;
+      await route.fulfill({ json: oldBootstrap });
+      return;
+    }
+    if (blockFollowing) await followingGate;
+    followingActive++;
+    try {
+      await route.fulfill({ response: await route.fetch() });
+    } finally {
+      followingActive--;
+    }
+  };
+  const activeRoutes = new Set<Promise<void>>();
+  const bootstrapRoute = (route: Route) => {
+    const work = bootstrapWork(route);
+    activeRoutes.add(work);
+    return work.finally(() => activeRoutes.delete(work));
+  };
+  await page.route("**/api/bootstrap", bootstrapRoute);
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await capturedFocus;
+    const configuredBootstrapResponse = page.waitForResponse(
+      async (response) =>
+        response.url() === `${base}/api/bootstrap` &&
+        response.request() !== heldRequest &&
+        response.ok() &&
+        unpack(await response.json()).teams.some(
+          (team: any) => team.id === teamId && team.sync?.configured,
+        ),
+    );
+    await settings
+      .getByRole("button", { name: "연결 저장", exact: true })
+      .click();
+    await configuredBootstrapResponse;
+    await expect(
+      settings.getByRole("button", { name: "초기 게시", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      settings.getByRole("button", { name: "연결 검사", exact: true }),
+    ).toBeEnabled();
+    await expect.poll(() => followingActive).toBe(0);
+    blockFollowing = true;
+    const indicator = page.getByRole("status", {
+      name: "팀 동기화 상태",
+      exact: true,
+    });
+    await expect(indicator).toHaveText("동기화 일시정지");
+    const lateResponse = page.waitForResponse(
+      (response) => response.request() === heldRequest,
+    );
+    releaseOld();
+    await (await lateResponse).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    // App only mounts this indicator for a configured team. A late pre-save
+    // bootstrap must not remove it, even while its status response is retained.
+    await expect(indicator).toHaveText("동기화 일시정지");
+  } finally {
+    releaseOld();
+    releaseFollowing();
+    await Promise.allSettled([...activeRoutes]);
+    await page.unroute("**/api/bootstrap", bootstrapRoute);
+  }
   await expect(
     settings.getByRole("button", { name: "초기 게시", exact: true }),
   ).toBeDisabled();
@@ -285,9 +402,7 @@ test("외부 최초 관리자는 Google 계정과 설치 키로 등록하고 팀
 test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된 작업을 이어서 실행한다", async ({
   page,
 }) => {
-  const bootstrap = unpack(
-    await (await page.request.get(`${base}/api/bootstrap`)).json(),
-  );
+  const bootstrap = await configuredBootstrap(page);
   let active = "old",
     started = false,
     resumed = 0;
@@ -394,6 +509,12 @@ test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된
 test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 숨기고 팀 가져오기를 제공한다", async ({
   page,
 }) => {
+  app.locals.sync.profiles.push({
+    profileId: "outside",
+    teamId,
+    name: "외부 자원",
+    repository: "test/outside",
+  });
   const bootstrap = unpack(
     await (await page.request.get(`${base}/api/bootstrap`)).json(),
   );
@@ -418,7 +539,7 @@ test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 
   await settings.getByRole("tab", { name: "동기화", exact: true }).click();
   await expect(
     settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
-  ).toContainText("미연결");
+  ).toContainText("연결 설정");
   await expect(
     settings.getByRole("button", { name: "초기 게시", exact: true }),
   ).toHaveCount(0);
@@ -433,20 +554,26 @@ test("외부 배포 환경은 localhost에서도 초기 게시와 키 발급을 
   ).toBeEnabled();
 });
 
-test("미연결 팀은 기존 설정과 함께 동기화 상태·서비스 설치 안내를 조회한다", async ({
+test("프로필 없는 팀은 동기화 탭·상태 요청 없이 기존 설정과 서비스 설치 안내를 사용한다", async ({
   page,
 }) => {
+  let syncReads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(request.url()))
+      syncReads++;
+  });
+  await page.clock.install();
   const settings = panel(page);
-  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
   await expect(
-    settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
-  ).toContainText("미연결");
+    settings.getByRole("tab", { name: "동기화", exact: true }),
+  ).toHaveCount(0);
   await expect(
-    settings.getByRole("button", { name: "초기 게시", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    settings.getByRole("button", { name: "연결 검사", exact: true }),
-  ).toBeDisabled();
+    settings.getByRole("tab", { name: "일반", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(20000);
+  expect(syncReads).toBe(0);
   await settings
     .getByRole("button", { name: "서비스 연결", exact: true })
     .click();
@@ -466,9 +593,56 @@ test("미연결 팀은 기존 설정과 함께 동기화 상태·서비스 설�
   ).toBeVisible();
 });
 
+test("프로필만 있는 팀은 연결 폼만 읽고 다른 팀으로 전환하면 일반 탭으로 돌아간다", async ({
+  page,
+}) => {
+  app.locals.sync.profiles.push({
+    profileId: "ready",
+    teamId,
+    name: "설정할 자원",
+    repository: "test/ready",
+  });
+  let syncReads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(request.url()))
+      syncReads++;
+  });
+  await page.clock.install();
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "동기화", exact: true }).click();
+  await expect(settings.getByLabel("연결 프로필")).toBeVisible();
+  await expect(settings.getByLabel("동기화 상태", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    settings.getByRole("button", { name: "연결 검사", exact: true }),
+  ).toHaveCount(0);
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.clock.runFor(20000);
+  expect(syncReads).toBe(0);
+  await settings
+    .locator(".settings-nav")
+    .getByRole("button", { name: "다른 동기화팀" })
+    .click();
+  await expect(
+    settings.getByRole("tab", { name: "동기화", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("tab", { name: "일반", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(syncReads).toBe(0);
+});
+
 test("팀장은 자기 팀 연결을 설정하며 공통 자원과 다른 팀은 볼 수 없다", async ({
   page,
 }) => {
+  app.locals.sync.profiles.push({
+    profileId: "lead",
+    teamId,
+    repository: "test/lead",
+  });
   await post(page, "/admin/users", {
     username: "sync-lead@example.com",
     password: "local-sync-test-password",
@@ -486,7 +660,7 @@ test("팀장은 자기 팀 연결을 설정하며 공통 자원과 다른 팀은
   await settings.getByRole("tab", { name: "동기화", exact: true }).click();
   await expect(
     settings.getByRole("region", { name: "동기화 검증팀 동기화" }),
-  ).toContainText("미연결");
+  ).toContainText("연결 설정");
   await expect(settings.getByLabel("연결 프로필", { exact: true })).toHaveCount(
     1,
   );
@@ -513,6 +687,10 @@ test("팀장은 자기 팀 연결을 설정하며 공통 자원과 다른 팀은
 test("Git 게시와 검증되지 않은 상대 상태를 실제 내부 반영으로 표시하지 않는다", async ({
   page,
 }) => {
+  const bootstrap = await configuredBootstrap(page);
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
   await page.route(`${base}/api/teams/${teamId}/sync`, async (route) => {
     await route.fulfill({
       json: {
@@ -535,6 +713,8 @@ test("Git 게시와 검증되지 않은 상대 상태를 실제 내부 반영으
   await page.route(`${base}/api/teams/${teamId}/sync/conflicts`, (route) =>
     route.fulfill({ json: { conflicts: [] } }),
   );
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await panel(page).getByRole("tab", { name: "동기화", exact: true }).click();
   const status = panel(page).getByLabel("동기화 상태", { exact: true });
   await expect(status).toContainText("내부 서버 저장");
@@ -709,9 +889,7 @@ test("팀 사이트에서 사내 계정을 선택하고 승인 대기 후 접속
 test("외부 팀장은 연결 신청을 승인하고 구성원 정보는 읽기만 한다", async ({
   page,
 }, info) => {
-  const bootstrap = unpack(
-    await (await page.request.get(`${base}/api/bootstrap`)).json(),
-  );
+  const bootstrap = await configuredBootstrap(page);
   let state = "pending";
   await page.route("**/api/bootstrap", (route) =>
     route.fulfill({

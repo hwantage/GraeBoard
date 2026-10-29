@@ -399,7 +399,7 @@ export function TeamMembers({
           </tbody>
         </table>
       </div>
-      {managed && (
+      {managed && team.sync?.configured && (
         <AccountLinkRequests
           key={team.id}
           teamId={team.id}

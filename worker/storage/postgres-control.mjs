@@ -8,7 +8,7 @@ import {
   memberPickerUser,
 } from "../../server/storage/control-service.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
-import { siteTeamId } from "../../shared/sync-profiles.js";
+import { profiles, siteTeamId } from "../../shared/sync-profiles.js";
 import { authenticateSite } from "../site-auth.mjs";
 export class PostgresControlRepository {
   constructor({ context }) {
@@ -87,14 +87,29 @@ export async function bootstrapFromTeamStores(ctx) {
   const teams = [],
     people = new Map(),
     years = new Set([new Date().getFullYear()]);
+  let installedProfiles = [];
+  try {
+    installedProfiles = profiles(ctx.env, { databaseOnly: true });
+  } catch {
+    // A saved connection must remain manageable when its profile is broken.
+  }
   const controlUsers = await ctx.controlStore.users();
   for (const row of await ctx.teams()) {
     let settings = DEFAULT_SETTINGS,
       name = row.name,
-      connectionError = null;
+      connectionError = null,
+      // Unready/unreachable databases retain the known saved connection.
+      // A successful ordinary bootstrap refines this to actual link presence.
+      configured = !!row.profile_id;
     if (row.status === "active")
       try {
         await ctx.data(row.id, async (s) => {
+          configured = (
+            await s.tx.query(
+              "SELECT EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1) AS configured",
+              [row.id],
+            )
+          ).rows[0].configured;
           const t = await s.get("team", []);
           settings = {
             ...DEFAULT_SETTINGS,
@@ -122,12 +137,20 @@ export async function bootstrapFromTeamStores(ctx) {
         });
       } catch {
         connectionError = "팀 업무 DB 연결을 확인하세요.";
+        configured = !!row.profile_id;
       }
     teams.push({
       id: row.id,
       name,
       settings,
       status: row.status,
+      sync: {
+        available:
+          configured ||
+          !!row.profile_id ||
+          installedProfiles.some((p) => p.teamId === row.id),
+        configured,
+      },
       ...(connectionError ? { connectionError } : {}),
     });
     for (const user of controlUsers)

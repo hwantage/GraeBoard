@@ -25,8 +25,8 @@ const taskResponses = new Map<string, { etag: string; data: unknown }>();
 let site = siteFor(null);
 const pulls = new Map<string, Promise<void>>();
 const lastPull = new Map<string, number>();
-export async function refreshExternalTeam(teamId: string) {
-  if (!site.external || !teamId) return;
+export async function refreshExternalTeam(teamId: string, configured: boolean) {
+  if (!site.external || !teamId || !configured) return;
   const running = pulls.get(teamId);
   if (running) return running;
   if (Date.now() - (lastPull.get(teamId) || 0) < 1500) return;

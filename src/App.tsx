@@ -337,21 +337,43 @@ function Workspace({
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
+  const syncConfigured = !!boot.teams.find((t) => t.id === teamId)?.sync
+    ?.configured;
   useEffect(() => {
-    if (!site.external || !teamId) return;
-    const pull = () => {
-      if (document.visibilityState !== "hidden")
-        void refreshExternalTeam(teamId).catch(() => {});
+    const controller = new AbortController();
+    let running = false;
+    const refresh = async () => {
+      if (running || document.visibilityState === "hidden") return;
+      running = true;
+      try {
+        // Membership and connection settings may change in another tab, even
+        // while this tab is showing a calendar, document or report.
+        const before = bootJsonRef.current;
+        const latest = await api<Bootstrap>("/bootstrap", {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || before !== bootJsonRef.current) return;
+        if (JSON.stringify(latest) !== bootJsonRef.current) onBootstrap(latest);
+        const configured = !!latest.teams.find((t) => t.id === teamId)?.sync
+          ?.configured;
+        if (site.external && configured)
+          await refreshExternalTeam(teamId, configured);
+      } catch {
+        // Existing data views own their connection errors and retry UI.
+      } finally {
+        running = false;
+      }
     };
     // Initial task reads and mutations already pull on the external server.
     // Only returning to an existing page needs this explicit refresh.
-    window.addEventListener("focus", pull);
-    document.addEventListener("visibilitychange", pull);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
-      window.removeEventListener("focus", pull);
-      document.removeEventListener("visibilitychange", pull);
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
-  }, [teamId, site]);
+  }, [teamId, site.external, onBootstrap]);
   const [toast, setToast] = useToast();
   const filterNameInput = useRef<HTMLInputElement>(null);
   const filterSaveQueue = useRef(Promise.resolve());
@@ -3105,8 +3127,9 @@ function Workspace({
           ) : (
             <SaveStatus pending={pending > 0} failed={!!failed} />
           )}
-          {teamId && (
+          {teamId && syncConfigured && (
             <TeamSyncIndicator
+              key={teamId}
               teamId={teamId}
               saving={pending > 0}
               failed={!!failed}

@@ -111,14 +111,17 @@ export function ConnectionChecks({
 export default function TeamSyncSettings({
   team,
   user,
+  onSaved,
   onMessage,
 }: {
   team: Team;
   user: User;
+  onSaved: () => Promise<void>;
   onMessage: (message: string) => void;
 }) {
   const site = useSite();
   const admin = canManageTeam(user, team.id);
+  const configured = team.sync?.configured === true;
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [profileId, setProfileId] = useState("");
@@ -133,10 +136,16 @@ export default function TeamSyncSettings({
   const switchStop = useRef(false);
   const live = useRef(true);
   const prefix = `/teams/${team.id}/sync`;
-  async function load(signal?: AbortSignal, includeConnection = false) {
+  async function load(
+    signal?: AbortSignal,
+    includeConnection = false,
+    readStatus = configured,
+  ) {
     const [nextStatus, nextConflicts, nextConnection] = await Promise.all([
-      api<SyncStatus>(prefix, { signal }),
-      api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, { signal }),
+      readStatus ? api<SyncStatus>(prefix, { signal }) : Promise.resolve(null),
+      readStatus
+        ? api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, { signal })
+        : Promise.resolve({ conflicts: [] }),
       admin && includeConnection
         ? api<Connection>(`/admin/teams/${team.id}/connection`, { signal })
         : Promise.resolve(null),
@@ -152,6 +161,10 @@ export default function TeamSyncSettings({
   }
   useEffect(() => {
     live.current = true;
+    if (!configured) {
+      setStatus(null);
+      setConflicts([]);
+    }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh(initial = false) {
@@ -160,7 +173,8 @@ export default function TeamSyncSettings({
       } catch (e) {
         if (!controller.signal.aborted) setError((e as Error).message);
       }
-      if (!controller.signal.aborted) timer = setTimeout(() => refresh(), 5000);
+      if (!controller.signal.aborted && configured)
+        timer = setTimeout(() => refresh(), 5000);
     }
     void refresh(true);
     return () => {
@@ -169,7 +183,7 @@ export default function TeamSyncSettings({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [team.id, admin]);
+  }, [team.id, admin, configured]);
   async function perform(action: string, message: string, body: unknown = {}) {
     if (busy) return;
     setBusy(true);
@@ -180,7 +194,14 @@ export default function TeamSyncSettings({
       const result = await send<ConnectionCheck>(`${prefix}/${action}`, body);
       if (!live.current) return;
       if (action === "check") setCheck(result);
-      await load(undefined, true);
+      if (
+        ["enable", "reconnect", "disconnect", "pause", "resume"].includes(
+          action,
+        )
+      )
+        await onSaved();
+      if (!live.current) return;
+      await load(undefined, true, true);
       if (live.current) onMessage(message);
     } catch (e) {
       if (live.current) setError((e as Error).message);
@@ -241,7 +262,9 @@ export default function TeamSyncSettings({
         if (live.current) setSwitchJob(job);
       }
       if (!live.current) return;
-      await load(undefined, true);
+      await onSaved();
+      if (!live.current) return;
+      await load(undefined, true, true);
       onMessage(
         job.hasMore
           ? "현재 묶음까지 이관하고 중단했습니다. 이어서 진행할 수 있습니다."
@@ -251,6 +274,7 @@ export default function TeamSyncSettings({
       if (live.current) {
         setError((e as Error).message);
         await load(undefined, true).catch(() => {});
+        await onSaved().catch(() => {});
       }
     } finally {
       if (live.current) setBusy(false);
@@ -274,116 +298,123 @@ export default function TeamSyncSettings({
       aria-label={`${team.name} 동기화`}
     >
       <ErrorNote error={error} />
-      {!status && !error && (
+      {!status && !connection && !error && (
         <LoadingState label="동기화 상태를 확인하고 있습니다." />
       )}
-      {status && (
+      {(status || connection) && (
         <>
-          <div className="team-sync-overview">
-            <div className="team-sync-heading">
-              <h4>
-                <RefreshCw size={16} aria-hidden="true" />
-                동기화 상태
-              </h4>
-              <span
-                className={`team-sync-mode ${needsRecovery || status.lastError ? "is-problem" : status.mode === "active" ? "is-active" : ""}`}
-              >
-                {modes[status.mode] || status.mode}
-              </span>
-            </div>
-            <p className="team-sync-site">
-              {status.siteName || "현재 서버"} ·{" "}
-              {external ? "외부망" : "내부망"}
-            </p>
-            <dl
-              className="team-sync-facts"
-              aria-label="동기화 상태"
-              aria-live="polite"
-            >
-              <div>
-                <dt>{external ? "외부 클라우드 저장" : "내부 서버 저장"}</dt>
-                <dd>{syncTime(status.lastLocalSavedAt)}</dd>
-              </div>
-              <div>
-                <dt>Git 반영</dt>
-                <dd>
-                  {syncTime(status.lastPublishedAt)}
-                  <span className="team-sync-secondary">
-                    공유 대기 {status.pending}건
+          {status && (
+            <>
+              <div className="team-sync-overview">
+                <div className="team-sync-heading">
+                  <h4>
+                    <RefreshCw size={16} aria-hidden="true" />
+                    동기화 상태
+                  </h4>
+                  <span
+                    className={`team-sync-mode ${needsRecovery || status.lastError ? "is-problem" : status.mode === "active" ? "is-active" : ""}`}
+                  >
+                    {modes[status.mode] || status.mode}
                   </span>
-                </dd>
+                </div>
+                <p className="team-sync-site">
+                  {status.siteName || "현재 서버"} ·{" "}
+                  {external ? "외부망" : "내부망"}
+                </p>
+                <dl
+                  className="team-sync-facts"
+                  aria-label="동기화 상태"
+                  aria-live="polite"
+                >
+                  <div>
+                    <dt>
+                      {external ? "외부 클라우드 저장" : "내부 서버 저장"}
+                    </dt>
+                    <dd>{syncTime(status.lastLocalSavedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Git 반영</dt>
+                    <dd>
+                      {syncTime(status.lastPublishedAt)}
+                      <span className="team-sync-secondary">
+                        공유 대기 {status.pending}건
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>마지막 수신</dt>
+                    <dd>{syncTime(status.lastReceivedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>{external ? "내부망 반영" : "외부망 반영"}</dt>
+                    <dd>
+                      {status.remoteStatus?.verified &&
+                      status.remoteStatus.mode === "active" &&
+                      Date.now() - Date.parse(status.remoteStatus.observedAt) <
+                        180000
+                        ? `마지막 확인: ${syncTime(status.remoteStatus.observedAt)}`
+                        : status.remoteStatus
+                          ? `현재 확인 불가 · 마지막 상태: ${syncTime(status.remoteStatus.observedAt)}`
+                          : "확인 대기"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>충돌 보관</dt>
+                    <dd>{status.conflicts}건</dd>
+                  </div>
+                </dl>
+                <ErrorNote error={status.lastError || ""} />
+                {status.receiptCapacity?.warning && (
+                  <ErrorNote
+                    error={
+                      status.receiptCapacity.blocked
+                        ? "동기화 확인 이력의 저장 한도에 도달했습니다. 기존 자료는 조회·백업할 수 있으며, 새 저장 전에 관리자 점검이 필요합니다."
+                        : "동기화 확인 이력이 저장 한도에 가까워지고 있습니다. 관리자 점검이 필요합니다."
+                    }
+                  />
+                )}
               </div>
-              <div>
-                <dt>마지막 수신</dt>
-                <dd>{syncTime(status.lastReceivedAt)}</dd>
-              </div>
-              <div>
-                <dt>{external ? "내부망 반영" : "외부망 반영"}</dt>
-                <dd>
-                  {status.remoteStatus?.verified &&
-                  status.remoteStatus.mode === "active" &&
-                  Date.now() - Date.parse(status.remoteStatus.observedAt) <
-                    180000
-                    ? `마지막 확인: ${syncTime(status.remoteStatus.observedAt)}`
-                    : status.remoteStatus
-                      ? `현재 확인 불가 · 마지막 상태: ${syncTime(status.remoteStatus.observedAt)}`
-                      : "확인 대기"}
-                </dd>
-              </div>
-              <div>
-                <dt>충돌 보관</dt>
-                <dd>{status.conflicts}건</dd>
-              </div>
-            </dl>
-            <ErrorNote error={status.lastError || ""} />
-            {status.receiptCapacity?.warning && (
-              <ErrorNote
-                error={
-                  status.receiptCapacity.blocked
-                    ? "동기화 확인 이력의 저장 한도에 도달했습니다. 기존 자료는 조회·백업할 수 있으며, 새 저장 전에 관리자 점검이 필요합니다."
-                    : "동기화 확인 이력이 저장 한도에 가까워지고 있습니다. 관리자 점검이 필요합니다."
-                }
-              />
-            )}
-          </div>
-          {needsRecovery && (
-            <div className="team-sync-recovery" role="note">
-              {canReconnect ? (
-                <>
-                  <strong>동기화 연결이 해제되어 있습니다.</strong>
-                  <p>
-                    <b>다시 연결</b>을 누르면 해제 중 저장한 내용을 보존하고
-                    기존 프로필로 연결합니다. 서버를 종료하거나 명령어를 실행할
-                    필요가 없습니다.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <strong>다시 연결하려면 복구 점검이 필요합니다.</strong>
-                  <p>
-                    {status.mode === "disconnected"
-                      ? "연결 해제 동안 저장한 변경을"
-                      : "저장 자료와 Git 공유본을"}{" "}
-                    대조해야 하므로 프로필 저장이나 연결 검사만으로는 재연결되지
-                    않습니다. 서버 관리자가 쓰기를 중지하고 백업한 뒤{" "}
-                    {external ? "외부 서버" : "내부 서버"} 복구 점검을 완료하면,
-                    이 화면에서 <b>재개</b>할 수 있습니다.
-                  </p>
-                  <p>
-                    잠시 동기화를 멈출 때는 <b>일시정지 → 재개</b>를 사용하세요.
-                  </p>
-                  {user.systemRole === "admin" && (
-                    <a
-                      href="/api/admin/service-connections/guide"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      설치 안내의 복구 절차 보기
-                    </a>
+              {needsRecovery && (
+                <div className="team-sync-recovery" role="note">
+                  {canReconnect ? (
+                    <>
+                      <strong>동기화 연결이 해제되어 있습니다.</strong>
+                      <p>
+                        <b>다시 연결</b>을 누르면 해제 중 저장한 내용을 보존하고
+                        기존 프로필로 연결합니다. 서버를 종료하거나 명령어를
+                        실행할 필요가 없습니다.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <strong>다시 연결하려면 복구 점검이 필요합니다.</strong>
+                      <p>
+                        {status.mode === "disconnected"
+                          ? "연결 해제 동안 저장한 변경을"
+                          : "저장 자료와 Git 공유본을"}{" "}
+                        대조해야 하므로 프로필 저장이나 연결 검사만으로는
+                        재연결되지 않습니다. 서버 관리자가 쓰기를 중지하고
+                        백업한 뒤 {external ? "외부 서버" : "내부 서버"} 복구
+                        점검을 완료하면, 이 화면에서 <b>재개</b>할 수 있습니다.
+                      </p>
+                      <p>
+                        잠시 동기화를 멈출 때는 <b>일시정지 → 재개</b>를
+                        사용하세요.
+                      </p>
+                      {user.systemRole === "admin" && (
+                        <a
+                          href="/api/admin/service-connections/guide"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          설치 안내의 복구 절차 보기
+                        </a>
+                      )}
+                    </>
                   )}
-                </>
+                </div>
               )}
-            </div>
+            </>
           )}
           {admin && connection && (
             <form
@@ -406,7 +437,11 @@ export default function TeamSyncSettings({
                   );
                   if (!live.current) return;
                   setCheck(null);
-                  await load(undefined, true);
+                  await onSaved();
+                  if (!live.current) return;
+                  // This submit handler still holds the pre-save configured
+                  // value even after the parent bootstrap has refreshed.
+                  await load(undefined, true, true);
                   onMessage("팀 연결을 저장했습니다.");
                 } catch (e) {
                   if (live.current) setError((e as Error).message);
@@ -504,7 +539,7 @@ export default function TeamSyncSettings({
               )}
             </div>
           )}
-          {!switchJob?.hasMore && (
+          {status && !switchJob?.hasMore && (
             <div className="team-sync-actions-section">
               <h4>연결 검사 및 실행</h4>
               <div className="team-sync-actions">
@@ -610,7 +645,7 @@ export default function TeamSyncSettings({
             </p>
           )}
           <ConnectionChecks result={check} />
-          {!external && user.teamRoles[team.id] === "lead" && (
+          {status && !external && user.teamRoles[team.id] === "lead" && (
             <TeamSetupKey
               key={team.id}
               teamId={team.id}

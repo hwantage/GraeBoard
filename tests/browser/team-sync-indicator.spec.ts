@@ -27,12 +27,17 @@ async function setup(
   page: Page,
   site: "internal" | "external",
   initial: SyncStatus | null = active(),
+  configured = true,
 ) {
   await page.request.post("/api/auth/login", {
     headers: { "X-Requested-With": "WeeklyPlan" },
     data: { username: "test@somansa.com", password: "1234" },
   });
   const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  boot.teams = boot.teams.map((team: { id: string }) => ({
+    ...team,
+    sync: { available: configured, configured },
+  }));
   // Both deployments use the same test URL. The server's explicit site setting
   // must take precedence even over the legacy authMode fallback.
   await page.route("**/api/bootstrap", (route) =>
@@ -41,6 +46,7 @@ async function setup(
         ...boot,
         site,
         authMode: site === "internal" ? "access" : "password",
+        accountLinking: site === "external",
       },
     }),
   );
@@ -55,11 +61,13 @@ async function setup(
     route.fulfill({ json: { ok: true } }),
   );
   const isStatus = (url: string) => /\/api\/teams\/[^/]+\/sync$/.test(url);
-  const first = page.waitForResponse((response) => isStatus(response.url()));
+  const first = configured
+    ? page.waitForResponse((response) => isStatus(response.url()))
+    : Promise.resolve();
   await page.goto("/");
   await first;
   await expect(page.getByLabel("팀 선택")).toBeVisible();
-  return async (next: SyncStatus | null) => {
+  const refresh = async (next: SyncStatus | null) => {
     status = next;
     const response = page.waitForResponse((result) => isStatus(result.url()));
     // Exercise the normal focus refresh; hidden indicators must keep monitoring.
@@ -67,6 +75,7 @@ async function setup(
     await (await response).finished();
     await page.evaluate(() => new Promise(requestAnimationFrame));
   };
+  return Object.assign(refresh, { boot });
 }
 
 test("내부망은 정상·전송 대기를 숨기고 장애·중단만 표시한 뒤 복구 시 숨긴다", async ({
@@ -93,29 +102,88 @@ test("내부망은 정상·전송 대기를 숨기고 장애·중단만 표시�
   await expect(indicator(page)).toHaveCount(0);
 });
 
-test("미연결 내부 팀은 저장 이벤트를 무시하고 60초마다 확인하며 비밀번호 메뉴를 유지한다", async ({
+for (const site of ["internal", "external"] as const) {
+  test(`${site}: 미설정 팀은 오류·설정 탭을 숨기고 동기화 API를 호출하지 않는다`, async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        /\/api\/teams\/[^/]+\/(sync|access-requests)(?:\/|$)/.test(
+          request.url(),
+        )
+      )
+        requests.push(request.url());
+    });
+    await page.clock.install();
+    // Even an unavailable sync endpoint cannot affect an ordinary team.
+    await setup(page, site, null, false);
+    await expect(indicator(page)).toHaveCount(0);
+    if (site === "internal") {
+      await page.getByRole("button", { name: "내 계정", exact: true }).click();
+      await expect(
+        page.getByRole("menuitem", { name: "비밀번호 변경", exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+    }
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await expect(
+      page.getByRole("tab", { name: "일반", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "동기화", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("tab", { name: "구성원", exact: true }).click();
+    await expect(
+      page.getByRole("region", { name: "Google 계정 연결", exact: true }),
+    ).toHaveCount(0);
+    await page.clock.pauseAt(new Date(Date.now() + 1000));
+    const refreshed = page.waitForResponse("**/api/bootstrap");
+    await page.evaluate(() => {
+      for (let i = 0; i < 5; i++)
+        window.dispatchEvent(new Event("graeboard:local-save"));
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await refreshed;
+    await page.clock.runFor(65000);
+    await expect(indicator(page)).toHaveCount(0);
+    expect(requests).toEqual([]);
+  });
+}
+
+test("설정 변경 반영 시 상태 조회와 예약된 저장 알림을 정리하고 재설정 뒤 다시 확인한다", async ({
   page,
 }) => {
-  let reads = 0;
+  const requests: string[] = [];
   page.on("request", (request) => {
-    if (/\/api\/teams\/[^/]+\/sync$/.test(request.url())) reads++;
+    if (/\/api\/teams\/[^/]+\/sync(?:\/|$)/.test(request.url()))
+      requests.push(request.url());
   });
   await page.clock.install();
-  await setup(page, "internal", { mode: "unlinked", pending: 0, conflicts: 0 });
-  await page.getByRole("button", { name: "내 계정", exact: true }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "비밀번호 변경", exact: true }),
-  ).toBeVisible();
-  await page.clock.pauseAt(new Date(Date.now() + 1000));
-  const before = reads;
-  await page.evaluate(() => {
-    for (let i = 0; i < 5; i++)
-      window.dispatchEvent(new Event("graeboard:local-save"));
+  const refresh = await setup(page, "external", {
+    ...active(),
+    lastError: "Git 실패",
   });
-  await page.clock.runFor(45000);
-  expect(reads).toBe(before);
-  await page.clock.runFor(16000);
-  await expect.poll(() => reads).toBe(before + 1);
+  await expect(indicator(page)).toHaveText("외부 동기화 오류");
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("graeboard:local-save")),
+  );
+  for (const team of refresh.boot.teams)
+    team.sync = { available: false, configured: false };
+  const response = page.waitForResponse("**/api/bootstrap");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await response;
+  await expect(indicator(page)).toHaveCount(0);
+  const before = requests.length;
+  await page.clock.runFor(65000);
+  expect(requests).toHaveLength(before);
+  for (const team of refresh.boot.teams)
+    team.sync = { available: true, configured: true };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(indicator(page)).toHaveText("외부 동기화 오류");
+  expect(requests.length).toBeGreaterThan(before);
 });
 
 test("외부 저장 알림이 연속되면 마지막 저장 2초 후 상태를 한 번 조회한다", async ({

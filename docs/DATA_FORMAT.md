@@ -149,6 +149,8 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 `bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 사본에도 이전 팀원의 프로필을 포함합니다.
 
+`bootstrap.teams`와 관리자 팀 목록의 `sync.available`은 해당 팀의 외부 연결 설정 화면 제공 여부, `sync.configured`는 저장된 외부 동기화 연결 여부입니다. 브라우저는 설정된 팀에만 동기화 상태 조회·표시와 외부 새로고침을 실행합니다. 이 값은 서버의 기존 프로필·연결에서 계산하는 응답 메타데이터이며 업무 설정이나 동기화 문서에 저장하지 않습니다.
+
 압축을 해제한 업무 객체는 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdBy`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 공통 서식이 있으면 `formatting`을, 복사한 행의 공통 서식이 있으면 `rowStyle`을 포함합니다. 셀 키는 팀 설정에 정의된 활성 속성 ID 또는 주의 월요일 날짜이며, 정의되지 않은 키는 거절합니다. 기본 속성은 `title`, `owner`, `status`이고, 예시 양식(`shared/coreProperties.js`의 `sampleProperties`)은 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`를 더합니다. 화면에서 추가한 속성은 앱이 만든 짧은 ID(`p` + base36 6자리, 예 `p7k2mq`)를 키로 씁니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
 
 ```json

@@ -146,6 +146,10 @@ export type Team = {
   name: string;
   settings: Settings;
   status?: "unconnected" | "importing" | "active" | "maintenance";
+  sync?: {
+    available: boolean;
+    configured: boolean;
+  };
 };
 export type FilterMode = "include" | "exclude";
 export type View = {
