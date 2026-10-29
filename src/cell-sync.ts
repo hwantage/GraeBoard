@@ -61,6 +61,10 @@ export function subscribeCellChanges({
           if (!stopped)
             onChanges({
               cells: batch.flatMap((update) => update.cells),
+              taskMetadata: Object.assign(
+                {},
+                ...batch.map((update) => update.taskMetadata),
+              ),
               updatedAt: Object.assign(
                 {},
                 ...batch.map((update) => update.updatedAt),

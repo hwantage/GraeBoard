@@ -1,3 +1,4 @@
+import { useSite } from "./site-context";
 import {
   useEffect,
   useId,
@@ -18,6 +19,9 @@ import { resumeSession } from "./event-stream";
 import { BrandLockup, Grae } from "./Brand";
 import { inkFor } from "./color";
 import type { Bootstrap, User } from "./types";
+import type { SetupStatus } from "../shared/session-contract";
+import ExternalLogin from "./ExternalLogin";
+import { siteFor } from "./site";
 
 export function Button({
   children,
@@ -191,9 +195,54 @@ export function SessionLogin({
   username: string;
   onSuccess: () => Promise<void>;
 }) {
+  const site = useSite();
   const [password, setPassword] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  if (site.external)
+    return (
+      <div>
+        <p className="field-help">
+          {site.accountLinking
+            ? `입력을 이 화면에 보존했습니다. 새 창에서 Google 로그인 후 사내 계정 ${username}을 선택하고 다시 시도하세요.`
+            : `입력을 이 화면에 보존했습니다. 새 창에서 ${username} 계정으로 Google 로그인을 확인한 뒤 다시 시도하세요.`}
+        </p>
+        <div className="form-actions">
+          <Button
+            onClick={() => {
+              window.open(
+                location.origin,
+                "graeboard-access-login",
+                "noopener",
+              );
+            }}
+          >
+            Google 로그인 확인
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const boot = await api<Bootstrap>("/bootstrap");
+                if (boot.user.username !== username)
+                  throw new Error("입력을 작성한 계정으로 로그인하세요.");
+                resumeSession();
+                await onSuccess();
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            로그인 후 재시도
+          </Button>
+        </div>
+        <ErrorNote error={error} />
+      </div>
+    );
   return (
     <form
       onSubmit={async (e) => {
@@ -254,17 +303,19 @@ export function Avatar({
   );
 }
 export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
-  const [setup, setSetup] = useState<{
-      required: boolean;
-      tokenRequired: boolean;
-    } | null>(null),
+  const [setup, setSetup] = useState<SetupStatus | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    api("/setup")
+    const controller = new AbortController();
+    api<SetupStatus>("/setup", { signal: controller.signal })
       .then(setSetup)
-      .catch((e) => setError(e.message));
+      .catch((error: Error) => {
+        if (!controller.signal.aborted) setError(error.message);
+      });
+    return () => controller.abort();
   }, []);
+  const site = siteFor(setup);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -288,6 +339,14 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
       setBusy(false);
     }
   }
+  if (!setup && error)
+    return (
+      <Empty
+        title="서버에 연결할 수 없습니다"
+        description={error}
+        action={<Button onClick={() => location.reload()}>다시 연결</Button>}
+      />
+    );
   return (
     <main className="auth-page">
       <section className="auth-story">
@@ -328,15 +387,31 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
         <div className="auth-card">
           <BrandLockup className="auth-mobile-brand" />
           <h2>
-            {setup?.required ? "우리 팀의 공간 만들기" : "다시 만나 반가워요"}
+            {site.accountLinking
+              ? setup?.required
+                ? "팀장 계정 연결"
+                : "사내 계정 연결"
+              : setup?.required
+                ? site.external
+                  ? "외부 공간 관리자 등록"
+                  : "우리 팀의 공간 만들기"
+                : "다시 만나 반가워요"}
           </h2>
           <p>
-            {setup?.required
-              ? "관리자 계정을 만들고 업무 기록을 시작하세요."
-              : "계정으로 로그인해 이번 주 업무를 확인하세요."}
+            {site.accountLinking
+              ? setup?.required
+                ? "Google 계정을 사내 팀장 계정에 연결하세요."
+                : "사내 계정을 선택하고 팀장에게 연결 승인을 요청하세요."
+              : setup?.required
+                ? "관리자 계정을 만들고 업무 기록을 시작하세요."
+                : site.external
+                  ? "Google로 확인한 계정으로 업무 공간에 접속합니다."
+                  : "계정으로 로그인해 이번 주 업무를 확인하세요."}
           </p>
           {!setup && !error ? (
             <LoaderCircle className="spin" />
+          ) : setup && site.external ? (
+            <ExternalLogin setup={setup} onLogin={onLogin} />
           ) : (
             <form onSubmit={submit}>
               {setup?.required && (
@@ -404,7 +479,12 @@ export function Auth({ onLogin }: { onLogin: (data: Bootstrap) => void }) {
                   {setup.tokenRequired && (
                     <label>
                       초기 설정 키
-                      <input name="token" type="password" required />
+                      <input
+                        name="token"
+                        type="password"
+                        autoComplete="off"
+                        required
+                      />
                     </label>
                   )}
                   <p className="field-help">

@@ -1,3 +1,5 @@
+import { retryAfterMs } from "../shared/api-error-message.js";
+
 export type StreamSubscription = {
   id: number;
   path: string;
@@ -353,6 +355,14 @@ export class StreamBroker {
         !response.body ||
         !response.headers.get("content-type")?.includes("text/event-stream")
       ) {
+        if (response.status === 429) {
+          this.retryAt = Math.max(
+            this.retryAt,
+            Date.now() +
+              Math.max(this.retryDelay, retryAfterMs(response.headers)),
+          );
+          this.retryDelay = Math.min(this.retryDelay * 2, 30000);
+        }
         if (response.status === 400) {
           const rejected = await response.json().catch(() => null);
           let removed = false;

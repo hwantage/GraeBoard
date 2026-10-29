@@ -18,7 +18,7 @@ import CellDatePicker, { normalizeDateInput } from "./CellDatePicker";
 import CellOptionPicker from "./CellOptionPicker";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
-import { ApiError } from "./api";
+import { ApiError, serverNow } from "./api";
 import type {
   Cell,
   CellChange,
@@ -194,7 +194,7 @@ export default forwardRef<
           }
           attempt.current = {
             operationId: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
+            createdAt: serverNow(),
             changes,
           };
         }

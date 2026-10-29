@@ -1,3 +1,4 @@
+import { SQLITE_VERSION, assertSqliteHistory, migrateSqlite } from './migrations/sqlite.mjs';
 import { storeDocumentVersion } from "./document-storage.mjs";
 import { hasDocumentContent } from "../shared/task-documents.js";
 import { DatabaseSync } from "node:sqlite";
@@ -27,8 +28,19 @@ import {
 
 import { normalizeCellStyle } from "../shared/formatting.js";
 
+// Reuse compiled programs on this connection, including its capture triggers.
+// Do not reuse query results or style-to-ID mappings across business commands.
+const statementCaches = new WeakMap();
+function cachedStatement(db, sql) {
+  let statements = statementCaches.get(db);
+  if (!statements) statementCaches.set(db, (statements = new Map()));
+  let statement = statements.get(sql);
+  if (!statement) statements.set(sql, (statement = db.prepare(sql)));
+  return statement;
+}
+
 // 백업 복구가 받아들이는 스키마 버전. 스키마가 바뀌면 올리고 복구 스크립트가 거부하게 한다.
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = SQLITE_VERSION;
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const nextTaskStamp = (previous) =>
@@ -70,93 +82,38 @@ export function openDatabase(
   if (version !== 0 && version !== SCHEMA_VERSION) {
     db.close();
     throw new Error(
-      `DB 형식 v${version}은 지원하지 않습니다. v${SCHEMA_VERSION}용 새 DB를 사용하세요.`,
+      [29, 30, 31, 32].includes(version)
+        ? `DB 형식 v${version}의 자동 변환은 지원하지 않습니다. npm run migrate -- --engine sqlite --database <DB 경로> 로 명시적 변환을 수행하세요.`
+        : `DB 형식 v${version}은 지원하지 않습니다. 지원하는 변환 경로가 없으므로 원본과 호환 릴리스를 보존하세요.`,
     );
   }
   db.exec(
     "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
   );
-  transaction(db, () => {
-    db.exec(`
-    CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT NOT NULL,settings TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,name TEXT NOT NULL,password TEXT NOT NULL,system_role TEXT NOT NULL DEFAULT 'user',active INTEGER NOT NULL DEFAULT 1,color TEXT NOT NULL DEFAULT '#177b70',avatar_initials TEXT NOT NULL DEFAULT '',avatar_image TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS memberships(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),role TEXT NOT NULL DEFAULT 'member',PRIMARY KEY(user_id,team_id));
-    CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS styles(id INTEGER PRIMARY KEY,data TEXT NOT NULL UNIQUE);
-      INSERT OR IGNORE INTO styles(id,data) VALUES(0,'{}');
-      CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),years TEXT NOT NULL,position REAL NOT NULL,deleted_at TEXT,default_style INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),row_style INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS cells(task_id TEXT NOT NULL REFERENCES tasks(id),key TEXT NOT NULL,value TEXT NOT NULL,style_id INTEGER NOT NULL DEFAULT 0 REFERENCES styles(id),version INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(task_id,key));
-      CREATE INDEX IF NOT EXISTS cells_style_idx ON cells(style_id);
-      CREATE INDEX IF NOT EXISTS tasks_style_idx ON tasks(default_style);
-      CREATE INDEX IF NOT EXISTS tasks_row_style_idx ON tasks(row_style);
-    CREATE TABLE IF NOT EXISTS document_versions(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,document_id TEXT NOT NULL,content_hash TEXT NOT NULL,markdown TEXT NOT NULL,has_content INTEGER NOT NULL,created_at TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),UNIQUE(team_id,document_id,content_hash));
-    CREATE TABLE IF NOT EXISTS annual_memos(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,year INTEGER NOT NULL,id TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(team_id,year,id));
-    CREATE INDEX IF NOT EXISTS annual_memos_version_idx ON annual_memos(version_id);
-    CREATE TABLE IF NOT EXISTS task_documents(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,id TEXT NOT NULL DEFAULT 'main',title TEXT NOT NULL DEFAULT '문서 1',position INTEGER NOT NULL DEFAULT 0,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(task_id,id));
-    CREATE INDEX IF NOT EXISTS task_documents_version_idx ON task_documents(version_id);
-    CREATE INDEX IF NOT EXISTS task_documents_summary_idx ON task_documents(task_id,has_content);
-    CREATE TABLE IF NOT EXISTS format_states(team_id TEXT PRIMARY KEY REFERENCES teams(id),revision INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS format_rules(team_id TEXT NOT NULL REFERENCES teams(id),id TEXT NOT NULL,selector TEXT NOT NULL,rows_json TEXT,keys_json TEXT,exclusions_json TEXT NOT NULL,style_id INTEGER NOT NULL REFERENCES styles(id),orders_json TEXT NOT NULL,PRIMARY KEY(team_id,id),UNIQUE(team_id,selector));
-    CREATE INDEX IF NOT EXISTS format_styles_idx ON format_rules(style_id);
-    CREATE INDEX IF NOT EXISTS tasks_team_idx ON tasks(team_id,deleted_at,position);
-    CREATE TABLE IF NOT EXISTS views(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(user_id,team_id,year,name));
-    CREATE TABLE IF NOT EXISTS saved_filters(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),scope TEXT NOT NULL CHECK(scope IN ('team','personal')),owner_id TEXT REFERENCES users(id),name TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((scope='team' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL)));
-    CREATE UNIQUE INDEX IF NOT EXISTS saved_filters_team_name ON saved_filters(team_id,name) WHERE scope='team';
-    CREATE UNIQUE INDEX IF NOT EXISTS saved_filters_personal_name ON saved_filters(team_id,owner_id,name) WHERE scope='personal';
-    CREATE TABLE IF NOT EXISTS filter_states(user_id TEXT NOT NULL REFERENCES users(id),team_id TEXT NOT NULL REFERENCES teams(id),selected_id TEXT REFERENCES saved_filters(id) ON DELETE SET NULL,data TEXT NOT NULL,PRIMARY KEY(user_id,team_id));
-    CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),year INTEGER NOT NULL,name TEXT NOT NULL,reference_date TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,data BLOB NOT NULL CHECK(typeof(data)='blob'));
-    CREATE TABLE IF NOT EXISTS report_documents(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,task_id TEXT NOT NULL,document_id TEXT NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),PRIMARY KEY(report_id,task_id,document_id));
-    CREATE INDEX IF NOT EXISTS report_documents_version_idx ON report_documents(version_id);
-    CREATE TABLE IF NOT EXISTS report_memos(report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,id TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL,version_id TEXT NOT NULL REFERENCES document_versions(id),has_content INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,PRIMARY KEY(report_id,id));
-    CREATE INDEX IF NOT EXISTS report_memos_version_idx ON report_memos(version_id);
-    CREATE TABLE IF NOT EXISTS calendar_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,weekdays TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS calendar_rules(team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,property_id TEXT NOT NULL,filter_values TEXT NOT NULL,filter_mode TEXT NOT NULL DEFAULT 'include' CHECK(filter_mode IN ('include','exclude')),revision INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS calendar_entries(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT REFERENCES users(id),date TEXT NOT NULL,end_date TEXT NOT NULL CHECK(end_date>=date),lane INTEGER NOT NULL DEFAULT 0 CHECK(lane>=0),title TEXT NOT NULL,preview TEXT NOT NULL DEFAULT '',version_id TEXT REFERENCES document_versions(id),revision INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),operation_id TEXT,request_hash TEXT,deleted_at TEXT,deletion_id TEXT);
-    CREATE INDEX IF NOT EXISTS calendar_entries_scope_idx ON calendar_entries(team_id,date,user_id);
-    CREATE INDEX IF NOT EXISTS calendar_entries_owner_idx ON calendar_entries(team_id,user_id);
-    CREATE INDEX IF NOT EXISTS calendar_entries_layout_start_idx ON calendar_entries(team_id,user_id,date,end_date) WHERE deleted_at IS NULL;
-    CREATE INDEX IF NOT EXISTS calendar_entries_layout_end_idx ON calendar_entries(team_id,user_id,end_date,date) WHERE deleted_at IS NULL;
-    CREATE INDEX IF NOT EXISTS calendar_entries_version_idx ON calendar_entries(version_id);
-    CREATE TABLE IF NOT EXISTS calendar_tags(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT REFERENCES users(id),name TEXT NOT NULL COLLATE NOCASE,color TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'label' CHECK(kind IN ('label','check')),revision INTEGER NOT NULL DEFAULT 1);
-    CREATE UNIQUE INDEX IF NOT EXISTS calendar_tags_personal_name_idx ON calendar_tags(team_id,user_id,name) WHERE user_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS calendar_tags_shared_name_idx ON calendar_tags(team_id,name) WHERE user_id IS NULL;
-    CREATE TABLE IF NOT EXISTS calendar_entry_tags(entry_id TEXT NOT NULL REFERENCES calendar_entries(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES calendar_tags(id) ON DELETE CASCADE,position INTEGER NOT NULL,checked INTEGER NOT NULL DEFAULT 0 CHECK(checked IN (0,1)),PRIMARY KEY(entry_id,tag_id),UNIQUE(entry_id,position));
-    CREATE INDEX IF NOT EXISTS calendar_entry_tags_tag_idx ON calendar_entry_tags(tag_id);
-    CREATE TABLE IF NOT EXISTS calendar_weekly_items(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),week_start TEXT NOT NULL,task_id TEXT NOT NULL,title TEXT NOT NULL,imported_at TEXT NOT NULL,PRIMARY KEY(team_id,user_id,week_start,task_id));
-    CREATE INDEX IF NOT EXISTS calendar_weekly_scope_idx ON calendar_weekly_items(team_id,week_start,user_id);
-    CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,team_id TEXT REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target TEXT NOT NULL,before_json TEXT,after_json TEXT,created_at TEXT NOT NULL);
-    CREATE INDEX IF NOT EXISTS audit_team_idx ON audit(team_id,created_at DESC);
-    CREATE INDEX IF NOT EXISTS audit_system_idx ON audit(team_id,created_at DESC,id DESC) WHERE team_id IS NULL;
-    DROP INDEX IF EXISTS audit_created_idx;
-    DROP INDEX IF EXISTS audit_cleanup_idx;
-    CREATE INDEX IF NOT EXISTS audit_cleanup_team_idx ON audit(team_id,created_at DESC,id DESC) WHERE action='history-cleanup';
-    CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL REFERENCES users(id),response TEXT NOT NULL,created_at TEXT NOT NULL);
-    DROP INDEX IF EXISTS operations_cell_created_idx;
-    CREATE INDEX IF NOT EXISTS operations_cell_team_created_idx ON operations((CASE WHEN json_array_length(response,'$.refs')=1 THEN json_extract(response,'$.refs[0].teamId') ELSE NULL END),created_at,id) WHERE json_extract(response,'$.kind') IN ('cell-audit','format-audit');
-    CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id),actor_id TEXT NOT NULL REFERENCES users(id),filename TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,applied_at TEXT,result TEXT);
-    CREATE TABLE IF NOT EXISTS team_revisions(team_id TEXT PRIMARY KEY REFERENCES teams(id),version INTEGER NOT NULL DEFAULT 0);
-    CREATE TRIGGER IF NOT EXISTS revision_team_insert AFTER INSERT ON teams BEGIN INSERT OR IGNORE INTO team_revisions(team_id) VALUES(NEW.id); END;
-    CREATE TRIGGER IF NOT EXISTS revision_task_insert AFTER INSERT ON tasks BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=NEW.team_id; END;
-    CREATE TRIGGER IF NOT EXISTS revision_task_update AFTER UPDATE ON tasks BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=NEW.team_id; END;
-    CREATE TRIGGER IF NOT EXISTS revision_task_delete AFTER DELETE ON tasks BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=OLD.team_id; END;
-    CREATE TRIGGER IF NOT EXISTS revision_cell_insert AFTER INSERT ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=NEW.task_id); END;
-    CREATE TRIGGER IF NOT EXISTS revision_cell_update AFTER UPDATE ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=NEW.task_id); END;
-    CREATE TRIGGER IF NOT EXISTS revision_cell_delete AFTER DELETE ON cells BEGIN UPDATE team_revisions SET version=version+1 WHERE team_id=(SELECT team_id FROM tasks WHERE id=OLD.task_id); END;
-    PRAGMA user_version=${SCHEMA_VERSION};
-  `);
-  });
+  try {
+    if (version === 0) migrateSqlite(db, { initialize: true });
+    else assertSqliteHistory(db);
+  } catch (error) { db.close(); throw error; }
   pruneStyles(db);
   return db;
 }
 export function transaction(db, work) {
   db.exec("BEGIN IMMEDIATE");
+  let committed=false;
   try {
+    db.syncCapture?.begin();
     const r = work();
+    if (r && typeof r.then === "function") throw new Error("SQLite transaction callback must be synchronous");
+    db.syncCapture?.flush();
     db.exec("COMMIT");
+    committed=true;
+    db.syncCapture?.committed();
     return r;
   } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
+    const failure = db.syncCapture?.failure || e;
+    if(!committed)db.exec("ROLLBACK");
+    db.syncCapture?.rollback();
+    throw failure;
   }
 }
 // API에 내보내는 사용자 객체: 프로필과 함께 소속 팀·팀 내 권한을 담는다.
@@ -214,10 +171,11 @@ export function replaceTeamMembers(db, teamId, rows) {
 export function styleWriter(db) {
   const known = new Map([["{}", 0]]);
   const objects = new WeakMap();
-  const insert = db.prepare(
+  const insert = cachedStatement(
+    db,
     "INSERT INTO styles(data) VALUES(?) ON CONFLICT(data) DO NOTHING",
   );
-  const find = db.prepare("SELECT id FROM styles WHERE data=?");
+  const find = cachedStatement(db, "SELECT id FROM styles WHERE data=?");
   return (style) => {
     if (objects.has(style)) return objects.get(style);
     const data = JSON.stringify(compactStyle(style));
@@ -233,7 +191,8 @@ export function styleWriter(db) {
 
 export function upsertCellStatement(db) {
   const intern = styleWriter(db);
-  const put = db.prepare(
+  const put = cachedStatement(
+    db,
     "INSERT INTO cells(task_id,key,value,style_id,version) VALUES(?,?,?,?,?) ON CONFLICT(task_id,key) DO UPDATE SET value=excluded.value,style_id=excluded.style_id,version=excluded.version",
   );
   return {
@@ -257,7 +216,7 @@ export function pruneStyles(db, candidates) {
 }
 // 업무의 수정 시각을 이전 값보다 뒤로 올린다. 같은 밀리초에 바뀌어도 값이 달라진다.
 export function touchTasks(db, tasks) {
-  const put = db.prepare("UPDATE tasks SET updated_at=? WHERE id=?");
+  const put = cachedStatement(db, "UPDATE tasks SET updated_at=? WHERE id=?");
   const stamps = {};
   for (const t of tasks) {
     stamps[t.id] = nextTaskStamp(t.updatedAt);
@@ -530,7 +489,7 @@ export function* initialCells(cells, defaultStyle = {}) {
 }
 export function audit(db, actorId, teamId, action, target, before, after) {
   const auditId = id();
-  db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)").run(
+  cachedStatement(db, "INSERT INTO audit VALUES(?,?,?,?,?,?,?,?)").run(
     auditId,
     teamId,
     actorId,

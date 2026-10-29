@@ -6,20 +6,21 @@
 
 표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 29입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 33입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
 
 ## 버전과 운영 호환성
 
-| 구분 | 현재 저장소 기준 | 확인 위치와 의미 |
-| --- | --- | --- |
-| SQLite DB 형식 | v29 | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version` |
-| JSON 반출 형식 | v6 | `server/transfer.mjs`의 `schemaVersion`; DB 버전과 별개 |
-| DB 백업 복구 | v29 백업만 허용 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사 |
-| 기존 DB 업그레이드 | 버전별 변환 실행기 없음 | 서버 시작과 복구 명령은 마이그레이션을 수행하지 않음 |
+| 구분               | 현재 저장소 기준             | 확인 위치와 의미                                                  |
+| ------------------ | ---------------------------- | ----------------------------------------------------------------- |
+| SQLite DB 형식     | v33                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
+| JSON 반출 형식     | v6                           | `shared/workbook.mjs`의 `schemaVersion`; DB 버전과 별개           |
+| DB 백업 복구       | v29·v30·v31·v32·v33 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
+| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 → v33 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
+| 외부 PostgreSQL | 팀별 site v3 + team v2, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v2 지원, team v1은 명시 변환 |
 
-실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 이 표의 저장소 버전과 같다고 추정하지 않습니다. `openDatabase`는 v29 기존 DB를 열고, 0이 아닌 다른 버전은 거절합니다. 버전 0에는 초기화 DDL을 실행하지만 기존 사용자 테이블이 없는지 검증하지 않으므로 버전 0이라는 이유만으로 기존 파일을 신규 DB로 취급하지 않습니다. `CREATE TABLE IF NOT EXISTS`는 기존 컬럼이나 저장된 본문을 새 형식으로 변환하지 않습니다.
+실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v33 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32는 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
-백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 업그레이드하지 않습니다. 복구 시 세션을 지우므로 다시 로그인해야 합니다.
+백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션과 접속 토큰을 지우고, v30 이상 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29·v30·v31·v32 복구본은 원본을 보존한 뒤 명시적 v33 migration을 수행합니다.
 
 스키마·영속 데이터 형식·해석 규칙·백업 호환성을 변경할 때는 [DB 변경 지침](DATABASE_CHANGES.md)을 반드시 따릅니다.
 
@@ -43,7 +44,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `expo
 
 정상 저장은 과거 이력을 조회하거나 과거 본문을 비교하지 않고 새 이력 ID를 연결합니다. 현재 셀과 값·정규화한 서식이 동일하면 쓰기·버전 증가·업무시각 변경·감사 이력을 생략합니다. 모든 항목이 동일하면 빈 `cells`·`before`·`updatedAt`을 반환하고 `refs: []`인 작은 재시도 기록만 저장합니다. 버전·권한 검사는 생략하지 않습니다. 같은 `operationId`가 다시 들어왔을 때만 `audit.id` 기본키로 전후 JSON을 읽어 `cells`, `before`, `operationId`, `savedAt`, `updatedAt` 응답을 복원합니다. 현재 셀을 응답 원본으로 사용하지 않으므로 이후 편집·복원·서버 재시작에도 최초 응답과 순서가 같습니다. 요청자와 현재 팀 접근 권한은 재시도에도 검사합니다. 참조 이력이 없으면 410으로 거절하고 변경을 다시 실행하지 않습니다.
 
-셀 요청의 `createdAt`은 필수 UTC ISO 시각이며 `operationId`와 함께 최초 전송부터 재시도까지 유지합니다. 생성 후 7일이 지나면 기록 유무와 관계없이 410으로 거절하고, 서버보다 5분 넘는 미래 시각이나 누락된 생성 시각은 400으로 거절합니다.
+브라우저는 API 응답의 `X-Server-Time`(이전 서버는 HTTP `Date`)에 `performance.now()` 경과 시간을 더해 요청 시각을 만듭니다. PC의 날짜·시간 변경에 영향받지 않으며, 재시도의 원래 요청 시각을 새 시각으로 바꾸지 않습니다. 셀 요청의 `createdAt`은 필수 UTC ISO 시각이며 `operationId`와 함께 최초 전송부터 재시도까지 유지합니다. 생성 후 7일이 지나면 기록 유무와 관계없이 410으로 거절하고, 서버보다 5분 넘는 미래 시각이나 누락된 생성 시각은 400으로 거절합니다.
 
 `GET /api/admin/audit`는 `team_id IS NULL`인 공통 감사 로그만 반환합니다. `from`·`to`는 선택적인 `YYYY-MM-DD` 날짜이며 한국 시간 기준 양 끝 날짜를 포함합니다. `actorId`·`action`을 함께 지정할 수 있습니다. 목록은 전후 JSON 없이 `entries`와 `nextCursor: {createdAt, id} | null`을 반환하며 한 번에 최대 50건입니다. 다음 페이지는 `cursorAt`·`cursorId`를 함께 보내고 `(created_at,id)` 내림차순으로 이어갑니다. 상세는 `GET /api/admin/audit/:id`의 `{before,after}`로 별도 조회합니다. 팀 이력·없는 이력·정리된 이력은 상세 API에서 404, 시스템 관리자가 아닌 계정은 목록·상세 모두 403입니다. 공통 범위 전용 날짜·ID 인덱스로 탐색하며 조회 자체는 새 이력을 만들지 않습니다.
 
@@ -81,13 +82,13 @@ XLSX 가져오기 작업은 작은 결과 응답을 직접 저장합니다. 팀 
 
 ### 서식 키 대응
 
-| 화면의 이름 | 저장·전송 키 |
-| --- | --- |
+| 화면의 이름                                              | 저장·전송 키           |
+| -------------------------------------------------------- | ---------------------- |
 | `borderTop`, `borderRight`, `borderBottom`, `borderLeft` | `bt`, `br`, `bb`, `bl` |
-| `color`, `backgroundColor` | `c`, `bg` |
-| `fontFamily`, `fontSize` | `ff`, `fs` |
-| `textAlign`, `verticalAlign`, `textMode` | `ta`, `va`, `tm` |
-| `bold`, `italic`, `underline`, `strike` | `b`, `i`, `u`, `s` |
+| `color`, `backgroundColor`                               | `c`, `bg`              |
+| `fontFamily`, `fontSize`                                 | `ff`, `fs`             |
+| `textAlign`, `verticalAlign`, `textMode`                 | `ta`, `va`, `tm`       |
+| `bold`, `italic`, `underline`, `strike`                  | `b`, `i`, `u`, `s`     |
 
 테두리 값은 `[선 종류, 색상]` 또는 `null`입니다. 예를 들어 `{"br":["double","#856060"],"bg":"#d1eee6"}`입니다. 동일한 내용의 서식은 키 순서와 관계없이 사전에서 한 번만 기록합니다. gzip 전에도 중복을 제거하며 일반 HTTP 응답의 gzip 압축은 계속 사용합니다.
 
@@ -101,13 +102,13 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 예를 들어 두 사람이 같은 셀의 `version: 1`을 읽고 편집했다면 먼저 저장한 요청은 `2`가 됩니다. 뒤늦은 요청은 `expectedVersion: 1`과 현재 번호 `2`가 달라 409로 거절합니다. 번호가 없으면 다른 사람의 수정이나 실행취소 이후의 편집을 조용히 덮어쓸 수 있습니다. 따라서 현재 JSON은 `version` 이름과 값을 명시적으로 유지합니다. 서식 키만 축약하며 모든 필드명을 임의로 줄이지 않습니다.
 
-| 번호 | 대상 | 역할 |
-| --- | --- | --- |
-| 셀 `version` | 개별 셀 | 값·개별 서식 저장, 실행취소, 늦은 응답의 충돌 검사 |
-| 문서 `revision` | 업무별 Markdown 본문 | 자동 저장과 동시 문서 수정의 충돌 검사 |
-| 공통 서식 `revision` | 팀의 행·열 규칙 집합 | 공통 서식 저장·복원, 셀 예외를 계산한 기준 확인 |
-| 팀 설정 `revision` | 팀 설정 | 속성·기본 서식 등 설정의 동시 수정 검사 |
-| `schemaVersion` / `SCHEMA_VERSION` | JSON 반출 / SQLite 구조 | 파일·DB 형식 구분; 사용자의 편집 횟수와 무관 |
+| 번호                               | 대상                    | 역할                                               |
+| ---------------------------------- | ----------------------- | -------------------------------------------------- |
+| 셀 `version`                       | 개별 셀                 | 값·개별 서식 저장, 실행취소, 늦은 응답의 충돌 검사 |
+| 문서 `revision`                    | 업무별 Markdown 본문    | 자동 저장과 동시 문서 수정의 충돌 검사             |
+| 공통 서식 `revision`               | 팀의 행·열 규칙 집합    | 공통 서식 저장·복원, 셀 예외를 계산한 기준 확인    |
+| 팀 설정 `revision`                 | 팀 설정                 | 속성·기본 서식 등 설정의 동시 수정 검사            |
+| `schemaVersion` / `SCHEMA_VERSION` | JSON 반출 / SQLite 구조 | 파일·DB 형식 구분; 사용자의 편집 횟수와 무관       |
 
 행 전체의 배경색을 바꿀 때는 공통 서식 `revision`을 올리고, 비어 있는 주차의 셀이나 `version`을 만들지 않습니다. 기존 셀 예외를 제거해야 하는 셀만 개별 번호도 올립니다. 변경이 없는 재적용은 어느 번호도 올리지 않습니다.
 
@@ -127,14 +128,14 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 다음 사례를 동작 기준으로 삼습니다.
 
-| 순서 / 상황 | 표시 결과 | 저장 결과 |
-| --- | --- | --- |
-| A·B 업무의 10월 19일 열을 파랑으로 지정 | 해당 두 셀이 파랑 | `rows: [A, B]`, `keys: ["2026-10-19"]` 규칙 하나 |
-| A 업무의 그 셀만 빨강으로 변경 | A는 빨강, B는 파랑 | A 셀에 빨강 배경색 예외만 저장 |
-| 같은 열을 초록으로 다시 지정 | A·B 모두 초록 | 공통 규칙 갱신, 해당 배경색 예외 제거; 다른 속성 예외는 유지 |
-| A 업무 행 전체를 노랑으로 지정 | A의 모든 열이 노랑 | `rows: [A]`, `keys: null` 규칙 하나 |
-| 12월에서 다음 해 1월·2월로 달력 이동 | A의 새 주차도 노랑 | 규칙 재사용; 빈 주차 셀 추가 없음 |
-| 10월 19일 열만 지정한 뒤 다음 해 같은 주차로 이동 | 다음 해 열에는 그 규칙을 적용하지 않음 | 열 규칙은 `2026-10-19`에 고정 |
+| 순서 / 상황                                       | 표시 결과                              | 저장 결과                                                    |
+| ------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
+| A·B 업무의 10월 19일 열을 파랑으로 지정           | 해당 두 셀이 파랑                      | `rows: [A, B]`, `keys: ["2026-10-19"]` 규칙 하나             |
+| A 업무의 그 셀만 빨강으로 변경                    | A는 빨강, B는 파랑                     | A 셀에 빨강 배경색 예외만 저장                               |
+| 같은 열을 초록으로 다시 지정                      | A·B 모두 초록                          | 공통 규칙 갱신, 해당 배경색 예외 제거; 다른 속성 예외는 유지 |
+| A 업무 행 전체를 노랑으로 지정                    | A의 모든 열이 노랑                     | `rows: [A]`, `keys: null` 규칙 하나                          |
+| 12월에서 다음 해 1월·2월로 달력 이동              | A의 새 주차도 노랑                     | 규칙 재사용; 빈 주차 셀 추가 없음                            |
+| 10월 19일 열만 지정한 뒤 다음 해 같은 주차로 이동 | 다음 해 열에는 그 규칙을 적용하지 않음 | 열 규칙은 `2026-10-19`에 고정                                |
 
 행 규칙은 같은 업무 ID를 따라갑니다. 같은 업무를 다음 연도에도 표시하면 서식이 이어지지만, 관계없는 새 업무에 자동 적용하지 않습니다. 업무 복제·행 삽입은 앞에서 설명한 복사 규칙을 따릅니다.
 
@@ -147,6 +148,8 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문·숫자 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다.
 
 `bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 사본에도 이전 팀원의 프로필을 포함합니다.
+
+`bootstrap.teams`와 관리자 팀 목록의 `sync.available`은 해당 팀의 외부 연결 설정 화면 제공 여부, `sync.configured`는 저장된 외부 동기화 연결 여부입니다. 브라우저는 설정된 팀에만 동기화 상태 조회·표시와 외부 새로고침을 실행합니다. 이 값은 서버의 기존 프로필·연결에서 계산하는 응답 메타데이터이며 업무 설정이나 동기화 문서에 저장하지 않습니다.
 
 압축을 해제한 업무 객체는 `id`, `teamId`, `years`, `position`, `defaultStyle`, `createdBy`, `createdAt`, `updatedAt`, `deletedAt`, `cells`를 가집니다. 공통 서식이 있으면 `formatting`을, 복사한 행의 공통 서식이 있으면 `rowStyle`을 포함합니다. 셀 키는 팀 설정에 정의된 활성 속성 ID 또는 주의 월요일 날짜이며, 정의되지 않은 키는 거절합니다. 기본 속성은 `title`, `owner`, `status`이고, 예시 양식(`shared/coreProperties.js`의 `sampleProperties`)은 `category`, `type`, `description`, `supporters`, `progress`, `deadline`, `score`, `current`를 더합니다. 화면에서 추가한 속성은 앱이 만든 짧은 ID(`p` + base36 6자리, 예 `p7k2mq`)를 키로 씁니다. 날짜 키 하나를 두 연도에서 조회하더라도 같은 값입니다. 연말의 일부 주는 앞·뒤 연도에 걸쳐 표시될 수 있습니다.
 
@@ -188,7 +191,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 ## 업무 문서
 
-업무마다 최대 50개의 문서를 보관합니다. 문서는 `id`(`main` 또는 UUID), `title`(보관 형식 최대 80자), Markdown 본문을 가지며 본문은 UTF-8 256KiB 이하입니다. 새 문서 추가·이름 변경에서 입력하는 제목은 원본과 사본 모두 1~50자로 제한합니다. 기존 보관 제목은 변경하거나 잘라내지 않습니다. 저장 전에는 빈 `main` 문서(문서 1, revision 0)를 표시하며 조회만으로 DB 행을 만들지 않습니다.
+업무마다 최대 50개의 문서를 보관합니다. 문서는 `id`(`main` 또는 UUID), `title`(보관 형식 최대 80자), Markdown 본문을 가지며 본문은 UTF-8 256KiB 이하입니다. 새 문서 추가·이름 변경에서 입력하는 제목은 원본과 사본 모두 1~50자로 제한합니다. 기존 보관 제목은 변경하거나 잘라내지 않습니다. 저장 전에는 빈 `main` 문서(문서 1, revision 0)를 표시하며 조회만으로 DB 행을 만들지 않습니다. 리치 편집의 토글 블록은 본문 안에 `<details open>`·`<summary>`(제목 수준은 `<summary><h2>…</h2></summary>`) HTML과 빈 줄로 구분한 일반 Markdown 내용으로 저장하며, 별도 컬럼이나 형식 버전 변경은 없습니다.
 
 `document_versions`는 내용 해시로 중복을 제거하는 불변 본문 저장소입니다. `task_documents`는 `(task_id,id)` 기본키, `title`, `position`, `version_id`, `has_content`, 정수 `revision`, `updated_at`, `actor_id`, 재시도용 `operation_id`·`request_hash`를 보관합니다. 실제 원본 문서 저장은 문서 revision·업무 시각·감사 기록을 같은 트랜잭션에서 갱신합니다. 본문을 비워도 revision을 유지합니다.
 
@@ -196,16 +199,16 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 일반·삭제 상태 업무 목록과 사본 표 조회에는 본문·문서 목록을 보내지 않습니다. 내용이 있는 문서가 하나라도 있을 때 `hasDocument: true`를 제공하며, `documentCount`는 빈 문서를 포함한 저장된 문서 수입니다. 개수는 기존 문서 목록에서 계산하며 별도 DB 열을 추가하지 않습니다. 문서 목록은 제목 탭을 열 때, 본문은 해당 탭을 처음 열 때 조회합니다. 문서별 편집기는 방문한 탭 안에서 유지해 원문 모드·입력·실행취소를 보존합니다.
 
-| API (원본/사본 각각 동일한 문서 동작) | 의미 |
-| --- | --- |
-| `GET /api/tasks/:id/documents` | 문서 ID·제목·내용 유무·revision 목록. `?content=1`은 행 복사에 필요한 전체 본문 조회 |
-| `POST /api/tasks/:id/documents` | `{id:UUID,title?}`로 추가. 제목 1~50자. 같은 ID의 재시도는 중복 생성하지 않음 |
-| `GET/PUT /api/tasks/:id/documents/:documentId` | 조회 / `{markdown,expectedRevision,operationId}`로 독립 저장 |
-| `PATCH /api/tasks/:id/documents/:documentId` | `{title,expectedTitle}`로 이름 변경. 새 제목 1~50자, 이전 이름 충돌 검사 |
-| `DELETE /api/tasks/:id/documents/:documentId` | `{expectedRevision}`으로 해당 문서만 삭제 |
+| API (원본/사본 각각 동일한 문서 동작)                        | 의미                                                                                           |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `GET /api/tasks/:id/documents`                               | 문서 ID·제목·내용 유무·revision 목록. `?content=1`은 행 복사에 필요한 전체 본문 조회           |
+| `POST /api/tasks/:id/documents`                              | `{id:UUID,title?}`로 추가. 제목 1~50자. 같은 ID의 재시도는 중복 생성하지 않음                  |
+| `GET/PUT /api/tasks/:id/documents/:documentId`               | 조회 / `{markdown,expectedRevision,operationId}`로 독립 저장                                   |
+| `PATCH /api/tasks/:id/documents/:documentId`                 | `{title,expectedTitle}`로 이름 변경. 새 제목 1~50자, 이전 이름 충돌 검사                       |
+| `DELETE /api/tasks/:id/documents/:documentId`                | `{expectedRevision}`으로 해당 문서만 삭제                                                      |
 | `/api/reports/:id/tasks/:taskId/documents` 및 `/:documentId` | 같은 목록·추가·조회·저장·이름 변경·삭제 동작. 문서 revision은 불변 버전 UUID(빈 초기 문서는 0) |
-| `POST .../documents/:documentId/images` | multipart 이미지 업로드. 문서 존재 및 편집 권한 확인 |
-| `GET /api/document-images/:teamId/:hash.webp` | 로그인·팀 접근 검사 후 이미지 제공 |
+| `POST .../documents/:documentId/images`                      | multipart 이미지 업로드. 문서 존재 및 편집 권한 확인                                           |
+| `GET /api/document-images/:teamId/:hash.webp`                | 로그인·팀 접근 검사 후 이미지 제공                                                             |
 
 `/document`는 기본 `main` 문서의 단일 조회/저장 경로로도 제공합니다. 분기 목록과 `/document-versions/:id` 조회 API는 삭제했습니다. 원본은 해당 업무의 `canEdit`, 사본은 해당 팀의 `canContribute`를 검사하며 두 경로 모두 담당자·지원자와 관계없이 같은 팀의 팀장·팀원에게 편집을 허용합니다. 열람자와 팀 외부 사용자의 쓰기를 차단합니다.
 
@@ -259,6 +262,14 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 않습니다. 다른 시스템으로 옮길 때 사용자 ID를 매핑하고, 날짜 키·업무 ID·색상·사본을 유지해야 합니다. 현재 앱의 JSON 직접 재가져오기 기능은 없습니다. 완전 복구는 SQLite 백업으로 수행합니다. XLSX 가져오기는 새 업무 ID를 부여하며, 동일 파일 재시도용 키를 별도로 관리합니다.
 
+### 접속 토큰
+
+`access_tokens`는 SQLite v33, PostgreSQL control v2/site v3에서 추가됩니다. 아직 배포하지 않은 신규 기능이므로 무기한 발급·암호화 재조회까지 최초 토큰 마이그레이션 하나에 포함합니다. 팀 업무 스키마(team v2)·JSON v6·동기화 형식은 유지합니다. `id`, `user_id`, `name`, `token_hash`, `prefix`, `created_at`, `token_ciphertext`를 저장하고 만료일 컬럼은 없습니다. 사용자 삭제 시 함께 삭제합니다.
+
+인증된 본인만 `GET /api/access-tokens`, `POST /api/access-tokens`의 `{id: UUID,name}`, `GET /api/access-tokens/:id/reveal`, `DELETE /api/access-tokens/:id`를 사용합니다. 최대 20개 제한은 트랜잭션에서 확인합니다. 원문은 `gbt_` + 암호학적 난수 32바이트의 hex 표현입니다. 검증용 SHA-256 해시와 재조회용 AES-256-GCM 암호문을 별도로 저장하며, 암호문은 사용자·토큰 ID에 바인딩합니다. 키는 DB 밖에 보관합니다. 목록에는 ID·이름·앞부분·생성일만 보내고 원문은 생성 또는 본인의 reveal 응답에만 보냅니다. 응답은 캐시하지 않으며 원문·해시·암호문은 감사 로그에 넣지 않습니다. 같은 생성 ID를 재전송하면 409를 반환하며 목록에서 눈 아이콘으로 원문을 다시 확인할 수 있습니다. 기존 로그인·쓰기 API에는 Bearer 인증을 추가하지 않았으며 조회 API 연결은 추후 작업입니다.
+
+내부 전체 백업에는 토큰 해시·암호문이 포함되지만 복구 시 토큰을 삭제합니다. 외부 논리 백업과 팀 반출·Git 동기화에는 토큰을 포함하지 않습니다. 토큰을 유지하며 서버를 이전하는 경우 DB와 별도로 암호화 키를 보존해야 합니다. 이전 버전 백업은 기존 형식으로 복원 후 명시적으로 업그레이드합니다.
+
 ## 동적 속성
 
 팀 설정은 `theme`, `properties`, `defaultStyle`, `defaultDensity`, `weekHeader`, `revision`으로 이루어지며 `properties` 배열이 모든 업무 정보 열과 순서를 정의합니다. 속성은 `id`, `name`, `kind`, `display`, `values`, `visible`, 선택적인 `multiple`·`width`(기본 열 너비, 없으면 120px)·`placement`·`archived`를 가집니다. 속성 ID는 영문자로 시작하는 영문·숫자·`_`·`-` 60자 이내입니다. `kind`는 `option`·`text`·`date`·`number`·`member`입니다. Option의 `display`는 `text`·`round`·`square`·`dot`·`emoji`, Member는 `text`·`avatar`입니다. `title`은 항상 활성 Text이며 삭제·숨김·종류 변경을 거절합니다. `owner`는 삭제 불가한 단일 Member, `status`는 삭제 불가하고 활성 값이 하나 이상인 Option입니다. `supporters`는 선택 속성으로 보관·복원이 가능하며 복수 Member와 권한 연계를 유지합니다. 새 팀에는 `title`, `owner`, `status`만 생성합니다. 첫 설정에서 예시 업무를 선택한 팀과 XLSX 가져오기는 예시 양식 속성을 사용합니다. 기본 상태는 예정·검토 중·진행 중·완료·보류이며 옵션 ID는 `status-planned`·`status-review`·`status-progress`·`status-completed`·`status-paused`입니다. `POST /api/admin/teams`의 `templateTeamId`는 원본 팀 설정을 복사하며 새 revision은 0입니다. 속성·값·순서·표시·기본 서식·테마를 포함하고 업무·회원 배정·개인 보기는 복사하지 않습니다. 값 배열의 순서가 선택 목록·묶음 순서이며, 각 값에는 `id`, `label`, `backgroundColor`, `dotColor`, `emoji`, 선택적인 `archived`가 있습니다.
@@ -289,43 +300,43 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 모든 업무 API는 HTTP-only 세션 쿠키를 요구합니다. 쓰기 요청은 `X-Requested-With: WeeklyPlan`을 포함합니다. 브라우저 외부 출처는 허용하지 않습니다.
 
-| 경로 | 용도 |
-|---|---|
-| `GET /api/bootstrap` | 현재 사용자·소속 팀·담당자·연도 |
-| `GET /api/tasks?teamId=…&year=…&startMonth=…` | 12개월에 해당하는 최대 두 연도의 업무를 중복 없이 조회. ETag 조건부 조회 지원 |
-| `POST /api/tasks` | 업무 생성·복제·기준 행의 앞/뒤에 삽입 |
-| `POST /api/tasks/reorder` | 한 행 또는 여러 행을 기준 업무의 앞/뒤로 함께 이동, 묶음 경계·권한·업무 버전 검사 |
-| `POST /api/cells/batch` | 개별 값 최대 2,000셀·개별 서식 최대 50,000셀, 행·열 공통 서식은 별도 `format` 범위 요청 |
-| `PATCH /api/tasks/:id` | 순서·연도 변경 |
-| `DELETE /api/tasks/:id` | 복구 가능한 삭제, 삭제 후 `updatedAt` 반환 |
-| `POST /api/tasks/delete` | `{tasks:[{id,updatedAt}]}`를 원자적으로 삭제하고 ID별 삭제 버전 반환 |
-| `POST /api/tasks/restore` | 삭제 당시 버전을 검사해 여러 업무를 원자적으로 복구 |
-| `POST /api/tasks/:id/restore` | 관리자 복구 또는 해당 업무 편집자의 삭제 취소. `updatedAt`을 보내면 복구 전 버전 일치 검사 |
-| `GET/PUT /api/views` | 사용자·팀·기준 연도별 표 배치 (`__current`). 필터 조건 제외 |
-| `GET /api/filters?teamId=…` | 팀 공용·본인 개인용 필터 목록과 본인의 현재 조건·선택. 연도 매개변수 없음 |
-| `PUT /api/filters` | `teamId`, `scope`(`team`·`personal`), `name`, `data`로 저장. 공용은 팀장만 허용 |
-| `PUT /api/filters/current` | 본인의 `teamId`, `selectedId`(또는 빈 문자열), `data` 저장 |
-| `PATCH /api/filters/:id` | 이름·조건 수정. 개인용은 본인, 공용은 팀장만 허용. 같은 구분의 중복 이름 거부 |
-| `DELETE /api/filters/:id` | 개인용은 본인, 공용은 팀장만 삭제 |
-| `GET/POST /api/reports` | 사본 목록·생성 |
-| `GET /api/reports/:id` | 사본과 편집 충돌 검사 revision 조회 |
-| `PATCH /api/reports/:id` | 보관 당시 속성 정의로 사본만 편집. 팀원·팀장·시스템 관리자 허용 |
-| `DELETE /api/reports` | `{teamId, ids}`로 선택한 사본을 일괄 삭제. 팀원·팀장·시스템 관리자 허용 |
-| `GET /api/audit` | 수행자·시각·전후 값 |
-| `GET /api/admin/audit` | 관리자 전용 공통 감사 로그 메타데이터, 기간·수행자·작업 필터, 50건 커서 페이지 |
-| `GET /api/admin/audit/:id` | 관리자 전용 공통 감사 로그의 변경 전·후 값 |
-| `POST /api/audit/:id/restore` | 셀·공통 서식 복원도 새 변경으로 기록 |
-| `POST /api/import/preview` | XLSX 사전 분석, multipart 파일 |
-| `POST /api/import/:id/apply` | 확인한 시트 적용 |
-| `POST /api/import/:id/exceptions` | 전체 이관 예외 JSON 다운로드 |
-| `POST /api/export` | XLSX·CSV·JSON 반출 |
-| `GET/POST /api/admin/users` | 전체 사용자·팀 목록 / 사용자 생성 (`systemRole`, `memberships: [{teamId, role}]`) |
-| `PATCH /api/admin/users/:id` | 사용자 정보·시스템 권한, 선택적으로 팀별 권한 전체 교체 |
-| `POST /api/admin/teams` | 팀 생성, 선택적인 `members: [{userId, role}]` |
-| `PATCH /api/teams/:id` | 팀 이름·테마 저장 (시스템 관리자·팀장) |
-| `GET/PUT /api/teams/:id/members` | 팀 구성원과 팀 내 권한 조회·전체 교체, 추가할 사용자 목록 (시스템 관리자·팀장) |
-| `DELETE /api/admin/teams/:id` | 확인한 팀의 전 연도 데이터 영구 삭제 |
-| `PATCH /api/teams/:id/settings` | 속성 이름·값·순서·표시 모양 저장 |
+| 경로                                          | 용도                                                                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `GET /api/bootstrap`                          | 현재 사용자·소속 팀·담당자·연도                                                            |
+| `GET /api/tasks?teamId=…&year=…&startMonth=…` | 12개월에 해당하는 최대 두 연도의 업무를 중복 없이 조회. ETag 조건부 조회 지원              |
+| `POST /api/tasks`                             | 업무 생성·복제·기준 행의 앞/뒤에 삽입                                                      |
+| `POST /api/tasks/reorder`                     | 한 행 또는 여러 행을 기준 업무의 앞/뒤로 함께 이동, 묶음 경계·권한·업무 버전 검사          |
+| `POST /api/cells/batch`                       | 개별 값 최대 2,000셀·개별 서식 최대 50,000셀, 행·열 공통 서식은 별도 `format` 범위 요청    |
+| `PATCH /api/tasks/:id`                        | 순서·연도 변경                                                                             |
+| `DELETE /api/tasks/:id`                       | 복구 가능한 삭제, 삭제 후 `updatedAt` 반환                                                 |
+| `POST /api/tasks/delete`                      | `{tasks:[{id,updatedAt}]}`를 원자적으로 삭제하고 ID별 삭제 버전 반환                       |
+| `POST /api/tasks/restore`                     | 삭제 당시 버전을 검사해 여러 업무를 원자적으로 복구                                        |
+| `POST /api/tasks/:id/restore`                 | 관리자 복구 또는 해당 업무 편집자의 삭제 취소. `updatedAt`을 보내면 복구 전 버전 일치 검사 |
+| `GET/PUT /api/views`                          | 사용자·팀·기준 연도별 표 배치 (`__current`). 필터 조건 제외                                |
+| `GET /api/filters?teamId=…`                   | 팀 공용·본인 개인용 필터 목록과 본인의 현재 조건·선택. 연도 매개변수 없음                  |
+| `PUT /api/filters`                            | `teamId`, `scope`(`team`·`personal`), `name`, `data`로 저장. 공용은 팀장만 허용            |
+| `PUT /api/filters/current`                    | 본인의 `teamId`, `selectedId`(또는 빈 문자열), `data` 저장                                 |
+| `PATCH /api/filters/:id`                      | 이름·조건 수정. 개인용은 본인, 공용은 팀장만 허용. 같은 구분의 중복 이름 거부              |
+| `DELETE /api/filters/:id`                     | 개인용은 본인, 공용은 팀장만 삭제                                                          |
+| `GET/POST /api/reports`                       | 사본 목록·생성                                                                             |
+| `GET /api/reports/:id`                        | 사본과 편집 충돌 검사 revision 조회                                                        |
+| `PATCH /api/reports/:id`                      | 보관 당시 속성 정의로 사본만 편집. 팀원·팀장·시스템 관리자 허용                            |
+| `DELETE /api/reports`                         | `{teamId, ids}`로 선택한 사본을 일괄 삭제. 팀원·팀장·시스템 관리자 허용                    |
+| `GET /api/audit`                              | 수행자·시각·전후 값                                                                        |
+| `GET /api/admin/audit`                        | 관리자 전용 공통 감사 로그 메타데이터, 기간·수행자·작업 필터, 50건 커서 페이지             |
+| `GET /api/admin/audit/:id`                    | 관리자 전용 공통 감사 로그의 변경 전·후 값                                                 |
+| `POST /api/audit/:id/restore`                 | 셀·공통 서식 복원도 새 변경으로 기록                                                       |
+| `POST /api/import/preview`                    | XLSX 사전 분석, multipart 파일                                                             |
+| `POST /api/import/:id/apply`                  | 확인한 시트 적용                                                                           |
+| `POST /api/import/:id/exceptions`             | 전체 이관 예외 JSON 다운로드                                                               |
+| `POST /api/export`                            | XLSX·CSV·JSON 반출                                                                         |
+| `GET/POST /api/admin/users`                   | 전체 사용자·팀 목록 / 사용자 생성 (`systemRole`, `memberships: [{teamId, role}]`)          |
+| `PATCH /api/admin/users/:id`                  | 사용자 정보·시스템 권한, 선택적으로 팀별 권한 전체 교체                                    |
+| `POST /api/admin/teams`                       | 팀 생성, 선택적인 `members: [{userId, role}]`                                              |
+| `PATCH /api/teams/:id`                        | 팀 이름·테마 저장 (시스템 관리자·팀장)                                                     |
+| `GET/PUT /api/teams/:id/members`              | 팀 구성원과 팀 내 권한 조회·전체 교체, 추가할 사용자 목록 (시스템 관리자·팀장)             |
+| `DELETE /api/admin/teams/:id`                 | 확인한 팀의 전 연도 데이터 영구 삭제                                                       |
+| `PATCH /api/teams/:id/settings`               | 속성 이름·값·순서·표시 모양 저장                                                           |
 
 정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
 
@@ -357,7 +368,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 ## 캘린더 일정
 
-`calendar_entries`는 개인 일정과 팀 공용 일정을 연간 업무와 별도로 저장합니다. `user_id`(API의 `userId`)는 개인 일정의 소유자이며 `NULL`이면 해당 팀의 공용 일정입니다. 공용 일정은 작성자의 탈퇴와 무관하게 팀에 남습니다. `GET /api/calendar`의 `scope=team`은 공용 일정만 반환하며 `userId`와 함께 지정할 수 없습니다. 기본값인 `scope=personal`은 활성 팀원의 개인 일정만 반환하고 `userId`로 한 사람을 선택할 수 있습니다. 공용 조회의 `weekly`는 빈 배열입니다. 생성 요청의 `userId: null`은 팀 공용 일정, 사용자 ID는 개인 일정을 뜻합니다. `date`는 시작일, `end_date`(API의 `endDate`)는 종료일이며 양 끝을 포함하는 `YYYY-MM-DD` 날짜입니다. 하루 일정은 두 날짜가 같습니다. 기간과 겹치는 일정만 조회하고, 월간·팀 주간 목록에는 본문 대신 제목과 짧은 미리보기를 반환합니다. 본문은 공통 `document_versions`에서 참조하며 이미지 검증과 SQLite 백업·복구에 포함됩니다. 연간 업무 JSON/XLSX 반출 형식은 바꾸지 않습니다.
+`calendar_entries`는 개인 일정과 팀 공용 일정을 연간 업무와 별도로 저장합니다. `user_id`(API의 `userId`)는 개인 일정의 소유자이며 `NULL`이면 해당 팀의 공용 일정입니다. 공용 일정은 작성자의 탈퇴와 무관하게 팀에 남습니다. `GET /api/calendar`의 `scope=team`은 공용 일정만 반환하며 `userId`와 함께 지정할 수 없습니다. 기본값인 `scope=personal`은 활성 팀원의 개인 일정만 반환하고 `userId`로 한 사람을 선택할 수 있습니다. 공용 조회의 `weekly`는 빈 배열입니다. 생성 요청의 `userId: null`은 팀 공용 일정, 사용자 ID는 개인 일정을 뜻합니다. `date`는 시작일, `end_date`(API의 `endDate`)는 종료일이며 양 끝을 포함하는 `YYYY-MM-DD` 날짜입니다. 하루 일정은 두 날짜가 같습니다. 기간과 겹치는 일정만 조회하고, 월간·팀 주간 목록에는 본문 대신 제목과 짧은 미리보기, 본문 존재 여부 `hasDocument`를 반환합니다. `hasDocument`는 기존 문서 내용 판별 규칙을 따르며 서식 문자만 있는 빈 문서는 제외합니다. 본문은 공통 `document_versions`에서 참조하며 이미지 검증과 SQLite 백업·복구에 포함됩니다. 연간 업무 JSON/XLSX 반출 형식은 바꾸지 않습니다.
 
 `lane`은 0부터 시작하는 카드의 현재 행 위치입니다. 생성할 때 기간이 겹치지 않는 첫 행을 배정합니다. 기간 변경 시 겹치는 카드의 상대 순서를 유지하고, 이동·축소·삭제로 생긴 빈 공간은 카드의 날짜 구간 전체가 들어가는 위쪽 행으로 채웁니다. 명시적 순서 변경은 사이의 카드를 빈자리 쪽으로 이동하며 새 순서를 보존한 채 빈 행을 정리합니다. `PATCH /api/calendar/entries/:id`의 `{lane, expectedLane, expectedDate, expectedEndDate}`로 순서만 변경합니다. 기간·순서 저장과 일정 삭제 응답의 `placements: [{id,lane}]`는 같은 팀·소유자의 변경 전후 구간에 겹침으로 연결된 일정의 현재 위치 정보이며 재시도 복구와 화면 캐시 병합에 사용합니다. 무관한 기간의 일정은 조회·재배치·응답에서 제외합니다. 제목·본문을 다시 조회하지 않습니다. 충돌 시 서버 기간을 선택하는 조회는 `GET /api/calendar/entries/:id?placements=1&from=…&to=…`로 현재 위치도 함께 받아 주변 카드의 행을 동기화합니다. 선택적인 `from`·`to`는 화면이 알고 있던 이전 기간이며 현재 기간과 함께 배치 조회에 포함합니다. 개인 소유자를 지정한 조회와 공용 조회의 `layout: [{id,date,endDate,lane}]`에는 화면 밖 연결 일정과 드래그로 닿을 수 있는 기간의 좌표도 포함합니다. 조회 범위는 최대 62일이며 카드 길이와 실제 표시 범위를 기준으로 이동 가능한 좌표를 미리 조회합니다. 하루 일정은 조회 범위를 넓히지 않고, 긴 일정은 양 끝에서 최대 61일 이동할 수 있는 좌표를 포함합니다. 제목·본문은 포함하지 않습니다. 위치 저장·삭제·복구 응답의 `layout`도 같은 좌표 형식이며 기존 캐시에 병합합니다. 활성 일정의 소유자별 시작일·종료일 부분 인덱스로 연결 구간의 새로 확장된 날짜 띠만 조회합니다.
 
@@ -379,13 +390,24 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 ## 실시간 동기화
 
-모든 Markdown 단일 문서 GET 경로에 `/events`를 붙이면 `document` SSE로 최신 본문을 받습니다. 원본 업무(`/tasks/:id/documents/:documentId`), 사본 업무(`/reports/:id/tasks/:taskId/documents/:documentId`), 원본 연간 메모(`/teams/:teamId/years/:year/memos/:documentId`), 사본 메모(`/reports/:reportId/memos/:documentId`), 캘린더(`/calendar/entries/:id/document`)를 지원하며 `/api` 접두어를 사용합니다. 업무의 기존 단일 `/document` 경로도 지원합니다. 조회·저장·충돌 응답의 문서와 SSE 스냅샷에 `sync: {session,sequence}`를 추가합니다. 이 값은 프로세스 메모리의 전송 순서이며 DB·백업·반출에는 저장하지 않습니다. 숫자 revision과 사본 문서의 UUID revision은 그대로 유지합니다. 최초 구독은 최신 문서를 보내고, 재연결은 마지막 `session:sequence` 커서 이후 변경이 있을 때만 본문을 보냅니다. 세션·팀 접근·삭제 상태는 재구독과 전송마다 다시 확인합니다. 접근을 잃으면 `access-revoked`의 데이터에 `{status}`를 담아 종료합니다. 401은 세션 만료, 403·404는 권한 상실·자원 삭제이며, 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 독립 수정은 합쳐 기존 PUT으로 저장하고 겹치는 충돌은 입력을 보존합니다. SQLite v29·JSON v6·백업 형식과 일정별 `tagIds` 순서 저장은 바꾸지 않습니다.
+모든 Markdown 단일 문서 GET 경로에 `/events`를 붙이면 `document` SSE로 최신 본문을 받습니다. 원본 업무(`/tasks/:id/documents/:documentId`), 사본 업무(`/reports/:id/tasks/:taskId/documents/:documentId`), 원본 연간 메모(`/teams/:teamId/years/:year/memos/:documentId`), 사본 메모(`/reports/:reportId/memos/:documentId`), 캘린더(`/calendar/entries/:id/document`)를 지원하며 `/api` 접두어를 사용합니다. 업무의 기존 단일 `/document` 경로도 지원합니다. 조회·저장·충돌 응답의 문서와 SSE 스냅샷에 `sync: {session,sequence}`를 추가합니다. `sync`는 응답용 순서 정보이며 DB·백업·반출에 별도 필드로 저장하지 않습니다. 기존 문서 revision 형식은 유지합니다. 최초 구독은 최신 문서를 보내며 재연결은 호스트별 전송 커서로 변경을 확인합니다. 세션·팀 접근·삭제 상태는 재구독과 전송마다 다시 확인합니다. 접근을 잃으면 `access-revoked`의 데이터에 `{status}`를 담아 종료합니다. 401은 세션 만료, 403·404는 권한 상실·자원 삭제이며, 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 독립 수정은 합쳐 기존 PUT으로 저장하고 겹치는 충돌은 입력을 보존합니다. 이 이벤트 계약 자체는 DB·JSON 반출·백업 형식과 일정별 `tagIds` 순서 저장을 바꾸지 않습니다. 현행 스키마 버전은 [버전과 운영 호환성](#버전과-운영-호환성)을 따릅니다.
+
+문서 본문의 순서와 SSE 전송 커서는 다음과 같이 구분합니다.
+
+| 호스트 | 문서 GET·PUT·충돌 응답·SSE 본문의 `sync` | SSE 전송·재연결 커서 |
+| --- | --- | --- |
+| 내부 Node | 프로세스 세대 `session`과 메모리의 문서 전송 순서 `sequence` | `session:sequence` |
+| 외부 Edge / PG | `session: "postgres"`, 해당 문서의 PG revision을 `sequence`로 사용 | `pg:<site_events cursor>` |
+
+외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.
+
+Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니다. 클라이언트는 커서를 보존해 다시 연결하며, 인증·권한은 재검사합니다. 이 재연결은 문서를 닫았다 열거나 페이지를 새로고침해야 한다는 뜻이 아닙니다.
 
 팀·사본 시트와 문서 목록의 `/events`는 성공한 변경 뒤 재조회를 알립니다. 셀 값은 기존 `/api/cells/events` 델타 전송을 계속 사용합니다. 원격 조회가 개인 필터·열 너비·스크롤 또는 미저장 입력을 덮어쓰지 않도록 클라이언트에서 적용 시점을 조정합니다.
 
 같은 Origin·브라우저 저장소 영역·앱 버전의 탭들은 `SharedWorker`를 통해 SSE 연결 하나를 공유합니다. `POST /api/events`의 JSON `{streams: [{id, path, lastEventId?}]}`로 최대 256개 구독을 전달해 긴 URL의 헤더 제한을 피합니다. 이 POST는 영속 데이터를 쓰지 않으며 기존 로그인·요청 출처 검사를 적용합니다. 집계 경로는 POST만 지원합니다. `path`에는 등록된 `/api/…/events` 경로와 조회 조건만 허용하며 각 경로의 기존 권한 검사를 그대로 실행합니다. `stream` 이벤트의 `{id, event, data, lastEventId?}`가 채널별 이벤트를 전달합니다. 핸들러의 접근 거부는 `access-revoked`, 그 밖의 거부는 상태 코드가 담긴 `rejected`를 보낸 뒤 `closed`로 해당 채널만 종료합니다. 잘못된 경로·구독 필드의 400 응답은 `rejectedIds`를 포함해 해당 구독만 종료하고, 정상 채널은 실패 백오프 증가 없이 다시 연결합니다. 401 이외의 `access-revoked` 또는 5xx 이외의 `rejected`가 선행된 `closed`만 해당 구독의 영구 종료로 처리합니다. 사유 없는 `closed`(정상 서버 종료·느린 리더 정리)와 `rejected` 5xx는 커서를 보존해 다시 연결합니다. 같은 청크의 다른 채널 이벤트와 재연결 대기 중 정상 채널은 계속 처리합니다. 사유 없는 부분 종료의 연결 백오프 중 구독 추가·제거는 재시도 시각에 반영합니다. `rejected` 5xx의 1.5~30초 백오프는 해당 채널에만 적용하며, 기한 전에는 POST에서 제외해 정상 채널과 새 구독은 10ms 묶음 처리 후 연결합니다. 채널 재시도 시각에는 다시 연결해 해당 채널을 포함하며, 연결이 15초 이상 유지되면 그 채널의 백오프를 초기화합니다. 마지막 구독 제거는 즉시 정리하고 과거 커서로 합류하면 재전송을 건너뛰지 않도록 먼저 연결을 끊습니다. 요청 수준 HTTP 401과 연결 중 `access-revoked {status:401}` 뒤의 종료는 모두 세션 손실로 구분합니다. 문서·목록 화면은 해당 구독을 유지하고 문서 입력을 권한 오류로 막지 않습니다. 로그인·재인증 성공 직후 `resumeSession()`이 워커에 재개 신호를 보내므로, 구독 키 변화나 연간 업무 시트 없이도 모든 탭의 세션 종료 채널을 새 ID·보존 커서로 다시 인증합니다. 새 스트림 추가·재합류 시의 재승인도 유지합니다. SharedWorker 미지원 환경은 페이지 내 브로커를 직접 재개하며, 세션 종료 채널이 없으면 재연결하지 않습니다. 식별되지 않은 요청 오류·전송 오류·사유 없는 `closed`는 연결 단위로 1.5초부터 최대 30초까지 지수 백오프하며, 5xx 채널의 지연을 물려받지 않습니다.
 
-워커는 같은 경로의 구독을 합치고 탭별 ID를 분리합니다. 채널 집합과 필요한 커서가 같으면 연결을 유지합니다. 채널 추가·제거로 POST를 다시 연결할 때 문서·목록은 마지막 커서를 함께 보내 변경 없는 초기 프레임을 생략합니다. 서버는 구독자가 없는 동안에도 변경을 기록하며, 본문 없이 revision·전송 순서 메타데이터만 최대 10,000개 키까지 보관합니다. 메타데이터 퇴출·프로세스 재시작 또는 다른 커서이면 최신 스냅샷으로 복구합니다. 셀의 시작 커서는 경로의 `after`에서 분리하며 가장 이른 커서부터 재전송하되, 각 리스너의 커서 이하 이벤트는 전달하지 않습니다. 다른 서버 세대·만료된 셀 커서는 기존 스냅샷 복구를 사용합니다. 문서·목록의 본문 캐시는 워커에 두지 않고, 커서가 없는 새 구독자는 서버가 권한을 재검사한 최신 스냅샷을 받습니다. 탭 종료·이동은 구독을 해제하고 복귀·워커 종료·네트워크 재연결은 마지막으로 처리한 커서부터 복구합니다. 서버 heartbeat가 45초간 오지 않으면 프록시가 응답을 열어 두어도 연결을 다시 만듭니다. 응답하지 않는 포트는 90초 또는 미처리 전송 4MiB를 넘으면 재구독 요청을 보낸 뒤 정리합니다. 페이지는 이 메시지를 처리하는 즉시 마지막으로 처리한 커서로 새 포트를 연결합니다. SharedWorker 미지원·초기 로딩 실패 시 같은 브로커를 페이지 안에서 실행하므로 해당 환경은 페이지당 연결 하나입니다. 기존 개별 SSE 경로와 DB·백업 형식은 변경하지 않습니다.
+워커는 같은 경로의 구독을 합치고 탭별 ID를 분리합니다. 채널 집합과 필요한 커서가 같으면 연결을 유지합니다. 채널 추가·제거로 POST를 다시 연결할 때 문서·목록은 마지막 커서를 함께 보내 변경 없는 초기 프레임을 생략합니다. 내부 Node는 구독자가 없는 동안에도 변경을 기록하며, 본문 없이 revision·전송 순서 메타데이터만 최대 10,000개 키까지 메모리에 보관합니다. 외부 Edge는 PostgreSQL의 `site_events` 커서를 사용합니다. 메타데이터 퇴출·프로세스 재시작 또는 다른 커서이면 최신 스냅샷으로 복구합니다. 셀의 시작 커서는 경로의 `after`에서 분리하며 가장 이른 커서부터 재전송하되, 각 리스너의 커서 이하 이벤트는 전달하지 않습니다. 다른 서버 세대·만료된 셀 커서는 기존 스냅샷 복구를 사용합니다. 문서·목록의 본문 캐시는 워커에 두지 않고, 커서가 없는 새 구독자는 서버가 권한을 재검사한 최신 스냅샷을 받습니다. 탭 종료·이동은 구독을 해제하고 복귀·워커 종료·네트워크 재연결은 마지막으로 처리한 커서부터 복구합니다. 서버 heartbeat가 45초간 오지 않으면 프록시가 응답을 열어 두어도 연결을 다시 만듭니다. 응답하지 않는 포트는 90초 또는 미처리 전송 4MiB를 넘으면 재구독 요청을 보낸 뒤 정리합니다. 페이지는 이 메시지를 처리하는 즉시 마지막으로 처리한 커서로 새 포트를 연결합니다. SharedWorker 미지원·초기 로딩 실패 시 같은 브로커를 페이지 안에서 실행하므로 해당 환경은 페이지당 연결 하나입니다. 기존 개별 SSE 경로와 DB·백업 형식은 변경하지 않습니다.
 
 ## 연간 업무 메모
 
@@ -394,3 +416,33 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 `/api/teams/:teamId/years/:year/memos`에서 목록 조회·생성을, `/:documentId`에서 본문 조회·저장·이름 변경·삭제를 제공합니다. 본문 저장은 revision과 operationId로 충돌·재시도를 검사합니다. `POST /api/teams/:teamId/years/:year/memos/reorder`는 `{ids, expectedIds}`로 전체 메모 순서를 저장합니다. 현재 목록·순서를 검사하고 이미 같은 순서인 재시도는 허용하며, 본문 revision과 수정 시각은 바꾸지 않습니다. 전체 SQLite 백업·복구와 JSON 반출(`memos`, 포함된 사본의 `data.memos`)에 포함합니다. XLSX·CSV는 업무 표만 반출합니다. 참조 정리와 팀 삭제 시 메모 참조도 함께 처리합니다.
 
 사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/reports/:reportId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `report_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.
+
+## 내부·외부 동기화 저장
+
+`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 24MiB를 검사합니다. 이벤트 파일은 4MiB, 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
+
+SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
+
+`site_entity_revisions`는 정리·복원 후에도 수정 번호를 증가시킵니다. 로컬 정리는 앱의 전체 업무 행과 C를 보존하며 화면 및 이미지 저장소에만 적용됩니다. 일반 저장에서 누락된 숨김 연도·문서를 공유 삭제로 해석하지 않습니다. 사용자 명시 삭제와 별개의 기능입니다.
+
+## 팀별 외부 사이트 계정과 승인
+
+내부 SQLite v33은 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Pages/gateway·R2·Supabase Edge/DB에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v2)는 기존 업무 형식을 유지하고 `graeboard_site`(site v3)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
+
+`sync-directory/<사내 installation UUID>`의 `directory.json`은 `graeboard-team-directory` v1입니다. root는 `format/version/teamId/installationId/repoId/members`, 구성원은 `id/name/email/active/role`만 허용합니다. 최대 1,000명·512KiB이며 비밀번호·사내 세션·다른 팀 소속·전체 관리자 역할을 포함하지 않습니다. 사내 현재 멤버십만 추출하며 업무 이력의 과거 작성자는 표시 참조로만 남습니다. Google 신원과 승인 결과는 외부 DB에만 보관합니다.
+
+내부는 정상 동기화 주기마다 구성원 변경을 게시하며 업무 일시정지 상태에도 구성원 갱신을 유지합니다. 외부는 1분 Cron, 진입/포커스 시 30초 간격 확인, 계정 연결/승인 시 강제 확인으로 최신 Git 이력을 적용합니다. 이름·이메일·역할·활성 상태를 트랜잭션으로 반영하고 탈퇴/비활성 계정의 Google 연결·접속 세션을 철회합니다. 재가입은 다시 승인이 필요합니다. 재작성된 Git 이력·다른 팀 자료는 거절합니다. 통신 실패 시 마지막 정상 상태를 유지하므로 사내 변경은 다음 성공한 동기화부터 적용됩니다.
+
+Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 내부에서 발급한 팀장 연결 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
+
+신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마와 team v2 인덱스를 순차 적용할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션·접속 토큰을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
+
+팀장 연결 키는 SQLite v31에 추가된 `external_setup_keys`와 site v2의 `setup_link_keys`/`setup_key_state`에 저장합니다. 256비트 난수 원문은 발급 응답에만 포함하고 SHA-256 해시·팀/사용자 UUID·발급/만료/폐기 시각만 `sync-setup/<내부 설치 UUID>/keys.json`으로 게시합니다. 키는 24시간 유효하며 발급한 현재 활성 팀장에게만 사용됩니다. 계정 연결 전에 구성원과 키의 최신 Git head를 강제로 확인하고, 검증·소비·Google 연결·세션 생성은 같은 트랜잭션에서 완료합니다. 기존 `SETUP_TOKEN`은 팀 사이트 인증에 사용하지 않습니다.
+
+`sync-setup-status/<외부 설치 UUID>/status.json`은 원본 head, 불투명 키 ID, 반영/사용 시각만 내부로 돌려보냅니다. Google 신원은 포함하지 않으며 해당 키/게시 head와 일치할 때만 화면에 반영합니다. 재발급·폐기는 Git 전송 이후 외부에 적용됩니다. 사용 완료·폐기 상태는 오래된 키 재수신으로 초기화하지 않습니다. site 백업 v3은 이 상태를 포함하며 v1/v2 백업도 기존 형식으로 읽습니다. 복구 시 미사용 키를 폐기하고 새 키를 발급합니다. SQLite v29/v30/v31 백업은 원래 버전으로 복구한 뒤 명시적으로 v32로 올립니다.
+
+### 동기화 v2와 용량
+
+기존 v1의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 v1 백업과 v2 snapshot을 포함하며, v2 C에는 `protocol`/`[]`의 `{version:2,reducer:2}` 표식이 있습니다. v2 사본은 report 메타데이터, `reportTask(reportId,taskId)`의 행 데이터, `reportCell(reportId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 논리 이관·외부 백업 v3의 포맷과 해시 규칙은 바뀌지 않습니다.
+
+receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending 예산은 4MiB이며 공유 엔티티 상한은 12,000개입니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.

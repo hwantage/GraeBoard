@@ -1,6 +1,6 @@
 # 그래보드 개발 안내
 
-[처음으로](../README.md) · [사용 안내](USER_GUIDE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [프로젝트 작업 규칙](../AGENTS.md)
+[처음으로](../README.md) · [구성도](ARCHITECTURE.md) · [사용 안내](USER_GUIDE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [프로젝트 작업 규칙](../AGENTS.md)
 
 그래보드는 실제 운영 중입니다. 개발·테스트 환경은 운영 DB와 문서 이미지 경로를 분리하고, 기능 변경 시 기존 운영 데이터와 저장 형식의 호환성을 확인합니다. 이 문서는 현재 저장소의 구현을 설명하며 실제 서버에 배포된 커밋·Node.js·DB 버전은 배포 전에 별도로 확인합니다.
 
@@ -14,43 +14,49 @@
 
 ## 구조
 
-| 경로 | 역할 |
-| --- | --- |
-| `src/App.tsx` | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태 |
-| `src/cell-sync.ts`, `cell-updates.js` | SSE 연결·복구, 셀 버전 비교와 변경 병합 |
-| `src/PeriodPicker.tsx` | 2행 월·주차 표, 연속 드래그·키보드 범위 선택 |
-| `src/Grid.tsx` | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그 |
-| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx` | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택 |
-| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts` | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기 |
-| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx` | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식 |
-| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `task-document.css` | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집 |
-| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js` | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시 |
-| `server/document-images.mjs` | 문서 이미지 변환·저장·권한·백업 참조 |
-| `src/AnnualMemoPanel.tsx`, `server/annual-memos.mjs`, `server/memo-storage.mjs` | 원본·사본 연간 메모, 본문 공유와 독립 편집 |
-| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js` | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동 |
-| `src/CalendarTags.tsx`, `shared/calendar-tags.js` | 개인·공용 태그와 체크 상태 |
-| `src/SheetTabs.tsx`, `useReportDraft.ts` | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도 |
-| `src/Panels.tsx`, `components.tsx` | 업무 상세, 이관·반출, 로그인과 공통 UI |
-| `src/TaskPropertyEditor.tsx` | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도 |
-| `shared/domain.js`, `coreProperties.js` | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화 |
-| `shared/fonts.js`, `themes.js` | 지원 글꼴·크기·폴백과 팀 테마 변수 |
-| `server/app.mjs` | 인증·권한, 업무·보기·스냅샷·관리 API 연결 |
-| `shared/compact.js` | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화 |
-| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs` | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
-| `server/db.mjs`, `validation.mjs` | SQLite 초기화, 저장 모델과 입력 검증 |
-| `server/filters.mjs` | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사 |
-| `server/settings.mjs`, `reorder.mjs`, `team-deletion.mjs` | 설정 변환, 업무 순서 저장, 팀 데이터의 원자적 삭제 |
-| `server/transfer.mjs`, `archive.mjs` | XLSX 분석·이관·반출과 압축 파일 제한 검사 |
-| `server/task-cache.mjs` | 팀 조회 캐시와 변경 무효화 |
-| `server/system-audit.mjs`, `src/SystemAuditLog.tsx` | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회 |
-| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts` | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유 |
-| `server/cell-events.mjs` | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사 |
-| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts` | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구 |
-| `server/cell-operations.mjs` | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성 |
-| `scripts/` | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지 |
-| `tests/` | API·권한·동시 수정·이관·백업·브라우저 검증 |
+외부 런타임은 `edge/main.mjs`(Supabase/Deno) → `edge/handler.mjs` → 기존 `worker/entry.mjs`의 API·repository를 재사용합니다. `worker/gateway.mjs`는 Cloudflare에서 HTTP 전달·정적 파일·R2/Images binding을 담당합니다. `scripts/build-edge.mjs`가 공통 모듈과 고정 버전 npm import를 묶습니다. `tests/edge-gateway.test.mjs`는 실제 workerd 전달/자원 경계를, `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → PostgreSQL 및 내부 SQLite/Git 흐름을 확인합니다. Deno 호환성은 생성 함수의 실행과 실제 Supabase 배포로 별도 확인합니다.
 
-프런트엔드는 React·TypeScript·Vite, API는 Express, 저장소는 Node 내장 SQLite를 사용합니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
+| 경로                                                                                                                                                   | 역할                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `src/App.tsx`                                                                                                                                          | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                 |
+| `src/cell-sync.ts`, `cell-updates.js`                                                                                                                  | SSE 연결·복구, 셀 버전 비교와 변경 병합                            |
+| `src/PeriodPicker.tsx`                                                                                                                                 | 2행 월·주차 표, 연속 드래그·키보드 범위 선택                       |
+| `src/Grid.tsx`                                                                                                                                         | 가상 행, 범위 선택, 셀 편집, 텍스트 넘침, 행 드래그                |
+| `src/InlineCellEditor.tsx`, `CellOptionPicker.tsx`                                                                                                     | 셀 안의 텍스트·날짜·숫자 입력과 속성 선택                          |
+| `src/Toolbar.tsx`, `FormatSelect.tsx`, `clipboard.ts`                                                                                                  | 범위 서식, 현재 값 재적용, 서식을 포함한 복사·붙여넣기             |
+| `src/SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`, `DefaultStyleManager.tsx`                                    | 설정 화면: 팀·구성원·사용자 계정·속성·기본 서식                    |
+| `src/TaskDocumentPanel.tsx`, `TaskDocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `DocumentToggle.ts`, `DocumentSlashMenu.tsx`, `task-document.css`    | 문서 지연 로딩·자동 저장·초안 복구, Milkdown 리치/원문 편집, 토글 블록·`/` 메뉴 |
+| `server/task-documents.mjs`, `server/document-storage.mjs`, `shared/task-documents.js`                                                                 | 문서 권한·revision·공유 버전·참조 정리·크기·존재 표시              |
+| `server/document-images.mjs`                                                                                                                           | 문서 이미지 변환·저장·권한·백업 참조                               |
+| `src/AnnualMemoPanel.tsx`, `server/storage/document-service.mjs`, `server/memo-storage.mjs`                                                            | 원본·사본 연간 메모, 본문 공유와 독립 편집                         |
+| `src/Calendar.tsx`, `server/calendar.mjs`, `shared/calendar-layout.js`                                                                                 | 개인·팀 공용 일정, 주간 할 일, 카드 배치와 기간 이동               |
+| `src/CalendarTags.tsx`, `shared/calendar-tags.js`                                                                                                      | 개인·공용 태그와 체크 상태                                         |
+| `src/SheetTabs.tsx`, `useReportDraft.ts`                                                                                                               | 원본·사본 하단 탭, 자동 저장 큐·실행취소·재시도                    |
+| `src/Panels.tsx`, `components.tsx`                                                                                                                     | 업무 상세, 이관·반출, 로그인과 공통 UI                             |
+| `src/TaskPropertyEditor.tsx`                                                                                                                           | 상세 팝업 내부 속성 편집·셀 버전 보존·저장 재시도                  |
+| `shared/domain.js`, `coreProperties.js`                                                                                                                | 날짜·주차, 필터·정렬·통계, 기본·예시 속성 양식과 설정 정규화       |
+| `shared/fonts.js`, `themes.js`                                                                                                                         | 지원 글꼴·크기·폴백과 팀 테마 변수                                 |
+| `server/app.mjs`                                                                                                                                       | 인증·권한, 업무·보기·스냅샷·관리 API 연결                          |
+| `shared/compact.js`                                                                                                                                    | 짧은 서식 키, 문서별 공통 서식 사전, 기본 서식 차이 정규화         |
+| `shared/formatting.js`, `src/format-selection.js`, `server/formatting.mjs`                                                                             | 행·열 규칙 생성, 속성별 우선순위, 셀 예외, 공통 서식 저장·실행취소 |
+| `server/db.mjs`, `validation.mjs`                                                                                                                      | SQLite 초기화, 저장 모델과 입력 검증                               |
+| `server/filters.mjs`                                                                                                                                   | 연도와 독립적인 공용·개인 필터와 현재 선택, 권한 검사              |
+| `server/settings.mjs`, `storage/task-command-rules.mjs`, `storage/sqlite-task-commands.mjs`, `storage/postgres-task-commands.mjs`, `team-deletion.mjs` | 설정 변환, 공통 업무 명령 검증과 엔진별 원자적 변경, 팀 삭제       |
+| `server/transfer.mjs`, `archive.mjs`                                                                                                                   | XLSX 분석·이관·반출과 압축 파일 제한 검사                          |
+| `server/task-cache.mjs`                                                                                                                                | 팀 조회 캐시와 변경 무효화                                         |
+| `server/system-audit.mjs`, `src/SystemAuditLog.tsx`                                                                                                    | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회              |
+| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts`                                                                          | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유      |
+| `server/cell-events.mjs`                                                                                                                               | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사            |
+| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`                                                  | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구    |
+| `server/cell-operations.mjs`                                                                                                                           | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성         |
+| `edge/main.mjs`, `edge/handler.mjs`, `edge/resources.mjs` | Deno 진입점·PG pool·gateway 인증·R2/Images 어댑터 |
+| `worker/entry.mjs`, `worker/events.mjs`, `worker/site-auth.mjs`, `worker/sync.mjs` | Edge에서 재사용하는 업무 API·SSE·계정 연결·Git 동기화 |
+| `worker/gateway.mjs`, `worker/forwarder.mjs`, `functions/[[path]].js` | Cloudflare 진입·정적 파일·이미지 자원·기존 binding 전달 |
+| `wrangler.gateway.jsonc`, `wrangler.forwarder.jsonc`, `supabase/config.toml` | 현재 외부 실행 환경별 배포 설정 |
+| `scripts/`                                                                                                                                             | 백업·복구·비밀번호 재설정·성능 확인·라이선스 고지                  |
+| `tests/`                                                                                                                                               | API·권한·동시 수정·이관·백업·브라우저 검증                         |
+
+프런트엔드는 React·TypeScript·Vite를 사용합니다. 기본 내부 API는 Express·Node 내장 SQLite이고, 외부 API는 Supabase Edge·PostgreSQL입니다. `worker/`의 공통 업무 코드가 Cloudflare에서 실행된다는 뜻은 아닙니다. 행 가상화는 `@tanstack/react-virtual`, 파일 변환은 ExcelJS를 사용합니다.
 
 ## 개발 실행
 
@@ -65,10 +71,10 @@ Vite는 `5173`, API는 `4310` 포트를 사용합니다. 개발 프록시는 `/a
 
 개발용 `.env`를 만들 때는 `.env.example`을 참고하고 `DB_PATH`와 `DOCUMENT_IMAGES_DIR`가 개발 전용 경로인지 확인합니다. 이미 있는 `.env`는 덮어쓰지 않습니다. 예시 계정과 업무는 비어 있는 개발 DB의 최초 설정에서 선택하여 생성할 수 있습니다. 실제 운영 파일을 테스트 픽스처로 사용하지 않습니다.
 
-| 명령 | 실행 내용 |
-| --- | --- |
-| `npm run dev` | API의 파일 변경 감시와 Vite 개발 서버를 함께 실행 |
-| `npm run build` | TypeScript 검사와 프런트엔드 배포 빌드. 결과는 `dist/` |
+| 명령            | 실행 내용                                                                     |
+| --------------- | ----------------------------------------------------------------------------- |
+| `npm run dev`   | API의 파일 변경 감시와 Vite 개발 서버를 함께 실행                             |
+| `npm run build` | TypeScript 검사와 프런트엔드 배포 빌드. 결과는 `dist/`                        |
 | `npm run start` | Node API 서버 실행. API와 준비된 `dist/`를 함께 제공하며 빌드는 수행하지 않음 |
 
 운영은 빌드한 프런트엔드와 서버 소스·런타임 의존성을 함께 배포합니다. `dist/`만으로는 인증·업무 저장·문서·캘린더 API가 동작하지 않습니다. `start`가 `NODE_ENV=production`을 자동 설정하지 않으므로 운영 `.env` 또는 서비스 환경에서 지정합니다. 기존 운영 환경의 업데이트는 [운영 안내](OPERATIONS.md)의 절차를 따릅니다.
@@ -85,7 +91,7 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 로그인 세션은 기존 `sessions.expires_at`와 HTTP-only·SameSite=Strict 쿠키를 이용해 30일 유지합니다. 유효한 인증 요청에서 하루에 한 번만 갱신하여 매 요청의 DB 쓰기와 Set-Cookie를 피합니다. 로그아웃·비밀번호 변경은 자체 삭제·재발급 경로를 사용하며 만료·비활성 계정은 갱신하지 않습니다. DB 버전·형식은 변경하지 않습니다.
 
-로그인 후 `/api/bootstrap`에서 소속 팀·사용자를 읽고 사용자·팀·기준 연도별 보기를 복원한 다음, `startMonth`부터 12개월에 해당하는 업무를 조회합니다. `getTasks`는 한 연도 또는 인접한 두 연도를 받아 SQL의 EXISTS 조건으로 중복 없이 업무를 읽습니다. 화면의 기준 연도는 업무 추가·삽입의 등록 연도입니다. 업무 응답은 ETag로 조건부 조회합니다. 팀·연도가 바뀌면 이전 요청 결과가 새 화면을 덮어쓰지 않도록 조회 대상을 검사합니다. 셀 값 저장은 SSE로 즉시 전달합니다. 행 추가·삭제·순서·공통 서식·설정과 사본 시트 변경은 리소스 SSE 알림으로 재조회합니다. 기존 7초 조회는 원본의 보완 경로로 유지하며, 편집·저장 중에는 전체 목록 교체를 보류합니다. SSE 셀 갱신은 편집 중에도 처리합니다.
+로그인 후 `/api/bootstrap`에서 소속 팀·사용자를 읽고 사용자·팀·기준 연도별 보기를 복원한 다음, `startMonth`부터 12개월에 해당하는 업무를 조회합니다. `getTasks`는 한 연도 또는 인접한 두 연도를 받아 SQL의 EXISTS 조건으로 중복 없이 업무를 읽습니다. 화면의 기준 연도는 업무 추가·삽입의 등록 연도입니다. 업무 응답은 ETag로 조건부 조회합니다. 팀·연도가 바뀌면 이전 요청 결과가 새 화면을 덮어쓰지 않도록 조회 대상을 검사합니다. 셀 값 저장은 SSE로 즉시 전달합니다. 행 추가·삭제·순서·공통 서식·설정과 사본 시트 변경은 리소스 SSE 알림으로 재조회합니다. 원본의 보완 조회는 내부망 7초·외부망 30초로 구분하며, 편집·저장 중에는 전체 목록 교체를 보류합니다. SSE 셀 갱신은 편집 중에도 처리합니다. 같은 범위·변경 버전의 동시 목록 갱신은 하나로 합치고, 429는 Retry-After와 증가하는 재시도 간격을 지킵니다. 업무·화면 정보 재조회가 성공하면 해당 조회 오류만 해제하며 저장·보기 저장·다른 작업의 오류는 보존합니다. 명시적인 내부 사이트 설정은 Access 인증 모드보다 우선합니다.
 
 변경되지 않은 ETag 요청은 업무를 조회·직렬화하기 전에 304로 응답합니다. 조회 캐시의 전체 예산은 64MiB입니다. 원문과 gzip의 합이 예산보다 크면 gzip만 보관하고, 압축을 받지 않는 클라이언트의 응답 시에만 원문을 복원합니다. 압축본도 예산을 넘으면 캐시하지 않습니다. 이전 팀의 보기 저장이 뒤늦게 실패해도 현재 팀 화면에 오류를 표시하지 않습니다.
 
@@ -99,6 +105,8 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 작업 완료 안내는 `src/Toast.tsx`의 `Toast`·`useToast`를 사용합니다. 설정·비밀번호·이력 정리·사본 이름 모달 안에서 렌더링하여 열린 dialog 위에 표시하며, 같은 문구를 다시 알려도 4초 표시 시간을 갱신합니다. 사본 표의 자동 저장 상태는 보조기기에 알리고, 저장 오류는 표 위에서 확인·재시도할 수 있습니다. 오류·입력 검증과 현재 진행 상태는 해당 화면에서 유지합니다.
 
+`src/api.ts`는 `shared/api-error-message.js`로 플랫폼 오류의 작업명·원인별 조치·HTTP 상태·제공된 요청 ID를 표시합니다. Supabase의 `sb-error-code`/JSON `code`, `Retry-After`를 읽으며 provider의 임의 `message`·HTML·SQL 원문은 표시하지 않습니다. 기존 앱 검증·권한·충돌 메시지와 `ApiError.details`는 보존합니다. 네트워크 실패와 잘못된 성공 응답 형식도 분류하며 호출자가 취소한 요청은 그대로 전달합니다. `tests/api-error-message.test.mjs`와 `tests/browser/api-errors.spec.ts`는 429·실행 한도·인증·시간 초과·비정상 본문을 검사합니다.
+
 기본 셀 툴바와 발표 도구는 `ZoomControls`의 50~200% 입력·증감·복원을 공유합니다. 확대는 `.grid-area`에만 적용하며 `Grid`의 행·열 크기 드래그는 포인터 이동량을 배율로 나눠 원래 치수에 반영합니다. 확대율은 화면 상태이며 업무 데이터와 View에 저장하지 않습니다. 발표 모드는 기본 배율을 초기값으로 받아 별도로 조절하고 종료 시 기본 배율을 복원합니다.
 
 기간 밖 주차와 접힌 월을 포함한 현재 12개월 전체 열 순서로 숨김 구간을 계산합니다. 날짜 구간을 펼칠 때는 현재 보이는 주차와 펼칠 주차만 남기고 나머지를 `hiddenWeeks`로 표현하여 다른 구간의 숨김을 유지합니다. 달력의 선택 표시도 실제 표시 주차를 사용합니다.
@@ -109,7 +117,7 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 주차 기본 경계선은 `settings.weekBorders`에 저장하며 `shared/borders.js`의 `weekBoundaryStyles`와 `withWeekBoundaries`로 실제 표시·반출 열의 첫 날짜와 마지막 날짜에 적용합니다. 같은 경계를 공유하는 두 셀을 함께 계산하며, 셀이나 행·열에 직접 지정한 선이 경계선보다 우선합니다. `null`·`none`이나 업무 기본 서식에서 상속된 선은 주차 경계선을 가리지 않습니다. 원본 셀 서식은 수정하지 않으며 그리드의 머리글·셀·텍스트 넘침 경계와 XLSX에서 같은 계산을 사용합니다. 셀 클립보드는 저장된 서식만 복사합니다.
 
-이번 주 기본 좌우 테두리는 선택 설정 `settings.currentWeekBorders`를 같은 `weekBoundaryStyles` 계산에 전달합니다. 실제 표시·반출 열 중 한국 시간의 월요일 키에만 적용하며, 설정한 방향은 양 끝 경계선보다 우선합니다. 직접 지정한 셀·행·열·이웃 셀의 선은 기존 `withWeekBoundaries` 경로로 우선합니다. `Grid`와 `PeriodPicker`는 `useTodayKey`로 한국 시간 자정과 탭 복귀 시 날짜를 갱신하므로, 자동 조회가 없는 사본에서도 이번 주 표시가 이동합니다. 기존 `teams.settings` JSON에 선택 필드만 추가하며 SQLite v29·JSON v6, 셀·이력·사본의 기존 읽기 호환성을 유지하고 데이터 변환은 하지 않습니다.
+이번 주 기본 좌우 테두리는 선택 설정 `settings.currentWeekBorders`를 같은 `weekBoundaryStyles` 계산에 전달합니다. 실제 표시·반출 열 중 한국 시간의 월요일 키에만 적용하며, 설정한 방향은 양 끝 경계선보다 우선합니다. 직접 지정한 셀·행·열·이웃 셀의 선은 기존 `withWeekBoundaries` 경로로 우선합니다. `Grid`와 `PeriodPicker`는 `useTodayKey`로 한국 시간 자정과 탭 복귀 시 날짜를 갱신하므로, 자동 조회가 없는 사본에서도 이번 주 표시가 이동합니다. 기존 `teams.settings` JSON에 선택 필드만 추가하며 SQLite v30·JSON v6, 셀·이력·사본의 기존 읽기 호환성을 유지하고 데이터 변환은 하지 않습니다.
 
 `shared/compact.js`의 서식 사전을 HTTP 요청·응답, SSE, JSON 반출, 이력·스냅샷에 공통 적용합니다. DB는 `styles` 테이블을 `cells.style_id`·`tasks.default_style`·`tasks.row_style`·`format_rules.style_id`에서 참조합니다. 새 셀의 빈 내용과 불필요한 서식은 생략하되, 삭제·실행취소 후에도 기존 셀 버전은 유지합니다. `tests/compact-storage.test.mjs`는 실제 생성 API, 3,180셀 범위 저장, 공통 사전 크기, 서식 정리 후 이력 복원·재시도, 변경 없는 요청과 충돌, 잘못된 압축 참조를 검증합니다.
 
@@ -134,9 +142,9 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 커밋 전 전체 리뷰에서는 `1543a6e`와 최종 코드를 같은 임시 데이터로 교차 측정했습니다. 한 셀 240회·2,000셀 100회(각 6회 준비 실행 제외)의 HTTP 요청·응답 시간이며, 2,000셀 작업의 이력·재시도 본문 저장량은 약 50% 줄었습니다.
 
 | 셀 수 | 저장 중앙값, 변경 전 → 후 | P95, 변경 전 → 후 |
-| --- | --- | --- |
-| 1 | 2.14 → 2.14ms | 2.58 → 2.95ms |
-| 2,000 | 46.11 → 38.72ms | 50.02 → 43.74ms |
+| ----- | ------------------------- | ----------------- |
+| 1     | 2.14 → 2.14ms             | 2.58 → 2.95ms     |
+| 2,000 | 46.11 → 38.72ms           | 50.02 → 43.74ms   |
 
 리뷰 중 열 너비 드래그마다 셀 표시 서식이 다시 만들어지는 것을 수정했습니다. 표시 서식은 너비와 독립적인 열 키와 업무·경계선이 바뀔 때만 계산합니다. 2,000행·Chromium CPU 4배 감속 조건에서 드래그 단계 중앙값은 수정 전 42ms에서 34ms로 줄어 기준 커밋의 34ms와 같았습니다. 셀 선택 중앙값도 기준 커밋과 최종 코드 모두 33ms였습니다. 별도 1만 행·45.5MB 스냅샷 샘플의 gzip 압축은 level 9의 534~546ms·1.60MB에서 level 1의 64~67ms·2.42MB로 바뀌었습니다. 이 수치는 로컬 합성 데이터 측정이며 압축 시간은 스냅샷 API 전체 응답 시간이 아닙니다.
 
@@ -162,15 +170,15 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 2026-10-14 공식 문서·저장소·npm 메타데이터를 비교해 MIT 라이선스의 **Milkdown 7.22.3**을 선택했습니다. [공식 소개](https://milkdown.dev/docs/guide/why-milkdown), [설치와 Kit 사용법](https://milkdown.dev/docs/guide/getting-started), [소스·라이선스](https://github.com/Milkdown/milkdown), [유지보수 이력](https://github.com/Milkdown/milkdown/releases)을 확인했습니다. ProseMirror의 편집·IME·history와 Remark의 Markdown 파이프라인을 사용하며, 공식 CommonMark·GFM 확장 및 명령 API를 연결합니다. React peer dependency를 요구하지 않는 Kit 인스턴스를 React 19 effect에서 생성·정리하고 TypeScript/Vite 빌드로 확인합니다. 자체 contenteditable 엔진은 만들지 않습니다.
 
-| 후보 | 공식 자료에서 확인한 차이 | 판단 |
-| --- | --- | --- |
-| Milkdown Kit 7.22.3 | MIT, TypeScript, ProseMirror/Remark, CommonMark·GFM 확장, 선택적 플러그인 | Markdown 원본과 리치 편집을 중심에 두기 적합. 앱의 기존 버튼·팀 테마·접근성 이름을 사용 |
-| Tiptap React 3.32.0 | MIT 코어, React 19 peer 지원, ProseMirror 기반. [공식 Markdown 확장](https://tiptap.dev/docs/editor/markdown)은 beta로 명시 | 양방향 확장은 가능하지만 현재 Markdown 지원의 제한을 추가 관리해야 함 |
-| BlockNote 0.55.0 | MPL-2.0 코어/React, React 19 지원, 기본 블록 UI 제공. [Markdown export](https://www.blocknotejs.org/docs/features/export/markdown)는 lossy로 명시 | 블록 JSON 중심 구조가 Markdown 원본 보존 요구와 덜 맞음 |
+| 후보                | 공식 자료에서 확인한 차이                                                                                                                         | 판단                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Milkdown Kit 7.22.3 | MIT, TypeScript, ProseMirror/Remark, CommonMark·GFM 확장, 선택적 플러그인                                                                         | Markdown 원본과 리치 편집을 중심에 두기 적합. 앱의 기존 버튼·팀 테마·접근성 이름을 사용 |
+| Tiptap React 3.32.0 | MIT 코어, React 19 peer 지원, ProseMirror 기반. [공식 Markdown 확장](https://tiptap.dev/docs/editor/markdown)은 beta로 명시                       | 양방향 확장은 가능하지만 현재 Markdown 지원의 제한을 추가 관리해야 함                   |
+| BlockNote 0.55.0    | MPL-2.0 코어/React, React 19 지원, 기본 블록 UI 제공. [Markdown export](https://www.blocknotejs.org/docs/features/export/markdown)는 lossy로 명시 | 블록 JSON 중심 구조가 Markdown 원본 보존 요구와 덜 맞음                                 |
 
 세 후보 모두 오픈소스의 필요한 편집 기능은 제공하지만, 한국어 OS IME 품질이나 접근성 전체를 패키지 설명만으로 보장하지 않았습니다. 선택한 에디터에 한글 조합·붙여넣기·실행취소·버튼/체크박스/모드의 키보드 경로를 실제 브라우저로 검증합니다. 후보 전체의 완성 번들 크기를 같은 UI로 벤치마크한 것은 아닙니다. 채택한 구성의 번들은 빌드 청크와 초기 네트워크 요청으로 측정합니다. 패키지 설치 크기는 실제 브라우저 전송량과 구분합니다.
 
-`DocumentEditor`는 모든 Markdown 저장 경로에서 본문 SSE를 구독합니다. 업무·사본 업무·원본 메모·사본 메모·캘린더 문서의 저장 시 최신 스냅샷을 전달하며 재연결에서는 마지막 커서 이후 변경된 경우에만 본문을 보내고 `shared/document-merge.js`로 독립 변경을 병합합니다. `sync: {session,sequence}`는 서버 프로세스 내 전송 순서이며 숫자 또는 UUID인 영속 revision과 분리합니다. HTTP 응답이 SSE보다 먼저 도착해도 오래된 스냅샷을 다시 적용하지 않습니다. 접근 권한은 전송마다 다시 확인합니다. 여러 문서 탭은 선택한 문서만 본문 스트림을 유지하고, 다시 선택할 때 최신 스냅샷을 받습니다. 문서 목록의 추가·이름·순서는 별도 목록 알림으로 갱신합니다.
+`DocumentEditor`는 모든 Markdown 저장 경로에서 본문 SSE를 구독합니다. 업무·사본 업무·원본 메모·사본 메모·캘린더 문서의 저장 시 최신 스냅샷을 전달하며 재연결에서는 마지막 커서 이후 변경된 경우에만 본문을 보내고 `shared/document-merge.js`로 독립 변경을 병합합니다. `sync: {session,sequence}`는 서버 프로세스 내 전송 순서이며 숫자 또는 UUID인 영속 revision과 분리합니다. HTTP 응답이 SSE보다 먼저 도착해도 오래된 스냅샷을 다시 적용하지 않습니다. 접근 권한은 전송마다 다시 확인합니다. 업무 상세의 여러 문서 탭은 선택한 문서만 본문 스트림을 유지하고, 다시 선택할 때 최신 스냅샷을 받습니다. 꼬리 메모는 여러 본문을 나란히 표시하므로 펼친 패널에서 로딩한 모든 메모의 구독을 유지합니다. 다른 메모를 선택해도 이미 표시된 본문은 자동 갱신하며, 패널을 접으면 구독을 해제합니다. 문서 목록의 추가·이름·순서는 별도 목록 알림으로 갱신합니다.
 
 `GridCell`의 작업명 오른쪽 문서 버튼은 기존 `rowMenu` 상세 열기 경로를 공유합니다. 본문이 없는 업무에서는 행 hover·작업명 선택·키보드 초점에서 흐리게 표시하고, 본문이 있으면 문서 개수 표시와 함께 항상 표시합니다. 편집 중에는 버튼을 숨기고 발표 모드에서는 빈 업무의 버튼을 만들지 않습니다. 발표 중 문서가 있는 업무의 버튼은 기존 `RowPanel`을 읽기 전용으로 열며 업무 동작 버튼을 숨깁니다. 버튼의 포인터·키보드 이벤트는 셀 편집·범위 선택으로 전파하지 않습니다.
 
@@ -180,15 +188,23 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으로 표시합니다. 지원하지 않는 HTML·외부 이미지 등은 원문을 보존합니다. 이미지 붙여넣기·드롭은 문서별 권한 API를 거치며 크기 조절 값은 로컬 이미지 URL에 보존합니다. 문서 제목은 탭 안에서 글자 길이에 맞춰 늘어나는 입력 상자로 수정하며, UI 및 원본·사본 생성/이름 변경 API에서 최대 50자를 허용합니다. 탭에는 10자 이상인 이름을 앞 9자와 …로 줄여 표시하되 접근성 이름·툴팁·저장값은 전체 제목을 유지합니다. 조합 입력을 보호하고 blur·Enter·탭 전환·닫기에서 동일한 저장 Promise를 기다립니다. 문서별 편집기의 원문/리치 토글은 선택된 탭의 오른쪽으로 portal 렌더링하여 본문 상태를 유지합니다. 리치 편집의 저장 상태는 툴바 오른쪽 실행취소·재실행 버튼 앞에 렌더링하고, 원문·읽기 전용·편집기 오류 상태에서는 제목 줄에 표시합니다. 제목 줄과 그 바로 아래 리치 툴바는 스크롤 상단에 고정합니다. 제목 탭은 가로 스크롤하고 수평 wheel 이벤트 및 overscroll 경계를 처리해 브라우저 탐색을 방지합니다. 전체 페이지에서도 업무 속성을 유지합니다.
 
+`src/DocumentToggle.ts`는 `<details>`·`<summary>` HTML 블록을 remark 변환 단계에서 `details` 노드로 묶고 `toggle`·`toggle_summary`·`toggle_content` ProseMirror 노드, 직렬화 핸들러, Enter·Backspace 처리, 요약 줄의 접기 버튼 node view를 제공합니다. `open` 속성과 `<summary>` 안의 `<h1>`~`<h6>`만 허용하며 그 외 속성·태그나 닫히지 않은 블록은 html 노드로 남겨 `checkMarkdown`이 원문 모드로 유도합니다. 같은 줄에 이어진 본문이나 `</details>` 뒤 텍스트는 Markdown으로 다시 파싱해 묶습니다. 요약은 `text*`만 담아 이미지·HTML이 들어가지 않으므로 서버의 이미지 참조 검사는 기존 파서로 본문 이미지를 찾습니다. 접힘 상태는 `open` 속성으로 문서에 저장하고 체크박스처럼 실행취소 이력에 포함하며, 읽기 전용에서는 DOM에서만 바꿉니다. `checkMarkdown`은 remark 변환 후 트리를 검사합니다. `src/DocumentSlashMenu.tsx`는 문단에서 `/`와 이어진 글자를 찾아 툴바와 같은 명령 목록을 거르고, 표 셀에서는 열지 않습니다. 메뉴 위치·선택 상태와 Esc 해제는 `RichMarkdownEditor`의 플러그인 view와 `handleKeyDown`에서 갱신합니다. 공식 `trailing` 플러그인은 표·코드·목록·토글·이미지로 끝나는 문서 뒤에 빈 문단을 유지하며 doc 직렬화가 마지막 빈 문단을 제외하므로 저장 결과는 같습니다. 원격 병합의 비교 문서에도 같은 빈 문단을 붙여 그 줄에 있던 커서를 보존합니다. 업로드로 삽입한 이미지는 `appendTransaction`에서 다음 문단(없으면 새로 생성)으로 커서를 옮기고, 본문 아래 여백 클릭은 문서 끝으로 이동합니다. `tests/browser/document-editor-blocks.spec.ts`가 세 동작을 검증합니다.
+
 연간 업무의 `canEdit(user, task)`는 팀별 `canContribute`를 사용합니다. 팀장·팀원은 작성자·담당자·지원자와 관계없이 같은 팀의 표·속성·문서를 편집하고 업무를 삭제·실행취소할 수 있습니다. 담당자·지원자 지정과 묶음 행 삽입·붙여넣기도 같은 기준을 사용합니다. 꼬리 메모는 기존 `canContribute` 검사로 공동 편집하며, 열람자와 외부 팀 사용자의 쓰기는 거절합니다. 캘린더 개인 일정의 소유자 검사와 팀 관리 권한은 별도로 유지합니다. 권한 설정 필드·SQLite 스키마·기존 데이터 변환은 추가하지 않습니다.
 
 원본과 사본 문서 모두 자동 저장합니다. 각 사본은 자체 문서 배열을 갖고 불변 본문만 공유하며, 저장은 해당 문서 참조만 교체합니다. 분기 UI·원문/분기 연결 API는 제거했습니다. 사본 표의 `useReportDraft`는 저장 중 새 입력을 대기열에 추가하고 완료 후 이어 저장합니다. 실행취소는 셀/행 상태를 복원하지만 현재 행의 문서 참조는 유지합니다. 삭제 직전 문서를 읽어 행 복원에 포함합니다. 사용자 자료는 검증 fixture로 사용하지 않습니다.
 
 사본 본문 자동 저장은 `report_documents`의 해당 참조만 갱신하고 이전 본문 버전만 정리합니다. 문서 조회용 행 ID·제목 인덱스는 압축 BLOB 해시로 무효화하며, 셀·본문을 보관하지 않는 16MiB 예산의 캐시를 사용합니다. 표를 해제한 뒤에는 `readReport`로 최신 문서 참조를 합쳐야 합니다. 여러 행 삭제·실행취소는 `POST /api/reports/:id/documents/batch`로 최대 100개 행씩 읽고 실행취소 이력을 한 번에 갱신합니다. 응답 본문 합계는 8MiB에서 다음 행으로 나누되 한 행의 문서는 분할하지 않으며, 클라이언트는 반환된 행 수부터 이어 읽습니다. 화면에서 문서가 없어 보이는 행도 함께 조회해 다른 사용자의 최근 저장을 보존합니다.
 
-사본 메모는 `server/memo-storage.mjs`의 참조 복사와 `server/annual-memos.mjs`의 공통 편집 경로를 사용합니다. 사본 표를 읽거나 저장할 때 메모 본문을 읽거나 표 BLOB에 포함하지 않습니다. 테스트는 복사 전후 `document_versions` 수, 공유 참조 ID, 메모 편집 전후 표 BLOB·revision 동일성, 재복사·재시도·권한·충돌·정리·이미지·JSON 반출·백업과 화면의 닫힌 상태 복사·저장 직후 재복사·원본 분리를 검증합니다.
+사본 메모는 `server/memo-storage.mjs`의 참조 복사와 `DocumentBusinessService`의 공통 편집 경로를 사용합니다. 사본 표를 읽거나 저장할 때 메모 본문을 읽거나 표 BLOB에 포함하지 않습니다. 테스트는 복사 전후 `document_versions` 수, 공유 참조 ID, 메모 편집 전후 표 BLOB·revision 동일성, 재복사·재시도·권한·충돌·정리·이미지·JSON 반출·백업과 화면의 닫힌 상태 복사·저장 직후 재복사·원본 분리를 검증합니다.
 
-업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 전체 너비의 제목 버튼과 별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 복원된 열린 상태에서는 표를 아래로 이동하지 않으며, 직접 아코디언을 열었을 때만 `scrollOnOpen`으로 문서를 보여 줍니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올리거나 dialog가 열리면 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
+업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 제목 버튼·중앙 가로 스크롤 영역·별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 복원된 열린 상태에서는 표를 아래로 이동하지 않으며, 직접 아코디언을 열었을 때만 `scrollOnOpen`으로 문서를 보여 줍니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올리거나 dialog가 열리면 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
+
+### 접속 토큰과 클라이언트 시각
+
+`AccountMenu` → `AccessTokens` → `/api/access-tokens`는 본인 토큰의 생성·목록·재조회·삭제를 처리합니다. 내부 `server/access-tokens.mjs`는 SQLite 트랜잭션을, 외부 `worker/access-tokens.mjs`는 기존 `controlTransaction`을 사용하며 입력 검증·난수·해시·AES-GCM은 `storage/access-token-service.mjs`를 공유합니다. 신규 토큰에는 만료일이 없으며 원문은 암호화해 저장하고 눈 아이콘을 눌렀을 때 본인에게만 복호화해 반환합니다. 내부 키는 `access-token-key.mjs`에서 DB 밖의 파일 또는 환경 변수로 관리합니다. 브라우저 영속 저장소와 감사 로그에는 토큰을 넣지 않으며, 조회용 Bearer 인증은 아직 연결하지 않습니다. 미배포 신규 기능의 스키마 변경을 v33/site v3/control v2 마이그레이션 하나에 포함합니다. 배포·키 관리·백업 취급은 [운영 안내](OPERATIONS.md#접속-토큰-도입-업데이트)를 따릅니다.
+
+`api.ts`는 내부·외부 JSON 응답의 `X-Server-Time`을 받아 monotonic clock에 고정합니다. 표 저장·명시적 덮어쓰기·상세 속성 저장은 `serverNow()`로 새 작업의 시각을 만들고, 재시도는 기존 ID와 시각을 유지합니다. 서버의 7일 재시도 유효기간과 미래 시각 검증은 유지합니다. `tests/browser/workspace-improvements.spec.ts`는 빠른/느린 PC 및 로그인 후 시각 변경, 숨긴 일정 목록, 검색 위치 보존, 마지막 문서 삭제, 꼬리 메모 편집·전체 화면·스크롤, 토큰 메뉴를 검사합니다. `tests/access-tokens.test.mjs`는 두 실제 DB의 소유권·해시·동시 발급 상한·migration 롤백·복구 폐기를 확인합니다.
 
 ### 속성과 상태 통계
 
@@ -198,7 +214,7 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 ### 이관과 삭제
 
-XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파일·팀·행 범위 및 열 연결 설정·시트·모드·연도 조합으로 중복 적용을 방지합니다. 담당자가 비어 있으면 미지정으로 유지합니다. 여러 표가 섞인 원본에는 API의 `sheetOptions`로 업무 표의 범위를 지정할 수 있습니다. 사본은 생성 당시 값·사용자·설정·보기를 보존하고 이후 독립적으로 편집합니다.
+XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/workbook.mjs`를 직접 사용하며, 빌드 중 서버 소스를 잘라 별도 파서를 생성하지 않습니다. XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파일·팀·행 범위 및 열 연결 설정·시트·모드·연도 조합으로 중복 적용을 방지합니다. 담당자가 비어 있으면 미지정으로 유지합니다. 여러 표가 섞인 원본에는 API의 `sheetOptions`로 업무 표의 범위를 지정할 수 있습니다. 사본은 생성 당시 값·사용자·설정·보기를 보존하고 이후 독립적으로 편집합니다.
 
 사본 편집은 `src/useReportDraft.ts`의 자동 저장 큐·실행취소 기록을 사용합니다. `shared/report-editing.js`가 브라우저와 서버에서 같은 편집 작업을 적용하고, `server/report-editing.mjs`는 팀 기여 권한·사본의 속성·BLOB revision을 검증한 뒤 해당 사본만 저장합니다. 현재 업무의 mutation·SSE·실행취소·필터 저장 경로와 연결하지 않습니다. `tests/reports.test.mjs`는 원본 속성 변경·원본 업무 삭제·권한·원자성·동시 수정·재시작·응답 유실 재시도를, `tests/browser/report-editing.spec.ts`는 편집·추가·삭제·서식·실행취소·자동 저장·실패 재시도·기존 필터 복귀를 검증합니다.
 
@@ -228,7 +244,9 @@ XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파
 - `#` 다음 여섯 자리 이슈 번호의 Redmine 링크는 현재 `shared/domain.js`의 `textLinks`에서 사내 주소를 사용합니다. 다른 설치처에 맞출 때 링크 규칙과 `tests/text-links.test.mjs`를 함께 수정합니다.
 - GraeBoard는 표시 브랜드입니다. DB 경로, 세션 쿠키, 쓰기 요청 헤더, 클립보드 MIME과 JSON 포맷 식별자는 `weekly-plan` 계열 값을 씁니다.
 
-여러 탭의 실시간 구독은 `StreamBroker`를 SharedWorker에서 실행합니다. 채널 집합·필요 커서가 같으면 살아 있는 POST 연결을 유지하고, 추가·제거 시 재연결하더라도 기존 문서·리소스의 커서를 보내 변경 없는 초기 프레임을 생략합니다. `createDocumentEvents`는 무구독 중 변경도 추적하며 본문 없이 revision·전송 순서만 최대 10,000개 키까지 보존합니다. 메타데이터 퇴출이나 서버 세대 변경은 최신 스냅샷으로 복구합니다. 각 리스너는 자기 커서 이하의 재전송을 받지 않아 새 스냅샷을 과거 셀로 되돌리지 않습니다. 종료 사유 없는 `closed`와 `rejected` 5xx는 커서를 유지한 일시 종료로 처리하고, 백오프 동안 같은 연결의 정상 채널과 같은 청크의 후속 프레임은 계속 처리합니다. 사유 없는 부분 종료 대기 중 구독 추가·제거는 연결 재시도 시각에 반영합니다. `rejected` 5xx는 해당 채널에만 1.5~30초 백오프를 두며 기한 전 POST에서 제외합니다. 정상 채널·새 구독은 10ms 묶음 처리 후 연결하고, 별도 채널 타이머가 기한에 재연결을 예약합니다. 채널이 15초 이상 유지되면 해당 채널의 지연을 초기화합니다. EOF·네트워크·heartbeat 부재와 단독 `closed`는 기존 연결 단위 백오프를 쓰며 채널 지연과 독립적입니다. 마지막 구독 제거는 즉시 정리하고, 과거 커서로 새 리스너가 합류하면 재전송을 건너뛰지 않도록 먼저 연결을 끊습니다. `access-revoked`는 `{status}`를 전달하며 401은 세션 손실, 403·404는 권한 상실·삭제입니다. 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 401 이외의 `access-revoked` 또는 비재시도 `rejected`가 선행된 종료만 해당 구독의 영구 종료입니다. 모든 리스너가 떠나면 그 키를 제거해 다음 구독은 새 채널을 만듭니다. HTTP 400의 `rejectedIds`만 종료하고 정상 채널은 실패 백오프를 늘리지 않고 다시 연결합니다. 요청 수준 HTTP 401은 전체 연결을, 연결 중 `access-revoked {status:401}`은 해당 채널을 세션 종료로 분류합니다. 문서·리소스 화면은 세션 종료에서 스트림을 닫지 않으며 문서 편집을 권한·삭제 오류로 막지 않습니다. `components.tsx`의 초기 로그인과 재인증 성공은 `resumeSession()`을 호출합니다. 워커의 `resume` 또는 페이지 내 fallback 브로커의 `resume()`이 스트림 키 변화 없이 모든 탭의 세션 종료 채널을 새 ID·보존 커서로 재승인합니다. 구독 없는 로그인 화면도 워커에 신호를 보내고 확인 응답 후 임시 포트를 닫습니다. 세션 종료 채널이 없으면 재연결하지 않습니다. 셀 복구 등 새 스트림 추가·재합류에 의한 기존 재승인도 유지합니다. 반복 전송 실패는 1.5~30초 백오프하고, 셀 스냅샷 복구와 셀의 `rejected` 5xx도 SSE `ready`를 받기 전까지 1~30초 백오프를 유지합니다. 문서·리소스 구독의 비재시도 거부는 기존 접근 거부 처리로 정리하고, 5xx 복구는 브로커가 맡습니다. 워커 대기열 4MiB 초과·리스 만료는 페이지에 즉시 재구독을 요청합니다. 미지원 환경도 같은 브로커를 페이지 안에서 사용합니다. 탭은 `EventStream` 인터페이스를 유지하므로 셀·문서·목록의 기존 동기화 호출부를 재사용합니다. 배포 시 서버와 빌드 결과를 함께 갱신하고 기존 탭을 새로고침합니다. 서로 다른 빌드의 워커 URL은 별개이므로 이전 탭은 새 워커에 자동 합류하지 않습니다.
+여러 탭의 실시간 구독은 `StreamBroker`를 SharedWorker에서 실행합니다. 채널 집합·필요 커서가 같으면 살아 있는 POST 연결을 유지하고, 추가·제거 시 재연결하더라도 기존 문서·리소스의 커서를 보내 변경 없는 초기 프레임을 생략합니다. 내부 Node의 `createDocumentEvents`는 무구독 중 변경도 추적하며 본문 없이 revision·전송 순서만 최대 10,000개 키까지 보존합니다. 메타데이터 퇴출이나 서버 세대 변경은 최신 스냅샷으로 복구합니다. 각 리스너는 자기 커서 이하의 재전송을 받지 않아 새 스냅샷을 과거 셀로 되돌리지 않습니다. 종료 사유 없는 `closed`와 `rejected` 5xx는 커서를 유지한 일시 종료로 처리하고, 백오프 동안 같은 연결의 정상 채널과 같은 청크의 후속 프레임은 계속 처리합니다. 사유 없는 부분 종료 대기 중 구독 추가·제거는 연결 재시도 시각에 반영합니다. `rejected` 5xx는 해당 채널에만 1.5~30초 백오프를 두며 기한 전 POST에서 제외합니다. 정상 채널·새 구독은 10ms 묶음 처리 후 연결하고, 별도 채널 타이머가 기한에 재연결을 예약합니다. 채널이 15초 이상 유지되면 해당 채널의 지연을 초기화합니다. EOF·네트워크·heartbeat 부재와 단독 `closed`는 기존 연결 단위 백오프를 쓰며 채널 지연과 독립적입니다. 마지막 구독 제거는 즉시 정리하고, 과거 커서로 새 리스너가 합류하면 재전송을 건너뛰지 않도록 먼저 연결을 끊습니다. `access-revoked`는 `{status}`를 전달하며 401은 세션 손실, 403·404는 권한 상실·삭제입니다. 상태 코드가 없는 기존 프레임은 403으로 해석합니다. 401 이외의 `access-revoked` 또는 비재시도 `rejected`가 선행된 종료만 해당 구독의 영구 종료입니다. 모든 리스너가 떠나면 그 키를 제거해 다음 구독은 새 채널을 만듭니다. HTTP 400의 `rejectedIds`만 종료하고 정상 채널은 실패 백오프를 늘리지 않고 다시 연결합니다. 요청 수준 HTTP 401은 전체 연결을, 연결 중 `access-revoked {status:401}`은 해당 채널을 세션 종료로 분류합니다. 문서·리소스 화면은 세션 종료에서 스트림을 닫지 않으며 문서 편집을 권한·삭제 오류로 막지 않습니다. `components.tsx`의 초기 로그인과 재인증 성공은 `resumeSession()`을 호출합니다. 워커의 `resume` 또는 페이지 내 fallback 브로커의 `resume()`이 스트림 키 변화 없이 모든 탭의 세션 종료 채널을 새 ID·보존 커서로 재승인합니다. 구독 없는 로그인 화면도 워커에 신호를 보내고 확인 응답 후 임시 포트를 닫습니다. 세션 종료 채널이 없으면 재연결하지 않습니다. 셀 복구 등 새 스트림 추가·재합류에 의한 기존 재승인도 유지합니다. 반복 전송 실패는 1.5~30초 백오프하고, 셀 스냅샷 복구와 셀의 `rejected` 5xx도 SSE `ready`를 받기 전까지 1~30초 백오프를 유지합니다. 문서·리소스 구독의 비재시도 거부는 기존 접근 거부 처리로 정리하고, 5xx 복구는 브로커가 맡습니다. 워커 대기열 4MiB 초과·리스 만료는 페이지에 즉시 재구독을 요청합니다. 미지원 환경도 같은 브로커를 페이지 안에서 사용합니다. 탭은 `EventStream` 인터페이스를 유지하므로 셀·문서·목록의 기존 동기화 호출부를 재사용합니다. 배포 시 서버와 빌드 결과를 함께 갱신하고 기존 탭을 새로고침합니다. 서로 다른 빌드의 워커 URL은 별개이므로 이전 탭은 새 워커에 자동 합류하지 않습니다.
+
+외부 문서의 GET·PUT·충돌 응답·SSE에는 같은 PG 문서 revision 기준의 `sync`를 사용합니다. SSE 전송 커서 `pg:<site_events cursor>`와 문서 `sync.sequence`는 서로 다른 순서이므로 비교하거나 덮어쓰지 않습니다. `worker/events.mjs`는 `payload.sync`를 보존합니다. 열린 연간 메모·업무 문서에서 변경을 누락하지 않도록 실제 Edge handler → PG 조회·저장·SSE 경로와 리치/Markdown 편집 화면을 함께 확인합니다. [실시간 동기화 계약](DATA_FORMAT.md#실시간-동기화)
 
 ## 검증
 
@@ -263,7 +281,7 @@ npm run licenses
 
 특정 규모만 실행하려면 `npm run performance:stress -- 10000:30`처럼 `업무수:일정점유율`을 전달합니다. 결과는 `docs/validation/load-test-results.json`, 화면은 같은 폴더에 저장합니다. Node.js 22.13.0 이상과 설치된 Chromium이 필요하며, 2만 업무 시나리오는 수 GB의 메모리를 사용하므로 운영 서버와 분리해 실행합니다. 30개 HTTP 세션과 한 브라우저의 검증이며, 30개 브라우저 동시 사용이나 사내 네트워크의 지연시간을 측정하는 검사는 아닙니다.
 
-검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 현재 인증은 로컬 계정·세션 방식이며 SSO 연동과 모바일 전용 UX는 구현·검증 범위에 포함되지 않습니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
+검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 내부 인증은 로컬 계정·세션 방식이며 외부는 전용 Cloudflare Access JWT와 앱 사용자·팀 권한을 검증합니다. 실제 Cloudflare Access/Images/Supabase 계정 배포와 모바일 전용 UX는 로컬 검증과 구분합니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
 
 ## 저장소 범위
 
@@ -274,3 +292,69 @@ npm run licenses
 초기 저장소 등록 시점의 검증(2026-10-09): 빌드 성공, API·도메인·백업 검사 **43건**, Chromium·Firefox·WebKit의 **45개 흐름 × 3종 = 135건** 통과. 임시 DB를 이용한 로그인 화면·브라우저 제목·메뉴·하단의 그래보드 표기와 XLSX·CSV·JSON 파일명, 엑셀 작성자 정보도 확인했습니다.
 
 2026-10-18 로컬 합성 데이터에서 표시 일정 한 개를 반복 이동했습니다. 해당 사용자의 무관한 과거 일정 1만 개에서 요청부터 JSON 읽기까지 중앙값은 약 30→3ms, 5만 개에서는 약 159→3ms였습니다. 5만 개의 위치를 모두 반환하던 응답은 영향받는 위치 한 개와 좌표만 반환해 압축 해제한 JSON 기준 약 2.75MB→515바이트로 줄었습니다. 메모리 SQLite·로컬 HTTP·준비 실행 제외 후 6회 측정이며 운영 장비와 네트워크의 지연 보장은 아닙니다. 상세 수치는 `docs/validation/calendar-layout-performance-20261018.json`에 있습니다. 화면 밖 연결 구간·개인/공용 분리·1천 개의 무관한 이력 제외·160개 연쇄 확장과 재시도는 API 회귀 테스트로, 세 캘린더 보기의 미리보기/저장 행 일치는 브라우저 회귀 테스트로 검증합니다.
+
+## 외부 동기화 개발·검증
+
+[설치 안내](CLOUD_SETUP.md)와 [프로토콜](SYNC_PROTOCOL.md)을 기준으로 `server/sync/`, `server/storage/`, `worker/`, `edge/`의 호출 경로를 함께 확인합니다. 내부 `transaction`은 동기 콜백만 허용하고, PG는 하나의 client에서 모든 await·COMMIT·rollback을 끝냅니다. Node의 timer는 readonly SQLite worker에서 Git·병합·해시·재투영을 수행하고 메인 쓰기 경계에서 현재 head·로컬 변경·L·작업 guard를 다시 검사합니다. 사이트 이벤트는 commit 뒤 기존 SSE 경로로 전달합니다.
+
+```sh
+npm test
+npm run build
+npm run build:edge
+npm run build:pages
+npm run test:e2e -- tests/browser/data-sync.spec.ts
+npm run performance:sync
+```
+
+PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서는 사용할 PG 서버 바이너리가 없으면 관련 검사를 `skip`하고 성공 종료할 수 있으므로, 종료 코드만으로 PG 검증을 주장하지 않습니다. 릴리스 검증은 `TEST_PG_BIN=/absolute/PostgreSQL/bin npm run test:postgres`를 사용합니다. 이 명령은 `postgres`, `initdb`, `pg_ctl`을 먼저 실행 확인하고 하나라도 없거나 실행할 수 없으면 테스트를 시작하기 전에 실패합니다. 준비가 확인되면 같은 경로를 모든 테스트에 전달해 전체 단위·통합 검사를 실행하며, 최종 pass/fail/skip 수도 기록합니다. 공통 외부 API 테스트는 임시 control/team PG와 실제 JWT 검증, 대역 R2/Images/GitHub HTTP를 사용합니다. Git CLI 경합·복구 테스트는 임시 bare 저장소를 사용합니다. 실제 cloud 변환 품질·도메인/Access policy·rate limit·운영 DB는 별도 검증 대상입니다.
+
+`performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
+
+안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.
+
+## 업무 저장소 계약
+
+Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.
+
+| 계약                                                     | 실제 명령 범위                                                                                                  |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| TaskBusinessService                                      | 조회/ETag, 셀 배치·서식·재시도, 생성/복제/수정/삭제/복원/순서, 개인 보기                                        |
+| DocumentBusinessService                                  | 원본/사본 문서, 연간/사본 메모, 일정 Markdown, 제목/순서/본문 CAS, 이미지 접근 권한과 선택된 저장소의 읽기/쓰기 |
+| ReportBusinessService                                    | 사본 생성·복사·이름·행/셀/서식 편집·삭제·revision                                                               |
+| CalendarBusinessService                                  | 일정·태그·배치·주간 업무·자동 가져오기·개인 규칙                                                                |
+| SettingsBusinessService / FilterBusinessService          | 팀 설정·이름/테마, 셀 종류 변환, 보기/필터 정규화, 공유/개인 필터·선택 상태                                     |
+| ControlBusinessService                                   | bootstrap·참조 인물/연도, 프로필, 사용자·팀·멤버십 관리                                                         |
+| HistoryBusinessService / AdminHistoryBusinessService     | 팀 이력·복원, 관리자 감사 검색·상세, 사이트 이력 정리                                                           |
+| DocumentBrowserBusinessService / TransferBusinessService | 문서 탐색, CSV/XLSX/JSON 내보내기, 실제 업로드 미리보기·적용·재시도                                             |
+
+`createApp()`은 내부 SQLite 저장소만 구성합니다. Node에서 PG repository를 선택하는 테스트 전용 모드와 factory 주입은 제거했습니다. 외부 API는 `worker/`의 route 함수와 `worker/storage/` PostgreSQL 구현을 사용하며, 인증·멤버십도 외부 PG control/site 저장소에서 확인합니다. 공통 도메인 서비스는 양쪽 명령 검증을 공유하지만 Node 라우트의 SQLite 트랜잭션은 동기를 유지합니다. 문서 이미지 준비와 XLSX 생성·읽기는 필요한 비동기 처리를 명시적으로 기다립니다.
+
+외부 Edge는 `RequestContext.data`와 `capacityLimits(env)`를 통해 쓰기 전 DB 용량 검사와 commit 전 상태 검사를 수행합니다. 내부 SQLite 업무 경로의 행 수 시험이나 PG 어댑터 직접 호출 시험은 외부 API의 지원 규모를 보장하지 않습니다. [용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)를 함께 확인합니다.
+
+이미지 변환은 내부 Node의 sharp·`FileImageStore`, 외부 Edge의 Cloudflare Images·`R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. Git 실행기 설정과 인증은 논리 팀 자료 이관과 별도로 관리합니다.
+
+`tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 두 실제 엔진의 permission/CAS/replay/L/late rollback을 비교합니다. 외부 HTTP 계약은 `tests/external-route-fixture.mjs`에서 실제 worker route 함수·PG control 인증·SSE를 실행하며, Node의 SQLite 업무 행에 의존하지 않는지 확인합니다. 이미지 업로드→본문 저장→R2 조회→JSON 반출, 관리 이력 정리와 멤버십 철회도 포함합니다. SQLite 검사는 반환값의 동기성, 커밋 후 다른 연결에서의 P·본문 가시성, 커밋 실패 시 이벤트 부재를 확인합니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
+
+## 팀별 외부 설치와 계정 연결
+
+Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. `worker/forwarder.mjs`는 이전 Worker 이름으로 들어오는 Service binding을 같은 gateway에 전달합니다. Hyperdrive binding과 이전 Cron, 전체 Worker 호환성 빌드 설정은 제거합니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/edge-gateway.test.mjs`는 실제 gateway의 workerd 실행으로 전달·정적 파일·인증 경계를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
+
+신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v32에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
+
+`tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 외부 API fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v3의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/gateway/Edge/Pages 빌드, 세 브라우저의 해당 흐름을 사용합니다. `tests/team-site.test.mjs`의 Edge handler는 Node 테스트 프로세스에서 실행하므로 실제 Google/Cloudflare/Supabase 배포 및 Deno 실행 검증은 별도입니다.
+
+팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30/v31 보존·원자적 v32 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
+
+외부 팀의 `Team.status`가 `unconnected`, `importing`, `maintenance`이면 업무 조회 대신 준비 상태 안내를 표시하고, 같은 팀이 active로 바뀌면 필터·보기·업무 조회를 다시 시작합니다. 내부 팀은 이 외부 상태로 화면을 차단하지 않습니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
+
+배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, 외부 API는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.
+
+`TeamSyncIndicator`는 bootstrap/setup에서 계산한 공통 `site` 객체를 Context로 받아 상단 표시를 구분합니다. 내부는 정상·미전송·상대 확인 대기를 숨기되 오류·충돌·복구·중단·조회 실패를 표시하며, 최초 조회 실패도 숨기지 않습니다. 외부는 클라우드 저장·Git 반영·내부망 반영을 세 태그로 분리하고 대기/진행 중은 회색, 완료는 푸른색으로 표시합니다. 저장 중·실패에는 후속 단계도 완료로 표시하지 않습니다. 상태 조회는 기본 15초이며 내부 미연결 팀은 60초 간격으로 줄입니다. 포커스 갱신은 유지하고, 저장 후 상태 조회는 외부에서만 마지막 알림 이후 2초 뒤에 실행합니다. 내부 저장 및 인증·관리 API의 성공은 이 추가 조회를 만들지 않습니다. 팀 전환 시 이전 조회 실패 상태를 초기화합니다. `tests/browser/team-sync-indicator.spec.ts`는 같은 URL에서 서버 환경 값에 따른 표시, 오류 복구, 최초 조회 실패, 적용 확인 조건, 색상과 좁은 화면 배치를 검증합니다.
+
+내부 재연결은 `TeamSyncSettings` → `POST /api/teams/:id/sync/reconnect` → `createNodeSync.reconnect` → readonly background snapshot의 경로입니다. 같은 설치의 disconnected 상태만 허용하고 팀장 권한을 계산 전후에 확인합니다. C+P와 실제 업무 자료의 차이를 기존 operation 형식으로 P에 추가한 뒤 같은 트랜잭션에서 active(초기 게시 전은 paused)로 전환합니다. 기존 C·P ID·writer epoch·L은 유지합니다. capture가 꺼진 동안의 문서 변경도 감지하도록 메인 연결의 total_changes와 data_version, 기존 snapshot guard를 커밋 직전에 검사하며 동시 저장 시 재계산합니다. 새 DB 스키마나 백업 형식은 도입하지 않습니다. `sync-integration`·`sync-lifecycle-review`·`browser/data-sync` 검사는 실제 API/Git에서 재연결·본문 보존·충돌·동시 저장·권한 철회·롤백을 확인합니다.
+
+### 리뷰 반영 검증 기준
+
+내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
+
+v1/v2의 기준 이력 재생, 일시정지한 양쪽의 명시 전환 수신, reportTask/reportCell 독립성, receipt 별도 용량, SQLite v32·PostgreSQL team v2 migration 및 정리 경계는 합성 DB에서 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 실제 운영 v29 백업 사본의 `restore --dry-run`과 실제 사본 migration·행/이미지 보존은 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.

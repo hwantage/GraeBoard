@@ -1,0 +1,16 @@
+CREATE TABLE control_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision BIGINT NOT NULL DEFAULT 0, setup_complete BOOLEAN NOT NULL DEFAULT FALSE);
+INSERT INTO control_meta(singleton) VALUES(1);
+CREATE TABLE site_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1), team_id TEXT NOT NULL UNIQUE, directory_head TEXT, directory_hash TEXT, directory_received_at TEXT, directory_checked_at BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT NOT NULL, email TEXT NOT NULL, name TEXT NOT NULL, system_role TEXT NOT NULL DEFAULT 'user' CHECK(system_role IN ('admin','user')), active BOOLEAN NOT NULL DEFAULT TRUE, color TEXT NOT NULL DEFAULT '#177b70', avatar_initials TEXT NOT NULL DEFAULT '', avatar_image TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, source_managed BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE UNIQUE INDEX users_username_idx ON users(lower(username));
+CREATE UNIQUE INDEX users_email_idx ON users(lower(email));
+CREATE TABLE access_identities(issuer TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(issuer,subject,user_id), UNIQUE(user_id));
+CREATE TABLE access_sessions(token_hash TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), expires_at BIGINT NOT NULL);
+CREATE TABLE access_requests(id TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')), created_at TEXT NOT NULL, resolved_by TEXT REFERENCES users(id), resolved_at TEXT, UNIQUE(issuer,subject,user_id));
+CREATE TABLE control_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, payload TEXT NOT NULL);
+CREATE TABLE teams(id TEXT PRIMARY KEY REFERENCES site_meta(team_id), name TEXT NOT NULL, profile_id TEXT, status TEXT NOT NULL DEFAULT 'unconnected', config_revision BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE memberships(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('lead','member','viewer')), PRIMARY KEY(user_id,team_id));
+CREATE TABLE control_jobs(id TEXT PRIMARY KEY, team_id TEXT REFERENCES teams(id), kind TEXT NOT NULL, phase TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX control_jobs_active_idx ON control_jobs(team_id) WHERE phase NOT IN ('complete','cancelled');
+CREATE TABLE control_audit(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES users(id), action TEXT NOT NULL, target TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE connection_probes(id TEXT PRIMARY KEY, created_at TEXT NOT NULL);

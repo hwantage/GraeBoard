@@ -15,7 +15,7 @@ import { canEdit, canManageTeam } from "../shared/domain.js";
 import { STYLE_KEYS, sameStyle } from "../shared/compact.js";
 import { scopeKey, scopeMatches, scopesOverlap } from "../shared/formatting.js";
 import { storeCellOperation } from "./cell-operations.mjs";
-import { requireThat, validCellKey } from "./validation.mjs";
+import { requireThat, validCellKey } from "../shared/validation.js";
 
 function snapshots(db, operation) {
   const stored = parse(operation.response);

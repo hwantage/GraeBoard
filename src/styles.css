@@ -2098,6 +2098,35 @@ body.row-reordering * {
   background: #f0f3f5;
   white-space: nowrap;
 }
+.team-sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.team-sync-stage {
+  color: #64748b;
+}
+.team-sync-stage.is-complete {
+  color: #1d4ed8;
+  background: #e8f0ff;
+}
+.team-sync-problem {
+  color: #a43e58;
+  background: #fce8ee;
+}
+@media (max-width: 720px) {
+  .topbar:has(.team-sync-indicator) {
+    height: auto;
+    min-height: 38px;
+    flex-wrap: wrap;
+  }
+  .topbar .team-sync-indicator {
+    order: 1;
+    flex-basis: 100%;
+    padding-bottom: 6px;
+  }
+}
 .modal {
   width: min(520px, calc(100vw - 32px));
   max-height: 86dvh;
@@ -5110,12 +5139,12 @@ body.row-reordering * {
 .sheet-row:hover .task-document-indicator.is-empty,
 .sheet-cell.focused .task-document-indicator.is-empty,
 .sheet-cell:focus-within .task-document-indicator.is-empty {
-  opacity: 0.55;
+  opacity: 0.18;
   pointer-events: auto;
 }
 .sheet-cell .task-document-indicator.is-empty:hover,
 .sheet-cell .task-document-indicator.is-empty:focus-visible {
-  opacity: 1;
+  opacity: 0.18;
 }
 .sheet-cell.has-document-count .task-document-indicator {
   width: 34px;
@@ -5266,4 +5295,39 @@ body.row-reordering * {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+.access-token-value {
+  width: 100%;
+  font-family: monospace;
+}
+.access-token-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.access-token-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.access-token-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.access-token-list li > div {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.access-token-list span,
+.access-token-list code {
+  color: var(--muted);
+  font-size: 12px;
 }

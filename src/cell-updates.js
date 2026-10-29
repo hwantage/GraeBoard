@@ -1,6 +1,6 @@
 /** @typedef {import("./types").Task} Task */
 /** @typedef {import("./types").SavedCell} SavedCell */
-/** @typedef {{ cells: SavedCell[], updatedAt?: Record<string, string>, formatting?: import("./types").Formatting, formatTeamId?: string }} CellUpdates */
+/** @typedef {{ cells: SavedCell[], updatedAt?: Record<string, string>, formatting?: import("./types").Formatting, formatTeamId?: string, taskMetadata?: Record<string, Pick<Task, "updatedAt" | "position" | "defaultStyle" | "rowStyle">> }} CellUpdates */
 /** @typedef {{ tasks: Task[], cellEventId: string }} TaskSnapshot */
 
 // HTTP acknowledgements and SSE can arrive in either order. Never replace a
@@ -17,24 +17,29 @@ export function mergeCellUpdates(tasks, update) {
   let changed = false;
   const next = tasks.map((task) => {
     const changes = byTask.get(task.id);
+    const incoming = update.taskMetadata?.[task.id];
+    const metadata =
+      incoming && incoming.updatedAt >= task.updatedAt ? incoming : undefined;
     const formatting =
       update.formatting &&
       task.teamId === update.formatTeamId &&
       update.formatting.revision > (task.formatting?.revision ?? 0)
         ? update.formatting
         : task.formatting;
-    if (!changes && formatting === task.formatting) return task;
+    if (!changes && !metadata && formatting === task.formatting) return task;
     let cells = task.cells;
     for (const { taskId, key, ...c } of changes?.values() || []) {
       if ((cells[key]?.version ?? 0) >= c.version) continue;
       if (cells === task.cells) cells = { ...cells };
       cells[key] = c;
     }
-    if (cells === task.cells && formatting === task.formatting) return task;
+    if (!metadata && cells === task.cells && formatting === task.formatting)
+      return task;
     changed = true;
-    const stamp = update.updatedAt?.[task.id];
+    const stamp = metadata?.updatedAt || update.updatedAt?.[task.id];
     return {
       ...task,
+      ...metadata,
       cells,
       ...(formatting ? { formatting } : {}),
       updatedAt: stamp && stamp > task.updatedAt ? stamp : task.updatedAt,

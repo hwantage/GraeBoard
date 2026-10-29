@@ -4,12 +4,12 @@ import { getTasks, now, json } from "./db.mjs";
 export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
   const entries = new Map();
   let bytes = 0;
-  const etagFor = (teamId, year, deleted) => {
+  const etagFor = (teamId, year, deleted, retentionKey = "") => {
     const version =
       db
         .prepare("SELECT version FROM team_revisions WHERE team_id=?")
         .get(teamId)?.version || 0;
-    return `"${teamId}:${year}:${deleted ? 1 : 0}:${version}"`;
+    return `"${teamId}:${year}:${deleted ? 1 : 0}:${version}${retentionKey ? ":retention:" + retentionKey : ""}"`;
   };
   // 호출자가 이미 ETag를 계산했으면 넘겨서 revision을 두 번 읽지 않게 한다.
   const cachedTasks = (
@@ -17,6 +17,7 @@ export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
     year,
     deleted,
     etag = etagFor(teamId, year, deleted),
+    { visibility, year: requestedYear } = {},
   ) => {
     const key = `${teamId}:${year}:${deleted ? 1 : 0}`;
     const existing = entries.get(key);
@@ -27,7 +28,11 @@ export function createTaskCache(db, { limit = 64 * 1024 * 1024 } = {}) {
     }
     const body = Buffer.from(
         json({
-          tasks: getTasks(db, teamId, year, deleted),
+          tasks: visibility?.years.has(String(requestedYear))
+            ? []
+            : visibility?.active
+              ? visibility.tasks(getTasks(db, teamId, year, deleted))
+              : getTasks(db, teamId, year, deleted),
           serverTime: now(),
         }),
       ),

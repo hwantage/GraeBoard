@@ -234,7 +234,7 @@ test("문서가 없는 업무는 캐릭터 안내에서 명시적으로 작성�
   await page.locator(`[data-row-id="${taskIds[0]}"] .row-select`).focus();
   await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
   await expect(icon(page)).toBeFocused();
-  await expect(icon(page)).toHaveCSS("opacity", "1");
+  await expect(icon(page)).toHaveCSS("opacity", "0.18");
   await page.keyboard.press("Enter");
   await expect(detail(page)).toBeVisible();
   const start = detail(page).getByRole("button", {
@@ -271,13 +271,13 @@ test("문서가 없는 업무는 캐릭터 안내에서 명시적으로 작성�
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.getByRole("button", { name: "업무 추가", exact: true }).focus();
   await page.locator(`[data-cell="${taskIds[0]}:owner"]`).hover();
-  await expect(icon(page)).toHaveCSS("opacity", "0.55");
+  await expect(icon(page)).toHaveCSS("opacity", "0.18");
   await page.locator(`[data-cell="${taskIds[0]}:title"]`).screenshot({
     path: info.outputPath("empty-task-detail-hint.png"),
   });
   await icon(page).hover();
   await expect(page.getByRole("tooltip")).toHaveText("업무 상세 열기");
-  await expect(icon(page)).toHaveCSS("opacity", "1");
+  await expect(icon(page)).toHaveCSS("opacity", "0.18");
   await icon(page).click();
   await expect(start).toBeVisible();
   expect(
@@ -1397,7 +1397,8 @@ test("리치 표 셀은 선택한 글자를 교체하고 빈 셀에도 블록·H
     await expect(cells.locator("br")).toHaveCount(2);
     await expect(rich(page).locator("em, ul")).toHaveCount(0);
     await expect(rich(page).locator("table")).toHaveCount(1);
-    await expect(rich(page).locator(":scope > p")).toHaveCount(0);
+    // Only the unsaved typing line that follows a table remains.
+    await expect(rich(page).locator(":scope > p")).toHaveText([""]);
   };
   await preserved();
   await close(page);

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 import { todayKey } from "../../shared/domain.js";
@@ -20,6 +20,79 @@ async function request(
   });
   expect(response.ok(), await response.text()).toBeTruthy();
   return response.json().then(unpack);
+}
+async function reloadCalendarAfterInitialRefresh(page: Page) {
+  // Calendar loads its data once, then useResourceSync's initial team event
+  // increments reload/contextAttempt. A visible card can precede that second
+  // pass. Observe the completed initial refresh before counting local writes.
+  const pending = new Set<Request>();
+  const latest = new Map<string, { request: Request; ok?: boolean }>();
+  let contextReads = 0,
+    sequence = 0;
+  const started = (req: Request) => {
+    if (req.isNavigationRequest() && req.resourceType() === "document") {
+      pending.clear();
+      latest.clear();
+      contextReads = 0;
+      sequence++;
+      return;
+    }
+    const url = new URL(req.url());
+    if (
+      req.method() !== "GET" ||
+      !(
+        url.pathname === `/api/calendar/teams/${teamId}` ||
+        url.pathname === "/api/calendar/preferences" ||
+        (url.pathname === "/api/calendar" &&
+          url.searchParams.get("teamId") === teamId)
+      )
+    )
+      return;
+    if (url.pathname === `/api/calendar/teams/${teamId}`) contextReads++;
+    pending.add(req);
+    latest.set(url.pathname, { request: req });
+    sequence++;
+  };
+  const finished = async (req: Request) => {
+    if (!pending.has(req)) return;
+    const response = await req.response();
+    const current = latest.get(new URL(req.url()).pathname);
+    if (current?.request === req) current.ok = response?.ok() || false;
+    pending.delete(req);
+  };
+  page.on("request", started);
+  page.on("requestfinished", finished);
+  page.on("requestfailed", finished);
+  try {
+    await page.reload();
+    await expect
+      .poll(async () => {
+        if (
+          contextReads < 2 ||
+          pending.size ||
+          latest.size !== 3 ||
+          [...latest.values()].some((value) => !value.ok)
+        )
+          return false;
+        const observed = sequence;
+        // Completed context responses can change the member query. Let React
+        // commit those effects, then require their resulting requests to finish.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            ),
+        );
+        return observed === sequence && pending.size === 0;
+      })
+      .toBe(true);
+  } finally {
+    page.off("request", started);
+    page.off("requestfinished", finished);
+    page.off("requestfailed", finished);
+  }
 }
 const manager = (page: Page) =>
   page.getByRole("dialog", { name: /^(개인|팀) 태그 관리$/ });
@@ -964,8 +1037,8 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
     3,
   );
   const label = await addTag(page, "회의", "purple");
-  // Reload after API seeding so remote seed notifications are not counted as local UI writes.
-  await page.reload();
+  // Finish the initial SSE refresh after seeding before observing local writes.
+  await reloadCalendarAfterInitialRefresh(page);
   const checks = (id: string) =>
     page
       .locator(`[data-entry-id="${id}"]`)
@@ -1083,6 +1156,112 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
   expect(
     (await request(page, `/calendar/entries/${first.id}`)).checkedTagIds,
   ).toEqual([]);
+});
+
+test("저장 전에 시작한 오래된 캘린더 조회는 완료된 체크 저장을 덮어쓰지 않는다", async ({
+  page,
+}) => {
+  const tag = await request(page, `/calendar/teams/${teamId}/tags`, "POST", {
+    id: randomUUID(),
+    name: "조회 경합 확인",
+    color: "blue",
+    kind: "check",
+  });
+  const entry = await addEntry(page, "체크 저장 보호", [tag.id]);
+  const remote = await addEntry(page, "원격 변경 전 제목", []);
+  await reloadCalendarAfterInitialRefresh(page);
+  const box = page
+    .locator(`[data-entry-id="${entry.id}"]`)
+    .getByRole("checkbox", { name: "조회 경합 확인 체크", exact: true })
+    .first();
+  await expect(box).not.toBeChecked();
+
+  let releaseSnapshot = () => {},
+    releaseContext = () => {},
+    snapshotStarted = () => {};
+  const snapshotGate = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+  const contextGate = new Promise<void>((resolve) => {
+    releaseContext = resolve;
+  });
+  const snapshotHeld = new Promise<void>((resolve) => {
+    snapshotStarted = resolve;
+  });
+  let holdSnapshot = true;
+  let heldRequest: Request | undefined;
+  // A resource refresh also loads context. Keep that response in flight so its
+  // new member-array identity cannot abort/restart the deliberately older read.
+  await page.route(`**/api/calendar/teams/${teamId}`, async (route) => {
+    const response = await route.fetch();
+    await contextGate;
+    await route.fulfill({ response });
+  });
+  await page.route(/\/api\/calendar\?/, async (route) => {
+    if (!holdSnapshot) return route.continue();
+    holdSnapshot = false;
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    const snapshot = unpack(await response.json());
+    expect(
+      snapshot.entries.find((value: { id: string }) => value.id === entry.id)
+        .checkedTagIds,
+    ).toEqual([]);
+    expect(
+      snapshot.entries.find((value: { id: string }) => value.id === remote.id)
+        .title,
+    ).toBe("다른 사용자가 저장한 제목");
+    heldRequest = route.request();
+    snapshotStarted();
+    await snapshotGate;
+    await route.fulfill({ response });
+  });
+  try {
+    // An actual remote mutation starts a real SSE-driven collection refresh.
+    await request(page, `/calendar/entries/${remote.id}`, "PATCH", {
+      title: "다른 사용자가 저장한 제목",
+      expectedTitle: remote.title,
+    });
+    await snapshotHeld;
+    const saved = page.waitForResponse(
+      (response) =>
+        response
+          .url()
+          .endsWith(`/calendar/entries/${entry.id}/tags/${tag.id}`) &&
+        response.request().method() === "PATCH" &&
+        response.ok(),
+    );
+    await box.check();
+    await saved;
+    await expect(box).toBeEnabled();
+    await expect(box).toBeChecked();
+    expect(
+      (await request(page, `/calendar/entries/${entry.id}`)).checkedTagIds,
+    ).toEqual([tag.id]);
+
+    const oldRead = page.waitForResponse(
+      (response) => response.request() === heldRequest,
+    );
+    releaseSnapshot();
+    await (await oldRead).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(box).toBeChecked();
+    await expect(card(page, remote.id)).toContainText(
+      "다른 사용자가 저장한 제목",
+    );
+    expect(
+      (await request(page, `/calendar/entries/${entry.id}`)).checkedTagIds,
+    ).toEqual([tag.id]);
+  } finally {
+    releaseSnapshot();
+    releaseContext();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });
 
 test("체크 실패는 복원하고 늦은 제목·본문 저장 응답은 체크 상태를 덮어쓰지 않는다", async ({
@@ -1256,7 +1435,7 @@ test("일정 상세를 간결하게 표시하고 즉시 삭제·실행취소로 
     checked: true,
     expectedChecked: false,
   });
-  await page.reload();
+  await reloadCalendarAfterInitialRefresh(page);
   await expect(card(page, entry.id)).toBeVisible();
   const reads: string[] = [];
   page.on("request", (req) => {
@@ -1272,9 +1451,23 @@ test("일정 상세를 간결하게 표시하고 즉시 삭제·실행취소로 
   await expect(
     panel.getByRole("textbox", { name: "일정 제목", exact: true }),
   ).toHaveValue(entry.title);
-  await expect(panel.getByRole("button", { name: /전체 페이지/ })).toHaveCount(
-    0,
-  );
+  const expand = panel.getByRole("button", {
+    name: "문서 전체 페이지로 보기",
+    exact: true,
+  });
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+  await expand.click();
+  await expect(panel).toHaveClass(/document-full-page/);
+  const collapse = panel.getByRole("button", {
+    name: "전체 페이지 닫기",
+    exact: true,
+  });
+  await expect(collapse).toHaveAttribute("aria-pressed", "true");
+  await collapse.click();
+  await expect(panel).not.toHaveClass(/document-full-page/);
+  await expect(
+    panel.getByRole("textbox", { name: "일정 제목", exact: true }),
+  ).toHaveValue(entry.title);
   await expect(heading.getByText("일정 제목", { exact: true })).toHaveCount(0);
   await expect(heading.getByText("일정 기간", { exact: true })).toHaveCount(0);
   await expect(heading.locator(":scope > p")).toHaveCount(0);

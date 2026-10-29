@@ -2,7 +2,7 @@
 
 **함께 그려가는 일의 흐름.**
 
-그래보드는 팀의 주간 업무와 연간 일정을 셀 형태로 관리하는 웹앱입니다. 팀원별 업무를 모아 보고, 필요한 기간과 속성만 표시하며, 셀에서 바로 내용을 편집합니다. React · TypeScript · Node.js · SQLite로 구성되어 자체 서버에서 운영할 수 있습니다.
+그래보드는 팀의 주간 업무와 연간 일정을 셀 형태로 관리하는 웹앱입니다. 팀원별 업무를 모아 보고, 필요한 기간과 속성만 표시하며, 셀에서 바로 내용을 편집합니다. React · TypeScript 프런트엔드와 Node.js · SQLite 내부 서버로 자체 운영할 수 있습니다. 외부 연결이 필요한 팀은 Supabase Edge Functions · PostgreSQL 사이트를 추가하고 GitHub로 자료를 동기화합니다.
 
 현재 서버에 배포되어 운영 중입니다. 이후 업데이트는 기존 계정·업무·문서·이미지를 보존하는 것을 전제로 합니다. DB 스키마나 저장 형식을 변경할 때는 [DB 변경 지침](docs/DATABASE_CHANGES.md)을 따릅니다. 이 문서의 실행 조건과 버전은 현재 저장소 기준이며, 실제 배포 버전과 서버 설정은 운영 기록으로 별도 관리합니다.
 
@@ -17,6 +17,11 @@
 - **캘린더**: 개인·팀 공용 일정, 주간 할 일, 태그와 필터, 일정 문서
 - **이관·반출**: XLSX 가져오기, XLSX·CSV·JSON 내보내기, SQLite 백업·복구
 - **발표 모드**: 현재 보기를 표만 표시하는 화면으로 전환
+- **팀 Git 동기화**: 내부 SQLite와 외부 Supabase Edge 사이트의 팀 자료·문서 이미지 전달, 충돌 보존·사이트별 정리
+
+외부 설치는 [클라우드 설치 안내](docs/CLOUD_SETUP.md)를 따릅니다. 일반 업무 API는 공통 명령 계약을 사용하며, 내부 Node는 SQLite·파일 이미지 저장소, 외부 Supabase Edge는 PostgreSQL·R2 이미지 저장소로 실행합니다. 내부 서버의 DB를 PostgreSQL로 바꾸는 모드는 제공하지 않습니다. [개발 안내](docs/DEVELOPMENT.md#업무-저장소-계약)에서 저장소 연결 방법을, 설치 안내에서 외부 용량·검증 한계를 확인하세요.
+
+PostgreSQL 팀 업무 저장소는 Node와 외부 Edge 모두 공유 상태·미전송 명령 **4 MiB**, 공유 엔티티 **12,000개** 한도를 적용합니다. 엔티티 수는 업무 행 수와 다르며, SQLite의 10,000행 성능 결과는 PostgreSQL 지원 규모를 뜻하지 않습니다.
 
 새 팀의 기본 속성은 **작업·팀원·상태**입니다. 상태는 예정·검토 중·진행 중·완료·보류를 제공하며, 기본 서식은 **9pt**, 세로 정렬은 **중간**, 셀 높이는 **편안하게**, 왼쪽 열은 **고정 안 함**입니다.
 
@@ -40,25 +45,28 @@ npm start
 
 기본 저장 위치는 `data/weekly-plan.sqlite`와 `data/document-images`입니다. 운영에서는 릴리스 교체로 경로가 달라지지 않도록 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 지정하고 기존 `.env`를 유지합니다. 저장소에는 실제 계정·업무 데이터·데이터베이스·백업·환경 비밀값을 포함하지 않습니다.
 
-| 명령 | 동작 |
-| --- | --- |
-| `npm run dev` | Node.js 파일 감시와 Vite 개발 서버 실행. 화면 `5173`, API `4310` |
-| `npm run build` | TypeScript 검사와 프런트엔드 운영 빌드. 결과는 `dist/` |
+| 명령                          | 동작                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| `npm run dev`                 | Node.js 파일 감시와 Vite 개발 서버 실행. 화면 `5173`, API `4310`                |
+| `npm run build`               | TypeScript 검사와 프런트엔드 운영 빌드. 결과는 `dist/`                          |
 | `npm start` / `npm run start` | Node.js 서버가 API와 빌드된 `dist/`를 `4310`에서 제공. 자동 빌드·파일 감시 없음 |
 
 포트는 기본값입니다. 운영은 `npm run build` 후 `npm start`로 실행합니다. 빌드에는 개발 의존성도 필요하므로 설치 시 `--include=dev`를 지정합니다. `dist/`에는 프런트엔드만 포함되므로 Node.js 서버·공유 코드·런타임 의존성도 필요합니다. `npm start` 자체는 `NODE_ENV=production`을 설정하지 않으므로 `.env` 또는 프로세스 환경에 지정합니다. 개발 서버는 운영 DB와 분리한 작업 경로·설정에서 실행합니다.
 
 ## 문서
 
-| 문서 | 내용 |
-| --- | --- |
-| [사용 안내](docs/USER_GUIDE.md) | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본 |
-| [운영 안내](docs/OPERATIONS.md) | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트 |
-| [개발 안내](docs/DEVELOPMENT.md) | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위 |
-| [데이터 형식과 API](docs/DATA_FORMAT.md) | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
-| [DB 변경 지침](docs/DATABASE_CHANGES.md) | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존 |
-| [프로젝트 작업 규칙](AGENTS.md) | 핵심 작업 원칙과 작업별 문서 안내 |
-| [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록 |
+| 문서                                                | 내용                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| [구성도와 데이터 흐름](docs/ARCHITECTURE.md) | 내부·외부 배포 구성, 인증, Git 전달과 열린 화면 반영 |
+| [사용 안내](docs/USER_GUIDE.md)                     | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본              |
+| [운영 안내](docs/OPERATIONS.md)                     | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트        |
+| [개발 안내](docs/DEVELOPMENT.md)                    | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위           |
+| [데이터 형식과 API](docs/DATA_FORMAT.md)            | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
+| [클라우드 설치 안내](docs/CLOUD_SETUP.md)           | 내부 SQLite·외부 Edge, Pages·Access·Git·R2 설정과 복구 |
+| [동기화 프로토콜](docs/SYNC_PROTOCOL.md)            | 확정 이력·미전송·사이트별 정리·충돌 규칙                    |
+| [DB 변경 지침](docs/DATABASE_CHANGES.md)            | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존    |
+| [프로젝트 작업 규칙](AGENTS.md)                     | 핵심 작업 원칙과 작업별 문서 안내                           |
+| [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록                            |
 
 ## 검증
 
@@ -73,10 +81,10 @@ npm run test:e2e
 
 ## 구성과 운영 범위
 
-브라우저는 React 가상 그리드를 사용하고, Express API가 권한·입력·동시 수정 버전을 검사하여 SQLite에 저장합니다. 운영은 **단일 서버와 로컬 디스크**를 기준으로 합니다. HTTPS와 접근 범위, 백업 보관은 운영 환경에 맞게 구성해야 합니다.
+내부는 Express API와 **단일 서버·로컬 디스크의 SQLite**를 사용합니다. 외부는 Pages → gateway Worker → Supabase Edge 경로로 접속하고 PostgreSQL에 저장합니다. 양쪽은 공통 업무 저장 계약을 사용하며 권한·입력·동시 수정 버전을 검사합니다. 내부의 외부 통신은 GitHub만 허용하고 Hyperdrive는 사용하지 않습니다. HTTPS·접근 정책·백업은 [구성도](docs/ARCHITECTURE.md)와 운영 안내에 따라 배치합니다.
 
-Pretendard·Noto Sans KR·Noto Serif KR·Nanum Gothic Coding은 앱에서 직접 제공합니다. 맑은 고딕은 PC에 설치된 글꼴을 사용하며 없으면 Pretendard로 표시합니다. Google API나 외부 폰트 서버는 실행에 필요하지 않습니다.
+Pretendard·Noto Sans KR·Noto Serif KR·Nanum Gothic Coding은 앱에서 직접 제공합니다. 맑은 고딕은 PC에 설치된 글꼴을 사용하며 없으면 Pretendard로 표시합니다. 외부 폰트 서버에 접속하지 않습니다. 외부 사이트의 Google 로그인은 Cloudflare Access를 통해 별도로 처리합니다.
 
-계산식·함수, 셀 병합, 셀 내부 부분 서식, 외부 SSO, 일반 파일 첨부, 오프라인 편집은 제공하지 않습니다. 문서에는 PNG/JPEG/WebP 이미지를 업로드할 수 있습니다. 텍스트의 여섯 자리 이슈 번호는 현재 사내 Redmine 주소로 연결되며, 연결 규칙은 [개발 안내](docs/DEVELOPMENT.md#확장과-변경)에서 설명합니다.
+계산식·함수, 셀 병합, 셀 내부 부분 서식, 일반 파일 첨부, 오프라인 편집은 제공하지 않습니다. 문서에는 PNG/JPEG/WebP 이미지를 업로드할 수 있습니다. 텍스트의 여섯 자리 이슈 번호는 현재 사내 Redmine 주소로 연결되며, 연결 규칙은 [개발 안내](docs/DEVELOPMENT.md#확장과-변경)에서 설명합니다.
 
 의존성 고지 원문은 [THIRD_PARTY_NOTICES.txt](docs/THIRD_PARTY_NOTICES.txt)에 있습니다. 현재 저장소에는 애플리케이션 소스의 별도 오픈소스 라이선스를 지정하지 않았습니다.

@@ -1,5 +1,5 @@
 import { audit, json, parse } from "./db.mjs";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 
 // The caller commits the cells, audit snapshots and replay references together.
 // Normal saves never read old audit rows or compare snapshot contents.

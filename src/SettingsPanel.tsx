@@ -1,5 +1,6 @@
+import { useSite } from "./site-context";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Plus, Users, History, ScrollText } from "lucide-react";
+import { Plus, Users, History, ScrollText, Plug } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "./types";
 import { canManageTeam, teamRole } from "../shared/domain.js";
 import { themeVariables } from "../shared/themes.js";
@@ -13,18 +14,23 @@ import UserAccounts from "./UserAccounts";
 import HistoryCleanup from "./HistoryCleanup";
 import SystemAuditLog from "./SystemAuditLog";
 import { teamRoleNames } from "./roles";
+import TeamSyncSettings from "./TeamSyncSettings";
+import ServiceConnections from "./ServiceConnections";
+import SiteMaintenance from "./SiteMaintenance";
 
 const teamTabs = [
   ["general", "일반"],
   ["members", "구성원"],
   ["properties", "속성"],
   ["format", "기본 서식"],
+  ["sync", "동기화"],
 ] as const;
 type TeamTab = (typeof teamTabs)[number][0];
 type SettingsTarget =
   | { kind: "team"; id: string; tab: TeamTab }
   | { kind: "new-team" }
   | { kind: "history-cleanup" }
+  | { kind: "service-connections" }
   | { kind: "audit" }
   | { kind: "users" };
 
@@ -43,13 +49,14 @@ export default function SettingsPanel({
   onRefresh,
 }: {
   user: User;
-  team: Team;
+  team?: Team;
   // 보드가 이미 받아 둔 팀·사용자. 저장 뒤에는 onRefresh가 최신 값을 돌려준다.
   teams: Team[];
   users: User[];
   onClose: () => void;
   onRefresh: () => Promise<Bootstrap | void>;
 }) {
+  const site = useSite();
   const isAdmin = user.systemRole === "admin";
   // 시스템 관리자는 팀에 속하지 않은 계정과 방금 생긴 팀까지 봐야 하므로
   // 열 때마다 전체 목록을 새로 받는다. 팀장은 보드가 받아 둔 값으로 충분하다.
@@ -67,11 +74,14 @@ export default function SettingsPanel({
   const users = isAdmin ? (adminData?.users ?? []) : boardUsers;
   const [selection, setSelection] = useState<SettingsTarget>(
     () =>
-      (canManageTeam(user, team.id)
+      (team && canManageTeam(user, team.id)
         ? { kind: "team", id: team.id, tab: "general" }
-        : firstTeam(teams)) || { kind: "users" },
+        : firstTeam(teams)) || {
+        kind: site.external ? "service-connections" : "users",
+      },
   );
   const [error, setError] = useState("");
+  const [cleanupTab, setCleanupTab] = useState<"history" | "site">("history");
   const [message, setMessage] = useToast();
   const loadAdminData = () =>
     isAdmin
@@ -98,8 +108,34 @@ export default function SettingsPanel({
   useEffect(() => {
     loadAdminData().catch((e) => setError(e.message));
   }, []);
+  useEffect(() => {
+    // Bootstrap refreshes also arrive through another tab's team changes.
+    // Preserve the admin-only teams while updating shared connection signals.
+    setAdminData((current) => {
+      if (!current) return current;
+      let changed = false;
+      const teams = current.teams.map((item) => {
+        const latest = allTeams.find((candidate) => candidate.id === item.id);
+        if (
+          !latest ||
+          (item.sync?.available === latest.sync?.available &&
+            item.sync?.configured === latest.sync?.configured)
+        )
+          return item;
+        changed = true;
+        return { ...item, sync: latest.sync };
+      });
+      return changed ? { ...current, teams } : current;
+    });
+  }, [allTeams]);
   function select(next: SettingsTarget) {
-    setSelection(next);
+    setSelection(
+      next.kind === "team" &&
+        next.tab === "sync" &&
+        !teams.find((item) => item.id === next.id)?.sync?.available
+        ? { ...next, tab: "general" }
+        : next,
+    );
     setError("");
     setMessage("");
   }
@@ -107,6 +143,16 @@ export default function SettingsPanel({
     selection.kind === "team"
       ? teams.find((t) => t.id === selection.id)
       : undefined;
+  const selectedTab =
+    selection.kind === "team"
+      ? selection.tab === "sync" && !selectedTeam?.sync?.available
+        ? "general"
+        : selection.tab
+      : null;
+  useEffect(() => {
+    if (selection.kind === "team" && selection.tab !== selectedTab)
+      setSelection({ ...selection, tab: "general" });
+  }, [selection, selectedTab]);
   return (
     <Modal title="설정" wide className="settings-modal" onClose={onClose}>
       <div className="settings-layout">
@@ -145,7 +191,7 @@ export default function SettingsPanel({
                 </li>
               );
             })}
-            {isAdmin && (
+            {isAdmin && !site.external && (
               <li>
                 <button
                   type="button"
@@ -200,6 +246,20 @@ export default function SettingsPanel({
                     <span className="settings-nav-name">변경 이력 정리</span>
                   </button>
                 </li>
+                <li>
+                  <button
+                    type="button"
+                    aria-current={
+                      selection.kind === "service-connections"
+                        ? "page"
+                        : undefined
+                    }
+                    onClick={() => select({ kind: "service-connections" })}
+                  >
+                    <Plug size={15} aria-hidden="true" />
+                    <span className="settings-nav-name">서비스 연결</span>
+                  </button>
+                </li>
               </ul>
             </>
           )}
@@ -220,7 +280,7 @@ export default function SettingsPanel({
                   <h3>{selectedTeam.name}</h3>
                   <p>
                     이 팀에만 적용되는 설정입니다
-                    {selectedTeam.id === team.id ? " · 지금 보고 있는 팀" : ""}
+                    {selectedTeam.id === team?.id ? " · 지금 보고 있는 팀" : ""}
                   </p>
                 </div>
               </div>
@@ -229,25 +289,29 @@ export default function SettingsPanel({
                 role="tablist"
                 aria-label={`${selectedTeam.name} 설정`}
               >
-                {teamTabs.map(([key, label]) => (
-                  <button
-                    key={key}
-                    id={`tab-${key}`}
-                    role="tab"
-                    aria-selected={selection.tab === key}
-                    aria-controls={`panel-${key}`}
-                    onClick={() => select({ ...selection, tab: key })}
-                  >
-                    {label}
-                  </button>
-                ))}
+                {teamTabs
+                  .filter(
+                    ([key]) => key !== "sync" || selectedTeam.sync?.available,
+                  )
+                  .map(([key, label]) => (
+                    <button
+                      key={key}
+                      id={`tab-${key}`}
+                      role="tab"
+                      aria-selected={selectedTab === key}
+                      aria-controls={`panel-${key}`}
+                      onClick={() => select({ ...selection, tab: key })}
+                    >
+                      {label}
+                    </button>
+                  ))}
               </div>
               <div
                 role="tabpanel"
-                id={`panel-${selection.tab}`}
-                aria-labelledby={`tab-${selection.tab}`}
+                id={`panel-${selectedTab}`}
+                aria-labelledby={`tab-${selectedTab}`}
               >
-                {selection.tab === "general" && (
+                {selectedTab === "general" && (
                   <TeamGeneral
                     key={selectedTeam.id}
                     team={selectedTeam}
@@ -262,7 +326,7 @@ export default function SettingsPanel({
                     onMessage={setMessage}
                   />
                 )}
-                {selection.tab === "members" && (
+                {selectedTab === "members" && (
                   <TeamMembers
                     key={selectedTeam.id}
                     team={selectedTeam}
@@ -271,18 +335,27 @@ export default function SettingsPanel({
                     onMessage={setMessage}
                   />
                 )}
-                {selection.tab === "properties" && (
+                {selectedTab === "properties" && (
                   <PropertiesManager
                     key={selectedTeam.id}
                     team={selectedTeam}
                     onSaved={saved}
                   />
                 )}
-                {selection.tab === "format" && (
+                {selectedTab === "format" && (
                   <DefaultStyleManager
                     key={selectedTeam.id}
                     team={selectedTeam}
                     onSaved={saved}
+                  />
+                )}
+                {selectedTab === "sync" && (
+                  <TeamSyncSettings
+                    key={selectedTeam.id}
+                    team={selectedTeam}
+                    user={user}
+                    onSaved={saved}
+                    onMessage={setMessage}
                   />
                 )}
               </div>
@@ -315,7 +388,49 @@ export default function SettingsPanel({
             />
           )}
           {isAdmin && selection.kind === "history-cleanup" && (
-            <HistoryCleanup initialTeamId={team.id} />
+            <>
+              <div
+                className="settings-tabs"
+                role="tablist"
+                aria-label="정리 종류"
+              >
+                <button
+                  id="cleanup-history-tab"
+                  role="tab"
+                  aria-selected={cleanupTab === "history"}
+                  aria-controls="cleanup-history-panel"
+                  onClick={() => setCleanupTab("history")}
+                >
+                  변경 이력
+                </button>
+                <button
+                  id="cleanup-site-tab"
+                  role="tab"
+                  aria-selected={cleanupTab === "site"}
+                  aria-controls="cleanup-site-panel"
+                  onClick={() => setCleanupTab("site")}
+                >
+                  연도·문서·이미지
+                </button>
+              </div>
+              <div
+                role="tabpanel"
+                id={`cleanup-${cleanupTab}-panel`}
+                aria-labelledby={`cleanup-${cleanupTab}-tab`}
+              >
+                {cleanupTab === "history" ? (
+                  <HistoryCleanup initialTeamId={team?.id || ""} />
+                ) : (
+                  <SiteMaintenance
+                    teams={teams}
+                    initialTeamId={team?.id || teams[0]?.id || ""}
+                  />
+                )}
+              </div>
+            </>
+          )}
+          {isAdmin && selection.kind === "service-connections" && (
+            <ServiceConnections teams={teams} onRefresh={saved} />
           )}
           {isAdmin && selection.kind === "audit" && (
             <SystemAuditLog users={users} teams={teams} />

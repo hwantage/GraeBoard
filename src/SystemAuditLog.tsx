@@ -16,6 +16,8 @@ const actions: Record<string, string> = {
   "user-update": "사용자·권한 변경",
   profile: "프로필 변경",
   password: "비밀번호 변경",
+  "access-token-create": "접속 토큰 생성",
+  "access-token-delete": "접속 토큰 삭제",
   "team-delete": "팀 삭제",
   "history-cleanup": "변경 이력 정리",
 };
@@ -43,6 +45,9 @@ const fields: Record<string, string> = {
   updatedAt: "완료·갱신 시각",
   completed: "정리 완료",
   id: "ID",
+  prefix: "토큰 앞부분",
+  createdAt: "생성 시각",
+  expiresAt: "만료 시각",
   teamId: "팀",
   role: "권한",
   value: "내용",

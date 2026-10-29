@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:postgres": "node scripts/test-postgres.mjs",
     "test:e2e": "playwright test",
     "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
     "admin": "node --env-file-if-exists=.env scripts/admin.mjs",
@@ -19,9 +20,22 @@
     "performance": "node scripts/performance.mjs",
     "performance:stress": "node scripts/load-test.mjs",
     "performance:ui": "node scripts/ui-performance.mjs",
-    "licenses": "node scripts/licenses.mjs"
+    "licenses": "node scripts/licenses.mjs",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "build:edge": "node scripts/build-edge.mjs",
+    "build:pages": "wrangler pages functions build --outdir dist-pages --build-output-directory dist --compatibility-date 2026-10-23",
+    "sync:credential": "node --env-file-if-exists=.env scripts/sync-credential.mjs",
+    "sync:history-maintenance": "node --env-file-if-exists=.env scripts/sync-history-maintenance.mjs",
+    "sync:maintenance-recover": "node --env-file-if-exists=.env scripts/sync-maintenance-recover.mjs",
+    "sync:recover": "node --env-file-if-exists=.env scripts/sync-recover.mjs",
+    "transfer": "node --env-file-if-exists=.env scripts/transfer.mjs",
+    "backup:external": "node --env-file-if-exists=.env scripts/backup-external.mjs",
+    "restore:external": "node --env-file-if-exists=.env scripts/restore-external.mjs",
+    "performance:sync": "node scripts/sync-performance.mjs",
+    "sync:upgrade": "node scripts/sync-upgrade.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@fontsource/nanum-gothic-coding": "^5.3.0",
@@ -37,8 +51,10 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.1",
     "helmet": "^8.3.0",
+    "jose": "^6.2.13",
     "lucide-react": "^1.53.0",
     "multer": "^2.4.0",
+    "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "remark-gfm": "^4.0.1",
@@ -48,6 +64,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261026.1",
     "@playwright/test": "^1.64.0",
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
@@ -56,7 +73,8 @@
     "concurrently": "^10.0.6",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "wrangler": "^4.153.0"
   },
   "overrides": {
     "exceljs": {

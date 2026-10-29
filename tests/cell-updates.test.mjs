@@ -109,3 +109,36 @@ test("셀을 추가하지 않은 공통 서식 응답·스냅샷도 적용하며
   assert.equal(snapshot[0].formatting, formatting);
   assert.equal(mergeSnapshotCells(snapshot, original), snapshot);
 });
+
+test("task metadata deltas preserve newer cells and ignore stale task metadata", () => {
+  const initial = [task("a", 9, "newer saved cell"), task("b")];
+  const next = mergeCellUpdates(initial, {
+    cells: [update("a", 2, "stale cell")],
+    taskMetadata: {
+      a: {
+        updatedAt: "2026-02-01",
+        position: 4,
+        defaultStyle: { bold: true },
+        rowStyle: {},
+      },
+    },
+  });
+  assert.equal(next[0].position, 4);
+  assert.equal(next[0].cells.title.value, "newer saved cell");
+  assert.equal(next[0].updatedAt, "2026-02-01");
+  assert.strictEqual(next[1], initial[1]);
+  assert.strictEqual(
+    mergeCellUpdates(next, {
+      cells: [],
+      taskMetadata: {
+        a: {
+          updatedAt: "2026-01-01",
+          position: 1,
+          defaultStyle: {},
+          rowStyle: {},
+        },
+      },
+    }),
+    next,
+  );
+});

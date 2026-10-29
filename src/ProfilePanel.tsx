@@ -1,3 +1,4 @@
+import { useSite } from "./site-context";
 import { useRef, useState } from "react";
 import { api } from "./api";
 import AvatarEditor from "./AvatarEditor";
@@ -13,6 +14,7 @@ export default function ProfilePanel({
   onClose: () => void;
   onSaved: (user: User) => void;
 }) {
+  const site = useSite();
   const [profile, setProfile] = useState({
     name: user.name,
     color: user.color,
@@ -57,6 +59,7 @@ export default function ProfilePanel({
             <input
               ref={nameInput}
               value={profile.name}
+              readOnly={site.accountLinking}
               required
               maxLength={50}
               autoComplete="name"

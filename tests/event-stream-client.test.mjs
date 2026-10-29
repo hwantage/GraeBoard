@@ -10,6 +10,11 @@ const source = (name) =>
   stripTypeScriptTypes(
     readFileSync(new URL(`../src/${name}.ts`, import.meta.url), "utf8"),
     { mode: "transform" },
+  ).replace(
+    '"../shared/api-error-message.js"',
+    JSON.stringify(
+      new URL("../shared/api-error-message.js", import.meta.url).href,
+    ),
   );
 function globals(t, values) {
   for (const [key, value] of Object.entries(values)) {

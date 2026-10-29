@@ -1,0 +1,174 @@
+.settings-section.team-sync-settings {
+  max-width: none;
+}
+.team-sync-overview {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.team-sync-heading,
+.team-sync-heading h4,
+.team-sync-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.team-sync-settings h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.team-sync-heading h4 {
+  margin: 0;
+}
+.team-sync-heading svg,
+.team-sync-section-title svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.team-sync-mode {
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: #64748b;
+  background: #f0f3f5;
+  font-size: 11px;
+}
+.team-sync-mode.is-active {
+  color: #1d4ed8;
+  background: #e8f0ff;
+}
+.team-sync-mode.is-problem {
+  color: #a43e58;
+  background: #fce8ee;
+}
+.team-sync-site,
+.team-sync-secondary {
+  color: var(--muted);
+  font-size: 12px;
+}
+.team-sync-site {
+  margin: 8px 0 0;
+}
+.team-sync-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+  margin: 20px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.team-sync-facts dt {
+  color: var(--muted);
+}
+.team-sync-facts dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.team-sync-secondary {
+  display: block;
+}
+.team-sync-recovery {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 6px;
+  color: #893c52;
+  background: #fff2f5;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.team-sync-recovery p {
+  margin: 6px 0;
+}
+.team-sync-connection,
+.team-sync-actions-section,
+.team-sync-settings > .settings-table-scroll {
+  margin-top: 24px;
+}
+.team-sync-profile-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.team-sync-profile-controls > label {
+  flex: 1;
+  min-width: 0;
+}
+.team-sync-profile-controls > button {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+.team-sync-connection .field-help {
+  overflow-wrap: anywhere;
+}
+.team-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.team-sync-disconnect {
+  margin-left: auto;
+}
+.team-sync-settings > .settings-section,
+.team-sync-settings > section {
+  max-width: none;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.team-sync-settings .role-legend {
+  gap: 12px 24px;
+  margin-bottom: 16px;
+}
+.settings-content .connection-checks-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+.connection-checks-table caption {
+  padding-bottom: 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+}
+.connection-checks-table th:first-child {
+  width: 100px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.connection-checks-table th:nth-child(2) {
+  width: 60px;
+}
+.connection-checks-table td:last-child {
+  width: auto;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.connection-check-result.is-error {
+  color: #a43e58;
+  background: #fff2f5;
+}
+.connection-check-result.is-ok {
+  color: var(--accent-strong);
+}
+@media (max-width: 600px) {
+  .team-sync-overview {
+    padding: 14px;
+  }
+  .team-sync-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .team-sync-profile-controls {
+    flex-wrap: wrap;
+  }
+  .team-sync-profile-controls > label {
+    flex-basis: 100%;
+  }
+  .connection-checks-table th:first-child {
+    width: 70px;
+  }
+  .connection-checks-table th:nth-child(2) {
+    width: 44px;
+  }
+}

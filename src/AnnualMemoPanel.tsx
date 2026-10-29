@@ -28,6 +28,9 @@ export default forwardRef<
     }
   });
   const [closing, setClosing] = useState(false);
+  const [scrollRatio, setScrollRatio] = useState(0);
+  const [scrollable, setScrollable] = useState(false);
+  const draggingScroll = useRef(false);
   const panel = useRef<DocumentPanelHandle>(null);
   const scrollOnOpen = useRef(false);
   const contentId = useId();
@@ -37,6 +40,7 @@ export default forwardRef<
     persistDraft: () => panel.current?.persistDraft() ?? true,
     selectDocument: async (id) =>
       (await panel.current?.selectDocument(id)) ?? false,
+    scrollToRatio: (ratio) => panel.current?.scrollToRatio(ratio),
   }));
   function rememberOpened(next: boolean) {
     setOpened(next);
@@ -62,7 +66,12 @@ export default forwardRef<
   }
   return (
     <section className="annual-memos" aria-label="연간 업무 메모 목록">
-      <h3 className="memo-accordion-heading">
+      <div
+        className="memo-accordion-heading"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) void toggle();
+        }}
+      >
         <Button
           className="toggle-memos"
           aria-expanded={opened}
@@ -79,13 +88,79 @@ export default forwardRef<
             aria-hidden="true"
           />
         </Button>
-      </h3>
+        {opened && (
+          <div
+            className="memo-scroll-slider"
+            role="scrollbar"
+            aria-label="꼬리 메모 좌우 스크롤"
+            aria-controls={contentId}
+            aria-orientation="horizontal"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(scrollRatio * 100)}
+            aria-disabled={!scrollable}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || !scrollable) return;
+              event.preventDefault();
+              event.currentTarget.focus({ preventScroll: true });
+              event.currentTarget.setPointerCapture(event.pointerId);
+              draggingScroll.current = true;
+              const box = event.currentTarget.getBoundingClientRect();
+              panel.current?.scrollToRatio(
+                (event.clientX - box.left) / box.width,
+              );
+            }}
+            onPointerMove={(event) => {
+              if (!draggingScroll.current) return;
+              const box = event.currentTarget.getBoundingClientRect();
+              panel.current?.scrollToRatio(
+                (event.clientX - box.left) / box.width,
+              );
+            }}
+            onPointerUp={(event) => {
+              draggingScroll.current = false;
+              if (event.currentTarget.hasPointerCapture(event.pointerId))
+                event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onLostPointerCapture={() => {
+              draggingScroll.current = false;
+            }}
+            onKeyDown={(event) => {
+              const ratio =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? 1
+                    : event.key === "ArrowLeft"
+                      ? scrollRatio - 0.1
+                      : event.key === "ArrowRight"
+                        ? scrollRatio + 0.1
+                        : null;
+              if (ratio === null) return;
+              event.preventDefault();
+              event.stopPropagation();
+              panel.current?.scrollToRatio(ratio);
+            }}
+          >
+            <span
+              className="memo-scroll-thumb"
+              style={{ left: `${scrollRatio * 80}%` }}
+            />
+            <span>드래그하여 좌우 스크롤</span>
+          </div>
+        )}
+      </div>
       <div id={contentId} hidden={!opened}>
         {opened && (
           <DocumentPanel
             ref={panel}
             inline
             scrollOnOpen={scrollOnOpen.current}
+            onScrollRatioChange={(ratio, available) => {
+              setScrollRatio(ratio);
+              setScrollable(available);
+            }}
             label="연간 업무 메모"
             path={
               reportId

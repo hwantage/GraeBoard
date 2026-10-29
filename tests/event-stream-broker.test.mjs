@@ -9,6 +9,11 @@ const code = stripTypeScriptTypes(
     new URL("../src/event-stream-broker.ts", import.meta.url),
     "utf8",
   ),
+).replace(
+  '"../shared/api-error-message.js"',
+  JSON.stringify(
+    new URL("../shared/api-error-message.js", import.meta.url).href,
+  ),
 );
 const { StreamBroker } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
@@ -41,8 +46,8 @@ function fixture(t) {
     requests.push(request);
     if (responses.length) {
       closed = true;
-      const { status, data } = responses.shift();
-      return Response.json(data, { status });
+      const { status, data, headers } = responses.shift();
+      return Response.json(data, { status, headers });
     }
     const body = new ReadableStream({
       start(value) {
@@ -62,7 +67,8 @@ function fixture(t) {
   t.after(() => clients.forEach((client) => client.close()));
   return {
     requests,
-    respond: (status, data = {}) => responses.push({ status, data }),
+    respond: (status, data = {}, headers = {}) =>
+      responses.push({ status, data, headers }),
     client() {
       const messages = [];
       const client = broker.attach((message) => messages.push(message));
@@ -97,6 +103,22 @@ const cells = (id, cursor) => ({
   id,
   path: `/api/cells/events?year=2026&teamId=team&after=${cursor}`,
   lastEventId: "",
+});
+
+test("429 Retry-After delays reconnection even when another subscription joins", async (t) => {
+  const f = fixture(t),
+    a = f.client();
+  f.respond(429, {}, { "Retry-After": "20" });
+  a.update([doc(1)]);
+  await f.tick();
+  assert.equal(f.requests.length, 1);
+  await f.tick(5000);
+  a.update([doc(1), doc(2, "b")]);
+  await f.tick(14999);
+  assert.equal(f.requests.length, 1);
+  await f.tick(1);
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].streams.length, 2);
 });
 
 test("공유 브로커는 탭별 ID 충돌·중복 구독을 분리하고 마지막 구독 종료 시 연결을 닫는다", async (t) => {

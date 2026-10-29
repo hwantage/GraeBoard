@@ -141,7 +141,16 @@ export type Settings = {
   revision?: number;
   defaultStyle?: Style;
 };
-export type Team = { id: string; name: string; settings: Settings };
+export type Team = {
+  id: string;
+  name: string;
+  settings: Settings;
+  status?: "unconnected" | "importing" | "active" | "maintenance";
+  sync?: {
+    available: boolean;
+    configured: boolean;
+  };
+};
 export type FilterMode = "include" | "exclude";
 export type View = {
   year: number;
@@ -165,12 +174,10 @@ export type View = {
   knownProperties?: string[];
   columnVisibility?: Record<string, boolean>;
 };
-export type Bootstrap = {
-  user: User;
-  users: User[];
-  teams: Team[];
-  years: number[];
-};
+export type Bootstrap = import("../shared/session-contract").Bootstrap<
+  User,
+  Team
+>;
 export type Point = { taskId: string; key: string };
 export type SelectionArea = {
   anchor: Point;

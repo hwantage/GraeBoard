@@ -1,6 +1,11 @@
 # Dependencies and generated builds
 node_modules/
 dist/
+dist-worker/
+dist-pages/
+supabase/functions/graeboard/index.mjs
+supabase/.temp/
+.wrangler/
 *.tsbuildinfo
 
 /draft/
@@ -18,6 +23,7 @@ exports/
 *.db
 *.db-*
 *.sql
+!server/migrations/**/*.sql
 *.dump
 *.bak
 *.xlsx

@@ -1,0 +1,8 @@
+project_id = "graeboard"
+
+[functions.graeboard]
+# Authentication is enforced by edge/handler.mjs (gateway secret) and the
+# existing Cloudflare Access JWT + account/team checks in worker/entry.mjs.
+# Supabase Auth JWTs are not the application's login mechanism.
+verify_jwt = false
+entrypoint = "./functions/graeboard/index.mjs"

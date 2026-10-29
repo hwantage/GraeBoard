@@ -5,6 +5,8 @@ import {
   type MouseEvent,
 } from "react";
 import { busyProps } from "./busyProps";
+import { FileText } from "lucide-react";
+import { normalizeSearchQuery } from "../shared/search.js";
 import { addDays, moveCalendarRange } from "../shared/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
 import {
@@ -36,6 +38,7 @@ export default function CalendarEntries({
   readOnly,
   changingId,
   savingId,
+  searchQuery,
   onOpen,
   onContextMenu,
   onDragStart,
@@ -54,6 +57,7 @@ export default function CalendarEntries({
   readOnly: boolean;
   changingId?: string;
   savingId?: string;
+  searchQuery: string;
   onOpen: (entry: CalendarEntry) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>, entry: CalendarEntry) => void;
   onDragStart: (
@@ -138,9 +142,18 @@ export default function CalendarEntries({
     const content = (
       <span className="calendar-entry-content">
         <strong>
-          {before && <i aria-hidden="true">← </i>}
-          {item.title}
-          {after && <i aria-hidden="true"> →</i>}
+          <span>
+            {before && <i aria-hidden="true">← </i>}
+            {item.title}
+            {after && <i aria-hidden="true"> →</i>}
+          </span>
+          {(item.hasDocument ?? !!item.preview) && (
+            <FileText
+              size={12}
+              className="calendar-document-icon"
+              aria-label="문서 있음"
+            />
+          )}
         </strong>
         <span className="calendar-entry-tags">
           {!separateTags &&
@@ -173,6 +186,9 @@ export default function CalendarEntries({
         }
         className={`calendar-entry-segment${before ? " continues-before" : ""}${after ? " continues-after" : ""}${isSource ? " is-drag-source" : ""}${isPreview ? " is-drag-preview" : ""}${!isSource && changingId === item.id ? " is-changing" : ""}`}
         style={{
+          visibility: normalizeSearchQuery(item.title).includes(searchQuery)
+            ? undefined
+            : "hidden",
           ...(entryTags[0] ? calendarTagStyle(entryTags[0].color) : {}),
           gridColumn: `${first + 1} / ${last + 2}`,
           gridRow: isPreview ? undefined : lane + 1,

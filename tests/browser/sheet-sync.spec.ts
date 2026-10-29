@@ -115,6 +115,7 @@ for (const copy of [false, true]) {
       const marker = peer.locator(
         `[data-cell="${tasks[0].id}:title"] .task-document-indicator`,
       );
+      await expect(marker).toHaveClass(/\bis-empty\b/);
       for (const markdown of ["상대 브라우저에 표시할 문서", ""]) {
         const document = await api(page, documentPath);
         await api(page, documentPath, "PUT", {
@@ -122,7 +123,14 @@ for (const copy of [false, true]) {
           expectedRevision: document.revision,
           operationId: randomUUID(),
         });
-        await expect(marker).toHaveCount(markdown ? 1 : 0, { timeout: 3000 });
+        // The detail action remains in the DOM for empty documents so hover
+        // and keyboard focus can open it. Content changes its indicator state.
+        if (markdown)
+          await expect(marker).not.toHaveClass(/\bis-empty\b/, {
+            timeout: 3000,
+          });
+        else
+          await expect(marker).toHaveClass(/\bis-empty\b/, { timeout: 3000 });
       }
       if (copy)
         expect((await api(page, `/reports/${report.id}`)).revision).toBe(

@@ -1,3 +1,5 @@
+import { queryPolicyFor } from "./query-policy";
+import { joinQuery } from "./shared-query";
 import AnnualMemoPanel from "./AnnualMemoPanel";
 import type { DocumentPanelHandle } from "./DocumentPanel";
 import Calendar from "./Calendar";
@@ -43,7 +45,18 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import { api, send, ApiError, taskQuery } from "./api";
+import {
+  api,
+  send,
+  serverNow,
+  ApiError,
+  taskQuery,
+  logout,
+  refreshExternalTeam,
+} from "./api";
+import { siteFor } from "./site";
+import { SiteContext, useSite } from "./site-context";
+import TeamSyncIndicator from "./TeamSyncIndicator";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
 import { subscribeCellChanges } from "./cell-sync";
 import {
@@ -117,6 +130,7 @@ import PeriodPicker from "./PeriodPicker";
 import PresentationTools from "./PresentationTools";
 import AccountMenu from "./AccountMenu";
 import ProfilePanel from "./ProfilePanel";
+import AccessTokens from "./AccessTokens";
 import FindBar from "./FindBar";
 import type { ClipboardMatrix } from "./clipboard";
 import { STYLE_KEYS } from "../shared/compact.js";
@@ -226,12 +240,14 @@ export default function App() {
     );
   if (!boot) return <Auth onLogin={setBoot} />;
   return (
-    <Workspace
-      key={boot.user.id}
-      boot={boot}
-      onBootstrap={setBoot}
-      onLogout={() => setBoot(null)}
-    />
+    <SiteContext.Provider value={siteFor(boot)}>
+      <Workspace
+        key={boot.user.id}
+        boot={boot}
+        onBootstrap={setBoot}
+        onLogout={() => setBoot(null)}
+      />
+    </SiteContext.Provider>
   );
 }
 function Workspace({
@@ -244,6 +260,7 @@ function Workspace({
   onLogout: () => void;
 }) {
   const { user } = boot;
+  const site = useSite();
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const calendarTheme = useCalendarTheme();
   const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
@@ -279,6 +296,7 @@ function Workspace({
       repeat: boolean;
     } | null>(null),
     [error, setError] = useState(""),
+    [queryError, setQueryError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
     [undoToast, setUndoToast] = useState<
       | ({ message: string } & (
@@ -321,6 +339,43 @@ function Workspace({
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
+  const syncConfigured = !!boot.teams.find((t) => t.id === teamId)?.sync
+    ?.configured;
+  useEffect(() => {
+    const controller = new AbortController();
+    let running = false;
+    const refresh = async () => {
+      if (running || document.visibilityState === "hidden") return;
+      running = true;
+      try {
+        // Membership and connection settings may change in another tab, even
+        // while this tab is showing a calendar, document or report.
+        const before = bootJsonRef.current;
+        const latest = await api<Bootstrap>("/bootstrap", {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || before !== bootJsonRef.current) return;
+        if (JSON.stringify(latest) !== bootJsonRef.current) onBootstrap(latest);
+        const configured = !!latest.teams.find((t) => t.id === teamId)?.sync
+          ?.configured;
+        if (site.external && configured)
+          await refreshExternalTeam(teamId, configured);
+      } catch {
+        // Existing data views own their connection errors and retry UI.
+      } finally {
+        running = false;
+      }
+    };
+    // Initial task reads and mutations already pull on the external server.
+    // Only returning to an existing page needs this explicit refresh.
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [teamId, site.external, onBootstrap]);
   const [toast, setToast] = useToast();
   const filterNameInput = useRef<HTMLInputElement>(null);
   const filterSaveQueue = useRef(Promise.resolve());
@@ -379,6 +434,10 @@ function Workspace({
     view?: View;
   } | null>(null);
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
+  const teamUnavailable =
+    site.external &&
+    !!team?.status &&
+    ["unconnected", "importing", "maintenance"].includes(team.status);
   const reportDraft = useReportDraft(teamId, user.id);
   const editingReport = !!report && reportDraft.draft?.report.id === report.id;
   const addTaskLabel = report ? "사본에 업무 추가" : "업무 추가";
@@ -443,6 +502,38 @@ function Workspace({
     remoteEpoch = useRef(0),
     cellEventCursor = useRef<string | null>(null),
     viewSaver = useRef<null | (() => void)>(null);
+  const queryPolicy = queryPolicyFor(site);
+  const querySchedule = useRef({ nextPollAt: 0, retryAt: 0, failures: 0 });
+  const queryGeneration = useRef(0);
+  const refreshWork = useRef<{
+    scope: string;
+    epoch: number;
+    remote: number;
+    generation: number;
+    controller: AbortController;
+    consumers: Set<object>;
+    promise: Promise<boolean | undefined>;
+  } | null>(null);
+  function querySucceeded() {
+    querySchedule.current = {
+      nextPollAt: Date.now() + queryPolicy.pollMs,
+      retryAt: 0,
+      failures: 0,
+    };
+    // Read recovery must never dismiss a failed save or another action's error.
+    setQueryError("");
+  }
+  function queryFailed(failure: Error) {
+    const schedule = querySchedule.current;
+    schedule.failures++;
+    const delay = queryPolicy.retryDelay(
+      schedule.failures,
+      failure instanceof ApiError ? failure : {},
+    );
+    schedule.retryAt = Date.now() + delay;
+    schedule.nextPollAt = schedule.retryAt;
+    setQueryError(failure.message);
+  }
   function editTasks() {
     return reportRef.current
       ? reportDraft.ref.current?.tasks || reportRef.current.tasks
@@ -608,7 +699,10 @@ function Workspace({
     } catch {}
   }, [teamId, year, user.id]);
   useEffect(() => {
-    if (teamId && !boot.teams.some((t) => t.id === teamId)) {
+    if (
+      (!teamId && boot.teams.length) ||
+      (teamId && !boot.teams.some((t) => t.id === teamId))
+    ) {
       boardKey.current = "";
       if (viewTimer.current) clearTimeout(viewTimer.current);
       viewTimer.current = null;
@@ -673,59 +767,112 @@ function Workspace({
       .catch((e) => setError(e.message));
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
-      if (!teamId) return true;
+      if (!teamId || signal?.aborted) return true;
+      if (Date.now() < querySchedule.current.retryAt) return false;
       if (pendingRef.current || failedRef.current || editorRef.current)
         return false;
       const key = `${teamId}:${year}`,
         scope = taskScopeRef.current,
         epoch = mutationEpoch.current,
-        remote = remoteEpoch.current;
-      try {
-        const [r, latestBoot] = await Promise.all([
-          api(taskQuery(teamId, year, viewRef.current.startMonth), { signal }),
-          api<Bootstrap>("/bootstrap", { signal }),
-        ]);
-        if (
-          boardKey.current === key &&
-          taskScopeRef.current === scope &&
-          epoch === mutationEpoch.current &&
-          remote === remoteEpoch.current &&
-          !pendingRef.current &&
-          !failedRef.current &&
-          !editorRef.current
-        ) {
-          tasksRef.current = r.tasks;
-          setTasks(r.tasks);
-          if (!cellEventCursor.current) cellEventCursor.current = r.cellEventId;
-          setLoadedScope(scope);
-          // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
-          if (JSON.stringify(latestBoot) !== bootJsonRef.current)
-            onBootstrap(latestBoot);
-          return true;
+        remote = remoteEpoch.current,
+        generation = queryGeneration.current;
+      const existing = refreshWork.current;
+      if (
+        existing?.scope === scope &&
+        existing.epoch === epoch &&
+        existing.remote === remote &&
+        existing.generation === generation &&
+        !existing.controller.signal.aborted
+      )
+        return joinQuery(existing, signal);
+      const work = {
+        scope,
+        epoch,
+        remote,
+        generation,
+        controller: new AbortController(),
+        consumers: new Set<object>(),
+        promise: null! as Promise<boolean | undefined>,
+      };
+      work.promise = (async () => {
+        try {
+          // Consumers share one read until all subscriptions have left. Scope
+          // and mutation guards below prevent late responses replacing new data.
+          const [r, latestBoot] = await Promise.all([
+            api(taskQuery(teamId, year, viewRef.current.startMonth), {
+              signal: work.controller.signal,
+            }),
+            api<Bootstrap>("/bootstrap", { signal: work.controller.signal }),
+          ]);
+          if (
+            !work.controller.signal.aborted &&
+            boardKey.current === key &&
+            taskScopeRef.current === scope &&
+            generation === queryGeneration.current &&
+            epoch === mutationEpoch.current &&
+            remote === remoteEpoch.current &&
+            !pendingRef.current &&
+            !failedRef.current &&
+            !editorRef.current
+          ) {
+            tasksRef.current = r.tasks;
+            setTasks(r.tasks);
+            if (!cellEventCursor.current)
+              cellEventCursor.current = r.cellEventId;
+            setLoadedScope(scope);
+            querySucceeded();
+            // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
+            if (JSON.stringify(latestBoot) !== bootJsonRef.current)
+              onBootstrap(latestBoot);
+            return true;
+          }
+          return false;
+        } catch (e) {
+          if (
+            work.controller.signal.aborted ||
+            generation !== queryGeneration.current ||
+            boardKey.current !== key ||
+            taskScopeRef.current !== scope ||
+            epoch !== mutationEpoch.current ||
+            remote !== remoteEpoch.current
+          )
+            return;
+          if (e instanceof ApiError && [403, 404].includes(e.status)) {
+            try {
+              const latest = await api<Bootstrap>("/bootstrap", {
+                signal: work.controller.signal,
+              });
+              if (
+                !work.controller.signal.aborted &&
+                boardKey.current === key &&
+                generation === queryGeneration.current &&
+                !latest.teams.some((t) => t.id === teamId)
+              ) {
+                onBootstrap(latest);
+                return;
+              }
+            } catch {}
+          }
+          if (
+            work.controller.signal.aborted ||
+            boardKey.current !== key ||
+            taskScopeRef.current !== scope ||
+            generation !== queryGeneration.current
+          )
+            return;
+          queryFailed(e as Error);
+          return false;
         }
-        return false;
-      } catch (e) {
-        if (e instanceof ApiError && [403, 404].includes(e.status)) {
-          try {
-            const latest = await api<Bootstrap>("/bootstrap");
-            if (
-              boardKey.current === key &&
-              !latest.teams.some((t) => t.id === teamId)
-            ) {
-              onBootstrap(latest);
-              return;
-            }
-          } catch {}
-        }
-        if (boardKey.current !== key || taskScopeRef.current !== scope) return;
-        if (!signal?.aborted) setError((e as Error).message);
-        return true;
-      }
+      })().finally(() => {
+        if (refreshWork.current === work) refreshWork.current = null;
+      });
+      refreshWork.current = work;
+      return joinQuery(work, signal);
     },
-    [teamId, year],
+    [teamId, year, queryPolicy],
   );
   useResourceSync(
-    screen === "annual" && ready
+    screen === "annual" && ready && !teamUnavailable
       ? report
         ? `/reports/${report.id}`
         : `/teams/${teamId}`
@@ -793,6 +940,7 @@ function Workspace({
     setSelectedSavedFilterId("");
     setFilterNameDialog(null);
     currentFilters.current = { teamId, data: {}, selectedId: "" };
+    if (teamUnavailable) return;
     filterLoad.current = filterSaveQueue.current
       .then(() => api(`/filters?teamId=${teamId}`))
       .then((r) => {
@@ -804,16 +952,22 @@ function Workspace({
     return () => {
       cancelled = true;
     };
-  }, [teamId, user.id]);
+  }, [teamId, user.id, teamUnavailable]);
   useEffect(() => {
-    if (!teamId) return;
+    if (!teamId || teamUnavailable) return;
     const key = `${teamId}:${year}`;
     let cancelled = false;
+    let loadingTasks = false;
+    queryGeneration.current++;
+    refreshWork.current?.controller.abort();
+    refreshWork.current = null;
     boardKey.current = key;
     cellEventCursor.current = null;
     setLoadedScope("");
     setLoaded(false);
     setError("");
+    setQueryError("");
+    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
     setViewError("");
     setSelection(null);
     setReport(null);
@@ -848,30 +1002,36 @@ function Workspace({
         ) as View;
         setView(current);
         viewRef.current = current;
+        loadingTasks = true;
         const r = await api(taskQuery(teamId, year, current.startMonth));
         if (cancelled || boardKey.current !== key) return;
         setTasks(r.tasks);
         tasksRef.current = r.tasks;
         cellEventCursor.current = r.cellEventId;
         setLoadedScope(`${key}:${current.startMonth > 1 ? 2 : 1}`);
+        querySucceeded();
         setLoaded(true);
         setJump({ key: null, id: Date.now() });
         if (target || !storedLayout) changeView(current);
       })
       .catch((e) => {
         if (!cancelled && boardKey.current === key) {
-          setError(e.message);
+          if (loadingTasks) queryFailed(e);
+          else setError(e.message);
           setLoaded(true);
         }
       });
     return () => {
       cancelled = true;
+      queryGeneration.current++;
+      refreshWork.current?.controller.abort();
+      refreshWork.current = null;
       boardKey.current = "";
       if (viewTimer.current) clearTimeout(viewTimer.current);
       viewSaver.current?.();
       viewSaver.current = null;
     };
-  }, [teamId, year]);
+  }, [teamId, year, teamUnavailable]);
   useEffect(() => {
     if (
       !loaded ||
@@ -882,9 +1042,14 @@ function Workspace({
     )
       return;
     let cancelled = false;
+    queryGeneration.current++;
+    refreshWork.current?.controller.abort();
+    refreshWork.current = null;
     cellEventCursor.current = null;
     setSelection(null);
     setError("");
+    setQueryError("");
+    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
     api(taskQuery(teamId, year, scopeMonth))
       .then((r) => {
         if (cancelled || taskScopeRef.current !== taskScope) return;
@@ -892,10 +1057,10 @@ function Workspace({
         setTasks(r.tasks);
         cellEventCursor.current = r.cellEventId;
         setLoadedScope(taskScope);
+        querySucceeded();
       })
       .catch((e) => {
-        if (!cancelled && taskScopeRef.current === taskScope)
-          setError(e.message);
+        if (!cancelled && taskScopeRef.current === taskScope) queryFailed(e);
       });
     return () => {
       cancelled = true;
@@ -936,16 +1101,19 @@ function Workspace({
     const timer = setInterval(() => {
       if (
         screen === "annual" &&
+        loaded &&
         !report &&
         !pendingRef.current &&
         !failedRef.current &&
         !editorRef.current &&
+        !refreshWork.current &&
+        Date.now() >= querySchedule.current.nextPollAt &&
         document.visibilityState === "visible"
       )
         refresh();
-    }, 7000);
+    }, 1000);
     return () => clearInterval(timer);
-  }, [refresh, report, screen]);
+  }, [refresh, report, screen, loaded]);
   function flushView() {
     if (viewTimer.current) clearTimeout(viewTimer.current);
     const save = viewSaver.current;
@@ -1542,7 +1710,7 @@ function Workspace({
         if (!changes.length && !format) return;
         payload = {
           operationId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
+          createdAt: serverNow(),
           changes,
           ...(format ? { format } : {}),
         };
@@ -1891,6 +2059,13 @@ function Workspace({
       );
       const nextEntry = { ...entry, deletedVersions: updatedAt };
       if (boardKey.current !== submittedBoard) return;
+      // A subsequent edit can invalidate the list refresh. Apply the confirmed
+      // deletion now, while retaining any newer remote restoration already seen.
+      const remaining = tasksRef.current.filter(
+        (task) => !updatedAt[task.id] || task.updatedAt > updatedAt[task.id],
+      );
+      tasksRef.current = remaining;
+      setTasks(remaining);
       recordTaskResult(entry, mode, nextEntry);
       setSelection(null);
       const message =
@@ -2621,7 +2796,7 @@ function Workspace({
         payload = {
           ...payload,
           operationId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
+          createdAt: serverNow(),
           changes: payload.changes.map((c) => ({
             ...c,
             expectedVersion: tasks.get(c.taskId)?.cells[c.key]?.version ?? 0,
@@ -2669,14 +2844,25 @@ function Workspace({
           action={
             <Button
               onClick={async () => {
-                await send("/auth/logout", {});
-                onLogout();
+                if (await logout()) onLogout();
               }}
             >
               로그아웃
             </Button>
           }
         />
+        {user.systemRole === "admin" && (
+          <Button onClick={() => setPanel("settings")}>설정</Button>
+        )}
+        {panel === "settings" && (
+          <SettingsPanel
+            user={user}
+            teams={boot.teams}
+            users={boot.users}
+            onClose={() => setPanel("")}
+            onRefresh={refreshBoot}
+          />
+        )}
       </main>
     );
   async function closeDocumentBrowser() {
@@ -2943,6 +3129,14 @@ function Workspace({
           ) : (
             <SaveStatus pending={pending > 0} failed={!!failed} />
           )}
+          {teamId && syncConfigured && (
+            <TeamSyncIndicator
+              key={teamId}
+              teamId={teamId}
+              saving={pending > 0}
+              failed={!!failed}
+            />
+          )}
           {screen === "calendar" ? (
             <>
               <Select
@@ -3031,8 +3225,13 @@ function Workspace({
                 onProfile={() =>
                   void navigateWorkspace(() => setPanel("profile"))
                 }
-                onPassword={() =>
-                  void navigateWorkspace(() => setPanel("password"))
+                onAccessTokens={() =>
+                  void navigateWorkspace(() => setPanel("access-tokens"))
+                }
+                onPassword={
+                  site.external
+                    ? undefined
+                    : () => void navigateWorkspace(() => setPanel("password"))
                 }
                 logoutDisabled={
                   calendarBusy ||
@@ -3051,8 +3250,7 @@ function Workspace({
                     return;
                   await navigateWorkspace(async () => {
                     flushView();
-                    await send("/auth/logout", {});
-                    onLogout();
+                    if (await logout()) onLogout();
                   });
                 }}
               />
@@ -3456,7 +3654,7 @@ function Workspace({
                           onClick={() => renameFilter(activeSavedFilter)}
                         >
                           <Pencil size={14} />
-                          <span>이름 변경</span>
+                          <span>필터 이름 변경</span>
                         </Button>
                         <Button
                           className="active-filter-delete"
@@ -3514,14 +3712,15 @@ function Workspace({
                   </Button>
                 </div>
               )}
-              {(error || viewError) && (
+              {(error || viewError || queryError) && (
                 <div className="board-error" role="alert">
-                  <span>{error || viewError}</span>
+                  <span>{error || viewError || queryError}</span>
                   <Button
                     title="알림 닫기"
                     onClick={() => {
                       setError("");
                       setViewError("");
+                      setQueryError("");
                     }}
                   >
                     <X size={15} />
@@ -3537,7 +3736,43 @@ function Workspace({
                   <Button onClick={() => setPanel("failed")}>입력 확인</Button>
                 </div>
               )}
-              {!ready ? (
+              {teamUnavailable ? (
+                <Empty
+                  title={
+                    team.status === "unconnected"
+                      ? "팀 자료를 가져와 주세요"
+                      : "팀 연결을 확인해 주세요"
+                  }
+                  description={
+                    canManageTeam(user, team.id)
+                      ? "설정 → 시스템 → 서비스 연결에서 ‘팀 가져오기’를 실행하세요."
+                      : "팀장이 업무 자료를 가져온 뒤 사용할 수 있습니다."
+                  }
+                  action={
+                    canManageTeam(user, team.id) ? (
+                      <Button onClick={() => setPanel("settings")}>
+                        설정 열기
+                      </Button>
+                    ) : (
+                      <Button onClick={() => location.reload()}>
+                        다시 확인
+                      </Button>
+                    )
+                  }
+                />
+              ) : !ready && loaded && (error || queryError) ? (
+                <Empty
+                  title="업무를 불러오지 못했습니다"
+                  description={
+                    error ||
+                    queryError ||
+                    "서비스 연결을 확인한 뒤 다시 시도하세요."
+                  }
+                  action={
+                    <Button onClick={() => location.reload()}>다시 연결</Button>
+                  }
+                />
+              ) : !ready ? (
                 <LoadingState
                   className="board-loading"
                   label="업무를 불러오는 중"
@@ -3653,7 +3888,10 @@ function Workspace({
                 taskIds={allTasks.map((task) => task.id)}
                 active={report}
                 canEdit={canAdd}
-                disabled={!ready || !!pending || !!failed || !!editor}
+                available={!teamUnavailable}
+                disabled={
+                  teamUnavailable || !ready || !!pending || !!failed || !!editor
+                }
                 status={
                   report
                     ? reportDraft.error
@@ -3899,6 +4137,9 @@ function Workspace({
             return latest;
           }}
         />
+      )}
+      {panel === "access-tokens" && (
+        <AccessTokens onClose={() => setPanel("")} onNotify={setToast} />
       )}
       {panel === "profile" && (
         <ProfilePanel

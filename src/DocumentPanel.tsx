@@ -10,7 +10,16 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import { Plus, ChevronDown, Pencil, Trash2, FileText } from "lucide-react";
+import {
+  Plus,
+  ChevronDown,
+  Pencil,
+  Trash2,
+  FileText,
+  Maximize2,
+  Minimize2,
+  X,
+} from "lucide-react";
 import { api, send, ApiError } from "./api";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import { Button, ErrorNote } from "./components";
@@ -32,6 +41,7 @@ import "./task-document.css";
 export type { DocumentHandle } from "./DocumentEditor";
 export type DocumentPanelHandle = DocumentHandle & {
   selectDocument: (id: string) => Promise<boolean>;
+  scrollToRatio: (ratio: number) => void;
 };
 export type DocumentListResult = { documents: DocumentInfo[] } & Partial<
   Pick<DocumentSaveResult, "hasDocument" | "documentCount" | "taskUpdatedAt">
@@ -49,9 +59,14 @@ type Props = Pick<
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
   scrollOnOpen?: boolean;
+  onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
 };
-type RenameDraft = { document: DocumentInfo; title: string };
+type RenameDraft = {
+  document: DocumentInfo;
+  title: string;
+  location: "tab" | "heading";
+};
 type ListResult = DocumentListResult;
 const initialDocument: DocumentInfo = {
   id: DEFAULT_DOCUMENT_ID,
@@ -165,6 +180,26 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const documentOrder = documents.map((doc) => doc.id).join(":");
     const inlineDocumentsVisible =
       !!props.inline && documentsLoaded && documents.length > 0;
+    useEffect(() => {
+      const rail = documentScroll.current;
+      if (!props.inline || !rail) return;
+      const update = () => {
+        const max = rail.scrollWidth - rail.clientWidth;
+        latest.current.onScrollRatioChange?.(
+          max > 0 ? rail.scrollLeft / max : 0,
+          max > 1,
+        );
+      };
+      const observer = new ResizeObserver(update);
+      observer.observe(rail);
+      for (const child of rail.children) observer.observe(child);
+      rail.addEventListener("scroll", update);
+      update();
+      return () => {
+        observer.disconnect();
+        rail.removeEventListener("scroll", update);
+      };
+    }, [props.inline, documentOrder]);
     const tabReorder = useListReorder<HTMLDivElement>(
       documents.map((doc) => doc.id),
       (documentId, targetId, placement) =>
@@ -435,6 +470,13 @@ export default forwardRef<DocumentPanelHandle, Props>(
         return true;
       },
       selectDocument: select,
+      scrollToRatio: (ratio) => {
+        const rail = documentScroll.current;
+        if (rail)
+          rail.scrollLeft =
+            Math.max(0, Math.min(1, ratio)) *
+            (rail.scrollWidth - rail.clientWidth);
+      },
       flush: async () => {
         if (busy || !(await finishRename())) return false;
         for (const handle of handles.current.values())
@@ -531,12 +573,16 @@ export default forwardRef<DocumentPanelHandle, Props>(
     function focusTab(documentId: string) {
       setTabToFocus(documentId);
     }
-    async function startRename(doc: DocumentInfo) {
-      if (readOnly || busy || !(await select(doc.id))) return;
+    async function startRename(
+      doc: DocumentInfo,
+      location: RenameDraft["location"] = "tab",
+    ) {
+      if (readOnly || busy || !(await select(doc.id, location !== "heading")))
+        return;
       setMenu(null);
       setConfirmDelete(false);
       setError("");
-      changeRename({ document: doc, title: doc.title });
+      changeRename({ document: doc, title: doc.title, location });
     }
     function finishRename(): Promise<boolean> {
       if (renameSave.current) return renameSave.current;
@@ -594,13 +640,25 @@ export default forwardRef<DocumentPanelHandle, Props>(
           [selected]: (previous[selected] || 0) + 1,
         }));
         changed(result);
-        if (props.inline && !result.documents.length) setOpened(false);
-        setVisited((previous) => [
-          ...new Set([
-            ...previous.filter((docId) => docId !== selected),
-            result.documents[0]?.id || "",
-          ]),
-        ]);
+        const empty = props.inline
+          ? !result.documents.length
+          : result.documentCount === 0;
+        if (empty) {
+          setOpened(false);
+          firstReady.current = false;
+          focusEditor.current = false;
+          props.onLoadingChange(false);
+        }
+        setVisited((previous) =>
+          empty
+            ? []
+            : [
+                ...new Set([
+                  ...previous.filter((docId) => docId !== selected),
+                  ...result.documents.slice(0, 1).map((doc) => doc.id),
+                ]),
+              ],
+        );
         setSelected(result.documents[0]?.id || "");
         setConfirmDelete(false);
         // Recreating the implicit first document must not reuse the deleted editor.
@@ -610,6 +668,67 @@ export default forwardRef<DocumentPanelHandle, Props>(
       } finally {
         setBusy(false);
       }
+    }
+    function titleEditor(doc: DocumentInfo) {
+      if (!renaming) return null;
+      return (
+        <span
+          className="document-tab-title-editor"
+          id={renaming?.location === "tab" ? `${id}-${doc.id}-tab` : undefined}
+        >
+          <FileText size={14} aria-hidden="true" />
+          <span className="document-tab-title-measure" aria-hidden="true">
+            {renaming.title || "\u00a0"}
+          </span>
+          <input
+            className="document-tab-title-input"
+            ref={renameInput}
+            aria-label="문서 제목"
+            aria-invalid={!!error}
+            maxLength={MAX_DOCUMENT_TITLE_LENGTH}
+            readOnly={renamePending}
+            value={renaming.title}
+            onChange={(event) =>
+              changeRename({ ...renaming, title: event.target.value })
+            }
+            onBlur={() => {
+              if (!composingTitle.current) void finishRename();
+            }}
+            onCompositionStart={() => {
+              composingTitle.current = true;
+            }}
+            onCompositionEnd={(event) => {
+              composingTitle.current = false;
+              changeRename({
+                ...renaming,
+                title: event.currentTarget.value,
+              });
+              if (document.activeElement !== event.currentTarget)
+                void finishRename();
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (
+                event.nativeEvent.isComposing ||
+                composingTitle.current ||
+                event.keyCode === 229
+              )
+                return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void finishRename().then((saved) => {
+                  if (saved) focusTab(doc.id);
+                });
+              } else if (event.key === "Escape" && !renameSave.current) {
+                event.preventDefault();
+                changeRename(null);
+                setError("");
+                focusTab(doc.id);
+              }
+            }}
+          />
+        </span>
+      );
     }
     if (!opened && !props.inline)
       return (
@@ -628,17 +747,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
           ) : (
             !!documents.length && (
               <div className="document-empty">
-                <Grae className="document-empty-character" />
-                <h3>
-                  {props.readOnly
-                    ? "작성된 문서가 없습니다."
-                    : "업무를 문서로 정리해 보세요"}
-                </h3>
-                <p>
-                  {props.readOnly
-                    ? "문서가 작성되면 이곳에서 내용을 확인할 수 있습니다."
-                    : "Markdown 문서로 업무의 배경과 진행 내용, 결정 사항을 기록할 수 있습니다."}
-                </p>
                 {!props.readOnly && (
                   <Button
                     className="primary"
@@ -655,6 +763,17 @@ export default forwardRef<DocumentPanelHandle, Props>(
                     문서 작성
                   </Button>
                 )}
+                <Grae className="document-empty-character" />
+                <h3>
+                  {props.readOnly
+                    ? "작성된 문서가 없습니다."
+                    : "업무를 문서로 정리해 보세요"}
+                </h3>
+                <p>
+                  {props.readOnly
+                    ? "문서가 작성되면 이곳에서 내용을 확인할 수 있습니다."
+                    : "Markdown 문서로 업무의 배경과 진행 내용, 결정 사항을 기록할 수 있습니다."}
+                </p>
               </div>
             )
           )}
@@ -682,69 +801,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 data-selected={selected === doc.id || undefined}
                 {...(props.inline ? tabReorder.itemProps(doc.id) : {})}
               >
-                {renaming?.document.id === doc.id ? (
-                  <span
-                    className="document-tab-title-editor"
-                    id={`${id}-${doc.id}-tab`}
-                  >
-                    <FileText size={14} aria-hidden="true" />
-                    <span
-                      className="document-tab-title-measure"
-                      aria-hidden="true"
-                    >
-                      {renaming.title || "\u00a0"}
-                    </span>
-                    <input
-                      className="document-tab-title-input"
-                      ref={renameInput}
-                      aria-label="문서 제목"
-                      aria-invalid={!!error}
-                      maxLength={MAX_DOCUMENT_TITLE_LENGTH}
-                      readOnly={renamePending}
-                      value={renaming.title}
-                      onChange={(event) =>
-                        changeRename({ ...renaming, title: event.target.value })
-                      }
-                      onBlur={() => {
-                        if (!composingTitle.current) void finishRename();
-                      }}
-                      onCompositionStart={() => {
-                        composingTitle.current = true;
-                      }}
-                      onCompositionEnd={(event) => {
-                        composingTitle.current = false;
-                        changeRename({
-                          ...renaming,
-                          title: event.currentTarget.value,
-                        });
-                        if (document.activeElement !== event.currentTarget)
-                          void finishRename();
-                      }}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                        if (
-                          event.nativeEvent.isComposing ||
-                          composingTitle.current ||
-                          event.keyCode === 229
-                        )
-                          return;
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void finishRename().then((saved) => {
-                            if (saved) focusTab(doc.id);
-                          });
-                        } else if (
-                          event.key === "Escape" &&
-                          !renameSave.current
-                        ) {
-                          event.preventDefault();
-                          changeRename(null);
-                          setError("");
-                          focusTab(doc.id);
-                        }
-                      }}
-                    />
-                  </span>
+                {renaming?.document.id === doc.id &&
+                renaming.location === "tab" ? (
+                  titleEditor(doc)
                 ) : (
                   <button
                     type="button"
@@ -887,7 +946,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
             </Button>
           </div>
         )}
-        <ErrorNote error={error} />
+        <ErrorNote error={renaming?.location === "heading" ? "" : error} />
         {(!documentsLoaded || !documents.length) && error && (
           <Button onClick={() => setAttempt((value) => value + 1)}>
             문서 다시 불러오기
@@ -906,12 +965,29 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 tabId={`${id}-${doc.id}-tab`}
                 documentId={doc.id}
                 title={doc.title}
+                titleError={
+                  renaming?.document.id === doc.id &&
+                  renaming.location === "heading"
+                    ? error
+                    : undefined
+                }
+                headingTitle={
+                  renaming?.document.id === doc.id &&
+                  renaming.location === "heading"
+                    ? titleEditor(doc)
+                    : undefined
+                }
+                onRename={
+                  readOnly ? undefined : () => void startRename(doc, "heading")
+                }
                 widthKey={`${props.draftKey(doc.id)}:width`}
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
                 controlsTarget={selected === doc.id ? controlsTarget : null}
-                onSelect={() => void select(doc.id, false)}
+                onSelect={() => {
+                  if (selected !== doc.id) void select(doc.id, false);
+                }}
               >
                 {(pageControls) => (
                   <>
@@ -922,7 +998,8 @@ export default forwardRef<DocumentPanelHandle, Props>(
                         draftKey={props.draftKey(doc.id)}
                         label={label}
                         readOnly={readOnly}
-                        live={selected === doc.id}
+                        // Inline memo cards remain visible when another card is selected.
+                        live={!!props.inline || selected === doc.id}
                         onRemoteDocument={(result) => {
                           setDocuments((previous) =>
                             previous.map((item) =>
@@ -1006,6 +1083,9 @@ function DocumentPage({
   tabId,
   documentId,
   title,
+  headingTitle,
+  titleError,
+  onRename,
   widthKey,
   inline,
   selected,
@@ -1018,6 +1098,9 @@ function DocumentPage({
   tabId: string;
   documentId: string;
   title: string;
+  headingTitle?: ReactNode;
+  titleError?: string;
+  onRename?: () => void;
   widthKey: string;
   inline: boolean;
   selected: boolean;
@@ -1054,16 +1137,44 @@ function DocumentPage({
       }
     }
   }
+  const [fullPage, setFullPage] = useState(false);
+  const dialog = useRef<HTMLDialogElement | null>(null);
+  const expandButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    if (!inline || !element) return;
+    if (!fullPage && !element.matches(":modal")) {
+      element.open = true;
+      return;
+    }
+    element.close();
+    if (fullPage) element.showModal();
+    else element.show();
+    // show/showModal can autofocus an editor; keep the explicit toggle focused.
+    expandButton.current?.focus({ preventScroll: true });
+  }, [inline, fullPage]);
+  const Container = inline ? "dialog" : "div";
   const [cardControls, setCardControls] = useState<HTMLDivElement | null>(null);
+  const [fullPageControls, setFullPageControls] =
+    useState<HTMLDivElement | null>(null);
   return (
-    <div
-      className={`document-page ${inline ? "memo-document-card" : ""}`}
+    <Container
+      ref={(element: HTMLDialogElement | HTMLDivElement | null) => {
+        dialog.current = inline ? (element as HTMLDialogElement) : null;
+      }}
+      className={`document-page ${inline ? "memo-document-card" : ""}${fullPage ? " memo-full-page" : ""}`}
+      onCancel={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setFullPage(false);
+      }}
       id={pageId}
       style={
         inline ? ({ "--memo-width": `${width}px` } as CSSProperties) : undefined
       }
-      role="tabpanel"
-      aria-labelledby={tabId}
+      role={fullPage ? "dialog" : "tabpanel"}
+      aria-label={fullPage ? title : undefined}
+      aria-labelledby={fullPage ? undefined : tabId}
       hidden={!inline && !selected}
       data-document-id={documentId}
       data-selected={selected || undefined}
@@ -1072,21 +1183,71 @@ function DocumentPage({
       onPointerDownCapture={inline ? onSelect : undefined}
     >
       {inline && (
-        <div className="memo-document-heading">
-          <span className="memo-document-title" title={title}>
-            {title}
-          </span>
-          <div className="memo-document-controls" ref={setCardControls} />
-        </div>
+        <header className="memo-document-heading">
+          {headingTitle ||
+            (onRename ? (
+              <button
+                type="button"
+                className="memo-document-title"
+                title={title}
+                onDoubleClick={onRename}
+                onKeyDown={(event) => {
+                  if (event.key === "F2" || event.key === "Enter") {
+                    event.preventDefault();
+                    onRename();
+                  }
+                }}
+              >
+                {title}
+              </button>
+            ) : (
+              <span className="memo-document-title" title={title}>
+                {title}
+              </span>
+            ))}
+          <Button
+            ref={expandButton}
+            className="document-expand"
+            tooltip={fullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"}
+            aria-pressed={fullPage}
+            onClick={() => setFullPage((value) => !value)}
+          >
+            {fullPage ? (
+              <Minimize2 size={16} aria-hidden="true" />
+            ) : (
+              <Maximize2 size={16} aria-hidden="true" />
+            )}
+          </Button>
+          <div
+            className="memo-document-controls"
+            ref={setCardControls}
+            hidden={fullPage}
+          />
+          {fullPage && (
+            <Button
+              className="memo-document-close"
+              tooltip="닫기"
+              onClick={() => setFullPage(false)}
+            >
+              <X size={20} aria-hidden="true" />
+            </Button>
+          )}
+        </header>
       )}
       {inline ? (
         <div className="memo-document-body" data-loading={loading || undefined}>
-          {children(cardControls)}
+          <div
+            className="memo-full-page-controls"
+            ref={setFullPageControls}
+            hidden={!fullPage}
+          />
+          <ErrorNote error={titleError || ""} />
+          {children(fullPage ? fullPageControls : cardControls)}
         </div>
       ) : (
         children(controlsTarget)
       )}
-      {inline && (
+      {inline && !fullPage && (
         <div
           className="memo-width-handle"
           role="separator"
@@ -1154,6 +1315,6 @@ function DocumentPage({
           }}
         />
       )}
-    </div>
+    </Container>
   );
 }

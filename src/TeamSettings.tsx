@@ -1,8 +1,10 @@
+import { useSite } from "./site-context";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, UserMinus } from "lucide-react";
 import Select from "./Select";
 import ThemePicker from "./ThemePicker";
 import { api, send, type ApiError } from "./api";
+import AccountLinkRequests from "./AccountLinkRequests";
 import { Avatar, Button, ErrorNote } from "./components";
 import { getTheme } from "../shared/themes.js";
 import type { Team, TeamRole, ThemeId, User } from "./types";
@@ -151,6 +153,7 @@ export function TeamMembers({
   onSaved: () => Promise<void>;
   onMessage: Notify;
 }) {
+  const managed = useSite().accountLinking;
   const isAdmin = user.systemRole === "admin";
   const [members, setMembers] = useState<Member[] | null>(null),
     [people, setPeople] = useState<UserSummary[]>([]),
@@ -230,57 +233,65 @@ export function TeamMembers({
             .join("")}
         </span>
       </h4>
-      <form
-        className="member-add"
-        aria-label="구성원 추가"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!members || !candidate) return;
-          const person = byId.get(candidate);
-          save(
-            [...members, { userId: candidate, role: candidateRole }],
-            `${person?.name || "사용자"}님을 ${teamRoleNames[candidateRole]}(으)로 추가했습니다.`,
-          ).then((ok) => ok && setCandidate(""));
-        }}
-      >
-        <Select
-          aria-label="추가할 사용자"
-          value={candidate}
-          disabled={busy || !members || !candidates.length}
-          onChange={(e) => setCandidate(e.target.value)}
+      {!managed && (
+        <form
+          className="member-add"
+          aria-label="구성원 추가"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!members || !candidate) return;
+            const person = byId.get(candidate);
+            save(
+              [...members, { userId: candidate, role: candidateRole }],
+              `${person?.name || "사용자"}님을 ${teamRoleNames[candidateRole]}(으)로 추가했습니다.`,
+            ).then((ok) => ok && setCandidate(""));
+          }}
         >
-          <option value="">
-            {candidates.length
-              ? "추가할 사용자 선택"
-              : "추가할 수 있는 사용자가 없습니다"}
-          </option>
-          {candidates.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.username})
+          <Select
+            aria-label="추가할 사용자"
+            value={candidate}
+            disabled={busy || !members || !candidates.length}
+            onChange={(e) => setCandidate(e.target.value)}
+          >
+            <option value="">
+              {candidates.length
+                ? "추가할 사용자 선택"
+                : "추가할 수 있는 사용자가 없습니다"}
             </option>
-          ))}
-        </Select>
-        <Select
-          aria-label="추가할 사용자의 팀 내 권한"
-          value={candidateRole}
-          disabled={busy}
-          onChange={(e) => setCandidateRole(e.target.value as TeamRole)}
-        >
-          {teamRoleOrder.map((role) => (
-            <option key={role} value={role}>
-              {teamRoleNames[role]}
-            </option>
-          ))}
-        </Select>
-        <Button type="submit" className="primary" disabled={busy || !candidate}>
-          <Plus size={16} />
-          추가
-        </Button>
-      </form>
+            {candidates.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.username})
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="추가할 사용자의 팀 내 권한"
+            value={candidateRole}
+            disabled={busy}
+            onChange={(e) => setCandidateRole(e.target.value as TeamRole)}
+          >
+            {teamRoleOrder.map((role) => (
+              <option key={role} value={role}>
+                {teamRoleNames[role]}
+              </option>
+            ))}
+          </Select>
+          <Button
+            type="submit"
+            className="primary"
+            disabled={busy || !candidate}
+          >
+            <Plus size={16} />
+            추가
+          </Button>
+        </form>
+      )}
       <p className="field-help">
-        {isAdmin
-          ? "새 계정은 시스템 › 사용자 계정에서 먼저 만든 뒤 여기서 팀에 추가합니다."
-          : "새 계정이 필요하면 시스템 관리자에게 요청하세요."}{" "}
+        {managed
+          ? "구성원 추가·탈퇴·권한 변경은 사내에서 반영됩니다."
+          : isAdmin
+            ? "새 계정은 시스템 › 사용자 계정에서 먼저 만든 뒤 여기서 팀에 추가합니다."
+            : "새 계정이 필요하면 시스템 관리자에게 요청하세요."}{" "}
         담당자로는 팀장·팀원만 지정할 수 있습니다.
       </p>
       <dl className="role-legend" aria-label="팀 내 권한 안내">
@@ -328,7 +339,7 @@ export function TeamMembers({
                     <Select
                       aria-label={`${name} 팀 내 권한`}
                       value={role}
-                      disabled={busy}
+                      disabled={busy || managed}
                       onChange={(e) => {
                         const next = e.target.value as TeamRole;
                         save(
@@ -347,24 +358,26 @@ export function TeamMembers({
                     </Select>
                   </td>
                   <td>
-                    <Button
-                      title={`${name} 팀에서 제외`}
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          !confirm(
-                            `${name}님을 ${team.name}에서 제외하시겠습니까?\n\n기존 업무의 담당자 표시는 유지되지만, 새로 담당자로 지정할 수는 없습니다.`,
+                    {!managed && (
+                      <Button
+                        title={`${name} 팀에서 제외`}
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            !confirm(
+                              `${name}님을 ${team.name}에서 제외하시겠습니까?\n\n기존 업무의 담당자 표시는 유지되지만, 새로 담당자로 지정할 수는 없습니다.`,
+                            )
                           )
-                        )
-                          return;
-                        save(
-                          members!.filter((m) => m.userId !== userId),
-                          `${name}님을 팀에서 제외했습니다.`,
-                        );
-                      }}
-                    >
-                      <UserMinus size={15} />
-                    </Button>
+                            return;
+                          save(
+                            members!.filter((m) => m.userId !== userId),
+                            `${name}님을 팀에서 제외했습니다.`,
+                          );
+                        }}
+                      >
+                        <UserMinus size={15} />
+                      </Button>
+                    )}
                   </td>
                 </tr>
               );
@@ -386,6 +399,13 @@ export function TeamMembers({
           </tbody>
         </table>
       </div>
+      {managed && team.sync?.configured && (
+        <AccountLinkRequests
+          key={team.id}
+          teamId={team.id}
+          onMessage={onMessage}
+        />
+      )}
     </>
   );
 }

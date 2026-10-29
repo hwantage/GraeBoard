@@ -1,10 +1,13 @@
 import { registerEventRoute } from "./event-streams.mjs";
 import { hasDocumentContent } from "../shared/task-documents.js";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 
 // Publish invalidations only after successful mutations. Bodies stay on their
 // existing authorized GET routes; cells retain their compact delta stream.
-export function installResourceEvents(app, { db, documentEvents, teamAccess }) {
+export function installResourceEvents(
+  app,
+  { db, documentEvents, teamAccess, taskRequestsHandled },
+) {
   registerEventRoute(app, "/api/teams/:id/events", (req, res) =>
     documentEvents.watch(req, res, `team:${req.params.id}`, (request) =>
       teamAccess(request.user, request.params.id),
@@ -22,6 +25,11 @@ export function installResourceEvents(app, { db, documentEvents, teamAccess }) {
   app.use((req, res, next) => {
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
     const path = req.path;
+    if (
+      (path.startsWith("/api/tasks") || path === "/api/cells/batch") &&
+      taskRequestsHandled?.(req)
+    )
+      return next();
     const keys = new Set();
     const team = (id) => {
       if (typeof id === "string") keys.add(`team:${id}`);
