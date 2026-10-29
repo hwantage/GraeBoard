@@ -113,7 +113,7 @@ sequenceDiagram
 - API와 앱 내 설치 안내는 `npm run build:edge` 후 Supabase 함수를 배포합니다. `docs/CLOUD_SETUP.md`는 함수에 포함되므로 문서 파일 수정만으로 실행 중 안내가 바뀌지 않습니다.
 - Pages Functions·Service binding 변경은 Pages 재배포가 필요합니다. 운영 주소는 선택한 Production branch를 사용합니다.
 - 이전 전체 Worker 이름의 Service binding은 `worker/forwarder.mjs`로 gateway에 전달할 수 있습니다. 이전 Worker의 DB·Git·Hyperdrive binding과 Cron은 제거합니다. 전체 Worker 업무 실행용 설정·빌드·호환성 테스트는 제거했습니다.
-- Edge 전환은 DB 스키마 변경과 별개입니다. 현재 SQLite v32, PostgreSQL team v2/site v2, 외부 백업 v3를 유지합니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#12-정리중단복구)를 따릅니다.
+- Edge 전환은 DB 스키마 변경과 별개입니다. 접속 토큰 도입까지 포함한 현재 버전은 SQLite v33, PostgreSQL team v2/site v3(분리형 control v2), 외부 백업 v3입니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#12-정리중단복구)를 따릅니다.
 
 Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의 실행·요청 한도는 남습니다. 과거 workerd 성능 측정과 현재 Edge 실행 검증을 구분합니다. [실행 한도와 검증 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)
 
