@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from "jose";
 import { verifyAccess, assertOrigin } from "../worker/access.mjs";
-import { profiles } from "../worker/config.mjs";
+import { profiles } from "../shared/sync-profiles.js";
 import { createWorker } from "../worker/entry.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import {

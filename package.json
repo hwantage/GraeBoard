@@ -22,16 +22,17 @@
     "performance:ui": "node scripts/ui-performance.mjs",
     "licenses": "node scripts/licenses.mjs",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
-    "build:worker": "node scripts/build-worker.mjs",
     "build:edge": "node scripts/build-edge.mjs",
     "build:pages": "wrangler pages functions build --outdir dist-pages --build-output-directory dist --compatibility-date 2026-10-23",
     "sync:credential": "node --env-file-if-exists=.env scripts/sync-credential.mjs",
+    "sync:history-maintenance": "node --env-file-if-exists=.env scripts/sync-history-maintenance.mjs",
     "sync:maintenance-recover": "node --env-file-if-exists=.env scripts/sync-maintenance-recover.mjs",
     "sync:recover": "node --env-file-if-exists=.env scripts/sync-recover.mjs",
     "transfer": "node --env-file-if-exists=.env scripts/transfer.mjs",
     "backup:external": "node --env-file-if-exists=.env scripts/backup-external.mjs",
     "restore:external": "node --env-file-if-exists=.env scripts/restore-external.mjs",
-    "performance:sync": "node scripts/sync-performance.mjs"
+    "performance:sync": "node scripts/sync-performance.mjs",
+    "sync:upgrade": "node scripts/sync-upgrade.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

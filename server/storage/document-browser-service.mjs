@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { yearSchema } from "../validation.mjs";
+import { yearSchema } from "../../shared/validation.js";
 import {
   defaultView,
   displayValue,
@@ -8,7 +8,7 @@ import {
   propertiesFor,
 } from "../../shared/domain.js";
 export const sourceSchema = z.union([z.literal("live"), z.string().uuid()]);
-export const browserQuerySchema = z.object({
+const browserQuerySchema = z.object({
   teamId: z.string().uuid(),
   year: yearSchema,
   q: z.string().trim().max(200).default(""),

@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { yearSchema, copiedRowSchema, viewSchema } from "../validation.mjs";
+import {
+  yearSchema,
+  copiedRowSchema,
+  viewSchema,
+} from "../../shared/validation.js";
 export const createTaskSchema = z
   .object({
     teamId: z.string().uuid(),

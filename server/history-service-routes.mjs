@@ -1,18 +1,18 @@
+import {
+  HISTORY_ROUTES,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
 import { HistoryBusinessService } from "./storage/history-service.mjs";
 export function installHistoryServiceRoutes(app, { repository }) {
   const service = (req) =>
-    new HistoryBusinessService(
-      typeof repository === "function" ? repository(req.user, req) : repository,
-      req.user,
+    new HistoryBusinessService(repository, req.user, {
+      clientId: req.get("X-Client-ID")?.slice(0, 64),
+    });
+  const send = (value, res, next) => res.json(value);
+  for (const route of HISTORY_ROUTES)
+    app[route.method.toLowerCase()]("/api" + route.path, (req, res) =>
+      res
+        .status(route.status)
+        .json(callBusinessRoute(service(req), route, req)),
     );
-  const send = (value, res, next) =>
-    value?.then
-      ? value.then((result) => res.json(result), next)
-      : res.json(value);
-  app.get("/api/audit", (req, res, next) =>
-    send(service(req).query(req.query), res, next),
-  );
-  app.post("/api/audit/:id/restore", (req, res, next) =>
-    send(service(req).restore(req.params.id, req.body), res, next),
-  );
 }

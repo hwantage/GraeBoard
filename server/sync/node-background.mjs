@@ -1,5 +1,5 @@
 import { Worker } from "node:worker_threads";
-import { HttpError } from "../validation.mjs";
+import { HttpError } from "../../shared/validation.js";
 
 export function snapshotGuard(db, teamId) {
   const link = db
@@ -42,6 +42,8 @@ export function interferenceKeys(entity, key, payload) {
   const keys = new Set([JSON.stringify([entity, key])]);
   const add = (type, parts) => keys.add(JSON.stringify([type, parts]));
   if (entity === "cell") add("task", [key[0]]);
+  if (["reportTask", "reportCell"].includes(entity)) add("report", [key[0]]);
+  if (entity === "reportCell") add("reportTask", key.slice(0, 2));
   if (entity === "document") {
     if (key[0] === "task") add("task", [key[1]]);
     if (key[0] === "calendar") add("calendar", [key[1]]);
@@ -95,8 +97,10 @@ export function assertSnapshotGuard(db, teamId, expected, { touched } = {}) {
 export function createNodeBackground({
   db,
   databasePath,
-  timeoutMs = 600000,
+  timeoutMs = 300000,
+  maxWorkers = 2,
   onMutation,
+  onProgress = () => {},
   onExit = () => {},
   workerUrl = new URL("./background-worker.mjs", import.meta.url),
 } = {}) {
@@ -108,64 +112,142 @@ export function createNodeBackground({
     throw new Error(
       "Background SQLite snapshots require a file-backed database",
     );
-  const worker = new Worker(workerUrl, { workerData: { databasePath } });
-  const pending = new Map();
+  if (!Number.isInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > 2)
+    throw new Error("Synchronization workers must be between one and two");
+  const lanes = Array.from({ length: maxWorkers }, () => ({
+    worker: null,
+    queue: [],
+    active: null,
+    retiring: false,
+    workerId: null,
+  }));
+  const teams = new Map();
   let sequence = 0,
+    workerSequence = 0,
     closed = false;
-  const failAll = (error) => {
-    for (const entry of pending.values()) {
-      clearTimeout(entry.timer);
-      entry.reject(error);
-    }
-    pending.clear();
-  };
-  worker.on("message", ({ id, result, error, mutation }) => {
-    if (mutation) {
-      Promise.resolve()
-        .then(() => {
-          if (closed) throw new Error("Synchronization worker is closed");
-          if (!onMutation)
-            throw new Error("Background mutation bridge is not installed");
-          return onMutation(mutation);
-        })
-        .then(
-          (value) =>
-            worker.postMessage({ mutationId: mutation.id, result: value }),
-          (failure) =>
-            worker.postMessage({
-              mutationId: mutation.id,
-              error: { message: failure.message, code: failure.code },
-            }),
-        );
-      return;
-    }
-    const entry = pending.get(id);
-    if (!entry) return;
-    pending.delete(id);
+  const failure = (error) =>
+    Object.assign(
+      [400, 404, 409].includes(error.status)
+        ? new HttpError(error.status, error.message)
+        : new Error(error.message),
+      { code: error.code, retryAt: error.retryAt },
+    );
+  const finish = (entry, error, result) => {
+    if (!entry || entry.settled) return;
+    entry.settled = true;
     clearTimeout(entry.timer);
-    if (error)
-      entry.reject(
-        Object.assign(
-          [400, 404, 409].includes(error.status)
-            ? new HttpError(error.status, error.message)
-            : new Error(error.message),
-          { code: error.code },
-        ),
-      );
+    if (error) entry.reject(error);
     else entry.resolve(result);
-    if (!pending.size) worker.unref();
-  });
-  worker.on("error", (error) => {
-    closed = true;
-    failAll(error);
-  });
-  worker.on("exit", (code) => {
-    closed = true;
-    if (pending.size)
-      failAll(new Error(`Synchronization worker exited (${code})`));
-    onExit(code);
-  });
-  worker.unref();
+  };
+  const arm = (lane) => {
+    const entry = lane.active;
+    if (!entry || entry.settled) return;
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {
+      const error = Object.assign(
+        new Error("Synchronization calculation timed out"),
+        { code: "SYNC_TIMEOUT" },
+      );
+      finish(entry, error);
+      lane.retiring = true;
+      // Abort the active request's I/O first. A stuck CPU task is then terminated;
+      // other teams' workers and queued requests remain intact.
+      lane.worker.postMessage({ cancelId: entry.id });
+      entry.termination = setTimeout(() => void lane.worker?.terminate(), 100);
+    }, timeoutMs);
+  };
+  const startWorker = (lane) => {
+    const worker = new Worker(workerUrl, { workerData: { databasePath } });
+    const workerId = ++workerSequence;
+    lane.worker = worker;
+    lane.workerId = workerId;
+    worker.on("message", ({ id, result, error, mutation, progress }) => {
+      if (lane.worker !== worker) return;
+      const entry = lane.active;
+      if (progress) {
+        if (progress === entry?.id && !entry.settled) {
+          onProgress({
+            workerId,
+            teamId: entry.request.teamId || entry.request.config?.teamId,
+          });
+          arm(lane);
+        }
+        return;
+      }
+      if (mutation) {
+        Promise.resolve()
+          .then(() => {
+            if (closed || !entry || entry.settled)
+              throw Object.assign(
+                new Error("Synchronization request is no longer active"),
+                { code: "SYNC_INTERRUPTED" },
+              );
+            if (!onMutation)
+              throw new Error("Background mutation bridge is not installed");
+            arm(lane);
+            return onMutation(mutation, { workerId, request: entry.request });
+          })
+          .then(
+            (value) => {
+              if (lane.worker === worker) {
+                arm(lane);
+                worker.postMessage({ mutationId: mutation.id, result: value });
+              }
+            },
+            (failed) => {
+              if (lane.worker === worker)
+                worker.postMessage({
+                  mutationId: mutation.id,
+                  error: {
+                    message: failed.message,
+                    code: failed.code,
+                    status: failed.status,
+                  },
+                });
+            },
+          );
+        return;
+      }
+      if (entry?.id !== id) return;
+      finish(entry, error ? failure(error) : null, result);
+      if (!lane.retiring) {
+        lane.active = null;
+        worker.unref();
+        pump(lane);
+      }
+    });
+    worker.on("error", (error) => {
+      lane.retiring = true;
+      finish(lane.active, error);
+    });
+    worker.on("exit", (code) => {
+      if (lane.worker !== worker) return;
+      if (lane.active) clearTimeout(lane.active.termination);
+      finish(lane.active, new Error(`Synchronization worker exited (${code})`));
+      lane.active = null;
+      lane.worker = null;
+      lane.retiring = false;
+      // The host releases only this worker's leases after termination is known.
+      onExit(code, { workerId });
+      pump(lane);
+    });
+    worker.unref();
+  };
+  const pump = (lane) => {
+    if (closed || lane.retiring || lane.active || !lane.queue.length) return;
+    if (!lane.worker) startWorker(lane);
+    const entry = lane.queue.shift();
+    lane.active = entry;
+    lane.worker.ref();
+    arm(lane);
+    try {
+      lane.worker.postMessage({ id: entry.id, request: entry.request });
+    } catch (error) {
+      finish(entry, error);
+      lane.active = null;
+      pump(lane);
+    }
+  };
   return {
     get closed() {
       return closed;
@@ -173,30 +255,38 @@ export function createNodeBackground({
     compute(request) {
       if (closed)
         return Promise.reject(new Error("Synchronization worker is closed"));
-      const id = ++sequence;
-      worker.ref();
+      const teamId = request.teamId || request.config?.teamId;
+      let lane = teams.get(teamId);
+      if (!lane) {
+        lane = lanes.reduce((best, candidate) =>
+          candidate.queue.length + Number(!!candidate.active) <
+          best.queue.length + Number(!!best.active)
+            ? candidate
+            : best,
+        );
+        if (teamId) teams.set(teamId, lane);
+      }
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          // A timed-out calculation has no writes. Terminating prevents its
-          // expensive work from delaying every subsequent requested snapshot.
-          closed = true;
-          failAll(new Error("Synchronization calculation timed out"));
-          void worker.terminate();
-        }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
-        try {
-          worker.postMessage({ id, request });
-        } catch (error) {
-          pending.delete(id);
-          clearTimeout(timer);
-          reject(error);
-        }
+        lane.queue.push({
+          id: ++sequence,
+          request,
+          resolve,
+          reject,
+          settled: false,
+        });
+        pump(lane);
       });
     },
     async close() {
       closed = true;
-      failAll(new Error("Synchronization worker closed"));
-      await worker.terminate();
+      const error = new Error("Synchronization worker closed");
+      for (const lane of lanes) {
+        finish(lane.active, error);
+        for (const entry of lane.queue) finish(entry, error);
+        lane.queue.length = 0;
+      }
+      await Promise.all(lanes.map((lane) => lane.worker?.terminate()));
+      teams.clear();
     },
   };
 }

@@ -5,6 +5,7 @@ const recoveryCodes = new Set([
   "SYNC_IDENTITY",
   "SYNC_FORMAT",
   "SYNC_INTEGRITY",
+  "EXTERNAL_SYNC_CAPACITY",
 ]);
 export class ProtocolError extends Error {
   constructor(code, message, options) {
@@ -13,6 +14,17 @@ export class ProtocolError extends Error {
     this.code = code;
   }
 }
+export class SyncInterruption extends Error {
+  constructor(
+    message = "동기화가 중단되었습니다. 미전송 변경은 보존되어 있습니다.",
+  ) {
+    super(message);
+    this.name = "SyncInterruption";
+    this.code = "SYNC_INTERRUPTED";
+    this.status = 409;
+  }
+}
+export const isSyncInterruption = (error) => error?.code === "SYNC_INTERRUPTED";
 export const isRecoveryError = (error) => recoveryCodes.has(error?.code);
 export const normalizeSyncError = (error) =>
   error == null

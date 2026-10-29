@@ -1,5 +1,8 @@
 import {
   taskCreationFields,
+  duplicatedTaskCells,
+  pastedTaskCells,
+  blankInsertionFormatting,
   validatePersonalView,
   planTaskReorder,
 } from "./task-command-rules.mjs";
@@ -17,28 +20,18 @@ import {
 } from "../db.mjs";
 import {
   requireThat,
-  HttpError,
   validateCellValue,
-  validCellKey,
   yearSchema,
   periodScopeSchema,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import {
   canEdit,
   canContribute,
-  isAssignable,
-  propertiesFor,
-  emptyPropertyValue,
   periodYears,
   normalizeView,
   viewLayout,
-  fieldsFor,
-  groupValue,
 } from "../../shared/domain.js";
-import {
-  copyRowFormatting,
-  taskAuditSnapshot,
-} from "../../shared/formatting.js";
+import { taskAuditSnapshot } from "../../shared/formatting.js";
 import { retentionView } from "../sync/visibility.mjs";
 import { withTaskDocuments } from "../task-documents.mjs";
 import { validateDocumentImages } from "../document-images.mjs";
@@ -77,8 +70,6 @@ export class SqliteTaskCommands {
     const blankInsertion = d.insertAt && blankCreation;
     // 신규 업무는 팀원·상태를 포함해 속성을 비운다. 명시한 값은 fields로 받는다.
     const fields = taskCreationFields(team.settings, user, d);
-    const defined = (key) =>
-      propertiesFor(team.settings).some((p) => p.id === key);
     let cells = {},
       defaultStyle = team.settings.defaultStyle,
       rowStyle = {},
@@ -90,23 +81,15 @@ export class SqliteTaskCommands {
         400,
         "같은 팀의 업무만 복제할 수 있습니다.",
       );
-      ({ cells, defaultStyle, rowStyle = {} } = copyRowFormatting(source));
+      ({
+        cells,
+        defaultStyle,
+        rowStyle = {},
+      } = duplicatedTaskCells(source, team.settings, d, fields));
       documents = retentionView(db, source.teamId).documents(
         withTaskDocuments(db, [source])[0].documents,
         ["task", source.id],
       );
-      // 복제본은 등록자가 담당자가 되고 지원자는 비운다.
-      for (const k of new Set([
-        ...["owner", "supporters"].filter(defined),
-        ...Object.keys(d.fields),
-      ]))
-        cells = {
-          ...cells,
-          [k]: {
-            value: k === "supporters" ? [] : (fields[k] ?? ""),
-            style: cells[k]?.style || {},
-          },
-        };
     }
     if (d.copiedRow) {
       cells = { ...d.copiedRow.cells };
@@ -115,30 +98,9 @@ export class SqliteTaskCommands {
       documents = d.copiedRow.documents;
       for (const document of documents || [])
         validateDocumentImages(document.markdown, d.teamId, documentImagesDir);
-      // 복사한 뒤 보관된 속성·선택값이나 팀을 떠난 담당자처럼 지금은 고를 수
-      // 없는 값만 빼고 나머지 행 내용은 붙여넣는다.
-      const archived = new Set(
-        propertiesFor(team.settings, true)
-          .filter((p) => p.archived)
-          .map((p) => p.id),
+      cells = pastedTaskCells(d.copiedRow, team.settings, (key, value) =>
+        validateCellValue(db, d.teamId, key, value, team.settings),
       );
-      for (const [key, c] of Object.entries(cells)) {
-        if (archived.has(key)) {
-          delete cells[key];
-          continue;
-        }
-        requireThat(
-          validCellKey(key, team.settings),
-          400,
-          "지원하지 않는 셀입니다.",
-        );
-        try {
-          validateCellValue(db, d.teamId, key, c.value, team.settings);
-        } catch (e) {
-          if (!(e instanceof HttpError) || e.status !== 400) throw e;
-          delete cells[key];
-        }
-      }
     }
     for (const [k, v] of Object.entries(fields))
       validateCellValue(db, d.teamId, k, v, team.settings);
@@ -162,23 +124,11 @@ export class SqliteTaskCommands {
         if (blankInsertion) {
           // 빈 행 삽입은 기준 행의 서식만 상속한다. 값은 새 업무 기본값이나
           // 묶음에서 전달한 값을 유지하고, 숨긴 열·빈 주차 서식도 보존한다.
-          const copied = copyRowFormatting(target);
-          defaultStyle = copied.defaultStyle;
-          rowStyle = copied.rowStyle || {};
-          const properties = new Map(
-            propertiesFor(team.settings).map((p) => [p.id, p]),
-          );
-          for (const [key, c] of Object.entries(copied.cells)) {
-            if (
-              !Object.keys(c.style).length ||
-              !validCellKey(key, team.settings)
-            )
-              continue;
-            cells[key] = {
-              value: fields[key] ?? emptyPropertyValue(properties.get(key)),
-              style: c.style,
-            };
-          }
+          ({ cells, defaultStyle, rowStyle } = blankInsertionFormatting(
+            target,
+            team.settings,
+            fields,
+          ));
         }
         position = insertionPosition(
           db,
@@ -240,7 +190,14 @@ export class SqliteTaskCommands {
       ).run(
         json(
           d.years
-            ? retentionView(db, task.teamId).preserveYears(task.years, d.years)
+            ? [
+                ...d.years,
+                ...task.years.filter(
+                  (year) =>
+                    visibility.years.has(String(year)) &&
+                    !d.years.includes(year),
+                ),
+              ]
             : task.years,
         ),
         d.position ?? task.position,

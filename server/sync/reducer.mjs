@@ -1,4 +1,5 @@
 import { diffChars } from "diff";
+import { forkRecordMap } from "../../shared/record-map.mjs";
 import {
   canonical,
   digest,
@@ -6,10 +7,13 @@ import {
   entityId,
   validateOperation,
   validateEntityPayload,
+  protocolVersion,
 } from "./protocol.mjs";
 
-function edits(base, value) {
-  const chunks = diffChars(base, value, { maxEditLength: 20000 }); // deterministic work budget, never wall-clock timeout
+function edits(base, value, reducer = 1) {
+  const chunks = diffChars(base, value, {
+    maxEditLength: reducer === 2 ? 2000 : 20000,
+  }); // deterministic work budget, never wall-clock timeout
   if (!chunks) return null;
   let offset = 0,
     pending = null;
@@ -30,11 +34,12 @@ function edits(base, value) {
   if (pending) changes.push(pending);
   return changes;
 }
-export function mergeMarkdown(base, current, desired) {
+export function mergeMarkdown(base, current, desired, reducer = 1) {
+  if (![1, 2].includes(reducer)) throw new Error("Unsupported reducer version");
   if (current === desired || desired === base) return current;
   if (current === base) return desired;
-  const a = edits(base, current),
-    b = edits(base, desired);
+  const a = edits(base, current, reducer),
+    b = edits(base, desired, reducer);
   if (!a || !b) return null;
   const result = [...a];
   for (const edit of b) {
@@ -62,6 +67,28 @@ export function mergeMarkdown(base, current, desired) {
     offset = edit.end;
   }
   return text + base.slice(offset);
+}
+function mergeReportTask(base, current, desired) {
+  const result = { ...current };
+  for (const key of new Set([
+    ...Object.keys(base || {}),
+    ...Object.keys(desired || {}),
+  ])) {
+    const before = base?.[key],
+      value = current?.[key],
+      next = desired?.[key];
+    if (equal(value, next) || equal(next, before)) continue;
+    if (equal(value, before)) {
+      if (next === undefined) delete result[key];
+      else result[key] = next;
+    } else if (
+      key === "updatedAt" &&
+      [before, value, next].every((item) => typeof item === "string")
+    ) {
+      result[key] = value > next ? value : next;
+    } else return null;
+  }
+  return result;
 }
 export function validateSnapshot(state, identity) {
   const plain = (value) =>
@@ -91,6 +118,7 @@ export function validateSnapshot(state, identity) {
       record.key,
       record.payload,
       identity.teamId,
+      protocolVersion(state),
     );
   }
   for (const [id, conflict] of Object.entries(state.conflicts)) {
@@ -119,6 +147,7 @@ export function validateSnapshot(state, identity) {
         record.key,
         record.payload,
         identity.teamId,
+        conflict.operation.protocol,
       );
     }
     if (conflict.resolution && !state.receipts[conflict.resolution])
@@ -149,10 +178,19 @@ function validateState(entities) {
   const alive = (entity, key) => !!entities[entityId(entity, key)];
   const unique = new Set();
   for (const e of Object.values(entities)) {
+    if (e.entity === "protocol" && e.deleted) return "Deleted protocol marker";
     if (e.deleted) continue;
     const p = e.payload;
     if (e.entity === "cell" && !alive("task", [e.key[0]]))
       return "Missing parent task";
+    if (e.entity === "reportTask" && !entities[entityId("report", [e.key[0]])])
+      return "Missing parent report";
+    if (
+      e.entity === "reportCell" &&
+      !entities[entityId("reportTask", e.key.slice(0, 2))]
+    )
+      return "Missing parent report task";
+    if (e.entity === "protocol" && e.deleted) return "Deleted protocol marker";
     if (e.entity === "document") {
       const parent =
         e.key[0] === "task"
@@ -196,7 +234,7 @@ export function reduce(
   identity = { teamId: op.teamId, repoId: op.repoId },
   context = null,
 ) {
-  validateOperation(op, identity);
+  validateOperation(op, identity, state);
   const payloadHash = digest(op),
     existing = state.receipts[op.opId];
   if (existing) {
@@ -232,8 +270,18 @@ export function reduce(
           ? entities[entityId("task", [c.key[0]])]
           : c.entity === "document" && ["task", "calendar"].includes(c.key[0])
             ? entities[entityId(c.key[0], [c.key[1]])]
-            : null;
-      if (parent?.deleted && c.action !== "delete") {
+            : op.protocol === 2 && c.entity === "reportTask"
+              ? entities[entityId("report", [c.key[0]])]
+              : op.protocol === 2 && c.entity === "reportCell"
+                ? entities[entityId("reportTask", c.key.slice(0, 2))]
+                : null;
+      if (
+        (parent?.deleted ||
+          (op.protocol === 2 &&
+            c.entity === "reportCell" &&
+            entities[entityId("report", [c.key[0]])]?.deleted)) &&
+        c.action !== "delete"
+      ) {
         reason = "Parent task deleted";
         break;
       }
@@ -298,7 +346,18 @@ export function reduce(
               field === "markdown" &&
               [base, value, desired].every((x) => typeof x === "string")
             ) {
-              const merged = mergeMarkdown(base, value, desired);
+              const merged = mergeMarkdown(base, value, desired, op.reducer);
+              if (merged !== null) {
+                payload[field] = merged;
+                continue;
+              }
+            }
+            if (
+              op.reducer === 2 &&
+              c.entity === "reportTask" &&
+              field === "data"
+            ) {
+              const merged = mergeReportTask(base, value, desired);
               if (merged !== null) {
                 payload[field] = merged;
                 continue;
@@ -437,6 +496,14 @@ function validateIncrement(entities, undo, context) {
     const p = e.payload;
     if (e.entity === "cell" && !entities[entityId("task", [e.key[0]])])
       return "Missing parent task";
+    if (e.entity === "reportTask" && !entities[entityId("report", [e.key[0]])])
+      return "Missing parent report";
+    if (
+      e.entity === "reportCell" &&
+      !entities[entityId("reportTask", e.key.slice(0, 2))]
+    )
+      return "Missing parent report task";
+    if (e.entity === "protocol" && e.deleted) return "Deleted protocol marker";
     if (e.entity === "document") {
       const parent =
         e.key[0] === "task"
@@ -495,10 +562,12 @@ function validateIncrement(entities, undo, context) {
 // One working copy for an ordered replay. Each command retains atomic rollback,
 // receipts and conflicts; only the temporary projection mutates. This avoids
 // copying and validating hundreds of thousands of unrelated cells per keystroke.
-export function reduceMany(state, operations, identity) {
+export function reduceMany(state, operations, identity, options = {}) {
   let result = {
     entities: { ...state.entities },
-    receipts: { ...state.receipts },
+    receipts: options.persistentReceipts
+      ? forkRecordMap(state.receipts)
+      : { ...state.receipts },
     conflicts: { ...state.conflicts },
   };
   const context = validationContext(result.entities);

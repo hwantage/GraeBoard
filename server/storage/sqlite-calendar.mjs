@@ -7,7 +7,7 @@ import {
   transaction,
   usersWithTeams,
 } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { todayKey } from "../../shared/domain.js";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import {
@@ -1041,9 +1041,13 @@ export class SqliteCalendarRepository {
   constructor(options) {
     const { operations, ...ports } = calendarOperations(options);
     this.db = options.db;
+    this.managedTeam = options.managedTeam;
     this.committedResources = [];
     this.operations = operations;
     Object.assign(this, ports);
+  }
+  authorizeCommand(operation, user, params) {
+    if (operation === "saveRule") this.managedTeam(user, params.teamId);
   }
   execute(operation, user, request = {}) {
     requireThat(

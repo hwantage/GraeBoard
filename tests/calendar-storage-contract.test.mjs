@@ -1,3 +1,4 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -20,9 +21,9 @@ import {
 import { calendarWeek } from "../shared/calendar.js";
 import { unpack } from "../shared/compact.js";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar-service.mjs";
-import { PostgresCalendarRepository } from "../server/storage/postgres-calendar.mjs";
+import { PostgresCalendarRepository } from "../worker/storage/postgres-calendar.mjs";
 import { RequestContext } from "../worker/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
@@ -517,7 +518,7 @@ test("M6 calendar service uses SQLite repository with atomic audit/outbox, repla
   assert.equal(forUser(f.user).getPreferences({}) instanceof Promise, false);
 });
 
-test("M6 same calendar service and Node HTTP routes accept a real PostgreSQL repository", async (t) => {
+test("M6 same calendar service and external HTTP routes accept a real PostgreSQL repository", async (t) => {
   const bin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
   if (!existsSync(join(bin, "postgres"))) {
     t.skip("TEST_PG_BIN required");
@@ -676,19 +677,16 @@ test("M6 same calendar service and Node HTTP routes accept a real PostgreSQL rep
         [canonical([id])],
       ),
   });
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-      calendarRepository: makeRepository,
+  const app = createExternalRouteApp({
+      env: env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => makeRepository(user).context,
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
-    await app.locals.sync.close();
-    app.locals.cellEvents.close();
-    app.locals.documentEvents.close();
+    await app.close();
   });
   const response = await fetch(
     `http://127.0.0.1:${server.address().port}/api/calendar/entries/${result.entry.id}`,
@@ -696,8 +694,15 @@ test("M6 same calendar service and Node HTTP routes accept a real PostgreSQL rep
   );
   assert.equal(response.status, 200);
   assert.equal(unpack(await response.json()).title, "Edited");
-  const notifications = [];
-  app.locals.documentEvents.invalidate = (...args) => notifications.push(args);
+  const eventCount = async () =>
+    Number(
+      (
+        await pool.query(
+          "SELECT COUNT(*) n FROM graeboard.site_events WHERE kind='changed'",
+        )
+      ).rows[0].n,
+    );
+  const beforeEvents = await eventCount();
   const patch = (body) =>
     fetch(
       `http://127.0.0.1:${server.address().port}/api/calendar/entries/${result.entry.id}`,
@@ -713,38 +718,43 @@ test("M6 same calendar service and Node HTTP routes accept a real PostgreSQL rep
       },
     );
   const updated = await patch({
-    title: "Node HTTP PG edit",
+    title: "external HTTP PG edit",
     expectedTitle: "Edited",
   });
   assert.equal(updated.status, 200, await updated.text());
-  assert.deepEqual(
-    notifications.map((item) => item[0]),
-    ["team:" + f.teamId],
-  );
+  assert.deepEqual(await eventCount(), beforeEvents + 1);
   assert.equal(
-    (await patch({ title: "Node HTTP PG edit", expectedTitle: "Edited" }))
+    (await patch({ title: "external HTTP PG edit", expectedTitle: "Edited" }))
       .status,
     200,
   );
   assert.equal(
-    notifications.length,
-    1,
+    await eventCount(),
+    beforeEvents + 1,
     "lost HTTP response retry emits no duplicate event",
   );
   fail = true;
   assert.equal(
-    (await patch({ title: "HTTP failure", expectedTitle: "Node HTTP PG edit" }))
-      .status,
+    (
+      await patch({
+        title: "HTTP failure",
+        expectedTitle: "external HTTP PG edit",
+      })
+    ).status,
     500,
   );
-  assert.equal(notifications.length, 1, "failure emits no precommit event");
+  assert.equal(
+    await eventCount(),
+    beforeEvents + 1,
+    "failure emits no precommit event",
+  );
   assert.equal(
     (await forUser(f.user).getEntry({ params: { id: result.entry.id } })).title,
-    "Node HTTP PG edit",
+    "external HTTP PG edit",
   );
   assert.equal(
     f.db.prepare("SELECT COUNT(*) n FROM calendar_entries").get().n,
     0,
-    "Node HTTP route read injected PG, not local SQLite",
+    "external HTTP route read injected PG, not local SQLite",
   );
 });

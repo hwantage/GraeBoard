@@ -1,8 +1,15 @@
-import { HttpError } from "../validation.mjs";
-import { LINK_METADATA_COLUMNS } from "../storage/team-store.mjs";
+import {
+  captureDetectors,
+  defineCaptureTriggers,
+} from "./capture-triggers.mjs";
+import { splitReportRecord } from "./versions.mjs";
+import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
+import { HttpError } from "../../shared/validation.js";
+import { LINK_METADATA_COLUMNS } from "../../shared/sync-team-store.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeepStrictEqual } from "node:util";
 import { readEntity } from "./entities.mjs";
-import { makeOperation } from "./operations.mjs";
+import { makeOperation, entityReferences } from "./operations.mjs";
 import {
   entityId,
   initialToken,
@@ -10,61 +17,19 @@ import {
   validateOperation,
 } from "./protocol.mjs";
 
-// TEMP triggers are a transaction-local change detector, never the replication
-// protocol. The first domain before-image and final after-image coalesce normal
-// DELETE/INSERT implementations into one immutable user operation.
-const detectors = {
-  teams: (r) => ["team", [], r.id],
-  tasks: (r) => ["task", [r.id], r.team_id],
-  cells: (r) => ["cell", [r.task_id, r.key], null, "tasks", r.task_id],
-  task_documents: (r) => [
-    "document",
-    ["task", r.task_id, r.id],
-    null,
-    "tasks",
-    r.task_id,
-  ],
-  annual_memos: (r) => [
-    "document",
-    ["annual", String(r.year), r.id],
-    r.team_id,
-  ],
-  reports: (r) => ["report", [r.id], r.team_id],
-  report_documents: (r) => [
-    "document",
-    ["report", r.report_id, r.task_id, r.document_id],
-    null,
-    "reports",
-    r.report_id,
-  ],
-  report_memos: (r) => [
-    "document",
-    ["reportMemo", r.report_id, r.id],
-    null,
-    "reports",
-    r.report_id,
-  ],
-  calendar_entries: (r) => ["calendar", [r.id], r.team_id],
-  calendar_entry_tags: (r) => [
-    "calendar",
-    [r.entry_id],
-    null,
-    "calendar_entries",
-    r.entry_id,
-  ],
-  calendar_tags: (r) => ["tag", [r.id], r.team_id],
-  calendar_rules: (r) => ["rule", [], r.team_id],
-  calendar_weekly_items: (r) => [
-    "weekly",
-    [r.user_id, r.week_start, r.task_id],
-    r.team_id,
-  ],
-  saved_filters: (r) =>
-    r.scope === "team" ? ["filter", [r.id], r.team_id] : null,
-  format_rules: (r) => ["formats", [], r.team_id],
-};
 export function installCapture(db, { onPending = () => {} } = {}) {
   const requestActor = new AsyncLocalStorage();
+  const receiptCapacity = createReceiptCapacityGuard(db);
+  db.exec(
+    "CREATE TEMP TABLE IF NOT EXISTS sync_capture_teams(team_id TEXT PRIMARY KEY)",
+  );
+  const syncTeams = () => {
+    db.exec("DELETE FROM sync_capture_teams");
+    const insert = db.prepare(
+      "INSERT INTO sync_capture_teams(team_id) VALUES(?)",
+    );
+    for (const teamId of links.keys()) insert.run(teamId);
+  };
   const triggerDefinitions = new Map();
   let triggersEnabled = false,
     failure = null;
@@ -85,7 +50,12 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     restores = new Map(),
     order = 0,
     checkedTeams = new Set(),
-    people = null;
+    people = null,
+    styles = new Map(),
+    beforeReports = new Map(),
+    afterReports = new Map(),
+    hintedCells = new Set(),
+    afterImages = new Map();
   // Keep prepared reads local to capture. The shared entity reader still defines
   // payloads, while each keystroke avoids preparing the same SQLite programs.
   const statements = new Map(),
@@ -96,23 +66,25 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       },
     };
   const prepare = (sql) => reader.prepare(sql);
+  const rememberChange = (teamId, opId, index, change, position) => {
+    const key = teamId + entityId(change.entity, change.key);
+    const value = {
+      opId,
+      version: `${opId}:${index}`,
+      generation: change.generation,
+      order: position,
+    };
+    prior.set(key, value);
+    if (
+      change.action === "restore" &&
+      ["task", "calendar"].includes(change.entity)
+    )
+      restores.set(key, { ...value, generation: value.version });
+  };
   const rememberPending = (operation) => {
     const position = ++order;
-    for (const [index, change] of operation.changes.entries()) {
-      const key = operation.teamId + entityId(change.entity, change.key);
-      const value = {
-        opId: operation.opId,
-        version: `${operation.opId}:${index}`,
-        generation: change.generation,
-        order: position,
-      };
-      prior.set(key, value);
-      if (
-        change.action === "restore" &&
-        ["task", "calendar"].includes(change.entity)
-      )
-        restores.set(key, { ...value, generation: value.version });
-    }
+    for (const [index, change] of operation.changes.entries())
+      rememberChange(operation.teamId, operation.opId, index, change, position);
   };
   const parentRestore = (teamId, entity, key) => {
     if (entity === "cell")
@@ -122,41 +94,82 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     return undefined;
   };
   const refresh = () => {
+    receiptCapacity.clear();
     links = new Map(
       prepare(
         `SELECT ${LINK_METADATA_COLUMNS} FROM team_sync_links WHERE mode<>'disconnected'`,
       )
         .all()
-        .map((l) => [l.team_id, l]),
+        .map((l) => {
+          const marker = prepare(
+            "SELECT payload FROM sync_entities WHERE team_id=? AND entity='protocol' AND entity_key='[]'",
+          ).get(l.team_id);
+          return [
+            l.team_id,
+            { ...l, protocol: marker ? JSON.parse(marker.payload).version : 1 },
+          ];
+        }),
     );
     prior = new Map();
     restores = new Map();
     order = 0;
     people = null;
-    for (const r of prepare(
-      "SELECT payload FROM sync_outbox WHERE status<>'acknowledged' ORDER BY local_seq",
-    ).all())
-      rememberPending(JSON.parse(r.payload));
+    // JSON is decoded by SQLite; document bodies never cross into the refresh cache.
+    let lastSequence;
+    for (const row of prepare(`SELECT o.team_id,o.op_id,o.local_seq,j.key AS change_index,
+      json_extract(j.value,'$.entity') AS entity,json_extract(j.value,'$.key') AS entity_key,
+      json_extract(j.value,'$.generation') AS generation,json_extract(j.value,'$.action') AS action
+      FROM sync_outbox o,json_each(o.payload,'$.changes') j
+      WHERE o.status<>'acknowledged' ORDER BY o.local_seq,CAST(j.key AS INTEGER)`).all()) {
+      if (lastSequence !== row.local_seq) {
+        order++;
+        lastSequence = row.local_seq;
+      }
+      rememberChange(
+        row.team_id,
+        row.op_id,
+        row.change_index,
+        {
+          entity: row.entity,
+          key: JSON.parse(row.entity_key),
+          generation: row.generation,
+          action: row.action,
+        },
+        order,
+      );
+    }
+    syncTeams();
     reconcileTriggers();
   };
   refresh();
-  const record = (teamId, entity, key) => {
+  const record = (teamId, entity, key, beforeImage = undefined) => {
     if (!active || suppressed || !links.has(teamId)) return;
     const mapKey = teamId + entityId(entity, key);
     if (before.has(mapKey)) return;
     if (!checkedTeams.has(teamId)) {
-      if (
-        prepare(
-          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND kind<>'backup' AND phase NOT IN ('complete','cancelled')",
-        ).get(teamId)
-      )
+      const boundary = prepare(`SELECT
+        EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
+        EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=? AND lease_owner LIKE 'upgrade:%' AND lease_until>?) AS upgrading`).get(
+        teamId,
+        teamId,
+        Date.now(),
+      );
+      if (boundary.maintenance || boundary.upgrading)
         throw (failure = new HttpError(
           409,
-          "팀 데이터 정리가 진행 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
+          boundary.upgrading
+            ? "동기화 형식 전환 중입니다. 입력을 보존하고 잠시 후 저장하세요."
+            : "팀 데이터 정리가 진행 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
         ));
       checkedTeams.add(teamId);
     }
-    const value = readEntity(reader, teamId, entity, key);
+    const value =
+      beforeImage !== undefined
+        ? beforeImage
+        : readEntity(reader, teamId, entity, key, {
+            styles,
+            reports: beforeReports,
+          });
     if (value) {
       let pending = prior.get(mapKey);
       const restored = parentRestore(teamId, entity, key);
@@ -178,11 +191,16 @@ export function installCapture(db, { onPending = () => {} } = {}) {
   db.function("graeboard_sync_before", (table, data) => {
     if (!active || suppressed || !links.size) return 0;
     const row = JSON.parse(data);
+    if (
+      table === "cells" &&
+      hintedCells.has(entityId("cell", [row.task_id, row.key]))
+    )
+      return 0;
     if (table === "audit") {
       if (row.team_id) actors.set(row.team_id, row.actor_id);
       return 0;
     }
-    const target = detectors[table]?.(row);
+    const target = captureDetectors[table]?.(row);
     if (!target) return 0;
     const [entity, key, direct, owner, ownerId] = target,
       teamId =
@@ -219,57 +237,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     db.exec(
       `CREATE TEMP TRIGGER IF NOT EXISTS sync_people_${event} AFTER ${event} ON main.users BEGIN SELECT graeboard_sync_people_changed(); END`,
     );
-  for (const table of [...Object.keys(detectors), "audit"]) {
-    const columns = db
-      .prepare(`PRAGMA table_info(${table})`)
-      .all()
-      .filter((c) => c.type !== "BLOB")
-      .map((c) => c.name);
-    for (const event of ["INSERT", "UPDATE", "DELETE"]) {
-      const prefix = event === "DELETE" ? "OLD" : "NEW";
-      // Only identity/context columns are passed, not body/settings/password data.
-      const keep = columns.filter((c) =>
-        [
-          "id",
-          "team_id",
-          "task_id",
-          "key",
-          "year",
-          "report_id",
-          "document_id",
-          "entry_id",
-          "user_id",
-          "week_start",
-          "scope",
-          "actor_id",
-        ].includes(c),
-      );
-      // Cell writes touch the task's local updated_at on every save. It is not
-      // shared task content and must not trigger two complete task/style reads.
-      const taskColumns = [
-          "id",
-          "team_id",
-          "years",
-          "position",
-          "deleted_at",
-          "default_style",
-          "row_style",
-          "created_by",
-          "created_at",
-        ],
-        taskUpdate = table === "tasks" && event === "UPDATE",
-        detectedEvent = taskUpdate
-          ? `UPDATE OF ${taskColumns.join(",")}`
-          : event,
-        when = taskUpdate
-          ? ` WHEN ${taskColumns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}`
-          : "";
-      triggerDefinitions.set(
-        `sync_detect_${table}_${event}`,
-        `CREATE TEMP TRIGGER IF NOT EXISTS sync_detect_${table}_${event} BEFORE ${detectedEvent} ON main.${table}${when} BEGIN SELECT graeboard_sync_before('${table}',json_object(${keep.map((c) => `'${c}',${prefix}.${c}`).join(",")})); END`,
-      );
-    }
-  }
+  defineCaptureTriggers(db, triggerDefinitions);
   reconcileTriggers();
   const capture = {
     get failure() {
@@ -283,9 +251,46 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       active = links.size > 0;
       if (!active) return;
       before = new Map();
+      styles = new Map();
+      beforeReports = new Map();
+      afterReports = new Map();
+      hintedCells = new Set();
+      afterImages = new Map();
       actors = new Map();
       created = [];
       checkedTeams = new Set();
+    },
+    cellSaving(teamId, taskId, cellKey, cell) {
+      if (!active || suppressed || !links.has(teamId)) return;
+      const key = [taskId, cellKey];
+      // saveBatch already read this immutable before-image under the same
+      // writer transaction. Other SQL paths continue through the TEMP trigger.
+      record(
+        teamId,
+        "cell",
+        key,
+        cell
+          ? {
+              entity: "cell",
+              key,
+              payload: { value: cell.value, style: cell.style },
+              deleted: false,
+            }
+          : null,
+      );
+      hintedCells.add(entityId("cell", key));
+    },
+    cellsSaved(teamId, cells) {
+      if (!active || suppressed || !links.has(teamId)) return;
+      for (const cell of cells) {
+        const key = [cell.taskId, cell.key];
+        afterImages.set(teamId + entityId("cell", key), {
+          entity: "cell",
+          key,
+          payload: { value: cell.value, style: cell.style },
+          deleted: false,
+        });
+      }
     },
     flush() {
       if (suppressed || !before.size) return;
@@ -296,25 +301,170 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         const group = teams.get(item.teamId),
           key = entityId(item.entity, item.key);
         group.before[key] = item.value;
-        group.after[key] = readEntity(
-          reader,
-          item.teamId,
-          item.entity,
-          item.key,
-        );
+        group.after[key] =
+          afterImages.get(item.teamId + key) ??
+          readEntity(reader, item.teamId, item.entity, item.key, {
+            styles,
+            reports: afterReports,
+          });
       }
       for (const [teamId, group] of teams) {
         const link = links.get(teamId);
+        let referenceRecords = Object.values(group.after);
+        if (link.protocol === 2) {
+          referenceRecords = [];
+          const beforeExpanded = {},
+            afterExpanded = {};
+          for (const key of new Set([
+            ...Object.keys(group.before),
+            ...Object.keys(group.after),
+          ])) {
+            const previous = group.before[key],
+              next = group.after[key];
+            if ((previous || next)?.entity !== "report") {
+              beforeExpanded[key] = previous;
+              afterExpanded[key] = next;
+              referenceRecords.push(next);
+              continue;
+            }
+            const old = new Map(
+                splitReportRecord(previous).map((record) => [
+                  entityId(record.entity, record.key),
+                  record,
+                ]),
+              ),
+              current = new Map(
+                splitReportRecord(next).map((record) => [
+                  entityId(record.entity, record.key),
+                  record,
+                ]),
+              );
+            // Only changed copy rows need canonical metadata and dependencies.
+            // Keep display references from the complete after-image as before.
+            // Structural equality is a conservative fast
+            // filter; makeOperation still owns the final canonical comparison.
+            const candidates = [...new Set([...old.keys(), ...current.keys()])];
+            referenceRecords.push(...candidates.map((id) => current.get(id)));
+            const changed = candidates.filter((id) => {
+              const before = old.get(id),
+                after = current.get(id);
+              return (
+                !before ||
+                !after ||
+                before.deleted !== after.deleted ||
+                !isDeepStrictEqual(before.payload, after.payload)
+              );
+            });
+            const storedRows = new Map(
+              prepare(
+                "SELECT s.entity,s.entity_key,s.generation,s.version,s.deleted,s.payload FROM json_each(?) AS wanted CROSS JOIN sync_entities s ON s.team_id=? AND s.entity=json_extract(wanted.value,'$[0]') AND s.entity_key=json_extract(wanted.value,'$[1]')",
+              )
+                .all(
+                  JSON.stringify(
+                    changed.map((id) => {
+                      const record = old.get(id) || current.get(id);
+                      return [record.entity, canonical(record.key)];
+                    }),
+                  ),
+                  teamId,
+                )
+                .map((row) => [
+                  entityId(row.entity, JSON.parse(row.entity_key)),
+                  row,
+                ]),
+            );
+            for (const id of changed) {
+              const sample = old.get(id) || current.get(id),
+                pending = prior.get(teamId + id),
+                stored = storedRows.get(id);
+              let base =
+                old.get(id) ||
+                (stored?.deleted
+                  ? {
+                      ...sample,
+                      payload: JSON.parse(stored.payload),
+                      deleted: true,
+                    }
+                  : null);
+              if (!base && pending) {
+                const row = prepare(
+                    "SELECT payload FROM sync_outbox WHERE op_id=? AND team_id=?",
+                  ).get(pending.opId, teamId),
+                  change =
+                    row &&
+                    JSON.parse(row.payload).changes.find(
+                      (change) => entityId(change.entity, change.key) === id,
+                    );
+                if (change?.action === "delete")
+                  base = {
+                    ...sample,
+                    payload: change.desired || change.base,
+                    deleted: true,
+                  };
+              }
+              if (base)
+                base = {
+                  ...base,
+                  generation:
+                    pending?.generation ||
+                    stored?.generation ||
+                    initialToken(link.bootstrap_id, sample.entity, sample.key),
+                  version:
+                    pending?.version ||
+                    stored?.version ||
+                    initialToken(link.bootstrap_id, sample.entity, sample.key),
+                };
+              beforeExpanded[id] = base;
+              afterExpanded[id] = current.get(id) || null;
+            }
+          }
+          group.before = beforeExpanded;
+          group.after = afterExpanded;
+        }
         const actorRef =
           requestActor.getStore() ||
           actors.get(teamId) ||
           `system:${link.installation_id}`;
         // Referenced people are display-only and are captured in the same command
         // before content can reference a newly registered local person.
-        people ||= prepare("SELECT id,name FROM users").all();
-        const content = JSON.stringify(group.after);
-        for (const person of people)
-          if (person.id === actorRef || content.includes(person.id)) {
+        people ||= new Map(
+          prepare("SELECT id,name FROM users")
+            .all()
+            .map((person) => [person.id, person]),
+        );
+        const references = new Set([actorRef]);
+        const collect = (value) => {
+          if (typeof value === "string") {
+            references.add(value);
+            for (const match of value.matchAll(
+              /[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}/gi,
+            ))
+              references.add(match[0]);
+          } else if (Array.isArray(value)) value.forEach(collect);
+          else if (value && typeof value === "object")
+            Object.values(value).forEach(collect);
+        };
+        for (const record of referenceRecords) {
+          if (!record) continue;
+          for (const [entity, key] of entityReferences(
+            record.entity,
+            record.key,
+            record.payload,
+          ))
+            if (entity === "person") references.add(key[0]);
+          // Member cells and snapshot/filter data can contain historical display IDs.
+          // Markdown and style payloads cannot contain person references.
+          if (record.entity === "cell") collect(record.payload.value);
+          if (record.entity === "reportCell")
+            collect(record.payload.data.value);
+          if (record.entity === "reportTask") collect(record.payload.data);
+          if (["report", "filter"].includes(record.entity))
+            collect(record.payload.data);
+          if (record.entity === "rule") collect(record.payload.values);
+        }
+        for (const id of references) {
+          const person = people.get(id);
+          if (person) {
             const key = entityId("person", [person.id]);
             if (
               !prior.has(teamId + key) &&
@@ -331,6 +481,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
               };
             }
           }
+        }
         const operation = makeOperation({
           link,
           actorRef,
@@ -338,24 +489,30 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           getPrior: (key) => prior.get(teamId + key)?.opId,
         });
         if (operation) {
+          let serialized;
           try {
-            validateOperation(operation, { teamId, repoId: link.repo_id });
+            validateOperation(
+              operation,
+              { teamId, repoId: link.repo_id },
+              undefined,
+              {
+                onSerialized(value) {
+                  serialized = value;
+                },
+              },
+            );
           } catch (error) {
             throw new HttpError(
               400,
               "동기화할 자료 형식을 확인하세요. " + error.message,
             );
           }
+          receiptCapacity.check(link, operation);
           // Hashing and Git preparation happen in the background. The immutable
           // JSON and ID are already durable with the business transaction.
           prepare(
             "INSERT INTO sync_outbox(op_id,team_id,payload,status,created_at) VALUES(?,?,?,'pending',?)",
-          ).run(
-            operation.opId,
-            teamId,
-            canonical(operation),
-            operation.createdAt,
-          );
+          ).run(operation.opId, teamId, serialized, operation.createdAt);
           created.push(operation);
         }
       }
@@ -391,8 +548,16 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       const link = prepare(
         `SELECT ${LINK_METADATA_COLUMNS} FROM team_sync_links WHERE team_id=?`,
       ).get(teamId);
-      if (link && link.mode !== "disconnected") links.set(teamId, link);
-      else links.delete(teamId);
+      if (link && link.mode !== "disconnected") {
+        const marker = prepare(
+          "SELECT payload FROM sync_entities WHERE team_id=? AND entity='protocol' AND entity_key='[]'",
+        ).get(teamId);
+        links.set(teamId, {
+          ...link,
+          protocol: marker ? JSON.parse(marker.payload).version : 1,
+        });
+      } else links.delete(teamId);
+      syncTeams();
       const ids = new Set(opIds);
       for (const map of [prior, restores])
         for (const [key, value] of map)

@@ -1,10 +1,21 @@
+import { receiptCapacity } from "../shared/sync-capacity.mjs";
+import {
+  SYSTEM_AUDIT_ROUTES,
+  matchBusinessRoute,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
 import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
-import { PostgresAdminHistoryRepository } from "../server/storage/postgres-admin-history.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
-import { canonical, entityId, digest } from "../server/sync/protocol.mjs";
+import { PostgresAdminHistoryRepository } from "./storage/postgres-admin-history.mjs";
+import { PostgresDatabase } from "./storage/postgres.mjs";
+import {
+  canonical,
+  entityId,
+  digest,
+  protocolVersion,
+} from "../server/sync/protocol.mjs";
 import { reduce, reduceMany } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
-import { profiles, profileFor, siteTeamId } from "./config.mjs";
+import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
 import {
   controlTransaction,
   databaseFor,
@@ -16,7 +27,7 @@ import { R2ImageStore } from "./images.mjs";
 import { beginProfileSwitch } from "./profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "./sync.mjs";
 
-export async function serviceStatus(ctx, { check = false } = {}) {
+async function serviceStatus(ctx, { check = false } = {}) {
   ctx.admin();
   const installed = profiles(ctx.env),
     checks = [];
@@ -88,7 +99,7 @@ export async function serviceStatus(ctx, { check = false } = {}) {
     guideUrl: "/api/admin/service-connections/guide",
   };
 }
-export async function syncStatus(ctx, teamId) {
+async function syncStatus(ctx, teamId) {
   const team = await ctx.team(teamId, { allowUnready: true });
   if (!team.profile_id)
     return {
@@ -105,7 +116,7 @@ export async function syncStatus(ctx, teamId) {
         connection: await tx.sync.readLink(),
         counts: (
           await tx.query(
-            "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged') pending,(SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1 AND resolution IS NULL) conflicts,(SELECT MAX(created_at) FROM sync_outbox WHERE team_id=$1) last_saved",
+            "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged') pending,(SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1 AND resolution IS NULL) conflicts,(SELECT COUNT(*) FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND deleted=0) protocol_markers,(SELECT created_at FROM sync_outbox WHERE team_id=$1 ORDER BY local_seq DESC LIMIT 1) last_saved,2+(SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0) FROM sync_receipts WHERE team_id=$1) receipt_bytes",
             [teamId],
           )
         ).rows[0],
@@ -124,7 +135,10 @@ export async function syncStatus(ctx, teamId) {
     pending: Number(snapshot.counts.pending),
     conflicts: Number(snapshot.counts.conflicts),
     lastLocalSavedAt: snapshot.counts.last_saved,
+    receiptCapacity: receiptCapacity(Number(snapshot.counts.receipt_bytes)),
     canonicalHead: link?.canonical_head,
+    canonicalHash: link?.canonical_hash,
+    protocol: Number(snapshot.counts.protocol_markers) ? 2 : 1,
     lastReceivedAt: link?.last_received_at,
     lastPublishedAt: link?.last_published_at,
     lastError: link?.last_error,
@@ -304,7 +318,7 @@ export async function adminRoutes(
     };
   }
   const sync =
-    /^\/teams\/([^/]+)\/sync(?:\/(check|enable|pause|resume|run|pull|refresh|disconnect|checkpoint|conflicts)(?:\/([^/]+)(?:\/(resolve))?)?)?$/.exec(
+    /^\/teams\/([^/]+)\/sync(?:\/(check|enable|pause|resume|run|pull|refresh|disconnect|checkpoint|upgrade|conflicts)(?:\/([^/]+)(?:\/(resolve))?)?)?$/.exec(
       path,
     );
   if (sync) {
@@ -439,8 +453,8 @@ export async function adminRoutes(
           });
         }
         const op = {
-          protocol: 1,
-          reducer: 1,
+          protocol: protocolVersion(state),
+          reducer: protocolVersion(state),
           repoId: link.repo_id,
           teamId,
           opId: crypto.randomUUID(),
@@ -473,6 +487,31 @@ export async function adminRoutes(
       if (["pull", "refresh"].includes(sync[2])) await refreshTeam(ctx.env, p);
       else await runTeam(ctx.env, p, { receiveOnly: body.receiveOnly });
       return syncStatus(ctx, teamId);
+    }
+    if (sync[2] === "upgrade") {
+      assert(method === "POST", 405, "POST 요청으로 실행하세요.");
+      assert(
+        ctx.user.systemRole === "admin",
+        403,
+        "시스템 관리자 권한이 필요합니다.",
+      );
+      const { serviceFor } = await import("./sync.mjs");
+      await db.withTeamTransaction(
+        teamId,
+        async (tx) => {
+          const jobs = await tx.query(
+            "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
+            [teamId],
+          );
+          assert(!jobs.rows.length, 409, "정리·백업 작업을 먼저 완료하세요.");
+        },
+        { readOnly: true },
+      );
+      return serviceFor(ctx.env, p, await db.readLink(teamId)).upgrade({
+        expectedHead: body.expectedHead,
+        expectedHash: body.expectedHash,
+        peersStopped: body.peersStopped,
+      });
     }
     if (sync[2] === "checkpoint") {
       const { serviceFor } = await import("./sync.mjs"),
@@ -529,8 +568,12 @@ export async function adminRoutes(
     new PostgresAdminHistoryRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/admin/audit" && method === "GET") return history.audit(query);
-  const audit = /^\/admin\/audit\/([^/]+)$/.exec(path);
-  if (audit && method === "GET") return history.auditEntry(audit[1]);
+  const auditRoute = matchBusinessRoute(SYSTEM_AUDIT_ROUTES, path, method);
+  if (auditRoute)
+    return callBusinessRoute(history, auditRoute.route, {
+      params: auditRoute.params,
+      body,
+      query,
+    });
   return undefined;
 }

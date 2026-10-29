@@ -8,6 +8,7 @@ import {
   emptyState,
   entityId,
   stateHash,
+  validateOperation,
 } from "../server/sync/protocol.mjs";
 import {
   reduce,
@@ -139,6 +140,126 @@ test("large user commands remain atomic and batch envelopes stay within receiver
     /envelope byte budget/,
   );
   assert.equal(first.changes[0].desired.name, "한".repeat(1000));
+});
+test("operation limits reject an oversized whole command without mutating the caller's draft", () => {
+  const op = operation("oversized", [
+    {
+      entity: "cell",
+      key: ["task", "description"],
+      generation: "g",
+      action: "create",
+      baseVersion: null,
+      base: null,
+      desired: { value: "한".repeat(1400000), style: {} },
+      fields: ["value", "style"],
+    },
+  ]);
+  const before = digest(op);
+  assert.throws(
+    () => validateOperation(op, identity),
+    (error) =>
+      error.status === 400 &&
+      error.code === "SYNC_OPERATION_CAPACITY" &&
+      /4MiB/.test(error.message),
+  );
+  assert.equal(digest(op), before);
+});
+test("validated serialization is exactly the unchanged canonical command and is never exposed on validation failure", () => {
+  const op = operation("serialized", [change({ name: '한글🙂\nquoted"' })]);
+  const before = structuredClone(op),
+    emitted = [];
+  assert.strictEqual(
+    validateOperation(op, identity, undefined, {
+      onSerialized: (value) => emitted.push(value),
+    }),
+    op,
+  );
+  assert.deepEqual(emitted, [canonical(op)]);
+  assert.deepEqual(op, before);
+  const oversized = operation("oversized-serialized", [
+    change({ name: "x".repeat(4 * 1024 * 1024) }),
+  ]);
+  for (const invalid of [{ ...op, protocol: 99 }, oversized])
+    assert.throws(() =>
+      validateOperation(invalid, identity, undefined, {
+        onSerialized: (value) => emitted.push(value),
+      }),
+    );
+  assert.equal(emitted.length, 1);
+});
+
+test("resolution references and version tokens reject invalid types, lengths and foreign membership before reduction", () => {
+  const valid = operation("validation", [change({ name: "Name" })]);
+  for (const resolves of [
+    "other",
+    null,
+    {},
+    [1],
+    [""],
+    ["x".repeat(201)],
+    ["same", "same"],
+    ["validation"],
+  ])
+    assert.throws(
+      () => validateOperation({ ...valid, resolves }, identity),
+      /resolution references/,
+    );
+  for (const baseVersion of [undefined, false, 1, {}, [], "", "x".repeat(513)])
+    assert.throws(
+      () =>
+        validateOperation(
+          { ...valid, changes: [{ ...valid.changes[0], baseVersion }] },
+          identity,
+        ),
+      /Invalid entity change/,
+    );
+  for (const baseVersion of [null, "previous:0"])
+    assert.equal(
+      validateOperation(
+        { ...valid, changes: [{ ...valid.changes[0], baseVersion }] },
+        identity,
+      ).changes[0].baseVersion,
+      baseVersion,
+    );
+  const first = reduce(
+    emptyState(),
+    operation("original", [change({ name: "original" })]),
+  ).state;
+  const state = reduce(
+    first,
+    operation("loser", [change({ name: "conflict" })]),
+  ).state;
+  const before = stateHash(state);
+  assert.throws(
+    () => reduce(state, { ...valid, resolves: ["missing"] }),
+    /missing or foreign conflict/,
+  );
+  assert.throws(
+    () =>
+      validateOperation({ ...valid, resolves: ["loser"] }, identity, {
+        ...state,
+        conflicts: {
+          loser: {
+            ...state.conflicts.loser,
+            operation: {
+              ...state.conflicts.loser.operation,
+              teamId: "foreign",
+            },
+          },
+        },
+      }),
+    /missing or foreign conflict/,
+  );
+  assert.equal(stateHash(state), before);
+  const resolution = operation("resolution", []);
+  resolution.resolves = ["loser"];
+  const resolved = reduce(state, resolution).state;
+  assert.equal(resolved.conflicts.loser.resolution, "resolution");
+  assert.equal(
+    stateHash(reduce(resolved, resolution).state),
+    stateHash(resolved),
+    "already resolved receipt replay remains idempotent",
+  );
 });
 test("T2/T3/T5 immutable receipts preserve conflicts and dependent final drafts", () => {
   let state = reduce(

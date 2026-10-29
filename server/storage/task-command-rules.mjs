@@ -1,4 +1,9 @@
-import { requireThat } from "../validation.mjs";
+import { copyRowFormatting } from "../../shared/formatting.js";
+import {
+  requireThat,
+  HttpError,
+  validCellKey,
+} from "../../shared/validation.js";
 import {
   propertiesFor,
   fieldsFor,
@@ -27,6 +32,61 @@ export function taskCreationFields(settings, user, request) {
         ),
     ),
     ...request.fields,
+  };
+}
+// Storage adapters resolve permissions/images; these plans have no DB or I/O.
+export function duplicatedTaskCells(source, settings, request, fields) {
+  const copied = copyRowFormatting(source);
+  for (const key of new Set([
+    ...["owner", "supporters"].filter((key) =>
+      propertiesFor(settings).some((property) => property.id === key),
+    ),
+    ...Object.keys(request.fields),
+  ]))
+    copied.cells[key] = {
+      value: key === "supporters" ? [] : (fields[key] ?? ""),
+      style: copied.cells[key]?.style || {},
+    };
+  return copied;
+}
+export function pastedTaskCells(copiedRow, settings, validate) {
+  const cells = { ...copiedRow.cells };
+  const archived = new Set(
+    propertiesFor(settings, true)
+      .filter((property) => property.archived)
+      .map((property) => property.id),
+  );
+  for (const [key, cell] of Object.entries(cells)) {
+    if (archived.has(key)) {
+      delete cells[key];
+      continue;
+    }
+    requireThat(validCellKey(key, settings), 400, "지원하지 않는 셀입니다.");
+    try {
+      validate(key, cell.value);
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 400) throw error;
+      delete cells[key];
+    }
+  }
+  return cells;
+}
+export function blankInsertionFormatting(target, settings, fields) {
+  const copied = copyRowFormatting(target),
+    cells = {};
+  const properties = new Map(
+    propertiesFor(settings).map((property) => [property.id, property]),
+  );
+  for (const [key, cell] of Object.entries(copied.cells))
+    if (Object.keys(cell.style).length && validCellKey(key, settings))
+      cells[key] = {
+        value: fields[key] ?? emptyPropertyValue(properties.get(key)),
+        style: cell.style,
+      };
+  return {
+    cells,
+    defaultStyle: copied.defaultStyle,
+    rowStyle: copied.rowStyle || {},
   };
 }
 export function validatePersonalView(data, settings) {

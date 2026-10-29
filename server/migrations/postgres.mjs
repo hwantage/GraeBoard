@@ -1,4 +1,4 @@
-import { postgresHistoryVersion } from "../storage/schema-version.mjs";
+import { postgresHistoryVersion } from "../../shared/postgres-schema-version.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
@@ -32,6 +32,26 @@ export const siteKeyMigration = (() => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 })();
+export const teamMaintenanceMigration = (() => {
+  const sql = readFileSync(
+    new URL("./postgres/002-team-maintenance.sql", import.meta.url),
+    "utf8",
+  );
+  return {
+    version: 2,
+    sql,
+    checksum: createHash("sha256").update(sql).digest("hex"),
+  };
+})();
+async function applyTeamMaintenance(client, from) {
+  if (from >= 2) return;
+  await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+  await client.query(teamMaintenanceMigration.sql);
+  await client.query("INSERT INTO schema_migrations VALUES('team',2,$1,$2)", [
+    teamMaintenanceMigration.checksum,
+    new Date().toISOString(),
+  ]);
+}
 
 export async function inspectPostgres(client, scope) {
   if (!postgresMigrations[scope])
@@ -58,7 +78,10 @@ export async function inspectPostgres(client, scope) {
       `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
     )
   ).rows;
-  return postgresHistoryVersion(rows, scope, { allowPreviousSite: true });
+  return postgresHistoryVersion(rows, scope, {
+    allowPreviousSite: true,
+    allowPreviousTeam: true,
+  });
 }
 
 export async function migratePostgres(
@@ -99,6 +122,21 @@ export async function migratePostgres(
         ).rows[0];
         if (identity?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
+      }
+      if (scope === "team" && from < 2) {
+        await applyTeamMaintenance(client, from);
+        await afterDdl?.(client);
+        await client.query(dryRun ? "ROLLBACK" : "COMMIT");
+        begun = false;
+        return {
+          engine: "postgres",
+          scope,
+          from,
+          to: 2,
+          applied: !dryRun,
+          dryRun,
+          checksum: teamMaintenanceMigration.checksum,
+        };
       }
       await client.query("ROLLBACK");
       begun = false;
@@ -141,21 +179,25 @@ export async function migratePostgres(
         [teamId],
       );
     }
-    await afterDdl?.(client);
     await client.query(
       "INSERT INTO schema_migrations(scope,version,checksum,applied_at) VALUES($1,$2,$3,$4)",
       [scope, migration.version, migration.checksum, new Date().toISOString()],
     );
+    if (scope === "team") await applyTeamMaintenance(client, 1);
+    await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     begun = false;
     return {
       engine: "postgres",
       scope,
       from: 0,
-      to: migration.version,
+      to: scope === "team" ? 2 : migration.version,
       applied: !dryRun,
       dryRun,
-      checksum: migration.checksum,
+      checksum:
+        scope === "team"
+          ? teamMaintenanceMigration.checksum
+          : migration.checksum,
     };
   } catch (error) {
     if (begun) await client.query("ROLLBACK").catch(() => {});
@@ -211,14 +253,20 @@ async function migrateSite(
           [siteKeyMigration.checksum, new Date().toISOString()],
         );
       }
+      if (teamVersion < 2) {
+        await applyTeamMaintenance(client, teamVersion);
+        await afterDdl?.(client);
+      }
       await client.query(dryRun ? "ROLLBACK" : "COMMIT");
       return {
         engine: "postgres",
         scope: "site",
         from,
         to: 2,
-        applied: from < 2 && !dryRun,
+        applied: (from < 2 || teamVersion < 2) && !dryRun,
         dryRun,
+        teamFrom: teamVersion,
+        teamTo: 2,
       };
     }
     if (teamVersion) {
@@ -268,6 +316,7 @@ async function migrateSite(
       siteKeyMigration.checksum,
       new Date().toISOString(),
     ]);
+    await applyTeamMaintenance(client, teamVersion || 1);
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     return {
@@ -277,6 +326,8 @@ async function migrateSite(
       to: 2,
       applied: !dryRun,
       dryRun,
+      teamFrom: teamVersion,
+      teamTo: 2,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

@@ -1,6 +1,12 @@
-import { canonical, digest, stateHash } from "./protocol.mjs";
+import {
+  canonical,
+  digest,
+  stateHash,
+  protocolVersion,
+  supportedVersion,
+} from "./protocol.mjs";
 import { validateSnapshot } from "./reducer.mjs";
-import { prepareStatePatch } from "../storage/team-store.mjs";
+import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
 import { ProtocolError, protocolValidation } from "./errors.mjs";
 
 export const snapshotCounts = (state) => ({
@@ -46,6 +52,11 @@ export async function loadCheckpoint(service, link, pinnedHead) {
   if (events.length !== 1) invalid("Invalid checkpoint event count");
   const envelope = json(await transport.readFile(oid, events[0].path));
   if (envelope.kind !== "checkpoint") return link;
+  if (envelope.protocol > service.maxProtocol)
+    throw new ProtocolError(
+      "SYNC_VERSION",
+      "Unsupported checkpoint protocol; canonical cursor is unchanged",
+    );
   // Older checkpoints lacked a complete manifest and remain replayable, but
   // cannot serve as a shortcut for a new site's trust boundary.
   if (envelope.checkpointVersion === undefined) return link;
@@ -65,8 +76,6 @@ export async function loadCheckpoint(service, link, pinnedHead) {
     invalid("Incomplete checkpoint manifest");
   const manifest = json(await transport.readFile(oid, "manifest.json"));
   for (const [field, value] of Object.entries({
-    protocol: 1,
-    reducer: 1,
     teamId: identity.teamId,
     repoId: identity.repoId,
     bootstrapId: link.bootstrap_id,
@@ -77,6 +86,12 @@ export async function loadCheckpoint(service, link, pinnedHead) {
         "Checkpoint repository identity mismatch",
       );
   }
+  if (
+    manifest.protocol !== 1 ||
+    manifest.reducer !== 1 ||
+    !supportedVersion(envelope.protocol, envelope.reducer)
+  )
+    throw new ProtocolError("SYNC_VERSION", "Unsupported checkpoint protocol");
   if (
     envelope.parent !== parent ||
     envelope.atCommit !== parent ||
@@ -93,11 +108,13 @@ export async function loadCheckpoint(service, link, pinnedHead) {
     validateSnapshot(bundle.state, identity),
   );
   if (
+    protocolVersion(state) !== envelope.protocol ||
     bundle.atCommit !== parent ||
     stateHash(state) !== envelope.resultHash ||
     canonical(snapshotCounts(state)) !== canonical(envelope.counts)
   )
     invalid("Checkpoint state checksum or counts mismatch");
+  service.assertCapacity?.(state);
   // The checkpoint's claimed canonical hash is also bound to its parent's
   // recorded reducer result; atCommit is not merely an arbitrary ancestor.
   const parentCommit = await transport.readCommit(parent);

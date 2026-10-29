@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import ExcelJS from "exceljs";
-import { inspectWorkbook } from "../server/transfer.mjs";
+import { inspectWorkbook } from "../shared/workbook.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 
 test("수식의 저장된 0·false·날짜 결과를 보존하고 미계산 결과를 경고한다", async () => {

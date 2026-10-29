@@ -19,7 +19,7 @@ import {
   MAX_IMAGE_BYTES,
   isDocumentImage,
 } from "../shared/document-images.js";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 
 export const documentImagesDirectory = () =>
   resolve(process.env.DOCUMENT_IMAGES_DIR || "data/document-images");

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { id, json, parse, transaction } from "../db.mjs";
-import { dateSchema, requireThat } from "../validation.mjs";
+import { dateSchema, requireThat } from "../../shared/validation.js";
 import { todayKey } from "../../shared/domain.js";
 
 const DAY = 24 * 60 * 60 * 1000;

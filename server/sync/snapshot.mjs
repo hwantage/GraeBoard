@@ -1,13 +1,13 @@
 import { gzipSync, gunzipSync } from "node:zlib";
 import { canonical } from "./protocol.mjs";
 
-const MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024;
+import { SYNC_SNAPSHOT_MAX_BYTES as MAX_SNAPSHOT_BYTES } from "../../shared/sync-limits.js";
 export function encodeSnapshot(value) {
   const source = Buffer.from(canonical(value));
   if (source.length > MAX_SNAPSHOT_BYTES)
     throw new Error("Snapshot exceeds uncompressed byte budget");
   const bytes = gzipSync(source, { level: 1 });
-  if (bytes.length > 64 * 1024 * 1024)
+  if (bytes.length > MAX_SNAPSHOT_BYTES)
     throw new Error("Snapshot exceeds Git object byte budget");
   return bytes;
 }

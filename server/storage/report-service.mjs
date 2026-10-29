@@ -1,13 +1,13 @@
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { z } from "zod";
 import {
   yearSchema,
   reportNameSchema,
   dateSchema,
   viewSchema,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import { editSchema } from "./report-command-schema.mjs";
-export const reportCreateSchema = z.object({
+const reportCreateSchema = z.object({
   id: z.string().uuid().optional(),
   teamId: z.string().uuid(),
   year: yearSchema,
@@ -27,20 +27,23 @@ const removeSchema = z
   })
   .strict();
 export class ReportBusinessService {
-  constructor(repository, user, { documentEvents } = {}) {
+  constructor(repository, user, { documentEvents, clientId } = {}) {
     this.repository = repository;
     this.user = user;
     this.documentEvents = documentEvents;
+    this.clientId = clientId;
   }
   mutate(command, args) {
     const result = this.repository[command](this.user, ...args);
     const done = (value) => {
-      this.repository.afterCommit?.(this.user, command, args, value);
+      this.repository.afterCommit?.(this.user, command, args, value, {
+        clientId: this.clientId,
+      });
       const changes = this.repository.resourceChanges?.();
       for (const teamId of changes?.teamIds || [])
-        this.documentEvents?.invalidate("team:" + teamId);
+        this.documentEvents?.invalidate("team:" + teamId, this.clientId);
       for (const reportId of changes?.reportIds || [])
-        this.documentEvents?.invalidate("report:" + reportId);
+        this.documentEvents?.invalidate("report:" + reportId, this.clientId);
       return value;
     };
     return result && typeof result.then === "function"
@@ -57,6 +60,7 @@ export class ReportBusinessService {
   }
   create(input) {
     const request = reportCreateSchema.parse(input);
+    this.repository.authorizeCreate?.(this.user, request);
     requireThat(
       request.year === request.view.year,
       400,

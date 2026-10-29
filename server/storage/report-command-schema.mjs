@@ -5,7 +5,7 @@ import {
   formatSchema,
   styleSchema,
   viewSchema,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 const ids = z.array(z.string().uuid()).min(1).max(20000);
 const base = { at: z.iso.datetime() };
 const restoreTaskSchema = z

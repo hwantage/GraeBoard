@@ -1,15 +1,25 @@
+import {
+  HISTORY_ROUTES,
+  HISTORY_CLEANUP_ROUTES,
+  matchBusinessRoute,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
 import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
-import { PostgresAdminHistoryRepository } from "../server/storage/postgres-admin-history.mjs";
+import { PostgresAdminHistoryRepository } from "./storage/postgres-admin-history.mjs";
 import { HistoryBusinessService } from "../server/storage/history-service.mjs";
-import { PostgresHistoryRepository } from "../server/storage/postgres-history.mjs";
+import { PostgresHistoryRepository } from "./storage/postgres-history.mjs";
 export function auditRoutes(ctx, path, method, body, query) {
   const service = new HistoryBusinessService(
     new PostgresHistoryRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/audit" && method === "GET") return service.query(query);
-  const match = /^\/audit\/([^/]+)\/restore$/.exec(path);
-  if (match && method === "POST") return service.restore(match[1], body);
+  const match = matchBusinessRoute(HISTORY_ROUTES, path, method);
+  if (match)
+    return callBusinessRoute(service, match.route, {
+      params: match.params,
+      body,
+      query,
+    });
   return undefined;
 }
 export async function historyCleanupRoutes(ctx, path, method, body, query) {
@@ -17,11 +27,12 @@ export async function historyCleanupRoutes(ctx, path, method, body, query) {
     new PostgresAdminHistoryRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/admin/history-cleanup/storage" && method === "GET")
-    return service.storage();
-  if (path === "/admin/history-cleanup" && method === "GET")
-    return service.preview(query);
-  if (path === "/admin/history-cleanup" && method === "POST")
-    return service.cleanup(body);
+  const match = matchBusinessRoute(HISTORY_CLEANUP_ROUTES, path, method);
+  if (match)
+    return callBusinessRoute(service, match.route, {
+      params: match.params,
+      body,
+      query,
+    });
   return undefined;
 }

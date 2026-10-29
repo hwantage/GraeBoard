@@ -1,3 +1,4 @@
+import { CONTROL_ROUTES } from "../shared/business-routes.js";
 import { ControlBusinessService } from "./storage/control-service.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 
@@ -5,46 +6,27 @@ export function installControlBusinessRoutes(
   app,
   { repository, documentEvents, refreshUser, cellEvents, site = "internal" },
 ) {
-  const repo = (req) =>
-    typeof repository === "function" ? repository(req.user, req) : repository;
   const service = (req) =>
-    new ControlBusinessService(repo(req), req.user, { documentEvents });
-  for (const [method, path, command, status = 200] of [
-    ["get", "/api/bootstrap", "bootstrap"],
-    ["patch", "/api/auth/profile", "profile"],
-    ["get", "/api/admin/users", "listUsers"],
-    ["post", "/api/admin/users", "createUser", 201],
-    ["patch", "/api/admin/users/:id", "updateUser"],
-    ["get", "/api/teams/:id/members", "members"],
-    ["put", "/api/teams/:id/members", "replaceMembers"],
-    ["post", "/api/admin/teams", "createTeam", 201],
-    ["delete", "/api/admin/teams/:id", "deleteTeam"],
-  ])
-    app[method](path, (req, res, next) => {
+    new ControlBusinessService(repository, req.user, {
+      documentEvents,
+      clientId: req.get("X-Client-ID")?.slice(0, 64),
+    });
+  for (const { method, path, name: command, status } of CONTROL_ROUTES)
+    app[method.toLowerCase()]("/api" + path, (req, res, next) => {
       try {
         const respond = (value) =>
           res
             .status(status)
             .json(command === "bootstrap" ? { ...value, site } : value);
         const result = service(req).execute(command, req.body, req.params.id);
-        if (result && typeof result.then === "function")
-          return result.then(respond).catch(next);
         respond(result);
       } catch (error) {
         next(error);
       }
     });
   registerEventRoute(app, "/api/teams/:id/events", (req, res) => {
-    const selected = repo(req);
-    if (selected.subscribe)
-      return selected.subscribe(req.user, req.params.id, {
-        request: req,
-        response: res,
-        refreshUser: () => refreshUser(req),
-        register: (response) => cellEvents.registerExternal(response),
-      });
     return documentEvents.watch(req, res, "team:" + req.params.id, (request) =>
-      selected.watch(request.user, request.params.id),
+      repository.watch(request.user, request.params.id),
     );
   });
 }

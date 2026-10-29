@@ -9,7 +9,7 @@ import {
   pruneStyles,
   touchTasks,
 } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import {
   auditSheetSql,
   deletedReportTasks,
@@ -120,7 +120,7 @@ export class SqliteHistoryRepository {
       }),
     };
   }
-  restore(user, entryId, body) {
+  restore(user, entryId, body, { clientId } = {}) {
     const {
       db,
       control: { teamAccess, taskAccess, managedTeam, restoreTaskRows },
@@ -235,9 +235,9 @@ export class SqliteHistoryRepository {
       .prepare("SELECT team_id,action,target FROM audit WHERE id=?")
       .get(entryId);
     if (entry) {
-      this.documentEvents?.invalidate("team:" + entry.team_id);
+      this.documentEvents?.invalidate("team:" + entry.team_id, clientId);
       if (entry.action === "report-edit")
-        this.documentEvents?.invalidate("report:" + entry.target);
+        this.documentEvents?.invalidate("report:" + entry.target, clientId);
     }
     return value;
   }

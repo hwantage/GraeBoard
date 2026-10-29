@@ -1,3 +1,5 @@
+import { splitReportRecord } from "../server/sync/versions.mjs";
+import { protocolVersion } from "../server/sync/protocol.mjs";
 import pg from "pg";
 import {
   assertStateCapacity,
@@ -7,9 +9,9 @@ import {
 import {
   postgresHistoryVersion,
   postgresLayout,
-} from "../server/storage/schema-version.mjs";
-import { siteTeamId } from "./config.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+} from "../shared/postgres-schema-version.js";
+import { siteTeamId } from "../shared/sync-profiles.js";
+import { PostgresDatabase } from "./storage/postgres.mjs";
 import {
   canonical,
   digest,
@@ -21,7 +23,7 @@ import {
 import { reduceMany, reduce } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
 
-export function poolFor(binding, scope = "control", { site = false } = {}) {
+function poolFor(binding, scope = "control", { site = false } = {}) {
   assert(binding?.connectionString, 503, "PostgreSQL binding을 확인하세요.");
   const { schema, migrationScope } = postgresLayout(scope, site);
   return {
@@ -280,10 +282,55 @@ export class DataSession {
     const opId = crypto.randomUUID(),
       dependsOn = new Set(),
       pendingIds = new Set(pending.map((op) => op.opId));
-    const changes = [];
-    for (const change of this.changes.values()) {
+    const changes = [],
+      version = protocolVersion(projectedState);
+    const captured = new Map(this.changes);
+    if (version === 2)
+      for (const [id, change] of this.changes) {
+        if (change.entity !== "report") continue;
+        captured.delete(id);
+        const after = new Map(
+          splitReportRecord(change.after).map((record) => [
+            entityId(record.entity, record.key),
+            record,
+          ]),
+        );
+        for (const record of Object.values(entities))
+          if (
+            ["reportTask", "reportCell"].includes(record.entity) &&
+            record.key[0] === change.key[0] &&
+            !after.has(entityId(record.entity, record.key))
+          )
+            after.set(entityId(record.entity, record.key), {
+              ...record,
+              deleted: true,
+            });
+        for (const [key, record] of after)
+          captured.set(key, {
+            entity: record.entity,
+            key: record.key,
+            after: record,
+          });
+      }
+    for (const change of captured.values()) {
       const { entity, key, after } = change,
         current = entities[entityId(entity, key)];
+      if (
+        version === 2 &&
+        current &&
+        equal(current.payload, after.payload) &&
+        !!current.deleted === !!after.deleted
+      )
+        continue;
+      if (version === 2 && ["reportTask", "reportCell"].includes(entity)) {
+        for (const parent of [
+          ["report", [key[0]]],
+          ...(entity === "reportCell" ? [["reportTask", key.slice(0, 2)]] : []),
+        ]) {
+          const token = entities[entityId(...parent)]?.version?.split(":")[0];
+          if (pendingIds.has(token)) dependsOn.add(token);
+        }
+      }
       if (current?.version) {
         const predecessor = current.version.split(":")[0];
         if (pendingIds.has(predecessor)) dependsOn.add(predecessor);
@@ -335,9 +382,10 @@ export class DataSession {
         ].filter((k) => !equal(base?.[k], desired?.[k])),
       });
     }
+    if (!changes.length) return;
     const operation = {
-      protocol: 1,
-      reducer: 1,
+      protocol: version,
+      reducer: version,
       repoId: link.repo_id,
       teamId: this.teamId,
       opId,
@@ -349,7 +397,9 @@ export class DataSession {
       objects: [],
     };
     const result = reduce(projectedState, operation);
-    const size = assertStateCapacity(result.state, this.limits);
+    const size = assertStateCapacity(result.state, this.limits, [], {
+      status: 400,
+    });
     if (
       size.bytes +
         pending.reduce((n, op) => n + Buffer.byteLength(canonical(op)), 0) +
@@ -411,6 +461,17 @@ export async function withData(
           "팀 자료 정리 중입니다. 입력을 보존한 뒤 다시 저장하세요.",
         );
       }
+      if (write)
+        assert(
+          !(
+            await tx.query(
+              "SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$2",
+              [teamId, Date.now()],
+            )
+          ).rows.length,
+          409,
+          "동기화 형식 전환 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
+        );
       if (write && body?.year !== undefined)
         assert(
           !(

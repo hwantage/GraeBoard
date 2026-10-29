@@ -1,15 +1,37 @@
 import { audit, parse, transaction, pruneStyles } from "./db.mjs";
-import { requireThat } from "./validation.mjs";
-import { stableId } from "./transfer.mjs";
+import { requireThat } from "../shared/validation.js";
+import { stableId } from "../shared/workbook.mjs";
 
 export function deleteTeam(db, teamId, actorId) {
   return transaction(db, () => {
     const team = db.prepare("SELECT id FROM teams WHERE id=?").get(teamId);
     requireThat(team, 404, "팀을 찾을 수 없습니다.");
-    const link = db.prepare('SELECT mode,lease_owner FROM team_sync_links WHERE team_id=?').get(teamId);
-    requireThat(!link || (link.mode === 'disconnected' && !link.lease_owner),409,'동기화 연결을 먼저 해제하세요.');
-    requireThat(!db.prepare("SELECT 1 FROM sync_outbox WHERE team_id=? AND status<>'acknowledged' LIMIT 1").get(teamId),409,'미전송 변경이 남아 있습니다. 동기화·백업을 확인한 뒤 삭제하세요.');
-    requireThat(!db.prepare("SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')").get(teamId),409,'정리·백업 작업을 먼저 완료하세요.');
+    const link = db
+      .prepare("SELECT mode,lease_owner FROM team_sync_links WHERE team_id=?")
+      .get(teamId);
+    requireThat(
+      !link || (link.mode === "disconnected" && !link.lease_owner),
+      409,
+      "동기화 연결을 먼저 해제하세요.",
+    );
+    requireThat(
+      !db
+        .prepare(
+          "SELECT 1 FROM sync_outbox WHERE team_id=? AND status<>'acknowledged' LIMIT 1",
+        )
+        .get(teamId),
+      409,
+      "미전송 변경이 남아 있습니다. 동기화·백업을 확인한 뒤 삭제하세요.",
+    );
+    requireThat(
+      !db
+        .prepare(
+          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
+        )
+        .get(teamId),
+      409,
+      "정리·백업 작업을 먼저 완료하세요.",
+    );
     // References retain team IDs so cleanup also works after an audit expires.
     db.prepare(
       `DELETE FROM operations WHERE EXISTS (

@@ -1,4 +1,5 @@
 import { withPreparedDocumentImageReferences } from "../../shared/document-image-references.js";
+import { z } from "zod";
 import { calendarPreview } from "./calendar-service.mjs";
 import { createHash } from "node:crypto";
 import {
@@ -9,7 +10,7 @@ import {
   touchTasks,
   userWithTeams,
 } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { canContribute } from "../../shared/domain.js";
 import {
   DEFAULT_DOCUMENT_ID,
@@ -67,7 +68,18 @@ export class SqliteDocumentRepository {
       documentPreparation,
     });
   }
-  access(user, scope, write = false) {
+  validateRevision(scope, value) {
+    (scope.kind === "report"
+      ? z.union([z.literal(0), z.string().uuid()])
+      : z.number().int().nonnegative()
+    ).parse(value);
+  }
+  access(
+    user,
+    scope,
+    write = false,
+    { image = false, taskIds, previous } = {},
+  ) {
     const db = this.db;
     let context;
     if (scope.kind === "task") {
@@ -83,12 +95,23 @@ export class SqliteDocumentRepository {
         requireThat(
           canContribute(user, row.team_id),
           403,
-          "사본을 편집할 권한이 없습니다.",
+          scope.kind === "reportMemo"
+            ? "메모 편집 권한이 없습니다."
+            : image
+              ? "사본에 이미지를 추가할 권한이 없습니다."
+              : "사본을 편집할 권한이 없습니다.",
         );
       retentionView(db, row.team_id).requireVisible("report", [row.id]);
       context = { row, reportId: row.id, teamId: row.team_id, year: row.year };
       if (scope.kind === "report") {
-        const tasks = reportDocumentTasks(db, row, [scope.taskId]);
+        // Reuse the decoded BLOB index when only document references changed.
+        // Fresh references, membership and retention checks still run below.
+        if (
+          previous?.row?.id === row.id &&
+          Buffer.from(row.data).equals(Buffer.from(previous.row.data))
+        )
+          row.data = previous.row.data;
+        const tasks = reportDocumentTasks(db, row, taskIds || [scope.taskId]);
         requireThat(
           tasks?.length,
           404,
@@ -96,6 +119,7 @@ export class SqliteDocumentRepository {
         );
         Object.assign(context, {
           task: tasks[0],
+          tasks,
           prefix: ["report", row.id, scope.taskId],
         });
       } else
@@ -276,7 +300,7 @@ export class SqliteDocumentRepository {
     };
   }
   imageAccess(user, scope) {
-    const context = this.access(user, scope, true);
+    const context = this.access(user, scope, true, { image: true });
     requireThat(
       !this.db
         .prepare(
@@ -433,7 +457,9 @@ export class SqliteDocumentRepository {
       requireThat(
         documents.length < MAX_TASK_DOCUMENTS,
         400,
-        `문서는 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`,
+        ["annual", "reportMemo"].includes(scope.kind)
+          ? `메모는 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`
+          : `업무마다 문서를 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`,
       );
       const title = data.title || nextDocumentTitle(documents, scope.kind);
       if (scope.kind === "task") {
@@ -562,7 +588,11 @@ export class SqliteDocumentRepository {
     const result = this.run(user, () => {
       context = this.access(user, scope, true);
       const current = this.body(context);
-      requireDocumentRevision(current, data);
+      requireThat(
+        current.revision === data.expectedRevision,
+        409,
+        "문서가 변경되었습니다. 최신 문서를 확인한 뒤 삭제하세요.",
+      );
       if (scope.kind === "task") {
         this.db
           .prepare("DELETE FROM task_documents WHERE task_id=? AND id=?")
@@ -670,6 +700,10 @@ export class SqliteDocumentRepository {
     const prepared = this.body(preparedContext, {
       summary: false,
     });
+    const preparedRevision = {
+      changes: this.db.prepare("SELECT total_changes() n").get().n,
+      dataVersion: this.db.prepare("PRAGMA data_version").get().data_version,
+    };
     const references = await this.documentPreparation.prepare([
       prepared.markdown,
       data.markdown,
@@ -692,8 +726,18 @@ export class SqliteDocumentRepository {
       changed = false;
     const result = withPreparedDocumentImageReferences(references, () =>
       this.run(user, () => {
-        context = this.access(user, scope, true);
-        const current = this.body(context, { summary: false }),
+        // BEGIN IMMEDIATE has excluded concurrent writers. Both counters must
+        // match before reusing the already-read body: total_changes catches this
+        // connection and data_version catches commits from other connections.
+        const unchanged =
+          preparedRevision.changes ===
+            this.db.prepare("SELECT total_changes() n").get().n &&
+          preparedRevision.dataVersion ===
+            this.db.prepare("PRAGMA data_version").get().data_version;
+        context = this.access(user, scope, true, { previous: preparedContext });
+        const current = unchanged
+            ? { ...prepared }
+            : this.body(context, { summary: false }),
           hash = createHash("sha256")
             .update(JSON.stringify(data))
             .digest("hex");
@@ -726,7 +770,16 @@ export class SqliteDocumentRepository {
             previous?.operation_id === data.operationId &&
             previous.actor_id === user.id &&
             previous.request_hash === hash;
-        requireDocumentRevision(current, data, replay);
+        if (scope.kind === "calendar") {
+          if (this.documentEvents)
+            Object.assign(current, this.documentEvents.stamp(current));
+          requireThat(
+            replay || current.revision === data.expectedRevision,
+            409,
+            "다른 사용자가 일정을 수정했습니다. 입력은 보존됩니다. 최신 문서를 확인하세요.",
+            { current },
+          );
+        } else requireDocumentRevision(current, data, replay);
         // A concurrent identical command may already have committed while this
         // request prepared. Preserve exact actor/operation/hash replay; only a
         // new write must still match the body whose extraction we pinned.
@@ -736,7 +789,9 @@ export class SqliteDocumentRepository {
               current.revision === prepared.revision &&
               current.markdown === prepared.markdown),
           409,
-          "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
+          scope.kind === "calendar"
+            ? "다른 사용자가 일정을 수정했습니다. 입력은 보존됩니다. 최신 문서를 확인하세요."
+            : "다른 사용자가 문서를 수정했습니다. 입력은 보존되었습니다. 최신 문서를 확인한 뒤 다시 저장하세요.",
           { current },
         );
         if (!replay && current.markdown !== data.markdown) {
@@ -901,12 +956,17 @@ export class SqliteDocumentRepository {
   readBatch(user, reportId, taskIds) {
     const result = [];
     let bytes = 0;
-    const base = this.access(user, {
-      kind: "report",
-      reportId,
-      taskId: taskIds[0],
-    });
-    const tasks = reportDocumentTasks(this.db, base.row, taskIds);
+    const base = this.access(
+      user,
+      {
+        kind: "report",
+        reportId,
+        taskId: taskIds[0],
+      },
+      false,
+      { taskIds },
+    );
+    const tasks = base.tasks;
     requireThat(tasks, 404, "사본에서 해당 업무를 찾지 못했습니다.");
     for (const task of tasks) {
       const context = {

@@ -1,5 +1,5 @@
 import { transaction } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import {
   newSetupKey,
   publishSetupJson,

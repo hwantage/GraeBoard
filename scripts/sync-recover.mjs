@@ -6,7 +6,7 @@ import { createNodeSync } from "../server/sync/node.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import { canonical, protocolVersion } from "../server/sync/protocol.mjs";
 
 export async function recoverSync({
   db,
@@ -51,7 +51,11 @@ export async function recoverSync({
       )
       .get(teamId)?.user_id;
     const op = makeOperation({
-      link: { ...link, writer_epoch: randomUUID() },
+      link: {
+        ...link,
+        protocol: protocolVersion(canonicalState),
+        writer_epoch: randomUUID(),
+      },
       actorRef: actorRef || "recovery-operator",
       before,
       after,

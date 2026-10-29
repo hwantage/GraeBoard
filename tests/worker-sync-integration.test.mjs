@@ -20,10 +20,10 @@ import { unpack } from "../shared/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { stateHash, digest, entityId } from "../server/sync/protocol.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { runTeam, scheduled } from "../worker/sync.mjs";
-import { profileFor } from "../worker/config.mjs";
+import { profileFor } from "../shared/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 const ok = (result) => {
@@ -998,11 +998,47 @@ test(
       );
       await app.locals.sync.get(teamId).run();
       ok(await outside(`/teams/${teamId}/sync/resume`, {}));
+      // GET pull and publisher tasks can outlive their HTTP response. Finish
+      // those requests before attributing the next R2 failure to Cron.
+      await Promise.allSettled(work);
       await assert.rejects(runTeam(env, p), /R2 unavailable/);
-      await scheduled(env);
+      const cronUntil = async (observed, message) => {
+        const timeout = Date.now() + 15000;
+        for (;;) {
+          const row = (
+            await team.query(
+              "SELECT payload FROM graeboard.site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
+              [teamId],
+            )
+          ).rows[0];
+          const deadline = Number(
+            JSON.parse(row?.payload || "{}").publishAfter || 0,
+          );
+          assert.ok(
+            Date.now() < timeout,
+            message + " (Cron deadline " + deadline + ")",
+          );
+          if (deadline > Date.now()) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(deadline - Date.now(), 1000)),
+            );
+            continue;
+          }
+          await scheduled(env);
+          if (await observed()) return;
+          // A racing read-only refresh can own the sync lease. Observe the
+          // required effect on the next eligible tick rather than counting calls.
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      };
+      const beforeCronFailure = failedR2Calls;
+      await cronUntil(
+        () => failedR2Calls > beforeCronFailure,
+        "scheduled receiver must reach the failed R2 binding after its durable deadline",
+      );
       assert.ok(
         failedR2Calls >= 3,
-        "save and scheduled receiver actually reached failed R2 binding",
+        "save, manual run and eligible Cron each reached the failed binding",
       );
       assert.equal(
         (await pgStore.readLink(teamId)).canonical_head,
@@ -1013,7 +1049,13 @@ test(
         preservedPending,
       );
       images.head = healthyHead;
-      await scheduled(env);
+      await cronUntil(
+        async () =>
+          !(await pgStore.readPending(teamId)).length &&
+          (await pgStore.readLink(teamId)).canonical_head ===
+            github.text(["rev-parse", "refs/heads/sync-v1"]),
+        "recovered Cron must acknowledge pending input and reach the repository head",
+      );
       await app.locals.sync.get(teamId).run();
       assert.equal((await pgStore.readPending(teamId)).length, 0);
       assert.equal(

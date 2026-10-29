@@ -1,3 +1,4 @@
+import { applicationEntities } from "../server/sync/versions.mjs";
 import {
   canonical,
   entityId,
@@ -6,12 +7,17 @@ import {
 } from "../server/sync/protocol.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { isExcluded as excluded } from "../server/sync/retention.mjs";
+import {
+  pendingEntityKeys,
+  canRetireProjection,
+} from "../server/sync/projection.mjs";
 export async function materialize(tx, teamId, { state, pending, exclusions }) {
   const link = await tx.sync.readLink();
   exclusions = exclusions.filter(
     (row) => (row.site_id || row.siteId) === link?.installation_id,
   );
-  const visible = project(state, pending).entities,
+  const visible = applicationEntities(project(state, pending).entities),
+    protectedKeys = pendingEntityKeys(pending),
     touched = new Set(),
     now = Date.now();
   let changedCount = 0;
@@ -110,8 +116,12 @@ export async function materialize(tx, teamId, { state, pending, exclusions }) {
       )
     ).rows;
     if (!rows.length) break;
-    const missing = rows.filter(
-      (row) => !visible[entityId(row.entity, JSON.parse(row.entity_key))],
+    const missing = rows.filter((row) =>
+      canRetireProjection(
+        entityId(row.entity, JSON.parse(row.entity_key)),
+        visible,
+        protectedKeys,
+      ),
     );
     if (missing.length) {
       const revs = await revisions(missing);

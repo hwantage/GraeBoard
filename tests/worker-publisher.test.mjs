@@ -9,8 +9,13 @@ import {
 } from "./business-storage-fixture.mjs";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { createPublisher, runTeam, scheduled } from "../worker/sync.mjs";
-import { profileFor } from "../worker/config.mjs";
+import {
+  createPublisher,
+  runTeam,
+  scheduled,
+  refreshTeam,
+} from "../worker/sync.mjs";
+import { profileFor } from "../shared/sync-profiles.js";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
@@ -61,7 +66,9 @@ test(
     execFileSync("git", ["init", "--bare", remote], { stdio: "ignore" });
     const github = githubEmulator(remote);
     let failGitHub = false,
-      failedFetches = 0;
+      failedFetches = 0,
+      limited = false,
+      limitedFetches = 0;
     globalThis.fetch = async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input.url);
       assert.equal(
@@ -72,6 +79,13 @@ test(
       if (failGitHub) {
         failedFetches++;
         throw new TypeError("fixture GitHub outage");
+      }
+      if (limited) {
+        limitedFetches++;
+        return new Response("", {
+          status: 429,
+          headers: { "retry-after": "120" },
+        });
       }
       return github.fetch(url.href, init);
     };
@@ -269,7 +283,11 @@ test(
     clock.advance(5000);
     clock.wake();
     await drain();
-    assert.equal(failedFetches, 1);
+    assert.equal(
+      failedFetches,
+      3,
+      "one request plus two bounded network retries",
+    );
     assert.deepEqual((await pending()).map(digest), beforeFailure);
     assert.equal(
       (await f.adapter.readLink(f.teamId)).canonical_head,
@@ -283,7 +301,7 @@ test(
     assert.deepEqual(clock.deadlines(), [retryAt]);
     assert.equal(
       failedFetches,
-      1,
+      3,
       "Fresh isolate cannot retry every subsequent mutation",
     );
     failGitHub = false;
@@ -350,6 +368,34 @@ test(
     clock.wake();
     await drain();
     assert.equal(publishes(github.calls.slice(beforeManual)).length, 1);
+    await save();
+    await clock.parked();
+    limited = true;
+    clock.advance(5000);
+    clock.wake();
+    await drain();
+    const limitedDeadline = Date.now() + 120000;
+    assert.equal((await metadata()).publishAfter, limitedDeadline);
+    assert.equal((await metadata()).nextAt, limitedDeadline);
+    assert.equal(limitedFetches, 1);
+    const held = (await pending()).map(digest);
+    // A different fetch function gives every new transport an empty process
+    // cache; the PostgreSQL deadline still protects Cron, refresh and timers.
+    const isolatedFetch = globalThis.fetch;
+    globalThis.fetch = (...args) => isolatedFetch(...args);
+    await scheduled(env);
+    assert.deepEqual(await refreshTeam(env, profile), { throttled: true });
+    const delayed = createPublisher(clock)(env, profile);
+    await clock.parked();
+    clock.advance(5000);
+    clock.wake();
+    assert.deepEqual(await delayed, { throttled: true });
+    assert.equal(limitedFetches, 1);
+    assert.deepEqual((await pending()).map(digest), held);
+    limited = false;
+    clock.advance(limitedDeadline - Date.now());
+    await scheduled(env);
+    await assertConverged();
     assert.deepEqual(errors, []);
     assert.deepEqual(github.unexpectedCalls, []);
     t.diagnostic(
@@ -362,6 +408,7 @@ test(
         cronRetainedBusyLease: true,
         restartCooldownPreserved: true,
         manualBypass: true,
+        persistedRateLimitDeadline: true,
       }),
     );
   },

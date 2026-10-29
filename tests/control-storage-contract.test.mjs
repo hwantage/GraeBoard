@@ -1,11 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { createApp } from "../server/app.mjs";
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { parseCompact, unpack } from "../shared/compact.js";
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
-import { PostgresControlRepository } from "../server/storage/postgres-control.mjs";
-import { createPostgresBusinessStorage } from "../server/storage/business-storage.mjs";
+import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,
@@ -206,28 +205,11 @@ test("M6 PostgreSQL Access control obeys same commands and atomically rolls back
   );
 });
 
-test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cell SSE without a PG control mirror, denies viewer writes and revokes live streams", async (t) => {
+test("M6 external control routes authorize PG HTTP and dedicated/multiplex cell SSE, deny viewer writes and revoke live streams", async (t) => {
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
-  assert.throws(
-    () =>
-      createApp({
-        db: f.db,
-        controlRepository: new PostgresControlRepository({
-          context: pg.createContext(),
-        }),
-      }),
-    /matching SQLite control/,
-    "broken password+Access-control configuration is rejected at construction",
-  );
-  await pg.control.query("DROP SCHEMA graeboard CASCADE");
-  const env = {
-    PG_TEAM: pg.env.PG_TEAM,
-    SYNC_PROFILES: JSON.stringify([
-      { profileId: "contract", teamId: f.teamId, databaseBinding: "PG_TEAM" },
-    ]),
-  };
+  const env = pg.env;
   await pg.pool.query(
     "UPDATE graeboard.site_entities SET payload=jsonb_set(payload::jsonb,'{years}','[2029]')::text WHERE entity='task'",
   );
@@ -242,21 +224,13 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
       JSON.stringify({ name: "Former owner" }),
     ],
   );
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      storage: createPostgresBusinessStorage({ env }),
-      documentImagesDir: f.dir + "/images",
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-    }),
+  const app = createExternalRouteApp({ env, defaultUserId: f.user.id }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.cellEvents.close();
-    app.locals.documentEvents.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
+    await app.close();
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   const api = async (
@@ -290,8 +264,8 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
   );
   assert.equal(
     response.data.authMode,
-    undefined,
-    "password host auth is preserved",
+    "access",
+    "external authentication mode is preserved",
   );
   const memberInput = {
     username: "node-pg-member@example.test",
@@ -300,17 +274,9 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
     memberships: [{ teamId: f.teamId, role: "member" }],
   };
   const created = await api("/api/admin/users", "POST", memberInput);
-  assert.equal(created.status, 201, JSON.stringify(created.data));
+  assert.equal(created.status, 200, JSON.stringify(created.data));
   const memberId = created.data.user.id;
-  const login = await api(
-    "/api/auth/login",
-    "POST",
-    { username: memberInput.username, password: memberInput.password },
-    "",
-  );
-  assert.equal(login.status, 200, JSON.stringify(login.data));
-  const memberCookie = login.headers.get("set-cookie").split(";")[0];
-  assert.ok(memberCookie.startsWith("weekly_session="));
+  const memberCookie = "weekly_session=" + memberId;
   const viewerInput = {
     ...memberInput,
     username: "node-pg-viewer@example.test",
@@ -318,15 +284,8 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
     memberships: [{ teamId: f.teamId, role: "viewer" }],
   };
   const viewer = await api("/api/admin/users", "POST", viewerInput);
-  assert.equal(viewer.status, 201, JSON.stringify(viewer.data));
-  const viewerLogin = await api(
-    "/api/auth/login",
-    "POST",
-    { username: viewerInput.username, password: viewerInput.password },
-    "",
-  );
-  assert.equal(viewerLogin.status, 200, JSON.stringify(viewerLogin.data));
-  const viewerCookie = viewerLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal(viewer.status, 200, JSON.stringify(viewer.data));
+  const viewerCookie = "weekly_session=" + viewer.data.user.id;
   const snap = await api(
     `/api/tasks?teamId=${f.teamId}&year=2029`,
     "GET",
@@ -345,7 +304,7 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
     },
     memberCookie,
   );
-  assert.equal(response.status, 201, JSON.stringify(response.data));
+  assert.equal(response.status, 200, JSON.stringify(response.data));
   const task = response.data.task;
   const viewerSnapshot = await api(
       `/api/tasks?teamId=${f.teamId}&year=2029`,
@@ -469,7 +428,7 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
   assert.equal(
     denied.status,
     403,
-    "SQLite control membership is the sole authority",
+    "PostgreSQL control membership is the sole authority",
   );
   const deadline = setTimeout(() => controller.abort(), 3000);
   try {
@@ -485,9 +444,8 @@ test("M6 Node SQLite control authorizes PG-only HTTP and dedicated/multiplex cel
   assert.equal((await dedicated.next("access-revoked")).data.status, 403);
   assert.equal((await multiplex.next("access-revoked")).data.status, 403);
   assert.equal(
-    (await pg.control.query("SELECT to_regclass('graeboard.users') name"))
-      .rows[0].name,
-    null,
-    "no PostgreSQL identity or membership table was used",
+    f.db.prepare("SELECT COUNT(*) n FROM users").get().n,
+    1,
+    "external user creation never writes to SQLite control",
   );
 });

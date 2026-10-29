@@ -6,14 +6,14 @@ import {
   requireThat,
   styleSchema,
   validateCellValue,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import {
   propertiesFor,
   sampleProperties,
   splitNames,
 } from "../../shared/domain.js";
 const uuid = z.string().uuid();
-export const exportSchema = z.object({
+const exportSchema = z.object({
   teamId: uuid,
   reportId: uuid.optional(),
   revision: z.string().optional(),
@@ -24,21 +24,16 @@ export const exportSchema = z.object({
   taskIds: z.array(uuid).max(20000).default([]),
   keys: z.array(z.string()).max(150).optional(),
 });
-export const applyImportSchema = z
-  .object({
-    sheet: z.string().min(1).max(120),
-    year: yearSchema,
-    personMap: z.record(z.string(), uuid),
-    mode: z.enum(["tasks", "report", "copy"]),
-    reportId: uuid.optional(),
-    revision: z.string().optional(),
-    referenceDate: dateSchema,
-    acceptWarnings: z.literal(true),
-  })
-  .refine(
-    (d) => (d.mode === "copy") === !!d.reportId,
-    "가져올 시트를 확인하세요.",
-  );
+const applyImportSchema = z.object({
+  sheet: z.string().min(1).max(120),
+  year: yearSchema,
+  personMap: z.record(z.string(), uuid),
+  mode: z.enum(["tasks", "report", "copy"]),
+  reportId: uuid.optional(),
+  revision: z.string().optional(),
+  referenceDate: dateSchema,
+  acceptWarnings: z.literal(true),
+});
 const previewSchema = z.object({
   teamId: uuid,
   year: yearSchema,
@@ -47,9 +42,10 @@ const previewSchema = z.object({
   file: z.object({ name: z.string().min(1), bytes: z.instanceof(Uint8Array) }),
 });
 export class TransferBusinessService {
-  constructor(repository, user) {
+  constructor(repository, user, { clientId } = {}) {
     this.repository = repository;
     this.user = user;
+    this.clientId = clientId;
   }
   export(input) {
     const request = exportSchema.parse(input);
@@ -57,6 +53,16 @@ export class TransferBusinessService {
     return this.repository.export(this.user, request);
   }
   preview(input) {
+    const teamId = uuid.parse(input.teamId),
+      year = yearSchema.parse(input.year);
+    this.repository.authorizePreview?.(this.user, { ...input, teamId, year });
+    requireThat(input.file, 400, "가져올 XLSX 파일을 선택하세요.");
+    requireThat(
+      typeof input.file.name === "string" &&
+        input.file.name.toLowerCase().endsWith(".xlsx"),
+      400,
+      "XLSX 파일을 선택하세요.",
+    );
     let options = input.sheetOptions || {};
     if (typeof options === "string") {
       try {
@@ -76,13 +82,14 @@ export class TransferBusinessService {
     return this.repository.preview(this.user, request);
   }
   exceptions(importId) {
-    return this.repository.exceptions(this.user, uuid.parse(importId));
+    return this.repository.exceptions(this.user, String(importId));
   }
   apply(importId, body) {
     return this.repository.apply(
       this.user,
-      uuid.parse(importId),
+      String(importId),
       applyImportSchema.parse(body),
+      { clientId: this.clientId },
     );
   }
 }

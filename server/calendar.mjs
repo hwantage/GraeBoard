@@ -4,17 +4,11 @@ import {
 } from "./storage/calendar-service.mjs";
 import { SqliteCalendarRepository } from "./storage/sqlite-calendar.mjs";
 export function installCalendarRoutes(app, options) {
-  const repository =
-    typeof options.repository === "object"
-      ? options.repository
-      : new SqliteCalendarRepository(options);
+  const repository = new SqliteCalendarRepository(options);
   app.locals.calendarRepository = repository;
   for (const route of CALENDAR_ROUTES)
     app[route.method.toLowerCase()]("/api" + route.path, (req, res) => {
-      const selected =
-        typeof options.repository === "function"
-          ? options.repository(req.user, req)
-          : repository;
+      const selected = repository;
       const value = new CalendarBusinessService(selected, req.user).execute(
         route.name,
         { params: req.params, body: req.body, query: req.query },
@@ -28,7 +22,7 @@ export function installCalendarRoutes(app, options) {
             );
         return res.status(route.status).json(result);
       };
-      return value?.then ? value.then(send) : send(value);
+      return send(value);
     });
   return {
     calendarImageAccess: repository.calendarImageAccess,

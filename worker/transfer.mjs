@@ -1,5 +1,10 @@
+import {
+  TRANSFER_ROUTES,
+  matchBusinessRoute,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
 import { TransferBusinessService } from "../server/storage/transfer-service.mjs";
-import { PostgresTransferRepository } from "../server/storage/postgres-transfer.mjs";
+import { PostgresTransferRepository } from "./storage/postgres-transfer.mjs";
 const response = (value) =>
   value?.contentType
     ? new Response(value.body, {
@@ -11,13 +16,13 @@ const response = (value) =>
       })
     : value;
 export async function transferRoutes(ctx, path, method, body) {
-  if (method !== "POST") return undefined;
+  const match = matchBusinessRoute(TRANSFER_ROUTES, path, method);
+  if (!match) return undefined;
   const service = new TransferBusinessService(
     new PostgresTransferRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/export") return response(await service.export(body));
-  if (path === "/import/preview") {
+  if (match.route.name === "preview") {
     const form = await ctx.request.formData(),
       file = form.get("file");
     return service.preview({
@@ -31,12 +36,10 @@ export async function transferRoutes(ctx, path, method, body) {
           : undefined,
     });
   }
-  const item = /^\/import\/([^/]+)\/(exceptions|apply)$/.exec(path);
-  if (item)
-    return response(
-      await (item[2] === "exceptions"
-        ? service.exceptions(item[1])
-        : service.apply(item[1], body)),
-    );
-  return undefined;
+  return response(
+    await callBusinessRoute(service, match.route, {
+      params: match.params,
+      body,
+    }),
+  );
 }

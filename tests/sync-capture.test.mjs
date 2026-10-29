@@ -344,3 +344,103 @@ test("cached display references see newly registered users and rollback retains 
   await sync.get(teamId).run();
   assert.deepEqual(Object.keys(sync.store(teamId).readState().conflicts), []);
 });
+
+test("cell saves reuse their transaction before-image without losing styles, creation or trigger fallback", async (t) => {
+  const { db, teamId, api, sync } = await fixture(t);
+  const task = (
+    await api("/tasks", { teamId, year: 2026, fields: { title: "before" } })
+  ).task;
+  const save = (changes) =>
+    api("/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes,
+    });
+  await save([
+    {
+      taskId: task.id,
+      key: "title",
+      value: "styled",
+      style: { bold: true },
+      expectedVersion: getTask(db, task.id).cells.title.version,
+    },
+  ]);
+  await api(`/teams/${teamId}/sync/enable`, {});
+  const store = sync.store(teamId),
+    canonicalCell =
+      store.readState().entities[entityId("cell", [task.id, "title"])];
+  const proto = Object.getPrototypeOf(db.prepare("SELECT 1")),
+    originalGet = proto.get;
+  let beforeReads = 0;
+  proto.get = function (...args) {
+    if (this.sourceSQL.startsWith("SELECT c.* FROM cells c JOIN tasks"))
+      beforeReads++;
+    return originalGet.apply(this, args);
+  };
+  try {
+    await save([
+      {
+        taskId: task.id,
+        key: "title",
+        value: "changed",
+        style: {},
+        expectedVersion: getTask(db, task.id).cells.title.version,
+      },
+      {
+        taskId: task.id,
+        key: "2026-11-02",
+        value: "new cell",
+        expectedVersion: 0,
+      },
+    ]);
+    assert.equal(
+      beforeReads,
+      0,
+      "capture must reuse the same-transaction business read",
+    );
+    const op = store.readPending().at(-1),
+      edited = op.changes.find(
+        (c) => c.entity === "cell" && c.key[1] === "title",
+      ),
+      created = op.changes.find(
+        (c) => c.entity === "cell" && c.key[1] === "2026-11-02",
+      );
+    assert.deepEqual(edited.base, { value: "styled", style: { bold: true } });
+    assert.deepEqual(edited.desired, { value: "changed", style: {} });
+    assert.equal(edited.baseVersion, canonicalCell.version);
+    assert.equal(edited.generation, canonicalCell.generation);
+    assert.equal(created.base, null);
+    assert.equal(created.action, "create");
+    const hint = sync.capture.cellSaving;
+    sync.capture.cellSaving = () => {};
+    try {
+      await save([
+        {
+          taskId: task.id,
+          key: "title",
+          value: "fallback",
+          expectedVersion: getTask(db, task.id).cells.title.version,
+        },
+      ]);
+    } finally {
+      sync.capture.cellSaving = hint;
+    }
+    assert.ok(
+      beforeReads > 0,
+      "ordinary SQL paths still obtain their before-image from the trigger",
+    );
+    assert.deepEqual(
+      store
+        .readPending()
+        .at(-1)
+        .changes.find((c) => c.entity === "cell").base,
+      edited.desired,
+    );
+  } finally {
+    proto.get = originalGet;
+  }
+  await sync.get(teamId).run();
+  assert.equal(store.readPending().length, 0);
+  assert.equal(getTask(db, task.id).cells.title.value, "fallback");
+  assert.equal(getTask(db, task.id).cells["2026-11-02"].value, "new cell");
+});

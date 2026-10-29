@@ -1,50 +1,33 @@
-import { z } from "zod";
-import { applyReportOperation } from "../shared/report-editing.js";
 import {
-  propertiesFor,
-  normalizeView,
-  savedFilter,
-  canManageTeam,
-  filteredTasks,
-  defaultView,
-  groupValue,
-  displayValue,
-} from "../shared/domain.js";
-import {
-  reportNameSchema,
-  dateSchema,
-  yearSchema,
-  viewSchema,
-  validateCellValue,
-  savedFilterSchema,
-} from "../server/validation.mjs";
-import { digest, equal } from "../server/sync/protocol.mjs";
+  REPORT_ROUTES,
+  FILTER_ROUTES,
+  BROWSER_ROUTES,
+  matchBusinessRoute,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
+
 import { assert } from "./access.mjs";
-import { settingsFor, taskList, taskView, stamp } from "./tasks.mjs";
+
 import { documentList } from "./documents.mjs";
-import { controlTransaction } from "./data.mjs";
-import { userRecord } from "./control.mjs";
+
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
 import {
   PostgresReportRepository,
   reportView,
-} from "../server/storage/postgres-reports.mjs";
-export { reportView } from "../server/storage/postgres-reports.mjs";
+} from "./storage/postgres-reports.mjs";
+export { reportView } from "./storage/postgres-reports.mjs";
 export async function reportRoutes(ctx, path, method, body, query) {
   const service = new ReportBusinessService(
     new PostgresReportRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/reports" && method === "GET")
-    return service.list(Object.fromEntries(query));
-  if (path === "/reports" && method === "POST") return service.create(body);
-  if (path === "/reports" && method === "DELETE") return service.remove(body);
-  const item = /^\/reports\/([^/]+)(\/name)?$/.exec(path);
-  if (item && method === "GET" && !item[2]) return service.read(item[1]);
-  if (item && method === "PATCH")
-    return item[2]
-      ? service.rename(item[1], body)
-      : service.edit(item[1], body);
+  const match = matchBusinessRoute(REPORT_ROUTES, path, method);
+  if (match)
+    return callBusinessRoute(service, match.route, {
+      params: match.params,
+      body,
+      query,
+    });
   const batch = /^\/reports\/([^/]+)\/documents\/batch$/.exec(path);
   if (batch && method === "POST") {
     const { teamId } = await ctx.locate("report", batch[1]);
@@ -79,28 +62,28 @@ export async function reportRoutes(ctx, path, method, body, query) {
   return undefined;
 }
 import { FilterBusinessService } from "../server/storage/filter-service.mjs";
-import { PostgresFilterRepository } from "../server/storage/postgres-filters.mjs";
+import { PostgresFilterRepository } from "./storage/postgres-filters.mjs";
 export function filterRoutes(ctx, path, method, body, query) {
   const service = new FilterBusinessService(
     new PostgresFilterRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/filters" && method === "GET") return service.list(query);
-  if (path === "/filters/current" && method === "PUT")
-    return service.current(body);
-  if (path === "/filters" && method === "PUT") return service.save(body);
-  const match = /^\/filters\/([^/]+)$/.exec(path);
-  if (match && method === "PATCH") return service.update(match[1], body);
-  if (match && method === "DELETE") return service.remove(match[1]);
+  const match = matchBusinessRoute(FILTER_ROUTES, path, method);
+  if (match)
+    return callBusinessRoute(service, match.route, {
+      params: match.params,
+      body,
+      query,
+    });
   return undefined;
 }
 import { DocumentBrowserBusinessService } from "../server/storage/document-browser-service.mjs";
-import { PostgresDocumentBrowserRepository } from "../server/storage/postgres-document-browser.mjs";
+import { PostgresDocumentBrowserRepository } from "./storage/postgres-document-browser.mjs";
 export function browserRoutes(ctx, path, method, _body, query) {
-  const match = /^\/document-browser\/(sources|tasks|task)$/.exec(path);
-  if (!match || method !== "GET") return undefined;
+  const match = matchBusinessRoute(BROWSER_ROUTES, path, method);
+  if (!match) return undefined;
   return new DocumentBrowserBusinessService(
     new PostgresDocumentBrowserRepository({ context: ctx }),
     ctx.user,
-  ).query(match[1], query);
+  ).query(match.route.name, query);
 }

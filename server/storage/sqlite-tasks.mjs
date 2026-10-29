@@ -8,7 +8,7 @@ import {
   pruneStyles,
   touchTasks,
 } from "../db.mjs";
-import { requireThat, validateCellValue } from "../validation.mjs";
+import { requireThat, validateCellValue } from "../../shared/validation.js";
 import { canEdit, canManageTeam, periodYears } from "../../shared/domain.js";
 import { styleNormalizer, unpack } from "../../shared/compact.js";
 import { applyFormatting, replayFormatOperation } from "../formatting.mjs";
@@ -30,6 +30,9 @@ export class SqliteTaskRepository extends SqliteTaskCommands {
       documentImagesDir,
     });
   }
+  authorizeTeam(user, teamId) {
+    this.control.teamAccess(user, teamId);
+  }
   subscribe(user, { teamId, year, startMonth }, { request, response, token }) {
     this.control.teamAccess(user, teamId);
     return this.cellEvents.subscribe(request, response, {
@@ -46,19 +49,20 @@ export class SqliteTaskRepository extends SqliteTaskCommands {
         403,
         "팀장만 삭제한 업무를 조회할 수 있습니다.",
       );
-    const period = periodYears(year, startMonth),
-      etag = this.cachedTasks.etag(teamId, period, deleted),
+    const visibility = retentionView(this.db, teamId),
+      period = periodYears(year, startMonth),
+      etag = this.cachedTasks.etag(
+        teamId,
+        period,
+        deleted,
+        visibility.cacheKey,
+      ),
       cellEventId = this.cellEvents.cursor();
     if (ifNoneMatch === etag) return { etag, cellEventId, notModified: true };
-    const encoded = this.cachedTasks(teamId, period, deleted, etag);
-    const visibility = retentionView(this.db, teamId);
-    if (visibility.active) {
-      const data = unpack(JSON.parse(encoded.body.toString("utf8")));
-      data.tasks = visibility.years.has(String(year))
-        ? []
-        : visibility.tasks(data.tasks);
-      return { etag, cellEventId, data };
-    }
+    const encoded = this.cachedTasks(teamId, period, deleted, etag, {
+      visibility,
+      year,
+    });
     return { etag, cellEventId, encoded };
   }
   saveBatch(user, d) {
@@ -167,8 +171,21 @@ export class SqliteTaskRepository extends SqliteTaskCommands {
         });
       }
       const put = upsertCellStatement(db);
-      for (const c of after)
+      for (const c of after) {
+        const task = tasks.get(c.taskId);
+        db.syncCapture?.cellSaving(
+          task.teamId,
+          c.taskId,
+          c.key,
+          task.cells[c.key],
+        );
         put.run(c.taskId, c.key, c.value, c.style, c.version);
+      }
+      for (const teamId of teams.keys())
+        db.syncCapture?.cellsSaved(
+          teamId,
+          after.filter((cell) => tasks.get(cell.taskId).teamId === teamId),
+        );
       pruneStyles(
         db,
         before.map((c) => c.style),

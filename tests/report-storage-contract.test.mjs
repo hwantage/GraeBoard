@@ -1,13 +1,13 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
+import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
-import { createApp } from "../server/app.mjs";
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
-import { PostgresReportRepository } from "../server/storage/postgres-reports.mjs";
+import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,
@@ -213,7 +213,7 @@ test("M6 report service preserves SQLite create/edit/retry/CAS/rollback and sync
   });
   assert.equal(service.list({ teamId: f.teamId }) instanceof Promise, false);
 });
-test("M6 same report service uses PG and actual Node HTTP reads report with no SQLite report mirror", async (t) => {
+test("M6 same report service uses PG and actual external HTTP reads report with no SQLite report mirror", async (t) => {
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
@@ -267,21 +267,17 @@ test("M6 same report service uses PG and actual Node HTTP reads report with no S
     },
   });
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM reports").get().n, 0);
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-      reportRepository: (user) =>
-        new PostgresReportRepository({ context: pg.createContext(user) }),
+  const app = createExternalRouteApp({
+      env: pg.env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => pg.createContext(user, request),
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.cellEvents.close();
-    app.locals.documentEvents.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
+    await app.close();
   });
   const response = await fetch(
     `http://127.0.0.1:${server.address().port}/api/reports/${reportId}`,

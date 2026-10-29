@@ -1,24 +1,20 @@
+import {
+  SETTINGS_ROUTES,
+  callBusinessRoute,
+} from "../shared/business-routes.js";
 import { SettingsBusinessService } from "./storage/settings-service.mjs";
 import { SqliteSettingsRepository } from "./storage/sqlite-settings.mjs";
 export { saveSettings } from "./storage/sqlite-settings.mjs";
 export function installSettingsRoutes(app, options) {
-  const repository =
-    typeof options.repository === "object"
-      ? options.repository
-      : new SqliteSettingsRepository(options);
+  const repository = new SqliteSettingsRepository(options);
   app.locals.settingsRepository = repository;
-  for (const [path, method] of [
-    ["/api/teams/:id/settings", "save"],
-    ["/api/teams/:id", "general"],
-  ])
-    app.patch(path, (req, res) => {
-      const selected =
-        typeof options.repository === "function"
-          ? options.repository(req.user, req)
-          : repository;
-      const value = new SettingsBusinessService(selected, req.user)[method](
-        req.params.id,
-        req.body,
+  for (const route of SETTINGS_ROUTES)
+    app[route.method.toLowerCase()]("/api" + route.path, (req, res) => {
+      const selected = repository;
+      const value = callBusinessRoute(
+        new SettingsBusinessService(selected, req.user),
+        route,
+        req,
       );
       const done = (result) => {
         for (const key of selected.resourceChanges?.() || [])
@@ -28,6 +24,6 @@ export function installSettingsRoutes(app, options) {
           );
         return res.json(result);
       };
-      return value?.then ? value.then(done) : done(value);
+      return done(value);
     });
 }

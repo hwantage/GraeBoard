@@ -73,8 +73,12 @@ async function fixture(t, { connected = true, worker } = {}) {
     writeFileSync(
       workerPath,
       `import { parentPort } from 'node:worker_threads';
-import { writeFileSync } from 'node:fs';
-parentPort.on('message', (message) => {
+import { existsSync, writeFileSync } from 'node:fs';
+// The pool restarts only the failed lane. Inject the fault once, then let the
+// replacement execute the actual production worker in the same lane.
+if (existsSync(${JSON.stringify(acquired)})) {
+  await import(${JSON.stringify(new URL("../server/sync/background-worker.mjs", import.meta.url).href)});
+} else parentPort.on('message', (message) => {
   if (message.request) parentPort.postMessage({ mutation: { id: 1, action: 'acquire', teamId: message.request.config.teamId, owner: 'fault-worker' } });
   else if (message.mutationId === 1 && message.result === true) {
     writeFileSync(${JSON.stringify(acquired)}, 'acquired');
@@ -83,7 +87,7 @@ parentPort.on('message', (message) => {
 });`,
     );
     options.backgroundWorkerUrl = pathToFileURL(workerPath);
-    options.backgroundTimeoutMs = 500;
+    options.backgroundTimeoutMs = 1000;
   }
   const app = createApp({
     db,
@@ -190,8 +194,6 @@ for (const worker of ["timeout", "exit"])
       () => !f.store.readLink().lease_owner,
       "Terminated worker's lease must be released",
     );
-    delete f.options.backgroundWorkerUrl;
-    f.options.backgroundTimeoutMs = 10000;
     ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
     assert.equal(f.store.readLink().mode, "active");
     assert.equal(f.store.readLink().last_error, null);

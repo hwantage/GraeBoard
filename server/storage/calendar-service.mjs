@@ -8,7 +8,7 @@ import {
   propertyFilterValuesSchema,
   propertyFilterModeSchema,
   requireThat,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import {
   canContribute,
   canManageTeam,
@@ -26,22 +26,22 @@ import {
 } from "../../shared/calendar-tags.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
-export const revisionSchema = z.number().int().nonnegative();
-export const laneSchema = z.number().int().min(0).max(10000);
-export const tagIdsSchema = z
+const revisionSchema = z.number().int().nonnegative();
+const laneSchema = z.number().int().min(0).max(10000);
+const tagIdsSchema = z
   .array(uuid)
   .max(CALENDAR_TAG_LIMIT)
   .refine(
     (ids) => new Set(ids).size === ids.length,
     "같은 태그를 중복으로 지정할 수 없습니다.",
   );
-export const tagSchema = z.object({
+const tagSchema = z.object({
   name: z.string().trim().min(1).max(40),
   color: z.enum(CALENDAR_TAG_COLORS.map((color) => color.id)),
   kind: z.enum(["label", "check"]).default("label"),
 });
 export const scopeSchema = z.object({ teamId: uuid, userId: uuid });
-export const weeklyScopeSchema = scopeSchema.extend({
+const weeklyScopeSchema = scopeSchema.extend({
   weekStart: dateSchema.refine(
     (date) => calendarWeek(date) === date,
     "대상 주는 일요일 날짜로 선택하세요.",
@@ -273,16 +273,6 @@ export const CALENDAR_ROUTES = [
   },
 ];
 const routes = new Map(CALENDAR_ROUTES.map((route) => [route.name, route]));
-export function calendarCommandRoute(name, params = {}) {
-  const route = routes.get(name);
-  requireThat(route, 404, "등록되지 않은 일정 기능입니다.");
-  return {
-    ...route,
-    path: route.path.replace(/:([a-zA-Z]+)/g, (_, key) =>
-      encodeURIComponent(params[key] || ""),
-    ),
-  };
-}
 export function matchCalendarRoute(path, method) {
   for (const route of CALENDAR_ROUTES) {
     if (route.method !== method) continue;
@@ -313,17 +303,12 @@ export class CalendarBusinessService {
     requireThat(routes.has(operation), 404, "등록되지 않은 일정 기능입니다.");
     const values =
       query instanceof URLSearchParams ? Object.fromEntries(query) : query;
+    this.repository.authorizeCommand?.(operation, this.user, params);
     const request = {
       params,
       body: bodySchemas[operation]?.parse(body) || body,
       query: querySchemas[operation]?.parse(values) || values,
     };
-    if (["listEntries", "listTags"].includes(operation))
-      requireThat(
-        request.query.scope !== "team" || !request.query.userId,
-        400,
-        "팀 공용 일정에는 개인 소유자를 지정할 수 없습니다.",
-      );
     return this.repository.execute(operation, this.user, request);
   }
   getPreferences(request) {

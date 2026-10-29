@@ -6,10 +6,11 @@ import {
   sealTransfer,
   verifyTransfer,
   portableHash,
-} from "./logical-format.mjs";
+} from "../../shared/logical-format.mjs";
 import { canonical, digest, entityId, ENTITIES } from "../sync/protocol.mjs";
 import { SqliteDatabase } from "./sqlite.mjs";
 import { allEntities, materialize } from "../sync/entities.mjs";
+import { applicationEntities } from "../sync/versions.mjs";
 import { readFormatting } from "../db.mjs";
 
 const SHARED = TEAM_TRANSFER_TABLES.filter(
@@ -92,11 +93,13 @@ function sqliteRevision(db, teamId, entity, key) {
   return Math.max(high, revision);
 }
 function sqlitePresentation(db, teamId, link) {
-  const entities = allEntities(db, {
-    ...link,
-    team_id: teamId,
-    bootstrap_id: link?.bootstrap_id || randomUUID(),
-  });
+  const entities = applicationEntities(
+    allEntities(db, {
+      ...link,
+      team_id: teamId,
+      bootstrap_id: link?.bootstrap_id || randomUUID(),
+    }),
+  );
   const rows = Object.values(entities).map((e) => ({
     team_id: teamId,
     entity: e.entity,

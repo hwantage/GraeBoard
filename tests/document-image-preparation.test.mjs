@@ -73,10 +73,9 @@ test("document image preparation bounds active plus queued jobs and aggregate UT
   const service = preparation(t, { workerUrl, maxPending: 2, timeoutMs: 2000 });
   const first = service.prepare([marker]),
     second = service.prepare([marker]);
-  await assert.rejects(
-    service.prepare([marker]),
-    (error) => unavailable(error) && error.code.endsWith("BUSY"),
-  );
+  assert.deepEqual(await service.prepare([marker]), [
+    { markdown: marker, urls: [] },
+  ]);
   assert.equal(service.stats.pending, 2);
   assert.equal(service.stats.queued, 1);
   assert.equal(service.stats.inputBytes, Buffer.byteLength(marker) * 2);
@@ -90,9 +89,9 @@ test("document image preparation bounds active plus queued jobs and aggregate UT
     timeoutMs: 2000,
   });
   const one = bounded.prepare([text]);
-  await assert.rejects(bounded.prepare([text]), (error) =>
-    error.code.endsWith("BUSY"),
-  );
+  assert.deepEqual(await bounded.prepare([text]), [
+    { markdown: text, urls: [] },
+  ]);
   await one;
   assert.equal(bounded.stats.inputBytes, 0);
 });
@@ -118,7 +117,7 @@ for (const [name, fault] of [
     "parentPort.postMessage({...reply(request),urls:[['/api/document-images/'+ 'x'.repeat(200)],[]]}); return;",
   ],
 ]) {
-  test(`document image worker ${name} rejects all pending work and a later request starts a fresh worker`, async (t) => {
+  test(`document image worker ${name} falls back without rejecting queued saves and replaces the failed worker`, async (t) => {
     const workerUrl = workerFixture(
       t,
       `parentPort.on('message', request => {
@@ -136,24 +135,14 @@ for (const [name, fault] of [
     const outcomes = await Promise.allSettled([first, second]);
     assert.ok(
       outcomes.every(
-        (result) => result.status === "rejected" && unavailable(result.reason),
+        (result) =>
+          result.status === "fulfilled" &&
+          result.value.every((row) => row.urls.length === 0),
       ),
     );
     assert.equal(service.stats.pending, 0);
     assert.equal(service.stats.inputBytes, 0);
-    if (name === "wrong ID")
-      assert.equal(
-        service.stats.terminating,
-        true,
-        "failure rejects jobs before the old worker exit is confirmed",
-      );
     const retry = service.prepare([marker + "retry"]);
-    if (name === "wrong ID")
-      assert.equal(
-        service.stats.workerStarts,
-        1,
-        "a request during termination cannot spawn an overlapping worker",
-      );
     assert.deepEqual(await retry, [{ markdown: marker + "retry", urls: [] }]);
     assert.equal(service.stats.workerStarts, 2);
     assert.notEqual(service.stats.workerThreadId, oldThread);
@@ -171,8 +160,8 @@ test("document preparation timeout includes queue wait instead of restarting the
     service.prepare([marker]),
   ]);
   assert.equal(outcomes[0].status, "fulfilled");
-  assert.equal(outcomes[1].status, "rejected");
-  assert.equal(outcomes[1].reason.code, "DOCUMENT_IMAGE_PREPARATION_TIMEOUT");
+  assert.equal(outcomes[1].status, "fulfilled");
+  assert.deepEqual(outcomes[1].value, [{ markdown: marker, urls: [] }]);
 });
 
 test("an unsolicited reply while idle retires the worker without automatic respawn", async (t) => {
@@ -216,11 +205,10 @@ test("a duplicate stale reply cannot settle the next active document job", async
     service.prepare([marker + "second"]),
   ]);
   assert.equal(outcomes[0].status, "fulfilled");
-  assert.equal(outcomes[1].status, "rejected");
-  assert.equal(
-    outcomes[1].reason.code,
-    "DOCUMENT_IMAGE_PREPARATION_INVALID_REPLY",
-  );
+  assert.equal(outcomes[1].status, "fulfilled");
+  assert.deepEqual(outcomes[1].value, [
+    { markdown: marker + "second", urls: [] },
+  ]);
   assert.equal(service.stats.pending, 0);
 });
 

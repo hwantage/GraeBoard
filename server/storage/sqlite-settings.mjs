@@ -1,4 +1,4 @@
-import { requireThat, validateCellValue } from "../validation.mjs";
+import { requireThat, validateCellValue } from "../../shared/validation.js";
 import { audit, json, parse, touchTasks, transaction } from "../db.mjs";
 import { expandStyle } from "../../shared/compact.js";
 
@@ -140,7 +140,6 @@ export class SqliteSettingsRepository {
         409,
         "팀 설정이 변경되었습니다. 관리 화면을 다시 열어 최신 설정을 확인하세요.",
       );
-    if (team.name === input.name && !themeChanged) return { ok: true };
     transaction(this.db, () => {
       this.db
         .prepare("UPDATE teams SET name=? WHERE id=?")

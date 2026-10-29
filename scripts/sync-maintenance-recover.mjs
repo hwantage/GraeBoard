@@ -9,7 +9,7 @@ import { canonical } from "../server/sync/protocol.mjs";
 import {
   abandonedBackup,
   recoverBackupJob,
-} from "../server/storage/backup-recovery.mjs";
+} from "../shared/backup-recovery.mjs";
 
 export function recoverMaintenanceJob(
   db,

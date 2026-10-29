@@ -1,3 +1,4 @@
+import { applicationEntities } from "../server/sync/versions.mjs";
 import {
   canonical,
   equal,
@@ -8,7 +9,7 @@ import { project } from "../server/sync/reducer.mjs";
 import { isExcluded } from "../server/sync/retention.mjs";
 import { assert } from "./access.mjs";
 import { databaseFor, controlTransaction, DataSession } from "./data.mjs";
-import { profileFor } from "./config.mjs";
+import { profileFor } from "../shared/sync-profiles.js";
 import { serviceFor } from "./sync.mjs";
 import { GitHubApiTransport } from "./git.mjs";
 const decode = (row) =>
@@ -137,7 +138,9 @@ export async function recoveryRoutes(ctx, path, method, body) {
         );
       }
       const snapshot = await tx.sync.readSnapshot(),
-        visible = project(snapshot, snapshot.pending).entities,
+        visible = applicationEntities(
+          project(snapshot, snapshot.pending).entities,
+        ),
         exclusions = snapshot.exclusions.filter(
           (r) => r.site_id === ctx.env.INSTALLATION_ID,
         ),
@@ -147,7 +150,11 @@ export async function recoveryRoutes(ctx, path, method, body) {
           team.id,
         ])
       ).rows) {
-        if (!ENTITIES.has(row.entity)) continue;
+        if (
+          !ENTITIES.has(row.entity) ||
+          ["protocol", "reportTask", "reportCell"].includes(row.entity)
+        )
+          continue;
         const key = JSON.parse(row.entity_key),
           record = visible[entityId(row.entity, key)];
         if (record && isExcluded(record, visible, exclusions)) continue;

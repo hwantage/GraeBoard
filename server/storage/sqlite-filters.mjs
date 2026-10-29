@@ -1,6 +1,6 @@
 import { savedFilter } from "../../shared/domain.js";
 import { id, json, now, parse, transaction } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { equal } from "../sync/protocol.mjs";
 import {
   normalizeFilterInput,
@@ -90,7 +90,6 @@ export class SqliteFilterRepository {
         )
         .get(team.id, input.scope, owner, input.name);
       if (existing) {
-        if (equal(parse(existing.data), data)) return;
         this.db
           .prepare("UPDATE saved_filters SET data=?,updated_at=? WHERE id=?")
           .run(json(data), now(), existing.id);

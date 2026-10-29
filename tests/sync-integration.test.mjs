@@ -1,3 +1,4 @@
+import { commitCanonicalForTest } from "./canonical-storage-fixture.mjs";
 import { recoverSync } from "../scripts/sync-recover.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -1034,13 +1035,14 @@ test(
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
-    // The service and storage contracts are production implementations. This
-    // bounded fixture inserts a deterministic pause at the transport boundary.
+    // The real service and SQLite transaction primitives run with a fixture-only
+    // canonical committer; the transport boundary inserts a deterministic pause.
     const store = {
       ...raw,
       commitCanonical(expected, next, state, acks) {
         a.app.locals.sync.capture.without(() =>
-          adapter.commitCanonical(
+          commitCanonicalForTest(
+            adapter,
             teamId,
             expected,
             next,
@@ -1104,10 +1106,16 @@ test(
     const peerHead = await b.transport.readHead();
     assert.notEqual(peerHead, head);
     release();
-    await checkpoint;
+    await assert.rejects(
+      checkpoint,
+      (error) =>
+        error.status === 409 && error.code === "SYNC_PUBLICATION_CONFLICT",
+    );
     assert.equal(published, false);
     assert.equal(await a.transport.readHead(), peerHead);
     assert.deepEqual(raw.readPending(), pending);
+    assert.equal(stateHash(raw.readState()), stateHash(before));
+    await a.app.locals.sync.get(teamId).run({ receiveOnly: true });
     assert.equal(
       getTask(a.db, task.id).cells.title.value,
       "local P after snapshot",
@@ -1186,3 +1194,151 @@ test(
     assert.equal(await a.transport.readHead("sync-status/" + aId), aStatus);
   },
 );
+
+test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent v2 copy cells", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  const task = ok(
+    await a.api("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "original", "2026-10-26": "original detail" },
+    }),
+  ).task;
+  const report = ok(
+    await a.api("/reports", {
+      teamId,
+      year: 2026,
+      name: "v2 copy",
+      referenceDate: "2026-10-29",
+      taskIds: [task.id],
+      view: defaultView(2026),
+    }),
+  );
+  await joinPeer(a, b, teamId);
+  for (const site of [a, b])
+    ok(await site.api(`/teams/${teamId}/sync/pause`, {}));
+  const storeA = a.app.locals.sync.store(teamId),
+    storeB = b.app.locals.sync.store(teamId);
+  const options = {
+    expectedHead: storeA.readLink().canonical_head,
+    expectedHash: stateHash(storeA.readState()),
+    peersStopped: true,
+  };
+  assert.equal(
+    (
+      await a.api(`/teams/${teamId}/sync/upgrade`, {
+        ...options,
+        expectedHash: "0".repeat(64),
+      })
+    ).status,
+    409,
+  );
+  assert.equal(storeA.readLink().canonical_head, options.expectedHead);
+  const upgraded = ok(await a.api(`/teams/${teamId}/sync/upgrade`, options));
+  assert.equal(upgraded.protocol, 2);
+  assert.equal(storeA.readLink().mode, "paused");
+  const received = ok(await b.api(`/teams/${teamId}/sync/upgrade`, options));
+  assert.equal(received.received, true);
+  assert.equal(storeB.readLink().mode, "paused");
+  assert.equal(
+    storeA.readLink().canonical_head,
+    storeB.readLink().canonical_head,
+  );
+  assert.equal(stateHash(storeA.readState()), stateHash(storeB.readState()));
+  for (const site of [a, b])
+    ok(await site.api(`/teams/${teamId}/sync/resume`, {}));
+  const save = async (site, key, value) => {
+    const before = ok(await site.api(`/reports/${report.id}`));
+    return ok(
+      await site.api(
+        `/reports/${report.id}`,
+        {
+          operationId: randomUUID(),
+          revision: before.revision,
+          operations: [
+            {
+              kind: "cells",
+              at: new Date().toISOString(),
+              changes: [
+                {
+                  taskId: task.id,
+                  key,
+                  value,
+                  expectedVersion: before.tasks[0].cells[key]?.version || 0,
+                },
+              ],
+            },
+          ],
+        },
+        "PATCH",
+      ),
+    );
+  };
+  await save(a, "title", "inside copy");
+  await save(b, "2026-10-26", "outside copy");
+  for (const store of [storeA, storeB]) {
+    const pending = store.readPending();
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].protocol, 2);
+    assert.equal(
+      pending[0].changes.filter((change) => change.entity === "reportCell")
+        .length,
+      1,
+    );
+    assert.ok(!pending[0].changes.some((change) => change.entity === "report"));
+  }
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  await a.app.locals.sync.get(teamId).run();
+  for (const site of [a, b]) {
+    const copy = ok(await site.api(`/reports/${report.id}`));
+    assert.equal(copy.tasks[0].cells.title.value, "inside copy");
+    assert.equal(copy.tasks[0].cells["2026-10-26"].value, "outside copy");
+    assert.equal(getTask(site.db, task.id).cells.title.value, "original");
+    assert.equal(
+      getTask(site.db, task.id).cells["2026-10-26"].value,
+      "original detail",
+    );
+    assert.equal(site.app.locals.sync.store(teamId).readPending().length, 0);
+  }
+  assert.equal(stateHash(storeA.readState()), stateHash(storeB.readState()));
+  await save(a, "title", "canonical copy");
+  await save(b, "title", "submitted copy");
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  await a.app.locals.sync.get(teamId).run();
+  const conflict = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts`),
+  ).conflicts.find((item) => !item.resolved);
+  assert.ok(conflict);
+  ok(
+    await b.api(
+      `/teams/${teamId}/sync/conflicts/${conflict.conflictId}/resolve`,
+      {
+        choice: "submitted",
+        expectedHead: conflict.expectedHead,
+        frontier: [conflict.conflictId],
+      },
+    ),
+  );
+  assert.equal(storeB.readPending()[0].protocol, 2);
+  await b.app.locals.sync.get(teamId).run();
+  await a.app.locals.sync.get(teamId).run();
+  assert.equal(
+    ok(await a.api(`/reports/${report.id}`)).tasks[0].cells.title.value,
+    "submitted copy",
+  );
+  ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
+  await save(a, "title", "offline v2 copy");
+  ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
+  assert.ok(
+    storeA.readPending().every((operation) => operation.protocol === 2),
+  );
+  await a.app.locals.sync.get(teamId).run();
+  await b.app.locals.sync.get(teamId).run();
+  assert.equal(
+    ok(await b.api(`/reports/${report.id}`)).tasks[0].cells.title.value,
+    "offline v2 copy",
+  );
+  assert.equal(stateHash(storeA.readState()), stateHash(storeB.readState()));
+});

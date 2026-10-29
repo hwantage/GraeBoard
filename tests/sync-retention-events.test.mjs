@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, getTask, json } from "../server/db.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { entityId } from "../server/sync/protocol.mjs";
+import { entityId, canonical, stateHash } from "../server/sync/protocol.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 import { documentStream } from "./document-events-helper.mjs";
@@ -791,4 +791,128 @@ test("year cleanup resets live cell streams and replay buffers while preserving 
   assert.equal(restored.data.event, "cells");
   direct.close();
   multiplex.close();
+});
+
+test("v2 year cleanup and restore reassemble complete copies while preserving canonical children and pending edits", async (t) => {
+  const f = await fixture(t),
+    tasks = [];
+  for (let i = 0; i < 2; i++) {
+    const task = ok(
+      await f.api("/tasks", {
+        teamId: f.teamId,
+        year: 2026,
+        fields: { title: "row " + i, "2026-10-26": "schedule " + i },
+      }),
+    ).task;
+    ok(
+      await f.api(
+        `/tasks/${task.id}/document`,
+        {
+          markdown: "body " + i,
+          expectedRevision: 0,
+          operationId: randomUUID(),
+        },
+        "PUT",
+      ),
+    );
+    tasks.push(task);
+  }
+  const report = ok(
+    await f.api("/reports", {
+      teamId: f.teamId,
+      year: 2026,
+      name: "complete v2 copy",
+      referenceDate: "2026-10-29",
+      taskIds: tasks.map((task) => task.id),
+      view: defaultView(2026),
+    }),
+  );
+  ok(
+    await f.api(
+      `/admin/teams/${f.teamId}/connection`,
+      { profileId: "test", expectedRevision: 0 },
+      "PUT",
+    ),
+  );
+  ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
+  ok(await f.api(`/teams/${f.teamId}/sync/pause`, {}));
+  const store = f.app.locals.sync.store(f.teamId);
+  ok(
+    await f.api(`/teams/${f.teamId}/sync/upgrade`, {
+      expectedHead: store.readLink().canonical_head,
+      expectedHash: stateHash(store.readState()),
+      peersStopped: true,
+    }),
+  );
+  const initial = ok(await f.api(`/reports/${report.id}`));
+  ok(
+    await f.api(
+      `/reports/${report.id}`,
+      {
+        operationId: randomUUID(),
+        revision: initial.revision,
+        operations: [
+          {
+            kind: "cells",
+            at: new Date().toISOString(),
+            changes: [
+              {
+                taskId: tasks[0].id,
+                key: "title",
+                value: "pending copied row",
+                expectedVersion: initial.tasks[0].cells.title.version,
+              },
+            ],
+          },
+        ],
+      },
+      "PATCH",
+    ),
+  );
+  const expected = ok(await f.api(`/reports/${report.id}`)),
+    stateBefore = stateHash(store.readState()),
+    pendingBefore = canonical(store.readPending()),
+    headBefore = store.readLink().canonical_head;
+  assert.equal(store.readPending().length, 1);
+  const path = `/admin/teams/${f.teamId}/maintenance`,
+    preview = ok(await f.api(path + "/preview", { kind: "year", year: 2026 }));
+  let job = ok(
+    await f.api(path + "/execute", { token: preview.token, confirmed: true }),
+  );
+  while (job.hasMore)
+    job = ok(await f.api(path + "/resume", { jobId: job.jobId }));
+  assert.equal(job.phase, "complete");
+  assert.equal((await f.api(`/reports/${report.id}`)).status, 409);
+  assert.equal(stateHash(store.readState()), stateBefore);
+  assert.equal(canonical(store.readPending()), pendingBefore);
+  const retention = ok(await f.api(path)).retention.find(
+    (row) => row.kind === "year" && row.key[0] === "2026",
+  );
+  job = ok(
+    await f.api(path + "/restore", {
+      retentionId: retention.id,
+      expectedRevision: retention.revision,
+    }),
+  );
+  while (job.hasMore)
+    job = ok(await f.api(path + "/resume", { jobId: job.jobId }));
+  assert.equal(job.phase, "complete");
+  const restored = ok(await f.api(`/reports/${report.id}`));
+  assert.deepEqual(
+    restored.tasks,
+    expected.tasks,
+    "both rows, every cell and the pending copied edit survive the local visibility cycle",
+  );
+  for (const [index, task] of tasks.entries()) {
+    assert.equal(
+      ok(await f.api(`/reports/${report.id}/tasks/${task.id}/document`))
+        .markdown,
+      "body " + index,
+    );
+    assert.equal(getTask(f.db, task.id).cells.title.value, "row " + index);
+  }
+  assert.equal(stateHash(store.readState()), stateBefore);
+  assert.equal(canonical(store.readPending()), pendingBefore);
+  assert.equal(store.readLink().canonical_head, headBefore);
+  assert.equal(ok(await f.api(path)).retention.length, 0);
 });

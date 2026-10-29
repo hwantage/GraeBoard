@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { TaskBusinessService } from "../server/storage/task-service.mjs";
-import { PostgresTaskRepository } from "../server/storage/postgres-tasks.mjs";
+import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";

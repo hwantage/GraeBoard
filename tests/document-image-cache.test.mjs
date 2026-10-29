@@ -759,7 +759,7 @@ for (const [name, fault, code] of [
   ["timeout", "/* Deliberately do not answer this message. */", "TIMEOUT"],
 ])
   test(
-    `actual document HTTP parser ${name} preserves all state and permits retry with the same operation ID`,
+    `actual document HTTP parser ${name} falls back before the writer and preserves idempotent retries`,
     { timeout: 15000 },
     async (t) => {
       const f = await fixture(t, { coldBody: true }),
@@ -804,28 +804,21 @@ parentPort.on('message', request => { ${fault} });\n`,
       };
       try {
         const response = await f.save(body, request);
-        assert.equal(response.status, 503, JSON.stringify(response));
-        assert.equal(failure?.code, `DOCUMENT_IMAGE_PREPARATION_${code}`);
-        assert.deepEqual(counts(), before);
-        assert.deepEqual(
-          { ...getTaskDocument(f.db, f.taskIds[0]) },
-          beforeBody,
-        );
-        assert.equal(
-          f.transactions(),
-          0,
-          "failed parser never enters the writer",
-        );
-        assert.equal(
-          events.length,
-          0,
-          "parser failure has no synchronous fallback",
+        assert.equal(response.status, 200, JSON.stringify(response));
+        assert.equal(failure, undefined);
+        assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
+        assert.equal(counts().sync_outbox, before.sync_outbox + 1);
+        assert.ok(events.length > 0, "the shared parser runs as a fallback");
+        assert.ok(
+          events.every((event) => !event.writer),
+          "fallback finishes before the SQLite writer",
         );
       } finally {
         provider.prepare = prepare;
         await faulty.close();
         rmSync(directory, { recursive: true, force: true });
       }
+      const fallbackParses = events.length;
       const saved = ok(await f.save(body, request));
       assert.equal(getTaskDocument(f.db, f.taskIds[0]).markdown, body);
       assert.equal(f.store.readPending().length, 1);
@@ -836,7 +829,7 @@ parentPort.on('message', request => { ${fault} });\n`,
         after,
         "same operation retry remains idempotent",
       );
-      assert.equal(events.length, 0);
+      assert.equal(events.length, fallbackParses);
     },
   );
 

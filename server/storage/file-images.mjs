@@ -10,8 +10,11 @@ import {
   readDocumentImage,
   writeDocumentImage,
 } from "../document-images.mjs";
-import { imageReferences, stillImage } from "../../worker/images.mjs";
-import { requireThat } from "../validation.mjs";
+import {
+  imageReferences,
+  stillImage,
+} from "../../shared/document-image-validation.js";
+import { requireThat } from "../../shared/validation.js";
 
 // Host byte storage is independent of the team DB engine. Node retains the same
 // immutable WebP files and URLs whether ordinary team rows use SQLite or PG.

@@ -20,8 +20,8 @@ import {
   transaction,
   audit,
 } from "../db.mjs";
-import { requireThat } from "../validation.mjs";
-import { profileFields } from "../profiles.mjs";
+import { requireThat } from "../../shared/validation.js";
+import { profileFields } from "../../shared/profiles.js";
 import { deleteTeam } from "../team-deletion.mjs";
 import { removeTeamDocumentImages } from "../document-images.mjs";
 import {
@@ -38,6 +38,9 @@ export class SqliteControlRepository {
   constructor(options) {
     this.options = options;
     this.authenticationMode = "password";
+  }
+  authorizeMembers(user, teamId) {
+    this.options.teamAccess(user, teamId);
   }
   execute(user, command, input = {}, targetId) {
     return execute(this.options, user, command, input, targetId);

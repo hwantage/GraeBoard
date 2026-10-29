@@ -1,4 +1,9 @@
-import { isRecoveryError, normalizeSyncError } from "../server/sync/errors.mjs";
+import {
+  isRecoveryError,
+  normalizeSyncError,
+  isSyncInterruption,
+  SyncInterruption,
+} from "../server/sync/errors.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import {
@@ -63,11 +68,29 @@ export function boundStore(
         ack,
         async (tx, projection) => {
           const link = await tx.sync.readLink();
-          assert(
-            link.lease_owner === owner,
-            409,
-            "동기화 실행 소유권이 바뀌었습니다.",
-          );
+          if (
+            link.lease_owner !== owner ||
+            link.lease_until <= Date.now() ||
+            (!["active", "initializing", "importing"].includes(link.mode) &&
+              !(options.transition === true && link.mode === "paused"))
+          )
+            throw new SyncInterruption();
+          if (
+            options.transition === true &&
+            (
+              await tx.query(
+                "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
+                [teamId],
+              )
+            ).rows.length
+          )
+            throw new SyncInterruption(
+              "정리·백업 작업이 시작되어 형식 전환을 중단했습니다.",
+            );
+          if (options.transition === true && projection.pending.length)
+            throw new SyncInterruption(
+              "새 미전송 자료가 있어 형식 전환을 중단했습니다. 입력을 보존하고 관리자에게 확인하세요.",
+            );
           assertStateCapacity(state, limits, projection.pending);
           await materialize(tx, teamId, projection);
           // A received commit may acknowledge our own outbox after a lost
@@ -96,17 +119,19 @@ export function boundStore(
           );
       }),
     setError: (error) =>
-      call((tx) =>
-        tx.query(
-          "UPDATE team_sync_links SET last_error=$2,updated_at=$3,mode=CASE WHEN $4 THEN 'recovery' ELSE mode END WHERE team_id=$1",
-          [
-            teamId,
-            normalizeSyncError(error)?.message || null,
-            new Date().toISOString(),
-            isRecoveryError(error),
-          ],
-        ),
-      ),
+      isSyncInterruption(error)
+        ? undefined
+        : call((tx) =>
+            tx.query(
+              "UPDATE team_sync_links SET last_error=$2,updated_at=$3,mode=CASE WHEN $4 THEN 'recovery' ELSE mode END WHERE team_id=$1",
+              [
+                teamId,
+                normalizeSyncError(error)?.message || null,
+                new Date().toISOString(),
+                isRecoveryError(error),
+              ],
+            ),
+          ),
     saveRemoteStatus: (status) =>
       call(async (tx) => {
         const link = await tx.sync.readLink();

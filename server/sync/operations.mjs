@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { equal, entityId, initialToken } from "./protocol.mjs";
 export function entityReferences(entity, key, payload) {
   const refs = [];
+  if (entity === "reportTask") refs.push(["report", [key[0]]]);
+  if (entity === "reportCell")
+    refs.push(["report", [key[0]]], ["reportTask", key.slice(0, 2)]);
   if (entity === "cell") refs.push(["task", [key[0]]]);
   if (entity === "document") {
     const parent =
@@ -86,8 +89,8 @@ export function makeOperation({
   }
   if (!changes.length && !resolves?.length) return null;
   return {
-    protocol: 1,
-    reducer: 1,
+    protocol: link.protocol || 1,
+    reducer: link.protocol || 1,
     repoId: link.repo_id || link.repoId,
     teamId: link.team_id || link.teamId,
     opId,

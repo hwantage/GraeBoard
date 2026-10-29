@@ -1,11 +1,6 @@
-import { DatabaseAdapter } from "./database-adapter.mjs";
-import {
-  createTeamStore,
-  executeSync,
-  prepareStatePatch,
-} from "./team-store.mjs";
+import { DatabaseAdapter } from "../../shared/database-adapter.js";
+import { createTeamStore, executeSync } from "../../shared/sync-team-store.mjs";
 import { assertSqliteHistory, sqliteVersion } from "../migrations/sqlite.mjs";
-import { digest } from "../sync/protocol.mjs";
 
 const statements = new WeakMap();
 function execute(db, sql, params) {
@@ -111,40 +106,6 @@ export class SqliteDatabase extends DatabaseAdapter {
   readPending(teamId) {
     return this.withTeamTransaction(teamId, (tx) => tx.sync.readPending(), {
       readOnly: true,
-    });
-  }
-  commitCanonical(
-    teamId,
-    expectedHead,
-    newHead,
-    state,
-    ackOpIds,
-    materialize,
-    options = {},
-  ) {
-    if (materialize?.constructor.name === "AsyncFunction")
-      throw new Error("SQLite materializer must be synchronous");
-    const previous =
-      options.previousState || (options.patch ? null : this.readState(teamId));
-    const patch = options.patch || prepareStatePatch(previous, state);
-    const hash = options.stateHash || digest(state);
-    return this.withTeamTransaction(teamId, (tx) => {
-      if (tx.sync.readLink()?.canonical_head !== expectedHead)
-        throw new Error("Canonical head changed; recompute before retry");
-      tx.sync.writeState(state, newHead, previous, patch);
-      tx.sync.acknowledge(ackOpIds);
-      const pending = tx.sync.readPending();
-      const result = materialize?.(tx, {
-        state,
-        pending,
-        exclusions: tx.sync.readExclusions(),
-      });
-      if (result && typeof result.then === "function") {
-        result.catch(() => {});
-        throw new Error("SQLite materializer must not return promises");
-      }
-      tx.sync.advanceHead(expectedHead, newHead, hash);
-      return result;
     });
   }
   health() {

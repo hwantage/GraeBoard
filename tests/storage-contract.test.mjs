@@ -1,3 +1,4 @@
+import { commitCanonicalForTest } from "./canonical-storage-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -19,8 +20,8 @@ import {
   postgresMigrations,
 } from "../server/migrations/postgres.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
-import { POSTGRES_CHECKSUMS } from "../server/storage/schema-version.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
+import { POSTGRES_CHECKSUMS } from "../shared/postgres-schema-version.js";
 import { canonical, digest, entityId } from "../server/sync/protocol.mjs";
 
 const link = (teamId) => ({
@@ -179,7 +180,8 @@ async function contract(t, adapter, team) {
             };
       await assert.rejects(
         async () =>
-          adapter.commitCanonical(
+          commitCanonicalForTest(
+            adapter,
             team,
             null,
             "head-1",
@@ -192,7 +194,8 @@ async function contract(t, adapter, team) {
       assert.deepEqual(await adapter.readState(team), before);
       assert.equal((await adapter.readPending(team)).length, 2);
       let pendingDuringCommit;
-      await adapter.commitCanonical(
+      await commitCanonicalForTest(
+        adapter,
         team,
         null,
         "head-1",
@@ -208,7 +211,15 @@ async function contract(t, adapter, team) {
       assert.equal((await adapter.readLink(team)).canonical_head, "head-1");
       await assert.rejects(
         async () =>
-          adapter.commitCanonical(team, null, "head-bad", next, [], () => {}),
+          commitCanonicalForTest(
+            adapter,
+            team,
+            null,
+            "head-bad",
+            next,
+            [],
+            () => {},
+          ),
         /head changed/,
       );
       assert.equal((await adapter.readLink(team)).canonical_head, "head-1");
@@ -424,15 +435,16 @@ test("PostgreSQL actual temporary server: migration, same-client transactions an
           /identity mismatch/,
         );
         await pool.query(
-          "UPDATE graeboard.schema_migrations SET checksum='tampered'",
+          "UPDATE graeboard.schema_migrations SET checksum='tampered' WHERE version=1",
         );
         await assert.rejects(
           () => migratePostgres(pool, { scope: "team" }),
           /checksum mismatch/,
         );
-        await pool.query("UPDATE graeboard.schema_migrations SET checksum=$1", [
-          POSTGRES_CHECKSUMS.team,
-        ]);
+        await pool.query(
+          "UPDATE graeboard.schema_migrations SET checksum=$1 WHERE version=1",
+          [POSTGRES_CHECKSUMS.team],
+        );
       },
     );
     const adapter = new PostgresDatabase(pool, { teamId: team });

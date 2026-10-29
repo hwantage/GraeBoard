@@ -21,10 +21,10 @@ import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
 import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
 import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
-import { profileFor, siteTeamId } from "./config.mjs";
+import { profileFor, siteTeamId } from "../shared/sync-profiles.js";
 import { siteAuthRoute, accessRequestRoutes } from "./site-auth.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
+import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";
 const security = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "same-origin",
@@ -82,13 +82,14 @@ async function boundedRequest(request) {
     duplex: "half",
   });
 }
-async function pullFirst(ctx, teamId) {
+async function pullFirst(ctx, teamId, { wait = true } = {}) {
   if (!teamId) return;
   const team = await ctx.team(teamId, { allowUnready: true });
   if (team.status !== "active" || !team.profile_id) return;
   const profile = profileFor(ctx.env, team.profile_id, teamId);
   const promise = refreshTeam(ctx.env, profile).catch(() => {});
   ctx.execution?.waitUntil(promise);
+  if (!wait) return;
   await Promise.race([
     promise,
     new Promise((resolve) => setTimeout(resolve, 1500)),
@@ -238,7 +239,7 @@ export function createWorker({
             { multiplex: false },
           );
         if (path === "/tasks" && method === "GET")
-          await pullFirst(ctx, url.searchParams.get("teamId"));
+          await pullFirst(ctx, url.searchParams.get("teamId"), { wait: false });
         if (["POST", "PUT", "PATCH", "DELETE"].includes(method))
           await pullFirst(ctx, await mutationTeam(ctx, path, body));
         if (siteTeamId(env))

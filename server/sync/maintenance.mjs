@@ -1,4 +1,4 @@
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { randomUUID } from "node:crypto";
 import { digest, entityId } from "./protocol.mjs";
 import { project } from "./reducer.mjs";

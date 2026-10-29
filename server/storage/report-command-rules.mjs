@@ -7,7 +7,7 @@ import {
   validateCellValue,
   validCellKey,
   requireThat,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 
 // Engine-neutral validation + row transformation; adapters supply authorized
 // people and hydrated document references and retain their own storage format.

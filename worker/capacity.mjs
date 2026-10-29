@@ -1,62 +1,20 @@
 import { gunzipSync } from "node:zlib";
 import { canonical } from "../server/sync/protocol.mjs";
-export class CapacityError extends Error {
-  constructor(message = "External synchronization capacity exceeded") {
-    super(message);
-    this.status = 413;
-    this.code = "EXTERNAL_SYNC_CAPACITY";
-  }
-}
-export function capacityLimits(env = {}) {
-  const number = (name, fallback, max) => {
-    const value = env[name] === undefined ? fallback : Number(env[name]);
-    if (!Number.isSafeInteger(value) || value < 1024 || value > max)
-      throw new CapacityError(
-        "External synchronization capacity configuration is invalid",
-      );
-    return value;
-  };
-  return {
-    maxBytes: number("SYNC_MAX_STATE_BYTES", 4 * 1024 * 1024, 4 * 1024 * 1024),
-    maxEntities: number("SYNC_MAX_ENTITIES", 12000, 12000),
-  };
-}
-export function assertStateCapacity(
-  state,
-  limits = capacityLimits(),
-  pending = [],
-) {
-  let bytes = 64,
-    count = 0;
-  for (const [section, records] of Object.entries(state)) {
-    if (!["entities", "receipts", "conflicts"].includes(section)) continue;
-    for (const [key, value] of Object.entries(records)) {
-      if (section === "entities" && ++count > limits.maxEntities)
-        throw new CapacityError(
-          "External synchronization entity capacity exceeded; canonical cursor is unchanged",
-        );
-      bytes +=
-        Buffer.byteLength(JSON.stringify(key)) +
-        Buffer.byteLength(canonical(value)) +
-        2;
-      if (bytes > limits.maxBytes)
-        throw new CapacityError(
-          "External synchronization state byte capacity exceeded; canonical cursor is unchanged",
-        );
-    }
-  }
-  for (const operation of pending)
-    bytes += Buffer.byteLength(canonical(operation));
-  if (bytes > limits.maxBytes)
-    throw new CapacityError(
-      "External state and pending capacity exceeded; prior data is preserved",
-    );
-  return { bytes, entities: count };
-}
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync-limits.js";
+import {
+  CapacityError,
+  capacityLimits,
+  assertStateCapacity,
+  receiptCapacity,
+} from "../shared/sync-capacity.mjs";
+export { CapacityError, capacityLimits, assertStateCapacity };
 export function assertFileCapacity(path, bytes, limits = capacityLimits()) {
   if (!bytes) return bytes;
   if (!/^snapshots\//.test(path) && !/^events\//.test(path)) return bytes;
-  if (bytes.byteLength > limits.maxBytes)
+  if (
+    bytes.byteLength >
+    (path.startsWith("snapshots/") ? SYNC_SNAPSHOT_MAX_BYTES : limits.maxBytes)
+  )
     throw new CapacityError(
       "External synchronization file capacity exceeded; canonical cursor is unchanged",
     );
@@ -92,16 +50,21 @@ export async function databaseCapacity(database, teamId) {
           ',"key":'||entity_key||',"payload":'||COALESCE(payload,'null')||
           ',"version":'||to_json(version)::text||'}') + 2),0)
         FROM sync_entities WHERE team_id=$1) +
-      (SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0)
-        FROM sync_receipts WHERE team_id=$1) +
       (SELECT COALESCE(SUM(octet_length(to_json(conflict_id)::text)+octet_length(payload)+2),0)
         FROM sync_conflicts WHERE team_id=$1) +
       (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox
-        WHERE team_id=$1 AND status<>'acknowledged') AS bytes`,
+        WHERE team_id=$1 AND status<>'acknowledged') AS bytes,
+      2 + (SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0)
+        FROM sync_receipts WHERE team_id=$1) AS receipt_bytes`,
           [teamId],
         )
       ).rows[0];
-      return { entities: Number(row.entities), bytes: Number(row.bytes) };
+      return {
+        entities: Number(row.entities),
+        bytes: Number(row.bytes),
+        receiptBytes: Number(row.receipt_bytes),
+        receiptCapacity: receiptCapacity(Number(row.receipt_bytes)),
+      };
     },
     { readOnly: true },
   );
@@ -131,14 +94,14 @@ export async function exclusiveSync(work) {
 }
 
 export function decodeBoundedSnapshot(bytes, limits = capacityLimits()) {
-  if (!bytes || bytes.byteLength > limits.maxBytes)
+  if (!bytes || bytes.byteLength > SYNC_SNAPSHOT_MAX_BYTES)
     throw new CapacityError(
       "External snapshot exceeds compressed byte capacity; canonical cursor is unchanged",
     );
   let source = bytes;
   try {
     if (bytes[0] === 0x1f && bytes[1] === 0x8b)
-      source = gunzipSync(bytes, { maxOutputLength: limits.maxBytes });
+      source = gunzipSync(bytes, { maxOutputLength: SYNC_SNAPSHOT_MAX_BYTES });
   } catch (error) {
     if (
       error.code === "ERR_BUFFER_TOO_LARGE" ||
@@ -149,9 +112,11 @@ export function decodeBoundedSnapshot(bytes, limits = capacityLimits()) {
       );
     throw error;
   }
-  if (source.byteLength > limits.maxBytes)
+  if (source.byteLength > SYNC_SNAPSHOT_MAX_BYTES)
     throw new CapacityError(
       "External snapshot exceeds decoded byte capacity; canonical cursor is unchanged",
     );
-  return JSON.parse(new TextDecoder().decode(source));
+  const value = JSON.parse(new TextDecoder().decode(source));
+  if (value.state) assertStateCapacity(value.state, limits);
+  return value;
 }

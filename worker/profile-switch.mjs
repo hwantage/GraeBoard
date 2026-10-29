@@ -1,11 +1,11 @@
 import {
   TEAM_TRANSFER_TABLES,
   portableRow,
-} from "../server/storage/logical-format.mjs";
+} from "../shared/logical-format.mjs";
 import { createHash } from "node:crypto";
 import { canonical, digest } from "../server/sync/protocol.mjs";
 import { controlTransaction, databaseFor } from "./data.mjs";
-import { profiles, profileFor } from "./config.mjs";
+import { profiles, profileFor } from "../shared/sync-profiles.js";
 import { R2ImageStore } from "./images.mjs";
 import { assert } from "./access.mjs";
 const tables = TEAM_TRANSFER_TABLES;

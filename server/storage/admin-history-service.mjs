@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { dateSchema, requireThat } from "../validation.mjs";
+import { dateSchema, requireThat } from "../../shared/validation.js";
 import { isSystemAdmin, todayKey } from "../../shared/domain.js";
 const auditQuerySchema = z
   .object({

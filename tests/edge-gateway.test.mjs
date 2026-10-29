@@ -58,7 +58,9 @@ for (const viaLegacy of [false, true])
       .setExpirationTime("1h")
       .sign(keys.privateKey);
     let assets = 0,
-      api = 0;
+      api = 0,
+      edgeAccess = 0,
+      keyRequests = 0;
     const edge = createEdgeHandler({
       env,
       verify,
@@ -127,7 +129,15 @@ for (const viaLegacy of [false, true])
                 return new Response("private app");
               },
             },
-            outboundService: edge,
+            outboundService: async (request) => {
+              if (request.url === env.ACCESS_ISSUER + "/cdn-cgi/access/certs") {
+                keyRequests++;
+                return Response.json({ keys: [jwk] });
+              }
+              if (new URL(request.url).pathname.endsWith("/_gateway/access"))
+                edgeAccess++;
+              return edge(request);
+            },
           },
         ],
       }),
@@ -185,6 +195,52 @@ for (const viaLegacy of [false, true])
       assert.equal(page.status, 200);
       assert.equal(await page.text(), "private app");
       assert.equal(assets, 1);
+      const files = await Promise.all(
+        Array.from({ length: 43 }, (_, i) =>
+          runtime.dispatchFetch(env.APP_ORIGIN + `/assets/font-${i}.woff2`, {
+            headers: { "cf-access-jwt-assertion": token },
+          }),
+        ),
+      );
+      for (const file of files) {
+        assert.equal(file.status, 200);
+        await file.text();
+      }
+      assert.equal(
+        edgeAccess,
+        0,
+        "page and asset authentication must not invoke Edge",
+      );
+      assert.equal(
+        keyRequests,
+        1,
+        "concurrent assets share the cached Access public keys",
+      );
+      for (const [issuer, audience, expiry] of [
+        [env.ACCESS_ISSUER, "other-app", "1h"],
+        [env.ACCESS_ISSUER, env.ACCESS_AUDIENCE, "-1s"],
+        ["https://other.cloudflareaccess.com", env.ACCESS_AUDIENCE, "1h"],
+      ]) {
+        const invalid = await new SignJWT({
+          type: "app",
+          email: "lead@example.com",
+        })
+          .setProtectedHeader({ alg: "RS256" })
+          .setIssuer(issuer)
+          .setAudience(audience)
+          .setSubject("lead")
+          .setExpirationTime(expiry)
+          .sign(keys.privateKey);
+        assert.equal(
+          (
+            await runtime.dispatchFetch(env.APP_ORIGIN + "/assets/app.js", {
+              headers: { "cf-access-jwt-assertion": invalid },
+            })
+          ).status,
+          401,
+        );
+      }
+      assert.equal(assets, 44, "invalid tokens never reach static assets");
       const response = await runtime.dispatchFetch(
         env.APP_ORIGIN + "/api/events",
         {
@@ -238,3 +294,47 @@ for (const viaLegacy of [false, true])
       await runtime.dispose();
     }
   });
+
+test("legacy gateway settings keep Edge verification; partial local settings fail closed", async () => {
+  let forwarded = 0;
+  const env = {
+    APP_ORIGIN: "https://board.pages.dev",
+    GRAEBOARD_EDGE_URL: "https://fixture.supabase.co/functions/v1/graeboard",
+    GRAEBOARD_GATEWAY_SECRET: "g".repeat(64),
+    ASSETS: { fetch: async () => new Response("app") },
+  };
+  const gateway = createGateway({
+    fetcher: async () => {
+      forwarded++;
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.equal(
+    (await gateway.fetch(new Request(env.APP_ORIGIN), env)).status,
+    200,
+  );
+  assert.equal(forwarded, 1);
+  assert.equal(
+    (
+      await gateway.fetch(new Request(env.APP_ORIGIN), {
+        ...env,
+        ACCESS_ISSUER: "https://fixture.cloudflareaccess.com",
+      })
+    ).status,
+    503,
+  );
+  assert.equal(forwarded, 1);
+  const local = createGateway({ verify: async () => ({}) });
+  assert.equal(
+    (
+      await local.fetch(new Request("http://board.pages.dev"), {
+        ...env,
+        APP_ORIGIN: "http://board.pages.dev",
+        ACCESS_ISSUER: "https://fixture.cloudflareaccess.com",
+        ACCESS_AUDIENCE: "board",
+      })
+    ).status,
+    503,
+    "local verification retains the HTTPS origin requirement",
+  );
+});

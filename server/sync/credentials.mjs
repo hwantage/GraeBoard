@@ -23,7 +23,7 @@ export function sealToken(token, profileId) {
     data: bytes.toString("base64"),
   });
 }
-export function openToken(value, profileId) {
+function openToken(value, profileId) {
   const c = JSON.parse(value);
   if (
     c.version !== 1 ||

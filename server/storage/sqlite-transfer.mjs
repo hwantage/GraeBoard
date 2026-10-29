@@ -13,7 +13,7 @@ import {
   withWeekBoundaries,
 } from "../../shared/borders.js";
 import { checkWorkbookArchive } from "../archive.mjs";
-import { profileSnapshot } from "../profiles.mjs";
+import { profileSnapshot } from "../../shared/profiles.js";
 import {
   encodeReport,
   decodeReport,
@@ -67,14 +67,14 @@ import {
   dateSchema,
   viewSchema,
   validateCellValue,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 
 import {
   inspectWorkbook,
   makeWorkbook,
   stableId,
   importSheetOptionsSchema,
-} from "../transfer.mjs";
+} from "../../shared/workbook.mjs";
 import {
   transferDownload,
   extendImportProperties,
@@ -285,6 +285,18 @@ export class SqliteTransferRepository {
       filename,
     );
   }
+  authorizePreview(user, input) {
+    this.managedTeam(user, input.teamId, "팀장만 자료를 가져올 수 있습니다.");
+    const reportId = z.string().uuid().optional().parse(input.reportId);
+    requireThat(
+      !reportId ||
+        this.db
+          .prepare("SELECT 1 FROM reports WHERE id=? AND team_id=?")
+          .get(reportId, input.teamId),
+      404,
+      "사본을 찾을 수 없습니다.",
+    );
+  }
   async preview(user, input) {
     const { db, managedTeam, assignableUsers } = this;
     const teamId = z.string().uuid().parse(input.teamId),
@@ -405,7 +417,7 @@ export class SqliteTransferRepository {
       "import-exceptions.json",
     );
   }
-  apply(user, importId, input) {
+  apply(user, importId, input, { clientId } = {}) {
     const { db, managedTeam, assignableUsers } = this;
     const work = () => {
       const d = z
@@ -620,9 +632,9 @@ export class SqliteTransferRepository {
       .prepare("SELECT team_id FROM imports WHERE id=?")
       .get(importId);
     if (imp) {
-      this.documentEvents?.invalidate("team:" + imp.team_id);
+      this.documentEvents?.invalidate("team:" + imp.team_id, clientId);
       if (input.reportId)
-        this.documentEvents?.invalidate("report:" + input.reportId);
+        this.documentEvents?.invalidate("report:" + input.reportId, clientId);
     }
     return value;
   }

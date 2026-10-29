@@ -1,4 +1,4 @@
-import { canonical, digest } from "./protocol.mjs";
+import { publishBranchJson } from "./branch-publication.mjs";
 
 export const DIRECTORY_MAX_BYTES = 512 * 1024;
 const uuid =
@@ -64,25 +64,14 @@ export function decodeDirectory(bytes, identity) {
 }
 export async function publishDirectory(transport, value) {
   validateDirectory(value);
-  const serialized = canonical(value);
-  if (new TextEncoder().encode(serialized).byteLength > DIRECTORY_MAX_BYTES)
-    throw new Error("Team directory exceeds byte limit");
-  const branch = "sync-directory/" + value.installationId;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const parent = await transport.readHead(branch);
-    if (parent) {
-      const previous = decodeDirectory(
-        await transport.readFile(parent, "directory.json"),
-        value,
-      );
-      if (digest(previous) === digest(value)) return parent;
-    }
-    const candidate = await transport.createCandidate(
-      parent,
-      { "directory.json": serialized },
-      "Update team members",
-    );
-    if (await transport.publish(candidate, parent, branch)) return candidate;
-  }
-  throw new Error("Team directory changed concurrently; retry synchronization");
+  return publishBranchJson(transport, {
+    branch: "sync-directory/" + value.installationId,
+    file: "directory.json",
+    value,
+    maxBytes: DIRECTORY_MAX_BYTES,
+    message: "Update team members",
+    decode: (bytes) => decodeDirectory(bytes, value),
+    conflictMessage:
+      "Team directory changed concurrently; retry synchronization",
+  });
 }

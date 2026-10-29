@@ -1,4 +1,4 @@
-import { recoverBackupJob } from "../server/storage/backup-recovery.mjs";
+import { recoverBackupJob } from "../shared/backup-recovery.mjs";
 import {
   MaintenanceService,
   maintenanceRevision,
@@ -9,7 +9,7 @@ import {
   retentionKey,
 } from "../server/sync/retention.mjs";
 import { databaseFor } from "./data.mjs";
-import { profileFor } from "./config.mjs";
+import { profileFor } from "../shared/sync-profiles.js";
 import { materialize } from "./sync.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { GitHubApiTransport } from "./git.mjs";
@@ -25,7 +25,7 @@ const decode = (row) =>
         createdAt: row.created_at,
       }
     : null;
-export function maintenanceAdapter(db, teamId) {
+function maintenanceAdapter(db, teamId) {
   const localSnapshot = (snapshot) => ({
     ...snapshot,
     exclusions: snapshot.exclusions.filter(

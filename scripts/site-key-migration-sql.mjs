@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   postgresMigrations,
   siteKeyMigration,
+  teamMaintenanceMigration,
 } from "../server/migrations/postgres.mjs";
 
 export function siteKeyMigrationSql(teamId) {
@@ -12,8 +13,8 @@ export function siteKeyMigrationSql(teamId) {
     )
   )
     throw new Error("Provide the existing team UUID");
-  return `-- Run in the team's Supabase SQL Editor after deploying the compatible Worker.
--- Additive site v1 -> v2; business rows, accounts, approvals and images are preserved.
+  return `-- Run in the team's Supabase SQL Editor during the approved maintenance window.
+-- Additive site v1 -> v2 and team v1 -> v2; existing data is preserved.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
@@ -26,9 +27,15 @@ BEGIN
     OR NOT EXISTS(SELECT 1 FROM graeboard.team_meta WHERE singleton=1 AND team_id='${teamId}') THEN
     RAISE EXCEPTION 'Site/team identity mismatch';
   END IF;
-  IF (SELECT COUNT(*) FROM graeboard.schema_migrations)<>1 OR NOT EXISTS(
-    SELECT 1 FROM graeboard.schema_migrations WHERE scope='team' AND version=1 AND checksum='${postgresMigrations.team.checksum}') THEN
+  IF (SELECT COUNT(*) FROM graeboard.schema_migrations) NOT IN (1,2) OR NOT EXISTS(
+    SELECT 1 FROM graeboard.schema_migrations WHERE scope='team' AND version=1 AND checksum='${postgresMigrations.team.checksum}') OR EXISTS(
+    SELECT 1 FROM graeboard.schema_migrations WHERE version<>1 AND NOT (scope='team' AND version=2 AND checksum='${teamMaintenanceMigration.checksum}')) THEN
     RAISE EXCEPTION 'Team migration history mismatch';
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=2) THEN
+    ${teamMaintenanceMigration.sql.replace("ON sync_outbox(", "ON graeboard.sync_outbox(")}
+    INSERT INTO graeboard.schema_migrations(scope,version,checksum,applied_at)
+      VALUES('team',2,'${teamMaintenanceMigration.checksum}',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
   END IF;
   SELECT MAX(version) INTO current_version FROM schema_migrations;
   IF current_version NOT IN (1,2) OR (SELECT COUNT(*) FROM schema_migrations)<>current_version OR NOT EXISTS(

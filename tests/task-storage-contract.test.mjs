@@ -1,3 +1,4 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -16,8 +17,8 @@ import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, sampleProperties } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
-import { PostgresTaskRepository } from "../server/storage/postgres-tasks.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
+import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
 import { TaskBusinessService } from "../server/storage/task-service.mjs";
 import { RequestContext } from "../worker/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
@@ -255,7 +256,7 @@ test("M6 ordinary task/cell service uses SQLite repository with atomic capture a
   );
 });
 
-test("M6 same ordinary service uses real PostgreSQL repository and Node HTTP task/cell routes accept that backend", async (t) => {
+test("M6 same ordinary service uses real PostgreSQL repository and external HTTP task/cell routes accept that backend", async (t) => {
   const bin = process.env.TEST_PG_BIN;
   if (!bin || !existsSync(join(bin, "postgres"))) {
     t.skip("Set TEST_PG_BIN for actual PostgreSQL ordinary-business contract");
@@ -419,19 +420,17 @@ test("M6 same ordinary service uses real PostgreSQL repository and Node HTTP tas
         ).rows[0].n,
       ),
   });
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-      taskRepository: makeRepository,
+  const app = createExternalRouteApp({
+      env: env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => makeRepository(user).context,
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.cellEvents.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    await app.close();
   });
   const origin = `http://127.0.0.1:${server.address().port}`,
     headers = {
@@ -443,7 +442,7 @@ test("M6 same ordinary service uses real PostgreSQL repository and Node HTTP tas
       headers,
     }),
     body = unpack(await response.json());
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.tasks[0].cells.title.value, "saved");
   const save = await fetch(origin + "/api/cells/batch", {
     method: "POST",
@@ -454,7 +453,7 @@ test("M6 same ordinary service uses real PostgreSQL repository and Node HTTP tas
           taskId: f.taskId,
           key: "title",
           expectedVersion: body.tasks[0].cells.title.version,
-          value: "Node HTTP writes PostgreSQL",
+          value: "external HTTP writes PostgreSQL",
         },
       ]),
     ),
@@ -472,7 +471,7 @@ test("M6 same ordinary service uses real PostgreSQL repository and Node HTTP tas
             )
           ).rows[0],
       )
-    ).payload.includes("Node HTTP writes PostgreSQL"),
+    ).payload.includes("external HTTP writes PostgreSQL"),
     true,
   );
   assert.equal(getTask(f.db, f.taskId).cells.title.value, "initial");

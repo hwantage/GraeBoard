@@ -28,10 +28,12 @@ test("an empty GitHub repository has no head, while other conflicts remain error
 
 test("GitHub 429/403 abort the cycle with retry metadata and a bounded next attempt", async () => {
   for (const status of [429, 403]) {
-    let calls = 0;
+    let calls = 0,
+      now = 1700000000000;
     const transport = new GitHubApiTransport({
       repository: "fixture/team",
       token: "private-fixture-token",
+      now: () => now,
       fetch: async () => {
         calls++;
         return calls === 1
@@ -53,6 +55,16 @@ test("GitHub 429/403 abort the cycle with retry metadata and a bounded next atte
       return true;
     });
     assert.equal(calls, 1, "No immediate retry storm inside the transport");
+    await assert.rejects(
+      transport.readHead(),
+      (error) => error.retryAt === now + 120000,
+    );
+    assert.equal(
+      calls,
+      1,
+      "The retry deadline blocks another cycle before network I/O",
+    );
+    now += 120000;
     assert.equal(await transport.readHead(), "a".repeat(40));
   }
 });
@@ -68,6 +80,7 @@ test("a partial blob upload never moves the ref; retry reuses immutable content 
   const transport = new GitHubApiTransport({
     repository: "fixture/team",
     token: "fixture",
+    maxRetries: 0,
     fetch: async (url, request) => {
       const path = new URL(url).pathname.split("/repos/fixture/team")[1],
         body = request.body ? JSON.parse(request.body) : null;
@@ -120,6 +133,104 @@ test("a partial blob upload never moves the ref; retry reuses immutable content 
   assert.deepEqual(commits[0].parents, []);
   assert.equal(await transport.publish(candidate, null), true);
   assert.equal(await transport.readHead(), candidate);
+});
+test("safe GitHub reads and immutable uploads retry with bounded backoff and consume request budgets; ref writes never retry blindly", async () => {
+  for (const [path, method] of [
+    ["/git/ref/heads/sync-v1", "GET"],
+    ["/git/blobs", "POST"],
+    ["/git/trees", "POST"],
+    ["/git/commits", "POST"],
+  ]) {
+    let calls = 0;
+    const waits = [];
+    const transport = new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture",
+      wait: async (ms) => waits.push(ms),
+      fetch: async () => {
+        calls++;
+        if (calls === 1) throw new TypeError("offline");
+        return calls === 2
+          ? new Response("", { status: 503 })
+          : Response.json({ sha: "a".repeat(40) });
+      },
+    });
+    assert.deepEqual(await transport.request(path, { method }), {
+      sha: "a".repeat(40),
+    });
+    assert.equal(calls, 3);
+    assert.deepEqual(waits, [250, 500]);
+    assert.equal(transport.remaining, 597);
+  }
+  for (const [path, method] of [
+    ["/git/refs", "POST"],
+    ["/git/refs/heads/sync-v1", "PATCH"],
+  ]) {
+    let calls = 0;
+    const transport = new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture",
+      wait: async () => assert.fail("ref retry"),
+      fetch: async () => {
+        calls++;
+        return new Response("", { status: 503 });
+      },
+    });
+    await assert.rejects(
+      transport.request(path, { method }),
+      (error) => error.status === 503,
+    );
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const transport = new GitHubApiTransport({
+    repository: "fixture/team",
+    token: "fixture",
+    maxRequests: 2,
+    wait: async () => {},
+    fetch: async () => {
+      calls++;
+      return new Response("", { status: 503 });
+    },
+  });
+  await assert.rejects(transport.readHead(), /budget/);
+  assert.equal(calls, 2);
+});
+test("rate-limit resets are shared by newly created transports and isolated by credentials", async () => {
+  let now = 1700000000000,
+    calls = 0;
+  const fetch = async () => {
+    calls++;
+    return calls === 1
+      ? new Response("", {
+          status: 429,
+          headers: {
+            "x-ratelimit-reset": "1700000120",
+            "x-ratelimit-remaining": "0",
+          },
+        })
+      : Response.json({ object: { sha: "a".repeat(40) } });
+  };
+  const make = (token = "limited") =>
+    new GitHubApiTransport({
+      repository: "fixture/team",
+      token,
+      fetch,
+      now: () => now,
+    });
+  await assert.rejects(
+    make().readHead(),
+    (error) => error.retryAt === 1700000120000,
+  );
+  await assert.rejects(
+    make().readHead(),
+    (error) => error.retryAt === 1700000120000,
+  );
+  assert.equal(calls, 1);
+  assert.equal(await make("different").readHead(), "a".repeat(40));
+  now += 120000;
+  assert.equal(await make().readHead(), "a".repeat(40));
+  assert.equal(calls, 3);
 });
 
 test("request and streamed blob budgets fail before accepting oversized external input", async () => {

@@ -1,5 +1,5 @@
 import { controlTransaction } from "./data.mjs";
-import { profiles, siteTeamId } from "./config.mjs";
+import { profiles, siteTeamId } from "../shared/sync-profiles.js";
 import { GitHubApiTransport } from "./git.mjs";
 import { assert } from "./access.mjs";
 import {
@@ -133,7 +133,7 @@ export async function refreshSetupKeys(
     { write: true },
   );
 }
-export async function publishSetupReceipt(
+async function publishSetupReceipt(
   env,
   { transport = transportFor(env) } = {},
 ) {

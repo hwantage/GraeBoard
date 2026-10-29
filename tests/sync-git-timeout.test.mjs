@@ -37,4 +37,22 @@ test("M8 real slow Git upload-pack uses a separate bounded network timeout", asy
   // A timeout does not poison the reusable transport or rewrite the branch.
   transport.networkTimeoutMs = 1500;
   assert.equal(await transport.readHead(), null);
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("fixture sync interruption"), {
+    code: "SYNC_INTERRUPTED",
+  });
+  transport.signal = controller.signal;
+  const aborted = transport.readHead();
+  const timer = setTimeout(() => controller.abort(reason), 20);
+  try {
+    await assert.rejects(aborted, (error) => error === reason);
+  } finally {
+    clearTimeout(timer);
+  }
+  transport.signal = new AbortController().signal;
+  assert.equal(
+    await transport.readHead(),
+    null,
+    "a cancelled command does not poison a fresh request signal",
+  );
 });

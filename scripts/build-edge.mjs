@@ -1,8 +1,6 @@
 import { build } from "esbuild";
 import { mkdir, readFile } from "node:fs/promises";
-import { generateTransferCore } from "./build-worker.mjs";
 
-await generateTransferCore();
 await mkdir("supabase/functions/graeboard", { recursive: true });
 const pkg = JSON.parse(await readFile("package-lock.json", "utf8"));
 const packages = ["pg", "jose", "zod", "diff", "exceljs"];

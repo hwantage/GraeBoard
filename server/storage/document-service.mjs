@@ -6,7 +6,11 @@ import {
   MAX_IMAGE_BYTES,
   isDocumentImage,
 } from "../../shared/document-images.js";
-import { documentSchema, yearSchema, requireThat } from "../validation.mjs";
+import {
+  documentSchema,
+  yearSchema,
+  requireThat,
+} from "../../shared/validation.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,
@@ -20,11 +24,8 @@ export const documentTitleSchema = z
   .string()
   .trim()
   .min(1)
-  .max(MAX_DOCUMENT_TITLE_LENGTH);
-export const documentRevisionSchema = z.union([
-  z.number().int().nonnegative(),
-  uuid,
-]);
+  .max(MAX_DOCUMENT_TITLE_LENGTH, "문서 제목은 50자까지 입력할 수 있습니다.");
+const documentRevisionSchema = z.union([z.number().int().nonnegative(), uuid]);
 export const createDocumentSchema = z
   .object({ id: uuid, title: documentTitleSchema.optional() })
   .strict();
@@ -47,7 +48,7 @@ const idsSchema = z
   .max(MAX_TASK_DOCUMENTS)
   .refine(
     (ids) => new Set(ids).size === ids.length,
-    "같은 문서를 중복 지정할 수 없습니다.",
+    "같은 메모를 중복 지정할 수 없습니다.",
   );
 const reorderSchema = z
   .object({ ids: idsSchema, expectedIds: idsSchema })
@@ -86,7 +87,7 @@ const scopeSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("calendar"),
-      entryId: uuid,
+      entryId: z.string(),
       documentId: z.literal("main").optional(),
     })
     .strict(),
@@ -148,10 +149,16 @@ export class DocumentBusinessService {
     );
   }
   save(scope, body) {
-    return this.write("save", this.document(scope), saveSchema.parse(body));
+    const target = this.document(scope),
+      request = saveSchema.parse(body);
+    this.repository.validateRevision?.(target, request.expectedRevision);
+    return this.write("save", target, request);
   }
   remove(scope, body) {
-    return this.write("remove", this.document(scope), removeSchema.parse(body));
+    const target = this.document(scope),
+      request = removeSchema.parse(body);
+    this.repository.validateRevision?.(target, request.expectedRevision);
+    return this.write("remove", target, request);
   }
   reorder(scope, body) {
     const target = scopeSchema.parse(scope);

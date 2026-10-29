@@ -7,6 +7,7 @@ import {
   decodeBoundedSnapshot,
 } from "./capacity.mjs";
 import { SyncService } from "../server/sync/service.mjs";
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync-limits.js";
 import {
   canonical,
   digest,
@@ -18,7 +19,7 @@ import { project } from "../server/sync/reducer.mjs";
 import { GitHubApiTransport } from "./git.mjs";
 import { R2ImageStore, imageReferences, stillImage } from "./images.mjs";
 import { DataSession, databaseFor, controlTransaction } from "./data.mjs";
-import { profiles, profileFor } from "./config.mjs";
+import { profiles, profileFor } from "../shared/sync-profiles.js";
 import { assert } from "./access.mjs";
 import { refreshDirectory } from "./directory.mjs";
 import { isExcluded } from "../server/sync/retention.mjs";
@@ -46,6 +47,25 @@ async function saveSchedulingState(tx, teamId, state) {
     "INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'syncRefresh','[]',$2,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
     [teamId, canonical(state)],
   );
+}
+async function withGitHubDeadline(database, teamId, work) {
+  try {
+    return await work();
+  } catch (error) {
+    if (Number.isFinite(error.retryAt) && error.retryAt > Date.now())
+      await database.withTeamTransaction(teamId, async (tx) => {
+        const state = await schedulingState(tx, teamId);
+        await saveSchedulingState(tx, teamId, {
+          ...state,
+          nextAt: Math.max(Number(state.nextAt || 0), error.retryAt),
+          publishAfter: Math.max(
+            Number(state.publishAfter || 0),
+            error.retryAt,
+          ),
+        });
+      });
+    throw error;
+  }
 }
 async function publishWindow(tx, env, profile) {
   const link = await tx.sync.readLink();
@@ -111,8 +131,8 @@ export function createPublisher({
     return promise;
   };
 }
-// Timers are an optimization, never the delivery guarantee: scheduled() and
-// explicit runTeam() bypass this cooldown and recover every durable pending row.
+// Timers are an optimization, never the delivery guarantee. Cron recovers every
+// durable pending row after the persisted deadline; explicit runs bypass debounce.
 export const schedulePublish = createPublisher();
 
 export function serviceFor(env, profile, link, options = {}) {
@@ -123,13 +143,14 @@ export function serviceFor(env, profile, link, options = {}) {
         new GitHubApiTransport({
           repository: profile.repository,
           token: env[profile.githubSecret],
-          maxBlobBytes: 10 * 1024 * 1024,
+          maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
         }),
       limits,
     ),
     images = new R2ImageStore(env[profile.bucketBinding], profile.teamId),
     adapter = imageSync(database, profile, images);
   const service = new SyncService({
+    stateLimits: limits,
     snapshotDecoder: (bytes) => decodeBoundedSnapshot(bytes, limits),
     transport,
     store: boundStore(database, profile.teamId, { ...options, limits }),
@@ -156,6 +177,7 @@ export function serviceFor(env, profile, link, options = {}) {
   return {
     run: (options) => exclusiveSync(() => service.run(options)),
     checkpoint: () => exclusiveSync(() => service.checkpoint()),
+    upgrade: (options) => exclusiveSync(() => service.upgrade(options)),
   };
 }
 // A persisted per-team deadline coalesces browser focus, polling and pre-edit
@@ -203,24 +225,39 @@ export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
   const transport = new GitHubApiTransport({
     repository: profile.repository,
     token: env[profile.githubSecret],
-    maxBlobBytes: 10 * 1024 * 1024,
+    maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
   });
-  const head = await transport.readHead();
-  if (head === link.canonical_head) return { changed: false, head };
-  return serviceFor(env, profile, link, { transport }).run({
-    receiveOnly: true,
-    updateStatus: false,
-    observedHead: head,
+  return withGitHubDeadline(database, profile.teamId, async () => {
+    const head = await transport.readHead();
+    if (head === link.canonical_head) return { changed: false, head };
+    return serviceFor(env, profile, link, { transport }).run({
+      receiveOnly: true,
+      updateStatus: false,
+      observedHead: head,
+    });
   });
 }
 export async function runTeam(
   env,
   profile,
-  { receiveOnly = false, updateStatus = true } = {},
+  {
+    receiveOnly = false,
+    updateStatus = true,
+    respectPublishWindow = false,
+  } = {},
 ) {
   const db = databaseFor(env, profile),
     link = await db.readLink(profile.teamId);
   if (!link) return { mode: "unlinked" };
+  if (respectPublishWindow) {
+    const state = await db.withTeamTransaction(
+      profile.teamId,
+      (tx) => schedulingState(tx, profile.teamId),
+      { readOnly: true },
+    );
+    if (Number(state.publishAfter || 0) > Date.now())
+      return { throttled: true };
+  }
   if (!updateStatus && !["active", "importing"].includes(link.mode))
     return { mode: link.mode };
   if (!env.INSTALLATION_ID || link.installation_id !== env.INSTALLATION_ID) {
@@ -232,10 +269,12 @@ export async function runTeam(
     );
     return { mode: "recovery" };
   }
-  const result = await serviceFor(env, profile, link).run({
-    receiveOnly,
-    updateStatus,
-  });
+  const result = await withGitHubDeadline(db, profile.teamId, () =>
+    serviceFor(env, profile, link).run({
+      receiveOnly,
+      updateStatus,
+    }),
+  );
   const latest = await db.readLink(profile.teamId);
   if (latest.mode === "active") {
     const transport = new GitHubApiTransport({
@@ -291,7 +330,9 @@ export async function scheduled(env) {
   );
   for (const team of teams) {
     try {
-      await runTeam(env, profileFor(env, team.profile_id, team.id));
+      await runTeam(env, profileFor(env, team.profile_id, team.id), {
+        respectPublishWindow: true,
+      });
     } catch (error) {
       console.error(
         "GraeBoard scheduled synchronization failed",

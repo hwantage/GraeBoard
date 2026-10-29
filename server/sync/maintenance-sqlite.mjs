@@ -11,8 +11,9 @@ import { sqliteTeamStore } from "../storage/sqlite.mjs";
 import { materialize } from "./entities.mjs";
 import { canonical, entityId } from "./protocol.mjs";
 import { project } from "./reducer.mjs";
+import { applicationEntities } from "./versions.mjs";
 import { MaintenanceService, maintenanceRevision } from "./maintenance.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
 import { auditImageReferences } from "./retention.mjs";
 
 class PreparationChanged extends Error {}
@@ -240,15 +241,25 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
             remove.revision,
           );
         const state = project(store.readState(), store.readPending()),
+          presentation = applicationEntities(state.entities),
+          revisions = new Set(keys),
           records = {};
         for (const encoded of keys) {
           const [entity, key] = JSON.parse(encoded);
+          const target = ["reportTask", "reportCell"].includes(entity)
+            ? entityId("report", [key[0]])
+            : encoded;
+          revisions.add(target);
+          if (presentation[target]) records[target] = presentation[target];
+        }
+        for (const encoded of revisions) {
+          const [entity, key] = JSON.parse(encoded);
           store.nextRevision(entity, key);
-          if (state.entities[entityId(entity, key)])
-            records[encoded] = state.entities[encoded];
         }
         // Application rows stay in place. Advance existing edit versions so a
         // tab opened before cleanup cannot overwrite a later restored document.
+        // Reassemble from the complete projection before selecting records:
+        // an individual v2 child cannot materialize a complete copied sheet.
         materialize(db, teamId, records);
         // Document visibility affects badges in the task snapshot without a
         // task-row write, so its conditional GET validator must advance too.

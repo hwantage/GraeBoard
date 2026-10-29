@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SQLITE_VERSION = 31;
+export const SQLITE_VERSION = 32;
 export const baseSql = readFileSync(
   new URL("./sqlite/029-base.sql", import.meta.url),
   "utf8",
@@ -18,9 +18,17 @@ export const keySql = readFileSync(
   "utf8",
 );
 export const keyChecksum = createHash("sha256").update(keySql).digest("hex");
+export const maintenanceSql = readFileSync(
+  new URL("./sqlite/032-sync-maintenance.sql", import.meta.url),
+  "utf8",
+);
+export const maintenanceChecksum = createHash("sha256")
+  .update(maintenanceSql)
+  .digest("hex");
 const migrations = [
   { version: 30, sql: syncSql, checksum: syncChecksum },
   { version: 31, sql: keySql, checksum: keyChecksum },
+  { version: 32, sql: maintenanceSql, checksum: maintenanceChecksum },
 ];
 
 // Read the released v29 definition, never the current application's initializer.
@@ -64,7 +72,7 @@ export function sqliteVersion(db) {
   return db.prepare("PRAGMA user_version").get().user_version;
 }
 export function assertSqliteHistory(db, { version = SQLITE_VERSION } = {}) {
-  if (![30, 31].includes(version) || sqliteVersion(db) !== version)
+  if (![30, 31, 32].includes(version) || sqliteVersion(db) !== version)
     throw new Error(
       "DB migration required: npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
     );
@@ -107,7 +115,7 @@ export function migrateSqlite(
     assertSqliteIntegrity(db);
     return { from, to: from, applied: false };
   }
-  if (![0, 29, 30].includes(from))
+  if (![0, 29, 30, 31].includes(from))
     throw new Error(`Unsupported SQLite version ${from}; data preserved`);
   if (from === 0) {
     if (
@@ -123,7 +131,7 @@ export function migrateSqlite(
     if (!initialize) throw new Error("Empty database requires --initialize");
   }
   if (from === 29) assertSqliteBaseline(db);
-  if (from === 30) assertSqliteHistory(db, { version: 30 });
+  if (from >= 30) assertSqliteHistory(db, { version: from });
   assertSqliteIntegrity(db);
   if (dryRun) {
     assertSqliteIntegrity(db);
@@ -132,7 +140,7 @@ export function migrateSqlite(
       to: SQLITE_VERSION,
       applied: false,
       dryRun: true,
-      checksum: keyChecksum,
+      checksum: maintenanceChecksum,
     };
   }
   db.exec("BEGIN IMMEDIATE");
@@ -159,5 +167,10 @@ export function migrateSqlite(
     db.exec("ROLLBACK");
     throw error;
   }
-  return { from, to: SQLITE_VERSION, applied: true, checksum: keyChecksum };
+  return {
+    from,
+    to: SQLITE_VERSION,
+    applied: true,
+    checksum: maintenanceChecksum,
+  };
 }

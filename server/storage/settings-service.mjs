@@ -14,13 +14,13 @@ import {
   weekHeaderSchema,
   borderSchema,
   requireThat,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import { THEME_IDS } from "../../shared/themes.js";
 const weekBordersSchema = z
   .object({ left: borderSchema.optional(), right: borderSchema.optional() })
   .strict();
 
-export const settingsSchema = z
+const settingsSchema = z
   .object({
     theme: z.enum(THEME_IDS).optional(),
     properties: propertiesSchema.optional(),
@@ -170,7 +170,7 @@ export function normalizeSettingsAuxiliary(kind, data, settings) {
     ? viewLayout(normalizeView(data, settings))
     : savedFilter(data, settings);
 }
-export const teamGeneralSchema = z
+const teamGeneralSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     theme: z.enum(THEME_IDS).optional(),

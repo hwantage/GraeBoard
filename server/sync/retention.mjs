@@ -23,6 +23,12 @@ export function isExcluded(record, state, retentions = []) {
       record.payload.years.every((year) => years.has(String(year)))
     );
   if (record.entity === "report") return years.has(String(record.payload.year));
+  if (["reportTask", "reportCell"].includes(record.entity))
+    return isExcluded(
+      entities[entityId("report", [record.key[0]])],
+      entities,
+      retentions,
+    );
   if (record.entity === "cell")
     return isExcluded(
       entities[entityId("task", [record.key[0]])],

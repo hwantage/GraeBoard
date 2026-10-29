@@ -13,6 +13,8 @@ import {
 import { reduceMany } from "../server/sync/reducer.mjs";
 import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import { ProtocolError } from "../server/sync/errors.mjs";
+import { boundedTransport, assertStateCapacity } from "../worker/capacity.mjs";
+import { SYNC_FILE_MAX_BYTES } from "../shared/sync-limits.js";
 const identity = { teamId: "team", repoId: "repo" };
 const sha = (value) => createHash("sha1").update(value).digest("hex");
 class Repository {
@@ -239,6 +241,131 @@ async function fixture(count = 5) {
   }
   return { repo, state, genesis, states };
 }
+test("checkpoint CAS rejection returns 409, keeps C/P intact and releases the lease for a successful retry", async () => {
+  const { repo, state } = await fixture(2),
+    head = repo.head;
+  const local = store(state, head, "active", [{ opId: "preserved-pending" }]);
+  let released = 0;
+  local.release = async () => {
+    released++;
+  };
+  const publish = repo.publish.bind(repo);
+  repo.publish = async () => false;
+  const service = new SyncService({ transport: repo, store: local, identity });
+  await assert.rejects(
+    service.checkpoint(),
+    (error) =>
+      error.status === 409 && error.code === "SYNC_PUBLICATION_CONFLICT",
+  );
+  assert.equal(released, 1);
+  assert.equal(repo.head, head);
+  assert.equal(local.link.canonical_head, head);
+  assert.equal(stateHash(local.state), stateHash(state));
+  assert.deepEqual(local.pending, [{ opId: "preserved-pending" }]);
+  repo.publish = publish;
+  await service.checkpoint();
+  assert.notEqual(repo.head, head);
+  assert.equal(local.link.canonical_head, repo.head);
+  assert.deepEqual(local.pending, [{ opId: "preserved-pending" }]);
+});
+test("malformed peer Git revisions never reach ancestry verification or mark status verified", async () => {
+  const { repo, state } = await fixture(1),
+    local = store(state, repo.head);
+  const service = new SyncService({
+    transport: repo,
+    store: local,
+    identity: { ...identity, peerInstallationId: "peer" },
+  });
+  let verified = 0,
+    saved;
+  repo.verifyReachable = async () => {
+    verified++;
+    return true;
+  };
+  local.saveRemoteStatus = async (value) => {
+    saved = value;
+  };
+  for (const revision of [":/operations", "--all", "short", 1, null]) {
+    const branch = "sync-status/peer",
+      parent = await repo.readHead(branch);
+    const oid = await repo.createCandidate(parent, {
+      "status.json": canonical({
+        ...identity,
+        installationId: "peer",
+        writerEpoch: "epoch",
+        mode: "active",
+        appliedCanonicalHead: revision,
+        observedAt: new Date().toISOString(),
+      }),
+    });
+    await repo.publish(oid, parent, branch);
+    await service.status(local.link);
+    assert.equal(saved.verified, false);
+  }
+  assert.equal(verified, 0);
+});
+test("multi-megabyte pending commands split into receiver-safe events and converge through the external bounded transport", async () => {
+  const { repo, genesis } = await fixture(0);
+  const ops = [];
+  for (let i = 0; i < 3; i++) {
+    const payload = {
+      title: "Large memo",
+      position: 0,
+      markdown: String(i).repeat(200 * 1024),
+    };
+    const base = i
+      ? { ...payload, markdown: String(i - 1).repeat(200 * 1024) }
+      : null;
+    ops.push({
+      protocol: 1,
+      reducer: 1,
+      ...identity,
+      opId: "large-" + i,
+      writerEpoch: "epoch",
+      actorRef: "person",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      dependsOn: i ? ["large-" + (i - 1)] : [],
+      objects: [],
+      changes: Array.from({ length: 7 }, (_, n) => ({
+        entity: "document",
+        key: ["annual", "2026", "doc-" + n],
+        generation: "g-" + n,
+        baseVersion: i ? `large-${i - 1}:${n}` : null,
+        base,
+        desired: payload,
+        action: i ? "edit" : "create",
+        fields: ["title", "position", "markdown"],
+      })),
+    });
+  }
+  const local = store(emptyState(), genesis, "active", ops);
+  const publisher = new SyncService({
+    transport: repo,
+    store: local,
+    identity,
+  });
+  for (let cycle = 0; local.pending.length && cycle < 3; cycle++)
+    await publisher.run({ updateStatus: false });
+  const events = [...repo.commits.values()].flatMap((commit) =>
+    commit.files.filter((file) => file.path.startsWith("events/")),
+  );
+  assert.ok(
+    new Set(events.map((file) => file.oid)).size >= 2,
+    "the old 64 MiB publisher would send one oversize event",
+  );
+  for (const event of events)
+    assert.ok(repo.blobs.get(event.oid).byteLength <= SYNC_FILE_MAX_BYTES);
+  const external = store(emptyState(), genesis);
+  await new SyncService({
+    transport: boundedTransport(repo),
+    store: external,
+    identity,
+  }).run({ receiveOnly: true, updateStatus: false });
+  assert.equal(external.link.canonical_head, repo.head);
+  assert.equal(stateHash(external.state), stateHash(local.state));
+  assertStateCapacity(external.state);
+  assert.equal(local.pending.length, 0);
+});
 test("350 missed commits advance in bounded REST cycles and old peer ancestry costs one comparison", async () => {
   const { repo, state, genesis } = await fixture(350),
     local = store(emptyState(), genesis);

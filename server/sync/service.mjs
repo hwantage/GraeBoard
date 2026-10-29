@@ -1,10 +1,23 @@
+import { upgradeState } from "./versions.mjs";
+import { assertStateCapacity } from "../../shared/sync-capacity.mjs";
 import { combineFileEntries } from "./file-entries.mjs";
+import { publishBranchJson } from "./branch-publication.mjs";
 import { loadCheckpoint, snapshotCounts } from "./checkpoint.mjs";
 import { ProtocolError, protocolValidation } from "./errors.mjs";
 import { encodeSnapshot, decodeSnapshot } from "./snapshot.mjs";
 import { randomUUID } from "node:crypto";
-import { canonical, digest, stateHash } from "./protocol.mjs";
+import {
+  canonical,
+  digest,
+  stateHash,
+  protocolVersion,
+  supportedVersion,
+} from "./protocol.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
+import {
+  SYNC_FILE_MAX_BYTES,
+  SYNC_ENVELOPE_RESERVE_BYTES,
+} from "../../shared/sync-limits.js";
 const decode = (bytes, limit = 128 * 1024 * 1024) => {
   if (!bytes || bytes.byteLength > limit)
     throw new ProtocolError(
@@ -22,17 +35,20 @@ const allowedPath = (path) =>
 export function operationBatch(
   pending,
   maxOperations = 50,
-  maxBytes = 64 * 1024 * 1024,
+  maxBytes = SYNC_FILE_MAX_BYTES,
 ) {
   // Reserve space for the envelope and hashes before making a remote commit.
   // Each immutable user command stays whole, including large bulk edits.
   const result = [];
-  let bytes = 1024;
+  let bytes = SYNC_ENVELOPE_RESERVE_BYTES;
   for (const operation of pending.slice(0, maxOperations)) {
     const size = Buffer.byteLength(canonical(operation)) + 1;
     if (bytes + size > maxBytes) {
       if (!result.length)
-        throw new Error("Pending command exceeds event envelope byte budget");
+        throw new ProtocolError(
+          "EXTERNAL_SYNC_CAPACITY",
+          "Pending command exceeds event envelope byte budget; review the preserved command before resuming",
+        );
       break;
     }
     result.push(operation);
@@ -48,6 +64,8 @@ export class SyncService {
     images,
     maxCommits = 32,
     maxOperations = 50,
+    maxProtocol = 2,
+    stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
     snapshotDecoder = decodeSnapshot,
   }) {
     Object.assign(this, {
@@ -57,9 +75,14 @@ export class SyncService {
       images,
       maxCommits,
       maxOperations,
+      maxProtocol,
+      stateLimits,
       snapshotDecoder,
     });
     this.running = null;
+  }
+  assertCapacity(state) {
+    return assertStateCapacity(state, this.stateLimits);
   }
   run(options = {}) {
     if (this.running) return this.running;
@@ -91,29 +114,12 @@ export class SyncService {
     if (head === after) return [];
     if (this.transport.readRange)
       return this.transport.readRange(head, after, this.maxCommits);
-    const chain = [];
-    let oid = head;
-    while (oid && oid !== after) {
-      if (chain.length >= 10000)
-        throw new Error(
-          "History budget exceeded; import a verified checkpoint",
-        );
-      const c = await this.transport.readCommit(oid);
-      if (c.parents.length > 1)
-        throw new ProtocolError(
-          "SYNC_HISTORY",
-          "Merge commit is not permitted",
-        );
-      chain.push(c);
-      oid = c.parents[0] || null;
-    }
-    if (after && oid !== after)
-      throw new ProtocolError(
-        "SYNC_HISTORY",
-        "Remote history rewritten; recovery required",
-      );
-    return chain.reverse();
+    throw new ProtocolError(
+      "SYNC_TRANSPORT",
+      "Synchronization transport must implement bounded readRange",
+    );
   }
+
   async verifyFiles(commit, parent) {
     const previous = parent
       ? await this.transport.readCommit(parent)
@@ -207,7 +213,8 @@ export class SyncService {
           "SYNC_IDENTITY",
           "Repository identity mismatch",
         );
-      let operations = [];
+      let operations = [],
+        transition = false;
       if (!parent) {
         if (
           !manifest.genesis ||
@@ -241,9 +248,93 @@ export class SyncService {
           await this.transport.readFile(commit.oid, events[0].path),
           64 * 1024 * 1024,
         );
-        if (envelope.parent !== parent || envelope.protocol !== 1)
-          throw new ProtocolError("SYNC_FORMAT", "Invalid event parent");
-        if (envelope.kind === "checkpoint") {
+        if (
+          envelope.parent !== parent ||
+          !supportedVersion(
+            envelope.protocol,
+            envelope.reducer ?? envelope.protocol,
+          ) ||
+          envelope.protocol > this.maxProtocol
+        )
+          throw new ProtocolError(
+            "SYNC_FORMAT",
+            "Invalid event parent or protocol",
+          );
+        if (
+          envelope.kind !== "transition" &&
+          envelope.protocol !== protocolVersion(state)
+        )
+          throw new ProtocolError(
+            "SYNC_VERSION",
+            "Explicit protocol transition required",
+          );
+        if (envelope.kind === "transition") {
+          if (!["paused", "importing"].includes(link.mode))
+            throw new ProtocolError(
+              "SYNC_TRANSITION_PENDING",
+              "Pause this writer before accepting a protocol transition",
+            );
+          if (
+            protocolVersion(state) !== 1 ||
+            envelope.protocol !== 2 ||
+            envelope.reducer !== 2 ||
+            envelope.fromProtocol !== 1 ||
+            envelope.previousHash !== stateHash(state) ||
+            !snapshotPath(envelope.path) ||
+            !snapshotPath(envelope.previousPath)
+          )
+            throw new ProtocolError(
+              "SYNC_VERSION",
+              "Invalid protocol transition",
+            );
+          if (
+            (await this.store.readPending()).length ||
+            Object.values(state.conflicts).some(
+              (conflict) => !conflict.resolution,
+            )
+          )
+            throw new ProtocolError(
+              "SYNC_TRANSITION_PENDING",
+              "Protocol transition requires drained pending commands and resolved conflicts",
+            );
+          const bytes = await this.transport.readFile(
+              commit.oid,
+              envelope.path,
+            ),
+            previousBytes = await this.transport.readFile(
+              commit.oid,
+              envelope.previousPath,
+            );
+          if (
+            digest(bytes) !== envelope.snapshotHash ||
+            digest(previousBytes) !== envelope.previousSnapshotHash
+          )
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
+              "Protocol transition snapshot checksum mismatch",
+            );
+          const bundle = protocolValidation(() => this.snapshotDecoder(bytes)),
+            previous = protocolValidation(() =>
+              this.snapshotDecoder(previousBytes),
+            );
+          const expected = protocolValidation(() => upgradeState(state));
+          if (
+            bundle.atCommit !== parent ||
+            previous.atCommit !== parent ||
+            stateHash(previous.state) !== envelope.previousHash ||
+            stateHash(expected) !== envelope.resultHash ||
+            stateHash(bundle.state) !== envelope.resultHash
+          )
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
+              "Protocol transition changed preserved data",
+            );
+          state = protocolValidation(() =>
+            validateSnapshot(bundle.state, this.identity),
+          );
+          this.assertCapacity(state);
+          transition = true;
+        } else if (envelope.kind === "checkpoint") {
           if (
             !snapshotPath(envelope.path) ||
             envelope.atCommit !== parent ||
@@ -259,7 +350,7 @@ export class SyncService {
           );
           if (
             envelope.checkpointVersion === 1 &&
-            (envelope.reducer !== 1 ||
+            (envelope.reducer !== protocolVersion(state) ||
               envelope.teamId !== this.identity.teamId ||
               envelope.repoId !== this.identity.repoId ||
               envelope.bootstrapId !== link.bootstrap_id ||
@@ -291,7 +382,12 @@ export class SyncService {
               "Operation envelope exceeds count budget",
             );
           state = protocolValidation(() =>
-            reduceMany(state, envelope.operations, this.identity),
+            reduceMany(
+              state,
+              envelope.operations,
+              { ...this.identity, protocol: envelope.protocol },
+              { persistentReceipts: true },
+            ),
           );
           operations = envelope.operations.map((op) => op.opId);
           if (stateHash(state) !== envelope.resultHash)
@@ -301,12 +397,19 @@ export class SyncService {
             );
         } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
+      if (protocolVersion(state) > this.maxProtocol)
+        throw new ProtocolError(
+          "SYNC_VERSION",
+          "Unsupported protocol version; canonical cursor is unchanged",
+        );
+      this.assertCapacity(state);
       await this.images?.receive?.(state, commit.oid, this.transport, {
         added,
         verifiedImages,
       });
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
+        transition,
       });
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
@@ -322,6 +425,7 @@ export class SyncService {
     if (head) return this.receive(link);
     const bundle = await this.store.bootstrap();
     protocolValidation(() => validateSnapshot(bundle.state, this.identity));
+    this.assertCapacity(bundle.state);
     if (stateHash(bundle.state) !== bundle.hash)
       throw new ProtocolError(
         "SYNC_INTEGRITY",
@@ -381,11 +485,13 @@ export class SyncService {
             await this.store.readState(),
             pending,
             this.identity,
+            { persistentReceipts: true },
           );
+          this.assertCapacity(state);
           const parent = link.canonical_head;
           if (!parent) throw new Error("Initial publication required");
           const event = {
-            protocol: 1,
+            protocol: protocolVersion(state),
             kind: "operations",
             parent,
             operations: pending,
@@ -423,13 +529,6 @@ export class SyncService {
   async status(link) {
     if (!link.canonical_head) return;
     const branch = "sync-status/" + link.installation_id;
-    const previous = await this.transport.readHead(branch);
-    let old = null;
-    if (previous)
-      old = decode(
-        await this.transport.readFile(previous, "status.json"),
-        64 * 1024,
-      );
     const status = {
       ...this.identity,
       installationId: link.installation_id,
@@ -438,18 +537,20 @@ export class SyncService {
       mode: link.mode,
       observedAt: new Date().toISOString(),
     };
-    // Refresh liveness at most once a minute; status never enters the canonical chain.
-    if (
-      !old ||
-      old.appliedCanonicalHead !== status.appliedCanonicalHead ||
-      old.mode !== status.mode ||
-      Date.now() - Date.parse(old.observedAt) > 60000
-    ) {
-      const oid = await this.transport.createCandidate(previous, {
-        "status.json": canonical(status),
-      });
-      await this.transport.publish(oid, previous, branch);
-    }
+    const stable = ({ observedAt, peerInstallationId, ...value }) => value;
+    await publishBranchJson(this.transport, {
+      branch,
+      file: "status.json",
+      value: status,
+      maxBytes: 64 * 1024,
+      decode: (bytes) => decode(bytes, 64 * 1024),
+      cacheKey: digest(stable(status)),
+      unchanged: (previous) =>
+        digest(stable(previous)) === digest(stable(status)) &&
+        Date.parse(previous.observedAt) <= Date.now() &&
+        Date.now() - Date.parse(previous.observedAt) < 60000,
+      expiresAt: (value) => Date.parse(value.observedAt) + 60000,
+    });
     if (this.identity.peerInstallationId) {
       const peer = await this.transport.readHead(
         "sync-status/" + this.identity.peerInstallationId,
@@ -466,6 +567,8 @@ export class SyncService {
           Date.now() - Date.parse(remote.observedAt) >= 0 &&
           Date.now() - Date.parse(remote.observedAt) < 180000 &&
           remote.installationId === this.identity.peerInstallationId &&
+          typeof remote.appliedCanonicalHead === "string" &&
+          /^[a-f0-9]{40}$/.test(remote.appliedCanonicalHead) &&
           (await this.transport.verifyReachable(
             link.canonical_head,
             remote.appliedCanonicalHead,
@@ -473,6 +576,131 @@ export class SyncService {
         remote.verifiedAgainstHead = link.canonical_head;
         await this.store.saveRemoteStatus?.(remote);
       }
+    }
+  }
+  async upgrade({ expectedHead, expectedHash, peersStopped } = {}) {
+    if (
+      peersStopped !== true ||
+      !/^[a-f0-9]{40}$/.test(expectedHead || "") ||
+      !/^[a-f0-9]{64}$/.test(expectedHash || "")
+    )
+      throw Object.assign(
+        new Error(
+          "Protocol upgrade requires the exact head/hash and stopped peer confirmation",
+        ),
+        { status: 400, code: "SYNC_UPGRADE_CONFIRMATION" },
+      );
+    const owner = "upgrade:" + randomUUID();
+    if (!(await this.store.acquire(owner))) return { busy: true };
+    try {
+      const link = await this.store.readLink();
+      if (link?.mode !== "paused" || link.canonical_head !== expectedHead)
+        throw Object.assign(
+          new Error(
+            "Pause both writers at the verified canonical head before upgrading",
+          ),
+          { status: 409, code: "SYNC_UPGRADE_HEAD" },
+        );
+      const state = await this.store.readState();
+      if (
+        stateHash(state) !== expectedHash ||
+        (await this.store.readPending()).length ||
+        Object.values(state.conflicts).some((conflict) => !conflict.resolution)
+      )
+        throw Object.assign(
+          new Error(
+            "Protocol upgrade requires the exact state and no pending/held commands or unresolved conflicts",
+          ),
+          { status: 409, code: "SYNC_TRANSITION_PENDING" },
+        );
+      const remoteHead = await this.transport.readHead();
+      if (remoteHead !== expectedHead) {
+        const remote =
+          remoteHead && (await this.transport.readCommit(remoteHead));
+        if (
+          !remote ||
+          remote.parents.length !== 1 ||
+          remote.parents[0] !== expectedHead
+        )
+          throw Object.assign(
+            new Error(
+              "Remote head is not the single expected protocol transition",
+            ),
+            { status: 409, code: "SYNC_UPGRADE_HEAD" },
+          );
+        const added = await this.verifyFiles(remote, expectedHead),
+          events = added.filter((file) => file.path.startsWith("events/"));
+        if (
+          events.length !== 1 ||
+          decode(await this.transport.readFile(remoteHead, events[0].path))
+            .kind !== "transition"
+        )
+          throw Object.assign(
+            new Error("Remote head is not a protocol transition"),
+            { status: 409, code: "SYNC_UPGRADE_HEAD" },
+          );
+        const received = await this.receive(link, remoteHead);
+        return {
+          head: received.canonical_head,
+          stateHash: stateHash(await this.store.readState()),
+          protocol: 2,
+          reducer: 2,
+          upgraded: true,
+          received: true,
+        };
+      }
+      if (protocolVersion(state) === 2)
+        return {
+          head: expectedHead,
+          stateHash: expectedHash,
+          protocol: 2,
+          reducer: 2,
+          upgraded: false,
+        };
+      protocolValidation(() => validateSnapshot(state, this.identity));
+      const next = protocolValidation(() =>
+        validateSnapshot(upgradeState(state), this.identity),
+      );
+      this.assertCapacity(next);
+      const path = "snapshots/" + randomUUID() + ".json.gz",
+        previousPath = "snapshots/" + randomUUID() + ".json.gz",
+        bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
+        previousBytes = encodeSnapshot({ atCommit: expectedHead, state }),
+        envelope = {
+          protocol: 2,
+          reducer: 2,
+          kind: "transition",
+          fromProtocol: 1,
+          parent: expectedHead,
+          previousHash: expectedHash,
+          resultHash: stateHash(next),
+          path,
+          previousPath,
+          snapshotHash: digest(bytes),
+          previousSnapshotHash: digest(previousBytes),
+        };
+      const oid = await this.transport.createCandidate(expectedHead, {
+        [path]: bytes,
+        [previousPath]: previousBytes,
+        ["events/" + randomUUID() + ".json"]: canonical(envelope),
+      });
+      if (!(await this.transport.publish(oid, expectedHead)))
+        throw Object.assign(
+          new Error(
+            "Protocol upgrade publication changed concurrently; canonical data is preserved",
+          ),
+          { status: 409, code: "SYNC_PUBLICATION_CONFLICT" },
+        );
+      const received = await this.receive(link, oid);
+      return {
+        head: received.canonical_head,
+        stateHash: envelope.resultHash,
+        protocol: 2,
+        reducer: 2,
+        upgraded: true,
+      };
+    } finally {
+      await this.store.release(owner);
     }
   }
   async checkpoint() {
@@ -484,10 +712,11 @@ export class SyncService {
       if (link?.mode !== "active" || !link.canonical_head)
         throw new Error("Checkpoint requires an active reconciled connection");
       const state = await this.store.readState();
+      this.assertCapacity(state);
       const bytes = encodeSnapshot({ atCommit: link.canonical_head, state });
       const envelope = {
-        protocol: 1,
-        reducer: 1,
+        protocol: protocolVersion(state),
+        reducer: protocolVersion(state),
         checkpointVersion: 1,
         teamId: this.identity.teamId,
         repoId: this.identity.repoId,
@@ -504,7 +733,13 @@ export class SyncService {
         [path]: bytes,
         ["events/" + randomUUID() + ".json"]: canonical(envelope),
       });
-      await this.transport.publish(oid, link.canonical_head);
+      if (!(await this.transport.publish(oid, link.canonical_head)))
+        throw Object.assign(
+          new Error(
+            "Checkpoint publication changed concurrently; retry checkpoint",
+          ),
+          { status: 409, code: "SYNC_PUBLICATION_CONFLICT" },
+        );
     } finally {
       await this.store.release(owner);
     }

@@ -8,7 +8,7 @@ import {
   reportNameSchema,
   dateSchema,
   viewSchema,
-} from "../validation.mjs";
+} from "../../shared/validation.js";
 import {
   withTaskDocumentReferences,
   syncReportDocuments,
@@ -44,7 +44,7 @@ export class SqliteReportRepository {
     this.teamAccess(user, row.team_id);
     retentionView(this.db, row.team_id).requireVisible("report", [reportId]);
   }
-  afterCommit(user, command, args, result) {
+  afterCommit(user, command, args, result, { clientId } = {}) {
     const reportId =
       command === "create" ? result.id : command === "remove" ? null : args[0];
     const teamId =
@@ -53,13 +53,13 @@ export class SqliteReportRepository {
         : this.db
             .prepare("SELECT team_id FROM reports WHERE id=?")
             .get(reportId)?.team_id;
-    if (teamId) this.documentEvents?.invalidate("team:" + teamId);
+    if (teamId) this.documentEvents?.invalidate("team:" + teamId, clientId);
     for (const id of command === "remove"
       ? args[0].ids
       : reportId
         ? [reportId]
         : [])
-      this.documentEvents?.invalidate("report:" + id);
+      this.documentEvents?.invalidate("report:" + id, clientId);
   }
   list(user, query) {
     const { db, teamAccess, referencedUsers } = this;
@@ -75,6 +75,14 @@ export class SqliteReportRepository {
         .all(teamId)
         .filter((row) => !view.hidden("report", [row.id])),
     };
+  }
+  authorizeCreate(user, request) {
+    this.teamAccess(user, request.teamId);
+    requireThat(
+      canContribute(user, request.teamId),
+      403,
+      "사본을 만들 권한이 없습니다.",
+    );
   }
   create(user, input) {
     const { db, teamAccess, referencedUsers } = this;

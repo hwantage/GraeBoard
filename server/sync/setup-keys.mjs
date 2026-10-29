@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { canonical, digest } from "./protocol.mjs";
+import { digest } from "./protocol.mjs";
+import { publishBranchJson } from "./branch-publication.mjs";
 
 export const SETUP_KEY_MAX_BYTES = 512 * 1024;
 export const SETUP_KEY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -93,25 +94,14 @@ export function readSetupJson(bytes) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 export async function publishSetupJson(transport, branch, file, value) {
-  const serialized = canonical(value);
-  if (Buffer.byteLength(serialized) > SETUP_KEY_MAX_BYTES)
-    throw new Error("Setup key metadata exceeds byte limit");
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const parent = await transport.readHead(branch);
-    if (
-      parent &&
-      canonical(readSetupJson(await transport.readFile(parent, file))) ===
-        serialized
-    )
-      return parent;
-    const candidate = await transport.createCandidate(
-      parent,
-      { [file]: serialized },
-      "Update team account linking",
-    );
-    if (await transport.publish(candidate, parent, branch)) return candidate;
-  }
-  throw new Error(
-    "Setup key metadata changed concurrently; retry synchronization",
-  );
+  return publishBranchJson(transport, {
+    branch,
+    file,
+    value,
+    maxBytes: SETUP_KEY_MAX_BYTES,
+    message: "Update team account linking",
+    decode: readSetupJson,
+    conflictMessage:
+      "Setup key metadata changed concurrently; retry synchronization",
+  });
 }

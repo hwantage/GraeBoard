@@ -1,15 +1,10 @@
+import { join } from "node:path";
+import { openDatabase } from "../server/db.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { readFileSync, readdirSync } from "node:fs";
-import { randomUUID, createHash } from "node:crypto";
-import { openDatabase } from "../server/db.mjs";
-import { createApp } from "../server/app.mjs";
+import { randomUUID } from "node:crypto";
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { createPostgresBusinessStorage } from "../server/storage/business-storage.mjs";
-import { SqliteControlStore } from "../server/storage/control-store.mjs";
-import { FileImageStore } from "../server/storage/file-images.mjs";
-import { documentImagePath } from "../server/document-images.mjs";
 import { unpack } from "../shared/compact.js";
 import sharp from "sharp";
 import { materialize } from "../worker/materialize.mjs";
@@ -262,7 +257,7 @@ test("M6 shared document contract on SQLite retains synchronous commands, all do
   );
 });
 
-test("M6 identical document contract uses PostgreSQL and Node HTTP task-id requests/SSE never consult SQLite domain rows", async (t) => {
+test("M6 identical document contract uses PostgreSQL and external HTTP task-id requests/SSE never consult SQLite domain rows", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const repository = f.makeRepository(f.user),
@@ -352,70 +347,80 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
   f.db
     .prepare("UPDATE memberships SET role='member' WHERE user_id=?")
     .run(f.user.id);
-  // The host retains accounts, sessions and team membership, without any task
-  // or document rows; PostgreSQL control is absent from this configuration.
-  const hostDb = openDatabase(join(f.dir, "host-auth.sqlite"));
-  hostDb
-    .prepare(
-      "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,'!','user',?)",
-    )
-    .run(
-      f.user.id,
-      "host@example.test",
-      "Host identity",
-      new Date().toISOString(),
-    );
-  hostDb
-    .prepare("INSERT INTO sessions VALUES(?,?,?)")
-    .run(
-      createHash("sha256").update(f.user.id).digest("hex"),
-      f.user.id,
-      Date.now() + 600000,
-    );
-  const hostTeam = f.db.prepare("SELECT * FROM teams WHERE id=?").get(f.teamId);
-  hostDb
-    .prepare("INSERT INTO teams VALUES(?,?,?)")
-    .run(hostTeam.id, hostTeam.name, hostTeam.settings);
-  hostDb
-    .prepare("INSERT INTO memberships VALUES(?,?,'member')")
-    .run(f.user.id, f.teamId);
-  const imageDirectory = join(f.dir, "host-images"),
-    {
-      PG_CONTROL: unusedControl,
-      BUCKET: unusedBucket,
-      TOKEN: unusedToken,
-      ...teamEnv
-    } = f.env;
-  teamEnv.SYNC_PROFILES = JSON.stringify([
-    { profileId: "contract", teamId: f.teamId, databaseBinding: "PG_TEAM" },
-  ]);
-  await f.control.query("DELETE FROM graeboard.memberships");
-  await f.control.query("DELETE FROM graeboard.users");
-  await f.control.query("DELETE FROM graeboard.teams");
-  repository.context.controlStore = new SqliteControlStore({
-    db: hostDb,
+  await f.control.query(
+    "UPDATE graeboard.users SET system_role='user' WHERE id=$1",
+    [f.user.id],
+  );
+  await f.control.query(
+    "UPDATE graeboard.memberships SET role='member' WHERE user_id=$1",
+    [f.user.id],
+  );
+  const storedImages = new Map(),
+    teamEnv = f.env;
+  teamEnv.BUCKET = {
+    async put(key, bytes) {
+      storedImages.set(key, Buffer.from(bytes));
+    },
+    async head(key) {
+      return storedImages.has(key) ? { key } : null;
+    },
+    async get(key) {
+      const bytes = storedImages.get(key);
+      return bytes
+        ? {
+            body: new Response(bytes).body,
+            arrayBuffer: async () => new Uint8Array(bytes).buffer,
+          }
+        : null;
+    },
+    async delete(key) {
+      storedImages.delete(key);
+    },
+    async list({ prefix = "" } = {}) {
+      return {
+        objects: [...storedImages.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => ({ key })),
+        truncated: false,
+      };
+    },
+  };
+  teamEnv.IMAGES = {
+    async info(stream) {
+      const info = await sharp(
+        Buffer.from(await new Response(stream).arrayBuffer()),
+      ).metadata();
+      return { ...info, format: "image/" + info.format };
+    },
+    input(stream) {
+      return {
+        transform() {
+          return {
+            async output() {
+              const bytes = await sharp(
+                Buffer.from(await new Response(stream).arrayBuffer()),
+              )
+                .webp({ quality: 90 })
+                .toBuffer();
+              return { response: () => new Response(bytes) };
+            },
+          };
+        },
+      };
+    },
+  };
+  const imageBytes = (url) =>
+    storedImages.get(`images/${f.teamId}/${url.split("/").at(-1)}`);
+  const app = createExternalRouteApp({
     env: teamEnv,
-  });
-  repository.context.teamCache.clear();
-  repository.context.env = teamEnv;
-  repository.context.imageStore = (teamId) =>
-    new FileImageStore({ directory: imageDirectory, teamId });
-  const app = createApp({
-    db: hostDb,
-    rateLimits: false,
-    documentImagesDir: imageDirectory,
-    storage: createPostgresBusinessStorage({ env: teamEnv }),
-    syncOptions: { schedule: false, installationId: f.link.installation_id },
+    defaultUserId: f.user.id,
   });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.documentEvents.close();
-    app.locals.cellEvents.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
-    hostDb.close();
+    await app.close();
   });
   const origin = `http://127.0.0.1:${server.address().port}`,
     headers = {
@@ -455,11 +460,11 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
     method: "PUT",
     headers,
     body: JSON.stringify(
-      saveRequest("Node HTTP writes PostgreSQL", after.revision),
+      saveRequest("external HTTP writes PostgreSQL", after.revision),
     ),
   });
   assert.equal(saved.status, 200, await saved.text());
-  await waitBody("Node HTTP writes PostgreSQL");
+  await waitBody("external HTTP writes PostgreSQL");
   const png = await sharp({
       create: { width: 2, height: 2, channels: 4, background: "#123456" },
     })
@@ -476,9 +481,9 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
       body: form,
     },
   );
-  assert.equal(uploaded.status, 201, await uploaded.clone().text());
+  assert.equal(uploaded.status, 200, await uploaded.clone().text());
   const { url: imageUrl } = await uploaded.json();
-  assert.equal(readdirSync(join(imageDirectory, f.teamId)).length, 1);
+  assert.equal(storedImages.size, 1);
   assert.equal(
     (await counts()).pending,
     beforeUpload.pending,
@@ -494,7 +499,7 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
     ),
     0,
   );
-  const imageMarkdown = `Node HTTP writes PostgreSQL\n\n![image](${imageUrl})`,
+  const imageMarkdown = `external HTTP writes PostgreSQL\n\n![image](${imageUrl})`,
     current = await service.read(target),
     imageSave = await fetch(`${origin}/api/tasks/${f.taskId}/document`, {
       method: "PUT",
@@ -507,7 +512,7 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
   assert.equal(imageRead.headers.get("content-type"), "image/webp");
   assert.deepEqual(
     Buffer.from(await imageRead.arrayBuffer()),
-    readFileSync(documentImagePath(imageDirectory, imageUrl)),
+    imageBytes(imageUrl),
   );
   const exported = await fetch(origin + "/api/export", {
     method: "POST",
@@ -522,34 +527,32 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
   assert.equal(exported.status, 200, await exported.clone().text());
   assert.equal(
     unpack(await exported.json()).documentImages[0].base64,
-    readFileSync(documentImagePath(imageDirectory, imageUrl)).toString(
-      "base64",
-    ),
+    imageBytes(imageUrl).toString("base64"),
   );
   await waitBody(imageUrl);
-  assert.equal(hostDb.prepare("SELECT COUNT(*) n FROM tasks").get().n, 0);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM tasks").get().n, 0);
   assert.equal(
-    hostDb.prepare("SELECT COUNT(*) n FROM task_documents").get().n,
+    f.db.prepare("SELECT COUNT(*) n FROM task_documents").get().n,
     0,
   );
   buffer = "";
-  hostDb
-    .prepare("DELETE FROM memberships WHERE user_id=? AND team_id=?")
-    .run(f.user.id, f.teamId);
-  app.locals.documentEvents.notify(`task:${f.taskId}:main`);
+  await f.control.query(
+    "DELETE FROM graeboard.memberships WHERE user_id=$1 AND team_id=$2",
+    [f.user.id, f.teamId],
+  );
   await waitBody("event: access-revoked");
-  assert.ok(!buffer.includes("Node HTTP writes PostgreSQL"));
+  assert.ok(!buffer.includes("external HTTP writes PostgreSQL"));
   const revoked = await fetch(`${origin}/api/tasks/${f.taskId}/document`, {
     headers,
   });
   assert.ok(
     [403, 404].includes(revoked.status),
-    "SQLite control membership revocation closes PostgreSQL document access",
+    "PostgreSQL control membership revocation closes PostgreSQL document access",
   );
   assert.equal(
     (await fetch(origin + imageUrl, { headers })).status,
     403,
-    "image reads also use current SQLite control membership",
+    "image reads also use current PostgreSQL control membership",
   );
   const deniedUpload = new FormData();
   deniedUpload.set(
@@ -568,9 +571,7 @@ test("M6 identical document contract uses PostgreSQL and Node HTTP task-id reque
       ).status,
     ),
   );
-  assert.equal(readdirSync(join(imageDirectory, f.teamId)).length, 1);
-  assert.equal("PG_CONTROL" in teamEnv, false);
-  assert.equal("BUCKET" in teamEnv, false);
+  assert.equal(storedImages.size, 1);
   abort.abort();
   await reader.cancel().catch(() => {});
   assert.equal((await service.read(target)).markdown, imageMarkdown);

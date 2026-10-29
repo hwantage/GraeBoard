@@ -2,7 +2,7 @@ import {
   readDocumentVersion,
   withTaskDocumentReferences,
 } from "./document-storage.mjs";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,

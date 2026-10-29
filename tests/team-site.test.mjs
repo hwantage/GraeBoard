@@ -16,7 +16,8 @@ import { randomUUID, createHash } from "node:crypto";
 import { Pool } from "pg";
 import sharp from "sharp";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { SQLITE_VERSION } from "../server/migrations/sqlite.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { openDatabase, json } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
@@ -28,8 +29,8 @@ import { createGateway } from "../worker/gateway.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
 import { refreshSetupKeys } from "../worker/setup-keys.mjs";
-import { portableHash } from "../server/storage/logical-format.mjs";
-import { profiles } from "../worker/config.mjs";
+import { portableHash } from "../shared/logical-format.mjs";
+import { profiles } from "../shared/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import {
   backupExternal,
@@ -1192,7 +1193,10 @@ test(
     success(await inside(`/teams/${teamId}/sync/pause`, {}, "POST", outsider));
     await refreshDirectory(env, { force: true });
     assert.equal((await outside("member-google", "/bootstrap")).status, 401);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 31);
+    assert.equal(
+      db.prepare("PRAGMA user_version").get().user_version,
+      SQLITE_VERSION,
+    );
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(
       db.prepare("PRAGMA integrity_check").get().integrity_check,

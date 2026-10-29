@@ -1,7 +1,8 @@
 import { Worker } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
+import { documentImageUrls } from "../shared/document-image-references.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
-import { HttpError } from "./validation.mjs";
+import { HttpError } from "../shared/validation.js";
 
 const prefix = "/api/document-images/";
 const unavailable = (reason) =>
@@ -49,10 +50,32 @@ export function createDocumentImagePreparation({
       job.reject(error);
     }
   };
+  const fallback = (items) =>
+    resultFor(
+      items,
+      items.map(({ markdown }) => documentImageUrls(markdown)),
+    );
+  const completeFallback = (job) => {
+    if (!job) return;
+    if (active === job) active = null;
+    else {
+      const index = queue.indexOf(job);
+      if (index < 0) return;
+      queue.splice(index, 1);
+    }
+    clearTimeout(job.timer);
+    inputBytes -= job.bytes;
+    try {
+      job.resolve(fallback(job.items));
+    } catch (error) {
+      job.reject(error);
+    }
+  };
   const retire = (current, error) => {
     if (current && generation !== current) return retiring || Promise.resolve();
     generation = null;
-    rejectAll(error);
+    if (closed) rejectAll(error);
+    else completeFallback(active);
     if (current) {
       current.stopping = true;
       // terminate() resolves after exit. A replacement may start only after it
@@ -138,7 +161,9 @@ export function createDocumentImagePreparation({
           if (generation === current) void retire(current, unavailable("EXIT"));
         });
       } catch {
-        rejectAll(unavailable("START"));
+        // Preparation is an optimization. A worker failure must not introduce
+        // a new save failure for an otherwise valid document.
+        while (queue.length) completeFallback(queue[0]);
         return;
       }
     }
@@ -199,14 +224,16 @@ export function createDocumentImagePreparation({
         queue.length + Number(!!active) >= maxPending ||
         inputBytes + bytes > maxBytes
       )
-        return Promise.reject(unavailable("BUSY"));
+        return Promise.resolve(fallback(items));
       for (const item of items) item.hash = hash(item.markdown);
       return new Promise((resolve, reject) => {
         const job = { id: randomUUID(), items, bytes, resolve, reject };
-        // Queue wait is part of the deadline, not an additional timeout per
-        // preceding job. Any expiry fails this generation without sync fallback.
+        // Deadlines include queue wait. Expiring a queued request only settles
+        // that request. An active timeout replaces the worker while retaining
+        // other requests and their original deadlines.
         job.timer = setTimeout(() => {
-          void retire(generation, unavailable("TIMEOUT"));
+          if (active === job) void retire(generation, unavailable("TIMEOUT"));
+          else completeFallback(job);
         }, timeoutMs);
         inputBytes += bytes;
         queue.push(job);

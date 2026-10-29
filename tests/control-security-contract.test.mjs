@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
-import { PostgresControlRepository } from "../server/storage/postgres-control.mjs";
+import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,

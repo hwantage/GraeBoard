@@ -1,4 +1,5 @@
 import { secretMatches, failure, privateHeaders } from "../edge/security.mjs";
+import { assertOrigin, verifyAccess } from "./access.mjs";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const csp =
@@ -115,6 +116,7 @@ async function resource(request, env) {
 
 export function createGateway({
   fetcher = globalThis.fetch.bind(globalThis),
+  verify = verifyAccess,
 } = {}) {
   const forward = async (request, env, path) => {
     const endpoint = new URL(env.GRAEBOARD_EDGE_URL);
@@ -190,15 +192,35 @@ export function createGateway({
         }
         if (!["GET", "HEAD"].includes(request.method))
           return new Response(null, { status: 405 });
-        const auth = await forward(
-          new Request(env.APP_ORIGIN + "/", {
-            headers: request.headers,
-            signal: request.signal,
-          }),
-          env,
-          "/_gateway/access",
-        );
-        if (auth.status !== 204) return auth;
+        if (
+          env.ACCESS_ISSUER ||
+          env.ACCESS_AUDIENCE ||
+          env.ACCESS_TEAM_DOMAIN ||
+          env.ACCESS_AUD
+        ) {
+          // Reuse the Edge's JWT verification (including expiry and audience).
+          // jose caches public keys; fonts/scripts need no Edge invocation.
+          try {
+            assertOrigin(request, env);
+            await verify(request, env);
+          } catch (error) {
+            return failure(
+              error.status || 503,
+              error.status === 401 ? error.message : "인증 연결을 확인하세요.",
+            );
+          }
+        } else {
+          // Older gateway configurations can be upgraded without an auth gap.
+          const auth = await forward(
+            new Request(env.APP_ORIGIN + "/", {
+              headers: request.headers,
+              signal: request.signal,
+            }),
+            env,
+            "/_gateway/access",
+          );
+          if (auth.status !== 204) return auth;
+        }
         const response = await env.ASSETS.fetch(request);
         const headers = new Headers(response.headers);
         headers.set("X-Content-Type-Options", "nosniff");

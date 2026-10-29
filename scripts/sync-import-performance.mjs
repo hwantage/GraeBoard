@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { performance } from "node:perf_hooks";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { SyncService } from "../server/sync/service.mjs";
 import { boundStore } from "../worker/sync.mjs";

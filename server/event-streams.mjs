@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { z } from "zod";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 
 const routes = new WeakMap();
 

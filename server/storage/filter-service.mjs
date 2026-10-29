@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { savedFilter, propertiesFor, teamRole } from "../../shared/domain.js";
-import { requireThat, savedFilterSchema } from "../validation.mjs";
+import { requireThat, savedFilterSchema } from "../../shared/validation.js";
 const uuid = z.string().uuid(),
   name = z.string().trim().min(1).max(60);
-export const filterQuerySchema = z.object({ teamId: uuid }).strict();
+const filterQuerySchema = z.object({ teamId: uuid }).strict();
 const current = z
   .object({
     teamId: uuid,
@@ -72,13 +72,9 @@ export class FilterBusinessService {
     return this.repository.save(this.user, save.parse(input));
   }
   update(id, input) {
-    return this.repository.update(
-      this.user,
-      uuid.parse(id),
-      update.parse(input),
-    );
+    return this.repository.update(this.user, String(id), update.parse(input));
   }
   remove(id) {
-    return this.repository.remove(this.user, uuid.parse(id));
+    return this.repository.remove(this.user, String(id));
   }
 }

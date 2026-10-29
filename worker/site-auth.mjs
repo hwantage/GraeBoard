@@ -2,10 +2,10 @@ import { refreshSetupKeys } from "./setup-keys.mjs";
 import { deploymentSite } from "../shared/site-mode.js";
 import { setupKeyId } from "../server/sync/setup-keys.mjs";
 import { controlTransaction } from "./data.mjs";
-import { siteTeamId } from "./config.mjs";
+import { siteTeamId } from "../shared/sync-profiles.js";
 import { refreshDirectory } from "./directory.mjs";
 import { assert, verifySetupToken } from "./access.mjs";
-import { userRecord } from "../server/storage/control-store.mjs";
+import { userRecord } from "./storage/control-store.mjs";
 import { digest } from "../server/sync/protocol.mjs";
 
 const COOKIE = "__Host-graeboard_account";

@@ -1,17 +1,25 @@
 import { fileEntries } from "./file-entries.mjs";
 import { ProtocolError } from "./errors.mjs";
-import { requireThat } from "../validation.mjs";
+import { requireThat } from "../../shared/validation.js";
+import { digest } from "./protocol.mjs";
 const assert = (condition, status, message) => {
   if (!condition) throw Object.assign(new Error(message), { status });
 };
 const enc = new TextEncoder();
+const cooldowns = new WeakMap();
+const retryable = (method, path) =>
+  method === "GET" ||
+  (method === "POST" && /^\/git\/(blobs|trees|commits)$/.test(path));
 export class GitHubApiTransport {
   constructor({
     repository,
     token,
-    fetch: fetcher = globalThis.fetch.bind(globalThis),
+    fetch: fetcher = globalThis.fetch,
     maxRequests = 600,
     maxBlobBytes = 64 * 1024 * 1024,
+    maxRetries = 2,
+    now = () => Date.now(),
+    wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   }) {
     assert(
       /^[\w.-]+\/[\w.-]+$/.test(repository) && !repository.includes(".."),
@@ -21,7 +29,13 @@ export class GitHubApiTransport {
     this.maxBlobBytes = maxBlobBytes;
     this.repository = repository;
     this.token = token;
-    this.fetch = fetcher;
+    this.fetch = (...args) => fetcher.call(globalThis, ...args);
+    this.now = now;
+    this.wait = wait;
+    this.maxRetries = Math.min(2, Math.max(0, maxRetries));
+    if (!cooldowns.has(fetcher)) cooldowns.set(fetcher, new Map());
+    this.cooldowns = cooldowns.get(fetcher);
+    this.cooldownKey = repository + "/" + digest(token || "");
     this.remaining = maxRequests;
     this.commits = new Map();
     this.blobs = new Map();
@@ -30,26 +44,84 @@ export class GitHubApiTransport {
     path,
     { method = "GET", body, missing = false, raw = false } = {},
   ) {
-    if (--this.remaining < 0)
-      throw new Error("GitHub request budget reached; resume next cycle");
-    const response = await this.fetch(
-      `https://api.github.com/repos/${this.repository}${path}`,
-      {
-        method,
-        redirect: "manual",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: raw
-            ? "application/vnd.github.raw+json"
-            : "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2026-03-10",
-          "User-Agent": "GraeBoard",
-          ...(body ? { "Content-Type": "application/json" } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(20000),
-      },
-    );
+    let response;
+    for (let attempt = 0; ; attempt++) {
+      const cooldown = this.cooldowns.get(this.cooldownKey);
+      if (cooldown?.retryAt > this.now())
+        throw Object.assign(
+          new Error("GitHub rate limit; retry after the scheduled delay"),
+          cooldown,
+        );
+      this.cooldowns.delete(this.cooldownKey);
+      if (--this.remaining < 0)
+        throw new Error("GitHub request budget reached; resume next cycle");
+      try {
+        response = await this.fetch(
+          `https://api.github.com/repos/${this.repository}${path}`,
+          {
+            method,
+            redirect: "manual",
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              Accept: raw
+                ? "application/vnd.github.raw+json"
+                : "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2026-03-10",
+              "User-Agent": "GraeBoard",
+              ...(body ? { "Content-Type": "application/json" } : {}),
+            },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+            signal: AbortSignal.timeout(20000),
+          },
+        );
+      } catch (error) {
+        if (!retryable(method, path) || attempt >= this.maxRetries) throw error;
+        await this.wait(250 * 2 ** attempt);
+        continue;
+      }
+      if (response.status === 429 || response.status === 403) {
+        const retryAfter = response.headers.get("retry-after"),
+          rateLimitReset = response.headers.get("x-ratelimit-reset"),
+          seconds = retryAfter === null ? NaN : Number(retryAfter),
+          date = Date.parse(retryAfter || ""),
+          reset = Number(rateLimitReset) * 1000;
+        const retryAt =
+          Number.isFinite(seconds) && seconds >= 0
+            ? this.now() + Math.max(1000, seconds * 1000)
+            : Number.isFinite(date) && date > this.now()
+              ? date
+              : Number.isFinite(reset) && reset > this.now()
+                ? reset
+                : this.now() + 60000;
+        const metadata = {
+          status: response.status,
+          code: "GITHUB_RATE_LIMIT",
+          retryAfter,
+          rateLimitReset,
+          retryAt,
+        };
+        if (this.cooldowns.size >= 1024)
+          this.cooldowns.delete(this.cooldowns.keys().next().value);
+        this.cooldowns.set(this.cooldownKey, metadata);
+        throw Object.assign(
+          new Error(
+            `GitHub request failed (${response.status}); retry after the scheduled delay`,
+          ),
+          metadata,
+        );
+      }
+      if (
+        response.status >= 500 &&
+        response.status <= 599 &&
+        retryable(method, path) &&
+        attempt < this.maxRetries
+      ) {
+        await response.body?.cancel();
+        await this.wait(250 * 2 ** attempt);
+        continue;
+      }
+      break;
+    }
     assert(
       response.status < 300 || response.status >= 400,
       502,

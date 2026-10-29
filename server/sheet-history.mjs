@@ -7,7 +7,7 @@ import {
   readReport,
 } from "./document-storage.mjs";
 import { canContribute } from "../shared/domain.js";
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 
 // Sheet identity is independent of the task ID, which copies can share.
 export const auditSheetSql = `CASE

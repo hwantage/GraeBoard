@@ -1,4 +1,4 @@
-import { requireThat } from "./validation.mjs";
+import { requireThat } from "../shared/validation.js";
 import { DEFAULT_DOCUMENT_ID } from "../shared/task-documents.js";
 import { blankDocument } from "./storage/document-service.mjs";
 import { readDocumentVersion } from "./document-storage.mjs";

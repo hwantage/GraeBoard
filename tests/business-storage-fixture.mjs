@@ -20,8 +20,8 @@ import {
 } from "../shared/domain.js";
 import { encodeReport } from "../server/reports.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
-import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
+import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { RequestContext } from "../worker/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";

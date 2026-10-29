@@ -14,14 +14,14 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Pool } from "pg";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import {
   exportTeam,
   importTeam,
   freezeTeam,
   releaseTransfer,
 } from "../server/storage/logical-transfer.mjs";
-import { verifyTransfer } from "../server/storage/logical-format.mjs";
+import { verifyTransfer } from "../shared/logical-format.mjs";
 
 export async function openTransferDatabase({
   engine,
@@ -29,6 +29,7 @@ export async function openTransferDatabase({
   urlEnv,
   scope = "team",
   site = false,
+  backupSource = false,
 }) {
   if (engine === "sqlite") {
     if (!database || !existsSync(database))
@@ -53,7 +54,11 @@ export async function openTransferDatabase({
   const pool = new Pool({ connectionString: process.env[urlEnv], max: 2 }),
     adapter = new PostgresDatabase(pool, { scope, site });
   try {
-    await adapter.health();
+    await adapter.health(
+      backupSource
+        ? { allowPreviousTeam: true, allowPreviousSite: true }
+        : undefined,
+    );
   } catch (error) {
     await pool.end();
     throw error;

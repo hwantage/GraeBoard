@@ -24,7 +24,7 @@ import {
 } from "../server/storage/logical-assets.mjs";
 import { storeDocumentVersion } from "../server/document-storage.mjs";
 import { SqliteDatabase, sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import {
   exportTeam,
@@ -32,7 +32,7 @@ import {
   freezeTeam,
   releaseTransfer,
 } from "../server/storage/logical-transfer.mjs";
-import { verifyTransfer } from "../server/storage/logical-format.mjs";
+import { verifyTransfer } from "../shared/logical-format.mjs";
 import {
   S3ImageStore,
   backupExternal,
@@ -50,7 +50,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
-import { recoverBackupJob } from "../server/storage/backup-recovery.mjs";
+import { recoverBackupJob } from "../shared/backup-recovery.mjs";
 
 function sourceFixture(dir) {
   const db = openDatabase(join(dir, "source.sqlite")),

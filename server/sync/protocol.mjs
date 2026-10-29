@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { SYNC_OPERATION_MAX_BYTES } from "../../shared/sync-limits.js";
 import { documentImageUrls } from "../../shared/document-image-references.js";
 import {
   DOCUMENT_IMAGE_PATTERN,
   isDocumentImage,
 } from "../../shared/document-images.js";
 export const PROTOCOL = 1;
-export const ENTITIES = new Set([
+export const ENTITIES_V1 = new Set([
   "team",
   "person",
   "task",
@@ -19,6 +20,18 @@ export const ENTITIES = new Set([
   "filter",
   "formats",
 ]);
+export const ENTITIES = new Set([
+  ...ENTITIES_V1,
+  "protocol",
+  "reportTask",
+  "reportCell",
+]);
+export const protocolVersion = (state) =>
+  state?.entities?.[JSON.stringify(["protocol", []])]?.payload?.version === 2
+    ? 2
+    : 1;
+export const supportedVersion = (protocol, reducer = protocol) =>
+  [1, 2].includes(protocol) && reducer === protocol;
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
 export function canonical(value) {
   if (value === null || typeof value === "boolean" || typeof value === "string")
@@ -132,6 +145,9 @@ const payloadFields = {
   weekly: ["title"],
   filter: ["name", "data"],
   formats: ["rules"],
+  protocol: ["version", "reducer"],
+  reportTask: ["data", "index"],
+  reportCell: ["data"],
 };
 const keyLengths = {
   team: 0,
@@ -145,12 +161,21 @@ const keyLengths = {
   weekly: 3,
   filter: 1,
   formats: 0,
+  protocol: 0,
+  reportTask: 2,
+  reportCell: 3,
 };
 const plain = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
-export function validateEntityPayload(entity, key, payload, teamId) {
+export function validateEntityPayload(
+  entity,
+  key,
+  payload,
+  teamId,
+  version = 1,
+) {
   if (
-    !ENTITIES.has(entity) ||
+    !(version === 2 ? ENTITIES : ENTITIES_V1).has(entity) ||
     !Array.isArray(key) ||
     key.some(
       (part) =>
@@ -240,11 +265,32 @@ export function validateEntityPayload(entity, key, payload, teamId) {
     throw new Error("Invalid calendar payload");
   if (entity === "formats" && !Array.isArray(payload.rules))
     throw new Error("Invalid formats payload");
+  if (entity === "protocol" && (payload.version !== 2 || payload.reducer !== 2))
+    throw new Error("Invalid protocol marker");
+  if (
+    entity === "reportTask" &&
+    (!plain(payload.data) ||
+      payload.data.id !== key[1] ||
+      payload.data.teamId !== teamId ||
+      Object.hasOwn(payload.data, "cells") ||
+      !Number.isSafeInteger(payload.index) ||
+      payload.index < 0)
+  )
+    throw new Error("Invalid report task");
+  if (
+    entity === "reportCell" &&
+    (!plain(payload.data) ||
+      !Object.hasOwn(payload.data, "value") ||
+      !plain(payload.data.style))
+  )
+    throw new Error("Invalid report cell");
   if (entity === "report") {
     if (
       !Number.isInteger(payload.year) ||
       !plain(payload.data) ||
-      !Array.isArray(payload.data.tasks) ||
+      (version === 1
+        ? !Array.isArray(payload.data.tasks)
+        : Object.hasOwn(payload.data, "tasks")) ||
       !Array.isArray(payload.data.users) ||
       !plain(payload.data.settings) ||
       !plain(payload.data.view)
@@ -261,7 +307,7 @@ export function validateEntityPayload(entity, key, payload, teamId) {
       )
     )
       throw new Error("Private account data in report");
-    if (payload.data.tasks.some((task) => task.teamId !== teamId))
+    if (payload.data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team report row");
   }
   if (entity === "document")
@@ -272,11 +318,12 @@ export function validateEntityPayload(entity, key, payload, teamId) {
       )
         throw new Error("Foreign or invalid image reference");
 }
-export function validateOperation(op, identity) {
+export function validateOperation(op, identity, state, { onSerialized } = {}) {
   if (
     !op ||
-    op.protocol !== 1 ||
-    op.reducer !== 1 ||
+    !supportedVersion(op.protocol, op.reducer) ||
+    (state && op.protocol !== protocolVersion(state)) ||
+    (identity.protocol !== undefined && identity.protocol !== op.protocol) ||
     op.repoId !== identity.repoId ||
     op.teamId !== identity.teamId
   )
@@ -286,20 +333,54 @@ export function validateOperation(op, identity) {
       throw new Error("Invalid operation identity");
   if (
     !Array.isArray(op.dependsOn) ||
-    op.dependsOn.some((id) => typeof id !== "string" || id === op.opId) ||
+    op.dependsOn.length > 200000 ||
+    op.dependsOn.some(
+      (id) =>
+        typeof id !== "string" || !id || id.length > 200 || id === op.opId,
+    ) ||
     !Array.isArray(op.changes) ||
     op.changes.length > 200000 ||
     !Array.isArray(op.objects)
   )
     throw new Error("Invalid operation structure");
+  if (op.resolves !== undefined) {
+    if (
+      !Array.isArray(op.resolves) ||
+      op.resolves.length > 200000 ||
+      new Set(op.resolves).size !== op.resolves.length ||
+      op.resolves.some(
+        (id) =>
+          typeof id !== "string" || !id || id.length > 200 || id === op.opId,
+      )
+    )
+      throw new Error("Invalid conflict resolution references");
+    if (state)
+      for (const id of op.resolves) {
+        const conflict =
+          Object.hasOwn(state.conflicts, id) && state.conflicts[id];
+        if (
+          !conflict ||
+          conflict.operation?.teamId !== op.teamId ||
+          conflict.operation?.repoId !== op.repoId
+        )
+          throw new Error(
+            "Conflict resolution references a missing or foreign conflict",
+          );
+      }
+  }
   const seen = new Set();
   for (const c of op.changes) {
     if (
-      !ENTITIES.has(c.entity) ||
+      !(op.protocol === 2 ? ENTITIES : ENTITIES_V1).has(c.entity) ||
+      c.entity === "protocol" ||
       !Array.isArray(c.key) ||
       c.key.some((v) => typeof v !== "string" || v.length > 200) ||
       !["create", "edit", "delete", "restore"].includes(c.action) ||
       typeof c.generation !== "string" ||
+      (c.baseVersion !== null &&
+        (typeof c.baseVersion !== "string" ||
+          !c.baseVersion ||
+          c.baseVersion.length > 512)) ||
       !Array.isArray(c.fields) ||
       c.fields.some(
         (x) =>
@@ -314,9 +395,9 @@ export function validateOperation(op, identity) {
     canonical(c.base);
     canonical(c.desired);
     if (c.base !== null)
-      validateEntityPayload(c.entity, c.key, c.base, op.teamId);
+      validateEntityPayload(c.entity, c.key, c.base, op.teamId, op.protocol);
     if (c.desired !== null)
-      validateEntityPayload(c.entity, c.key, c.desired, op.teamId);
+      validateEntityPayload(c.entity, c.key, c.desired, op.teamId, op.protocol);
     if (c.desired === null && c.action !== "delete")
       throw new Error("Missing desired entity");
     if (c.fields.some((field) => !payloadFields[c.entity].includes(field)))
@@ -344,7 +425,14 @@ export function validateOperation(op, identity) {
     )
       throw new Error("Private team setting in shared payload");
   }
-  if (Buffer.byteLength(canonical(op)) > 64 * 1024 * 1024)
-    throw new Error("Operation exceeds protocol byte budget");
+  const serialized = canonical(op);
+  if (Buffer.byteLength(serialized) > SYNC_OPERATION_MAX_BYTES)
+    throw Object.assign(
+      new Error(
+        "동기화할 변경이 4MiB 전송 한도를 초과했습니다. 변경을 나누어 저장하세요.",
+      ),
+      { status: 400, code: "SYNC_OPERATION_CAPACITY" },
+    );
+  onSerialized?.(serialized);
   return op;
 }

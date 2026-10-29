@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { digest } from "../sync/protocol.mjs";
 import { imageReferences, activeImageReferences } from "../sync/retention.mjs";
 import { project } from "../sync/reducer.mjs";
-import { portableHash, verifyTransfer } from "./logical-format.mjs";
+import { portableHash, verifyTransfer } from "../../shared/logical-format.mjs";
 import { stateFrom } from "./external-backup.mjs";
 import { documentImagePath, writeDocumentImage } from "../document-images.mjs";
 

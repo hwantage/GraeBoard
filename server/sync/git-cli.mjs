@@ -24,6 +24,7 @@ export class GitCliTransport {
     allowLocal = false,
     localTimeoutMs = 30000,
     networkTimeoutMs = 300000,
+    signal,
   }) {
     this.directory = resolve(directory);
     this.repository = allowLocal
@@ -33,12 +34,16 @@ export class GitCliTransport {
     this.ready = null;
     this.localTimeoutMs = localTimeoutMs;
     this.networkTimeoutMs = networkTimeoutMs;
+    this.signal = signal;
   }
   async init() {
     if (!this.ready)
       this.ready = (async () => {
         await mkdir(this.directory, { recursive: true, mode: 0o700 });
-        await exec("git", ["init", "--bare", this.directory]);
+        await exec("git", ["init", "--bare", this.directory], {
+          timeout: this.localTimeoutMs,
+          signal: this.signal,
+        });
         await this.git(["config", "remote.origin.url", this.repository]);
         await this.git(["config", "core.hooksPath", "/dev/null"]);
         const helper = join(this.directory, "graeboard-askpass.cjs");
@@ -51,6 +56,7 @@ export class GitCliTransport {
     return this.ready;
   }
   async git(args, { input, index } = {}) {
+    const signal = this.signal;
     const network = ["fetch", "push", "ls-remote"].includes(args[0]);
     const timeout = network ? this.networkTimeoutMs : this.localTimeoutMs;
     const env = {
@@ -86,12 +92,18 @@ export class GitCliTransport {
             {
               env,
               timeout,
+              signal,
               maxBuffer: 128 * 1024 * 1024,
               encoding: "buffer",
             },
             (error, stdout) =>
               error
-                ? reject(new Error("Git operation failed (" + error.code + ")"))
+                ? reject(
+                    Object.assign(
+                      new Error("Git operation failed (" + error.code + ")"),
+                      { code: error.code },
+                    ),
+                  )
                 : resolve(stdout),
           );
           child.stdin.end(input);
@@ -113,12 +125,15 @@ export class GitCliTransport {
           {
             env,
             timeout,
+            signal,
             maxBuffer: 128 * 1024 * 1024,
             encoding: "buffer",
           },
         )
       ).stdout;
     } catch (error) {
+      if (signal?.aborted && signal.reason instanceof Error)
+        throw signal.reason;
       throw Object.assign(
         new Error("Git operation failed (" + (error.code || "network") + ")"),
         { code: error.code },
@@ -271,6 +286,12 @@ export class GitCliTransport {
   }
   async verifyReachable(ancestor, head) {
     if (!ancestor) return true;
+    if (
+      ![ancestor, head].every(
+        (oid) => typeof oid === "string" && /^[a-f0-9]{40}$/.test(oid),
+      )
+    )
+      throw new ProtocolError("SYNC_FORMAT", "Invalid Git ancestry identity");
     try {
       await this.git(["merge-base", "--is-ancestor", ancestor, head]);
       return true;

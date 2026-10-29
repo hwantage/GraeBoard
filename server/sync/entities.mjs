@@ -1,3 +1,5 @@
+import { channel } from "node:diagnostics_channel";
+import { splitReportRecord, applicationEntities } from "./versions.mjs";
 import { expandStyle } from "../../shared/compact.js";
 import {
   parse,
@@ -10,6 +12,7 @@ import {
 } from "../db.mjs";
 import {
   readReport,
+  withReportDocumentReferences,
   reportDocumentContents,
   storeDocumentVersion,
   syncReportDocuments,
@@ -19,13 +22,59 @@ import { encodeReport, decodeReport } from "../reports.mjs";
 import { hasDocumentContent } from "../../shared/task-documents.js";
 import { entityId, initialToken, equal } from "./protocol.mjs";
 
+const reportDecoded = channel("graeboard.sync.report.decode");
 const one = (db, sql, ...args) => db.prepare(sql).get(...args);
 const rows = (db, sql, ...args) => db.prepare(sql).all(...args);
-const style = (db, id) =>
-  expandStyle(
+const style = (db, id, cache) => {
+  if (cache?.has(id)) return cache.get(id);
+  const value = expandStyle(
     JSON.parse(one(db, "SELECT data FROM styles WHERE id=?", id)?.data || "{}"),
   );
-export function readEntity(db, teamId, entity, key) {
+  cache?.set(id, value);
+  return value;
+};
+// One immutable report snapshot per capture phase. Before and after phases
+// own separate maps, so a changed BLOB can never reuse an earlier decoded body.
+function reportSnapshot(db, teamId, reportId, cache) {
+  const key = teamId + ":" + reportId;
+  if (cache?.has(key)) return cache.get(key);
+  const row = one(
+    db,
+    "SELECT * FROM reports WHERE team_id=? AND id=?",
+    teamId,
+    reportId,
+  );
+  if (!row) {
+    cache?.set(key, null);
+    return null;
+  }
+  const data = decodeReport(row.data),
+    tasks = new Map(),
+    documents = new Map();
+  reportDecoded.publish({ teamId, reportId });
+  for (const task of data.tasks) {
+    tasks.set(task.id, task);
+    for (const [position, document] of (task.documents || []).entries())
+      documents.set(JSON.stringify([task.id, document.id]), {
+        ...document,
+        position,
+      });
+  }
+  const bodies = new Map(
+    rows(
+      db,
+      "SELECT d.task_id,d.document_id,v.markdown FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=?",
+      reportId,
+    ).map((entry) => [
+      JSON.stringify([entry.task_id, entry.document_id]),
+      entry.markdown,
+    ]),
+  );
+  const result = { row, data, tasks, documents, bodies };
+  cache?.set(key, result);
+  return result;
+}
+export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
   let r, p;
   const [a, b, c, d] = key;
   switch (entity) {
@@ -47,8 +96,8 @@ export function readEntity(db, teamId, entity, key) {
         p = {
           years: parse(r.years),
           position: r.position,
-          defaultStyle: style(db, r.default_style),
-          rowStyle: style(db, r.row_style),
+          defaultStyle: style(db, r.default_style, styles),
+          rowStyle: style(db, r.row_style, styles),
           createdBy: r.created_by,
           createdAt: r.created_at,
           deletedAt: r.deleted_at,
@@ -62,7 +111,8 @@ export function readEntity(db, teamId, entity, key) {
         a,
         b,
       );
-      if (r) p = { value: parse(r.value, ""), style: style(db, r.style_id) };
+      if (r)
+        p = { value: parse(r.value, ""), style: style(db, r.style_id, styles) };
       break;
     case "formats":
       p = { rules: readFormatting(db, teamId).rules };
@@ -100,48 +150,38 @@ export function readEntity(db, teamId, entity, key) {
           b,
         );
       if (a === "report") {
-        const owner = one(
-          db,
-          "SELECT * FROM reports WHERE team_id=? AND id=?",
-          teamId,
-          b,
-        );
-        if (owner) {
-          const report = decodeReport(owner.data),
-            task = report.tasks.find((t) => t.id === c),
-            index = task?.documents?.findIndex((x) => x.id === d);
-          if (index >= 0) {
-            const doc = task.documents[index],
-              body = one(
-                db,
-                "SELECT v.markdown FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=? AND d.task_id=? AND d.document_id=?",
-                b,
-                c,
-                d,
-              );
-            if (body)
-              r = {
-                title: doc.title,
-                position: index,
-                markdown: body.markdown,
-              };
-          }
-        }
+        const snapshot = reportSnapshot(db, teamId, b, reports),
+          id = JSON.stringify([c, d]),
+          document = snapshot?.documents.get(id);
+        if (document && snapshot.bodies.has(id))
+          r = {
+            title: document.title,
+            position: document.position,
+            markdown: snapshot.bodies.get(id),
+          };
       }
       if (r) p = { title: r.title, position: r.position, markdown: r.markdown };
       break;
     }
-    case "report":
-      r = one(db, "SELECT * FROM reports WHERE team_id=? AND id=?", teamId, a);
-      if (r) {
-        const data = readReport(db, r);
-        data.tasks = data.tasks.map((t) => ({
-          ...t,
-          documents: (t.documents || []).map((doc) => ({
-            id: doc.id,
-            title: doc.title,
-          })),
-        }));
+    case "report": {
+      const snapshot = reportSnapshot(db, teamId, a, reports);
+      if (snapshot) {
+        const r = snapshot.row,
+          data = {
+            ...snapshot.data,
+            tasks: withReportDocumentReferences(
+              db,
+              r.id,
+              snapshot.data.tasks,
+              true,
+            ).map((t) => ({
+              ...t,
+              documents: (t.documents || []).map((doc) => ({
+                id: doc.id,
+                title: doc.title,
+              })),
+            })),
+          };
         p = {
           year: r.year,
           name: r.name,
@@ -152,6 +192,7 @@ export function readEntity(db, teamId, entity, key) {
         };
       }
       break;
+    }
     case "calendar":
       r = one(
         db,
@@ -225,7 +266,7 @@ export function readEntity(db, teamId, entity, key) {
         deleted: ["task", "calendar"].includes(entity) && !!p.deletedAt,
       };
 }
-export function allEntityKeys(db, teamId) {
+function allEntityKeys(db, teamId, reports) {
   const keys = [
     ["team", []],
     ["formats", []],
@@ -250,7 +291,7 @@ export function allEntityKeys(db, teamId) {
     add("document", ["annual", String(r.year), r.id]);
   for (const r of rows(db, "SELECT * FROM reports WHERE team_id=?", teamId)) {
     add("report", [r.id]);
-    for (const t of readReport(db, r).tasks)
+    for (const t of reportSnapshot(db, teamId, r.id, reports).data.tasks)
       for (const d of t.documents || [])
         add("document", ["report", r.id, t.id, d.id]);
     for (const m of rows(
@@ -301,6 +342,8 @@ export function allEntityKeys(db, teamId) {
 }
 export function allEntities(db, link) {
   const result = {},
+    reports = new Map(),
+    styles = new Map(),
     people = new Set(),
     known = new Set(rows(db, "SELECT id FROM users").map((row) => row.id));
   const remember = (value) => {
@@ -311,7 +354,10 @@ export function allEntities(db, link) {
       Object.values(value).forEach(remember);
   };
   const add = (entity, key) => {
-    const record = readEntity(db, link.team_id, entity, key);
+    const record = readEntity(db, link.team_id, entity, key, {
+      reports,
+      styles,
+    });
     if (!record) return;
     const token = initialToken(link.bootstrap_id, entity, key);
     result[entityId(entity, key)] = {
@@ -322,9 +368,36 @@ export function allEntities(db, link) {
     if (entity === "weekly") remember(key[0]);
     remember(record.payload);
   };
-  for (const [entity, key] of allEntityKeys(db, link.team_id)) add(entity, key);
+  for (const [entity, key] of allEntityKeys(db, link.team_id, reports))
+    add(entity, key);
   for (const id of people)
     if (!result[entityId("person", [id])]) add("person", [id]);
+  const marker = one(
+    db,
+    "SELECT generation,version,payload,deleted FROM sync_entities WHERE team_id=? AND entity='protocol' AND entity_key='[]'",
+    link.team_id,
+  );
+  if (marker && JSON.parse(marker.payload).version === 2) {
+    const expanded = {};
+    for (const record of Object.values(result))
+      for (const child of splitReportRecord(record)) {
+        const token = initialToken(link.bootstrap_id, child.entity, child.key);
+        expanded[entityId(child.entity, child.key)] = {
+          ...child,
+          generation: token,
+          version: token,
+        };
+      }
+    expanded[entityId("protocol", [])] = {
+      entity: "protocol",
+      key: [],
+      generation: marker.generation,
+      version: marker.version,
+      payload: JSON.parse(marker.payload),
+      deleted: !!marker.deleted,
+    };
+    return expanded;
+  }
   return result;
 }
 function documentTarget(key) {
@@ -457,15 +530,23 @@ export function materializeEntity(
       db.prepare("DELETE FROM reports WHERE team_id=? AND id=?").run(teamId, a);
       return;
     }
+    const bodies = new Map(
+      rows(
+        db,
+        "SELECT d.task_id,d.document_id,v.markdown FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=?",
+        a,
+      ).map((row) => [
+        JSON.stringify([row.task_id, row.document_id]),
+        row.markdown,
+      ]),
+    );
     const data = {
       ...p.data,
       tasks: p.data.tasks.map((t) => ({
         ...t,
         documents: (t.documents || []).map((doc) => ({
           ...doc,
-          markdown:
-            readEntity(db, teamId, "document", ["report", a, t.id, doc.id])
-              ?.payload.markdown || "",
+          markdown: bodies.get(JSON.stringify([t.id, doc.id])) || "",
         })),
       })),
     };
@@ -643,6 +724,9 @@ export function materializeEntity(
   throw new Error("Unsupported materialization " + e.entity);
 }
 export function materialize(db, teamId, entities, previous = {}, options = {}) {
+  entities = applicationEntities(entities);
+  previous = applicationEntities(previous);
+  const retiredKeys = new Set(options.retiredKeys || []);
   const order = [
     "person",
     "team",
@@ -663,13 +747,17 @@ export function materialize(db, teamId, entities, previous = {}, options = {}) {
       e.deleted !== previous[k]?.deleted,
   );
   changes.sort(
-    ([, a], [, b]) =>
-      (a.deleted && !["task", "calendar"].includes(a.entity)
-        ? 100 - order.indexOf(a.entity)
-        : order.indexOf(a.entity)) -
-      (b.deleted && !["task", "calendar"].includes(b.entity)
-        ? 100 - order.indexOf(b.entity)
-        : order.indexOf(b.entity)),
+    ([aKey, a], [bKey, b]) =>
+      (retiredKeys.has(aKey)
+        ? -100 - order.indexOf(a.entity)
+        : a.deleted && !["task", "calendar"].includes(a.entity)
+          ? 100 - order.indexOf(a.entity)
+          : order.indexOf(a.entity)) -
+      (retiredKeys.has(bKey)
+        ? -100 - order.indexOf(b.entity)
+        : b.deleted && !["task", "calendar"].includes(b.entity)
+          ? 100 - order.indexOf(b.entity)
+          : order.indexOf(b.entity)),
   );
   for (const [, e] of changes) materializeEntity(db, teamId, e, options);
   return changes.map(([key]) => key);

@@ -13,11 +13,12 @@ import {
   databaseRow,
   portableHash,
   verifyTransfer,
-} from "./logical-format.mjs";
+} from "../../shared/logical-format.mjs";
 import { canonical, digest, entityId } from "../sync/protocol.mjs";
 import { imageReferences, activeImageReferences } from "../sync/retention.mjs";
 import { project } from "../sync/reducer.mjs";
-import { unfinishedJobError } from "./backup-recovery.mjs";
+import { postgresHistoryVersion } from "../../shared/postgres-schema-version.js";
+import { unfinishedJobError } from "../../shared/backup-recovery.mjs";
 
 const CONTROL_TABLES = [
   "control_meta",
@@ -184,11 +185,22 @@ async function completeBackup({ adapter, teamId, jobId }) {
     ),
   );
 }
-export async function exportControl(adapter) {
+async function exportControl(adapter) {
   return adapter.withControlTransaction(
     async (tx) => {
       const tables = {};
-      for (const table of controlTables(adapter.site))
+      const keys =
+        !adapter.site ||
+        postgresHistoryVersion(
+          (
+            await tx.query(
+              "SELECT scope,version,checksum FROM schema_migrations ORDER BY version",
+            )
+          ).rows,
+          "site",
+          { allowPreviousSite: true },
+        ) >= 2;
+      for (const table of controlTables(adapter.site, keys))
         tables[table] = (await tx.query(`SELECT * FROM ${table}`)).rows
           .map(portableRow)
           .sort((a, b) => canonical(a).localeCompare(canonical(b)));
@@ -217,6 +229,8 @@ export async function backupExternal({ control, teams, destination }) {
     };
     if (control) {
       const data = await exportControl(control);
+      if (control.site && !Object.hasOwn(data.tables, "setup_link_keys"))
+        manifest.version = 2;
       if (
         control.site &&
         (teams.length !== 1 ||

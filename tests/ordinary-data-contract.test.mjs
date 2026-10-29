@@ -1,19 +1,19 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { TaskBusinessService } from "../server/storage/task-service.mjs";
-import { PostgresTaskRepository } from "../server/storage/postgres-tasks.mjs";
+import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "../server/storage/postgres-documents.mjs";
+import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
 import { HistoryBusinessService } from "../server/storage/history-service.mjs";
-import { PostgresHistoryRepository } from "../server/storage/postgres-history.mjs";
+import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import { DocumentBrowserBusinessService } from "../server/storage/document-browser-service.mjs";
-import { PostgresDocumentBrowserRepository } from "../server/storage/postgres-document-browser.mjs";
+import { PostgresDocumentBrowserRepository } from "../worker/storage/postgres-document-browser.mjs";
 import { TransferBusinessService } from "../server/storage/transfer-service.mjs";
-import { PostgresTransferRepository } from "../server/storage/postgres-transfer.mjs";
-import { createApp } from "../server/app.mjs";
+import { PostgresTransferRepository } from "../worker/storage/postgres-transfer.mjs";
 import { getTask } from "../server/db.mjs";
 import { unpack } from "../shared/compact.js";
 import { materialize } from "../worker/materialize.mjs";
@@ -255,7 +255,7 @@ test("M6 ordinary history/browser/transfer services use SQLite transactions and 
   );
 });
 
-test("M6 same history/browser/transfer contract uses PostgreSQL; Node injected PG-only HTTP query/export/import remains on PG", async (t) => {
+test("M6 same history/browser/transfer contract uses PostgreSQL; external PG HTTP query/export/import remains on PG", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   let fail = false;
@@ -357,22 +357,17 @@ test("M6 same history/browser/transfer contract uses PostgreSQL; Node injected P
     f.db.prepare("DELETE FROM tasks WHERE id=?").run(f.taskId);
   });
   f.db.prepare("UPDATE users SET system_role='user' WHERE id=?").run(f.user.id);
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      historyRepository: make.history,
-      browserRepository: make.browser,
-      transferRepository: make.transfer,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
+  const app = createExternalRouteApp({
+      env: f.env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => context(user),
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.documentEvents.close();
-    app.locals.cellEvents.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
+    await app.close();
   });
   const origin = `http://127.0.0.1:${server.address().port}`,
     headers = {

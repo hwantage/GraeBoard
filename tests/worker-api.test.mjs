@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { PostgresDatabase } from "../server/storage/postgres.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { materialize, boundStore, refreshTeam } from "../worker/sync.mjs";
 import {
@@ -867,13 +867,26 @@ test(
         unchanged.headers.get("x-cell-event-id"),
         cached.response.headers.get("x-cell-event-id"),
       );
-      await team.query("UPDATE graeboard.schema_migrations SET version=999");
+      const currentSchemaVersion = Number(
+        (
+          await team.query(
+            "SELECT MAX(version) AS version FROM graeboard.schema_migrations WHERE scope='team'",
+          )
+        ).rows[0].version,
+      );
+      await team.query(
+        "UPDATE graeboard.schema_migrations SET version=999 WHERE scope='team' AND version=$1",
+        [currentSchemaVersion],
+      );
       assert.equal(
         (await request("/tasks?teamId=" + teamId + "&year=2026")).status,
         503,
       );
       assert.equal((await request("/admin/users")).status, 200);
-      await team.query("UPDATE graeboard.schema_migrations SET version=1");
+      await team.query(
+        "UPDATE graeboard.schema_migrations SET version=$1 WHERE scope='team' AND version=999",
+        [currentSchemaVersion],
+      );
       await Promise.allSettled(work);
       const teamSettings = (await request("/bootstrap")).body.teams[0].settings,
         newTheme = THEME_IDS.find((t) => t !== teamSettings.theme);
@@ -1003,12 +1016,15 @@ test(
           installation_id: installationId,
           writer_epoch: randomUUID(),
           profile_id: "a",
-          mode: "paused",
+          mode: "importing",
           updated_at: new Date().toISOString(),
         }),
       );
       assert.equal(await nearStore.acquire("capacity-commit"), true);
       await nearStore.commitCanonical(null, "c".repeat(40), nearLimit, []);
+      await nearDatabase.withTeamTransaction(teamId, (tx) =>
+        tx.sync.writeLink({ mode: "paused" }),
+      );
       await nearStore.release("capacity-commit");
       const nearSize = assertStateCapacity(nearLimit);
       assert.ok(nearSize.bytes > 3.98 * 1024 * 1024);

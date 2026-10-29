@@ -1,12 +1,14 @@
 import { gzipSync, gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { channel } from "node:diagnostics_channel";
 import { propertiesFor } from "../shared/domain.js";
 import { stringify, parseCompact } from "../shared/compact.js";
 import {
   normalizeReportName,
   DUPLICATE_REPORT_NAME,
 } from "../shared/report-names.js";
-import { requireThat, reportNameSchema } from "./validation.mjs";
+import { requireThat, reportNameSchema } from "../shared/validation.js";
 
 // Call inside the insertion's BEGIN IMMEDIATE transaction so two writers cannot
 // both claim a name. Compare stored names too, including decomposed Korean text.
@@ -56,8 +58,31 @@ export function encodeReport({ tasks, users, view, settings }) {
   );
 }
 
+const decodedReports = new AsyncLocalStorage();
+const reportDecoded = channel("graeboard.report.decode");
+// The immutable report-edit path shares only decompressed JSON for its own
+// synchronous transaction, including capture.flush. Hydrated document bodies
+// and owner identity never enter this cache, and requests do not share it.
+export function withReportDecodeCache(work) {
+  const scope = { entries: new Map(), closed: false };
+  try {
+    return decodedReports.run(scope, work);
+  } finally {
+    // onPending may schedule timers inside this context. Async descendants must
+    // neither retain decoded sheets nor reuse a completed transaction's cache.
+    scope.closed = true;
+    scope.entries.clear();
+  }
+}
 export function decodeReport(data) {
-  return parseCompact(gunzipSync(data).toString("utf8"));
+  const scope = decodedReports.getStore(),
+    cache = scope && !scope.closed ? scope.entries : null,
+    key = cache && reportDataKey(data);
+  if (cache?.has(key)) return cache.get(key);
+  const report = parseCompact(gunzipSync(data).toString("utf8"));
+  cache?.set(key, report);
+  reportDecoded.publish({ bytes: data.byteLength });
+  return report;
 }
 
 // Document access only needs row identity and tab metadata, never the cells.

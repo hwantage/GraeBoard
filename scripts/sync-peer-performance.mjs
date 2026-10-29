@@ -5,8 +5,14 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
+import { operationBatch } from "../server/sync/service.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
-import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
+import {
+  canonical,
+  entityId,
+  stateHash,
+  protocolVersion,
+} from "../server/sync/protocol.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 
 try {
@@ -48,7 +54,10 @@ try {
     ...before[documentKey],
     payload: { ...before[documentKey].payload, markdown: documentValue },
   };
+  const changes = [[before, after]];
   for (let i = 0; i < documents; i++) {
+    if (i % 50 === 0) changes.push([{}, {}]);
+    const [before, after] = changes.at(-1);
     const key = ["task", documentTaskId, randomUUID()],
       id = entityId("document", key);
     before[id] = null;
@@ -63,38 +72,53 @@ try {
       deleted: false,
     };
   }
-  const operation = makeOperation({
+  const transport = new GitCliTransport({
+    directory,
+    repository: remote,
+    allowLocal: true,
+  });
+  let head = await transport.readHead(),
+    current = state,
+    operationId;
+  if (head !== link.canonical_head)
+    throw new Error("Peer benchmark canonical head changed");
+  // Each group of 50 documents is one immutable command. Bounded batches use the same
+  // production envelope selector as regular synchronization publication.
+  const operations = changes.map(([before, after]) =>
+    makeOperation({
       link: { ...link, writer_epoch: randomUUID() },
       actorRef,
       before,
       after,
     }),
-    reduced = reduce(state, operation);
-  if (reduced.receipt.result !== "applied")
-    throw new Error("Peer benchmark operation was not applicable");
-  const transport = new GitCliTransport({
-      directory,
-      repository: remote,
-      allowLocal: true,
-    }),
-    head = await transport.readHead();
-  if (head !== link.canonical_head)
-    throw new Error("Peer benchmark canonical head changed");
-  const event = {
-    protocol: 1,
-    kind: "operations",
-    parent: head,
-    operations: [operation],
-    resultHash: stateHash(reduced.state),
-  };
-  const oid = await transport.createCandidate(head, {
-    ["events/" + randomUUID() + ".json"]: canonical(event),
-  });
-  if (!(await transport.publish(oid, head)))
-    throw new Error("Peer benchmark publication raced");
+  );
+  while (operations.length) {
+    const batch = operationBatch(operations);
+    for (const operation of batch) {
+      const reduced = reduce(current, operation);
+      if (reduced.receipt.result !== "applied")
+        throw new Error("Peer benchmark operation was not applicable");
+      current = reduced.state;
+      operationId ||= operation.opId;
+    }
+    const event = {
+      protocol: protocolVersion(current),
+      kind: "operations",
+      parent: head,
+      operations: batch,
+      resultHash: stateHash(current),
+    };
+    const oid = await transport.createCandidate(head, {
+      ["events/" + randomUUID() + ".json"]: canonical(event),
+    });
+    if (!(await transport.publish(oid, head)))
+      throw new Error("Peer benchmark publication raced");
+    head = oid;
+    operations.splice(0, batch.length);
+  }
   parentPort.postMessage({
-    oid,
-    operationId: operation.opId,
+    oid: head,
+    operationId,
     cellTaskId: taskId,
     cellValue,
     documentTaskId,

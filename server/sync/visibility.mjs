@@ -1,10 +1,34 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { requireThat } from "../validation.mjs";
-import { canonical, entityId } from "./protocol.mjs";
-import { isExcluded } from "./retention.mjs";
+import { canonical, digest } from "./protocol.mjs";
 
-// L is a serving overlay. It never changes the canonical records or the full
-// application rows used by capture and explicit shared deletion commands.
+// A request may consult several repositories. Reuse its team overlay until any
+// local or other-connection write changes the database; never retain it across
+// requests or across an asynchronous document preparation race.
+const contexts = new AsyncLocalStorage();
+export function installRetentionContext(app) {
+  app.use("/api", (_req, _res, next) => contexts.run(new WeakMap(), next));
+}
+export function withRetentionViews(work) {
+  return contexts.run(new WeakMap(), work);
+}
 export function retentionView(db, teamId) {
+  const scope = contexts.getStore();
+  if (!scope) return createRetentionView(db, teamId);
+  let teams = scope.get(db);
+  if (!teams) scope.set(db, (teams = new Map()));
+  const stamp = `${db.prepare("SELECT total_changes() n").get().n}:${db.prepare("PRAGMA data_version").get().data_version}`;
+  const existing = teams.get(teamId);
+  if (existing?.stamp === stamp) return existing.view;
+  const view = createRetentionView(db, teamId);
+  teams.set(teamId, { stamp, view });
+  return view;
+}
+
+// L only changes serving. Canonical records, pending operations and application
+// rows remain complete. Active overlays load metadata in sets instead of issuing
+// task/document/generation queries for every row in an annual response.
+function createRetentionView(db, teamId) {
   const exclusions = db
     .prepare("SELECT * FROM site_retention WHERE team_id=?")
     .all(teamId);
@@ -13,77 +37,112 @@ export function retentionView(db, teamId) {
       .filter((row) => row.kind === "year")
       .map((row) => String(JSON.parse(row.entity_key)[0])),
   );
-  const records = {};
-  function record(entity, key) {
-    const id = entityId(entity, key);
-    if (Object.hasOwn(records, id)) return records[id];
-    let value;
+  const documentExclusions = new Set(
+    exclusions
+      .filter((row) => row.kind === "document")
+      .map((row) => canonical([JSON.parse(row.entity_key), row.generation])),
+  );
+  let taskYears, reportYears, generations, taskDocuments;
+  const reportDocuments = new Map();
+  function ownerYears(entity, id) {
     if (entity === "task") {
-      const row = db
-        .prepare("SELECT years FROM tasks WHERE team_id=? AND id=?")
-        .get(teamId, key[0]);
-      value = row
-        ? { entity, key, payload: { years: JSON.parse(row.years) } }
-        : null;
-    } else if (entity === "report") {
-      const row = db
-        .prepare("SELECT year FROM reports WHERE team_id=? AND id=?")
-        .get(teamId, key[0]);
-      value = row ? { entity, key, payload: { year: row.year } } : null;
-    } else value = { entity, key, payload: {} };
-    if (value) {
-      value.generation =
+      taskYears ||= new Map(
         db
-          .prepare(
-            "SELECT generation FROM sync_entities WHERE team_id=? AND entity=? AND entity_key=?",
-          )
-          .get(teamId, entity, canonical(key))?.generation || "";
+          .prepare("SELECT id,years FROM tasks WHERE team_id=?")
+          .all(teamId)
+          .map((row) => [row.id, JSON.parse(row.years)]),
+      );
+      return taskYears.get(id);
     }
-    return (records[id] = value);
+    reportYears ||= new Map(
+      db
+        .prepare("SELECT id,year FROM reports WHERE team_id=?")
+        .all(teamId)
+        .map((row) => [row.id, row.year]),
+    );
+    return reportYears.get(id);
   }
   function hidden(entity, key) {
     if (!exclusions.length) return false;
-    const value = record(entity, key);
-    if (entity === "cell") record("task", [key[0]]);
-    if (entity === "document") {
-      const [kind, owner] = key;
-      if (kind === "task") record("task", [owner]);
-      if (kind === "report" || kind === "reportMemo") record("report", [owner]);
-      if (kind === "calendar") record("calendar", [owner]);
+    if (entity === "task") {
+      const values = ownerYears(entity, key[0]);
+      return (
+        !!values?.length && values.every((year) => years.has(String(year)))
+      );
     }
-    return isExcluded(value, records, exclusions);
+    if (entity === "report")
+      return years.has(String(ownerYears(entity, key[0])));
+    if (entity === "cell") return hidden("task", [key[0]]);
+    if (entity !== "document") return false;
+    if (documentExclusions.size) {
+      generations ||= new Map(
+        db
+          .prepare(
+            "SELECT entity_key,generation FROM sync_entities WHERE team_id=? AND entity='document'",
+          )
+          .all(teamId)
+          .map((row) => [row.entity_key, row.generation]),
+      );
+      if (
+        documentExclusions.has(
+          canonical([key, generations.get(canonical(key)) || ""]),
+        )
+      )
+        return true;
+    }
+    const [owner, id] = key;
+    if (owner === "annual") return years.has(String(id));
+    if (owner === "task") return hidden("task", [id]);
+    if (owner.startsWith("report")) return hidden("report", [id]);
+    return false;
   }
   const documents = (docs, owner) =>
     (docs || []).filter((doc) => !hidden("document", [...owner, doc.id]));
-  function task(task, reportId) {
-    if (!task) return task;
-    if (!exclusions.length) return task;
-    if (!reportId && hidden("task", [task.id])) return null;
-    const result = { ...task };
+  const groupDocuments = (rows) => {
+    const byTask = new Map();
+    for (const row of rows) {
+      if (!byTask.has(row.taskId)) byTask.set(row.taskId, []);
+      byTask.get(row.taskId).push({ id: row.id, hasContent: !!row.hasContent });
+    }
+    return byTask;
+  };
+  function summaries(taskId, reportId) {
+    if (reportId) {
+      if (!reportDocuments.has(reportId))
+        reportDocuments.set(
+          reportId,
+          groupDocuments(
+            db
+              .prepare(
+                "SELECT d.task_id AS taskId,d.document_id AS id,v.has_content AS hasContent FROM report_documents d JOIN reports r ON r.id=d.report_id JOIN document_versions v ON v.id=d.version_id WHERE r.team_id=? AND d.report_id=?",
+              )
+              .all(teamId, reportId),
+          ),
+        );
+      return reportDocuments.get(reportId).get(taskId) || [];
+    }
+    taskDocuments ||= groupDocuments(
+      db
+        .prepare(
+          "SELECT d.task_id AS taskId,d.id,d.has_content AS hasContent FROM task_documents d JOIN tasks t ON t.id=d.task_id WHERE t.team_id=?",
+        )
+        .all(teamId),
+    );
+    return taskDocuments.get(taskId) || [];
+  }
+  function task(value, reportId) {
+    if (!value || !exclusions.length) return value;
+    if (!reportId && hidden("task", [value.id])) return null;
+    const result = { ...value };
     if (!reportId && result.years)
       result.years = result.years.filter((year) => !years.has(String(year)));
-    if (result.documents)
-      result.documents = documents(
-        result.documents,
-        reportId ? ["report", reportId, task.id] : ["task", task.id],
-      );
-    // Summaries must not advertise a document whose body is locally excluded.
-    const rows = reportId
-      ? db
-          .prepare(
-            "SELECT document_id AS id,v.has_content AS hasContent FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE report_id=? AND task_id=?",
-          )
-          .all(reportId, task.id)
-      : db
-          .prepare(
-            "SELECT id,has_content AS hasContent FROM task_documents WHERE task_id=?",
-          )
-          .all(task.id);
-    if (rows?.length) {
-      const visible = documents(
-        rows,
-        reportId ? ["report", reportId, task.id] : ["task", task.id],
-      );
+    const owner = reportId
+      ? ["report", reportId, value.id]
+      : ["task", value.id];
+    if (result.documents) result.documents = documents(result.documents, owner);
+    const rows = summaries(value.id, reportId);
+    if (rows.length) {
+      const visible = documents(rows, owner);
       result.documentCount = visible.length;
       result.hasDocument = visible.some((doc) => doc.hasContent);
     }
@@ -92,12 +151,26 @@ export function retentionView(db, teamId) {
   return {
     active: exclusions.length > 0,
     revision: exclusions.reduce((n, row) => Math.max(n, row.revision), 0),
+    // Include the complete exclusion set: removing one of two rows with the
+    // same maximum revision must also invalidate the filtered representation.
+    cacheKey: exclusions.length
+      ? digest(
+          exclusions
+            .map((row) => [
+              row.kind,
+              row.entity_key,
+              row.generation,
+              row.revision,
+            ])
+            .sort((a, b) => canonical(a).localeCompare(canonical(b))),
+        )
+      : "",
     years,
     hidden,
     documents,
     task,
-    tasks: (tasks, reportId) =>
-      tasks.map((value) => task(value, reportId)).filter(Boolean),
+    tasks: (values, reportId) =>
+      values.map((value) => task(value, reportId)).filter(Boolean),
     requireVisible(entity, key) {
       requireThat(
         !hidden(entity, key),
@@ -114,137 +187,4 @@ export function retentionView(db, teamId) {
       ];
     },
   };
-}
-
-export function installRetentionBoundary(
-  app,
-  { db, taskRequestsHandled = false },
-) {
-  app.use("/api", (req, res, next) => {
-    const path = req.path;
-    if (
-      taskRequestsHandled &&
-      (path === "/tasks" ||
-        path === "/cells/batch" ||
-        path === "/views" ||
-        /^\/tasks\/(?:delete|restore|reorder)$/.test(path) ||
-        /^\/tasks\/[^/]+(?:\/restore)?$/.test(path))
-    )
-      return next();
-    if (/^\/(?:admin|auth)\//.test(path) || /\/sync(?:\/|$)/.test(path))
-      return next();
-    let teamId = req.query.teamId || req.body?.teamId;
-    let reportId, taskId, documentOwner, documentId;
-    let match;
-    if (
-      (match = path.match(/^\/tasks\/([^/]+)(?:\/|$)/)) &&
-      !["delete", "restore", "reorder"].includes(match[1])
-    ) {
-      taskId = match[1];
-      teamId = db
-        .prepare("SELECT team_id FROM tasks WHERE id=?")
-        .get(taskId)?.team_id;
-      const doc = path.match(
-        /^\/tasks\/[^/]+\/(?:documents\/([^/]+)|document)(?:\/|$)/,
-      );
-      documentOwner = ["task", taskId];
-      if (doc && doc[1] !== "events") documentId = doc[1] || "main";
-    }
-    if ((match = path.match(/^\/reports\/([^/]+)(?:\/|$)/))) {
-      reportId = match[1];
-      teamId = db
-        .prepare("SELECT team_id FROM reports WHERE id=?")
-        .get(reportId)?.team_id;
-      const doc = path.match(
-        /^\/reports\/[^/]+\/tasks\/([^/]+)\/(?:documents(?:\/([^/]+))?|document)(?:\/|$)/,
-      );
-      if (doc) {
-        taskId = doc[1];
-        documentOwner = ["report", reportId, taskId];
-        if (doc[2] && doc[2] !== "events") documentId = doc[2];
-        if (path.endsWith("/document")) documentId = "main";
-      }
-      const memo = path.match(/^\/reports\/[^/]+\/memos(?:\/([^/]+))?/);
-      if (memo) {
-        documentOwner = ["reportMemo", reportId];
-        if (memo[1] && !["events", "reorder"].includes(memo[1]))
-          documentId = memo[1];
-      }
-    }
-    if (
-      (match = path.match(
-        /^\/teams\/([^/]+)\/years\/([^/]+)\/memos(?:\/([^/]+))?/,
-      ))
-    ) {
-      teamId = match[1];
-      documentOwner = ["annual", match[2]];
-      if (match[3] && !["events", "reorder"].includes(match[3]))
-        documentId = match[3];
-    }
-    if ((match = path.match(/^\/calendar\/entries\/([^/]+)(?:\/|$)/))) {
-      teamId = db
-        .prepare("SELECT team_id FROM calendar_entries WHERE id=?")
-        .get(match[1])?.team_id;
-      if (/\/document(?:\/|$)/.test(path)) {
-        documentOwner = ["calendar", match[1]];
-        documentId = "main";
-      }
-    }
-    if (!teamId || typeof teamId !== "string") return next();
-    const view = retentionView(db, teamId);
-    if (!view.active) return next();
-    req.retention = view;
-    try {
-      if (reportId) view.requireVisible("report", [reportId]);
-      if (taskId && !reportId) view.requireVisible("task", [taskId]);
-      if (documentId)
-        view.requireVisible("document", [...documentOwner, documentId]);
-      const year =
-        documentOwner?.[0] === "annual" ? documentOwner[1] : req.body?.year;
-      if (req.method !== "GET" && year != null)
-        requireThat(
-          !view.years.has(String(year)),
-          409,
-          "이 사이트에서 정리한 연도입니다. 설정에서 복원한 뒤 사용하세요.",
-        );
-      if (req.body?.reportId)
-        view.requireVisible("report", [req.body.reportId]);
-      if (req.body?.sourceId)
-        view.requireVisible("report", [req.body.sourceId]);
-      const original = res.json.bind(res);
-      res.json = (data) => {
-        if (res.statusCode >= 400 || !data || typeof data !== "object")
-          return original(data);
-        let output = { ...data };
-        const source =
-          reportId ||
-          (req.query.source && req.query.source !== "live"
-            ? req.query.source
-            : undefined);
-        if (Array.isArray(output.tasks))
-          output.tasks = view.years.has(String(req.query.year))
-            ? []
-            : view.tasks(output.tasks, source);
-        if (output.task) output.task = view.task(output.task, source);
-        if (Array.isArray(output.documents) && documentOwner)
-          output.documents = view.documents(output.documents, documentOwner);
-        if (Array.isArray(output.reports))
-          output.reports = output.reports.filter(
-            (row) => !view.years.has(String(row.year)),
-          );
-        if (Array.isArray(output.sources))
-          output.sources = output.sources.filter((row) =>
-            row.id === "live"
-              ? !view.years.has(String(req.query.year))
-              : !view.hidden("report", [row.id]),
-          );
-        if (documentOwner?.[0] === "annual" && view.years.has(documentOwner[1]))
-          output.documents = [];
-        return original(output);
-      };
-      next();
-    } catch (error) {
-      next(error);
-    }
-  });
 }

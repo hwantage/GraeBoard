@@ -6,7 +6,7 @@ import {
 import { digest } from "../server/sync/protocol.mjs";
 import { GitHubApiTransport } from "./git.mjs";
 import { controlTransaction } from "./data.mjs";
-import { profiles, siteTeamId } from "./config.mjs";
+import { profiles, siteTeamId } from "../shared/sync-profiles.js";
 import { assert } from "./access.mjs";
 
 export async function refreshDirectory(env, { force = false, transport } = {}) {
@@ -81,7 +81,7 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
   });
 }
 
-export async function applyDirectory(env, directory, { head, previousHead }) {
+async function applyDirectory(env, directory, { head, previousHead }) {
   validateDirectory(directory);
   const teamId = siteTeamId(env);
   assert(

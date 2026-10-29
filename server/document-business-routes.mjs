@@ -5,8 +5,8 @@ import {
 } from "./storage/document-service.mjs";
 import { documentRouteScope } from "../shared/document-routes.js";
 
-// This installer is registered before SQLite-specific serving middleware. Both
-// backends resolve permissions and retention within their document repository.
+// Node document routes use SQLite permissions and retention. Body saves await
+// image preparation before entering the synchronous write transaction.
 export function installDocumentBusinessRoutes(
   app,
   { service, documentEvents },
@@ -44,7 +44,7 @@ export function installDocumentBusinessRoutes(
         .status(status)
         .json(stamp ? documentEvents.stamp(value) : value);
     };
-    return result?.then ? result.then(complete, next) : complete(result);
+    return complete(result);
   };
   for (const base of routes) {
     registerEventRoute(app, `${base}/events`, (req, res) => {
@@ -93,8 +93,8 @@ export function installDocumentBusinessRoutes(
         scope: target(req),
       }),
     );
-    app.put(path, (req, res, next) =>
-      send(business(req).save(target(req), req.body), res, next),
+    app.put(path, async (req, res, next) =>
+      send(await business(req).save(target(req), req.body), res, next),
     );
     registerEventRoute(app, `${path}/events`, (req, res) => {
       const scope = documentRouteScope(req.path.slice(4, -7));

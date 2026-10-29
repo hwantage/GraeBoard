@@ -10,7 +10,7 @@ const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/pat
        npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id <existing-uuid> --initialize [--dry-run]
        npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id <existing-uuid> --initialize [--dry-run]
 
-SQLite supports released v29 → v30 → v31, or a new empty database with --initialize.
+SQLite supports released v29 → v30 → v31 → v32, or a new empty database with --initialize.
 PostgreSQL initializes the dedicated graeboard schema at control/team version 1.
 The site scope upgrades site v1 to v2, or atomically initializes graeboard_site and graeboard in one database for one external team.
 For an existing team v1 database, omit --initialize to add only graeboard_site and preserve business data.

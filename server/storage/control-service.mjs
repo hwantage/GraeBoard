@@ -5,8 +5,8 @@ import {
   isSystemAdmin,
   canManageTeam,
 } from "../../shared/domain.js";
-import { requireThat } from "../validation.mjs";
-import { profileFields } from "../profiles.mjs";
+import { requireThat } from "../../shared/validation.js";
+import { profileFields } from "../../shared/profiles.js";
 
 export const loginId = z
   .string()
@@ -51,13 +51,13 @@ const userFields = {
   // controls identities externally, but supplied values still need valid types.
   password: credentials.shape.password.optional(),
 };
-export const createControlUserSchema = z.object({
+const createControlUserSchema = z.object({
   ...userFields,
   active: userFields.active.default(true),
   systemRole: systemRoles.default("user"),
   memberships: userMembershipRowsSchema.default([]),
 });
-export const updateControlUserSchema = z
+const updateControlUserSchema = z
   .object(userFields)
   .partial()
   .refine(
@@ -93,10 +93,11 @@ export const profileSchema = z
 // Authentication is a host port (cookie/password internally, Access externally).
 // Authorized control commands use this same service with either engine.
 export class ControlBusinessService {
-  constructor(repository, user, { documentEvents } = {}) {
+  constructor(repository, user, { documentEvents, clientId } = {}) {
     this.repository = repository;
     this.user = user;
     this.documentEvents = documentEvents;
+    this.clientId = clientId;
   }
   execute(command, input = {}, targetId) {
     if (command === "profile") input = profileSchema.parse(input);
@@ -115,6 +116,8 @@ export class ControlBusinessService {
         "시스템 관리자 권한이 필요합니다.",
       );
     if (targetId) z.string().uuid().parse(targetId);
+    if (["members", "replaceMembers"].includes(command))
+      this.repository.authorizeMembers?.(this.user, targetId);
     if (["members", "replaceMembers"].includes(command))
       requireThat(
         canManageTeam(this.user, targetId),
@@ -147,7 +150,7 @@ export class ControlBusinessService {
     const result = this.repository.execute(this.user, command, input, targetId);
     const done = (value) => {
       if (["replaceMembers", "deleteTeam"].includes(command))
-        this.documentEvents?.invalidate("team:" + targetId);
+        this.documentEvents?.invalidate("team:" + targetId, this.clientId);
       return value;
     };
     return result && typeof result.then === "function"

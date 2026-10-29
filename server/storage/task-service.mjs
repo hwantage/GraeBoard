@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { yearSchema } from "../validation.mjs";
+import { yearSchema } from "../../shared/validation.js";
 import {
   createTaskSchema,
   updateTaskSchema,
@@ -7,7 +7,11 @@ import {
   reorderTaskSchema,
   saveViewSchema,
 } from "./task-command-schema.mjs";
-import { batchSchema, periodScopeSchema, requireThat } from "../validation.mjs";
+import {
+  batchSchema,
+  periodScopeSchema,
+  requireThat,
+} from "../../shared/validation.js";
 import { normalizeCellStyle } from "../../shared/formatting.js";
 import { sameStyle } from "../../shared/compact.js";
 
@@ -54,6 +58,7 @@ export class TaskBusinessService {
   query(query, { ifNoneMatch } = {}) {
     const values =
       query instanceof URLSearchParams ? Object.fromEntries(query) : query;
+    this.repository.authorizeTeam?.(this.user, String(values.teamId || ""));
     const period = periodScopeSchema.parse(values);
     return this.repository.query(this.user, {
       teamId: String(values.teamId || ""),
@@ -71,22 +76,19 @@ export class TaskBusinessService {
   }
   create(body) {
     const request = createTaskSchema.parse(body);
+    this.repository.authorizeTeam?.(this.user, request.teamId);
     periodScopeSchema.parse(request);
     return this.mutate("create", request);
   }
   update(taskId, body) {
-    return this.mutate(
-      "update",
-      z.string().uuid().parse(taskId),
-      updateTaskSchema.parse(body),
-    );
+    return this.mutate("update", String(taskId), updateTaskSchema.parse(body));
   }
   remove(body) {
     return this.mutate("remove", taskVersionsSchema.parse(body).tasks);
   }
   removeOne(taskId, body = {}) {
     return this.mutate("remove", [
-      { id: z.string().uuid().parse(taskId), updatedAt: body.updatedAt },
+      { id: String(taskId), updatedAt: body.updatedAt },
     ]);
   }
   restore(body) {
@@ -96,18 +98,29 @@ export class TaskBusinessService {
     const request = z
       .object({ updatedAt: z.string().datetime().optional() })
       .parse(body);
-    return this.mutate("restore", [
-      { id: z.string().uuid().parse(taskId), ...request },
-    ]);
+    return this.mutate("restore", [{ id: String(taskId), ...request }]);
   }
   reorder(body) {
     const request = reorderTaskSchema.parse(body);
     periodScopeSchema.parse(request);
+    const requested = request.tasks || [{ id: request.taskId }],
+      ids = new Set(requested.map((task) => task.id));
+    requireThat(
+      ids.size === requested.length,
+      400,
+      "같은 업무를 중복 선택할 수 없습니다.",
+    );
+    requireThat(
+      !ids.has(request.targetId),
+      400,
+      "이동할 행 밖의 위치를 선택하세요.",
+    );
     return this.mutate("reorder", request);
   }
   readViews(query) {
+    this.repository.authorizeTeam?.(this.user, String(query.teamId || ""));
     return this.repository.readViews(this.user, {
-      teamId: z.string().uuid().parse(query.teamId),
+      teamId: String(query.teamId || ""),
       year: yearSchema.parse(query.year),
     });
   }
@@ -122,13 +135,10 @@ export class TaskBusinessService {
     );
   }
   locate(id, options) {
-    return this.repository.locate(
-      this.user,
-      z.string().uuid().parse(id),
-      options,
-    );
+    return this.repository.locate(this.user, String(id), options);
   }
   subscribe(query, port) {
+    this.repository.authorizeTeam?.(this.user, String(query.teamId || ""));
     const period = periodScopeSchema.parse(query);
     return this.repository.subscribe(
       this.user,

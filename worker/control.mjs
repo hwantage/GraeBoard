@@ -1,6 +1,10 @@
+import {
+  CONTROL_ROUTES,
+  matchBusinessRoute,
+} from "../shared/business-routes.js";
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
 import { deploymentSite } from "../shared/site-mode.js";
-import { PostgresControlRepository } from "../server/storage/postgres-control.mjs";
+import { PostgresControlRepository } from "./storage/postgres-control.mjs";
 import { assertDatabaseCapacity, capacityLimits } from "./capacity.mjs";
 import {
   DEFAULT_SETTINGS,
@@ -9,17 +13,14 @@ import {
 } from "../shared/domain.js";
 import { assert, verifySetupToken, HttpError } from "./access.mjs";
 import { controlTransaction, databaseFor, withData } from "./data.mjs";
-import { profiles, profileFor, siteTeamId } from "./config.mjs";
+import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
 import { authenticateSite } from "./site-auth.mjs";
 import { R2ImageStore } from "./images.mjs";
-import { profileFields } from "../server/profiles.mjs";
+import { profileFields } from "../shared/profiles.js";
 import { z } from "zod";
 
-import {
-  PostgresControlStore,
-  userRecord,
-} from "../server/storage/control-store.mjs";
-export { userRecord } from "../server/storage/control-store.mjs";
+import { PostgresControlStore, userRecord } from "./storage/control-store.mjs";
+export { userRecord } from "./storage/control-store.mjs";
 export async function authenticate(env, identity, request) {
   if (siteTeamId(env)) return authenticateSite(env, identity, request);
   return controlTransaction(env, async (tx) => {
@@ -282,27 +283,6 @@ export function controlRoutes(ctx, path, method, body) {
     new PostgresControlRepository({ context: ctx }),
     ctx.user,
   );
-  if (path === "/bootstrap" && method === "GET") return service.bootstrap();
-  if (path === "/auth/profile" && method === "PATCH")
-    return service.execute("profile", body);
-  if (path === "/admin/users" && method === "GET")
-    return service.execute("listUsers");
-  if (path === "/admin/users" && method === "POST")
-    return service.execute("createUser", body);
-  if (path === "/admin/teams" && method === "POST")
-    return service.execute("createTeam", body);
-  let match;
-  if ((match = /^\/admin\/users\/([^/]+)$/.exec(path)) && method === "PATCH")
-    return service.execute("updateUser", body, match[1]);
-  if (
-    (match = /^\/teams\/([^/]+)\/members$/.exec(path)) &&
-    ["GET", "PUT"].includes(method)
-  )
-    return service.execute(
-      method === "GET" ? "members" : "replaceMembers",
-      body,
-      match[1],
-    );
-  if ((match = /^\/admin\/teams\/([^/]+)$/.exec(path)) && method === "DELETE")
-    return service.execute("deleteTeam", body, match[1]);
+  const match = matchBusinessRoute(CONTROL_ROUTES, path, method);
+  if (match) return service.execute(match.route.name, body, match.params.id);
 }

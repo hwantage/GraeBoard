@@ -5,7 +5,12 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { openDatabase } from "../server/db.mjs";
 import {
+  SQLITE_VERSION,
+  keySql,
+  keyChecksum,
+  maintenanceChecksum,
   baseSql,
   syncSql,
   syncChecksum,
@@ -67,7 +72,7 @@ function shape(db) {
     .all();
 }
 
-test("v29 → v31 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
+test("v29 → v32 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
   const upgraded = legacy(),
     fresh = new DatabaseSync(":memory:");
   try {
@@ -115,7 +120,7 @@ test("migration DDL/history/version roll back together and the same migration ca
 });
 
 test("unsupported versions, occupied version zero, malformed v29 and altered history are rejected without resetting data", () => {
-  for (const version of [0, 28, 32]) {
+  for (const version of [0, 28, SQLITE_VERSION + 1]) {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(
@@ -193,7 +198,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
     assert.equal(existsSync(missing), false);
     result = run("--db", path);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).to, 31);
+    assert.equal(JSON.parse(result.stdout).to, SQLITE_VERSION);
     result = run("--database", path);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).applied, false);
@@ -211,7 +216,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
   }
 });
 
-test("released v30 upgrades atomically to v31, retaining the original migration checksum and all rows", () => {
+test("released v30 upgrades atomically to v32, retaining the original migration checksum and all rows", () => {
   const db = legacy();
   try {
     db.exec(syncSql);
@@ -221,7 +226,7 @@ test("released v30 upgrades atomically to v31, retaining the original migration 
     );
     db.exec("PRAGMA user_version=30");
     const before = contents(db);
-    assert.equal(migrateSqlite(db, { dryRun: true }).to, 31);
+    assert.equal(migrateSqlite(db, { dryRun: true }).to, SQLITE_VERSION);
     assert.deepEqual(contents(db), before);
     assert.throws(
       () =>
@@ -247,5 +252,117 @@ test("released v30 upgrades atomically to v31, retaining the original migration 
     assert.equal(migrateSqlite(db).applied, false);
   } finally {
     db.close();
+  }
+});
+
+test("released v31 index upgrade preserves old checksums, rolls back DDL and uses the general sequence index", () => {
+  const db = legacy();
+  try {
+    db.exec(syncSql);
+    db.exec(keySql);
+    db.prepare("INSERT INTO schema_migrations VALUES(30,?,'original30')").run(
+      syncChecksum,
+    );
+    db.prepare("INSERT INTO schema_migrations VALUES(31,?,'original31')").run(
+      keyChecksum,
+    );
+    db.exec("PRAGMA user_version=31");
+    const before = contents(db),
+      shapeBefore = shape(db);
+    assert.throws(
+      () =>
+        migrateSqlite(db, {
+          afterDdl(version) {
+            if (version === 32) throw new Error("interrupted32");
+          },
+        }),
+      /interrupted32/,
+    );
+    assert.deepEqual(contents(db), before);
+    assert.deepEqual(shape(db), shapeBefore);
+    assert.equal(sqliteVersion(db), 31);
+    migrateSqlite(db);
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT * FROM schema_migrations WHERE version<32 ORDER BY version",
+        )
+        .all(),
+      before.schema_migrations,
+    );
+    assert.equal(
+      db
+        .prepare("SELECT checksum FROM schema_migrations WHERE version=32")
+        .get().checksum,
+      maintenanceChecksum,
+    );
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT local_seq FROM sync_outbox WHERE team_id=? ORDER BY local_seq DESC LIMIT 1",
+      )
+      .all("team");
+    assert.match(JSON.stringify(plan), /sync_outbox_team_sequence/);
+    assert.doesNotMatch(
+      JSON.stringify(plan),
+      /USE TEMP B-TREE|SCAN sync_outbox/,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("v31 startup preserves the database and directs operators to the explicit migration before booting v32", () => {
+  const dir = mkdtempSync(join(tmpdir(), "graeboard-v31-startup-")),
+    path = join(dir, "existing.sqlite");
+  let db = legacy(path);
+  try {
+    db.exec(syncSql);
+    db.exec(keySql);
+    db.prepare("INSERT INTO schema_migrations VALUES(30,?,'original30')").run(
+      syncChecksum,
+    );
+    db.prepare("INSERT INTO schema_migrations VALUES(31,?,'original31')").run(
+      keyChecksum,
+    );
+    db.exec("PRAGMA user_version=31");
+    const before = contents(db);
+    db.close();
+    db = null;
+    const bytes = readFileSync(path);
+    assert.throws(
+      () => openDatabase(path),
+      (error) => {
+        assert.match(error.message, /v31/);
+        assert.match(
+          error.message,
+          /npm run migrate -- --engine sqlite --database/,
+        );
+        assert.doesNotMatch(error.message, /지원하는 변환 경로가 없/);
+        return true;
+      },
+    );
+    assert.deepEqual(readFileSync(path), bytes);
+    const migrated = spawnSync(
+      process.execPath,
+      ["scripts/migrate.mjs", "--engine", "sqlite", "--database", path],
+      { encoding: "utf8" },
+    );
+    assert.equal(migrated.status, 0, migrated.stderr);
+    const { from, to, applied } = JSON.parse(migrated.stdout);
+    assert.deepEqual(
+      { from, to, applied },
+      { from: 31, to: SQLITE_VERSION, applied: true },
+    );
+    db = openDatabase(path);
+    assert.equal(sqliteVersion(db), SQLITE_VERSION);
+    assertSqliteHistory(db);
+    assertSqliteIntegrity(db);
+    const after = contents(db);
+    for (const [table, rows] of Object.entries(before))
+      if (table !== "schema_migrations")
+        assert.deepEqual(after[table], rows, table);
+  } finally {
+    db?.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });

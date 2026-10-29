@@ -1,3 +1,5 @@
+import { applicationEntities } from "./versions.mjs";
+import { syncImageReferences } from "../../shared/sync-image-references.js";
 import { encodeStoredSnapshot, decodeStoredSnapshot } from "./snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
@@ -9,21 +11,27 @@ import {
   equal,
   stateHash,
   validateOperation,
+  protocolVersion,
 } from "./protocol.mjs";
 import { makeOperation } from "./operations.mjs";
-import { HttpError, requireThat } from "../validation.mjs";
+import { HttpError, requireThat } from "../../shared/validation.js";
 import { reduceMany, project, validateSnapshot } from "./reducer.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
-import { prepareStatePatch } from "../storage/team-store.mjs";
+import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
 import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
-import { normalizeSyncError, protocolValidation } from "./errors.mjs";
+import {
+  normalizeSyncError,
+  protocolValidation,
+  ProtocolError,
+  SyncInterruption,
+} from "./errors.mjs";
+import { pendingEntityKeys, canRetireProjection } from "./projection.mjs";
 import { SyncService } from "./service.mjs";
 import { publishDirectory } from "./directory.mjs";
 import { existsSync } from "node:fs";
 import {
   documentImagePath,
-  documentImageUrls,
   readDocumentImage,
   writeDocumentImage,
 } from "../document-images.mjs";
@@ -38,6 +46,64 @@ db.exec(
   "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA query_only=ON",
 );
 
+const canonicalCache = new Map();
+const projectionCache = new Map();
+function canonicalCacheKey(link) {
+  return JSON.stringify([
+    link.team_id,
+    link.repo_id,
+    link.bootstrap_id,
+    link.installation_id,
+    link.writer_epoch,
+    link.generation,
+    link.canonical_head,
+    link.canonical_hash,
+  ]);
+}
+function cacheCanonical(teamId, link, state) {
+  if (link.canonical_head)
+    canonicalCache.set(teamId, { key: canonicalCacheKey(link), state });
+}
+function readCanonical(teamId, store, guard, link) {
+  const key = canonicalCacheKey(link),
+    cached = canonicalCache.get(teamId);
+  if (guard.head && cached?.key === key) return cached.state;
+  const state = store.readState();
+  if (guard.head && link.canonical_hash) {
+    validateSnapshot(state, { teamId, repoId: link.repo_id });
+    if (stateHash(state) !== link.canonical_hash)
+      throw new ProtocolError(
+        "SYNC_INTEGRITY",
+        "Stored canonical state does not match its verified hash",
+      );
+  }
+  cacheCanonical(teamId, link, state);
+  return state;
+}
+function projectedState(teamId, state, pending) {
+  const cached = projectionCache.get(teamId);
+  const ids = pending.map((op) => op.opId);
+  const extend =
+    cached?.base === state &&
+    cached.ids.length <= ids.length &&
+    cached.ids.every((id, index) => ids[index] === id);
+  const result = extend
+    ? ids.length === cached.ids.length
+      ? cached.result
+      : reduceMany(cached.result, pending.slice(cached.ids.length))
+    : pending.length
+      ? reduceMany(state, pending)
+      : state;
+  projectionCache.set(teamId, { base: state, ids, result });
+  return {
+    entities: result.entities,
+    held: pending
+      .filter(
+        (op) => !["applied", "noop"].includes(result.receipts[op.opId].result),
+      )
+      .map((op) => op.opId),
+  };
+}
 function snapshot(teamId, work) {
   db.exec("BEGIN");
   try {
@@ -51,6 +117,8 @@ function snapshot(teamId, work) {
     return result;
   } catch (error) {
     db.exec("ROLLBACK");
+    canonicalCache.delete(teamId);
+    projectionCache.delete(teamId);
     throw error;
   }
 }
@@ -64,7 +132,8 @@ function compute(request) {
         "연결 상태가 변경되었습니다.",
       );
       const pending = store.readPending(),
-        before = project(store.readState(), pending).entities,
+        canonicalState = store.readState(),
+        before = project(canonicalState, pending).entities,
         after = allEntities(db, link),
         exclusions = store.readExclusions(link.installation_id);
       for (const [key, previous] of Object.entries(before)) {
@@ -76,7 +145,7 @@ function compute(request) {
             previous.deleted || previous.entity === "person" ? previous : null;
       }
       const operation = makeOperation({
-        link,
+        link: { ...link, protocol: protocolVersion({ entities: before }) },
         actorRef: request.actorRef,
         before,
         after,
@@ -166,7 +235,7 @@ function compute(request) {
               };
       }
       const operation = makeOperation({
-        link,
+        link: { ...link, protocol: protocolVersion(state) },
         actorRef: request.actorRef,
         before,
         after,
@@ -192,8 +261,7 @@ function compute(request) {
         projected.entities,
         candidates,
         exclusions,
-        touched,
-        true,
+        { touched, measureReads: true, pending: [...pending, operation] },
       );
       return {
         ...prepared,
@@ -301,7 +369,9 @@ function compute(request) {
     });
   if (request.kind === "project")
     return snapshot(request.teamId, ({ store, guard, link }) => {
-      const previousState = request.previousState || store.readState();
+      const previousState =
+        request.previousState ||
+        readCanonical(request.teamId, store, guard, link);
       const state = request.state || previousState;
       const acknowledged = new Set(request.ackOpIds || []);
       const pendingRows = store.readPendingRows();
@@ -316,19 +386,21 @@ function compute(request) {
       for (const row of pendingRows)
         for (const change of row.operation.changes)
           candidates.add(entityId(change.entity, change.key));
-      const projected = project(state, pending);
+      const projected = projectedState(request.teamId, state, pending);
       const prepared = projectionPatch(
         request.teamId,
         projected.entities,
         candidates,
         exclusions,
+        { pending },
       );
       const outboxHashes = pendingRows
         .filter((row) => acknowledged.has(row.op_id))
         .map((row) => {
           const hash = digest(row.operation);
           if (state.receipts[row.op_id]?.payloadHash !== hash)
-            throw new Error(
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
               "Canonical ACK payload differs from local operation",
             );
           return { opId: row.op_id, hash };
@@ -355,11 +427,32 @@ function projectionPatch(
   entities,
   candidates,
   exclusions,
-  touched = new Set(),
-  measureReads = false,
+  { touched = new Set(), measureReads = false, pending = [] } = {},
 ) {
+  const canonicalEntities = entities;
+  entities = applicationEntities(entities);
+  if (entities !== canonicalEntities)
+    candidates = new Set(
+      [...candidates].flatMap((id) => {
+        const [entity, key] = JSON.parse(id);
+        return entity === "protocol"
+          ? []
+          : [
+              entityId(
+                ["reportTask", "reportCell"].includes(entity)
+                  ? "report"
+                  : entity,
+                ["reportTask", "reportCell"].includes(entity) ? [key[0]] : key,
+              ),
+            ];
+      }),
+    );
+  const reports = new Map(),
+    styles = new Map();
   const changedEntities = {},
-    previous = {};
+    previous = {},
+    protectedKeys = pendingEntityKeys(pending),
+    retiredKeys = [];
   let readEntityCount = 0,
     domainSelectCount = 0;
   const reader = measureReads
@@ -378,11 +471,81 @@ function projectionPatch(
         },
       }
     : db;
+  // A rejected local creation may still be referenced by P/held. Keep that
+  // local row until ACK, while allowing C to advance so its own operation can
+  // be published. SQLite's unique names otherwise deadlock receive -> publish.
+  const uniqueTypes = new Set(
+    [...candidates]
+      .map((key) => JSON.parse(key)[0])
+      .filter((entity) => ["tag", "filter"].includes(entity)),
+  );
+  const deferred = new Set();
+  if (uniqueTypes.size) {
+    candidates = new Set(candidates);
+    for (const [key, record] of Object.entries(entities)) {
+      if (!uniqueTypes.has(record.entity) || record.deleted) continue;
+      candidates.add(key);
+      const collision =
+        record.entity === "tag"
+          ? reader
+              .prepare(
+                "SELECT id FROM calendar_tags WHERE team_id=? AND user_id IS ? AND name=? AND id<>?",
+              )
+              .get(
+                teamId,
+                record.payload.userId,
+                record.payload.name,
+                record.key[0],
+              )
+          : reader
+              .prepare(
+                "SELECT id FROM saved_filters WHERE team_id=? AND scope='team' AND name=? AND id<>?",
+              )
+              .get(teamId, record.payload.name, record.key[0]);
+      if (
+        collision &&
+        protectedKeys.has(entityId(record.entity, [collision.id]))
+      )
+        deferred.add(key);
+    }
+    if (uniqueTypes.has("tag")) {
+      for (const [key, record] of Object.entries(entities)) {
+        if (record.entity !== "calendar" || record.deleted) continue;
+        const references = (record.payload.tags || []).map((tag) =>
+          entityId("tag", [tag.id]),
+        );
+        if (references.some((key) => candidates.has(key))) candidates.add(key);
+        if (references.some((key) => deferred.has(key))) deferred.add(key);
+      }
+      for (const [key, record] of Object.entries(entities)) {
+        if (record.entity !== "document" || record.key[0] !== "calendar")
+          continue;
+        const parent = entityId("calendar", [record.key[1]]);
+        if (candidates.has(parent)) candidates.add(key);
+        if (deferred.has(parent)) deferred.add(key);
+      }
+    }
+  }
   for (const key of candidates) {
-    const record = entities[key];
-    if (!record || isExcluded(record, entities, exclusions)) continue;
+    if (deferred.has(key)) continue;
+    let record = entities[key];
+    if (record && isExcluded(record, entities, exclusions)) continue;
+    if (!record && !canRetireProjection(key, entities, protectedKeys)) continue;
+    const [entity, entityKey] = record
+      ? [record.entity, record.key]
+      : JSON.parse(key);
     readEntityCount++;
-    const current = readEntity(reader, teamId, record.entity, record.key);
+    const current = readEntity(reader, teamId, entity, entityKey, {
+      reports,
+      styles,
+    });
+    if (!record) {
+      if (!current || current.deleted) continue;
+      // This is a local projection retirement, never a canonical tombstone or
+      // a new outbox operation. The rejected input remains in its receipt/conflict.
+      record = { ...current, deleted: true };
+      retiredKeys.push(key);
+    }
     if (record.deleted && (!current || current.payload?.deletedAt)) continue;
     if (
       !equal(record.payload, current?.payload) ||
@@ -402,38 +565,44 @@ function projectionPatch(
   return {
     changedEntities,
     previous,
+    retiredKeys,
     touched: [...touched],
     readEntityCount,
     domainSelectCount,
   };
 }
 
+let activeRequest;
+function progress() {
+  activeRequest?.controller.signal.throwIfAborted();
+  if (activeRequest) parentPort.postMessage({ progress: activeRequest.id });
+}
 let mutationSequence = 0;
 const mutations = new Map(),
   services = new Map();
 function mutate(action, teamId, owner, data) {
+  progress();
   const id = ++mutationSequence;
   return new Promise((resolve, reject) => {
     mutations.set(id, { resolve, reject });
     parentPort.postMessage({ mutation: { id, action, teamId, owner, data } });
   });
 }
-function references(state) {
-  const markdowns = [];
-  for (const e of Object.values(state.entities))
-    if (e.entity === "document") markdowns.push(e.payload.markdown);
-  for (const c of Object.values(state.conflicts))
-    if (!c.resolution)
-      for (const change of c.operation.changes)
-        if (change.entity === "document") {
-          if (change.base?.markdown) markdowns.push(change.base.markdown);
-          if (change.desired?.markdown) markdowns.push(change.desired.markdown);
-        }
-  return [...new Set(markdowns.flatMap(documentImageUrls))];
-}
 function serviceFor(config) {
-  if (services.has(config.serviceKey)) return services.get(config.serviceKey);
+  if (services.has(config.serviceKey)) {
+    const service = services.get(config.serviceKey);
+    service.transport.signal = activeRequest?.controller.signal;
+    return service;
+  }
   const { teamId, documentImagesDir } = config;
+  // A replacement configuration supersedes the old service for this team.
+  // Requests in this worker run serially, so no old run can still be using it.
+  for (const [key, service] of services)
+    if (service.identity.teamId === teamId) {
+      services.delete(key);
+      canonicalCache.delete(teamId);
+      projectionCache.delete(teamId);
+    }
   const raw = sqliteTeamStore(db, teamId);
   let owner;
   const store = {
@@ -446,7 +615,9 @@ function serviceFor(config) {
       return mutate("release", teamId, value);
     },
     readState() {
-      return snapshot(teamId, ({ store }) => store.readState());
+      return snapshot(teamId, ({ store, guard, link }) =>
+        readCanonical(teamId, store, guard, link),
+      );
     },
     async bootstrap() {
       const prepared = compute({ kind: "bootstrap", teamId });
@@ -468,21 +639,35 @@ function serviceFor(config) {
         bundleJson: encodeStoredSnapshot({ ...saved, publication: data }),
       });
     },
-    async commitCanonical(expectedHead, newHead, state, ackOpIds) {
+    async commitCanonical(
+      expectedHead,
+      newHead,
+      state,
+      ackOpIds,
+      options = {},
+    ) {
       for (let attempt = 0; attempt < 8; attempt++) {
         const prepared = compute({ kind: "project", teamId, state, ackOpIds });
         if (prepared.guard.head !== expectedHead)
-          throw new Error(
+          throw new ProtocolError(
+            "SYNC_INTEGRITY",
             "Canonical head changed during background preparation",
           );
         try {
-          return await mutate("commit", teamId, owner, {
+          const result = await mutate("commit", teamId, owner, {
             expectedHead,
             newHead,
             ackOpIds,
+            transition: options.transition === true,
             prepared,
           });
+          const link = raw.readLink();
+          if (link.canonical_head === newHead)
+            cacheCanonical(teamId, link, state);
+          return result;
         } catch (error) {
+          canonicalCache.delete(teamId);
+          projectionCache.delete(teamId);
           if (error.code !== "SYNC_SNAPSHOT_CHANGED" || attempt === 7)
             throw error;
           // HTTP edits win the short write boundary; reconstruct P from their
@@ -506,7 +691,17 @@ function serviceFor(config) {
       return mutate("status", teamId, owner, { serialized: canonical(value) });
     },
   };
-  const transport = new GitCliTransport(config.transport);
+  const transport = new GitCliTransport({
+    ...config.transport,
+    signal: activeRequest?.controller.signal,
+  });
+  const git = transport.git.bind(transport);
+  transport.git = async (...args) => {
+    progress();
+    const result = await git(...args);
+    progress();
+    return result;
+  };
   const images = {
     async *publish(state, { parent, transport } = {}) {
       const inherited = new Set(
@@ -523,11 +718,11 @@ function serviceFor(config) {
         project(state, pending).entities,
         teamId,
       );
-      for (const url of references(state)) {
+      for (const url of syncImageReferences(state)) {
         const path = url.replace("/api/document-images/", "images/");
         if (inherited.has(path)) continue;
         if (!url.startsWith(`/api/document-images/${teamId}/`))
-          throw new Error("Foreign image reference");
+          throw new ProtocolError("SYNC_INTEGRITY", "Foreign image reference");
         if (
           !existsSync(documentImagePath(documentImagesDir, url)) &&
           !active.has(url)
@@ -555,7 +750,10 @@ function serviceFor(config) {
           digest(bytes) !== path.split("/").at(-1).replace(".webp", "") ||
           bytes.length > 10 * 1024 * 1024
         )
-          throw new Error("Invalid image content hash or size");
+          throw new ProtocolError(
+            "SYNC_INTEGRITY",
+            "Invalid image content hash or size",
+          );
         if (required) writeDocumentImage(documentImagesDir, url, bytes);
       };
       for (const url of active)
@@ -591,35 +789,60 @@ function serviceFor(config) {
   services.set(config.serviceKey, service);
   return service;
 }
-parentPort.on("message", async ({ id, request, mutationId, result, error }) => {
-  if (mutationId) {
-    const waiting = mutations.get(mutationId);
-    if (!waiting) return;
-    mutations.delete(mutationId);
-    if (error)
-      waiting.reject(
-        Object.assign(new Error(error.message), { code: error.code }),
-      );
-    else waiting.resolve(result);
-    return;
-  }
-  try {
-    const result =
-      request.kind === "service"
-        ? await serviceFor(request.config)
-            [request.action === "checkpoint" ? "checkpoint" : "run"](
-              request.options || {},
-            )
-            .finally(async () => {
-              if (request.action !== "checkpoint")
-                await serviceFor(request.config).publishDirectory();
-            })
-        : compute(request);
-    parentPort.postMessage({ id, result });
-  } catch (error) {
-    parentPort.postMessage({
-      id,
-      error: { message: error.message, code: error.code, status: error.status },
-    });
-  }
-});
+parentPort.on(
+  "message",
+  async ({ id, request, mutationId, result, error, cancelId }) => {
+    if (cancelId) {
+      if (activeRequest?.id === cancelId) {
+        const reason = new SyncInterruption();
+        activeRequest.controller.abort(reason);
+        for (const waiting of mutations.values()) waiting.reject(reason);
+        mutations.clear();
+      }
+      return;
+    }
+    if (mutationId) {
+      const waiting = mutations.get(mutationId);
+      if (!waiting) return;
+      mutations.delete(mutationId);
+      if (error)
+        waiting.reject(
+          Object.assign(new Error(error.message), {
+            code: error.code,
+            status: error.status,
+          }),
+        );
+      else waiting.resolve(result);
+      return;
+    }
+    activeRequest = { id, controller: new AbortController() };
+    try {
+      progress();
+      let result;
+      if (request.kind === "service") {
+        const service = serviceFor(request.config);
+        result = await service[
+          ["checkpoint", "upgrade"].includes(request.action)
+            ? request.action
+            : "run"
+        ](request.options || {});
+        progress();
+        if (request.action === "run") await service.publishDirectory();
+      } else result = compute(request);
+      progress();
+      parentPort.postMessage({ id, result });
+    } catch (error) {
+      parentPort.postMessage({
+        id,
+        error: {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+          retryAt: error.retryAt,
+        },
+      });
+    } finally {
+      activeRequest = null;
+    }
+  },
+);

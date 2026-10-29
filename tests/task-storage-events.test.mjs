@@ -1,11 +1,10 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { defaultView } from "../shared/domain.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { createApp } from "../server/app.mjs";
-import { PostgresTaskRepository } from "../server/storage/postgres-tasks.mjs";
-import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
+import { postgresFixture } from "./business-storage-fixture.mjs";
 import { parseCompact, unpack } from "../shared/compact.js";
 
 async function openStream(
@@ -89,7 +88,7 @@ async function openStream(
   };
 }
 
-test("M6 Node PG-only task uses same backend for snapshot/save/dedicated+multiplex SSE and revalidates non-admin permissions", async (t) => {
+test("M6 external PG task uses same backend for snapshot/save/dedicated+multiplex SSE and revalidates non-admin permissions", async (t) => {
   const pg = await postgresFixture(t),
     f = pg;
   if (!pg) return;
@@ -144,21 +143,17 @@ test("M6 Node PG-only task uses same backend for snapshot/save/dedicated+multipl
     f.db.prepare("SELECT id FROM tasks WHERE id=?").get(taskId),
     undefined,
   );
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-      taskRepository: (user) =>
-        new PostgresTaskRepository({ context: pg.makeContext(user) }),
+  const app = createExternalRouteApp({
+      env: pg.env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => pg.makeContext(user, request),
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   t.after(async () => {
-    app.locals.cellEvents.close();
-    app.locals.documentEvents?.close();
-    await app.locals.sync.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    await app.close();
   });
   const origin = "http://127.0.0.1:" + server.address().port;
   const request = async (
@@ -192,10 +187,10 @@ test("M6 Node PG-only task uses same backend for snapshot/save/dedicated+multipl
     body: {
       teamId: f.teamId,
       year: 2026,
-      fields: { title: "Created through Node PG route" },
+      fields: { title: "Created through external PG route" },
     },
   });
-  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.status, 200, JSON.stringify(created.body));
   const createdId = created.body.task.id;
   const structural = await teamStream.next("document");
   assert.notEqual(structural.data.revision, firstTeamEvent.data.revision);
@@ -343,37 +338,33 @@ test("M6 Node PG-only task uses same backend for snapshot/save/dedicated+multipl
   const replay = await openStream(t, origin, eventPath, member);
   assert.deepEqual((await replay.next("cells")).data.cells, save.body.cells);
   replay.close();
-  const localTask = f.app.locals.taskRepository.locate(f.user, f.taskId);
-  f.db.syncCapture.withActor(f.user.id, () =>
-    f.app.locals.taskRepository.remove(f.user, [
-      { id: f.taskId, updatedAt: localTask.updatedAt },
-    ]),
-  );
-  const localAudit = f.db
-    .prepare(
-      "SELECT id FROM audit WHERE action='delete' AND target=? ORDER BY rowid DESC LIMIT 1",
-    )
-    .get(f.taskId);
-  const localRestore = await request(
-    "/api/audit/" + localAudit.id + "/restore",
-    { user: f.user.id, method: "POST", body: {} },
-  );
-  assert.equal(localRestore.status, 200, JSON.stringify(localRestore.body));
+  const original = latest.body.tasks.find((row) => row.id === f.taskId);
+  const removed = await request(`/api/tasks/${f.taskId}`, {
+    user: f.user.id,
+    method: "DELETE",
+    body: { updatedAt: original.updatedAt },
+  });
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  const deletion = (
+    await request(`/api/audit?teamId=${f.teamId}&taskId=${f.taskId}&limit=1`)
+  ).body.entries[0];
+  assert.equal(deletion.action, "delete");
+  const restored = await request(`/api/audit/${deletion.id}/restore`, {
+    user: f.user.id,
+    method: "POST",
+    body: {},
+  });
+  assert.equal(restored.status, 200, JSON.stringify(restored.body));
+  assert.equal(restored.body.tasks[0].deletedAt, null);
+  await pg.control.query("DELETE FROM graeboard.memberships WHERE user_id=$1", [
+    member,
+  ]);
   assert.equal(
-    f.db.prepare("SELECT deleted_at FROM tasks WHERE id=?").get(f.taskId)
-      .deleted_at,
-    null,
-  );
-  f.db.prepare("DELETE FROM memberships WHERE user_id=?").run(member);
-  // The PG control membership intentionally remains: Node cookie/control is authoritative.
-  assert.equal(
-    (
-      await pg.control.query(
-        "SELECT * FROM graeboard.memberships WHERE user_id=$1",
-        [member],
-      )
-    ).rows.length,
+    f.db
+      .prepare("SELECT COUNT(*) n FROM memberships WHERE user_id=?")
+      .get(member).n,
     1,
+    "external membership revocation is independent of SQLite",
   );
   assert.equal((await dedicated.next("access-revoked")).data.status, 403);
   assert.equal((await multiplex.next("access-revoked")).data.status, 403);

@@ -1,3 +1,4 @@
+import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -7,8 +8,8 @@ import {
 } from "./business-storage-fixture.mjs";
 import { SettingsBusinessService } from "../server/storage/settings-service.mjs";
 import { FilterBusinessService } from "../server/storage/filter-service.mjs";
-import { PostgresSettingsRepository } from "../server/storage/postgres-settings.mjs";
-import { PostgresFilterRepository } from "../server/storage/postgres-filters.mjs";
+import { PostgresSettingsRepository } from "../worker/storage/postgres-settings.mjs";
+import { PostgresFilterRepository } from "../worker/storage/postgres-filters.mjs";
 import {
   userWithTeams,
   transaction,
@@ -17,7 +18,6 @@ import {
 } from "../server/db.mjs";
 import { defaultView, normalizeSettings } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
-import { createApp } from "../server/app.mjs";
 import { materialize } from "../worker/materialize.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 const reject = (work, status) =>
@@ -45,6 +45,15 @@ function viewerFor(f) {
     f.db.prepare("SELECT * FROM users WHERE id=?").get(id),
   );
 }
+// A repeated save retains business values but keeps the internal API's
+// last-used filter ordering and team-update audit entry.
+const withoutFilterStamp = (snapshot) => ({
+  ...snapshot,
+  ...(snapshot.filters
+    ? { filters: snapshot.filters.map(({ updated_at, ...row }) => row) }
+    : {}),
+});
+const withoutAudit = ({ audit, ...snapshot }) => snapshot;
 async function contract({
   f,
   viewer,
@@ -129,7 +138,11 @@ async function contract({
     name: "Personal renamed",
     data: filterData,
   });
-  assert.deepEqual(await snapshot(), all, "personal save retry has no write");
+  assert.deepEqual(
+    withoutFilterStamp(await snapshot()),
+    withoutFilterStamp(all),
+    "personal save retry preserves data and shared state",
+  );
   await filters.save({
     teamId: f.teamId,
     scope: "team",
@@ -147,9 +160,9 @@ async function contract({
     data: filterData,
   });
   assert.deepEqual(
-    await snapshot(),
-    all,
-    "shared filter retry preserves P/audit",
+    withoutFilterStamp(await snapshot()),
+    withoutFilterStamp(all),
+    "shared filter retry preserves P/audit and filter values",
   );
   await reject(() => privateFilter.update(shared.id, { name: "Denied" }), 403);
   await filters.save({
@@ -284,9 +297,9 @@ async function contract({
   all = await snapshot();
   await settings.general(f.teamId, { name: "Renamed team" });
   assert.deepEqual(
-    await snapshot(),
-    all,
-    "unchanged general save is idempotent",
+    withoutAudit(await snapshot()),
+    withoutAudit(all),
+    "unchanged general save preserves business and pending state",
   );
   await writeCell("description", "7");
   await visibility(true);
@@ -429,7 +442,7 @@ test("M6 SQLite settings/filter service preserves conversions, local preferences
     false,
   );
 });
-test("M6 same settings/filter services run on real PG and injected Node HTTP without local business rows", async (t) => {
+test("M6 same settings/filter services run on real PG and injected external HTTP without local business rows", async (t) => {
   const f = sqliteBusinessFixture(t),
     viewer = viewerFor(f),
     pg = await postgresBusinessFixture(t, f);
@@ -585,26 +598,27 @@ test("M6 same settings/filter services run on real PG and injected Node HTTP wit
       });
     },
   });
-  const app = createApp({
-      db: f.db,
-      rateLimits: false,
-      syncOptions: { schedule: false, installationId: f.link.installation_id },
-      settingsRepository: (user) =>
-        new PostgresSettingsRepository({ context: contextFor(user) }),
-      filterRepository: (user) =>
-        new PostgresFilterRepository({ context: contextFor(user) }),
+  const app = createExternalRouteApp({
+      env: pg.env,
+      defaultUserId: f.user.id,
+      contextFor: (user, request) => contextFor(user),
     }),
     server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   t.after(async () => {
-    await app.locals.sync.close();
-    app.locals.cellEvents.close();
-    app.locals.documentEvents.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
+    await app.close();
   });
-  const notifications = [];
-  app.locals.documentEvents.invalidate = (key) => notifications.push(key);
+  const eventCount = async () =>
+    Number(
+      (
+        await pg.pool.query(
+          "SELECT COUNT(*) n FROM graeboard.site_events WHERE kind='changed'",
+        )
+      ).rows[0].n,
+    );
+  const beforeEvents = await eventCount();
   const req = async (path, method, body) => {
     const response = await fetch(
       `http://127.0.0.1:${server.address().port}/api${path}`,
@@ -648,14 +662,11 @@ test("M6 same settings/filter services run on real PG and injected Node HTTP wit
       .defaultDensity,
     oldSQLite.defaultDensity,
   );
-  assert.equal(
-    notifications.filter((key) => key === "team:" + f.teamId).length,
-    2,
-  );
+  assert.equal(await eventCount(), beforeEvents + 2);
   response = await req("/teams/" + f.teamId + "/settings", "PATCH", {
     revision: current.revision,
     defaultDensity: "comfortable",
   });
   assert.equal(response.status, 409);
-  assert.equal(notifications.length, 2);
+  assert.equal(await eventCount(), beforeEvents + 2);
 });

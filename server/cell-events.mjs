@@ -105,6 +105,7 @@ export function createCellEvents(
       operationId: payloads[0].operationId,
       cells: [...cells.values()],
       updatedAt: Object.assign({}, ...payloads.map((p) => p.updatedAt)),
+      taskMetadata: Object.assign({}, ...payloads.map((p) => p.taskMetadata)),
     });
     return Buffer.byteLength(merged) > maxEventBytes
       ? frame("reset", "{}", eventId)
@@ -160,7 +161,8 @@ export function createCellEvents(
     }
   }
   function publish(result, tasks) {
-    if (!result.cells.length) return;
+    if (!result.cells.length && !Object.keys(result.taskMetadata || {}).length)
+      return;
     const scopes = new Map();
     for (const c of result.cells) {
       const task = tasks.get(c.taskId);
@@ -177,6 +179,27 @@ export function createCellEvents(
         }
         payload.cells.push(c);
         payload.updatedAt[c.taskId] = result.updatedAt[c.taskId];
+      }
+    }
+    for (const [taskId, metadata] of Object.entries(
+      result.taskMetadata || {},
+    )) {
+      const task = tasks.get(taskId);
+      if (!task) continue;
+      for (const year of task.years) {
+        const scope = `${task.teamId}:${year}`;
+        let payload = scopes.get(scope);
+        if (!payload)
+          scopes.set(
+            scope,
+            (payload = {
+              operationId: result.operationId,
+              cells: [],
+              updatedAt: {},
+            }),
+          );
+        (payload.taskMetadata ||= {})[taskId] = metadata;
+        payload.updatedAt[taskId] = metadata.updatedAt;
       }
     }
     sequence++;

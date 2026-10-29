@@ -21,6 +21,7 @@ export async function externalResources(file, { restore = false } = {}) {
     if (config.control) {
       const resource = await openTransferDatabase({
         engine: "postgres",
+        backupSource: !restore,
         urlEnv: config.control.urlEnv,
         scope: "control",
         site: !!config.control.site,
@@ -48,6 +49,7 @@ export async function externalResources(file, { restore = false } = {}) {
           throw new Error("Set the named R2 credential environment variables");
       const resource = await openTransferDatabase({
         engine: "postgres",
+        backupSource: !restore,
         urlEnv: entry.urlEnv,
       });
       opened.push(resource);
