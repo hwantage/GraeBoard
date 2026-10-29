@@ -56,7 +56,11 @@ export async function openTransferDatabase({
   try {
     await adapter.health(
       backupSource
-        ? { allowPreviousTeam: true, allowPreviousSite: true }
+        ? {
+            allowPreviousTeam: true,
+            allowPreviousSite: true,
+            allowPreviousControl: true,
+          }
         : undefined,
     );
   } catch (error) {

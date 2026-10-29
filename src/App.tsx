@@ -48,6 +48,7 @@ import {
 import {
   api,
   send,
+  serverNow,
   ApiError,
   taskQuery,
   logout,
@@ -129,6 +130,7 @@ import PeriodPicker from "./PeriodPicker";
 import PresentationTools from "./PresentationTools";
 import AccountMenu from "./AccountMenu";
 import ProfilePanel from "./ProfilePanel";
+import AccessTokens from "./AccessTokens";
 import FindBar from "./FindBar";
 import type { ClipboardMatrix } from "./clipboard";
 import { STYLE_KEYS } from "../shared/compact.js";
@@ -1708,7 +1710,7 @@ function Workspace({
         if (!changes.length && !format) return;
         payload = {
           operationId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
+          createdAt: serverNow(),
           changes,
           ...(format ? { format } : {}),
         };
@@ -2794,7 +2796,7 @@ function Workspace({
         payload = {
           ...payload,
           operationId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
+          createdAt: serverNow(),
           changes: payload.changes.map((c) => ({
             ...c,
             expectedVersion: tasks.get(c.taskId)?.cells[c.key]?.version ?? 0,
@@ -3223,6 +3225,9 @@ function Workspace({
                 onProfile={() =>
                   void navigateWorkspace(() => setPanel("profile"))
                 }
+                onAccessTokens={() =>
+                  void navigateWorkspace(() => setPanel("access-tokens"))
+                }
                 onPassword={
                   site.external
                     ? undefined
@@ -3649,7 +3654,7 @@ function Workspace({
                           onClick={() => renameFilter(activeSavedFilter)}
                         >
                           <Pencil size={14} />
-                          <span>이름 변경</span>
+                          <span>필터 이름 변경</span>
                         </Button>
                         <Button
                           className="active-filter-delete"
@@ -4132,6 +4137,9 @@ function Workspace({
             return latest;
           }}
         />
+      )}
+      {panel === "access-tokens" && (
+        <AccessTokens onClose={() => setPanel("")} onNotify={setToast} />
       )}
       {panel === "profile" && (
         <ProfilePanel

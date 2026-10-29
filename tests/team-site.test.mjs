@@ -1218,7 +1218,7 @@ test(
       teamId = randomUUID();
     await migratePostgres(pool, { scope: "site", initialize: true, teamId });
     await pool.query(
-      "DROP TABLE graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version=2",
+      "DROP TABLE graeboard_site.access_tokens,graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version>=2",
     );
     await pool.query(
       "INSERT INTO graeboard_site.users(id,username,email,name,created_at) VALUES('lead','lead','lead','Kept','today'); INSERT INTO graeboard_site.access_identities VALUES('issuer','subject','lead')",
@@ -1271,7 +1271,7 @@ test(
     );
     assert.equal(
       (await migratePostgres(pool, { scope: "site", teamId })).to,
-      2,
+      3,
     );
   },
 );

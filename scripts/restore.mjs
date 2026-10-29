@@ -37,7 +37,7 @@ export function restoreDatabase(
   try {
     if (
       source.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      ![29, 30, 31, SCHEMA_VERSION].includes(
+      ![29, 30, 31, 32, SCHEMA_VERSION].includes(
         source.prepare("PRAGMA user_version").get().user_version,
       )
     )
@@ -92,6 +92,8 @@ export function restoreDatabase(
     const restored = new DatabaseSync(temporary);
     try {
       restored.exec("DELETE FROM sessions");
+      if (restored.prepare("PRAGMA user_version").get().user_version >= 33)
+        restored.exec("DELETE FROM access_tokens");
       if (restored.prepare("PRAGMA user_version").get().user_version >= 31)
         restored
           .prepare(

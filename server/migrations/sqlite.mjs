@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SQLITE_VERSION = 32;
+export const SQLITE_VERSION = 33;
 export const baseSql = readFileSync(
   new URL("./sqlite/029-base.sql", import.meta.url),
   "utf8",
@@ -25,10 +25,18 @@ export const maintenanceSql = readFileSync(
 export const maintenanceChecksum = createHash("sha256")
   .update(maintenanceSql)
   .digest("hex");
+export const accessTokenSql = readFileSync(
+  new URL("./sqlite/033-access-tokens.sql", import.meta.url),
+  "utf8",
+);
+export const accessTokenChecksum = createHash("sha256")
+  .update(accessTokenSql)
+  .digest("hex");
 const migrations = [
   { version: 30, sql: syncSql, checksum: syncChecksum },
   { version: 31, sql: keySql, checksum: keyChecksum },
   { version: 32, sql: maintenanceSql, checksum: maintenanceChecksum },
+  { version: 33, sql: accessTokenSql, checksum: accessTokenChecksum },
 ];
 
 // Read the released v29 definition, never the current application's initializer.
@@ -72,7 +80,7 @@ export function sqliteVersion(db) {
   return db.prepare("PRAGMA user_version").get().user_version;
 }
 export function assertSqliteHistory(db, { version = SQLITE_VERSION } = {}) {
-  if (![30, 31, 32].includes(version) || sqliteVersion(db) !== version)
+  if (![30, 31, 32, 33].includes(version) || sqliteVersion(db) !== version)
     throw new Error(
       "DB migration required: npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
     );
@@ -115,7 +123,7 @@ export function migrateSqlite(
     assertSqliteIntegrity(db);
     return { from, to: from, applied: false };
   }
-  if (![0, 29, 30, 31].includes(from))
+  if (![0, 29, 30, 31, 32].includes(from))
     throw new Error(`Unsupported SQLite version ${from}; data preserved`);
   if (from === 0) {
     if (
@@ -140,7 +148,7 @@ export function migrateSqlite(
       to: SQLITE_VERSION,
       applied: false,
       dryRun: true,
-      checksum: maintenanceChecksum,
+      checksum: accessTokenChecksum,
     };
   }
   db.exec("BEGIN IMMEDIATE");
@@ -171,6 +179,6 @@ export function migrateSqlite(
     from,
     to: SQLITE_VERSION,
     applied: true,
-    checksum: maintenanceChecksum,
+    checksum: accessTokenChecksum,
   };
 }

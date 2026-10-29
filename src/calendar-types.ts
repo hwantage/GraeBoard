@@ -8,6 +8,7 @@ export type CalendarEntry = {
   lane: number;
   title: string;
   preview: string;
+  hasDocument?: boolean;
   revision: number;
   updatedAt: string;
   tagIds: string[];

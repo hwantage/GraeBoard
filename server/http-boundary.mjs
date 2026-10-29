@@ -40,7 +40,10 @@ export function installHttpBoundary(app) {
   app.use(cookieParser());
   app.use((req, res, next) => {
     const respond = res.json.bind(res);
-    res.json = (data) => respond(pack(data));
+    res.json = (data) => {
+      res.set("X-Server-Time", now());
+      return respond(pack(data));
+    };
     next();
   });
   app.use("/api/cells/batch", express.json({ limit: "32mb" }));

@@ -101,7 +101,14 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
   });
   assert.equal(created.teamTo, 2);
   assert.equal(await teamVersion(), 2);
+  await f.pool.query(
+    "DROP TABLE graeboard_site.access_tokens; DELETE FROM graeboard_site.schema_migrations WHERE version>=3",
+  );
   for (const siteVersion of [2, 1]) {
+    if (siteVersion === 1)
+      await f.pool.query(
+        "DROP TABLE graeboard_site.access_tokens; DELETE FROM graeboard_site.schema_migrations WHERE version>=3",
+      );
     await resetTeam();
     if (siteVersion === 1) {
       await f.pool.query(
@@ -139,7 +146,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
     });
     assert.equal(result.teamFrom, 1);
     assert.equal(result.teamTo, 2);
-    assert.equal(result.to, 2);
+    assert.equal(result.to, 3);
     assert.equal(stateHash(await f.adapter.readState(f.teamId)), before);
   }
   await resetTeam();

@@ -1,3 +1,4 @@
+import { accessTokenRoutes } from "../worker/access-tokens.mjs";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -98,6 +99,7 @@ export function createExternalRouteApp({ env, defaultUserId, contextFor }) {
       }
       for (const route of [
         controlRoutes,
+        accessTokenRoutes,
         adminRoutes,
         taskRoutes,
         documentRoutes,

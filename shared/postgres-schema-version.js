@@ -17,21 +17,30 @@ export const SITE_KEY_CHECKSUM =
   "36ac6929900353521f57dda03ab45d11066ad869329d5efa4bcea251029974ad";
 export const TEAM_MAINTENANCE_CHECKSUM =
   "ceb14347ad6c7a237694b61202f4384bc07aaf08e7c6998f0c325adc10228acc";
+export const ACCESS_TOKEN_CHECKSUM =
+  "93267cbac2c6ec29df185703716f1a557241b9a9309790ecd0a17e3436478bb1";
 export function postgresHistoryVersion(
   rows,
   scope,
-  { allowPreviousSite = false, allowPreviousTeam = false } = {},
+  {
+    allowPreviousSite = false,
+    allowPreviousTeam = false,
+    allowPreviousControl = false,
+  } = {},
 ) {
   const expected = [
     POSTGRES_CHECKSUMS[scope],
-    ...(scope === "site" ? [SITE_KEY_CHECKSUM] : []),
+    ...(scope === "site" ? [SITE_KEY_CHECKSUM, ACCESS_TOKEN_CHECKSUM] : []),
     ...(scope === "team" ? [TEAM_MAINTENANCE_CHECKSUM] : []),
+    ...(scope === "control" ? [ACCESS_TOKEN_CHECKSUM] : []),
   ];
+  const allowPrevious =
+    (allowPreviousSite && scope === "site") ||
+    (allowPreviousTeam && scope === "team") ||
+    (allowPreviousControl && scope === "control");
   const length =
-    ((allowPreviousSite && scope === "site") ||
-      (allowPreviousTeam && scope === "team")) &&
-    rows.length === 1
-      ? 1
+    allowPrevious && rows.length >= 1 && rows.length < expected.length
+      ? rows.length
       : expected.length;
   if (
     !POSTGRES_CHECKSUMS[scope] ||

@@ -12,7 +12,7 @@ R2와 Images native binding은 gateway에 남습니다. Edge가 서버 전용 Se
 
 Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다.
 
-기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 옮기는 변경 자체에는 DB migration이 없습니다. **이번 리뷰 반영 릴리스는 별도로 SQLite v32·PostgreSQL team v2 인덱스 migration이 필요합니다.** site v2와 기존 team 업무 데이터, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 전체 업무 API를 Cloudflare에서 실행하는 호환성 설정과 빌드는 제거했습니다. 배포에는 gateway·forwarder 설정과 Supabase Edge 빌드를 사용합니다.
+기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 옮기는 변경 자체에는 DB migration이 없습니다. **현재 릴리스는 SQLite v33·PostgreSQL site v3(분리형 control v2)·team v2 migration이 필요합니다.** 기존 site 계정과 team 업무 데이터, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 전체 업무 API를 Cloudflare에서 실행하는 호환성 설정과 빌드는 제거했습니다. 배포에는 gateway·forwarder 설정과 Supabase Edge 빌드를 사용합니다.
 
 인터넷에 연결된 운영자 환경에서 다음 순서로 배포합니다. 내부 Node 서버는 이 환경 파일을 읽지 않으며 GitHub만 접속합니다.
 
@@ -30,6 +30,7 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 | `SYNC_MAX_STATE_BYTES`, `SYNC_MAX_ENTITIES` | 기존 용량 제한 |
 | `GRAEBOARD_GATEWAY_SECRET` | gateway와 같은 전달용 Secret |
 | `RESOURCE_ORIGIN`, `GRAEBOARD_RESOURCE_SECRET` | gateway의 HTTPS `workers.dev` origin, 같은 자원용 Secret |
+| `GRAEBOARD_ACCESS_TOKEN_KEY` | 접속 토큰 암호화·재조회용 base64 32바이트 키. DB 밖에 보존하고 기존 키를 임의로 교체하지 않습니다. |
 | `GRAEBOARD_DATABASE_URL` | 선택 사항. 전용 앱 역할의 PostgreSQL 접속 URL. 생략 시 Supabase가 제공하는 `SUPABASE_DB_URL` 사용 |
 
 5. `npx supabase functions deploy graeboard --project-ref 프로젝트ID --use-api`를 실행합니다. `supabase/config.toml`의 `verify_jwt=false`는 Supabase Auth 검증 대신 gateway Secret 및 Cloudflare Access JWT·앱 계정·팀 권한을 직접 검증하기 위한 설정입니다. 이 검증 코드를 제거한 함수를 공개하지 않습니다.
@@ -84,7 +85,7 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 ## 3. SQLite v29·v30·v31을 v32로 올리기
 
-실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32**입니다. 일반 서버 시작은 기존 v29·v30·v31 DB를 자동 변환하지 않습니다.
+실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32 → v33**입니다. 일반 서버 시작은 기존 v29·v30·v31·v32 DB를 자동 변환하지 않습니다.
 
 1. 기존 릴리스로 DB와 문서 이미지 백업을 만들고 별도 경로에 복구해 확인합니다.
 2. 운영 적용 때는 서버와 다른 DB 쓰기 작업을 중지합니다.
@@ -127,7 +128,7 @@ npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-i
 unset PG_SITE_URL
 ```
 
-이 명령은 `graeboard`의 team v2와 `graeboard_site`의 site v2를 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite는 v32로 별도 변환합니다.
+이 명령은 `graeboard`의 team v2와 `graeboard_site`의 site v3를 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite는 v33으로 별도 변환합니다.
 
 기존 분리형 설치의 **team v1 DB**를 전환할 때는 백업과 쓰기 중단 후 같은 명령에서 `--initialize`를 빼고 실행합니다. 기존 업무 스키마·ID·C/P/L을 그대로 두고 site 스키마와 team v2 인덱스를 추가합니다. 기존 공통 control DB는 건드리지 않습니다. 그 DB의 계정·Google 연결을 가져오지 않으며, 내부 구성원 동기화 후 팀장 최초 연결과 팀원 승인을 다시 합니다. 이전 외부 계정 ID로 작성한 업무의 표시 참조는 이력으로 보존합니다. 기존 control DB 자체에 site migration을 적용하는 것은 거절합니다.
 

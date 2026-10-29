@@ -5,6 +5,18 @@ import { siteFor } from "./site";
 // Distinguish this page from other tabs, including tabs signed in as the same user.
 export const clientId = crypto.randomUUID();
 
+// Anchor request timestamps to the server and a monotonic clock. Changing the
+// device clock after login must not invalidate new edits or extend retries.
+let serverClock: { time: number; received: number; started: number } | null =
+  null;
+export function serverNow() {
+  return new Date(
+    serverClock
+      ? serverClock.time + performance.now() - serverClock.received
+      : Date.now(),
+  ).toISOString();
+}
+
 export class ApiError extends Error {
   status: number;
   details: any;
@@ -63,6 +75,7 @@ export async function api<T = any>(
   const cached = cacheable ? taskResponses.get(path) : undefined;
   if (path.startsWith("/auth/")) taskResponses.clear();
   let response: Response;
+  const started = performance.now();
   try {
     response = await fetch("/api" + path, {
       credentials: "same-origin",
@@ -90,6 +103,11 @@ export async function api<T = any>(
       0,
     );
   }
+  const stamp =
+    response.headers.get("X-Server-Time") || response.headers.get("Date");
+  const time = stamp ? Date.parse(stamp) : NaN;
+  if (Number.isFinite(time) && (!serverClock || started >= serverClock.started))
+    serverClock = { time, received: performance.now(), started };
   const withCursor = (data: unknown) =>
     cacheable
       ? {

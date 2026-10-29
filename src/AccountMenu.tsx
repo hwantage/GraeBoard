@@ -6,12 +6,14 @@ import type { User } from "./types";
 export default function AccountMenu({
   user,
   onProfile,
+  onAccessTokens,
   onPassword,
   onLogout,
   logoutDisabled,
 }: {
   user: User;
   onProfile: () => void;
+  onAccessTokens: () => void;
   onPassword?: () => void;
   onLogout: () => Promise<void>;
   logoutDisabled: boolean;
@@ -108,6 +110,16 @@ export default function AccountMenu({
             }}
           >
             <UserRound size={16} aria-hidden="true" /> 프로필
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              close(true);
+              onAccessTokens();
+            }}
+          >
+            <KeyRound size={16} aria-hidden="true" /> 접속 토큰
           </button>
           {onPassword && (
             <button

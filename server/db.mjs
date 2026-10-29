@@ -82,7 +82,7 @@ export function openDatabase(
   if (version !== 0 && version !== SCHEMA_VERSION) {
     db.close();
     throw new Error(
-      [29, 30, 31].includes(version)
+      [29, 30, 31, 32].includes(version)
         ? `DB 형식 v${version}의 자동 변환은 지원하지 않습니다. npm run migrate -- --engine sqlite --database <DB 경로> 로 명시적 변환을 수행하세요.`
         : `DB 형식 v${version}은 지원하지 않습니다. 지원하는 변환 경로가 없으므로 원본과 호환 릴리스를 보존하세요.`,
     );

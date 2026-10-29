@@ -851,10 +851,15 @@
 .calendar-entry-card strong {
   font-size: 14px;
   font-weight: 700;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.calendar-entry-card strong > span {
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .calendar-entry-card i {
   font-style: normal;
@@ -1292,4 +1297,77 @@
   .calendar-entry-card {
     transition: none;
   }
+}
+
+.search-box.calendar-search {
+  flex-basis: 220px;
+  width: 220px;
+  min-width: 180px;
+  height: 30px;
+  border: var(--calendar-border-width) solid var(--calendar-outline);
+  background: #fff;
+}
+.calendar-search > svg {
+  flex-shrink: 0;
+  margin-inline: 3px;
+}
+.calendar-search > input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.workspace[data-calendar-theme="dark"] .calendar-search {
+  background: #fff;
+  border-color: var(--calendar-outline);
+  color: #71898b;
+}
+.workspace[data-calendar-theme="dark"] .calendar-search:focus-within {
+  border-color: var(--accent);
+}
+.workspace[data-calendar-theme="dark"] .calendar-search > button {
+  color: #71898b;
+}
+.workspace[data-calendar-theme="dark"] .calendar-search > input {
+  background: transparent;
+  color: #263238;
+}
+.workspace[data-calendar-theme="dark"] .calendar-search > input::placeholder {
+  color: #71898b;
+}
+.calendar-document-icon {
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: -1px;
+  flex-shrink: 0;
+}
+.calendar-hidden-entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.calendar-hidden-entries li + li {
+  border-top: 1px solid var(--line);
+}
+.calendar-hidden-entries button {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.calendar-hidden-entries button:hover {
+  background: var(--accent-surface);
+}
+.calendar-hidden-entries strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.calendar-hidden-entries span {
+  color: var(--muted);
+  font-size: 12px;
 }

@@ -156,7 +156,11 @@ export class PostgresDatabase extends DatabaseAdapter {
       return result;
     });
   }
-  async health({ allowPreviousTeam = false, allowPreviousSite = false } = {}) {
+  async health({
+    allowPreviousTeam = false,
+    allowPreviousSite = false,
+    allowPreviousControl = false,
+  } = {}) {
     const client = await this.pool.connect();
     try {
       const rows = (
@@ -167,6 +171,7 @@ export class PostgresDatabase extends DatabaseAdapter {
       const version = postgresHistoryVersion(rows, this.migrationScope, {
         allowPreviousTeam,
         allowPreviousSite,
+        allowPreviousControl,
       });
       if (this.scope === "team" && this.teamId) {
         const row = (

@@ -12,12 +12,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ListFilter,
+  FileText,
+  Search,
   Plus,
   SlidersHorizontal,
   Tags,
   Users,
+  X,
 } from "lucide-react";
 import { api, ApiError, send } from "./api";
+import { normalizeSearchQuery } from "../shared/search.js";
 import { busyProps } from "./busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
 import GridHeaderMenu from "./GridHeaderMenu";
@@ -113,6 +117,15 @@ export default function Calendar({
   const [reload, setReload] = useState(0);
   const [contextAttempt, setContextAttempt] = useState(0);
   const [showDays, setShowDays] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [search, setSearch] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
+  const composingSearch = useRef(false);
+  const searchQuery = normalizeSearchQuery(search);
+  function clearSearch() {
+    setSearch("");
+    searchInput.current?.focus();
+  }
   const [showRule, setShowRule] = useState(false);
   const [showTags, setShowTags] = useState(false);
   const [addingWeek, setAddingWeek] = useState<{
@@ -226,6 +239,7 @@ export default function Calendar({
     !!task ||
     !!creating ||
     showDays ||
+    showHidden ||
     showRule ||
     showTags ||
     !!addingWeek;
@@ -293,6 +307,7 @@ export default function Calendar({
         !!task ||
         !!creating ||
         showDays ||
+        showHidden ||
         showRule ||
         showTags ||
         !!addingWeek,
@@ -306,6 +321,7 @@ export default function Calendar({
     task,
     creating,
     showDays,
+    showHidden,
     showRule,
     showTags,
     addingWeek,
@@ -884,9 +900,11 @@ export default function Calendar({
       </aside>
     );
   };
-  const hiddenCount = useMemo(
+  const hiddenEntries = useMemo(
     () =>
       displayEntries.filter((item) => {
+        if (!normalizeSearchQuery(item.title).includes(searchQuery))
+          return false;
         const starts =
           view !== "team"
             ? weeks
@@ -897,8 +915,8 @@ export default function Calendar({
             return date >= item.date && date <= item.endDate;
           }),
         );
-      }).length,
-    [displayEntries, view, weeks, memberWeeks, weekdays, today],
+      }),
+    [displayEntries, view, weeks, memberWeeks, weekdays, today, searchQuery],
   );
   const weekRow = (start: string, ownerId: string | null) => {
     const dates = weekdays.map((day) => addDays(start, day));
@@ -922,6 +940,7 @@ export default function Calendar({
           readOnly={!writable(ownerId)}
           changingId={rangeChange?.entry.id || dragging.drag?.id}
           savingId={pending ? rangeChange?.entry.id : undefined}
+          searchQuery={searchQuery}
           onOpen={setEntry}
           onContextMenu={(event, item) => {
             event.preventDefault();
@@ -1170,11 +1189,56 @@ export default function Calendar({
             </div>
           )}
           <div className="view-bar calendar-toolbar-actions">
-            {hiddenCount > 0 && (
-              <Button onClick={() => setShowDays(true)}>
-                숨긴 요일에 일정 {hiddenCount}개
+            {hiddenEntries.length > 0 && (
+              <Button
+                {...busyProps(locked)}
+                onClick={() => setShowHidden(true)}
+              >
+                숨긴 요일에 일정 {hiddenEntries.length}개
               </Button>
             )}
+            <div
+              className="search-box calendar-search"
+              role="search"
+              aria-label="일정 찾기"
+            >
+              <Search size={14} aria-hidden="true" />
+              <input
+                ref={searchInput}
+                type="search"
+                aria-label="일정 제목 검색"
+                placeholder="일정 제목 검색"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onCompositionStart={() => {
+                  composingSearch.current = true;
+                }}
+                onCompositionEnd={() => {
+                  composingSearch.current = false;
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.nativeEvent.isComposing ||
+                    composingSearch.current ||
+                    event.keyCode === 229
+                  )
+                    return;
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    clearSearch();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                aria-label="검색 지우기"
+                title="검색 지우기 (Esc)"
+                disabled={!search}
+                onClick={clearSearch}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </div>
             {view !== "team" && (
               <Button
                 className="calendar-today-control"
@@ -1394,6 +1458,38 @@ export default function Calendar({
           </div>
         )}
       </div>
+      {showHidden && (
+        <Modal title="숨긴 요일의 일정" onClose={() => setShowHidden(false)}>
+          <ul className="calendar-hidden-entries">
+            {hiddenEntries.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowHidden(false);
+                    setEntry(item);
+                  }}
+                >
+                  <strong>
+                    {item.title}
+                    {(item.hasDocument ?? !!item.preview) && (
+                      <FileText size={12} aria-label="문서 있음" />
+                    )}
+                  </strong>
+                  <span>
+                    {item.date}
+                    {item.endDate !== item.date && ` ~ ${item.endDate}`} ·{" "}
+                    {item.userId === null
+                      ? "팀 공용"
+                      : members.find((member) => member.id === item.userId)
+                          ?.name}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
       {showDays && (
         <CalendarWeekdays
           weekdays={weekdays}

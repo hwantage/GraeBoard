@@ -25,12 +25,14 @@ import {
 import { readDocumentVersion } from "../document-storage.mjs";
 
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
+  COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id ORDER BY position)) AS tagIds,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds`;
 const tagColumns = `id,team_id AS teamId,user_id AS userId,name,color,kind,revision,
   (SELECT count(*) FROM calendar_entry_tags et JOIN calendar_entries e ON e.id=et.entry_id WHERE et.tag_id=calendar_tags.id AND e.deleted_at IS NULL) AS usageCount`;
 const entryJson = (row) => ({
   ...row,
+  hasDocument: !!row.hasDocument,
   tagIds: parse(row.tagIds, []),
   checkedTagIds: parse(row.checkedTagIds, []),
 });
@@ -108,8 +110,10 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
   }
   function visibleEntry(row, visibility = retentionView(db, row.teamId)) {
     const entry = entryJson(row);
-    if (visibility.hidden("document", ["calendar", row.id, "main"]))
+    if (visibility.hidden("document", ["calendar", row.id, "main"])) {
       entry.preview = "";
+      entry.hasDocument = false;
+    }
     return entry;
   }
   function summary(id) {

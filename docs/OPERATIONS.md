@@ -100,13 +100,23 @@ HTTPS 역방향 프록시가 앱으로 요청을 전달하도록 구성하고 �
 
 ### DB 호환성
 
-현재 저장소의 DB 스키마는 **v32**, JSON 내보내기 형식은 **v6**입니다. 내부 서버는 빈 신규 DB 또는 checksum 이력이 일치하는 v32만 엽니다. 기존 v29·v30·v31은 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`로 명시적으로 변환합니다. 일반 시작·복구는 기존 DB를 자동 변환하지 않으며 실제 운영 DB 버전은 배포 전에 별도로 확인합니다.
+현재 저장소의 DB 스키마는 **v33**, JSON 내보내기 형식은 **v6**입니다. 내부 서버는 빈 신규 DB 또는 checksum 이력이 일치하는 v33만 엽니다. 기존 v29·v30·v31·v32는 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`로 명시적으로 변환합니다. 일반 시작·복구는 기존 DB를 자동 변환하지 않으며 실제 운영 DB 버전은 배포 전에 별도로 확인합니다.
 
 스키마·저장 형식·기존 데이터 변환이 필요한 작업은 [DB 변경 지침](DATABASE_CHANGES.md)의 승인·마이그레이션·검증 절차를 따릅니다.
 
 사본은 공통 서식 사전과 필요한 담당자의 ID·이름만 포함한 gzip BLOB이며 아바타를 복사하지 않습니다. 문서는 `document_versions`에 보관하고 원본·사본이 참조합니다. 문서 수정은 해당 원본/사본의 참조만 교체하므로 서로 영향을 주지 않습니다. 사용하지 않는 이전 본문은 정리하며 분기 이력은 별도로 보관하지 않습니다. 백업은 DB의 본문·참조와 외부 이미지 파일을 함께 보관합니다. 저장 구조의 상세는 [데이터 형식](DATA_FORMAT.md)을 참고하세요.
 
 이번 주 기본 테두리의 `currentWeekBorders`는 기존 `teams.settings` JSON의 선택 항목입니다. 당시 DB v29·JSON v6·백업 버전을 유지한 변경이며 기존 팀·사본의 누락 항목은 설정 없음으로 읽으므로, 별도 SQL 변환이나 신규 DB 생성이 필요하지 않습니다. 프런트엔드와 API를 함께 배포하고 실제 운영 버전·백업은 위 호환성 및 업데이트 절차에 따라 확인합니다. 구버전 API는 새 항목을 받지 못하며 설정 저장 시 제거할 수 있으므로, 코드만 되돌린 뒤 새 테두리 설정이 보존된다고 가정하지 않습니다. 운영 적용·복구는 별도 승인한 환경에서 수행합니다.
+
+### 접속 토큰 도입 업데이트
+
+목표 버전은 내부 SQLite v33, 외부 PostgreSQL site v3(기존 분리형 control v2), 업무 team v2입니다. 운영 DB 버전은 별도로 읽기 전용 확인하며 저장소 버전으로 추정하지 않습니다. 이번 변경은 무기한 토큰의 해시·암호문을 저장하는 전용 테이블·인덱스를 한 번에 추가하며 기존 업무 데이터는 보존합니다. 일반 서버 시작은 이전 SQLite를 자동 변환하지 않습니다.
+
+승인된 유지보수 시간에 쓰기를 중지하고 DB·이미지·동기화 저장소를 백업한 다음, SQLite는 기존 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`를 실행합니다. 외부는 `npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id 기존팀UUID`를 실행합니다. 기존 분리형 control은 `--scope control --url-env PG_CONTROL_URL`을 사용합니다. 운영 DB에는 `--initialize`를 사용하지 않습니다. 각 명령에 `--dry-run`을 붙여 먼저 점검할 수 있습니다. SQL Editor용 `node scripts/site-key-migration-sql.mjs 기존팀UUID`도 site v1/v2→v3와 team v1→v2를 같은 트랜잭션으로 처리합니다.
+
+검증 시간은 별도 복제본에서 측정하고, 토큰 목록·발급·삭제와 기존 업무·문서 조회를 확인한 뒤 쓰기를 재개합니다. DDL·이력·버전은 실패 시 함께 롤백합니다. 배포 실패 시 접속 재개 전에는 DB·이미지 백업과 이전 릴리스로 복구하며, 재개 후에는 백업 이후 입력을 별도로 보존해야 합니다. 내부 복구 시 토큰은 폐기하고 외부 백업은 토큰을 포함하지 않습니다. 외부 운영 migration이나 배포는 별도 승인 범위입니다.
+
+접속 토큰 재조회의 암호화 키는 `GRAEBOARD_ACCESS_TOKEN_KEY`에 base64 형식의 32바이트 키를 설정합니다. 외부 Edge에는 이 secret을 배포 전에 등록합니다. 내부 SQLite는 미설정 시 DB 폴더의 `access-token.key`를 최초 발급 때 생성하며 권한은 0600입니다. 이 파일은 DB·이미지 백업에 포함하지 않으므로 별도 안전한 경로에 보관합니다. 기존 암호문이 있는데 키 파일이 없어지면 새 키를 만들지 않고 복원 안내를 반환합니다. 기존 키를 임의로 교체하면 저장된 토큰을 다시 표시할 수 없습니다.
 
 ### 이력 보관과 정리
 
@@ -171,9 +181,9 @@ npm run backup -- backups/manual.sqlite
 DOCUMENT_IMAGES_DIR=data/restore-check/document-images npm run restore -- backups/manual.sqlite data/restore-check/weekly-plan.sqlite
 ```
 
-복구 명령은 **새 DB 파일**에만 쓰며 기존 대상 파일을 덮어쓰지 않습니다. 이미지 경로를 생략하면 `.env`의 폴더를 사용하므로 훈련에서는 반드시 분리합니다. 복구된 세션은 삭제되어 사용자가 다시 로그인해야 합니다. 복구한 DB로 서버를 확인할 때도 별도 작업 경로·DB·이미지 설정과 로컬 바인딩·별도 포트를 사용합니다.
+복구 명령은 **새 DB 파일**에만 쓰며 기존 대상 파일을 덮어쓰지 않습니다. 이미지 경로를 생략하면 `.env`의 폴더를 사용하므로 훈련에서는 반드시 분리합니다. 복구된 세션과 접속 토큰은 삭제되어 사용자가 다시 로그인하고 필요한 토큰을 재발급해야 합니다. 복구한 DB로 서버를 확인할 때도 별도 작업 경로·DB·이미지 설정과 로컬 바인딩·별도 포트를 사용합니다.
 
-복구 도구는 v29·v30·v31·v32 백업을 원래 버전 그대로 새 경로에 복원합니다. v29·v30·v31 복구본은 원본을 보존한 뒤 명시적 migration으로 v32를 만들며, v30 이상 연결은 `recovery`로 시작합니다. `npm run sync:recover -- --database /절대경로/복구본.sqlite --team-id 팀UUID --dry-run`으로 대조하고, 원래/복구 서버의 쓰기 중단과 백업을 확인한 후 `--confirm-drained`로 읽기 전용 원격 대조를 완료합니다. 결과는 일시정지 상태이며 관리자가 재개합니다.
+복구 도구는 v29·v30·v31·v32·v33 백업을 원래 버전 그대로 새 경로에 복원합니다. v29·v30·v31·v32 복구본은 원본을 보존한 뒤 명시적 migration으로 v33을 만들며, v30 이상 연결은 `recovery`로 시작합니다. `npm run sync:recover -- --database /절대경로/복구본.sqlite --team-id 팀UUID --dry-run`으로 대조하고, 원래/복구 서버의 쓰기 중단과 백업을 확인한 후 `--confirm-drained`로 읽기 전용 원격 대조를 완료합니다. 결과는 일시정지 상태이며 관리자가 재개합니다.
 
 운영 복구는 서버와 쓰기 작업을 중지하고 검증된 DB·이미지 묶음을 준비한 뒤 `DB_PATH`와 `DOCUMENT_IMAGES_DIR`을 함께 전환합니다. 해당 DB와 호환되는 릴리스로 재시작하며 이전 DB와 백업은 자동 삭제하지 않습니다. 백업 시점 이후의 변경은 복구본에 없으므로 재개 이후 데이터의 보존 방법을 먼저 판단합니다.
 
@@ -247,9 +257,9 @@ unset GRAEBOARD_RESET_PASSWORD
 
 SIGTERM/SIGINT는 새 접속·구독을 차단하고 진행 중 HTTP 요청과 동기화를 기다립니다. 종료 상한을 넘으면 비정상 종료 코드 1을 기록하고 프로세스를 종료하며 미전송 명령을 삭제하지 않습니다. 이때 응답을 못 받은 요청은 결과를 재조회하고, 중단된 동기화·정리·백업의 소유권은 실제 이전 실행 종료를 확인한 뒤 복구 절차로 처리합니다. 초기 게시·수동 실행은 완료까지 HTTP 응답을 기다리므로 프록시 시간 초과를 작업 취소로 해석하지 말고 상태를 다시 조회합니다.
 
-팀장 연결 키는 SQLite v31과 외부 계정 관리 site v2에서 추가됐습니다. 이번 릴리스는 SQLite v32·PostgreSQL team v2까지 명시적으로 변환하며, 마지막 단계에서는 일반 outbox 인덱스를 추가합니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run migrate -- --engine sqlite --database 사본경로 --dry-run`과 실제 변환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 현재 버전 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본 경로를 변환하고 서버를 재시작합니다. SQLite v32에는 v30·v31·v32 세 migration checksum이 필요하며 기존 이력은 수정하지 않습니다.
+팀장 연결 키는 SQLite v31과 외부 계정 관리 site v2에서 추가됐습니다. 이번 릴리스는 SQLite v33·PostgreSQL site v3(분리형 control v2)·team v2까지 명시적으로 변환합니다. SQLite v32/team v2 단계에서 일반 outbox 인덱스를, v33/site v3/control v2 단계에서 접속 토큰 테이블을 추가합니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run migrate -- --engine sqlite --database 사본경로 --dry-run`과 실제 변환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 현재 버전 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본 경로를 변환하고 서버를 재시작합니다. SQLite v33에는 v30·v31·v32·v33 네 migration checksum이 필요하며 기존 이력은 수정하지 않습니다.
 
-site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키 테이블, site v2 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
+site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키·접속 토큰 테이블, site v2/v3 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
 
 기존 Google 연결은 유지됩니다. 초기 키 방식으로 되돌리기 위해 예전 API 코드만 배포하지 않습니다. 접속 재개 전 실패는 백업과 대응 릴리스로 함께 복구하고, 재개 후에는 현재 데이터를 보존한 채 수정 배포를 우선합니다. 백업 복구는 백업 이후 저장을 잃을 수 있으므로 재개 후 전체 복구 전에는 그 사이 데이터를 별도 보존해야 합니다. 복구된 미사용 연결 키는 폐기하며 내부에서 재발급합니다.
 
@@ -269,7 +279,7 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 
 ### 이전 외부 DB의 업그레이드 전 백업
 
-`npm run backup:external -- --config /private/approved-resources.json --output /private/new-backup`의 원본 연결에만 PostgreSQL team v1 및 site v1의 검증된 기존 checksum을 허용합니다. 일반 API·새 복구 대상은 여전히 현재 team v2/site v2 migration이 필요합니다. site v1 원본은 기존 backup v2 형식으로, site v2 원본은 backup v3 형식으로 생성하며 원본 DB를 자동 변환하지 않습니다. 기존 분리 control/team backup v1과 site backup v2·v3의 해시·복구 규칙은 유지합니다. 형식 v2 동기화 상태도 backup v3에서 reportTask/reportCell·P·receipts·conflicts 원문을 보존하며, 복구는 새 writer epoch와 recovery 상태로 시작합니다.
+`npm run backup:external -- --config /private/approved-resources.json --output /private/new-backup`의 원본 연결에만 PostgreSQL team v1, control v1 및 site v1/v2의 검증된 기존 checksum을 허용합니다. 일반 API·새 복구 대상은 여전히 현재 team v2/site v3/control v2 migration이 필요합니다. site v1 원본은 기존 backup v2 형식으로, site v2/v3 원본은 backup v3 형식으로 생성하며 원본 DB를 자동 변환하지 않습니다. 기존 분리 control/team backup v1과 site backup v2·v3의 해시·복구 규칙은 유지합니다. 형식 v2 동기화 상태도 backup v3에서 reportTask/reportCell·P·receipts·conflicts 원문을 보존하며, 복구는 새 writer epoch와 recovery 상태로 시작합니다.
 
 ## 동기화 v2 명시 전환
 

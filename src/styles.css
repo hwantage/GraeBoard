@@ -5139,12 +5139,12 @@ body.row-reordering * {
 .sheet-row:hover .task-document-indicator.is-empty,
 .sheet-cell.focused .task-document-indicator.is-empty,
 .sheet-cell:focus-within .task-document-indicator.is-empty {
-  opacity: 0.55;
+  opacity: 0.18;
   pointer-events: auto;
 }
 .sheet-cell .task-document-indicator.is-empty:hover,
 .sheet-cell .task-document-indicator.is-empty:focus-visible {
-  opacity: 1;
+  opacity: 0.18;
 }
 .sheet-cell.has-document-count .task-document-indicator {
   width: 34px;
@@ -5295,4 +5295,39 @@ body.row-reordering * {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+.access-token-value {
+  width: 100%;
+  font-family: monospace;
+}
+.access-token-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.access-token-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.access-token-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.access-token-list li > div {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.access-token-list span,
+.access-token-list code {
+  color: var(--muted);
+  font-size: 12px;
 }

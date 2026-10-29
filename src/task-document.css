@@ -718,13 +718,24 @@
 }
 .memo-accordion-heading {
   position: sticky;
+  cursor: pointer;
   top: 32px;
   z-index: 6;
   margin: 0;
+  background: var(--accent-surface);
+  border-block: 1px solid var(--line);
+}
+.memo-accordion-heading:has(.toggle-memos[aria-expanded="true"]),
+.memo-accordion-heading:has(.toggle-memos:hover:not(:disabled)) {
+  background: var(--accent-soft);
+}
+.memo-accordion-heading:has(.toggle-memos:focus-visible) {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -3px;
 }
 .annual-memos .toggle-memos {
   display: flex;
-  width: 100%;
+  width: max(140px, calc(50% - 110px));
   height: var(--memo-accordion-height);
   min-height: var(--memo-accordion-height);
   margin: 0;
@@ -732,21 +743,18 @@
   justify-content: flex-start;
   text-align: left;
   border: 0;
-  border-block: 1px solid var(--line);
   border-radius: 0;
-  background: var(--accent-surface);
+  background: transparent;
   color: var(--accent-strong);
   font-size: 11px;
   line-height: 18px;
   font-weight: 700;
 }
-.annual-memos .toggle-memos:hover:not(:disabled),
-.annual-memos .toggle-memos[aria-expanded="true"] {
-  background: var(--accent-soft);
+.annual-memos .toggle-memos:hover:not(:disabled) {
+  background: transparent;
 }
 .annual-memos .toggle-memos:focus-visible {
-  outline-color: currentColor;
-  outline-offset: -3px;
+  outline: none;
 }
 .memo-accordion-icon {
   flex-shrink: 0;
@@ -826,6 +834,13 @@
 .memo-document-heading > div {
   flex-shrink: 0;
 }
+.memo-document-heading .document-expand {
+  border: 0;
+  padding: 5px;
+  min-height: 27px;
+  background: transparent;
+  color: var(--ink);
+}
 .annual-memos .document-source {
   min-height: 320px;
 }
@@ -894,4 +909,125 @@
 .memo-width-handle:focus-visible::after,
 .memo-width-handle:active::after {
   background: var(--accent);
+}
+
+.memo-scroll-slider {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(200px, calc(100% - 260px));
+  min-width: 100px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+.memo-scroll-slider > span:last-child {
+  position: relative;
+  pointer-events: none;
+}
+.memo-scroll-thumb {
+  position: absolute;
+  inset-block: 2px;
+  width: 20%;
+  border-radius: 4px;
+  background: var(--accent-pastel);
+  pointer-events: none;
+}
+.memo-scroll-slider[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+.memo-scroll-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.annual-memos dialog.memo-document-card {
+  position: relative;
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  background: white;
+  color: inherit;
+  overflow: visible;
+}
+button.memo-document-title {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+  cursor: text;
+}
+.memo-document-heading > .document-tab-title-editor {
+  min-width: 0;
+  overflow: hidden;
+}
+.annual-memos dialog.memo-document-card.memo-full-page {
+  zoom: calc(1 / var(--grid-zoom, 1));
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.memo-document-card.memo-full-page .memo-document-body {
+  width: min(1120px, calc(100% - 48px));
+  margin: 16px auto;
+  border: 0;
+  border-radius: 0;
+}
+.memo-document-card.memo-full-page .memo-document-heading {
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.memo-full-page .memo-document-title {
+  font-size: 20px;
+}
+.memo-document-heading .memo-document-close {
+  margin-left: auto;
+  border: 0;
+  padding: 5px;
+  min-height: 27px;
+  background: transparent;
+  color: var(--muted);
+}
+.memo-full-page-controls {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+.memo-full-page-controls[hidden] {
+  display: none;
+}
+@media (max-width: 500px) {
+  .memo-scroll-slider {
+    left: auto;
+    right: 8px;
+    transform: translateY(-50%);
+    width: min(200px, calc(100% - 160px));
+    min-width: 0;
+  }
 }

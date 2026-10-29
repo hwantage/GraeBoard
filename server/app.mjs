@@ -1,4 +1,5 @@
 import { installHttpBoundary, installHttpFallback } from "./http-boundary.mjs";
+import { installAccessTokenRoutes } from "./access-tokens.mjs";
 import { installLocalAuth } from "./local-auth.mjs";
 import { createSqliteAccess } from "./sqlite-access.mjs";
 import { installControlBusinessRoutes } from "./control-business-routes.mjs";
@@ -71,6 +72,7 @@ export function createApp({
     allowSetup,
     rateLimits,
   });
+  installAccessTokenRoutes(app, { db });
   const {
     teamAccess,
     taskAccess,

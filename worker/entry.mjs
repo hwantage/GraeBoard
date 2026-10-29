@@ -1,3 +1,4 @@
+import { accessTokenRoutes } from "./access-tokens.mjs";
 import { syncSetupKeyStatus } from "./setup-keys.mjs";
 import { deploymentSite } from "../shared/site-mode.js";
 import { pack, unpack } from "../shared/compact.js";
@@ -37,6 +38,7 @@ export const json = (value, status = 200, headers = {}) =>
     headers: {
       ...security,
       "Content-Type": "application/json; charset=utf-8",
+      "X-Server-Time": new Date().toISOString(),
       ...headers,
     },
   });
@@ -246,6 +248,7 @@ export function createWorker({
           ctx.user = await authenticate(env, identity, request);
         const routes = [
           controlRoutes,
+          accessTokenRoutes,
           adminRoutes,
           recoveryRoutes,
           auditRoutes,

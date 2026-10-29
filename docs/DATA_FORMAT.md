@@ -6,21 +6,21 @@
 
 표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 32입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 33입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
 
 ## 버전과 운영 호환성
 
 | 구분               | 현재 저장소 기준             | 확인 위치와 의미                                                  |
 | ------------------ | ---------------------------- | ----------------------------------------------------------------- |
-| SQLite DB 형식     | v32                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
+| SQLite DB 형식     | v33                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
 | JSON 반출 형식     | v6                           | `shared/workbook.mjs`의 `schemaVersion`; DB 버전과 별개           |
-| DB 백업 복구       | v29·v30·v31·v32 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
-| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
-| 외부 PostgreSQL | 팀별 site v2 + team v2, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v1/team v2 지원, team v1은 명시 변환 |
+| DB 백업 복구       | v29·v30·v31·v32·v33 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
+| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 → v33 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
+| 외부 PostgreSQL | 팀별 site v3 + team v2, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v2 지원, team v1은 명시 변환 |
 
-실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v32 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
+실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v33 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32는 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
-백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션을 지우고, v30 이상 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29·v30·v31 복구본은 원본을 보존한 뒤 명시적 v32 migration을 수행합니다.
+백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션과 접속 토큰을 지우고, v30 이상 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29·v30·v31·v32 복구본은 원본을 보존한 뒤 명시적 v33 migration을 수행합니다.
 
 스키마·영속 데이터 형식·해석 규칙·백업 호환성을 변경할 때는 [DB 변경 지침](DATABASE_CHANGES.md)을 반드시 따릅니다.
 
@@ -44,7 +44,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `expo
 
 정상 저장은 과거 이력을 조회하거나 과거 본문을 비교하지 않고 새 이력 ID를 연결합니다. 현재 셀과 값·정규화한 서식이 동일하면 쓰기·버전 증가·업무시각 변경·감사 이력을 생략합니다. 모든 항목이 동일하면 빈 `cells`·`before`·`updatedAt`을 반환하고 `refs: []`인 작은 재시도 기록만 저장합니다. 버전·권한 검사는 생략하지 않습니다. 같은 `operationId`가 다시 들어왔을 때만 `audit.id` 기본키로 전후 JSON을 읽어 `cells`, `before`, `operationId`, `savedAt`, `updatedAt` 응답을 복원합니다. 현재 셀을 응답 원본으로 사용하지 않으므로 이후 편집·복원·서버 재시작에도 최초 응답과 순서가 같습니다. 요청자와 현재 팀 접근 권한은 재시도에도 검사합니다. 참조 이력이 없으면 410으로 거절하고 변경을 다시 실행하지 않습니다.
 
-셀 요청의 `createdAt`은 필수 UTC ISO 시각이며 `operationId`와 함께 최초 전송부터 재시도까지 유지합니다. 생성 후 7일이 지나면 기록 유무와 관계없이 410으로 거절하고, 서버보다 5분 넘는 미래 시각이나 누락된 생성 시각은 400으로 거절합니다.
+브라우저는 API 응답의 `X-Server-Time`(이전 서버는 HTTP `Date`)에 `performance.now()` 경과 시간을 더해 요청 시각을 만듭니다. PC의 날짜·시간 변경에 영향받지 않으며, 재시도의 원래 요청 시각을 새 시각으로 바꾸지 않습니다. 셀 요청의 `createdAt`은 필수 UTC ISO 시각이며 `operationId`와 함께 최초 전송부터 재시도까지 유지합니다. 생성 후 7일이 지나면 기록 유무와 관계없이 410으로 거절하고, 서버보다 5분 넘는 미래 시각이나 누락된 생성 시각은 400으로 거절합니다.
 
 `GET /api/admin/audit`는 `team_id IS NULL`인 공통 감사 로그만 반환합니다. `from`·`to`는 선택적인 `YYYY-MM-DD` 날짜이며 한국 시간 기준 양 끝 날짜를 포함합니다. `actorId`·`action`을 함께 지정할 수 있습니다. 목록은 전후 JSON 없이 `entries`와 `nextCursor: {createdAt, id} | null`을 반환하며 한 번에 최대 50건입니다. 다음 페이지는 `cursorAt`·`cursorId`를 함께 보내고 `(created_at,id)` 내림차순으로 이어갑니다. 상세는 `GET /api/admin/audit/:id`의 `{before,after}`로 별도 조회합니다. 팀 이력·없는 이력·정리된 이력은 상세 API에서 404, 시스템 관리자가 아닌 계정은 목록·상세 모두 403입니다. 공통 범위 전용 날짜·ID 인덱스로 탐색하며 조회 자체는 새 이력을 만들지 않습니다.
 
@@ -191,7 +191,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 ## 업무 문서
 
-업무마다 최대 50개의 문서를 보관합니다. 문서는 `id`(`main` 또는 UUID), `title`(보관 형식 최대 80자), Markdown 본문을 가지며 본문은 UTF-8 256KiB 이하입니다. 새 문서 추가·이름 변경에서 입력하는 제목은 원본과 사본 모두 1~50자로 제한합니다. 기존 보관 제목은 변경하거나 잘라내지 않습니다. 저장 전에는 빈 `main` 문서(문서 1, revision 0)를 표시하며 조회만으로 DB 행을 만들지 않습니다.
+업무마다 최대 50개의 문서를 보관합니다. 문서는 `id`(`main` 또는 UUID), `title`(보관 형식 최대 80자), Markdown 본문을 가지며 본문은 UTF-8 256KiB 이하입니다. 새 문서 추가·이름 변경에서 입력하는 제목은 원본과 사본 모두 1~50자로 제한합니다. 기존 보관 제목은 변경하거나 잘라내지 않습니다. 저장 전에는 빈 `main` 문서(문서 1, revision 0)를 표시하며 조회만으로 DB 행을 만들지 않습니다. 리치 편집의 토글 블록은 본문 안에 `<details open>`·`<summary>`(제목 수준은 `<summary><h2>…</h2></summary>`) HTML과 빈 줄로 구분한 일반 Markdown 내용으로 저장하며, 별도 컬럼이나 형식 버전 변경은 없습니다.
 
 `document_versions`는 내용 해시로 중복을 제거하는 불변 본문 저장소입니다. `task_documents`는 `(task_id,id)` 기본키, `title`, `position`, `version_id`, `has_content`, 정수 `revision`, `updated_at`, `actor_id`, 재시도용 `operation_id`·`request_hash`를 보관합니다. 실제 원본 문서 저장은 문서 revision·업무 시각·감사 기록을 같은 트랜잭션에서 갱신합니다. 본문을 비워도 revision을 유지합니다.
 
@@ -261,6 +261,14 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 사본 조회에는 현재 업무 화면의 연도 제한을 적용하지 않습니다. 날짜 열과 달력은 저장된 `year`, `view.startMonth`를 사용합니다. 닫을 때 현재 업무 화면의 연도·보기·스크롤을 복원하고 연간 보기나 필터 저장소에는 사본의 조건을 쓰지 않습니다. 선택 삭제는 모든 ID가 해당 팀의 사본인지 검사한 뒤 하나의 트랜잭션으로 삭제하며, 원본 업무를 유지하고 `report-delete` 이력을 남깁니다.
 
 JSON 내보내기는 비밀번호·세션·전체 계정 권한을 포함하지 않습니다. 다른 시스템으로 옮길 때 사용자 ID를 매핑하고, 날짜 키·업무 ID·색상·사본을 유지해야 합니다. 현재 앱의 JSON 직접 재가져오기 기능은 없습니다. 완전 복구는 SQLite 백업으로 수행합니다. XLSX 가져오기는 새 업무 ID를 부여하며, 동일 파일 재시도용 키를 별도로 관리합니다.
+
+### 접속 토큰
+
+`access_tokens`는 SQLite v33, PostgreSQL control v2/site v3에서 추가됩니다. 아직 배포하지 않은 신규 기능이므로 무기한 발급·암호화 재조회까지 최초 토큰 마이그레이션 하나에 포함합니다. 팀 업무 스키마(team v2)·JSON v6·동기화 형식은 유지합니다. `id`, `user_id`, `name`, `token_hash`, `prefix`, `created_at`, `token_ciphertext`를 저장하고 만료일 컬럼은 없습니다. 사용자 삭제 시 함께 삭제합니다.
+
+인증된 본인만 `GET /api/access-tokens`, `POST /api/access-tokens`의 `{id: UUID,name}`, `GET /api/access-tokens/:id/reveal`, `DELETE /api/access-tokens/:id`를 사용합니다. 최대 20개 제한은 트랜잭션에서 확인합니다. 원문은 `gbt_` + 암호학적 난수 32바이트의 hex 표현입니다. 검증용 SHA-256 해시와 재조회용 AES-256-GCM 암호문을 별도로 저장하며, 암호문은 사용자·토큰 ID에 바인딩합니다. 키는 DB 밖에 보관합니다. 목록에는 ID·이름·앞부분·생성일만 보내고 원문은 생성 또는 본인의 reveal 응답에만 보냅니다. 응답은 캐시하지 않으며 원문·해시·암호문은 감사 로그에 넣지 않습니다. 같은 생성 ID를 재전송하면 409를 반환하며 목록에서 눈 아이콘으로 원문을 다시 확인할 수 있습니다. 기존 로그인·쓰기 API에는 Bearer 인증을 추가하지 않았으며 조회 API 연결은 추후 작업입니다.
+
+내부 전체 백업에는 토큰 해시·암호문이 포함되지만 복구 시 토큰을 삭제합니다. 외부 논리 백업과 팀 반출·Git 동기화에는 토큰을 포함하지 않습니다. 토큰을 유지하며 서버를 이전하는 경우 DB와 별도로 암호화 키를 보존해야 합니다. 이전 버전 백업은 기존 형식으로 복원 후 명시적으로 업그레이드합니다.
 
 ## 동적 속성
 
@@ -360,7 +368,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 ## 캘린더 일정
 
-`calendar_entries`는 개인 일정과 팀 공용 일정을 연간 업무와 별도로 저장합니다. `user_id`(API의 `userId`)는 개인 일정의 소유자이며 `NULL`이면 해당 팀의 공용 일정입니다. 공용 일정은 작성자의 탈퇴와 무관하게 팀에 남습니다. `GET /api/calendar`의 `scope=team`은 공용 일정만 반환하며 `userId`와 함께 지정할 수 없습니다. 기본값인 `scope=personal`은 활성 팀원의 개인 일정만 반환하고 `userId`로 한 사람을 선택할 수 있습니다. 공용 조회의 `weekly`는 빈 배열입니다. 생성 요청의 `userId: null`은 팀 공용 일정, 사용자 ID는 개인 일정을 뜻합니다. `date`는 시작일, `end_date`(API의 `endDate`)는 종료일이며 양 끝을 포함하는 `YYYY-MM-DD` 날짜입니다. 하루 일정은 두 날짜가 같습니다. 기간과 겹치는 일정만 조회하고, 월간·팀 주간 목록에는 본문 대신 제목과 짧은 미리보기를 반환합니다. 본문은 공통 `document_versions`에서 참조하며 이미지 검증과 SQLite 백업·복구에 포함됩니다. 연간 업무 JSON/XLSX 반출 형식은 바꾸지 않습니다.
+`calendar_entries`는 개인 일정과 팀 공용 일정을 연간 업무와 별도로 저장합니다. `user_id`(API의 `userId`)는 개인 일정의 소유자이며 `NULL`이면 해당 팀의 공용 일정입니다. 공용 일정은 작성자의 탈퇴와 무관하게 팀에 남습니다. `GET /api/calendar`의 `scope=team`은 공용 일정만 반환하며 `userId`와 함께 지정할 수 없습니다. 기본값인 `scope=personal`은 활성 팀원의 개인 일정만 반환하고 `userId`로 한 사람을 선택할 수 있습니다. 공용 조회의 `weekly`는 빈 배열입니다. 생성 요청의 `userId: null`은 팀 공용 일정, 사용자 ID는 개인 일정을 뜻합니다. `date`는 시작일, `end_date`(API의 `endDate`)는 종료일이며 양 끝을 포함하는 `YYYY-MM-DD` 날짜입니다. 하루 일정은 두 날짜가 같습니다. 기간과 겹치는 일정만 조회하고, 월간·팀 주간 목록에는 본문 대신 제목과 짧은 미리보기, 본문 존재 여부 `hasDocument`를 반환합니다. `hasDocument`는 기존 문서 내용 판별 규칙을 따르며 서식 문자만 있는 빈 문서는 제외합니다. 본문은 공통 `document_versions`에서 참조하며 이미지 검증과 SQLite 백업·복구에 포함됩니다. 연간 업무 JSON/XLSX 반출 형식은 바꾸지 않습니다.
 
 `lane`은 0부터 시작하는 카드의 현재 행 위치입니다. 생성할 때 기간이 겹치지 않는 첫 행을 배정합니다. 기간 변경 시 겹치는 카드의 상대 순서를 유지하고, 이동·축소·삭제로 생긴 빈 공간은 카드의 날짜 구간 전체가 들어가는 위쪽 행으로 채웁니다. 명시적 순서 변경은 사이의 카드를 빈자리 쪽으로 이동하며 새 순서를 보존한 채 빈 행을 정리합니다. `PATCH /api/calendar/entries/:id`의 `{lane, expectedLane, expectedDate, expectedEndDate}`로 순서만 변경합니다. 기간·순서 저장과 일정 삭제 응답의 `placements: [{id,lane}]`는 같은 팀·소유자의 변경 전후 구간에 겹침으로 연결된 일정의 현재 위치 정보이며 재시도 복구와 화면 캐시 병합에 사용합니다. 무관한 기간의 일정은 조회·재배치·응답에서 제외합니다. 제목·본문을 다시 조회하지 않습니다. 충돌 시 서버 기간을 선택하는 조회는 `GET /api/calendar/entries/:id?placements=1&from=…&to=…`로 현재 위치도 함께 받아 주변 카드의 행을 동기화합니다. 선택적인 `from`·`to`는 화면이 알고 있던 이전 기간이며 현재 기간과 함께 배치 조회에 포함합니다. 개인 소유자를 지정한 조회와 공용 조회의 `layout: [{id,date,endDate,lane}]`에는 화면 밖 연결 일정과 드래그로 닿을 수 있는 기간의 좌표도 포함합니다. 조회 범위는 최대 62일이며 카드 길이와 실제 표시 범위를 기준으로 이동 가능한 좌표를 미리 조회합니다. 하루 일정은 조회 범위를 넓히지 않고, 긴 일정은 양 끝에서 최대 61일 이동할 수 있는 좌표를 포함합니다. 제목·본문은 포함하지 않습니다. 위치 저장·삭제·복구 응답의 `layout`도 같은 좌표 형식이며 기존 캐시에 병합합니다. 활성 일정의 소유자별 시작일·종료일 부분 인덱스로 연결 구간의 새로 확장된 날짜 띠만 조회합니다.
 
@@ -419,7 +427,7 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 ## 팀별 외부 사이트 계정과 승인
 
-내부 SQLite v32는 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Pages/gateway·R2·Supabase Edge/DB에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v2)는 기존 업무 형식을 유지하고 `graeboard_site`(site v2)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
+내부 SQLite v33은 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Pages/gateway·R2·Supabase Edge/DB에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v2)는 기존 업무 형식을 유지하고 `graeboard_site`(site v3)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
 
 `sync-directory/<사내 installation UUID>`의 `directory.json`은 `graeboard-team-directory` v1입니다. root는 `format/version/teamId/installationId/repoId/members`, 구성원은 `id/name/email/active/role`만 허용합니다. 최대 1,000명·512KiB이며 비밀번호·사내 세션·다른 팀 소속·전체 관리자 역할을 포함하지 않습니다. 사내 현재 멤버십만 추출하며 업무 이력의 과거 작성자는 표시 참조로만 남습니다. Google 신원과 승인 결과는 외부 DB에만 보관합니다.
 
@@ -427,7 +435,7 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 내부에서 발급한 팀장 연결 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
 
-신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마와 team v2 인덱스를 순차 적용할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
+신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마와 team v2 인덱스를 순차 적용할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션·접속 토큰을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
 
 팀장 연결 키는 SQLite v31에 추가된 `external_setup_keys`와 site v2의 `setup_link_keys`/`setup_key_state`에 저장합니다. 256비트 난수 원문은 발급 응답에만 포함하고 SHA-256 해시·팀/사용자 UUID·발급/만료/폐기 시각만 `sync-setup/<내부 설치 UUID>/keys.json`으로 게시합니다. 키는 24시간 유효하며 발급한 현재 활성 팀장에게만 사용됩니다. 계정 연결 전에 구성원과 키의 최신 Git head를 강제로 확인하고, 검증·소비·Google 연결·세션 생성은 같은 트랜잭션에서 완료합니다. 기존 `SETUP_TOKEN`은 팀 사이트 인증에 사용하지 않습니다.
 

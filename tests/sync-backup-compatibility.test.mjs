@@ -38,7 +38,7 @@ test("released team v1/site v1 backup sources remain supported while normal heal
     "DROP INDEX graeboard.sync_outbox_team_sequence; DELETE FROM graeboard.schema_migrations WHERE version=2",
   );
   await f.pool.query(
-    "DROP TABLE graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version=2",
+    "DROP TABLE graeboard_site.access_tokens,graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version>=2",
   );
   const control = new PostgresDatabase(f.pool, {
     scope: "control",

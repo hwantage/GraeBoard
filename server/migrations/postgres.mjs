@@ -43,6 +43,41 @@ export const teamMaintenanceMigration = (() => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 })();
+export const accessTokenMigrations = Object.fromEntries(
+  [
+    ["control", 2],
+    ["site", 3],
+  ].map(([scope, version]) => {
+    const sql = readFileSync(
+      new URL(
+        `./postgres/00${version}-${scope}-access-tokens.sql`,
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    return [
+      scope,
+      {
+        version,
+        sql,
+        checksum: createHash("sha256").update(sql).digest("hex"),
+      },
+    ];
+  }),
+);
+async function applyAccessTokens(client, scope) {
+  const migration = accessTokenMigrations[scope];
+  const schema = scope === "site" ? "graeboard_site" : "graeboard";
+  await client.query(`SET LOCAL search_path TO ${schema}, pg_catalog`);
+  await client.query(migration.sql);
+  await client.query("INSERT INTO schema_migrations VALUES($1,$2,$3,$4)", [
+    scope,
+    migration.version,
+    migration.checksum,
+    new Date().toISOString(),
+  ]);
+}
+
 async function applyTeamMaintenance(client, from) {
   if (from >= 2) return;
   await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
@@ -81,6 +116,7 @@ export async function inspectPostgres(client, scope) {
   return postgresHistoryVersion(rows, scope, {
     allowPreviousSite: true,
     allowPreviousTeam: true,
+    allowPreviousControl: true,
   });
 }
 
@@ -123,8 +159,9 @@ export async function migratePostgres(
         if (identity?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
       }
-      if (scope === "team" && from < 2) {
-        await applyTeamMaintenance(client, from);
+      if (from < 2) {
+        if (scope === "team") await applyTeamMaintenance(client, from);
+        else await applyAccessTokens(client, "control");
         await afterDdl?.(client);
         await client.query(dryRun ? "ROLLBACK" : "COMMIT");
         begun = false;
@@ -135,7 +172,10 @@ export async function migratePostgres(
           to: 2,
           applied: !dryRun,
           dryRun,
-          checksum: teamMaintenanceMigration.checksum,
+          checksum: (scope === "team"
+            ? teamMaintenanceMigration
+            : accessTokenMigrations.control
+          ).checksum,
         };
       }
       await client.query("ROLLBACK");
@@ -184,6 +224,7 @@ export async function migratePostgres(
       [scope, migration.version, migration.checksum, new Date().toISOString()],
     );
     if (scope === "team") await applyTeamMaintenance(client, 1);
+    else await applyAccessTokens(client, "control");
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     begun = false;
@@ -191,13 +232,13 @@ export async function migratePostgres(
       engine: "postgres",
       scope,
       from: 0,
-      to: scope === "team" ? 2 : migration.version,
+      to: 2,
       applied: !dryRun,
       dryRun,
       checksum:
         scope === "team"
           ? teamMaintenanceMigration.checksum
-          : migration.checksum,
+          : accessTokenMigrations.control.checksum,
     };
   } catch (error) {
     if (begun) await client.query("ROLLBACK").catch(() => {});
@@ -253,6 +294,10 @@ async function migrateSite(
           [siteKeyMigration.checksum, new Date().toISOString()],
         );
       }
+      if (from < 3) {
+        await applyAccessTokens(client, "site");
+        await afterDdl?.(client);
+      }
       if (teamVersion < 2) {
         await applyTeamMaintenance(client, teamVersion);
         await afterDdl?.(client);
@@ -262,8 +307,8 @@ async function migrateSite(
         engine: "postgres",
         scope: "site",
         from,
-        to: 2,
-        applied: (from < 2 || teamVersion < 2) && !dryRun,
+        to: 3,
+        applied: (from < 3 || teamVersion < 2) && !dryRun,
         dryRun,
         teamFrom: teamVersion,
         teamTo: 2,
@@ -316,6 +361,7 @@ async function migrateSite(
       siteKeyMigration.checksum,
       new Date().toISOString(),
     ]);
+    await applyAccessTokens(client, "site");
     await applyTeamMaintenance(client, teamVersion || 1);
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
@@ -323,7 +369,7 @@ async function migrateSite(
       engine: "postgres",
       scope: "site",
       from: 0,
-      to: 2,
+      to: 3,
       applied: !dryRun,
       dryRun,
       teamFrom: teamVersion,

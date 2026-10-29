@@ -1,4 +1,5 @@
 import { normalizeSearchQuery } from "../../shared/search.js";
+import { hasDocumentContent } from "../../shared/task-documents.js";
 import {
   CALENDAR_ROUTES,
   requireCalendarWrite,
@@ -67,6 +68,8 @@ export async function entryView(s, row) {
     lane: p.lane,
     title: p.title,
     preview: calendarPreview((!doc?.deleted && doc?.payload.markdown) || ""),
+    hasDocument:
+      !doc?.deleted && hasDocumentContent(doc?.payload.markdown || ""),
     revision: doc?.revision || 0,
     updatedAt: stamp(row),
     tagIds: (p.tags || []).map((t) => t.id),
