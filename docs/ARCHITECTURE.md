@@ -30,7 +30,7 @@ flowchart TB
         C["1분 Cron"]
         EB --> A --> P
         P -->|"Service binding"| W
-        W -->|"API · Access 검증 · SSE 전달"| E
+        W -->|"API · SSE 전달"| E
         E <--> D
         E -->|"자원용 Secret · /_resources/"| W
         W <--> R
@@ -47,7 +47,7 @@ flowchart TB
 | 팀 데이터 GitHub  | 업무 확정 이력, 이미지, 구성원·연결 키 해시·적용 상태 전달     | `server/sync/`, [브랜치 규약](SYNC_PROTOCOL.md#git-브랜치별-역할)                    |
 | Cloudflare Access | 외부 주소의 Google 로그인                                      | 팀 전용 Access 앱, `ACCESS_ISSUER`, `ACCESS_AUDIENCE`                                |
 | Pages Functions   | 모든 경로를 gateway로 전달                                     | `functions/[[path]].js`, `public/_routes.json`, `GRAEBOARD_BACKEND`                  |
-| gateway Worker    | Edge 호출, 인증 후 정적 파일 제공, R2/Images 접근, Cron 전달   | `worker/gateway.mjs`, `wrangler.gateway.jsonc`                                       |
+| gateway Worker    | Edge 호출, Access JWT 검증 후 정적 파일 제공, R2/Images 접근, Cron 전달   | `worker/gateway.mjs`, `wrangler.gateway.jsonc`                                       |
 | Supabase Edge     | Access JWT 검증, 앱 계정·팀 권한, 업무 API, Git 동기화, SSE    | `edge/main.mjs` → `edge/handler.mjs` → `worker/entry.mjs`, `GRAEBOARD_SITE=external` |
 | PostgreSQL        | 팀 업무와 외부 계정·승인·세션                                  | 팀별 프로젝트의 `graeboard`와 `graeboard_site` 스키마                                |
 | R2 / Images       | 외부 문서 이미지 저장·변환                                     | gateway의 `R2_TEAM`, `IMAGES` binding                                                |
@@ -112,7 +112,15 @@ sequenceDiagram
 - 프런트엔드는 `npm run build` 결과를 gateway Static Assets와 함께 배포합니다. Pages의 Git 자동 빌드만으로 gateway의 파일이 갱신되지 않습니다.
 - API와 앱 내 설치 안내는 `npm run build:edge` 후 Supabase 함수를 배포합니다. `docs/CLOUD_SETUP.md`는 함수에 포함되므로 문서 파일 수정만으로 실행 중 안내가 바뀌지 않습니다.
 - Pages Functions·Service binding 변경은 Pages 재배포가 필요합니다. 운영 주소는 선택한 Production branch를 사용합니다.
-- 이전 전체 Worker 이름의 Service binding은 `worker/forwarder.mjs`로 gateway에 전달할 수 있습니다. 이전 Worker의 DB·Git·Hyperdrive binding과 Cron은 제거합니다. 루트 `wrangler.jsonc`는 호환성 테스트용입니다.
-- Edge 전환은 DB 스키마 변경과 별개입니다. 현재 SQLite v31, PostgreSQL team v1/site v2, 외부 백업 v3를 유지합니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#12-정리중단복구)를 따릅니다.
+- 이전 전체 Worker 이름의 Service binding은 `worker/forwarder.mjs`로 gateway에 전달할 수 있습니다. 이전 Worker의 DB·Git·Hyperdrive binding과 Cron은 제거합니다. 전체 Worker 업무 실행용 설정·빌드·호환성 테스트는 제거했습니다.
+- Edge 전환은 DB 스키마 변경과 별개입니다. 현재 SQLite v32, PostgreSQL team v2/site v2, 외부 백업 v3를 유지합니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#12-정리중단복구)를 따릅니다.
 
 Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의 실행·요청 한도는 남습니다. 과거 workerd 성능 측정과 현재 Edge 실행 검증을 구분합니다. [실행 한도와 검증 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)
+
+## 리뷰 반영 구조
+
+내부 `createApp`은 SQLite 구성만 담당하고 HTTP 경계·로컬 인증·권한 조회를 `http-boundary.mjs`, `local-auth.mjs`, `sqlite-access.mjs`로 나눕니다. 공통 HTTP 라우트 표는 `shared/business-routes.js`, 외부 PostgreSQL 구현은 `worker/storage/`에 둡니다. 외부가 내부 Node 호스트를 역참조하지 않도록 import 방향을 검사합니다. 워크북 parser는 `shared/workbook.mjs`에서 직접 공유하며 빌드 중 소스 문자열을 잘라 생성하지 않습니다.
+
+Node 동기화는 팀별 큐를 두 실행 슬롯에 배치합니다. 진행 단계마다 5분 무진행 제한을 갱신하고 실제 진행에 맞춰 소유 lease를 연장합니다. 시간 초과 요청의 I/O를 취소한 뒤 해당 worker만 종료하며 다른 슬롯·대기 요청은 유지합니다. C 캐시는 팀·저장소·설치·발신 세대·head·hash·복구 세대에 묶고 commit 성공 뒤 공개합니다. C/P 원자 commit과 snapshot guard는 `node-mutations.mjs`에서 유지합니다. 상태·연결 라우트, SSE 알림, 오류 기록은 각각 독립 모듈입니다.
+
+원격 task의 서식·순서 변경은 셀 SSE에 메타데이터를 싣습니다. 생성·삭제·복원·연도 변경이나 retention 변경은 범위 snapshot을 다시 요청합니다. 빈 canonical 변경은 알림을 보내지 않습니다. retention 활성 조회도 팀 단위 메타데이터와 revision을 사용해 캐시합니다.

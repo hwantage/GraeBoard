@@ -6,21 +6,21 @@
 
 표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 30입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 32입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
 
 ## 버전과 운영 호환성
 
 | 구분               | 현재 저장소 기준             | 확인 위치와 의미                                                  |
 | ------------------ | ---------------------------- | ----------------------------------------------------------------- |
-| SQLite DB 형식     | v31                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
-| JSON 반출 형식     | v6                           | `server/transfer.mjs`의 `schemaVersion`; DB 버전과 별개           |
-| DB 백업 복구       | v29·v30·v31 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
-| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
-| 외부 PostgreSQL | 팀별 site v2 + team v1, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control/team v1 호환 |
+| SQLite DB 형식     | v32                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
+| JSON 반출 형식     | v6                           | `shared/workbook.mjs`의 `schemaVersion`; DB 버전과 별개           |
+| DB 백업 복구       | v29·v30·v31·v32 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
+| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
+| 외부 PostgreSQL | 팀별 site v2 + team v2, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v1/team v2 지원, team v1은 명시 변환 |
 
-실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v31 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
+실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v32 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
-백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션을 지우고, v31 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29 복구본은 원본을 보존한 뒤 명시적 v31 migration을 수행합니다.
+백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션을 지우고, v30 이상 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29·v30·v31 복구본은 원본을 보존한 뒤 명시적 v32 migration을 수행합니다.
 
 스키마·영속 데이터 형식·해석 규칙·백업 호환성을 변경할 때는 [DB 변경 지침](DATABASE_CHANGES.md)을 반드시 따릅니다.
 
@@ -409,7 +409,7 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 ## 내부·외부 동기화 저장
 
-`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 최대 128MiB 해제/64MiB 전송 크기를 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
+`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 24MiB를 검사합니다. 이벤트 파일은 4MiB, 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
 SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
 
@@ -417,7 +417,7 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 ## 팀별 외부 사이트 계정과 승인
 
-내부 SQLite v31은 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Pages/gateway·R2·Supabase Edge/DB에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v1)는 기존 업무 형식을 유지하고 `graeboard_site`(site v2)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
+내부 SQLite v32는 모든 팀을 유지합니다. 선택한 팀만 자기 Git·Pages/gateway·R2·Supabase Edge/DB에 연결하며 외부 `PG_SITE`는 한 팀 UUID에 고정됩니다. PostgreSQL 한 프로젝트의 `graeboard`(team v2)는 기존 업무 형식을 유지하고 `graeboard_site`(site v2)에 `site_meta`, `users`, `memberships`, `access_identities`, `access_requests`, `access_sessions`와 기존 관리 테이블을 둡니다. site `teams.id`는 `site_meta.team_id` 외래키로 다른 팀을 거절합니다.
 
 `sync-directory/<사내 installation UUID>`의 `directory.json`은 `graeboard-team-directory` v1입니다. root는 `format/version/teamId/installationId/repoId/members`, 구성원은 `id/name/email/active/role`만 허용합니다. 최대 1,000명·512KiB이며 비밀번호·사내 세션·다른 팀 소속·전체 관리자 역할을 포함하지 않습니다. 사내 현재 멤버십만 추출하며 업무 이력의 과거 작성자는 표시 참조로만 남습니다. Google 신원과 승인 결과는 외부 DB에만 보관합니다.
 
@@ -425,9 +425,14 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 내부에서 발급한 팀장 연결 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
 
-신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마만 추가할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
+신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마와 team v2 인덱스를 순차 적용할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
 
+팀장 연결 키는 SQLite v31에 추가된 `external_setup_keys`와 site v2의 `setup_link_keys`/`setup_key_state`에 저장합니다. 256비트 난수 원문은 발급 응답에만 포함하고 SHA-256 해시·팀/사용자 UUID·발급/만료/폐기 시각만 `sync-setup/<내부 설치 UUID>/keys.json`으로 게시합니다. 키는 24시간 유효하며 발급한 현재 활성 팀장에게만 사용됩니다. 계정 연결 전에 구성원과 키의 최신 Git head를 강제로 확인하고, 검증·소비·Google 연결·세션 생성은 같은 트랜잭션에서 완료합니다. 기존 `SETUP_TOKEN`은 팀 사이트 인증에 사용하지 않습니다.
 
-팀장 연결 키는 SQLite v31의 `external_setup_keys`와 site v2의 `setup_link_keys`/`setup_key_state`에 저장합니다. 256비트 난수 원문은 발급 응답에만 포함하고 SHA-256 해시·팀/사용자 UUID·발급/만료/폐기 시각만 `sync-setup/<내부 설치 UUID>/keys.json`으로 게시합니다. 키는 24시간 유효하며 발급한 현재 활성 팀장에게만 사용됩니다. 계정 연결 전에 구성원과 키의 최신 Git head를 강제로 확인하고, 검증·소비·Google 연결·세션 생성은 같은 트랜잭션에서 완료합니다. 기존 `SETUP_TOKEN`은 팀 사이트 인증에 사용하지 않습니다.
+`sync-setup-status/<외부 설치 UUID>/status.json`은 원본 head, 불투명 키 ID, 반영/사용 시각만 내부로 돌려보냅니다. Google 신원은 포함하지 않으며 해당 키/게시 head와 일치할 때만 화면에 반영합니다. 재발급·폐기는 Git 전송 이후 외부에 적용됩니다. 사용 완료·폐기 상태는 오래된 키 재수신으로 초기화하지 않습니다. site 백업 v3은 이 상태를 포함하며 v1/v2 백업도 기존 형식으로 읽습니다. 복구 시 미사용 키를 폐기하고 새 키를 발급합니다. SQLite v29/v30/v31 백업은 원래 버전으로 복구한 뒤 명시적으로 v32로 올립니다.
 
-`sync-setup-status/<외부 설치 UUID>/status.json`은 원본 head, 불투명 키 ID, 반영/사용 시각만 내부로 돌려보냅니다. Google 신원은 포함하지 않으며 해당 키/게시 head와 일치할 때만 화면에 반영합니다. 재발급·폐기는 Git 전송 이후 외부에 적용됩니다. 사용 완료·폐기 상태는 오래된 키 재수신으로 초기화하지 않습니다. site 백업 v3은 이 상태를 포함하며 v1/v2 백업도 기존 형식으로 읽습니다. 복구 시 미사용 키를 폐기하고 새 키를 발급합니다. SQLite v29/v30 백업은 원래 버전으로 복구한 뒤 명시적으로 v31로 올립니다.
+### 동기화 v2와 용량
+
+기존 v1의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 v1 백업과 v2 snapshot을 포함하며, v2 C에는 `protocol`/`[]`의 `{version:2,reducer:2}` 표식이 있습니다. v2 사본은 report 메타데이터, `reportTask(reportId,taskId)`의 행 데이터, `reportCell(reportId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 논리 이관·외부 백업 v3의 포맷과 해시 규칙은 바뀌지 않습니다.
+
+receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending 예산은 4MiB이며 공유 엔티티 상한은 12,000개입니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.

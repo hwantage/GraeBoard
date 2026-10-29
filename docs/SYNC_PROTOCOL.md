@@ -1,4 +1,4 @@
-# 팀 Git 동기화 규약 v1
+# 팀 Git 동기화 규약 v1·v2
 
 [설치 안내](CLOUD_SETUP.md) · [데이터 형식](DATA_FORMAT.md) · [개발 안내](DEVELOPMENT.md)
 
@@ -16,13 +16,13 @@
 
 업무 저장과 outbox는 같은 트랜잭션에 기록합니다. 수신 적용에서는 C·receipt·해당 op의 ACK·남은 P의 재투영·cursor를 함께 커밋합니다. GitHub 응답만 보고 outbox를 삭제하지 않습니다. 정리 때문에 V에서 사라진 항목을 공유 삭제로 해석하지 않으며, 일반 저장의 의도는 U를 기준으로 적용합니다.
 
-내부 SQLite는 동기 트랜잭션을 사용합니다. PostgreSQL은 동일 client에서 `BEGIN`부터 모든 쿼리를 await한 뒤 commit/rollback합니다. DB 트랜잭션을 연 채 GitHub·R2 HTTP 응답을 기다리지 않습니다. 자세한 구현은 `server/storage/`와 `server/sync/`에 있습니다.
+내부 SQLite는 동기 트랜잭션을 사용합니다. PostgreSQL은 동일 client에서 `BEGIN`부터 모든 쿼리를 await한 뒤 commit/rollback합니다. DB 트랜잭션을 연 채 GitHub·R2 HTTP 응답을 기다리지 않습니다. 내부 호스트는 `server/`, 외부 저장소는 `worker/storage/`, 순수 상태 계약은 `shared/`와 `server/sync/`에 있습니다.
 
 ## 식별자와 명령
 
 `repoId`와 `teamId`는 저장소 신원입니다. `bootstrapId`는 초기 엔티티 토큰을 고정하고, DB 밖 `installationId`는 설치를 구분합니다. `writerEpoch`는 새 발신 세대이며 복구된 이전 명령의 ID나 payload를 다시 작성하지 않습니다. `localSeq`는 로컬 outbox 순서이며 전역 식별자가 아닙니다.
 
-명령은 `protocol:1`, `reducer:1`, `repoId`, `teamId`, `opId`, `writerEpoch`, `actorRef`, `createdAt`, `dependsOn`, `changes`, `objects`를 포함합니다. 변경의 key는 문자열 배열입니다. `generation`, `baseVersion`, `action`, `base`, `desired`, `fields`로 어떤 세대·필드에 대한 변경인지 명시합니다. 생성·편집·삭제·복원을 구분합니다.
+v1 명령은 `protocol:1`, `reducer:1`, `repoId`, `teamId`, `opId`, `writerEpoch`, `actorRef`, `createdAt`, `dependsOn`, `changes`, `objects`를 포함합니다. 변경의 key는 문자열 배열입니다. `generation`, `baseVersion`, `action`, `base`, `desired`, `fields`로 어떤 세대·필드에 대한 변경인지 명시합니다. 생성·편집·삭제·복원을 구분합니다.
 
 `opId` 하나는 영구히 하나의 payload를 가리킵니다. 같은 ID·같은 해시는 최초 receipt를 반환하며 같은 ID·다른 payload는 오류입니다. 제출 시각은 표시용이며 충돌 승패를 결정하지 않습니다. JSON은 객체 키를 정렬하고 배열 순서를 유지하며 유한·안전 범위 숫자와 UTF-8을 사용합니다. null·필드 없음·빈 문자열·빈 배열을 구분합니다.
 
@@ -50,7 +50,7 @@ receipt에는 `opId`, `payloadHash`, `result`, `conflictId`, `outputTokens`를 �
 
 ## 결정적 병합과 충돌
 
-현재 공유값이 base와 같으면 desired를 적용합니다. desired가 base 또는 current와 같으면 이미 있는 내용을 유지합니다. 독립 필드는 병합하고, 같은 필드 그룹이 서로 다르게 바뀌면 먼저 확정된 공유값을 유지합니다. 일정 기간·배치, 순서 있는 태그 목록, 팀 속성 정의, 사본 표처럼 함께 유효해야 하는 묶음을 임의 leaf로 나누지 않습니다.
+현재 공유값이 base와 같으면 desired를 적용합니다. desired가 base 또는 current와 같으면 이미 있는 내용을 유지합니다. 독립 필드는 병합하고, 같은 필드 그룹이 서로 다르게 바뀌면 먼저 확정된 공유값을 유지합니다. 일정 기간·배치, 순서 있는 태그 목록, 팀 속성 정의, v1 사본 표처럼 함께 유효해야 하는 묶음을 임의 leaf로 나누지 않습니다.
 
 Markdown은 같은 삽입점의 다른 삽입과 겹치는 변경을 충돌로 보관합니다. 비겹침 변경만 병합하며 계산량 상한을 사용합니다. 실행 환경의 벽시계 속도에 따라 결과가 달라지는 timeout 판정을 사용하지 않습니다.
 
@@ -84,7 +84,7 @@ checkpoint는 정확한 canonical head의 C와 receipts·충돌·객체를 보�
 
 문서 이미지는 팀 UUID·SHA-256 경로의 WebP입니다. 내부 파일 폴더와 외부 R2에 제공하고 Git을 통해 교환합니다. 수신한 바이트는 해시를 검증하며 다시 인코딩하지 않습니다. 다른 팀 이미지와 계정 아바타는 전달하지 않습니다. 이미지 의존성은 문서 Markdown의 실제 이미지 문법(참조형 이미지 포함)에서 추출합니다. 셀 값·제목·태그·필터의 일반 문자열에 이미지처럼 보이는 주소가 있어도 공유할 수 있으며, 기존 미전송 명령의 ID·내용·의존성을 다시 쓰지 않습니다. 실제 문서 이미지의 다른 팀 주소는 저장 트랜잭션 전체를 거절합니다.
 
-Node의 일반 문서 저장은 앱 소유의 별도 parser Worker에서 현재 본문과 새 본문의 이미지 구문을 준비합니다. Git 작업과 큐를 공유하지 않으며, 작업 수·입력 크기·대기 시간을 제한합니다. 준비 후 세션·소속·권한과 현재 본문/revision을 다시 확인하고, 정확히 일치하는 두 본문의 추출 결과만 짧은 동기 쓰기 트랜잭션 동안 고정합니다. 팀 이미지 권한·파일 존재와 capture의 operation 검증은 그대로 실행합니다. Worker 오류·시간 초과·과부하 또는 준비 중 본문 변경은 본문·감사·P를 함께 보존하고 재시도할 수 있으며 메인 스레드에서 재파싱하지 않습니다. 원격 operation·base·checkpoint의 검증은 이 로컬 준비 경계를 사용하지 않습니다.
+Node의 일반 문서 저장은 앱 소유의 별도 parser Worker에서 현재 본문과 새 본문의 이미지 구문을 준비합니다. Git 작업과 큐를 공유하지 않으며, 작업 수·입력 크기·대기 시간을 제한합니다. 준비 후 세션·소속·권한과 현재 본문/revision을 다시 확인하고, 정확히 일치하는 두 본문의 추출 결과만 짧은 동기 쓰기 트랜잭션 동안 고정합니다. 팀 이미지 권한·파일 존재와 capture의 operation 검증은 그대로 실행합니다. Worker 오류·시간 초과·과부하에서는 해당 작업만 동기 parser로 보완합니다. 다른 대기 작업을 일괄 취소하지 않습니다. 준비 중 본문이 바뀌면 revision 검증으로 거절하며 본문·감사·P를 함께 보존합니다. 원격 operation·base·checkpoint의 검증은 이 로컬 준비 경계를 사용하지 않습니다.
 
 공통 파서의 최근 추출 캐시는 프로세스별 최대 8개와 문자열·URL 계산량 2MiB로 제한됩니다(AST나 권한 성공을 저장하지 않음). 30초 만료는 다음 조회·삽입 때 정리하는 논리적 만료이며, 유휴 30초 뒤 문자열을 즉시 지우는 타이머는 아닙니다. 저장 명령의 고정 결과는 커밋 성공·실패 때 해제하며 최근 캐시의 만료·다른 문서에 의한 퇴출과 독립적입니다.
 
@@ -104,12 +104,90 @@ SQLite 정리의 감사 이력 조회는 쓰기 트랜잭션 밖에서 100행씩
 
 성능은 같은 장비·합성 데이터·동시 세션에서 미연결과 활성 상태를 비교합니다. 초기 목표는 내부 저장 p95 증가 10% 이내와 commit 후 다른 화면 반영 p95 1초 이내입니다. Git/R2/외부 DB 장애 및 대량 수신·백업 중 결과도 따로 기록하며 과거 측정 수치를 현재 릴리스 결과로 재사용하지 않습니다.
 
+`npm run performance:sync`는 기존 대량 처리 측정과 C11 보강 시나리오를 함께 실행합니다. C11만 다시 측정할 때는 `SYNC_PERF_REVIEW_ONLY=1 SYNC_PERF_OUTPUT=docs/validation/sync-review-performance.json npm run performance:sync`를 사용합니다. 코드 변경·다른 성능 검사·브라우저 빌드를 멈춘 상태에서 실행하며, 원시 시간·장비·소스/측정기 해시와 통과 여부를 JSON에 남깁니다.
+
+C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 2,000셀 배치, 연결 DB의 미연결 팀, 사용자 1,000명, 연결 사본 생성·셀 편집, retention 활성 조회, acknowledged outbox 50,000행 상태 폴링, 원격 업무 메타데이터 수신 시 30개 HTTP SSE 클라이언트와 30개 실제 Chromium 앱의 재조회 수를 검사합니다. 사본은 실제 두 사이트의 v1→v2 전환을 거쳐 업무 1,000개·문서 100개를 유지합니다. C11 데이터는 업무당 기본 속성 3셀과 배치로 추가되는 일정 1셀이고, 기존 대량 측정의 업무 10,000개·60주·30% 채움 설정은 그대로입니다. 사본 셀 편집 목표는 모든 측정 요청 100ms 미만입니다. 실제 브라우저 검사는 유휴 저장 측정이 끝난 뒤 실행합니다. 초기 로딩 후 페이지 시계를 멈추고 7초 주기보다 짧게 진행하여 정기 polling과 구분되는 SSE 유발 재조회 수와 화면의 업무 순서를 확인합니다. 별도로 256KiB 문서의 v2 병합 경계에서 Node CPU 시간을 측정하며 실제 Edge 실행 시간으로 해석하지 않습니다.
+
+### 2026-10-29 C11 최초 완료 측정 — 추가 최적화 전
+
+다른 빌드·테스트를 중지한 Apple M4 Pro(14코어, 48GB), Node.js 22.23.1에서 측정했습니다. 자료는 업무 1,000개·문서 100개·등록 사용자 1,000명이며 동시 HTTP 세션은 30개입니다. 유휴 비교는 같은 자료 규모와 API 준비 순서를 가진 두 SQLite DB에서 순서를 교차한 3쌍의 요청을 합쳤습니다. 원시 표본은 로컬 `docs/validation/sync-review-performance-before-optimization.json`에 보존했습니다. 이 결과의 `sourceTreeSha256`은 `c0ef7a065fd13b09e6406a1a683b69a5f11cac5c3910350df84ae00f6d061eb8`입니다.
+
+| 시나리오 | 최초 완료 결과 | 판정·범위 |
+| --- | --- | --- |
+| 연결 유휴 저장 | 각 900회 p95: 미연결 27.450ms → 연결 36.545ms, +33.132% | 증가 10% 이내 목표 미달 |
+| 2,000셀 배치 | 각 5회 p95: 미연결 98.639ms → 연결 138.798ms | 실제 HTTP 저장·응답 파싱 포함 |
+| 연결 DB의 미연결 팀 | 각 900회 저장 p95: 연결 전 30.570ms → 연결 후 28.881ms | 해당 팀의 캡처 명령 0개 |
+| 사용자 1,000명 | 위 유휴·배치·미연결 팀 측정에 같은 사용자 집합 사용 | 동시 사용자 1,000명 시험은 아님 |
+| 연결 사본 생성 | 1,000업무·100문서, 3회 p95 127.272ms | 두 사이트의 실제 v1→v2 전환 후 생성 |
+| 연결 사본 셀 편집 | 30회 p50 69.024ms, p95 89.750ms, 최대 114.288ms | 모든 요청 100ms 미만 목표 미달 |
+| retention 활성 조회 | 각 30회 p95: 기본 4.850ms → 활성 4.844ms | 활성 조회 최대 18.095ms, 보존 연도의 1,000행 유지 |
+| acknowledged outbox 상태 조회 | 2KiB payload 50,000행 추가 전후 각 30회 p95: 3.996ms → 32.966ms | 누적 이력에 따른 비용 증가 관찰 |
+| 원격 업무 메타데이터 | HTTP SSE 30/30 전달 578.762ms, 실제 Chromium 30/30 화면 반영 698.046ms | 각각 snapshot 재조회 0회, 브라우저 오류 0건 |
+
+마지막 행의 시간은 Git 수신 시작부터 전달·화면 반영까지입니다. 실제 Chromium 156.0.8078.4의 독립 context 30개가 앱과 기존 event broker를 사용했습니다. 초기 GET 완료와 최신 cells SSE ready를 모두 확인한 뒤 페이지 시계를 제어하여 정기 polling과 변경 때문에 발생한 재조회를 구분했습니다. 이 시간은 자연스러운 사용자 조작·브라우저 화면 표시의 일반적인 지연 보장이 아닙니다.
+
+같은 실행의 A6 측정은 256KiB Markdown, 조건별 준비 3회와 측정 10회입니다. 양쪽 1,000자 치환은 병합됐고 Node 프로세스 CPU p50/p95는 231.935/239.224ms, 경과 시간 p95는 237.061ms였습니다. 양쪽 1,001자 치환은 원문을 보존한 충돌이 됐고 CPU p50/p95는 229.421/306.454ms, 경과 시간 p95는 241.492ms였습니다. 실제 Supabase Edge의 CPU·메모리·네트워크 성능은 측정하지 않았습니다.
+
+첫 실행 시도는 성능 판정 전에 v2 전환 준비에서 미전송 명령이 남아 409로 중단됐습니다. 측정기가 운영의 주기별 처리 상한을 유지하면서 명령 수 감소와 목표 head 도달을 확인하도록 준비 절차를 고친 뒤 위 결과를 얻었습니다. 위 두 목표 미달 결과는 보존하며, 추가 코드 최적화 후 결과와 구분합니다.
+
+### 추가 최적화 1차 후 동일 조건 측정
+
+사본 v2의 변경 레코드 직접 조회, receipt 조회의 pending 부분 인덱스 지정, 같은 트랜잭션의 셀 before 값 재사용을 반영한 뒤 같은 측정기·자료·표본·판정 기준으로 다시 실행했습니다. 원시 파일은 `docs/validation/sync-review-performance-after-optimization-1.json`, 소스 해시는 `14baf7c5bf8c2807dcbdf857698a577807f287982da6c206d8a076d1ab64e5d2`입니다.
+
+| 항목 | 추가 최적화 1차 후 결과 |
+| --- | --- |
+| 유휴 저장 p95 | 미연결 29.937ms → 연결 46.880ms, +56.596%로 목표 미달 |
+| 사본 편집 | p95 71.152ms, 최대 102.139ms로 모든 요청 100ms 미만 목표 미달 |
+| 2,000셀 배치 p95 | 미연결 89.832ms → 연결 130.330ms |
+| 미연결 팀 저장 p95 | 연결 전 31.170ms → 연결 후 36.871ms, 캡처 명령 0개 |
+| 사본 생성·retention 조회 p95 | 생성 127.894ms, retention 활성 조회 4.642ms |
+| 5만 acknowledged 상태 조회 p95 | 1.854ms → 1.873ms |
+| 원격 메타데이터 | HTTP SSE 30/30 전달 607.050ms, 실제 Chromium 30/30 화면 반영 630.609ms, 추가 snapshot 조회 각각 0회 |
+| A6 Node CPU p95 | 1,000자 치환 병합 230.200ms, 1,001자 치환 충돌 309.027ms |
+
+연결 유휴 비교의 두 번째 구간은 event-loop p95 77.726ms와 저장 p95 76.127ms를 기록했습니다. 이 구간을 표본에서 빼거나 통과 값만 선택하지 않았습니다. 두 성능 목표는 아직 충족하지 않았으며 상태 조회 개선과 구분해 기록합니다. 실제 Edge 실행 성능은 계속 미측정입니다.
+
+### 추가 최적화 2차 후 동일 조건 측정
+
+명령 검증 때 만든 canonical 문자열을 outbox 저장에서 재사용하고, 사본 편집의 같은 BLOB 디코드를 트랜잭션 안에서 공유한 뒤 다시 측정했습니다. 원시 파일은 `docs/validation/sync-review-performance-after-optimization-2.json`, 소스 해시는 `9a43e06eaef12734e78d89c8b85bf4421216eca07f67220adea2c9bd723602c2`입니다. 측정기·자료·표본 수·판정 기준은 앞선 유효 실행과 같습니다.
+
+| 항목 | 추가 최적화 2차 후 결과 |
+| --- | --- |
+| 유휴 저장 p95 | 미연결 25.7785ms → 연결 34.2004ms, +32.6703%로 목표 미달 |
+| 사본 편집 | p95 65.192ms, 최대 97.460ms로 모든 요청 100ms 미만 목표 통과 |
+| 2,000셀 배치 p95 | 미연결 94.843ms → 연결 120.212ms |
+| 미연결 팀 저장 p95 | 연결 전 29.975ms → 연결 후 26.481ms, 캡처 명령 0개 |
+| 사본 생성·retention 조회 p95 | 생성 119.173ms, retention 활성 조회 5.159ms |
+| 5만 acknowledged 상태 조회 p95 | 2.193ms → 1.613ms |
+| 원격 메타데이터 | HTTP SSE 30/30 전달 587.289ms, 실제 Chromium 30/30 화면 반영 736.060ms, 추가 snapshot 조회 각각 0회 |
+| A6 Node CPU p95 | 1,000자 치환 병합 236.942ms, 1,001자 치환 충돌 313.739ms |
+
+이 세 번째 유효 실행을 최종 측정으로 기록합니다. 사본 편집 목표와 재조회 검사는 통과했지만 연결 유휴 저장의 10% 목표를 충족하지 못해 C11은 보류합니다. 입증된 추가 개선 없이 앞선 측정값과 실패 구간을 삭제하거나 판정 기준을 완화하지 않았습니다.
+
 ## PostgreSQL 업무 저장소와 외부 실행 자원 경계
 
-프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 Node와 Edge 모두 같은 `RequestContext.data`·`capacityLimits(env)`를 통해 상태·pending 4 MiB 및 공유 엔티티 12,000개 상한을 적용합니다. 두 호스트의 쓰기는 DB 크기와 commit 전 상태를 검사합니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 Node PG나 Edge의 지원 규모를 뜻하지 않습니다.
+프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 외부 Edge의 `RequestContext.data`·`capacityLimits(env)`를 통해 업무·충돌·pending 4MiB 및 공유 엔티티 12,000개 상한을 적용합니다. receipt는 16MiB 별도 예산(12MiB 경고)이며 과거 초과 상태의 조회·반출은 막지 않고 새 저장·게시는 사전에 거절합니다. 내부도 같은 receipt 예산과 명령 상한을 적용하지만 외부 업무 용량 한도는 적용하지 않습니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다.
 
-`tests/worker-capacity.test.mjs`는 실제 workerd의 bootstrap과 후속 reducer를 측정하며, `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL Worker API가 같은 bare Git에 CLI와 GitHub Data API로 참여하도록 검증합니다. 전자는 Cloudflare workerd 호환 경로와 크기 제한을, 후자는 엔진 간 자료·이미지·경합·복구를 검증합니다. 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
+`tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL 외부 API가 같은 bare Git에 CLI와 GitHub Data API로 참여하여 엔진 간 자료·이미지·경합·복구를 검증합니다. 이전 전체 Worker의 workerd 전용 용량 검사는 제거했으며 Cloudflare 전달·자원 경계는 `tests/edge-gateway.test.mjs`로 검사합니다. 이 검사들은 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
 
 ## 팀 구성원 단방향 브랜치
 
 계정 권한은 업무 C/P/L에 포함하지 않습니다. 신규 팀 사이트는 `sync-directory/<internalInstallationId>`의 `directory.json` v1로 해당 팀의 `id/name/email/active/role`만 내부에서 게시합니다. 최대 1,000명·512KiB, 팀·저장소·설치 UUID와 허용 필드를 검증하고 CAS로 게시합니다. 외부는 직전 head의 후속 이력만 반영합니다. 계정 승인·Google 신원·선택 세션은 외부에만 저장하며 업무 reducer가 변경할 수 없습니다. 철회는 다음 성공한 구성원 수신 시 적용합니다. [계정 형식](DATA_FORMAT.md#팀별-외부-사이트-계정과-승인)을 참고합니다.
+
+## 버전 전환과 저장 경계
+
+기존 `sync-v1` 브랜치·v1 manifest·명령의 canonical 필드와 해시는 유지합니다. 양쪽에 v2 reader를 설치한 뒤 정확한 v1 head/hash·양쪽 일시정지·미전송과 미해결 충돌이 0인 조건에서만 명시 전환합니다. 전환 이벤트는 검증된 v1 백업 snapshot과 결정적으로 분해한 v2 snapshot을 함께 보존합니다. v2에는 `protocol`/`[]` 표식 `{version:2,reducer:2}`와 `reportTask`·`reportCell`이 추가됩니다. 기존 사본의 모든 행·셀·서식·순서·문서 참조를 보존하고 앱 응답에서는 다시 기존 사본으로 조합합니다. 같은 원본 task ID를 사용해도 사본 ID를 키에 포함하므로 원본 셀과 섞이지 않습니다.
+
+v2 사본의 부모 `report`에는 행 배열을 넣지 않습니다. `reportTask` 키는 `[reportId, taskId]`이고 `{data, index}`에 셀을 제외한 행 정보와 순서를 보관합니다. `reportCell` 키는 `[reportId, taskId, cellKey]`이고 `{data}`에 값·서식·로컬 셀 버전을 보관합니다. 서로 다른 셀 변경은 독립적으로 병합합니다. 행의 `data`는 필드별 3-way 병합을 하고, 두 셀 편집이 함께 바꾸는 `updatedAt`만 두 문자열 중 코드포인트 비교로 큰 값을 선택합니다. 실제 실행 시각이나 locale에 따른 정렬은 사용하지 않습니다. 같은 셀의 다른 변경과 같은 행 메타데이터 필드의 다른 변경은 기존 제출 원문을 충돌로 보관합니다.
+
+삭제된 사본·행의 내용을 조합할 때는 부모와 같은 삭제 명령에서 생긴 자식 tombstone만 포함합니다. 따라서 먼저 삭제한 행·셀은 나중에 사본 전체를 삭제하고 복원해도 다시 나타나지 않습니다. v1에서 이미 삭제된 사본을 전환할 때는 해당 사본에 보존된 본문만 같은 삭제 그룹으로 옮깁니다. 명시 복원은 새 세대를 사용하며 과거 삭제 세대의 지연 편집을 적용하지 않습니다.
+
+앱 응답과 논리 이동의 `site_entities`는 기존 `report.data.tasks` 형식으로 조합합니다. 공유 기준본의 `sync_entities`·receipt·충돌·P는 v2 형식을 그대로 보존합니다. 논리 이동과 백업 v3 복원은 프로토콜을 다시 v1으로 바꾸지 않으며, 복구·재연결·충돌 해결이 만드는 새 명령도 현재 marker의 버전을 사용합니다.
+
+전환 실행권은 기존 lease의 `upgrade:` 소유자로 구분합니다. 이 lease가 유효한 동안 해당 팀의 새 업무 저장은 HTTP 409로 거절하고 입력을 보존합니다. 일반 활성 동기화의 lease는 이 제한을 적용하지 않습니다. 게시 직전과 최종 DB 커밋에서도 기준 head/hash·P/held·미해결 충돌·작업 경계를 확인하며, 전환 수신 후에도 양쪽은 일시정지 상태를 유지합니다.
+
+v1 이력은 기존 차이 탐색 상한 20,000을, v2는 상한 2,000을 사용합니다. 기기 시간으로 병합 여부를 결정하지 않으며 상한을 넘은 base/current/desired를 모두 충돌에 보존합니다. 이전 reader는 v2 전환 이벤트와 v2 checkpoint 모두에서 cursor를 전진시키지 않습니다. 전환 명령과 양쪽이 일시정지한 상태의 수신 절차는 [운영 안내](OPERATIONS.md#동기화-v2-명시-전환)에 있습니다.
+
+이벤트 파일은 4MiB 이내입니다. 명령 하나는 봉투 여유 1KiB와 구분자 1바이트를 제외한 크기 이내인지 저장 시점에 검증합니다. 큰 묶음은 여러 이벤트로 나눠 게시하고, 단일 명령이 상한을 넘으면 업무·감사·outbox를 모두 롤백하고 400으로 거절합니다. snapshot은 압축·해제 각각 24MiB 상한과 해제 후 업무·receipt별 예산을 검사합니다. receipt 원문은 checkpoint 후에도 보존하고 stateHash에 계속 포함하므로 전체 해시 계산은 누적 이력에 비례합니다.
+
+상태 조회는 마지막 local_seq 행과 일반 인덱스를 사용합니다. 오래된 acknowledged outbox와 SSE 이벤트 정리는 기본으로 자동 실행하지 않으며 최신 행·pending/held·미해결 충돌·의존성·불일치 hash를 보호합니다. receipt·tombstone·sync_objects·Git 이력은 삭제하지 않습니다. 이전 SSE 커서는 최신 snapshot으로 복구합니다.

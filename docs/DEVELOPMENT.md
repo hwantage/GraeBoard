@@ -91,7 +91,7 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 로그인 세션은 기존 `sessions.expires_at`와 HTTP-only·SameSite=Strict 쿠키를 이용해 30일 유지합니다. 유효한 인증 요청에서 하루에 한 번만 갱신하여 매 요청의 DB 쓰기와 Set-Cookie를 피합니다. 로그아웃·비밀번호 변경은 자체 삭제·재발급 경로를 사용하며 만료·비활성 계정은 갱신하지 않습니다. DB 버전·형식은 변경하지 않습니다.
 
-로그인 후 `/api/bootstrap`에서 소속 팀·사용자를 읽고 사용자·팀·기준 연도별 보기를 복원한 다음, `startMonth`부터 12개월에 해당하는 업무를 조회합니다. `getTasks`는 한 연도 또는 인접한 두 연도를 받아 SQL의 EXISTS 조건으로 중복 없이 업무를 읽습니다. 화면의 기준 연도는 업무 추가·삽입의 등록 연도입니다. 업무 응답은 ETag로 조건부 조회합니다. 팀·연도가 바뀌면 이전 요청 결과가 새 화면을 덮어쓰지 않도록 조회 대상을 검사합니다. 셀 값 저장은 SSE로 즉시 전달합니다. 행 추가·삭제·순서·공통 서식·설정과 사본 시트 변경은 리소스 SSE 알림으로 재조회합니다. 기존 7초 조회는 원본의 보완 경로로 유지하며, 편집·저장 중에는 전체 목록 교체를 보류합니다. SSE 셀 갱신은 편집 중에도 처리합니다.
+로그인 후 `/api/bootstrap`에서 소속 팀·사용자를 읽고 사용자·팀·기준 연도별 보기를 복원한 다음, `startMonth`부터 12개월에 해당하는 업무를 조회합니다. `getTasks`는 한 연도 또는 인접한 두 연도를 받아 SQL의 EXISTS 조건으로 중복 없이 업무를 읽습니다. 화면의 기준 연도는 업무 추가·삽입의 등록 연도입니다. 업무 응답은 ETag로 조건부 조회합니다. 팀·연도가 바뀌면 이전 요청 결과가 새 화면을 덮어쓰지 않도록 조회 대상을 검사합니다. 셀 값 저장은 SSE로 즉시 전달합니다. 행 추가·삭제·순서·공통 서식·설정과 사본 시트 변경은 리소스 SSE 알림으로 재조회합니다. 원본의 보완 조회는 내부망 7초·외부망 30초로 구분하며, 편집·저장 중에는 전체 목록 교체를 보류합니다. SSE 셀 갱신은 편집 중에도 처리합니다. 같은 범위·변경 버전의 동시 목록 갱신은 하나로 합치고, 429는 Retry-After와 증가하는 재시도 간격을 지킵니다. 업무·화면 정보 재조회가 성공하면 해당 조회 오류만 해제하며 저장·보기 저장·다른 작업의 오류는 보존합니다. 명시적인 내부 사이트 설정은 Access 인증 모드보다 우선합니다.
 
 변경되지 않은 ETag 요청은 업무를 조회·직렬화하기 전에 304로 응답합니다. 조회 캐시의 전체 예산은 64MiB입니다. 원문과 gzip의 합이 예산보다 크면 gzip만 보관하고, 압축을 받지 않는 클라이언트의 응답 시에만 원문을 복원합니다. 압축본도 예산을 넘으면 캐시하지 않습니다. 이전 팀의 보기 저장이 뒤늦게 실패해도 현재 팀 화면에 오류를 표시하지 않습니다.
 
@@ -206,7 +206,7 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 ### 이관과 삭제
 
-XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파일·팀·행 범위 및 열 연결 설정·시트·모드·연도 조합으로 중복 적용을 방지합니다. 담당자가 비어 있으면 미지정으로 유지합니다. 여러 표가 섞인 원본에는 API의 `sheetOptions`로 업무 표의 범위를 지정할 수 있습니다. 사본은 생성 당시 값·사용자·설정·보기를 보존하고 이후 독립적으로 편집합니다.
+XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/workbook.mjs`를 직접 사용하며, 빌드 중 서버 소스를 잘라 별도 파서를 생성하지 않습니다. XLSX는 미리보기 후 담당자·예외 확인을 거쳐 적용합니다. 파일·팀·행 범위 및 열 연결 설정·시트·모드·연도 조합으로 중복 적용을 방지합니다. 담당자가 비어 있으면 미지정으로 유지합니다. 여러 표가 섞인 원본에는 API의 `sheetOptions`로 업무 표의 범위를 지정할 수 있습니다. 사본은 생성 당시 값·사용자·설정·보기를 보존하고 이후 독립적으로 편집합니다.
 
 사본 편집은 `src/useReportDraft.ts`의 자동 저장 큐·실행취소 기록을 사용합니다. `shared/report-editing.js`가 브라우저와 서버에서 같은 편집 작업을 적용하고, `server/report-editing.mjs`는 팀 기여 권한·사본의 속성·BLOB revision을 검증한 뒤 해당 사본만 저장합니다. 현재 업무의 mutation·SSE·실행취소·필터 저장 경로와 연결하지 않습니다. `tests/reports.test.mjs`는 원본 속성 변경·원본 업무 삭제·권한·원자성·동시 수정·재시작·응답 유실 재시도를, `tests/browser/report-editing.spec.ts`는 편집·추가·삭제·서식·실행취소·자동 저장·실패 재시도·기존 필터 복귀를 검증합니다.
 
@@ -292,7 +292,6 @@ npm run licenses
 ```sh
 npm test
 npm run build
-npm run build:worker
 npm run build:edge
 npm run build:pages
 npm run test:e2e -- tests/browser/data-sync.spec.ts
@@ -320,52 +319,34 @@ Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에
 | HistoryBusinessService / AdminHistoryBusinessService     | 팀 이력·복원, 관리자 감사 검색·상세, 사이트 이력 정리                                                           |
 | DocumentBrowserBusinessService / TransferBusinessService | 문서 탐색, CSV/XLSX/JSON 내보내기, 실제 업로드 미리보기·적용·재시도                                             |
 
-`createApp()`의 기본값은 SQLite입니다. 서버 설정에서 팀 업무 저장소를 PG로 선택하는 예시는 다음과 같습니다. `env`에는 **서버 전용** 팀 PG binding과 팀 UUID에 대응하는 SYNC_PROFILES를 지정합니다. PG 업무 저장소 선택은 서버 전체에 적용되며 팀별 SQLite/PG 혼합 선택은 지원하지 않습니다. 사용할 모든 활성 팀에 해당 팀 UUID의 `SYNC_PROFILES` 항목과 PG binding을 준비해야 합니다. 프로필이 없는 팀은 `unconfigured`로 분류되고 해당 팀의 업무 요청은 HTTP 409로 거절됩니다. 내부 Node에서는 PG_CONTROL·R2·Git token을 이 업무 저장소 설정에 요구하지 않습니다. 사용자 입력으로 repository나 연결 문자열을 선택하지 않습니다.
+`createApp()`은 내부 SQLite 저장소만 구성합니다. Node에서 PG repository를 선택하는 테스트 전용 모드와 factory 주입은 제거했습니다. 외부 API는 `worker/`의 route 함수와 `worker/storage/` PostgreSQL 구현을 사용하며, 인증·멤버십도 외부 PG control/site 저장소에서 확인합니다. 공통 도메인 서비스는 양쪽 명령 검증을 공유하지만 Node 라우트의 SQLite 트랜잭션은 동기를 유지합니다. 문서 이미지 준비와 XLSX 생성·읽기는 필요한 비동기 처리를 명시적으로 기다립니다.
 
-```js
-import { createApp } from "./server/app.mjs";
-import { createPostgresBusinessStorage } from "./server/storage/business-storage.mjs";
-const app = createApp({
-  db: controlDatabase,
-  documentImagesDir: imageDirectory,
-  storage: createPostgresBusinessStorage({
-    env: {
-      PG_TEAM_A: { connectionString: process.env.PG_TEAM_A_URL },
-      SYNC_PROFILES: [
-        {
-          profileId: "team-a",
-          teamId: originalTeamUuid,
-          databaseBinding: "PG_TEAM_A",
-        },
-      ],
-    },
-  }),
-});
-```
+외부 Edge는 `RequestContext.data`와 `capacityLimits(env)`를 통해 쓰기 전 DB 용량 검사와 commit 전 상태 검사를 수행합니다. 내부 SQLite 업무 경로의 행 수 시험이나 PG 어댑터 직접 호출 시험은 외부 API의 지원 규모를 보장하지 않습니다. [용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)를 함께 확인합니다.
 
-이 예시에서 Node 계정·비밀번호·쿠키 세션·멤버십·시스템 감사 이력은 하나의 SQLite control DB에 남습니다. PostgreSQL에 계정·팀 권한을 복제하지 않으며 SQLite 멤버십 철회는 PG 업무 SSE에도 반영됩니다. bootstrap은 이 control 정보와 선택한 팀 DB의 현재 설정·연도를 조합합니다. 팀 이력 정리는 PG에서 수행하고 관리 감사 기록은 SQLite에 남기며, Node의 정리 미리보기 토큰은 서버 메모리에 보관합니다.
+이미지 변환은 내부 Node의 sharp·`FileImageStore`, 외부 Edge의 Cloudflare Images·`R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. Git 실행기 설정과 인증은 논리 팀 자료 이관과 별도로 관리합니다.
 
-Node PG와 외부 Edge는 같은 `RequestContext.data`와 `capacityLimits(env)`를 사용합니다. 두 호스트 모두 상태·pending **4 MiB**와 공유 엔티티 **12,000개**가 기본 상한이며 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`는 더 낮출 수만 있습니다. 쓰기 전 DB 용량 검사와 commit 전 상태 검사에서 이 한도를 적용합니다. 기본 SQLite 업무 경로의 10,000행 성능 시험이나 PG 어댑터 직접 호출 시험은 이 PG 업무 API가 10,000행을 지원한다는 근거가 아닙니다. [용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)를 함께 확인합니다.
-
-이미지 변환과 저장소도 DB 엔진과 독립적입니다. 내부 Node는 sharp와 `FileImageStore`, 외부 Edge는 gateway의 Cloudflare Images와 `R2ImageStore` 자원 어댑터를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. 다른 호스트 저장소가 필요하면 factory의 `imageStoreFor(teamId)` 포트에 `read/has/install/remove/validate/getObject` 계약을 갖춘 구현을 주입할 수 있습니다. Git 실행기 설정은 논리 팀 자료 이관과 별도로 관리합니다. 운영 중 DB를 설정 한 줄로 옮기거나 인증 자료를 자동 복제하는 기능은 아닙니다.
-
-`tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 같은 서비스에 두 실제 엔진을 넣어 permission/CAS/replay/L/late rollback을 비교합니다. Node PG-only HTTP 검사는 SQLite에 업무/사본을 남기지 않으며 셀·문서·사본·팀 SSE와 멤버십 철회를 검사합니다. PG_CONTROL·R2·Git binding 없이 기본 파일 이미지 업로드→본문 저장→이미지 조회→JSON 반출과 관리 이력 정리도 검증합니다. SQLite 검사에는 반환값이 Promise로 바뀌지 않았는지, 저장 후 별도 연결에서 P와 본문이 동시에 보이는지, 커밋 전 실패에 이벤트가 없는지도 포함됩니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
+`tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 두 실제 엔진의 permission/CAS/replay/L/late rollback을 비교합니다. 외부 HTTP 계약은 `tests/external-route-fixture.mjs`에서 실제 worker route 함수·PG control 인증·SSE를 실행하며, Node의 SQLite 업무 행에 의존하지 않는지 확인합니다. 이미지 업로드→본문 저장→R2 조회→JSON 반출, 관리 이력 정리와 멤버십 철회도 포함합니다. SQLite 검사는 반환값의 동기성, 커밋 후 다른 연결에서의 P·본문 가시성, 커밋 실패 시 이벤트 부재를 확인합니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
 
 ## 팀별 외부 설치와 계정 연결
 
-Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. `worker/forwarder.mjs`는 이전 Worker 이름으로 들어오는 Service binding을 같은 gateway에 전달합니다. Hyperdrive binding과 이전 Cron은 제거하며 루트 `wrangler.jsonc`는 호환성 테스트 빌드용입니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/worker-runtime.test.mjs`는 실제 Pages 번들과 Worker 번들을 workerd Service binding으로 연결해 인증 전 정적 파일/API 차단과 origin 검사를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
+Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Worker → Supabase Edge의 경로입니다. `worker/forwarder.mjs`는 이전 Worker 이름으로 들어오는 Service binding을 같은 gateway에 전달합니다. Hyperdrive binding과 이전 Cron, 전체 Worker 호환성 빌드 설정은 제거합니다. `public/_routes.json`으로 모든 경로를 Functions에 전달합니다. `tests/pages-gateway.test.mjs`는 누락된 binding의 JSON 503, 헤더·업로드·쿠키·스트리밍 보존을 검사하고, `tests/edge-gateway.test.mjs`는 실제 gateway의 workerd 실행으로 전달·정적 파일·인증 경계를 검증합니다. 팀 사이트 통합 검사는 이 Pages 진입점을 거쳐 SQLite/Git/PostgreSQL 간 구성원·승인·탈퇴 흐름을 확인합니다.
 
-신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v31에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
+신규 외부 설치는 `PG_SITE` + `SITE_TEAM_ID`와 프로필 하나로 구성합니다. 사내 모든 팀은 SQLite v32에 남고 연결된 팀의 구성원만 `server/sync/directory.mjs`를 통해 별도 Git 브랜치에 게시합니다. `worker/directory.mjs`가 단방향 반영하고 `worker/site-auth.mjs`가 최초 팀장 연결·계정 선택·팀장 승인·접속 세션을 처리합니다. 기존 분리형 `PG_CONTROL` 경로는 호환용으로 유지합니다.
 
 `tests/team-site.test.mjs`는 실제 SQLite·Git·PostgreSQL과 외부 API fetch를 연결해 팀장 연결 설정, 다른 팀 제외, 승인 전 차단, Google 신원에 묶인 세션, 팀원 추가/역할 변경/탈퇴, site migration 롤백·재실행·기존 team 보존, 백업 v3의 승인 보존·세션 제외를 검사합니다. `tests/browser/data-sync.spec.ts`는 계정 선택·대기·승인 후 접속과 팀장 승인 화면을 확인합니다. release 검증은 `TEST_PG_BIN=/경로/postgresql/bin npm run test:postgres`, 프런트엔드/gateway/Edge/Pages 빌드, 세 브라우저의 해당 흐름을 사용합니다. `tests/team-site.test.mjs`의 Edge handler는 Node 테스트 프로세스에서 실행하므로 실제 Google/Cloudflare/Supabase 배포 및 Deno 실행 검증은 별도입니다.
 
+팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30/v31 보존·원자적 v32 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
 
-팀장 키: `TeamSetupKey` → 내부 `/teams/:id/setup-key` → `external_setup_keys` → 기존 동기화 실행 뒤 Git 키 브랜치 → `worker/setup-keys.mjs` → site v2 → `/auth/setup` 순서입니다. 원문은 React 메모리/발급 응답에만 두고 저장하거나 로그로 남기지 않습니다. `tests/team-site.test.mjs`는 내부 실제 API 발급, Git 전송, 다른 팀/일반 구성원 거부, 만료·재발급, 동시 소비, 연결 해제 뒤 재사용 거부, 반영/사용 영수증과 백업을 확인합니다. `tests/sync-migrations.test.mjs`는 v29/v30 보존·원자적 v31 업그레이드를 검사합니다. 실제 운영 DB에는 테스트를 실행하지 않습니다.
-
-외부 `Team.status`가 준비되지 않았으면 업무 조회 대신 가져오기 안내를 표시하고, 같은 팀의 상태가 active로 바뀌면 필터/보기/업무 조회를 다시 시작합니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
+외부 팀의 `Team.status`가 `unconnected`, `importing`, `maintenance`이면 업무 조회 대신 준비 상태 안내를 표시하고, 같은 팀이 active로 바뀌면 필터·보기·업무 조회를 다시 시작합니다. 내부 팀은 이 외부 상태로 화면을 차단하지 않습니다. 최초 조회 실패는 무기한 로딩으로 남기지 않습니다. `tests/browser/external-loading.spec.ts`와 기존 auth/data-sync 브라우저 검사를 함께 실행합니다.
 
 배포 역할은 `shared/site-mode.js`에서 `GRAEBOARD_SITE`와 서버 호스트를 대조합니다. Node는 DB를 열기 전에 internal을, 외부 API는 요청·Cron 전에 external을 검사합니다. 화면은 bootstrap/setup의 명시적 `site`를 우선하며 기존 배포와 호환할 때만 `authMode`를 사용합니다. 초기 게시 API는 외부에서 403으로 거절하며 가져오기로 대체 실행하지 않습니다. `tests/site-mode.test.mjs`, `tests/team-site.test.mjs`, `tests/browser/data-sync.spec.ts`는 설정 오류·요청 값 변조·외부 게시 차단과 환경별 버튼을 확인합니다.
 
-`TeamSyncIndicator`는 bootstrap/setup의 `site`를 읽는 기존 `isExternalSite()`로 상단 표시를 구분합니다. 내부는 정상·미전송·상대 확인 대기를 숨기되 오류·충돌·복구·중단·조회 실패를 표시하며, 최초 조회 실패도 숨기지 않습니다. 외부는 클라우드 저장·Git 반영·내부망 반영을 세 태그로 분리하고 대기/진행 중은 회색, 완료는 푸른색으로 표시합니다. 저장 중·실패에는 후속 단계도 완료로 표시하지 않습니다. 태그 숨김은 15초 주기·포커스·저장 후 상태 조회를 중단하지 않으며 팀 전환 시 이전 조회 실패 상태를 초기화합니다. `tests/browser/team-sync-indicator.spec.ts`는 같은 URL에서 서버 환경 값에 따른 표시, 오류 복구, 최초 조회 실패, 적용 확인 조건, 색상과 좁은 화면 배치를 검증합니다.
+`TeamSyncIndicator`는 bootstrap/setup에서 계산한 공통 `site` 객체를 Context로 받아 상단 표시를 구분합니다. 내부는 정상·미전송·상대 확인 대기를 숨기되 오류·충돌·복구·중단·조회 실패를 표시하며, 최초 조회 실패도 숨기지 않습니다. 외부는 클라우드 저장·Git 반영·내부망 반영을 세 태그로 분리하고 대기/진행 중은 회색, 완료는 푸른색으로 표시합니다. 저장 중·실패에는 후속 단계도 완료로 표시하지 않습니다. 상태 조회는 기본 15초이며 내부 미연결 팀은 60초 간격으로 줄입니다. 포커스 갱신은 유지하고, 저장 후 상태 조회는 외부에서만 마지막 알림 이후 2초 뒤에 실행합니다. 내부 저장 및 인증·관리 API의 성공은 이 추가 조회를 만들지 않습니다. 팀 전환 시 이전 조회 실패 상태를 초기화합니다. `tests/browser/team-sync-indicator.spec.ts`는 같은 URL에서 서버 환경 값에 따른 표시, 오류 복구, 최초 조회 실패, 적용 확인 조건, 색상과 좁은 화면 배치를 검증합니다.
 
 내부 재연결은 `TeamSyncSettings` → `POST /api/teams/:id/sync/reconnect` → `createNodeSync.reconnect` → readonly background snapshot의 경로입니다. 같은 설치의 disconnected 상태만 허용하고 팀장 권한을 계산 전후에 확인합니다. C+P와 실제 업무 자료의 차이를 기존 operation 형식으로 P에 추가한 뒤 같은 트랜잭션에서 active(초기 게시 전은 paused)로 전환합니다. 기존 C·P ID·writer epoch·L은 유지합니다. capture가 꺼진 동안의 문서 변경도 감지하도록 메인 연결의 total_changes와 data_version, 기존 snapshot guard를 커밋 직전에 검사하며 동시 저장 시 재계산합니다. 새 DB 스키마나 백업 형식은 도입하지 않습니다. `sync-integration`·`sync-lifecycle-review`·`browser/data-sync` 검사는 실제 API/Git에서 재연결·본문 보존·충돌·동시 저장·권한 철회·롤백을 확인합니다.
+
+### 리뷰 반영 검증 기준
+
+내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
+
+v1/v2의 기준 이력 재생, 일시정지한 양쪽의 명시 전환 수신, reportTask/reportCell 독립성, receipt 별도 용량, SQLite v32·PostgreSQL team v2 migration 및 정리 경계는 합성 DB에서 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 실제 운영 v29 백업 사본의 `restore --dry-run`과 실제 사본 migration·행/이미지 보존은 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.
