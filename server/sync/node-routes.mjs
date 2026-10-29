@@ -3,7 +3,8 @@ import { SQLITE_VERSION } from "../migrations/sqlite.mjs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { profileToken } from "./credentials.mjs";
+import { profileToken, sealToken } from "./credentials.mjs";
+import { createSyncSetupConfig } from "./setup-config.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
 import { transaction } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";
@@ -19,6 +20,47 @@ function installConnectionRoutes(
   app,
   { db, sync, managedTeam, requireSystemAdmin },
 ) {
+  const setup = createSyncSetupConfig({ db, sync, path: sync.setupConfigPath });
+  app.get("/api/admin/teams/:id/sync-setup", (req, res) => {
+    requireSystemAdmin(req.user);
+    managedTeam(req.user, id(req));
+    res.set("Cache-Control", "no-store").json(setup.status(id(req)));
+  });
+  app.put("/api/admin/teams/:id/sync-setup", (req, res) => {
+    requireSystemAdmin(req.user);
+    managedTeam(req.user, id(req));
+    res.set("Cache-Control", "no-store").json(setup.save(id(req), req.body));
+  });
+  app.put("/api/admin/teams/:id/sync-credential", (req, res) => {
+    requireSystemAdmin(req.user);
+    managedTeam(req.user, id(req));
+    const profile = sync.profiles.find(
+      (p) => p.teamId === id(req) && p.profileId === req.body.profileId,
+    );
+    requireThat(profile, 400, "재시작 후 설치된 해당 팀 프로필을 선택하세요.");
+    requireThat(
+      !sync.isBusy(id(req)),
+      409,
+      "동기화 작업이 진행 중입니다. 작업이 끝난 뒤 토큰 저장을 다시 시도하세요.",
+    );
+    requireThat(
+      typeof req.body.token === "string" &&
+        /^[A-Za-z0-9_]{1,10000}$/.test(req.body.token),
+      400,
+      "GitHub 토큰 형식을 확인하세요.",
+    );
+    requireThat(
+      Buffer.from(process.env.GRAEBOARD_SYNC_KEY || "", "base64").length === 32,
+      409,
+      "동기화 암호화 키 등록 후 서버를 재시작하세요.",
+    );
+    const encrypted = sealToken(req.body.token, profile.profileId);
+    db.prepare(
+      "INSERT INTO sync_credentials VALUES(?,?,?) ON CONFLICT(profile_id) DO UPDATE SET ciphertext=excluded.ciphertext,updated_at=excluded.updated_at",
+    ).run(profile.profileId, encrypted, new Date().toISOString());
+    sync.clear(id(req));
+    res.set("Cache-Control", "no-store").json({ ok: true });
+  });
   app.get("/api/admin/service-connections", (req, res) => {
     requireSystemAdmin(req.user);
     res.json({

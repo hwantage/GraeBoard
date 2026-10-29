@@ -3745,7 +3745,7 @@ function Workspace({
                   }
                   description={
                     canManageTeam(user, team.id)
-                      ? "설정 → 시스템 → 서비스 연결에서 ‘팀 가져오기’를 실행하세요."
+                      ? "설정 → 시스템 → 외부 동기화에서 ‘팀 가져오기’를 실행하세요."
                       : "팀장이 업무 자료를 가져온 뒤 사용할 수 있습니다."
                   }
                   action={

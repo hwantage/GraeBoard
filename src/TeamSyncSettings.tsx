@@ -1,5 +1,7 @@
 import { useSite } from "./site-context";
 import TeamSetupKey from "./TeamSetupKey";
+import SyncSetupWizard from "./SyncSetupWizard";
+import SyncConnectionDetails from "./SyncConnectionDetails";
 import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
@@ -142,15 +144,18 @@ export default function TeamSyncSettings({
   user,
   onSaved,
   onMessage,
+  embedded = false,
 }: {
   team: Team;
   user: User;
   onSaved: () => Promise<void>;
   onMessage: (message: string) => void;
+  embedded?: boolean;
 }) {
   const site = useSite();
   const admin = canManageTeam(user, team.id);
   const configured = team.sync?.configured === true;
+  const [setupOpen, setSetupOpen] = useState(false);
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [profileId, setProfileId] = useState("");
@@ -193,11 +198,20 @@ export default function TeamSyncSettings({
     setConflicts(nextConflicts.conflicts);
     if (nextConnection) {
       setConnection(nextConnection);
-      setProfileId(nextConnection.profileId || "");
+      const original = nextConnection.profiles.filter(
+        (profile) => profile.teamId === team.id && !profile.replaces,
+      );
+      setProfileId(
+        nextConnection.profileId ||
+          (original.length === 1 ? original[0].profileId : ""),
+      );
       setSwitchJob(nextConnection.switchJob || null);
     }
   }
   useEffect(() => {
+    // The wizard embeds its own copy of this screen; polling here as well would
+    // double every status read while it is open.
+    if (setupOpen) return;
     live.current = true;
     if (!configured) {
       setStatus(null);
@@ -221,7 +235,7 @@ export default function TeamSyncSettings({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [team.id, admin, configured]);
+  }, [team.id, admin, configured, setupOpen]);
   async function perform(
     action: string,
     message: string,
@@ -361,6 +375,20 @@ export default function TeamSyncSettings({
   const selectedProfile = connection?.profiles.find(
     (profile) => profile.profileId === profileId,
   );
+  const currentProfile = connection?.profiles.find(
+    (profile) =>
+      profile.teamId === team.id &&
+      profile.profileId === (connection.profileId || profileId),
+  );
+  const replacementProfiles = connection?.profileId
+    ? connection.profiles.filter(
+        (profile) =>
+          profile.teamId === team.id &&
+          profile.replaces === connection.profileId,
+      )
+    : [];
+  const changingProfile =
+    !!connection?.profileId && profileId !== connection.profileId;
   const linked = status && !["unlinked", "disconnected"].includes(status.mode);
   const initialized = !!status?.canonicalHead;
   const external = site.external;
@@ -370,11 +398,43 @@ export default function TeamSyncSettings({
     status?.mode === "disconnected" || status?.mode === "recovery";
   const replacing =
     external && !!connection?.profileId && profileId !== connection.profileId;
+  if (setupOpen)
+    return (
+      <SyncSetupWizard
+        key={team.id}
+        team={team}
+        systemAdmin={user.systemRole === "admin"}
+        onClose={() => setSetupOpen(false)}
+        onRefresh={onSaved}
+        onMessage={onMessage}
+      >
+        <TeamSyncSettings
+          team={team}
+          user={user}
+          onSaved={onSaved}
+          onMessage={onMessage}
+          embedded
+        />
+      </SyncSetupWizard>
+    );
   return (
     <section
       className="settings-section team-sync-settings"
-      aria-label={`${team.name} 동기화`}
+      aria-label={`${team.name} 외부 동기화`}
     >
+      {admin && !embedded && (!external || user.systemRole === "admin") && (
+        <div className="sync-setup-launch">
+          <p className="field-help">
+            GitHub 연동을 통해 외부에서 동기화 운영이 가능합니다.
+          </p>
+          <Button
+            className={configured ? "" : "primary"}
+            onClick={() => setSetupOpen(true)}
+          >
+            외부 동기화 설정
+          </Button>
+        </div>
+      )}
       <ErrorNote error={loadError} />
       {!status && !connection && !loadError && (
         <LoadingState label="동기화 상태를 확인하고 있습니다." />
@@ -529,7 +589,7 @@ export default function TeamSyncSettings({
                     showError(
                       "connection",
                       e,
-                      refreshing ? "연결 저장 후 상태 조회" : "연결 저장",
+                      refreshing ? "팀 연결 후 상태 조회" : "팀 연결",
                     );
                 } finally {
                   if (live.current) setBusy(false);
@@ -541,72 +601,113 @@ export default function TeamSyncSettings({
                 연결 설정
               </h4>
               <div className="team-sync-profile-controls">
-                <label>
-                  연결 프로필
-                  <Select
-                    aria-label="연결 프로필"
-                    value={profileId}
-                    {...busyProps(busy, !!switchJob?.hasMore || needsRecovery)}
-                    onChange={(event) => {
-                      setProfileId(event.target.value);
-                      setCheck(null);
-                    }}
-                  >
-                    <option value="">설치된 프로필 선택</option>
-                    {connection.profiles
-                      .filter((profile) => profile.teamId === team.id)
-                      .map((profile) => (
-                        <option
-                          key={profile.profileId}
-                          value={profile.profileId}
-                        >
-                          {profile.name || profile.profileId}
-                        </option>
-                      ))}
-                  </Select>
-                </label>
-                {!needsRecovery && (
+                <dl className="team-sync-profile" aria-label="연결 프로필">
+                  <dt>연결 프로필</dt>
+                  <dd>
+                    {currentProfile?.name &&
+                    currentProfile.name !== currentProfile.profileId
+                      ? currentProfile.name
+                      : currentProfile || connection.profileId
+                        ? `${team.name} 연결 프로필`
+                        : "설치된 프로필 없음"}
+                  </dd>
+                </dl>
+                {!needsRecovery && !connection.profileId && currentProfile && (
                   <Button
                     type="submit"
                     className="primary"
-                    {...busyProps(
-                      busy,
-                      !profileId ||
-                        profileId === connection.profileId ||
-                        !!switchJob?.hasMore ||
-                        (replacing &&
-                          selectedProfile?.replaces !== connection.profileId),
-                    )}
+                    {...busyProps(busy, !profileId || !!switchJob?.hasMore)}
                   >
-                    {replacing ? "자료 이관 후 연결 변경" : "연결 저장"}
+                    이 팀에 연결
                   </Button>
                 )}
               </div>
+              {currentProfile?.repository && (
+                <p className="field-help">
+                  저장소: {currentProfile.repository}
+                </p>
+              )}
+              {replacementProfiles.length > 0 && (
+                <details className="team-sync-replacement">
+                  <summary>연결 이전·복구</summary>
+                  <div className="team-sync-profile-controls">
+                    <label>
+                      교체용 프로필
+                      <Select
+                        aria-label="교체용 프로필"
+                        value={changingProfile ? profileId : ""}
+                        {...busyProps(
+                          busy,
+                          !!switchJob?.hasMore || needsRecovery,
+                        )}
+                        onChange={(event) => {
+                          setProfileId(
+                            event.target.value || connection.profileId,
+                          );
+                          setCheck(null);
+                        }}
+                      >
+                        <option value="">현재 연결 유지</option>
+                        {replacementProfiles.map((profile) => (
+                          <option
+                            key={profile.profileId}
+                            value={profile.profileId}
+                          >
+                            {profile.name || profile.profileId}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+                    {!needsRecovery && (
+                      <Button
+                        type="submit"
+                        className="primary"
+                        {...busyProps(
+                          busy,
+                          !changingProfile ||
+                            !!switchJob?.hasMore ||
+                            selectedProfile?.replaces !== connection.profileId,
+                        )}
+                      >
+                        {external
+                          ? "자료 이관 후 연결 변경"
+                          : "검증 후 연결 변경"}
+                      </Button>
+                    )}
+                  </div>
+                  {changingProfile && selectedProfile?.repository && (
+                    <p className="field-help">
+                      교체 저장소: {selectedProfile.repository}
+                    </p>
+                  )}
+                  <p className="field-help">
+                    {external
+                      ? "선택한 새 자원에 본문·이미지·미전송 변경을 옮기고 검증한 뒤 연결을 변경합니다. 이관 중에는 팀 편집이 잠시 대기하며 기존 자원은 보존됩니다."
+                      : "기존 연결을 일시정지한 뒤 같은 팀의 검증된 저장소 복사본으로 교체합니다. 연결 변경 후 서버 관리자의 복구 점검을 거쳐 재개하세요."}
+                  </p>
+                </details>
+              )}
               {!switchJob?.hasMore && (
                 <SyncErrorNote
                   error={errorTarget === "connection" ? error : ""}
                   reveal
                 />
               )}
-              {selectedProfile?.repository && (
-                <p className="field-help">
-                  저장소: {selectedProfile.repository}
-                </p>
-              )}
-              {replacing && (
-                <p className="field-help">
-                  선택한 새 자원에 본문·이미지·미전송 변경을 옮기고 검증한 뒤
-                  연결을 변경합니다. 이관 중에는 팀 편집이 잠시 대기하며 기존
-                  자원은 보존됩니다.
-                </p>
-              )}
               {!connection.profiles.some(
                 (profile) => profile.teamId === team.id,
               ) && (
                 <p className="field-help">
-                  이 팀의 설치된 연결 프로필이 없습니다. 시스템 → 서비스
-                  연결에서 설치 안내를 확인하세요.
+                  이 팀의 설치된 연결 프로필이 없습니다. 외부 동기화 설정에서
+                  준비하거나 시스템 관리자에게 내부 프로필 등록을 요청하세요.
                 </p>
+              )}
+              {!embedded && (
+                <SyncConnectionDetails
+                  key={team.id}
+                  teamId={team.id}
+                  profileId={connection.profileId || profileId || undefined}
+                  systemAdmin={user.systemRole === "admin"}
+                />
               )}
             </form>
           )}

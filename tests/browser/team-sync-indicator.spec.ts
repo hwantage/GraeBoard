@@ -103,7 +103,7 @@ test("내부망은 정상·전송 대기를 숨기고 장애·중단만 표시�
 });
 
 for (const site of ["internal", "external"] as const) {
-  test(`${site}: 미설정 팀은 오류·설정 탭을 숨기고 동기화 API를 호출하지 않는다`, async ({
+  test(`${site}: 미설정 팀은 설정 진입점을 제공하고 오류·백그라운드 동기화 요청을 숨긴다`, async ({
     page,
   }) => {
     const requests: string[] = [];
@@ -131,8 +131,8 @@ for (const site of ["internal", "external"] as const) {
       page.getByRole("tab", { name: "일반", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("tab", { name: "동기화", exact: true }),
-    ).toHaveCount(0);
+      page.getByRole("tab", { name: "외부 동기화", exact: true }),
+    ).toBeVisible();
     await page.getByRole("tab", { name: "구성원", exact: true }).click();
     await expect(
       page.getByRole("region", { name: "Google 계정 연결", exact: true }),

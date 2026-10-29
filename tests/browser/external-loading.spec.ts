@@ -68,7 +68,7 @@ for (const status of ["unconnected", "importing"] as const) {
     await page.getByRole("button", { name: "설정 열기" }).click();
     const settings = page.getByRole("dialog", { name: "설정", exact: true });
     await settings
-      .getByRole("button", { name: "서비스 연결", exact: true })
+      .getByRole("button", { name: "외부 동기화", exact: true })
       .click();
     expect(await (await page.request.get("/__test/streams")).json()).toEqual(
       [],

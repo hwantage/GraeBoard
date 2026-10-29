@@ -12,6 +12,7 @@ const app = createApp({
     db,
     rateLimits: false,
     documentImagesDir: join(dir, "images"),
+    syncOptions: { setupConfigPath: join(dir, ".env") },
   }),
   activeStreams = new Set(),
   server = createServer((req, res) => {

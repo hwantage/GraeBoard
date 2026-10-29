@@ -14,7 +14,11 @@ import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import Toast, { useToast } from "./Toast";
 import { busyProps } from "./busyProps";
-import type { Team } from "./types";
+import type { Team, User } from "./types";
+import Select from "./Select";
+import SyncSetupWizard from "./SyncSetupWizard";
+import TeamSyncSettings from "./TeamSyncSettings";
+import SyncConnectionDetails from "./SyncConnectionDetails";
 import "./service-connections.css";
 import {
   ConnectionChecks,
@@ -37,15 +41,19 @@ const resource = (value: ResourceProfile["database"]) =>
 export default function ServiceConnections({
   teams,
   onRefresh,
+  user,
 }: {
   teams: Team[];
   onRefresh: () => Promise<unknown>;
+  user: User;
 }) {
   const site = useSite();
   const [service, setService] = useState<Service | null>(null);
   const [check, setCheck] = useState<ConnectionCheck | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupTeamId, setSetupTeamId] = useState(teams[0]?.id || "");
   const [message, setMessage] = useToast();
   const live = useRef(true);
   async function load(signal?: AbortSignal) {
@@ -85,14 +93,42 @@ export default function ServiceConnections({
       if (live.current) setBusy(false);
     }
   }
+  const setupTeam = teams.find((team) => team.id === setupTeamId);
+  if (setupOpen && setupTeam)
+    return (
+      <>
+        <SyncSetupWizard
+          key={setupTeam.id}
+          team={setupTeam}
+          systemAdmin={user.systemRole === "admin"}
+          onRefresh={onRefresh}
+          onMessage={setMessage}
+          onClose={() => {
+            setSetupOpen(false);
+            void load().catch((e) => setError(e.message));
+          }}
+        >
+          <TeamSyncSettings
+            team={setupTeam}
+            user={user}
+            onSaved={async () => {
+              await onRefresh();
+            }}
+            onMessage={setMessage}
+            embedded
+          />
+        </SyncSetupWizard>
+        <Toast message={message} />
+      </>
+    );
   return (
     <section
       className="settings-section service-connections"
-      aria-label="서비스 연결"
+      aria-label="외부 동기화"
     >
       <div className="settings-team-header service-connections-header">
         <div>
-          <h3>서비스 연결</h3>
+          <h3>외부 동기화</h3>
           <p>
             {site.accountLinking
               ? "이 팀의 서비스와 저장소를 확인합니다."
@@ -132,6 +168,27 @@ export default function ServiceConnections({
       )}
       {service && (
         <>
+          <div className="sync-setup-launch service-connections-setup">
+            <label htmlFor="sync-setup-team">설정할 팀</label>
+            <Select
+              id="sync-setup-team"
+              value={setupTeamId}
+              onChange={(event) => setSetupTeamId(event.target.value)}
+            >
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
+              ))}
+            </Select>
+            <Button
+              className="primary"
+              disabled={!setupTeam}
+              onClick={() => setSetupOpen(true)}
+            >
+              외부 동기화 설정
+            </Button>
+          </div>
           <div className="service-connections-overview">
             <div className="service-connections-heading">
               <h4>
@@ -215,77 +272,82 @@ export default function ServiceConnections({
               </h4>
               <span className="list-count">{service.profiles.length}</span>
             </div>
-            {service.profiles.map((profile) => (
-              <article
-                className="service-connection-profile"
-                key={profile.profileId}
-                aria-label={profile.name || profile.profileId}
-              >
-                <div className="service-connection-profile-header">
-                  <div>
-                    <h5>{profile.name || profile.profileId}</h5>
-                    {teams.find((team) => team.id === profile.teamId)?.name && (
-                      <p>
-                        {teams.find((team) => team.id === profile.teamId)!.name}
-                      </p>
+            {service.profiles.map((profile) => {
+              const profileTeam = teams.find(
+                (team) => team.id === profile.teamId,
+              );
+              const profileName =
+                profile.name && profile.name !== profile.profileId
+                  ? profile.name
+                  : `${profileTeam?.name || "팀"} 연결 프로필`;
+              return (
+                <article
+                  className="service-connection-profile"
+                  key={profile.profileId}
+                  aria-label={profileName}
+                >
+                  <div className="service-connection-profile-header">
+                    <div>
+                      <h5>{profileName}</h5>
+                      {teams.find((team) => team.id === profile.teamId)
+                        ?.name && (
+                        <p>
+                          {
+                            teams.find((team) => team.id === profile.teamId)!
+                              .name
+                          }
+                        </p>
+                      )}
+                    </div>
+                    {site.external && (
+                      <Button
+                        {...busyProps(busy, profile.ready === false)}
+                        onClick={() =>
+                          void action(
+                            "/admin/sync/import",
+                            {
+                              profileId: profile.profileId,
+                              teamId: profile.teamId,
+                            },
+                            "팀 가져오기를 실행했습니다.",
+                            true,
+                          )
+                        }
+                      >
+                        팀 가져오기
+                      </Button>
                     )}
                   </div>
-                  {site.external && (
-                    <Button
-                      {...busyProps(busy, profile.ready === false)}
-                      onClick={() =>
-                        void action(
-                          "/admin/sync/import",
-                          {
-                            profileId: profile.profileId,
-                            teamId: profile.teamId,
-                          },
-                          "팀 가져오기를 실행했습니다.",
-                          true,
-                        )
-                      }
-                    >
-                      팀 가져오기
-                    </Button>
-                  )}
-                </div>
-                <dl className="service-connections-facts">
-                  <div>
-                    <dt>Git 저장소</dt>
-                    <dd>{profile.repository || "미설정"}</dd>
-                  </div>
-                </dl>
-                <dl className="service-connection-resources">
-                  <div>
-                    <dt>
-                      <Database size={14} aria-hidden="true" />
-                      업무 데이터베이스
-                    </dt>
-                    <dd>{resource(profile.database)}</dd>
-                  </div>
-                  <div>
-                    <dt>
-                      <Image size={14} aria-hidden="true" />
-                      이미지 저장소
-                    </dt>
-                    <dd>{resource(profile.images)}</dd>
-                  </div>
-                </dl>
-                <details className="service-connections-details">
-                  <summary>연결 식별 정보</summary>
                   <dl className="service-connections-facts">
                     <div>
-                      <dt>프로필 ID</dt>
-                      <dd>{profile.profileId}</dd>
-                    </div>
-                    <div>
-                      <dt>팀 ID</dt>
-                      <dd>{profile.teamId}</dd>
+                      <dt>Git 저장소</dt>
+                      <dd>{profile.repository || "미설정"}</dd>
                     </div>
                   </dl>
-                </details>
-              </article>
-            ))}
+                  <dl className="service-connection-resources">
+                    <div>
+                      <dt>
+                        <Database size={14} aria-hidden="true" />
+                        업무 데이터베이스
+                      </dt>
+                      <dd>{resource(profile.database)}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        <Image size={14} aria-hidden="true" />
+                        이미지 저장소
+                      </dt>
+                      <dd>{resource(profile.images)}</dd>
+                    </div>
+                  </dl>
+                  <SyncConnectionDetails
+                    teamId={profile.teamId}
+                    profileId={profile.profileId}
+                    systemAdmin={user.systemRole === "admin"}
+                  />
+                </article>
+              );
+            })}
             {!service.profiles.length && (
               <p className="service-connections-empty">
                 설치된 팀 연결 프로필이 없습니다.
@@ -297,8 +359,8 @@ export default function ServiceConnections({
             <p className="field-help">
               외부 서비스 주소와 Google 로그인은 한 번 설정합니다. 각 팀에는
               업무 데이터베이스, 비공개 이미지 저장소, 비공개 Git 저장소를
-              연결합니다. 설치를 마친 프로필은 해당 팀의 동기화 탭에서
-              선택합니다.
+              연결합니다. 설치를 마친 프로필은 해당 팀의 외부 동기화 탭에서
+              확인하고 연결합니다.
             </p>
             <p className="field-help">
               Access의 허용 정책과 그래보드 사용자·팀 권한은 각각 관리합니다.

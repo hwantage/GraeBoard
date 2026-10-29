@@ -104,6 +104,31 @@
   flex-shrink: 0;
   margin-bottom: 0;
 }
+.team-sync-profile {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.team-sync-profile dt {
+  color: var(--muted);
+}
+.team-sync-profile dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.team-sync-replacement {
+  margin-top: 16px;
+  font-size: 13px;
+}
+.team-sync-replacement summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.team-sync-replacement .team-sync-profile-controls {
+  margin-top: 12px;
+}
 .team-sync-connection .field-help {
   overflow-wrap: anywhere;
 }

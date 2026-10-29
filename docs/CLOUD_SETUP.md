@@ -41,6 +41,14 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 ## 1. 준비할 자원
 
+신규 팀 설치는 앱의 **설정 → 팀 → 외부 동기화 → 외부 동기화 설정**에서 시작할 수 있습니다. 시스템 관리자는 **시스템 → 외부 동기화**의 팀 선택으로 같은 안내를 엽니다. 안내는 **1. 내부 프로필 생성 → 2. 외부 서비스 설정**으로 구분합니다. 첫 과정에서 GitHub 데이터 저장소 주소를 입력하고 **내부 프로필 생성**을 누르면 프로필 생성·서버 적용 상태를 확인할 수 있습니다. 식별자는 배포 설정에 자동으로 포함되며, 나중에 팀의 외부 동기화 화면에서 **연결 식별 정보**를 펼쳐 확인합니다. 이어서 **외부 서비스 설정으로** 이동하면 Cloudflare, Supabase, 배포, 내부 팀 연결, 외부 계정, 양방향 확인 순서로 필요한 값과 복사 가능한 설정을 제공합니다. 외부에서는 설치 확인·팀 가져오기·양방향 확인만 제공합니다. 콘솔 작업과 배포는 운영자 환경에서 직접 실행하며 내부 서버가 Cloudflare/Supabase 관리 API에 접속하지 않습니다.
+
+**내부 프로필 생성**은 기존 `.env`의 `GRAEBOARD_SYNC_PROFILES` 배열에 팀을 추가하고 기존 설치 ID·암호화 키·다른 설정을 보존합니다. 새 설치에서만 내부 공통 설치 UUID·암호화 키와 팀별 외부 UUID를 생성합니다. 저장한 프로필은 실행 중인 서버에 바로 적용되며, 이 서버에서 처음으로 설치 식별자를 만든 경우에만 시스템 관리자가 재시작한 뒤 **서버 적용 확인**을 거칩니다. 이어서 **팀 연결 → 내부 GitHub 토큰 저장 → 이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰은 기존 `sync_credentials` AES-256-GCM 형식으로 저장되며 조회 응답에 포함하지 않습니다. 최초 생성한 `.env`의 설치 ID·키는 기존 비밀 보관소에 별도로 보존해야 합니다. 설치 ID나 키가 없는 기존 연결/암호문을 새 값으로 덮어쓰지 않습니다.
+
+실행 환경 변수가 `.env`와 다르게 우선 적용되는 서비스, 심볼릭 링크, 중복·여러 줄의 동기화 변수는 UI 저장을 거절합니다. 기존 서비스 관리자가 환경 설정을 정리한 뒤 재시도합니다. 연결 이력이 없는 프로필은 UI에서 저장소 주소를 수정하되 프로필 ID·설치 ID·키를 유지합니다. 실행 중 프로필의 저장소·설치 신원 변경과 복구는 기존 절차를 따릅니다. 외부 DB·관리 토큰·gateway Secret은 앱에 입력하지 않으며, gateway 예시는 소스 루트의 Git 제외 파일 `.env.gateway.json`에 저장합니다. 안내 입력·체크는 브라우저 메모리에만 유지합니다.
+
+2026-10-29 공식 절차를 확인했습니다: [Pages Service binding](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings), [Access 앱 생성](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/), [pages.dev 운영·미리보기 보호](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain), [Supabase PostgreSQL 연결](https://supabase.com/docs/guides/database/connecting-to-postgres), [Edge Secrets](https://supabase.com/docs/guides/functions/secrets), [Edge 배포](https://supabase.com/docs/guides/functions/deploy). 실제 계정 권한·네트워크·배포 결과는 각 단계에서 직접 확인합니다.
+
 사내에서는 모든 팀을 기존 SQLite DB 하나에서 관리합니다. 외부 접근이 필요한 팀만 동기화를 켜며, 각 팀이 독립된 외부 사이트를 운영합니다.
 
 | 범위 | 준비할 것 |
@@ -197,7 +205,7 @@ gateway는 `wrangler.gateway.jsonc`로 배포하며 `assets.run_worker_first: tr
 
 Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Enable access policy**로 시작합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Edge에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
 
-1. 기존 Zero Trust 조직에서 **Access controls → Applications → Add an application → Self-hosted**를 선택합니다.
+1. 기존 Zero Trust 조직에서 **Access controls → Applications → Create new application → Self-hosted and private → Add public hostname**을 선택합니다. pages.dev는 위 Pages 정책 생성·운영 호스트 보호 절차를 먼저 사용합니다.
 2. GraeBoard의 `APP_ORIGIN` 호스트 전체를 대상으로 별도 앱을 만듭니다.
 3. 해당 팀 앱에만 적용하는 Allow 정책을 만들고 그 팀의 Google 사용자·그룹을 지정합니다.
 4. 이 앱의 로그인 방법은 Google IdP만 허용하고 OTP·다른 IdP·Bypass는 사용하지 않습니다. 다른 서비스의 넓은 Allow 정책을 공유하지 않습니다.
@@ -207,7 +215,7 @@ Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General →
 
 Edge는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
-내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 외부에 `SETUP_TOKEN`을 등록할 필요가 없습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
+내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 외부 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 외부에 `SETUP_TOKEN`을 등록할 필요가 없습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
 
 이후 사용자는 Google 로그인 → 해당 팀의 사내 계정 선택 → 연결 신청 → 승인 대기 순서로 진행합니다. 팀장은 **설정 → 팀 → 구성원 → Google 계정 연결**에서 승인·거절·연결 해제를 처리합니다. 승인된 계정만 접속할 수 있으며 마지막으로 연결된 팀장의 연결은 다른 팀장을 연결하기 전까지 해제할 수 없습니다. 이름이나 이메일이 같다는 이유로 자동 연결하지 않습니다. 인증 신원은 검증된 Access의 `(issuer, subject)`에 연결하고 선택 세션도 그 신원에 묶습니다.
 
@@ -253,13 +261,13 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 
 1. 내부 DB·이미지 백업과 팀 UUID를 확인합니다. 기존 사내 자료를 최초 게시할 때는 [스냅샷 용량](#최초-게시-스냅샷의-용량-초과)도 먼저 확인합니다. 연결 검사 성공만으로 전체 자료의 게시·수신 가능 용량을 검증한 것은 아닙니다.
 2. 내부 서버의 팀 연결 프로필과 설치 식별자를 준비하고 서버를 시작합니다.
-3. 내부 **설정 → 팀 → 동기화**에서 설치된 프로필을 선택해 **연결 저장**을 누릅니다.
+3. 내부 **설정 → 팀 → 외부 동기화**에서 자동 지정된 프로필을 확인하고 **이 팀에 연결**을 누릅니다.
 4. **연결 검사** 결과를 확인한 뒤 **초기 게시**를 실행합니다. 초기 게시 중 새 내부 편집도 대기 변경으로 보존됩니다.
-5. 내부 초기 게시에 팀 구성원 정보도 포함됐는지 확인하고, 외부에서 팀장 계정을 최초 연결합니다. **설정 → 시스템 → 서비스 연결**에서 연결 검사 후 **팀 가져오기**를 실행합니다. 기존 업무를 초기화해 덮어쓰지 않습니다.
+5. 내부 초기 게시에 팀 구성원 정보도 포함됐는지 확인하고, 외부에서 팀장 계정을 최초 연결합니다. **설정 → 시스템 → 외부 동기화**에서 연결 검사 후 **팀 가져오기**를 실행합니다. 기존 업무를 초기화해 덮어쓰지 않습니다.
 6. 본문·이미지·팀 신원을 확인한 뒤 팀원에게 주소를 전달하고, 각자의 연결 신청을 팀장이 승인합니다. 역할은 사내에서 설정합니다.
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
 
-연결 저장 직후 `일시정지`, `Git 반영: 아직 없음`은 최초 게시 전 상태입니다. **연결 검사**가 성공해야 **초기 게시** 버튼이 활성화됩니다. Git 검사는 `api.github.com`에서 비공개 저장소 조회와 임시 `graeboard-probe/<UUID>` 브랜치 생성·삭제를 확인합니다. 실제 초기 게시의 `github.com` Git CLI 통신과 전체 자료·이미지 전송은 별도 단계입니다. 내부 초기 게시와 외부 가져오기를 마치기 전에는 `외부망 반영: 확인 대기`를 완료로 해석하지 않습니다.
+**이 팀에 연결** 직후 `일시정지`, `Git 반영: 아직 없음`은 최초 게시 전 상태입니다. **연결 검사**가 성공해야 **초기 게시** 버튼이 활성화됩니다. Git 검사는 `api.github.com`에서 비공개 저장소 조회와 임시 `graeboard-probe/<UUID>` 브랜치 생성·삭제를 확인합니다. 실제 초기 게시의 `github.com` Git CLI 통신과 전체 자료·이미지 전송은 별도 단계입니다. 내부 초기 게시와 외부 가져오기를 마치기 전에는 `외부망 반영: 확인 대기`를 완료로 해석하지 않습니다.
 
 ### 개발용 외부 자료를 비우고 사내 기존 팀으로 처음 연결
 
@@ -272,7 +280,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 5. R2의 대상 bucket에서 **Settings → Empty Bucket → Empty**를 실행하고 객체가 비었는지 확인합니다. bucket과 binding은 유지합니다. 이는 외부 이미지 삭제이며 사내 이미지 폴더에는 적용하지 않습니다. [R2 비우기](https://developers.cloudflare.com/r2/buckets/delete-buckets/)
 6. 팀 **데이터 저장소**의 `sync-v1`, 이전 내부 설치의 `sync-directory/<ID>`·`sync-setup/<ID>`·`sync-status/<ID>`, 이전 외부 설치의 `sync-setup-status/<ID>`·`sync-status/<ID>`를 삭제합니다. 기본 `main`과 앱 **소스 저장소**는 유지합니다. GitHub **All** 탭에서 대상 브랜치가 사라지고 재생성되지 않는지 확인합니다. 이 절차는 동기화 브랜치를 비우는 것이며 GitHub의 모든 과거 객체를 영구 소거하는 절차가 아닙니다.
 7. 사내 설치 ID가 없으면 새 UUID를 한 번 발급해 고정합니다. 기존 사내 설치 ID가 있으면 유지합니다. 새 외부 설치 ID와 양쪽 상대 설치 ID, 프로필·`SITE_TEAM_ID`·gateway 팀 UUID를 맞춥니다. 이전 개발 서버의 프로필과 설치 ID를 그대로 복사하지 않습니다. 환경 설정만 바꾸면서 기존 DB·이미지 경로는 유지합니다.
-8. 사내에서 **연결 저장 → 연결 검사 → 초기 게시**를 완료합니다. 외부 설정과 동일 릴리스의 Edge/gateway를 반영한 뒤 사내 팀장이 연결 키를 발급하고, 외부에서 자신의 사내 계정을 연결해 **팀 가져오기**를 수행합니다. 사용자 접근은 운영자 검증 범위로 제한하고 Cron은 계속 중지합니다. 업무·문서·이미지·구성원과 양방향 반영을 검증한 뒤 Cron과 사용자 접근을 재개합니다.
+8. 사내에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 완료합니다. 외부 설정과 동일 릴리스의 Edge/gateway를 반영한 뒤 사내 팀장이 연결 키를 발급하고, 외부에서 자신의 사내 계정을 연결해 **팀 가져오기**를 수행합니다. 사용자 접근은 운영자 검증 범위로 제한하고 Cron은 계속 중지합니다. 업무·문서·이미지·구성원과 양방향 반영을 검증한 뒤 Cron과 사용자 접근을 재개합니다.
 
 현재 `SyncService.initialize`의 최초 게시 형식은 protocol 1입니다. 최신 앱 배포나 외부 DB 초기화만으로 protocol 2가 되지는 않습니다. protocol 2로 운영할 경우 최초 연결 후 [명시 전환 절차](OPERATIONS.md#동기화-v2-명시-전환)를 수행합니다. 형식 전환이 용량 상한을 없애지는 않습니다.
 
@@ -551,7 +559,7 @@ npm run sync:recover -- --database /srv/graeboard/data/weekly-plan.sqlite --team
 `sync:recover` 명령은 내부 SQLite 전용입니다. `restore:external` 또는 논리 이관 후에는 아래 외부 API 절차를 사용합니다. 복구한 팀을 **처음 가져오기**로 다시 초기화하지 않습니다.
 
 1. 이전 Edge의 해당 팀 쓰기·업로드 실행과 gateway Cron을 모두 중지하고 원본 DB/R2와 백업을 보존합니다. 복구한 팀 사이트 DB를 Edge 접속 설정에, R2를 gateway binding에 연결하고, 해당 팀의 `SYNC_PROFILES`와 새 `INSTALLATION_ID`를 설정합니다. 이 단계에서도 팀은 공개하지 않습니다.
-2. 복구한 승인 정보에 연결된 팀장의 Google 계정으로 공식 `APP_ORIGIN`에 로그인하고 사내 계정을 선택합니다. **설정 → 시스템 → 서비스 연결**에서 복구한 자원을 검사하고, 팀 연결에 복구 대상 프로필을 선택합니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
+2. 복구한 승인 정보에 연결된 팀장의 Google 계정으로 공식 `APP_ORIGIN`에 로그인하고 사내 계정을 선택합니다. **설정 → 시스템 → 외부 동기화**에서 복구한 자원을 검사하고, 팀의 외부 동기화 탭에서 자동 지정된 복구 대상 프로필을 확인한 뒤 **이 팀에 연결**을 누릅니다. 관리 API를 사용한다면 `PUT /api/admin/teams/:id/connection`에 `{ "profileId": "복구-프로필-ID" }`를 보냅니다. control DB가 `unconnected`인 복구 팀의 프로필만 이렇게 다시 지정합니다. 운영 중인 팀은 앞 절의 연결 전환 절차를 사용합니다.
 3. `GET /api/admin/teams/:id/maintenance/uploads/recover`로 남은 업로드 실행을 확인합니다. 이전 실행이 끝났음을 확인한 ID만 `POST` 같은 경로에 `{ "confirmedDrained": true, "leaseIds": ["확인한-ID"] }`로 해제합니다. 이 작업은 시간 경과만으로 자동 수행하지 않습니다. 미완료 정리는 앞 절의 복구 절차로 이어서 완료합니다. 중단된 백업은 `POST /api/admin/teams/:id/maintenance/recover`의 `{ "jobId": "확인한-ID", "dryRun": true }`로 확인하고, 이전 백업 실행이 종료된 뒤 `{ "jobId": "확인한-ID", "confirmedDrained": true }`로 guard를 `cancelled` 처리합니다. 시간 경과만으로 해제하지 않습니다. C/P/L/head와 부분 백업 파일은 보존되며 부분 파일은 완전 백업이 아닙니다. 이후 백업은 새 출력 경로에 만듭니다.
 4. `GET /api/teams/:id/sync`의 `canonicalHead`와 현재 프로필·설치 UUID를 확인합니다. 같은 origin의 인증된 관리자 요청으로 `POST /api/admin/teams/:id/sync/recover`에 다음 내용을 보냅니다. `expectedHead`는 실제 조회한 값이며 최초 커서가 없으면 JSON `null`입니다.
 
