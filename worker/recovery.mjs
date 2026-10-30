@@ -1,7 +1,7 @@
 import { applicationEntities } from "../server/sync/versions.mjs";
 import {
   canonical,
-  equal,
+  payloadEqual,
   entityId,
   ENTITIES,
 } from "../server/sync/protocol.mjs";
@@ -165,7 +165,8 @@ export async function recoveryRoutes(ctx, path, method, body) {
         if (
           record &&
           !!record.deleted === !!sharedDeleted &&
-          equal(
+          payloadEqual(
+            row.entity,
             soft ? { ...record.payload, deletedAt: null } : record.payload,
             soft ? { ...payload, deletedAt: null } : payload,
           )

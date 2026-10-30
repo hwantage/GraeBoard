@@ -2,6 +2,10 @@ import { channel } from "node:diagnostics_channel";
 import { splitReportRecord, applicationEntities } from "./versions.mjs";
 import { expandStyle } from "../../shared/compact.js";
 import {
+  packReportData,
+  unpackReportData,
+} from "../../shared/report-sync-data.js";
+import {
   parse,
   teamSettings,
   readFormatting,
@@ -20,7 +24,7 @@ import {
 } from "../document-storage.mjs";
 import { encodeReport, decodeReport } from "../reports.mjs";
 import { hasDocumentContent } from "../../shared/task-documents.js";
-import { entityId, initialToken, equal } from "./protocol.mjs";
+import { entityId, initialToken, payloadEqual } from "./protocol.mjs";
 
 const reportDecoded = channel("graeboard.sync.report.decode");
 const one = (db, sql, ...args) => db.prepare(sql).get(...args);
@@ -182,13 +186,15 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
               })),
             })),
           };
+        // 동기화 payload도 저장 BLOB과 같은 공유 사전 형태를 쓴다. 업무마다 반복되는
+        // 공통 서식 규칙·셀 서식을 한 번만 직렬화한다.
         p = {
           year: r.year,
           name: r.name,
           referenceDate: r.reference_date,
           createdBy: r.created_by,
           createdAt: r.created_at,
-          data,
+          data: packReportData(data),
         };
       }
       break;
@@ -540,9 +546,11 @@ export function materializeEntity(
         row.markdown,
       ]),
     );
+    // 수신한 data는 공유 사전 형태 또는 기존 평문이다. 앱 저장 경로는 푼 객체를 받는다.
+    const source = unpackReportData(p.data);
     const data = {
-      ...p.data,
-      tasks: p.data.tasks.map((t) => ({
+      ...source,
+      tasks: source.tasks.map((t) => ({
         ...t,
         documents: (t.documents || []).map((doc) => ({
           ...doc,
@@ -743,7 +751,7 @@ export function materialize(db, teamId, entities, previous = {}, options = {}) {
   ];
   const changes = Object.entries(entities).filter(
     ([k, e]) =>
-      !equal(e.payload, previous[k]?.payload) ||
+      !payloadEqual(e.entity, e.payload, previous[k]?.payload) ||
       e.deleted !== previous[k]?.deleted,
   );
   changes.sort(

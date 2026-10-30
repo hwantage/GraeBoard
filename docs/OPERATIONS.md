@@ -249,6 +249,8 @@ unset GRAEBOARD_RESET_PASSWORD
 
 외부 API의 기본 실행 환경은 Supabase Edge Functions입니다. Cloudflare gateway는 정적 화면·요청 전달·R2/Images 처리만 수행하며 내부 Node는 `GRAEBOARD_SITE=internal`과 GitHub 접속만 유지합니다. `npm run build:edge`로 만든 함수를 배포하고 Pages binding을 gateway로 연결합니다. 기존 Worker에서의 이전은 동일 DB·계정 세션·설치 UUID를 유지하며 schema migration이 없습니다. 배포 설정·Secret 분리·전환과 복구 순서는 [Edge 배포](CLOUD_SETUP.md#supabase-edge-functions-배포)를 따릅니다. Hyperdrive는 사용하지 않으며 이전 Worker 이름은 gateway 전달용으로만 유지합니다. 업무 요청 외의 자동 동기화는 gateway Cron이 Edge를 호출하며, Cloudflare와 Supabase 양쪽 실행 로그를 확인합니다.
 
+사본 동기화 payload를 공유 사전 형태로 바꾼 버전(2026-10-30)부터는 reducer의 비교 규칙과 payload 검증이 함께 바뀌므로 사내 서버(Node)와 외부 서버(Supabase `graeboard` 함수)를 같은 버전으로 연이어 배포하며, 새 버전이 두 형태를 모두 읽으므로 외부 서버를 먼저 배포합니다. 이전 외부 서버는 새 형태의 사본 명령이 담긴 커밋을 "Invalid report payload"로 적용하지 못하고 오류를 기록한 채 기준 head를 유지하다가 외부 서버 배포 후 같은 커밋부터 다시 적용합니다. 기존 평문 사본 명령·기준본은 변환 없이 그대로 읽습니다.
+
 외부 배포 산출물은 다음처럼 구분합니다. Pages 소스의 자동 빌드가 다른 대상까지 배포하지 않습니다.
 
 | 변경 대상 | 반영 방법 |
