@@ -5,6 +5,7 @@ import {
   Database,
   GitBranch,
   Image,
+  LoaderCircle,
   Plug,
   Server,
   ShieldCheck,
@@ -52,6 +53,9 @@ export default function ServiceConnections({
   const [check, setCheck] = useState<ConnectionCheck | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The profile whose import is running: its button shows the progress state and
+  // stays locked until the server answers so a second import cannot be queued.
+  const [importing, setImporting] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupTeamId, setSetupTeamId] = useState(teams[0]?.id || "");
   const [message, setMessage] = useToast();
@@ -75,22 +79,27 @@ export default function ServiceConnections({
     path: string,
     body: unknown,
     done: string,
-    importing = false,
+    importProfileId = "",
   ) {
+    if (busy) return;
     setBusy(true);
+    setImporting(importProfileId);
     setError("");
     setMessage("");
     try {
       const result = await send<ConnectionCheck>(path, body);
       if (!live.current) return;
-      if (!importing) setCheck(result);
+      if (!importProfileId) setCheck(result);
       await load();
-      if (importing) await onRefresh();
+      if (importProfileId) await onRefresh();
       if (live.current) setMessage(done);
     } catch (e) {
       if (live.current) setError((e as Error).message);
     } finally {
-      if (live.current) setBusy(false);
+      if (live.current) {
+        setBusy(false);
+        setImporting("");
+      }
     }
   }
   const setupTeam = teams.find((team) => team.id === setupTeamId);
@@ -302,6 +311,7 @@ export default function ServiceConnections({
                     {site.external && (
                       <Button
                         {...busyProps(busy, profile.ready === false)}
+                        aria-busy={importing === profile.profileId || undefined}
                         onClick={() =>
                           void action(
                             "/admin/sync/import",
@@ -310,11 +320,18 @@ export default function ServiceConnections({
                               teamId: profile.teamId,
                             },
                             "팀 가져오기를 실행했습니다.",
-                            true,
+                            profile.profileId,
                           )
                         }
                       >
-                        팀 가져오기
+                        {importing === profile.profileId ? (
+                          <>
+                            <LoaderCircle size={14} className="spin" />팀
+                            가져오기 처리 중…
+                          </>
+                        ) : (
+                          "팀 가져오기"
+                        )}
                       </Button>
                     )}
                   </div>

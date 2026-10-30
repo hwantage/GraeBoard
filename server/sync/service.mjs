@@ -67,6 +67,9 @@ export class SyncService {
     maxProtocol = 2,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
     snapshotDecoder = decodeSnapshot,
+    // An operator-side first import may commit the state first and install the
+    // content-addressed images afterwards; each install still verifies the hash.
+    deferImages = false,
   }) {
     Object.assign(this, {
       transport,
@@ -78,6 +81,7 @@ export class SyncService {
       maxProtocol,
       stateLimits,
       snapshotDecoder,
+      deferImages,
     });
     this.running = null;
   }
@@ -175,6 +179,7 @@ export class SyncService {
           !file.path.startsWith("images/" + this.identity.teamId + "/")
         )
           throw new ProtocolError("SYNC_FORMAT", "Foreign image object");
+        if (this.deferImages && file.path.startsWith("images/")) continue;
         const bytes = await this.transport.readFile(commit.oid, file.path),
           expected = file.path
             .split("/")
@@ -403,10 +408,11 @@ export class SyncService {
           "Unsupported protocol version; canonical cursor is unchanged",
         );
       this.assertCapacity(state);
-      await this.images?.receive?.(state, commit.oid, this.transport, {
-        added,
-        verifiedImages,
-      });
+      if (!this.deferImages)
+        await this.images?.receive?.(state, commit.oid, this.transport, {
+          added,
+          verifiedImages,
+        });
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
         transition,

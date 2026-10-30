@@ -171,8 +171,9 @@ export function serviceFor(env, profile, link, options = {}) {
         return adapter.receive(state, ...args);
       },
     },
-    maxCommits: 4,
+    maxCommits: options.maxCommits || 4,
     maxOperations: 50,
+    deferImages: !!options.deferImages,
   });
   return {
     run: (options) => exclusiveSync(() => service.run(options)),
@@ -244,6 +245,14 @@ export async function runTeam(
     receiveOnly = false,
     updateStatus = true,
     respectPublishWindow = false,
+    // An operator-side import may supply a transport with a larger GitHub
+    // request budget than one hosted invocation can spend, and may install
+    // images in a later pass instead of before the state commit.
+    transport = null,
+    deferImages = false,
+    maxCommits = 0,
+    leaseMs = 0,
+    incrementalMaterialize = false,
   } = {},
 ) {
   const db = databaseFor(env, profile),
@@ -270,7 +279,13 @@ export async function runTeam(
     return { mode: "recovery" };
   }
   const result = await withGitHubDeadline(db, profile.teamId, () =>
-    serviceFor(env, profile, link).run({
+    serviceFor(env, profile, link, {
+      ...(transport ? { transport } : {}),
+      ...(maxCommits ? { maxCommits } : {}),
+      ...(leaseMs ? { leaseMs } : {}),
+      incrementalMaterialize,
+      deferImages,
+    }).run({
       receiveOnly,
       updateStatus,
     }),
@@ -423,7 +438,14 @@ export async function importTeam(ctx, body) {
     },
     { write: true },
   );
-  await runTeam(ctx.env, profile, { receiveOnly: true });
+  await runTeam(ctx.env, profile, {
+    receiveOnly: true,
+    transport: ctx.transport || null,
+    deferImages: !!ctx.deferImages,
+    maxCommits: ctx.maxCommits || 0,
+    leaseMs: ctx.leaseMs || 0,
+    incrementalMaterialize: !!ctx.incrementalMaterialize,
+  });
   const link = await db.readLink(profile.teamId),
     caughtUp = link.canonical_head === (await transport.readHead());
   if (caughtUp)

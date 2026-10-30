@@ -1,7 +1,8 @@
 // Both publishers must leave room for the immutable event envelope before an
-// operation is committed locally. Each event file is limited to 4 MiB;
-// the full team state has a separate budget.
-export const SYNC_FILE_MAX_BYTES = 4 * 1024 * 1024;
+// operation is committed locally. Each event file is limited to 32 MiB so that
+// one user command, such as copying a large report, always fits in one event;
+// the full team state has a separate budget of the same size.
+export const SYNC_FILE_MAX_BYTES = 32 * 1024 * 1024;
 export const SYNC_ENVELOPE_RESERVE_BYTES = 1024;
 export const SYNC_OPERATION_MAX_BYTES =
   SYNC_FILE_MAX_BYTES - SYNC_ENVELOPE_RESERVE_BYTES - 1;
