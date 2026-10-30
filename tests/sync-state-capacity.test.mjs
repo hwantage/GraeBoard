@@ -10,6 +10,7 @@ import { encodeReport } from "../server/reports.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { allEntities } from "../server/sync/entities.mjs";
 import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
+import { unpackReportData } from "../shared/report-sync-data.js";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
   capacityLimits,
@@ -259,8 +260,10 @@ test(
         [canonical([reportId])],
       )
     ).rows[0];
+    // site_entities keeps the shared-dictionary storage form of the report data.
     assert.equal(
-      JSON.parse(report.payload).data.tasks[0].cells.description.value.length,
+      unpackReportData(JSON.parse(report.payload).data).tasks[0].cells
+        .description.value.length,
       9 * MiB,
     );
     const importMs = Math.round(performance.now() - start);

@@ -22,6 +22,10 @@ import {
 } from "../server/sync/protocol.mjs";
 import { reduceMany, reduce } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
+import {
+  packReportPayload,
+  unpackReportPayload,
+} from "../shared/report-sync-data.js";
 
 function poolFor(binding, scope = "control", { site = false } = {}) {
   assert(binding?.connectionString, 503, "PostgreSQL binding을 확인하세요.");
@@ -114,10 +118,19 @@ export async function controlTransaction(env, work, { write = false } = {}) {
     await client.release();
   }
 }
+// site_entities는 동기화 기준본과 같은 저장 형태(사본 data의 공유 사전)를 보관한다.
+// 앱 코드는 SQLite와 마찬가지로 푼 객체를 읽는다.
+const storedPayload = (entity, payload) =>
+  entity === "report" ? packReportPayload(payload) : payload;
 const rowEntity = (row) => ({
   ...row,
   key: JSON.parse(row.entity_key),
-  payload: row.payload == null ? null : JSON.parse(row.payload),
+  payload:
+    row.payload == null
+      ? null
+      : row.entity === "report"
+        ? unpackReportPayload(JSON.parse(row.payload))
+        : JSON.parse(row.payload),
   revision: Number(row.revision),
   deleted: !!row.deleted,
 });
@@ -187,7 +200,7 @@ export class DataSession {
         this.teamId,
         entity,
         JSON.stringify(key),
-        canonical(payload),
+        canonical(storedPayload(entity, payload)),
         revision,
         storedDeleted ? 1 : 0,
       ],
@@ -315,10 +328,12 @@ export class DataSession {
     for (const change of captured.values()) {
       const { entity, key, after } = change,
         current = entities[entityId(entity, key)];
+      // 동기화 명령은 저장 형태(사본 data의 공유 사전)를 그대로 싣는다.
+      const desired = storedPayload(entity, after.payload);
       if (
         version === 2 &&
         current &&
-        equal(current.payload, after.payload) &&
+        equal(current.payload, desired) &&
         !!current.deleted === !!after.deleted
       )
         continue;
@@ -361,8 +376,7 @@ export class DataSession {
             : current.deleted
               ? "restore"
               : "edit";
-      const base = current?.payload ?? null,
-        desired = after.payload;
+      const base = current?.payload ?? null;
       changes.push({
         entity,
         key,

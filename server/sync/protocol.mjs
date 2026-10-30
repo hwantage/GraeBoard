@@ -5,6 +5,10 @@ import {
   DOCUMENT_IMAGE_PATTERN,
   isDocumentImage,
 } from "../../shared/document-images.js";
+import {
+  normalizeEntityPayload,
+  unpackReportData,
+} from "../../shared/report-sync-data.js";
 export const PROTOCOL = 1;
 export const ENTITIES_V1 = new Set([
   "team",
@@ -120,6 +124,9 @@ export function digest(value) {
 export const equal = (a, b) =>
   a === b ||
   (a !== undefined && b !== undefined && canonical(a) === canonical(b));
+// 사본 data는 평문과 공유 사전 형태가 섞여 있을 수 있으므로 내용으로 비교한다.
+export const payloadEqual = (entity, a, b) =>
+  equal(normalizeEntityPayload(entity, a), normalizeEntityPayload(entity, b));
 export const emptyState = () => ({ entities: {}, receipts: {}, conflicts: {} });
 export const stateHash = (state) => digest(state);
 export const initialToken = (bootstrapId, entity, key) =>
@@ -285,29 +292,37 @@ export function validateEntityPayload(
   )
     throw new Error("Invalid report cell");
   if (entity === "report") {
+    // data는 저장과 같은 공유 사전 형태 또는 기존 평문이다. 내용 검사는 푼 뒤 수행한다.
+    let data = payload.data;
+    if (plain(data))
+      try {
+        data = unpackReportData(data);
+      } catch {
+        throw new Error("Invalid report payload");
+      }
     if (
       !Number.isInteger(payload.year) ||
-      !plain(payload.data) ||
+      !plain(data) ||
       (version === 1
-        ? !Array.isArray(payload.data.tasks)
-        : Object.hasOwn(payload.data, "tasks")) ||
-      !Array.isArray(payload.data.users) ||
-      !plain(payload.data.settings) ||
-      !plain(payload.data.view)
+        ? !Array.isArray(data.tasks)
+        : Object.hasOwn(data, "tasks")) ||
+      !Array.isArray(data.users) ||
+      !plain(data.settings) ||
+      !plain(data.view)
     )
       throw new Error("Invalid report payload");
     if (
-      Object.keys(payload.data).some(
+      Object.keys(data).some(
         (field) => !["tasks", "users", "view", "settings"].includes(field),
       ) ||
-      payload.data.users.some(
+      data.users.some(
         (person) =>
           !plain(person) ||
           Object.keys(person).some((field) => !["id", "name"].includes(field)),
       )
     )
       throw new Error("Private account data in report");
-    if (payload.data.tasks?.some((task) => task.teamId !== teamId))
+    if (data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team report row");
   }
   if (entity === "document")

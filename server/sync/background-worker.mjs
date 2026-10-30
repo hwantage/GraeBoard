@@ -9,6 +9,7 @@ import {
   digest,
   entityId,
   equal,
+  payloadEqual,
   stateHash,
   validateOperation,
   protocolVersion,
@@ -548,7 +549,7 @@ function projectionPatch(
     }
     if (record.deleted && (!current || current.payload?.deletedAt)) continue;
     if (
-      !equal(record.payload, current?.payload) ||
+      !payloadEqual(record.entity, record.payload, current?.payload) ||
       !!record.deleted !== !!current?.deleted
     ) {
       changedEntities[key] = record;

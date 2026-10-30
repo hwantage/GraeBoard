@@ -1,12 +1,16 @@
 import { canonical, digest, entityId, protocolVersion } from "./protocol.mjs";
+import {
+  packReportData,
+  unpackReportData,
+} from "../../shared/report-sync-data.js";
 
 export const splitReportRecord = (record) => {
-  if (
-    record?.entity !== "report" ||
-    !Array.isArray(record.payload?.data?.tasks)
-  )
-    return record ? [record] : [];
-  const { tasks, ...data } = record.payload.data;
+  if (!record) return [];
+  // v1 사본 data는 공유 사전 형태일 수 있다. 행·셀로 나누기 전에 푼다.
+  const source =
+    record.entity === "report" ? unpackReportData(record.payload?.data) : null;
+  if (!Array.isArray(source?.tasks)) return [record];
+  const { tasks, ...data } = source;
   const records = [{ ...record, payload: { ...record.payload, data } }],
     ids = new Set();
   tasks.forEach((task, index) => {
@@ -83,11 +87,15 @@ export function applicationEntities(entities) {
             .map((cell) => [cell.key[2], cell.payload.data]),
         ),
       }));
+    // 조합한 사본도 v1과 같은 저장 형태(공유 사전)로 돌려준다.
     output[id] = {
       ...record,
       payload: {
         ...record.payload,
-        data: { ...record.payload.data, tasks: rows },
+        data: packReportData({
+          ...unpackReportData(record.payload.data),
+          tasks: rows,
+        }),
       },
     };
   }

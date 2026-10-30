@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { SyncService } from "../server/sync/service.mjs";
+import { unpackReportData } from "../shared/report-sync-data.js";
 import {
   canonical,
   digest,
@@ -260,8 +261,10 @@ test("A3/A6 actual PostgreSQL receiver validates paused transition then publishe
     stateHash(node.state),
   );
   assert.equal(
-    applicationEntities(node.state.entities)[entityId("report", [f.reportId])]
-      .payload.data.tasks[0].cells.title.value,
+    unpackReportData(
+      applicationEntities(node.state.entities)[entityId("report", [f.reportId])]
+        .payload.data,
+    ).tasks[0].cells.title.value,
     "PG v2 edit",
   );
   assert.equal(

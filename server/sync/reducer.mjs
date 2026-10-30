@@ -4,11 +4,13 @@ import {
   canonical,
   digest,
   equal,
+  payloadEqual,
   entityId,
   validateOperation,
   validateEntityPayload,
   protocolVersion,
 } from "./protocol.mjs";
+import { normalizeEntityPayload } from "../../shared/report-sync-data.js";
 
 function edits(base, value, reducer = 1) {
   const chunks = diffChars(base, value, {
@@ -321,7 +323,7 @@ export function reduce(
             outputs[key] = current.version;
             continue;
           }
-          if (!equal(current.payload, c.base)) {
+          if (!payloadEqual(c.entity, current.payload, c.base)) {
             reason = "Delete conflicts with edit";
             break;
           }
@@ -332,14 +334,20 @@ export function reduce(
             break;
           }
           payload = { ...current.payload };
+          // 사본 data는 평문·공유 사전 형태를 내용으로 비교한다. 과거 평문 이벤트의
+          // 재생 결과는 바뀌지 않는다.
+          const normalized = normalizeEntityPayload(c.entity, current.payload),
+            normalizedBase = normalizeEntityPayload(c.entity, c.base),
+            normalizedDesired = normalizeEntityPayload(c.entity, c.desired);
           for (const field of c.fields) {
-            const base = c.base?.[field],
-              desired = c.desired?.[field],
-              value = current.payload?.[field];
+            const base = normalizedBase?.[field],
+              desired = normalizedDesired?.[field],
+              value = normalized?.[field];
             if (equal(value, desired) || equal(desired, base)) continue;
             if (equal(value, base)) {
-              if (desired === undefined) delete payload[field];
-              else payload[field] = desired;
+              if (c.desired?.[field] !== undefined)
+                payload[field] = c.desired[field];
+              else delete payload[field];
               continue;
             }
             if (

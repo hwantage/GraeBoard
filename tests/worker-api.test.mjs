@@ -29,6 +29,7 @@ import {
 } from "../shared/domain.js";
 import { THEME_IDS } from "../shared/themes.js";
 import { unpack } from "../shared/compact.js";
+import { unpackReportData } from "../shared/report-sync-data.js";
 import { ProtocolError } from "../server/sync/errors.mjs";
 import {
   databaseCapacity,
@@ -471,8 +472,11 @@ test(
       const reportOperation = (await adapter.readPending(teamId))
         .flatMap((op) => op.changes)
         .find((c) => c.entity === "report" && c.key[0] === reportId);
+      // The command carries report data in the shared-dictionary storage form.
       assert.deepEqual(
-        Object.keys(reportOperation.desired.data.users[0]).sort(),
+        Object.keys(
+          unpackReportData(reportOperation.desired.data).users[0],
+        ).sort(),
         ["id", "name"],
       );
       assert.doesNotMatch(

@@ -16,6 +16,7 @@ import {
 import { prepareReportEdits } from "../server/storage/report-command-rules.mjs";
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
+import { unpackReportData } from "../shared/report-sync-data.js";
 
 const freeze = (value) => {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -195,9 +196,11 @@ test("failed ordinary report edit discards both decoded after-images and transac
   assert.equal(result.tasks[0].cells.title.value, "saved next request");
   const pending = f.adapter.readPending(f.teamId);
   assert.equal(pending.length, 1);
+  // The command carries the report data in the shared-dictionary storage form.
   assert.equal(
-    pending[0].changes.find((change) => change.entity === "report").base.data
-      .tasks[0].cells.title.value,
+    unpackReportData(
+      pending[0].changes.find((change) => change.entity === "report").base.data,
+    ).tasks[0].cells.title.value,
     "initial",
   );
   assert.equal(

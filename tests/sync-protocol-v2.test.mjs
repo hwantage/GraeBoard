@@ -31,6 +31,12 @@ import { getTask, transaction, openDatabase } from "../server/db.mjs";
 import { channel } from "node:diagnostics_channel";
 import { encodeReport } from "../server/reports.mjs";
 import {
+  packReportData,
+  unpackReportData,
+} from "../shared/report-sync-data.js";
+// Report data travels and is stored in the shared-dictionary form; tests read it expanded.
+const reportTasks = (record) => unpackReportData(record.payload.data).tasks;
+import {
   storeReportDocuments,
   syncReportDocuments,
 } from "../server/document-storage.mjs";
@@ -221,8 +227,9 @@ test("A3 Node ordinary report save captures only the changed v2 copy cell", asyn
   assert.equal(getTask(f.db, f.taskId).cells.title.value, "initial");
   const projected = reduceMany(next, pending);
   assert.equal(
-    applicationEntities(projected.entities)[entityId("report", [f.reportId])]
-      .payload.data.tasks[0].cells.title.value,
+    reportTasks(
+      applicationEntities(projected.entities)[entityId("report", [f.reportId])],
+    )[0].cells.title.value,
     "Node copy",
   );
 });
@@ -262,8 +269,9 @@ test("A3 actual PostgreSQL report save and materialization retain copy-cell sepa
   assert.ok(Buffer.byteLength(canonical(pending[0])) < 5000);
   const projected = reduceMany(state, pending);
   assert.equal(
-    applicationEntities(projected.entities)[entityId("report", [f.reportId])]
-      .payload.data.tasks[0].cells.title.value,
+    reportTasks(
+      applicationEntities(projected.entities)[entityId("report", [f.reportId])],
+    )[0].cells.title.value,
     "Edge copy",
   );
   await f.adapter.commitCanonical(
@@ -333,10 +341,14 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
     source = structuredClone(f.state),
     reportId = entityId("report", [f.reportId]);
   const secondTask = randomUUID(),
-    originalTask = source.entities[reportId].payload.data.tasks[0];
-  source.entities[reportId].payload.data.tasks.push({
-    ...structuredClone(originalTask),
-    id: secondTask,
+    sourceData = unpackReportData(source.entities[reportId].payload.data),
+    originalTask = sourceData.tasks[0];
+  source.entities[reportId].payload.data = packReportData({
+    ...sourceData,
+    tasks: [
+      ...sourceData.tasks,
+      { ...structuredClone(originalTask), id: secondTask },
+    ],
   });
   let state = upgradeState(source);
   const command = (after) => {
@@ -368,8 +380,8 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
     .map(([id]) => id);
   command(Object.fromEntries(removedTaskIds.map((id) => [id, null])));
   const active = applicationEntities(state.entities)[reportId];
-  assert.equal(active.payload.data.tasks.length, 1);
-  assert.equal(active.payload.data.tasks[0].cells.description, undefined);
+  assert.equal(reportTasks(active).length, 1);
+  assert.equal(reportTasks(active)[0].cells.description, undefined);
   const visible = splitReportRecord(active);
   command(
     Object.fromEntries(
@@ -378,8 +390,8 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
   );
   const deleted = applicationEntities(state.entities)[reportId];
   assert.equal(deleted.deleted, true);
-  assert.equal(deleted.payload.data.tasks.length, 1);
-  assert.equal(deleted.payload.data.tasks[0].cells.description, undefined);
+  assert.equal(reportTasks(deleted).length, 1);
+  assert.equal(reportTasks(deleted)[0].cells.description, undefined);
   const restored = splitReportRecord({ ...deleted, deleted: false });
   command(
     Object.fromEntries(
@@ -387,8 +399,8 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
     ),
   );
   const final = applicationEntities(state.entities)[reportId];
-  assert.equal(final.payload.data.tasks.length, 1);
-  assert.equal(final.payload.data.tasks[0].cells.description, undefined);
+  assert.equal(reportTasks(final).length, 1);
+  assert.equal(reportTasks(final)[0].cells.description, undefined);
   assert.equal(
     state.entities[entityId("reportTask", [f.reportId, secondTask])].deleted,
     true,
@@ -420,7 +432,9 @@ test("A3 a pre-existing v1 deleted copy retains exactly its tombstone body after
 test("A3 1000-row 100-document copy decodes once per phase and invalidates after rollback", async (t) => {
   const f = sqliteFixture(t),
     report = structuredClone(
-      f.state.entities[entityId("report", [f.reportId])].payload.data,
+      unpackReportData(
+        f.state.entities[entityId("report", [f.reportId])].payload.data,
+      ),
     ),
     prototype = report.tasks[0];
   report.tasks = Array.from({ length: 1000 }, (_, index) => ({
@@ -598,7 +612,8 @@ test("A3 v2 logical transfer preserves canonical children and exports the establ
     (row) => row.entity === "report",
   );
   assert.equal(
-    JSON.parse(report.payload).data.tasks[0].cells.title.value,
+    unpackReportData(JSON.parse(report.payload).data).tasks[0].cells.title
+      .value,
     "pending transfer copy",
   );
   assert.ok(
@@ -618,8 +633,8 @@ test("A3 v2 logical transfer preserves canonical children and exports the establ
   assert.equal(stateHash(restored.readState(f.teamId)), stateHash(state));
   assert.deepEqual(restored.readPending(f.teamId), pending);
   assert.equal(
-    readEntity(db, f.teamId, "report", [f.reportId]).payload.data.tasks[0].cells
-      .title.value,
+    reportTasks(readEntity(db, f.teamId, "report", [f.reportId]))[0].cells.title
+      .value,
     "pending transfer copy",
   );
   assert.equal(restored.readLink(f.teamId).mode, "recovery");

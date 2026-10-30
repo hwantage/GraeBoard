@@ -13,7 +13,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { Pool } from "pg";
 import sharp from "sharp";
-import { openDatabase, json, getTask } from "../server/db.mjs";
+import {
+  openDatabase,
+  json,
+  getTask,
+  transaction,
+  writeFormatting,
+} from "../server/db.mjs";
+import { isPackedReportData } from "../shared/report-sync-data.js";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
@@ -408,6 +415,25 @@ test(
         digest(new Uint8Array(await imageResponse.arrayBuffer())),
         digest(webp),
       );
+      // A column rule carrying row IDs is attached to every task row. An outside
+      // report must still travel in the shared-dictionary storage form.
+      transaction(db, () =>
+        writeFormatting(db, teamId, {
+          revision: 1,
+          rules: [
+            {
+              id: "bridge-rule",
+              rows: [task.id],
+              keys: ["title"],
+              excludeKeys: [],
+              style: { backgroundColor: "#ffe8a3" },
+              orders: { backgroundColor: 1 },
+            },
+          ],
+        }),
+      );
+      await app.locals.sync.get(teamId).run();
+      await drain();
       const report = ok(
         await outside("/reports", {
           teamId,
@@ -420,7 +446,12 @@ test(
       );
       await drain();
       await app.locals.sync.get(teamId).run();
-      assert.equal(ok(await inside("/reports/" + report.id)).tasks.length, 1);
+      const insideReport = ok(await inside("/reports/" + report.id));
+      assert.equal(insideReport.tasks.length, 1);
+      assert.equal(
+        insideReport.tasks[0].formatting?.rules[0]?.id,
+        "bridge-rule",
+      );
       assert.match(
         ok(await inside(`/reports/${report.id}/tasks/${task.id}/document`))
           .markdown,
