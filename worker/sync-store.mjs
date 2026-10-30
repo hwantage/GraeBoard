@@ -15,7 +15,17 @@ import { materialize } from "./materialize.mjs";
 export function boundStore(
   database,
   teamId,
-  { maintenanceJobId = null, limits = capacityLimits() } = {},
+  {
+    maintenanceJobId = null,
+    limits = capacityLimits(),
+    // One hosted invocation finishes well within ten minutes; an operator-side
+    // first import of a long chain may hold the lease for hours.
+    leaseMs = 600000,
+    // Hosted runs re-compare every visible row so a damaged projection heals
+    // itself; a long operator import may instead write only what each commit
+    // changed and run one full pass at the end.
+    incrementalMaterialize = false,
+  } = {},
 ) {
   let owner = null;
   const call = (work) => database.withTeamTransaction(teamId, work);
@@ -40,7 +50,7 @@ export function boundStore(
         const now = Date.now();
         const q = await tx.query(
           "UPDATE team_sync_links SET lease_owner=$2,lease_until=$3 WHERE team_id=$1 AND (lease_owner IS NULL OR lease_until<$4)",
-          [teamId, id, now + 600000, now],
+          [teamId, id, now + leaseMs, now],
         );
         if (q.rowCount) {
           owner = id;
@@ -92,7 +102,13 @@ export function boundStore(
               "새 미전송 자료가 있어 형식 전환을 중단했습니다. 입력을 보존하고 관리자에게 확인하세요.",
             );
           assertStateCapacity(state, limits, projection.pending);
-          await materialize(tx, teamId, projection);
+          await materialize(
+            tx,
+            teamId,
+            incrementalMaterialize && options.previousState
+              ? { ...projection, previousState: options.previousState }
+              : projection,
+          );
           // A received commit may acknowledge our own outbox after a lost
           // publish response. Only that evidence marks a local write published.
           if (ack.length)

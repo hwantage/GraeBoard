@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { LoaderCircle } from "lucide-react";
 import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
@@ -119,6 +120,7 @@ export default function SyncSetupWizard({
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [token, setToken] = useState("");
+  const [importing, setImporting] = useState("");
   const [credentialVersion, setCredentialVersion] = useState(0);
   const [confirmed, setConfirmed] = useState<Record<number, boolean>>({});
   const [manual, setManual] = useState({ internal: false, external: false });
@@ -803,19 +805,32 @@ export default function SyncSetupWizard({
                 <Button
                   key={profile.profileId}
                   disabled={busy || profile.ready === false}
+                  aria-busy={importing === profile.profileId || undefined}
                   onClick={() =>
                     void action(async () => {
-                      await send("/admin/sync/import", {
-                        profileId: profile.profileId,
-                        teamId: team.id,
-                      });
-                      if (!live.current) return;
-                      await onRefresh();
-                      await load();
+                      setImporting(profile.profileId);
+                      try {
+                        await send("/admin/sync/import", {
+                          profileId: profile.profileId,
+                          teamId: team.id,
+                        });
+                        if (!live.current) return;
+                        await onRefresh();
+                        await load();
+                      } finally {
+                        if (live.current) setImporting("");
+                      }
                     }, "팀 가져오기를 실행했습니다.")
                   }
                 >
-                  팀 가져오기
+                  {importing === profile.profileId ? (
+                    <>
+                      <LoaderCircle size={14} className="spin" />팀 가져오기
+                      처리 중…
+                    </>
+                  ) : (
+                    "팀 가져오기"
+                  )}
                 </Button>
               ))}
           {children}

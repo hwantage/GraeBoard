@@ -311,10 +311,10 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
     const payload = {
       title: "Large memo",
       position: 0,
-      markdown: String(i).repeat(200 * 1024),
+      markdown: String(i).repeat(250 * 1024),
     };
     const base = i
-      ? { ...payload, markdown: String(i - 1).repeat(200 * 1024) }
+      ? { ...payload, markdown: String(i - 1).repeat(250 * 1024) }
       : null;
     ops.push({
       protocol: 1,
@@ -326,7 +326,7 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
       createdAt: "2026-01-01T00:00:00.000Z",
       dependsOn: i ? ["large-" + (i - 1)] : [],
       objects: [],
-      changes: Array.from({ length: 7 }, (_, n) => ({
+      changes: Array.from({ length: 50 }, (_, n) => ({
         entity: "document",
         key: ["annual", "2026", "doc-" + n],
         generation: "g-" + n,

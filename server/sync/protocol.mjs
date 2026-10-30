@@ -429,7 +429,7 @@ export function validateOperation(op, identity, state, { onSerialized } = {}) {
   if (Buffer.byteLength(serialized) > SYNC_OPERATION_MAX_BYTES)
     throw Object.assign(
       new Error(
-        "동기화할 변경이 4MiB 전송 한도를 초과했습니다. 변경을 나누어 저장하세요.",
+        `동기화할 변경이 전송 한도 ${Math.ceil(SYNC_OPERATION_MAX_BYTES / 1048576)}MiB를 초과했습니다. 관리자에게 동기화 전송 한도 확인을 요청하세요.`,
       ),
       { status: 400, code: "SYNC_OPERATION_CAPACITY" },
     );

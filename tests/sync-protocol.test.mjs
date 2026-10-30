@@ -150,7 +150,7 @@ test("operation limits reject an oversized whole command without mutating the ca
       action: "create",
       baseVersion: null,
       base: null,
-      desired: { value: "한".repeat(1400000), style: {} },
+      desired: { value: "한".repeat(11300000), style: {} },
       fields: ["value", "style"],
     },
   ]);
@@ -160,7 +160,7 @@ test("operation limits reject an oversized whole command without mutating the ca
     (error) =>
       error.status === 400 &&
       error.code === "SYNC_OPERATION_CAPACITY" &&
-      /4MiB/.test(error.message),
+      /32MiB/.test(error.message),
   );
   assert.equal(digest(op), before);
 });
@@ -177,7 +177,7 @@ test("validated serialization is exactly the unchanged canonical command and is 
   assert.deepEqual(emitted, [canonical(op)]);
   assert.deepEqual(op, before);
   const oversized = operation("oversized-serialized", [
-    change({ name: "x".repeat(4 * 1024 * 1024) }),
+    change({ name: "x".repeat(33 * 1024 * 1024) }),
   ]);
   for (const invalid of [{ ...op, protocol: 99 }, oversized])
     assert.throws(() =>

@@ -43,9 +43,17 @@ test("state and entity budgets grow independently of event files, with bounded c
   });
   assert.equal(lower.maxBytes, 4 * MiB);
   assert.equal(lower.maxEntities, 12000);
-  assertFileCapacity("events/a.json", new Uint8Array(4 * MiB));
+  // Event files are bounded by the smaller of the file limit and the state
+  // budget: a lowered state budget lowers them, the default allows 32 MiB.
+  assertFileCapacity("events/a.json", new Uint8Array(4 * MiB), lower);
   assert.throws(
-    () => assertFileCapacity("events/a.json", new Uint8Array(4 * MiB + 1)),
+    () =>
+      assertFileCapacity("events/a.json", new Uint8Array(4 * MiB + 1), lower),
+    /file capacity/,
+  );
+  assertFileCapacity("events/a.json", new Uint8Array(32 * MiB));
+  assert.throws(
+    () => assertFileCapacity("events/a.json", new Uint8Array(32 * MiB + 1)),
     /file capacity/,
   );
   const state = emptyState();

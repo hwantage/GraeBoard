@@ -18,6 +18,7 @@ import {
 import {
   SYNC_RECEIPT_MAX_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,
+  SYNC_FILE_MAX_BYTES,
 } from "../shared/sync-limits.js";
 import { createReceiptCapacityGuard } from "../server/sync/receipt-capacity.mjs";
 import { transaction } from "../server/db.mjs";
@@ -89,7 +90,7 @@ test("old over-budget receipt state remains readable while new receipts and over
     () =>
       assertFileCapacity(
         "events/operation.json",
-        new Uint8Array(4 * 1024 * 1024 + 1),
+        new Uint8Array(SYNC_FILE_MAX_BYTES + 1),
       ),
     /file capacity/,
   );

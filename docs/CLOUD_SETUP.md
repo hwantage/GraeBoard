@@ -448,6 +448,32 @@ fi
 
 외부 저장 뒤의 자동 게시는 팀별 첫 미전송 변경이 저장된 시각부터 2초 동안 변경을 모으고, 이후 자동 게시 시도 사이에는 최소 5초 간격을 둡니다. 연속 저장이 첫 대기 시간을 계속 연장하지 않으며, 게시 시도 시각은 DB에 남아 다른 Edge 실행에서도 간격을 지킵니다. 네트워크 오류나 실행 소유권 충돌이 생겨도 미전송 변경은 유지합니다. Edge 실행 종료로 대기 작업이 사라지면 다음 Cron이 처리합니다. 이미 진행 중인 게시가 미전송 목록을 읽은 뒤 저장된 마지막 변경도 그 주기에 포함되지 않고 후속 저장 또는 다음 1분 Cron 주기까지 남을 수 있습니다. 변경은 미전송 상태로 보존됩니다. Cron과 사용자가 직접 실행하는 동기화는 이 자동 게시 대기 시간을 적용하지 않습니다. 이 간격은 요청을 줄이기 위한 것으로 GitHub 계정의 요청 한도나 운영 환경의 지연을 보장하지 않습니다.
 
+### 외부 최초 가져오기의 실행 자원 한도 초과 (546)
+
+외부 **팀 가져오기**가 `HTTP 546 · WORKER_RESOURCE_LIMIT`로 실패하면 Supabase Edge 함수의 호출당 상한(CPU 2초, 메모리 256 MB)에 걸린 것입니다. 가져오기는 한 번의 호출에서 genesis 스냅샷의 내려받기·압축 해제·해시 검증·PostgreSQL 기록을 모두 수행하므로 수십 MiB 규모의 팀은 이 상한을 넘을 수 있습니다. 어느 상한인지는 Supabase 함수 로그에만 남습니다. 설정이 잘못된 것이 아니므로 아래처럼 운영자 PC에서 같은 가져오기 경로를 Node로 실행합니다. 결과는 Edge의 팀 가져오기와 같고, 빈 팀 DB에만 가져오며 실패 시 DB 변경은 롤백됩니다.
+
+운영자 전용 파일에 Edge Secrets와 같은 이름·값을 한 줄씩 적습니다. `GRAEBOARD_DATABASE_URL`은 Supabase의 직접 연결 또는 세션 풀러 PostgreSQL URL입니다. 값은 명령 인자로 넣지 않습니다.
+
+```sh
+umask 077
+cat > /private/external-import.env <<'SETTINGS'
+GRAEBOARD_DATABASE_URL=postgresql://...
+SITE_TEAM_ID=팀-UUID
+INSTALLATION_ID=외부-설치-UUID
+PEER_INSTALLATION_ID=내부-설치-UUID
+SYNC_PROFILES=[{"profileId":"...","teamId":"팀-UUID","repository":"소유자/저장소","databaseBinding":"PG_SITE","bucketBinding":"R2_TEAM","githubSecret":"GIT_TEAM"}]
+GIT_TEAM=외부용-GitHub-토큰
+RESOURCE_ORIGIN=https://gateway.계정.workers.dev
+GRAEBOARD_RESOURCE_SECRET=gateway와-같은-자원용-Secret
+SETTINGS
+npm run sync:external-import -- --settings /private/external-import.env --dry-run
+npm run sync:external-import -- --settings /private/external-import.env
+npm run sync:external-import -- --settings /private/external-import.env --images
+rm /private/external-import.env
+```
+
+`--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
+
 ### 최초 게시 스냅샷의 용량 초과
 
 `Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
@@ -463,7 +489,7 @@ fi
 
 이는 현재 앱이 설정한 상한이며 Supabase 요금제의 DB 용량 제한을 뜻하지 않습니다. `SYNC_MAX_STATE_BYTES`와 `SYNC_MAX_ENTITIES`는 외부 상한을 **낮추는 설정**으로, 위 값을 넘게 지정하면 설정 오류가 됩니다. 스냅샷 상한만 늘려도 외부가 수신할 수 있는 것은 아닙니다. protocol 2로 바꾸는 것만으로도 이 상한은 없어지지 않습니다.
 
-**외부 공유 상태**는 한 팀의 업무·셀·사본·문서·일정 등 동기화 기준본, 삭제 표식, 충돌 자료와 미전송 변경을 canonical UTF-8 JSON으로 계수한 크기입니다. 한 번에 보내는 파일 크기나 PostgreSQL 전체 디스크 사용량이 아닙니다. 문서 본문은 포함하고 이미지 원본 바이트는 별도 객체로 전송합니다. 이전 외부 상태 4 MiB·12,000개 상한을 32 MiB·50,000개로 상향했으며, **이벤트 파일은 계속 4 MiB**입니다. 작은 변경을 여러 이벤트로 나눠 보내도 전체 기준본 용량은 별도로 검사합니다. protocol 1에서 4 MiB보다 큰 사본 하나를 수정하는 경우에는 명령 상한에 걸릴 수 있으므로 최초 가져오기 후 [v2 전환](OPERATIONS.md#동기화-v2-명시-전환)도 확인합니다.
+**외부 공유 상태**는 한 팀의 업무·셀·사본·문서·일정 등 동기화 기준본, 삭제 표식, 충돌 자료와 미전송 변경을 canonical UTF-8 JSON으로 계수한 크기입니다. 한 번에 보내는 파일 크기나 PostgreSQL 전체 디스크 사용량이 아닙니다. 문서 본문은 포함하고 이미지 원본 바이트는 별도 객체로 전송합니다. 이전 외부 상태 4 MiB·12,000개 상한을 32 MiB·50,000개로 상향했으며, **이벤트 파일 상한도 4 MiB에서 32 MiB로** 올렸습니다. 사용자 명령 하나(예: 8 MiB 사본 복사)는 나눌 수 없는 한 이벤트이므로 이벤트 상한이 공유 상태 상한보다 작으면 동기화가 일반 기능을 막게 됩니다. 이제 단일 명령은 공유 상태 32 MiB와 스냅샷 64 MiB 한도만 받습니다. 작은 변경을 여러 이벤트로 나눠 보내도 전체 기준본 용량은 별도로 검사합니다.
 
 적용 시 내부 Node와 외부 Edge를 같은 한도 구현으로 갱신합니다. 이전 `SYNC_MAX_STATE_BYTES=4194304` 또는 `SYNC_MAX_ENTITIES=12000`을 외부 환경에 명시했다면 설정을 제거해 새 기본값을 사용하거나 각각 `33554432`, `50000`으로 바꿉니다. 코드만 배포해도 명시한 낮은 설정은 유지됩니다. 이번 상향은 DB 스키마·저장 형식·프로토콜 버전을 바꾸지 않으므로 별도 DB 마이그레이션은 없습니다.
 
@@ -704,4 +730,4 @@ Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마�
 
 앱 내부 실행은 SQLite 전용이며, PostgreSQL 업무 API는 `worker/storage/`를 사용하는 외부 Edge 경로에서 실행합니다. 전체 업무 Worker 모드는 제거했고 gateway·forwarder는 요청 전달만 담당합니다. SQLite v32·PostgreSQL team v2 migration은 일반 outbox 인덱스만 추가하며 기존 업무·receipt·Git 이력을 정리하지 않습니다. 저장 형식 v2는 앱 배포와 별도인 [명시 전환 절차](OPERATIONS.md#동기화-v2-명시-전환)를 따릅니다.
 
-이벤트 파일은 4MiB 이내로 분할하고 snapshot은 압축·해제 각각 64MiB를 검사합니다. 외부의 업무·충돌·pending 32MiB 예산과 receipt 16MiB 예산(12MiB 경고)을 분리합니다. 과거 receipt가 한도를 넘어도 조회·반출은 가능하며 새 저장은 사전에 거절합니다. GitHub의 429·Retry-After·제한 초기화 시각은 제한된 재시도와 DB의 다음 실행 시각에 반영합니다. GET 업무 조회는 원격 Git 최신화를 백그라운드로 예약하고 기존 DB 응답을 즉시 제공합니다.
+이벤트 파일은 32MiB 이내로 분할하고 snapshot은 압축·해제 각각 64MiB를 검사합니다. 외부의 업무·충돌·pending 32MiB 예산과 receipt 16MiB 예산(12MiB 경고)을 분리합니다. 과거 receipt가 한도를 넘어도 조회·반출은 가능하며 새 저장은 사전에 거절합니다. GitHub의 429·Retry-After·제한 초기화 시각은 제한된 재시도와 DB의 다음 실행 시각에 반영합니다. GET 업무 조회는 원격 Git 최신화를 백그라운드로 예약하고 기존 DB 응답을 즉시 제공합니다.

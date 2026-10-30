@@ -11,7 +11,11 @@ import {
   pendingEntityKeys,
   canRetireProjection,
 } from "../server/sync/projection.mjs";
-export async function materialize(tx, teamId, { state, pending, exclusions }) {
+export async function materialize(
+  tx,
+  teamId,
+  { state, pending, exclusions, previousState = null },
+) {
   const link = await tx.sync.readLink();
   exclusions = exclusions.filter(
     (row) => (row.site_id || row.siteId) === link?.installation_id,
@@ -20,6 +24,11 @@ export async function materialize(tx, teamId, { state, pending, exclusions }) {
     protectedKeys = pendingEntityKeys(pending),
     touched = new Set(),
     now = Date.now();
+  // With the previous canonical state known, only entities whose projection
+  // changed need a row comparison; rows that vanished are retired below.
+  const previousVisible = previousState
+    ? applicationEntities(project(previousState, pending).entities)
+    : null;
   let changedCount = 0;
   const revisions = async (batch) =>
     (
@@ -99,6 +108,7 @@ export async function materialize(tx, teamId, { state, pending, exclusions }) {
     await write(changes);
   };
   for (const id in visible) {
+    if (previousVisible && equal(previousVisible[id], visible[id])) continue;
     batch.push(visible[id]);
     if (batch.length === 500) {
       await apply(batch);
