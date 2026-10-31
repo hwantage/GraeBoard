@@ -42,6 +42,16 @@ function openToken(value, profileId) {
     decipher.final(),
   ]).toString("utf8");
 }
+// GitHub's fixed prefixes identify nothing, so ten characters are shown after
+// them; never more than half of the token.
+export function tokenPreview(token) {
+  if (typeof token !== "string" || !token) return "";
+  const prefix = /^(?:github_pat_|gh[pousr]_)/.exec(token)?.[0] || "";
+  return token.slice(
+    0,
+    Math.min(prefix.length + 10, Math.floor(token.length / 2)),
+  );
+}
 export function profileToken(db, profile) {
   const row = db
     .prepare("SELECT ciphertext FROM sync_credentials WHERE profile_id=?")

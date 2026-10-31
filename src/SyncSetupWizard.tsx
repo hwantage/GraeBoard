@@ -4,6 +4,7 @@ import { api, send } from "./api";
 import { Button, ErrorNote } from "./components";
 import LoadingState from "./LoadingState";
 import { useSite } from "./site-context";
+import TeamSetupKey from "./TeamSetupKey";
 import {
   ConnectionChecks,
   type ConnectionCheck,
@@ -12,7 +13,9 @@ import {
 import { syncTime, type SyncStatus } from "./sync-types";
 import type { Team } from "./types";
 import {
+  appSourceRepository,
   setupSteps,
+  setupStep,
   externalSetupSteps,
   setupExamples,
   validateSetupStep,
@@ -32,10 +35,13 @@ type Setup = {
   restartRequired: boolean;
   credentialReady: boolean;
   credentialStored: boolean;
+  tokenEnvironment: boolean;
+  tokenPreview: string;
 };
 const docs = {
   github:
     "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+  token: "https://github.com/settings/personal-access-tokens/new",
   access:
     "https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/",
   pages:
@@ -45,6 +51,19 @@ const docs = {
   secrets: "https://supabase.com/docs/guides/functions/secrets",
   deploy: "https://supabase.com/docs/guides/functions/deploy",
 };
+// Team leads without system administration cannot read installation IDs, so
+// the operator steps that produce deployment values are left to the operator.
+const operatorSteps = [
+  setupStep.repository,
+  setupStep.cloudflare,
+  setupStep.supabase,
+  setupStep.deploy,
+];
+const repositoryUrl = (value: string) =>
+  (value.startsWith("https://")
+    ? value
+    : `https://github.com/${value}`
+  ).replace(/\.git$/, "");
 function Link({ href, children }: { href: string; children: ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noreferrer">
@@ -95,6 +114,7 @@ function CopyValue({
 export default function SyncSetupWizard({
   team,
   systemAdmin,
+  lead,
   onClose,
   onRefresh,
   onMessage,
@@ -102,6 +122,7 @@ export default function SyncSetupWizard({
 }: {
   team: Team;
   systemAdmin: boolean;
+  lead: boolean;
   onClose: () => void;
   onRefresh: () => Promise<unknown>;
   onMessage: (message: string) => void;
@@ -109,9 +130,14 @@ export default function SyncSetupWizard({
 }) {
   const { external } = useSite();
   const [step, setStep] = useState(
-    external ? 0 : team.sync?.configured || !systemAdmin ? 4 : 0,
+    external
+      ? 0
+      : team.sync?.configured || !systemAdmin
+        ? setupStep.publish
+        : setupStep.repository,
   );
   const [furthest, setFurthest] = useState(step);
+  const [published, setPublished] = useState(false);
   const [setup, setSetup] = useState<Setup | null>(null);
   const [profiles, setProfiles] = useState<ResourceProfile[]>([]);
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -141,55 +167,94 @@ export default function SyncSetupWizard({
   const prefix = `/teams/${team.id}/sync`;
   const setupPath = `/admin/teams/${team.id}/sync-setup`;
   const steps = external ? externalSetupSteps : setupSteps;
-  const minimumStep = !external && !systemAdmin ? 4 : 0;
+  const available = steps
+    .map((_, index) => index)
+    .filter(
+      (index) => external || systemAdmin || !operatorSteps.includes(index),
+    );
+  const previousStep = available.filter((index) => index < step).at(-1);
+  const nextStep = available.find((index) => index > step);
+  const servicesStep = available.find((index) => index >= setupStep.cloudflare);
+  const inServices = !external && step >= setupStep.cloudflare;
+  const phaseSteps = external
+    ? available
+    : available.filter((index) => index >= setupStep.cloudflare === inServices);
+  // An already published team may revisit any external service step without
+  // re-entering the values that only fill the copyable examples.
+  const reachable = (index: number) =>
+    index <= furthest || (published && index >= setupStep.cloudflare);
   const final = step === steps.length - 1;
   // The repository stays editable until the team has connection history; the
   // server enforces the same boundary.
   const editable = systemAdmin && !team.sync?.configured;
   const examples = setupExamples(team, setup, draft);
   const verified = syncVerification(status);
+  const readsStatus =
+    final || (!external && step === setupStep.account && lead);
   const goToStep = (index: number) => {
     setStep(index);
     setError("");
     setToken("");
   };
-  // Internally the embedded connection settings and the final step read the
-  // sync status themselves, so the wizard only reads it for the external flow.
+  // Internally the embedded connection settings read the sync status
+  // themselves, so the wizard only reads it where a step depends on it.
   async function load(signal?: AbortSignal) {
     if (external) {
       const nextStatus = await api<SyncStatus>(prefix, { signal });
-      if (!live.current || signal?.aborted) return;
+      if (!live.current || signal?.aborted) return null;
       setStatus(nextStatus);
     }
+    let next: Setup | null = null;
     if (!external && systemAdmin) {
-      const next = await api<Setup>(setupPath, { signal });
-      if (!live.current || signal?.aborted) return;
+      next = await api<Setup>(setupPath, { signal });
+      if (!live.current || signal?.aborted) return null;
       setSetup(next);
       if (next.profile)
         setDraft((value) => ({
           ...value,
-          repository: next.profile!.repository.startsWith("https://")
-            ? next.profile!.repository
-            : `https://github.com/${next.profile!.repository}`,
+          repository: repositoryUrl(next!.profile!.repository),
         }));
     } else {
       const connection = await api<{ profiles: ResourceProfile[] }>(
         `/admin/teams/${team.id}/connection`,
         { signal },
       );
-      if (!live.current || signal?.aborted) return;
+      if (!live.current || signal?.aborted) return null;
       setProfiles(
         connection.profiles.filter((profile) => profile.teamId === team.id),
       );
     }
     setLoaded(true);
+    return next;
   }
   useEffect(() => {
     live.current = true;
     const controller = new AbortController();
-    void load(controller.signal).catch((cause) => {
-      if (!controller.signal.aborted) setError(cause.message);
-    });
+    if (!external && team.sync?.configured)
+      // Only unlocks direct navigation; the embedded settings report status
+      // errors themselves.
+      void api<SyncStatus>(prefix, { signal: controller.signal })
+        .then((current) => {
+          if (!controller.signal.aborted) setPublished(!!current.canonicalHead);
+        })
+        .catch(() => {});
+    void load(controller.signal)
+      .then((loadedSetup) => {
+        if (
+          loadedSetup &&
+          !(
+            loadedSetup.profile &&
+            loadedSetup.installed &&
+            (loadedSetup.credentialStored || loadedSetup.tokenEnvironment)
+          )
+        ) {
+          setStep(setupStep.repository);
+          setFurthest(setupStep.repository);
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(cause.message);
+      });
     return () => {
       live.current = false;
       controller.abort();
@@ -203,7 +268,7 @@ export default function SyncSetupWizard({
     if (error) errorRef.current?.scrollIntoView({ block: "nearest" });
   }, [error]);
   useEffect(() => {
-    if (!final) return;
+    if (!readsStatus) return;
     const controller = new AbortController();
     void api<SyncStatus>(prefix, { signal: controller.signal })
       .then((value) => {
@@ -213,7 +278,7 @@ export default function SyncSetupWizard({
         if (!controller.signal.aborted) setError(cause.message);
       });
     return () => controller.abort();
-  }, [final, prefix]);
+  }, [readsStatus, prefix]);
   async function action(work: () => Promise<unknown>, message = "") {
     if (busy) return;
     setBusy(true);
@@ -277,7 +342,7 @@ export default function SyncSetupWizard({
           if (!current.canonicalHead || current.mode === "importing")
             throw new Error("팀 가져오기를 완료한 뒤 다음으로 진행하세요.");
         }
-      } else if (step < 4) {
+      } else if (step === setupStep.repository) {
         const invalid = validateSetupStep(step, draft);
         if (invalid) throw new Error(invalid);
         if (!setup?.profile)
@@ -285,12 +350,8 @@ export default function SyncSetupWizard({
             "내부 프로필 생성 버튼으로 프로필을 먼저 생성하세요. 생성은 시스템 관리자가 진행합니다.",
           );
         if (
-          step === 0 &&
           draft.repository.replace(/\.git$/, "") !==
-            (setup.profile.repository.startsWith("https://")
-              ? setup.profile.repository
-              : `https://github.com/${setup.profile.repository}`
-            ).replace(/\.git$/, "")
+          repositoryUrl(setup.profile.repository)
         )
           throw new Error(
             "내부 프로필 수정 저장 버튼으로 수정한 저장소 주소를 저장한 뒤 진행하세요.",
@@ -299,23 +360,33 @@ export default function SyncSetupWizard({
           throw new Error(
             "기존 프로필의 외부 설치 UUID를 서버 관리자에게 확인하세요. 기존 ID를 임의로 바꾸지 마세요.",
           );
-        if (!confirmed[step])
+        if (!setup.installed)
           throw new Error(
-            "이 단계의 작업과 확인 항목을 완료한 뒤 체크하세요. 체크는 실제 연결 검사를 대신하지 않습니다.",
+            "프로필이 아직 서버에 적용되지 않았습니다. 시스템 관리자에게 Node 서비스 재시작을 요청한 뒤 서버 적용 확인을 누르세요.",
           );
-      } else if (step === 4) {
+        if (!setup.credentialStored && !setup.tokenEnvironment)
+          throw new Error("내부 GitHub 토큰을 저장한 뒤 진행하세요.");
+      } else if (step === setupStep.publish) {
         const current = await api<SyncStatus>(prefix);
         if (!live.current) return;
         setStatus(current);
+        setPublished(!!current.canonicalHead);
         if (!current.canonicalHead)
           throw new Error(
             "이 팀에 연결 → 연결 검사 → 초기 게시를 완료한 뒤 진행하세요.",
           );
+      } else if (step < setupStep.account) {
+        const invalid = validateSetupStep(step, draft);
+        if (invalid) throw new Error(invalid);
+        if (!confirmed[step])
+          throw new Error(
+            "이 단계의 작업과 확인 항목을 완료한 뒤 체크하세요. 체크는 실제 연결 검사를 대신하지 않습니다.",
+          );
       } else if (!confirmed[step])
         throw new Error("외부 계정 연결과 팀 가져오기를 완료한 뒤 체크하세요.");
-      if (live.current) {
-        setStep(step + 1);
-        setFurthest(Math.max(furthest, step + 1));
+      if (live.current && nextStep !== undefined) {
+        setStep(nextStep);
+        setFurthest(Math.max(furthest, nextStep));
       }
     });
   }
@@ -341,26 +412,31 @@ export default function SyncSetupWizard({
           <li>
             <button
               type="button"
-              aria-current={step === 0 ? "true" : undefined}
-              disabled={busy || minimumStep > 0}
-              onClick={() => goToStep(0)}
+              aria-current={!inServices ? "true" : undefined}
+              disabled={busy}
+              onClick={() => goToStep(available[0])}
             >
-              <strong>1. 내부 프로필 생성</strong>
+              <strong>1. 내부 프로필 설정</strong>
               <span>
-                {setup?.profile
-                  ? setup.installed
-                    ? "서버 적용됨"
-                    : "생성됨 · 재시작 요청 필요"
-                  : "GitHub 저장소 · 팀 프로필"}
+                {setup?.profile && !setup.installed
+                  ? "생성됨 · 재시작 요청 필요"
+                  : published
+                    ? "GitHub 초기 게시 완료"
+                    : "GitHub 저장소 · 토큰 · 초기 게시"}
               </span>
             </button>
           </li>
           <li>
             <button
               type="button"
-              aria-current={step > 0 ? "true" : undefined}
-              disabled={busy || !loaded || furthest < 1}
-              onClick={() => goToStep(furthest)}
+              aria-current={inServices ? "true" : undefined}
+              disabled={
+                busy ||
+                !loaded ||
+                servicesStep === undefined ||
+                !reachable(servicesStep)
+              }
+              onClick={() => goToStep(Math.max(furthest, servicesStep!))}
             >
               <strong>2. 외부 서비스 설정</strong>
               <span>Cloudflare · Supabase · 배포 · 연결 확인</span>
@@ -368,43 +444,41 @@ export default function SyncSetupWizard({
           </li>
         </ol>
       )}
-      {(external || step > 0) && (
-        <>
-          <ol className="sync-setup-steps" aria-label="설정 단계">
-            {steps.map((label, index) =>
-              !external && index === 0 ? null : (
-                <li key={label}>
-                  <button
-                    type="button"
-                    aria-current={index === step ? "step" : undefined}
-                    disabled={busy || index > furthest || index < minimumStep}
-                    onClick={() => goToStep(index)}
-                  >
-                    {external ? index + 1 : index}. {label}
-                  </button>
-                </li>
-              ),
-            )}
-          </ol>
-          <p className="field-help">
-            {external
-              ? `안내 진행 ${step + 1} / ${steps.length}`
-              : `외부 서비스 설정 ${step} / ${steps.length - 1}`}{" "}
-            · 연결 상태는 실제 검사 결과로 확인합니다.
-          </p>
-        </>
-      )}
+      <ol className="sync-setup-steps" aria-label="설정 단계">
+        {phaseSteps.map((index, position) => (
+          <li key={steps[index]}>
+            <button
+              type="button"
+              aria-current={index === step ? "step" : undefined}
+              disabled={busy || !reachable(index)}
+              onClick={() => goToStep(index)}
+            >
+              {position + 1}. {steps[index]}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <p className="field-help">
+        {external
+          ? "안내 진행"
+          : inServices
+            ? "외부 서비스 설정"
+            : "내부 프로필 설정"}{" "}
+        {phaseSteps.indexOf(step) + 1} / {phaseSteps.length} · 연결 상태는 실제
+        검사 결과로 확인합니다.
+      </p>
       <h4 ref={heading} tabIndex={-1}>
         {steps[step]}
       </h4>
       {!loaded && !error && (
         <LoadingState label="현재 팀 설정을 확인하고 있습니다." />
       )}
-      {!external && step === 0 && (
+      {!external && step === setupStep.repository && (
         <>
           <p>
-            GitHub 데이터 저장소를 연결할 팀 프로필을 먼저 생성합니다. 생성 후
-            외부 서비스 설정으로 진행합니다.
+            내부 서버가 팀 자료를 게시할 GitHub 데이터 저장소와 토큰을
+            등록합니다. 다음 <b>GitHub 연결</b> 단계에서 초기 게시를 마치면 팀
+            자료가 이 저장소에 올라갑니다.
           </p>
           {setup && (
             <dl className="sync-setup-status" aria-label="내부 프로필 상태">
@@ -438,12 +512,6 @@ export default function SyncSetupWizard({
               </div>
             </dl>
           )}
-          <p>
-            GitHub Settings → Developer settings → Personal access tokens →
-            Fine-grained tokens에서 이 저장소 하나와{" "}
-            <b>Contents: Read and write</b>를 선택합니다. 내부·외부 토큰은 각각
-            준비합니다. <Link href={docs.github}>GitHub 안내</Link>
-          </p>
           {systemAdmin ? (
             <>
               {editable && (
@@ -452,7 +520,10 @@ export default function SyncSetupWizard({
                   disabled={!loaded || busy}
                   onClick={() =>
                     void action(async () => {
-                      const invalid = validateSetupStep(0, draft);
+                      const invalid = validateSetupStep(
+                        setupStep.repository,
+                        draft,
+                      );
                       if (invalid) throw new Error(invalid);
                       const creating = !setup?.profile;
                       const saved = await send<Setup>(
@@ -488,61 +559,320 @@ export default function SyncSetupWizard({
                 <p role="status">
                   이 서버의 최초 설치 식별자를 적용하려면 시스템 관리자에게 Node
                   서비스 재시작을 요청하세요. 이후 팀 프로필은 재시작 없이
-                  적용됩니다. 적용 여부는 <b>팀 연결</b> 단계의{" "}
-                  <b>서버 적용 확인</b>으로 확인하며, 재시작 전에도 외부 서비스
-                  설정 안내를 진행할 수 있습니다.
+                  적용됩니다. 재시작한 뒤 <b>서버 적용 확인</b>을 누르면 토큰을
+                  저장할 수 있습니다.
                 </p>
               )}
+              {setup?.profile &&
+                !setup.credentialReady &&
+                !setup.restartRequired && (
+                  <p>
+                    토큰을 암호화해 저장하려면 서버 관리자가
+                    GRAEBOARD_SYNC_KEY를 등록하고 재시작해야 합니다. 기존
+                    암호문이 있으면 원래 키를 복원하세요.
+                  </p>
+                )}
+              {setup?.profile &&
+                (!setup.installed ||
+                  !setup.credentialReady ||
+                  setup.restartRequired) && (
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      void action(async () => {
+                        await load();
+                        if (live.current)
+                          setCredentialVersion((value) => value + 1);
+                      })
+                    }
+                  >
+                    서버 적용 확인
+                  </Button>
+                )}
+              <div className="sync-setup-credential">
+                <h5>내부 GitHub 토큰</h5>
+                <p>
+                  내부 서버가 이 저장소에 자료를 게시할 때 사용하는 토큰입니다.
+                  다음 순서로 발급합니다.{" "}
+                  <Link href={docs.github}>GitHub 안내</Link>
+                </p>
+                <ol>
+                  <li>
+                    GitHub 오른쪽 위 프로필 →{" "}
+                    <b>
+                      Settings → Developer settings → Personal access tokens →
+                      Fine-grained tokens → Generate new token
+                    </b>{" "}
+                    (<Link href={docs.token}>바로 가기</Link>)
+                  </li>
+                  <li>
+                    <b>Resource owner</b>는 저장소 소유자로,{" "}
+                    <b>Repository access</b>는 <b>Only select repositories</b>
+                    에서 위 데이터 저장소 하나만 선택합니다.
+                  </li>
+                  <li>
+                    <b>Repository permissions → Contents</b>를{" "}
+                    <b>Read and write</b>로 지정하고 만료일을 정해 생성합니다.
+                    외부 서버용 토큰은 배포 단계에서 같은 방법으로 따로
+                    발급합니다.
+                  </li>
+                </ol>
+                {setup && (setup.credentialStored || !!setup.tokenPreview) && (
+                  <div className="sync-setup-token">
+                    <dl className="sync-setup-status">
+                      <div>
+                        <dt>등록된 토큰</dt>
+                        <dd>
+                          {setup.tokenPreview ? (
+                            <code>{setup.tokenPreview}…</code>
+                          ) : (
+                            "현재 암호화 키로 확인할 수 없음"
+                          )}
+                          {!setup.credentialStored && " · 서버 환경 변수"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {setup.credentialStored && (
+                      <Button
+                        disabled={busy || !setup.installed}
+                        onClick={() =>
+                          void action(async () => {
+                            await send(
+                              `/admin/teams/${team.id}/sync-credential`,
+                              { profileId: setup.profile?.profileId },
+                              "DELETE",
+                            );
+                            if (!live.current) return;
+                            setCheck(null);
+                            setCredentialVersion((value) => value + 1);
+                            await load();
+                          }, "토큰을 삭제했습니다.")
+                        }
+                      >
+                        토큰 삭제
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!setup?.credentialStored && (
+                  <>
+                    <p className="field-help">
+                      {!setup?.profile
+                        ? "내부 프로필을 생성한 뒤 저장할 수 있습니다."
+                        : setup.tokenEnvironment
+                          ? "여기에 저장하면 서버 환경 변수 토큰 대신 사용합니다."
+                          : "토큰을 저장한 뒤 다음 단계에서 연결 검사를 실행하세요. 저장 성공은 GitHub 권한 검사와 별개입니다."}
+                    </p>
+                    <label>
+                      내부 GitHub 토큰
+                      <input
+                        type="password"
+                        value={token}
+                        autoComplete="new-password"
+                        spellCheck={false}
+                        onChange={(event) => setToken(event.target.value)}
+                        disabled={busy}
+                      />
+                    </label>
+                    <Button
+                      disabled={
+                        busy ||
+                        !token ||
+                        !setup?.installed ||
+                        !setup.credentialReady
+                      }
+                      onClick={() =>
+                        void action(async () => {
+                          await send(
+                            `/admin/teams/${team.id}/sync-credential`,
+                            { profileId: setup?.profile?.profileId, token },
+                            "PUT",
+                          );
+                          if (!live.current) return;
+                          setToken("");
+                          setCheck(null);
+                          setCredentialVersion((value) => value + 1);
+                          await load();
+                        }, "토큰을 암호화해 저장했습니다. 다음 단계에서 연결 검사를 실행하세요.")
+                      }
+                    >
+                      토큰 저장
+                    </Button>
+                  </>
+                )}
+              </div>
             </>
           ) : (
             <p>
               내부 프로필 등록·토큰 교체는 시스템 관리자가 같은 팀의 설정
-              안내에서 수행합니다. 설치된 프로필의 연결·초기 게시·연결 키 발급은
-              팀장이 다음 팀 연결 단계에서 진행할 수 있습니다.
+              안내에서 수행합니다. 설치된 프로필의 연결·초기 게시는 팀장이
+              GitHub 연결 단계에서 진행할 수 있습니다.
             </p>
-          )}
-          {acknowledge(
-            "비공개 데이터 저장소와 두 환경의 토큰 발급 권한을 확인했습니다.",
           )}
         </>
       )}
-      {!external && step === 1 && (
+      {!external && step === setupStep.publish && (
         <>
           <p>
-            Cloudflare <b>Workers & Pages</b>에서 팀 Pages 프로젝트를
-            준비합니다. 소스는 앱 저장소, 빌드는 <code>npm run build</code>,
-            출력은 <code>dist</code>, NODE_VERSION은 22입니다. gateway 연결 전
-            503 응답은 준비 중 상태입니다.
+            <b>이 팀에 연결 → 연결 검사 → 초기 게시</b> 순서로 진행합니다. 초기
+            게시가 끝나면 팀 자료가 GitHub 저장소에 올라가며 외부 서비스
+            설정으로 넘어갈 수 있습니다. 이미 연결한 팀은 현재 상태에서
+            이어갑니다.
           </p>
+          <div key={credentialVersion}>{children}</div>
+        </>
+      )}
+      {!external && step === setupStep.cloudflare && (
+        <>
+          <p>
+            이 팀의 외부 사이트를 Cloudflare에 준비합니다. 아래 순서대로 만든 뒤
+            값을 입력하면 배포 단계의 설정 파일에 자동으로 채워집니다.
+          </p>
+          <h5>① Pages 프로젝트 (외부 접속 주소)</h5>
+          <ol>
+            <li>
+              Cloudflare 대시보드 <b>Workers & Pages → Create application</b>
+              에서 <b>Pages</b>(화면 아래 “Looking to deploy Pages?”로 표시될 수
+              있음) → <b>Import an existing Git repository</b>를 선택합니다.
+            </li>
+            <li>
+              GitHub 연결 화면에서 Cloudflare 앱의 저장소 범위를{" "}
+              <b>Only select repositories</b>로 두고 앱 소스 저장소{" "}
+              <Link href={appSourceRepository}>{appSourceRepository}</Link>를
+              선택합니다. 팀 데이터 저장소가 아닙니다. 앱은 설치하는 GitHub
+              계정이 소유한 저장소만 고를 수 있으므로, 다른 계정으로 연결할 때는
+              먼저 이 저장소를 그 계정으로 Fork한 뒤 Fork한 저장소를 선택합니다.
+              Fork할 때 <b>Copy the main branch only</b> 체크를 해제해 release
+              브랜치도 함께 복사합니다.
+            </li>
+            <li>
+              <b>Set up builds and deployments</b>에 다음 값을 입력합니다.
+              <dl className="sync-setup-status">
+                <div>
+                  <dt>Project name</dt>
+                  <dd>
+                    원하는 이름. <code>https://이름.pages.dev</code>가 외부 접속
+                    주소가 됩니다.
+                  </dd>
+                </div>
+                <div>
+                  <dt>Production branch</dt>
+                  <dd>
+                    <code>release</code> (원본 저장소의 release에 올린 버전만
+                    외부 사이트에 반영됩니다)
+                  </dd>
+                </div>
+                <div>
+                  <dt>Framework preset</dt>
+                  <dd>None</dd>
+                </div>
+                <div>
+                  <dt>Build command</dt>
+                  <dd>
+                    <code>npm run build</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Build output directory</dt>
+                  <dd>
+                    <code>dist</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Environment variables</dt>
+                  <dd>
+                    Variable name <code>NODE_VERSION</code>, Value{" "}
+                    <code>22</code> (앱이 Node.js 22 이상에서만 빌드됩니다)
+                  </dd>
+                </div>
+              </dl>
+            </li>
+            <li>
+              <b>Save and Deploy</b>를 누릅니다. 프로젝트를 만든 뒤 변수를
+              추가할 때는 <b>Settings → Variables and Secrets → Add</b>에서 Type{" "}
+              <b>Text</b>, Variable name <code>NODE_VERSION</code>, Value{" "}
+              <code>22</code>로 저장하고 <b>Deployments</b>에서 다시 배포해야
+              적용됩니다.
+            </li>
+            <li>
+              배포된 주소에 접속하면 “외부 서버에 연결할 수 없습니다”(503)가
+              보입니다. gateway를 연결하기 전이라 정상입니다.
+            </li>
+          </ol>
+          {input(
+            "외부 접속 주소(Pages 도메인)",
+            "appOrigin",
+            "https://team.pages.dev",
+          )}
+          <h5>② R2 bucket (문서 이미지 저장소)</h5>
+          <ol>
+            <li>
+              <Link href={docs.r2}>R2 Object Storage → Create bucket</Link>에서
+              아래 이름 그대로 bucket을 만듭니다. R2를 처음 쓰는 계정은 결제
+              수단 등록을 요구할 수 있습니다.
+            </li>
+            <li>
+              bucket은 기본이 비공개입니다. bucket Settings의 공개 접근(r2.dev
+              주소·Custom Domains)은 켜지 않습니다.
+            </li>
+          </ol>
           <div className="sync-setup-fields">
-            {input("외부 접속 주소", "appOrigin", "https://team.pages.dev")}
-            {input("gateway Worker 이름", "gateway")}
-            {input("비공개 R2 bucket 이름", "bucket")}
+            <div>
+              {input("비공개 R2 bucket 이름", "bucket")}
+              <p className="field-help">
+                추천 이름이 채워져 있습니다. 다른 이름으로 만들었다면 실제
+                이름으로 바꾸세요.
+              </p>
+            </div>
+            <div>
+              {input("gateway Worker 이름", "gateway")}
+              <p className="field-help">
+                대시보드에서 만들지 않습니다. 배포 단계의{" "}
+                <code>wrangler deploy</code>가 이 이름으로 Worker를 만들고
+                R2·이미지 연결(R2_TEAM·IMAGES)도 설정합니다. 계정 안에서 겹치지
+                않으면 그대로 씁니다.
+              </p>
+            </div>
           </div>
-          <p>
-            <Link href={docs.r2}>R2 Object Storage → Create bucket</Link>에서 팀
-            전용 bucket을 만들고 Public access를 끕니다. gateway에는
-            R2_TEAM·IMAGES binding을 사용합니다.
-          </p>
-          <p>
-            Cloudflare One의{" "}
-            <b>
-              Access controls → Applications → Create new application →
-              Self-hosted and private → Add public hostname
-            </b>
-            에서 위 운영 호스트 전체를 보호하세요. 팀 Google 계정만 허용하고
-            Google IdP만 선택합니다. pages.dev의 Preview 정책만으로 운영 주소가
-            보호되지는 않습니다. <Link href={docs.access}>Access 설정</Link>
-          </p>
-          <p>
-            pages.dev 주소는 Pages Settings → Enable access policy → Manage에서
-            생성한 앱의 Public hostname의 *를 제거해 운영 주소를 보호합니다.
-            이어서 Pages Settings → General에서 Enable access policy를 다시 켜
-            미리보기 정책을 복원하세요.{" "}
-            <Link href="https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain">
-              Pages 운영·미리보기 보호
-            </Link>
-          </p>
+          <h5>③ Google 로그인 보호 (Access)</h5>
+          <ol>
+            <li>
+              Cloudflare One(Zero Trust)을 처음 열면 팀 이름을 정합니다.{" "}
+              <code>https://팀이름.cloudflareaccess.com</code>이 아래 Access
+              발급자입니다.
+            </li>
+            <li>
+              Zero Trust의 로그인 방법(Login methods) 설정에서 <b>Google</b>을
+              추가합니다. Google Cloud에서 만든 OAuth 클라이언트 ID·Secret이
+              필요합니다.
+            </li>
+            <li>
+              Pages 프로젝트 <b>Settings → General → Enable access policy</b>를
+              켜면 미리보기 주소(<code>*.프로젝트.pages.dev</code>)용 Access
+              앱이 생깁니다. <b>Manage</b>로 그 앱을 열어 Public hostname의
+              Subdomain 칸에서 <code>*</code>를 지우고 저장하면 운영 주소를
+              보호합니다. 이어서 Enable access policy를 다시 켜 미리보기 보호도
+              복원합니다. 미리보기 정책만으로는 운영 주소가 보호되지 않습니다.{" "}
+              <Link href="https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain">
+                Pages 운영·미리보기 보호
+              </Link>
+            </li>
+            <li>
+              운영 주소 앱의 정책은 <b>Allow</b>로 팀 Google 계정만 허용하고,
+              Login methods는 <b>Google</b>만 선택합니다(One-time PIN 등은
+              끕니다). 자체 도메인을 쓰면{" "}
+              <b>
+                Access controls → Applications → Create new application →
+                Self-hosted and private → Add public hostname
+              </b>
+              에서 그 호스트 전체를 보호합니다.{" "}
+              <Link href={docs.access}>Access 설정</Link>
+            </li>
+            <li>
+              앱의 <b>Application Audience (AUD) Tag</b>를 복사해 아래에
+              입력합니다.
+            </li>
+          </ol>
           <div className="sync-setup-fields">
             {input(
               "Access 발급자",
@@ -556,7 +886,7 @@ export default function SyncSetupWizard({
           )}
         </>
       )}
-      {!external && step === 2 && (
+      {!external && step === setupStep.supabase && (
         <>
           <p>
             Supabase에서 이 팀 전용 프로젝트 하나를 만드세요. Project
@@ -575,18 +905,28 @@ export default function SyncSetupWizard({
           <p>
             완료 후 site v3·team v2와 위 팀 UUID가 일치하는지 확인합니다.
             graeboard·graeboard_site를 공개 Data API 스키마에 추가하지 않습니다.
+            Edge Function(<code>graeboard</code>)은 gateway 주소가 정해진 뒤
+            배포 단계에서 Secrets와 함께 배포합니다.
           </p>
           {acknowledge(
             "외부 DB 초기화 결과의 팀 UUID와 스키마 버전을 확인했습니다.",
           )}
         </>
       )}
-      {!external && step === 3 && (
+      {!external && step === setupStep.deploy && (
         <>
           <p>
-            인터넷이 되는 운영자 PC의 앱 소스 루트에 아래 설정을{" "}
-            <b>.env.gateway.json</b>으로 저장합니다. 이 파일은 Git 제외
-            대상입니다. 입력값은 자원 생성·배포를 자동 실행하지 않습니다.
+            외부 사이트의 화면은 gateway Worker(Cloudflare), 업무 API는 Supabase
+            Edge 함수가 제공합니다. 둘 다 Pages와 별도로 배포해야 하며, 팀
+            Fork가 원본 저장소의 <b>release</b>를 따라 자동으로 배포하게 하는
+            방법(권장)과 운영자 PC에서 직접 배포하는 방법이 있습니다. 입력값은
+            자원 생성·배포를 자동 실행하지 않습니다.
+          </p>
+          <h5>① gateway 설정</h5>
+          <p>
+            자동 배포는 아래 JSON 전체를 Fork의 Variables{" "}
+            <code>GATEWAY_CONFIG</code>에, 수동 배포는 앱 소스 루트의{" "}
+            <b>.env.gateway.json</b>(Git 제외 대상)으로 저장합니다.
           </p>
           {copy("gateway 설정", examples.gateway)}
           {input(
@@ -594,6 +934,12 @@ export default function SyncSetupWizard({
             "resourceOrigin",
             "https://graeboard-team.account.workers.dev",
           )}
+          <p className="field-help">
+            Workers & Pages 화면에 표시되는 계정의 workers.dev 하위 도메인으로{" "}
+            <code>https://gateway이름.하위도메인.workers.dev</code> 형태로
+            입력합니다.
+          </p>
+          <h5>② Supabase Edge Secrets (처음 한 번)</h5>
           <p>
             Supabase <b>Edge Functions → Secrets</b>에 다음 이름과 값을 각각
             등록하세요. SYNC_PROFILES는 아래 JSON 전체를 그대로 붙여 넣습니다.{" "}
@@ -608,23 +954,81 @@ export default function SyncSetupWizard({
             />
           ))}
           <p>
-            별도로 <b>GIT_TEAM</b>에는 외부 GitHub 토큰을 등록합니다.{" "}
-            <b>GRAEBOARD_GATEWAY_SECRET</b>과 <b>GRAEBOARD_RESOURCE_SECRET</b>은
-            서로 다른 32바이트 이상 난수를 생성하여 gateway와 Edge 양쪽에 같은
-            값을 등록하세요. <b>GRAEBOARD_ACCESS_TOKEN_KEY</b>는 base64 32바이트
-            키를 생성해 Edge에 등록하고 보존합니다. 이 비밀값들은 이 화면에
-            입력하지 않습니다.
+            별도로 <b>GIT_TEAM</b>에는 내부 토큰과 같은 방법으로 따로 발급한
+            외부 GitHub 토큰을 등록합니다. <b>GRAEBOARD_GATEWAY_SECRET</b>과{" "}
+            <b>GRAEBOARD_RESOURCE_SECRET</b>은 서로 다른 32바이트 이상 난수를
+            생성하여 gateway와 Edge 양쪽에 같은 값을 등록하세요.{" "}
+            <b>GRAEBOARD_ACCESS_TOKEN_KEY</b>는 base64 32바이트 키를 생성해
+            Edge에 등록하고 보존합니다. 이 비밀값들은 이 화면에 입력하지
+            않습니다.
           </p>
           {copy(
             "난수 생성 명령 (각 키마다 별도 실행)",
             "openssl rand -base64 32",
           )}
           <p>
+            gateway 쪽 두 Secret은 Worker가 만들어진 뒤(첫 배포 후){" "}
+            <b>
+              Workers & Pages → 해당 Worker → Settings → Variables and Secrets →
+              Add
+            </b>
+            에서 Type <b>Secret</b>으로 등록하거나 아래 수동 배포 명령의{" "}
+            <code>wrangler secret put</code>으로 등록합니다.
+          </p>
+          <h5>③ 자동 배포: 팀 Fork가 release를 따라감 (권장)</h5>
+          <ol>
+            <li>
+              Fork의 <b>Actions</b> 탭에서 워크플로 실행을 허용하고{" "}
+              <b>팀 사이트 release 배포</b> 워크플로를 켭니다.
+            </li>
+            <li>
+              Fork <b>Settings → Secrets and variables → Actions</b>에
+              등록합니다.
+              <dl className="sync-setup-status">
+                <div>
+                  <dt>Variables</dt>
+                  <dd>
+                    <code>TEAM_SITE_DEPLOY</code> = <code>enabled</code>,{" "}
+                    <code>CLOUDFLARE_ACCOUNT_ID</code> = Cloudflare 계정 ID,{" "}
+                    <code>SUPABASE_PROJECT_REF</code> ={" "}
+                    <code>{draft.projectRef || "Supabase Reference ID"}</code>,{" "}
+                    <code>GATEWAY_CONFIG</code> = 위 gateway 설정 JSON 전체
+                  </dd>
+                </div>
+                <div>
+                  <dt>Secrets</dt>
+                  <dd>
+                    <code>CLOUDFLARE_API_TOKEN</code> = Cloudflare{" "}
+                    <b>My Profile → API Tokens → Create Token</b>의 “Edit
+                    Cloudflare Workers” 템플릿으로 만든 토큰,{" "}
+                    <code>SUPABASE_ACCESS_TOKEN</code> = Supabase{" "}
+                    <b>Account → Access Tokens</b>에서 만든 토큰
+                  </dd>
+                </div>
+              </dl>
+            </li>
+            <li>
+              Actions에서 <b>Run workflow</b>로 첫 배포를 실행합니다. 이후 원본
+              저장소의 release가 바뀌면 30분 안에 자동으로 API → 화면 순서로
+              배포하고, Pages도 release를 따라 다시 빌드합니다. 사내 서버는
+              별도로 배포합니다.
+            </li>
+            <li>
+              원본의 워크플로 파일이 바뀐 release는 기본 토큰으로 동기화할 수
+              없어 실패로 표시됩니다. 그때는 Fork 화면의 <b>Sync fork</b>로
+              맞추거나, Contents·Workflows 쓰기 권한이 있는 토큰을 Secret{" "}
+              <code>SYNC_TOKEN</code>으로 등록합니다.
+            </li>
+          </ol>
+          <h5>④ 수동 배포: 운영자 PC</h5>
+          <p>
             아래 wrangler secret put의 숨김 입력에 같은 Secret을 넣습니다.
             Supabase CLI는 운영자 계정으로 인증하고, 저장소의 verify_jwt=false와
-            gateway·Access 검증 코드를 함께 배포합니다.
+            gateway·Access 검증 코드를 함께 배포합니다. 새 버전마다 최신 release
+            소스에서 다시 실행해야 합니다.
           </p>
           {copy("빌드·배포 명령", examples.deploy)}
+          <h5>⑤ Pages 연결과 확인</h5>
           <p>
             Pages <b>Settings → Bindings → Add → Service binding</b>에 이름{" "}
             <b>GRAEBOARD_BACKEND</b>, 대상은 위 gateway를 지정하고
@@ -643,101 +1047,44 @@ export default function SyncSetupWizard({
           )}
         </>
       )}
-      {!external && step === 4 && (
+      {!external && step === setupStep.account && (
         <>
-          {systemAdmin && (
-            <div className="sync-setup-credential">
-              <h5>내부 GitHub 토큰</h5>
-              <p className="field-help">
-                {setup?.credentialStored
-                  ? "암호화된 토큰이 등록되어 있습니다. 교체할 때만 입력하세요."
-                  : "내부용 토큰을 저장하고 아래에서 연결 검사하세요. 저장 성공은 GitHub 권한 검사와 별개입니다."}
-              </p>
-              {setup?.restartRequired && (
-                <p>
-                  시스템 관리자에게 Node 서비스 재시작을 요청한 뒤{" "}
-                  <b>서버 적용 확인</b>을 누르세요.
-                </p>
-              )}
-              {setup && !setup.credentialReady && !setup.restartRequired && (
-                <p>
-                  토큰을 암호화해 저장하려면 서버 관리자가 GRAEBOARD_SYNC_KEY를
-                  등록하고 재시작해야 합니다. 기존 암호문이 있으면 원래 키를
-                  복원하세요.
-                </p>
-              )}
-              {setup &&
-                (!setup.installed ||
-                  !setup.credentialReady ||
-                  setup.restartRequired) && (
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void action(async () => {
-                        await load();
-                        if (live.current)
-                          setCredentialVersion((value) => value + 1);
-                      })
-                    }
-                  >
-                    서버 적용 확인
-                  </Button>
-                )}
-              <label>
-                내부 GitHub 토큰
-                <input
-                  type="password"
-                  value={token}
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  onChange={(event) => setToken(event.target.value)}
-                  disabled={busy}
-                />
-              </label>
-              <Button
-                disabled={
-                  busy || !token || !setup?.installed || !setup.credentialReady
+          <p>
+            외부 사이트에 처음 접속할 팀장 계정을 연결하고 팀 자료를 가져옵니다.
+          </p>
+          <ol>
+            <li>
+              팀장이 아래에서 <b>팀장 연결 키</b>를 발급해 복사합니다. 키는
+              GitHub를 거쳐 외부에 반영된 뒤 24시간 동안 한 번 사용할 수
+              있습니다.
+            </li>
+            <li>
+              외부 접속 주소에서 Google로 로그인한 뒤 자신의 사내 팀장 계정을
+              선택하고 키를 입력합니다.
+            </li>
+            <li>
+              외부 <b>설정 → 시스템 → 외부 동기화 → 외부 동기화 설정</b>에서{" "}
+              <b>공통 연결 검사 → 팀 가져오기</b>를 진행합니다. 팀장이 보이지
+              않으면 연결 키의 외부 반영 상태부터 확인하세요.
+            </li>
+          </ol>
+          {lead ? (
+            status && (
+              <TeamSetupKey
+                key={team.id}
+                teamId={team.id}
+                enabled={
+                  !!status.canonicalHead &&
+                  ["active", "paused"].includes(status.mode)
                 }
-                onClick={() =>
-                  void action(async () => {
-                    await send(
-                      `/admin/teams/${team.id}/sync-credential`,
-                      { profileId: setup?.profile?.profileId, token },
-                      "PUT",
-                    );
-                    if (!live.current) return;
-                    setToken("");
-                    setCheck(null);
-                    setCredentialVersion((value) => value + 1);
-                    await load();
-                  }, "토큰을 암호화해 저장했습니다. 연결 검사를 다시 실행하세요.")
-                }
-              >
-                토큰 저장
-              </Button>
-            </div>
+                onMessage={onMessage}
+              />
+            )
+          ) : (
+            <p className="field-help">
+              팀장 연결 키는 이 팀의 팀장 계정으로 로그인해 발급합니다.
+            </p>
           )}
-          <p>
-            설치된 프로필을 확인하고 <b>이 팀에 연결 → 연결 검사 → 초기 게시</b>{" "}
-            순서로 진행합니다. 기존 연결은 현재 상태에서 이어가며,
-            일시정지·복구·연결 해제는 아래 기존 관리 기능을 사용합니다.
-          </p>
-          <div key={credentialVersion}>{children}</div>
-        </>
-      )}
-      {!external && step === 5 && (
-        <>
-          <p>
-            이전 <b>팀 연결</b> 단계의 <b>팀장 연결 키 발급</b>을 사용합니다.
-            외부 사이트에서 Google 로그인 후 자신의 사내 팀장 계정을 선택하고
-            키를 입력하세요. 키는 GitHub를 거쳐 외부에 반영된 후 24시간 동안 한
-            번 사용합니다.
-          </p>
-          <p>
-            외부 <b>설정 → 시스템 → 외부 동기화 → 외부 동기화 설정</b>에서{" "}
-            <b>공통 연결 검사 → 팀 가져오기</b>를 진행합니다. 아직 팀장이 보이지
-            않으면 내부 초기 게시·연결 키의 외부 반영 상태부터 확인하세요.
-          </p>
           {acknowledge(
             "외부 팀장 계정을 연결하고 해당 팀 자료를 가져왔습니다.",
           )}
@@ -907,10 +1254,10 @@ export default function SyncSetupWizard({
       {busy && <p role="status">처리 중…</p>}
       <div className="sync-setup-footer">
         <Button
-          disabled={busy || step === minimumStep}
-          onClick={() => goToStep(step - 1)}
+          disabled={busy || previousStep === undefined}
+          onClick={() => goToStep(previousStep!)}
         >
-          {!external && step === 1 ? "내부 프로필 생성으로" : "이전"}
+          {!external && step === servicesStep ? "내부 프로필 설정으로" : "이전"}
         </Button>
         {final ? (
           <Button
@@ -938,7 +1285,9 @@ export default function SyncSetupWizard({
             disabled={busy || !loaded}
             onClick={() => void next()}
           >
-            {!external && step === 0 ? "외부 서비스 설정으로" : "다음"}
+            {!external && nextStep === servicesStep
+              ? "외부 서비스 설정으로"
+              : "다음"}
           </Button>
         )}
       </div>

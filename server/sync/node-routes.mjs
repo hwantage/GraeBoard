@@ -61,6 +61,24 @@ function installConnectionRoutes(
     sync.clear(id(req));
     res.set("Cache-Control", "no-store").json({ ok: true });
   });
+  app.delete("/api/admin/teams/:id/sync-credential", (req, res) => {
+    requireSystemAdmin(req.user);
+    managedTeam(req.user, id(req));
+    const profile = sync.profiles.find(
+      (p) => p.teamId === id(req) && p.profileId === req.body.profileId,
+    );
+    requireThat(profile, 400, "재시작 후 설치된 해당 팀 프로필을 선택하세요.");
+    requireThat(
+      !sync.isBusy(id(req)),
+      409,
+      "동기화 작업이 진행 중입니다. 작업이 끝난 뒤 토큰 삭제를 다시 시도하세요.",
+    );
+    db.prepare("DELETE FROM sync_credentials WHERE profile_id=?").run(
+      profile.profileId,
+    );
+    sync.clear(id(req));
+    res.set("Cache-Control", "no-store").json({ ok: true });
+  });
   app.get("/api/admin/service-connections", (req, res) => {
     requireSystemAdmin(req.user);
     res.json({
@@ -232,8 +250,16 @@ function installTeamSyncRoutes(
   });
   app.post("/api/teams/:id/sync/check", async (req, res) => {
     managedTeam(req.user, id(req));
-    const service = sync.get(id(req)),
-      checked = await service.transport.check(),
+    const service = sync.get(id(req));
+    // Without any token GitHub answers 401/404, which reads like a permission
+    // problem of an existing token.
+    requireThat(
+      service.transport.token ||
+        !service.transport.repository?.startsWith("https://github.com/"),
+      409,
+      "이 팀의 내부 GitHub 토큰이 등록되지 않았습니다. 시스템 관리자가 외부 동기화 설정의 GitHub 저장소 단계에서 토큰을 저장한 뒤 다시 검사하세요.",
+    );
+    const checked = await service.transport.check(),
       head = checked.head;
     if (head) {
       const manifest = JSON.parse(

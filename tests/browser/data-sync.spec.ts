@@ -221,6 +221,14 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   await expect(
     settings.getByRole("button", { name: "일시정지", exact: true }),
   ).toBeEnabled();
+  // The result stays under the buttons and names what reached Git.
+  await expect(
+    settings
+      .getByRole("status")
+      .filter({
+        hasText: /^초기 게시를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
+      }),
+  ).toBeVisible();
   await settings
     .getByRole("button", { name: "팀장 연결 키 발급", exact: true })
     .click();
@@ -329,6 +337,13 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   await expect(
     settings.getByRole("button", { name: "지금 동기화", exact: true }),
   ).toBeEnabled();
+  await expect(
+    settings
+      .getByRole("status")
+      .filter({
+        hasText: /^동기화를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
+      }),
+  ).toBeVisible();
   const shared = app.locals.sync.store(teamId).readState();
   expect(
     Object.values(shared.entities).some(

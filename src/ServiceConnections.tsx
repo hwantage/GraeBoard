@@ -110,6 +110,7 @@ export default function ServiceConnections({
           key={setupTeam.id}
           team={setupTeam}
           systemAdmin={user.systemRole === "admin"}
+          lead={user.teamRoles[setupTeam.id] === "lead"}
           onRefresh={onRefresh}
           onMessage={setMessage}
           onClose={() => {

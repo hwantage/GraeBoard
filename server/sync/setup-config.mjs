@@ -11,6 +11,7 @@ import { parseEnv } from "node:util";
 import { requireThat } from "../../shared/validation.js";
 import { repositoryUrl } from "./git-cli.mjs";
 import { validateSyncProfiles } from "./profiles.mjs";
+import { profileToken, tokenPreview } from "./credentials.mjs";
 
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -143,7 +144,18 @@ export function createSyncSetupConfig({ db, sync, path, env = process.env }) {
         !!db
           .prepare("SELECT 1 FROM sync_credentials WHERE profile_id=?")
           .get(profile.profileId),
+      tokenEnvironment:
+        !!profile && !!env[profile.tokenEnv || "GRAEBOARD_GIT_TOKEN"],
+      tokenPreview: profile ? preview(profile) : "",
     };
+  }
+  // A ciphertext the loaded key cannot open is reported as stored but unreadable.
+  function preview(profile) {
+    try {
+      return tokenPreview(profileToken(db, profile));
+    } catch {
+      return "";
+    }
   }
   function save(teamId, input) {
     const { text, file, profiles } = read();

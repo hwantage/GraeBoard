@@ -43,9 +43,9 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 ## 1. 준비할 자원
 
-신규 팀 설치는 앱의 **설정 → 팀 → 외부 동기화 → 외부 동기화 설정**에서 시작할 수 있습니다. 시스템 관리자는 **시스템 → 외부 동기화**의 팀 선택으로 같은 안내를 엽니다. 안내는 **1. 내부 프로필 생성 → 2. 외부 서비스 설정**으로 구분합니다. 첫 과정에서 GitHub 데이터 저장소 주소를 입력하고 **내부 프로필 생성**을 누르면 프로필 생성·서버 적용 상태를 확인할 수 있습니다. 식별자는 배포 설정에 자동으로 포함되며, 나중에 팀의 외부 동기화 화면에서 **연결 식별 정보**를 펼쳐 확인합니다. 이어서 **외부 서비스 설정으로** 이동하면 Cloudflare, Supabase, 배포, 내부 팀 연결, 외부 계정, 양방향 확인 순서로 필요한 값과 복사 가능한 설정을 제공합니다. 외부에서는 설치 확인·팀 가져오기·양방향 확인만 제공합니다. 콘솔 작업과 배포는 운영자 환경에서 직접 실행하며 내부 서버가 Cloudflare/Supabase 관리 API에 접속하지 않습니다.
+신규 팀 설치는 앱의 **설정 → 팀 → 외부 동기화 → 외부 동기화 설정**에서 시작할 수 있습니다. 시스템 관리자는 **시스템 → 외부 동기화**의 팀 선택으로 같은 안내를 엽니다. 안내는 **1. 내부 프로필 설정 → 2. 외부 서비스 설정**으로 구분합니다. 첫 과정은 사내 서버가 팀 자료를 GitHub까지 게시하는 단계로, **GitHub 저장소**에서 데이터 저장소 주소를 입력해 **내부 프로필 생성**을 누르고 같은 화면에서 내부 GitHub 토큰을 저장한 뒤, **GitHub 연결**에서 이 팀에 연결 → 연결 검사 → 초기 게시를 마칩니다. 식별자는 배포 설정에 자동으로 포함되며, 나중에 팀의 외부 동기화 화면에서 **연결 식별 정보**를 펼쳐 확인합니다. 초기 게시 뒤 **외부 서비스 설정으로** 이동하면 Cloudflare(Pages·R2·Access), Supabase(PostgreSQL), 배포(gateway·Edge Function), 외부 계정(팀장 연결 키), 양방향 확인 순서로 필요한 값과 복사 가능한 설정을 제공합니다. 외부에서는 설치 확인·팀 가져오기·양방향 확인만 제공합니다. 콘솔 작업과 배포는 운영자 환경에서 직접 실행하며 내부 서버가 Cloudflare/Supabase 관리 API에 접속하지 않습니다.
 
-**내부 프로필 생성**은 기존 `.env`의 `GRAEBOARD_SYNC_PROFILES` 배열에 팀을 추가하고 기존 설치 ID·암호화 키·다른 설정을 보존합니다. 새 설치에서만 내부 공통 설치 UUID·암호화 키와 팀별 외부 UUID를 생성합니다. 저장한 프로필은 실행 중인 서버에 바로 적용되며, 이 서버에서 처음으로 설치 식별자를 만든 경우에만 시스템 관리자가 재시작한 뒤 **서버 적용 확인**을 거칩니다. 이어서 **팀 연결 → 내부 GitHub 토큰 저장 → 이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰은 기존 `sync_credentials` AES-256-GCM 형식으로 저장되며 조회 응답에 포함하지 않습니다. 최초 생성한 `.env`의 설치 ID·키는 기존 비밀 보관소에 별도로 보존해야 합니다. 설치 ID나 키가 없는 기존 연결/암호문을 새 값으로 덮어쓰지 않습니다.
+**내부 프로필 생성**은 기존 `.env`의 `GRAEBOARD_SYNC_PROFILES` 배열에 팀을 추가하고 기존 설치 ID·암호화 키·다른 설정을 보존합니다. 새 설치에서만 내부 공통 설치 UUID·암호화 키와 팀별 외부 UUID를 생성합니다. 저장한 프로필은 실행 중인 서버에 바로 적용되며, 이 서버에서 처음으로 설치 식별자를 만든 경우에만 시스템 관리자가 재시작한 뒤 **서버 적용 확인**을 거칩니다. 이어서 같은 단계에서 **내부 GitHub 토큰 저장**, 다음 단계에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰은 [6번](#6-팀별-github-저장소와-토큰)의 Fine-grained token(해당 저장소 하나, Contents: Read and write)이며, 기존 `sync_credentials` AES-256-GCM 형식으로 저장되고 조회 응답에 포함하지 않습니다. `tokenEnv` 환경 변수로 등록한 토큰도 인정하며, 토큰이 하나도 없으면 연결 검사가 GitHub 권한 오류 대신 토큰 미등록을 안내합니다. 최초 생성한 `.env`의 설치 ID·키는 기존 비밀 보관소에 별도로 보존해야 합니다. 설치 ID나 키가 없는 기존 연결/암호문을 새 값으로 덮어쓰지 않습니다.
 
 실행 환경 변수가 `.env`와 다르게 우선 적용되는 서비스, 심볼릭 링크, 중복·여러 줄의 동기화 변수는 UI 저장을 거절합니다. 기존 서비스 관리자가 환경 설정을 정리한 뒤 재시도합니다. 연결 이력이 없는 프로필은 UI에서 저장소 주소를 수정하되 프로필 ID·설치 ID·키를 유지합니다. 실행 중 프로필의 저장소·설치 신원 변경과 복구는 기존 절차를 따릅니다. 외부 DB·관리 토큰·gateway Secret은 앱에 입력하지 않으며, gateway 예시는 소스 루트의 Git 제외 파일 `.env.gateway.json`에 저장합니다. 안내 입력·체크는 브라우저 메모리에만 유지합니다.
 
@@ -217,7 +217,7 @@ Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General →
 
 Edge는 `Cf-Access-Jwt-Assertion`의 서명·발급자·Audience·만료를 검사합니다. 이메일 헤더만으로 로그인시키지 않으며 다른 앱 Audience의 토큰도 거절합니다. Static Assets에서는 `ctx.access` 전달만을 인증 근거로 사용하지 않습니다. [JWT 검증](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [Workers Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
-내부 초기 게시 후 팀장 본인이 **설정 → 팀 → 외부 동기화 → 팀장 연결 키 발급**을 누릅니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 외부에 `SETUP_TOKEN`을 등록할 필요가 없습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
+내부 초기 게시 후 팀장 본인이 외부 동기화 설정 안내의 **외부 계정** 단계(또는 **설정 → 팀 → 외부 동기화**)에서 **팀장 연결 키 발급**을 누릅니다. 초기 게시 전에는 이 키를 표시하지 않습니다. 키 원문을 한 번 복사하고 GitHub 전달 상태를 확인합니다. 외부에서 Google 로그인 후 **같은 사내 팀장 계정을 선택하고 팀장 연결 키로 연결**합니다. 키는 24시간 동안 한 번만 유효합니다. 원문은 파일/DB/GitHub에 보관하지 않으며 외부에 `SETUP_TOKEN`을 등록할 필요가 없습니다. 기존 팀 사이트의 수동 토큰은 더 이상 검증하지 않습니다.
 
 이후 사용자는 Google 로그인 → 해당 팀의 사내 계정 선택 → 연결 신청 → 승인 대기 순서로 진행합니다. 팀장은 **설정 → 팀 → 구성원 → Google 계정 연결**에서 승인·거절·연결 해제를 처리합니다. 승인된 계정만 접속할 수 있으며 마지막으로 연결된 팀장의 연결은 다른 팀장을 연결하기 전까지 해제할 수 없습니다. 이름이나 이메일이 같다는 이유로 자동 연결하지 않습니다. 인증 신원은 검증된 Access의 `(issuer, subject)`에 연결하고 선택 세션도 그 신원에 묶습니다.
 
@@ -256,6 +256,30 @@ npm run build:pages
 | `functions/`·Pages Service binding·Production branch | Pages 배포 및 연결 확인 |
 
 같은 변경에 여러 대상이 포함되면 함께 갱신하고 배포 커밋·함수 버전·Worker 버전을 운영 기록에 남깁니다. 이전 배포에서 전달 전용 Worker를 유지한다면 그 Service binding도 같은 gateway를 가리켜야 합니다.
+
+### release 자동 배포 (팀 Fork)
+
+원본 저장소([hwantage/GraeBoard](https://github.com/hwantage/GraeBoard))의 `main`은 개발 소스를 보관하고, 외부 팀 사이트에 내보낼 버전만 `release` 브랜치로 올립니다(`git push origin main:release`). 사내 서버는 이와 별도로 [운영 안내의 업데이트](OPERATIONS.md#업데이트) 절차로 배포합니다.
+
+각 팀은 원본을 자기 GitHub 계정으로 Fork해 자기 Cloudflare·Supabase에 연결합니다. Fork할 때 **Copy the main branch only** 체크를 해제해 `release`도 복사하고, Pages의 Production branch는 `release`로 지정합니다. 저장소에 포함된 `.github/workflows/team-site-release.yml`이 Fork에서 다음을 수행합니다.
+
+1. `release` push·30분마다·수동 실행 때 원본 `release`를 Fork에 합칩니다(Fork에 없으면 원본에서 만듭니다). `main`도 합치되 실패하면 경고만 남깁니다.
+2. Fork의 `release`가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
+3. Pages는 Cloudflare Git 연결로 `release`를 따라 다시 빌드합니다.
+
+Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settings → Secrets and variables → Actions**에 다음 값을 등록합니다. 원본처럼 `TEAM_SITE_DEPLOY`가 없는 저장소에서는 아무것도 배포하지 않습니다.
+
+| 종류 | 이름 | 값 |
+| --- | --- | --- |
+| Variable | `TEAM_SITE_DEPLOY` | `enabled` |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | 팀 Cloudflare 계정 ID |
+| Variable | `SUPABASE_PROJECT_REF` | 팀 Supabase Reference ID |
+| Variable | `GATEWAY_CONFIG` | 설정 안내 배포 단계의 gateway 설정 JSON 전체(`.env.gateway.json`과 같은 내용) |
+| Secret | `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens의 “Edit Cloudflare Workers” 템플릿 토큰 |
+| Secret | `SUPABASE_ACCESS_TOKEN` | Supabase Account → Access Tokens의 토큰 |
+| Secret (선택) | `SYNC_TOKEN` | Fork에 대한 Contents·Workflows 쓰기 권한 토큰 |
+
+GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면의 **Sync fork**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다. gateway의 두 Secret과 Supabase Edge Secrets는 처음 한 번 직접 등록하며, 자동 배포는 이를 바꾸지 않습니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 

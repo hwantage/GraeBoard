@@ -20,8 +20,10 @@ import {
   createSyncSetupConfig,
   patchSyncEnv,
 } from "../server/sync/setup-config.mjs";
+import { tokenPreview } from "../server/sync/credentials.mjs";
 import {
   setupExamples,
+  setupStep,
   validateSetupStep,
   syncVerification,
 } from "../shared/sync-setup.js";
@@ -330,6 +332,107 @@ test("credential API enforces admin/team scope, encrypts and invalidates only an
   );
 });
 
+test("connection check names a missing internal token and setup reports an environment token", async (t) => {
+  const f = await fixture(t),
+    tokenEnv = "GRAEBOARD_SETUP_TEST_TOKEN";
+  t.after(() => delete process.env[tokenEnv]);
+  process.env.GRAEBOARD_SYNC_KEY = randomBytes(32).toString("base64");
+  await f.start({
+    profiles: [
+      {
+        profileId: "a",
+        teamId: f.teamId,
+        repository: "test/team-a",
+        tokenEnv,
+      },
+    ],
+    installationId: randomUUID(),
+  });
+  const setupRoute = `/admin/teams/${f.teamId}/sync-setup`;
+  const before = (await f.api(setupRoute)).data;
+  assert.equal(before.credentialStored, false);
+  assert.equal(before.tokenEnvironment, false);
+  assert.equal(
+    (
+      await f.api(
+        `/admin/teams/${f.teamId}/connection`,
+        { profileId: "a", expectedRevision: 0 },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  const missing = await f.api(`/teams/${f.teamId}/sync/check`, {});
+  assert.equal(missing.status, 409);
+  assert.match(missing.data.error, /내부 GitHub 토큰이 등록되지 않았습니다/);
+  process.env[tokenEnv] = "environment_token";
+  assert.equal((await f.api(setupRoute)).data.tokenEnvironment, true);
+  f.sync().clear(f.teamId);
+  assert.equal(f.sync().get(f.teamId).transport.token, "environment_token");
+});
+
+test("setup shows only a token prefix and deletes the stored credential of an idle team", async (t) => {
+  assert.equal(
+    tokenPreview("ghp_" + "x".repeat(10) + "y".repeat(26)),
+    "ghp_" + "x".repeat(10),
+  );
+  assert.equal(tokenPreview("short_token"), "short");
+  assert.equal(tokenPreview(undefined), "");
+  const f = await fixture(t);
+  process.env.GRAEBOARD_SYNC_KEY = randomBytes(32).toString("base64");
+  await f.start({
+    profiles: [{ profileId: "a", teamId: f.teamId, repository: "test/team-a" }],
+    installationId: randomUUID(),
+  });
+  const credential = `/admin/teams/${f.teamId}/sync-credential`,
+    setupRoute = `/admin/teams/${f.teamId}/sync-setup`,
+    token = "github_pat_11ABCDEFGH" + "0".repeat(12) + "_" + "s".repeat(59);
+  assert.equal(
+    (await f.api(credential, { profileId: "a", token }, "PUT")).status,
+    200,
+  );
+  const stored = (await f.api(setupRoute)).data;
+  assert.equal(stored.credentialStored, true);
+  assert.equal(stored.tokenPreview, "github_pat_11ABCDEFGH");
+  assert.doesNotMatch(JSON.stringify(stored), /s{20}/);
+  assert.equal(
+    (
+      await f.api(
+        `/admin/teams/${f.teamId}/connection`,
+        { profileId: "a", expectedRevision: 0 },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(f.sync().get(f.teamId).transport.token, token);
+  f.db
+    .prepare("UPDATE team_sync_links SET lease_owner='busy' WHERE team_id=?")
+    .run(f.teamId);
+  assert.equal(
+    (await f.api(credential, { profileId: "a" }, "DELETE")).status,
+    409,
+  );
+  f.db
+    .prepare("UPDATE team_sync_links SET lease_owner=NULL WHERE team_id=?")
+    .run(f.teamId);
+  const link = { ...f.sync().store(f.teamId).readLink() };
+  const deleted = await f.api(credential, { profileId: "a" }, "DELETE");
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(deleted.data, { ok: true });
+  assert.equal(f.db.prepare("SELECT 1 FROM sync_credentials").get(), undefined);
+  const after = (await f.api(setupRoute)).data;
+  assert.equal(after.credentialStored, false);
+  assert.equal(after.tokenPreview, "");
+  assert.equal(f.sync().get(f.teamId).transport.token, undefined);
+  assert.deepEqual({ ...f.sync().store(f.teamId).readLink() }, link);
+  f.db.prepare("UPDATE users SET system_role='user' WHERE id=?").run(f.userId);
+  assert.equal(
+    (await f.api(credential, { profileId: "a" }, "DELETE")).status,
+    403,
+  );
+});
+
 test("setup targets the linked replacement profile rather than the original credential", async (t) => {
   const f = await fixture(t);
   const original = {
@@ -471,17 +574,28 @@ test("setup examples separate external secrets and bind the exact team and persi
     projectRef: "a".repeat(20),
     resourceOrigin: "https://team-gateway.company.workers.dev",
   };
-  for (let step = 0; step < 4; step++)
+  for (const step of Object.values(setupStep))
     assert.equal(validateSetupStep(step, draft), "");
   assert.match(
-    validateSetupStep(1, {
+    validateSetupStep(setupStep.repository, {
+      ...draft,
+      repository: "https://github.com/example",
+    }),
+    /GitHub 저장소 주소/,
+  );
+  assert.match(
+    validateSetupStep(setupStep.cloudflare, {
       ...draft,
       appOrigin: "https://password@team.pages.dev",
     }),
     /HTTPS/,
   );
   assert.match(
-    validateSetupStep(3, {
+    validateSetupStep(setupStep.supabase, { ...draft, projectRef: "short" }),
+    /Reference ID/,
+  );
+  assert.match(
+    validateSetupStep(setupStep.deploy, {
       ...draft,
       resourceOrigin: "https://workers.dev.attacker.test",
     }),

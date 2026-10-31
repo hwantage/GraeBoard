@@ -140,11 +140,27 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 16px;
-  margin-bottom: 20px;
+  margin: 16px 0 20px;
+}
+.sync-setup h5 {
+  margin: 20px 0 4px;
+  font-size: 13px;
 }
 .sync-setup-credential h5 {
   margin: 0;
   font-size: 13px;
+}
+.sync-setup-token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.sync-setup-token dl {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
 .sync-setup-footer {
   display: flex;

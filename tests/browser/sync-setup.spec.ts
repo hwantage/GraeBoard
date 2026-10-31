@@ -103,7 +103,7 @@ test.afterEach(async ({ page }) => {
   else process.env.GRAEBOARD_SYNC_KEY_ID = originalKeyId;
 });
 
-test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이동하고 재진입한다", async ({
+test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설정으로 이동하고 재진입한다", async ({
   page,
 }, testInfo) => {
   await open(page);
@@ -116,7 +116,10 @@ test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이�
   ).toHaveCount(0);
   const phases = w.getByRole("list", { name: "설정 과정", exact: true });
   await expect(phases.locator('[aria-current="true"]')).toContainText(
-    "1. 내부 프로필 생성",
+    "1. 내부 프로필 설정",
+  );
+  await expect(w.locator('[aria-current="step"]')).toHaveText(
+    "1. GitHub 저장소",
   );
   await expect(
     w.getByText("아직 생성되지 않음", { exact: true }),
@@ -124,17 +127,17 @@ test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이�
   await expect(
     phases.getByRole("button", { name: /^2\. 외부 서비스 설정/ }),
   ).toBeDisabled();
-  await w
-    .getByRole("button", { name: "외부 서비스 설정으로", exact: true })
-    .click();
+  // The token sits beside the repository but needs the saved profile first.
+  await expect(w.getByLabel("내부 GitHub 토큰", { exact: true })).toBeVisible();
+  await expect(
+    w.getByRole("button", { name: "토큰 저장", exact: true }),
+  ).toBeDisabled();
+  await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(w.getByText(/GitHub 저장소 주소를/)).toBeVisible();
   await w
     .getByLabel("GitHub 데이터 저장소", { exact: true })
     .fill("https://github.com/example/team-data");
-  await w.getByRole("checkbox").check();
-  await w
-    .getByRole("button", { name: "외부 서비스 설정으로", exact: true })
-    .click();
+  await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(w.getByText(/프로필을 먼저 생성하세요/)).toBeVisible();
   await page.route(
     `**/api/admin/teams/${teamId}/sync-setup`,
@@ -185,6 +188,53 @@ test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이�
     path: testInfo.outputPath("internal-profile.png"),
     fullPage: true,
   });
+  await w.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(
+    w.getByText(/내부 GitHub 토큰을 저장한 뒤 진행하세요/),
+  ).toBeVisible();
+  const tokenInput = w.getByLabel("내부 GitHub 토큰", { exact: true });
+  await tokenInput.fill("fixture_token");
+  await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
+  // Only the token's beginning is shown, with delete instead of the input.
+  await expect(w.getByText("fixtur…", { exact: true })).toBeVisible();
+  await expect(tokenInput).toHaveCount(0);
+  await expect(w.getByText(/암호화된 토큰이 등록/)).toHaveCount(0);
+  await w.getByRole("button", { name: "토큰 삭제", exact: true }).click();
+  await expect(tokenInput).toHaveValue("");
+  await expect(w.getByText("fixtur…", { exact: true })).toHaveCount(0);
+  await w.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(
+    w.getByText(/내부 GitHub 토큰을 저장한 뒤 진행하세요/),
+  ).toBeVisible();
+  await tokenInput.fill("fixture_token");
+  await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
+  await expect(w.getByText("fixtur…", { exact: true })).toBeVisible();
+  await w.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(
+    w.getByRole("heading", { name: "GitHub 연결", exact: true }),
+  ).toBeFocused();
+  await expect(
+    w.getByRole("button", { name: "이 팀에 연결", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    w.getByRole("region", { name: "팀장 연결 키", exact: true }),
+  ).toHaveCount(0);
+  await w
+    .getByRole("button", { name: "외부 서비스 설정으로", exact: true })
+    .click();
+  await expect(w.getByText(/초기 게시를 완료한 뒤/)).toBeVisible();
+  // Once GitHub holds the initial publication, the external services open.
+  await page.route("**/api/teams/*/sync", (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        canonicalHead: "head",
+        pending: 0,
+        conflicts: 0,
+        profileId: profile.profileId,
+      },
+    }),
+  );
   await w
     .getByRole("button", { name: "외부 서비스 설정으로", exact: true })
     .click();
@@ -195,11 +245,11 @@ test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이�
     w.getByRole("heading", { name: "Cloudflare", exact: true }),
   ).toBeFocused();
   await w
-    .getByRole("button", { name: "내부 프로필 생성으로", exact: true })
+    .getByRole("button", { name: "내부 프로필 설정으로", exact: true })
     .click();
   await expect(
-    w.getByRole("definition").filter({ hasText: "서버 적용됨" }),
-  ).toBeVisible();
+    w.getByRole("heading", { name: "GitHub 연결", exact: true }),
+  ).toBeFocused();
   await phases.getByRole("button", { name: /^2\. 외부 서비스 설정/ }).click();
   await expect(
     w.getByRole("heading", { name: "Cloudflare", exact: true }),
@@ -250,21 +300,14 @@ test("내부 프로필 생성·재시도 후 외부 서비스 설정으로 이�
   });
   await w.getByRole("checkbox").check();
   await w.getByRole("button", { name: "다음", exact: true }).click();
-  // The applied profile needs no restart confirmation here.
   await expect(
-    w.getByRole("button", { name: "서버 적용 확인", exact: true }),
-  ).toHaveCount(0);
+    w.getByRole("heading", { name: "외부 계정", exact: true }),
+  ).toBeFocused();
+  // The lead key is issued here, after the publication it unlocks.
   await expect(
-    w.getByRole("button", { name: "토큰 저장", exact: true }),
-  ).toBeDisabled();
-  await w.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(w.getByText(/초기 게시를 완료한 뒤/)).toBeVisible();
-  await w.getByLabel("내부 GitHub 토큰", { exact: true }).fill("fixture_token");
-  await expect(
-    w.getByRole("button", { name: "토큰 저장", exact: true }),
-  ).toBeEnabled();
-  await expect(
-    w.getByRole("button", { name: "이 팀에 연결", exact: true }),
+    w
+      .getByRole("region", { name: "팀장 연결 키", exact: true })
+      .getByRole("button", { name: "팀장 연결 키 발급", exact: true }),
   ).toBeEnabled();
   await w.getByRole("button", { name: "설정 안내 닫기" }).click();
   const details = page.locator(".team-sync-settings .sync-connection-details");
@@ -345,11 +388,11 @@ test("최초 설정 조회 실패는 오류 위치에서 다시 불러올 수 �
   const w = wizard(page);
   await expect(w.getByText(/설정을 불러오지 못했습니다/)).toBeVisible();
   await expect(
-    w.getByRole("button", { name: "외부 서비스 설정으로", exact: true }),
+    w.getByRole("button", { name: "다음", exact: true }),
   ).toBeDisabled();
   await w.getByRole("button", { name: "다시 불러오기", exact: true }).click();
   await expect(
-    w.getByRole("button", { name: "외부 서비스 설정으로", exact: true }),
+    w.getByRole("button", { name: "다음", exact: true }),
   ).toBeEnabled();
   await expect(
     w.getByRole("button", { name: "다시 불러오기", exact: true }),
@@ -395,9 +438,7 @@ test("서비스 연결의 대상 팀 전환은 초안·식별자를 분리하고
   await expect(
     other.getByLabel("GitHub 데이터 저장소", { exact: true }),
   ).toHaveValue("");
-  await other
-    .getByRole("button", { name: "외부 서비스 설정으로", exact: true })
-    .click();
+  await other.getByRole("button", { name: "다음", exact: true }).click();
   await expect(other.getByText(/GitHub 저장소 주소를/)).toBeVisible();
   const width = await other.evaluate((node) => ({
     scroll: node.scrollWidth,
@@ -444,16 +485,42 @@ test("연결된 팀 재진입은 기존 관리로 시작하고 오래된 영수�
   await page.route("**/api/teams/*/sync", (route) =>
     route.fulfill({ json: status }),
   );
+  await page.route("**/api/admin/teams/*/sync-setup", (route) =>
+    route.fulfill({
+      json: {
+        revision: "revision",
+        installationId: randomUUID(),
+        profile: {
+          profileId: "existing",
+          repository: "https://github.com/example/data",
+          peerInstallationId: randomUUID(),
+        },
+        installed: true,
+        restartRequired: false,
+        credentialReady: true,
+        credentialStored: true,
+        tokenEnvironment: false,
+      },
+    }),
+  );
   await page.reload();
   await open(page);
   const w = wizard(page);
   await expect(
-    w.getByRole("heading", { name: "팀 연결", exact: true }),
+    w.getByRole("heading", { name: "GitHub 연결", exact: true }),
   ).toBeVisible();
   await expect(
     w.getByRole("button", { name: "일시정지", exact: true }),
   ).toBeVisible();
-  await w.getByRole("button", { name: "다음", exact: true }).click();
+  // A published team reaches later steps without re-entering deployment values.
+  await w
+    .getByRole("list", { name: "설정 과정", exact: true })
+    .getByRole("button", { name: /^2\. 외부 서비스 설정/ })
+    .click();
+  await expect(
+    w.getByRole("heading", { name: "Cloudflare", exact: true }),
+  ).toBeFocused();
+  await w.getByRole("button", { name: "4. 외부 계정", exact: true }).click();
   await w.getByRole("checkbox").check();
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await w.getByLabel("내부에서 저장한 업무·이미지가 외부에 보입니다.").check();
@@ -490,8 +557,10 @@ test("토큰 저장 실패 후 재시도는 기존 연결을 보존하고 원문
   await page.reload();
   await open(page);
   const w = wizard(page);
-  const phases = w.getByRole("list", { name: "설정 과정", exact: true });
-  await phases.getByRole("button", { name: /^1\. 내부 프로필 생성/ }).click();
+  // A connected team without a token opens at the token step.
+  await expect(
+    w.getByRole("heading", { name: "GitHub 저장소", exact: true }),
+  ).toBeVisible();
   await expect(w.getByLabel("프로필 ID", { exact: true })).toHaveCount(0);
   await expect(
     w.getByRole("button", { name: "내부 프로필 생성", exact: true }),
@@ -499,7 +568,6 @@ test("토큰 저장 실패 후 재시도는 기존 연결을 보존하고 원문
   await expect(
     w.getByRole("definition").filter({ hasText: "서버 적용됨" }),
   ).toBeVisible();
-  await phases.getByRole("button", { name: /^2\. 외부 서비스 설정/ }).click();
   await w
     .getByLabel("내부 GitHub 토큰", { exact: true })
     .fill("fixture_private_token");
@@ -516,10 +584,10 @@ test("토큰 저장 실패 후 재시도는 기존 연결을 보존하고 원문
   );
   const link = { ...app.locals.sync.store(teamId).readLink() };
   await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
-  await expect(w.getByLabel("내부 GitHub 토큰", { exact: true })).toHaveValue(
-    "",
+  await expect(w.getByText("fixture_pr…", { exact: true })).toBeVisible();
+  await expect(w.getByLabel("내부 GitHub 토큰", { exact: true })).toHaveCount(
+    0,
   );
-  await expect(w.getByText(/암호화된 토큰이 등록/)).toBeVisible();
   expect(
     db
       .prepare(
@@ -701,6 +769,12 @@ test("팀 탭에서 설정 안내를 여는 동안 기존 화면의 상태 조�
     page,
     `/admin/teams/${teamId}/connection`,
     { profileId: "existing", expectedRevision: 0 },
+    "PUT",
+  );
+  await post(
+    page,
+    `/admin/teams/${teamId}/sync-credential`,
+    { profileId: "existing", token: "fixture_token" },
     "PUT",
   );
   await page.reload();

@@ -107,6 +107,8 @@ async function fixture(t) {
 test("connection check reports an empty GitHub repository and succeeds after its first commit", async (t) => {
   const { a, teamId } = await fixture(t);
   a.transport.repository = "https://github.com/fixture/team";
+  // A GitHub-backed check always carries a token; a missing one is rejected earlier.
+  a.transport.token = "fixture_token";
   const fetcher = globalThis.fetch,
     calls = [];
   let state = "empty";

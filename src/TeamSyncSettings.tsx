@@ -96,7 +96,7 @@ function SyncErrorNote({
     if (error && reveal) ref.current?.scrollIntoView({ block: "nearest" });
   }, [error, reveal]);
   return error ? (
-    <div ref={ref}>
+    <div ref={ref} className="team-sync-error">
       <ErrorNote error={error} />
     </div>
   ) : null;
@@ -164,6 +164,8 @@ export default function TeamSyncSettings({
   const [editing, setEditing] = useState<Conflict | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState("");
+  const [notice, setNotice] = useState("");
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState("");
   const [errorTarget, setErrorTarget] = useState<ErrorTarget>("actions");
@@ -207,6 +209,7 @@ export default function TeamSyncSettings({
       );
       setSwitchJob(nextConnection.switchJob || null);
     }
+    return nextStatus;
   }
   useEffect(() => {
     // The wizard embeds its own copy of this screen; polling here as well would
@@ -243,12 +246,14 @@ export default function TeamSyncSettings({
     target: ErrorTarget = "actions",
   ) {
     if (busy) return;
+    const actionName = actionNames[action] || "충돌 해결";
     setBusy(true);
+    setRunning(target === "actions" ? actionName : "");
+    setNotice("");
     setReconnecting(action === "reconnect");
     setError("");
     if (action === "check") setCheck(null);
     onMessage("");
-    const actionName = actionNames[action] || "충돌 해결";
     let refreshing = false;
     try {
       const result = await send<ConnectionCheck>(`${prefix}/${action}`, body);
@@ -274,8 +279,18 @@ export default function TeamSyncSettings({
       )
         await onSaved();
       if (!live.current) return;
-      await load(undefined, true, true);
-      if (live.current) onMessage(message);
+      const current = await load(undefined, true, true);
+      if (!live.current) return;
+      // Run and the initial publication finish their cycle before answering,
+      // so the refreshed status names what reached Git.
+      const done =
+        current &&
+        (action === "run" || (action === "enable" && current.canonicalHead))
+          ? `${action === "run" ? "동기화를" : "초기 게시를"} 완료했습니다. Git 반영 ${syncTime(current.lastPublishedAt)} · 공유 대기 ${current.pending}건${current.conflicts ? ` · 충돌 보관 ${current.conflicts}건` : ""}`
+          : message;
+      setRunning("");
+      if (target === "actions") setNotice(done);
+      else onMessage(done);
     } catch (e) {
       if (live.current) {
         showError(
@@ -290,6 +305,7 @@ export default function TeamSyncSettings({
     } finally {
       if (live.current) {
         setBusy(false);
+        setRunning("");
         setReconnecting(false);
       }
     }
@@ -404,6 +420,7 @@ export default function TeamSyncSettings({
         key={team.id}
         team={team}
         systemAdmin={user.systemRole === "admin"}
+        lead={user.teamRoles[team.id] === "lead"}
         onClose={() => setSetupOpen(false)}
         onRefresh={onSaved}
         onMessage={onMessage}
@@ -839,7 +856,19 @@ export default function TeamSyncSettings({
                 }
                 reveal={errorTarget === "actions" && !!error}
               />
-              {admin && linked && (
+              {running
+                ? !error && (
+                    <p className="team-sync-result" role="status">
+                      {running} 중…
+                    </p>
+                  )
+                : notice &&
+                  !status.lastError && (
+                    <p className="team-sync-result" role="status">
+                      {notice}
+                    </p>
+                  )}
+              {admin && linked && initialized && (
                 <p className="field-help">
                   잠시 멈출 때는 일시정지를 사용하세요.{" "}
                   {external
@@ -849,22 +878,26 @@ export default function TeamSyncSettings({
               )}
             </div>
           )}
-          {busy && (
+          {busy && !running && (
             <p className="field-help" role="status">
               처리 중…
             </p>
           )}
           <ConnectionChecks result={check} />
-          {status && !external && user.teamRoles[team.id] === "lead" && (
-            <TeamSetupKey
-              key={team.id}
-              teamId={team.id}
-              enabled={
-                initialized && ["active", "paused"].includes(status.mode)
-              }
-              onMessage={onMessage}
-            />
-          )}
+          {/* The guide issues the key in its external account step. */}
+          {!embedded &&
+            status &&
+            !external &&
+            user.teamRoles[team.id] === "lead" &&
+            initialized &&
+            ["active", "paused"].includes(status.mode) && (
+              <TeamSetupKey
+                key={team.id}
+                teamId={team.id}
+                enabled
+                onMessage={onMessage}
+              />
+            )}
           {conflicts.filter((conflict) => !conflict.resolved).length > 0 && (
             <section aria-label="충돌 보관함">
               <h4>충돌 보관함</h4>

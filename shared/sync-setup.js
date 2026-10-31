@@ -1,12 +1,22 @@
 export const setupSteps = [
-  "내부 프로필 생성",
+  "GitHub 저장소",
+  "GitHub 연결",
   "Cloudflare",
   "Supabase",
   "배포",
-  "팀 연결",
   "외부 계정",
   "양방향 확인",
 ];
+export const appSourceRepository = "https://github.com/hwantage/GraeBoard";
+export const setupStep = {
+  repository: 0,
+  publish: 1,
+  cloudflare: 2,
+  supabase: 3,
+  deploy: 4,
+  account: 5,
+  verify: 6,
+};
 export const externalSetupSteps = ["설치 확인", "팀 가져오기", "양방향 확인"];
 const origin = (value) => {
   try {
@@ -23,13 +33,13 @@ const origin = (value) => {
 };
 export function validateSetupStep(step, draft) {
   if (
-    step === 0 &&
+    step === setupStep.repository &&
     !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(
       draft.repository,
     )
   )
     return "GitHub 저장소 주소를 https://github.com/소유자/저장소 형식으로 입력하세요.";
-  if (step === 1) {
+  if (step === setupStep.cloudflare) {
     if (!origin(draft.appOrigin))
       return "외부 접속 주소는 경로와 마지막 / 없이 HTTPS 주소로 입력하세요.";
     if (!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(draft.issuer))
@@ -41,10 +51,10 @@ export function validateSetupStep(step, draft) {
     if (!/^[a-z][a-z0-9-]{0,62}$/.test(draft.gateway))
       return "gateway 이름은 영문 소문자로 시작하는 영문·숫자·하이픈으로 입력하세요.";
   }
-  if (step === 2 && !/^[a-z0-9]{20}$/.test(draft.projectRef))
+  if (step === setupStep.supabase && !/^[a-z0-9]{20}$/.test(draft.projectRef))
     return "Supabase 프로젝트 Reference ID 20자리를 입력하세요.";
   if (
-    step === 3 &&
+    step === setupStep.deploy &&
     (!origin(draft.resourceOrigin) ||
       !new URL(draft.resourceOrigin).hostname.endsWith(".workers.dev"))
   )
