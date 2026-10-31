@@ -34,6 +34,8 @@ exports/
 # Local configuration and credentials
 .env*
 !.env.example
+team-site-config.json
+team-site-secrets.json
 *.pem
 *.key
 *.p12

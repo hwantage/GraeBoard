@@ -57,6 +57,9 @@ export function syncErrorMessage(error) {
     )
   )
     return "Git 저장소에 접근할 권한을 확인하지 못했습니다. 관리자에게 Git 접속 토큰의 유효 여부와 해당 비공개 저장소의 읽기·쓰기 권한을 확인해 달라고 요청하세요.";
+  // GitHub answers 404 for a private repository the token cannot see.
+  if (/GitHub request failed \(404\)/i.test(message))
+    return "GitHub 저장소를 찾을 수 없습니다. 저장소 주소가 맞는지, 등록한 GitHub 토큰의 Repository access에 이 저장소가 포함돼 있는지 확인하세요. 토큰이 볼 수 없는 비공개 저장소도 GitHub는 '찾을 수 없음'으로 응답합니다.";
   if (
     ["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(code) ||
     /timed out|timeout/i.test(message)

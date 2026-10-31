@@ -10,7 +10,9 @@
 
 R2와 Images native binding은 gateway에 남습니다. Edge가 서버 전용 Secret으로 gateway의 `/_resources/` 경로를 호출합니다. 이 경로는 비밀값 확인과 해당 팀의 이미지/검사 키 범위를 검사하며 브라우저에는 Secret을 전달하지 않습니다. 업무·문서 조회와 Git 연산은 Worker에서 실행하지 않습니다.
 
-Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다.
+Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료합니다. 기존 클라이언트가 마지막 커서로 다시 연결하므로 변경 이력을 이어받습니다. 긴 연결에서 누적되는 CPU 사용량을 제한하기 위한 설정이며, 활성 화면 수에 따라 함수 호출량은 늘어납니다. 브라우저 탭이 1분 넘게 숨겨지면 그 탭은 공유 실시간 연결에서 빠지고, 모든 탭이 숨겨진 브라우저는 재연결을 멈춥니다. 탭이 다시 보이면 마지막으로 처리한 커서로 재구독해 그동안의 변경을 이어받습니다.
+
+Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화면 파일·API·실시간 재연결 요청은 모두 Workers 무료 플랜의 하루 요청 수(Pages Functions와 합산 10만 건)로 셉니다. Pages Functions에서 gateway로의 Service binding 호출은 따로 세지 않습니다. 열어 둔 브라우저 하나가 업무 시간 내내 보이는 상태라면 실시간 재연결만 하루 약 1,900건입니다. gateway는 내용 해시가 붙은 `/assets/` 빌드 파일에 `Cache-Control: private, max-age=31536000, immutable`을 붙여 재방문 때 다시 요청하지 않게 하고, `index.html`과 없는 파일의 앱 화면 대체 응답에는 붙이지 않습니다. 하루 요청 수는 **Workers & Pages → 프로젝트 → Metrics**에서 확인합니다. 한도를 넘으면 다음 날 0시(UTC)까지 Pages 설정(Fail open/closed)에 따라 API가 실패합니다. [Workers 요금·한도](https://developers.cloudflare.com/workers/platform/pricing/)
 
 기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 옮기는 변경 자체에는 DB migration이 없습니다. **현재 릴리스는 SQLite v33·PostgreSQL site v3(분리형 control v2)·team v2 migration이 필요합니다.** 기존 site 계정과 team 업무 데이터, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 전체 업무 API를 Cloudflare에서 실행하는 호환성 설정과 빌드는 제거했습니다. 배포에는 gateway·forwarder 설정과 Supabase Edge 빌드를 사용합니다.
 
@@ -21,17 +23,17 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 3. `wrangler.gateway.jsonc`를 복사해 실제 Pages origin·팀 UUID·bucket·Edge URL·Worker 이름과 Edge에서 사용하는 `ACCESS_ISSUER`·`ACCESS_AUDIENCE`를 지정합니다. gateway를 배포하고 독립적인 난수 Secret 두 개를 등록합니다: `GRAEBOARD_GATEWAY_SECRET`(gateway → Edge), `GRAEBOARD_RESOURCE_SECRET`(Edge → R2/Images gateway). 둘 다 32바이트 이상의 난수를 사용합니다. gateway의 `workers.dev` 주소는 자원 호출용이며 일반 화면/API는 설정된 Pages origin만 허용합니다.
 4. Supabase Edge Secrets에 다음 값을 등록합니다. JSON 변수는 JSON 자체를 값으로 저장하며 역슬래시로 이중 escape하지 않습니다. `supabase secrets set --env-file 운영자전용파일 --project-ref 프로젝트ID`로 등록할 경우 `SYNC_PROFILES=[{"profileId":...}]`처럼 한 줄로 저장합니다. 관리 토큰을 함수 Secrets에 넣지 않습니다.
 
-| Edge 설정 | 값 |
-| --- | --- |
-| `GRAEBOARD_SITE` | `external` |
-| `APP_ORIGIN`, `ACCESS_ISSUER`, `ACCESS_AUDIENCE` | 기존 Pages와 Access 앱 설정 |
-| `SITE_NAME`, `SITE_TEAM_ID`, `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | 기존 외부 설치 값 그대로 |
-| `SYNC_PROFILES`, `GIT_TEAM` | 기존 팀 프로필 및 팀 전용 GitHub 토큰. DB binding `PG_SITE`, bucket binding `R2_TEAM` |
-| `SYNC_MAX_STATE_BYTES`, `SYNC_MAX_ENTITIES` | 기존 용량 제한 |
-| `GRAEBOARD_GATEWAY_SECRET` | gateway와 같은 전달용 Secret |
-| `RESOURCE_ORIGIN`, `GRAEBOARD_RESOURCE_SECRET` | gateway의 HTTPS `workers.dev` origin, 같은 자원용 Secret |
-| `GRAEBOARD_ACCESS_TOKEN_KEY` | 접속 토큰 암호화·재조회용 base64 32바이트 키. DB 밖에 보존하고 기존 키를 임의로 교체하지 않습니다. |
-| `GRAEBOARD_DATABASE_URL` | 선택 사항. 전용 앱 역할의 PostgreSQL 접속 URL. 생략 시 Supabase가 제공하는 `SUPABASE_DB_URL` 사용 |
+| Edge 설정                                                              | 값                                                                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `GRAEBOARD_SITE`                                                       | `external`                                                                                         |
+| `APP_ORIGIN`, `ACCESS_ISSUER`, `ACCESS_AUDIENCE`                       | 기존 Pages와 Access 앱 설정                                                                        |
+| `SITE_NAME`, `SITE_TEAM_ID`, `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | 기존 외부 설치 값 그대로                                                                           |
+| `SYNC_PROFILES`, `GIT_TEAM`                                            | 기존 팀 프로필 및 팀 전용 GitHub 토큰. DB binding `PG_SITE`, bucket binding `R2_TEAM`              |
+| `SYNC_MAX_STATE_BYTES`, `SYNC_MAX_ENTITIES`                            | 기존 용량 제한                                                                                     |
+| `GRAEBOARD_GATEWAY_SECRET`                                             | gateway와 같은 전달용 Secret                                                                       |
+| `RESOURCE_ORIGIN`, `GRAEBOARD_RESOURCE_SECRET`                         | gateway의 HTTPS `workers.dev` origin, 같은 자원용 Secret                                           |
+| `GRAEBOARD_ACCESS_TOKEN_KEY`                                           | 접속 토큰 암호화·재조회용 base64 32바이트 키. DB 밖에 보존하고 기존 키를 임의로 교체하지 않습니다. |
+| `GRAEBOARD_DATABASE_URL`                                               | 선택 사항. 전용 앱 역할의 PostgreSQL 접속 URL. 생략 시 Supabase가 제공하는 `SUPABASE_DB_URL` 사용  |
 
 5. `npx supabase functions deploy graeboard --project-ref 프로젝트ID --use-api`를 실행합니다. `supabase/config.toml`의 `verify_jwt=false`는 Supabase Auth 검증 대신 gateway Secret 및 Cloudflare Access JWT·앱 계정·팀 권한을 직접 검증하기 위한 설정입니다. 이 검증 코드를 제거한 함수를 공개하지 않습니다.
 6. Pages Production/Preview의 `GRAEBOARD_BACKEND`를 새 gateway로 바꾸고 Pages를 재배포합니다. Google 로그인, 업무/문서 조회·저장, R2 이미지, 두 방향 Git 반영, 로그아웃·권한 철회를 확인합니다. 문제가 생기면 검증된 gateway와 Edge 함수 버전을 함께 재배포합니다. Hyperdrive를 쓰던 전체 Worker로 되돌리거나 DB를 이전 백업으로 덮어쓰지 않습니다.
@@ -43,9 +45,9 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 ## 1. 준비할 자원
 
-신규 팀 설치는 앱의 **설정 → 팀 → 외부 동기화 → 외부 동기화 설정**에서 시작할 수 있습니다. 시스템 관리자는 **시스템 → 외부 동기화**의 팀 선택으로 같은 안내를 엽니다. 안내는 **1. 내부 프로필 설정 → 2. 외부 서비스 설정**으로 구분합니다. 첫 과정은 사내 서버가 팀 자료를 GitHub까지 게시하는 단계로, **GitHub 저장소**에서 데이터 저장소 주소를 입력해 **내부 프로필 생성**을 누르고 같은 화면에서 내부 GitHub 토큰을 저장한 뒤, **GitHub 연결**에서 이 팀에 연결 → 연결 검사 → 초기 게시를 마칩니다. 식별자는 배포 설정에 자동으로 포함되며, 나중에 팀의 외부 동기화 화면에서 **연결 식별 정보**를 펼쳐 확인합니다. 초기 게시 뒤 **외부 서비스 설정으로** 이동하면 Cloudflare(Pages·R2·Access), Supabase(PostgreSQL), 배포(gateway·Edge Function), 외부 계정(팀장 연결 키), 양방향 확인 순서로 필요한 값과 복사 가능한 설정을 제공합니다. 외부에서는 설치 확인·팀 가져오기·양방향 확인만 제공합니다. 콘솔 작업과 배포는 운영자 환경에서 직접 실행하며 내부 서버가 Cloudflare/Supabase 관리 API에 접속하지 않습니다.
+신규 팀 설치는 앱의 **설정 → 팀 → 외부 동기화 → 외부 동기화 설정**에서 시작할 수 있습니다. 시스템 관리자는 **시스템 → 외부 동기화**의 팀 선택으로 같은 안내를 엽니다. 안내는 **1. 내부 프로필 설정 → 2. 외부 서비스 설정**으로 구분합니다. 첫 과정은 사내 서버가 팀 자료를 GitHub까지 게시하는 단계로, **GitHub 저장소**에서 데이터 저장소 주소와 내부 GitHub 토큰을 함께 입력해 **저장소·토큰 저장**을 누른 뒤, **GitHub 연결**에서 이 팀에 연결 → 연결 검사 → 초기 게시를 마칩니다. 식별자는 배포 설정에 자동으로 포함되며, 나중에 팀의 외부 동기화 화면에서 **연결 식별 정보**를 펼쳐 확인합니다. 초기 게시 뒤 **외부 서비스 설정으로** 이동하면 GitHub Fork(앱 소스), Cloudflare(Pages·R2·Access), Supabase(PostgreSQL), 배포(gateway·Edge Function), 외부 계정(팀장 연결 키), 양방향 확인 순서로 필요한 값과 복사 가능한 설정을 제공합니다. 외부에서는 설치 확인·팀 가져오기·양방향 확인만 제공합니다. 콘솔 작업과 배포는 운영자 환경에서 직접 실행하며 내부 서버가 Cloudflare/Supabase 관리 API에 접속하지 않습니다.
 
-**내부 프로필 생성**은 기존 `.env`의 `GRAEBOARD_SYNC_PROFILES` 배열에 팀을 추가하고 기존 설치 ID·암호화 키·다른 설정을 보존합니다. 새 설치에서만 내부 공통 설치 UUID·암호화 키와 팀별 외부 UUID를 생성합니다. 저장한 프로필은 실행 중인 서버에 바로 적용되며, 이 서버에서 처음으로 설치 식별자를 만든 경우에만 시스템 관리자가 재시작한 뒤 **서버 적용 확인**을 거칩니다. 이어서 같은 단계에서 **내부 GitHub 토큰 저장**, 다음 단계에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰은 [6번](#6-팀별-github-저장소와-토큰)의 Fine-grained token(해당 저장소 하나, Contents: Read and write)이며, 기존 `sync_credentials` AES-256-GCM 형식으로 저장되고 조회 응답에 포함하지 않습니다. `tokenEnv` 환경 변수로 등록한 토큰도 인정하며, 토큰이 하나도 없으면 연결 검사가 GitHub 권한 오류 대신 토큰 미등록을 안내합니다. 최초 생성한 `.env`의 설치 ID·키는 기존 비밀 보관소에 별도로 보존해야 합니다. 설치 ID나 키가 없는 기존 연결/암호문을 새 값으로 덮어쓰지 않습니다.
+**저장소·토큰 저장**은 저장소 주소가 새로 입력되거나 바뀌었을 때 먼저 프로필을 저장하고, 프로필이 서버에 적용되면 이어서 토큰을 저장합니다. 둘은 함께 있어야 연결할 수 있으므로 토큰 없이 저장소만 처음 저장하는 요청은 화면에서 거절하고, 토큰 형식도 프로필을 쓰기 전에 검사합니다. 프로필 저장은 기존 `.env`의 `GRAEBOARD_SYNC_PROFILES` 배열에 팀을 추가하고 기존 설치 ID·암호화 키·다른 설정을 보존합니다. 새 설치에서만 내부 공통 설치 UUID·암호화 키와 팀별 외부 UUID를 생성합니다. 저장한 프로필은 실행 중인 서버에 바로 적용되며, 이 서버에서 처음으로 설치 식별자를 만든 경우에만 토큰 저장을 미루고, 시스템 관리자가 재시작한 뒤 토큰을 입력해 다시 저장합니다. 이어서 다음 단계에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰은 [6번](#6-팀별-github-저장소와-토큰)의 Fine-grained token(해당 저장소 하나, Contents: Read and write)이며, 기존 `sync_credentials` AES-256-GCM 형식으로 저장되고 조회 응답에 포함하지 않습니다. `tokenEnv` 환경 변수로 등록한 토큰도 인정하며, 토큰이 하나도 없으면 연결 검사가 GitHub 권한 오류 대신 토큰 미등록을 안내합니다. 최초 생성한 `.env`의 설치 ID·키는 기존 비밀 보관소에 별도로 보존해야 합니다. 설치 ID나 키가 없는 기존 연결/암호문을 새 값으로 덮어쓰지 않습니다.
 
 실행 환경 변수가 `.env`와 다르게 우선 적용되는 서비스, 심볼릭 링크, 중복·여러 줄의 동기화 변수는 UI 저장을 거절합니다. 기존 서비스 관리자가 환경 설정을 정리한 뒤 재시도합니다. 연결 이력이 없는 프로필은 UI에서 저장소 주소를 수정하되 프로필 ID·설치 ID·키를 유지합니다. 실행 중 프로필의 저장소·설치 신원 변경과 복구는 기존 절차를 따릅니다. 외부 DB·관리 토큰·gateway Secret은 앱에 입력하지 않으며, gateway 예시는 소스 루트의 Git 제외 파일 `.env.gateway.json`에 저장합니다. 안내 입력·체크는 브라우저 메모리에만 유지합니다.
 
@@ -53,13 +55,13 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 사내에서는 모든 팀을 기존 SQLite DB 하나에서 관리합니다. 외부 접근이 필요한 팀만 동기화를 켜며, 각 팀이 독립된 외부 사이트를 운영합니다.
 
-| 범위 | 준비할 것 |
-| --- | --- |
-| 내부 공통 | 기존 Node/SQLite 서버·이미지 경로·Git CLI |
-| 외부 연결 팀마다 | 비공개 GitHub 데이터 저장소 하나 |
+| 범위             | 준비할 것                                                                       |
+| ---------------- | ------------------------------------------------------------------------------- |
+| 내부 공통        | 기존 Node/SQLite 서버·이미지 경로·Git CLI                                       |
+| 외부 연결 팀마다 | 비공개 GitHub 데이터 저장소 하나                                                |
 | 외부 연결 팀마다 | Cloudflare Pages 접속 주소·gateway Worker + Static Assets·Google 전용 Access 앱 |
-| 외부 연결 팀마다 | Supabase 프로젝트 하나와 `graeboard` Edge Function |
-| 외부 연결 팀마다 | 비공개 R2 bucket·Images binding |
+| 외부 연결 팀마다 | Supabase 프로젝트 하나와 `graeboard` Edge Function                              |
+| 외부 연결 팀마다 | 비공개 R2 bucket·Images binding                                                 |
 
 외부 연결 팀이 N개면 Supabase 프로젝트도 N개입니다. 한 프로젝트 안의 `graeboard`는 업무 자료, `graeboard_site`는 그 팀의 사용자·연결 승인·설정 정보를 보관합니다. 별도 공통 관리 프로젝트는 만들지 않습니다. 기존에 빈 관리용 프로젝트를 만들었다면 그 프로젝트를 해당 팀 전용으로 사용할 수 있습니다.
 
@@ -75,19 +77,19 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 `binding`은 실행 환경에서 제공하는 자원을 가리키는 이름입니다. 앱 화면에서 bucket 이름을 입력한다고 자원이 생성되지는 않습니다.
 
-| 값 | 입력 위치 | 의미 |
-| --- | --- | --- |
-| `GRAEBOARD_SITE` | Edge Secret | `external`. 내부 Node의 `.env`에는 `internal` |
-| `APP_ORIGIN` | Edge Secret·gateway 변수 | 경로 없는 외부 HTTPS origin 하나 |
-| `GRAEBOARD_BACKEND` | Pages Service binding | 같은 팀의 gateway Worker |
-| `ACCESS_ISSUER`, `ACCESS_AUDIENCE` | Edge Secret·gateway 변수 | Google Access 발급자와 앱 Audience |
-| `GRAEBOARD_DATABASE_URL` | Edge Secret (선택) | 전용 앱 역할의 PostgreSQL 주소. 생략 시 `SUPABASE_DB_URL` |
-| `SITE_TEAM_ID` | Edge Secret·gateway 변수 | 기존 내부 팀 UUID |
-| `R2_TEAM`, `IMAGES` | gateway binding | 팀 비공개 bucket과 이미지 변환 |
-| `GIT_TEAM` | Edge Secret | 해당 팀 저장소만 허용한 GitHub 토큰 |
-| `SYNC_PROFILES` | Edge Secret | 팀 UUID와 내부 `PG_SITE`·`R2_TEAM`·`GIT_TEAM` 이름의 연결 |
-| 팀장 연결 키 | 내부 팀 설정에서 발급 | 검증 해시만 GitHub를 통해 Supabase로 전달 |
-| `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | Edge Secret | 외부 및 내부 설치의 고정 UUID |
+| 값                                        | 입력 위치                | 의미                                                      |
+| ----------------------------------------- | ------------------------ | --------------------------------------------------------- |
+| `GRAEBOARD_SITE`                          | Edge Secret              | `external`. 내부 Node의 `.env`에는 `internal`             |
+| `APP_ORIGIN`                              | Edge Secret·gateway 변수 | 경로 없는 외부 HTTPS origin 하나                          |
+| `GRAEBOARD_BACKEND`                       | Pages Service binding    | 같은 팀의 gateway Worker                                  |
+| `ACCESS_ISSUER`, `ACCESS_AUDIENCE`        | Edge Secret·gateway 변수 | Google Access 발급자와 앱 Audience                        |
+| `GRAEBOARD_DATABASE_URL`                  | Edge Secret (선택)       | 전용 앱 역할의 PostgreSQL 주소. 생략 시 `SUPABASE_DB_URL` |
+| `SITE_TEAM_ID`                            | Edge Secret·gateway 변수 | 기존 내부 팀 UUID                                         |
+| `R2_TEAM`, `IMAGES`                       | gateway binding          | 팀 비공개 bucket과 이미지 변환                            |
+| `GIT_TEAM`                                | Edge Secret              | 해당 팀 저장소만 허용한 GitHub 토큰                       |
+| `SYNC_PROFILES`                           | Edge Secret              | 팀 UUID와 내부 `PG_SITE`·`R2_TEAM`·`GIT_TEAM` 이름의 연결 |
+| 팀장 연결 키                              | 내부 팀 설정에서 발급    | 검증 해시만 GitHub를 통해 Supabase로 전달                 |
+| `INSTALLATION_ID`, `PEER_INSTALLATION_ID` | Edge Secret              | 외부 및 내부 설치의 고정 UUID                             |
 
 `ACCESS_TEAM_DOMAIN`과 `ACCESS_AUD`도 발급자·Audience의 호환 이름입니다. 한 설치에서는 한 가지 이름을 일관되게 사용하세요. 발급자에는 `https://`를 포함하고 끝에 `/`를 붙이지 않습니다.
 
@@ -128,7 +130,9 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 
 팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. Edge Function은 PostgreSQL에 직접 연결하므로 Hyperdrive·Supabase Data API·Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
 
-아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
+**신규 외부 DB는 Supabase 웹 화면만으로 초기화할 수 있습니다.** 설정 안내의 Supabase 단계(시스템 관리자)가 이 팀 UUID·이름을 넣은 **외부 DB 초기화 SQL**을 보여 줍니다. 내부 서버의 `GET /api/admin/teams/:id/external-db-sql`이 아래 명령의 빈 DB 초기화와 같은 migration SQL·순서·checksum을 한 트랜잭션 스크립트로 만들며, 새 프로젝트의 **SQL Editor**에 전체를 붙여 넣고 **Run**합니다(RLS 확인 창은 **Run without RLS**). `graeboard`·`graeboard_site`에 테이블이 하나라도 있으면 아무것도 바꾸지 않고 멈추고, 중간 실패는 전체 롤백합니다. 마지막 결과 표에서 `team_uuid`·`site_version` 3·`team_version` 2를 확인합니다. 스크립트는 두 스키마에서 `PUBLIC`·`anon`·`authenticated` 권한을 회수하고 `graeboard_app` 역할이 있으면 아래와 같은 권한을 줍니다. 기존 외부 DB 업그레이드는 이 스크립트가 아니라 아래 명령이나 업그레이드 절차를 따릅니다.
+
+명령으로 초기화할 때는 앱 소스가 있고 인터넷에 연결된 운영자 PC에서 `npm ci` 후 실행합니다. 아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
 
 ```sh
 read -s PG_SITE_URL
@@ -160,10 +164,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA graeboard, graeboard_site
 
 Hyperdrive를 생성하지 않습니다. DB 연결은 Supabase Edge에만 설정하고 gateway에는 다음 자원만 연결합니다.
 
-| 자원 | gateway binding | 설정 |
-| --- | --- | --- |
-| 비공개 R2 bucket | `R2_TEAM` | 해당 팀 전용, public access 끄기 |
-| Images | `IMAGES` | 이미지 변환 |
+| 자원             | gateway binding | 설정                             |
+| ---------------- | --------------- | -------------------------------- |
+| 비공개 R2 bucket | `R2_TEAM`       | 해당 팀 전용, public access 끄기 |
+| Images           | `IMAGES`        | 이미지 변환                      |
 
 이미지는 앱의 권한 검사를 거쳐 `/api/document-images/...`로 제공합니다. R2 native binding에는 S3 access key가 필요 없습니다. [R2 binding](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 
@@ -205,11 +209,13 @@ gateway는 `wrangler.gateway.jsonc`로 배포하며 `assets.run_worker_first: tr
 
 ## 8. GraeBoard 전용 Google Access
 
-Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Enable access policy**로 시작합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Edge에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
+Pages의 `pages.dev` 주소를 사용할 때는 Pages **Settings → General → Preview access**의 **Restrict previews**(이전 화면의 Enable access policy)로 시작합니다. 생성된 앱은 **Zero Trust → Access controls → Applications**에서 앱 이름(`프로젝트 - Cloudflare Pages`)을 눌러 편집하며, Public hostname의 Subdomain에서 `*`를 지워 운영 주소를 보호한 뒤 Restrict previews를 다시 눌러 미리보기 앱을 새로 만듭니다. 두 앱은 목록의 Destinations(`프로젝트.pages.dev`, `*.프로젝트.pages.dev`)로 구분합니다. 기본 생성된 앱은 미리보기 `*.프로젝트.pages.dev`만 보호합니다. 운영 주소 `프로젝트.pages.dev`도 별도 보호하고, 미리보기 정책을 유지합니다. 운영 앱의 Audience를 Edge에 지정하며 미리보기의 다른 호스트·Audience로 운영 DB에 접근하지 못하게 합니다. [Pages Access 설정](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)
+
+Zero Trust 조직이 없는 새 Cloudflare 계정은 먼저 대시보드의 **Zero Trust**에서 팀 이름을 정하고 Free 플랜을 고릅니다(결제 수단 등록은 필요하지만 0원, 50명까지). `https://팀이름.cloudflareaccess.com`이 `ACCESS_ISSUER`이며 나중에는 **Zero Trust → Settings**에서 확인합니다. 이어서 Google Cloud 콘솔에서 동의 화면(External)과 Web application OAuth 클라이언트를 만들고 Authorized JavaScript origins에 팀 도메인, redirect URI에 `팀 도메인/cdn-cgi/access/callback`을 넣습니다. Client ID·Secret을 **Zero Trust → Integrations → Identity providers → Add new identity provider → Google**에 등록하고 **Test**로 확인합니다. 설정 안내의 Cloudflare 단계 ③이 같은 순서를 단계별로 안내하며 발급자를 입력하면 OAuth 값을 복사 칸으로 채웁니다. [Zero Trust 가입](https://developers.cloudflare.com/cloudflare-one/setup/), [Google IdP](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)
 
 1. 기존 Zero Trust 조직에서 **Access controls → Applications → Create new application → Self-hosted and private → Add public hostname**을 선택합니다. pages.dev는 위 Pages 정책 생성·운영 호스트 보호 절차를 먼저 사용합니다.
 2. GraeBoard의 `APP_ORIGIN` 호스트 전체를 대상으로 별도 앱을 만듭니다.
-3. 해당 팀 앱에만 적용하는 Allow 정책을 만들고 그 팀의 Google 사용자·그룹을 지정합니다.
+3. 해당 팀 앱에만 적용하는 Allow 정책을 만듭니다. 기본은 Include **Login Methods: Google**로 Google 계정 전체를 통과시키고, 업무 접근은 GraeBoard의 사내 계정 연결 승인으로 제한합니다. 계정을 미리 좁히려면 **Emails**(주소 정확히 일치)나 **Emails ending in**(`@도메인`)을 씁니다. Zero Trust 무료 플랜의 50명 한도는 승인 전 로그인 사용자도 셉니다.
 4. 이 앱의 로그인 방법은 Google IdP만 허용하고 OTP·다른 IdP·Bypass는 사용하지 않습니다. 다른 서비스의 넓은 Allow 정책을 공유하지 않습니다.
 5. 조직 team domain을 `ACCESS_ISSUER`, 이 앱의 Application Audience를 `ACCESS_AUDIENCE`에 등록합니다.
 
@@ -247,13 +253,13 @@ npm run build:pages
 
 배포 대상은 서로 독립적입니다. **Pages의 Git 자동 빌드만으로 gateway의 정적 파일이나 Edge 함수가 갱신되지는 않습니다.**
 
-| 변경 내용 | 빌드·배포 대상 |
-| --- | --- |
-| `src/`, `public/` 화면·정적 자원 | `npm run build` → 해당 `dist/`를 포함한 gateway 배포. Pages의 경로 설정도 바뀌었다면 Pages 재배포 |
-| 공통 API·`worker/` 업무 구현·`edge/` | `npm run build:edge` → Supabase `graeboard` 함수 배포 |
-| `docs/CLOUD_SETUP.md` | 앱 내 설치 안내에 포함되므로 Edge 재빌드·배포 |
-| `worker/gateway.mjs`·gateway 변수·자원 binding·Cron | gateway 배포 및 해당 환경 설정 반영 |
-| `functions/`·Pages Service binding·Production branch | Pages 배포 및 연결 확인 |
+| 변경 내용                                            | 빌드·배포 대상                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `src/`, `public/` 화면·정적 자원                     | `npm run build` → 해당 `dist/`를 포함한 gateway 배포. Pages의 경로 설정도 바뀌었다면 Pages 재배포 |
+| 공통 API·`worker/` 업무 구현·`edge/`                 | `npm run build:edge` → Supabase `graeboard` 함수 배포                                             |
+| `docs/CLOUD_SETUP.md`                                | 앱 내 설치 안내에 포함되므로 Edge 재빌드·배포                                                     |
+| `worker/gateway.mjs`·gateway 변수·자원 binding·Cron  | gateway 배포 및 해당 환경 설정 반영                                                               |
+| `functions/`·Pages Service binding·Production branch | Pages 배포 및 연결 확인                                                                           |
 
 같은 변경에 여러 대상이 포함되면 함께 갱신하고 배포 커밋·함수 버전·Worker 버전을 운영 기록에 남깁니다. 이전 배포에서 전달 전용 Worker를 유지한다면 그 Service binding도 같은 gateway를 가리켜야 합니다.
 
@@ -261,25 +267,27 @@ npm run build:pages
 
 원본 저장소([hwantage/GraeBoard](https://github.com/hwantage/GraeBoard))의 `main`은 개발 소스를 보관하고, 외부 팀 사이트에 내보낼 버전만 `release` 브랜치로 올립니다(`git push origin main:release`). 사내 서버는 이와 별도로 [운영 안내의 업데이트](OPERATIONS.md#업데이트) 절차로 배포합니다.
 
-각 팀은 원본을 자기 GitHub 계정으로 Fork해 자기 Cloudflare·Supabase에 연결합니다. Fork할 때 **Copy the main branch only** 체크를 해제해 `release`도 복사하고, Pages의 Production branch는 `release`로 지정합니다. 저장소에 포함된 `.github/workflows/team-site-release.yml`이 Fork에서 다음을 수행합니다.
+각 팀은 원본을 자기 GitHub 계정으로 Fork해 자기 Cloudflare·Supabase에 연결합니다. Cloudflare Pages는 Cloudflare GitHub 앱을 설치한 계정·조직이 소유한 저장소만 고를 수 있어 다른 계정 소유인 원본을 직접 연결할 수 없기 때문입니다. 설정 안내의 **외부 서비스 설정 → GitHub Fork** 단계가 이 절차를 안내합니다. 원본의 Fork 화면(`https://github.com/hwantage/GraeBoard/fork`)에서 Owner를 팀 계정으로 고르고 **Copy the main branch only** 체크를 해제해 `release`도 복사합니다. 해제하지 못했다면 Fork를 지우고 다시 만듭니다. Cloudflare의 GitHub 연결 화면에서는 Repository access를 **Only select repositories**로 두어 Fork만 선택하고, Pages의 Production branch는 `release`로 지정합니다. Fork에는 앱 소스만 있고 팀 자료는 별도 비공개 데이터 저장소에만 있습니다. 저장소에 포함된 `.github/workflows/team-site-release.yml`이 Fork에서 다음을 수행합니다.
 
 1. `release` push·30분마다·수동 실행 때 원본 `release`를 Fork에 합칩니다(Fork에 없으면 원본에서 만듭니다). `main`도 합치되 실패하면 경고만 남깁니다.
-2. Fork의 `release`가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
+2. Fork의 `release`가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 `scripts/team-site-deploy.mjs`가 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. `TEAM_SITE_CONFIG`가 있으면 이어서 wrangler 출력에서 Worker의 workers.dev 주소를 찾아 `RESOURCE_ORIGIN`으로 쓰고, `wrangler secret bulk`로 gateway 키 두 개를, `supabase secrets set`으로 Edge 설정·키·`GIT_TEAM`·`RESOURCE_ORIGIN`을 넣습니다(이미 있는 접속 토큰 암호화 키는 유지). 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
 3. Pages는 Cloudflare Git 연결로 `release`를 따라 다시 빌드합니다.
 
-Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settings → Secrets and variables → Actions**에 다음 값을 등록합니다. 원본처럼 `TEAM_SITE_DEPLOY`가 없는 저장소에서는 아무것도 배포하지 않습니다.
+이 경로는 GitHub·Supabase·Cloudflare 웹 화면만으로 진행하며 사내망·운영자 PC 작업이 없습니다. 설정 안내의 **배포** 단계에서 토큰 세 개(Cloudflare API, Supabase 액세스, 외부용 GitHub)와 Cloudflare Account ID를 입력하고 **배포 설정 만들기**를 누르면 Fork에 넣을 값 두 개가 만들어집니다. Worker 이름과 주소, Edge 설정, 비밀 키를 Cloudflare·Supabase 화면에 옮겨 적지 않습니다. 토큰은 브라우저 메모리에서 값을 만드는 데만 쓰고 사내 서버로 보내거나 저장하지 않습니다. 앞 단계의 외부 접속 주소·Access 값·bucket·Reference ID·Account ID처럼 비밀이 아닌 값만 팀별로 브라우저(`localStorage`)에 기억해 새로고침 뒤에도 같은 설정을 만듭니다. `TEAM_SITE_SECRETS`의 `GRAEBOARD_GATEWAY_SECRET`·`GRAEBOARD_RESOURCE_SECRET`·`GRAEBOARD_ACCESS_TOKEN_KEY`는 만들 때마다 `crypto.getRandomValues`로 새로 정하며, 배포 스크립트는 Supabase에 `GRAEBOARD_ACCESS_TOKEN_KEY`가 이미 있으면 그 값을 유지해 발급한 접속 토큰을 보존합니다. gateway 두 키는 같은 실행에서 양쪽에 함께 바뀝니다. 워크플로는 Secret 안의 각 값을 로그에서 가립니다.
 
-| 종류 | 이름 | 값 |
-| --- | --- | --- |
-| Variable | `TEAM_SITE_DEPLOY` | `enabled` |
-| Variable | `CLOUDFLARE_ACCOUNT_ID` | 팀 Cloudflare 계정 ID |
-| Variable | `SUPABASE_PROJECT_REF` | 팀 Supabase Reference ID |
-| Variable | `GATEWAY_CONFIG` | 설정 안내 배포 단계의 gateway 설정 JSON 전체(`.env.gateway.json`과 같은 내용) |
-| Secret | `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens의 “Edit Cloudflare Workers” 템플릿 토큰 |
-| Secret | `SUPABASE_ACCESS_TOKEN` | Supabase Account → Access Tokens의 토큰 |
-| Secret (선택) | `SYNC_TOKEN` | Fork에 대한 Contents·Workflows 쓰기 권한 토큰 |
+Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settings → Secrets and variables → Actions**에 다음 두 값을 넣습니다. `TEAM_SITE_CONFIG`나 `TEAM_SITE_DEPLOY`가 없는 저장소(원본 포함)에서는 아무것도 배포하지 않습니다.
 
-GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면의 **Sync fork**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다. gateway의 두 Secret과 Supabase Edge Secrets는 처음 한 번 직접 등록하며, 자동 배포는 이를 바꾸지 않습니다.
+| 종류          | 이름                | 값                                                                                           |
+| ------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| Variable      | `TEAM_SITE_CONFIG`  | 설정 안내가 만든 JSON(Cloudflare Account ID, Supabase Reference ID, gateway 설정, Edge 설정) |
+| Secret        | `TEAM_SITE_SECRETS` | 설정 안내가 만든 JSON(`CLOUDFLARE_API_TOKEN`·`SUPABASE_ACCESS_TOKEN`·`GIT_TEAM`과 키 세 개)  |
+| Secret (선택) | `SYNC_TOKEN`        | Fork에 대한 Contents·Workflows 쓰기 권한 토큰                                                |
+
+토큰을 바꾸거나 값을 고칠 때는 설정 안내에서 다시 만들어 같은 이름의 값을 **Update**로 덮어씁니다. GitHub에 넣은 값은 다시 볼 수 없지만 설정 안내가 언제든 다시 만들 수 있으므로 따로 보관하지 않습니다. PC에서 직접 배포할 때는 두 값을 `team-site-config.json`·`team-site-secrets.json`(Git 제외 대상)으로 저장해 같은 스크립트를 실행합니다.
+
+이전 방식의 Variable `TEAM_SITE_DEPLOY`·`CLOUDFLARE_ACCOUNT_ID`·`SUPABASE_PROJECT_REF`·`GATEWAY_CONFIG`만 있는 Fork도 그대로 배포되며, 이 경우 gateway Secret과 Supabase Edge Secrets는 콘솔에서 직접 관리하고 자동 배포가 바꾸지 않습니다. 배포 스크립트는 release 소스에 들어 있으므로 원본의 `main`과 `release`를 함께 갱신하고, 이미 만든 Fork는 **Sync fork**로 새 워크플로를 받습니다.
+
+GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면의 **Sync fork**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
@@ -443,24 +451,24 @@ fi
 
 동기화 실행 오류는 실행한 버튼 아래에 붉게 표시합니다. 알려진 용량·인증서·Git 권한·네트워크 오류는 내부 Node와 외부 Edge의 HTTP 응답에서 원인과 조치를 안내하고, 이전 버전이 저장한 영어 오류도 화면에서 같은 문구로 해석합니다. 상태 카드에는 실행 오류를 중복 표시하지 않습니다. 알 수 없는 서버 오류는 일반 안내를 유지하므로 아래 서버 로그로 원인을 확인합니다.
 
-| 화면·증상               | 먼저 확인할 것                                        | 보존할 상태                           |
-| ----------------------- | ----------------------------------------------------- | ------------------------------------- |
-| 관리 DB 오류            | `PG_SITE` 대상, site migration, 앱 역할·TLS     | 팀 DB를 초기화하지 않음               |
-| 팀 DB 신원 불일치       | 내부 UUID, team migration의 UUID, 프로필 binding      | 기존 업무·연결 유지                   |
-| Git 인증/권한 실패      | 토큰 만료·Contents 쓰기 권한·조직 승인·private 저장소 | outbox 유지, 토큰만 교체              |
-| 연결 검사 `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN` | [Node와 Git의 사내 CA 신뢰 설정](#사내-https-인증서와-nodegit-신뢰-설정), 실제 서비스 실행 환경 | TLS 검증과 기존 DB·토큰 유지 |
-| `Snapshot exceeds uncompressed byte budget` | [최초 스냅샷 용량](#최초-게시-스냅샷의-용량-초과), 종류별 엔티티 수·크기, 외부 수신 상한 | 업무·문서·사본·미전송 명령·연결 신원 보존 |
-| R2 검사 실패            | 선택 팀 bucket·binding·PUT/GET/DELETE 권한            | 다른 bucket을 지우지 않음             |
-| 이미지 변환 실패        | `IMAGES` binding·사용량·입력 포맷/화소                | 문서 입력 보존 후 재업로드            |
-| Access 401              | 이 앱 AUD·정확한 발급자·로그인 만료                   | 다른 서비스 토큰 재사용 금지          |
-| Access는 통과했는데 403 | 사내 활성 계정·연결 승인·팀 역할                             | 조직 전체 사용자를 자동 추가하지 않음 |
-| Git 연결 시간 초과 | 앱 clone의 GitHub 프록시 주소·접속 허용·네트워크 | 미전송 내용과 clone 보존 |
-| JSON 대신 HTML / `Unexpected token '<'` | 실제 Production branch, Pages Functions와 gateway 연결 | DB를 초기화하지 않음 |
-| 외부 JSON 503 / 외부 서버 연결 실패 | Pages binding, gateway의 Edge URL·전달 Secret, Edge 로그 | 마지막 정상 자료·입력 보존 |
-| Google 로그인 대신 JSON 401 | 운영 주소 자체의 Access 보호와 issuer/AUD. 미리보기 wildcard만 설정했는지 확인 | 다른 앱 정책을 넓히지 않음 |
-| 표는 갱신되는데 열린 메모·문서가 그대로임 | 상대 DB 반영 여부, SSE 응답과 문서 `sync` 버전, API 배포 버전 | 미저장 입력 보존, 최초 가져오기 반복 금지 |
-| 오래된 내부 확인        | 내부 실행 상태·Git 통신·복구 모드                     | 마지막 확인과 현재 상태 구분          |
-| 복구 점검 필요          | 원격 이력 변경·DB 복사·restore 여부                   | 강제 push·새 genesis로 덮지 않음      |
+| 화면·증상                                              | 먼저 확인할 것                                                                                  | 보존할 상태                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 관리 DB 오류                                           | `PG_SITE` 대상, site migration, 앱 역할·TLS                                                     | 팀 DB를 초기화하지 않음                   |
+| 팀 DB 신원 불일치                                      | 내부 UUID, team migration의 UUID, 프로필 binding                                                | 기존 업무·연결 유지                       |
+| Git 인증/권한 실패                                     | 토큰 만료·Contents 쓰기 권한·조직 승인·private 저장소                                           | outbox 유지, 토큰만 교체                  |
+| 연결 검사 `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN` | [Node와 Git의 사내 CA 신뢰 설정](#사내-https-인증서와-nodegit-신뢰-설정), 실제 서비스 실행 환경 | TLS 검증과 기존 DB·토큰 유지              |
+| `Snapshot exceeds uncompressed byte budget`            | [최초 스냅샷 용량](#최초-게시-스냅샷의-용량-초과), 종류별 엔티티 수·크기, 외부 수신 상한        | 업무·문서·사본·미전송 명령·연결 신원 보존 |
+| R2 검사 실패                                           | 선택 팀 bucket·binding·PUT/GET/DELETE 권한                                                      | 다른 bucket을 지우지 않음                 |
+| 이미지 변환 실패                                       | `IMAGES` binding·사용량·입력 포맷/화소                                                          | 문서 입력 보존 후 재업로드                |
+| Access 401                                             | 이 앱 AUD·정확한 발급자·로그인 만료                                                             | 다른 서비스 토큰 재사용 금지              |
+| Access는 통과했는데 403                                | 사내 활성 계정·연결 승인·팀 역할                                                                | 조직 전체 사용자를 자동 추가하지 않음     |
+| Git 연결 시간 초과                                     | 앱 clone의 GitHub 프록시 주소·접속 허용·네트워크                                                | 미전송 내용과 clone 보존                  |
+| JSON 대신 HTML / `Unexpected token '<'`                | 실제 Production branch, Pages Functions와 gateway 연결                                          | DB를 초기화하지 않음                      |
+| 외부 JSON 503 / 외부 서버 연결 실패                    | Pages binding, gateway의 Edge URL·전달 Secret, Edge 로그                                        | 마지막 정상 자료·입력 보존                |
+| Google 로그인 대신 JSON 401                            | 운영 주소 자체의 Access 보호와 issuer/AUD. 미리보기 wildcard만 설정했는지 확인                  | 다른 앱 정책을 넓히지 않음                |
+| 표는 갱신되는데 열린 메모·문서가 그대로임              | 상대 DB 반영 여부, SSE 응답과 문서 `sync` 버전, API 배포 버전                                   | 미저장 입력 보존, 최초 가져오기 반복 금지 |
+| 오래된 내부 확인                                       | 내부 실행 상태·Git 통신·복구 모드                                                               | 마지막 확인과 현재 상태 구분              |
+| 복구 점검 필요                                         | 원격 이력 변경·DB 복사·restore 여부                                                             | 강제 push·새 genesis로 덮지 않음          |
 
 내부는 Git 연결을, 외부는 Edge의 DB·Git·gateway 자원 경로를 각각 검사합니다. 문서 자동 반영은 [Git 전달과 SSE의 구분](ARCHITECTURE.md#저장부터-열린-화면-반영까지)을 참고합니다.
 
@@ -506,12 +514,12 @@ rm /private/external-import.env
 
 게시 측과 수신 측의 상한을 함께 확인해야 합니다.
 
-| 검사 대상 | 현재 상한 | 의미 |
-| --- | --- | --- |
-| 압축 전 snapshot / 압축된 snapshot 객체 | 각각 64 MiB | 내부 bootstrap 저장과 Git snapshot 인코딩·디코딩 |
-| 외부 공유 상태·충돌·미전송 명령 | 32 MiB | 외부 `assertStateCapacity`의 상태 예산 |
-| 외부 공유 엔티티 | 50,000개 | 업무 행 외에 셀·문서·일정 등도 각각 집계 |
-| 외부 receipt | 16 MiB, 12 MiB부터 경고 | 업무 상태와 별도 예산 |
+| 검사 대상                               | 현재 상한               | 의미                                             |
+| --------------------------------------- | ----------------------- | ------------------------------------------------ |
+| 압축 전 snapshot / 압축된 snapshot 객체 | 각각 64 MiB             | 내부 bootstrap 저장과 Git snapshot 인코딩·디코딩 |
+| 외부 공유 상태·충돌·미전송 명령         | 32 MiB                  | 외부 `assertStateCapacity`의 상태 예산           |
+| 외부 공유 엔티티                        | 50,000개                | 업무 행 외에 셀·문서·일정 등도 각각 집계         |
+| 외부 receipt                            | 16 MiB, 12 MiB부터 경고 | 업무 상태와 별도 예산                            |
 
 이는 현재 앱이 설정한 상한이며 Supabase 요금제의 DB 용량 제한을 뜻하지 않습니다. `SYNC_MAX_STATE_BYTES`와 `SYNC_MAX_ENTITIES`는 외부 상한을 **낮추는 설정**으로, 위 값을 넘게 지정하면 설정 오류가 됩니다. 스냅샷 상한만 늘려도 외부가 수신할 수 있는 것은 아닙니다. protocol 2로 바꾸는 것만으로도 이 상한은 없어지지 않습니다.
 
@@ -592,6 +600,16 @@ npm run sync:maintenance-recover -- --database /srv/graeboard/data/weekly-plan.s
 L로 제외하지 않은 삭제 표식과 로컬 복원 이력이 참조하는 기존 이미지도 보호하며, 삭제 뒤 시간이 지났다는 이유만으로 이 보호를 만료시키지 않습니다. 따라서 모든 삭제 이미지가 즉시 정리되는 것은 아닙니다. Git 수신은 현재 표시할 문서와 미전송 입력·미해결 충돌에 필요한 이미지만 설치하므로, 삭제 표식·이력만의 파일 또는 정리한 문서 파일을 새 수신 때 자동으로 다시 내려받지 않습니다. 과거 커밋을 순서대로 재생하는 동안 당시 살아 있던 문서의 파일을 설치하는 경우는 있습니다. 정리한 사이트에서 새 사본을 만들면 현재 제공되는 연도·업무·문서만 새 사본으로 공유하며 숨긴 원본은 삭제하지 않습니다. 숨긴 내용까지 복사하려면 먼저 보관본을 복원합니다.
 
 공유 기준본의 본문·메타데이터는 DB에 남습니다. 이 기능은 R2/파일 이미지 공간과 앱 제공 범위를 정리하며 DB 전체 내용을 비우는 기능이 아닙니다. 자동 TTL·Git 이력 재작성은 제공하지 않습니다.
+
+### 내부 팀의 저장소 바꾸기·처음부터 다시 연결
+
+사내 팀을 다른 데이터 저장소로 옮기거나, 같은 이름으로 다시 만든 빈 저장소로 처음부터 연결할 때 사용합니다. 기존 저장소의 공유본을 이어받는 이전·복구는 위 절차와 연결 이전 기능을 따릅니다.
+
+1. **설정 → 팀 → 외부 동기화**에서 **연결 해제**를 누릅니다.
+2. 시스템 관리자가 **연결 기록 초기화**를 누릅니다. 이 서버에 있는 그 팀의 동기화 기록, 로컬 Git 복제본, 화면에서 저장한 내부 GitHub 토큰을 지웁니다. 업무·문서·이미지와 `.env` 프로필은 유지합니다. 미해결 충돌이나 보관본에만 남은 정리 자료가 있으면 먼저 해결·복원해야 합니다.
+3. GitHub에서 새 저장소를 준비하고 그 저장소를 Repository access에 포함한 Fine-grained token을 발급합니다. 저장소를 지우고 다시 만들면 저장소 ID가 바뀌므로 기존 토큰은 새 저장소를 볼 수 없습니다. 다른 계정·조직의 저장소라면 Resource owner도 그 계정·조직으로 고릅니다.
+4. 설정 안내의 **GitHub 저장소** 단계에서 바꾼 주소와 새 토큰을 함께 입력해 **저장소·토큰 저장**을 누른 뒤, **GitHub 연결** 단계에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 진행합니다. 토큰이 저장소를 볼 수 없으면 연결 검사가 "GitHub 저장소를 찾을 수 없습니다"와 함께 주소·Repository access 확인을 안내합니다. `tokenEnv` 환경 변수로 등록한 토큰은 서버 설정이라 초기화로 지우지 않습니다.
+5. 이미 연결했던 외부 사이트는 [개발용 외부 자료 비우기](#개발용-외부-자료를-비우고-사내-기존-팀으로-처음-연결) 절차로 외부 자료를 비우고 새 저장소에서 팀 가져오기를 다시 합니다.
 
 일시정지는 로컬 저장과 변경 캡처를 계속하며 업무 자료의 Git 송수신을 중단합니다. 팀 구성원·권한 갱신과 상태 확인은 계속합니다. 연결 해제는 미전송 변경·충돌을 보존하고 전송을 중단합니다. 복구한 DB는 자동 발신하지 않고 복구 점검으로 시작해야 합니다. 원격 head·opId 처리 여부를 대조하고 새 writer 세대를 준비한 뒤 재개합니다. 팀 프로젝트의 업무·계정 승인 스키마와 이미지·미전송 변경을 함께 보존합니다. 업무만 논리 복구할 때는 계정·승인을 덮어쓰지 않습니다.
 

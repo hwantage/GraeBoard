@@ -127,32 +127,44 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
   await expect(
     phases.getByRole("button", { name: /^2\. 외부 서비스 설정/ }),
   ).toBeDisabled();
-  // The token sits beside the repository but needs the saved profile first.
-  await expect(w.getByLabel("내부 GitHub 토큰", { exact: true })).toBeVisible();
+  // The repository and token are entered together and saved by one button.
+  const tokenInput = w.getByLabel("내부 GitHub 토큰", { exact: true });
+  const save = w.getByRole("button", { name: "저장소·토큰 저장", exact: true });
+  await expect(tokenInput).toBeVisible();
+  await expect(save).toBeEnabled();
   await expect(
     w.getByRole("button", { name: "토큰 저장", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(w.getByText(/GitHub 저장소 주소를/)).toBeVisible();
   await w
     .getByLabel("GitHub 데이터 저장소", { exact: true })
     .fill("https://github.com/example/team-data");
   await w.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(w.getByText(/프로필을 먼저 생성하세요/)).toBeVisible();
+  await expect(w.getByText(/저장소·토큰 저장을 누르세요/)).toBeVisible();
+  // A repository without its token is refused before anything is written.
+  await save.click();
+  await expect(w.getByText(/토큰도 함께 입력하세요/)).toBeVisible();
+  expect(existsSync(join(directory, ".env"))).toBe(false);
+  await tokenInput.fill("fixture token");
+  await save.click();
+  await expect(w.getByText(/GitHub 토큰 형식을 확인하세요/)).toBeVisible();
+  expect(existsSync(join(directory, ".env"))).toBe(false);
+  await tokenInput.fill("fixture_token");
   await page.route(
     `**/api/admin/teams/${teamId}/sync-setup`,
     (route) =>
-      route.fulfill({
-        status: 409,
-        json: {
-          error: "프로필 생성 요청을 저장하지 못했습니다. 다시 시도하세요.",
-        },
-      }),
+      route.request().method() === "PUT"
+        ? route.fulfill({
+            status: 409,
+            json: {
+              error: "프로필 생성 요청을 저장하지 못했습니다. 다시 시도하세요.",
+            },
+          })
+        : route.fallback(),
     { times: 1 },
   );
-  await w
-    .getByRole("button", { name: "내부 프로필 생성", exact: true })
-    .click();
+  await save.click();
   await expect(
     w.getByText(/프로필 생성 요청을 저장하지 못했습니다/),
   ).toBeVisible();
@@ -160,13 +172,12 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
   await expect(
     w.getByText("아직 생성되지 않음", { exact: true }),
   ).toBeVisible();
+  await expect(tokenInput).toHaveValue("fixture_token");
   await expect(w.getByLabel("프로필 ID", { exact: true })).toHaveCount(0);
-  await w
-    .getByRole("button", { name: "내부 프로필 생성", exact: true })
-    .click();
-  // The server already carries an installation identity, so the profile
-  // applies on save without a restart.
-  await expect(page.getByText(/서버에 바로 적용되었습니다/)).toBeVisible();
+  // Enter submits the pair; the server already carries an installation
+  // identity, so the profile applies and the token is stored at once.
+  await tokenInput.press("Enter");
+  await expect(page.getByText(/저장소와 토큰을 저장했습니다/)).toBeVisible();
   await expect(
     w.getByRole("definition").filter({ hasText: "서버 적용됨" }),
   ).toBeVisible();
@@ -188,26 +199,22 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
     path: testInfo.outputPath("internal-profile.png"),
     fullPage: true,
   });
-  await w.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(
-    w.getByText(/내부 GitHub 토큰을 저장한 뒤 진행하세요/),
-  ).toBeVisible();
-  const tokenInput = w.getByLabel("내부 GitHub 토큰", { exact: true });
-  await tokenInput.fill("fixture_token");
-  await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
   // Only the token's beginning is shown, with delete instead of the input.
   await expect(w.getByText("fixtur…", { exact: true })).toBeVisible();
   await expect(tokenInput).toHaveCount(0);
   await expect(w.getByText(/암호화된 토큰이 등록/)).toHaveCount(0);
+  await save.click();
+  await expect(w.getByText(/바뀐 내용이 없습니다/)).toBeVisible();
   await w.getByRole("button", { name: "토큰 삭제", exact: true }).click();
   await expect(tokenInput).toHaveValue("");
   await expect(w.getByText("fixtur…", { exact: true })).toHaveCount(0);
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(
-    w.getByText(/내부 GitHub 토큰을 저장한 뒤 진행하세요/),
+    w.getByText(/내부 GitHub 토큰을 입력해 저장한 뒤 진행하세요/),
   ).toBeVisible();
   await tokenInput.fill("fixture_token");
-  await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
+  await save.click();
+  await expect(page.getByText(/토큰을 암호화해 저장했습니다/)).toBeVisible();
   await expect(w.getByText("fixtur…", { exact: true })).toBeVisible();
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(
@@ -241,9 +248,9 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
   await expect(phases.locator('[aria-current="true"]')).toContainText(
     "2. 외부 서비스 설정",
   );
-  await expect(
-    w.getByRole("heading", { name: "Cloudflare", exact: true }),
-  ).toBeFocused();
+  // The external services start by forking the app source for Pages.
+  const fork = w.getByRole("heading", { name: "GitHub Fork", exact: true });
+  await expect(fork).toBeFocused();
   await w
     .getByRole("button", { name: "내부 프로필 설정으로", exact: true })
     .click();
@@ -251,13 +258,49 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
     w.getByRole("heading", { name: "GitHub 연결", exact: true }),
   ).toBeFocused();
   await phases.getByRole("button", { name: /^2\. 외부 서비스 설정/ }).click();
+  await expect(fork).toBeFocused();
+  await expect(
+    w.getByRole("link", { name: "원본 저장소의 Fork 화면", exact: true }),
+  ).toHaveAttribute("href", "https://github.com/hwantage/GraeBoard/fork");
+  await expect(w.getByText(/Copy the main branch only/)).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("fork.png"),
+    fullPage: true,
+  });
+  await w.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(w.getByText(/완료한 뒤 체크하세요/)).toBeVisible();
+  await w.getByRole("checkbox").check();
+  await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(
     w.getByRole("heading", { name: "Cloudflare", exact: true }),
   ).toBeFocused();
+  await expect(w.getByText(/Fork한 저장소/).first()).toBeVisible();
   await w.getByLabel("외부 접속 주소").fill("https://team.pages.dev");
+  // The Google OAuth values appear once the Access team domain is known.
+  const redirect = w.getByLabel(
+    "승인된 리디렉션 URI(Authorized redirect URIs)",
+    {
+      exact: true,
+    },
+  );
+  await expect(redirect).toHaveCount(0);
+  await expect(w.getByText(/Zero Trust 무료 가입/)).toBeVisible();
   await w
     .getByLabel("Access 발급자")
     .fill("https://company.cloudflareaccess.com");
+  await expect(redirect).toHaveValue(
+    "https://company.cloudflareaccess.com/cdn-cgi/access/callback",
+  );
+  await expect(
+    w.getByLabel("승인된 JavaScript 원본(Authorized JavaScript origins)", {
+      exact: true,
+    }),
+  ).toHaveValue("https://company.cloudflareaccess.com");
+  await redirect.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("access.png"),
+    fullPage: true,
+  });
   await w.getByLabel("Application Audience").fill("a".repeat(64));
   await w.getByRole("checkbox").check();
   await w.getByRole("button", { name: "다음", exact: true }).click();
@@ -269,26 +312,94 @@ test("내부 프로필·토큰 저장과 초기 게시 후 외부 서비스 설�
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await expect(w.getByText(/Reference ID 20자리/)).toBeVisible();
   await w.getByLabel("Supabase Reference ID").fill("a".repeat(20));
-  await expect(
-    w.getByLabel("외부 DB 초기화 명령", { exact: true }),
-  ).toHaveValue(new RegExp(teamId));
+  // The database is initialized from the Supabase SQL Editor, not a PC.
+  const databaseSql = w.getByLabel("외부 DB 초기화 SQL", { exact: true });
+  await expect(databaseSql).toHaveValue(
+    new RegExp(`INSERT INTO graeboard\\.team_meta VALUES\\(1,'${teamId}'\\)`),
+  );
+  await expect(databaseSql).toHaveValue(/^-- GraeBoard 외부 DB 초기화/);
+  await expect(w.getByText(/npm run migrate/)).toHaveCount(0);
   await w.getByRole("checkbox").check();
   await w.getByRole("button", { name: "다음", exact: true }).click();
-  await w
-    .getByLabel("gateway 자원 주소")
-    .fill("https://team-gateway.company.workers.dev");
-  await expect(w.getByLabel("SYNC_PROFILES", { exact: true })).toHaveValue(
-    new RegExp(teamId),
-  );
-  await expect(w.getByLabel("INSTALLATION_ID", { exact: true })).toHaveValue(
-    profile.peerInstallationId,
-  );
+  await expect(w.locator('[aria-current="step"]')).toHaveText("4. 배포");
+  // Nothing about the Worker is typed by hand. The earlier steps' values are
+  // remembered here, and one button builds the two values the fork needs.
+  await expect(w.getByLabel("gateway 자원 주소")).toHaveCount(0);
+  await expect(w.getByLabel("gateway Worker 이름")).toHaveCount(0);
+  const earlier = w.locator('[aria-label="앞 단계에서 입력한 값"]');
+  await expect(earlier).toContainText("https://team.pages.dev");
+  await expect(earlier).toContainText("a".repeat(20));
+  const make = w.getByRole("button", { name: "배포 설정 만들기", exact: true });
+  await make.click();
+  await expect(w.getByText(/Account ID 32자리/)).toBeVisible();
+  await w.getByLabel("Cloudflare Account ID").fill("c".repeat(32));
+  await make.click();
   await expect(
-    w.getByLabel("PEER_INSTALLATION_ID", { exact: true }),
-  ).toHaveValue(env.GRAEBOARD_INSTALLATION_ID);
-  await expect(w.locator('[aria-current="step"]')).toHaveText("3. 배포");
+    w.getByText(
+      /Cloudflare API 토큰, Supabase 액세스 토큰, 외부용 GitHub 토큰을 입력하세요/,
+    ),
+  ).toBeVisible();
+  await expect(w.getByLabel("TEAM_SITE_CONFIG", { exact: true })).toHaveCount(
+    0,
+  );
+  await w.getByLabel("Cloudflare API 토큰").fill("cf-token");
+  await w.getByLabel("Supabase 액세스 토큰").fill("sbp_token");
+  await w.getByLabel("외부용 GitHub 토큰").fill("github_pat_external");
+  await make.click();
+  const site = JSON.parse(
+    await w.getByLabel("TEAM_SITE_CONFIG", { exact: true }).inputValue(),
+  );
+  expect(site).toMatchObject({
+    cloudflareAccountId: "c".repeat(32),
+    supabaseProjectRef: "a".repeat(20),
+    gateway: {
+      name: `graeboard-${teamId.slice(0, 8)}`,
+      vars: { SITE_TEAM_ID: teamId, APP_ORIGIN: "https://team.pages.dev" },
+    },
+    edge: {
+      SITE_TEAM_ID: teamId,
+      INSTALLATION_ID: profile.peerInstallationId,
+      PEER_INSTALLATION_ID: env.GRAEBOARD_INSTALLATION_ID,
+    },
+  });
+  expect(JSON.parse(site.edge.SYNC_PROFILES)[0].teamId).toBe(teamId);
+  expect(site.edge.RESOURCE_ORIGIN).toBeUndefined();
+  // Tokens and freshly generated keys go to the fork as one secret.
+  const secrets = JSON.parse(
+    await w.getByLabel("TEAM_SITE_SECRETS", { exact: true }).inputValue(),
+  );
+  expect(secrets).toMatchObject({
+    CLOUDFLARE_API_TOKEN: "cf-token",
+    SUPABASE_ACCESS_TOKEN: "sbp_token",
+    GIT_TEAM: "github_pat_external",
+  });
+  const keys = [
+    secrets.GRAEBOARD_GATEWAY_SECRET,
+    secrets.GRAEBOARD_RESOURCE_SECRET,
+    secrets.GRAEBOARD_ACCESS_TOKEN_KEY,
+  ];
+  for (const key of keys) expect(Buffer.from(key, "base64")).toHaveLength(32);
+  expect(new Set(keys).size).toBe(3);
+  // A changed value hides the stale output until it is built again.
+  await w.getByLabel("Supabase 액세스 토큰").fill("sbp_other");
+  await expect(w.getByLabel("TEAM_SITE_SECRETS", { exact: true })).toHaveCount(
+    0,
+  );
+  await make.click();
+  // Only non-secret console values are remembered in this browser.
+  const remembered = await page.evaluate(
+    (key) => localStorage.getItem(key) || "",
+    `graeboard:sync-setup:${teamId}`,
+  );
+  expect(JSON.parse(remembered)).toMatchObject({
+    appOrigin: "https://team.pages.dev",
+    accountId: "c".repeat(32),
+  });
+  expect(remembered).not.toMatch(/cf-token|sbp_|github_pat/);
+  await expect(w.getByText(/openssl/)).toHaveCount(0);
+  await expect(w.getByLabel("빌드·배포 명령", { exact: true })).toBeHidden();
   await expect(
-    w.getByRole("button", { name: "3. 배포", exact: true }),
+    w.getByRole("button", { name: "4. 배포", exact: true }),
   ).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(
     w.getByRole("button", { name: "서버 적용 확인", exact: true }),
@@ -518,9 +629,9 @@ test("연결된 팀 재진입은 기존 관리로 시작하고 오래된 영수�
     .getByRole("button", { name: /^2\. 외부 서비스 설정/ })
     .click();
   await expect(
-    w.getByRole("heading", { name: "Cloudflare", exact: true }),
+    w.getByRole("heading", { name: "GitHub Fork", exact: true }),
   ).toBeFocused();
-  await w.getByRole("button", { name: "4. 외부 계정", exact: true }).click();
+  await w.getByRole("button", { name: "5. 외부 계정", exact: true }).click();
   await w.getByRole("checkbox").check();
   await w.getByRole("button", { name: "다음", exact: true }).click();
   await w.getByLabel("내부에서 저장한 업무·이미지가 외부에 보입니다.").check();
@@ -563,7 +674,10 @@ test("토큰 저장 실패 후 재시도는 기존 연결을 보존하고 원문
   ).toBeVisible();
   await expect(w.getByLabel("프로필 ID", { exact: true })).toHaveCount(0);
   await expect(
-    w.getByRole("button", { name: "내부 프로필 생성", exact: true }),
+    w.getByRole("button", { name: "저장소·토큰 저장", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    w.getByLabel("GitHub 데이터 저장소", { exact: true }),
   ).toHaveCount(0);
   await expect(
     w.getByRole("definition").filter({ hasText: "서버 적용됨" }),
@@ -575,7 +689,7 @@ test("토큰 저장 실패 후 재시도는 기존 연결을 보존하고 원문
     "UPDATE team_sync_links SET lease_owner='busy' WHERE team_id=?",
   ).run(teamId);
   await w.getByRole("button", { name: "토큰 저장", exact: true }).click();
-  await expect(w.getByText(/작업이 끝난 뒤 토큰 저장/)).toBeVisible();
+  await expect(w.getByText(/작업이 끝난 뒤 토큰을 다시 저장/)).toBeVisible();
   await expect(w.getByLabel("내부 GitHub 토큰", { exact: true })).toHaveValue(
     "fixture_private_token",
   );
@@ -699,12 +813,17 @@ test("최초 설치 식별자만 시스템 관리자 재시작을 요청하고 �
   await w
     .getByLabel("GitHub 데이터 저장소", { exact: true })
     .fill("https://github.com/example/first-install");
+  await w.getByLabel("내부 GitHub 토큰", { exact: true }).fill("fixture_token");
   await w
-    .getByRole("button", { name: "내부 프로필 생성", exact: true })
+    .getByRole("button", { name: "저장소·토큰 저장", exact: true })
     .click();
   await expect(
     w.getByText(/시스템 관리자에게 Node 서비스 재시작을 요청하세요/),
   ).toBeVisible();
+  await expect(
+    page.getByText(/재시작한 뒤 다시 저장하면 토큰도 저장합니다/),
+  ).toBeVisible();
+  expect(db.prepare("SELECT 1 FROM sync_credentials").get()).toBeUndefined();
   await expect(
     w
       .getByRole("definition")
@@ -724,6 +843,11 @@ test("최초 설치 식별자만 시스템 관리자 재시작을 요청하고 �
     w.getByRole("definition").filter({ hasText: "서버 적용됨" }),
   ).toBeVisible();
   await expect(w.getByText(/재시작을 요청하세요/)).toHaveCount(0);
+  await w.getByLabel("내부 GitHub 토큰", { exact: true }).fill("fixture_token");
+  await w
+    .getByRole("button", { name: "저장소·토큰 저장", exact: true })
+    .click();
+  await expect(w.getByText("fixtur…", { exact: true })).toBeVisible();
   await w.getByRole("button", { name: "설정 안내 닫기" }).click();
   // The next team applies without another restart.
   await page.getByRole("button", { name: "외부 동기화", exact: true }).click();
@@ -737,9 +861,12 @@ test("최초 설치 식별자만 시스템 관리자 재시작을 요청하고 �
     .getByLabel("GitHub 데이터 저장소", { exact: true })
     .fill("https://github.com/example/second-team");
   await other
-    .getByRole("button", { name: "내부 프로필 생성", exact: true })
+    .getByLabel("내부 GitHub 토큰", { exact: true })
+    .fill("fixture_token");
+  await other
+    .getByRole("button", { name: "저장소·토큰 저장", exact: true })
     .click();
-  await expect(page.getByText(/서버에 바로 적용되었습니다/)).toBeVisible();
+  await expect(page.getByText(/저장소와 토큰을 저장했습니다/)).toBeVisible();
   await expect(
     other.getByRole("definition").filter({ hasText: "서버 적용됨" }),
   ).toBeVisible();
@@ -844,4 +971,65 @@ test("외부 사이트의 팀장에게는 시스템 관리자용 설정 안내 �
   await expect(
     page.getByText("GitHub 연동을 통해 외부에서 동기화 운영이 가능합니다."),
   ).toHaveCount(0);
+});
+
+test("연결 해제한 팀은 연결 기록을 초기화한 뒤 저장소를 바꿀 수 있다", async ({
+  page,
+}) => {
+  app.locals.sync.profiles.push({
+    profileId: "existing",
+    teamId,
+    repository: "https://github.com/example/old-data",
+    peerInstallationId: randomUUID(),
+  });
+  await post(
+    page,
+    `/admin/teams/${teamId}/connection`,
+    { profileId: "existing", expectedRevision: 0 },
+    "PUT",
+  );
+  db.prepare(
+    "UPDATE team_sync_links SET mode='disconnected' WHERE team_id=?",
+  ).run(teamId);
+  await page.reload();
+  await page
+    .getByRole("combobox", { name: "팀 선택", exact: true })
+    .selectOption(teamId);
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "외부 동기화", exact: true }).click();
+  const reset = page.getByRole("button", {
+    name: "연결 기록 초기화",
+    exact: true,
+  });
+  let confirmation = "";
+  page.once("dialog", (dialog) => {
+    confirmation = dialog.message();
+    return dialog.dismiss();
+  });
+  await reset.click();
+  expect(confirmation).toMatch(/GitHub 토큰도 함께 지웁니다/);
+  expect(
+    db.prepare("SELECT 1 FROM team_sync_links WHERE team_id=?").get(teamId),
+  ).toBeTruthy();
+  page.once("dialog", (dialog) => dialog.accept());
+  await reset.click();
+  await expect(
+    page.getByText(/연결 기록과 토큰을 초기화했습니다/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "이 팀에 연결", exact: true }),
+  ).toBeVisible();
+  expect(
+    db.prepare("SELECT 1 FROM team_sync_links WHERE team_id=?").get(teamId),
+  ).toBeUndefined();
+  await page
+    .getByRole("button", { name: "외부 동기화 설정", exact: true })
+    .click();
+  const w = wizard(page);
+  await expect(
+    w.getByLabel("GitHub 데이터 저장소", { exact: true }),
+  ).toHaveValue("https://github.com/example/old-data");
+  await expect(
+    w.getByRole("button", { name: "저장소·토큰 저장", exact: true }),
+  ).toBeEnabled();
 });

@@ -146,6 +146,11 @@
   margin: 20px 0 4px;
   font-size: 13px;
 }
+.sync-setup h6 {
+  margin: 16px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
 .sync-setup-credential h5 {
   margin: 0;
   font-size: 13px;
@@ -156,6 +161,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px 12px;
+  margin: 10px 0;
 }
 .sync-setup-token dl {
   flex: 1 1 auto;

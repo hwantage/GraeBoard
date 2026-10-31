@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   writeFileSync,
@@ -433,6 +434,166 @@ test("setup shows only a token prefix and deletes the stored credential of an id
   );
 });
 
+test("a disconnected team's sync history resets so its repository can change and connect anew", async (t) => {
+  const f = await fixture(t),
+    syncDir = join(tmpdir(), `graeboard-reset-${randomUUID()}`),
+    savedDir = process.env.GRAEBOARD_SYNC_DIR,
+    key = randomBytes(32).toString("base64");
+  process.env.GRAEBOARD_SYNC_DIR = syncDir;
+  process.env.GRAEBOARD_SYNC_KEY = key;
+  t.after(() => {
+    if (savedDir === undefined) delete process.env.GRAEBOARD_SYNC_DIR;
+    else process.env.GRAEBOARD_SYNC_DIR = savedDir;
+    rmSync(syncDir, { recursive: true, force: true });
+  });
+  writeFileSync(f.path, `GRAEBOARD_SYNC_KEY=${key}\n`);
+  await f.start({
+    profiles: [
+      {
+        profileId: "a",
+        teamId: f.teamId,
+        repository: "https://github.com/example/old-data",
+        peerInstallationId: randomUUID(),
+      },
+    ],
+    installationId: randomUUID(),
+  });
+  const task = await f.api("/tasks", {
+    teamId: f.teamId,
+    year: 2026,
+    fields: { title: "보존할 업무" },
+  });
+  assert.equal(task.status, 201);
+  assert.equal(
+    (
+      await f.api(
+        `/admin/teams/${f.teamId}/sync-credential`,
+        { profileId: "a", token: "github_pat_" + "o".repeat(40) },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.api(
+        `/admin/teams/${f.teamId}/connection`,
+        { profileId: "a", expectedRevision: 0 },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  const reset = `/admin/teams/${f.teamId}/sync-reset`,
+    oldLink = { ...f.sync().store(f.teamId).readLink() };
+  assert.equal((await f.api(reset, { confirmed: true })).status, 409);
+  f.db
+    .prepare("UPDATE team_sync_links SET mode='disconnected' WHERE team_id=?")
+    .run(f.teamId);
+  assert.equal((await f.api(reset, {})).status, 400);
+  f.db
+    .prepare(
+      "INSERT INTO sync_conflicts(team_id,conflict_id,op_id,payload) VALUES(?,?,?,?)",
+    )
+    .run(f.teamId, "c1", "o1", "{}");
+  assert.equal((await f.api(reset, { confirmed: true })).status, 409);
+  f.db.prepare("UPDATE sync_conflicts SET resolution='current'").run();
+  f.db
+    .prepare(
+      "INSERT INTO site_retention(team_id,site_id,kind,entity_key,revision,created_at) VALUES(?,?,?,?,?,?)",
+    )
+    .run(f.teamId, "site", "year", "2025", 1, new Date().toISOString());
+  assert.equal((await f.api(reset, { confirmed: true })).status, 409);
+  f.db.prepare("DELETE FROM site_retention").run();
+  f.db
+    .prepare(
+      "INSERT INTO sync_entities(team_id,entity,entity_key,generation,version,payload) VALUES(?,?,?,?,?,?)",
+    )
+    .run(f.teamId, "task", "k", "g", "v", "{}");
+  f.db
+    .prepare(
+      "INSERT INTO sync_outbox(op_id,team_id,payload,created_at) VALUES(?,?,?,?)",
+    )
+    .run("op", f.teamId, "{}", new Date().toISOString());
+  mkdirSync(join(syncDir, "a"), { recursive: true });
+  const done = await f.api(reset, { confirmed: true });
+  assert.equal(done.status, 200, JSON.stringify(done.data));
+  for (const table of [
+    "team_sync_links",
+    "sync_entities",
+    "sync_outbox",
+    "sync_conflicts",
+  ])
+    assert.equal(
+      f.db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE team_id=?`)
+        .get(f.teamId).n,
+      0,
+      table,
+    );
+  assert.equal(existsSync(join(syncDir, "a")), false);
+  // A token issued for the old repository must not carry over to the new one.
+  assert.equal(f.db.prepare("SELECT 1 FROM sync_credentials").get(), undefined);
+  assert.equal(
+    (await f.api(`/admin/teams/${f.teamId}/sync-setup`)).data.tokenPreview,
+    "",
+  );
+  assert.ok(
+    f.db.prepare("SELECT 1 FROM tasks WHERE id=?").get(task.data.task.id),
+  );
+  const entry = f.db
+    .prepare("SELECT team_id,target,before_json FROM audit WHERE action=?")
+    .get("sync-reset");
+  assert.equal(entry.team_id, null);
+  assert.equal(entry.target, f.teamId);
+  assert.equal(
+    JSON.parse(entry.before_json).repository,
+    "https://github.com/example/old-data",
+  );
+  const route = `/admin/teams/${f.teamId}/sync-setup`;
+  const changed = await f.api(
+    route,
+    {
+      repository: "https://github.com/example/new-data",
+      expectedRevision: (await f.api(route)).data.revision,
+    },
+    "PUT",
+  );
+  assert.equal(changed.status, 200, JSON.stringify(changed.data));
+  assert.equal(
+    f.sync().profiles.find((p) => p.teamId === f.teamId).repository,
+    "https://github.com/example/new-data",
+  );
+  assert.equal(
+    (
+      await f.api(
+        `/admin/teams/${f.teamId}/connection`,
+        { profileId: "a", expectedRevision: 0 },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  assert.notEqual(f.sync().store(f.teamId).readLink().repo_id, oldLink.repo_id);
+  f.db.prepare("UPDATE users SET system_role='user' WHERE id=?").run(f.userId);
+  assert.equal((await f.api(reset, { confirmed: true })).status, 403);
+});
+
+test("only system administrators receive the team's external DB initialization SQL", async (t) => {
+  const f = await fixture(t),
+    route = `/admin/teams/${f.teamId}/external-db-sql`;
+  const response = await f.api(route);
+  assert.equal(response.status, 200);
+  assert.ok(
+    response.data.sql.includes(
+      `INSERT INTO graeboard.team_meta VALUES(1,'${f.teamId}');`,
+    ),
+  );
+  assert.ok(response.data.sql.includes("'설정팀'"));
+  f.db.prepare("UPDATE users SET system_role='user' WHERE id=?").run(f.userId);
+  assert.equal((await f.api(route)).status, 403);
+});
+
 test("setup targets the linked replacement profile rather than the original credential", async (t) => {
   const f = await fixture(t);
   const original = {
@@ -572,7 +733,7 @@ test("setup examples separate external secrets and bind the exact team and persi
     bucket: "team-images",
     gateway: "team-gateway",
     projectRef: "a".repeat(20),
-    resourceOrigin: "https://team-gateway.company.workers.dev",
+    accountId: "c".repeat(32),
   };
   for (const step of Object.values(setupStep))
     assert.equal(validateSetupStep(step, draft), "");
@@ -597,9 +758,9 @@ test("setup examples separate external secrets and bind the exact team and persi
   assert.match(
     validateSetupStep(setupStep.deploy, {
       ...draft,
-      resourceOrigin: "https://workers.dev.attacker.test",
+      accountId: "c".repeat(31),
     }),
-    /workers.dev/,
+    /Account ID/,
   );
   const examples = setupExamples(team, setup, draft),
     profiles = JSON.parse(examples.edge.SYNC_PROFILES);
@@ -612,7 +773,14 @@ test("setup examples separate external secrets and bind the exact team and persi
   assert.equal(JSON.parse(examples.gateway).vars.SITE_TEAM_ID, team.id);
   assert.deepEqual(JSON.parse(examples.gateway).triggers.crons, []);
   assert.equal(examples.edge.GIT_TEAM, undefined);
-  assert.match(examples.migration, /'"'"'/);
+  // The fork's single variable carries the deploy targets and both configs;
+  // the workflow adds the Worker address and keys itself.
+  const site = JSON.parse(examples.siteConfig);
+  assert.equal(site.cloudflareAccountId, "c".repeat(32));
+  assert.equal(site.supabaseProjectRef, "a".repeat(20));
+  assert.deepEqual(site.gateway, JSON.parse(examples.gateway));
+  assert.deepEqual(site.edge, examples.edge);
+  assert.equal(site.edge.RESOURCE_ORIGIN, undefined);
 });
 
 test("completion requires fresh verified matching peer receipt, no pending/error/conflict and active mode", () => {

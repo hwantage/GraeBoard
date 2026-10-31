@@ -6,8 +6,9 @@ import { syncSetupKeys } from "./setup-key-issuer.mjs";
 import { SyncInterruption } from "./errors.mjs";
 import { profileToken } from "./credentials.mjs";
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { transaction } from "../db.mjs";
+import { audit, transaction } from "../db.mjs";
 import { createNodeLeaseStores } from "./node-leases.mjs";
 import { materialize } from "./entities.mjs";
 import { installCapture } from "./capture.mjs";
@@ -408,6 +409,102 @@ export function createNodeSync({
       services.delete(teamId);
       capacity.clear();
       capture.refresh();
+    },
+    // Forget a disconnected team's connection so it can start over with the
+    // same or another repository. Business data stays; the next connection
+    // publishes the current data as a new genesis.
+    forget(teamId, actorId) {
+      requireThat(!stopped, 409, "동기화 서버가 종료 중입니다.");
+      const link = store(teamId).readLink();
+      requireThat(
+        link?.mode === "disconnected",
+        409,
+        "연결 해제한 팀만 연결 기록을 초기화할 수 있습니다.",
+      );
+      requireThat(
+        !link.lease_owner && !services.get(teamId)?.idle(),
+        409,
+        "이전 동기화가 마무리 중입니다. 잠시 후 다시 시도하세요.",
+      );
+      const profile = profiles.find(
+        (p) => p.profileId === link.profile_id && p.teamId === teamId,
+      );
+      transaction(db, () => {
+        const current = store(teamId).readLink();
+        requireThat(
+          current?.mode === "disconnected" &&
+            current.generation === link.generation &&
+            !current.lease_owner,
+          409,
+          "연결 상태가 변경되었습니다. 새로고침한 뒤 확인하세요.",
+        );
+        requireThat(
+          !db
+            .prepare(
+              "SELECT 1 FROM sync_conflicts WHERE team_id=? AND resolution IS NULL",
+            )
+            .get(teamId),
+          409,
+          "충돌 보관함의 충돌을 먼저 해결하세요.",
+        );
+        // Cleaned-up data survives only in the repository; forgetting it here
+        // would lose the copy this server can restore from.
+        requireThat(
+          !db
+            .prepare("SELECT 1 FROM site_retention WHERE team_id=?")
+            .get(teamId),
+          409,
+          "정리해 보관본에만 남은 자료가 있습니다. 보관본에서 복원한 뒤 초기화하세요.",
+        );
+        requireThat(
+          !db
+            .prepare(
+              "SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND phase NOT IN ('complete','cancelled')",
+            )
+            .get(teamId),
+          409,
+          "정리·백업 작업을 먼저 완료하세요.",
+        );
+        for (const table of [
+          "sync_entities",
+          "sync_outbox",
+          "sync_receipts",
+          "sync_conflicts",
+          "sync_objects",
+          "sync_person_refs",
+          "site_retention",
+          "site_maintenance_jobs",
+          "site_entity_revisions",
+          "site_events",
+          "external_setup_keys",
+          "team_sync_links",
+        ])
+          db.prepare(`DELETE FROM ${table} WHERE team_id=?`).run(teamId);
+        // A token issued for the previous repository rarely reaches the next.
+        db.prepare("DELETE FROM sync_credentials WHERE profile_id=?").run(
+          link.profile_id,
+        );
+        audit(db, actorId, null, "sync-reset", teamId, {
+          team: db.prepare("SELECT name FROM teams WHERE id=?").get(teamId)
+            ?.name,
+          repository: profile?.repository || "",
+          publishedHead: link.canonical_head || "",
+        });
+      });
+      services.delete(teamId);
+      const timer = timers.get(teamId);
+      if (timer) clearTimeout(timer.timer);
+      timers.delete(teamId);
+      capacity.clear();
+      capture.refresh();
+      if (profile && !options.transports?.[profile.profileId])
+        rmSync(
+          resolve(
+            process.env.GRAEBOARD_SYNC_DIR || "data/sync",
+            profile.profileId,
+          ),
+          { recursive: true, force: true },
+        );
     },
     async close() {
       stopped = true;

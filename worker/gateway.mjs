@@ -2,6 +2,10 @@ import { secretMatches, failure, privateHeaders } from "../edge/security.mjs";
 import { assertOrigin, verifyAccess } from "./access.mjs";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// Vite names every build file by its content hash, so a changed file gets a new
+// URL. Browsers may then keep these without revalidating, which also keeps
+// repeat visits from spending Pages Functions requests on unchanged files.
+const hashedAsset = /^\/assets\/[^/]+-[\w-]{8}\.[a-z0-9]+$/i;
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
 
@@ -226,6 +230,13 @@ export function createGateway({
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("X-Frame-Options", "DENY");
         headers.set("Content-Security-Policy", csp);
+        // A missing hashed file falls back to the app page; never pin that.
+        if (
+          response.status === 200 &&
+          hashedAsset.test(url.pathname) &&
+          !headers.get("Content-Type")?.startsWith("text/html")
+        )
+          headers.set("Cache-Control", "private, max-age=31536000, immutable");
         return new Response(response.body, {
           status: response.status,
           headers,

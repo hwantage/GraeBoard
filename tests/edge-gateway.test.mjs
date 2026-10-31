@@ -338,3 +338,37 @@ test("legacy gateway settings keep Edge verification; partial local settings fai
     "local verification retains the HTTPS origin requirement",
   );
 });
+
+test("hashed build files are cached by the browser; the app page and fallbacks are not", async () => {
+  const env = {
+    APP_ORIGIN: "https://board.pages.dev",
+    ACCESS_ISSUER: "https://fixture.cloudflareaccess.com",
+    ACCESS_AUDIENCE: "board",
+    ASSETS: {
+      fetch: async (request) =>
+        new URL(request.url).pathname === "/assets/index-BWhnghAv.js"
+          ? new Response("app()", {
+              headers: {
+                "Content-Type": "text/javascript",
+                "Cache-Control": "public, max-age=0, must-revalidate",
+              },
+            })
+          : // Single-page fallback for a missing file or a route.
+            new Response("<!doctype html>", {
+              headers: { "Content-Type": "text/html" },
+            }),
+    },
+  };
+  const gateway = createGateway({ verify: async () => ({}) });
+  const cache = async (path) =>
+    (await gateway.fetch(new Request(env.APP_ORIGIN + path), env)).headers.get(
+      "Cache-Control",
+    );
+  assert.equal(
+    await cache("/assets/index-BWhnghAv.js"),
+    "private, max-age=31536000, immutable",
+  );
+  assert.equal(await cache("/"), null);
+  assert.equal(await cache("/assets/index-Missing1.js"), null);
+  assert.equal(await cache("/assets/plain.js"), null);
+});

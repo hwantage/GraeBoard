@@ -1,6 +1,7 @@
 export const setupSteps = [
   "GitHub 저장소",
   "GitHub 연결",
+  "GitHub Fork",
   "Cloudflare",
   "Supabase",
   "배포",
@@ -11,11 +12,12 @@ export const appSourceRepository = "https://github.com/hwantage/GraeBoard";
 export const setupStep = {
   repository: 0,
   publish: 1,
-  cloudflare: 2,
-  supabase: 3,
-  deploy: 4,
-  account: 5,
-  verify: 6,
+  fork: 2,
+  cloudflare: 3,
+  supabase: 4,
+  deploy: 5,
+  account: 6,
+  verify: 7,
 };
 export const externalSetupSteps = ["설치 확인", "팀 가져오기", "양방향 확인"];
 const origin = (value) => {
@@ -48,20 +50,13 @@ export function validateSetupStep(step, draft) {
       return "Access 앱의 64자리 Application Audience를 입력하세요.";
     if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(draft.bucket))
       return "R2 bucket 이름은 영문 소문자·숫자·하이픈 3~63자로 입력하세요.";
-    if (!/^[a-z][a-z0-9-]{0,62}$/.test(draft.gateway))
-      return "gateway 이름은 영문 소문자로 시작하는 영문·숫자·하이픈으로 입력하세요.";
   }
   if (step === setupStep.supabase && !/^[a-z0-9]{20}$/.test(draft.projectRef))
     return "Supabase 프로젝트 Reference ID 20자리를 입력하세요.";
-  if (
-    step === setupStep.deploy &&
-    (!origin(draft.resourceOrigin) ||
-      !new URL(draft.resourceOrigin).hostname.endsWith(".workers.dev"))
-  )
-    return "배포한 gateway의 HTTPS workers.dev 주소를 입력하세요.";
+  if (step === setupStep.deploy && !/^[0-9a-f]{32}$/.test(draft.accountId))
+    return "Cloudflare Account ID 32자리를 입력하세요.";
   return "";
 }
-const shell = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 export function setupExamples(team, setup, draft) {
   const profile = setup?.profile;
   const externalProfile = [
@@ -87,41 +82,49 @@ export function setupExamples(team, setup, draft) {
     ACCESS_ISSUER: draft.issuer,
     ACCESS_AUDIENCE: draft.audience,
     SYNC_PROFILES: JSON.stringify(externalProfile),
-    RESOURCE_ORIGIN: draft.resourceOrigin,
+  };
+  const gateway = {
+    name: draft.gateway,
+    main: "worker/gateway.mjs",
+    compatibility_date: "2026-10-23",
+    compatibility_flags: ["nodejs_compat"],
+    workers_dev: true,
+    preview_urls: false,
+    assets: {
+      directory: "./dist",
+      binding: "ASSETS",
+      run_worker_first: true,
+      not_found_handling: "single-page-application",
+    },
+    images: { binding: "IMAGES" },
+    triggers: { crons: [] },
+    vars: {
+      APP_ORIGIN: draft.appOrigin,
+      ACCESS_ISSUER: draft.issuer,
+      ACCESS_AUDIENCE: draft.audience,
+      SITE_TEAM_ID: team.id,
+      GRAEBOARD_EDGE_URL: `https://${draft.projectRef}.supabase.co/functions/v1/graeboard`,
+    },
+    r2_buckets: [{ binding: "R2_TEAM", bucket_name: draft.bucket }],
   };
   return {
     edge,
     profile: JSON.stringify(externalProfile, null, 2),
-    gateway: JSON.stringify(
+    gateway: JSON.stringify(gateway, null, 2),
+    // The fork's single TEAM_SITE_CONFIG variable; the release workflow deploys
+    // from it and fills both sides' settings (scripts/team-site-deploy.mjs).
+    siteConfig: JSON.stringify(
       {
-        name: draft.gateway,
-        main: "worker/gateway.mjs",
-        compatibility_date: "2026-10-23",
-        compatibility_flags: ["nodejs_compat"],
-        workers_dev: true,
-        preview_urls: false,
-        assets: {
-          directory: "./dist",
-          binding: "ASSETS",
-          run_worker_first: true,
-          not_found_handling: "single-page-application",
-        },
-        images: { binding: "IMAGES" },
-        triggers: { crons: [] },
-        vars: {
-          APP_ORIGIN: draft.appOrigin,
-          ACCESS_ISSUER: draft.issuer,
-          ACCESS_AUDIENCE: draft.audience,
-          SITE_TEAM_ID: team.id,
-          GRAEBOARD_EDGE_URL: `https://${draft.projectRef}.supabase.co/functions/v1/graeboard`,
-        },
-        r2_buckets: [{ binding: "R2_TEAM", bucket_name: draft.bucket }],
+        cloudflareAccountId: draft.accountId,
+        supabaseProjectRef: draft.projectRef,
+        gateway,
+        edge,
       },
       null,
       2,
     ),
-    migration: `read -s PG_SITE_URL\nexport PG_SITE_URL\nnpm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id ${shell(team.id)} --team-name ${shell(team.name)} --initialize --dry-run\nnpm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id ${shell(team.id)} --team-name ${shell(team.name)} --initialize\nunset PG_SITE_URL`,
-    deploy: `npm run build\nnpm run build:edge\nnpm run build:pages\nnpx wrangler deploy --config .env.gateway.json\nnpx wrangler secret put GRAEBOARD_GATEWAY_SECRET --config .env.gateway.json\nnpx wrangler secret put GRAEBOARD_RESOURCE_SECRET --config .env.gateway.json\nnpx supabase functions deploy graeboard --project-ref ${shell(draft.projectRef)} --use-api`,
+    deploy:
+      'npm ci\nnpm run build\nnpm run build:edge\nexport TEAM_SITE_CONFIG="$(cat team-site-config.json)"\nexport TEAM_SITE_SECRETS="$(cat team-site-secrets.json)"\nnode scripts/team-site-deploy.mjs\nunset TEAM_SITE_SECRETS',
   };
 }
 export function syncVerification(status, now = Date.now()) {

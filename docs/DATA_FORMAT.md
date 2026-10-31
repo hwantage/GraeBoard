@@ -10,13 +10,13 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `expo
 
 ## 버전과 운영 호환성
 
-| 구분               | 현재 저장소 기준             | 확인 위치와 의미                                                  |
-| ------------------ | ---------------------------- | ----------------------------------------------------------------- |
-| SQLite DB 형식     | v33                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`  |
-| JSON 반출 형식     | v6                           | `shared/workbook.mjs`의 `schemaVersion`; DB 버전과 별개           |
-| DB 백업 복구       | v29·v30·v31·v32·v33 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사              |
-| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 → v33 migration   | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite` |
-| 외부 PostgreSQL | 팀별 site v3 + team v2, 한 프로젝트 | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v2 지원, team v1은 명시 변환 |
+| 구분               | 현재 저장소 기준                             | 확인 위치와 의미                                                                                              |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| SQLite DB 형식     | v33                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                              |
+| JSON 반출 형식     | v6                                           | `shared/workbook.mjs`의 `schemaVersion`; DB 버전과 별개                                                       |
+| DB 백업 복구       | v29·v30·v31·v32·v33 백업, 기존 버전 유지     | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사                                                          |
+| 기존 DB 업그레이드 | 명시적 v29 → v30 → v31 → v32 → v33 migration | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite`                                             |
+| 외부 PostgreSQL    | 팀별 site v3 + team v2, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v2 지원, team v1은 명시 변환 |
 
 실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v33 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32는 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
@@ -26,9 +26,9 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `6`입니다. `expo
 
 ## 저장 규칙 요약
 
-단계별 동기화 설정은 DB 버전·스키마·프로필 JSON·토큰 암호화·백업 형식을 변경하지 않습니다. 내부 시스템 관리자 전용 `GET/PUT /api/admin/teams/:id/sync-setup`은 기존 `.env` 설정의 안전한 팀별 조회·추가를 제공합니다. PUT은 파일 revision을 비교하고 기존 연결 신원·다른 팀 프로필을 보존합니다. 설치 식별자를 이미 읽은 서버는 저장한 프로필을 실행 중 프로필 목록에 바로 적용하고, 서버가 식별자 없이 시작된 최초 설치에서만 재시작 필요를 반환합니다. 연결 이력이 없는 프로필의 저장소 수정도 같은 API로 처리하며 프로필 ID·외부 설치 UUID를 유지합니다. 응답에는 내부/외부 설치 ID·프로필 ID·저장소·등록 여부와 사용 중인 토큰의 앞부분(`tokenPreview`: GitHub 공통 접두어 뒤 10자, 토큰 길이의 절반 이하)만 포함하고 키·토큰 전체는 포함하지 않습니다. 앞부분은 저장 형식을 바꾸지 않고 조회 시 기존 암호문(없으면 `tokenEnv` 환경 변수)에서 계산합니다.
+단계별 동기화 설정은 DB 버전·스키마·프로필 JSON·토큰 암호화·백업 형식을 변경하지 않습니다. 내부 시스템 관리자 전용 `GET /api/admin/teams/:id/external-db-sql`은 `{sql}`로 신규 외부 PostgreSQL 초기화 스크립트를 돌려줍니다. `npm run migrate -- --scope site --initialize`의 빈 DB 경로와 같은 migration SQL·순서·checksum(site 1·2·3, team 1·2)을 `BEGIN…COMMIT` 한 번으로 묶고, 두 스키마에 테이블이 있으면 거절하며, 앱 외 역할의 권한을 회수합니다. 스키마·저장 형식은 바꾸지 않습니다. `GET/PUT /api/admin/teams/:id/sync-setup`은 기존 `.env` 설정의 안전한 팀별 조회·추가를 제공합니다. PUT은 파일 revision을 비교하고 기존 연결 신원·다른 팀 프로필을 보존합니다. 설치 식별자를 이미 읽은 서버는 저장한 프로필을 실행 중 프로필 목록에 바로 적용하고, 서버가 식별자 없이 시작된 최초 설치에서만 재시작 필요를 반환합니다. 연결 이력이 없는 프로필의 저장소 수정도 같은 API로 처리하며 프로필 ID·외부 설치 UUID를 유지합니다. 응답에는 내부/외부 설치 ID·프로필 ID·저장소·등록 여부와 사용 중인 토큰의 앞부분(`tokenPreview`: GitHub 공통 접두어 뒤 10자, 토큰 길이의 절반 이하)만 포함하고 키·토큰 전체는 포함하지 않습니다. 앞부분은 저장 형식을 바꾸지 않고 조회 시 기존 암호문(없으면 `tokenEnv` 환경 변수)에서 계산합니다.
 
-`PUT /api/admin/teams/:id/sync-credential`은 설치된 해당 팀 프로필과 시스템 관리자 권한을 검사한 뒤 기존 `sync_credentials(profile_id,ciphertext,updated_at)`에 AES-256-GCM 암호문을 저장합니다. 동기화 작업 중에는 409를 반환합니다. 성공 응답은 `{ok:true}`이며 연결 상태·outbox·receipt·충돌 자료를 변경하지 않습니다. `DELETE /api/admin/teams/:id/sync-credential`은 같은 권한·작업 중 검사 뒤 해당 프로필의 `sync_credentials` 행만 지우고 실행기 캐시를 비우며 `{ok:true}`를 반환합니다. 이후 이 프로필은 `tokenEnv` 환경 변수 토큰을 사용하고, 그것도 없으면 연결 검사가 토큰 미등록을 안내합니다. 이 API들은 모두 기존 인증·쓰기 요청 보호 경계를 따르며 외부 런타임에는 설치 설정 쓰기 API를 추가하지 않습니다.
+`PUT /api/admin/teams/:id/sync-credential`은 설치된 해당 팀 프로필과 시스템 관리자 권한을 검사한 뒤 기존 `sync_credentials(profile_id,ciphertext,updated_at)`에 AES-256-GCM 암호문을 저장합니다. 동기화 작업 중에는 409를 반환합니다. 성공 응답은 `{ok:true}`이며 연결 상태·outbox·receipt·충돌 자료를 변경하지 않습니다. `DELETE /api/admin/teams/:id/sync-credential`은 같은 권한·작업 중 검사 뒤 해당 프로필의 `sync_credentials` 행만 지우고 실행기 캐시를 비우며 `{ok:true}`를 반환합니다. 이후 이 프로필은 `tokenEnv` 환경 변수 토큰을 사용하고, 그것도 없으면 연결 검사가 토큰 미등록을 안내합니다. `POST /api/admin/teams/:id/sync-reset`은 `{confirmed:true}`와 시스템 관리자 권한, 연결 해제(`disconnected`) 상태·작업 없음을 검사한 뒤 그 팀의 동기화 상태 행(`team_sync_links`, `sync_*`, `site_*`, `external_setup_keys`)만 한 트랜잭션으로 지우고 시스템 감사(`sync-reset`, 이전 저장소·마지막 게시 커밋)를 남깁니다. 같은 트랜잭션에서 연결했던 프로필의 `sync_credentials` 행도 지우며(이전 저장소용 토큰을 새 저장소에 재사용하지 않도록), 로컬 Git 복제본 폴더도 삭제합니다. 업무 자료·`.env` 프로필·`tokenEnv` 환경 변수는 유지하며, 미해결 충돌·보관본(`site_retention`)·진행 중 정리 작업이 있으면 409입니다. 이후 프로필의 저장소 주소를 수정할 수 있고 다음 연결은 새 `repo_id`로 현재 자료를 초기 게시합니다. 이 API들은 모두 기존 인증·쓰기 요청 보호 경계를 따르며 외부 런타임에는 설치 설정 쓰기 API를 추가하지 않습니다.
 
 이 절과 [서식 저장과 전송](#서식-저장과-전송)은 현재 저장 구조의 설계 기준입니다. 사용자가 보는 동작은 [사용 안내](USER_GUIDE.md), 구현 경로와 검증은 [개발 안내](DEVELOPMENT.md)에 정리합니다.
 
@@ -258,12 +258,12 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 사본의 업무 객체는 업무 목록과 같은 모양이라 업무마다 팀 공통 서식 규칙 전체(`formatting`)를 가집니다. 열 전체 규칙은 대상 업무 ID 목록을 들고 있어 규칙 집합이 수십 KB가 될 수 있으므로, 사본을 평문으로 직렬화하면 "업무 수 × 규칙 집합"만큼 커집니다. 따라서 사본 `data`를 다루는 모든 저장·전송 경로는 같은 공유 사전 형태를 사용합니다.
 
-| 경로 | 형태 |
-| --- | --- |
-| 사내 `reports.data` BLOB | 공유 사전 JSON을 gzip |
-| HTTP 응답·JSON 반출 | 공유 사전 JSON |
+| 경로                              | 형태                                                   |
+| --------------------------------- | ------------------------------------------------------ |
+| 사내 `reports.data` BLOB          | 공유 사전 JSON을 gzip                                  |
+| HTTP 응답·JSON 반출               | 공유 사전 JSON                                         |
 | 동기화 명령 P·기준본 C의 `report` | 공유 사전 형태의 `data` (`shared/report-sync-data.js`) |
-| 외부 `site_entities`의 `report` | 공유 사전 형태의 `data`, `DataSession`이 읽을 때 풂 |
+| 외부 `site_entities`의 `report`   | 공유 사전 형태의 `data`, `DataSession`이 읽을 때 풂    |
 
 애플리케이션 코드는 내부·외부 모두 풀린 객체만 다룹니다. 새 코드가 동기화 payload나 `site_entities`의 사본 `data`를 직접 읽을 때는 `unpackReportData`를 거치고, 두 payload를 비교할 때는 `payloadEqual`을 사용합니다.
 
@@ -411,9 +411,9 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 문서 본문의 순서와 SSE 전송 커서는 다음과 같이 구분합니다.
 
-| 호스트 | 문서 GET·PUT·충돌 응답·SSE 본문의 `sync` | SSE 전송·재연결 커서 |
-| --- | --- | --- |
-| 내부 Node | 프로세스 세대 `session`과 메모리의 문서 전송 순서 `sequence` | `session:sequence` |
+| 호스트         | 문서 GET·PUT·충돌 응답·SSE 본문의 `sync`                           | SSE 전송·재연결 커서      |
+| -------------- | ------------------------------------------------------------------ | ------------------------- |
+| 내부 Node      | 프로세스 세대 `session`과 메모리의 문서 전송 순서 `sequence`       | `session:sequence`        |
 | 외부 Edge / PG | `session: "postgres"`, 해당 문서의 PG revision을 `sequence`로 사용 | `pg:<site_events cursor>` |
 
 외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.

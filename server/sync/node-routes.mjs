@@ -1,5 +1,6 @@
 import { installSetupKeyRoutes } from "./setup-key-issuer.mjs";
 import { SQLITE_VERSION } from "../migrations/sqlite.mjs";
+import { siteInitializeSql } from "../migrations/site-initialize-sql.mjs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -31,6 +32,14 @@ function installConnectionRoutes(
     managedTeam(req.user, id(req));
     res.set("Cache-Control", "no-store").json(setup.save(id(req), req.body));
   });
+  // The operator pastes this into the new site's Supabase SQL Editor.
+  app.get("/api/admin/teams/:id/external-db-sql", (req, res) => {
+    requireSystemAdmin(req.user);
+    const team = managedTeam(req.user, id(req));
+    res
+      .set("Cache-Control", "no-store")
+      .json({ sql: siteInitializeSql(team.id, team.name) });
+  });
   app.put("/api/admin/teams/:id/sync-credential", (req, res) => {
     requireSystemAdmin(req.user);
     managedTeam(req.user, id(req));
@@ -41,7 +50,7 @@ function installConnectionRoutes(
     requireThat(
       !sync.isBusy(id(req)),
       409,
-      "동기화 작업이 진행 중입니다. 작업이 끝난 뒤 토큰 저장을 다시 시도하세요.",
+      "동기화 작업이 진행 중입니다. 작업이 끝난 뒤 토큰을 다시 저장하세요.",
     );
     requireThat(
       typeof req.body.token === "string" &&
@@ -59,6 +68,17 @@ function installConnectionRoutes(
       "INSERT INTO sync_credentials VALUES(?,?,?) ON CONFLICT(profile_id) DO UPDATE SET ciphertext=excluded.ciphertext,updated_at=excluded.updated_at",
     ).run(profile.profileId, encrypted, new Date().toISOString());
     sync.clear(id(req));
+    res.set("Cache-Control", "no-store").json({ ok: true });
+  });
+  app.post("/api/admin/teams/:id/sync-reset", (req, res) => {
+    requireSystemAdmin(req.user);
+    managedTeam(req.user, id(req));
+    requireThat(
+      req.body?.confirmed === true,
+      400,
+      "연결 기록 초기화를 확인하세요.",
+    );
+    sync.forget(id(req), req.user.id);
     res.set("Cache-Control", "no-store").json({ ok: true });
   });
   app.delete("/api/admin/teams/:id/sync-credential", (req, res) => {

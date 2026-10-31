@@ -36,6 +36,10 @@ test("sync diagnostics distinguish capacity, trust, authorization and rate limit
     ],
     [new Error("GitHub request failed (403)"), /토큰.*권한/],
     [
+      new Error("GitHub request failed (404)"),
+      /저장소를 찾을 수 없습니다.*Repository access/,
+    ],
+    [
       new Error("GitHub request failed (403); retry after the scheduled delay"),
       /요청 한도.*잠시 후/,
     ],

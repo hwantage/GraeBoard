@@ -310,6 +310,35 @@ export default function TeamSyncSettings({
       }
     }
   }
+  async function resetConnection() {
+    if (
+      busy ||
+      !confirm(
+        "이 팀의 동기화 연결 기록을 초기화합니다.\n\n· 업무·문서·이미지 자료는 그대로 남습니다.\n· 저장한 내부 GitHub 토큰도 함께 지웁니다.\n· 기존 GitHub 저장소·외부 사이트와는 더 이상 이어지지 않습니다.\n· 저장소를 바꾸거나 새 저장소로 다시 연결하면 현재 자료로 새로 초기 게시합니다.\n\n계속하시겠습니까?",
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    onMessage("");
+    try {
+      await send(`/admin/teams/${team.id}/sync-reset`, { confirmed: true });
+      if (!live.current) return;
+      setCheck(null);
+      await onSaved();
+      if (!live.current) return;
+      await load(undefined, true, false);
+      if (live.current)
+        onMessage(
+          "연결 기록과 토큰을 초기화했습니다. 외부 동기화 설정의 GitHub 저장소 단계에서 저장소 주소와 토큰을 등록한 뒤 다시 연결하세요.",
+        );
+    } catch (e) {
+      if (live.current) showError("actions", e, "연결 기록 초기화");
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  }
   async function resolve(
     conflict: Conflict,
     choice: "current" | "submitted" | "edited",
@@ -568,6 +597,24 @@ export default function TeamSyncSettings({
                       )}
                     </>
                   )}
+                  {!external &&
+                    status.mode === "disconnected" &&
+                    user.systemRole === "admin" && (
+                      <>
+                        <p>
+                          다른 저장소로 바꾸거나 새로 만든 저장소로 처음부터
+                          연결하려면 <b>연결 기록 초기화</b>를 누르세요. 업무
+                          자료는 그대로 남고 저장한 GitHub 토큰은 지워지며, 다시
+                          연결하면 현재 자료로 새로 초기 게시합니다.
+                        </p>
+                        <Button
+                          {...busyProps(busy)}
+                          onClick={() => void resetConnection()}
+                        >
+                          연결 기록 초기화
+                        </Button>
+                      </>
+                    )}
                 </div>
               )}
             </>

@@ -20,6 +20,7 @@ const actions: Record<string, string> = {
   "access-token-delete": "접속 토큰 삭제",
   "team-delete": "팀 삭제",
   "history-cleanup": "변경 이력 정리",
+  "sync-reset": "동기화 연결 초기화",
 };
 const fields: Record<string, string> = {
   name: "이름",
@@ -49,6 +50,9 @@ const fields: Record<string, string> = {
   createdAt: "생성 시각",
   expiresAt: "만료 시각",
   teamId: "팀",
+  team: "팀",
+  repository: "GitHub 저장소",
+  publishedHead: "마지막 게시 커밋",
   role: "권한",
   value: "내용",
 };
@@ -147,7 +151,11 @@ function AuditEntry({ entry, teams }: { entry: Entry; teams: Team[] }) {
   const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
   const target =
     entry.targetName ||
-    (entry.action === "team-delete" ? "삭제된 팀" : "시스템 공통");
+    (entry.action === "team-delete"
+      ? "삭제된 팀"
+      : entry.action === "sync-reset"
+        ? "팀 외부 동기화"
+        : "시스템 공통");
   return (
     <details onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>

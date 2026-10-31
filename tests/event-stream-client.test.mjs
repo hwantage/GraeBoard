@@ -88,6 +88,98 @@ test("페이지는 워커 재구독 요청을 받으면 health timeout 없이 �
   t.mock.timers.tick(0);
 });
 
+test("1분 넘게 숨긴 탭은 공유 스트림에서 빠지고 다시 보이면 처리한 커서로 재구독한다", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+  const workers = [];
+  class Worker {
+    constructor() {
+      this.messages = [];
+      this.port = {
+        // The shared worker answers health pings while it is alive.
+        postMessage: (message) => {
+          this.messages.push(message);
+          if (message.kind === "ping" && !this.closed)
+            this.port.onmessage({ data: { kind: "pong" } });
+        },
+        start() {},
+        close: () => {
+          this.closed = true;
+        },
+      };
+      workers.push(this);
+    }
+  }
+  const page = new EventTarget();
+  page.visibilityState = "visible";
+  globals(t, {
+    window: new EventTarget(),
+    document: page,
+    SharedWorker: Worker,
+    EventSource: { CONNECTING: 0, OPEN: 1, CLOSED: 2 },
+  });
+  const clientCode =
+    source("event-stream")
+      .replaceAll(
+        '"./event-stream-broker"',
+        JSON.stringify(moduleURL(source("event-stream-broker"))),
+      )
+      .replace("import.meta.url", '"file:///test/event-stream.ts"') +
+    "\n// hidden tab release";
+  const { EventStream } = await import(moduleURL(clientCode));
+  // Advance like real time so the 15 s health pings run in between.
+  const advance = (ms) => {
+    for (let left = ms; left > 0; left -= 5000)
+      t.mock.timers.tick(Math.min(5000, left));
+  };
+  const visibility = (state) => {
+    page.visibilityState = state;
+    page.dispatchEvent(new Event("visibilitychange"));
+  };
+  const stream = new EventStream("/api/teams/test/events");
+  t.mock.timers.tick(0);
+  workers[0].port.onmessage({ data: { kind: "ready" } });
+  workers[0].port.onmessage({
+    data: {
+      kind: "event",
+      id: stream.id,
+      event: "document",
+      data: "{}",
+      lastEventId: "epoch:9",
+    },
+  });
+  // A short switch away keeps the connection.
+  visibility("hidden");
+  advance(59000);
+  visibility("visible");
+  advance(60000);
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].closed, undefined);
+  // A tab left hidden releases its share of the stream.
+  visibility("hidden");
+  advance(60000);
+  assert.ok(workers[0].closed);
+  assert.deepEqual(workers[0].messages.at(-1), { kind: "disconnect" });
+  // Subscription changes while hidden do not reconnect.
+  const other = new EventStream("/api/teams/test/other");
+  t.mock.timers.tick(0);
+  assert.equal(workers.length, 1);
+  other.close();
+  t.mock.timers.tick(0);
+  visibility("visible");
+  t.mock.timers.tick(0);
+  assert.equal(workers.length, 2);
+  workers[1].port.onmessage({ data: { kind: "ready" } });
+  assert.deepEqual(workers[1].messages[0].streams, [
+    {
+      id: stream.id,
+      path: "/api/teams/test/events",
+      lastEventId: "epoch:9",
+    },
+  ]);
+  stream.close();
+  t.mock.timers.tick(0);
+});
+
 test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되면 백오프하고 rejected 400은 종료한다", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const sources = [];

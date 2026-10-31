@@ -17,6 +17,12 @@ let startup: ReturnType<typeof setTimeout> | undefined;
 let health: ReturnType<typeof setInterval> | undefined;
 let lastMessage = 0;
 let resumePending = false;
+// A tab left in the background releases its share of the stream, so a browser
+// whose tabs are all hidden stops reconnecting. On return it resubscribes from
+// its last cursor, as a page restored after pagehide does.
+const HIDDEN_RELEASE_MS = 60000;
+let hidden = false;
+let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 
 function snapshot(): StreamSubscription[] {
   return [...streams.values()].map(({ id, path, lastEventId }) => ({
@@ -54,7 +60,7 @@ function disconnect() {
 function useFallback() {
   disconnect();
   unavailable = true;
-  if (!suspended && (streams.size || resumePending)) {
+  if (!suspended && !hidden && (streams.size || resumePending)) {
     fallback = new StreamBroker().attach(receive);
     fallback.update(snapshot());
     sendResume();
@@ -78,7 +84,7 @@ export function resumeSession() {
 }
 function sync() {
   syncTimer = undefined;
-  if (suspended || (!streams.size && !resumePending)) {
+  if (suspended || hidden || (!streams.size && !resumePending)) {
     disconnect();
     return;
   }
@@ -176,10 +182,18 @@ window.addEventListener("online", () => {
   scheduleSync();
 });
 document.addEventListener("visibilitychange", () => {
-  if (
-    document.visibilityState === "visible" &&
-    Date.now() - lastMessage > 45000
-  ) {
+  clearTimeout(hiddenTimer);
+  hiddenTimer = undefined;
+  if (document.visibilityState === "hidden") {
+    hiddenTimer = setTimeout(() => {
+      hiddenTimer = undefined;
+      hidden = true;
+      disconnect();
+    }, HIDDEN_RELEASE_MS);
+  } else if (hidden) {
+    hidden = false;
+    scheduleSync();
+  } else if (Date.now() - lastMessage > 45000) {
     disconnect();
     scheduleSync();
   }
