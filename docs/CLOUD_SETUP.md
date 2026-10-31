@@ -287,7 +287,7 @@ Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settin
 
 이전 방식의 Variable `TEAM_SITE_DEPLOY`·`CLOUDFLARE_ACCOUNT_ID`·`SUPABASE_PROJECT_REF`·`GATEWAY_CONFIG`만 있는 Fork도 그대로 배포되며, 이 경우 gateway Secret과 Supabase Edge Secrets는 콘솔에서 직접 관리하고 자동 배포가 바꾸지 않습니다. 배포 스크립트는 release 소스에 들어 있으므로 원본의 `main`과 `release`를 함께 갱신하고, 이미 만든 Fork는 **Sync fork**로 새 워크플로를 받습니다.
 
-GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면의 **Sync fork**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
+GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면에서 `main`과 `release` 브랜치를 각각 골라 **Sync fork → Update branch**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
