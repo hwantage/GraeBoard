@@ -1,11 +1,11 @@
 import { splitReportRecord } from "../server/sync/versions.mjs";
 import { protocolVersion } from "../server/sync/protocol.mjs";
 import pg from "pg";
+import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
 import {
-  assertStateCapacity,
-  capacityLimits,
-  CapacityError,
-} from "./capacity.mjs";
+  assertReceiptCapacity,
+  recordBytes,
+} from "../shared/sync-capacity.mjs";
 import {
   postgresHistoryVersion,
   postgresLayout,
@@ -20,7 +20,7 @@ import {
   equal,
   ENTITIES,
 } from "../server/sync/protocol.mjs";
-import { reduceMany, reduce } from "../server/sync/reducer.mjs";
+import { reduceMany, reduce, uniqueName } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
 import {
   packReportPayload,
@@ -141,6 +141,8 @@ export class DataSession {
     this.teamId = teamId;
     this.cache = new Map();
     this.lists = new Map();
+    // Position of each listed record, so a put does not rescan a long list.
+    this.listIndex = new Map();
     this.changes = new Map();
     this.eventKinds = new Set();
   }
@@ -165,8 +167,51 @@ export class DataSession {
     );
     const rows = q.rows.map(rowEntity);
     this.lists.set(entity, rows);
+    this.listIndex.set(
+      entity,
+      new Map(rows.map((row, index) => [entityId(entity, row.key), index])),
+    );
     for (const row of rows) this.cache.set(entityId(entity, row.key), row);
     return rows.filter((row) => deleted || !row.deleted);
+  }
+  // Live rows under one parent key (a task's cells or documents), in list order,
+  // without reading the whole entity for the team.
+  async listChildren(entity, parent) {
+    if (this.lists.has(entity)) {
+      const prefix = JSON.stringify(parent).slice(0, -1) + ",";
+      return this.lists
+        .get(entity)
+        .filter(
+          (row) => !row.deleted && JSON.stringify(row.key).startsWith(prefix),
+        );
+    }
+    const found = (
+      await this.tx.query(
+        "SELECT * FROM site_entities WHERE team_id=$1 AND entity=$2 AND deleted=0 AND left(entity_key,length($3))=$3 ORDER BY entity_key",
+        [this.teamId, entity, JSON.stringify(parent).slice(0, -1) + ","],
+      )
+    ).rows.map(rowEntity);
+    for (const row of found) {
+      const id = entityId(entity, row.key);
+      if (!this.cache.has(id)) this.cache.set(id, row);
+    }
+    return found.map((row) => this.cache.get(entityId(entity, row.key)));
+  }
+  // Live cells whose own style sets any of the given properties, in list order.
+  // Null columns or rows mean every column or row of the team.
+  async cellsStyling(properties, { columns = null, rows = null } = {}) {
+    if (!properties.length) return [];
+    const found = (
+      await this.tx.query(
+        "SELECT * FROM site_entities WHERE team_id=$1 AND entity='cell' AND deleted=0 AND (payload::jsonb->'style') ?| $2::text[] AND ($3::text[] IS NULL OR entity_key::jsonb->>1=ANY($3)) AND ($4::text[] IS NULL OR entity_key::jsonb->>0=ANY($4)) ORDER BY entity_key",
+        [this.teamId, properties, columns, rows],
+      )
+    ).rows.map(rowEntity);
+    for (const row of found) {
+      const id = entityId("cell", row.key);
+      if (!this.cache.has(id)) this.cache.set(id, row);
+    }
+    return found.map((row) => this.cache.get(entityId("cell", row.key)));
   }
   async put(
     entity,
@@ -208,8 +253,9 @@ export class DataSession {
     const after = { entity, key, payload, revision, deleted: storedDeleted };
     if (this.lists.has(entity)) {
       const rows = this.lists.get(entity),
-        index = rows.findIndex((r) => entityId(r.entity, r.key) === id);
-      if (index < 0) rows.push(after);
+        positions = this.listIndex.get(entity),
+        index = positions.get(id);
+      if (index === undefined) positions.set(id, rows.push(after) - 1);
       else rows[index] = after;
     }
     this.cache.set(id, after);
@@ -278,6 +324,230 @@ export class DataSession {
       entities: projectedState.entities,
     };
   }
+  // The records a capture can consult: the changed keys and those of pending
+  // operations, the parents and restored children the reducer checks, every
+  // tag, calendars using a touched tag, the protocol marker, and the receipts
+  // and conflicts pending operations name. Name uniqueness comes from SQL, so
+  // the cost follows the change instead of the team's whole state.
+  async projectedFor() {
+    const team = this.teamId,
+      pending = (
+        await this.tx.query(
+          "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+          [team],
+        )
+      ).rows.map((row) => JSON.parse(row.payload));
+    const wanted = new Map(),
+      prefixes = new Map(),
+      tags = new Set(),
+      want = (entity, key) => wanted.set(entityId(entity, key), [entity, key]),
+      children = (entity, key) => {
+        const prefix = canonical(key).slice(0, -1) + ",";
+        prefixes.set(entity + "\u0000" + prefix, [entity, prefix]);
+      },
+      // A restore re-stamps the parent's cells and documents.
+      restored = (entity, key) => {
+        if (!["task", "calendar"].includes(entity)) return;
+        if (entity === "task") children("cell", [key[0]]);
+        children("document", [entity, key[0]]);
+      };
+    want("protocol", []);
+    const touch = (entity, key, action) => {
+      want(entity, key);
+      if (entity === "cell") want("task", [key[0]]);
+      if (entity === "document") {
+        if (["task", "calendar"].includes(key[0])) want(key[0], [key[1]]);
+        else if (key[0].startsWith("report")) want("report", [key[1]]);
+      }
+      if (entity === "reportTask") want("report", [key[0]]);
+      if (entity === "reportCell") {
+        want("report", [key[0]]);
+        want("reportTask", key.slice(0, 2));
+      }
+      if (entity === "report") {
+        children("reportTask", [key[0]]);
+        children("reportCell", [key[0]]);
+      }
+      if (entity === "tag") tags.add(key[0]);
+      if (action === "restore") restored(entity, key);
+    };
+    for (const change of this.changes.values())
+      touch(change.entity, change.key);
+    for (const op of pending)
+      for (const change of op.changes)
+        touch(change.entity, change.key, change.action);
+    const state = emptyState();
+    const read = async (sql, values) => {
+      const added = [];
+      for (const row of (await this.tx.query(sql, values)).rows) {
+        const key = JSON.parse(row.entity_key),
+          id = entityId(row.entity, key);
+        if (state.entities[id]) continue;
+        state.entities[id] = {
+          entity: row.entity,
+          key,
+          generation: row.generation,
+          version: row.version,
+          payload: row.payload == null ? null : JSON.parse(row.payload),
+          deleted: !!row.deleted,
+        };
+        added.push([id, state.entities[id]]);
+      }
+      return added;
+    };
+    const readChildren = async () => {
+      if (!prefixes.size) return [];
+      const list = [...prefixes.values()];
+      prefixes.clear();
+      return read(
+        "SELECT s.* FROM sync_entities s JOIN unnest($2::text[],$3::text[]) w(entity,prefix) ON s.team_id=$1 AND s.entity=w.entity AND left(s.entity_key,length(w.prefix))=w.prefix",
+        [
+          team,
+          list.map(([entity]) => entity),
+          list.map(([, prefix]) => prefix),
+        ],
+      );
+    };
+    const ids = [...wanted.values()];
+    await read(
+      "SELECT s.* FROM sync_entities s JOIN unnest($2::text[],$3::text[]) w(entity,entity_key) ON s.team_id=$1 AND s.entity=w.entity AND s.entity_key=w.entity_key",
+      [
+        team,
+        ids.map(([entity]) => entity),
+        ids.map(([, key]) => canonical(key)),
+      ],
+    );
+    await read(
+      "SELECT * FROM sync_entities WHERE team_id=$1 AND entity='tag'",
+      [team],
+    );
+    await readChildren();
+    if (tags.size)
+      await read(
+        "SELECT s.* FROM sync_entities s JOIN unnest($2::text[]) t(id) ON s.team_id=$1 AND s.entity='calendar' AND strpos(s.payload,t.id)>0",
+        [team, [...tags].map((id) => JSON.stringify(id))],
+      );
+    const opIds = [
+      ...new Set(pending.flatMap((op) => [op.opId, ...op.dependsOn])),
+    ];
+    if (opIds.length)
+      for (const row of (
+        await this.tx.query(
+          "SELECT op_id,receipt FROM sync_receipts WHERE team_id=$1 AND op_id=ANY($2)",
+          [team, opIds],
+        )
+      ).rows)
+        state.receipts[row.op_id] = JSON.parse(row.receipt);
+    const resolves = [...new Set(pending.flatMap((op) => op.resolves || []))];
+    if (resolves.length)
+      for (const row of (
+        await this.tx.query(
+          "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)",
+          [team, resolves],
+        )
+      ).rows)
+        state.conflicts[row.conflict_id] = JSON.parse(row.payload);
+    // The same index reduceMany builds, from SQL instead of every record.
+    const names = new Map(),
+      tagUsers = new Map();
+    for (const row of (
+      await this.tx.query(
+        "SELECT entity,entity_key,deleted,payload::json->>'name' AS name,payload::json->>'userId' AS user_id FROM sync_entities WHERE team_id=$1 AND entity IN ('tag','filter','report')",
+        [team],
+      )
+    ).rows) {
+      const id = entityId(row.entity, JSON.parse(row.entity_key)),
+        loaded = state.entities[id];
+      if (!loaded && row.name == null) continue;
+      const name = uniqueName(
+        loaded || {
+          entity: row.entity,
+          deleted: !!row.deleted,
+          payload: { name: row.name, userId: row.user_id || undefined },
+        },
+      );
+      if (name) names.set(name, id);
+    }
+    for (const [id, record] of Object.entries(state.entities))
+      if (record.entity === "calendar" && !record.deleted)
+        for (const tag of record.payload.tags || []) {
+          if (!tagUsers.has(tag.id)) tagUsers.set(tag.id, new Set());
+          tagUsers.get(tag.id).add(id);
+        }
+    let projectedState = {
+      entities: { ...state.entities },
+      receipts: { ...state.receipts },
+      conflicts: { ...state.conflicts },
+    };
+    const context = { entities: projectedState.entities, names, tagUsers };
+    for (const op of pending)
+      projectedState = reduce(
+        projectedState,
+        op,
+        { teamId: op.teamId, repoId: op.repoId },
+        context,
+      ).state;
+    // This capture restores what the projection still holds deleted.
+    for (const change of this.changes.values())
+      if (projectedState.entities[entityId(change.entity, change.key)]?.deleted)
+        restored(change.entity, change.key);
+    for (const [id, record] of await readChildren())
+      projectedState.entities[id] ??= record;
+    return {
+      state,
+      projectedState,
+      pending,
+      entities: projectedState.entities,
+      context,
+    };
+  }
+  // C's size in SQL plus what this capture changes, matching the whole-state
+  // measurement it replaces without loading C.
+  async assertCaptureCapacity(state, result, pending, operation) {
+    const totals = await capacityTotals(this.tx, this.teamId),
+      delta = (before, after) => {
+        let bytes = 0,
+          count = 0;
+        for (const id of new Set([
+          ...Object.keys(before),
+          ...Object.keys(after),
+        ]))
+          if (before[id] !== after[id]) {
+            if (after[id]) bytes += recordBytes(id, after[id]);
+            if (before[id]) bytes -= recordBytes(id, before[id]);
+            count += !!after[id] - !!before[id];
+          }
+        return { bytes, count };
+      };
+    const entities = delta(state.entities, result.entities),
+      conflicts = delta(state.conflicts, result.conflicts),
+      receipts = delta(state.receipts, result.receipts);
+    if (totals.entities + entities.count > this.limits.maxEntities)
+      throw new CapacityError(
+        "External synchronization entity capacity exceeded; canonical cursor is unchanged",
+        400,
+      );
+    const bytes =
+      totals.entityBytes +
+      totals.conflictBytes +
+      entities.bytes +
+      conflicts.bytes;
+    if (bytes > this.limits.maxBytes)
+      throw new CapacityError(
+        "External synchronization state byte capacity exceeded; canonical cursor is unchanged",
+        400,
+      );
+    assertReceiptCapacity(totals.receiptBytes + receipts.bytes, 400);
+    if (
+      bytes +
+        pending.reduce((n, op) => n + Buffer.byteLength(canonical(op)), 0) +
+        Buffer.byteLength(canonical(operation)) >
+      this.limits.maxBytes
+    )
+      throw new CapacityError(
+        "External state and pending capacity exceeded; previous data is unchanged",
+      );
+  }
   async capture(actorId) {
     if (!this.changes.size) return;
     const link = (
@@ -291,7 +561,8 @@ export class DataSession {
       409,
       "팀 데이터를 준비하고 있습니다. 잠시 후 다시 저장하세요.",
     );
-    const { projectedState, pending, entities } = await this.projected();
+    const { state, projectedState, pending, entities, context } =
+      await this.projectedFor();
     const opId = crypto.randomUUID(),
       dependsOn = new Set(),
       pendingIds = new Set(pending.map((op) => op.opId));
@@ -410,19 +681,13 @@ export class DataSession {
       changes,
       objects: [],
     };
-    const result = reduce(projectedState, operation);
-    const size = assertStateCapacity(result.state, this.limits, [], {
-      status: 400,
-    });
-    if (
-      size.bytes +
-        pending.reduce((n, op) => n + Buffer.byteLength(canonical(op)), 0) +
-        Buffer.byteLength(canonical(operation)) >
-      this.limits.maxBytes
-    )
-      throw new CapacityError(
-        "External state and pending capacity exceeded; previous data is unchanged",
-      );
+    const result = reduce(
+      projectedState,
+      operation,
+      { teamId: operation.teamId, repoId: operation.repoId },
+      context,
+    );
+    await this.assertCaptureCapacity(state, result.state, pending, operation);
     assert(
       ["applied", "noop"].includes(result.receipt.result),
       409,

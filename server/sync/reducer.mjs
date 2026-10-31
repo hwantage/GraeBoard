@@ -462,7 +462,7 @@ export function reduce(
     receipt,
   };
 }
-const uniqueName = (record) => {
+export const uniqueName = (record) => {
   if (
     !record ||
     record.deleted ||

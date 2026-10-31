@@ -9,7 +9,8 @@ import { assert } from "./access.mjs";
 import {
   capacityLimits,
   assertStateCapacity,
-  assertDatabaseCapacity,
+  measureDatabaseCapacity,
+  CapacityError,
 } from "./capacity.mjs";
 import { materialize } from "./materialize.mjs";
 export function boundStore(
@@ -21,20 +22,34 @@ export function boundStore(
     // One hosted invocation finishes well within ten minutes; an operator-side
     // first import of a long chain may hold the lease for hours.
     leaseMs = 600000,
-    // Hosted runs re-compare every visible row so a damaged projection heals
-    // itself; a long operator import may instead write only what each commit
-    // changed and run one full pass at the end.
+    // Without it every commit re-compares every visible row, which heals a
+    // damaged projection but costs the whole team. Hosted publish/receive runs
+    // and a long operator import compare only what each commit changed.
     incrementalMaterialize = false,
   } = {},
 ) {
   let owner = null;
+  // SQL already measures C before it is read; the service derives the size of
+  // each reduced state from it instead of serializing the whole state again.
+  const measured = new WeakMap();
   const call = (work) => database.withTeamTransaction(teamId, work);
   return {
     readLink: () => database.readLink(teamId),
     readState: async () => {
-      await assertDatabaseCapacity(database, teamId, limits);
-      return database.readState(teamId);
+      const { size, stateBytes } = await measureDatabaseCapacity(
+        database,
+        teamId,
+        limits,
+      );
+      const state = await database.readState(teamId);
+      measured.set(state, {
+        bytes: stateBytes,
+        entities: size.entities,
+        receiptBytes: size.receiptBytes,
+      });
+      return state;
     },
+    measuredSize: (state) => measured.get(state),
     readPending: () => database.readPending(teamId),
     async acquire(id) {
       return call(async (tx) => {
@@ -69,7 +84,8 @@ export function boundStore(
       owner = null;
     },
     async commitCanonical(expected, head, state, ack, options = {}) {
-      assertStateCapacity(state, limits);
+      // The service measured this same state; only the pending part is new.
+      const size = options.stateSize || assertStateCapacity(state, limits);
       return database.commitCanonical(
         teamId,
         expected,
@@ -101,7 +117,18 @@ export function boundStore(
             throw new SyncInterruption(
               "새 미전송 자료가 있어 형식 전환을 중단했습니다. 입력을 보존하고 관리자에게 확인하세요.",
             );
-          assertStateCapacity(state, limits, projection.pending);
+          if (
+            size.bytes +
+              projection.pending.reduce(
+                (bytes, operation) =>
+                  bytes + Buffer.byteLength(canonical(operation)),
+                0,
+              ) >
+            limits.maxBytes
+          )
+            throw new CapacityError(
+              "External state and pending capacity exceeded; prior data is preserved",
+            );
           await materialize(
             tx,
             teamId,

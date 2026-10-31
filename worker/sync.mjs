@@ -1,6 +1,5 @@
 import {
   capacityLimits,
-  assertStateCapacity,
   assertDatabaseCapacity,
   boundedTransport,
   exclusiveSync,
@@ -161,16 +160,8 @@ export function serviceFor(env, profile, link, options = {}) {
         ? { peerInstallationId: env.PEER_INSTALLATION_ID }
         : {}),
     },
-    images: {
-      publish: (state, context) => {
-        assertStateCapacity(state, limits);
-        return adapter.publish(state, context);
-      },
-      receive: (state, ...args) => {
-        assertStateCapacity(state, limits);
-        return adapter.receive(state, ...args);
-      },
-    },
+    // The service checks each state's capacity before handing it over.
+    images: adapter,
     maxCommits: options.maxCommits || 4,
     maxOperations: 50,
     deferImages: !!options.deferImages,
@@ -252,7 +243,8 @@ export async function runTeam(
     deferImages = false,
     maxCommits = 0,
     leaseMs = 0,
-    incrementalMaterialize = false,
+    // A hosted invocation cannot afford a whole-team re-compare per commit.
+    incrementalMaterialize = true,
   } = {},
 ) {
   const db = databaseFor(env, profile),

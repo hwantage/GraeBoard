@@ -131,3 +131,52 @@ export function assertStateCapacity(
     receiptCapacity: receiptCapacity(receiptBytes),
   };
 }
+// The same measurement as assertStateCapacity(state), derived from a measured
+// state it was reduced from: only records whose object changed are serialized.
+export function assertStateCapacityFrom(
+  base,
+  baseSize,
+  state,
+  limits = capacityLimits(),
+  { allowReceiptOverflow = false, status = 413 } = {},
+) {
+  let bytes = baseSize.bytes,
+    receiptBytes = baseSize.receiptBytes,
+    count = baseSize.entities;
+  for (const section of ["entities", "receipts", "conflicts"]) {
+    const before = base[section],
+      after = state[section];
+    for (const key of new Set([
+      ...Object.keys(before),
+      ...Object.keys(after),
+    ])) {
+      const old = before[key],
+        value = after[key];
+      if (old === value) continue;
+      const delta =
+        (value === undefined ? 0 : recordBytes(key, value)) -
+        (old === undefined ? 0 : recordBytes(key, old));
+      if (section === "receipts") receiptBytes += delta;
+      else bytes += delta;
+      if (section === "entities")
+        count += (value !== undefined) - (old !== undefined);
+    }
+  }
+  if (count > limits.maxEntities)
+    throw new CapacityError(
+      "External synchronization entity capacity exceeded; canonical cursor is unchanged",
+      status,
+    );
+  if (bytes > limits.maxBytes)
+    throw new CapacityError(
+      "External synchronization state byte capacity exceeded; canonical cursor is unchanged",
+      status,
+    );
+  if (!allowReceiptOverflow) assertReceiptCapacity(receiptBytes, status);
+  return {
+    bytes,
+    entities: count,
+    receiptBytes,
+    receiptCapacity: receiptCapacity(receiptBytes),
+  };
+}

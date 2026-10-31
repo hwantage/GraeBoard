@@ -40,13 +40,11 @@ export function boundedTransport(transport, limits = capacityLimits()) {
 // Same UTF-8 serialization metric as assertStateCapacity. Payloads and entity_key
 // are already canonical JSON in storage; PostgreSQL to_json(text) supplies the
 // same string escaping as JSON.stringify without fetching the canonical body.
-export async function databaseCapacity(database, teamId) {
-  return database.withTeamTransaction(
-    teamId,
-    async (tx) => {
-      const row = (
-        await tx.query(
-          `SELECT
+// The parts stay separate so a capture can add only its own change to C.
+export async function capacityTotals(tx, teamId) {
+  const row = (
+    await tx.query(
+      `SELECT
       (SELECT COUNT(*) FROM sync_entities WHERE team_id=$1) AS entities,
       64 + (SELECT COALESCE(SUM(
         octet_length(to_json('['||to_json(entity)::text||','||entity_key||']')::text) +
@@ -54,37 +52,68 @@ export async function databaseCapacity(database, teamId) {
           ',"entity":'||to_json(entity)::text||',"generation":'||to_json(generation)::text||
           ',"key":'||entity_key||',"payload":'||COALESCE(payload,'null')||
           ',"version":'||to_json(version)::text||'}') + 2),0)
-        FROM sync_entities WHERE team_id=$1) +
+        FROM sync_entities WHERE team_id=$1) AS entity_bytes,
       (SELECT COALESCE(SUM(octet_length(to_json(conflict_id)::text)+octet_length(payload)+2),0)
-        FROM sync_conflicts WHERE team_id=$1) +
+        FROM sync_conflicts WHERE team_id=$1) AS conflict_bytes,
       (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox
-        WHERE team_id=$1 AND status<>'acknowledged') AS bytes,
+        WHERE team_id=$1 AND status<>'acknowledged') AS outbox_bytes,
       2 + (SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0)
         FROM sync_receipts WHERE team_id=$1) AS receipt_bytes`,
-          [teamId],
-        )
-      ).rows[0];
+      [teamId],
+    )
+  ).rows[0];
+  return {
+    entities: Number(row.entities),
+    entityBytes: Number(row.entity_bytes),
+    conflictBytes: Number(row.conflict_bytes),
+    outboxBytes: Number(row.outbox_bytes),
+    receiptBytes: Number(row.receipt_bytes),
+  };
+}
+// The sync store also needs C alone (stateBytes) to size each reduced state;
+// the reported capacity keeps its own shape.
+async function measureDatabase(database, teamId) {
+  return database.withTeamTransaction(
+    teamId,
+    async (tx) => {
+      const totals = await capacityTotals(tx, teamId);
       return {
-        entities: Number(row.entities),
-        bytes: Number(row.bytes),
-        receiptBytes: Number(row.receipt_bytes),
-        receiptCapacity: receiptCapacity(Number(row.receipt_bytes)),
+        size: {
+          entities: totals.entities,
+          bytes: totals.entityBytes + totals.conflictBytes + totals.outboxBytes,
+          receiptBytes: totals.receiptBytes,
+          receiptCapacity: receiptCapacity(totals.receiptBytes),
+        },
+        stateBytes: totals.entityBytes + totals.conflictBytes,
       };
     },
     { readOnly: true },
   );
+}
+export async function databaseCapacity(database, teamId) {
+  return (await measureDatabase(database, teamId)).size;
+}
+export async function measureDatabaseCapacity(
+  database,
+  teamId,
+  limits = capacityLimits(),
+) {
+  const measure = await measureDatabase(database, teamId);
+  if (
+    measure.size.entities > limits.maxEntities ||
+    measure.size.bytes > limits.maxBytes
+  )
+    throw new CapacityError(
+      "External stored synchronization capacity exceeded; canonical cursor is unchanged",
+    );
+  return measure;
 }
 export async function assertDatabaseCapacity(
   database,
   teamId,
   limits = capacityLimits(),
 ) {
-  const size = await databaseCapacity(database, teamId);
-  if (size.entities > limits.maxEntities || size.bytes > limits.maxBytes)
-    throw new CapacityError(
-      "External stored synchronization capacity exceeded; canonical cursor is unchanged",
-    );
-  return size;
+  return (await measureDatabaseCapacity(database, teamId, limits)).size;
 }
 
 let synchronizationRunning = false;

@@ -1027,6 +1027,21 @@ test(
           ],
         }),
       );
+      // Receiving checks R2 only for images the incoming records reference,
+      // so the inbound edit touches the document holding the restored image.
+      const internalDocument = ok(await inside(`/tasks/${task.id}/document`));
+      assert.match(internalDocument.markdown, /\.webp\)/);
+      ok(
+        await inside(
+          `/tasks/${task.id}/document`,
+          {
+            operationId: randomUUID(),
+            expectedRevision: internalDocument.revision,
+            markdown: internalDocument.markdown + "\nInbound image edit",
+          },
+          "PUT",
+        ),
+      );
       await app.locals.sync.get(teamId).run();
       ok(await outside(`/teams/${teamId}/sync/resume`, {}));
       // GET pull and publisher tasks can outlive their HTTP response. Finish
@@ -1098,6 +1113,10 @@ test(
           (r) => r.id === task.id,
         ).cells["2026-11-02"].value,
         "Inbound during R2 outage",
+      );
+      assert.match(
+        ok(await outside(`/tasks/${task.id}/document`)).markdown,
+        /Inbound image edit/,
       );
       assert.equal(
         stateHash(await pgStore.readState(teamId)),

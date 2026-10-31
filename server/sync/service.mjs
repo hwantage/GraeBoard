@@ -1,9 +1,16 @@
 import { upgradeState } from "./versions.mjs";
-import { assertStateCapacity } from "../../shared/sync-capacity.mjs";
+import {
+  assertStateCapacity,
+  assertStateCapacityFrom,
+} from "../../shared/sync-capacity.mjs";
 import { combineFileEntries } from "./file-entries.mjs";
 import { publishBranchJson } from "./branch-publication.mjs";
 import { loadCheckpoint, snapshotCounts } from "./checkpoint.mjs";
-import { ProtocolError, protocolValidation } from "./errors.mjs";
+import {
+  ProtocolError,
+  protocolValidation,
+  isSyncInterruption,
+} from "./errors.mjs";
 import { encodeSnapshot, decodeSnapshot } from "./snapshot.mjs";
 import { randomUUID } from "node:crypto";
 import {
@@ -84,9 +91,17 @@ export class SyncService {
       deferImages,
     });
     this.running = null;
+    this.sizes = new WeakMap();
   }
-  assertCapacity(state) {
-    return assertStateCapacity(state, this.stateLimits);
+  // With the state it was reduced from, measure only the changed records.
+  assertCapacity(state, base) {
+    const known =
+        base && (this.sizes.get(base) || this.store.measuredSize?.(base)),
+      size = known
+        ? assertStateCapacityFrom(base, known, state, this.stateLimits)
+        : assertStateCapacity(state, this.stateLimits);
+    this.sizes.set(state, size);
+    return size;
   }
   run(options = {}) {
     if (this.running) return this.running;
@@ -164,7 +179,8 @@ export class SyncService {
     )
       link = await loadCheckpoint(this, link, head);
     const chain = await this.readChain(head, link.canonical_head);
-    let state = await this.store.readState();
+    // An unchanged head needs no canonical state at all.
+    let state = chain.length ? await this.store.readState() : null;
     for (const commit of chain.slice(0, this.maxCommits)) {
       const previousState = state;
       const parent = link.canonical_head || null;
@@ -219,7 +235,8 @@ export class SyncService {
           "Repository identity mismatch",
         );
       let operations = [],
-        transition = false;
+        transition = false,
+        verifiedHash;
       if (!parent) {
         if (
           !manifest.genesis ||
@@ -400,6 +417,7 @@ export class SyncService {
               "SYNC_INTEGRITY",
               "Reducer result checksum mismatch",
             );
+          verifiedHash = envelope.resultHash;
         } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
       if (protocolVersion(state) > this.maxProtocol)
@@ -407,15 +425,18 @@ export class SyncService {
           "SYNC_VERSION",
           "Unsupported protocol version; canonical cursor is unchanged",
         );
-      this.assertCapacity(state);
+      const stateSize = this.assertCapacity(state, previousState);
       if (!this.deferImages)
         await this.images?.receive?.(state, commit.oid, this.transport, {
           added,
           verifiedImages,
+          previousState: parent ? previousState : null,
         });
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
         transition,
+        stateHash: verifiedHash,
+        stateSize,
       });
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
@@ -487,13 +508,11 @@ export class SyncService {
             this.maxOperations,
           );
           if (!pending.length) break;
-          let state = reduceMany(
-            await this.store.readState(),
-            pending,
-            this.identity,
-            { persistentReceipts: true },
-          );
-          this.assertCapacity(state);
+          const previousState = await this.store.readState();
+          let state = reduceMany(previousState, pending, this.identity, {
+            persistentReceipts: true,
+          });
+          const stateSize = this.assertCapacity(state, previousState);
           const parent = link.canonical_head;
           if (!parent) throw new Error("Initial publication required");
           const event = {
@@ -510,16 +529,27 @@ export class SyncService {
             this.images?.publish?.(state, {
               parent,
               transport: this.transport,
+              operations: pending,
             }),
           );
           const oid = await this.transport.createCandidate(parent, files);
+          let published;
           try {
-            await this.transport.publish(oid, parent);
+            published = await this.transport.publish(oid, parent);
           } catch (error) {
             await this.receive(await this.store.readLink());
             throw error;
           }
-          link = await this.receive(await this.store.readLink());
+          // false: a peer moved the branch first, so receive what is there.
+          link =
+            published === true
+              ? await this.commitPublished(link, oid, state, {
+                  operations: pending.map((op) => op.opId),
+                  previousState,
+                  stateHash: event.resultHash,
+                  stateSize,
+                })
+              : await this.receive(await this.store.readLink());
           if (link.canonical_head === oid) break;
         }
       if (updateStatus) await this.status(link);
@@ -531,6 +561,26 @@ export class SyncService {
     } finally {
       await this.store.release(owner);
     }
+  }
+  // The commit just published (the branch now points at it) applies exactly
+  // these operations to C, which is what receiving it would recompute. Record
+  // that result directly instead of reading, reducing, hashing and checking
+  // images for the whole state again; anything unexpected falls back to
+  // receiving the commit like any other.
+  async commitPublished(link, oid, state, { operations, ...options }) {
+    try {
+      await this.store.commitCanonical(
+        link.canonical_head,
+        oid,
+        state,
+        operations,
+        options,
+      );
+    } catch (error) {
+      if (isSyncInterruption(error)) throw error;
+      return this.receive(await this.store.readLink());
+    }
+    return this.store.readLink();
   }
   async status(link) {
     if (!link.canonical_head) return;
