@@ -119,7 +119,16 @@ if (existsSync(${JSON.stringify(acquired)})) {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     db.close();
-    rmSync(directory, { recursive: true, force: true });
+    // Terminating the sync worker does not stop a git child it started, which
+    // may still write a temporary index into the cache while it is removed.
+    for (let attempt = 0; ; attempt++)
+      try {
+        rmSync(directory, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (error.code !== "ENOTEMPTY" || attempt >= 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
   });
   if (connected)
     ok(

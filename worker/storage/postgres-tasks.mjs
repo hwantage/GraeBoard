@@ -231,10 +231,11 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
             }
             format = await s.put("formats", [], undo.payload.formatting);
           } else {
-            const rows = await s.list("task");
+            const rows = await s.list("task"),
+              byId = new Map(rows.map((r) => [r.key[0], r]));
             for (const scope of d.format.scopes)
-              for (const id of scope.rows || rows.map((r) => r.key[0])) {
-                const row = requireTask(rows.find((r) => r.key[0] === id));
+              for (const id of scope.rows || byId.keys()) {
+                const row = requireTask(byId.get(id));
                 assert(
                   d.format.expectedTasks?.[id] === stamp(row),
                   409,
@@ -278,7 +279,26 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
                 rules.splice(index, 1);
             }
             format = await s.put("formats", [], { rules });
-            for (const c of await s.list("cell")) {
+            // Only a cell inside a scope that sets one of these style
+            // properties itself changes, so no other cell is read.
+            const union = (field) =>
+              d.format.scopes.some((scope) => scope[field] == null)
+                ? null
+                : [
+                    ...new Set(
+                      d.format.scopes.flatMap((scope) => scope[field]),
+                    ),
+                  ];
+            for (const c of await s.cellsStyling(
+              [
+                ...new Set(
+                  d.format.scopes.flatMap((scope) =>
+                    Object.keys(scope.style || {}),
+                  ),
+                ),
+              ],
+              { columns: union("keys"), rows: union("rows") },
+            )) {
               const style = { ...c.payload.style };
               for (const scope of d.format.scopes)
                 if (scopeMatches(scope, c.key[0], c.key[1]))
@@ -313,7 +333,12 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
             assert(!seen.has(key), 400, "같은 셀을 중복 수정할 수 없습니다.");
             seen.add(key);
             const row = requireTask(await s.get("task", [change.taskId])),
-              task = change.style !== undefined ? await taskView(s, row) : null,
+              // Normalizing a style reads the row's formatting and base styles,
+              // not the team's cells or documents.
+              task =
+                change.style !== undefined
+                  ? await taskView(s, row, { cells: [], documents: [] })
+                  : null,
               old = await s.get("cell", [change.taskId, change.key]),
               previous = old
                 ? { ...old.payload, version: old.revision }

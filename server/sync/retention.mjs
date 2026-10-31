@@ -89,15 +89,18 @@ export function auditImageReferences(value, teamId) {
   ];
 }
 
+// `records` may narrow the scan to changed records; exclusion still consults
+// the whole projection for parents.
 export function installImageReferences(
   state,
   pending,
   retentions,
   projected = state.entities,
   teamId,
+  records = projected,
 ) {
   const urls = new Set();
-  for (const record of Object.values(projected))
+  for (const record of Object.values(records))
     if (!record.deleted && !isExcluded(record, projected, retentions)) {
       for (const url of imageReferences(record.payload, teamId)) urls.add(url);
     }
