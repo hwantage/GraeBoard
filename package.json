@@ -29,6 +29,7 @@
     "sync:maintenance-recover": "node --env-file-if-exists=.env scripts/sync-maintenance-recover.mjs",
     "sync:recover": "node --env-file-if-exists=.env scripts/sync-recover.mjs",
     "sync:external-import": "node scripts/sync-external-import.mjs",
+    "dev:snapshot-import": "node --env-file-if-exists=.env scripts/dev-snapshot-import.mjs",
     "transfer": "node --env-file-if-exists=.env scripts/transfer.mjs",
     "backup:external": "node --env-file-if-exists=.env scripts/backup-external.mjs",
     "restore:external": "node --env-file-if-exists=.env scripts/restore-external.mjs",
