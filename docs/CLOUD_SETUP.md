@@ -287,7 +287,7 @@ Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settin
 
 이전 방식의 Variable `TEAM_SITE_DEPLOY`·`CLOUDFLARE_ACCOUNT_ID`·`SUPABASE_PROJECT_REF`·`GATEWAY_CONFIG`만 있는 Fork도 그대로 배포되며, 이 경우 gateway Secret과 Supabase Edge Secrets는 콘솔에서 직접 관리하고 자동 배포가 바꾸지 않습니다. 배포 스크립트는 release 소스에 들어 있으므로 원본의 `main`과 `release`를 함께 갱신하고, 이미 만든 Fork는 **Sync fork**로 새 워크플로를 받습니다.
 
-GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면의 **Sync fork**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
+GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면에서 `main`과 `release` 브랜치를 각각 골라 **Sync fork → Update branch**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
@@ -752,7 +752,7 @@ dry-run은 manifest·모든 자료/이미지 해시·대상 DB 형식·팀 UUID�
 
 새 편집은 한도 초과 시 `413 / EXTERNAL_SYNC_CAPACITY`로 중단하고 기존 C/P/L을 보존합니다. Git 발신·수신도 원격 바이트·압축 해제 snapshot·reducer 결과를 검사하고 마지막 정상 cursor를 유지합니다. 한 실행 인스턴스의 동기화 계산을 직렬화하고 한 수신 주기는 최대 4개 커밋을 처리합니다. 초과한 팀을 작은 자료로 덮어쓰거나 부분 가져오기를 성공으로 처리하지 않습니다. 사이트 정리는 C·receipts를 줄이지 않으므로 이 상한을 늘리지 않습니다.
 
-일반 PG 조회는 read-only 트랜잭션으로 쓰기용 advisory lock을 잡지 않습니다. 저장은 현재 한도 내의 C/P/receipt/충돌 전체를 읽고 투영하므로 비용이 전체 상태 크기에 비례합니다. Edge 전환만으로 증분 저장 최적화나 PG 지원 규모가 달라지지는 않습니다.
+일반 PG 조회는 read-only 트랜잭션으로 쓰기용 advisory lock을 잡지 않습니다. 저장은 바뀐 항목과 그 상위 항목, 미전송 명령이 건드린 항목, 검증에 필요한 태그·영수증·충돌만 읽어 투영하고, 용량은 SQL 합계에 이번 변경분만 더해 확인합니다. 열·행 서식은 그 범위에서 해당 속성을 가진 셀만 읽고, 업무 한 건의 응답은 그 업무의 셀·문서만 읽습니다. 게시는 이벤트 형식에 필요한 결과 해시 때문에 전체 상태를 한 번 읽지만, 자기 게시 직후 같은 상태를 다시 받거나 해시하지 않으며 DB 반영과 R2 이미지 확인은 바뀐 행만 처리합니다. 업무 목록 조회는 표시할 셀 전체를 읽으므로 팀 규모에 비례합니다.
 
 ### 현재 운영 경로에서 확인할 제한
 

@@ -1431,8 +1431,10 @@ export default function SyncSetupWizard({
               <ol>
                 <li>
                   Fork 저장소 첫 화면에 <b>This branch is … behind</b>가 보이면{" "}
-                  <b>Sync fork → Update branch</b>로 원본의 최신 배포 설정을
-                  받습니다.
+                  <b>Sync fork → Update branch</b>를 누릅니다. 왼쪽 위 브랜치
+                  선택을 <code>release</code>로 바꿔 한 번 더 누릅니다. 원본의
+                  배포 설정 파일이 바뀐 버전은 자동 동기화가 받을 수 없어 두
+                  브랜치 모두 이렇게 맞춥니다.
                 </li>
                 <li>
                   <b>Actions</b> 탭에서 워크플로 사용을 허용합니다(Fork는 처음에
@@ -1458,9 +1460,10 @@ export default function SyncSetupWizard({
               <p>
                 Pages 프로젝트{" "}
                 <b>Settings → Bindings → Add → Service binding</b>에 이름{" "}
-                <b>GRAEBOARD_BACKEND</b>, 대상 <code>{draft.gateway}</code>를
-                지정하고 Production/Preview를 각각 확인한 뒤 <b>Deployments</b>
-                에서 다시 배포합니다.{" "}
+                <b>GRAEBOARD_BACKEND</b>, 대상 <code>{draft.gateway}</code>,
+                Entrypoint는 <b>Default</b>로 지정하고 Production/Preview를 각각
+                확인합니다. binding은 새 배포부터 적용되므로 <b>Deployments</b>
+                에서 최신 배포의 <b>⋯ → Retry deployment</b>를 누릅니다.{" "}
                 <Link href={docs.pages}>Pages binding</Link>
               </p>
               <p>

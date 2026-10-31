@@ -92,9 +92,9 @@ export class PostgresTaskCommands {
             body,
             fields,
           ));
-          documents = (await s.list("document"))
-            .filter((d) => d.key[0] === "task" && d.key[1] === body.sourceId)
-            .map((d) => ({ id: d.key[2], ...d.payload }));
+          documents = (
+            await s.listChildren("document", ["task", body.sourceId])
+          ).map((d) => ({ id: d.key[2], ...d.payload }));
         }
         if (body.copiedRow) {
           ({

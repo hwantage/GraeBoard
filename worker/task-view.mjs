@@ -33,11 +33,31 @@ export async function settingsFor(s) {
     revision: row?.revision || 0,
   };
 }
-export async function taskView(s, row, { cells, documents, format } = {}) {
+// A list passes formatViews so tasks under the same rules share one formatting
+// object; the response encoder then serializes the team format once, not per task.
+const taskFormatting = (format, id, formatViews) => {
+  const rules = [],
+    applied = [];
+  format.payload.rules.forEach((rule, index) => {
+    if (rule.rows && !rule.rows.includes(id)) return;
+    rules.push(rule);
+    applied.push(index);
+  });
+  const key = applied.join(",");
+  if (formatViews?.has(key)) return formatViews.get(key);
+  const formatting = { ...format.payload, rules, revision: format.revision };
+  formatViews?.set(key, formatting);
+  return formatting;
+};
+export async function taskView(
+  s,
+  row,
+  { cells, documents, format, formatViews } = {},
+) {
   const id = row.key[0],
     excluded = await excludedYears(s);
-  cells ||= await s.list("cell");
-  documents ||= await s.list("document");
+  cells ||= await s.listChildren("cell", [id]);
+  documents ||= await s.listChildren("document", ["task", id]);
   format ||= await s.get("formats", []);
   const docs = documents.filter(
     (d) => d.key[0] === "task" && d.key[1] === id && !d.deleted,
@@ -55,17 +75,7 @@ export async function taskView(s, row, { cells, documents, format } = {}) {
     ),
     documentCount: docs.length,
     hasDocument: docs.some((d) => !!d.payload.markdown.trim()),
-    ...(format
-      ? {
-          formatting: {
-            ...format.payload,
-            rules: format.payload.rules.filter(
-              (rule) => !rule.rows || rule.rows.includes(id),
-            ),
-            revision: format.revision,
-          },
-        }
-      : {}),
+    ...(format ? { formatting: taskFormatting(format, id, formatViews) } : {}),
   };
 }
 export async function taskList(
@@ -80,7 +90,8 @@ export async function taskList(
     format = await s.get("formats", []),
     years = year ? periodYears(year, startMonth) : null,
     cellGroups = new Map(),
-    docGroups = new Map();
+    docGroups = new Map(),
+    formatViews = new Map();
   for (const c of cells) {
     if (!cellGroups.has(c.key[0])) cellGroups.set(c.key[0], []);
     cellGroups.get(c.key[0]).push(c);
@@ -109,6 +120,7 @@ export async function taskList(
           cells: cellGroups.get(r.key[0]) || [],
           documents: docGroups.get(r.key[0]) || [],
           format,
+          formatViews,
         }),
       ),
   );
