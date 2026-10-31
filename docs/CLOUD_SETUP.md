@@ -281,13 +281,13 @@ Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settin
 | ------------- | ------------------- | -------------------------------------------------------------------------------------------- |
 | Variable      | `TEAM_SITE_CONFIG`  | 설정 안내가 만든 JSON(Cloudflare Account ID, Supabase Reference ID, gateway 설정, Edge 설정) |
 | Secret        | `TEAM_SITE_SECRETS` | 설정 안내가 만든 JSON(`CLOUDFLARE_API_TOKEN`·`SUPABASE_ACCESS_TOKEN`·`GIT_TEAM`과 키 세 개)  |
-| Secret (선택) | `SYNC_TOKEN`        | Fork에 대한 Contents·Workflows 쓰기 권한 토큰                                                |
+| Secret (선택) | `SYNC_TOKEN`        | Fork에 대한 Contents·Workflows 쓰기 권한 토큰([등록 방법](#sync_token-등록-선택))            |
 
 토큰을 바꾸거나 값을 고칠 때는 설정 안내에서 다시 만들어 같은 이름의 값을 **Update**로 덮어씁니다. GitHub에 넣은 값은 다시 볼 수 없지만 설정 안내가 언제든 다시 만들 수 있으므로 따로 보관하지 않습니다. PC에서 직접 배포할 때는 두 값을 `team-site-config.json`·`team-site-secrets.json`(Git 제외 대상)으로 저장해 같은 스크립트를 실행합니다.
 
 이전 방식의 Variable `TEAM_SITE_DEPLOY`·`CLOUDFLARE_ACCOUNT_ID`·`SUPABASE_PROJECT_REF`·`GATEWAY_CONFIG`만 있는 Fork도 그대로 배포되며, 이 경우 gateway Secret과 Supabase Edge Secrets는 콘솔에서 직접 관리하고 자동 배포가 바꾸지 않습니다. 배포 스크립트는 release 소스에 들어 있으므로 원본의 `main`과 `release`를 함께 갱신하고, 이미 만든 Fork는 **Sync fork**로 새 워크플로를 받습니다.
 
-GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면에서 `main`과 `release` 브랜치를 각각 골라 **Sync fork → Update branch**로 맞추거나 `SYNC_TOKEN`을 등록합니다. 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
+GitHub의 기본 토큰은 워크플로 파일을 쓸 수 없으므로, 원본의 워크플로 파일이 바뀐 release는 동기화가 실패로 표시됩니다. 그때는 Fork 화면에서 `main`과 `release` 브랜치를 각각 골라 **Sync fork → Update branch**로 맞추거나 `SYNC_TOKEN`을 등록합니다([새 release 내보내기와 팀 Fork 반영](#새-release-내보내기와-팀-fork-반영)). 동기화 형식이 바뀌는 릴리스는 외부·사내 배포 순서가 정해져 있으므로([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)) `release`로 올리는 시점을 사내 배포 계획에 맞춥니다.
 
 Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)를 따릅니다. 자체 도메인으로 Worker에 직접 접속하는 기존 방식은 `APP_ORIGIN`과 같은 호스트를 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)에 연결합니다.
 
@@ -302,6 +302,46 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 7. 양쪽에서 작은 업무 변경과 문서 이미지를 저장해 반대쪽에서 확인합니다. 같은 내부 서버의 다른 브라우저는 Git 주기를 기다리지 않고 SSE로 즉시 갱신되는지 확인합니다.
 
 **이 팀에 연결** 직후 `일시정지`, `Git 반영: 아직 없음`은 최초 게시 전 상태입니다. **연결 검사**가 성공해야 **초기 게시** 버튼이 활성화됩니다. Git 검사는 `api.github.com`에서 비공개 저장소 조회와 임시 `graeboard-probe/<UUID>` 브랜치 생성·삭제를 확인합니다. 실제 초기 게시의 `github.com` Git CLI 통신과 전체 자료·이미지 전송은 별도 단계입니다. 내부 초기 게시와 외부 가져오기를 마치기 전에는 `외부망 반영: 확인 대기`를 완료로 해석하지 않습니다.
+
+### 새 release 내보내기와 팀 Fork 반영
+
+원본 관리자가 `main`의 변경을 팀 사이트에 내보내는 절차입니다. 저장 형식이 바뀌는 릴리스는 [내부·외부 배포 순서](OPERATIONS.md#내부외부-git-동기화-운영)를 먼저 확인합니다.
+
+**1. 원본 `release` 올리기.** 아래 둘 중 하나로 합니다. 원본의 `release`에는 보호 규칙이 없어 관리자가 바로 병합합니다.
+
+- 명령: `git push origin main:release`. `release`가 `main`의 이전 커밋일 때만 성공합니다.
+- GitHub 화면: `https://github.com/hwantage/GraeBoard/compare/release...main`(또는 **Pull requests → New pull request**에서 base `release`, compare `main`)에서 **Create pull request**를 누릅니다. 병합 버튼 옆 **▼**에서 **Create a merge commit**을 고르고 **Merge pull request → Confirm merge**를 누릅니다. Squash는 `main`에 없는 커밋을 `release`에 만들어 다음 반영 때 충돌할 수 있으므로 쓰지 않습니다. 병합 뒤 나오는 **Delete branch**는 `main`을 지우는 버튼이므로 누르지 않습니다. 화면으로 병합하면 `release`에 병합 커밋이 생겨 이후 명령 방식은 거절되므로, 다음 릴리스도 같은 화면 방식으로 올립니다.
+
+원본 저장소의 Actions에 "팀 사이트 release 배포"가 skipped로 표시되는 것은 원본에 배포 설정이 없기 때문이며 정상입니다.
+
+**2. 팀 Fork 반영.** 팀은 따로 할 일이 없습니다. 워크플로의 주기 실행이 원본 `release`·`main`을 Fork에 합치고 배포합니다. 주기는 30분으로 지정했지만 GitHub가 혼잡하면 실행을 미루므로 실제 간격은 40~60분이었습니다(2026-11-01 somansadev Fork 실행 기록). 바로 배포하려면 Fork의 **Actions → 팀 사이트 release 배포 → Run workflow**를 누릅니다. "release가 그대로여도 다시 배포"는 비워 둡니다. 이 실행이 **Sync fork**와 같은 합치기를 먼저 하므로 Fork에서 Sync fork를 따로 누르지 않습니다. 원본 `release`를 올리기 전에 실행하면 받을 변경이 없어 "이미 배포했습니다"로 배포를 건너뜁니다.
+
+**3. 확인.** 실행의 **sync**·**deploy** 작업이 모두 성공하고 Fork `release`의 최신 커밋이 원본 `release`와 같은지 봅니다. 배포를 마친 커밋은 Fork의 `team-site-deployed` 태그가 가리킵니다. 이어서 외부 사이트에서 바뀐 기능을 확인합니다.
+
+**Sync fork가 필요한 경우.** 다음 경우에는 sync가 실패하거나 `main` 경고가 남습니다. Fork 화면 왼쪽 위 브랜치 선택에서 `main`과 `release`를 차례로 골라 각각 **Sync fork → Update branch**를 누른 뒤 **Run workflow**를 다시 실행합니다.
+
+- 릴리스가 `.github/workflows/` 파일을 바꿨고 `SYNC_TOKEN`이 없을 때. GitHub 기본 토큰은 워크플로 파일을 쓸 수 없습니다.
+- Fork의 `release`·`main`에 원본에 없는 커밋이 있어 합칠 수 없을 때.
+
+**주기 실행이 멈추는 경우.** 공개 저장소에서 60일 동안 활동이 없으면 GitHub가 주기 실행을 자동으로 끕니다. 끄기 전에 메일로 알리며, Fork의 **Actions** 탭에서 해당 워크플로를 골라 **Enable workflow**로 다시 켭니다. 꺼져 있는 동안에도 **Run workflow**로 직접 실행할 수 있습니다.
+
+#### SYNC_TOKEN 등록 (선택)
+
+워크플로 파일이 바뀐 릴리스까지 자동으로 받으려면 Fork에 `SYNC_TOKEN` Secret을 등록합니다. 워크플로의 sync 단계는 `SYNC_TOKEN`이 있으면 기본 토큰 대신 이 토큰으로 합칩니다.
+
+1. **Fork를 소유한 계정**으로 GitHub에 로그인합니다. 조직 소유 Fork는 조직 설정의 **Personal access tokens**에서 fine-grained 토큰 사용을 허용해야 하며, 승인이 필요하면 조직 관리자가 승인합니다.
+2. 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**으로 이동합니다.
+3. 다음과 같이 입력합니다.
+   - **Token name**: 예) `GraeBoard release sync`
+   - **Expiration**: 원하는 기간(최대 1년)
+   - **Resource owner**: Fork를 소유한 계정 또는 조직
+   - **Repository access**: **Only select repositories**에서 Fork 하나만 선택
+   - **Repository permissions**: **Contents**와 **Workflows**를 **Read and write**로 지정합니다. **Metadata: Read-only**는 자동으로 선택되며 나머지는 No access로 둡니다.
+4. **Generate token**을 누르고 표시된 값(`github_pat_…`)을 복사합니다. 이 화면을 벗어나면 다시 볼 수 없습니다.
+5. Fork의 **Settings → Secrets and variables → Actions → Secrets → New repository secret**에서 Name을 `SYNC_TOKEN`으로 하여 저장합니다.
+6. **Run workflow**로 확인합니다. sync 로그에 "main은 동기화하지 못했습니다" 경고가 없으면 정상입니다.
+
+토큰이 만료되거나 삭제돼도 Secret이 남아 있으면 sync가 그 토큰으로 실패해 일반 릴리스 배포도 멈춥니다. 만료 안내 메일을 받으면 새 토큰으로 같은 Secret을 **Update**하고, 더 쓰지 않을 때는 Secret을 지워 기본 토큰으로 돌아갑니다. 이 토큰으로 `release`를 갱신하면 그 push가 워크플로를 한 번 더 실행합니다. 같은 실행 묶음은 앞 실행이 끝날 때까지 기다린 뒤 이미 배포한 커밋으로 판단해 다시 배포하지 않습니다.
 
 ### 개발용 외부 자료를 비우고 사내 기존 팀으로 처음 연결
 
