@@ -43,7 +43,9 @@ export function boundStore(
     slices = true,
   } = {},
 ) {
-  let owner = null;
+  let owner = null,
+    // Whether this run's SQL hash of C matched the stored canonical hash.
+    canonicalVerified = false;
   // SQL already measures C before it is read; the service derives the size of
   // each reduced state from it instead of serializing the whole state again.
   const measured = new WeakMap();
@@ -92,15 +94,20 @@ export function boundStore(
                 return null;
               }
               mark("reduce");
+              // The SQL canonical text of C is checked against the stored
+              // hash once per run; later commits hash only the result.
               const hashes = await canonicalHashes(
                 tx,
                 teamId,
                 sliceChanges(base, state),
+                { current: !canonicalVerified },
               );
-              mark("canonicalHash", {
-                verified: hashes?.current === link.canonical_hash,
-              });
-              if (hashes?.current !== link.canonical_hash) return null;
+              const verified =
+                !!hashes &&
+                (canonicalVerified || hashes.current === link.canonical_hash);
+              mark("canonicalHash", { verified, reused: canonicalVerified });
+              if (!verified) return null;
+              canonicalVerified = true;
               const { size, stateBytes } = await measureTransactionCapacity(
                 tx,
                 teamId,
