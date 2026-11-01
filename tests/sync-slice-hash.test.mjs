@@ -115,6 +115,18 @@ test("PostgreSQL hashes C and C with slice changes exactly as stateHash does", a
       await canonicalHashes(tx, teamId, sliceChanges(base, next)),
       { current: digest(stored), next: digest(whole) },
     );
+    // A run that already verified C hashes only the result.
+    assert.deepEqual(
+      await canonicalHashes(tx, teamId, sliceChanges(base, next), {
+        current: false,
+      }),
+      { current: null, next: digest(whole) },
+    );
+    // The hash may run past the pool's statement limit on a small database.
+    assert.equal(
+      (await tx.query("SHOW statement_timeout")).rows[0].statement_timeout,
+      "2min",
+    );
     // Keys outside the BMP sort differently by UTF-8 byte and UTF-16 unit.
     const astral = add(emptyState(), [
       record("tag", ["tag-😀"], { name: "x", userId: "u" }),

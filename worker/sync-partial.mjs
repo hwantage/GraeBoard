@@ -248,13 +248,20 @@ const HASHES_SQL = `WITH
   en AS ${overlaid("e", "ec")},
   rn AS ${overlaid("r", "rc")},
   cn AS ${overlaid("c", "cc")}
-SELECT ${stateText("c", "e", "r")} AS current, ${stateText("cn", "en", "rn")} AS next`;
+SELECT CASE WHEN $8 THEN ${stateText("c", "e", "r")} END AS current, ${stateText("cn", "en", "rn")} AS next`;
 
 // stateHash() of C and of C with these changes, computed by PostgreSQL from
 // the stored canonical text so the caller never loads or serializes C. Returns
 // null when the key order could differ from canonical(); the caller compares
-// current with the stored canonical hash before trusting next.
-export async function canonicalHashes(tx, teamId, changes) {
+// current with the stored canonical hash before trusting next. A caller that
+// already verified current in this run passes { current: false } and gets
+// only next, half the work.
+export async function canonicalHashes(
+  tx,
+  teamId,
+  changes,
+  { current = true } = {},
+) {
   const sections = ["entities", "receipts", "conflicts"];
   if (
     sections.some((section) =>
@@ -262,6 +269,13 @@ export async function canonicalHashes(tx, teamId, changes) {
     )
   )
     return null;
+  // Each hash sorts and joins the whole team's canonical text (about 19MB for
+  // 31,000 records). A small database exceeds the pool's 15-second statement
+  // limit when the sort spills to disk, so this transaction alone may take
+  // longer and sort in memory.
+  await tx.query(
+    "SET LOCAL statement_timeout = '120s'; SET LOCAL work_mem = '64MB'",
+  );
   const row = (
     await tx.query(HASHES_SQL, [
       teamId,
@@ -269,6 +283,7 @@ export async function canonicalHashes(tx, teamId, changes) {
         changes[section].ids,
         changes[section].bodies,
       ]),
+      current,
     ])
   ).rows[0];
   return { current: row.current, next: row.next };
