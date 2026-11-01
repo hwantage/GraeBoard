@@ -11,6 +11,7 @@ import {
   visibleWeeks,
   cell,
 } from "../../shared/domain.js";
+import { pickColor } from "./colors";
 
 async function selectFormat(control: Locator, value: string) {
   const trigger = control.and(control.page().getByRole("combobox"));
@@ -823,7 +824,7 @@ test("기본 서식 공통 툴바는 미리보기·실행취소·테두리와 �
   const preview = page.locator(".preview-cell").first();
   await selectDefaultFormat(page, "글자 크기", "16");
   await panel.getByRole("button", { name: "굵게", exact: true }).click();
-  await panel.getByLabel("배경색", { exact: true }).fill("#fff4aa");
+  await pickColor(panel, "배경색", "#fff4aa");
   await expect(preview).toHaveCSS("background-color", "rgb(255, 244, 170)");
   await panel.getByRole("button", { name: "실행취소", exact: true }).click();
   await expect(preview).toHaveCSS("background-color", "rgb(255, 255, 255)");
@@ -2407,7 +2408,7 @@ test("열 머리글 드래그·Shift 선택은 전체 열에 서식을 적용하
   );
   await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
-    page.getByLabel("배경색", { exact: true }).fill("#d1eee6"),
+    pickColor(page, "배경색", "#d1eee6"),
   ]);
   const saved = (
     await (
@@ -2557,7 +2558,7 @@ test("2,000셀 이상 열 전체 서식은 화면 밖 행·실행취소를 지�
   ).toHaveCount(keys.length);
   await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
-    page.getByLabel("배경색", { exact: true }).fill("#d1eee6"),
+    pickColor(page, "배경색", "#d1eee6"),
   ]);
   const readTasks = async () =>
     (
@@ -3322,6 +3323,22 @@ test("신규 팀 양식 선택으로 속성과 테마·기본 서식만 새 팀�
     .toBeCloseTo((16 * 4) / 3, 1);
 });
 
+test("설정 왼쪽 아래에 빌드 버전과 GitHub 저장소 링크를 표시한다", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+  await expect(dialog.locator(".settings-version")).toContainText(
+    /^버전 [0-9a-f]{7,} · \d{4}-\d{2}-\d{2}$/,
+  );
+  const link = dialog.getByRole("link", { name: "GitHub 저장소", exact: true });
+  await expect(link).toHaveAttribute(
+    "href",
+    "https://github.com/hwantage/GraeBoard",
+  );
+  await expect(link).toHaveAttribute("target", "_blank");
+});
+
 test("팀 일반 설정의 팀 삭제는 경고 취소·확인 후 데이터와 선택을 갱신한다", async ({
   page,
 }, info) => {
@@ -3626,9 +3643,9 @@ test("편집·기본 서식·실행취소·새로고침 복원", async ({ page }
   await cell.click();
   await page.getByRole("button", { name: "굵게", exact: true }).click();
   await expect(cell).toHaveCSS("font-weight", "700");
-  await page.getByLabel("글자 색상", { exact: true }).fill("#24796d");
+  await pickColor(page, "글자 색상", "#24796d");
   await expect(cell).toHaveCSS("color", "rgb(36, 121, 109)");
-  await page.getByLabel("배경색", { exact: true }).fill("#d1eee6");
+  await pickColor(page, "배경색", "#d1eee6");
   await expect(cell).toHaveCSS("background-color", "rgb(209, 238, 230)");
   await selectFormat(page.getByLabel("글꼴", { exact: true }), "Noto Serif KR");
   await expect(cell).toHaveCSS("font-family", /Noto Serif KR/);
@@ -3715,7 +3732,7 @@ test("숨긴 행·열을 포함한 배경색·글자·테두리는 복원과 실
       ),
       action(),
     ]);
-  await save(() => page.getByLabel("배경색", { exact: true }).fill("#d1eee6"));
+  await save(() => pickColor(page, "배경색", "#d1eee6"));
   await save(() =>
     page.getByRole("button", { name: "굵게", exact: true }).click(),
   );
@@ -7756,7 +7773,7 @@ test("복사한 HTML은 서식을 유지하고 일반 텍스트는 대상 서식
   await source.click();
   await selectFormat(page.getByLabel("글자 크기"), "18");
   await expect(source).toHaveCSS("font-size", "24px");
-  await page.getByLabel("배경색", { exact: true }).fill("#d1eee6");
+  await pickColor(page, "배경색", "#d1eee6");
   await expect(source).toHaveCSS("background-color", "rgb(209, 238, 230)");
   const copied = await copyContents(page);
   const contents = {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
 import { unpack } from "../../shared/compact.js";
 import { defaultView, normalizeView, cell } from "../../shared/domain.js";
+import { pickColor } from "./colors";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 async function post(page: Page, path: string, data: unknown) {
@@ -352,7 +353,7 @@ test("사본 저장 실패는 입력과 탭을 보존하고 재시도 후 전환
 test("사본 서식·행 복제·삭제·복원은 원본에 영향이 없다", async ({ page }) => {
   await openReport(page);
   await page.locator(`[data-cell="${taskIds[0]}:title"]`).click();
-  await page.getByLabel("배경색", { exact: true }).fill("#fff4aa");
+  await pickColor(page, "배경색", "#fff4aa");
   await saved(page);
   expect(
     cell((await get(page, `/reports/${reportId}`)).tasks[0], "title").style

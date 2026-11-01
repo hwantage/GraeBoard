@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 import { cell } from "../../shared/domain.js";
+import { pickColor } from "./colors";
 
 let teamId: string, ids: string[];
 async function post(page: Page, path: string, data: unknown) {
@@ -126,6 +127,27 @@ test("밑줄·취소선은 실제 텍스트에 표시되고 각각 해제하거�
   });
 });
 
+test("이미 적용된 색을 다시 골라도 선택한 모든 셀에 적용한다", async ({
+  page,
+}) => {
+  const first = page.locator(`[data-cell="${ids[0]}:title"]`),
+    second = page.locator(`[data-cell="${ids[1]}:title"]`);
+  await first.click();
+  await save(page, () => pickColor(page, "글자 색상", "#3c71ad"));
+  await expect(first).toHaveCSS("color", "rgb(60, 113, 173)");
+  // The selection ends on the colored cell, so the tool already shows this
+  // color. Picking it again must still reach the other selected cell.
+  await second.click();
+  await first.click({ modifiers: ["Shift"] });
+  await page.getByRole("button", { name: "글자 색상", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "글자 색상", exact: true }),
+    swatch = popup.getByRole("button", { name: "#3c71ad", exact: true });
+  await expect(swatch).toHaveAttribute("aria-pressed", "true");
+  await save(page, () => swatch.click());
+  await expect(second).toHaveCSS("color", "rgb(60, 113, 173)");
+  await expect(popup).toHaveCount(0);
+});
+
 test("행 전체 서식은 빈 주차를 저장하지 않고 월 이동·새해 1월·2월·새로고침에도 이어진다", async ({
   page,
 }) => {
@@ -133,9 +155,7 @@ test("행 전체 서식은 빈 주차를 저장하지 않고 월 이동·새해 
   await page
     .getByRole("button", { name: "1행 전체 선택", exact: true })
     .click();
-  const result = await save(page, () =>
-    page.getByLabel("배경색", { exact: true }).fill("#d1eee6"),
-  );
+  const result = await save(page, () => pickColor(page, "배경색", "#d1eee6"));
   expect(result.formatOperation).toBe(true);
   expect(result.cells).toHaveLength(0);
   const rows = await stored(page);
@@ -176,18 +196,12 @@ test("열 공통 서식과 한 셀 예외를 재적용·실행취소·재실행�
     exact: true,
   });
   await header.click();
-  await save(page, () =>
-    page.getByLabel("배경색", { exact: true }).fill("#d1eee6"),
-  );
+  await save(page, () => pickColor(page, "배경색", "#d1eee6"));
   await title.click();
-  await save(page, () =>
-    page.getByLabel("배경색", { exact: true }).fill("#cebdeb"),
-  );
+  await save(page, () => pickColor(page, "배경색", "#cebdeb"));
   await expect(title).toHaveCSS("background-color", "rgb(206, 189, 235)");
   await header.click();
-  await save(page, () =>
-    page.getByLabel("배경색", { exact: true }).fill("#ffe599"),
-  );
+  await save(page, () => pickColor(page, "배경색", "#ffe599"));
   await expect(title).toHaveCSS("background-color", "rgb(255, 229, 153)");
   await save(page, () =>
     page.getByRole("button", { name: "실행취소", exact: true }).click(),
@@ -261,9 +275,7 @@ test("변경 이력 JSON은 축약 키와 사전 참조를 표시하고 다른 �
   await page
     .getByRole("button", { name: "1행 전체 선택", exact: true })
     .click();
-  await save(page, () =>
-    page.getByLabel("배경색", { exact: true }).fill("#ffe6dd"),
-  );
+  await save(page, () => pickColor(page, "배경색", "#ffe6dd"));
   const result = await post(page, "/tasks", {
     teamId,
     year: 2026,

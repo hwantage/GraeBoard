@@ -40,6 +40,24 @@ async function member(ctx, teamId, userId) {
     active || (await ctx.data(teamId, (s) => s.get("person", [userId])));
   assert(reference, 404, "현재 팀의 활성 구성원을 선택하세요.");
 }
+// Every listed person must be an active member or a synced person reference;
+// one membership read and one person read cover them all.
+async function members(ctx, teamId, userIds) {
+  const active = new Set(
+    (await ctx.controlStore.members(teamId, { activeOnly: true })).map(
+      (user) => user.id,
+    ),
+  );
+  const others = userIds.filter((id) => !active.has(id));
+  if (!others.length) return;
+  const people = await ctx.data(teamId, (s) =>
+    s.getMany(
+      "person",
+      others.map((id) => [id]),
+    ),
+  );
+  assert(people.every(Boolean), 404, "현재 팀의 활성 구성원을 선택하세요.");
+}
 async function writable(ctx, teamId, userId) {
   await ctx.team(teamId);
   await member(ctx, teamId, userId);
@@ -85,6 +103,23 @@ async function layout(s, userId) {
       endDate: r.payload.endDate,
       lane: r.payload.lane,
     }));
+}
+// One owner's calendar for a range: the entries with their previews, the
+// weekly items and, for an owner (null for shared entries), the layout.
+async function calendarView(s, rows, items, owner, from, to) {
+  return {
+    entries: await Promise.all(rows.map((r) => entryView(s, r))),
+    weekly: items,
+    layout:
+      owner === undefined
+        ? []
+        : calendarConnectedLayout(await layout(s, owner), [
+            calendarViewRange(
+              rows.map((r) => r.payload),
+              { date: from, endDate: to },
+            ),
+          ]),
+  };
 }
 async function placementResult(s, userId) {
   const all = await layout(s, userId);
@@ -410,28 +445,52 @@ async function calendarOperation(ctx, operation, params, body, query) {
         "document",
         rows.map((r) => ["calendar", r.key[0], "main"]),
       );
-      return {
-        entries: await Promise.all(rows.map((r) => entryView(s, r))),
-        weekly:
-          query.get("scope") === "team"
-            ? []
-            : await weekly(s, query.get("userId"), from, to),
-        layout:
-          query.get("scope") === "team" || query.get("userId")
-            ? calendarConnectedLayout(
-                await layout(
-                  s,
-                  query.get("scope") === "team" ? null : query.get("userId"),
-                ),
-                [
-                  calendarViewRange(
-                    rows.map((r) => r.payload),
-                    { date: from, endDate: to },
-                  ),
-                ],
-              )
-            : [],
-      };
+      return calendarView(
+        s,
+        rows,
+        query.get("scope") === "team"
+          ? []
+          : await weekly(s, query.get("userId"), from, to),
+        query.get("scope") === "team" ? null : query.get("userId") || undefined,
+        from,
+        to,
+      );
+    });
+  }
+  if (operation === "listMemberEntries") {
+    const teamId = query.get("teamId"),
+      userIds = query.get("userIds").split(","),
+      from = dateSchema.parse(query.get("from")),
+      to = dateSchema.parse(query.get("to"));
+    validRange(from, to, true);
+    await members(ctx, teamId, userIds);
+    // The team's entries, documents and weekly items are read once for all
+    // listed members, not once per member.
+    return ctx.data(teamId, async (s) => {
+      const wanted = new Set(userIds),
+        rows = (await s.list("calendar")).filter(
+          (r) =>
+            !r.payload.deletedAt &&
+            wanted.has(r.payload.userId) &&
+            r.payload.date <= to &&
+            r.payload.endDate >= from,
+        );
+      await s.getMany(
+        "document",
+        rows.map((r) => ["calendar", r.key[0], "main"]),
+      );
+      const items = await weekly(s, null, from, to),
+        views = {};
+      for (const userId of userIds)
+        views[userId] = await calendarView(
+          s,
+          rows.filter((r) => r.payload.userId === userId),
+          items.filter((item) => item.userId === userId),
+          userId,
+          from,
+          to,
+        );
+      return { members: views };
     });
   }
   if (operation === "listTasks")
