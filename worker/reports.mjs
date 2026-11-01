@@ -8,7 +8,7 @@ import {
 
 import { assert } from "./access.mjs";
 
-import { documentList } from "./documents.mjs";
+import { documentListsUnder } from "./documents.mjs";
 
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
 import {
@@ -40,6 +40,8 @@ export async function reportRoutes(ctx, path, method, body, query) {
     );
     return ctx.data(teamId, async (s) => {
       const report = await s.get("report", [batch[1]]),
+        // Every requested task's documents from one read of the report's.
+        documents = await documentListsUnder(s, ["report", batch[1]], "report"),
         tasks = [];
       for (const id of body.taskIds) {
         assert(
@@ -49,11 +51,7 @@ export async function reportRoutes(ctx, path, method, body, query) {
         );
         tasks.push({
           id,
-          documents: await documentList(
-            s,
-            { prefix: ["report", batch[1], id], kind: "report" },
-            { content: true },
-          ),
+          documents: await documents.list(id, { content: true }),
         });
       }
       return { tasks };
