@@ -214,7 +214,7 @@ unset GRAEBOARD_RESET_PASSWORD
 
 ## 업데이트
 
-개발 소스는 원본 저장소의 `main`에 반영하고, 외부 팀 사이트에 내보낼 버전만 `release` 브랜치로 올립니다(`git push origin main:release`). 각 팀 Fork는 `release`를 따라 자기 Cloudflare·Supabase에 자동 배포하며([release 자동 배포](CLOUD_SETUP.md#release-자동-배포-팀-fork)), 사내 서버는 아래 절차로 따로 배포합니다. 동기화 형식이 바뀌는 릴리스는 [내부·외부 배포 순서](#내부외부-git-동기화-운영)에 맞춰 `release`로 올리는 시점을 정합니다.
+개발 소스는 원본 저장소의 `main`에 반영하고, 외부 팀 사이트에 내보낼 버전만 `release` 브랜치로 올립니다(`git push origin main:release` 또는 GitHub 화면의 `main` → `release` 풀 리퀘스트, [새 release 내보내기와 팀 Fork 반영](CLOUD_SETUP.md#새-release-내보내기와-팀-fork-반영)). 각 팀 Fork는 `release`를 따라 자기 Cloudflare·Supabase에 자동 배포하며([release 자동 배포](CLOUD_SETUP.md#release-자동-배포-팀-fork)), 사내 서버는 아래 절차로 따로 배포합니다. 동기화 형식이 바뀌는 릴리스는 [내부·외부 배포 순서](#내부외부-git-동기화-운영)에 맞춰 `release`로 올리는 시점을 정합니다.
 
 ### 배포 전 준비
 
