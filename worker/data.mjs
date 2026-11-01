@@ -390,14 +390,25 @@ export class DataSession {
   // The records a capture can consult (see CanonicalSlice): the changed keys
   // and those of pending operations, so the cost follows the change instead
   // of the team's whole state.
-  async projectedFor() {
-    const rows = (
+  //
+  // replaceable(link) names the last pending operation this capture replaces
+  // (see replaceableOperation); the projection then leaves it out, so the new
+  // operation runs from that operation's base to this capture's result.
+  async projectedFor(replaceable = () => null) {
+    let rows = (
         await this.tx.query(
-          "SELECT payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+          "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
           [this.teamId],
         )
       ).rows,
       pending = rows.map((row) => JSON.parse(row.payload));
+    const replaced = rows.length
+      ? replaceable(rows.at(-1), pending.at(-1))
+      : null;
+    if (replaced) {
+      rows = rows.slice(0, -1);
+      pending = pending.slice(0, -1);
+    }
     const slice = new CanonicalSlice(this.tx, this.teamId);
     for (const change of this.changes.values())
       slice.touch(change.entity, change.key);
@@ -425,6 +436,38 @@ export class DataSession {
       pending,
       entities: projectedState.entities,
       context,
+      replaced,
+    };
+  }
+  // A copy edit carries the whole copy, and edits arrive a second apart while
+  // someone types. When the last unsent operation only edits the same copy,
+  // this capture replaces it with one operation from that operation's base to
+  // the new result, so replaying and publishing cost one copy, not one per
+  // save. Only while no sync run holds the lease: taking the lease and this
+  // capture share the team lock, so a publish never reads a row replaced here.
+  replaceableOperation(link) {
+    const [change, ...others] = this.changes.values();
+    if (
+      link.lease_owner ||
+      others.length ||
+      change.entity !== "report" ||
+      !change.before ||
+      change.before.deleted ||
+      change.after.deleted
+    )
+      return () => null;
+    return (row, operation) => {
+      const [previous, ...rest] = operation.changes;
+      return row.status === "pending" &&
+        operation.protocol === 1 &&
+        operation.writerEpoch === link.writer_epoch &&
+        !operation.objects.length &&
+        !rest.length &&
+        previous.entity === "report" &&
+        previous.action === "edit" &&
+        previous.key[0] === change.key[0]
+        ? row.op_id
+        : null;
     };
   }
   // C's size in SQL plus what this capture changes, matching the whole-state
@@ -494,8 +537,8 @@ export class DataSession {
       409,
       "팀 데이터를 준비하고 있습니다. 잠시 후 다시 저장하세요.",
     );
-    const { state, projectedState, pending, entities, context } =
-      await this.projectedFor();
+    const { state, projectedState, pending, entities, context, replaced } =
+      await this.projectedFor(this.replaceableOperation(link));
     const opId = crypto.randomUUID(),
       dependsOn = new Set(),
       pendingIds = new Set(pending.map((op) => op.opId));
@@ -580,7 +623,15 @@ export class DataSession {
             : current.deleted
               ? "restore"
               : "edit";
-      const base = current?.payload ?? null;
+      const base = current?.payload ?? null,
+        fields = [
+          ...new Set([
+            ...Object.keys(base || {}),
+            ...Object.keys(desired || {}),
+          ]),
+        ].filter((k) => !equal(base?.[k], desired?.[k]));
+      // Edits that end where the replaced operation began leave nothing.
+      if (replaced && action === "edit" && !fields.length) continue;
       changes.push({
         entity,
         key,
@@ -592,14 +643,21 @@ export class DataSession {
         action,
         base,
         desired,
-        fields: [
-          ...new Set([
-            ...Object.keys(base || {}),
-            ...Object.keys(desired || {}),
-          ]),
-        ].filter((k) => !equal(base?.[k], desired?.[k])),
+        fields,
       });
     }
+    // The replaced operation goes even when the copy is back to its base.
+    if (replaced)
+      assert(
+        (
+          await this.tx.query(
+            "DELETE FROM sync_outbox WHERE team_id=$1 AND op_id=$2 AND status='pending'",
+            [this.teamId, replaced],
+          )
+        ).rowCount === 1,
+        409,
+        "동기화 기준이 변경되었습니다. 최신 내용을 확인하세요.",
+      );
     if (!changes.length) return;
     const operation = {
       protocol: version,

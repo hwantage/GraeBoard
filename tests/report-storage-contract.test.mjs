@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
+import { unpackReportPayload } from "../shared/report-sync-data.js";
+import { payloadEqual } from "../server/sync/protocol.mjs";
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
 import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
 import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
@@ -457,4 +459,104 @@ test("PG copy audit and retry records stay packed and read back whole", async (t
     revision: current.revision,
   });
   assert.ok(restored.tasks.some((task) => task.id === added));
+});
+
+// Edits of one copy while nothing publishes leave one unsent operation, from
+// the copy before the first edit to its latest content, instead of one copy
+// per save; a held lease or another kind of change keeps them separate.
+test("PG consecutive copy edits replace the last unsent edit of that copy", async (t) => {
+  const f = sqliteBusinessFixture(t),
+    pg = await postgresBusinessFixture(t, f);
+  if (!pg) return;
+  const service = new ReportBusinessService(
+      new PostgresReportRepository({ context: pg.createContext() }),
+      f.user,
+    ),
+    pending = async () =>
+      (
+        await pg.pool.query(
+          "SELECT payload FROM graeboard.sync_outbox WHERE status<>'acknowledged' ORDER BY local_seq",
+        )
+      ).rows.map((row) => JSON.parse(row.payload)),
+    reportOps = async () =>
+      (await pending()).filter((op) =>
+        op.changes.some((c) => c.entity === "report"),
+      ),
+    id = randomUUID();
+  await service.create({
+    id,
+    teamId: f.teamId,
+    year: 2026,
+    name: "edited copy",
+    referenceDate: "2026-10-01",
+    view: defaultView(2026),
+    taskIds: [f.taskId],
+  });
+  const title = async (value) => {
+    const current = await service.read(id);
+    return service.edit(id, {
+      revision: current.revision,
+      operationId: randomUUID(),
+      operations: [
+        {
+          kind: "cells",
+          at: new Date().toISOString(),
+          changes: [
+            {
+              taskId: f.taskId,
+              key: "title",
+              value,
+              expectedVersion: current.tasks[0].cells.title.version,
+            },
+          ],
+        },
+      ],
+    });
+  };
+  // The first edit also creates the copy's document, so it stays as it is.
+  await title("first");
+  const before = await reportOps(),
+    original = before.at(-1).changes.find((c) => c.entity === "report").desired;
+  for (const value of ["second", "third", "fourth"]) await title(value);
+  const ops = await reportOps();
+  assert.equal(ops.length, before.length + 1, "one operation for the edits");
+  const [edit] = ops.at(-1).changes;
+  assert.equal(ops.at(-1).changes.length, 1);
+  assert.deepEqual(edit.base, original, "from the copy before them");
+  assert.equal(
+    unpackReportPayload(edit.desired).data.tasks[0].cells.title.value,
+    "fourth",
+  );
+  // The merged operation reaches the stored content.
+  const stored = JSON.parse(
+    (
+      await pg.pool.query(
+        "SELECT payload FROM graeboard.site_entities WHERE entity='report' AND entity_key=$1",
+        [JSON.stringify([id])],
+      )
+    ).rows[0].payload,
+  );
+  assert.ok(payloadEqual("report", edit.desired, stored));
+  const lease = (owner) =>
+      pg.pool.query(
+        "UPDATE graeboard.team_sync_links SET lease_owner=$1,lease_until=$2",
+        [owner, owner ? Date.now() + 600000 : null],
+      ),
+    rename = (name) =>
+      pg.createContext().data(
+        f.teamId,
+        async (s) => {
+          const row = await s.get("report", [id]);
+          await s.put("report", [id], { ...row.payload, name });
+        },
+        { write: true, body: {}, action: "report-rename" },
+      );
+  // A sync run holding the lease may have read the last row: append instead.
+  await lease("run");
+  await rename("renamed");
+  assert.equal((await reportOps()).length, before.length + 2);
+  // Undone once the run is over, the rename leaves nothing to send.
+  await lease(null);
+  await rename("edited copy");
+  assert.equal((await reportOps()).length, before.length + 1);
 });

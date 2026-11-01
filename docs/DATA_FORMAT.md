@@ -440,7 +440,7 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 ## 내부·외부 동기화 저장
 
-`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 32MiB(2026-10-30 이전 4MiB), 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
+`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 P(게시되지 않은 같은 사본의 연속 수정만 하나로 교체하고 그 밖에는 불변, [동기화 프로토콜](SYNC_PROTOCOL.md#postgresql-업무-저장소와-외부-실행-자원-경계)), 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 32MiB(2026-10-30 이전 4MiB), 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
 SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 사본 `report`의 `data`는 C·P·`site_entities` 모두에서 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태이며, 외부 `DataSession`은 읽을 때 풀고 쓸 때 다시 사전 형태로 저장합니다. 이 변경 전에 기록된 평문 사본은 변환하지 않고 그대로 읽으며, 다음 편집 때 사전 형태로 바뀝니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
 
