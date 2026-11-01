@@ -27,7 +27,7 @@ import { firstCalendarLane } from "../../shared/calendar-layout.js";
 import { CALENDAR_TAG_COLORS } from "../../shared/calendar-tags.js";
 import { equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
-import { taskList, taskView, settingsFor, stamp } from "../tasks.mjs";
+import { taskCells, taskView, settingsFor, stamp } from "../tasks.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });
 }
@@ -91,7 +91,12 @@ async function placementResult(s, userId) {
   return { placements: all.map(({ id, lane }) => ({ id, lane })), layout: all };
 }
 async function tagsFor(s, userId) {
-  const entries = await s.list("calendar");
+  // Usage per tag from one pass over the entries, not one pass per tag.
+  const usage = new Map();
+  for (const e of await s.list("calendar"))
+    if (!e.payload.deletedAt)
+      for (const tag of new Set(e.payload.tags.map((x) => x.id)))
+        usage.set(tag, (usage.get(tag) || 0) + 1);
   return (await s.list("tag"))
     .filter((t) => userId === undefined || t.payload.userId === userId)
     .sort(
@@ -104,10 +109,7 @@ async function tagsFor(s, userId) {
       teamId: s.teamId,
       ...t.payload,
       revision: t.revision,
-      usageCount: entries.filter(
-        (e) =>
-          !e.payload.deletedAt && e.payload.tags.some((x) => x.id === t.key[0]),
-      ).length,
+      usageCount: usage.get(t.key[0]) || 0,
     }));
 }
 async function checkedTags(s, userId, ids, checked = []) {
@@ -118,6 +120,10 @@ async function checkedTags(s, userId, ids, checked = []) {
       checked.every((id) => ids.includes(id)),
     400,
     "일정 태그를 확인하세요.",
+  );
+  await s.getMany(
+    "tag",
+    ids.map((id) => [id]),
   );
   const tags = [];
   for (const id of ids) {
@@ -137,14 +143,25 @@ async function checkedTags(s, userId, ids, checked = []) {
   return tags;
 }
 async function weekly(s, userId, from, to) {
+  const rows = (await s.list("weekly")).filter(
+    (r) =>
+      !(
+        (userId && r.key[0] !== userId) ||
+        (from && r.key[1] < calendarWeek(from)) ||
+        (to && r.key[1] > to)
+      ),
+  );
+  // Each item shows its task's current title; read them together.
+  await s.getMany(
+    "task",
+    rows.map((r) => [r.key[2]]),
+  );
+  await s.getMany(
+    "cell",
+    rows.map((r) => [r.key[2], "title"]),
+  );
   const list = [];
-  for (const r of await s.list("weekly")) {
-    if (
-      (userId && r.key[0] !== userId) ||
-      (from && r.key[1] < calendarWeek(from)) ||
-      (to && r.key[1] > to)
-    )
-      continue;
+  for (const r of rows) {
     const t = await s.get("task", [r.key[2]]),
       title = await s.get("cell", [r.key[2], "title"]);
     list.push({
@@ -387,6 +404,12 @@ async function calendarOperation(ctx, operation, params, body, query) {
           r.payload.date <= to &&
           r.payload.endDate >= from,
       );
+      // Each entry's preview comes from its main document; read them together
+      // instead of one round trip per entry.
+      await s.getMany(
+        "document",
+        rows.map((r) => ["calendar", r.key[0], "main"]),
+      );
       return {
         entries: await Promise.all(rows.map((r) => entryView(s, r))),
         weekly:
@@ -414,7 +437,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
   if (operation === "listTasks")
     return ctx.data(query.get("teamId"), async (s) => {
       await member(ctx, query.get("teamId"), query.get("userId"));
-      const tasks = (await taskList(s)).filter((t) =>
+      const tasks = (await taskCells(s, ["title"])).filter((t) =>
           normalizeSearchQuery(String(t.cells.title?.value || "")).includes(
             normalizeSearchQuery(query.get("q") || ""),
           ),
@@ -468,7 +491,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
             "가져오기 기준을 확인하세요.",
           );
           const selected = selectCalendarImport(
-            (await taskList(s)).map((t) => ({
+            (await taskCells(s, ["owner", rule.propertyId])).map((t) => ({
               id: t.id,
               years: t.years,
               owner: t.cells.owner?.value,
@@ -488,6 +511,18 @@ async function calendarOperation(ctx, operation, params, body, query) {
           "업무 목록을 확인하세요.",
         );
         let added = 0;
+        await s.getMany(
+          "task",
+          ids.map((id) => [id]),
+        );
+        await s.getMany(
+          "weekly",
+          ids.map((id) => [body.userId, body.weekStart, id]),
+        );
+        await s.getMany(
+          "cell",
+          ids.map((id) => [id, "title"]),
+        );
         for (const id of ids) {
           const task = await s.get("task", [id]);
           assert(

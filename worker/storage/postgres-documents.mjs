@@ -73,22 +73,34 @@ export function documentView(row, id = "main") {
     sync: { session: "postgres", sequence: row?.revision || 0 },
   };
 }
-export async function documentList(s, scope, { content = false } = {}) {
-  if (await annualHidden(s, scope)) return [];
-  const rows = (await s.list("document"))
-    .filter((r) => matching(r, scope.prefix))
-    .sort(
-      (a, b) =>
-        a.payload.position - b.payload.position ||
-        a.key.at(-1).localeCompare(b.key.at(-1)),
-    );
-  if (
-    !rows.length &&
-    ["task", "report"].includes(scope.kind) &&
-    !(await s.list("document", { deleted: true })).some((r) =>
-      matching(r, scope.prefix),
+// Keys of the live (or deleted) documents under a key prefix, without reading
+// their markdown. A session that already holds the whole list answers from it.
+export async function documentKeysUnder(s, parent, { deleted = false } = {}) {
+  const prefix = JSON.stringify(parent).slice(0, -1) + ",";
+  if (s.lists.has("document"))
+    return (await s.list("document", { deleted: true }))
+      .filter(
+        (row) =>
+          row.deleted === deleted && JSON.stringify(row.key).startsWith(prefix),
+      )
+      .map((row) => row.key);
+  return (
+    await s.tx.query(
+      "SELECT entity_key FROM site_entities WHERE team_id=$1 AND entity='document' AND deleted=$2 AND left(entity_key,length($3))=$3 ORDER BY entity_key",
+      [s.teamId, deleted ? 1 : 0, prefix],
     )
-  )
+  ).rows.map((row) => JSON.parse(row.entity_key));
+}
+// One owner's list from its live rows. A task or report task that never had a
+// document shows the empty main document; `used` says whether a deleted one
+// exists and is asked only when no live row does.
+async function listView(rows, kind, used, content) {
+  rows.sort(
+    (a, b) =>
+      a.payload.position - b.payload.position ||
+      a.key.at(-1).localeCompare(b.key.at(-1)),
+  );
+  if (!rows.length && ["task", "report"].includes(kind) && !(await used()))
     return [
       {
         id: "main",
@@ -106,6 +118,55 @@ export async function documentList(s, scope, { content = false } = {}) {
     updatedAt: stamp(r),
     ...(content ? { markdown: r.payload.markdown } : {}),
   }));
+}
+// Reads only the owner's rows by key prefix, as SQLite reads one owner's table
+// rows, instead of every document of the team.
+export async function documentList(s, scope, { content = false } = {}) {
+  if (await annualHidden(s, scope)) return [];
+  const rows = (await s.listChildren("document", scope.prefix)).filter((r) =>
+    matching(r, scope.prefix),
+  );
+  return listView(
+    rows,
+    scope.kind,
+    async () =>
+      (await documentKeysUnder(s, scope.prefix, { deleted: true })).some(
+        (key) => matching({ key }, scope.prefix),
+      ),
+    content,
+  );
+}
+// documentList for every owner directly under `parent` (each task of a report),
+// read with one query and grouped once instead of one read per owner. Owners
+// are tasks or report tasks, never annual memos. `rows` are the live rows read.
+export async function documentListsUnder(s, parent, kind) {
+  const rows = await s.listChildren("document", parent),
+    owners = new Map(),
+    ownerOf = (key) =>
+      key.length === parent.length + 2 ? key[parent.length] : undefined;
+  for (const row of rows) {
+    const owner = ownerOf(row.key);
+    if (owner === undefined) continue;
+    if (!owners.has(owner)) owners.set(owner, []);
+    owners.get(owner).push(row);
+  }
+  let deleted;
+  const used = async (owner) => {
+    deleted ||= documentKeysUnder(s, parent, { deleted: true }).then(
+      (keys) => new Set(keys.map(ownerOf)),
+    );
+    return (await deleted).has(owner);
+  };
+  return {
+    rows,
+    list: (owner, { content = false } = {}) =>
+      listView(
+        [...(owners.get(owner) || [])],
+        kind,
+        () => used(owner),
+        content,
+      ),
+  };
 }
 async function result(s, scope) {
   const documents = await documentList(s, scope);

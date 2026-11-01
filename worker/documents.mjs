@@ -6,7 +6,11 @@ import { authenticate } from "./control.mjs";
 import { documentRouteScope } from "../shared/document-routes.js";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";
-export { documentView, documentList } from "./storage/postgres-documents.mjs";
+export {
+  documentView,
+  documentList,
+  documentListsUnder,
+} from "./storage/postgres-documents.mjs";
 
 export async function documentScope(ctx, path, options) {
   const target = documentRouteScope(path);

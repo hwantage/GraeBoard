@@ -15,6 +15,7 @@ export {
   settingsFor,
   taskView,
   taskList,
+  taskCells,
 } from "./task-view.mjs";
 export async function taskRoutes(ctx, path, method, body, query) {
   const settingsRoute = matchBusinessRoute(SETTINGS_ROUTES, path, method);

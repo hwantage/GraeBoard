@@ -23,25 +23,37 @@ import {
 import { digest, equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
-import { documentList } from "../documents.mjs";
+import { documentListsUnder } from "./postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../control.mjs";
-const revision = (data) =>
+export const reportRevision = (data) =>
   digest({
     ...data,
     tasks: data.tasks.map(
       ({ documents, hasDocument, documentCount, ...task }) => task,
     ),
   });
+// What the report list shows, without the data: PostgreSQL drops it, so the
+// list does not transfer and unpack every report's sheet. A payload that
+// jsonb cannot read (\u0000 or a lone surrogate escape) comes whole instead.
+async function reportSummaries(s) {
+  return (
+    await s.tx.query(
+      "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='report' AND deleted=0 ORDER BY entity_key",
+      [s.teamId, "\\\\u(0000|[dD][89a-fA-F])"],
+    )
+  ).rows.map((row) => ({
+    key: JSON.parse(row.entity_key),
+    payload: JSON.parse(row.payload),
+  }));
+}
 export async function reportView(s, row) {
   const p = row.payload,
     data = p.data;
+  const lists = await documentListsUnder(s, ["report", row.key[0]], "report");
   const tasks = [];
   for (const task of data.tasks) {
-    const documents = await documentList(s, {
-      prefix: ["report", row.key[0], task.id],
-      kind: "report",
-    });
+    const documents = await lists.list(task.id);
     tasks.push({
       ...task,
       documentCount: documents.length,
@@ -56,7 +68,7 @@ export async function reportView(s, row) {
     createdAt: p.createdAt,
     ...data,
     tasks,
-    revision: revision(data),
+    revision: reportRevision(data),
   };
 }
 async function execute(ctx, command, body, reportId) {
@@ -65,25 +77,35 @@ async function execute(ctx, command, body, reportId) {
     const authors = new Map(
       (await ctx.controlStore.users()).map((row) => [row.id, row.name]),
     );
-    return ctx.data(body.teamId, async (s) => ({
-      reports: await Promise.all(
-        (await s.list("report"))
-          .sort((a, b) =>
-            b.payload.createdAt.localeCompare(a.payload.createdAt),
-          )
-          .map(async (r) => ({
-            id: r.key[0],
-            name: r.payload.name,
-            year: r.payload.year,
-            referenceDate: r.payload.referenceDate,
-            createdAt: r.payload.createdAt,
-            author:
-              authors.get(r.payload.createdBy) ||
-              (await s.get("person", [r.payload.createdBy]))?.payload.name ||
-              r.payload.createdBy,
-          })),
-      ),
-    }));
+    return ctx.data(body.teamId, async (s) => {
+      const rows = await reportSummaries(s);
+      // Authors who left the team are named by their record; read them at once.
+      await s.getMany(
+        "person",
+        rows
+          .filter((r) => !authors.get(r.payload.createdBy))
+          .map((r) => [r.payload.createdBy]),
+      );
+      return {
+        reports: await Promise.all(
+          rows
+            .sort((a, b) =>
+              b.payload.createdAt.localeCompare(a.payload.createdAt),
+            )
+            .map(async (r) => ({
+              id: r.key[0],
+              name: r.payload.name,
+              year: r.payload.year,
+              referenceDate: r.payload.referenceDate,
+              createdAt: r.payload.createdAt,
+              author:
+                authors.get(r.payload.createdBy) ||
+                (await s.get("person", [r.payload.createdBy]))?.payload.name ||
+                r.payload.createdBy,
+            })),
+        ),
+      };
+    });
   }
   if (command === "create") {
     const teamId = body.teamId,
@@ -256,7 +278,7 @@ async function execute(ctx, command, body, reportId) {
           return { id: row.key[0], name };
         }
         assert(
-          body.revision === revision(row.payload.data),
+          body.revision === reportRevision(row.payload.data),
           409,
           "다른 사용자가 사본을 수정했습니다. 입력은 유지됩니다.",
         );
@@ -265,13 +287,10 @@ async function execute(ctx, command, body, reportId) {
           400,
           "사본 변경 요청을 확인하세요.",
         );
-        const data = structuredClone(row.payload.data);
+        const data = structuredClone(row.payload.data),
+          lists = await documentListsUnder(s, ["report", reportId], "report");
         for (const task of data.tasks)
-          task.documents = await documentList(
-            s,
-            { prefix: ["report", reportId, task.id], kind: "report" },
-            { content: true },
-          );
+          task.documents = await lists.list(task.id, { content: true });
         const available = (await ctx.controlStore.members(teamId)).filter(
           (row) => ["lead", "member"].includes(row.role),
         );
@@ -286,12 +305,9 @@ async function execute(ctx, command, body, reportId) {
         let { tasks } = prepared;
         data.users = [...prepared.people.values()];
         const remainingIds = new Set(tasks.map((task) => task.id));
-        for (const doc of await s.list("document"))
-          if (
-            doc.key[0] === "report" &&
-            doc.key[1] === row.key[0] &&
-            !remainingIds.has(doc.key[2])
-          )
+        // Nothing was written since: the rows read above are still current.
+        for (const doc of lists.rows)
+          if (!remainingIds.has(doc.key[2]))
             await s.put("document", doc.key, doc.payload, { deleted: true });
         for (const task of tasks)
           for (const doc of task.documents || [])
