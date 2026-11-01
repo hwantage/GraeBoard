@@ -586,6 +586,22 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         : [];
     return { entries, weekly, layout };
   };
+  // Several members on the same range in one request; each member's result is
+  // what listEntries returns for that member.
+  operations.listMemberEntries = (request) => {
+    const { userIds, ...query } = request.query;
+    return {
+      members: Object.fromEntries(
+        userIds.map((userId) => [
+          userId,
+          operations.listEntries({
+            ...request,
+            query: { ...query, scope: "personal", userId },
+          }),
+        ]),
+      ),
+    };
+  };
   operations.listTasks = (request) => {
     const query = request.query;
     teamAccess(request.user, query.teamId);

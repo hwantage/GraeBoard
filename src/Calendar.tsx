@@ -209,7 +209,7 @@ export default function Calendar({
       return { userId: member.id, from, to: addDays(from, 6) };
     });
   }, [members, memberId, view, weeks, memberWeeks, today]);
-  const { data, schedules, updateData, beginMutation, endMutation } =
+  const { data, schedules, updateData, beginMutation, endMutation, retry } =
     useCalendarData(team.id, queries, reload);
   const loadError =
     view !== "team" ? schedules.get(monthlyOwner)?.error || "" : "";
@@ -1436,10 +1436,7 @@ export default function Calendar({
                           {schedule?.error ? (
                             <>
                               <ErrorNote error={schedule.error} />
-                              <Button
-                                {...busyProps(locked)}
-                                onClick={() => setReload((n) => n + 1)}
-                              >
+                              <Button {...busyProps(locked)} onClick={retry}>
                                 {m.name} 일정 다시 불러오기
                               </Button>
                             </>

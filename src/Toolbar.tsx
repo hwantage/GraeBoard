@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "./types";
 import BorderMenu from "./BorderMenu";
+import ColorMenu from "./ColorMenu";
 import ZoomControls from "./ZoomControls";
-import { FONTS, FONT_SIZES, PALETTE, textMode } from "../shared/domain.js";
+import { FONTS, FONT_SIZES, textMode } from "../shared/domain.js";
 import { Button } from "./components";
 
 const ICON_PATHS: Record<string, string> = {
@@ -102,7 +103,6 @@ export default function Toolbar({
   canCopyFormat?: boolean;
   onPaintFormat?: (repeat: boolean) => void;
 }) {
-  const paletteId = useId();
   return (
     <div className="format-toolbar" aria-label={label}>
       {leadingAction}
@@ -166,53 +166,20 @@ export default function Toolbar({
         ))}
       </div>
       <div className="toolbar-group">
-        <label
-          className={`color-tool ${disabled ? "disabled" : ""}`}
-          data-tooltip="글자 색상"
-        >
-          <span className="color-tool-icon" aria-hidden="true">
-            A
-          </span>
-          <span
-            className="color-tool-swatch"
-            style={{ backgroundColor: style.color || "#243642" }}
-            aria-hidden="true"
-          />
-          <input
-            aria-label="글자 색상"
-            type="color"
-            value={style.color || "#243642"}
-            list={paletteId}
-            disabled={disabled}
-            onChange={(e) => onStyle({ color: e.target.value })}
-          />
-        </label>
-        <label
-          className={`color-tool ${disabled ? "disabled" : ""}`}
-          data-tooltip="배경색"
-        >
-          <span className="color-tool-icon" aria-hidden="true">
-            <PaintBucket size={16} />
-          </span>
-          <span
-            className="color-tool-swatch"
-            style={{ backgroundColor: style.backgroundColor || "#ffffff" }}
-            aria-hidden="true"
-          />
-          <input
-            aria-label="배경색"
-            type="color"
-            value={style.backgroundColor || "#ffffff"}
-            list={paletteId}
-            disabled={disabled}
-            onChange={(e) => onStyle({ backgroundColor: e.target.value })}
-          />
-        </label>
-        <datalist id={paletteId}>
-          {PALETTE.map((c) => (
-            <option key={c}>{c}</option>
-          ))}
-        </datalist>
+        <ColorMenu
+          label="글자 색상"
+          icon="A"
+          value={style.color || "#243642"}
+          disabled={disabled}
+          onApply={(color) => onStyle({ color })}
+        />
+        <ColorMenu
+          label="배경색"
+          icon={<PaintBucket size={16} />}
+          value={style.backgroundColor || "#ffffff"}
+          disabled={disabled}
+          onApply={(backgroundColor) => onStyle({ backgroundColor })}
+        />
       </div>
       <div className="toolbar-group">
         {(
