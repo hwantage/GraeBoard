@@ -44,7 +44,15 @@ export function imageSync(database, profile, r2) {
         },
         { readOnly: true },
       );
-      const projection = project(state, snapshot.pending);
+      // A slice holds what the received and pending commands touch; one saved
+      // after it was read may name a receipt it lacks. Such a command's images
+      // are still listed from the pending commands below.
+      let projection;
+      try {
+        projection = project(state, snapshot.pending);
+      } catch {
+        projection = { entities: state.entities };
+      }
       // Earlier commits installed what the previous state referenced; only the
       // records this commit or the pending operations change can add images.
       let candidates = projection.entities;

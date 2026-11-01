@@ -37,7 +37,7 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 5. `npx supabase functions deploy graeboard --project-ref 프로젝트ID --use-api`를 실행합니다. `supabase/config.toml`의 `verify_jwt=false`는 Supabase Auth 검증 대신 gateway Secret 및 Cloudflare Access JWT·앱 계정·팀 권한을 직접 검증하기 위한 설정입니다. 이 검증 코드를 제거한 함수를 공개하지 않습니다.
 6. Pages Production/Preview의 `GRAEBOARD_BACKEND`를 새 gateway로 바꾸고 Pages를 재배포합니다. Google 로그인, 업무/문서 조회·저장, R2 이미지, 두 방향 Git 반영, 로그아웃·권한 철회를 확인합니다. 문제가 생기면 검증된 gateway와 Edge 함수 버전을 함께 재배포합니다. Hyperdrive를 쓰던 전체 Worker로 되돌리거나 DB를 이전 백업으로 덮어쓰지 않습니다.
-7. 검증 후 gateway에 `* * * * *` Cron을 설정하면 Edge의 인증된 scheduler 경로를 호출합니다. 실제 Git 작업은 Edge `waitUntil`에서 실행하며 기존 lease와 outbox로 중복 적용을 막습니다. 크기·커밋·operation 묶음 제한을 유지하고 실행 로그에서 CPU·시간 초과와 미전송 상태를 확인합니다. Free의 호출량·CPU·메모리 한도는 별개이므로 무제한 동작으로 간주하지 않습니다.
+7. 팀 사이트 배포(`scripts/team-site-deploy.mjs`)가 gateway에 `* * * * *` Cron을 설정하며, 이 Cron이 Edge의 인증된 scheduler 경로를 호출합니다. 설정 JSON의 `triggers.crons` 값과 관계없이 배포마다 다시 설정합니다. 점검 중에 멈추려면 `TEAM_SITE_CONFIG`에 `"cron": false`(개별 변수를 쓰는 fork는 `TEAM_SITE_CRON=false`)를 넣고 재배포하며, 값을 지우고 재배포하면 다시 켜집니다. 이전 설정 안내가 만든 `"crons": []`는 Cron을 끄지 않습니다. 실제 Git 작업은 Edge `waitUntil`에서 실행하며 기존 lease와 outbox로 중복 적용을 막습니다. 크기·커밋·operation 묶음 제한을 유지하고 실행 로그에서 CPU·시간 초과와 미전송 상태를 확인합니다. Free의 호출량·CPU·메모리 한도는 별개이므로 무제한 동작으로 간주하지 않습니다.
 
 이미 동기화 중인 팀에 새 릴리스를 적용할 때는 동기화 명령의 형식·검증 규칙이 바뀌었는지 확인합니다. 바뀐 경우 두 형식을 모두 읽는 외부 서버(Supabase `graeboard` 함수)를 먼저 배포하고 사내 서버를 그 다음에 업데이트합니다. 2026-10-30 사본 공유 사전 형식이 이 경우에 해당합니다. 순서가 뒤바뀌어도 이전 외부 서버는 해당 커밋을 적용하지 않고 기준 head를 유지하므로, 외부 서버 배포 후 다시 적용됩니다. [운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)
 
@@ -348,7 +348,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 이 절은 **사내 팀에는 기존 동기화 이력이 없고, 재사용할 외부 자원의 개발 자료 삭제가 승인된 경우**에만 적용합니다. 이미 운영 동기화 중인 팀이나 복구 사본은 [정리·중단·복구](#12-정리중단복구)를 따릅니다. 사내 SQLite와 이미지 폴더를 현재 자료의 원본으로 유지하며, 외부 초기화를 위해 사내 DB를 삭제하거나 빈 DB로 교체하지 않습니다.
 
 1. 실제 사내 `DB_PATH`·`DOCUMENT_IMAGES_DIR`, 팀 UUID, `team_sync_links`의 기존 연결 유무를 읽기 전용으로 확인합니다. 같은 팀 이름이어도 개발 팀과 사내 팀의 UUID는 다를 수 있습니다. 외부 Supabase 프로젝트·R2 bucket·Git 데이터 저장소와 삭제할 개발 팀/설치 UUID를 따로 식별합니다. 외부 백업 생략은 대상 개발 자료에 대한 명시적 승인 범위만 적용하고 사내 백업·복구 절차를 바꾸지 않습니다.
-2. 이전 개발 Node 서버와 자동 동기화를 정상 종료하고 프로세스·포트 종료를 확인합니다. 외부의 사용자 요청도 쓰기와 동기화를 시작하므로 **Cron 중지만으로는 충분하지 않습니다.** 외부 Edge API를 503 점검 응답으로 전환하고 gateway Cron을 제거합니다. 재배포 설정에도 `triggers.crons: []`를 유지합니다. Cron 제거 전파는 최대 15분이 걸릴 수 있으며 이전 요청·백그라운드 실행의 종료를 로그에서 확인한 뒤 삭제합니다. [Cron 안내](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+2. 이전 개발 Node 서버와 자동 동기화를 정상 종료하고 프로세스·포트 종료를 확인합니다. 외부의 사용자 요청도 쓰기와 동기화를 시작하므로 **Cron 중지만으로는 충분하지 않습니다.** 외부 Edge API를 503 점검 응답으로 전환하고 gateway Cron을 제거합니다. 재배포에도 Cron이 꺼져 있도록 `TEAM_SITE_CONFIG`에 `"cron": false`를 둡니다. Cron 제거 전파는 최대 15분이 걸릴 수 있으며 이전 요청·백그라운드 실행의 종료를 로그에서 확인한 뒤 삭제합니다. [Cron 안내](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 3. 검토된 대상 전용 SQL로 Supabase의 `graeboard`·`graeboard_site`를 초기화합니다. SQL은 **삭제할 개발 팀 UUID를 검사**하고, 최신 릴리스의 migration SQL·checksum으로 두 스키마를 같은 트랜잭션 안에서 재생성해야 합니다. 새 `site_meta`·`team_meta`에는 **사내 팀 UUID**를 넣습니다. 다른 Supabase 스키마와 프로젝트·접속 Secret은 유지합니다. 현재 릴리스의 완료 기준은 site v3, team v2, 사내 팀 UUID 일치, 앱 사용자·동기화 연결 0건입니다. 성공 후 재실행은 이전 개발 팀 UUID 검사에서 거절돼야 합니다. 기존 팀 업그레이드용 `site-key-migration-sql.mjs`는 빈 DB 재생성 도구가 아닙니다.
 4. 새 테이블에 서버용 `graeboard_app`의 스키마·테이블·sequence 권한을 복원하고 `PUBLIC`·`anon`·`authenticated`의 앱 스키마 접근을 차단합니다. 이 권한 처리를 포함한 검토된 초기화 SQL에 대해 Supabase가 RLS 선택을 표시하면 **Run without RLS**를 사용합니다. 현재 앱은 서버에서 인증·팀 권한을 검사하고 PG 전용 역할로 접근하며, RLS 정책을 만들지 않습니다. 정책 없이 RLS만 켜면 서버 역할의 조회·저장이 차단됩니다. 다른 SQL이나 공개 Data API 테이블에 이 선택을 일반화하지 않습니다. [PostgreSQL RLS](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
 5. R2의 대상 bucket에서 **Settings → Empty Bucket → Empty**를 실행하고 객체가 비었는지 확인합니다. bucket과 binding은 유지합니다. 이는 외부 이미지 삭제이며 사내 이미지 폴더에는 적용하지 않습니다. [R2 비우기](https://developers.cloudflare.com/r2/buckets/delete-buckets/)
@@ -550,7 +550,9 @@ rm /private/external-import.env
 
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
-외부에서 저장한 변경이 **Git 대기**로 남고 Supabase 함수 로그에 `CPU Time exceeded`와 `/sync/run` 또는 scheduler 경로의 546이 보이면, 게시 한 번이 호출당 CPU 상한을 넘은 것입니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 10분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
+외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
+
+이 방식 이전에는 업무 430여 개 팀(공유 기록 31,541개, 정규 JSON 19MB)의 게시 한 번이 전체 상태 읽기 1.3초·해시 0.4초를 쓰고 `CPU Time exceeded`(546)로 중단되었습니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 7분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
 
 어느 단계에서 상한을 넘는지는 단계별 로그로 확인합니다.
 
@@ -559,9 +561,9 @@ rm /private/external-import.env
 3. **Edge Functions → graeboard → Logs**에서 `GraeBoard sync phase`를 검색합니다. 게시·수신 단계가 끝날 때마다 한 줄씩 남습니다. `CPU Time exceeded` 직전의 마지막 줄 다음 단계가 상한을 넘은 단계입니다.
 4. 확인을 마치면 Secret을 삭제합니다.
 
-게시는 `readPending → measureCapacity → readState → reduce → capacity → stateHash → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → measureCapacity → readState → reduce → stateHash → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. 변경이 없는 주기는 기록하지 않습니다.
+게시는 `readPending → readSlice → reduce → canonicalHash → measureCapacity → capacity → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → readSlice → reduce → canonicalHash → measureCapacity → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. `canonicalHash`의 `verified`가 `false`이면 전체 상태 경로로 넘어가며 이어서 `readState → reduce → stateHash`가 기록됩니다. 변경이 없는 주기는 기록하지 않습니다.
 
-각 줄의 `ms`는 그 단계의 경과 시간, `totalMs`는 리스를 잡은 뒤의 누적 시간입니다. `reduce`·`capacity`·`stateHash`·`event`·`preparePatch`는 네트워크 대기가 없어 `ms`가 곧 CPU 시간입니다. 첫 `readPending`에는 원격 head 확인이, `readState`·`writeState`·`materialize`에는 PostgreSQL 대기와 행 해석이, `createCandidate`·`publishRef`에는 GitHub 대기가 함께 들어갑니다. `processCpuMs`는 플랫폼이 제공할 때만 표시하는 함수 프로세스 전체의 CPU이며 같은 프로세스의 다른 호출이 포함될 수 있습니다.
+각 줄의 `ms`는 그 단계의 경과 시간, `totalMs`는 리스를 잡은 뒤의 누적 시간입니다. `reduce`·`capacity`·`stateHash`·`event`·`preparePatch`는 네트워크 대기가 없어 `ms`가 곧 CPU 시간입니다. 첫 `readPending`에는 원격 head 확인이, `readSlice`·`canonicalHash`·`measureCapacity`·`readState`·`writeState`·`materialize`에는 PostgreSQL 대기가, `createCandidate`·`publishRef`에는 GitHub 대기가 함께 들어갑니다. Supabase Edge는 `process.cpuUsage()`를 제공하지 않아 CPU 시간을 따로 기록하지 않습니다.
 
 ### 최초 게시 스냅샷의 용량 초과
 

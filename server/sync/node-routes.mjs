@@ -350,15 +350,21 @@ function installTeamSyncRoutes(
           ).run(link.canonical_head ? "active" : "initializing", teamId);
           sync.capture.refresh();
         }
+        let result;
         if (action === "checkpoint") {
           requireThat(
             link.mode === "active" && link.canonical_head,
             409,
             "활성 동기화의 공유본에서만 checkpoint를 만들 수 있습니다.",
           );
-          await sync.get(teamId).checkpoint();
-        } else await sync.get(teamId).run({ initialize: !link.canonical_head });
+          result = await sync.get(teamId).checkpoint();
+        } else
+          result = await sync.get(teamId).run({
+            initialize: !link.canonical_head,
+          });
         sync.schedule(teamId);
+        // Another run holding the lease means this request did nothing.
+        if (result?.busy) return res.json({ ...status(teamId), busy: true });
       }
       res.json(status(teamId));
     });

@@ -114,6 +114,7 @@ test("TEAM_SITE_CONFIG and TEAM_SITE_SECRETS deploy the API, then the gateway, t
   );
   assert.equal(gateway.name, "graeboard-team");
   assert.equal(gateway.vars.SITE_TEAM_ID, team.id);
+  assert.deepEqual(gateway.triggers.crons, ["* * * * *"]);
   // Only the two gateway keys go to the Worker, and the file is removed.
   assert.deepEqual(bulk, {
     GRAEBOARD_GATEWAY_SECRET: keys.GRAEBOARD_GATEWAY_SECRET,
@@ -269,4 +270,42 @@ test("--check masks every token and key in GitHub Actions and reports missing va
   const missing = check({});
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /::error::.*TEAM_SITE_CONFIG/);
+});
+
+// Configs written by earlier setup guides carry an empty Cron list, which left
+// pending saves without the scheduler's retry; only "cron": false pauses it.
+test("the deployment schedules the gateway Cron unless the config pauses it", (t) => {
+  const deployed = (config) => {
+    const dir = mkdtempSync(join(tmpdir(), "graeboard-deploy-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const { env } = siteEnv(),
+      site = JSON.parse(env.TEAM_SITE_CONFIG);
+    deployTeamSite(
+      {
+        ...env,
+        TEAM_SITE_CONFIG: JSON.stringify(config(site)),
+        RUNNER_TEMP: dir,
+      },
+      {
+        cwd: dir,
+        run: (command, args) =>
+          command === "npx" && args[1] === "deploy"
+            ? "Deployed\n  https://graeboard-team.somansadev.workers.dev\n"
+            : "",
+      },
+    );
+    return JSON.parse(readFileSync(join(dir, ".env.gateway.json"), "utf8"))
+      .triggers.crons;
+  };
+  assert.deepEqual(
+    deployed((site) => ({
+      ...site,
+      gateway: { ...site.gateway, triggers: { crons: [] } },
+    })),
+    ["* * * * *"],
+  );
+  assert.deepEqual(
+    deployed((site) => ({ ...site, cron: false })),
+    [],
+  );
 });

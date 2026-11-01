@@ -771,7 +771,7 @@ test("setup examples separate external secrets and bind the exact team and persi
   assert.equal(examples.edge.INSTALLATION_ID, setup.profile.peerInstallationId);
   assert.equal(examples.edge.PEER_INSTALLATION_ID, setup.installationId);
   assert.equal(JSON.parse(examples.gateway).vars.SITE_TEAM_ID, team.id);
-  assert.deepEqual(JSON.parse(examples.gateway).triggers.crons, []);
+  assert.deepEqual(JSON.parse(examples.gateway).triggers.crons, ["* * * * *"]);
   assert.equal(examples.edge.GIT_TEAM, undefined);
   // The fork's single variable carries the deploy targets and both configs;
   // the workflow adds the Worker address and keys itself.

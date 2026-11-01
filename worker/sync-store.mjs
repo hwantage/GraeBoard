@@ -4,28 +4,43 @@ import {
   isSyncInterruption,
   SyncInterruption,
 } from "../server/sync/errors.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import {
+  canonical,
+  entityId,
+  protocolVersion,
+} from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import {
   capacityLimits,
   assertStateCapacity,
   measureDatabaseCapacity,
+  measureTransactionCapacity,
   CapacityError,
 } from "./capacity.mjs";
-import { materialize } from "./materialize.mjs";
+import { materialize, materializeSlice } from "./materialize.mjs";
+import {
+  CanonicalSlice,
+  reduceSlice,
+  sliceChanges,
+  canonicalHashes,
+} from "./sync-partial.mjs";
 export function boundStore(
   database,
   teamId,
   {
     maintenanceJobId = null,
     limits = capacityLimits(),
-    // One hosted invocation finishes well within ten minutes; an operator-side
-    // first import of a long chain may hold the lease for hours.
-    leaseMs = 600000,
+    // A Supabase Edge invocation ends within 400 seconds (150 on Free), so an
+    // invocation stopped at its CPU limit blocks the team for at most seven
+    // minutes; an operator-side first import of a long chain may hold the
+    // lease for hours.
+    leaseMs = 420000,
     // Without it every commit re-compares every visible row, which heals a
     // damaged projection but costs the whole team. Hosted publish/receive runs
     // and a long operator import compare only what each commit changed.
     incrementalMaterialize = false,
+    // Apply operations to the records they touch instead of loading C.
+    slices = true,
   } = {},
 ) {
   let owner = null;
@@ -51,6 +66,85 @@ export function boundStore(
       return state;
     },
     measuredSize: (state) => measured.get(state),
+    // Applies operations to the part of C they touch and has PostgreSQL hash
+    // the result, so a hosted invocation never loads or hashes the whole team.
+    // The SQL hash of C must first equal the stored canonical hash. null means
+    // the whole-state path decides: a v2 team, a key whose order could differ,
+    // or a reduction the slice cannot complete on its own.
+    reduceSlice: slices
+      ? (operations, identity, { cover = [], mark = () => {} } = {}) =>
+          database.withTeamTransaction(
+            teamId,
+            async (tx) => {
+              const link = await tx.sync.readLink();
+              if (!link?.canonical_head || !link.canonical_hash) return null;
+              const slice = new CanonicalSlice(tx, teamId),
+                base = await slice.include(operations).include(cover).load();
+              if (protocolVersion(base) !== 1) return null;
+              const context = await slice.context(base);
+              mark("readSlice", {
+                entities: Object.keys(base.entities).length,
+              });
+              let state;
+              try {
+                ({ state } = reduceSlice(base, operations, identity, context));
+              } catch {
+                return null;
+              }
+              mark("reduce");
+              const hashes = await canonicalHashes(
+                tx,
+                teamId,
+                sliceChanges(base, state),
+              );
+              mark("canonicalHash", {
+                verified: hashes?.current === link.canonical_hash,
+              });
+              if (hashes?.current !== link.canonical_hash) return null;
+              const { size, stateBytes } = await measureTransactionCapacity(
+                tx,
+                teamId,
+                limits,
+              );
+              measured.set(base, {
+                bytes: stateBytes,
+                entities: size.entities,
+                receiptBytes: size.receiptBytes,
+              });
+              mark("measureCapacity", { bytes: stateBytes });
+              return {
+                head: link.canonical_head,
+                base,
+                state,
+                hash: hashes.next,
+              };
+            },
+            { readOnly: true },
+          )
+      : undefined,
+    // The protocol C is at, from its marker record alone.
+    readProtocol: () =>
+      database.withTeamTransaction(
+        teamId,
+        async (tx) => {
+          const row = (
+            await tx.query(
+              "SELECT payload FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND entity_key='[]'",
+              [teamId],
+            )
+          ).rows[0];
+          return protocolVersion({
+            entities: row?.payload
+              ? {
+                  [entityId("protocol", [])]: {
+                    payload: JSON.parse(row.payload),
+                  },
+                }
+              : {},
+          });
+        },
+        { readOnly: true },
+      ),
     readPending: () => database.readPending(teamId),
     async acquire(id) {
       return call(async (tx) => {
@@ -85,6 +179,9 @@ export function boundStore(
       owner = null;
     },
     async commitCanonical(expected, head, state, ack, options = {}) {
+      // A slice is not C: its size and hash come from the SQL measurement.
+      if (options.slice && !(options.stateSize && options.stateHash))
+        throw new Error("A slice commit requires its measured size and hash");
       // The service measured this same state; only the pending part is new.
       const size = options.stateSize || assertStateCapacity(state, limits);
       return database.commitCanonical(
@@ -130,13 +227,19 @@ export function boundStore(
             throw new CapacityError(
               "External state and pending capacity exceeded; prior data is preserved",
             );
-          await materialize(
-            tx,
-            teamId,
-            incrementalMaterialize && options.previousState
-              ? { ...projection, previousState: options.previousState }
-              : projection,
-          );
+          if (options.slice)
+            await materializeSlice(tx, teamId, {
+              ...projection,
+              base: options.previousState,
+            });
+          else
+            await materialize(
+              tx,
+              teamId,
+              incrementalMaterialize && options.previousState
+                ? { ...projection, previousState: options.previousState }
+                : projection,
+            );
           // A received commit may acknowledge our own outbox after a lost
           // publish response. Only that evidence marks a local write published.
           if (ack.length)

@@ -485,7 +485,14 @@ export async function adminRoutes(
     }
     if (["run", "pull", "refresh"].includes(sync[2])) {
       if (["pull", "refresh"].includes(sync[2])) await refreshTeam(ctx.env, p);
-      else await runTeam(ctx.env, p, { receiveOnly: body.receiveOnly });
+      else {
+        // Another run holding the lease means this request did nothing.
+        const result = await runTeam(ctx.env, p, {
+          receiveOnly: body.receiveOnly,
+        });
+        if (result?.busy)
+          return { ...(await syncStatus(ctx, teamId)), busy: true };
+      }
       return syncStatus(ctx, teamId);
     }
     if (sync[2] === "upgrade") {

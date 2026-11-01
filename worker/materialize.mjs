@@ -11,24 +11,13 @@ import {
   pendingEntityKeys,
   canRetireProjection,
 } from "../server/sync/projection.mjs";
-export async function materialize(
-  tx,
-  teamId,
-  { state, pending, exclusions, previousState = null },
-) {
-  const link = await tx.sync.readLink();
-  exclusions = exclusions.filter(
-    (row) => (row.site_id || row.siteId) === link?.installation_id,
-  );
-  const visible = applicationEntities(project(state, pending).entities),
-    protectedKeys = pendingEntityKeys(pending),
-    touched = new Set(),
+import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
+
+// Writes projected records to the site rows that differ from them, retires
+// rows, then bumps the owning tasks and announces the change once.
+function siteWriter(tx, teamId, visible, exclusions) {
+  const touched = new Set(),
     now = Date.now();
-  // With the previous canonical state known, only entities whose projection
-  // changed need a row comparison; rows that vanished are retired below.
-  const previousVisible = previousState
-    ? applicationEntities(project(previousState, pending).entities)
-    : null;
   let changedCount = 0;
   const revisions = async (batch) =>
     (
@@ -59,7 +48,6 @@ export async function materialize(
     );
     changedCount += batch.length;
   };
-  let batch = [];
   const apply = async (records) => {
     const keys = records.map((e) => ({
         entity: e.entity,
@@ -107,15 +95,72 @@ export async function materialize(
     }
     await write(changes);
   };
+  const retire = async (rows) => {
+    if (!rows.length) return;
+    const revs = await revisions(rows);
+    await tx.query(
+      `UPDATE site_entities s SET deleted=1,revision=r.revision FROM jsonb_to_recordset($2::jsonb) AS r(entity text,entity_key text,revision bigint) WHERE s.team_id=$1 AND s.entity=r.entity AND s.entity_key=r.entity_key`,
+      [
+        teamId,
+        canonical(revs.map((r) => ({ ...r, revision: Number(r.revision) }))),
+      ],
+    );
+    changedCount += rows.length;
+  };
+  const finish = async () => {
+    if (touched.size) {
+      const ids = [...touched].map((id) => canonical([id]));
+      await tx.query(
+        `UPDATE site_entity_revisions SET revision=GREATEST(revision+1,$3) WHERE team_id=$1 AND entity='task' AND entity_key=ANY($2::text[])`,
+        [teamId, ids, now],
+      );
+      await tx.query(
+        `UPDATE site_entities s SET revision=r.revision FROM site_entity_revisions r WHERE s.team_id=$1 AND s.entity='task' AND s.entity_key=ANY($2::text[]) AND r.team_id=s.team_id AND r.entity=s.entity AND r.entity_key=s.entity_key`,
+        [teamId, ids],
+      );
+    }
+    const team = visible[entityId("team", [])];
+    if (team && !team.deleted)
+      await tx.query("UPDATE teams SET name=$2,settings=$3 WHERE id=$1", [
+        teamId,
+        team.payload.name,
+        canonical(team.payload.settings),
+      ]);
+    if (changedCount)
+      await tx.sync.appendEvent("changed", { teamId, source: "sync" });
+  };
+  return { apply, retire, finish };
+}
+async function siteExclusions(tx, exclusions) {
+  const link = await tx.sync.readLink();
+  return exclusions.filter(
+    (row) => (row.site_id || row.siteId) === link?.installation_id,
+  );
+}
+export async function materialize(
+  tx,
+  teamId,
+  { state, pending, exclusions, previousState = null },
+) {
+  exclusions = await siteExclusions(tx, exclusions);
+  const visible = applicationEntities(project(state, pending).entities),
+    protectedKeys = pendingEntityKeys(pending),
+    site = siteWriter(tx, teamId, visible, exclusions);
+  // With the previous canonical state known, only entities whose projection
+  // changed need a row comparison; rows that vanished are retired below.
+  const previousVisible = previousState
+    ? applicationEntities(project(previousState, pending).entities)
+    : null;
+  let batch = [];
   for (const id in visible) {
     if (previousVisible && equal(previousVisible[id], visible[id])) continue;
     batch.push(visible[id]);
     if (batch.length === 500) {
-      await apply(batch);
+      await site.apply(batch);
       batch = [];
     }
   }
-  if (batch.length) await apply(batch);
+  if (batch.length) await site.apply(batch);
   // Retire removed canonical rows in bounded pages without loading their bodies.
   let after = ["", ""];
   for (;;) {
@@ -133,38 +178,59 @@ export async function materialize(
         protectedKeys,
       ),
     );
-    if (missing.length) {
-      const revs = await revisions(missing);
-      await tx.query(
-        `UPDATE site_entities s SET deleted=1,revision=r.revision FROM jsonb_to_recordset($2::jsonb) AS r(entity text,entity_key text,revision bigint) WHERE s.team_id=$1 AND s.entity=r.entity AND s.entity_key=r.entity_key`,
-        [
-          teamId,
-          canonical(revs.map((r) => ({ ...r, revision: Number(r.revision) }))),
-        ],
-      );
-      changedCount += missing.length;
-    }
+    await site.retire(missing);
     after = [rows.at(-1).entity, rows.at(-1).entity_key];
     if (rows.length < 500) break;
   }
-  if (touched.size) {
-    const ids = [...touched].map((id) => canonical([id]));
-    await tx.query(
-      `UPDATE site_entity_revisions SET revision=GREATEST(revision+1,$3) WHERE team_id=$1 AND entity='task' AND entity_key=ANY($2::text[])`,
-      [teamId, ids, now],
+  await site.finish();
+}
+// After a slice commit (see reduceSlice) only records that commit changed, or
+// that remaining pending operations touch, can project differently. They are
+// projected over the same slice and compared with their site rows; nothing
+// else is read. Unlike materialize(), rows outside them are not re-checked.
+export async function materializeSlice(
+  tx,
+  teamId,
+  { base, state, pending, exclusions },
+) {
+  exclusions = await siteExclusions(tx, exclusions);
+  const keys = new Set();
+  for (const [id, record] of Object.entries(state.entities))
+    if (record !== base.entities[id]) keys.add(id);
+  const slice = new CanonicalSlice(tx, teamId);
+  await slice.include(pending).load(state);
+  const { state: projected } = reduceSlice(
+    state,
+    pending,
+    null,
+    await slice.context(state),
+  );
+  const visible = applicationEntities(projected.entities),
+    protectedKeys = pendingEntityKeys(pending),
+    site = siteWriter(tx, teamId, visible, exclusions);
+  for (const [id, record] of Object.entries(projected.entities))
+    if (record !== state.entities[id]) keys.add(id);
+  for (const op of pending)
+    for (const change of op.changes)
+      keys.add(entityId(change.entity, change.key));
+  const records = [],
+    gone = [];
+  for (const id of keys)
+    if (visible[id]) records.push(visible[id]);
+    else if (canRetireProjection(id, visible, protectedKeys)) {
+      const [entity, key] = JSON.parse(id);
+      gone.push({ entity, entity_key: canonical(key) });
+    }
+  for (let i = 0; i < records.length; i += 500)
+    await site.apply(records.slice(i, i + 500));
+  if (gone.length)
+    await site.retire(
+      (
+        await tx.query(
+          `SELECT s.entity,s.entity_key FROM site_entities s JOIN jsonb_to_recordset($2::jsonb) AS g(entity text,entity_key text) ON s.entity=g.entity AND s.entity_key=g.entity_key WHERE s.team_id=$1 AND s.deleted=0`,
+          [teamId, canonical(gone)],
+        )
+      ).rows,
     );
-    await tx.query(
-      `UPDATE site_entities s SET revision=r.revision FROM site_entity_revisions r WHERE s.team_id=$1 AND s.entity='task' AND s.entity_key=ANY($2::text[]) AND r.team_id=s.team_id AND r.entity=s.entity AND r.entity_key=s.entity_key`,
-      [teamId, ids],
-    );
-  }
-  const team = visible[entityId("team", [])];
-  if (team && !team.deleted)
-    await tx.query("UPDATE teams SET name=$2,settings=$3 WHERE id=$1", [
-      teamId,
-      team.payload.name,
-      canonical(team.payload.settings),
-    ]);
-  if (changedCount)
-    await tx.sync.appendEvent("changed", { teamId, source: "sync" });
+  await site.finish();
 }

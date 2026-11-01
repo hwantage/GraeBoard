@@ -20,6 +20,8 @@ const EDGE_SETTINGS = [
   "ACCESS_AUDIENCE",
   "SYNC_PROFILES",
 ];
+// Every minute, the interval the external sync guarantees are written for.
+export const GATEWAY_CRON = "* * * * *";
 const SITE_TOKENS = [
   "CLOUDFLARE_API_TOKEN",
   "SUPABASE_ACCESS_TOKEN",
@@ -90,6 +92,7 @@ export function readDeployConfig(env) {
       accountId: config.cloudflareAccountId,
       projectRef: config.supabaseProjectRef,
       gateway: config.gateway,
+      cron: config.cron !== false,
       edge,
       keys: Object.fromEntries(SITE_KEYS.map((name) => [name, secrets[name]])),
       gitToken: secrets.GIT_TEAM,
@@ -114,6 +117,7 @@ export function readDeployConfig(env) {
       json(env.GATEWAY_CONFIG, "GATEWAY_CONFIG"),
       "GATEWAY_CONFIG",
     ),
+    cron: env.TEAM_SITE_CRON !== "false",
   };
 }
 
@@ -158,7 +162,18 @@ const defined = (values) =>
 export function deployTeamSite(env, { run = runCommand, cwd = "." } = {}) {
   const config = readDeployConfig(env);
   const gatewayFile = join(cwd, ".env.gateway.json");
-  writeFileSync(gatewayFile, JSON.stringify(config.gateway, null, 2) + "\n");
+  // The deployment owns the schedule: the gateway's Cron retries what an
+  // invocation left pending and refreshes the status the other site checks.
+  // Configs written before this carry an empty list, so only "cron": false
+  // (TEAM_SITE_CRON=false for the separate variables) pauses it.
+  const gateway = {
+    ...config.gateway,
+    triggers: {
+      ...config.gateway.triggers,
+      crons: config.cron ? [GATEWAY_CRON] : [],
+    },
+  };
+  writeFileSync(gatewayFile, JSON.stringify(gateway, null, 2) + "\n");
   const tokens = config.tokens || {};
   const cloudflare = defined({
     CLOUDFLARE_ACCOUNT_ID: config.accountId,
