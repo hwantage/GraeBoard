@@ -35,12 +35,13 @@ export function boundStore(
   const call = (work) => database.withTeamTransaction(teamId, work);
   return {
     readLink: () => database.readLink(teamId),
-    readState: async () => {
+    readState: async ({ mark = () => {} } = {}) => {
       const { size, stateBytes } = await measureDatabaseCapacity(
         database,
         teamId,
         limits,
       );
+      mark("measureCapacity", { bytes: stateBytes });
       const state = await database.readState(teamId);
       measured.set(state, {
         bytes: stateBytes,

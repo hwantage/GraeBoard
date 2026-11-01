@@ -136,15 +136,18 @@ export class PostgresDatabase extends DatabaseAdapter {
     materialize,
     options = {},
   ) {
+    const mark = options.mark || (() => {});
     const previous =
       options.previousState ||
       (options.patch ? null : await this.readState(teamId));
     const patch = options.patch || prepareStatePatch(previous, state);
     const hash = options.stateHash || digest(state);
+    mark("preparePatch");
     return this.withTeamTransaction(teamId, async (tx) => {
       if ((await tx.sync.readLink())?.canonical_head !== expectedHead)
         throw new Error("Canonical head changed; recompute before retry");
       await tx.sync.writeState(state, newHead, previous, patch);
+      mark("writeState");
       await tx.sync.acknowledge(ackOpIds);
       const pending = await tx.sync.readPending();
       const result = await materialize?.(tx, {
@@ -152,6 +155,7 @@ export class PostgresDatabase extends DatabaseAdapter {
         pending,
         exclusions: await tx.sync.readExclusions(),
       });
+      mark("materialize");
       await tx.sync.advanceHead(expectedHead, newHead, hash);
       return result;
     });

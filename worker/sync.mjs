@@ -165,6 +165,12 @@ export function serviceFor(env, profile, link, options = {}) {
     maxCommits: options.maxCommits || 4,
     maxOperations: 50,
     deferImages: !!options.deferImages,
+    // SYNC_PHASE_LOG=1 logs each phase of a publishing or receiving cycle,
+    // to find which one exceeds the hosted runtime's per-invocation CPU limit.
+    trace:
+      env.SYNC_PHASE_LOG === "1"
+        ? (entry) => console.log("GraeBoard sync phase", JSON.stringify(entry))
+        : null,
   });
   return {
     run: (options) => exclusiveSync(() => service.run(options)),

@@ -63,6 +63,41 @@ export function operationBatch(
   }
   return result;
 }
+// A hosted runtime stops an invocation at its CPU budget without unwinding, so
+// each phase is reported as soon as it ends: the last line before the runtime's
+// limit message names the phase that ran out. processCpuMs is the CPU of the
+// whole runtime process where the platform exposes it (other invocations in the
+// same process are included); ms equals CPU only for the synchronous phases.
+export function phaseTimer(trace, label) {
+  if (!trace) return () => {};
+  const cpu = () => {
+    try {
+      const usage = globalThis.process?.cpuUsage?.();
+      return usage ? (usage.user + usage.system) / 1000 : null;
+    } catch {
+      return null;
+    }
+  };
+  const start = performance.now();
+  let last = start,
+    lastCpu = cpu();
+  return (phase, detail = {}) => {
+    const now = performance.now(),
+      used = cpu();
+    trace({
+      label,
+      phase,
+      ms: Math.round(now - last),
+      totalMs: Math.round(now - start),
+      ...(used !== null && lastCpu !== null
+        ? { processCpuMs: Math.round(used - lastCpu) }
+        : {}),
+      ...detail,
+    });
+    last = now;
+    lastCpu = used;
+  };
+}
 export class SyncService {
   constructor({
     transport,
@@ -77,6 +112,9 @@ export class SyncService {
     // An operator-side first import may commit the state first and install the
     // content-addressed images afterwards; each install still verifies the hash.
     deferImages = false,
+    // Receives one entry per finished phase of a cycle that receives commits or
+    // publishes operations (see phaseTimer).
+    trace = null,
   }) {
     Object.assign(this, {
       transport,
@@ -89,9 +127,11 @@ export class SyncService {
       stateLimits,
       snapshotDecoder,
       deferImages,
+      trace,
     });
     this.running = null;
     this.sizes = new WeakMap();
+    this.mark = () => {};
   }
   // With the state it was reduced from, measure only the changed records.
   assertCapacity(state, base) {
@@ -179,8 +219,12 @@ export class SyncService {
     )
       link = await loadCheckpoint(this, link, head);
     const chain = await this.readChain(head, link.canonical_head);
+    if (chain.length) this.mark("readChain", { commits: chain.length });
     // An unchanged head needs no canonical state at all.
-    let state = chain.length ? await this.store.readState() : null;
+    let state = chain.length
+      ? await this.store.readState({ mark: this.mark })
+      : null;
+    if (state) this.mark("readState");
     for (const commit of chain.slice(0, this.maxCommits)) {
       const previousState = state;
       const parent = link.canonical_head || null;
@@ -412,12 +456,14 @@ export class SyncService {
             ),
           );
           operations = envelope.operations.map((op) => op.opId);
+          this.mark("reduce", { operations: operations.length });
           if (stateHash(state) !== envelope.resultHash)
             throw new ProtocolError(
               "SYNC_INTEGRITY",
               "Reducer result checksum mismatch",
             );
           verifiedHash = envelope.resultHash;
+          this.mark("stateHash");
         } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
       if (protocolVersion(state) > this.maxProtocol)
@@ -432,12 +478,15 @@ export class SyncService {
           verifiedImages,
           previousState: parent ? previousState : null,
         });
+      this.mark("receiveImages");
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
         transition,
         stateHash: verifiedHash,
         stateSize,
+        mark: this.mark,
       });
+      this.mark("commitCanonical", { commit: commit.oid });
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
     }
@@ -491,6 +540,8 @@ export class SyncService {
   } = {}) {
     const owner = randomUUID();
     if (!(await this.store.acquire(owner))) return { busy: true };
+    this.mark = phaseTimer(this.trace, this.identity.teamId);
+    let traced = false;
     try {
       let link = await this.store.readLink();
       if (!link) return { mode: "unlinked" };
@@ -500,7 +551,11 @@ export class SyncService {
       }
       if (initialize && link.mode === "initializing")
         link = await this.initialize(link);
-      else link = await this.receive(link, observedHead, useCheckpoint);
+      else {
+        const before = link.canonical_head;
+        link = await this.receive(link, observedHead, useCheckpoint);
+        traced = link.canonical_head !== before;
+      }
       if (!receiveOnly && link.mode !== "recovery")
         for (let attempt = 0; attempt < 4; attempt++) {
           const pending = operationBatch(
@@ -508,11 +563,34 @@ export class SyncService {
             this.maxOperations,
           );
           if (!pending.length) break;
-          const previousState = await this.store.readState();
+          traced = true;
+          // Details cost a pass over the batch and C, so only a trace pays it.
+          this.mark(
+            "readPending",
+            this.trace && {
+              attempt,
+              operations: pending.length,
+              bytes: pending.reduce(
+                (sum, op) => sum + Buffer.byteLength(canonical(op)),
+                0,
+              ),
+            },
+          );
+          const previousState = await this.store.readState({
+            mark: this.mark,
+          });
+          this.mark(
+            "readState",
+            this.trace && {
+              entities: Object.keys(previousState.entities).length,
+            },
+          );
           let state = reduceMany(previousState, pending, this.identity, {
             persistentReceipts: true,
           });
+          this.mark("reduce");
           const stateSize = this.assertCapacity(state, previousState);
+          this.mark("capacity", { bytes: stateSize.bytes });
           const parent = link.canonical_head;
           if (!parent) throw new Error("Initial publication required");
           const event = {
@@ -522,6 +600,7 @@ export class SyncService {
             operations: pending,
             resultHash: stateHash(state),
           };
+          this.mark("stateHash");
           const files = combineFileEntries(
             {
               ["events/" + randomUUID() + ".json"]: canonical(event),
@@ -532,7 +611,9 @@ export class SyncService {
               operations: pending,
             }),
           );
+          this.mark("event");
           const oid = await this.transport.createCandidate(parent, files);
+          this.mark("createCandidate");
           let published;
           try {
             published = await this.transport.publish(oid, parent);
@@ -540,6 +621,7 @@ export class SyncService {
             await this.receive(await this.store.readLink());
             throw error;
           }
+          this.mark("publishRef", { published });
           // false: a peer moved the branch first, so receive what is there.
           link =
             published === true
@@ -548,17 +630,22 @@ export class SyncService {
                   previousState,
                   stateHash: event.resultHash,
                   stateSize,
+                  mark: this.mark,
                 })
               : await this.receive(await this.store.readLink());
+          this.mark("commitPublished", { head: link.canonical_head });
           if (link.canonical_head === oid) break;
         }
       if (updateStatus) await this.status(link);
+      if (traced) this.mark("done");
       await this.store.setError?.(null);
       return { head: link.canonical_head };
     } catch (error) {
+      if (traced) this.mark("failed", { error: error.code || error.message });
       await this.store.setError?.(error);
       throw error;
     } finally {
+      this.mark = () => {};
       await this.store.release(owner);
     }
   }

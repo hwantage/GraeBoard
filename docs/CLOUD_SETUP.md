@@ -548,6 +548,21 @@ rm /private/external-import.env
 
 `--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
 
+### 외부 게시의 실행 자원 한도 초과 (546)
+
+외부에서 저장한 변경이 **Git 대기**로 남고 Supabase 함수 로그에 `CPU Time exceeded`와 `/sync/run` 또는 scheduler 경로의 546이 보이면, 게시 한 번이 호출당 CPU 상한을 넘은 것입니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 10분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
+
+어느 단계에서 상한을 넘는지는 단계별 로그로 확인합니다.
+
+1. Supabase 대시보드 **Edge Functions → Secrets**에서 `SYNC_PHASE_LOG` 값을 `1`로 추가합니다.
+2. 리스가 끝난 뒤 Cron이 게시를 다시 시도하거나 팀 설정의 **지금 동기화**를 누릅니다.
+3. **Edge Functions → graeboard → Logs**에서 `GraeBoard sync phase`를 검색합니다. 게시·수신 단계가 끝날 때마다 한 줄씩 남습니다. `CPU Time exceeded` 직전의 마지막 줄 다음 단계가 상한을 넘은 단계입니다.
+4. 확인을 마치면 Secret을 삭제합니다.
+
+게시는 `readPending → measureCapacity → readState → reduce → capacity → stateHash → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → measureCapacity → readState → reduce → stateHash → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. 변경이 없는 주기는 기록하지 않습니다.
+
+각 줄의 `ms`는 그 단계의 경과 시간, `totalMs`는 리스를 잡은 뒤의 누적 시간입니다. `reduce`·`capacity`·`stateHash`·`event`·`preparePatch`는 네트워크 대기가 없어 `ms`가 곧 CPU 시간입니다. 첫 `readPending`에는 원격 head 확인이, `readState`·`writeState`·`materialize`에는 PostgreSQL 대기와 행 해석이, `createCandidate`·`publishRef`에는 GitHub 대기가 함께 들어갑니다. `processCpuMs`는 플랫폼이 제공할 때만 표시하는 함수 프로세스 전체의 CPU이며 같은 프로세스의 다른 호출이 포함될 수 있습니다.
+
 ### 최초 게시 스냅샷의 용량 초과
 
 `Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
