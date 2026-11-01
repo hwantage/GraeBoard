@@ -129,6 +129,64 @@ export const payloadEqual = (entity, a, b) =>
   equal(normalizeEntityPayload(entity, a), normalizeEntityPayload(entity, b));
 export const emptyState = () => ({ entities: {}, receipts: {}, conflicts: {} });
 export const stateHash = (state) => digest(state);
+
+// The state sum: each record of C hashed on its own and the digests added in
+// four 64-bit lanes (each mod 2^64). Unlike stateHash it is order-free, so a
+// commit updates it from the records it changed instead of rehashing C, and
+// PostgreSQL computes it with a plain aggregate. It detects accidental
+// divergence between sites; it is not meant to resist crafted collisions.
+// A record digest is sha256(section "\n" id "\n" canonical(value)), where the
+// section is "e" (entity, id = entityId), "r" (receipt, id = opId) or "c"
+// (conflict, id = conflictId); canonical JSON never contains a raw newline.
+const LANE = 1n << 64n;
+const SUM_SECTIONS = [
+  ["entities", "e"],
+  ["receipts", "r"],
+  ["conflicts", "c"],
+];
+export const SUM_ZERO = "0".repeat(64);
+const lanes = (hex) =>
+  [0, 16, 32, 48].map((i) => BigInt("0x" + hex.slice(i, i + 16)));
+const laneHex = (values) =>
+  values
+    .map((v) => (((v % LANE) + LANE) % LANE).toString(16).padStart(16, "0"))
+    .join("");
+export const recordDigest = (section, id, value) =>
+  createHash("sha256")
+    .update(section + "\n" + id + "\n" + canonical(value))
+    .digest("hex");
+// The sum of C from its records; O(records), for a site holding C in memory.
+export function stateSum(state) {
+  const total = [0n, 0n, 0n, 0n];
+  for (const [section, tag] of SUM_SECTIONS)
+    for (const [id, value] of Object.entries(state[section] || {}))
+      lanes(recordDigest(tag, id, value)).forEach((v, i) => (total[i] += v));
+  return laneHex(total);
+}
+// The sum of state from the sum of base: only records whose object changed
+// (by reference, as reducers share untouched records) are hashed. base and
+// state may be whole states or matching slices of them.
+export function stateSumFrom(sum, base, state) {
+  const total = lanes(sum);
+  for (const [section, tag] of SUM_SECTIONS) {
+    const before = base[section] || {},
+      after = state[section] || {};
+    for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (before[id] === after[id]) continue;
+      if (before[id] !== undefined)
+        lanes(recordDigest(tag, id, before[id])).forEach(
+          (v, i) => (total[i] -= v),
+        );
+      if (after[id] !== undefined)
+        lanes(recordDigest(tag, id, after[id])).forEach(
+          (v, i) => (total[i] += v),
+        );
+    }
+  }
+  return laneHex(total);
+}
+// Lane totals PostgreSQL returns as signed 64-bit sums, folded mod 2^64.
+export const sumFromLanes = (values) => laneHex(values.map((v) => BigInt(v)));
 export const initialToken = (bootstrapId, entity, key) =>
   digest([bootstrapId, entity, key]);
 const payloadFields = {

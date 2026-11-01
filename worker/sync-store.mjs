@@ -7,14 +7,15 @@ import {
 import {
   canonical,
   entityId,
+  emptyState,
   protocolVersion,
+  stateSumFrom,
 } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import {
   capacityLimits,
   assertStateCapacity,
   measureDatabaseCapacity,
-  measureTransactionCapacity,
   CapacityError,
 } from "./capacity.mjs";
 import { materialize, materializeSlice } from "./materialize.mjs";
@@ -23,6 +24,10 @@ import {
   reduceSlice,
   sliceChanges,
   canonicalHashes,
+  computeTotals,
+  readTotals,
+  writeTotals,
+  clearTotals,
 } from "./sync-partial.mjs";
 export function boundStore(
   database,
@@ -68,18 +73,25 @@ export function boundStore(
       return state;
     },
     measuredSize: (state) => measured.get(state),
-    // Applies operations to the part of C they touch and has PostgreSQL hash
-    // the result, so a hosted invocation never loads or hashes the whole team.
-    // The SQL hash of C must first equal the stored canonical hash. null means
-    // the whole-state path decides: a v2 team, a key whose order could differ,
-    // or a reduction the slice cannot complete on its own.
+    // Applies operations to the part of C they touch. The state sum comes
+    // from C's kept totals (one order-free aggregate when they are missing)
+    // plus the records the operations changed, so a commit costs what it
+    // changes. With legacyHash it also has PostgreSQL rebuild the whole-state
+    // hash a peer without the state sum still verifies, after checking the SQL
+    // text of C against the stored canonical hash once per run. null means the
+    // whole-state path decides: a v2 team, a key whose order could differ, or a
+    // reduction the slice cannot complete on its own.
     reduceSlice: slices
-      ? (operations, identity, { cover = [], mark = () => {} } = {}) =>
+      ? (
+          operations,
+          identity,
+          { cover = [], legacyHash = false, mark = () => {} } = {},
+        ) =>
           database.withTeamTransaction(
             teamId,
             async (tx) => {
               const link = await tx.sync.readLink();
-              if (!link?.canonical_head || !link.canonical_hash) return null;
+              if (!link?.canonical_head) return null;
               const slice = new CanonicalSlice(tx, teamId),
                 base = await slice.include(operations).include(cover).load();
               if (protocolVersion(base) !== 1) return null;
@@ -94,37 +106,69 @@ export function boundStore(
                 return null;
               }
               mark("reduce");
-              // The SQL canonical text of C is checked against the stored
-              // hash once per run; later commits hash only the result.
-              const hashes = await canonicalHashes(
-                tx,
-                teamId,
-                sliceChanges(base, state),
-                { current: !canonicalVerified },
-              );
-              const verified =
-                !!hashes &&
-                (canonicalVerified || hashes.current === link.canonical_hash);
-              mark("canonicalHash", { verified, reused: canonicalVerified });
-              if (!verified) return null;
-              canonicalVerified = true;
-              const { size, stateBytes } = await measureTransactionCapacity(
-                tx,
-                teamId,
-                limits,
-              );
+              let totals = await readTotals(tx, teamId, link.canonical_head);
+              if (!totals) {
+                totals = await computeTotals(tx, teamId);
+                mark("computeTotals", { entities: totals.entities });
+              }
+              if (
+                totals.entities > limits.maxEntities ||
+                totals.stateBytes > limits.maxBytes
+              )
+                throw new CapacityError(
+                  "External stored synchronization capacity exceeded; canonical cursor is unchanged",
+                );
               measured.set(base, {
-                bytes: stateBytes,
-                entities: size.entities,
-                receiptBytes: size.receiptBytes,
+                bytes: totals.stateBytes,
+                entities: totals.entities,
+                receiptBytes: totals.receiptBytes,
               });
-              mark("measureCapacity", { bytes: stateBytes });
-              return {
-                head: link.canonical_head,
-                base,
-                state,
-                hash: hashes.next,
-              };
+              const sum = stateSumFrom(totals.sum, base, state);
+              mark("stateSum");
+              let hash = null;
+              if (legacyHash) {
+                // C's SQL text is checked against the stored hash once per
+                // run. Commits carrying only the state sum leave no stored
+                // hash; the result hash is then the SQL rebuild alone.
+                const check = !!link.canonical_hash && !canonicalVerified;
+                const hashes = await canonicalHashes(
+                  tx,
+                  teamId,
+                  sliceChanges(base, state),
+                  { current: check },
+                );
+                const verified =
+                  !!hashes &&
+                  (!check || hashes.current === link.canonical_hash);
+                mark("canonicalHash", { verified, checked: check });
+                if (!verified) return null;
+                if (check) canonicalVerified = true;
+                hash = hashes.next;
+              }
+              return { head: link.canonical_head, base, state, sum, hash };
+            },
+            { readOnly: true },
+          )
+      : undefined,
+    // C as an empty slice with its kept totals, for a commit that leaves C
+    // unchanged (a checkpoint verified by its state sum).
+    unchangedSlice: slices
+      ? () =>
+          database.withTeamTransaction(
+            teamId,
+            async (tx) => {
+              const link = await tx.sync.readLink();
+              if (!link?.canonical_head) return null;
+              const totals =
+                (await readTotals(tx, teamId, link.canonical_head)) ||
+                (await computeTotals(tx, teamId));
+              const base = emptyState();
+              measured.set(base, {
+                bytes: totals.stateBytes,
+                entities: totals.entities,
+                receiptBytes: totals.receiptBytes,
+              });
+              return { head: link.canonical_head, base, sum: totals.sum };
             },
             { readOnly: true },
           )
@@ -187,7 +231,10 @@ export function boundStore(
     },
     async commitCanonical(expected, head, state, ack, options = {}) {
       // A slice is not C: its size and hash come from the SQL measurement.
-      if (options.slice && !(options.stateSize && options.stateHash))
+      if (
+        options.slice &&
+        !(options.stateSize && (options.stateHash || options.stateSum))
+      )
         throw new Error("A slice commit requires its measured size and hash");
       // The service measured this same state; only the pending part is new.
       const size = options.stateSize || assertStateCapacity(state, limits);
@@ -247,6 +294,16 @@ export function boundStore(
                 ? { ...projection, previousState: options.previousState }
                 : projection,
             );
+          // C's totals follow every change to C, or are dropped so the next
+          // reader measures C again.
+          if (options.stateSum && options.stateSize)
+            await writeTotals(tx, teamId, head, {
+              sum: options.stateSum,
+              entities: size.entities,
+              stateBytes: size.bytes,
+              receiptBytes: size.receiptBytes,
+            });
+          else await clearTotals(tx, teamId);
           // A received commit may acknowledge our own outbox after a lost
           // publish response. Only that evidence marks a local write published.
           if (ack.length)

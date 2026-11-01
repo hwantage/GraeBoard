@@ -1,8 +1,6 @@
 import { HttpError } from "./http-error.js";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 import {
-  SYNC_STATE_MAX_BYTES,
-  SYNC_STATE_MAX_ENTITIES,
   SYNC_RECEIPT_MAX_BYTES,
   SYNC_RECEIPT_WARNING_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,
@@ -18,26 +16,22 @@ export class CapacityError extends HttpError {
     this.code = "EXTERNAL_SYNC_CAPACITY";
   }
 }
+// A team has no total size budget: saves, publications and receipts cost what
+// they change (slices and the state sum), not the whole team. An operator may
+// still cap a team with SYNC_MAX_STATE_BYTES and SYNC_MAX_ENTITIES.
 export function capacityLimits(env = {}) {
-  const number = (name, fallback, max) => {
-    const value = env[name] === undefined ? fallback : Number(env[name]);
-    if (!Number.isSafeInteger(value) || value < 1024 || value > max)
+  const cap = (name) => {
+    if (env[name] === undefined || env[name] === "") return Infinity;
+    const value = Number(env[name]);
+    if (!Number.isSafeInteger(value) || value < 1024)
       throw new CapacityError(
         "External synchronization capacity configuration is invalid",
       );
     return value;
   };
   return {
-    maxBytes: number(
-      "SYNC_MAX_STATE_BYTES",
-      SYNC_STATE_MAX_BYTES,
-      SYNC_STATE_MAX_BYTES,
-    ),
-    maxEntities: number(
-      "SYNC_MAX_ENTITIES",
-      SYNC_STATE_MAX_ENTITIES,
-      SYNC_STATE_MAX_ENTITIES,
-    ),
+    maxBytes: cap("SYNC_MAX_STATE_BYTES"),
+    maxEntities: cap("SYNC_MAX_ENTITIES"),
     maxReceiptBytes: SYNC_RECEIPT_MAX_BYTES,
     maxSnapshotBytes: SYNC_SNAPSHOT_MAX_BYTES,
   };
