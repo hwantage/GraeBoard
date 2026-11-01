@@ -72,33 +72,29 @@ export async function capacityTotals(tx, teamId) {
 }
 // The sync store also needs C alone (stateBytes) to size each reduced state;
 // the reported capacity keeps its own shape.
-async function measureDatabase(database, teamId) {
+async function measureTotals(tx, teamId) {
+  const totals = await capacityTotals(tx, teamId);
+  return {
+    size: {
+      entities: totals.entities,
+      bytes: totals.entityBytes + totals.conflictBytes + totals.outboxBytes,
+      receiptBytes: totals.receiptBytes,
+      receiptCapacity: receiptCapacity(totals.receiptBytes),
+    },
+    stateBytes: totals.entityBytes + totals.conflictBytes,
+  };
+}
+function measureDatabase(database, teamId) {
   return database.withTeamTransaction(
     teamId,
-    async (tx) => {
-      const totals = await capacityTotals(tx, teamId);
-      return {
-        size: {
-          entities: totals.entities,
-          bytes: totals.entityBytes + totals.conflictBytes + totals.outboxBytes,
-          receiptBytes: totals.receiptBytes,
-          receiptCapacity: receiptCapacity(totals.receiptBytes),
-        },
-        stateBytes: totals.entityBytes + totals.conflictBytes,
-      };
-    },
+    (tx) => measureTotals(tx, teamId),
     { readOnly: true },
   );
 }
 export async function databaseCapacity(database, teamId) {
   return (await measureDatabase(database, teamId)).size;
 }
-export async function measureDatabaseCapacity(
-  database,
-  teamId,
-  limits = capacityLimits(),
-) {
-  const measure = await measureDatabase(database, teamId);
+function withinCapacity(measure, limits) {
   if (
     measure.size.entities > limits.maxEntities ||
     measure.size.bytes > limits.maxBytes
@@ -107,6 +103,21 @@ export async function measureDatabaseCapacity(
       "External stored synchronization capacity exceeded; canonical cursor is unchanged",
     );
   return measure;
+}
+export async function measureDatabaseCapacity(
+  database,
+  teamId,
+  limits = capacityLimits(),
+) {
+  return withinCapacity(await measureDatabase(database, teamId), limits);
+}
+// The same measurement inside a caller's transaction.
+export async function measureTransactionCapacity(
+  tx,
+  teamId,
+  limits = capacityLimits(),
+) {
+  return withinCapacity(await measureTotals(tx, teamId), limits);
 }
 export async function assertDatabaseCapacity(
   database,

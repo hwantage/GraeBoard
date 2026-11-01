@@ -97,7 +97,7 @@ export function setupExamples(team, setup, draft) {
       not_found_handling: "single-page-application",
     },
     images: { binding: "IMAGES" },
-    triggers: { crons: [] },
+    triggers: { crons: ["* * * * *"] },
     vars: {
       APP_ORIGIN: draft.appOrigin,
       ACCESS_ISSUER: draft.issuer,

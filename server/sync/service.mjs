@@ -65,37 +65,22 @@ export function operationBatch(
 }
 // A hosted runtime stops an invocation at its CPU budget without unwinding, so
 // each phase is reported as soon as it ends: the last line before the runtime's
-// limit message names the phase that ran out. processCpuMs is the CPU of the
-// whole runtime process where the platform exposes it (other invocations in the
-// same process are included); ms equals CPU only for the synchronous phases.
+// limit message names the phase that ran out. Wall time equals CPU time only
+// for the synchronous phases; Supabase Edge has no process.cpuUsage().
 export function phaseTimer(trace, label) {
   if (!trace) return () => {};
-  const cpu = () => {
-    try {
-      const usage = globalThis.process?.cpuUsage?.();
-      return usage ? (usage.user + usage.system) / 1000 : null;
-    } catch {
-      return null;
-    }
-  };
   const start = performance.now();
-  let last = start,
-    lastCpu = cpu();
+  let last = start;
   return (phase, detail = {}) => {
-    const now = performance.now(),
-      used = cpu();
+    const now = performance.now();
     trace({
       label,
       phase,
       ms: Math.round(now - last),
       totalMs: Math.round(now - start),
-      ...(used !== null && lastCpu !== null
-        ? { processCpuMs: Math.round(used - lastCpu) }
-        : {}),
       ...detail,
     });
     last = now;
-    lastCpu = used;
   };
 }
 export class SyncService {
@@ -220,13 +205,19 @@ export class SyncService {
       link = await loadCheckpoint(this, link, head);
     const chain = await this.readChain(head, link.canonical_head);
     if (chain.length) this.mark("readChain", { commits: chain.length });
-    // An unchanged head needs no canonical state at all.
-    let state = chain.length
-      ? await this.store.readState({ mark: this.mark })
-      : null;
-    if (state) this.mark("readState");
+    // C is read only for a commit that cannot be applied to a slice of it; an
+    // unchanged head needs no canonical state at all.
+    let state = null;
+    const whole = async () => {
+      if (!state) {
+        state = await this.store.readState({ mark: this.mark });
+        this.mark("readState");
+      }
+      return state;
+    };
     for (const commit of chain.slice(0, this.maxCommits)) {
-      const previousState = state;
+      let previousState = state,
+        slice = false;
       const parent = link.canonical_head || null;
       await this.checkCommit(commit.oid, parent);
       const added = await this.verifyFiles(commit, parent);
@@ -328,12 +319,18 @@ export class SyncService {
           );
         if (
           envelope.kind !== "transition" &&
-          envelope.protocol !== protocolVersion(state)
+          envelope.protocol !==
+            (state
+              ? protocolVersion(state)
+              : ((await this.store.readProtocol?.()) ??
+                protocolVersion(await whole())))
         )
           throw new ProtocolError(
             "SYNC_VERSION",
             "Explicit protocol transition required",
           );
+        if (["transition", "checkpoint"].includes(envelope.kind))
+          previousState = await whole();
         if (envelope.kind === "transition") {
           if (!["paused", "importing"].includes(link.mode))
             throw new ProtocolError(
@@ -447,23 +444,24 @@ export class SyncService {
               "SYNC_FORMAT",
               "Operation envelope exceeds count budget",
             );
-          state = protocolValidation(() =>
-            reduceMany(
-              state,
-              envelope.operations,
-              { ...this.identity, protocol: envelope.protocol },
-              { persistentReceipts: true },
-            ),
+          const reduced = await this.reduceCanonical(
+            envelope.operations,
+            { ...this.identity, protocol: envelope.protocol },
+            {
+              parent,
+              cover: state ? [] : await this.store.readPending(),
+              received: true,
+              whole: state,
+            },
           );
+          ({ previousState, state, slice } = reduced);
           operations = envelope.operations.map((op) => op.opId);
-          this.mark("reduce", { operations: operations.length });
-          if (stateHash(state) !== envelope.resultHash)
+          if (reduced.resultHash !== envelope.resultHash)
             throw new ProtocolError(
               "SYNC_INTEGRITY",
               "Reducer result checksum mismatch",
             );
           verifiedHash = envelope.resultHash;
-          this.mark("stateHash");
         } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
       if (protocolVersion(state) > this.maxProtocol)
@@ -484,9 +482,12 @@ export class SyncService {
         transition,
         stateHash: verifiedHash,
         stateSize,
+        slice,
         mark: this.mark,
       });
       this.mark("commitCanonical", { commit: commit.oid });
+      // A slice is not C; a later commit that needs C reads it again.
+      if (slice) state = null;
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
     }
@@ -530,6 +531,47 @@ export class SyncService {
     await this.store.saveBootstrap?.({ oid, bundleHash: digest(bytes) });
     await this.transport.publish(oid, null);
     return this.receive(link);
+  }
+  // Applies operations to C and returns the result with its stateHash. A store
+  // that can reduce only the records the operations touch (reduceSlice) does
+  // so, with the hash computed beside the data; anything it declines falls
+  // back to loading and hashing the whole state. The slice result stands for
+  // C only through commitCanonical(..., { slice: true }).
+  // Received operations are validated as protocol input (protocolValidation).
+  async reduceCanonical(
+    operations,
+    identity,
+    { parent, cover = [], received = false, whole = null } = {},
+  ) {
+    const reduction = whole
+      ? null
+      : await this.store.reduceSlice?.(operations, identity, {
+          cover,
+          mark: this.mark,
+        });
+    if (reduction && reduction.head === parent)
+      return {
+        previousState: reduction.base,
+        state: reduction.state,
+        resultHash: reduction.hash,
+        slice: true,
+      };
+    const previousState =
+      whole || (await this.store.readState({ mark: this.mark }));
+    if (!whole)
+      this.mark(
+        "readState",
+        this.trace && { entities: Object.keys(previousState.entities).length },
+      );
+    const reduce = () =>
+        reduceMany(previousState, operations, identity, {
+          persistentReceipts: true,
+        }),
+      state = received ? protocolValidation(reduce) : reduce();
+    this.mark("reduce");
+    const resultHash = stateHash(state);
+    this.mark("stateHash");
+    return { previousState, state, resultHash, slice: false };
   }
   async cycle({
     initialize = false,
@@ -576,31 +618,19 @@ export class SyncService {
               ),
             },
           );
-          const previousState = await this.store.readState({
-            mark: this.mark,
-          });
-          this.mark(
-            "readState",
-            this.trace && {
-              entities: Object.keys(previousState.entities).length,
-            },
-          );
-          let state = reduceMany(previousState, pending, this.identity, {
-            persistentReceipts: true,
-          });
-          this.mark("reduce");
-          const stateSize = this.assertCapacity(state, previousState);
-          this.mark("capacity", { bytes: stateSize.bytes });
           const parent = link.canonical_head;
           if (!parent) throw new Error("Initial publication required");
+          const { previousState, state, resultHash, slice } =
+            await this.reduceCanonical(pending, this.identity, { parent });
+          const stateSize = this.assertCapacity(state, previousState);
+          this.mark("capacity", { bytes: stateSize.bytes });
           const event = {
             protocol: protocolVersion(state),
             kind: "operations",
             parent,
             operations: pending,
-            resultHash: stateHash(state),
+            resultHash,
           };
-          this.mark("stateHash");
           const files = combineFileEntries(
             {
               ["events/" + randomUUID() + ".json"]: canonical(event),
@@ -630,6 +660,7 @@ export class SyncService {
                   previousState,
                   stateHash: event.resultHash,
                   stateSize,
+                  slice,
                   mark: this.mark,
                 })
               : await this.receive(await this.store.readLink());

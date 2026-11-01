@@ -251,6 +251,8 @@ export async function runTeam(
     leaseMs = 0,
     // A hosted invocation cannot afford a whole-team re-compare per commit.
     incrementalMaterialize = true,
+    // Nor loading and hashing the whole team (see boundStore reduceSlice).
+    slices = true,
   } = {},
 ) {
   const db = databaseFor(env, profile),
@@ -282,6 +284,7 @@ export async function runTeam(
       ...(maxCommits ? { maxCommits } : {}),
       ...(leaseMs ? { leaseMs } : {}),
       incrementalMaterialize,
+      slices,
       deferImages,
     }).run({
       receiveOnly,
@@ -443,6 +446,7 @@ export async function importTeam(ctx, body) {
     maxCommits: ctx.maxCommits || 0,
     leaseMs: ctx.leaseMs || 0,
     incrementalMaterialize: !!ctx.incrementalMaterialize,
+    slices: ctx.slices !== false,
   });
   const link = await db.readLink(profile.teamId),
     caughtUp = link.canonical_head === (await transport.readHead());

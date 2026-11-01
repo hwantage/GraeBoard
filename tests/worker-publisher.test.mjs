@@ -92,7 +92,15 @@ test(
     t.after(() => {
       globalThis.fetch = nativeFetch;
     });
+    const phases = [],
+      log = console.log;
+    t.mock.method(console, "log", (...args) =>
+      args[0] === "GraeBoard sync phase"
+        ? phases.push(JSON.parse(args[1]))
+        : log(...args),
+    );
     Object.assign(f.env, {
+      SYNC_PHASE_LOG: "1",
       APP_ORIGIN: "https://publisher.example.test",
       ACCESS_ISSUER: "https://publisher.cloudflareaccess.com",
       INSTALLATION_ID: f.link.installation_id,
@@ -325,6 +333,12 @@ test(
     await scheduled(env);
     assert.equal(github.calls.length, beforeBusy);
     assert.deepEqual((await pending()).map(digest), retained);
+    // A manual run meeting that lease reports it did nothing instead of a
+    // completed run with the pending count unchanged.
+    const manual = await request(`/teams/${f.teamId}/sync/run`, {});
+    assert.equal(manual.busy, true);
+    assert.equal(manual.pending, retained.length);
+    assert.equal(github.calls.length, beforeBusy);
     await f.pool.query(
       "UPDATE graeboard.team_sync_links SET lease_owner=NULL,lease_until=NULL WHERE team_id=$1",
       [f.teamId],
@@ -398,6 +412,15 @@ test(
     await assertConverged();
     assert.deepEqual(errors, []);
     assert.deepEqual(github.unexpectedCalls, []);
+    // Every publication reduced only the records it touched and had PostgreSQL
+    // hash C; none loaded the team's whole state.
+    const hashed = phases.filter((p) => p.phase === "canonicalHash");
+    assert.ok(hashed.length >= 3);
+    assert.ok(hashed.every((p) => p.verified));
+    assert.deepEqual(
+      phases.filter((p) => p.phase === "readState"),
+      [],
+    );
     t.diagnostic(
       JSON.stringify({
         mutationsInContinuousWindow: 60,

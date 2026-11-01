@@ -1469,8 +1469,8 @@ export default function SyncSetupWizard({
               <p>
                 시크릿 창에서 외부 접속 주소를 열어 Google 로그인 뒤 계정 연결
                 화면이 뜨는지 확인합니다. 503이면 binding과 Actions 실행 결과를,
-                인증 오류면 외부 접속 주소·Access Audience를 확인합니다. Cron은
-                양방향 확인 후 켭니다.
+                인증 오류면 외부 접속 주소·Access Audience를 확인합니다. 매분
+                Cron은 배포할 때 함께 설정됩니다.
               </p>
               <details className="sync-connection-details">
                 <summary>PC에서 직접 배포하기 (선택)</summary>
@@ -1683,8 +1683,8 @@ export default function SyncSetupWizard({
           <p className="field-help">
             상대 확인은 최근 3분 이내의 동일 공유본 적용 영수증으로 검사합니다.
             대기 중이면 양쪽 연결 상태·미전송·충돌을 확인하고 설정 완료를 다시
-            누르세요. 완료 후 gateway의 triggers.crons를 ["* * * * *"]로
-            설정하여 재배포하고 실행 로그를 확인합니다.
+            누르세요. 매분 Cron은 배포 때 함께 설정되므로 따로 바꾸지 않으며,
+            완료 후 실행 로그를 확인합니다.
           </p>
         </>
       )}

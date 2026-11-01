@@ -60,6 +60,12 @@ test(
       db,
       server,
       app;
+    const phases = [],
+      log = console.log;
+    console.log = (...args) =>
+      args[0] === "GraeBoard sync phase"
+        ? phases.push(JSON.parse(args[1]))
+        : log(...args);
     const command = (bin, args) => {
         const r = spawnSync(join(pgBin, bin), args, { encoding: "utf8" });
         assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -191,6 +197,7 @@ test(
           SETUP_TOKEN: "fixture-setup-token-with-enough-entropy",
           INSTALLATION_ID: externalInstallation,
           PEER_INSTALLATION_ID: internalInstallation,
+          SYNC_PHASE_LOG: "1",
           PG_CONTROL: { connectionString: url("control") },
           PG_TEAM: { connectionString: url("team") },
           R2_TEAM: images,
@@ -1127,6 +1134,16 @@ test(
         [],
         "swallowed unexpected GitHub API calls also fail the fixture",
       );
+      // Every publication and received commit was reduced on a slice of C
+      // that PostgreSQL hashed; the Worker never loaded the whole state.
+      const hashed = phases.filter((p) => p.phase === "canonicalHash");
+      assert.ok(hashed.length >= 10);
+      assert.ok(hashed.every((p) => p.verified));
+      assert.ok(phases.some((p) => p.phase === "commitCanonical"));
+      assert.deepEqual(
+        phases.filter((p) => p.phase === "readState"),
+        [],
+      );
       if (process.env.WORKER_FAULT_REPORT)
         writeFileSync(
           process.env.WORKER_FAULT_REPORT,
@@ -1160,6 +1177,7 @@ test(
           ) + "\n",
         );
     } finally {
+      console.log = log;
       await Promise.allSettled(work);
       globalThis.fetch = nativeFetch;
       if (app) {

@@ -185,6 +185,9 @@ export async function importExternalTeam(
           maxCommits: 64,
           leaseMs: 6 * 60 * 60 * 1000,
           incrementalMaterialize: true,
+          // Without a CPU limit, reading C once per cycle and replaying 64
+          // commits in memory beats one SQL hash of C per commit.
+          slices: false,
           transport: new GitHubApiTransport({
             repository: profile.repository,
             token: env[profile.githubSecret],

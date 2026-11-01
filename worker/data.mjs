@@ -20,7 +20,8 @@ import {
   equal,
   ENTITIES,
 } from "../server/sync/protocol.mjs";
-import { reduceMany, reduce, uniqueName } from "../server/sync/reducer.mjs";
+import { reduceMany, reduce } from "../server/sync/reducer.mjs";
+import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
 import { assert } from "./access.mjs";
 import {
   packReportPayload,
@@ -324,174 +325,31 @@ export class DataSession {
       entities: projectedState.entities,
     };
   }
-  // The records a capture can consult: the changed keys and those of pending
-  // operations, the parents and restored children the reducer checks, every
-  // tag, calendars using a touched tag, the protocol marker, and the receipts
-  // and conflicts pending operations name. Name uniqueness comes from SQL, so
-  // the cost follows the change instead of the team's whole state.
+  // The records a capture can consult (see CanonicalSlice): the changed keys
+  // and those of pending operations, so the cost follows the change instead
+  // of the team's whole state.
   async projectedFor() {
-    const team = this.teamId,
-      pending = (
-        await this.tx.query(
-          "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
-          [team],
-        )
-      ).rows.map((row) => JSON.parse(row.payload));
-    const wanted = new Map(),
-      prefixes = new Map(),
-      tags = new Set(),
-      want = (entity, key) => wanted.set(entityId(entity, key), [entity, key]),
-      children = (entity, key) => {
-        const prefix = canonical(key).slice(0, -1) + ",";
-        prefixes.set(entity + "\u0000" + prefix, [entity, prefix]);
-      },
-      // A restore re-stamps the parent's cells and documents.
-      restored = (entity, key) => {
-        if (!["task", "calendar"].includes(entity)) return;
-        if (entity === "task") children("cell", [key[0]]);
-        children("document", [entity, key[0]]);
-      };
-    want("protocol", []);
-    const touch = (entity, key, action) => {
-      want(entity, key);
-      if (entity === "cell") want("task", [key[0]]);
-      if (entity === "document") {
-        if (["task", "calendar"].includes(key[0])) want(key[0], [key[1]]);
-        else if (key[0].startsWith("report")) want("report", [key[1]]);
-      }
-      if (entity === "reportTask") want("report", [key[0]]);
-      if (entity === "reportCell") {
-        want("report", [key[0]]);
-        want("reportTask", key.slice(0, 2));
-      }
-      if (entity === "report") {
-        children("reportTask", [key[0]]);
-        children("reportCell", [key[0]]);
-      }
-      if (entity === "tag") tags.add(key[0]);
-      if (action === "restore") restored(entity, key);
-    };
-    for (const change of this.changes.values())
-      touch(change.entity, change.key);
-    for (const op of pending)
-      for (const change of op.changes)
-        touch(change.entity, change.key, change.action);
-    const state = emptyState();
-    const read = async (sql, values) => {
-      const added = [];
-      for (const row of (await this.tx.query(sql, values)).rows) {
-        const key = JSON.parse(row.entity_key),
-          id = entityId(row.entity, key);
-        if (state.entities[id]) continue;
-        state.entities[id] = {
-          entity: row.entity,
-          key,
-          generation: row.generation,
-          version: row.version,
-          payload: row.payload == null ? null : JSON.parse(row.payload),
-          deleted: !!row.deleted,
-        };
-        added.push([id, state.entities[id]]);
-      }
-      return added;
-    };
-    const readChildren = async () => {
-      if (!prefixes.size) return [];
-      const list = [...prefixes.values()];
-      prefixes.clear();
-      return read(
-        "SELECT s.* FROM sync_entities s JOIN unnest($2::text[],$3::text[]) w(entity,prefix) ON s.team_id=$1 AND s.entity=w.entity AND left(s.entity_key,length(w.prefix))=w.prefix",
-        [
-          team,
-          list.map(([entity]) => entity),
-          list.map(([, prefix]) => prefix),
-        ],
-      );
-    };
-    const ids = [...wanted.values()];
-    await read(
-      "SELECT s.* FROM sync_entities s JOIN unnest($2::text[],$3::text[]) w(entity,entity_key) ON s.team_id=$1 AND s.entity=w.entity AND s.entity_key=w.entity_key",
-      [
-        team,
-        ids.map(([entity]) => entity),
-        ids.map(([, key]) => canonical(key)),
-      ],
-    );
-    await read(
-      "SELECT * FROM sync_entities WHERE team_id=$1 AND entity='tag'",
-      [team],
-    );
-    await readChildren();
-    if (tags.size)
-      await read(
-        "SELECT s.* FROM sync_entities s JOIN unnest($2::text[]) t(id) ON s.team_id=$1 AND s.entity='calendar' AND strpos(s.payload,t.id)>0",
-        [team, [...tags].map((id) => JSON.stringify(id))],
-      );
-    const opIds = [
-      ...new Set(pending.flatMap((op) => [op.opId, ...op.dependsOn])),
-    ];
-    if (opIds.length)
-      for (const row of (
-        await this.tx.query(
-          "SELECT op_id,receipt FROM sync_receipts WHERE team_id=$1 AND op_id=ANY($2)",
-          [team, opIds],
-        )
-      ).rows)
-        state.receipts[row.op_id] = JSON.parse(row.receipt);
-    const resolves = [...new Set(pending.flatMap((op) => op.resolves || []))];
-    if (resolves.length)
-      for (const row of (
-        await this.tx.query(
-          "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)",
-          [team, resolves],
-        )
-      ).rows)
-        state.conflicts[row.conflict_id] = JSON.parse(row.payload);
-    // The same index reduceMany builds, from SQL instead of every record.
-    const names = new Map(),
-      tagUsers = new Map();
-    for (const row of (
+    const pending = (
       await this.tx.query(
-        "SELECT entity,entity_key,deleted,payload::json->>'name' AS name,payload::json->>'userId' AS user_id FROM sync_entities WHERE team_id=$1 AND entity IN ('tag','filter','report')",
-        [team],
+        "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+        [this.teamId],
       )
-    ).rows) {
-      const id = entityId(row.entity, JSON.parse(row.entity_key)),
-        loaded = state.entities[id];
-      if (!loaded && row.name == null) continue;
-      const name = uniqueName(
-        loaded || {
-          entity: row.entity,
-          deleted: !!row.deleted,
-          payload: { name: row.name, userId: row.user_id || undefined },
-        },
-      );
-      if (name) names.set(name, id);
-    }
-    for (const [id, record] of Object.entries(state.entities))
-      if (record.entity === "calendar" && !record.deleted)
-        for (const tag of record.payload.tags || []) {
-          if (!tagUsers.has(tag.id)) tagUsers.set(tag.id, new Set());
-          tagUsers.get(tag.id).add(id);
-        }
-    let projectedState = {
-      entities: { ...state.entities },
-      receipts: { ...state.receipts },
-      conflicts: { ...state.conflicts },
-    };
-    const context = { entities: projectedState.entities, names, tagUsers };
-    for (const op of pending)
-      projectedState = reduce(
-        projectedState,
-        op,
-        { teamId: op.teamId, repoId: op.repoId },
-        context,
-      ).state;
+    ).rows.map((row) => JSON.parse(row.payload));
+    const slice = new CanonicalSlice(this.tx, this.teamId);
+    for (const change of this.changes.values())
+      slice.touch(change.entity, change.key);
+    const state = await slice.include(pending).load();
+    const { state: projectedState, context } = reduceSlice(
+      state,
+      pending,
+      null,
+      await slice.context(state),
+    );
     // This capture restores what the projection still holds deleted.
     for (const change of this.changes.values())
       if (projectedState.entities[entityId(change.entity, change.key)]?.deleted)
-        restored(change.entity, change.key);
-    for (const [id, record] of await readChildren())
+        slice.restored(change.entity, change.key);
+    for (const [id, record] of await slice.readChildren(state))
       projectedState.entities[id] ??= record;
     return {
       state,

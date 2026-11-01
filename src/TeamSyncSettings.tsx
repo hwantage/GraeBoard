@@ -256,7 +256,10 @@ export default function TeamSyncSettings({
     onMessage("");
     let refreshing = false;
     try {
-      const result = await send<ConnectionCheck>(`${prefix}/${action}`, body);
+      const result = await send<ConnectionCheck & { busy?: boolean }>(
+        `${prefix}/${action}`,
+        body,
+      );
       if (!live.current) return;
       if (action === "check") {
         setCheck(result);
@@ -282,12 +285,16 @@ export default function TeamSyncSettings({
       const current = await load(undefined, true, true);
       if (!live.current) return;
       // Run and the initial publication finish their cycle before answering,
-      // so the refreshed status names what reached Git.
+      // so the refreshed status names what reached Git. A run that found
+      // another one holding the team's sync did nothing and says so.
       const done =
-        current &&
-        (action === "run" || (action === "enable" && current.canonicalHead))
-          ? `${action === "run" ? "동기화를" : "초기 게시를"} 완료했습니다. Git 반영 ${syncTime(current.lastPublishedAt)} · 공유 대기 ${current.pending}건${current.conflicts ? ` · 충돌 보관 ${current.conflicts}건` : ""}`
-          : message;
+        current && action === "run" && result.busy
+          ? `다른 동기화 실행이 아직 끝나지 않아 이번 요청은 처리하지 않았습니다. 잠시 후 다시 누르세요. Git 반영 ${syncTime(current.lastPublishedAt)} · 공유 대기 ${current.pending}건`
+          : current &&
+              (action === "run" ||
+                (action === "enable" && current.canonicalHead))
+            ? `${action === "run" ? "동기화를" : "초기 게시를"} 완료했습니다. Git 반영 ${syncTime(current.lastPublishedAt)} · 공유 대기 ${current.pending}건${current.conflicts ? ` · 충돌 보관 ${current.conflicts}건` : ""}`
+            : message;
       setRunning("");
       if (target === "actions") setNotice(done);
       else onMessage(done);

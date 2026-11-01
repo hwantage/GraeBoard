@@ -344,6 +344,24 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
         hasText: /^동기화를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
       }),
   ).toBeVisible();
+  // A run that met another run's lease did nothing; it must not read as done.
+  await page.route(`**/api/teams/${teamId}/sync/run`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: { ...(await response.json()), busy: true },
+    });
+  });
+  await settings
+    .getByRole("button", { name: "지금 동기화", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("status").filter({
+      hasText:
+        /^다른 동기화 실행이 아직 끝나지 않아 이번 요청은 처리하지 않았습니다\. 잠시 후 다시 누르세요\. Git 반영 .+ · 공유 대기 \d+건$/,
+    }),
+  ).toBeVisible();
+  await page.unroute(`**/api/teams/${teamId}/sync/run`);
   const shared = app.locals.sync.store(teamId).readState();
   expect(
     Object.values(shared.entities).some(
