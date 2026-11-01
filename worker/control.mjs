@@ -229,13 +229,21 @@ export class RequestContext {
       database,
       teamId,
       async (s) => {
-        if (options.write && !options.privateWrite)
-          for (const person of [
+        if (options.write && !options.privateWrite) {
+          const everyone = [
             ...people,
             { id: this.user.id, name: this.user.name },
-          ])
+          ];
+          // One query reads every member's record; the loop then reads the
+          // session cache, so the check costs the same for any team size.
+          await s.getMany(
+            "person",
+            everyone.map((person) => [person.id]),
+          );
+          for (const person of everyone)
             if (!(await s.get("person", [person.id])))
               await s.put("person", [person.id], { name: person.name });
+        }
         const value = await work(s);
         businessChanged = s.changes.size > 0;
         return value;

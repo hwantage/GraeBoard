@@ -83,11 +83,27 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
         (rows.length && Number(rows[0].cursor) > Number(after[1]) + 1)
       )
         return { cursor: eventId, reset: true, events: [] };
+      // Most polls find nothing new; they need no retention lookup.
+      if (!rows.length) return { cursor: eventId, reset: false, events: [] };
       const hidden = await excludedYears(s),
         years = periodYears(year, startMonth),
+        payloads = rows.map((row) => JSON.parse(row.payload)),
         events = [];
-      for (const row of rows) {
-        const payload = JSON.parse(row.payload),
+      // One query reads every task the new events name; the loop then reads
+      // the session cache, so a poll costs the same for any number of tasks.
+      if (!hidden.has(year))
+        await s.getMany(
+          "task",
+          [
+            ...new Set(
+              payloads.flatMap((payload) =>
+                payload.cells.map((cell) => cell.taskId),
+              ),
+            ),
+          ].map((id) => [id]),
+        );
+      for (const [index, row] of rows.entries()) {
+        const payload = payloads[index],
           cells = [];
         if (!hidden.has(year))
           for (const cell of payload.cells) {
@@ -327,7 +343,17 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
             { formatting: previousFormatting, cells: before },
             { shared: false },
           );
-        } else
+        } else {
+          // A pasted range names many cells; read their tasks and cells
+          // together instead of two round trips per cell.
+          await s.getMany(
+            "task",
+            d.changes.map((change) => [change.taskId]),
+          );
+          await s.getMany(
+            "cell",
+            d.changes.map((change) => [change.taskId, change.key]),
+          );
           for (const change of d.changes) {
             const key = JSON.stringify([change.taskId, change.key]);
             assert(!seen.has(key), 400, "같은 셀을 중복 수정할 수 없습니다.");
@@ -378,6 +404,7 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
               version: saved.revision,
             });
           }
+        }
         for (const id of new Set(cells.map((c) => c.taskId))) {
           await s.touch("task", [id]);
           updatedAt[id] = stamp(await s.get("task", [id]));

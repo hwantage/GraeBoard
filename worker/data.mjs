@@ -46,14 +46,17 @@ function poolFor(binding, scope = "control", { site = false } = {}) {
         ? client.release.bind(client)
         : () => client.end();
       try {
-        const rows = (
-          await client.query(
-            `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
-          )
-        ).rows;
-        client.schemaVersion = postgresHistoryVersion(rows, migrationScope, {
-          allowPreviousSite: true,
-        });
+        // A pooled connection was checked when it was opened.
+        if (client.schemaVersion === undefined) {
+          const rows = (
+            await client.query(
+              `SELECT scope,version,checksum FROM ${schema}.schema_migrations ORDER BY version`,
+            )
+          ).rows;
+          client.schemaVersion = postgresHistoryVersion(rows, migrationScope, {
+            allowPreviousSite: true,
+          });
+        }
       } catch (error) {
         await release(error);
         if (error.status) throw error;
@@ -87,23 +90,24 @@ export async function controlTransaction(env, work, { write = false } = {}) {
   const team = siteTeamId(env);
   const client = await controlPool(env).connect();
   try {
-    await client.query("BEGIN");
-    await client.query(
-      `SET LOCAL search_path TO ${team ? "graeboard_site" : "graeboard"}, pg_catalog`,
+    // One round trip opens the transaction (see PostgresDatabase.transaction).
+    const opened = [].concat(
+      await client.query(
+        [
+          "BEGIN",
+          `SET LOCAL search_path TO ${team ? "graeboard_site" : "graeboard"}, pg_catalog`,
+          ...(write
+            ? ["SELECT revision FROM control_meta WHERE singleton=1 FOR UPDATE"]
+            : []),
+          ...(team ? ["SELECT team_id FROM site_meta WHERE singleton=1"] : []),
+        ].join(";"),
+      ),
     );
-    if (team) {
-      const row = (
-        await client.query("SELECT team_id FROM site_meta WHERE singleton=1")
-      ).rows[0];
+    if (team)
       assert(
-        row?.team_id === team,
+        opened.at(-1).rows[0]?.team_id === team,
         503,
         "외부 사이트 DB의 팀 UUID가 일치하지 않습니다.",
-      );
-    }
-    if (write)
-      await client.query(
-        "SELECT revision FROM control_meta WHERE singleton=1 FOR UPDATE",
       );
     const result = await work(client);
     if (write)
@@ -157,6 +161,31 @@ export class DataSession {
       this.cache.set(id, q.rows[0] ? rowEntity(q.rows[0]) : null);
     }
     return this.cache.get(id);
+  }
+  // Several records of one entity in one query. They land in the cache get()
+  // reads, so a per-item get() afterwards costs no round trip.
+  async getMany(entity, keys) {
+    const missing = new Map();
+    for (const key of keys) {
+      const id = entityId(entity, key);
+      if (!this.cache.has(id)) missing.set(id, JSON.stringify(key));
+    }
+    if (missing.size) {
+      const found = new Map(
+        (
+          await this.tx.query(
+            "SELECT * FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=ANY($3::text[])",
+            [this.teamId, entity, [...missing.values()]],
+          )
+        ).rows.map((row) => {
+          const record = rowEntity(row);
+          return [entityId(entity, record.key), record];
+        }),
+      );
+      for (const id of missing.keys())
+        this.cache.set(id, found.get(id) || null);
+    }
+    return keys.map((key) => this.cache.get(entityId(entity, key)));
   }
   async list(entity, { deleted = false } = {}) {
     if (this.lists.has(entity))
@@ -587,56 +616,47 @@ export async function withData(
   return database.withTeamTransaction(
     teamId,
     async (tx) => {
-      {
-        const job = await tx.query(
-          "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled') LIMIT 1",
-          [teamId],
-        );
-        assert(
-          !job.rows.length,
-          409,
-          "팀 자료 정리 중입니다. 입력을 보존한 뒤 다시 저장하세요.",
-        );
-      }
-      if (write)
-        assert(
-          !(
-            await tx.query(
-              "SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$2",
-              [teamId, Date.now()],
-            )
-          ).rows.length,
-          409,
-          "동기화 형식 전환 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
-        );
-      if (write && body?.year !== undefined)
-        assert(
-          !(
-            await tx.query(
-              "SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$2",
-              [teamId, canonical([String(body.year)])],
-            )
-          ).rows.length,
-          409,
-          "이 사이트에서 제외된 연도입니다. 먼저 복원하세요.",
-        );
-      const operationId = body?.operationId;
-      if (write && operationId) {
-        const previous = (
+      // Every guard of this transaction in one round trip; each is asserted
+      // in the same order as before.
+      const operationId = write ? body?.operationId || null : null,
+        year =
+          write && body?.year !== undefined
+            ? canonical([String(body.year)])
+            : null,
+        guards = (
           await tx.query(
-            "SELECT * FROM site_operations WHERE team_id=$1 AND op_id=$2",
-            [teamId, operationId],
+            `SELECT
+              EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
+              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
+              $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
+              (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
+            [teamId, write, Date.now(), year, operationId],
           )
         ).rows[0];
-        if (previous) {
-          assert(
-            previous.actor_id === actorId &&
-              previous.request_hash === digest(body),
-            409,
-            "같은 요청 ID에 다른 내용을 저장할 수 없습니다.",
-          );
-          return JSON.parse(previous.response);
-        }
+      assert(
+        !guards.maintenance,
+        409,
+        "팀 자료 정리 중입니다. 입력을 보존한 뒤 다시 저장하세요.",
+      );
+      assert(
+        !guards.upgrading,
+        409,
+        "동기화 형식 전환 중입니다. 입력을 보존하고 잠시 후 저장하세요.",
+      );
+      assert(
+        !guards.retained,
+        409,
+        "이 사이트에서 제외된 연도입니다. 먼저 복원하세요.",
+      );
+      if (guards.previous) {
+        const previous = guards.previous;
+        assert(
+          previous.actor_id === actorId &&
+            previous.request_hash === digest(body),
+          409,
+          "같은 요청 ID에 다른 내용을 저장할 수 없습니다.",
+        );
+        return JSON.parse(previous.response);
       }
       const session = new DataSession(tx, teamId, { limits }),
         result = await work(session);

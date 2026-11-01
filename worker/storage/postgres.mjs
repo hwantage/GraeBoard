@@ -41,29 +41,29 @@ export class PostgresDatabase extends DatabaseAdapter {
         committing = false,
         open = false;
       try {
-        await client.query(
-          readOnly
-            ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
-            : "BEGIN",
-        );
+        // One round trip opens the transaction: a remote database makes each
+        // separate statement cost a full network round trip.
         begun = true;
-        await client.query(
-          `SET LOCAL search_path TO ${this.schema}, pg_catalog`,
-        );
-        if (!readOnly)
+        const opened = [].concat(
           await client.query(
-            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
-            [teamId || "graeboard-control"],
-          );
-        if (teamId) {
-          const row = (
-            await client.query(
-              "SELECT team_id FROM team_meta WHERE singleton=1",
-            )
-          ).rows[0];
-          if (row?.team_id !== teamId)
-            throw new Error("PostgreSQL team identity mismatch");
-        }
+            [
+              readOnly
+                ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                : "BEGIN",
+              `SET LOCAL search_path TO ${this.schema}, pg_catalog`,
+              ...(readOnly
+                ? []
+                : [
+                    `SELECT pg_advisory_xact_lock(hashtextextended(${client.escapeLiteral(teamId || "graeboard-control")},0))`,
+                  ]),
+              ...(teamId
+                ? ["SELECT team_id FROM team_meta WHERE singleton=1"]
+                : []),
+            ].join(";"),
+          ),
+        );
+        if (teamId && opened.at(-1).rows[0]?.team_id !== teamId)
+          throw new Error("PostgreSQL team identity mismatch");
         open = true;
         const run = (sql, params = []) => {
           if (!open) throw new Error("Transaction is closed");

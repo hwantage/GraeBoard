@@ -8,7 +8,8 @@ import {
   documentBrowserPage,
   documentPreview,
 } from "../../server/storage/document-browser-service.mjs";
-import { reportView } from "./postgres-reports.mjs";
+import { reportRevision } from "./postgres-reports.mjs";
+import { documentKeysUnder } from "./postgres-documents.mjs";
 export class PostgresDocumentBrowserRepository {
   constructor({ context }) {
     this.context = context;
@@ -28,12 +29,9 @@ export class PostgresDocumentBrowserRepository {
     const teamId = query.teamId,
       year = yearSchema.parse(query.year),
       source = query.source || "live",
-      users = (await ctx.bootstrap()).users;
+      // Only the task pages show people; the source list skips the bootstrap.
+      users = kind === "sources" ? null : (await ctx.bootstrap()).users;
     return ctx.data(teamId, async (s) => {
-      const documents = await s.list("document"),
-        reports = (await s.list("report")).filter(
-          (r) => r.payload.year === year,
-        );
       if ((await excludedYears(s)).has(year)) {
         if (kind === "sources") return { sources: [] };
         if (kind === "tasks")
@@ -44,7 +42,19 @@ export class PostgresDocumentBrowserRepository {
         assert(false, 404, "이 사이트에서 정리한 연도입니다. 먼저 복원하세요.");
       }
       if (kind === "sources") {
-        const live = await taskList(s, { year });
+        const live = await taskList(s, { year }),
+          reports = (await s.list("report")).filter(
+            (r) => r.payload.year === year,
+          ),
+          // Counted from keys, once for every report: no markdown is read.
+          counts = new Map();
+        for (const key of await documentKeysUnder(s, ["report"])) {
+          if (!counts.has(key[1]))
+            counts.set(key[1], { tasks: new Set(), documents: 0 });
+          const count = counts.get(key[1]);
+          count.tasks.add(key[2]);
+          count.documents++;
+        }
         return {
           sources: [
             {
@@ -57,22 +67,15 @@ export class PostgresDocumentBrowserRepository {
               id: r.key[0],
               name: r.payload.name,
               taskCount: r.payload.data.tasks.filter((t) =>
-                documents.some(
-                  (d) =>
-                    d.key[0] === "report" &&
-                    d.key[1] === r.key[0] &&
-                    d.key[2] === t.id,
-                ),
+                counts.get(r.key[0])?.tasks.has(t.id),
               ).length,
-              documentCount: documents.filter(
-                (d) => d.key[0] === "report" && d.key[1] === r.key[0],
-              ).length,
+              documentCount: counts.get(r.key[0])?.documents || 0,
             })),
           ],
         };
       }
-      const report =
-        source === "live" ? null : reports.find((r) => r.key[0] === source);
+      const row = source === "live" ? null : await s.get("report", [source]),
+        report = row && !row.deleted && row.payload.year === year ? row : null;
       assert(source === "live" || report, 404, "사본을 찾을 수 없습니다.");
       const tasks =
           source === "live"
@@ -86,29 +89,29 @@ export class PostgresDocumentBrowserRepository {
           task,
           settings,
           users,
-          ...(report
-            ? { revision: (await reportView(s, report)).revision }
-            : {}),
+          ...(report ? { revision: reportRevision(report.payload.data) } : {}),
         };
       }
       const sourceUsers = report?.payload.data.users || users;
+      // The source's documents grouped by task once, not filtered per task.
+      const owner = source === "live" ? 1 : 2,
+        byTask = new Map();
+      for (const d of await s.listChildren(
+        "document",
+        source === "live" ? ["task"] : ["report", source],
+      )) {
+        if (!byTask.has(d.key[owner])) byTask.set(d.key[owner], []);
+        byTask.get(d.key[owner]).push(d);
+      }
       const withDocs = tasks
           .map((task) => ({
             ...task,
-            documents: documents
-              .filter((d) =>
-                source === "live"
-                  ? d.key[0] === "task" && d.key[1] === task.id
-                  : d.key[0] === "report" &&
-                    d.key[1] === source &&
-                    d.key[2] === task.id,
-              )
-              .map((d) => ({
-                id: d.key.at(-1),
-                title: d.payload.title,
-                hasContent: hasDocumentContent(d.payload.markdown),
-                preview: documentPreview(d.payload.markdown),
-              })),
+            documents: (byTask.get(task.id) || []).map((d) => ({
+              id: d.key.at(-1),
+              title: d.payload.title,
+              hasContent: hasDocumentContent(d.payload.markdown),
+              preview: documentPreview(d.payload.markdown),
+            })),
           }))
           .filter((t) => t.documents.length),
         pageResult = documentBrowserPage(
