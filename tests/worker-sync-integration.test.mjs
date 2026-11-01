@@ -1135,9 +1135,13 @@ test(
         "swallowed unexpected GitHub API calls also fail the fixture",
       );
       // Every publication and received commit was reduced on a slice of C
-      // that PostgreSQL hashed; the Worker never loaded the whole state.
-      const hashed = phases.filter((p) => p.phase === "canonicalHash");
-      assert.ok(hashed.length >= 10);
+      // and carried the state sum; the Worker never loaded the whole state.
+      // Once the SQLite site announced the sum, publications stopped
+      // rebuilding the whole-state hash.
+      const summed = phases.filter((p) => p.phase === "stateSum"),
+        hashed = phases.filter((p) => p.phase === "canonicalHash");
+      assert.ok(summed.length >= 10);
+      assert.ok(summed.length > hashed.length);
       assert.ok(hashed.every((p) => p.verified));
       assert.ok(phases.some((p) => p.phase === "commitCanonical"));
       assert.deepEqual(

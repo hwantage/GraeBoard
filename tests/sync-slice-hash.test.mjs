@@ -1,8 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { postgresFixture } from "./business-storage-fixture.mjs";
-import { canonicalHashes, sliceChanges } from "../worker/sync-partial.mjs";
-import { digest, entityId, emptyState } from "../server/sync/protocol.mjs";
+import {
+  canonicalHashes,
+  sliceChanges,
+  computeTotals,
+} from "../worker/sync-partial.mjs";
+import { capacityTotals } from "../worker/capacity.mjs";
+import { assertStateCapacity } from "../shared/sync-capacity.mjs";
+import {
+  digest,
+  entityId,
+  emptyState,
+  stateSum,
+  stateSumFrom,
+} from "../server/sync/protocol.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 
 const record = (entity, key, payload, extra = {}) => ({
@@ -128,6 +140,20 @@ test("PostgreSQL hashes C and C with slice changes exactly as stateHash does", a
       (await tx.query("SHOW statement_timeout")).rows[0].statement_timeout,
       "2min",
     );
+    // The order-free state sum and capacity totals match the JS definitions
+    // and capacityTotals, and a slice update reaches the same sum.
+    const totals = await computeTotals(tx, teamId),
+      size = assertStateCapacity(stored),
+      sql = await capacityTotals(tx, teamId);
+    assert.deepEqual(totals, {
+      sum: stateSum(stored),
+      entities: size.entities,
+      stateBytes: size.bytes,
+      receiptBytes: size.receiptBytes,
+    });
+    assert.equal(totals.stateBytes, sql.entityBytes + sql.conflictBytes);
+    assert.equal(totals.receiptBytes, sql.receiptBytes);
+    assert.equal(stateSumFrom(totals.sum, base, next), stateSum(whole));
     // Keys outside the BMP sort differently by UTF-8 byte and UTF-16 unit.
     const astral = add(emptyState(), [
       record("tag", ["tag-😀"], { name: "x", userId: "u" }),

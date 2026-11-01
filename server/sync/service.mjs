@@ -17,6 +17,7 @@ import {
   canonical,
   digest,
   stateHash,
+  stateSum,
   protocolVersion,
   supportedVersion,
 } from "./protocol.mjs";
@@ -82,6 +83,20 @@ export function phaseTimer(trace, label) {
     });
     last = now;
   };
+}
+// What this site's events and status carry beyond protocol 1, announced on
+// its status branch. "sum-1": events carry resultSum (see stateSum) and this
+// site verifies it, so a peer may omit the whole-state resultHash.
+export const CAPABILITIES = ["sum-1"];
+// Whether the peer's last stored status announced the state sum.
+export function peerSums(link) {
+  try {
+    return !!JSON.parse(link?.remote_status || "null")?.capabilities?.includes(
+      "sum-1",
+    );
+  } catch {
+    return false;
+  }
 }
 export class SyncService {
   constructor({
@@ -271,7 +286,8 @@ export class SyncService {
         );
       let operations = [],
         transition = false,
-        verifiedHash;
+        verifiedHash,
+        verifiedSum;
       if (!parent) {
         if (
           !manifest.genesis ||
@@ -452,16 +468,28 @@ export class SyncService {
               cover: state ? [] : await this.store.readPending(),
               received: true,
               whole: state,
+              needHash: !envelope.resultSum,
             },
           );
           ({ previousState, state, slice } = reduced);
           operations = envelope.operations.map((op) => op.opId);
-          if (reduced.resultHash !== envelope.resultHash)
+          // A peer with the state sum sends it (and the whole-state hash
+          // when it holds C in memory); an older peer sends only the hash.
+          // Whatever both sides computed must agree.
+          if (
+            (!envelope.resultSum && !envelope.resultHash) ||
+            (envelope.resultSum && reduced.resultSum !== envelope.resultSum) ||
+            (envelope.resultHash &&
+              reduced.resultHash &&
+              reduced.resultHash !== envelope.resultHash) ||
+            (!envelope.resultSum && !reduced.resultHash)
+          )
             throw new ProtocolError(
               "SYNC_INTEGRITY",
               "Reducer result checksum mismatch",
             );
-          verifiedHash = envelope.resultHash;
+          verifiedHash = reduced.resultHash || null;
+          verifiedSum = reduced.resultSum;
         } else throw new ProtocolError("SYNC_FORMAT", "Unsupported event kind");
       }
       if (protocolVersion(state) > this.maxProtocol)
@@ -481,6 +509,7 @@ export class SyncService {
         previousState,
         transition,
         stateHash: verifiedHash,
+        stateSum: verifiedSum,
         stateSize,
         slice,
         mark: this.mark,
@@ -538,15 +567,25 @@ export class SyncService {
   // back to loading and hashing the whole state. The slice result stands for
   // C only through commitCanonical(..., { slice: true }).
   // Received operations are validated as protocol input (protocolValidation).
+  // The state sum (stateSum) is always produced. The whole-state stateHash is
+  // produced when needHash asks for it, for a peer that verifies only that;
+  // a store holding C in memory computes both anyway.
   async reduceCanonical(
     operations,
     identity,
-    { parent, cover = [], received = false, whole = null } = {},
+    {
+      parent,
+      cover = [],
+      received = false,
+      whole = null,
+      needHash = true,
+    } = {},
   ) {
     const reduction = whole
       ? null
       : await this.store.reduceSlice?.(operations, identity, {
           cover,
+          legacyHash: needHash,
           mark: this.mark,
         });
     if (reduction && reduction.head === parent)
@@ -554,6 +593,7 @@ export class SyncService {
         previousState: reduction.base,
         state: reduction.state,
         resultHash: reduction.hash,
+        resultSum: reduction.sum,
         slice: true,
       };
     const previousState =
@@ -569,9 +609,10 @@ export class SyncService {
         }),
       state = received ? protocolValidation(reduce) : reduce();
     this.mark("reduce");
-    const resultHash = stateHash(state);
+    const resultHash = stateHash(state),
+      resultSum = stateSum(state);
     this.mark("stateHash");
-    return { previousState, state, resultHash, slice: false };
+    return { previousState, state, resultHash, resultSum, slice: false };
   }
   async cycle({
     initialize = false,
@@ -620,8 +661,11 @@ export class SyncService {
           );
           const parent = link.canonical_head;
           if (!parent) throw new Error("Initial publication required");
-          const { previousState, state, resultHash, slice } =
-            await this.reduceCanonical(pending, this.identity, { parent });
+          const { previousState, state, resultHash, resultSum, slice } =
+            await this.reduceCanonical(pending, this.identity, {
+              parent,
+              needHash: !peerSums(link),
+            });
           const stateSize = this.assertCapacity(state, previousState);
           this.mark("capacity", { bytes: stateSize.bytes });
           const event = {
@@ -629,7 +673,8 @@ export class SyncService {
             kind: "operations",
             parent,
             operations: pending,
-            resultHash,
+            ...(resultHash ? { resultHash } : {}),
+            resultSum,
           };
           const files = combineFileEntries(
             {
@@ -658,7 +703,8 @@ export class SyncService {
               ? await this.commitPublished(link, oid, state, {
                   operations: pending.map((op) => op.opId),
                   previousState,
-                  stateHash: event.resultHash,
+                  stateHash: resultHash || null,
+                  stateSum: resultSum,
                   stateSize,
                   slice,
                   mark: this.mark,
@@ -709,6 +755,7 @@ export class SyncService {
       writerEpoch: link.writer_epoch,
       appliedCanonicalHead: link.canonical_head,
       mode: link.mode,
+      capabilities: CAPABILITIES,
       observedAt: new Date().toISOString(),
     };
     const stable = ({ observedAt, peerInstallationId, ...value }) => value;

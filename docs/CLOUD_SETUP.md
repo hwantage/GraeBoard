@@ -561,7 +561,7 @@ rm /private/external-import.env
 3. **Edge Functions → graeboard → Logs**에서 `GraeBoard sync phase`를 검색합니다. 게시·수신 단계가 끝날 때마다 한 줄씩 남습니다. `CPU Time exceeded` 직전의 마지막 줄 다음 단계가 상한을 넘은 단계입니다.
 4. 확인을 마치면 Secret을 삭제합니다.
 
-게시는 `readPending → readSlice → reduce → canonicalHash → measureCapacity → capacity → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → readSlice → reduce → canonicalHash → measureCapacity → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. `canonicalHash`의 `verified`가 `false`이면 전체 상태 경로로 넘어가며 이어서 `readState → reduce → stateHash`가 기록됩니다. 변경이 없는 주기는 기록하지 않습니다.
+게시는 `readPending → readSlice → reduce → (computeTotals) → stateSum → (canonicalHash) → capacity → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → readSlice → reduce → (computeTotals) → stateSum → (canonicalHash) → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. `computeTotals`는 저장된 C 합계(`syncTotals`)가 현재 head의 것이 아닐 때만, `canonicalHash`는 상대가 상태 합(`sum-1`)을 알리지 않았거나 받은 이벤트에 `resultSum`이 없을 때만 나옵니다. `canonicalHash`의 `verified`가 `false`이면 전체 상태 경로로 넘어가며 이어서 `readState → reduce → stateHash`가 기록됩니다. 변경이 없는 주기는 기록하지 않습니다.
 
 각 줄의 `ms`는 그 단계의 경과 시간, `totalMs`는 리스를 잡은 뒤의 누적 시간입니다. `reduce`·`capacity`·`stateHash`·`event`·`preparePatch`는 네트워크 대기가 없어 `ms`가 곧 CPU 시간입니다. 첫 `readPending`에는 원격 head 확인이, `readSlice`·`canonicalHash`·`measureCapacity`·`readState`·`writeState`·`materialize`에는 PostgreSQL 대기가, `createCandidate`·`publishRef`에는 GitHub 대기가 함께 들어갑니다. Supabase Edge는 `process.cpuUsage()`를 제공하지 않아 CPU 시간을 따로 기록하지 않습니다.
 

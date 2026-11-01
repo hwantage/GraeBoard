@@ -458,6 +458,31 @@ Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 
 
 `sync-setup-status/<외부 설치 UUID>/status.json`은 원본 head, 불투명 키 ID, 반영/사용 시각만 내부로 돌려보냅니다. Google 신원은 포함하지 않으며 해당 키/게시 head와 일치할 때만 화면에 반영합니다. 재발급·폐기는 Git 전송 이후 외부에 적용됩니다. 사용 완료·폐기 상태는 오래된 키 재수신으로 초기화하지 않습니다. site 백업 v3은 이 상태를 포함하며 v1/v2 백업도 기존 형식으로 읽습니다. 복구 시 미사용 키를 폐기하고 새 키를 발급합니다. SQLite v29/v30/v31 백업은 원래 버전으로 복구한 뒤 명시적으로 v32로 올립니다.
 
+### 상태 합 (`sum-1`)
+
+operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 같습니다.
+- C의 기록마다 `sha256(구분 "\n" ID "\n" canonical(값))`을 구합니다. 구분은 엔티티 `e`(ID는 `entityId`), 영수증 `r`(opId), 충돌 `c`(conflictId)입니다.
+- 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/protocol.mjs`의 `stateSum`).
+- 순서와 무관한 합이라 커밋은 바뀐 기록의 이전값과 새값만 빼고 더해 갱신합니다(`stateSumFrom`). PostgreSQL에서도 정렬 없는 집계 한 번으로 계산합니다.
+- 목적은 사이트 사이의 우발적 불일치를 감지하는 것이며, 의도적으로 만든 충돌에 대한 내성은 목표가 아닙니다.
+
+각 사이트는 상태 브랜치 `status.json`에 `capabilities: ["sum-1"]`을 싣습니다.
+- 내부(Node)는 C를 메모리에 두므로 항상 `resultHash`와 `resultSum`을 모두 싣습니다.
+- 외부는 저장된 상대 상태(`remote_status`)가 `sum-1`을 알린 뒤에만 `resultHash`를 생략합니다.
+- 받는 쪽은 실린 값 중 자기가 계산한 값을 모두 비교합니다. `resultSum`이 없는 이전 형식 이벤트는 기존처럼 `resultHash`로 검증합니다.
+
+외부 PG 팀 저장소는 C의 합계를 `site_entities`의 `syncTotals`/`[]` 행에 `{head,sum,entities,stateBytes,receiptBytes}`로 둡니다.
+- `head`가 연결의 `canonical_head`와 같을 때만 유효합니다.
+- 모든 C 반영(`commitCanonical`)이 이 행을 새 값으로 바꾸거나 지웁니다. 지워지면 다음 사용 때 집계 한 번으로 다시 만듭니다.
+- 용량 측정(`capacityTotals`)은 이 행이 유효하면 미전송 크기만 SQL로 더합니다.
+- `resultSum`만으로 확정한 커밋 뒤에는 `canonical_hash`가 `NULL`일 수 있습니다.
+
+이전 버전으로 되돌릴 때는 순서를 지킵니다.
+1. 되돌리기 전에 상대 사이트의 동기화를 일시정지합니다.
+2. 되돌린 사이트의 상태 브랜치가 `sum-1` 없이 갱신된 것을 확인한 뒤 재개합니다.
+
+그러지 않으면 저장된 상대 상태가 `sum-1`을 알리는 동안 외부가 `resultHash` 없이 게시할 수 있고, 이전 버전은 그 이벤트를 무결성 오류로 거절합니다.
+
 ### 동기화 v2와 용량
 
 기존 v1의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 v1 백업과 v2 snapshot을 포함하며, v2 C에는 `protocol`/`[]`의 `{version:2,reducer:2}` 표식이 있습니다. v2 사본은 report 메타데이터, `reportTask(reportId,taskId)`의 행 데이터, `reportCell(reportId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 v1 형태의 `report.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. v2 부모 `report`와 `reportTask`·`reportCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, v2 전환 전에 이 중복을 줄이는 방안을 정합니다. 논리 이관·외부 백업 v3의 포맷과 해시 규칙은 바뀌지 않습니다.
