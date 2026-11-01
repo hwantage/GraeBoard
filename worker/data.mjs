@@ -69,7 +69,11 @@ function poolFor(binding, scope = "control", { site = false } = {}) {
     },
   };
 }
-export function databaseFor(env, profile) {
+// The synchronization engine runs off the request path (Cron, background
+// publication) and reads or hashes the whole team's canonical text, which a
+// small database cannot always do within the pool's 15-second statement limit.
+export const SYNC_STATEMENT_TIMEOUT_MS = 120000;
+export function databaseFor(env, profile, { statementTimeout = null } = {}) {
   const team = siteTeamId(env);
   if (team)
     assert(
@@ -79,6 +83,7 @@ export function databaseFor(env, profile) {
     );
   return new PostgresDatabase(poolFor(env[profile.databaseBinding], "team"), {
     teamId: profile.teamId,
+    statementTimeout,
   });
 }
 export function controlPool(env) {

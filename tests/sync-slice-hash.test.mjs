@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { canonicalHashes, sliceChanges } from "../worker/sync-partial.mjs";
 import { digest, entityId, emptyState } from "../server/sync/protocol.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 
 const record = (entity, key, payload, extra = {}) => ({
   entity,
@@ -139,5 +140,34 @@ test("PostgreSQL hashes C and C with slice changes exactly as stateHash does", a
   assert.throws(
     () => sliceChanges(next, base),
     /cannot remove canonical records/,
+  );
+});
+
+// The synchronization engine's transactions may outlast the pool's statement
+// limit (SYNC_STATEMENT_TIMEOUT_MS); request transactions keep it.
+test("a sync database sets its statement limit in each transaction", async (t) => {
+  const f = await postgresFixture(t);
+  if (!f) return;
+  const limit = (database) =>
+    database.withTeamTransaction(
+      f.teamId,
+      async (tx) =>
+        (await tx.query("SHOW statement_timeout")).rows[0].statement_timeout,
+      { readOnly: true },
+    );
+  assert.equal(
+    await limit(
+      new PostgresDatabase(f.pool, {
+        teamId: f.teamId,
+        statementTimeout: 120000,
+      }),
+    ),
+    "2min",
+  );
+  assert.equal(await limit(f.adapter), "0");
+  assert.throws(
+    () =>
+      new PostgresDatabase(f.pool, { teamId: f.teamId, statementTimeout: 0 }),
+    /Invalid PostgreSQL statement timeout/,
   );
 });
