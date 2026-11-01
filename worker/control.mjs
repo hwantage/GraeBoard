@@ -18,6 +18,7 @@ import { authenticateSite } from "./site-auth.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { profileFields } from "../shared/profiles.js";
 import { z } from "zod";
+import { withDocumentImageReferences } from "../shared/document-image-references.js";
 
 import { PostgresControlStore, userRecord } from "./storage/control-store.mjs";
 export { userRecord } from "./storage/control-store.mjs";
@@ -225,36 +226,44 @@ export class RequestContext {
     if (options.write)
       await assertDatabaseCapacity(database, teamId, capacityLimits(this.env));
     let businessChanged = false;
-    const result = await withData(
-      database,
-      teamId,
-      async (s) => {
-        if (options.write && !options.privateWrite) {
-          const everyone = [
-            ...people,
-            { id: this.user.id, name: this.user.name },
-          ];
-          // One query reads every member's record; the loop then reads the
-          // session cache, so the check costs the same for any team size.
-          await s.getMany(
-            "person",
-            everyone.map((person) => [person.id]),
-          );
-          for (const person of everyone)
-            if (!(await s.get("person", [person.id])))
-              await s.put("person", [person.id], { name: person.name });
-        }
-        const value = await work(s);
-        businessChanged = s.changes.size > 0;
-        return value;
-      },
-      {
-        ...options,
-        limits: capacityLimits(this.env),
-        actorId: this.user.id,
-        validateImages: async (value) =>
-          (await this.imageStore(teamId)).validate(value),
-      },
+    // Each document body's images are parsed once per request: saving checks
+    // them, the capture validates them and replaying pending operations
+    // validates theirs, and a copy carries hundreds of bodies. The session
+    // holds those bodies until the request ends anyway.
+    const result = await withDocumentImageReferences(
+      () =>
+        withData(
+          database,
+          teamId,
+          async (s) => {
+            if (options.write && !options.privateWrite) {
+              const everyone = [
+                ...people,
+                { id: this.user.id, name: this.user.name },
+              ];
+              // One query reads every member's record; the loop then reads the
+              // session cache, so the check costs the same for any team size.
+              await s.getMany(
+                "person",
+                everyone.map((person) => [person.id]),
+              );
+              for (const person of everyone)
+                if (!(await s.get("person", [person.id])))
+                  await s.put("person", [person.id], { name: person.name });
+            }
+            const value = await work(s);
+            businessChanged = s.changes.size > 0;
+            return value;
+          },
+          {
+            ...options,
+            limits: capacityLimits(this.env),
+            actorId: this.user.id,
+            validateImages: async (value) =>
+              (await this.imageStore(teamId)).validate(value),
+          },
+        ),
+      { maxEntries: Infinity, maxBytes: Infinity, ttlMs: Infinity },
     );
     if (businessChanged) {
       this.changedTeams.add(teamId);

@@ -8,6 +8,7 @@ import { defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
 import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,
@@ -346,4 +347,114 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
     "actual PG event reaches Node subscriber without SQLite report",
   );
   controller.abort();
+});
+
+// A copy is megabytes once unpacked (every task repeats the team's formatting
+// rules), so PostgreSQL records it packed or summarized and reads it back
+// whole: history still restores deleted rows and retries answer the same.
+test("PG copy audit and retry records stay packed and read back whole", async (t) => {
+  const f = sqliteBusinessFixture(t),
+    pg = await postgresBusinessFixture(t, f);
+  if (!pg) return;
+  const service = new ReportBusinessService(
+      new PostgresReportRepository({ context: pg.createContext() }),
+      f.user,
+    ),
+    history = new PostgresHistoryRepository({ context: pg.createContext() }),
+    audit = async (action) =>
+      (
+        await pg.pool.query(
+          "SELECT id,payload FROM graeboard.site_audit WHERE action=$1 ORDER BY created_at,id",
+          [action],
+        )
+      ).rows;
+  const id = randomUUID();
+  await service.create({
+    id,
+    teamId: f.teamId,
+    year: 2026,
+    name: "packed copy",
+    referenceDate: "2026-10-01",
+    view: defaultView(2026),
+    taskIds: [f.taskId],
+  });
+  assert.deepEqual(
+    (await audit("report")).map((row) => JSON.parse(row.payload)),
+    [
+      [
+        {
+          entity: "report",
+          key: [id],
+          before: null,
+          after: { name: "packed copy", count: 1 },
+        },
+      ],
+    ],
+  );
+  let current = await service.read(id);
+  const added = randomUUID(),
+    styled = {
+      revision: current.revision,
+      operationId: randomUUID(),
+      operations: [
+        {
+          kind: "create",
+          at: new Date().toISOString(),
+          taskId: added,
+          fields: { title: "row to delete" },
+        },
+        {
+          kind: "cells",
+          at: new Date().toISOString(),
+          changes: [
+            {
+              taskId: f.taskId,
+              key: "title",
+              value: "styled",
+              style: { bold: true },
+              expectedVersion: current.tasks[0].cells.title.version,
+            },
+          ],
+        },
+      ],
+    };
+  const saved = await service.edit(id, styled);
+  // The retry answers from the packed record exactly as the first save did.
+  assert.deepEqual(await service.edit(id, styled), saved);
+  const response = (
+    await pg.pool.query(
+      "SELECT response FROM graeboard.site_operations WHERE op_id=$1",
+      [styled.operationId],
+    )
+  ).rows[0].response;
+  assert.ok(JSON.parse(response).$styles, "the retry record is packed");
+  current = await service.edit(id, {
+    revision: saved.revision,
+    operationId: randomUUID(),
+    operations: [
+      { kind: "delete", at: new Date().toISOString(), taskIds: [added] },
+    ],
+  });
+  assert.ok(!current.tasks.some((task) => task.id === added));
+  const edits = await audit("report-edit");
+  assert.ok(
+    edits.every((row) =>
+      JSON.parse(row.payload)
+        .filter((c) => c.entity === "report")
+        .every((c) => c.after.data.$styles),
+    ),
+    "copy edits are audited in their stored form",
+  );
+  const { entries } = await history.query(f.user, {
+    teamId: f.teamId,
+    sheetId: id,
+  });
+  const removal = entries.find(
+    (entry) => entry.before?.deletedTasks?.[0]?.id === added,
+  );
+  assert.deepEqual(removal.restorableTaskIds, [added]);
+  const restored = await history.restore(f.user, removal.id, {
+    revision: current.revision,
+  });
+  assert.ok(restored.tasks.some((task) => task.id === added));
 });

@@ -170,10 +170,11 @@ export function withPreparedDocumentImageReferences(entries, work) {
 
 // Synchronous SQLite callers stay synchronous. Async PG commands retain their
 // own scope across awaits; close it on success or failure, including late tasks.
-export function withDocumentImageReferences(work) {
+// limits size the scope (see createDocumentImageReferenceCache).
+export function withDocumentImageReferences(work, limits) {
   if (referenceScope.getStore() && !referenceScope.getStore().closed)
     return work();
-  const scope = createDocumentImageReferenceCache();
+  const scope = createDocumentImageReferenceCache(limits);
   return referenceScope.run(scope, () => {
     try {
       const result = work();

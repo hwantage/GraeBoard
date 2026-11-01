@@ -58,7 +58,26 @@ export function canonical(value) {
     );
   throw new Error("Unsupported canonical JSON value");
 }
-function visitCanonical(value, write) {
+// Throws where canonical() would, without building the string: validation
+// walks a copy of megabytes once instead of serializing it.
+export function assertCanonical(value) {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "string" ||
+    (typeof value === "number" &&
+      Number.isFinite(value) &&
+      Math.abs(value) <= Number.MAX_SAFE_INTEGER)
+  )
+    return;
+  if (Array.isArray(value)) value.forEach(assertCanonical);
+  else if (value && Object.getPrototypeOf(value) === Object.prototype)
+    for (const key of Object.keys(value)) assertCanonical(value[key]);
+  else throw new Error("Unsupported canonical JSON value");
+}
+// text(value), when given, may return the canonical text of an object to write
+// whole instead of visiting it.
+function visitCanonical(value, write, text) {
   if (
     value === null ||
     typeof value === "boolean" ||
@@ -70,11 +89,18 @@ function visitCanonical(value, write) {
     write(JSON.stringify(value));
     return;
   }
+  if (text && value && typeof value === "object") {
+    const cached = text(value);
+    if (cached !== undefined) {
+      write(cached);
+      return;
+    }
+  }
   if (Array.isArray(value)) {
     write("[");
     for (let i = 0; i < value.length; i++) {
       if (i) write(",");
-      if (i in value) visitCanonical(value[i], write);
+      if (i in value) visitCanonical(value[i], write, text);
     }
     write("]");
     return;
@@ -87,14 +113,23 @@ function visitCanonical(value, write) {
       first = false;
       write(JSON.stringify(key));
       write(":");
-      visitCanonical(value[key], write);
+      visitCanonical(value[key], write, text);
     }
     write("}");
     return;
   }
   throw new Error("Unsupported canonical JSON value");
 }
+// canonical() that writes text(value)'s string for any object it knows.
+export function canonicalWith(value, text) {
+  const parts = [];
+  visitCanonical(value, (token) => parts.push(token), text);
+  return parts.join("");
+}
 export function digest(value) {
+  return digestWith(value);
+}
+function digestWith(value, text) {
   const hash = createHash("sha256");
   if (typeof value === "string" || value instanceof Uint8Array)
     return hash.update(value).digest("hex");
@@ -108,22 +143,101 @@ export function digest(value) {
     chunks = [];
     length = 0;
   };
-  visitCanonical(value, (token) => {
-    if (token.length >= 16384) {
-      flush();
-      hash.update(token);
-    } else {
-      if (length + token.length > 16384) flush();
-      chunks.push(token);
-      length += token.length;
-    }
-  });
+  visitCanonical(
+    value,
+    (token) => {
+      if (token.length >= 16384) {
+        flush();
+        hash.update(token);
+      } else {
+        if (length + token.length > 16384) flush();
+        chunks.push(token);
+        length += token.length;
+      }
+    },
+    text,
+  );
   flush();
   return hash.digest("hex");
 }
-export const equal = (a, b) =>
-  a === b ||
-  (a !== undefined && b !== undefined && canonical(a) === canonical(b));
+// digest() of a value that reaches some objects more than once (an unpacked
+// copy gives all its tasks one formatting object): each such object is
+// serialized once and its text reused, so the work follows the distinct
+// structure, not every repetition. The hash is the same.
+export function digestShared(value) {
+  const seen = new WeakSet(),
+    repeated = new WeakSet(),
+    pending = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (!item || typeof item !== "object") continue;
+    if (seen.has(item)) {
+      repeated.add(item);
+      continue;
+    }
+    seen.add(item);
+    for (const key of Object.keys(item)) pending.push(item[key]);
+  }
+  const texts = new WeakMap();
+  return digestWith(value, (item) => {
+    if (!repeated.has(item)) return undefined;
+    if (!texts.has(item)) texts.set(item, canonical(item));
+    return texts.get(item);
+  });
+}
+// Whether canonical(a) === canonical(b), without building either string. It
+// stops at the first difference, and a pair of objects reached again (an
+// unpacked copy shares one formatting object among all its tasks) is compared
+// once. Values canonical() rejects still throw.
+export function equal(a, b) {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return sameCanonical(a, b, new Map());
+}
+const plainObject = (value) =>
+  !!value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.getPrototypeOf(value) === Object.prototype;
+function sameCanonical(a, b, seen) {
+  const objectA = !!a && typeof a === "object",
+    objectB = !!b && typeof b === "object";
+  if (!objectA || !objectB) {
+    if (objectA || objectB) {
+      assertCanonical(a);
+      assertCanonical(b);
+      return false;
+    }
+    return canonical(a) === canonical(b);
+  }
+  if (a === b) return true;
+  if (seen.get(a)?.has(b)) return true;
+  let same;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    same = a.length === b.length;
+    for (let i = 0; same && i < a.length; i++)
+      same = sameCanonical(a[i], b[i], seen);
+  } else if (plainObject(a) && plainObject(b)) {
+    const keys = Object.keys(a);
+    same = keys.length === Object.keys(b).length;
+    for (let i = 0; same && i < keys.length; i++)
+      same =
+        Object.hasOwn(b, keys[i]) &&
+        sameCanonical(a[keys[i]], b[keys[i]], seen);
+  } else if (
+    (Array.isArray(a) || plainObject(a)) &&
+    (Array.isArray(b) || plainObject(b))
+  ) {
+    assertCanonical(a);
+    assertCanonical(b);
+    same = false;
+  } else return canonical(a) === canonical(b);
+  if (same) {
+    if (!seen.has(a)) seen.set(a, new Set());
+    seen.get(a).add(b);
+  }
+  return same;
+}
 // 사본 data는 평문과 공유 사전 형태가 섞여 있을 수 있으므로 내용으로 비교한다.
 export const payloadEqual = (entity, a, b) =>
   equal(normalizeEntityPayload(entity, a), normalizeEntityPayload(entity, b));
@@ -270,7 +384,7 @@ export function validateEntityPayload(
         ? "Account credentials and privileges are local"
         : "Unsupported entity payload",
     );
-  canonical(payload);
+  assertCanonical(payload);
   const string = (field, max = 200000) => {
     if (typeof payload[field] !== "string" || payload[field].length > max)
       throw new Error("Invalid " + entity + " " + field);
@@ -391,7 +505,13 @@ export function validateEntityPayload(
       )
         throw new Error("Foreign or invalid image reference");
 }
-export function validateOperation(op, identity, state, { onSerialized } = {}) {
+// serialized: canonical(op) when the caller already has it.
+export function validateOperation(
+  op,
+  identity,
+  state,
+  { onSerialized, serialized: known } = {},
+) {
   if (
     !op ||
     !supportedVersion(op.protocol, op.reducer) ||
@@ -465,8 +585,7 @@ export function validateOperation(op, identity, state, { onSerialized } = {}) {
     const key = entityId(c.entity, c.key);
     if (seen.has(key)) throw new Error("Duplicate entity change");
     seen.add(key);
-    canonical(c.base);
-    canonical(c.desired);
+    // validateEntityPayload checks a non-null value serializes canonically.
     if (c.base !== null)
       validateEntityPayload(c.entity, c.key, c.base, op.teamId, op.protocol);
     if (c.desired !== null)
@@ -498,7 +617,7 @@ export function validateOperation(op, identity, state, { onSerialized } = {}) {
     )
       throw new Error("Private team setting in shared payload");
   }
-  const serialized = canonical(op);
+  const serialized = known ?? canonical(op);
   if (Buffer.byteLength(serialized) > SYNC_OPERATION_MAX_BYTES)
     throw Object.assign(
       new Error(

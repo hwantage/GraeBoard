@@ -235,9 +235,11 @@ export function reduce(
   op,
   identity = { teamId: op.teamId, repoId: op.repoId },
   context = null,
+  // A caller that already serialized op passes canonical(op) and its digest.
+  { serialized, hash } = {},
 ) {
-  validateOperation(op, identity, state);
-  const payloadHash = digest(op),
+  validateOperation(op, identity, state, { serialized });
+  const payloadHash = hash ?? digest(serialized ?? op),
     existing = state.receipts[op.opId];
   if (existing) {
     if (existing.payloadHash !== payloadHash)
