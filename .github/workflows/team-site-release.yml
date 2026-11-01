@@ -1,7 +1,8 @@
 # Each team's external site follows the source repository's release branch.
 # A team fork opts in with its TEAM_SITE_CONFIG variable (or the older
-# TEAM_SITE_DEPLOY); repositories without either, including the source
-# repository, never deploy anything.
+# TEAM_SITE_DEPLOY); repositories without either never deploy anything. A
+# development fork sets "branch": "main" in TEAM_SITE_CONFIG to follow main
+# instead, so changes are tried there before they go to release.
 name: 팀 사이트 release 배포
 
 on:
@@ -38,8 +39,19 @@ jobs:
           # releases changing them synced automatically adds SYNC_TOKEN.
           GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           FORCE: ${{ inputs.force }}
+          TEAM_SITE_CONFIG: ${{ vars.TEAM_SITE_CONFIG }}
         run: |
           set -euo pipefail
+          config="${TEAM_SITE_CONFIG:-}"
+          [ -n "$config" ] || config='{}'
+          branch="$(jq -r '.branch // "release"' <<<"$config")"
+          case "$branch" in
+            release|main) ;;
+            *)
+              echo "::error::TEAM_SITE_CONFIG의 branch는 release 또는 main이어야 합니다."
+              exit 1
+              ;;
+          esac
           repo="$GITHUB_REPOSITORY"
           parent="$(gh api "repos/$repo" --jq '.parent.full_name // ""')"
           if [ -n "$parent" ]; then
@@ -55,17 +67,24 @@ jobs:
                 -f sha="$upstream" --silent
               echo "release 브랜치를 원본에서 만들었습니다."
             fi
-            gh api -X POST "repos/$repo/merge-upstream" -f branch=main --silent 2>/dev/null ||
-              echo "::warning::main은 동기화하지 못했습니다. 원본의 워크플로 파일이 바뀌었다면 GitHub의 Sync fork로 main을 맞추세요."
+            if ! gh api -X POST "repos/$repo/merge-upstream" -f branch=main --silent 2>/dev/null; then
+              message="main은 동기화하지 못했습니다. 원본의 워크플로 파일이 바뀌었다면 GitHub의 Sync fork로 main을 맞추세요."
+              # A main-following fork would otherwise redeploy its old main.
+              if [ "$branch" = main ]; then
+                echo "::error::$message"
+                exit 1
+              fi
+              echo "::warning::$message"
+            fi
           fi
-          head="$(gh api "repos/$repo/branches/release" --jq .commit.sha)"
+          head="$(gh api "repos/$repo/branches/$branch" --jq .commit.sha)"
           deployed="$(gh api "repos/$repo/git/ref/tags/team-site-deployed" --jq .object.sha 2>/dev/null)" || deployed=""
           echo "sha=$head" >> "$GITHUB_OUTPUT"
           if [ "$head" != "$deployed" ] || [ "$FORCE" = "true" ]; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
-            echo "release $head 를 배포합니다."
+            echo "$branch $head 를 배포합니다."
           else
-            echo "release $head 는 이미 배포했습니다."
+            echo "$branch $head 는 이미 배포했습니다."
           fi
 
   deploy:
@@ -125,4 +144,4 @@ jobs:
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
               -f ref=refs/tags/team-site-deployed -f sha="$SHA" --silent
           fi
-          echo "release $SHA 배포를 마쳤습니다."
+          echo "$SHA 배포를 마쳤습니다."

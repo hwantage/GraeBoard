@@ -269,9 +269,9 @@ npm run build:pages
 
 각 팀은 원본을 자기 GitHub 계정으로 Fork해 자기 Cloudflare·Supabase에 연결합니다. Cloudflare Pages는 Cloudflare GitHub 앱을 설치한 계정·조직이 소유한 저장소만 고를 수 있어 다른 계정 소유인 원본을 직접 연결할 수 없기 때문입니다. 설정 안내의 **외부 서비스 설정 → GitHub Fork** 단계가 이 절차를 안내합니다. 원본의 Fork 화면(`https://github.com/hwantage/GraeBoard/fork`)에서 Owner를 팀 계정으로 고르고 **Copy the main branch only** 체크를 해제해 `release`도 복사합니다. 해제하지 못했다면 Fork를 지우고 다시 만듭니다. Cloudflare의 GitHub 연결 화면에서는 Repository access를 **Only select repositories**로 두어 Fork만 선택하고, Pages의 Production branch는 `release`로 지정합니다. Fork에는 앱 소스만 있고 팀 자료는 별도 비공개 데이터 저장소에만 있습니다. 저장소에 포함된 `.github/workflows/team-site-release.yml`이 Fork에서 다음을 수행합니다.
 
-1. `release` push·30분마다·수동 실행 때 원본 `release`를 Fork에 합칩니다(Fork에 없으면 원본에서 만듭니다). `main`도 합치되 실패하면 경고만 남깁니다.
-2. Fork의 `release`가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 `scripts/team-site-deploy.mjs`가 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. `TEAM_SITE_CONFIG`가 있으면 이어서 wrangler 출력에서 Worker의 workers.dev 주소를 찾아 `RESOURCE_ORIGIN`으로 쓰고, `wrangler secret bulk`로 gateway 키 두 개를, `supabase secrets set`으로 Edge 설정·키·`GIT_TEAM`·`RESOURCE_ORIGIN`을 넣습니다(이미 있는 접속 토큰 암호화 키는 유지). 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
-3. Pages는 Cloudflare Git 연결로 `release`를 따라 다시 빌드합니다.
+1. `release` push·30분마다·수동 실행 때 원본 `release`를 Fork에 합칩니다(Fork에 없으면 원본에서 만듭니다). `main`도 합치되 실패하면 경고만 남깁니다. 단, `main`을 배포하는 개발용 Fork(아래)는 `main` 합치기가 실패하면 오류로 멈춥니다.
+2. Fork의 배포 브랜치(`release`, 개발용 Fork는 `main`)가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 `scripts/team-site-deploy.mjs`가 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. `TEAM_SITE_CONFIG`가 있으면 이어서 wrangler 출력에서 Worker의 workers.dev 주소를 찾아 `RESOURCE_ORIGIN`으로 쓰고, `wrangler secret bulk`로 gateway 키 두 개를, `supabase secrets set`으로 Edge 설정·키·`GIT_TEAM`·`RESOURCE_ORIGIN`을 넣습니다(이미 있는 접속 토큰 암호화 키는 유지). 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
+3. Pages는 Cloudflare Git 연결로 `release`를 따라 다시 빌드합니다. 개발용 Fork는 Pages의 Production branch도 `main`으로 둡니다.
 
 이 경로는 GitHub·Supabase·Cloudflare 웹 화면만으로 진행하며 사내망·운영자 PC 작업이 없습니다. 설정 안내의 **배포** 단계에서 토큰 세 개(Cloudflare API, Supabase 액세스, 외부용 GitHub)와 Cloudflare Account ID를 입력하고 **배포 설정 만들기**를 누르면 Fork에 넣을 값 두 개가 만들어집니다. Worker 이름과 주소, Edge 설정, 비밀 키를 Cloudflare·Supabase 화면에 옮겨 적지 않습니다. 토큰은 브라우저 메모리에서 값을 만드는 데만 쓰고 사내 서버로 보내거나 저장하지 않습니다. 앞 단계의 외부 접속 주소·Access 값·bucket·Reference ID·Account ID처럼 비밀이 아닌 값만 팀별로 브라우저(`localStorage`)에 기억해 새로고침 뒤에도 같은 설정을 만듭니다. `TEAM_SITE_SECRETS`의 `GRAEBOARD_GATEWAY_SECRET`·`GRAEBOARD_RESOURCE_SECRET`·`GRAEBOARD_ACCESS_TOKEN_KEY`는 만들 때마다 `crypto.getRandomValues`로 새로 정하며, 배포 스크립트는 Supabase에 `GRAEBOARD_ACCESS_TOKEN_KEY`가 이미 있으면 그 값을 유지해 발급한 접속 토큰을 보존합니다. gateway 두 키는 같은 실행에서 양쪽에 함께 바뀝니다. 워크플로는 Secret 안의 각 값을 로그에서 가립니다.
 
@@ -282,6 +282,8 @@ Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settin
 | Variable      | `TEAM_SITE_CONFIG`  | 설정 안내가 만든 JSON(Cloudflare Account ID, Supabase Reference ID, gateway 설정, Edge 설정) |
 | Secret        | `TEAM_SITE_SECRETS` | 설정 안내가 만든 JSON(`CLOUDFLARE_API_TOKEN`·`SUPABASE_ACCESS_TOKEN`·`GIT_TEAM`과 키 세 개)  |
 | Secret (선택) | `SYNC_TOKEN`        | Fork에 대한 Contents·Workflows 쓰기 권한 토큰([등록 방법](#sync_token-등록-선택))            |
+
+**개발용 외부 사이트.** 변경은 `main`에서 개발 환경(사내 역할의 개발 PC + 개발용 외부 사이트)으로 먼저 확인한 뒤 `release`로 올립니다. 개발용 Fork는 `TEAM_SITE_CONFIG` JSON 맨 위에 `"branch": "main",`을 넣어 원본 `main`을 배포하고, Cloudflare Pages 프로젝트의 **Settings → Builds → Branch control → Production branch**도 `main`으로 바꿉니다. 운영 Fork는 값을 넣지 않으며(기본 `release`), `release`·`main` 외의 값은 오류입니다. 개발 PC의 사내 서버도 `main`을 실행해야 양쪽이 같은 버전으로 동기화합니다. 사내 운영 서버는 `release`를 체크아웃해 갱신합니다([운영 안내의 업데이트](OPERATIONS.md#업데이트)).
 
 토큰을 바꾸거나 값을 고칠 때는 설정 안내에서 다시 만들어 같은 이름의 값을 **Update**로 덮어씁니다. GitHub에 넣은 값은 다시 볼 수 없지만 설정 안내가 언제든 다시 만들 수 있으므로 따로 보관하지 않습니다. PC에서 직접 배포할 때는 두 값을 `team-site-config.json`·`team-site-secrets.json`(Git 제외 대상)으로 저장해 같은 스크립트를 실행합니다.
 
