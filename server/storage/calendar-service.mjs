@@ -17,6 +17,7 @@ import {
 import {
   calendarWeek,
   CALENDAR_MAX_RANGE_DAYS,
+  CALENDAR_MEMBER_BATCH,
   addDays,
   daysBetween,
 } from "../../shared/calendar.js";
@@ -145,6 +146,15 @@ const querySchemas = {
     from: dateSchema,
     to: dateSchema,
   }),
+  listMemberEntries: z.object({
+    teamId: uuid,
+    userIds: z
+      .string()
+      .transform((value) => [...new Set(value.split(","))])
+      .pipe(z.array(uuid).min(1).max(CALENDAR_MEMBER_BATCH)),
+    from: dateSchema,
+    to: dateSchema,
+  }),
   listTasks: weeklyScopeSchema.extend({
     q: z.string().max(120).default(""),
     offset: z.coerce.number().int().min(0).max(100000).default(0),
@@ -203,6 +213,12 @@ export const CALENDAR_ROUTES = [
     name: "listEntries",
     method: "GET",
     path: "/calendar",
+    status: 200,
+  },
+  {
+    name: "listMemberEntries",
+    method: "GET",
+    path: "/calendar/members",
     status: 200,
   },
   {
@@ -337,6 +353,9 @@ export class CalendarBusinessService {
   }
   listEntries(request) {
     return this.execute("listEntries", request);
+  }
+  listMemberEntries(request) {
+    return this.execute("listMemberEntries", request);
   }
   listTasks(request) {
     return this.execute("listTasks", request);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { CalendarData } from "./calendar-types";
+import { CALENDAR_MEMBER_BATCH } from "../shared/calendar.js";
 
 export type CalendarQuery = { userId: string | null; from: string; to: string };
 type LoadedCalendar = {
@@ -21,6 +22,8 @@ export function useCalendarData(
   reload: number,
 ) {
   const [loaded, setLoaded] = useState<Record<string, LoadedCalendar>>({});
+  // Retrying reads again only the ranges that failed.
+  const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   const mutations = useRef(0);
   const deferred = useRef(new Set<() => void>());
@@ -33,20 +36,62 @@ export function useCalendarData(
     const reads = new Set<() => void>();
     // Keep one range per visible member. Navigating one member reuses the
     // others' completed requests; unfinished requests are safely restarted.
+    // A failed range is read again below, so it shows as loading, not failed.
     setLoaded((previous) =>
       Object.fromEntries(
         queries.flatMap(({ userId }) => {
           const owner = userId ?? "team";
-          return previous[owner] ? [[owner, previous[owner]]] : [];
+          return previous[owner]?.data ? [[owner, previous[owner]]] : [];
         }),
       ),
     );
+    // Members on the same range load together, so the team view costs one
+    // request (one server call) instead of one per member.
+    const batches: CalendarQuery[][] = [];
     for (const query of queries) {
-      const key = keyFor(query);
-      const owner = query.userId ?? "team";
-      const previous = loaded[owner];
-      if (previous?.key === key && previous.reload === reload && previous.data)
+      const previous = loaded[query.userId ?? "team"];
+      if (
+        previous?.key === keyFor(query) &&
+        previous.reload === reload &&
+        previous.data
+      )
         continue;
+      const batch =
+        query.userId !== null &&
+        batches.find(
+          ([first, ...rest]) =>
+            first.userId !== null &&
+            first.from === query.from &&
+            first.to === query.to &&
+            rest.length + 1 < CALENDAR_MEMBER_BATCH,
+        );
+      if (batch) batch.push(query);
+      else batches.push([query]);
+    }
+    for (const batch of batches) {
+      const [{ from, to, userId }] = batch;
+      const load = () =>
+        batch.length > 1
+          ? api<{ members: Record<string, CalendarData> }>(
+              `/calendar/members?${new URLSearchParams({ teamId, from, to, userIds: batch.map((query) => query.userId).join(",") })}`,
+              { signal: controller.signal },
+            ).then((result) =>
+              batch.map((query) => result.members[query.userId!]),
+            )
+          : api<CalendarData>(
+              `/calendar?${new URLSearchParams({ teamId, from, to, ...(userId === null ? { scope: "team" } : { userId }) })}`,
+              { signal: controller.signal },
+            ).then((data) => [data]);
+      const settle = (result: (query: CalendarQuery, i: number) => object) =>
+        setLoaded((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            batch.map((query, i) => [
+              query.userId ?? "team",
+              { key: keyFor(query), query, reload, ...result(query, i) },
+            ]),
+          ),
+        }));
       const read = () => {
         if (controller.signal.aborted) return;
         if (mutations.current) {
@@ -57,11 +102,8 @@ export function useCalendarData(
         const startedAt = generation.current;
         const updates: CalendarUpdate[] = [];
         pendingUpdates.current.add(updates);
-        void api<CalendarData>(
-          `/calendar?${new URLSearchParams({ teamId, from: query.from, to: query.to, ...(query.userId === null ? { scope: "team" } : { userId: query.userId }) })}`,
-          { signal: controller.signal },
-        )
-          .then((data) => {
+        void load()
+          .then((results) => {
             if (controller.signal.aborted) return;
             // A local edit may have committed after this GET captured its
             // snapshot. Reconcile only after the entire mutation settles, so
@@ -70,17 +112,11 @@ export function useCalendarData(
               read();
               return;
             }
-            setLoaded((current) => ({
-              ...current,
-              [owner]: {
-                key,
-                query,
-                reload,
-                data: updates.reduce(
-                  (result, update) => update(result, query),
-                  data,
-                ),
-              },
+            settle((query, i) => ({
+              data: updates.reduce(
+                (result, update) => update(result, query),
+                results[i],
+              ),
             }));
           })
           .catch((error: Error) => {
@@ -89,10 +125,7 @@ export function useCalendarData(
               read();
               return;
             }
-            setLoaded((current) => ({
-              ...current,
-              [owner]: { key, query, reload, error: error.message },
-            }));
+            settle(() => ({ error: error.message }));
           })
           .finally(() => pendingUpdates.current.delete(updates));
       };
@@ -104,7 +137,7 @@ export function useCalendarData(
       for (const read of reads) deferred.current.delete(read);
     };
     // Loaded results deliberately do not trigger new requests.
-  }, [teamId, queries, reload]);
+  }, [teamId, queries, reload, attempt]);
 
   const schedules = useMemo(
     () =>
@@ -155,5 +188,8 @@ export function useCalendarData(
     if (!mutations.current || --mutations.current) return;
     for (const read of [...deferred.current]) read();
   }
-  return { data, schedules, updateData, beginMutation, endMutation };
+  function retry() {
+    setAttempt((value) => value + 1);
+  }
+  return { data, schedules, updateData, beginMutation, endMutation, retry };
 }

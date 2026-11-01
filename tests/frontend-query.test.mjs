@@ -117,7 +117,8 @@ test("only successful business mutations dispatch the local-save signal", async 
   assert.equal(saves, 1);
 });
 
-test("local calendar merges preserve in-flight member data without fetching it again", async (t) => {
+// Runs useCalendarData with hand-driven hooks and API requests.
+async function calendarHarness(t) {
   const slots = [],
     effects = [],
     requests = [];
@@ -149,44 +150,69 @@ test("local calendar merges preserve in-flight member data without fetching it a
       effects.push(() => (slots[index].cleanup = work()));
     },
     api(path) {
-      return new Promise((resolve) => requests.push({ path, resolve }));
+      return new Promise((resolve, reject) =>
+        requests.push({ path, resolve, reject }),
+      );
     },
   };
   globalThis.__calendarQueryTest = harness;
-  t.after(() => delete globalThis.__calendarQueryTest);
+  t.after(() => {
+    for (const slot of slots) slot?.cleanup?.();
+    delete globalThis.__calendarQueryTest;
+  });
   const code = source("useCalendarData")
     .replace(
       '"react"',
       JSON.stringify(
+        // Delegates on each call: imports are cached across tests.
         moduleURL(
-          "export const { useEffect, useMemo, useRef, useState } = globalThis.__calendarQueryTest;",
+          ["useEffect", "useMemo", "useRef", "useState"]
+            .map(
+              (name) =>
+                `export const ${name} = (...a) => globalThis.__calendarQueryTest.${name}(...a);`,
+            )
+            .join("\n"),
         ),
       ),
     )
     .replace(
       '"./api"',
       JSON.stringify(
-        moduleURL("export const { api } = globalThis.__calendarQueryTest;"),
+        moduleURL(
+          "export const api = (...a) => globalThis.__calendarQueryTest.api(...a);",
+        ),
       ),
+    )
+    .replace(
+      '"../shared/calendar.js"',
+      JSON.stringify(new URL("../shared/calendar.js", import.meta.url).href),
     );
   const { useCalendarData } = await import(moduleURL(code));
-  const queries = [
-    { userId: "one", from: "2026-10-01", to: "2026-10-31" },
-    { userId: "two", from: "2026-10-01", to: "2026-10-31" },
-  ];
-  const render = () => {
-    cursor = 0;
-    const result = useCalendarData("team", queries, 0);
-    while (effects.length) effects.shift()();
-    return result;
+  return {
+    requests,
+    render(queries, reload = 0) {
+      cursor = 0;
+      const result = useCalendarData("team", queries, reload);
+      while (effects.length) effects.shift()();
+      return result;
+    },
   };
-  render();
+}
+
+test("local calendar merges preserve in-flight member data without fetching it again", async (t) => {
+  const { requests, render } = await calendarHarness(t);
+  // Members on different weeks load separately.
+  const queries = [
+    { userId: "one", from: "2026-10-04", to: "2026-10-10" },
+    { userId: "two", from: "2026-10-11", to: "2026-10-17" },
+  ];
+  render(queries);
   requests[0].resolve({
     entries: [{ id: "entry-one", title: "first" }],
     weekly: [],
   });
   await setImmediate();
-  const state = render();
+  const state = render(queries);
   state.updateData((data, query) =>
     query.userId === "two"
       ? {
@@ -200,9 +226,51 @@ test("local calendar merges preserve in-flight member data without fetching it a
     weekly: [],
   });
   await setImmediate();
-  const complete = render();
+  const complete = render(queries);
   assert.equal(requests.length, 2);
   assert.equal(complete.schedules.get("one").data.entries[0].title, "first");
   assert.equal(complete.schedules.get("two").data.entries[0].title, "merged");
-  for (const slot of slots) slot?.cleanup?.();
+});
+
+test("members on one week load in one request and a retry reads only the failed ones", async (t) => {
+  const { requests, render } = await calendarHarness(t);
+  const week = { from: "2026-10-04", to: "2026-10-10" },
+    queries = ["one", "two", "three"].map((userId) => ({ userId, ...week }));
+  render(queries);
+  assert.equal(requests.length, 1);
+  const batch = new URL(requests[0].path, "http://app");
+  assert.equal(batch.pathname, "/calendar/members");
+  assert.equal(batch.searchParams.get("userIds"), "one,two,three");
+  const view = (title) => ({ entries: [{ id: title, title }], weekly: [] });
+  requests[0].resolve({
+    members: { one: view("a"), two: view("b"), three: view("c") },
+  });
+  await setImmediate();
+  let state = render(queries);
+  assert.equal(state.schedules.get("three").data.entries[0].title, "c");
+  // One member moves to another week and its load fails.
+  const moved = [
+    ...queries.slice(0, 2),
+    { userId: "three", from: "2026-10-11", to: "2026-10-17" },
+  ];
+  render(moved);
+  assert.equal(requests.length, 2);
+  assert.equal(new URL(requests[1].path, "http://app").pathname, "/calendar");
+  requests[1].reject(new Error("BOOT_ERROR"));
+  await setImmediate();
+  state = render(moved);
+  assert.equal(state.schedules.get("three").error, "BOOT_ERROR");
+  // Retrying shows the member as loading at once and re-reads only it.
+  state.retry();
+  render(moved);
+  state = render(moved);
+  assert.equal(state.schedules.get("three"), undefined);
+  assert.equal(state.schedules.get("one").data.entries[0].title, "a");
+  assert.equal(requests.length, 3);
+  assert.match(requests[2].path, /userId=three/);
+  requests[2].resolve(view("d"));
+  await setImmediate();
+  state = render(moved);
+  assert.equal(state.schedules.get("three").data.entries[0].title, "d");
+  assert.equal(requests.length, 3);
 });
