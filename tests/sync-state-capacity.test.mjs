@@ -26,16 +26,18 @@ import { createExternalRouteApp } from "./external-route-fixture.mjs";
 
 const MiB = 1024 * 1024;
 
-test("state and entity budgets grow independently of event files, with bounded configuration and pending accounting", () => {
+// A team's state has no total budget: saves, publications and receipts cost
+// what they change. An operator may still cap it; event files stay bounded.
+test("a team's state has no total budget unless an operator caps it, while event files stay bounded", () => {
   const limits = capacityLimits();
-  assert.equal(limits.maxBytes, 32 * MiB);
-  assert.equal(limits.maxEntities, 50000);
+  assert.equal(limits.maxBytes, Infinity);
+  assert.equal(limits.maxEntities, Infinity);
   assert.equal(limits.maxSnapshotBytes, 64 * MiB);
   assert.equal(limits.maxReceiptBytes, 16 * MiB);
   for (const env of [
-    { SYNC_MAX_STATE_BYTES: 32 * MiB + 1 },
-    { SYNC_MAX_ENTITIES: 50001 },
     { SYNC_MAX_STATE_BYTES: "NaN" },
+    { SYNC_MAX_STATE_BYTES: -1 },
+    { SYNC_MAX_ENTITIES: 1000 },
   ])
     assert.throws(() => capacityLimits(env), /configuration is invalid/);
   const lower = capacityLimits({
@@ -44,8 +46,8 @@ test("state and entity budgets grow independently of event files, with bounded c
   });
   assert.equal(lower.maxBytes, 4 * MiB);
   assert.equal(lower.maxEntities, 12000);
-  // Event files are bounded by the smaller of the file limit and the state
-  // budget: a lowered state budget lowers them, the default allows 32 MiB.
+  // Event files are bounded by the smaller of the file limit and a state
+  // cap: a lowered cap lowers them, otherwise they allow 32 MiB.
   assertFileCapacity("events/a.json", new Uint8Array(4 * MiB), lower);
   assert.throws(
     () =>
@@ -57,21 +59,29 @@ test("state and entity budgets grow independently of event files, with bounded c
     () => assertFileCapacity("events/a.json", new Uint8Array(32 * MiB + 1)),
     /file capacity/,
   );
+  // Past the former 32 MiB and 50,000-record budget without a cap.
   const state = emptyState();
-  state.entities.one = { payload: "x".repeat(32 * MiB - 256) };
+  state.entities.one = { payload: "x".repeat(32 * MiB + 512) };
   assertStateCapacity(state);
+  const capped = capacityLimits({
+    SYNC_MAX_STATE_BYTES: String(32 * MiB),
+    SYNC_MAX_ENTITIES: "50000",
+  });
   assert.throws(
-    () => assertStateCapacity(state, limits, [{ payload: "x".repeat(512) }]),
+    () => assertStateCapacity(state, capped),
+    /state byte capacity/,
+  );
+  state.entities.one.payload = "x".repeat(32 * MiB - 256);
+  assertStateCapacity(state, capped);
+  assert.throws(
+    () => assertStateCapacity(state, capped, [{ payload: "x".repeat(512) }]),
     /state and pending capacity/,
   );
-  state.entities.one.payload += "x".repeat(512);
-  assert.throws(() => assertStateCapacity(state), /state byte capacity/);
   state.entities = Object.fromEntries(
-    Array.from({ length: 50000 }, (_, i) => [String(i), {}]),
+    Array.from({ length: 50001 }, (_, i) => [String(i), {}]),
   );
-  assert.equal(assertStateCapacity(state).entities, 50000);
-  state.entities.extra = {};
-  assert.throws(() => assertStateCapacity(state), /entity capacity/);
+  assert.equal(assertStateCapacity(state).entities, 50001);
+  assert.throws(() => assertStateCapacity(state, capped), /entity capacity/);
 });
 
 test(

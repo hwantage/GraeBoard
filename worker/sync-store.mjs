@@ -7,6 +7,7 @@ import {
 import {
   canonical,
   entityId,
+  emptyState,
   protocolVersion,
   stateSumFrom,
 } from "../server/sync/protocol.mjs";
@@ -145,6 +146,29 @@ export function boundStore(
                 hash = hashes.next;
               }
               return { head: link.canonical_head, base, state, sum, hash };
+            },
+            { readOnly: true },
+          )
+      : undefined,
+    // C as an empty slice with its kept totals, for a commit that leaves C
+    // unchanged (a checkpoint verified by its state sum).
+    unchangedSlice: slices
+      ? () =>
+          database.withTeamTransaction(
+            teamId,
+            async (tx) => {
+              const link = await tx.sync.readLink();
+              if (!link?.canonical_head) return null;
+              const totals =
+                (await readTotals(tx, teamId, link.canonical_head)) ||
+                (await computeTotals(tx, teamId));
+              const base = emptyState();
+              measured.set(base, {
+                bytes: totals.stateBytes,
+                entities: totals.entities,
+                receiptBytes: totals.receiptBytes,
+              });
+              return { head: link.canonical_head, base, sum: totals.sum };
             },
             { readOnly: true },
           )

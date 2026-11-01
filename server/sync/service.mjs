@@ -345,7 +345,37 @@ export class SyncService {
             "SYNC_VERSION",
             "Explicit protocol transition required",
           );
-        if (["transition", "checkpoint"].includes(envelope.kind))
+        // A checkpoint leaves C as it is. With its state sum, a store that
+        // keeps C's totals verifies it against them and advances the head
+        // without loading C or the snapshot (that is for sites joining).
+        const unchanged =
+          envelope.kind === "checkpoint" &&
+          envelope.checkpointVersion === 1 &&
+          envelope.resultSum &&
+          !state &&
+          (await this.store.unchangedSlice?.());
+        if (unchanged) {
+          if (
+            unchanged.head !== parent ||
+            !snapshotPath(envelope.path) ||
+            envelope.atCommit !== parent ||
+            envelope.reducer !== envelope.protocol ||
+            envelope.teamId !== this.identity.teamId ||
+            envelope.repoId !== this.identity.repoId ||
+            envelope.bootstrapId !== link.bootstrap_id
+          )
+            throw new ProtocolError("SYNC_FORMAT", "Invalid checkpoint");
+          if (envelope.resultSum !== unchanged.sum)
+            throw new ProtocolError(
+              "SYNC_INTEGRITY",
+              "Checkpoint state sum mismatch",
+            );
+          previousState = state = unchanged.base;
+          slice = true;
+          verifiedHash = link.canonical_hash || null;
+          verifiedSum = unchanged.sum;
+          this.mark("checkpointSum");
+        } else if (["transition", "checkpoint"].includes(envelope.kind))
           previousState = await whole();
         if (envelope.kind === "transition") {
           if (!["paused", "importing"].includes(link.mode))
@@ -413,6 +443,8 @@ export class SyncService {
           );
           this.assertCapacity(state);
           transition = true;
+        } else if (envelope.kind === "checkpoint" && unchanged) {
+          // Verified above by the state sum.
         } else if (envelope.kind === "checkpoint") {
           if (
             !snapshotPath(envelope.path) ||
@@ -949,6 +981,7 @@ export class SyncService {
         atCommit: link.canonical_head,
         path,
         resultHash: stateHash(state),
+        resultSum: stateSum(state),
       };
       const oid = await this.transport.createCandidate(link.canonical_head, {
         [path]: bytes,

@@ -1129,6 +1129,26 @@ test(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
       );
+      // A later checkpoint carries the state sum: the Worker checks it against
+      // its kept totals and advances to it without loading C or the snapshot,
+      // and both sites still hold the same state.
+      ok(await inside(`/teams/${teamId}/sync/checkpoint`, {}));
+      const checkpointHead = github.text(["rev-parse", "refs/heads/sync-v1"]),
+        beforeCheckpoint = phases.length;
+      await runTeam(env, p);
+      assert.equal(
+        (await pgStore.readLink(teamId)).canonical_head,
+        checkpointHead,
+      );
+      const checkpointPhases = phases
+        .slice(beforeCheckpoint)
+        .map((entry) => entry.phase);
+      assert.ok(checkpointPhases.includes("checkpointSum"));
+      assert.ok(!checkpointPhases.includes("readState"));
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
       assert.deepEqual(
         github.unexpectedCalls,
         [],

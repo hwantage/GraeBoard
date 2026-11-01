@@ -310,7 +310,7 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie
    ```
 
-3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 v1 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 v2 상태의 업무 32MiB·엔티티 50,000개 한도를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
+3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 v1 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 v2 상태의 용량 한도(snapshot·receipt, 지정한 경우 업무·엔티티 상한)를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
 
    ```sh
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute

@@ -470,6 +470,7 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 - 내부(Node)는 C를 메모리에 두므로 항상 `resultHash`와 `resultSum`을 모두 싣습니다.
 - 외부는 저장된 상대 상태(`remote_status`)가 `sum-1`을 알린 뒤에만 `resultHash`를 생략합니다.
 - 받는 쪽은 실린 값 중 자기가 계산한 값을 모두 비교합니다. `resultSum`이 없는 이전 형식 이벤트는 기존처럼 `resultHash`로 검증합니다.
+- checkpoint 이벤트도 `resultHash`와 함께 `resultSum`을 싣습니다. checkpoint는 C를 바꾸지 않으므로, 외부는 이 값을 저장된 합계와 비교해 검증하고 C와 snapshot을 읽지 않고 head만 옮깁니다. snapshot 본문은 새로 합류하는 사이트가 읽습니다.
 
 외부 PG 팀 저장소는 C의 합계를 `site_entities`의 `syncTotals`/`[]` 행에 `{head,sum,entities,stateBytes,receiptBytes}`로 둡니다.
 - `head`가 연결의 `canonical_head`와 같을 때만 유효합니다.
@@ -487,4 +488,4 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 
 기존 v1의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 v1 백업과 v2 snapshot을 포함하며, v2 C에는 `protocol`/`[]`의 `{version:2,reducer:2}` 표식이 있습니다. v2 사본은 report 메타데이터, `reportTask(reportId,taskId)`의 행 데이터, `reportCell(reportId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 v1 형태의 `report.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. v2 부모 `report`와 `reportTask`·`reportCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, v2 전환 전에 이 중복을 줄이는 방안을 정합니다. 논리 이관·외부 백업 v3의 포맷과 해시 규칙은 바뀌지 않습니다.
 
-receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending 예산은 32MiB이며 공유 엔티티 상한은 50,000개입니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.
+receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending과 공유 엔티티 수에는 기본 상한이 없으며, 외부 환경에 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.
