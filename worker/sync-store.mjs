@@ -269,14 +269,17 @@ export function boundStore(
             throw new SyncInterruption(
               "새 미전송 자료가 있어 형식 전환을 중단했습니다. 입력을 보존하고 관리자에게 확인하세요.",
             );
+          // Sizing every pending operation (a copy edit carries the whole
+          // copy) only matters under an operator's cap.
           if (
+            Number.isFinite(limits.maxBytes) &&
             size.bytes +
               projection.pending.reduce(
                 (bytes, operation) =>
                   bytes + Buffer.byteLength(canonical(operation)),
                 0,
               ) >
-            limits.maxBytes
+              limits.maxBytes
           )
             throw new CapacityError(
               "External state and pending capacity exceeded; prior data is preserved",

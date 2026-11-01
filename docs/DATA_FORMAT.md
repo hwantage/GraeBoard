@@ -264,6 +264,10 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | HTTP 응답·JSON 반출               | 공유 사전 JSON                                         |
 | 동기화 명령 P·기준본 C의 `report` | 공유 사전 형태의 `data` (`shared/report-sync-data.js`) |
 | 외부 `site_entities`의 `report`   | 공유 사전 형태의 `data`, `DataSession`이 읽을 때 풂    |
+| 외부 `site_audit`의 사본 수정     | 공유 사전 형태의 전후 `data`, 이력 조회가 읽을 때 풂   |
+| 외부 `site_operations.response`   | 응답 전체를 `pack`한 JSON, 재시도 응답 때 풂           |
+
+외부 사본 생성의 `site_audit`은 내부 `audit`처럼 `{name, count}`만 남깁니다. 저장 형태 `[{entity:"report", key:[id], before:null, after:{name, count}}]`이며 복사한 문서는 기록하지 않습니다. 2026-11-02 이전에 기록한 평문 감사·재시도 기록은 그대로 읽습니다. 이 형태로 기록한 뒤 이전 release로 되돌리면 그 이후의 사본 수정 이력에서 **삭제한 업무 복구**를 쓸 수 없고, 같은 요청의 재시도 응답이 공유 사전 형태로 나갈 수 있습니다.
 
 애플리케이션 코드는 내부·외부 모두 풀린 객체만 다룹니다. 새 코드가 동기화 payload나 `site_entities`의 사본 `data`를 직접 읽을 때는 `unpackReportData`를 거치고, 두 payload를 비교할 때는 `payloadEqual`을 사용합니다.
 
@@ -436,7 +440,7 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 ## 내부·외부 동기화 저장
 
-`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 불변 P, 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 32MiB(2026-10-30 이전 4MiB), 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
+`sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 P(게시되지 않은 같은 사본의 연속 수정만 하나로 교체하고 그 밖에는 불변, [동기화 프로토콜](SYNC_PROTOCOL.md#postgresql-업무-저장소와-외부-실행-자원-경계)), 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 32MiB(2026-10-30 이전 4MiB), 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
 SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상태/최종 상태 차이만 outbox에 기록합니다. PG 팀 저장소는 `site_entities`의 업무 상태와 별도 C/P/L을 같은 client 트랜잭션으로 저장합니다. 사본 `report`의 `data`는 C·P·`site_entities` 모두에서 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태이며, 외부 `DataSession`은 읽을 때 풀고 쓸 때 다시 사전 형태로 저장합니다. 이 변경 전에 기록된 평문 사본은 변환하지 않고 그대로 읽으며, 다음 편집 때 사전 형태로 바뀝니다. 업무 이력의 표시용 `{id,name}` 사람 참조와 인증용 팀 구성원 목록은 분리합니다. 업무 브랜치에는 비밀번호·로그인 이메일·세션·역할·개인 보기·개인 필터·개인 캘린더 설정을 포함하지 않습니다. 아래 별도 구성원 브랜치에 해당 팀의 이메일과 팀 역할을 단방향 게시합니다.
 
@@ -461,24 +465,28 @@ Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 
 ### 상태 합 (`sum-1`)
 
 operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 같습니다.
+
 - C의 기록마다 `sha256(구분 "\n" ID "\n" canonical(값))`을 구합니다. 구분은 엔티티 `e`(ID는 `entityId`), 영수증 `r`(opId), 충돌 `c`(conflictId)입니다.
 - 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/protocol.mjs`의 `stateSum`).
 - 순서와 무관한 합이라 커밋은 바뀐 기록의 이전값과 새값만 빼고 더해 갱신합니다(`stateSumFrom`). PostgreSQL에서도 정렬 없는 집계 한 번으로 계산합니다.
 - 목적은 사이트 사이의 우발적 불일치를 감지하는 것이며, 의도적으로 만든 충돌에 대한 내성은 목표가 아닙니다.
 
 각 사이트는 상태 브랜치 `status.json`에 `capabilities: ["sum-1"]`을 싣습니다.
+
 - 내부(Node)는 C를 메모리에 두므로 항상 `resultHash`와 `resultSum`을 모두 싣습니다.
 - 외부는 저장된 상대 상태(`remote_status`)가 `sum-1`을 알린 뒤에만 `resultHash`를 생략합니다.
 - 받는 쪽은 실린 값 중 자기가 계산한 값을 모두 비교합니다. `resultSum`이 없는 이전 형식 이벤트는 기존처럼 `resultHash`로 검증합니다.
 - checkpoint 이벤트도 `resultHash`와 함께 `resultSum`을 싣습니다. checkpoint는 C를 바꾸지 않으므로, 외부는 이 값을 저장된 합계와 비교해 검증하고 C와 snapshot을 읽지 않고 head만 옮깁니다. snapshot 본문은 새로 합류하는 사이트가 읽습니다.
 
 외부 PG 팀 저장소는 C의 합계를 `site_entities`의 `syncTotals`/`[]` 행에 `{head,sum,entities,stateBytes,receiptBytes}`로 둡니다.
+
 - `head`가 연결의 `canonical_head`와 같을 때만 유효합니다.
 - 모든 C 반영(`commitCanonical`)이 이 행을 새 값으로 바꾸거나 지웁니다. 지워지면 다음 사용 때 집계 한 번으로 다시 만듭니다.
 - 용량 측정(`capacityTotals`)은 이 행이 유효하면 미전송 크기만 SQL로 더합니다.
 - `resultSum`만으로 확정한 커밋 뒤에는 `canonical_hash`가 `NULL`일 수 있습니다.
 
 이전 버전으로 되돌릴 때는 순서를 지킵니다.
+
 1. 되돌리기 전에 상대 사이트의 동기화를 일시정지합니다.
 2. 되돌린 사이트의 상태 브랜치가 `sum-1` 없이 갱신된 것을 확인한 뒤 재개합니다.
 

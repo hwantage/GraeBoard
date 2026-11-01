@@ -20,14 +20,14 @@ import {
   validateCellValue,
   savedFilterSchema,
 } from "../../shared/validation.js";
-import { digest, equal } from "../../server/sync/protocol.mjs";
+import { digestShared, equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
 import { documentListsUnder } from "./postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../control.mjs";
 export const reportRevision = (data) =>
-  digest({
+  digestShared({
     ...data,
     tasks: data.tasks.map(
       ({ documents, hasDocument, documentCount, ...task }) => task,
@@ -136,8 +136,10 @@ async function execute(ctx, command, body, reportId) {
           409,
           "사본 생성 요청이 변경되었습니다. 새 이름으로 다시 시도하세요.",
         );
+        // Names come without each copy's sheet, so the check does not grow
+        // with the copies the team keeps.
         assert(
-          !(await s.list("report")).some((r) => r.payload.name === name),
+          !(await reportSummaries(s)).some((r) => r.payload.name === name),
           409,
           "같은 이름의 사본이 있습니다.",
         );
@@ -178,14 +180,20 @@ async function execute(ctx, command, body, reportId) {
             settings: await settingsFor(s),
           };
         }
-        const docs = await s.list("document");
+        // Only the documents being copied, grouped by task once: not every
+        // document of the team (other copies hold most of them), and not a
+        // scan of them per task.
+        const docs = new Map();
+        for (const d of await s.listChildren(
+          "document",
+          source ? ["report", body.sourceId] : ["task"],
+        )) {
+          const taskId = d.key.at(-2);
+          if (!docs.has(taskId)) docs.set(taskId, []);
+          docs.get(taskId).push(d);
+        }
         for (const task of data.tasks) {
-          const prefix = source
-              ? ["report", body.sourceId, task.id]
-              : ["task", task.id],
-            sourceDocs = docs.filter((d) =>
-              prefix.every((v, i) => d.key[i] === v),
-            );
+          const sourceDocs = docs.get(task.id) || [];
           task.documents = sourceDocs.map((d) => ({
             id: d.key.at(-1),
             title: d.payload.title,
@@ -197,10 +205,9 @@ async function execute(ctx, command, body, reportId) {
               doc.payload,
             );
         }
-        for (const memo of docs.filter((d) =>
-          source
-            ? d.key[0] === "reportMemo" && d.key[1] === body.sourceId
-            : d.key[0] === "annual" && d.key[1] === String(year),
+        for (const memo of await s.listChildren(
+          "document",
+          source ? ["reportMemo", body.sourceId] : ["annual", String(year)],
         ))
           await s.put(
             "document",
