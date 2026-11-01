@@ -13,7 +13,14 @@ import {
 export class PostgresDatabase extends DatabaseAdapter {
   constructor(
     pool,
-    { scope = "team", teamId = null, site = pool.site || false } = {},
+    {
+      scope = "team",
+      teamId = null,
+      site = pool.site || false,
+      // Milliseconds for each statement of this database's transactions, in
+      // place of the pool's limit (see SYNC_STATEMENT_TIMEOUT_MS).
+      statementTimeout = null,
+    } = {},
   ) {
     super();
     if (!["team", "control"].includes(scope))
@@ -23,6 +30,12 @@ export class PostgresDatabase extends DatabaseAdapter {
     this.teamId = teamId;
     this.engine = "postgres";
     this.site = site;
+    if (
+      statementTimeout !== null &&
+      !(Number.isSafeInteger(statementTimeout) && statementTimeout > 0)
+    )
+      throw new Error("Invalid PostgreSQL statement timeout");
+    this.statementTimeout = statementTimeout;
     Object.assign(this, postgresLayout(scope, site));
   }
   async transaction(work, { teamId, readOnly = false, retries = 0 } = {}) {
@@ -51,6 +64,9 @@ export class PostgresDatabase extends DatabaseAdapter {
                 ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
                 : "BEGIN",
               `SET LOCAL search_path TO ${this.schema}, pg_catalog`,
+              ...(this.statementTimeout
+                ? [`SET LOCAL statement_timeout = ${this.statementTimeout}`]
+                : []),
               ...(readOnly
                 ? []
                 : [
