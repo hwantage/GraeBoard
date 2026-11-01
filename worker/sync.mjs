@@ -17,7 +17,14 @@ import {
 import { project } from "../server/sync/reducer.mjs";
 import { GitHubApiTransport } from "./git.mjs";
 import { R2ImageStore, imageReferences, stillImage } from "./images.mjs";
-import { DataSession, databaseFor, controlTransaction } from "./data.mjs";
+import {
+  DataSession,
+  databaseFor,
+  controlTransaction,
+  SYNC_STATEMENT_TIMEOUT_MS,
+} from "./data.mjs";
+const syncDatabase = (env, profile) =>
+  databaseFor(env, profile, { statementTimeout: SYNC_STATEMENT_TIMEOUT_MS });
 import { profiles, profileFor } from "../shared/sync-profiles.js";
 import { assert } from "./access.mjs";
 import { refreshDirectory } from "./directory.mjs";
@@ -99,7 +106,7 @@ export function createPublisher({
     const key = `${profile.teamId}/${profile.profileId}`;
     if (teams.has(key)) return teams.get(key);
     const promise = (async () => {
-      const database = databaseFor(env, profile);
+      const database = syncDatabase(env, profile);
       const window = await database.withTeamTransaction(
         profile.teamId,
         (tx) => publishWindow(tx, env, profile),
@@ -136,7 +143,7 @@ export const schedulePublish = createPublisher();
 
 export function serviceFor(env, profile, link, options = {}) {
   const limits = capacityLimits(env),
-    database = databaseFor(env, profile),
+    database = syncDatabase(env, profile),
     transport = boundedTransport(
       options.transport ||
         new GitHubApiTransport({
@@ -183,7 +190,7 @@ export function serviceFor(env, profile, link, options = {}) {
 // Foreground checks never read/publish status branches or load C for an equal head.
 export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
   await refreshDirectory(env).catch(() => {});
-  const database = databaseFor(env, profile);
+  const database = syncDatabase(env, profile);
   const snapshot = await database.withTeamTransaction(
     profile.teamId,
     async (tx) => ({
@@ -255,7 +262,7 @@ export async function runTeam(
     slices = true,
   } = {},
 ) {
-  const db = databaseFor(env, profile),
+  const db = syncDatabase(env, profile),
     link = await db.readLink(profile.teamId);
   if (!link) return { mode: "unlinked" };
   if (respectPublishWindow) {
@@ -366,7 +373,7 @@ export async function importTeam(ctx, body) {
     "외부 사이트 INSTALLATION_ID를 먼저 설정하세요.",
   );
   const profile = profileFor(ctx.env, body.profileId, body.teamId),
-    db = databaseFor(ctx.env, profile);
+    db = syncDatabase(ctx.env, profile);
   await db.health();
   const transport = new GitHubApiTransport({
     repository: profile.repository,
