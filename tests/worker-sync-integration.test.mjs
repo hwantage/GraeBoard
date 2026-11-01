@@ -1129,15 +1129,39 @@ test(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
       );
+      // A later checkpoint carries the state sum: the Worker checks it against
+      // its kept totals and advances to it without loading C or the snapshot,
+      // and both sites still hold the same state.
+      ok(await inside(`/teams/${teamId}/sync/checkpoint`, {}));
+      const checkpointHead = github.text(["rev-parse", "refs/heads/sync-v1"]),
+        beforeCheckpoint = phases.length;
+      await runTeam(env, p);
+      assert.equal(
+        (await pgStore.readLink(teamId)).canonical_head,
+        checkpointHead,
+      );
+      const checkpointPhases = phases
+        .slice(beforeCheckpoint)
+        .map((entry) => entry.phase);
+      assert.ok(checkpointPhases.includes("checkpointSum"));
+      assert.ok(!checkpointPhases.includes("readState"));
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
       assert.deepEqual(
         github.unexpectedCalls,
         [],
         "swallowed unexpected GitHub API calls also fail the fixture",
       );
       // Every publication and received commit was reduced on a slice of C
-      // that PostgreSQL hashed; the Worker never loaded the whole state.
-      const hashed = phases.filter((p) => p.phase === "canonicalHash");
-      assert.ok(hashed.length >= 10);
+      // and carried the state sum; the Worker never loaded the whole state.
+      // Once the SQLite site announced the sum, publications stopped
+      // rebuilding the whole-state hash.
+      const summed = phases.filter((p) => p.phase === "stateSum"),
+        hashed = phases.filter((p) => p.phase === "canonicalHash");
+      assert.ok(summed.length >= 10);
+      assert.ok(summed.length > hashed.length);
       assert.ok(hashed.every((p) => p.verified));
       assert.ok(phases.some((p) => p.phase === "commitCanonical"));
       assert.deepEqual(

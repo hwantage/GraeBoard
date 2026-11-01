@@ -166,7 +166,7 @@ C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 
 
 ## PostgreSQL 업무 저장소와 외부 실행 자원 경계
 
-프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 외부 Edge의 `RequestContext.data`·`capacityLimits(env)`를 통해 업무·충돌·pending 32MiB 및 공유 엔티티 50,000개 상한을 적용합니다. receipt는 16MiB 별도 예산(12MiB 경고)이며 과거 초과 상태의 조회·반출은 막지 않고 새 저장·게시는 사전에 거절합니다. 내부도 같은 receipt 예산과 명령 상한을 적용하지만 외부 업무 용량 한도는 적용하지 않습니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 서버 설정은 이 상한을 낮출 수만 있습니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다.
+프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 외부 Edge의 `RequestContext.data`·`capacityLimits(env)`를 통해 업무·충돌·pending 용량과 공유 엔티티 수를 셉니다. 이 둘에는 기본 상한이 없고, 운영자가 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(2026-11-01 이전 32MiB·50,000개). receipt는 16MiB 별도 예산(12MiB 경고)이며 과거 초과 상태의 조회·반출은 막지 않고 새 저장·게시는 사전에 거절합니다. 내부도 같은 receipt 예산과 명령 상한을 적용하지만 외부 업무 용량 한도는 적용하지 않습니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다.
 
 `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL 외부 API가 같은 bare Git에 CLI와 GitHub Data API로 참여하여 엔진 간 자료·이미지·경합·복구를 검증합니다. 이전 전체 Worker의 workerd 전용 용량 검사는 제거했으며 Cloudflare 전달·자원 경계는 `tests/edge-gateway.test.mjs`로 검사합니다. 이 검사들은 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
 
@@ -188,6 +188,6 @@ v2 부모 `report`의 `data`는 행 배열이 없으므로 평문 그대로이�
 
 v1 이력은 기존 차이 탐색 상한 20,000을, v2는 상한 2,000을 사용합니다. 기기 시간으로 병합 여부를 결정하지 않으며 상한을 넘은 base/current/desired를 모두 충돌에 보존합니다. 이전 reader는 v2 전환 이벤트와 v2 checkpoint 모두에서 cursor를 전진시키지 않습니다. 전환 명령과 양쪽이 일시정지한 상태의 수신 절차는 [운영 안내](OPERATIONS.md#동기화-v2-명시-전환)에 있습니다.
 
-이벤트 파일은 32MiB 이내입니다(2026-10-30 이전 4MiB). 사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 공유 상태 예산과 같은 값입니다. 명령 하나는 봉투 여유 1KiB와 구분자 1바이트를 제외한 크기 이내인지 저장 시점에 검증합니다. 사본 명령의 크기는 [공유 범위](#공유-범위)의 공유 사전 형태로 계산하므로 공통 서식 규칙이 업무마다 반복되어 커지지 않습니다. 큰 묶음은 여러 이벤트로 나눠 게시하고, 단일 명령이 상한을 넘으면 업무·감사·outbox를 모두 롤백하고 400으로 거절합니다. snapshot은 압축·해제 각각 64MiB 상한과 해제 후 업무·receipt별 예산을 검사합니다. receipt 원문은 checkpoint 후에도 보존하고 stateHash에 계속 포함하므로 전체 해시 계산은 누적 이력에 비례합니다.
+이벤트 파일은 32MiB 이내입니다(2026-10-30 이전 4MiB). 사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 정한 값입니다. 명령 하나는 봉투 여유 1KiB와 구분자 1바이트를 제외한 크기 이내인지 저장 시점에 검증합니다. 사본 명령의 크기는 [공유 범위](#공유-범위)의 공유 사전 형태로 계산하므로 공통 서식 규칙이 업무마다 반복되어 커지지 않습니다. 큰 묶음은 여러 이벤트로 나눠 게시하고, 단일 명령이 상한을 넘으면 업무·감사·outbox를 모두 롤백하고 400으로 거절합니다. snapshot은 압축·해제 각각 64MiB 상한과 해제 후 receipt 예산(업무 상한은 지정한 경우)을 검사합니다. receipt 원문은 checkpoint 후에도 보존하고 stateHash에 계속 포함하므로 전체 해시 계산은 누적 이력에 비례합니다. 외부 Edge는 상대가 `sum-1`을 알리면 전체 해시 대신 바뀐 기록만 갱신하는 상태 합([데이터 형식](DATA_FORMAT.md#상태-합-sum-1))을 씁니다.
 
 상태 조회는 마지막 local_seq 행과 일반 인덱스를 사용합니다. 오래된 acknowledged outbox와 SSE 이벤트 정리는 기본으로 자동 실행하지 않으며 최신 행·pending/held·미해결 충돌·의존성·불일치 hash를 보호합니다. receipt·tombstone·sync_objects·Git 이력은 삭제하지 않습니다. 이전 SSE 커서는 최신 snapshot으로 복구합니다.

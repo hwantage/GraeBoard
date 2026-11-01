@@ -157,7 +157,10 @@ export class PostgresDatabase extends DatabaseAdapter {
       options.previousState ||
       (options.patch ? null : await this.readState(teamId));
     const patch = options.patch || prepareStatePatch(previous, state);
-    const hash = options.stateHash || digest(state);
+    // A slice commit may carry only the state sum (canonical_hash is then
+    // unknown); a whole state without a given hash is hashed here.
+    const hash =
+      options.stateHash !== undefined ? options.stateHash : digest(state);
     mark("preparePatch");
     return this.withTeamTransaction(teamId, async (tx) => {
       if ((await tx.sync.readLink())?.canonical_head !== expectedHead)

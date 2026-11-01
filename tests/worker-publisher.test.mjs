@@ -414,9 +414,12 @@ test(
     assert.deepEqual(github.unexpectedCalls, []);
     // Every publication reduced only the records it touched and had PostgreSQL
     // hash C; none loaded the team's whole state.
+    // No peer status announces the state sum here, so each publication also
+    // rebuilt the whole-state hash for it, beside the state sum.
     const hashed = phases.filter((p) => p.phase === "canonicalHash");
     assert.ok(hashed.length >= 3);
     assert.ok(hashed.every((p) => p.verified));
+    assert.ok(phases.filter((p) => p.phase === "stateSum").length >= 3);
     assert.deepEqual(
       phases.filter((p) => p.phase === "readState"),
       [],

@@ -1,4 +1,9 @@
-import { canonical, entityId, emptyState } from "../server/sync/protocol.mjs";
+import {
+  canonical,
+  entityId,
+  emptyState,
+  sumFromLanes,
+} from "../server/sync/protocol.mjs";
 import { reduce, uniqueName } from "../server/sync/reducer.mjs";
 
 const recordFromRow = (row) => ({
@@ -287,4 +292,57 @@ export async function canonicalHashes(
     ])
   ).rows[0];
   return { current: row.current, next: row.next };
+}
+
+// C's state sum (see stateSum) and the capacity totals of capacityTotals,
+// from one order-free aggregate: no sort and no whole-team string.
+const lane = (i) =>
+  `COALESCE(sum(('x'||encode(substring(h from ${8 * i + 1} for 8),'hex'))::bit(64)::bigint::numeric),0)::text`;
+const TOTALS_SQL = `WITH
+  rows AS (
+    ${SECTION("sync_entities", `'['||to_json(entity)::text||','||entity_key||']'`, `'{"deleted":'||CASE WHEN deleted=1 THEN 'true' ELSE 'false' END||',"entity":'||to_json(entity)::text||',"generation":'||to_json(generation)::text||',"key":'||entity_key||',"payload":'||COALESCE(payload,'null')||',"version":'||to_json(version)::text||'}'`).replace("SELECT ", "SELECT 'e' AS s, ")}
+    UNION ALL ${SECTION("sync_receipts", "op_id", "receipt").replace("SELECT ", "SELECT 'r' AS s, ")}
+    UNION ALL ${SECTION("sync_conflicts", "conflict_id", "payload").replace("SELECT ", "SELECT 'c' AS s, ")}
+  ),
+  d AS (SELECT s, id, body, sha256(convert_to(s||E'\\n'||id||E'\\n'||body,'UTF8')) AS h FROM rows)
+SELECT ${[0, 1, 2, 3].map((i) => `${lane(i)} AS l${i}`).join(", ")},
+  count(*) FILTER (WHERE s='e') AS entities,
+  64 + COALESCE(sum(octet_length(to_json(id)::text)+octet_length(body)+2) FILTER (WHERE s<>'r'),0) AS state_bytes,
+  2 + COALESCE(sum(octet_length(to_json(id)::text)+octet_length(body)+2) FILTER (WHERE s='r'),0) AS receipt_bytes
+FROM d`;
+export async function computeTotals(tx, teamId) {
+  const row = (await tx.query(TOTALS_SQL, [teamId])).rows[0];
+  return {
+    sum: sumFromLanes([row.l0, row.l1, row.l2, row.l3]),
+    entities: Number(row.entities),
+    stateBytes: Number(row.state_bytes),
+    receiptBytes: Number(row.receipt_bytes),
+  };
+}
+// The totals of C at a canonical head, kept beside the site rows like the
+// sync scheduling state. commitCanonical replaces or clears them with every
+// change to C, and they count only while their head is the current one.
+const TOTALS_KEY = ["syncTotals", "[]"];
+export async function readTotals(tx, teamId, head) {
+  if (!head) return null;
+  const row = (
+    await tx.query(
+      "SELECT payload FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=$3",
+      [teamId, ...TOTALS_KEY],
+    )
+  ).rows[0];
+  const totals = row && JSON.parse(row.payload);
+  return totals?.head === head ? totals : null;
+}
+export async function writeTotals(tx, teamId, head, totals) {
+  await tx.query(
+    "INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,$2,$3,$4,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
+    [teamId, ...TOTALS_KEY, canonical({ ...totals, head })],
+  );
+}
+export async function clearTotals(tx, teamId) {
+  await tx.query(
+    "DELETE FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=$3",
+    [teamId, ...TOTALS_KEY],
+  );
 }

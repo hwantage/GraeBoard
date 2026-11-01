@@ -42,6 +42,29 @@ export function boundedTransport(transport, limits = capacityLimits()) {
 // same string escaping as JSON.stringify without fetching the canonical body.
 // The parts stay separate so a capture can add only its own change to C.
 export async function capacityTotals(tx, teamId) {
+  // C's part comes from its totals kept at the current canonical head (see
+  // writeTotals in sync-partial.mjs); only the outbox is summed here. Without
+  // current totals the whole team is measured as before.
+  const kept = (
+    await tx.query(
+      `SELECT l.canonical_head AS head, t.payload AS totals,
+        (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox
+          WHERE team_id=$1 AND status<>'acknowledged') AS outbox_bytes
+      FROM team_sync_links l LEFT JOIN site_entities t
+        ON t.team_id=l.team_id AND t.entity='syncTotals' AND t.entity_key='[]'
+      WHERE l.team_id=$1`,
+      [teamId],
+    )
+  ).rows[0];
+  const totals = kept?.totals && JSON.parse(kept.totals);
+  if (kept?.head && totals?.head === kept.head)
+    return {
+      entities: totals.entities,
+      entityBytes: totals.stateBytes,
+      conflictBytes: 0,
+      outboxBytes: Number(kept.outbox_bytes),
+      receiptBytes: totals.receiptBytes,
+    };
   const row = (
     await tx.query(
       `SELECT
