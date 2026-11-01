@@ -2,6 +2,8 @@
 // Annual sheets use the Monday inside that calendar week; neither key is inferred
 // from the visible weekdays (hiding Sunday must not change a saved week).
 export const CALENDAR_MAX_RANGE_DAYS = 62;
+// Team members on the same week load in one request of at most this many.
+export const CALENDAR_MEMBER_BATCH = 50;
 export const CALENDAR_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export const DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 export function addDays(key, count) {

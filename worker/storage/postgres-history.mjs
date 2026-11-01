@@ -3,11 +3,30 @@ import {
   historyRestoreSchema,
 } from "../../server/storage/history-service.mjs";
 import { assert } from "../access.mjs";
+import { unpackReportPayload } from "../../shared/report-sync-data.js";
 import { taskView } from "../task-view.mjs";
 import { reportView } from "../reports.mjs";
 import { TaskBusinessService } from "../../server/storage/task-service.mjs";
 import { PostgresTaskRepository } from "./postgres-tasks.mjs";
-const decoded = (row) => ({ ...row, changes: JSON.parse(row.payload) });
+// Report changes are recorded in their stored (packed) form; older rows hold
+// the plain form, which unpacking leaves as it is.
+const decoded = (row) => {
+  const changes = JSON.parse(row.payload);
+  return {
+    ...row,
+    changes: Array.isArray(changes)
+      ? changes.map((c) =>
+          c?.entity === "report"
+            ? {
+                ...c,
+                before: unpackReportPayload(c.before),
+                after: unpackReportPayload(c.after),
+              }
+            : c,
+        )
+      : changes,
+  };
+};
 async function historyEntry(s, row, names) {
   const changes = Array.isArray(row.changes) ? row.changes : [],
     cellChanges = changes.filter((c) => c.entity === "cell"),

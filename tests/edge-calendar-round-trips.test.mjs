@@ -105,6 +105,15 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
           to: "2026-11-30",
         },
       }),
+    members: () =>
+      calendar.listMemberEntries({
+        query: {
+          teamId: f.teamId,
+          userIds: f.user.id,
+          from: "2026-11-01",
+          to: "2026-11-30",
+        },
+      }),
     tags: () => calendar.listTags({ params: { teamId: f.teamId }, query: {} }),
     picker: () =>
       calendar.listTasks({
@@ -133,6 +142,10 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
     (await reads.month()).weekly.filter((w) => w.title.startsWith("업무 "))
       .length,
     30,
+  );
+  assert.deepEqual(
+    (await reads.members()).members[f.user.id],
+    await reads.month(),
   );
   assert.ok(
     (await reads.tags()).tags

@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Eraser, Grid2X2 } from "lucide-react";
 import BorderControls from "./BorderControls";
+import { usePopover } from "./usePopover";
 import { BORDER_PRESETS } from "../shared/borders.js";
 import type { Border, BorderPreset } from "./types";
 
@@ -61,52 +62,20 @@ export default function BorderMenu({
   single?: boolean;
   onApply: (preset: BorderPreset, border: Border | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const {
+    open,
+    setOpen,
+    position,
+    popup,
+    trigger,
+    close,
+    onKeyDown,
+    container,
+  } = usePopover(280);
   const [border, setBorder] = useState<Border | null>({
     style: "solid",
     color: "#607984",
   });
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const popup = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const rect = trigger.current!.getBoundingClientRect();
-      const height = popup.current?.offsetHeight || 280;
-      setPosition({
-        top: Math.max(
-          8,
-          Math.min(rect.bottom + 4, window.innerHeight - height - 8),
-        ),
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)),
-      });
-    };
-    place();
-    popup.current?.querySelector("button")?.focus();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: Event) => {
-      if (
-        !popup.current?.contains(event.target as Node) &&
-        !trigger.current?.contains(event.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("focusin", close);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("focusin", close);
-    };
-  }, [open]);
   return (
     <>
       <button
@@ -130,14 +99,7 @@ export default function BorderMenu({
             style={position}
             role="dialog"
             aria-label="선택 영역 테두리"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                e.stopPropagation();
-                setOpen(false);
-                trigger.current?.focus();
-              }
-            }}
+            onKeyDown={onKeyDown}
           >
             <BorderControls
               label="테두리 선"
@@ -167,8 +129,7 @@ export default function BorderMenu({
                     disabled={disabled}
                     onClick={() => {
                       onApply(value, border);
-                      setOpen(false);
-                      trigger.current?.focus();
+                      close();
                     }}
                   >
                     <BorderIcon preset={value} />
@@ -176,7 +137,7 @@ export default function BorderMenu({
                 ))}
             </div>
           </div>,
-          trigger.current?.closest("dialog") || document.body,
+          container(),
         )}
     </>
   );

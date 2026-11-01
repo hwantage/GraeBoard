@@ -1,4 +1,5 @@
 import { splitReportRecord } from "../server/sync/versions.mjs";
+import { pack, unpack } from "../shared/compact.js";
 import { protocolVersion } from "../server/sync/protocol.mjs";
 import pg from "pg";
 import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
@@ -14,6 +15,7 @@ import { siteTeamId } from "../shared/sync-profiles.js";
 import { PostgresDatabase } from "./storage/postgres.mjs";
 import {
   canonical,
+  canonicalWith,
   digest,
   entityId,
   emptyState,
@@ -132,15 +134,23 @@ export async function controlTransaction(env, work, { write = false } = {}) {
 // 앱 코드는 SQLite와 마찬가지로 푼 객체를 읽는다.
 const storedPayload = (entity, payload) =>
   entity === "report" ? packReportPayload(payload) : payload;
+// The stored form a report was read or written in, and that form's text, so
+// recording the same payload again (an audit's before and after) neither packs
+// nor serializes it again.
+const packedForms = new WeakMap(),
+  storedTexts = new WeakMap();
+const readPayload = (entity, text) => {
+  const stored = JSON.parse(text);
+  if (entity !== "report") return stored;
+  const payload = unpackReportPayload(stored);
+  if (payload !== stored) packedForms.set(payload, stored);
+  storedTexts.set(stored, text);
+  return payload;
+};
 const rowEntity = (row) => ({
   ...row,
   key: JSON.parse(row.entity_key),
-  payload:
-    row.payload == null
-      ? null
-      : row.entity === "report"
-        ? unpackReportPayload(JSON.parse(row.payload))
-        : JSON.parse(row.payload),
+  payload: row.payload == null ? null : readPayload(row.entity, row.payload),
   revision: Number(row.revision),
   deleted: !!row.deleted,
 });
@@ -155,6 +165,24 @@ export class DataSession {
     this.listIndex = new Map();
     this.changes = new Map();
     this.eventKinds = new Set();
+    // Stored form of each payload put in this session: a report packs once,
+    // not again when the capture writes the same payload into its operation.
+    this.storedForms = new WeakMap();
+  }
+  storedText(entity, payload) {
+    const stored = this.stored(entity, payload);
+    if (entity !== "report" || !stored || typeof stored !== "object")
+      return canonical(stored);
+    if (!storedTexts.has(stored)) storedTexts.set(stored, canonical(stored));
+    return storedTexts.get(stored);
+  }
+  stored(entity, payload) {
+    if (entity !== "report" || !payload || typeof payload !== "object")
+      return storedPayload(entity, payload);
+    if (packedForms.has(payload)) return packedForms.get(payload);
+    if (!this.storedForms.has(payload))
+      this.storedForms.set(payload, storedPayload(entity, payload));
+    return this.storedForms.get(payload);
   }
   async get(entity, key) {
     const id = entityId(entity, key);
@@ -280,7 +308,7 @@ export class DataSession {
         this.teamId,
         entity,
         JSON.stringify(key),
-        canonical(storedPayload(entity, payload)),
+        this.storedText(entity, payload),
         revision,
         storedDeleted ? 1 : 0,
       ],
@@ -362,13 +390,25 @@ export class DataSession {
   // The records a capture can consult (see CanonicalSlice): the changed keys
   // and those of pending operations, so the cost follows the change instead
   // of the team's whole state.
-  async projectedFor() {
-    const pending = (
-      await this.tx.query(
-        "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
-        [this.teamId],
-      )
-    ).rows.map((row) => JSON.parse(row.payload));
+  //
+  // replaceable(link) names the last pending operation this capture replaces
+  // (see replaceableOperation); the projection then leaves it out, so the new
+  // operation runs from that operation's base to this capture's result.
+  async projectedFor(replaceable = () => null) {
+    let rows = (
+        await this.tx.query(
+          "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+          [this.teamId],
+        )
+      ).rows,
+      pending = rows.map((row) => JSON.parse(row.payload));
+    const replaced = rows.length
+      ? replaceable(rows.at(-1), pending.at(-1))
+      : null;
+    if (replaced) {
+      rows = rows.slice(0, -1);
+      pending = pending.slice(0, -1);
+    }
     const slice = new CanonicalSlice(this.tx, this.teamId);
     for (const change of this.changes.values())
       slice.touch(change.entity, change.key);
@@ -378,6 +418,11 @@ export class DataSession {
       pending,
       null,
       await slice.context(state),
+      // Each row's text and hash as stored, instead of serializing it again.
+      rows.map((row) => ({
+        serialized: row.payload,
+        hash: row.payload_hash ?? undefined,
+      })),
     );
     // This capture restores what the projection still holds deleted.
     for (const change of this.changes.values())
@@ -391,12 +436,49 @@ export class DataSession {
       pending,
       entities: projectedState.entities,
       context,
+      replaced,
+    };
+  }
+  // A copy edit carries the whole copy, and edits arrive a second apart while
+  // someone types. When the last unsent operation only edits the same copy,
+  // this capture replaces it with one operation from that operation's base to
+  // the new result, so replaying and publishing cost one copy, not one per
+  // save. Only while no sync run holds the lease: taking the lease and this
+  // capture share the team lock, so a publish never reads a row replaced here.
+  replaceableOperation(link) {
+    const [change, ...others] = this.changes.values();
+    if (
+      link.lease_owner ||
+      others.length ||
+      change.entity !== "report" ||
+      !change.before ||
+      change.before.deleted ||
+      change.after.deleted
+    )
+      return () => null;
+    return (row, operation) => {
+      const [previous, ...rest] = operation.changes;
+      return row.status === "pending" &&
+        operation.protocol === 1 &&
+        operation.writerEpoch === link.writer_epoch &&
+        !operation.objects.length &&
+        !rest.length &&
+        previous.entity === "report" &&
+        previous.action === "edit" &&
+        previous.key[0] === change.key[0]
+        ? row.op_id
+        : null;
     };
   }
   // C's size in SQL plus what this capture changes, matching the whole-state
-  // measurement it replaces without loading C.
-  async assertCaptureCapacity(state, result, pending, operation) {
-    const totals = await capacityTotals(this.tx, this.teamId),
+  // measurement it replaces without loading C. Only receipts have a budget
+  // unless the operator caps the state, so sizing the changed records (a copy
+  // is megabytes) is skipped otherwise.
+  async assertCaptureCapacity(state, result, pending, operationBytes) {
+    const limited =
+        Number.isFinite(this.limits.maxEntities) ||
+        Number.isFinite(this.limits.maxBytes),
+      totals = await capacityTotals(this.tx, this.teamId),
       delta = (before, after) => {
         let bytes = 0,
           count = 0;
@@ -411,8 +493,9 @@ export class DataSession {
           }
         return { bytes, count };
       };
-    const entities = delta(state.entities, result.entities),
-      conflicts = delta(state.conflicts, result.conflicts),
+    const none = { bytes: 0, count: 0 },
+      entities = limited ? delta(state.entities, result.entities) : none,
+      conflicts = limited ? delta(state.conflicts, result.conflicts) : none,
       receipts = delta(state.receipts, result.receipts);
     if (totals.entities + entities.count > this.limits.maxEntities)
       throw new CapacityError(
@@ -431,10 +514,11 @@ export class DataSession {
       );
     assertReceiptCapacity(totals.receiptBytes + receipts.bytes, 400);
     if (
+      Number.isFinite(this.limits.maxBytes) &&
       bytes +
         pending.reduce((n, op) => n + Buffer.byteLength(canonical(op)), 0) +
-        Buffer.byteLength(canonical(operation)) >
-      this.limits.maxBytes
+        operationBytes >
+        this.limits.maxBytes
     )
       throw new CapacityError(
         "External state and pending capacity exceeded; previous data is unchanged",
@@ -453,8 +537,8 @@ export class DataSession {
       409,
       "팀 데이터를 준비하고 있습니다. 잠시 후 다시 저장하세요.",
     );
-    const { state, projectedState, pending, entities, context } =
-      await this.projectedFor();
+    const { state, projectedState, pending, entities, context, replaced } =
+      await this.projectedFor(this.replaceableOperation(link));
     const opId = crypto.randomUUID(),
       dependsOn = new Set(),
       pendingIds = new Set(pending.map((op) => op.opId));
@@ -492,7 +576,7 @@ export class DataSession {
       const { entity, key, after } = change,
         current = entities[entityId(entity, key)];
       // 동기화 명령은 저장 형태(사본 data의 공유 사전)를 그대로 싣는다.
-      const desired = storedPayload(entity, after.payload);
+      const desired = this.stored(entity, after.payload);
       if (
         version === 2 &&
         current &&
@@ -539,7 +623,15 @@ export class DataSession {
             : current.deleted
               ? "restore"
               : "edit";
-      const base = current?.payload ?? null;
+      const base = current?.payload ?? null,
+        fields = [
+          ...new Set([
+            ...Object.keys(base || {}),
+            ...Object.keys(desired || {}),
+          ]),
+        ].filter((k) => !equal(base?.[k], desired?.[k]));
+      // Edits that end where the replaced operation began leave nothing.
+      if (replaced && action === "edit" && !fields.length) continue;
       changes.push({
         entity,
         key,
@@ -551,14 +643,21 @@ export class DataSession {
         action,
         base,
         desired,
-        fields: [
-          ...new Set([
-            ...Object.keys(base || {}),
-            ...Object.keys(desired || {}),
-          ]),
-        ].filter((k) => !equal(base?.[k], desired?.[k])),
+        fields,
       });
     }
+    // The replaced operation goes even when the copy is back to its base.
+    if (replaced)
+      assert(
+        (
+          await this.tx.query(
+            "DELETE FROM sync_outbox WHERE team_id=$1 AND op_id=$2 AND status='pending'",
+            [this.teamId, replaced],
+          )
+        ).rowCount === 1,
+        409,
+        "동기화 기준이 변경되었습니다. 최신 내용을 확인하세요.",
+      );
     if (!changes.length) return;
     const operation = {
       protocol: version,
@@ -573,13 +672,23 @@ export class DataSession {
       changes,
       objects: [],
     };
+    // One serialization of the operation serves its receipt hash, the size
+    // check and the outbox row.
+    const serialized = canonical(operation),
+      hash = digest(serialized);
     const result = reduce(
       projectedState,
       operation,
       { teamId: operation.teamId, repoId: operation.repoId },
       context,
+      { serialized, hash },
     );
-    await this.assertCaptureCapacity(state, result.state, pending, operation);
+    await this.assertCaptureCapacity(
+      state,
+      result.state,
+      pending,
+      Buffer.byteLength(serialized),
+    );
     assert(
       ["applied", "noop"].includes(result.receipt.result),
       409,
@@ -588,13 +697,7 @@ export class DataSession {
     );
     await this.tx.query(
       "INSERT INTO sync_outbox(op_id,team_id,payload,payload_hash,created_at) VALUES($1,$2,$3,$4,$5)",
-      [
-        opId,
-        this.teamId,
-        canonical(operation),
-        digest(operation),
-        operation.createdAt,
-      ],
+      [opId, this.teamId, serialized, hash, operation.createdAt],
     );
   }
   async event(kind, payload) {
@@ -605,6 +708,31 @@ export class DataSession {
     );
   }
 }
+// A new copy is recorded by its name and task count, as the internal site
+// does. Its sheet and copied documents are the copy itself, not edits to
+// restore, and writing them out again would cost as much as the copy. Other
+// report changes keep their stored (packed) form: unpacked, each task repeats
+// the team's formatting rules and the text runs to tens of megabytes. History
+// unpacks them when it reads them.
+const auditChanges = (action, changes, stored) =>
+  action === "report"
+    ? changes
+        .filter((c) => c.entity === "report")
+        .map((c) => ({
+          entity: c.entity,
+          key: c.key,
+          before: null,
+          after: {
+            name: c.after.payload.name,
+            count: c.after.payload.data?.tasks?.length ?? 0,
+          },
+        }))
+    : changes.map((c) => ({
+        entity: c.entity,
+        key: c.key,
+        before: stored(c.entity, c.before?.payload ?? null),
+        after: stored(c.entity, c.after?.payload ?? null),
+      }));
 export async function withData(
   database,
   teamId,
@@ -661,7 +789,7 @@ export async function withData(
           409,
           "같은 요청 ID에 다른 내용을 저장할 수 없습니다.",
         );
-        return JSON.parse(previous.response);
+        return unpack(JSON.parse(previous.response));
       }
       const session = new DataSession(tx, teamId, { limits }),
         result = await work(session);
@@ -684,13 +812,11 @@ export async function withData(
               action === "format"
                 ? body.operationId
                 : [...session.changes.keys()][0],
-              canonical(
-                [...session.changes.values()].map((c) => ({
-                  entity: c.entity,
-                  key: c.key,
-                  before: c.before?.payload ?? null,
-                  after: c.after?.payload ?? null,
-                })),
+              canonicalWith(
+                auditChanges(action, [...session.changes.values()], (e, p) =>
+                  session.stored(e, p),
+                ),
+                (value) => storedTexts.get(value),
               ),
               new Date().toISOString(),
             ],
@@ -718,7 +844,10 @@ export async function withData(
               operationId,
               actorId,
               digest(body),
-              canonical(result),
+              // A copy's edit answers with the whole copy: packed, it is the
+              // size of the stored copy instead of tens of megabytes with
+              // the formatting rules repeated on every task.
+              JSON.stringify(pack(result)),
               new Date().toISOString(),
             ],
           );

@@ -18,7 +18,7 @@ import {
   sampleProperties,
   todayKey,
 } from "../shared/domain.js";
-import { calendarWeek } from "../shared/calendar.js";
+import { addDays, calendarWeek } from "../shared/calendar.js";
 import { unpack } from "../shared/compact.js";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
@@ -415,6 +415,36 @@ async function contract({
   });
   assert.equal(imported.existing, 1);
   assert.equal(imported.matched, 1);
+  // The team view reads members on one range together; each member's part
+  // equals that member's own read.
+  const userIds = [user.id, refId, viewer.id];
+  for (const [from, to, check] of [
+    ["2026-10-25", "2026-11-30", (own) => own.entries.length > 0],
+    [weekStart, addDays(weekStart, 6), (own) => own.weekly.length > 0],
+  ]) {
+    const together = await service.listMemberEntries({
+      query: { teamId, userIds: userIds.join(","), from, to },
+    });
+    assert.deepEqual(Object.keys(together.members), userIds);
+    assert.ok(check(together.members[user.id]));
+    for (const userId of userIds)
+      assert.deepEqual(
+        together.members[userId],
+        await service.listEntries({ query: { teamId, userId, from, to } }),
+      );
+  }
+  await rejects(
+    () =>
+      service.listMemberEntries({
+        query: {
+          teamId,
+          userIds: `${user.id},${randomUUID()}`,
+          from: "2026-10-25",
+          to: "2026-10-31",
+        },
+      }),
+    404,
+  );
   await rejects(
     () =>
       service.listEntries({

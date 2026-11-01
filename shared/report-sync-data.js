@@ -7,15 +7,22 @@ import { pack, unpack } from "./compact.js";
 // 기존 이벤트·기준본의 평문 data는 그대로 읽는다.
 const REQUEST_STYLE_LIMIT = 50001;
 
-function sortKeys(value) {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && Object.getPrototypeOf(value) === Object.prototype)
-    return Object.fromEntries(
+// An object reached twice (the formatting rules every task under them shares)
+// sorts once and stays shared, so pack() references it instead of
+// serializing it again for each task.
+function sortKeys(value, seen = new WeakMap()) {
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  let sorted = value;
+  if (Array.isArray(value)) sorted = value.map((item) => sortKeys(item, seen));
+  else if (Object.getPrototypeOf(value) === Object.prototype)
+    sorted = Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [key, sortKeys(value[key])]),
+        .map((key) => [key, sortKeys(value[key], seen)]),
     );
-  return value;
+  seen.set(value, sorted);
+  return sorted;
 }
 
 export const isPackedReportData = (data) =>

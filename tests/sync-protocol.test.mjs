@@ -9,6 +9,8 @@ import {
   entityId,
   stateHash,
   validateOperation,
+  assertCanonical,
+  digestShared,
 } from "../server/sync/protocol.mjs";
 import {
   reduce,
@@ -458,5 +460,88 @@ test("T14 snapshots reject authority metadata and foreign image/report rows befo
   assert.throws(
     () => reduce(emptyState(), operation("image", [document])),
     /Foreign/,
+  );
+});
+
+test("equal and assertCanonical agree with canonical() on random values", () => {
+  let seed = 7;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31,
+    pick = (list) => list[Math.floor(random() * list.length)];
+  const value = (depth) => {
+    const kind = depth > 3 ? random() * 5 : random() * 8;
+    if (kind < 1) return null;
+    if (kind < 2) return random() < 0.5;
+    if (kind < 3) return pick([0, -0, 1, -1, 1.5, 9007199254740991]);
+    if (kind < 5) return pick(["", "a", "b", "가", " "]);
+    if (kind < 6.5)
+      return Array.from({ length: Math.floor(random() * 3) }, () =>
+        value(depth + 1),
+      );
+    const object = {};
+    for (const key of ["a", "b", "c"].filter(() => random() < 0.6))
+      object[key] = value(depth + 1);
+    return object;
+  };
+  // Mutates one leaf (or nothing) of a deep copy, sharing untouched branches.
+  const tweak = (v) => {
+    if (random() < 0.3 || v === null || typeof v !== "object")
+      return random() < 0.5 ? v : value(3);
+    if (Array.isArray(v)) {
+      const copy = v.slice();
+      if (copy.length)
+        copy[Math.floor(random() * copy.length)] = tweak(copy[0]);
+      return copy;
+    }
+    const copy = { ...v },
+      keys = Object.keys(copy);
+    if (keys.length) copy[pick(keys)] = tweak(copy[keys[0]]);
+    return copy;
+  };
+  for (let i = 0; i < 5000; i++) {
+    const a = value(0),
+      b = random() < 0.5 ? tweak(a) : JSON.parse(JSON.stringify(a)),
+      shared = { left: a, right: a, other: b };
+    assert.equal(equal(a, b), canonical(a) === canonical(b), canonical([a, b]));
+    assert.equal(
+      equal(shared, { left: b, right: b, other: a }),
+      canonical(shared) === canonical({ left: b, right: b, other: a }),
+    );
+    assertCanonical(a);
+  }
+  // Invalid values throw as canonical() does. (Like a === b at the top, one
+  // object reached on both sides is equal without being inspected.)
+  for (const bad of [
+    () => undefined,
+    () => Number.NaN,
+    () => 2 ** 60,
+    () => new Date(0),
+  ]) {
+    for (const x of [{ v: bad() }, [bad()], { v: 1, w: bad() }]) {
+      assert.throws(() => canonical(x));
+      assert.throws(() => assertCanonical(x));
+    }
+    if (bad() !== undefined)
+      assert.throws(() => equal({ v: bad() }, { v: bad() }));
+  }
+});
+
+test("digestShared hashes like digest when objects repeat", () => {
+  const formatting = {
+      revision: 3,
+      rules: [{ id: "r", style: { bold: true } }],
+    },
+    style = { color: "#123456" },
+    copy = (shared) => ({
+      tasks: Array.from({ length: 5 }, (_, i) => ({
+        id: String(i),
+        formatting: shared ? formatting : structuredClone(formatting),
+        cells: { title: { value: "t" + i, style } },
+      })),
+      sparse: [1, , 3],
+    });
+  assert.equal(digestShared(copy(true)), digest(copy(true)));
+  assert.equal(digestShared(copy(true)), digest(copy(false)));
+  assert.throws(() =>
+    digestShared({ a: formatting, b: formatting, c: Number.NaN }),
   );
 });

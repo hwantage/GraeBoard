@@ -183,7 +183,13 @@ export class CanonicalSlice {
 
 // reduceMany over a slice: the same per-command rollback, receipts and
 // conflicts, with name and tag indexes from context() instead of every record.
-export function reduceSlice(base, operations, identity, { names, tagUsers }) {
+export function reduceSlice(
+  base,
+  operations,
+  identity,
+  { names, tagUsers },
+  known = [],
+) {
   let state = {
     entities: { ...base.entities },
     receipts: { ...base.receipts },
@@ -196,13 +202,15 @@ export function reduceSlice(base, operations, identity, { names, tagUsers }) {
       [...tagUsers].map(([tag, users]) => [tag, new Set(users)]),
     ),
   };
-  for (const op of operations)
+  operations.forEach((op, i) => {
     state = reduce(
       state,
       op,
       identity || { teamId: op.teamId, repoId: op.repoId },
       context,
+      known[i],
     ).state;
+  });
   return { state, context };
 }
 

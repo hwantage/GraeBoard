@@ -168,6 +168,8 @@ C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 
 
 프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 외부 Edge의 `RequestContext.data`·`capacityLimits(env)`를 통해 업무·충돌·pending 용량과 공유 엔티티 수를 셉니다. 이 둘에는 기본 상한이 없고, 운영자가 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(2026-11-01 이전 32MiB·50,000개). receipt는 16MiB 별도 예산(12MiB 경고)이며 과거 초과 상태의 조회·반출은 막지 않고 새 저장·게시는 사전에 거절합니다. 내부도 같은 receipt 예산과 명령 상한을 적용하지만 외부 업무 용량 한도는 적용하지 않습니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다.
 
+외부 P는 한 가지 경우에만 기존 행을 바꿉니다. v1에서 사본 수정 명령은 사본 전체를 base·desired로 담으므로, 편집 중 자동 저장마다 명령이 쌓이면 저장할 때의 P 재생과 Cron 게시가 쌓인 수만큼 무거워집니다. 그래서 새 저장이 사본 하나만 수정하고, P의 마지막 행이 같은 사본만 수정한 `pending` v1 명령이며, 같은 writer epoch이고, **동기화 lease를 아무도 갖지 않을 때** 그 행을 지우고 그 명령의 base에서 새 결과까지의 명령 하나를 새 opId로 넣습니다(`DataSession.replaceableOperation`). 결과가 그 base와 같으면 명령을 남기지 않습니다. lease 획득과 저장은 같은 팀 advisory lock 안에서 실행되므로, 게시 중인 실행이 읽은 행은 바뀌지 않습니다. lease가 만료된 채 멈췄던 게시가 이전 명령을 이미 Git에 올린 드문 경우에는 교체한 명령이 동시 수정 충돌로 보존됩니다. 이력(`site_audit`)과 재시도 기록은 요청마다 남습니다.
+
 `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL 외부 API가 같은 bare Git에 CLI와 GitHub Data API로 참여하여 엔진 간 자료·이미지·경합·복구를 검증합니다. 이전 전체 Worker의 workerd 전용 용량 검사는 제거했으며 Cloudflare 전달·자원 경계는 `tests/edge-gateway.test.mjs`로 검사합니다. 이 검사들은 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
 
 ## 팀 구성원 단방향 브랜치
