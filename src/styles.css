@@ -1492,8 +1492,9 @@ small {
   /* A column lets the collapsed memo bar sit at the bottom of short tables. */
   display: flex;
   flex-direction: column;
-  /* Keyboard moves keep rows above the horizontal scrollbar. */
-  scroll-padding-bottom: 14px;
+  /* Keyboard moves keep rows above a classic horizontal scrollbar.
+     --sheet-rail-size is set by SheetHorizontalScroll. */
+  scroll-padding-bottom: var(--sheet-rail-size, 0px);
 }
 .sheet-scroll.has-sheet-footer > * {
   flex-shrink: 0;
@@ -1502,26 +1503,55 @@ small {
    the horizontal scrollbar right above it; at the end of the table both sit
    in their own place after the last row. */
 .sheet-scroll:has(> .annual-memos[data-collapsed]) {
-  scroll-padding-bottom: calc(14px + var(--sheet-footer-bar-height));
+  scroll-padding-bottom: calc(
+    var(--sheet-rail-size, 0px) + var(--sheet-footer-bar-height)
+  );
 }
 .sheet-scroll:has(> .annual-memos[data-collapsed]) > .sheet-horizontal-scroll {
   margin-top: auto;
   bottom: var(--sheet-footer-bar-height);
 }
+/* The rail holds only the room a classic scrollbar needs, so the memos sit
+   right under the rows. Its track hangs from the rail's bottom edge. */
 .sheet-horizontal-scroll {
   position: sticky;
   left: 0;
   bottom: 0;
   z-index: 16;
   width: 100%;
-  /* Keep the same gap above memos when horizontal scrolling is unnecessary. */
-  height: 14px;
+  height: var(--sheet-rail-size, 0px);
+}
+.sheet-horizontal-scroll-track,
+.sheet-scrollbar-probe {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #bacbc7 #f4f7f6;
+}
+.sheet-horizontal-scroll-track {
+  right: 0;
+  height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: #bacbc7 #f4f7f6;
   background: white;
+}
+/* Overlay scrollbars take no room: the track lies over the bottom of the
+   rows, shows its thumb while scrolling and lets clicks reach the cells. */
+.sheet-horizontal-scroll[data-scrollbar="overlay"]
+  .sheet-horizontal-scroll-track {
+  height: 14px;
+  background: transparent;
+  pointer-events: none;
+}
+/* Measures the scrollbar thickness with the track's scrollbar style. */
+.sheet-scrollbar-probe {
+  width: 40px;
+  height: 40px;
+  overflow: scroll;
+  visibility: hidden;
+  pointer-events: none;
 }
 .sheet-header {
   display: flex;
