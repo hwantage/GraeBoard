@@ -1,4 +1,4 @@
-import type { FilterMode, Settings, TaskDocument, User } from "./types";
+import type { Cell, FilterMode, Settings, TaskDocument, User } from "./types";
 export type CalendarEntry = {
   id: string;
   teamId: string;
@@ -50,17 +50,30 @@ export type WeeklyItem = {
   title: string;
   importedAt: string;
   unavailable: boolean;
+  documentCount: number;
+  hasDocument: boolean;
 };
 export type WeeklyAddResult = {
   added: number;
   existing: number;
   weekly: WeeklyItem[];
 };
+export type WeeklyRemoveResult = { removed: number; weekly: WeeklyItem[] };
+export type WeeklyRestoreResult = { restored: number; weekly: WeeklyItem[] };
 export type CalendarTaskOption = {
   id: string;
   title: string;
   years: number[];
+  owner: Cell["value"];
+  status: string;
+  documentCount: number;
+  hasDocument: boolean;
   added: boolean;
+};
+export type CalendarTaskFilter = {
+  propertyId: string;
+  values: string[];
+  mode: FilterMode;
 };
 export type CalendarRule = {
   propertyId: string;

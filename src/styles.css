@@ -242,6 +242,17 @@ small {
   flex: 1;
   min-height: 150px;
 }
+/* Narrow areas such as a calendar week column show a smaller character. */
+.loading-state.compact {
+  min-height: 0;
+  gap: 6px;
+  padding: 12px 0;
+  font-size: 11px;
+}
+.loading-state.compact .grae-loading {
+  width: 48px;
+  height: 48px;
+}
 .empty {
   padding: 55px 20px;
   display: flex;

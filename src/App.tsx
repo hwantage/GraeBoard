@@ -13,6 +13,14 @@ import useCalendarTheme from "./useCalendarTheme";
 import { THEMES, getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";
+import {
+  changeSelection,
+  changedRules,
+  coversAll,
+  nearbyRows,
+  sheetChanges,
+  type ChangeTargets,
+} from "./selection-areas.js";
 import { copyRowFormatting, resetCellStyle } from "../shared/formatting.js";
 import {
   useCallback,
@@ -102,6 +110,7 @@ import type {
   SavedCell,
   Property,
   FormatChange,
+  FormatRule,
 } from "./types";
 import {
   Auth,
@@ -336,6 +345,14 @@ function Workspace({
       id: number;
       preserveHorizontalScroll?: boolean;
       scrollTop?: number;
+      nearest?: boolean;
+    } | null>(null),
+    // 실행취소·재실행 결과를 다음 렌더의 보이는 행·열에서 선택한다.
+    [changeReveal, setChangeReveal] = useState<{
+      targets: ChangeTargets;
+      sheet: string;
+      selected: number;
+      retain: boolean;
     } | null>(null),
     [viewError, setViewError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -500,6 +517,10 @@ function Workspace({
     boardKey = useRef(""),
     mutationEpoch = useRef(0),
     remoteEpoch = useRef(0),
+    // 복사를 거절한 안내. 다음 복사가 성공하면 이 안내만 지운다.
+    copyError = useRef(""),
+    // 표나 찾기로 선택을 바꾸면 늘어난다. 그 뒤 끝난 실행취소는 선택을 옮기지 않는다.
+    selectionEpoch = useRef(0),
     cellEventCursor = useRef<string | null>(null),
     viewSaver = useRef<null | (() => void)>(null);
   const queryPolicy = queryPolicyFor(site);
@@ -1466,6 +1487,7 @@ function Workspace({
         (id) => id !== point.taskId,
       );
     if (Object.keys(reveal).length) changeView(reveal);
+    selectionEpoch.current++;
     setSelection({ anchor: point, focus: point });
     setJump((previous) => ({
       ...point,
@@ -1553,6 +1575,73 @@ function Workspace({
         id: Math.max(Date.now(), (previous?.id || 0) + 1),
       }));
   }
+  const sheetKey = `${teamId}:${year}:${report?.id || "original"}`;
+  function revealChange(
+    targets: ChangeTargets,
+    selected: number,
+    retain = false,
+  ) {
+    setChangeReveal({ targets, sheet: sheetKey, selected, retain });
+  }
+  function revealResult(
+    result: BatchResult,
+    rules: FormatRule[] | undefined,
+    selected: number,
+  ) {
+    revealChange(
+      {
+        cells: result.cells,
+        rules: result.formatting
+          ? changedRules(rules, result.formatting.rules)
+          : [],
+      },
+      selected,
+    );
+  }
+  // 되돌린 셀·행을 선택하고 화면 밖이면 그 위치로 옮긴다. 보이는 대상이 없으면
+  // 선택을 그대로 둔다.
+  useLayoutEffect(() => {
+    if (!changeReveal) return;
+    setChangeReveal(null);
+    if (
+      changeReveal.sheet !== sheetKey ||
+      changeReveal.selected !== selectionEpoch.current
+    )
+      return;
+    const next = changeSelection(changeReveal.targets, visibleTasks, columns);
+    if (!next) {
+      if (changeReveal.retain) retainReportSelection(allTasks);
+      return;
+    }
+    const grid =
+      workspaceRef.current?.querySelector<HTMLElement>(".sheet-scroll");
+    const active = document.activeElement;
+    const focused =
+      !!grid && (!active || active === document.body || grid.contains(active));
+    const target = next.jump;
+    // 현재 선택이 바뀐 셀을 모두 담고 있으면 선택은 두고 위치만 옮긴다.
+    if (
+      !selection ||
+      !coversAll(
+        rangesOf(selection, visibleTasks, columns),
+        rangesOf(next.selection, visibleTasks, columns),
+      )
+    )
+      setSelection(next.selection);
+    if (target)
+      setJump((previous) => ({
+        ...target,
+        nearest: true,
+        id: Math.max(Date.now(), (previous?.id || 0) + 1),
+      }));
+    // 단축키로 되돌렸거나 저장 중 잠긴 버튼에서 포커스가 사라졌으면 표에 두어
+    // 새 선택에서 바로 방향키를 쓸 수 있게 한다. 다른 입력칸의 포커스는 그대로 둔다.
+    if (focused)
+      requestAnimationFrame(() => {
+        if (grid && !grid.contains(document.activeElement))
+          grid.focus({ preventScroll: true });
+      });
+  }, [changeReveal]);
   // 서식 범위는 숨김 전 행·열 순서로 계산한다. 값 편집·복사는 보이는 셀만 사용한다.
   const range = rangeOf(selection, matchingTasks, columnOrder);
   const count = range
@@ -1697,7 +1786,8 @@ function Workspace({
     }
     if (report || presentation || failedRef.current) return false;
     if (rejectPendingChanges()) return false;
-    const submittedBoard = boardKey.current;
+    const submittedBoard = boardKey.current,
+      selected = selectionEpoch.current;
     mutationEpoch.current++;
     pendingRef.current++;
     setPending(pendingRef.current);
@@ -1716,8 +1806,10 @@ function Workspace({
         };
         const result = await send<BatchResult>("/cells/batch", payload);
         if (boardKey.current !== submittedBoard) return;
+        const rules = tasksRef.current[0]?.formatting?.rules;
         applyResult(result);
         recordResult(result, mode);
+        if (mode !== "normal") revealResult(result, rules, selected);
       } catch (err) {
         if (boardKey.current !== submittedBoard) return;
         const e = err as ApiError;
@@ -2042,7 +2134,10 @@ function Workspace({
       }
       return;
     }
-    const submittedBoard = boardKey.current;
+    const submittedBoard = boardKey.current,
+      selected = selectionEpoch.current,
+      shown = visibleTasks,
+      key = selection?.focus.key;
     return taskOperation(async () => {
       const deleting = entry.ids.map((id) => {
         const t = tasksRef.current.find((task) => task.id === id);
@@ -2068,6 +2163,12 @@ function Workspace({
       setTasks(remaining);
       recordTaskResult(entry, mode, nextEntry);
       setSelection(null);
+      // 실행취소로 사라진 행은 그 자리를 이어받은 행으로 이동한다.
+      if (mode !== "normal")
+        revealChange(
+          { near: nearbyRows(new Set(entry.ids), shown), key },
+          selected,
+        );
       const message =
         entry.ids.length > 1
           ? `${entry.ids.length}개 업무를 삭제했습니다.`
@@ -2086,12 +2187,14 @@ function Workspace({
       }
     });
   }
-  function restoreTasks(
+  async function restoreTasks(
     entry: TaskDeletion | TaskCreation,
     mode: "undo" | "redo",
   ) {
-    const submittedBoard = boardKey.current;
-    return taskOperation(async () => {
+    const submittedBoard = boardKey.current,
+      selected = selectionEpoch.current;
+    let restored = false;
+    await taskOperation(async () => {
       await send("/tasks/restore", {
         tasks: entry.ids.map((id) => ({
           id,
@@ -2105,7 +2208,11 @@ function Workspace({
           ? `${entry.ids.length}개 업무를 되살렸습니다.`
           : `‘${entry.title}’ 업무를 되살렸습니다.`,
       );
+      restored = true;
     });
+    // 되살린 행은 목록을 다시 읽은 뒤에 보이므로 그때 선택한다.
+    if (restored && boardKey.current === submittedBoard)
+      revealChange({ rows: entry.ids }, selected);
   }
   async function undo(redo = false) {
     if (report) {
@@ -2114,6 +2221,8 @@ function Workspace({
         if (!draft) return;
         const next = draft.history[draft.cursor + (redo ? 1 : -1)];
         if (!next) return;
+        const selected = selectionEpoch.current;
+        let before: Task[];
         try {
           const ids = new Set(next.map((task) => task.id));
           const documents = await documentsForReportRows(
@@ -2125,12 +2234,22 @@ function Workspace({
           )
             return;
           reportDraft.preserveDocuments(documents);
+          before = reportDraft.ref.current.tasks;
           reportDraft.undo(redo);
         } catch (e) {
           setError((e as Error).message);
           return;
         }
-        retainReportSelection(reportDraft.ref.current?.tasks || report.tasks);
+        revealChange(
+          sheetChanges(
+            before,
+            reportDraft.ref.current?.tasks || report.tasks,
+            visibleTasks,
+            selection?.focus.key,
+          ),
+          selected,
+          true,
+        );
         setRowTask(null);
         setError("");
       }
@@ -2831,8 +2950,11 @@ function Workspace({
         };
       }
       const result = await send<BatchResult>("/cells/batch", payload);
+      const rules = tasksRef.current[0]?.formatting?.rules;
       applyResult(result);
       recordResult(result, failed.mode);
+      if (failed.mode !== "normal")
+        revealResult(result, rules, selectionEpoch.current);
       setFailed(null);
       failedRef.current = null;
       setPanel("");
@@ -3868,7 +3990,10 @@ function Workspace({
                     setEditor(null);
                     return true;
                   }}
-                  onSelect={setSelection}
+                  onSelect={(next) => {
+                    selectionEpoch.current++;
+                    setSelection(next);
+                  }}
                   formatPainting={!!formatBrush}
                   onPaintFormat={paintFormat}
                   onEdit={beginEdit}
@@ -3882,6 +4007,14 @@ function Workspace({
                   onView={(part) => changeView(part, true)}
                   onAdd={addTask}
                   onError={setError}
+                  onCopied={(message) => {
+                    if (message) setError(message);
+                    else if (copyError.current) {
+                      const shown = copyError.current;
+                      setError((current) => (current === shown ? "" : current));
+                    }
+                    copyError.current = message;
+                  }}
                   copyEditable={!!report && canAdd}
                   readOnly={
                     (!!report && (!editingReport || !canAdd)) ||

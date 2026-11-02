@@ -418,10 +418,15 @@ test("사본 다중 삭제 알림은 즉시 복구하고 시트 전환·후속 �
   expect(documentReads).toEqual([`/api/reports/${reportId}/documents/batch`]);
   await toast.getByRole("button", { name: "실행취소", exact: true }).click();
   await expect(page.locator('[data-column="title"]')).toHaveCount(2);
+  // 되살린 두 행을 선택하므로 다음 삭제는 첫 행만 다시 골라 지운다.
+  await expect(page.locator('.row-number[aria-selected="true"]')).toHaveCount(
+    2,
+  );
   await saved(page);
   expect((await get(page, documentPath)).markdown).toBe(
     "삭제 직전 다른 편집자가 저장한 문서",
   );
+  await page.locator(`[data-row-id="${taskIds[0]}"] .row-select`).click();
   await rowAction(page, taskIds[0], "행 삭제");
   await expect(toast.getByRole("button", { name: "실행취소" })).toBeEnabled();
   await edit(page, taskIds[1], "title", "삭제 이후 사본 편집");

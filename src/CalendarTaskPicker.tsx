@@ -1,20 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import { Search } from "lucide-react";
+import { FileText, ListFilter, Search } from "lucide-react";
 import { addDays } from "../shared/calendar.js";
+import { propertiesFor } from "../shared/domain.js";
 import { normalizeSearchQuery } from "../shared/search.js";
 import { api, send } from "./api";
 import { busyProps } from "./busyProps";
 import { Button, ErrorNote, Modal } from "./components";
+import LoadingState from "./LoadingState";
+import MemberValue from "./MemberValue";
+import PropertyBadge from "./PropertyBadge";
+import PropertyFilter from "./PropertyFilter";
+import Select from "./Select";
+import { usePropertyFilterTasks } from "./CalendarSettings";
 import type {
+  CalendarTaskFilter,
   CalendarTaskOption,
   WeeklyAddResult,
   WeeklyItem,
 } from "./calendar-types";
+import type { FilterMode, Settings, User } from "./types";
 
 type TaskPage = { tasks: CalendarTaskOption[]; nextOffset: number | null };
 
 export default function CalendarTaskPicker({
   teamId,
+  settings,
+  members,
   userId,
   ownerName,
   weekStart,
@@ -22,6 +33,8 @@ export default function CalendarTaskPicker({
   onClose,
 }: {
   teamId: string;
+  settings: Settings;
+  members: User[];
   userId: string;
   ownerName: string;
   weekStart: string;
@@ -37,11 +50,43 @@ export default function CalendarTaskPicker({
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Attribute filters use the annual board's PropertyFilter. The title has its
+  // own search, so every other active property can be filtered.
+  const properties = propertiesFor(settings).filter((p) => p.id !== "title");
+  const owner = properties.find((p) => p.id === "owner");
+  const status = properties.find((p) => p.id === "status");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterId, setFilterId] = useState(
+    status?.id || properties[0]?.id || "",
+  );
+  const [filters, setFilters] = useState<
+    Record<string, { values: string[]; mode: FilterMode }>
+  >({});
+  const filterProperty = properties.find((p) => p.id === filterId);
+  const filterValues = usePropertyFilterTasks(
+    teamId,
+    showFilters ? filterProperty : undefined,
+    weekStart,
+  );
   const search = useRef<HTMLInputElement>(null);
   const saving = useRef(false);
   const alive = useRef(true);
   const q = normalizeSearchQuery(input);
-  const key = JSON.stringify([teamId, userId, weekStart, q, offset, attempt]);
+  const applied: CalendarTaskFilter[] = properties.flatMap((p) =>
+    filters[p.id]?.values.length
+      ? [{ propertyId: p.id, ...filters[p.id] }]
+      : [],
+  );
+  const filterQuery = applied.length ? JSON.stringify(applied) : "";
+  const key = JSON.stringify([
+    teamId,
+    userId,
+    weekStart,
+    q,
+    filterQuery,
+    offset,
+    attempt,
+  ]);
   const ready = result?.key === key;
   useEffect(() => {
     alive.current = true;
@@ -54,7 +99,14 @@ export default function CalendarTaskPicker({
     const timer = setTimeout(
       () => {
         void api<TaskPage>(
-          `/calendar/tasks?${new URLSearchParams({ teamId, userId, weekStart, q, offset: String(offset) })}`,
+          `/calendar/tasks?${new URLSearchParams({
+            teamId,
+            userId,
+            weekStart,
+            q,
+            offset: String(offset),
+            ...(filterQuery ? { filters: filterQuery } : {}),
+          })}`,
           { signal: controller.signal },
         )
           .then((page) => {
@@ -66,13 +118,26 @@ export default function CalendarTaskPicker({
               setResult({ key, tasks: [], nextOffset: null, error: e.message });
           });
       },
-      q ? 180 : 0,
+      q || filterQuery ? 180 : 0,
     );
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
   }, [key]);
+  function changeFilter(
+    propertyId: string,
+    change: Partial<{ values: string[]; mode: FilterMode }>,
+  ) {
+    setFilters((previous) => ({
+      ...previous,
+      [propertyId]: {
+        ...(previous[propertyId] || { values: [], mode: "include" }),
+        ...change,
+      },
+    }));
+    setOffset(0);
+  }
   async function add() {
     if (saving.current || !selected.length) return;
     saving.current = true;
@@ -98,6 +163,8 @@ export default function CalendarTaskPicker({
   return (
     <Modal
       title="주간 업무 추가"
+      wide
+      className="calendar-task-picker"
       initialFocus={search}
       onClose={() => {
         if (!saving.current) onClose();
@@ -106,66 +173,179 @@ export default function CalendarTaskPicker({
       <p className="calendar-hint">
         {ownerName} · {weekStart} ~ {addDays(weekStart, 6)}
       </p>
-      <label className="user-search calendar-task-search">
-        <Search size={15} aria-hidden="true" />
-        <input
-          ref={search}
-          type="search"
-          aria-label="업무 제목 검색"
-          placeholder="업무 제목 검색"
-          maxLength={120}
-          value={input}
-          {...busyProps(busy)}
-          onChange={(event) => {
-            setInput(event.target.value);
-            setOffset(0);
-          }}
-        />
-      </label>
+      <div className="calendar-task-toolbar">
+        <label className="user-search calendar-task-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            ref={search}
+            type="search"
+            aria-label="업무 제목 검색"
+            placeholder="업무 제목 검색"
+            maxLength={120}
+            value={input}
+            {...busyProps(busy)}
+            onChange={(event) => {
+              setInput(event.target.value);
+              setOffset(0);
+            }}
+          />
+        </label>
+        {!!properties.length && (
+          <Button
+            active={showFilters || !!applied.length}
+            aria-expanded={showFilters}
+            onClick={() => setShowFilters((value) => !value)}
+          >
+            <ListFilter size={14} aria-hidden="true" />
+            {`속성 필터${applied.length ? ` (${applied.length})` : ""}`}
+          </Button>
+        )}
+      </div>
       <div
-        className="calendar-task-options"
-        aria-label="추가할 업무"
-        aria-busy={!ready}
+        className={`calendar-task-browser${showFilters ? " has-filters" : ""}`}
       >
-        {!ready ? (
-          <p role="status" className="calendar-hint">
-            업무를 불러오고 있습니다…
-          </p>
-        ) : (
-          result.tasks.map((task) => (
-            <label key={task.id} className="calendar-task-option">
-              <input
-                type="checkbox"
-                aria-label={task.title}
-                checked={task.added || selected.includes(task.id)}
-                {...busyProps(
-                  busy,
-                  task.added ||
-                    (selected.length >= 100 && !selected.includes(task.id)),
-                )}
-                onChange={(event) => {
-                  setSelected((previous) =>
-                    event.target.checked
-                      ? [...previous, task.id]
-                      : previous.filter((id) => id !== task.id),
-                  );
-                }}
-              />
-              <span>
-                <strong>{task.title}</strong>
-                <small>
-                  {task.years.join(" · ")}
-                  {task.added && " · 추가됨"}
-                </small>
-              </span>
+        {showFilters && (
+          <div
+            className="calendar-task-filters"
+            role="group"
+            aria-label="속성 필터"
+          >
+            <label className="calendar-field">
+              필터 속성
+              <Select
+                aria-label="필터 속성"
+                value={filterId}
+                disabled={busy}
+                onChange={(event) => setFilterId(event.target.value)}
+              >
+                {properties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {`${p.name}${filters[p.id]?.values.length ? ` (${filters[p.id].values.length})` : ""}`}
+                  </option>
+                ))}
+              </Select>
             </label>
-          ))
+            {filterValues.loading && (
+              <p role="status" className="calendar-hint">
+                필터 값을 불러오고 있습니다…
+              </p>
+            )}
+            {filterValues.error && (
+              <>
+                <ErrorNote error={filterValues.error} />
+                <Button onClick={filterValues.retry}>
+                  필터 값 다시 불러오기
+                </Button>
+              </>
+            )}
+            {filterProperty && !filterValues.loading && !filterValues.error && (
+              <fieldset className="calendar-rule-filter" disabled={busy}>
+                <PropertyFilter
+                  key={filterProperty.id}
+                  property={filterProperty}
+                  tasks={filterValues.tasks}
+                  users={members}
+                  selected={filters[filterProperty.id]?.values || []}
+                  mode={filters[filterProperty.id]?.mode || "include"}
+                  onChange={(values) =>
+                    changeFilter(filterProperty.id, { values })
+                  }
+                  onModeChange={(mode) =>
+                    changeFilter(filterProperty.id, { mode })
+                  }
+                />
+              </fieldset>
+            )}
+          </div>
         )}
-        {ready && !result.tasks.length && !result.error && (
-          <p className="calendar-hint">
-            {q ? "검색된 업무가 없습니다." : "추가할 업무가 없습니다."}
-          </p>
-        )}
+        <div
+          className="calendar-task-options"
+          aria-label="추가할 업무"
+          aria-busy={!ready}
+        >
+          {!ready ? (
+            <LoadingState
+              className="compact calendar-task-loading"
+              label="업무를 불러오는 중"
+            />
+          ) : (
+            result.tasks.map((task) => (
+              <label key={task.id} className="calendar-task-option">
+                <input
+                  type="checkbox"
+                  aria-label={task.title}
+                  checked={task.added || selected.includes(task.id)}
+                  {...busyProps(
+                    busy,
+                    task.added ||
+                      (selected.length >= 100 && !selected.includes(task.id)),
+                  )}
+                  onChange={(event) => {
+                    setSelected((previous) =>
+                      event.target.checked
+                        ? [...previous, task.id]
+                        : previous.filter((id) => id !== task.id),
+                    );
+                  }}
+                />
+                <span className="calendar-task-summary">
+                  <strong>
+                    {task.title}
+                    {task.hasDocument && (
+                      <span
+                        className="calendar-task-document"
+                        role="img"
+                        aria-label={
+                          task.documentCount > 1
+                            ? `문서 ${task.documentCount}개`
+                            : "문서 있음"
+                        }
+                        title={
+                          task.documentCount > 1
+                            ? `문서 ${task.documentCount}개`
+                            : "문서 있음"
+                        }
+                      >
+                        {task.documentCount > 1 && (
+                          <span
+                            className="task-document-count"
+                            aria-hidden="true"
+                          >
+                            {task.documentCount}
+                          </span>
+                        )}
+                        <FileText size={11} aria-hidden="true" />
+                      </span>
+                    )}
+                  </strong>
+                  <small>
+                    {task.years.join(" · ")}
+                    {task.added && " · 추가됨"}
+                  </small>
+                </span>
+                <span className="calendar-task-details">
+                  {owner && (
+                    <MemberValue
+                      property={owner}
+                      value={task.owner}
+                      users={members}
+                    />
+                  )}
+                  {status && (
+                    <PropertyBadge property={status} value={task.status} />
+                  )}
+                </span>
+              </label>
+            ))
+          )}
+          {ready && !result.tasks.length && !result.error && (
+            <p className="calendar-hint">
+              {q || applied.length
+                ? "검색된 업무가 없습니다."
+                : "추가할 업무가 없습니다."}
+            </p>
+          )}
+        </div>
       </div>
       {ready && result.error && (
         <>
