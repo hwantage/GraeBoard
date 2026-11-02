@@ -953,7 +953,9 @@ export default function Calendar({
                   className={`calendar-week-task-open${item.unavailable ? " is-unavailable" : ""}`}
                   aria-description={
                     item.hasDocument
-                      ? `문서 ${item.documentCount}개`
+                      ? item.documentCount > 1
+                        ? `문서 ${item.documentCount}개`
+                        : "문서 있음"
                       : undefined
                   }
                   {...busyProps(locked)}
@@ -963,11 +965,15 @@ export default function Calendar({
                     {item.title || "제목 없는 업무"}
                     {item.unavailable && <span> · 조회할 수 없는 업무</span>}
                   </span>
+                  {/* Like the annual board, a single document shows the
+                      icon only and several show their count. */}
                   {item.hasDocument && (
                     <span className="calendar-week-document" aria-hidden="true">
-                      <span className="task-document-count">
-                        {item.documentCount}
-                      </span>
+                      {item.documentCount > 1 && (
+                        <span className="task-document-count">
+                          {item.documentCount}
+                        </span>
+                      )}
                       <FileText size={11} />
                     </span>
                   )}

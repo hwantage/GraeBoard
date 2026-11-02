@@ -289,7 +289,35 @@ export default function CalendarTaskPicker({
                   }}
                 />
                 <span className="calendar-task-summary">
-                  <strong>{task.title}</strong>
+                  <strong>
+                    {task.title}
+                    {task.hasDocument && (
+                      <span
+                        className="calendar-task-document"
+                        role="img"
+                        aria-label={
+                          task.documentCount > 1
+                            ? `문서 ${task.documentCount}개`
+                            : "문서 있음"
+                        }
+                        title={
+                          task.documentCount > 1
+                            ? `문서 ${task.documentCount}개`
+                            : "문서 있음"
+                        }
+                      >
+                        {task.documentCount > 1 && (
+                          <span
+                            className="task-document-count"
+                            aria-hidden="true"
+                          >
+                            {task.documentCount}
+                          </span>
+                        )}
+                        <FileText size={11} aria-hidden="true" />
+                      </span>
+                    )}
+                  </strong>
                   <small>
                     {task.years.join(" · ")}
                     {task.added && " · 추가됨"}
@@ -305,19 +333,6 @@ export default function CalendarTaskPicker({
                   )}
                   {status && (
                     <PropertyBadge property={status} value={task.status} />
-                  )}
-                  {task.hasDocument && (
-                    <span
-                      className="calendar-task-document"
-                      role="img"
-                      aria-label={`문서 ${task.documentCount}개`}
-                      title={`문서 ${task.documentCount}개`}
-                    >
-                      <span className="task-document-count" aria-hidden="true">
-                        {task.documentCount}
-                      </span>
-                      <FileText size={11} aria-hidden="true" />
-                    </span>
                   )}
                 </span>
               </label>

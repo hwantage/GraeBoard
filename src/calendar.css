@@ -646,6 +646,13 @@
 .calendar-week-document {
   padding-bottom: 3px;
 }
+/* Directly after the title text. A full line moves it to the next line, so
+   a long title never hides it. */
+.calendar-task-document {
+  margin-left: 4px;
+  vertical-align: -1px;
+  white-space: nowrap;
+}
 /* The annual board lifts its count above overflowing text; these do not. */
 :is(.calendar-week-document, .calendar-task-document) .task-document-count {
   margin-top: 0;

@@ -49,6 +49,27 @@ async function task(
     });
   return created.id as string;
 }
+// A second, empty tab: the task then has two documents, one with content.
+const addDocumentTab = (page: Page, taskId: string) =>
+  request(page, `/tasks/${taskId}/documents`, "POST", {
+    id: randomUUID(),
+    title: "추가 문서",
+  });
+// The mark sits on the title's last line, right after its text.
+async function followsTitle(title: Locator, mark: Locator) {
+  const text = await title.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element.firstChild!);
+    const rects = [...range.getClientRects()];
+    const last = rects[rects.length - 1];
+    return { right: last.right, top: last.top, bottom: last.bottom };
+  });
+  const box = (await mark.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(text.right - 1);
+  expect(box.x - text.right).toBeLessThanOrEqual(8);
+  expect(box.y).toBeGreaterThanOrEqual(text.top - 4);
+  expect(box.y + box.height).toBeLessThanOrEqual(text.bottom + 4);
+}
 const addToWeek = (page: Page, taskIds: string[], owner = userId) =>
   request(page, "/calendar/weekly", "POST", {
     teamId,
@@ -230,6 +251,12 @@ test("주간 업무 추가 창은 넓게 열려 팀원·상태·문서를 보여
   );
   await task(page, "주간 후보 완료", memberId, "status-completed");
   await task(page, "주간 후보 예정", "", "status-planned");
+  const longTitle =
+    "문서가 여러 개 있는 아주 긴 이름의 주간 후보 업무로 제목이 줄바꿈되는 경우까지 확인하는 작업";
+  await addDocumentTab(
+    page,
+    await task(page, longTitle, "", "status-progress", "첫 문서"),
+  );
   const searches: URL[] = [];
   page.on("request", (r) => {
     const url = new URL(r.url());
@@ -246,12 +273,28 @@ test("주간 업무 추가 창은 넓게 열려 팀원·상태·문서를 보여
   expect((await dialog.boundingBox())!.width).toBeGreaterThan(800);
   await expect(option(dialog, "주간 후보 진행")).toContainText(userName);
   await expect(option(dialog, "주간 후보 진행")).toContainText("진행 중");
-  await expect(
-    option(dialog, "주간 후보 진행").getByRole("img", {
-      name: "문서 1개",
-      exact: true,
-    }),
-  ).toBeVisible();
+  // One document shows the icon only, right after the title text.
+  const single = option(dialog, "주간 후보 진행").getByRole("img", {
+    name: "문서 있음",
+    exact: true,
+  });
+  await expect(single).toBeVisible();
+  await expect(single).toHaveText("");
+  await followsTitle(
+    option(dialog, "주간 후보 진행").locator("strong"),
+    single,
+  );
+  const several = option(dialog, longTitle).getByRole("img", {
+    name: "문서 2개",
+    exact: true,
+  });
+  await expect(several).toHaveText("2");
+  await followsTitle(option(dialog, longTitle).locator("strong"), several);
+  const details = (await option(dialog, longTitle)
+    .locator(".calendar-task-details")
+    .boundingBox())!;
+  const mark = (await several.boundingBox())!;
+  expect(mark.x + mark.width).toBeLessThanOrEqual(details.x);
   await expect(option(dialog, "주간 후보 완료")).toContainText("서연");
   await expect(option(dialog, "주간 후보 완료")).toContainText("완료");
   await expect(
@@ -338,6 +381,21 @@ test("주간 업무 추가 창은 넓게 열려 팀원·상태·문서를 보여
     .boundingBox())!;
   expect(panel.y + panel.height).toBeLessThanOrEqual(list.y);
   expect(list.x + list.width).toBeLessThanOrEqual(390);
+  // A wrapped long title keeps the mark after its last line, inside the row.
+  const longRow = option(dialog, longTitle);
+  const title = (await longRow.locator("strong").boundingBox())!;
+  expect(title.height).toBeGreaterThan(25);
+  const wrappedMark = longRow.getByRole("img", {
+    name: "문서 2개",
+    exact: true,
+  });
+  await expect(wrappedMark).toBeVisible();
+  await followsTitle(longRow.locator("strong"), wrappedMark);
+  const row = (await longRow.boundingBox())!;
+  const wrappedBox = (await wrappedMark.boundingBox())!;
+  expect(wrappedBox.x + wrappedBox.width).toBeLessThanOrEqual(
+    row.x + row.width,
+  );
   await page.screenshot({
     path: info.outputPath("weekly-picker-mobile.png"),
   });
@@ -443,41 +501,64 @@ test("주간 업무는 확인 없이 삭제하고 실행취소로 같은 자리�
   await context.close();
 });
 
-test("문서가 있는 주간 업무는 오른쪽 아래에 문서 수와 아이콘을 표시하고 상세에서 저장하면 바로 반영한다", async ({
+test("문서가 있는 주간 업무는 오른쪽 아래에 문서 아이콘과 여러 개일 때 문서 수를 표시하고 상세에서 저장하면 바로 반영한다", async ({
   page,
 }, info) => {
   const documented = await task(
     page,
-    "문서 있는 주간 업무",
+    "문서 하나 주간 업무",
     userId,
     "status-progress",
     "작성한 문서",
   );
+  const several = await task(
+    page,
+    "문서 둘 주간 업무",
+    userId,
+    "status-progress",
+    "작성한 문서",
+  );
+  await addDocumentTab(page, several);
   const plain = await task(page, "문서 없는 주간 업무", userId, "");
-  await addToWeek(page, [documented, plain]);
+  await addToWeek(page, [documented, several, plain]);
   await open(page);
   const item = (title: string) =>
     weekTasks(page).locator(".calendar-week-task").filter({ hasText: title });
-  const indicator = item("문서 있는 주간 업무").locator(
+  // Like the annual board: one document shows the icon only.
+  const indicator = item("문서 하나 주간 업무").locator(
     ".calendar-week-document",
   );
-  await expect(indicator).toHaveText("1");
   await expect(indicator.locator("svg")).toHaveCount(1);
+  await expect(indicator).toHaveText("");
   await expect(
     weekTasks(page).getByRole("button", {
-      name: "문서 있는 주간 업무",
+      name: "문서 하나 주간 업무",
       exact: true,
     }),
-  ).toHaveAttribute("aria-description", "문서 1개");
+  ).toHaveAttribute("aria-description", "문서 있음");
+  const counted = item("문서 둘 주간 업무").locator(".calendar-week-document");
+  await expect(counted).toHaveText("2");
+  await expect(counted.locator("svg")).toHaveCount(1);
+  await expect(
+    weekTasks(page).getByRole("button", {
+      name: "문서 둘 주간 업무",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-description", "문서 2개");
   await expect(
     item("문서 없는 주간 업무").locator(".calendar-week-document"),
   ).toHaveCount(0);
-  const card = (await item("문서 있는 주간 업무")
-    .locator(".calendar-week-task-open")
-    .boundingBox())!;
-  const mark = (await indicator.boundingBox())!;
-  expect(card.x + card.width - (mark.x + mark.width)).toBeLessThanOrEqual(8);
-  expect(card.y + card.height - (mark.y + mark.height)).toBeLessThanOrEqual(8);
+  for (const [title, mark] of [
+    ["문서 하나 주간 업무", indicator],
+    ["문서 둘 주간 업무", counted],
+  ] as const) {
+    const card = (await item(title)
+      .locator(".calendar-week-task-open")
+      .boundingBox())!;
+    const box = (await mark.boundingBox())!;
+    expect(card.x + card.width - (box.x + box.width)).toBeLessThanOrEqual(8);
+    expect(card.y + card.height - (box.y + box.height)).toBeLessThanOrEqual(8);
+  }
   await page.screenshot({
     path: info.outputPath("weekly-document-count.png"),
   });
@@ -497,8 +578,8 @@ test("문서가 있는 주간 업무는 오른쪽 아래에 문서 수와 아이
     .fill("캘린더에서 작성한 문서");
   await detail.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(detail).toHaveCount(0);
-  await expect(
-    item("문서 없는 주간 업무").locator(".calendar-week-document"),
-  ).toHaveText("1");
+  const saved = item("문서 없는 주간 업무").locator(".calendar-week-document");
+  await expect(saved.locator("svg")).toHaveCount(1);
+  await expect(saved).toHaveText("");
   expect(reads).toHaveLength(0);
 });
