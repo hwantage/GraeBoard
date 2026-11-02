@@ -25,6 +25,10 @@ import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
 } from "../../shared/calendar-tags.js";
+import {
+  DOCUMENT_LINK_BATCH,
+  parseDocumentLinkPath,
+} from "../../shared/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();
@@ -48,6 +52,33 @@ const weeklyScopeSchema = scopeSchema.extend({
     "대상 주는 일요일 날짜로 선택하세요.",
   ),
 });
+const weeklyItemSchema = weeklyScopeSchema.extend({ taskId: uuid });
+// Picker attribute filters travel as one JSON query value. Both engines read
+// it with parseCalendarTaskFilters and apply matchesPropertyFilter before
+// paging, so every page holds only matching tasks.
+const taskFiltersSchema = z
+  .array(
+    z
+      .object({
+        propertyId: z.string().min(1).max(80),
+        values: propertyFilterValuesSchema.min(1),
+        mode: propertyFilterModeSchema,
+      })
+      .strict(),
+  )
+  .max(50);
+export function parseCalendarTaskFilters(text) {
+  return taskFiltersSchema.parse(JSON.parse(text || "[]"));
+}
+export function matchesCalendarTaskFilters(values, filters) {
+  return filters.every((filter) =>
+    matchesPropertyFilter(
+      values[filter.propertyId] ?? "",
+      filter.values,
+      filter.mode,
+    ),
+  );
+}
 export const rangeSchema = z.object({ date: dateSchema, endDate: dateSchema });
 const bodySchemas = {
   savePreferences: z
@@ -86,6 +117,10 @@ const bodySchemas = {
     })
     .strict(),
   importWeekly: weeklyScopeSchema.strict(),
+  removeWeekly: weeklyItemSchema.strict(),
+  restoreWeekly: weeklyItemSchema
+    .extend({ importedAt: z.string().datetime() })
+    .strict(),
   createEntry: scopeSchema
     .extend({
       userId: uuid.nullable(),
@@ -134,6 +169,22 @@ const bodySchemas = {
     .object({ deletionId: uuid, previousRange: rangeSchema.optional() })
     .strict(),
 };
+const linkPathsSchema = z
+  .string()
+  .default("")
+  .transform((value) => [...new Set(value.split(",").filter(Boolean))])
+  .pipe(
+    z
+      .array(
+        z
+          .string()
+          .refine(
+            (path) => !!parseDocumentLinkPath(path),
+            "문서 링크 주소를 확인하세요.",
+          ),
+      )
+      .max(DOCUMENT_LINK_BATCH),
+  );
 const querySchemas = {
   listTags: z.object({
     scope: z.enum(["personal", "team"]).default("personal"),
@@ -158,7 +209,20 @@ const querySchemas = {
   listTasks: weeklyScopeSchema.extend({
     q: z.string().max(120).default(""),
     offset: z.coerce.number().int().min(0).max(100000).default(0),
+    filters: z
+      .string()
+      .max(8000)
+      .default("[]")
+      .refine((text) => {
+        try {
+          parseCalendarTaskFilters(text);
+          return true;
+        } catch {
+          return false;
+        }
+      }, "업무 필터 조건을 확인하세요."),
   }),
+  resolveLinks: z.object({ links: linkPathsSchema }),
 };
 export const CALENDAR_ROUTES = [
   {
@@ -240,6 +304,18 @@ export const CALENDAR_ROUTES = [
     status: 200,
   },
   {
+    name: "removeWeekly",
+    method: "DELETE",
+    path: "/calendar/weekly",
+    status: 200,
+  },
+  {
+    name: "restoreWeekly",
+    method: "POST",
+    path: "/calendar/weekly/restore",
+    status: 200,
+  },
+  {
     name: "createEntry",
     method: "POST",
     path: "/calendar/entries",
@@ -285,6 +361,14 @@ export const CALENDAR_ROUTES = [
     name: "getTask",
     method: "GET",
     path: "/calendar/tasks/:id",
+    status: 200,
+  },
+  // Current titles of linked tasks, entries, memos and copy rows. The
+  // repositories that open a task or an entry from the calendar answer it.
+  {
+    name: "resolveLinks",
+    method: "GET",
+    path: "/document-links",
     status: 200,
   },
 ];
@@ -366,6 +450,12 @@ export class CalendarBusinessService {
   importWeekly(request) {
     return this.execute("importWeekly", request);
   }
+  removeWeekly(request) {
+    return this.execute("removeWeekly", request);
+  }
+  restoreWeekly(request) {
+    return this.execute("restoreWeekly", request);
+  }
   createEntry(request) {
     return this.execute("createEntry", request);
   }
@@ -389,6 +479,9 @@ export class CalendarBusinessService {
   }
   getTask(request) {
     return this.execute("getTask", request);
+  }
+  resolveLinks(request) {
+    return this.execute("resolveLinks", request);
   }
 }
 export function requireCalendarWrite(user, teamId, userId) {

@@ -23,6 +23,8 @@ import {
   applyCalendarTagCheck,
   saveCalendarTagCheck,
 } from "./calendar-tag-checks";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import { updateDocumentLinkTitle, useOpenDocumentLink } from "./document-links";
 
 export default function CalendarEntryPanel({
   entry,
@@ -69,6 +71,8 @@ export default function CalendarEntryPanel({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaving = useRef(false);
   const alive = useRef(true);
+  const linkTarget = { kind: "calendar" as const, id: entry.id };
+  useOpenDocumentLink(linkTarget, () => close());
   function titleChanged() {
     return draft.current.trim() !== current.current.title;
   }
@@ -237,6 +241,7 @@ export default function CalendarEntryPanel({
         // erases spaces typed during the request and interrupts the caret/IME.
         persist();
         onSaved(current.current);
+        updateDocumentLinkTitle(linkTarget, saved.title);
         if (alive.current) setError("");
         if (alive.current) setTitleConflict(null);
         return true;
@@ -290,22 +295,25 @@ export default function CalendarEntryPanel({
     }
   }
   async function close(keepDraft = false) {
-    if (leaving.current || busy || savingTags.current) return;
+    if (leaving.current || busy || savingTags.current) return false;
     leaving.current = true;
     try {
       if (keepDraft) {
         if (
-          persist() &&
-          (!rangeEditor.current || rangeEditor.current.persistDraft()) &&
-          (!editor.current || editor.current.persistDraft())
+          !persist() ||
+          (rangeEditor.current && !rangeEditor.current.persistDraft()) ||
+          (editor.current && !editor.current.persistDraft())
         )
-          onClose();
-        return;
+          return false;
+        onClose();
+        return true;
       }
-      if (!(await saveTitle())) return;
-      if (rangeEditor.current && !(await rangeEditor.current.flush())) return;
-      if (editor.current && !(await editor.current.flush())) return;
+      if (!(await saveTitle())) return false;
+      if (rangeEditor.current && !(await rangeEditor.current.flush()))
+        return false;
+      if (editor.current && !(await editor.current.flush())) return false;
       onClose();
+      return true;
     } finally {
       leaving.current = false;
     }
@@ -344,20 +352,23 @@ export default function CalendarEntryPanel({
       title="캘린더 일정"
       className={`task-detail-modal calendar-entry-modal${documentFullPage ? " document-full-page" : ""}`}
       titleAction={
-        <Button
-          tooltip={
-            documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
-          }
-          className="document-expand"
-          aria-pressed={documentFullPage}
-          onClick={() => setDocumentFullPage((value) => !value)}
-        >
-          {documentFullPage ? (
-            <Minimize2 size={16} aria-hidden="true" />
-          ) : (
-            <Maximize2 size={16} aria-hidden="true" />
-          )}
-        </Button>
+        <>
+          <CopyDocumentLinkButton target={linkTarget} title={title} />
+          <Button
+            tooltip={
+              documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
+            }
+            className="document-expand"
+            aria-pressed={documentFullPage}
+            onClick={() => setDocumentFullPage((value) => !value)}
+          >
+            {documentFullPage ? (
+              <Minimize2 size={16} aria-hidden="true" />
+            ) : (
+              <Maximize2 size={16} aria-hidden="true" />
+            )}
+          </Button>
+        </>
       }
       onClose={() => void close()}
       titleContent={

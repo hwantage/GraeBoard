@@ -3,13 +3,12 @@ import { syncImageReferences } from "../../shared/sync-image-references.js";
 import { encodeStoredSnapshot, decodeStoredSnapshot } from "./snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
-import { allEntities, readEntity } from "./entities.mjs";
+import { allEntities, readEntity, localPayloadEqual } from "./entities.mjs";
 import {
   canonical,
   digest,
   entityId,
   equal,
-  payloadEqual,
   stateHash,
   validateOperation,
   protocolVersion,
@@ -135,7 +134,12 @@ function compute(request) {
       const pending = store.readPending(),
         canonicalState = store.readState(),
         before = project(canonicalState, pending).entities,
-        after = allEntities(db, link),
+        // A calendar document with no saved body is published only when
+        // shared state already has it.
+        after = allEntities(db, link, {
+          calendarDocuments: (key, saved) =>
+            saved || !!before[entityId("document", key)],
+        }),
         exclusions = store.readExclusions(link.installation_id);
       for (const [key, previous] of Object.entries(before)) {
         // Local retention and unused person references are not shared deletions.
@@ -325,12 +329,24 @@ function compute(request) {
           };
         }
       }
+      const pending = store.readPendingRows();
+      // Genesis holds the calendar documents whose body was saved, and any
+      // that a command captured before this snapshot already wrote.
+      const written = new Set(
+        pending.flatMap(({ operation }) =>
+          operation.changes.map((change) =>
+            entityId(change.entity, change.key),
+          ),
+        ),
+      );
       const state = {
-        entities: allEntities(db, link),
+        entities: allEntities(db, link, {
+          calendarDocuments: (key, saved) =>
+            saved || written.has(entityId("document", key)),
+        }),
         receipts: {},
         conflicts: {},
       };
-      const pending = store.readPendingRows();
       const missing = new Set();
       for (const { operation: op } of pending) {
         const outputTokens = {};
@@ -549,7 +565,12 @@ function projectionPatch(
     }
     if (record.deleted && (!current || current.payload?.deletedAt)) continue;
     if (
-      !payloadEqual(record.entity, record.payload, current?.payload) ||
+      !localPayloadEqual(
+        record.entity,
+        record.key,
+        record.payload,
+        current?.payload,
+      ) ||
       !!record.deleted !== !!current?.deleted
     ) {
       changedEntities[key] = record;

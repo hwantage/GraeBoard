@@ -40,6 +40,7 @@ function fixture(t) {
     teamId = randomUUID(),
     userId = randomUUID(),
     viewerId = randomUUID(),
+    outsiderId = randomUUID(),
     refId = randomUUID(),
     stamp = new Date().toISOString();
   db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
@@ -50,6 +51,7 @@ function fixture(t) {
   for (const [id, name, role, active] of [
     [userId, "Admin", "admin", 1],
     [viewerId, "Viewer", "user", 1],
+    [outsiderId, "Outsider", "user", 1],
     [refId, "Imported person", "user", 0],
   ])
     db.prepare(
@@ -73,6 +75,10 @@ function fixture(t) {
       year: Number(todayKey().slice(0, 4)),
       actorId: userId,
       fields: { title: "Contract task", owner: userId },
+      documents: [
+        { id: "main", title: "Contract body", markdown: "Contract body" },
+        { id: randomUUID(), title: "Empty", markdown: " \n" },
+      ],
     }),
     link = {
       team_id: teamId,
@@ -109,6 +115,10 @@ function fixture(t) {
       db,
       db.prepare("SELECT * FROM users WHERE id=?").get(viewerId),
     ),
+    outsider = userWithTeams(
+      db,
+      db.prepare("SELECT * FROM users WHERE id=?").get(outsiderId),
+    ),
     app = createApp({
       db,
       rateLimits: false,
@@ -127,6 +137,7 @@ function fixture(t) {
     teamId,
     user,
     viewer,
+    outsider,
     refId,
     taskId: task.id,
     link,
@@ -142,6 +153,7 @@ async function contract({
   teamId,
   user,
   viewer,
+  outsider,
   refId,
   taskId,
   counts,
@@ -415,6 +427,126 @@ async function contract({
   });
   assert.equal(imported.existing, 1);
   assert.equal(imported.matched, 1);
+  // The picker shows owner, status and documents, and applies attribute
+  // filters before paging with the annual board's rule.
+  assert.deepEqual(
+    selected.tasks.map(({ id, owner, status, documentCount, hasDocument }) => ({
+      id,
+      owner,
+      status,
+      documentCount,
+      hasDocument,
+    })),
+    [
+      {
+        id: taskId,
+        owner: user.id,
+        status: "",
+        documentCount: 2,
+        hasDocument: true,
+      },
+    ],
+  );
+  const pick = (filters) =>
+    service.listTasks({
+      query: {
+        teamId,
+        userId: user.id,
+        weekStart,
+        q: "contract",
+        filters: JSON.stringify(filters),
+      },
+    });
+  for (const [filters, expected] of [
+    [[{ propertyId: "owner", values: [user.id], mode: "include" }], [taskId]],
+    [[{ propertyId: "owner", values: [user.id], mode: "exclude" }], []],
+    [[{ propertyId: "status", values: [""], mode: "include" }], [taskId]],
+    [
+      [
+        { propertyId: "owner", values: [user.id], mode: "include" },
+        { propertyId: "status", values: ["status-completed"], mode: "include" },
+      ],
+      [],
+    ],
+  ])
+    assert.deepEqual(
+      (await pick(filters)).tasks.map((task) => task.id),
+      expected,
+      JSON.stringify(filters),
+    );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      pick([{ propertyId: "owner", values: [], mode: "include" }]),
+    ),
+    (e) => e.name === "ZodError",
+  );
+  // A weekly item carries its task's document summary. Removing it unlinks
+  // only that week; undo links it again with the same permission as adding.
+  const week = { teamId, userId: user.id, from: weekStart, to: weekStart },
+    [item] = (await service.listEntries({ query: week })).weekly,
+    itemBody = { teamId, userId: user.id, weekStart, taskId };
+  assert.deepEqual(
+    [item.taskId, item.documentCount, item.hasDocument, item.unavailable],
+    [taskId, 2, true, false],
+  );
+  const original = await service.getTask({ params: { id: taskId } });
+  await rejects(() => view.removeWeekly({ body: itemBody }), 403);
+  await rejects(
+    () =>
+      view.restoreWeekly({
+        body: { ...itemBody, importedAt: item.importedAt },
+      }),
+    403,
+  );
+  const removed = await service.removeWeekly({ body: itemBody });
+  assert.equal(removed.removed, 1);
+  assert.deepEqual(removed.weekly, []);
+  assert.equal(
+    (await service.removeWeekly({ body: itemBody })).removed,
+    0,
+    "lost removal response is idempotent",
+  );
+  assert.deepEqual((await service.listEntries({ query: week })).weekly, []);
+  assert.equal((await pick([])).tasks[0].added, false);
+  assert.deepEqual(
+    await service.getTask({ params: { id: taskId } }),
+    original,
+    "removal never changes the original task",
+  );
+  const restored = await service.restoreWeekly({
+    body: { ...itemBody, importedAt: item.importedAt },
+  });
+  assert.equal(restored.restored, 1);
+  assert.deepEqual(
+    restored.weekly.map((w) => [w.taskId, w.documentCount, w.hasDocument]),
+    [[taskId, 2, true]],
+  );
+  assert.equal(
+    (
+      await service.restoreWeekly({
+        body: { ...itemBody, importedAt: item.importedAt },
+      })
+    ).restored,
+    0,
+    "lost undo response is idempotent",
+  );
+  await rejects(
+    () =>
+      service.restoreWeekly({
+        body: {
+          ...itemBody,
+          taskId: randomUUID(),
+          importedAt: item.importedAt,
+        },
+      }),
+    404,
+  );
+  await service.removeWeekly({ body: itemBody });
+  assert.equal(
+    (await service.addWeekly({ body: weeklyBody })).added,
+    1,
+    "a removed item can be selected again",
+  );
   // The team view reads members on one range together; each member's part
   // equals that member's own read.
   const userIds = [user.id, refId, viewer.id];
@@ -458,6 +590,64 @@ async function contract({
       }),
     400,
   );
+  // Document links read the current titles of what the user can open.
+  const missingId = randomUUID(),
+    linkQuery = {
+      links: [
+        `/links/task/${taskId}`,
+        `/links/task/${missingId}`,
+        `/links/calendar/${entry.id}`,
+        `/links/calendar/${shared.id}`,
+        `/links/calendar/${missingId}`,
+      ].join(","),
+    },
+    sortLinks = ({ links }) =>
+      links.sort((a, b) => a.path.localeCompare(b.path));
+  const expectedLinks = sortLinks({
+    links: [
+      { path: `/links/task/${taskId}`, teamId, title: "Contract task" },
+      { path: `/links/calendar/${entry.id}`, teamId, title: "Edited" },
+      {
+        path: `/links/calendar/${shared.id}`,
+        teamId,
+        title: "Shared viewer card",
+      },
+    ],
+  });
+  assert.deepEqual(
+    sortLinks(await service.resolveLinks({ query: linkQuery })),
+    expectedLinks,
+  );
+  assert.deepEqual(
+    sortLinks(await view.resolveLinks({ query: linkQuery })),
+    expectedLinks,
+    "a viewer reads the titles it can open",
+  );
+  assert.deepEqual(
+    (await forUser(outsider).resolveLinks({ query: linkQuery })).links,
+    [],
+    "another team's titles are not disclosed",
+  );
+  assert.deepEqual((await service.resolveLinks({ query: {} })).links, []);
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      service.resolveLinks({ query: { links: "/links/task/not-a-task" } }),
+    ),
+    { name: "ZodError" },
+  );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      service.resolveLinks({
+        query: {
+          links: Array.from(
+            { length: 51 },
+            () => `/links/calendar/${randomUUID()}`,
+          ).join(","),
+        },
+      }),
+    ),
+    { name: "ZodError" },
+  );
   entry = await service.getEntry({ params: { id: entry.id } });
   const deletion = {
     deletionId: randomUUID(),
@@ -472,6 +662,15 @@ async function contract({
   await service.deleteEntry({ params: { id: entry.id }, body: deletion });
   await tombstone(entry.id);
   await rejects(() => service.getEntry({ params: { id: entry.id } }), 404);
+  assert.deepEqual(
+    (
+      await service.resolveLinks({
+        query: { links: `/links/calendar/${entry.id}` },
+      })
+    ).links,
+    [],
+    "a deleted entry is no longer resolved",
+  );
   entry = await service.restoreEntry({
     params: { id: entry.id },
     body: { deletionId: deletion.deletionId },
@@ -598,7 +797,7 @@ test("M6 same calendar service and external HTTP routes accept a real PostgreSQL
     initialize: true,
     teamId: f.teamId,
   });
-  for (const u of [f.user, f.viewer])
+  for (const u of [f.user, f.viewer, f.outsider])
     await control.query(
       "INSERT INTO graeboard.users(id,username,email,name,system_role,created_at) VALUES($1,$2,$2,$3,$4,$5)",
       [u.id, u.username, u.name, u.systemRole, new Date().toISOString()],
@@ -724,6 +923,19 @@ test("M6 same calendar service and external HTTP routes accept a real PostgreSQL
   );
   assert.equal(response.status, 200);
   assert.equal(unpack(await response.json()).title, "Edited");
+  const linkTitles = async (userId) => {
+    const found = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/document-links?links=/links/task/${f.taskId},/links/calendar/${result.entry.id}`,
+      { headers: { cookie: "weekly_session=" + userId } },
+    );
+    assert.equal(found.status, 200);
+    return unpack(await found.json()).links.map((link) => link.title);
+  };
+  assert.deepEqual((await linkTitles(f.user.id)).sort(), [
+    "Contract task",
+    "Edited",
+  ]);
+  assert.deepEqual(await linkTitles(f.outsider.id), []);
   const eventCount = async () =>
     Number(
       (

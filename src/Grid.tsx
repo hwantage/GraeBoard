@@ -81,6 +81,11 @@ import {
   readClipboard,
   type ClipboardMatrix,
 } from "./clipboard";
+import {
+  copyLayout,
+  subtractRange,
+  toSelectionArea,
+} from "./selection-areas.js";
 
 const ROW_HEADER_WIDTH = 48;
 
@@ -202,6 +207,7 @@ export default function Grid({
   onView,
   onAdd,
   onError,
+  onCopied,
   copyEditable = false,
   readOnly = false,
   presentation = false,
@@ -249,6 +255,8 @@ export default function Grid({
   onView: (v: Partial<View>) => void;
   onAdd: () => void;
   onError: (s: string) => void;
+  // 복사 결과. 성공하면 빈 문자열, 거절하면 안내 문구다.
+  onCopied?: (error: string) => void;
   copyEditable?: boolean;
   readOnly?: boolean;
   presentation?: boolean;
@@ -260,6 +268,8 @@ export default function Grid({
     id: number;
     preserveHorizontalScroll?: boolean;
     scrollTop?: number;
+    // 이미 보이는 셀이면 화면을 움직이지 않는다.
+    nearest?: boolean;
   } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -314,6 +324,12 @@ export default function Grid({
     [baseColumns, columnResize],
   );
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+  // ⌘/Ctrl로 선택한 셀에서 시작한 드래그는 시작 전 선택에서 끈 범위를 뺀다.
+  const removing = useRef<{
+    base: Selection | null;
+    start: Point;
+    last: Point;
+  } | null>(null);
   const rowDragPointer = useRef({ x: 0, y: 0 });
   const rowDragPreview = useRef<HTMLDivElement>(null);
   const [rowDrag, setRowDrag] = useState<{
@@ -732,6 +748,8 @@ export default function Grid({
     overscan: 12,
     getItemKey,
     scrollMargin: 32,
+    // Keep rows above a classic horizontal scrollbar (up to 18px), if any.
+    scrollPaddingEnd: footer ? 18 : 0,
     rangeExtractor,
   });
   useLayoutEffect(() => {
@@ -751,13 +769,27 @@ export default function Grid({
         if (jump.taskId) {
           const row = taskIndexes.get(jump.taskId);
           if (row === undefined) return;
-          virtual.scrollToIndex(row, { align: "center" });
+          if (
+            !jump.nearest ||
+            virtual.getOffsetForIndex(row, "auto")?.[1] !== "auto"
+          )
+            virtual.scrollToIndex(row, { align: "center" });
         }
         const pinned =
           rowHeaderWidth +
           columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
-        if (!jump.preserveHorizontalScroll && !columns[index].fixed)
-          ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 16);
+        const grid = ref.current,
+          left = positions[index];
+        if (
+          !jump.preserveHorizontalScroll &&
+          !columns[index].fixed &&
+          !(
+            jump.nearest &&
+            left >= grid.scrollLeft + pinned &&
+            left + columns[index].width <= grid.scrollLeft + grid.clientWidth
+          )
+        )
+          grid.scrollLeft = Math.max(0, left - pinned - 16);
         appliedJump.current = jump.id;
       }
     }
@@ -877,7 +909,33 @@ export default function Grid({
       : e.shiftKey
         ? selection?.areas
         : undefined;
-    const anchor = selectHeader(kind, index, e.shiftKey, additive);
+    // ⌘/Ctrl로 이미 선택한 행·열 머리글을 누르거나 끌면 그 행·열을 뺀다.
+    const remove =
+      additive &&
+      !e.shiftKey &&
+      !formatPainting &&
+      (kind === "rows"
+        ? selectedAt(index, 0, kind)
+        : selectedAt(0, index, kind));
+    const band = (from: number, to: number) =>
+      kind === "rows"
+        ? {
+            r1: Math.min(from, to),
+            r2: Math.max(from, to),
+            c1: 0,
+            c2: columns.length - 1,
+          }
+        : {
+            r1: 0,
+            r2: tasks.length - 1,
+            c1: Math.min(from, to),
+            c2: Math.max(from, to),
+          };
+    let anchor = index;
+    if (remove) {
+      onSelect(without(previousSelection, band(index, index)));
+      focusGrid();
+    } else anchor = selectHeader(kind, index, e.shiftKey, additive);
     startFormatDrag(e);
     const origin = { x: e.clientX, y: e.clientY };
     let x = e.clientX,
@@ -910,7 +968,11 @@ export default function Grid({
             );
       if (next >= 0 && next !== last) {
         last = next;
-        onSelect({ ...headerSelection(kind, anchor, next), areas });
+        onSelect(
+          remove
+            ? without(previousSelection, band(anchor, next))
+            : { ...headerSelection(kind, anchor, next), areas },
+        );
       }
     };
     const move = (event: PointerEvent) => {
@@ -1175,6 +1237,63 @@ export default function Grid({
         focus: point,
         areas: selection.areas,
       });
+    focusGrid();
+  }
+  // Excel처럼 ⌘/Ctrl로 이미 선택한 셀·행·열을 누르거나 끌면 그 범위를 선택에서
+  // 뺀다. 걸친 영역은 남은 사각형으로 나누고, 마지막 영역을 활성 영역으로 둔다.
+  function without(
+    base: Selection | null,
+    remove: { r1: number; r2: number; c1: number; c2: number },
+  ): Selection | null {
+    const kept: SelectionArea[] = [];
+    for (const area of savedAreas(base)) {
+      const range = rangeOf(area, tasks, columns);
+      const pieces =
+        range &&
+        subtractRange(
+          { ...range, kind: area.kind },
+          remove,
+          tasks.length - 1,
+          columns.length - 1,
+        );
+      if (!pieces) kept.push(area);
+      else
+        kept.push(
+          ...pieces.map((piece) => toSelectionArea(piece, tasks, columns)),
+        );
+    }
+    const active = kept.pop();
+    return active
+      ? { ...active, ...(kept.length ? { areas: kept } : {}) }
+      : null;
+  }
+  function selectedAt(r: number, c: number, kind?: "columns" | "rows") {
+    return ranges.some(
+      (range) =>
+        (!kind || range.kind === kind || range.kind === "all") &&
+        r >= range.r1 &&
+        r <= range.r2 &&
+        c >= range.c1 &&
+        c <= range.c2,
+    );
+  }
+  function removeCells(from: Point, to: Point) {
+    const r1 = taskIndexes.get(from.taskId) ?? -1,
+      r2 = taskIndexes.get(to.taskId) ?? -1,
+      c1 = columns.findIndex((c) => c.key === from.key),
+      c2 = columns.findIndex((c) => c.key === to.key);
+    if (!removing.current || r1 < 0 || r2 < 0 || c1 < 0 || c2 < 0) return;
+    removing.current.last = to;
+    onSelect(
+      without(removing.current.base, {
+        r1: Math.min(r1, r2),
+        r2: Math.max(r1, r2),
+        c1: Math.min(c1, c2),
+        c2: Math.max(c1, c2),
+      }),
+    );
+  }
+  function focusGrid() {
     ref.current?.focus({ preventScroll: true });
     // Firefox can clear focus when the blurred textarea unmounts. Restore the
     // grid after that commit, unless a new editor has already taken focus.
@@ -1370,12 +1489,34 @@ export default function Grid({
       if (e.button !== 0) return;
       dragOrigin.current = { x: e.clientX, y: e.clientY };
       e.preventDefault();
-      pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
+      const r = taskIndexes.get(point.taskId) ?? -1,
+        c = columns.findIndex((column) => column.key === point.key);
+      removing.current =
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !formatPainting &&
+        selectedAt(r, c)
+          ? { base: selection, start: point, last: point }
+          : null;
+      if (removing.current) {
+        removeCells(point, point);
+        focusGrid();
+      } else pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
       startFormatDrag(e);
     },
     dragSelect(e, point) {
       const start = dragOrigin.current;
+      const remove = removing.current;
       if (
+        remove &&
+        e.buttons === 1 &&
+        (remove.last.taskId !== point.taskId || remove.last.key !== point.key)
+      ) {
+        removeCells(remove.start, point);
+        return;
+      }
+      if (
+        remove ||
         e.buttons !== 1 ||
         !selection ||
         !start ||
@@ -1420,7 +1561,7 @@ export default function Grid({
   );
   return (
     <div
-      className="grid-area"
+      className={`grid-area${footer ? " has-sheet-footer" : ""}`}
       style={
         {
           "--row-header-width": `${rowHeaderWidth}px`,
@@ -1455,29 +1596,37 @@ export default function Grid({
         onKeyDown={keyboard}
         onPointerUp={() => {
           dragOrigin.current = null;
+          removing.current = null;
         }}
         onPointerCancel={() => {
           dragOrigin.current = null;
+          removing.current = null;
         }}
         onCopy={(e) => {
-          if (editor || !range) return;
+          if (editor || !ranges.length) return;
           e.preventDefault();
-          if (selection?.areas?.length) {
-            onError("복사할 때는 하나의 연속된 영역을 선택하세요.");
+          const layout = copyLayout(ranges);
+          const failed = (message: string) =>
+            onCopied ? onCopied(message) : onError(message);
+          if (!layout) {
+            failed(
+              "여러 영역을 복사할 때는 같은 행 또는 같은 열의 영역을 선택하세요.",
+            );
             return;
           }
           try {
             copyToEvent(
               e.clipboardData,
               createClipboard(
-                tasks.slice(range.r1, range.r2 + 1),
-                columns.slice(range.c1, range.c2 + 1).map((c) => c.key),
+                layout.rows.map((i) => tasks[i]),
+                layout.columns.map((i) => columns[i].key),
                 users,
                 settings,
               ),
             );
+            onCopied?.("");
           } catch (err) {
-            onError((err as Error).message);
+            failed((err as Error).message);
           }
         }}
         onPaste={(e) => {
@@ -1746,8 +1895,8 @@ export default function Grid({
           </Button>
         )}
         {footer && <SheetHorizontalScroll width={totalWidth} />}
-        {footer}
       </div>
+      {footer}
       {headerMenu && (
         <GridHeaderMenu
           key={`${headerMenu.kind}:${headerMenu.index}`}

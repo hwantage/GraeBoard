@@ -1,9 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { isDocumentImage } from "../shared/document-images.js";
+import { parseDocumentLinkPath } from "../shared/document-links.js";
+import { DocumentLinkTitles, useDocumentLinkOpener } from "./document-links";
+import {
+  documentLinkSchema,
+  documentLinkView,
+  openDocumentLink,
+  pasteDocumentLink,
+} from "./DocumentLinkNode";
 import { documentImageView, type ImagePreview } from "./DocumentImageView";
 import { Button, Modal } from "./components";
 import Select from "./Select";
 import DocumentLoading from "./DocumentLoading";
+import DocumentBlockHandle, {
+  BLOCK_FORMATS,
+  blockDrag,
+  blockMoveKeydown,
+  type BlockHandleApi,
+} from "./DocumentBlockHandle";
 import DocumentSlashMenu, {
   filterSlashItems,
   slashMatch,
@@ -29,6 +43,7 @@ import {
   defaultValueCtx,
   editorViewCtx,
   editorViewOptionsCtx,
+  commandsCtx,
   parserCtx,
   serializerCtx,
   remarkCtx,
@@ -309,7 +324,7 @@ const codeBlockMetaSchema = codeBlockSchema.extendSchema((prev) => (ctx) => {
 
 export function safeDocumentLink(url: string) {
   return (
-    /^(https?:|mailto:)/i.test(url) &&
+    (/^(https?:|mailto:)/i.test(url) || !!parseDocumentLinkPath(url)) &&
     !/[\u0000-\u0020\u007f-\u00a0\u200b-\u200d\u2028\u2029\ufeff]/u.test(url)
   );
 }
@@ -385,7 +400,7 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
       );
     if (node.type === "link" && !safeDocumentLink(node.url))
       throw new Error(
-        "HTTP(S)·메일 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
+        "HTTP(S)·메일·문서 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
       );
     if (node.type === "image" && !isDocumentImage(node.url))
       throw new Error(
@@ -475,6 +490,9 @@ export default function RichMarkdownEditor(props: Props) {
   const appliedRemote = useRef(props.remoteMarkdown);
   const latest = useRef(props);
   latest.current = props;
+  const documentLinks = useDocumentLinkOpener();
+  const linkOpener = useRef(documentLinks);
+  linkOpener.current = documentLinks;
   const [ready, setReady] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -483,12 +501,14 @@ export default function RichMarkdownEditor(props: Props) {
   const [link, setLink] = useState<string | null>(null);
   const [linkError, setLinkError] = useState("");
   const [uploadError, setUploadError] = useState("");
+  const [linkOpenError, setLinkOpenError] = useState("");
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [imageZoom, setImageZoom] = useState(false);
   type SlashState = SlashMatch & { left: number; top: number; flip: boolean };
   const shell = useRef<HTMLDivElement>(null);
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  const blockHandle = useRef<BlockHandleApi>(null);
   const slashRef = useRef<SlashState | null>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const slashIndexRef = useRef(0);
@@ -564,6 +584,7 @@ export default function RichMarkdownEditor(props: Props) {
     let initialized = false;
     const uploads = new Set<AbortController>();
     const pendingImages = new Set<Node>();
+    const linkTitles = new DocumentLinkTitles();
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root.current);
@@ -636,7 +657,16 @@ export default function RichMarkdownEditor(props: Props) {
               if (!anchor) return false;
               event.preventDefault();
               const href = anchor.getAttribute("href") || "";
-              if (
+              const target = parseDocumentLinkPath(href);
+              if (target)
+                openDocumentLink(
+                  target,
+                  event,
+                  linkTitles,
+                  linkOpener.current,
+                  (message) => active && setLinkOpenError(message),
+                );
+              else if (
                 safeDocumentLink(href) &&
                 (latest.current.readOnly || event.metaKey || event.ctrlKey)
               )
@@ -647,9 +677,11 @@ export default function RichMarkdownEditor(props: Props) {
           handleKeyDown: (view, event) => {
             if (latest.current.readOnly || view.composing || event.isComposing)
               return false;
+            if (blockHandle.current?.keydown(event)) return true;
             if (slashKeydown(event)) return true;
             if (toggleKeydown(view, event)) return true;
             if (listFormatKeydown(view, event)) return true;
+            if (blockMoveKeydown(view, event)) return true;
             if (
               event.key !== "Enter" ||
               !event.shiftKey ||
@@ -694,6 +726,7 @@ export default function RichMarkdownEditor(props: Props) {
               return false;
             // Markdown/plain text still uses the same preservation check.
             event.preventDefault();
+            if (pasteDocumentLink(view, text, linkTitles)) return true;
             const { $from, $to } = view.state.selection;
             if (
               isInTable(view.state) &&
@@ -725,6 +758,7 @@ export default function RichMarkdownEditor(props: Props) {
             return false;
           },
           nodeViews: {
+            document_link: (node) => documentLinkView(node, linkTitles),
             image: (node, view, getPos) =>
               documentImageView(
                 node,
@@ -796,11 +830,13 @@ export default function RichMarkdownEditor(props: Props) {
       .use(commonmark)
       .use(codeBlockMetaSchema)
       .use(gfm)
+      .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)
       .use(history)
       .use(upload)
       .use(trailing)
+      .use(blockDrag)
       .use(
         $prose(
           (ctx) =>
@@ -827,6 +863,7 @@ export default function RichMarkdownEditor(props: Props) {
                     setInTable(isInTable(view.state));
                     setCanDeleteRow(deleteTableRow(view.state));
                     syncSlash(view);
+                    blockHandle.current?.update(view, previous);
                   }
                   if (
                     active &&
@@ -874,6 +911,7 @@ export default function RichMarkdownEditor(props: Props) {
       });
     return () => {
       active = false;
+      linkTitles.dispose();
       pendingImages.clear();
       for (const controller of uploads) controller.abort();
       latest.current.onUploading?.(0);
@@ -952,30 +990,34 @@ export default function RichMarkdownEditor(props: Props) {
       listFormatCommand(format)(view.state, view.dispatch, view);
     });
   }
-  // Block formats from the select and the "/" menu. A toggle summary turns
-  // back into a plain block because Milkdown's block commands cannot change
-  // it in place.
+  // Block formats from the select, the "/" menu and the block handle menu,
+  // which also asks whether a format applies. A toggle summary turns back into
+  // a plain block because Milkdown's block commands cannot change it in place.
+  function blockCommand(ctx: Ctx, value: string): Command | null {
+    if (value === "bullet" || value === "ordered" || value === "task")
+      return listFormatCommand(value);
+    if (value.startsWith("toggle"))
+      return setToggleCommand(Number(value.slice(6)) || 0);
+    const commands = ctx.get(commandsCtx);
+    const summary = inToggleSummary(ctx.get(editorViewCtx).state);
+    if (value.startsWith("h")) {
+      const level = Number(value.slice(1));
+      return summary
+        ? unwrapToggleCommand(headingSchema.type(ctx), { level })
+        : commands.get(wrapInHeadingCommand.key)(level);
+    }
+    if (value === "paragraph")
+      return summary
+        ? unwrapToggleCommand(paragraphSchema.type(ctx))
+        : commands.get(turnIntoTextCommand.key)();
+    if (value === "quote") return commands.get(wrapInBlockquoteCommand.key)();
+    if (value === "code") return commands.get(createCodeBlockCommand.key)();
+    return null;
+  }
   function setBlock(value: string) {
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
-      const exec = (command: Command) =>
-        command(view.state, view.dispatch, view);
-      if (value.startsWith("toggle")) {
-        exec(setToggleCommand(Number(value.slice(6)) || 0));
-        return;
-      }
-      const summary = inToggleSummary(view.state);
-      if (value.startsWith("h")) {
-        const level = Number(value.slice(1));
-        if (summary)
-          exec(unwrapToggleCommand(headingSchema.type(ctx), { level }));
-        else callCommand(wrapInHeadingCommand.key, level)(ctx);
-      } else if (value === "paragraph") {
-        if (summary) exec(unwrapToggleCommand(paragraphSchema.type(ctx)));
-        else callCommand(turnIntoTextCommand.key)(ctx);
-      } else if (value === "quote")
-        callCommand(wrapInBlockquoteCommand.key)(ctx);
-      else if (value === "code") callCommand(createCodeBlockCommand.key)(ctx);
+      blockCommand(ctx, value)?.(view.state, view.dispatch, view);
     });
   }
   const slashEntries: [string, string, string, ReactNode][] = [
@@ -1037,6 +1079,11 @@ export default function RichMarkdownEditor(props: Props) {
       {uploadError && (
         <p className="document-error" role="alert">
           {uploadError}
+        </p>
+      )}
+      {linkOpenError && (
+        <p className="document-error" role="alert">
+          {linkOpenError}
         </p>
       )}
       {!props.readOnly && (
@@ -1241,6 +1288,22 @@ export default function RichMarkdownEditor(props: Props) {
           });
         }}
       />
+      {ready && !props.readOnly && (
+        <DocumentBlockHandle
+          ref={blockHandle}
+          view={() =>
+            editorRef.current?.action((ctx) => ctx.get(editorViewCtx)) ?? null
+          }
+          shell={shell}
+          formats={slashItems.filter((item) => BLOCK_FORMATS.includes(item.id))}
+          canFormat={(id) =>
+            !!editorRef.current?.action((ctx) =>
+              blockCommand(ctx, id)?.(ctx.get(editorViewCtx).state),
+            )
+          }
+          onOpen={() => closeSlash()}
+        />
+      )}
       {slash && !props.readOnly && visibleSlashItems.length > 0 && (
         <DocumentSlashMenu
           items={visibleSlashItems}

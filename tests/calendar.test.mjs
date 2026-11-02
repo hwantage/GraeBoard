@@ -1745,6 +1745,302 @@ test("업무 선택 검색은 활성 팀 업무만 페이지로 반환하며 검
   );
 });
 
+test("업무 선택 검색은 팀원·상태·문서를 보여 주고 속성 필터를 페이지 전에 적용한다", async (t) => {
+  const f = await fixture(t);
+  for (let i = 0; i < 60; i++)
+    f.task({
+      title: `Filter 업무 ${String(i).padStart(2, "0")}`,
+      owner: i % 2 ? f.people.second.id : f.people.member.id,
+      condition: i % 3 ? "ready-id" : "",
+      status: i % 4 ? "status-progress" : "status-completed",
+      supporters: i % 5 ? [] : [f.people.lead.id, f.people.second.id],
+    });
+  const documented = insertTask(f.db, {
+    teamId: f.teamId,
+    year: 2026,
+    actorId: f.people.lead.id,
+    fields: { title: "Filter 문서 업무", owner: f.people.member.id },
+    documents: [
+      { id: "main", title: "본문", markdown: "작성한 문서" },
+      { id: randomUUID(), title: "빈 문서", markdown: "" },
+    ],
+  });
+  const scope = {
+    teamId: f.teamId,
+    userId: f.people.member.id,
+    weekStart: "2026-10-04",
+    q: "filter",
+  };
+  const search = async (filters, offset = 0) => {
+    const result = await f.req(
+      `/calendar/tasks?${new URLSearchParams({
+        ...scope,
+        offset: String(offset),
+        ...(filters ? { filters: JSON.stringify(filters) } : {}),
+      })}`,
+    );
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    return result.data;
+  };
+  const all = async (filters) => {
+    const tasks = [];
+    for (let offset = 0; offset !== null;) {
+      const page = await search(filters, offset);
+      assert.ok(page.tasks.length <= 50);
+      tasks.push(...page.tasks);
+      offset = page.nextOffset;
+    }
+    return tasks;
+  };
+  const everything = await all();
+  assert.equal(everything.length, 61);
+  const option = everything.find((task) => task.id === documented.id);
+  assert.deepEqual(
+    [option.owner, option.status, option.documentCount, option.hasDocument],
+    [f.people.member.id, "", 2, true],
+  );
+  assert.ok(
+    everything
+      .filter((task) => task.id !== documented.id)
+      .every((task) => task.documentCount === 0 && !task.hasDocument),
+  );
+  const expected = (filter) =>
+    everything
+      .filter((task) => task.id !== documented.id)
+      .filter((task) => filter(Number(task.title.slice(-2))))
+      .map((task) => task.id);
+  for (const [filters, filter] of [
+    [
+      [{ propertyId: "status", values: ["status-completed"], mode: "include" }],
+      (i) => i % 4 === 0,
+    ],
+    [
+      [{ propertyId: "owner", values: [f.people.member.id], mode: "exclude" }],
+      (i) => i % 2 === 1,
+    ],
+    [
+      [{ propertyId: "condition", values: [""], mode: "include" }],
+      (i) => i % 3 === 0,
+    ],
+    [
+      [
+        {
+          propertyId: "supporters",
+          values: [f.people.lead.id],
+          mode: "include",
+        },
+        { propertyId: "status", values: ["status-progress"], mode: "include" },
+      ],
+      (i) => i % 5 === 0 && i % 4 !== 0,
+    ],
+  ]) {
+    const found = await all(filters);
+    assert.deepEqual(
+      found.map((task) => task.id).filter((id) => id !== documented.id),
+      expected(filter),
+      JSON.stringify(filters),
+    );
+  }
+  // The exclusion filter with paging: 30 tasks are not the member's.
+  const first = await search([
+    { propertyId: "owner", values: [f.people.member.id], mode: "include" },
+  ]);
+  assert.equal(first.tasks.length, 31);
+  assert.equal(first.nextOffset, null);
+  for (const filters of [
+    "not json",
+    JSON.stringify([{ propertyId: "status", values: [], mode: "include" }]),
+    JSON.stringify([{ propertyId: "status", values: ["a"], mode: "other" }]),
+    JSON.stringify([{ propertyId: "status", values: ["a"] }]),
+    "x".repeat(8001),
+  ])
+    assert.equal(
+      (
+        await f.req(
+          `/calendar/tasks?${new URLSearchParams({ ...scope, filters })}`,
+        )
+      ).status,
+      400,
+    );
+});
+
+test("주간 업무는 문서 수를 함께 보여 주고 문서를 저장하면 다시 조회할 때 반영한다", async (t) => {
+  const f = await fixture(t);
+  const task = f.task({ title: "문서 연결 업무" });
+  await f.req("/calendar/weekly", "POST", {
+    teamId: f.teamId,
+    userId: f.people.member.id,
+    weekStart: "2026-10-04",
+    taskIds: [task.id],
+  });
+  const item = async () => (await f.list()).data.weekly[0];
+  assert.deepEqual(
+    [(await item()).documentCount, (await item()).hasDocument],
+    [0, false],
+  );
+  const saved = await f.req(`/tasks/${task.id}/document`, "PUT", {
+    markdown: "주간 업무에서 볼 문서",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.deepEqual(
+    [(await item()).documentCount, (await item()).hasDocument],
+    [saved.data.documentCount, true],
+  );
+  f.db.prepare("UPDATE tasks SET deleted_at=? WHERE id=?").run(now(), task.id);
+  assert.deepEqual(
+    [
+      (await item()).unavailable,
+      (await item()).documentCount,
+      (await item()).hasDocument,
+    ],
+    [true, 0, false],
+  );
+});
+
+test("주간 업무 삭제는 그 주의 연결만 지우고 실행취소로 같은 자리에 되살리며 권한을 검사한다", async (t) => {
+  const f = await fixture(t);
+  const tasks = [
+    f.task({ title: "첫째" }),
+    f.task({ title: "둘째" }),
+    f.task({ title: "셋째" }),
+  ];
+  const week = {
+    teamId: f.teamId,
+    userId: f.people.member.id,
+    weekStart: "2026-10-04",
+  };
+  // Items list in the order they were added.
+  for (const item of tasks) {
+    t.mock.timers.tick(1000);
+    await f.req("/calendar/weekly", "POST", { ...week, taskIds: [item.id] });
+  }
+  await f.req("/calendar/weekly", "POST", {
+    ...week,
+    weekStart: "2026-10-11",
+    taskIds: [tasks[1].id],
+  });
+  const before = (await f.list()).data.weekly;
+  const original = {
+    tasks: f.db.prepare("SELECT * FROM tasks ORDER BY id").all(),
+    cells: f.db.prepare("SELECT * FROM cells ORDER BY task_id,key").all(),
+  };
+  const body = { ...week, taskId: tasks[1].id };
+  for (const fields of [
+    { weekStart: "2026-10-05" },
+    { taskId: "not-a-task" },
+    { userId: null },
+    { extra: true },
+  ])
+    assert.equal(
+      (await f.req("/calendar/weekly", "DELETE", { ...body, ...fields }))
+        .status,
+      400,
+    );
+  for (const role of ["viewer", "second", "outsider"])
+    assert.equal(
+      (await f.req("/calendar/weekly", "DELETE", body, role)).status,
+      403,
+    );
+  assert.deepEqual((await f.list()).data.weekly, before);
+  const removed = await f.req("/calendar/weekly", "DELETE", body);
+  assert.equal(removed.status, 200, JSON.stringify(removed.data));
+  assert.equal(removed.data.removed, 1);
+  assert.deepEqual(
+    removed.data.weekly.map((item) => item.taskId),
+    [tasks[0].id, tasks[2].id],
+  );
+  assert.equal(
+    (await f.req("/calendar/weekly", "DELETE", body)).data.removed,
+    0,
+    "응답 유실 후 재시도는 다른 항목을 지우지 않는다",
+  );
+  assert.deepEqual(
+    (await f.list()).data.weekly.map((item) => [item.weekStart, item.taskId]),
+    [
+      ["2026-10-04", tasks[0].id],
+      ["2026-10-04", tasks[2].id],
+      ["2026-10-11", tasks[1].id],
+    ],
+  );
+  assert.deepEqual(
+    f.db.prepare("SELECT * FROM tasks ORDER BY id").all(),
+    original.tasks,
+  );
+  assert.deepEqual(
+    f.db.prepare("SELECT * FROM cells ORDER BY task_id,key").all(),
+    original.cells,
+  );
+  const removedItem = before.find(
+    (item) => item.taskId === tasks[1].id && item.weekStart === "2026-10-04",
+  );
+  const restore = { ...body, importedAt: removedItem.importedAt };
+  for (const role of ["viewer", "second", "outsider"])
+    assert.equal(
+      (await f.req("/calendar/weekly/restore", "POST", restore, role)).status,
+      403,
+    );
+  assert.equal(
+    (
+      await f.req("/calendar/weekly/restore", "POST", {
+        ...restore,
+        importedAt: "어제",
+      })
+    ).status,
+    400,
+  );
+  const restored = await f.req("/calendar/weekly/restore", "POST", restore);
+  assert.equal(restored.status, 200, JSON.stringify(restored.data));
+  assert.equal(restored.data.restored, 1);
+  assert.deepEqual((await f.list()).data.weekly, before);
+  assert.equal(
+    (await f.req("/calendar/weekly/restore", "POST", restore)).data.restored,
+    0,
+  );
+  // A lead removes a member's item; an item of a deleted task is removed and
+  // restored as the same unavailable reference.
+  f.db
+    .prepare("UPDATE tasks SET deleted_at=? WHERE id=?")
+    .run(now(), tasks[2].id);
+  const unavailable = (await f.list()).data.weekly.find(
+    (item) => item.taskId === tasks[2].id,
+  );
+  assert.equal(unavailable.unavailable, true);
+  const leadRemoved = await f.req(
+    "/calendar/weekly",
+    "DELETE",
+    { ...week, taskId: tasks[2].id },
+    "lead",
+  );
+  assert.equal(leadRemoved.data.removed, 1);
+  const back = await f.req(
+    "/calendar/weekly/restore",
+    "POST",
+    { ...week, taskId: tasks[2].id, importedAt: unavailable.importedAt },
+    "admin",
+  );
+  assert.equal(back.status, 200, JSON.stringify(back.data));
+  assert.deepEqual(
+    back.data.weekly.find((item) => item.taskId === tasks[2].id),
+    unavailable,
+  );
+  for (const taskId of [randomUUID(), f.task({}, 2026, f.otherTeam).id])
+    assert.equal(
+      (
+        await f.req("/calendar/weekly/restore", "POST", {
+          ...restore,
+          taskId,
+        })
+      ).status,
+      404,
+    );
+  assert.equal(
+    f.db.prepare("SELECT COUNT(*) n FROM calendar_weekly_items").get().n,
+    4,
+  );
+});
+
 test("가져온 작업 링크는 실제 작업을 조회하고 속성 변경/삭제 이후도 안전하다", async (t) => {
   const f = await fixture(t),
     task = f.task();
@@ -1773,6 +2069,82 @@ test("가져온 작업 링크는 실제 작업을 조회하고 속성 변경/삭
     (await f.req(`/calendar/tasks/${task.id}`, "GET", undefined, "outsider"))
       .status,
     404,
+  );
+});
+
+test("문서 링크 제목 조회는 열 수 있는 업무·일정의 현재 제목만 묶어서 돌려준다", async (t) => {
+  const f = await fixture(t),
+    task = f.task({ title: "링크한 업무" }),
+    otherTask = f.task({ title: "다른 팀 업무" }, 2026, f.otherTeam),
+    entry = (await f.create("2026-10-12", "member", "링크한 일정")).data,
+    missing = randomUUID();
+  const paths = {
+    task: `/links/task/${task.id}`,
+    other: `/links/task/${otherTask.id}`,
+    entry: `/links/calendar/${entry.id}`,
+  };
+  const links = async (list, role = "member") => {
+    const result = await f.req(
+      `/document-links?${new URLSearchParams({ links: list.join(",") })}`,
+      "GET",
+      undefined,
+      role,
+    );
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    return Object.fromEntries(
+      result.data.links.map(({ path, ...link }) => [path, link]),
+    );
+  };
+  const all = [
+    ...Object.values(paths),
+    `/links/task/${missing}`,
+    `/links/calendar/${missing}`,
+  ];
+  assert.deepEqual(await links(all), {
+    [paths.task]: { teamId: f.teamId, title: "링크한 업무" },
+    [paths.entry]: { teamId: f.teamId, title: "링크한 일정" },
+  });
+  assert.deepEqual(Object.keys(await links(all, "viewer")).sort(), [
+    paths.entry,
+    paths.task,
+  ]);
+  assert.deepEqual(Object.keys(await links(all, "outsider")), [paths.other]);
+  assert.equal(Object.keys(await links(all, "admin")).length, 3);
+  const renamed = await f.req("/cells/batch", "POST", {
+    operationId: randomUUID(),
+    createdAt: now(),
+    changes: [
+      {
+        taskId: task.id,
+        key: "title",
+        value: "바뀐 업무 이름",
+        expectedVersion: task.cells.title.version,
+      },
+    ],
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.data));
+  assert.equal((await links([paths.task]))[paths.task].title, "바뀐 업무 이름");
+  f.db.prepare("UPDATE tasks SET deleted_at=? WHERE id=?").run(now(), task.id);
+  assert.deepEqual(await links([paths.task]), {});
+  for (const bad of [
+    `${paths.task},/links/task/bad`,
+    "/links/memo/x/2026/main",
+    `/links/memo/${f.teamId}/1999/main`,
+    `https://example.com${paths.task}`,
+  ])
+    assert.equal(
+      (await f.req(`/document-links?links=${encodeURIComponent(bad)}`)).status,
+      400,
+      `rejects ${bad}`,
+    );
+  assert.equal(
+    (
+      await f.req(
+        `/document-links?links=${Array.from({ length: 51 }, () => `/links/task/${randomUUID()}`).join(",")}`,
+      )
+    ).status,
+    400,
+    "at most 50 links per lookup",
   );
 });
 

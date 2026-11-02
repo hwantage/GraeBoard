@@ -79,23 +79,32 @@ export default function useWorkspaceRoute(
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  function commit(next: WorkspaceRoute) {
+  // `replace` switches the screen in place, e.g. after opening a link address.
+  function commit(next: WorkspaceRoute, replace = false) {
     if (next === current.current.route) return;
     const url = new URL(location.href);
     url.pathname = paths[next];
     const entry = {
-      index: current.current.index + 1,
+      index: current.current.index + (replace ? 0 : 1),
       route: next,
     };
-    history.pushState({ ...history.state, [historyKey]: entry.index }, "", url);
+    history[replace ? "replaceState" : "pushState"](
+      { ...history.state, [historyKey]: entry.index },
+      "",
+      url,
+    );
     current.current = entry;
     setRoute(next);
   }
+  // Says whether the screen is `next` afterwards.
   async function navigate(next: WorkspaceRoute) {
-    if (busy.current || next === current.current.route) return;
+    if (next === current.current.route) return true;
+    if (busy.current) return false;
     busy.current = true;
     try {
-      if (await prepareRef.current(next)) commit(next);
+      if (!(await prepareRef.current(next))) return false;
+      commit(next);
+      return true;
     } finally {
       busy.current = false;
     }

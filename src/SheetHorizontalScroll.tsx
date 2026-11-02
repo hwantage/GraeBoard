@@ -2,12 +2,18 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 // Keep the table's horizontal scrollbar directly above its footer. The existing
 // scroll element still owns both coordinates, sticky columns and virtualization.
+// The rail takes room between the rows and the footer only for a classic
+// scrollbar that is needed. Overlay scrollbars (macOS) lie over the bottom of
+// the rows instead, so no empty strip separates the table from the memos.
 export default function SheetHorizontalScroll({ width }: { width: number }) {
+  const holder = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLDivElement>(null);
+  const probe = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState(false);
+  const [thickness, setThickness] = useState(0);
   useLayoutEffect(() => {
     const bar = rail.current!;
-    const sheet = bar.parentElement!;
+    const sheet = holder.current!.parentElement!;
     let mirroredLeft = bar.scrollLeft;
     const fromSheet = () => {
       if (bar.scrollLeft !== sheet.scrollLeft)
@@ -23,6 +29,8 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
         sheet.scrollLeft = bar.scrollLeft;
     };
     const resize = new ResizeObserver(() => {
+      const size = probe.current!;
+      setThickness(Math.max(0, size.offsetHeight - size.clientHeight));
       setOverflow(bar.scrollWidth > bar.clientWidth + 1);
       fromSheet();
     });
@@ -85,19 +93,35 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
       sheet.removeEventListener("wheel", wheel);
       sheet.removeEventListener("touchstart", touchstart);
       sheet.removeEventListener("touchmove", touchmove);
+      sheet.style.removeProperty("--sheet-rail-size");
     };
   }, []);
+  const size = overflow ? thickness : 0;
+  useLayoutEffect(() => {
+    // Scroll padding and the rail's own height follow the space it takes.
+    holder.current!.parentElement!.style.setProperty(
+      "--sheet-rail-size",
+      `${size}px`,
+    );
+  }, [size]);
   return (
     <div
-      ref={rail}
+      ref={holder}
       className="sheet-horizontal-scroll"
-      aria-label="업무 표 가로 스크롤"
-      role="group"
-      tabIndex={overflow ? 0 : -1}
-      aria-hidden={!overflow}
-      onKeyDown={(event) => event.stopPropagation()}
+      data-scrollbar={thickness ? "classic" : "overlay"}
     >
-      <div style={{ width, height: 1 }} />
+      <div
+        ref={rail}
+        className="sheet-horizontal-scroll-track"
+        aria-label="업무 표 가로 스크롤"
+        role="group"
+        tabIndex={overflow ? 0 : -1}
+        aria-hidden={!overflow}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <div style={{ width, height: 1 }} />
+      </div>
+      <div ref={probe} className="sheet-scrollbar-probe" aria-hidden="true" />
     </div>
   );
 }

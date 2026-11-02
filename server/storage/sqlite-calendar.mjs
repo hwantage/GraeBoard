@@ -23,6 +23,7 @@ import {
   CALENDAR_MAX_RANGE_DAYS,
 } from "../../shared/calendar.js";
 import { readDocumentVersion } from "../document-storage.mjs";
+import { resolveSqliteDocumentLinks } from "./sqlite-document-links.mjs";
 
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
@@ -55,6 +56,8 @@ import {
   prepareCalendarPlacement,
   dragLayoutRange,
   calendarViewRange,
+  parseCalendarTaskFilters,
+  matchesCalendarTaskFilters,
   CALENDAR_ROUTES,
 } from "./calendar-service.mjs";
 
@@ -123,11 +126,28 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         .get(id),
     );
   }
+  // Each task's document count and whether any has content, as hydrateTasks
+  // reports them for the annual board.
+  const documentColumns = (task) =>
+    `(SELECT COUNT(*) FROM task_documents d WHERE d.task_id=${task}) AS documentCount,
+      (SELECT COALESCE(MAX(d.has_content),0) FROM task_documents d WHERE d.task_id=${task}) AS hasDocument`;
+  function documentSummary(visibility, id, row) {
+    const summary = visibility.task({
+      id,
+      documentCount: row.documentCount,
+      hasDocument: !!row.hasDocument,
+    });
+    return {
+      documentCount: summary.documentCount,
+      hasDocument: !!summary.hasDocument,
+    };
+  }
   function weeklyItems(teamId, userId, from, to) {
     const visibility = retentionView(db, teamId);
     return db
       .prepare(
-        `SELECT w.user_id AS userId,w.week_start AS weekStart,w.task_id AS taskId,w.title AS savedTitle,w.imported_at AS importedAt,t.deleted_at,t.id AS found,c.value AS currentTitle
+        `SELECT w.user_id AS userId,w.week_start AS weekStart,w.task_id AS taskId,w.title AS savedTitle,w.imported_at AS importedAt,t.deleted_at,t.id AS found,c.value AS currentTitle,
+      ${documentColumns("t.id")}
       FROM calendar_weekly_items w LEFT JOIN tasks t ON t.id=w.task_id AND t.team_id=w.team_id LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
       WHERE w.team_id=? AND w.week_start BETWEEN ? AND ?${userId ? " AND w.user_id=?" : ""}
       AND (w.user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=? AND u.active=1) OR EXISTS (SELECT 1 FROM sync_person_refs p WHERE p.team_id=w.team_id AND p.person_id=w.user_id))
@@ -140,15 +160,33 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         ...(userId ? [userId] : []),
         teamId,
       )
-      .map(({ deleted_at, found, currentTitle, savedTitle, ...item }) => ({
-        ...item,
-        title:
-          found && !deleted_at && !visibility.hidden("task", [item.taskId])
-            ? String(parse(currentTitle, savedTitle))
-            : savedTitle,
-        unavailable:
-          !found || !!deleted_at || visibility.hidden("task", [item.taskId]),
-      }));
+      .map(
+        ({
+          deleted_at,
+          found,
+          currentTitle,
+          savedTitle,
+          documentCount,
+          hasDocument,
+          ...item
+        }) => {
+          const available =
+            found && !deleted_at && !visibility.hidden("task", [item.taskId]);
+          return {
+            ...item,
+            title: available
+              ? String(parse(currentTitle, savedTitle))
+              : savedTitle,
+            unavailable: !available,
+            ...(available
+              ? documentSummary(visibility, item.taskId, {
+                  documentCount,
+                  hasDocument,
+                })
+              : { documentCount: 0, hasDocument: false }),
+          };
+        },
+      );
   }
   function addWeeklyItems({ teamId, userId, weekStart }, tasks) {
     const insert = db.prepare(
@@ -606,34 +644,73 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
     const query = request.query;
     teamAccess(request.user, query.teamId);
     member(query.teamId, query.userId);
+    const filters = parseCalendarTaskFilters(query.filters);
     // Manual selection spans years, statuses and assignees so past omissions
     // and future plans can refer to the same original task.
+    const matching = `FROM tasks t LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
+        WHERE t.team_id=? AND t.deleted_at IS NULL AND instr(normalize_search_text(COALESCE(json_extract(c.value,'$'),'')),?)>0
+      ORDER BY t.position,t.id`;
+    const args = [query.teamId, normalizeSearchQuery(query.q)];
+    let ids;
+    if (filters.length) {
+      // Attribute filters are applied before paging with the annual board's
+      // rule, so the cells of the filtered properties are read once.
+      const values = new Map();
+      for (const cell of db
+        .prepare(
+          `SELECT c.task_id AS taskId,c.key,c.value FROM cells c JOIN tasks t ON t.id=c.task_id
+        WHERE t.team_id=? AND t.deleted_at IS NULL AND c.key IN (SELECT value FROM json_each(?))`,
+        )
+        .all(
+          query.teamId,
+          json([...new Set(filters.map((filter) => filter.propertyId))]),
+        )) {
+        if (!values.has(cell.taskId)) values.set(cell.taskId, {});
+        values.get(cell.taskId)[cell.key] = parse(cell.value, "");
+      }
+      ids = db
+        .prepare(`SELECT t.id ${matching}`)
+        .all(...args)
+        .filter((row) =>
+          matchesCalendarTaskFilters(values.get(row.id) || {}, filters),
+        )
+        .slice(query.offset, query.offset + 51);
+    } else
+      ids = db
+        .prepare(`SELECT t.id ${matching} LIMIT 51 OFFSET ?`)
+        .all(...args, query.offset);
+    // Owner and status help choosing between tasks with similar titles.
     const rows = db
       .prepare(
-        `SELECT t.id,t.years,c.value AS title,
+        `SELECT t.id,t.years,n.value AS title,o.value AS owner,s.value AS status,
+      ${documentColumns("t.id")},
       EXISTS(SELECT 1 FROM calendar_weekly_items w WHERE w.team_id=t.team_id AND w.user_id=? AND w.week_start=? AND w.task_id=t.id) AS added
-      FROM tasks t LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
-        WHERE t.team_id=? AND t.deleted_at IS NULL AND instr(normalize_search_text(COALESCE(json_extract(c.value,'$'),'')),?)>0
-      ORDER BY t.position,t.id LIMIT 51 OFFSET ?`,
+      FROM json_each(?) j JOIN tasks t ON t.id=j.value
+      LEFT JOIN cells n ON n.task_id=t.id AND n.key='title'
+      LEFT JOIN cells o ON o.task_id=t.id AND o.key='owner'
+      LEFT JOIN cells s ON s.task_id=t.id AND s.key='status'
+      ORDER BY j.key`,
       )
       .all(
         query.userId,
         query.weekStart,
-        query.teamId,
-        normalizeSearchQuery(query.q),
-        query.offset,
+        json(ids.slice(0, 50).map((row) => row.id)),
       );
     const visibility = retentionView(db, query.teamId);
     return {
       tasks: visibility.tasks(
-        rows.slice(0, 50).map((row) => ({
+        rows.map((row) => ({
           id: row.id,
           title: String(parse(row.title, "제목 없음")),
           years: parse(row.years, []),
+          owner: parse(row.owner, "") ?? "",
+          status: String(parse(row.status, "") ?? ""),
+          documentCount: row.documentCount,
+          hasDocument: !!row.hasDocument,
           added: !!row.added,
         })),
       ),
-      nextOffset: rows.length > 50 ? query.offset + 50 : null,
+      nextOffset: ids.length > 50 ? query.offset + 50 : null,
     };
   };
   operations.addWeekly = (request) => {
@@ -660,6 +737,66 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
       );
     });
     return result;
+  };
+  // Removing an item only unlinks the task from that person's week. The
+  // original task, other weeks and other people's lists stay unchanged.
+  operations.removeWeekly = (request) => {
+    const data = request.body;
+    writable(request.user, data.teamId, data.userId);
+    return transaction(db, () => ({
+      removed: Number(
+        db
+          .prepare(
+            "DELETE FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
+          )
+          .run(data.teamId, data.userId, data.weekStart, data.taskId).changes,
+      ),
+      weekly: weeklyItems(
+        data.teamId,
+        data.userId,
+        data.weekStart,
+        data.weekStart,
+      ),
+    }));
+  };
+  // Undo links the same task again at its previous position. A deleted
+  // original can be linked again because the item showed it as unavailable.
+  operations.restoreWeekly = (request) => {
+    const data = request.body;
+    writable(request.user, data.teamId, data.userId);
+    return transaction(db, () => {
+      const task = db
+        .prepare(
+          "SELECT t.id,c.value AS title FROM tasks t LEFT JOIN cells c ON c.task_id=t.id AND c.key='title' WHERE t.id=? AND t.team_id=?",
+        )
+        .get(data.taskId, data.teamId);
+      requireThat(
+        task,
+        404,
+        "업무를 찾을 수 없어 주간 할 일에 되돌릴 수 없습니다.",
+      );
+      const restored = db
+        .prepare(
+          "INSERT OR IGNORE INTO calendar_weekly_items VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          data.teamId,
+          data.userId,
+          data.weekStart,
+          data.taskId,
+          String(parse(task.title, "") || "제목 없음"),
+          data.importedAt,
+        ).changes;
+      return {
+        restored: Number(restored),
+        weekly: weeklyItems(
+          data.teamId,
+          data.userId,
+          data.weekStart,
+          data.weekStart,
+        ),
+      };
+    });
   };
   operations.importWeekly = (request) => {
     const data = request.body;
@@ -1043,6 +1180,11 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
     const task = taskAccess(request.user, request.params.id);
     return { task: retentionView(db, task.teamId).task(task) };
   };
+  operations.resolveLinks = (request) =>
+    resolveSqliteDocumentLinks(
+      { db, teamAccess, user: request.user },
+      request.query.links,
+    );
   return {
     operations,
     calendarDocumentAccess: { entryAccess, read: document, summary },

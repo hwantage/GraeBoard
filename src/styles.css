@@ -242,6 +242,17 @@ small {
   flex: 1;
   min-height: 150px;
 }
+/* Narrow areas such as a calendar week column show a smaller character. */
+.loading-state.compact {
+  min-height: 0;
+  gap: 6px;
+  padding: 12px 0;
+  font-size: 11px;
+}
+.loading-state.compact .grae-loading {
+  width: 48px;
+  height: 48px;
+}
 .empty {
   padding: 55px 20px;
   display: flex;
@@ -1485,23 +1496,71 @@ small {
   scrollbar-color: #bacbc7 #f4f7f6;
   overscroll-behavior: contain;
 }
+/* The tail memo bar or panel sits under the table in the grid area, and the
+   table scrolls above it. */
+.grid-area.has-sheet-footer {
+  flex-direction: column;
+}
+.grid-area.has-sheet-footer > .sheet-scroll {
+  min-height: 0;
+}
 .sheet-scroll.has-sheet-footer {
   overflow-x: hidden;
+  /* A column keeps the horizontal scrollbar right above the memos even when
+     the table is short. */
+  display: flex;
+  flex-direction: column;
+  /* Keyboard moves keep rows above a classic horizontal scrollbar.
+     --sheet-rail-size is set by SheetHorizontalScroll. */
+  scroll-padding-bottom: var(--sheet-rail-size, 0px);
 }
+.sheet-scroll.has-sheet-footer > * {
+  flex-shrink: 0;
+}
+.sheet-scroll.has-sheet-footer > .sheet-horizontal-scroll {
+  margin-top: auto;
+}
+/* The rail holds only the room a classic scrollbar needs, so the memos sit
+   right under the rows. Its track hangs from the rail's bottom edge. */
 .sheet-horizontal-scroll {
   position: sticky;
   left: 0;
   bottom: 0;
   z-index: 16;
   width: 100%;
-  /* Keep the same gap above memos when horizontal scrolling is unnecessary. */
-  height: 14px;
+  height: var(--sheet-rail-size, 0px);
+}
+.sheet-horizontal-scroll-track,
+.sheet-scrollbar-probe {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #bacbc7 #f4f7f6;
+}
+.sheet-horizontal-scroll-track {
+  right: 0;
+  height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: #bacbc7 #f4f7f6;
   background: white;
+}
+/* Overlay scrollbars take no room: the track lies over the bottom of the
+   rows, shows its thumb while scrolling and lets clicks reach the cells. */
+.sheet-horizontal-scroll[data-scrollbar="overlay"]
+  .sheet-horizontal-scroll-track {
+  height: 14px;
+  background: transparent;
+  pointer-events: none;
+}
+/* Measures the scrollbar thickness with the track's scrollbar style. */
+.sheet-scrollbar-probe {
+  width: 40px;
+  height: 40px;
+  overflow: scroll;
+  visibility: hidden;
+  pointer-events: none;
 }
 .sheet-header {
   display: flex;
@@ -1763,7 +1822,9 @@ small {
   opacity: 0.35;
 }
 body.row-reordering,
-body.row-reordering * {
+body.row-reordering *,
+body.document-block-moving,
+body.document-block-moving * {
   cursor: grabbing !important;
   user-select: none !important;
 }
@@ -2323,7 +2384,8 @@ body.row-reordering * {
 .task-detail-modal > header > .button {
   flex-shrink: 0;
 }
-.task-detail-modal > header .document-expand {
+.task-detail-modal > header .document-expand,
+.task-detail-modal > header .document-link-copy {
   color: var(--ink);
 }
 .task-detail-modal .modal-body {
