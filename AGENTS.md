@@ -10,9 +10,11 @@
 
 ## 개선 작업 흐름
 
-1. **작업 공간**: 로컬 개발 서버가 도는 메인 체크아웃(`main`)에서 직접 고치지 않는다. Orca CLI로 `origin/main` 기준 워크트리를 만든다. 브랜치는 `hwantage/<작업-이름>`, 경로는 `~/orca/workspaces/weekly_plan/<작업-이름>`이 된다. `node_modules`는 메인 체크아웃 것을 심볼릭 링크로 쓰고 커밋하지 않는다.
+1. **작업 공간**: 로컬 개발 서버가 도는 메인 체크아웃(`main`)에서 직접 고치지 않는다. `origin/main` 기준 워크트리에서 `fix/…`·`feat/…` 브랜치로 작업한다. `node_modules`는 메인 체크아웃 것을 심볼릭 링크로 쓰고 커밋하지 않는다.
    ```sh
-   orca worktree create --repo path:/Users/hwantage/works/somansa/weekly_plan --name <작업-이름> --base-branch origin/main --setup skip --json
+   git fetch origin
+   git worktree add -b fix/<작업-이름> ~/orca/workspaces/weekly_plan/fix-<작업-이름> origin/main
+   ln -s /Users/hwantage/works/somansa/weekly_plan/node_modules ~/orca/workspaces/weekly_plan/fix-<작업-이름>/node_modules
    ```
 2. **구현·검증**: [검증](docs/DEVELOPMENT.md#검증) 절차(`TEST_PG_BIN=<PostgreSQL bin> npm test`, `npm run build`, `npm run build:edge`, 관련 브라우저 테스트)를 통과시키고, 변경 이력을 `docs/DEVELOPMENT.md`에 남긴다.
 3. **커밋·PR**: 커밋 메시지는 영어, PR 제목·설명은 한국어로 `main` 대상 PR을 올린다. DB·저장 형식 변경은 [DB 변경 지침](docs/DATABASE_CHANGES.md)의 승인을 먼저 받는다.
