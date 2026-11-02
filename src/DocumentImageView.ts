@@ -69,6 +69,16 @@ export function documentImageView(
   handle.dataset.tooltip = "드래그 또는 방향키로 크기 조절";
   const widthLabel = document.createElement("span");
   widthLabel.className = "document-image-size";
+  // An image this site never received (or whose file was lost) is shown as
+  // missing; deleting it and pasting it again stores it anew.
+  const missing = document.createElement("span");
+  missing.className = "document-image-missing";
+  missing.textContent = "이미지 없음 · 지우고 다시 붙여넣으세요";
+  missing.hidden = true;
+  const showMissing = (shown: boolean) => {
+    missing.hidden = !shown;
+    dom.classList.toggle("is-missing", shown);
+  };
   let drag: {
     id: number;
     x: number;
@@ -88,7 +98,10 @@ export function documentImageView(
     if (next.type !== node.type) return false;
     node = next;
     const src = documentImageSource(node.attrs.src);
-    if (src && img.getAttribute("src") !== src) img.src = src;
+    if (src && img.getAttribute("src") !== src) {
+      showMissing(false);
+      img.src = src;
+    }
     if (!src) img.removeAttribute("src");
     img.alt = node.attrs.alt || "";
     img.title = node.attrs.title || "";
@@ -119,7 +132,11 @@ export function documentImageView(
     preview();
   });
   img.addEventListener("load", () => {
+    showMissing(false);
     if (!drag) renderWidth(documentImageWidth(node.attrs.src));
+  });
+  img.addEventListener("error", () => {
+    if (img.getAttribute("src")) showMissing(true);
   });
   reset.addEventListener("click", () => commit(null));
   handle.addEventListener("pointerdown", (event) => {
@@ -179,7 +196,7 @@ export function documentImageView(
     }
   });
   actions.append(reset, enlarge);
-  dom.append(img, actions, handle, widthLabel);
+  dom.append(img, missing, actions, handle, widthLabel);
   update(node);
   return {
     dom,

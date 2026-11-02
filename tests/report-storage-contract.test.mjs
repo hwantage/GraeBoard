@@ -562,25 +562,23 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
   assert.equal((await reportOps()).length, before.length + 1);
 });
 
-// A copy repeats the source documents; when the image store lacks an image
-// they show, the refusal names those documents instead of asking to paste.
-test("PG copy creation names the documents whose images the store lacks", async (t) => {
+// A copy repeats the source documents as they are: an image the store lacks
+// is shown as missing in the copy too, and never stops the copy.
+test("PG copy creation goes on when the image store lacks an image", async (t) => {
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
   pg.env.BUCKET = bucket();
   const missing = `/api/document-images/${f.teamId}/${"a".repeat(64)}.webp`,
-    key = JSON.stringify(["task", f.taskId, randomUUID()]);
+    documentId = randomUUID(),
+    markdown = `본문\n\n![그림](${missing})`,
+    key = JSON.stringify(["task", f.taskId, documentId]);
   await pg.pool.query(
     "INSERT INTO graeboard.site_entities VALUES($1,'document',$2,$3,1,0)",
     [
       f.teamId,
       key,
-      JSON.stringify({
-        title: "그림 문서",
-        position: 1,
-        markdown: `본문\n\n![그림](${missing})`,
-      }),
+      JSON.stringify({ title: "그림 문서", position: 1, markdown }),
     ],
   );
   await pg.pool.query(
@@ -588,23 +586,24 @@ test("PG copy creation names the documents whose images the store lacks", async 
     [f.teamId, key],
   );
   const service = new ReportBusinessService(
-    new PostgresReportRepository({ context: pg.createContext() }),
-    f.user,
-  );
-  await assert.rejects(
-    service.create({
-      id: randomUUID(),
-      teamId: f.teamId,
-      year: 2026,
-      name: "missing image copy",
-      referenceDate: "2026-10-01",
-      view: defaultView(2026),
-      taskIds: [f.taskId],
-    }),
-    (error) =>
-      error.status === 400 &&
-      error.message.includes("이미지 1개가 서버에 없어") &&
-      error.message.includes("업무 「initial」의 문서 「그림 문서」") &&
-      error.details.missingImages[0] === missing,
-  );
+      new PostgresReportRepository({ context: pg.createContext() }),
+      f.user,
+    ),
+    id = randomUUID();
+  await service.create({
+    id,
+    teamId: f.teamId,
+    year: 2026,
+    name: "missing image copy",
+    referenceDate: "2026-10-01",
+    view: defaultView(2026),
+    taskIds: [f.taskId],
+  });
+  const copied = (
+    await pg.pool.query(
+      "SELECT payload FROM graeboard.site_entities WHERE entity='document' AND entity_key=$1",
+      [JSON.stringify(["report", id, f.taskId, documentId])],
+    )
+  ).rows[0];
+  assert.equal(JSON.parse(copied.payload).markdown, markdown);
 });

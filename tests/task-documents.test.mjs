@@ -1034,7 +1034,6 @@ test("이미지 업로드는 권한·실제 형식·크기를 검사하고 팀�
   assert.equal((await f.req(url.slice(4), "GET", undefined, null)).status, 401);
   assert.equal((await f.save(`![메모](${url})`, 0, "member")).status, 200);
   const missing = url.replace(/[a-f0-9]{64}\.webp$/, "0".repeat(64) + ".webp");
-  assert.equal((await f.save(`![없음](${missing})`, 1)).status, 400);
   assert.equal(
     (await f.save(`![다른 팀](${url.replace(f.teamId, randomUUID())})`, 1))
       .status,
@@ -1045,6 +1044,8 @@ test("이미지 업로드는 권한·실제 형식·크기를 검사하고 팀�
     200,
     "코드에 쓴 예제 URL은 실제 이미지가 아니다",
   );
+  // A missing image is shown as missing in the document, never refused.
+  assert.equal((await f.save(`![없음](${missing})`, 2)).status, 200);
   assert.deepEqual(documentImageUrls(`![메모][ref]\n\n[ref]: ${url}`), [url]);
   assert.equal(
     f.db.prepare("SELECT count(*) AS n FROM document_versions").get().n,

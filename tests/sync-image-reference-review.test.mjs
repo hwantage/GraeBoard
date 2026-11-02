@@ -495,3 +495,67 @@ test("actual Git receive skips tombstone-only and locally excluded images while 
     "later receive does not reinstall L-excluded content",
   );
 });
+
+// A document may point at an image whose file this site lost (or never had).
+// It is shown as missing; saving, publishing and a peer's receiving all go on,
+// and the peer installs the images Git does hold.
+test("actual Git publish and receive go on past a missing image file", async (t) => {
+  const f = await fixture(t);
+  const task = ok(
+    await f.api("/tasks", {
+      teamId: f.teamId,
+      year: 2026,
+      fields: { title: "missing image" },
+    }),
+  ).task;
+  const bytes = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "green" },
+    })
+      .webp()
+      .toBuffer(),
+    present = `/api/document-images/${f.teamId}/${digest(bytes)}.webp`,
+    missing = `/api/document-images/${f.teamId}/${"c".repeat(64)}.webp`;
+  writeDocumentImage(join(f.directory, "images"), present, bytes);
+  const documentId = randomUUID();
+  ok(await f.api(`/tasks/${task.id}/documents`, { id: documentId }));
+  ok(
+    await f.api(
+      `/tasks/${task.id}/documents/${documentId}`,
+      {
+        markdown: `![있음](${present})\n![없음](${missing})`,
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+      "PUT",
+    ),
+  );
+  await f.enable();
+  await f.app.locals.sync.get(f.teamId).run();
+  ok(await f.api(`/teams/${f.teamId}/sync/checkpoint`, {}));
+  const source = f.app.locals.sync.store(f.teamId);
+  assert.equal(source.readPending().length, 0, "the publication went through");
+  const peer = await fixture(t, { teamId: f.teamId, remote: f.remote });
+  const original = source.readLink();
+  peer.app.locals.sync.store(f.teamId).writeLink({
+    ...Object.fromEntries(
+      ["repo_id", "bootstrap_id", "writer_epoch", "updated_at"].map((key) => [
+        key,
+        original[key],
+      ]),
+    ),
+    profile_id: "test",
+    installation_id: peer.app.locals.sync.installationId,
+    mode: "importing",
+  });
+  peer.app.locals.sync.capture.refresh();
+  await peer.app.locals.sync.get(f.teamId).run({ receiveOnly: true });
+  const peerFile = (url) =>
+    documentImagePath(join(peer.directory, "images"), url);
+  assert.equal(existsSync(peerFile(present)), true);
+  assert.equal(existsSync(peerFile(missing)), false);
+  assert.equal(
+    peer.app.locals.sync.store(f.teamId).readLink().canonical_head,
+    original.canonical_head,
+    "the peer received the commit without the missing image",
+  );
+});

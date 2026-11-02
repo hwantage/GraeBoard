@@ -97,7 +97,7 @@ export class SqliteTaskCommands {
       rowStyle = d.copiedRow.rowStyle || {};
       documents = d.copiedRow.documents;
       for (const document of documents || [])
-        validateDocumentImages(document.markdown, d.teamId, documentImagesDir);
+        validateDocumentImages(document.markdown, d.teamId);
       cells = pastedTaskCells(d.copiedRow, team.settings, (key, value) =>
         validateCellValue(db, d.teamId, key, value, team.settings),
       );
