@@ -243,7 +243,8 @@ test("document, report and browser reads cost the same statements for few or man
       ["둘째", true],
     ],
   );
-  assert.equal(many.emptyReportTask.value.documents[0].markdown, "");
+  // With content, only stored documents, as the internal site answers.
+  assert.deepEqual(many.emptyReportTask.value.documents, []);
   const tasks = new Map(many.report.value.tasks.map((task) => [task.id, task]));
   assert.equal(tasks.size, 33);
   assert.equal(tasks.get(empty).documentCount, 1);
