@@ -189,6 +189,8 @@ export function deployTeamSite(env, { run = runCommand, cwd = "." } = {}) {
       "functions",
       "deploy",
       "graeboard",
+      // Newer Supabase CLIs ask before deploying and stop in CI without --yes.
+      "--yes",
       "--project-ref",
       config.projectRef,
       "--use-api",
@@ -238,6 +240,7 @@ export function deployTeamSite(env, { run = runCommand, cwd = "." } = {}) {
       ...Object.entries(edgeSecrets(config, resourceOrigin, keptAccessKey)).map(
         ([name, value]) => `${name}=${value}`,
       ),
+      "--yes",
     ],
     { env: supabase },
   );
