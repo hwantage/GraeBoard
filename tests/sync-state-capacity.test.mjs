@@ -260,8 +260,9 @@ test(
     const counts = Object.fromEntries(rows.map((r) => [r.entity, r.n]));
     assert.equal(counts.cell, 25612);
     assert.equal(counts.task, 467);
-    // Every calendar also owns a document entity, including empty Markdown.
-    assert.equal(counts.document, 2315 + 2307);
+    // A calendar entry has a document entity only once its body is saved;
+    // these entries never had one.
+    assert.equal(counts.document, 2315);
     assert.equal(counts.calendar, 2307);
     assert.equal(counts.report, 1);
     const report = (
