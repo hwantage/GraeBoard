@@ -56,10 +56,13 @@ function siteEnv() {
 }
 const edgeValues = (args) =>
   Object.fromEntries(
-    args.slice(4).map((pair) => {
-      const at = pair.indexOf("=");
-      return [pair.slice(0, at), pair.slice(at + 1)];
-    }),
+    args
+      .slice(4)
+      .filter((pair) => pair !== "--yes")
+      .map((pair) => {
+        const at = pair.indexOf("=");
+        return [pair.slice(0, at), pair.slice(at + 1)];
+      }),
   );
 
 test("TEAM_SITE_CONFIG and TEAM_SITE_SECRETS deploy the API, then the gateway, then both sides' secrets", (t) => {
