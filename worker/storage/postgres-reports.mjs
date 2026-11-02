@@ -22,6 +22,7 @@ import {
 } from "../../shared/validation.js";
 import { digestShared, equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
+import { imageReferences } from "../images.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
 import { documentListsUnder } from "./postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
@@ -108,6 +109,9 @@ async function execute(ctx, command, body, reportId) {
     });
   }
   if (command === "create") {
+    // Documents copied into the copy, to name the ones whose images the
+    // image store lacks: nothing was pasted, so asking to paste again misleads.
+    const copied = [];
     const teamId = body.teamId,
       id = body.id || crypto.randomUUID(),
       name = reportNameSchema.parse(body.name),
@@ -127,109 +131,137 @@ async function execute(ctx, command, body, reportId) {
         .map(({ id, name }) => ({ id, name }));
     dateSchema.parse(body.referenceDate);
     viewSchema.parse(body.view);
-    return ctx.data(
-      teamId,
-      async (s) => {
-        const exists = await s.get("report", [id]);
-        assert(
-          !exists,
-          409,
-          "사본 생성 요청이 변경되었습니다. 새 이름으로 다시 시도하세요.",
-        );
-        // Names come without each copy's sheet, so the check does not grow
-        // with the copies the team keeps.
-        assert(
-          !(await reportSummaries(s)).some((r) => r.payload.name === name),
-          409,
-          "같은 이름의 사본이 있습니다.",
-        );
-        const source = body.sourceId
-          ? await s.get("report", [body.sourceId])
-          : null;
-        assert(
-          !body.sourceId || (source && !source.deleted),
-          404,
-          "사본을 찾을 수 없습니다.",
-        );
-        let data;
-        if (source) data = structuredClone(source.payload.data);
-        else {
-          const selected = new Set(body.taskIds || []),
-            tasks = (
-              await taskList(s, { year, startMonth: body.view.startMonth })
-            ).filter((t) => selected.has(t.id));
+    return ctx
+      .data(
+        teamId,
+        async (s) => {
+          const exists = await s.get("report", [id]);
           assert(
-            tasks.length === selected.size,
+            !exists,
             409,
-            "일부 업무가 변경되었습니다.",
+            "사본 생성 요청이 변경되었습니다. 새 이름으로 다시 시도하세요.",
           );
-          data = {
-            tasks,
-            users: [
-              ...new Map(
-                [
-                  ...(await s.list("person")).map((r) => ({
-                    id: r.key[0],
-                    name: r.payload.name,
-                  })),
-                  ...people,
-                ].map((u) => [u.id, u]),
-              ).values(),
-            ],
-            view: body.view,
-            settings: await settingsFor(s),
-          };
-        }
-        // Only the documents being copied, grouped by task once: not every
-        // document of the team (other copies hold most of them), and not a
-        // scan of them per task.
-        const docs = new Map();
-        for (const d of await s.listChildren(
-          "document",
-          source ? ["report", body.sourceId] : ["task"],
-        )) {
-          const taskId = d.key.at(-2);
-          if (!docs.has(taskId)) docs.set(taskId, []);
-          docs.get(taskId).push(d);
-        }
-        for (const task of data.tasks) {
-          const sourceDocs = docs.get(task.id) || [];
-          task.documents = sourceDocs.map((d) => ({
-            id: d.key.at(-1),
-            title: d.payload.title,
-          }));
-          for (const doc of sourceDocs)
+          // Names come without each copy's sheet, so the check does not grow
+          // with the copies the team keeps.
+          assert(
+            !(await reportSummaries(s)).some((r) => r.payload.name === name),
+            409,
+            "같은 이름의 사본이 있습니다.",
+          );
+          const source = body.sourceId
+            ? await s.get("report", [body.sourceId])
+            : null;
+          assert(
+            !body.sourceId || (source && !source.deleted),
+            404,
+            "사본을 찾을 수 없습니다.",
+          );
+          let data;
+          if (source) data = structuredClone(source.payload.data);
+          else {
+            const selected = new Set(body.taskIds || []),
+              tasks = (
+                await taskList(s, { year, startMonth: body.view.startMonth })
+              ).filter((t) => selected.has(t.id));
+            assert(
+              tasks.length === selected.size,
+              409,
+              "일부 업무가 변경되었습니다.",
+            );
+            data = {
+              tasks,
+              users: [
+                ...new Map(
+                  [
+                    ...(await s.list("person")).map((r) => ({
+                      id: r.key[0],
+                      name: r.payload.name,
+                    })),
+                    ...people,
+                  ].map((u) => [u.id, u]),
+                ).values(),
+              ],
+              view: body.view,
+              settings: await settingsFor(s),
+            };
+          }
+          // Only the documents being copied, grouped by task once: not every
+          // document of the team (other copies hold most of them), and not a
+          // scan of them per task.
+          const docs = new Map();
+          for (const d of await s.listChildren(
+            "document",
+            source ? ["report", body.sourceId] : ["task"],
+          )) {
+            const taskId = d.key.at(-2);
+            if (!docs.has(taskId)) docs.set(taskId, []);
+            docs.get(taskId).push(d);
+          }
+          for (const task of data.tasks) {
+            const sourceDocs = docs.get(task.id) || [];
+            task.documents = sourceDocs.map((d) => ({
+              id: d.key.at(-1),
+              title: d.payload.title,
+            }));
+            for (const doc of sourceDocs) {
+              copied.push({
+                label: `업무 「${task.cells?.title?.value || "제목 없음"}」의 문서 「${doc.payload.title}」`,
+                payload: doc.payload,
+              });
+              await s.put(
+                "document",
+                ["report", id, task.id, doc.key.at(-1)],
+                doc.payload,
+              );
+            }
+          }
+          for (const memo of await s.listChildren(
+            "document",
+            source ? ["reportMemo", body.sourceId] : ["annual", String(year)],
+          )) {
+            copied.push({
+              label: `연간 메모 「${memo.payload.title}」`,
+              payload: memo.payload,
+            });
             await s.put(
               "document",
-              ["report", id, task.id, doc.key.at(-1)],
-              doc.payload,
+              ["reportMemo", id, memo.key.at(-1)],
+              memo.payload,
             );
-        }
-        for (const memo of await s.listChildren(
-          "document",
-          source ? ["reportMemo", body.sourceId] : ["annual", String(year)],
-        ))
-          await s.put(
-            "document",
-            ["reportMemo", id, memo.key.at(-1)],
-            memo.payload,
-          );
-        await s.put("report", [id], {
-          year: source?.payload.year || year,
-          name,
-          referenceDate: body.referenceDate,
-          createdBy: ctx.user.id,
-          createdAt: new Date().toISOString(),
-          data,
-        });
-        return { id };
-      },
-      {
-        write: true,
-        body: { ...body, operationId: "report-create:" + id },
-        action: "report",
-      },
-    );
+          }
+          await s.put("report", [id], {
+            year: source?.payload.year || year,
+            name,
+            referenceDate: body.referenceDate,
+            createdBy: ctx.user.id,
+            createdAt: new Date().toISOString(),
+            data,
+          });
+          return { id };
+        },
+        {
+          write: true,
+          body: { ...body, operationId: "report-create:" + id },
+          action: "report",
+        },
+      )
+      .catch((error) => {
+        const missing = new Set(error.details?.missingImages || []);
+        if (!missing.size) throw error;
+        const holders = copied
+          .filter((doc) =>
+            imageReferences(doc.payload, teamId).some((url) =>
+              missing.has(url),
+            ),
+          )
+          .map((doc) => doc.label);
+        assert(
+          false,
+          400,
+          `원본 문서의 이미지 ${missing.size}개가 서버에 없어 사본을 만들 수 없습니다${holders.length ? `: ${holders.slice(0, 3).join(", ")}${holders.length > 3 ? ` 외 ${holders.length - 3}건` : ""}` : ""}. 관리자에게 문서 이미지 복구를 요청하세요.`,
+          { missingImages: [...missing] },
+        );
+      });
   }
   if (command === "remove")
     return ctx.data(
