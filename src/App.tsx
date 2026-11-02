@@ -517,6 +517,8 @@ function Workspace({
     boardKey = useRef(""),
     mutationEpoch = useRef(0),
     remoteEpoch = useRef(0),
+    // 복사를 거절한 안내. 다음 복사가 성공하면 이 안내만 지운다.
+    copyError = useRef(""),
     // 표나 찾기로 선택을 바꾸면 늘어난다. 그 뒤 끝난 실행취소는 선택을 옮기지 않는다.
     selectionEpoch = useRef(0),
     cellEventCursor = useRef<string | null>(null),
@@ -4005,6 +4007,14 @@ function Workspace({
                   onView={(part) => changeView(part, true)}
                   onAdd={addTask}
                   onError={setError}
+                  onCopied={(message) => {
+                    if (message) setError(message);
+                    else if (copyError.current) {
+                      const shown = copyError.current;
+                      setError((current) => (current === shown ? "" : current));
+                    }
+                    copyError.current = message;
+                  }}
                   copyEditable={!!report && canAdd}
                   readOnly={
                     (!!report && (!editingReport || !canAdd)) ||

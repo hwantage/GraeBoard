@@ -337,22 +337,8 @@ export function changeSelection(targets, tasks, columns) {
       },
     ];
   areas.sort((a, b) => a.r1 - b.r1 || a.c1 - b.c1);
-  // 왼쪽 위에서 오른쪽 아래로 끌어 선택한 것과 같은 방향이다. Shift 확장은
-  // 왼쪽 위에서 시작하고, 행·열 전체는 머리글 선택과 같은 기준 셀을 쓴다.
-  const corner = (
-    /** @type {Area} */ { kind },
-    /** @type {number} */ r,
-    /** @type {number} */ c,
-  ) => ({
-    taskId: tasks[kind === "columns" ? 0 : r].id,
-    key: columns[kind === "rows" ? 0 : c].key,
-  });
   const area = (/** @type {Area} */ range) =>
-    /** @type {SelectionArea} */ ({
-      ...(range.kind ? { kind: range.kind } : {}),
-      anchor: corner(range, range.r1, range.c1),
-      focus: corner(range, range.r2, range.c2),
-    });
+    toSelectionArea(range, tasks, columns);
   const [first, ...rest] = areas;
   return {
     selection: {
@@ -370,4 +356,57 @@ export function changeSelection(targets, tasks, columns) {
               : {}),
           },
   };
+}
+
+/**
+ * 화면 좌표의 범위를 선택 영역으로 바꾼다. 왼쪽 위에서 오른쪽 아래로 끌어 선택한
+ * 것과 같은 방향이어서 Shift 확장은 왼쪽 위에서 시작하고, 행·열 전체는 머리글
+ * 선택과 같은 기준 셀을 쓴다.
+ * @param {Area} range @param {Task[]} tasks @param {{key: string}[]} columns
+ * @returns {SelectionArea}
+ */
+export function toSelectionArea(range, tasks, columns) {
+  const corner = (/** @type {number} */ r, /** @type {number} */ c) => ({
+    taskId: tasks[range.kind === "columns" ? 0 : r].id,
+    key: columns[range.kind === "rows" ? 0 : c].key,
+  });
+  return {
+    ...(range.kind ? { kind: range.kind } : {}),
+    anchor: corner(range.r1, range.c1),
+    focus: corner(range.r2, range.c2),
+  };
+}
+
+/**
+ * Excel처럼 선택한 영역에서 범위를 뺀다. 겹치지 않으면 null, 겹치면 남은 위·왼쪽·
+ * 오른쪽·아래 사각형이다. 행·열 전체 선택에서 남은 조각이 여전히 표의 모든 열·행에
+ * 걸치면 행·열 선택으로 남긴다.
+ * @param {Area} area @param {Range} remove
+ * @param {number} lastRow @param {number} lastColumn
+ * @returns {Area[] | null}
+ */
+export function subtractRange(area, remove, lastRow, lastColumn) {
+  const r1 = Math.max(area.r1, remove.r1),
+    r2 = Math.min(area.r2, remove.r2),
+    c1 = Math.max(area.c1, remove.c1),
+    c2 = Math.min(area.c2, remove.c2);
+  if (r1 > r2 || c1 > c2) return null;
+  const rows = area.kind === "rows" || area.kind === "all",
+    columns = area.kind === "columns" || area.kind === "all";
+  /** @param {Range} piece @returns {Area} */
+  const typed = (piece) => {
+    const allColumns = rows && piece.c1 === 0 && piece.c2 === lastColumn,
+      allRows = columns && piece.r1 === 0 && piece.r2 === lastRow;
+    return allColumns || allRows
+      ? { ...piece, kind: allColumns ? "rows" : "columns" }
+      : piece;
+  };
+  return [
+    { r1: area.r1, r2: r1 - 1, c1: area.c1, c2: area.c2 },
+    { r1, r2, c1: area.c1, c2: c1 - 1 },
+    { r1, r2, c1: c2 + 1, c2: area.c2 },
+    { r1: r2 + 1, r2: area.r2, c1: area.c1, c2: area.c2 },
+  ]
+    .filter((piece) => piece.r1 <= piece.r2 && piece.c1 <= piece.c2)
+    .map(typed);
 }

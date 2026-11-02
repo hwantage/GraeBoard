@@ -7,6 +7,8 @@ import {
   coversAll,
   nearbyRows,
   sheetChanges,
+  subtractRange,
+  toSelectionArea,
 } from "../src/selection-areas.js";
 
 const tasks = ["a", "b", "c", "d", "e"].map((id, i) => ({
@@ -282,4 +284,54 @@ test("현재 선택이 바뀐 셀을 모두 담으면 그대로 두고, 셀이 �
     coversAll([area(0, 99, 0, 99)], [area(0, 99, 0, 99)], 9999),
     false,
   );
+});
+
+test("선택에서 범위를 빼면 남은 사각형으로 나누고 행·열 전체 선택은 그대로 남긴다", () => {
+  // 겹치지 않으면 그대로 둔다.
+  assert.equal(subtractRange(area(0, 1, 0, 1), area(3, 3, 3, 3), 4, 4), null);
+  // 한 셀만 있는 영역은 사라진다.
+  assert.deepEqual(subtractRange(area(2, 2, 3, 3), area(2, 2, 3, 3), 4, 4), []);
+  // 가운데 셀을 빼면 위·왼쪽·오른쪽·아래로 나뉜다.
+  assert.deepEqual(
+    subtractRange(area(0, 2, 0, 2), area(1, 1, 1, 1), 4, 4).map(
+      ({ r1, r2, c1, c2 }) => [r1, r2, c1, c2],
+    ),
+    [
+      [0, 0, 0, 2],
+      [1, 1, 0, 0],
+      [1, 1, 2, 2],
+      [2, 2, 0, 2],
+    ],
+  );
+  // 행 전체 선택에서 한 행을 빼면 위·아래가 행 선택으로 남고, 한 셀을 빼면
+  // 같은 행의 나머지는 셀 영역이 된다.
+  assert.deepEqual(
+    subtractRange(area(0, 3, 0, 4, "rows"), area(1, 1, 0, 4), 4, 4),
+    [area(0, 0, 0, 4, "rows"), area(2, 3, 0, 4, "rows")].map(
+      ({ kind, ...r }) => ({ ...r, kind }),
+    ),
+  );
+  assert.deepEqual(
+    subtractRange(area(1, 1, 0, 4, "rows"), area(1, 1, 2, 2), 4, 4),
+    [
+      { r1: 1, r2: 1, c1: 0, c2: 1 },
+      { r1: 1, r2: 1, c1: 3, c2: 4 },
+    ],
+  );
+  assert.deepEqual(
+    subtractRange(area(0, 4, 1, 3, "columns"), area(0, 4, 2, 2), 4, 4),
+    [
+      { r1: 0, r2: 4, c1: 1, c2: 1, kind: "columns" },
+      { r1: 0, r2: 4, c1: 3, c2: 3, kind: "columns" },
+    ],
+  );
+  assert.deepEqual(
+    subtractRange(area(0, 4, 0, 4, "all"), area(0, 4, 0, 0), 4, 4),
+    [{ r1: 0, r2: 4, c1: 1, c2: 4, kind: "columns" }],
+  );
+  assert.deepEqual(toSelectionArea(area(1, 2, 0, 4, "rows"), tasks, columns), {
+    kind: "rows",
+    anchor: { taskId: "b", key: "title" },
+    focus: { taskId: "c", key: "title" },
+  });
 });

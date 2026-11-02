@@ -40,6 +40,14 @@ async function pasteContents(page: Page, contents: Record<string, string>) {
     el.dispatchEvent(event);
   }, contents);
 }
+async function dragSelection(page: Page, from: Locator, to: Locator) {
+  const a = (await from.boundingBox())!,
+    b = (await to.boundingBox())!;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+  await page.mouse.up();
+}
 // 가상 스크롤로 행이 빠져 있어도 표 영역 밖이면 화면 밖이다.
 async function expectOffscreen(target: Locator) {
   await expect
@@ -57,12 +65,14 @@ async function expectOffscreen(target: Locator) {
     .toBe(true);
 }
 // 가상 스크롤은 행으로 이동한 뒤 잠시 위치를 보정하므로, 직접 옮긴 위치가
-// 두 프레임 동안 유지되고 대상 행이 보일 때까지 다시 옮긴다.
+// 두 프레임 동안 유지되고 대상 행이 보일 때까지 다시 옮긴다. 맨 위로 갈 때는
+// 왼쪽 끝으로도 옮긴다(WebKit은 전체 선택 뒤 마지막 열로 가로 스크롤한다).
 async function scrollTo(page: Page, top: 0 | "bottom", visible: Locator) {
   const grid = page.getByRole("grid");
   await expect(async () => {
     const position = await grid.evaluate(async (el, to) => {
       el.scrollTop = to === "bottom" ? el.scrollHeight : to;
+      if (to === 0) el.scrollLeft = 0;
       const at = el.scrollTop;
       for (let i = 0; i < 2; i++)
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -192,18 +202,126 @@ test("떨어진 영역은 같은 행 또는 같은 열이면 하나의 표로 �
   await expect(alert).toContainText(
     "여러 영역을 복사할 때는 같은 행 또는 같은 열의 영역을 선택하세요.",
   );
-  // 붙여넣기는 여러 영역에서 계속 거절하고, 복사는 2,000셀 한도를 지킨다.
+  // 같은 행으로 다시 골라 복사가 성공하면 안내를 바로 지운다.
+  await at(0, "title").click();
+  await at(0, "2026-03-02").click({ modifiers: ["Meta"] });
+  copied = await copyContents(page);
+  expect(copied["text/plain"]).toBe("업무 01\tA1");
+  await expect(alert).toHaveCount(0);
+  // 붙여넣기는 여러 영역에서 계속 거절하고, 그 안내는 복사 성공으로 지우지 않는다.
   await pasteContents(page, { "text/plain": "붙여넣기" });
   await expect(alert).toContainText(
     "붙여넣을 때는 하나의 연속된 영역을 선택하세요.",
   );
   await expect(at(0, "title")).toHaveText("업무 01");
+  copied = await copyContents(page);
+  expect(copied["text/plain"]).toBe("업무 01\tA1");
+  await expect(alert).toContainText(
+    "붙여넣을 때는 하나의 연속된 영역을 선택하세요.",
+  );
+  // 2,000셀 한도의 거절도 다음 복사가 성공하면 지운다.
   await page.getByRole("button", { name: "모든 셀 선택", exact: true }).click();
   copied = await copyContents(page);
   expect(copied).toEqual({});
   await expect(alert).toContainText(
     "한 번에 2,000개 셀까지 복사·붙여넣을 수 있습니다.",
   );
+  await scrollTo(page, 0, at(0, "title"));
+  await at(0, "title").click();
+  copied = await copyContents(page);
+  expect(copied["text/plain"]).toBe("업무 01");
+  await expect(alert).toHaveCount(0);
+});
+
+test("⌘/Ctrl로 이미 선택한 셀·행·열을 누르거나 끌면 선택에서 뺀다", async ({
+  page,
+}) => {
+  const at = (row: number, key: string) =>
+    page.locator(`[data-cell="${taskIds[row]}:${key}"]`);
+  const selected = page.locator('.sheet-cell[aria-selected="true"]');
+  const rowHeader = (row: number) =>
+    page.getByRole("button", { name: `${row}행 전체 선택`, exact: true });
+  const selectedRows = page.locator('.row-number[aria-selected="true"]');
+  // 같은 열에서 하나씩 고른 셀 중 하나를 다시 누르면 그 셀만 빠진다.
+  await at(0, "title").click();
+  for (const row of [1, 2, 3])
+    await at(row, "title").click({ modifiers: ["Meta"] });
+  await expect(selected).toHaveCount(4);
+  await at(2, "title").click({ modifiers: ["Meta"] });
+  await expect(selected).toHaveCount(3);
+  await expect(at(2, "title")).toHaveAttribute("aria-selected", "false");
+  for (const row of [0, 1, 3])
+    await expect(at(row, "title")).toHaveAttribute("aria-selected", "true");
+  // 남은 영역을 복사할 수 있고, 활성 셀은 마지막 영역에 둔다.
+  expect((await copyContents(page))["text/plain"]).toBe(
+    "업무 01\n업무 02\n업무 04",
+  );
+  await expect(at(3, "title")).toHaveClass(/focused/);
+  // 사각형 가운데 셀을 빼면 나머지 여덟 칸이 남는다.
+  await at(0, "2026-03-02").click();
+  await at(2, "2026-03-16").click({ modifiers: ["Shift"] });
+  await expect(selected).toHaveCount(9);
+  await at(1, "2026-03-09").click({ modifiers: ["Meta"] });
+  await expect(selected).toHaveCount(8);
+  await expect(at(1, "2026-03-09")).toHaveAttribute("aria-selected", "false");
+  // 선택한 셀에서 시작한 ⌘/Ctrl 드래그는 끈 범위를 뺀다.
+  await at(0, "2026-03-02").click();
+  await at(2, "2026-03-16").click({ modifiers: ["Shift"] });
+  await page.keyboard.down("Meta");
+  await dragSelection(page, at(0, "2026-03-09"), at(2, "2026-03-09"));
+  await page.keyboard.up("Meta");
+  await expect(selected).toHaveCount(6);
+  for (const row of [0, 1, 2])
+    await expect(at(row, "2026-03-09")).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  expect((await copyContents(page))["text/plain"]).toBe("A1\t\nA2\t\nA3\t");
+  // 선택하지 않은 셀은 그대로 영역을 더한다.
+  await at(3, "2026-03-09").click({ modifiers: ["Meta"] });
+  await expect(selected).toHaveCount(7);
+  // 행 머리글: 선택한 행을 다시 누르면 그 행만 빠진다.
+  await rowHeader(1).click();
+  await rowHeader(3).click({ modifiers: ["Meta"] });
+  await expect(selectedRows).toHaveCount(2);
+  await rowHeader(1).click({ modifiers: ["Meta"] });
+  await expect(selectedRows).toHaveCount(1);
+  await expect(
+    page.locator(`[data-row-id="${taskIds[2]}"] .row-number`),
+  ).toHaveAttribute("aria-selected", "true");
+  // 행 머리글 드래그로 여러 행을 한 번에 뺀다.
+  await rowHeader(1).click();
+  await rowHeader(4).click({ modifiers: ["Shift"] });
+  await expect(selectedRows).toHaveCount(4);
+  await page.keyboard.down("Meta");
+  await dragSelection(page, rowHeader(2), rowHeader(3));
+  await page.keyboard.up("Meta");
+  await expect(selectedRows).toHaveCount(2);
+  for (const [row, value] of [
+    [0, "true"],
+    [1, "false"],
+    [2, "false"],
+    [3, "true"],
+  ] as const)
+    await expect(
+      page.locator(`[data-row-id="${taskIds[row]}"] .row-number`),
+    ).toHaveAttribute("aria-selected", value);
+  // 열 머리글도 같고, 마지막 선택을 빼면 선택이 없는 상태가 된다.
+  const first = page.locator('[data-header-key="2026-03-02"]');
+  const second = page.locator('[data-header-key="2026-03-09"]');
+  await first.click();
+  await second.click({ modifiers: ["Meta"] });
+  await expect(first).toHaveAttribute("aria-selected", "true");
+  await expect(second).toHaveAttribute("aria-selected", "true");
+  await first.click({ modifiers: ["Meta"] });
+  await expect(first).toHaveAttribute("aria-selected", "false");
+  await expect(second).toHaveAttribute("aria-selected", "true");
+  await second.click({ modifiers: ["Meta"] });
+  await expect(second).toHaveAttribute("aria-selected", "false");
+  await expect(selected).toHaveCount(0);
+  await at(0, "title").click();
+  await expect(at(0, "title")).toHaveClass(/focused/);
+  await expect(selected).toHaveCount(1);
 });
 
 test("원본 실행취소·재실행은 화면 밖의 바뀐 셀·행·열을 선택하고 그 위치로 이동한다", async ({
