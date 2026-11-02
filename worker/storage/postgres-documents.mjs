@@ -94,12 +94,21 @@ export async function documentKeysUnder(s, parent, { deleted = false } = {}) {
 // One owner's list from its live rows. A task or report task that never had a
 // document shows the empty main document; `used` says whether a deleted one
 // exists and is asked only when no live row does.
+// content "stored": the stored documents alone, as {id, title, markdown}. That
+// is what the internal site answers for a task's or copy row's documents with
+// their content, and all a pasted or restored row may carry (copiedRowSchema).
 async function listView(rows, kind, used, content) {
   rows.sort(
     (a, b) =>
       a.payload.position - b.payload.position ||
       a.key.at(-1).localeCompare(b.key.at(-1)),
   );
+  if (content === "stored")
+    return rows.map((r) => ({
+      id: r.key.at(-1),
+      title: r.payload.title,
+      markdown: r.payload.markdown,
+    }));
   if (!rows.length && ["task", "report"].includes(kind) && !(await used()))
     return [
       {
@@ -392,7 +401,10 @@ export class PostgresDocumentRepository {
           return !key
             ? {
                 documents: await documentList(s, scope, {
-                  content: content,
+                  content:
+                    content && ["task", "report"].includes(kind)
+                      ? "stored"
+                      : content,
                 }),
               }
             : (assert(row || virtual, 404, "문서를 찾을 수 없습니다."),

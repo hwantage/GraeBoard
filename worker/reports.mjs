@@ -51,7 +51,7 @@ export async function reportRoutes(ctx, path, method, body, query) {
         );
         tasks.push({
           id,
-          documents: await documents.list(id, { content: true }),
+          documents: await documents.list(id, { content: "stored" }),
         });
       }
       return { tasks };

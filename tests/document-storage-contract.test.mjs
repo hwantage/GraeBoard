@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { openDatabase } from "../server/db.mjs";
 import test from "node:test";
+import { copiedRowSchema } from "../shared/validation.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
@@ -97,6 +98,17 @@ async function documentContract({ f, service, counts, failOnce }) {
         ).markdown,
         first.markdown,
       );
+      // A copied row sends these back when pasted or restored, so both sites
+      // answer a task's or copy row's contents with what copiedRowSchema takes.
+      if (["task", "report"].includes(owner.kind)) {
+        const listed = (await service.list(owner, { content: true })).documents;
+        assert.deepEqual(
+          listed.map((doc) => Object.keys(doc).sort()),
+          listed.map(() => ["id", "markdown", "title"]),
+          owner.kind + " content listing",
+        );
+        copiedRowSchema.shape.documents.parse(listed);
+      }
       if (["annual", "reportMemo"].includes(owner.kind)) {
         const otherId = randomUUID();
         await service.create(owner, { id: otherId });

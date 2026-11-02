@@ -2518,15 +2518,29 @@ function Workspace({
     }
     return documents;
   }
+  // A pasted row's documents carry only what the server accepts for them
+  // (copiedRowSchema); a listing's revision or hasContent stays behind.
   async function documentsForCopy(task: Task) {
-    if (task.documents) return structuredClone(task.documents);
-    if (report && !report.tasks.some((t) => t.id === task.id)) return [];
-    const result = await api<{ documents: NonNullable<Task["documents"]> }>(
-      report
-        ? `/reports/${report.id}/tasks/${task.id}/documents?content=1`
-        : `/tasks/${task.id}/documents?content=1`,
-    );
-    return result.documents;
+    if (
+      report &&
+      !task.documents &&
+      !report.tasks.some((t) => t.id === task.id)
+    )
+      return [];
+    const documents =
+      task.documents ||
+      (
+        await api<{ documents: NonNullable<Task["documents"]> }>(
+          report
+            ? `/reports/${report.id}/tasks/${task.id}/documents?content=1`
+            : `/tasks/${task.id}/documents?content=1`,
+        )
+      ).documents;
+    return documents.map(({ id, title, markdown }) => ({
+      id,
+      title,
+      markdown,
+    }));
   }
 
   async function rowCommand(

@@ -216,11 +216,19 @@ unset GRAEBOARD_RESET_PASSWORD
 
 개발 소스는 원본 저장소의 `main`에 반영하고, 외부 팀 사이트에 내보낼 버전만 `release` 브랜치로 올립니다(`git push origin main:release` 또는 GitHub 화면의 `main` → `release` 풀 리퀘스트, [새 release 내보내기와 팀 Fork 반영](CLOUD_SETUP.md#새-release-내보내기와-팀-fork-반영)). 각 팀 Fork는 `release`를 따라 자기 Cloudflare·Supabase에 자동 배포하며([release 자동 배포](CLOUD_SETUP.md#release-자동-배포-팀-fork)), 사내 서버는 아래 절차로 따로 배포합니다. 동기화 형식이 바뀌는 릴리스는 [내부·외부 배포 순서](#내부외부-git-동기화-운영)에 맞춰 `release`로 올리는 시점을 정합니다.
 
+**사내 운영 서버는 `release` 브랜치를 실행합니다.** `main`은 개발 환경(개발 PC의 사내 서버와 `"branch": "main"`인 개발용 외부 사이트)에서 먼저 확인하는 브랜치이며, 확인을 마친 버전만 `release`로 올라갑니다([개발용 외부 사이트](CLOUD_SETUP.md#release-자동-배포-팀-fork)). 운영 서버 작업 디렉터리가 `main`에 있다면 처음 한 번 `git fetch origin` 후 `git checkout release`로 바꾸고, 이후 업데이트마다 `release`에서 받습니다.
+
+```sh
+git fetch origin
+git checkout release
+git pull --ff-only origin release
+```
+
 ### 배포 전 준비
 
 1. 현재 배포 커밋·런타임·환경 설정·실제 DB 및 이미지 경로를 기록합니다. 실제 운영 DB의 `PRAGMA user_version`을 읽기 전용으로 확인하고 새 릴리스와 비교합니다. 버전 확인을 위해 새 서버를 운영 DB에 먼저 연결하지 않습니다.
 2. 스키마·저장 형식·데이터 해석의 호환성 변경을 확인합니다. 변경이 있으면 [DB 변경 지침](DATABASE_CHANGES.md)에 따른 승인·구현·검증을 완료한 뒤 배포합니다.
-3. 운영 중인 경로와 분리해 새 소스를 준비하고 해당 런타임으로 `npm ci --include=dev`, `npm run build`, 변경에 필요한 [검증](DEVELOPMENT.md#검증)을 수행합니다. 빌드 도중 기존 서비스의 `dist/`·의존성을 교체하지 않습니다.
+3. 운영 중인 경로와 분리해 `release`의 새 소스를 준비하고 해당 런타임으로 `npm ci --include=dev`, `npm run build`, 변경에 필요한 [검증](DEVELOPMENT.md#검증)을 수행합니다. 빌드 도중 기존 서비스의 `dist/`·의존성을 교체하지 않습니다.
 4. 현재 버전 도구로 백업한 사본을 별도 DB·이미지 경로에 복구해 새 릴리스를 검증합니다. DB 변경이 있으면 사본에서 승인된 마이그레이션과 이전 릴리스로의 복구를 먼저 검증합니다. 운영 DB를 테스트 대상으로 사용하지 않습니다.
 5. 점검 시간, 쓰기 중단 방법, 최종 백업 위치, 이전 릴리스 및 복구에 필요한 환경 설정을 준비합니다.
 
