@@ -406,6 +406,7 @@ export function StandaloneRowPanel({
   readOnly,
   onClose,
   onCellsSaved,
+  onDocumentSaved,
 }: {
   task: Task;
   settings: Settings;
@@ -414,6 +415,7 @@ export function StandaloneRowPanel({
   readOnly?: boolean;
   onClose: () => void;
   onCellsSaved?: (result: BatchResult) => void;
+  onDocumentSaved?: (result: DocumentSaveResult) => void;
 }) {
   const [task, setTask] = useState(initial);
   return (
@@ -424,14 +426,15 @@ export function StandaloneRowPanel({
       users={users}
       readOnly={readOnly}
       onClose={onClose}
-      onDocumentSaved={(result) =>
+      onDocumentSaved={(result) => {
+        onDocumentSaved?.(result);
         setTask((previous) => ({
           ...previous,
           hasDocument: result.hasDocument,
           documentCount: result.documentCount,
           updatedAt: result.taskUpdatedAt,
-        }))
-      }
+        }));
+      }}
       onSaveProperty={async (payload) => {
         const result = await send<BatchResult>("/cells/batch", payload);
         onCellsSaved?.(result);
