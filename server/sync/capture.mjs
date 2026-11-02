@@ -8,7 +8,7 @@ import { HttpError } from "../../shared/validation.js";
 import { LINK_METADATA_COLUMNS } from "../../shared/sync-team-store.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
-import { readEntity } from "./entities.mjs";
+import { readEntity, isCalendarDocument } from "./entities.mjs";
 import { makeOperation, entityReferences } from "./operations.mjs";
 import {
   entityId,
@@ -163,13 +163,30 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         ));
       checkedTeams.add(teamId);
     }
-    const value =
-      beforeImage !== undefined
-        ? beforeImage
-        : readEntity(reader, teamId, entity, key, {
-            styles,
-            reports: beforeReports,
-          });
+    let value =
+        beforeImage !== undefined
+          ? beforeImage
+          : readEntity(reader, teamId, entity, key, {
+              styles,
+              reports: beforeReports,
+            }),
+      body = null;
+    // SQLite reads every calendar entry's document, saved or not. Shared state
+    // decides whether it exists: P or C has it, or, before the first shared
+    // head, genesis will (it holds the documents with a saved body). A
+    // document it does not have is created by the first body save.
+    if (value && isCalendarDocument(entity, key) && !prior.has(mapKey)) {
+      const local = prepare(
+        "SELECT e.version_id,l.canonical_head,EXISTS(SELECT 1 FROM sync_entities s WHERE s.team_id=e.team_id AND s.entity='document' AND s.entity_key=?) AS shared FROM calendar_entries e JOIN team_sync_links l ON l.team_id=e.team_id WHERE e.team_id=? AND e.id=?",
+      ).get(canonical(key), teamId, key[1]);
+      if (
+        !local.shared &&
+        (local.canonical_head !== null || local.version_id === null)
+      ) {
+        body = local.version_id;
+        value = null;
+      }
+    }
     if (value) {
       let pending = prior.get(mapKey);
       const restored = parentRestore(teamId, entity, key);
@@ -186,7 +203,16 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       value.generation = row?.generation || token;
       value.version = row?.version || token;
     }
-    before.set(mapKey, { teamId, entity, key, value });
+    before.set(mapKey, { teamId, entity, key, value, body });
+  };
+  // Whether this transaction saved the body of a calendar document that shared
+  // state does not have: its version differs from the one read before.
+  const calendarBodySaved = (item) => {
+    const version =
+      prepare(
+        "SELECT version_id FROM calendar_entries WHERE team_id=? AND id=?",
+      ).get(item.teamId, item.key[1])?.version_id ?? null;
+    return version !== null && version !== item.body;
   };
   db.function("graeboard_sync_before", (table, data) => {
     if (!active || suppressed || !links.size) return 0;
@@ -301,12 +327,28 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         const group = teams.get(item.teamId),
           key = entityId(item.entity, item.key);
         group.before[key] = item.value;
-        group.after[key] =
+        let after =
           afterImages.get(item.teamId + key) ??
           readEntity(reader, item.teamId, item.entity, item.key, {
             styles,
             reports: afterReports,
           });
+        // A calendar document is created only by saving its body, and only its
+        // body changes: renaming the entry leaves the document's title alone,
+        // as on the external site.
+        if (after && isCalendarDocument(item.entity, item.key)) {
+          if (item.value)
+            after = {
+              ...after,
+              payload: {
+                ...after.payload,
+                title: item.value.payload.title,
+                position: item.value.payload.position,
+              },
+            };
+          else if (!calendarBodySaved(item)) after = null;
+        }
+        group.after[key] = after;
       }
       for (const [teamId, group] of teams) {
         const link = links.get(teamId);
