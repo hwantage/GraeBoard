@@ -336,24 +336,20 @@ test("열린 꼬리 메모 복원은 표 위치를 유지하고 발표에서는 
     memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
   ).toContainText("발표에서 읽을 메모");
   await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(160);
-  // Position the collapsed toggle before measuring, so click auto-scrolling
-  // cannot stand in for revealing the newly opened document.
+  // The memos open as a panel under the table: the table keeps its place
+  // and the document shows without scrolling.
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await grid.evaluate((el) => {
     el.scrollTop = 0;
   });
   await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(0);
-  await toggle.scrollIntoViewIfNeeded();
-  const beforeOpen = await grid.evaluate((el) => el.scrollTop);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect
-    .poll(() => grid.evaluate((el) => el.scrollTop))
-    .toBeGreaterThan(beforeOpen);
   await expect(
     memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
   ).toBeInViewport();
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(0);
   await expect(toggle).toHaveCSS("font-size", "11px");
   expect((await toggle.boundingBox())!.height).toBe(
     (await page.locator(".format-toolbar").boundingBox())!.height,

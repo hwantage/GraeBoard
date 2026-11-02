@@ -748,6 +748,8 @@ export default function Grid({
     overscan: 12,
     getItemKey,
     scrollMargin: 32,
+    // Keep rows above a classic horizontal scrollbar (up to 18px), if any.
+    scrollPaddingEnd: footer ? 18 : 0,
     rangeExtractor,
   });
   useLayoutEffect(() => {
@@ -1559,7 +1561,7 @@ export default function Grid({
   );
   return (
     <div
-      className="grid-area"
+      className={`grid-area${footer ? " has-sheet-footer" : ""}`}
       style={
         {
           "--row-header-width": `${rowHeaderWidth}px`,
@@ -1893,8 +1895,8 @@ export default function Grid({
           </Button>
         )}
         {footer && <SheetHorizontalScroll width={totalWidth} />}
-        {footer}
       </div>
+      {footer}
       {headerMenu && (
         <GridHeaderMenu
           key={`${headerMenu.kind}:${headerMenu.index}`}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { TextSelection, type EditorState } from "@milkdown/kit/prose/state";
 import { isInTable } from "@milkdown/kit/prose/tables";
 
@@ -8,6 +8,9 @@ export type SlashItem = {
   keywords: string;
   icon: ReactNode;
   run: () => void;
+  disabled?: boolean;
+  // A heading is shown above the first item of each group.
+  group?: string;
 };
 export type SlashMatch = { from: number; to: number; query: string };
 
@@ -42,6 +45,7 @@ export function filterSlashItems(items: SlashItem[], query: string) {
 }
 
 export default function DocumentSlashMenu({
+  label = "편집 형식 선택",
   items,
   active,
   left,
@@ -50,6 +54,7 @@ export default function DocumentSlashMenu({
   onHover,
   onSelect,
 }: {
+  label?: string;
   items: SlashItem[];
   active: number;
   left: number;
@@ -69,23 +74,30 @@ export default function DocumentSlashMenu({
       ref={list}
       className="document-slash-menu"
       role="listbox"
-      aria-label="편집 형식 선택"
+      aria-label={label}
       data-flip={flip || undefined}
       style={{ left, top }}
     >
       {items.map((item, index) => (
-        <button
-          type="button"
-          role="option"
-          key={item.id}
-          aria-selected={index === active}
-          onMouseDown={(event) => event.preventDefault()}
-          onMouseEnter={() => onHover(index)}
-          onClick={() => onSelect(item)}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-        </button>
+        <Fragment key={item.id}>
+          {item.group && item.group !== items[index - 1]?.group && (
+            <div className="document-slash-menu-group" aria-hidden="true">
+              {item.group}
+            </div>
+          )}
+          <button
+            type="button"
+            role="option"
+            aria-selected={index === active}
+            disabled={item.disabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseEnter={() => onHover(index)}
+            onClick={() => onSelect(item)}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        </Fragment>
       ))}
     </div>
   );
