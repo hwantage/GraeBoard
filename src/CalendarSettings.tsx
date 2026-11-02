@@ -13,7 +13,54 @@ import {
   DAY_LABELS,
 } from "../shared/calendar.js";
 import type { CalendarContext, CalendarRule } from "./calendar-types";
-import type { FilterMode, Task } from "./types";
+import type { FilterMode, Property, Task } from "./types";
+
+// Text, date and number filters list the values of the week's year tasks.
+// They are read once per property kind change, not on every key press.
+export function usePropertyFilterTasks(
+  teamId: string,
+  property: Property | undefined,
+  week: string,
+) {
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{
+    key: string;
+    tasks: Task[];
+    error: string;
+  } | null>(null);
+  const needsTasks =
+    !!property &&
+    (property.kind === "text" ||
+      property.kind === "date" ||
+      property.kind === "number");
+  const year = Number(week.slice(0, 4));
+  const query = taskQuery(
+    teamId,
+    year,
+    Number(addDays(week, 6).slice(0, 4)) === year ? 1 : 2,
+  );
+  const key = JSON.stringify([query, attempt]);
+  const ready = result?.key === key;
+  useEffect(() => {
+    if (!needsTasks || ready) return;
+    const controller = new AbortController();
+    void api<{ tasks: Task[] }>(query, { signal: controller.signal })
+      .then(({ tasks }) => {
+        if (!controller.signal.aborted) setResult({ key, tasks, error: "" });
+      })
+      .catch((e: Error) => {
+        if (!controller.signal.aborted)
+          setResult({ key, tasks: [], error: e.message });
+      });
+    return () => controller.abort();
+  }, [query, key, needsTasks, ready]);
+  return {
+    tasks: ready ? result.tasks : [],
+    loading: needsTasks && !ready,
+    error: needsTasks && ready ? result.error : "",
+    retry: () => setAttempt((value) => value + 1),
+  };
+}
 
 export function CalendarWeekdays({
   weekdays,
@@ -119,44 +166,19 @@ export function CalendarRuleSettings({
   const [mode, setMode] = useState<FilterMode>(context.rule.mode);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{
-    key: string;
-    tasks: Task[];
-    error: string;
-  } | null>(null);
   const property = properties.find((p) => p.id === propertyId);
   const allowedProperty = property && canUseCalendarRuleProperty(property);
   const problem = calendarRuleProblem({ propertyId, values, mode }, properties);
-  const needsTasks =
-    allowedProperty &&
-    (property.kind === "text" ||
-      property.kind === "date" ||
-      property.kind === "number");
-  const week = calendarWeek(todayKey());
-  const year = Number(week.slice(0, 4));
-  const query = taskQuery(
+  const {
+    tasks,
+    loading,
+    error: loadError,
+    retry,
+  } = usePropertyFilterTasks(
     teamId,
-    year,
-    Number(addDays(week, 6).slice(0, 4)) === year ? 1 : 2,
+    allowedProperty ? property : undefined,
+    calendarWeek(todayKey()),
   );
-  const key = JSON.stringify([query, attempt]);
-  const ready = result?.key === key;
-  const loading = needsTasks && !ready;
-  const loadError = needsTasks && ready ? result.error : "";
-  useEffect(() => {
-    if (!needsTasks || ready) return;
-    const controller = new AbortController();
-    void api<{ tasks: Task[] }>(query, { signal: controller.signal })
-      .then(({ tasks }) => {
-        if (!controller.signal.aborted) setResult({ key, tasks, error: "" });
-      })
-      .catch((e: Error) => {
-        if (!controller.signal.aborted)
-          setResult({ key, tasks: [], error: e.message });
-      });
-    return () => controller.abort();
-  }, [query, key, needsTasks, ready]);
   return (
     <Modal
       title="주간 할 일 기준"
@@ -204,9 +226,7 @@ export function CalendarRuleSettings({
       {loadError && (
         <>
           <ErrorNote error={loadError} />
-          <Button onClick={() => setAttempt((value) => value + 1)}>
-            필터 값 다시 불러오기
-          </Button>
+          <Button onClick={retry}>필터 값 다시 불러오기</Button>
         </>
       )}
       {allowedProperty && !loading && !loadError && (
@@ -214,7 +234,7 @@ export function CalendarRuleSettings({
           <PropertyFilter
             key={property.id}
             property={property}
-            tasks={ready ? result.tasks : []}
+            tasks={tasks}
             users={context.members}
             selected={values}
             mode={mode}

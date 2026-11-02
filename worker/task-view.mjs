@@ -58,13 +58,16 @@ const summarize = (documents) => ({
 const CONTENT =
   "[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]";
 // Each task's live document count and whether any has content, aggregated in
-// SQL so a task list does not read every document's markdown.
-async function documentSummaries(s) {
+// SQL so a task list does not read every document's markdown. Given task IDs
+// limit it to those tasks, such as the weekly items a calendar shows.
+export async function documentSummaries(s, ids) {
   const summaries = new Map();
+  if (ids && !ids.length) return summaries;
   if (s.lists.has("document")) {
-    const groups = new Map();
+    const groups = new Map(),
+      wanted = ids && new Set(ids);
     for (const d of await s.list("document"))
-      if (d.key[0] === "task") {
+      if (d.key[0] === "task" && (!wanted || wanted.has(d.key[1]))) {
         if (!groups.has(d.key[1])) groups.set(d.key[1], []);
         groups.get(d.key[1]).push(d);
       }
@@ -73,8 +76,10 @@ async function documentSummaries(s) {
   }
   for (const row of (
     await s.tx.query(
-      "SELECT entity_key::jsonb->>1 AS task,COUNT(*)::int AS count,COALESCE(bool_or((payload::jsonb->>'markdown') ~ $2),false) AS content FROM site_entities WHERE team_id=$1 AND entity='document' AND deleted=0 AND left(entity_key,8)='[\"task\",' GROUP BY 1",
-      [s.teamId, CONTENT],
+      "SELECT entity_key::jsonb->>1 AS task,COUNT(*)::int AS count,COALESCE(bool_or((payload::jsonb->>'markdown') ~ $2),false) AS content FROM site_entities WHERE team_id=$1 AND entity='document' AND deleted=0 AND left(entity_key,8)='[\"task\",'" +
+        (ids ? " AND entity_key::jsonb->>1=ANY($3::text[])" : "") +
+        " GROUP BY 1",
+      ids ? [s.teamId, CONTENT, ids] : [s.teamId, CONTENT],
     )
   ).rows)
     summaries.set(row.task, { count: row.count, content: row.content });
