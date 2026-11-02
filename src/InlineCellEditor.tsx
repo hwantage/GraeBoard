@@ -126,7 +126,14 @@ export default function InlineCellEditor({
         input.parentElement?.style.removeProperty("height");
         input.parentElement?.style.removeProperty("top");
       }
-      input?.focus({ preventScroll: true });
+      // 검색창처럼 표 밖의 입력칸에 입력 중이면 선택만 옮기고 포커스는 둔다.
+      const active = document.activeElement;
+      if (!(
+        active instanceof HTMLElement &&
+        active.matches("input,textarea,select,[contenteditable=true]") &&
+        !input?.closest(".sheet-scroll")?.contains(active)
+      ))
+        input?.focus({ preventScroll: true });
       return;
     }
     // IME가 시작된 textarea를 교체하거나 다시 focus/select하지 않는다.
