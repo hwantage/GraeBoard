@@ -10,6 +10,8 @@ import {
   prepareCalendarPlacement,
   calendarViewRange,
   calendarPreview,
+  parseCalendarTaskFilters,
+  matchesCalendarTaskFilters,
   uuid as idSchema,
   titleSchema,
 } from "../../server/storage/calendar-service.mjs";
@@ -27,7 +29,13 @@ import { firstCalendarLane } from "../../shared/calendar-layout.js";
 import { CALENDAR_TAG_COLORS } from "../../shared/calendar-tags.js";
 import { equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
-import { taskCells, taskView, settingsFor, stamp } from "../tasks.mjs";
+import {
+  documentSummaries,
+  taskCells,
+  taskView,
+  settingsFor,
+  stamp,
+} from "../tasks.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });
 }
@@ -195,24 +203,34 @@ async function weekly(s, userId, from, to) {
     "cell",
     rows.map((r) => [r.key[2], "title"]),
   );
+  // Document counts of all listed tasks come from one aggregate query.
+  const documents = await documentSummaries(s, [
+    ...new Set(rows.map((r) => r.key[2])),
+  ]);
   const list = [];
   for (const r of rows) {
     const t = await s.get("task", [r.key[2]]),
-      title = await s.get("cell", [r.key[2], "title"]);
+      title = await s.get("cell", [r.key[2], "title"]),
+      available = t && !t.deleted && !t.payload.deletedAt,
+      summary = available && documents.get(r.key[2]);
     list.push({
       userId: r.key[0],
       weekStart: r.key[1],
       taskId: r.key[2],
-      title:
-        t && !t.deleted && !t.payload.deletedAt
-          ? String(title?.payload.value || r.payload.title)
-          : r.payload.title,
+      title: available
+        ? String(title?.payload.value || r.payload.title)
+        : r.payload.title,
       importedAt: stamp(r),
-      unavailable: !t || t.deleted || !!t.payload.deletedAt,
+      unavailable: !available,
+      documentCount: summary?.count || 0,
+      hasDocument: !!summary?.content,
     });
   }
   return list;
 }
+// One person's weekly list for a week, as the add and remove responses return.
+const weekItems = (s, body) =>
+  weekly(s, body.userId, body.weekStart, body.weekStart);
 const methods = new Map(
   CALENDAR_ROUTES.map((route) => [route.name, route.method]),
 );
@@ -496,28 +514,94 @@ async function calendarOperation(ctx, operation, params, body, query) {
   if (operation === "listTasks")
     return ctx.data(query.get("teamId"), async (s) => {
       await member(ctx, query.get("teamId"), query.get("userId"));
-      const tasks = (await taskCells(s, ["title"])).filter((t) =>
-          normalizeSearchQuery(String(t.cells.title?.value || "")).includes(
-            normalizeSearchQuery(query.get("q") || ""),
-          ),
+      const filters = parseCalendarTaskFilters(query.get("filters")),
+        search = normalizeSearchQuery(query.get("q") || ""),
+        tasks = (
+          await taskCells(s, [
+            "title",
+            "owner",
+            "status",
+            ...filters.map((filter) => filter.propertyId),
+          ])
+        ).filter(
+          (t) =>
+            normalizeSearchQuery(String(t.cells.title?.value || "")).includes(
+              search,
+            ) &&
+            matchesCalendarTaskFilters(
+              Object.fromEntries(
+                filters.map(({ propertyId }) => [
+                  propertyId,
+                  t.cells[propertyId]?.value,
+                ]),
+              ),
+              filters,
+            ),
         ),
-        items = await weekly(
+        added = new Set(
+          (await s.list("weekly"))
+            .filter(
+              (r) =>
+                r.key[0] === query.get("userId") &&
+                r.key[1] === query.get("weekStart"),
+            )
+            .map((r) => r.key[2]),
+        ),
+        offset = Math.max(0, Number(query.get("offset") || 0)),
+        page = tasks.slice(offset, offset + 50),
+        documents = await documentSummaries(
           s,
-          query.get("userId"),
-          query.get("weekStart"),
-          query.get("weekStart"),
-        ),
-        offset = Math.max(0, Number(query.get("offset") || 0));
+          page.map((t) => t.id),
+        );
       return {
-        tasks: tasks.slice(offset, offset + 50).map((t) => ({
+        tasks: page.map((t) => ({
           id: t.id,
           title: String(t.cells.title?.value || "제목 없음"),
           years: t.years,
-          added: items.some((w) => w.taskId === t.id),
+          owner: t.cells.owner?.value ?? "",
+          status: String(t.cells.status?.value ?? ""),
+          documentCount: documents.get(t.id)?.count || 0,
+          hasDocument: !!documents.get(t.id)?.content,
+          added: added.has(t.id),
         })),
         nextOffset: offset + 50 < tasks.length ? offset + 50 : null,
       };
     });
+  if (["removeWeekly", "restoreWeekly"].includes(operation)) {
+    await writable(ctx, body.teamId, body.userId);
+    return ctx.data(
+      body.teamId,
+      async (s) => {
+        const key = [body.userId, body.weekStart, body.taskId],
+          existing = await s.get("weekly", key),
+          linked = !!existing && !existing.deleted;
+        // Removing an item leaves a tombstone for synchronization; the
+        // original task and other weeks stay unchanged.
+        if (operation === "removeWeekly") {
+          if (linked)
+            await s.put("weekly", key, existing.payload, { deleted: true });
+          return { removed: Number(linked), weekly: await weekItems(s, body) };
+        }
+        // Undo links the task again, also when its original was deleted.
+        // PostgreSQL lists weekly items by key, so the position returns too.
+        const task = await s.get("task", [body.taskId]);
+        assert(
+          task && !task.deleted,
+          404,
+          "업무를 찾을 수 없어 주간 할 일에 되돌릴 수 없습니다.",
+        );
+        if (!linked)
+          await s.put("weekly", key, {
+            title: String(
+              (await s.get("cell", [body.taskId, "title"]))?.payload.value ||
+                "제목 없음",
+            ),
+          });
+        return { restored: Number(!linked), weekly: await weekItems(s, body) };
+      },
+      { write: true, body, action: "calendar-weekly" },
+    );
+  }
   if (["addWeekly", "importWeekly"].includes(operation)) {
     await writable(ctx, body.teamId, body.userId);
     dateSchema.parse(body.weekStart);
@@ -589,8 +673,10 @@ async function calendarOperation(ctx, operation, params, body, query) {
             400,
             "다른 팀 또는 삭제된 업무입니다.",
           );
-          const key = [body.userId, body.weekStart, id];
-          if (!(await s.get("weekly", key))) {
+          const key = [body.userId, body.weekStart, id],
+            existing = await s.get("weekly", key);
+          // A removed item stays as a tombstone and may be added again.
+          if (!existing || existing.deleted) {
             await s.put("weekly", key, {
               title: String(
                 (await s.get("cell", [id, "title"]))?.payload.value ||
@@ -603,7 +689,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
         return {
           added,
           existing: ids.length - added,
-          weekly: await weekly(s, body.userId, body.weekStart, body.weekStart),
+          weekly: await weekItems(s, body),
           weekStart: body.weekStart,
           weekEnd: addDays(body.weekStart, 6),
           annualWeek: addDays(body.weekStart, 1),
