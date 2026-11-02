@@ -469,16 +469,25 @@ async function contract({
   // Document links read the current titles of what the user can open.
   const missingId = randomUUID(),
     linkQuery = {
-      task: `${taskId},${missingId},${taskId}`,
-      calendar: [entry.id, shared.id, missingId].join(","),
+      links: [
+        `/links/task/${taskId}`,
+        `/links/task/${missingId}`,
+        `/links/calendar/${entry.id}`,
+        `/links/calendar/${shared.id}`,
+        `/links/calendar/${missingId}`,
+      ].join(","),
     },
     sortLinks = ({ links }) =>
-      links.sort((a, b) => (a.kind + a.id).localeCompare(b.kind + b.id));
+      links.sort((a, b) => a.path.localeCompare(b.path));
   const expectedLinks = sortLinks({
     links: [
-      { kind: "task", id: taskId, teamId, title: "Contract task" },
-      { kind: "calendar", id: entry.id, teamId, title: "Edited" },
-      { kind: "calendar", id: shared.id, teamId, title: "Shared viewer card" },
+      { path: `/links/task/${taskId}`, teamId, title: "Contract task" },
+      { path: `/links/calendar/${entry.id}`, teamId, title: "Edited" },
+      {
+        path: `/links/calendar/${shared.id}`,
+        teamId,
+        title: "Shared viewer card",
+      },
     ],
   });
   assert.deepEqual(
@@ -498,7 +507,7 @@ async function contract({
   assert.deepEqual((await service.resolveLinks({ query: {} })).links, []);
   await assert.rejects(
     Promise.resolve().then(() =>
-      service.resolveLinks({ query: { task: "not-a-task" } }),
+      service.resolveLinks({ query: { links: "/links/task/not-a-task" } }),
     ),
     { name: "ZodError" },
   );
@@ -506,7 +515,10 @@ async function contract({
     Promise.resolve().then(() =>
       service.resolveLinks({
         query: {
-          calendar: Array.from({ length: 101 }, () => randomUUID()).join(","),
+          links: Array.from(
+            { length: 51 },
+            () => `/links/calendar/${randomUUID()}`,
+          ).join(","),
         },
       }),
     ),
@@ -527,9 +539,11 @@ async function contract({
   await tombstone(entry.id);
   await rejects(() => service.getEntry({ params: { id: entry.id } }), 404);
   assert.deepEqual(
-    (await service.resolveLinks({ query: { calendar: entry.id } })).links.map(
-      (link) => link.id,
-    ),
+    (
+      await service.resolveLinks({
+        query: { links: `/links/calendar/${entry.id}` },
+      })
+    ).links,
     [],
     "a deleted entry is no longer resolved",
   );
@@ -787,7 +801,7 @@ test("M6 same calendar service and external HTTP routes accept a real PostgreSQL
   assert.equal(unpack(await response.json()).title, "Edited");
   const linkTitles = async (userId) => {
     const found = await fetch(
-      `http://127.0.0.1:${server.address().port}/api/document-links?task=${f.taskId}&calendar=${result.entry.id}`,
+      `http://127.0.0.1:${server.address().port}/api/document-links?links=/links/task/${f.taskId},/links/calendar/${result.entry.id}`,
       { headers: { cookie: "weekly_session=" + userId } },
     );
     assert.equal(found.status, 200);

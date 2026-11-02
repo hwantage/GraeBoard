@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
-import { todayKey } from "../../shared/domain.js";
+import { defaultView, todayKey } from "../../shared/domain.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string, taskIds: string[];
@@ -97,12 +97,14 @@ async function copied(
   browserName: string,
   button: Locator,
 ): Promise<{ text: string; html: string }> {
+  // Each copy button shows its own notice next to it.
+  const notice = button.locator("xpath=following-sibling::*[1]");
   if (browserName === "chromium") {
     await page
       .context()
       .grantPermissions(["clipboard-read", "clipboard-write"]);
     await button.click();
-    await expect(page.locator(".toast")).toBeVisible();
+    await expect(notice).toHaveText("링크를 복사했습니다.");
     return page.evaluate(async () => {
       const [item] = await navigator.clipboard.read();
       const read = async (type: string) =>
@@ -115,6 +117,7 @@ async function copied(
     });
   }
   await page.evaluate(() => {
+    (window as any).__copied = null;
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
@@ -128,10 +131,61 @@ async function copied(
     });
   });
   await button.click();
-  await expect
-    .poll(() => page.evaluate(() => !!(window as any).__copied))
-    .toBe(true);
+  await expect(notice).toHaveText("링크를 복사했습니다.");
   return page.evaluate(() => (window as any).__copied);
+}
+async function memo(page: Page, title: string, year = 2026, markdown = "") {
+  const id = randomUUID(),
+    path = `/teams/${teamId}/years/${year}/memos`;
+  await request(page, path, "POST", { id, title });
+  if (markdown)
+    await request(page, `${path}/${id}`, "PUT", {
+      markdown,
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+  return id;
+}
+const copySheet = (page: Page, name = "링크 사본") =>
+  request(page, "/reports", "POST", {
+    teamId,
+    year: 2026,
+    name,
+    referenceDate: "2026-10-26",
+    view: defaultView(2026),
+    taskIds,
+  }).then((report) => report.id as string);
+const memoCard = (page: Page, id: string) =>
+  page.locator(`.memo-document-card[data-document-id="${id}"]`);
+async function openMemos(page: Page) {
+  const toggle = page
+    .getByRole("region", { name: "연간 업무 메모 목록" })
+    .getByRole("button", { name: "꼬리 메모", exact: true });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+// The copy button sits immediately left of the full-page button.
+async function besideExpand(scope: Locator) {
+  const copy = scope.getByRole("button", { name: "링크 복사", exact: true });
+  const expand = scope.locator(".document-expand");
+  await expect(copy).toBeVisible();
+  expect(
+    await copy.evaluate((button) => {
+      // Skip this button's own notice when it is showing.
+      let next = button.nextElementSibling;
+      while (next?.classList.contains("toast")) next = next.nextElementSibling;
+      return next?.classList.contains("document-expand");
+    }),
+  ).toBe(true);
+  const [left, right] = await Promise.all([
+    copy.boundingBox(),
+    expand.boundingBox(),
+  ]);
+  expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
+  expect(right!.x - (left!.x + left!.width)).toBeLessThan(12);
+  expect(Math.abs(left!.y - right!.y)).toBeLessThan(2);
+  return copy;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -189,7 +243,6 @@ test("업무 상세의 링크 복사는 전체 페이지 버튼 왼쪽에서 주
   expect(clip.text).toBe(url);
   expect(clip.html).toContain(`href="${url}"`);
   expect(clip.html).toContain(">링크 대상 업무</a>");
-  await expect(target.locator(".toast")).toHaveText("링크를 복사했습니다.");
   await target.screenshot({ path: info.outputPath("copy-link-button.png") });
   await target.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(details(page)).toHaveCount(0);
@@ -424,7 +477,6 @@ test("일정 상세의 링크 복사도 전체 페이지 버튼 왼쪽에 있고
     new URL(`/links/calendar/${scheduled.id}`, page.url()).href,
   );
   expect(clip.html).toContain(">링크할 일정</a>");
-  await expect(dialog.locator(".toast")).toHaveText("링크를 복사했습니다.");
 });
 
 test("삭제했거나 열 수 없는 링크는 저장된 글자를 흐리게 보이고 누르면 안내한다", async ({
@@ -512,4 +564,226 @@ test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 �
   expect(await page.evaluate(() => (window as any).__opened)).toEqual([
     ["https://example.com/docs", "_blank", "noopener,noreferrer"],
   ]);
+});
+
+test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 버튼 왼쪽에 링크 복사가 있다", async ({
+  page,
+  browserName,
+}, info) => {
+  const id = await memo(page, "링크할 메모");
+  const report = await copySheet(page);
+  await page.reload();
+  await openMemos(page);
+  const card = memoCard(page, id);
+  let clip = await copied(page, browserName, await besideExpand(card));
+  expect(clip.text).toBe(
+    new URL(`/links/memo/${teamId}/2026/${id}`, page.url()).href,
+  );
+  expect(clip.html).toContain(">링크할 메모</a>");
+  await card
+    .locator(".memo-document-heading")
+    .screenshot({ path: info.outputPath("memo-copy-button.png") });
+
+  const tab = page.getByRole("tab", { name: "링크 사본", exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await openMemos(page);
+  clip = await copied(
+    page,
+    browserName,
+    await besideExpand(memoCard(page, id)),
+  );
+  expect(clip.text).toBe(
+    new URL(`/links/report-memo/${report}/${id}`, page.url()).href,
+  );
+  await page
+    .locator(`[data-cell="${taskIds[1]}:title"]`)
+    .click({ button: "right" });
+  const detail = details(page);
+  await expect(detail).toBeVisible();
+  clip = await copied(page, browserName, await besideExpand(detail));
+  expect(clip.text).toBe(
+    new URL(`/links/report-task/${report}/${taskIds[1]}`, page.url()).href,
+  );
+  expect(clip.html).toContain(">링크 대상 업무</a>");
+});
+
+test("메모 링크는 열린 상세를 닫고 그 연도의 꼬리 메모를 펼쳐 전체 페이지로 연다", async ({
+  page,
+}, info) => {
+  const current = await memo(page, "링크할 메모", 2026, "올해 메모 본문");
+  const previous = await memo(page, "지난해 메모", 2025, "지난해 메모 본문");
+  await saveTask(
+    page,
+    taskIds[0],
+    `[메모](/links/memo/${teamId}/2026/${current}) [지난해](/links/memo/${teamId}/2025/${previous})\n`,
+  );
+  const source = await open(page);
+  await expect(links(source)).toHaveText(["링크할 메모", "지난해 메모"]);
+  await links(source).nth(0).click();
+  await expect(details(page)).toHaveCount(0);
+  const full = page.getByRole("dialog", { name: "링크할 메모", exact: true });
+  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toContainText("올해 메모 본문");
+  await expect(
+    page
+      .getByRole("region", { name: "연간 업무 메모 목록" })
+      .getByRole("button", { name: "꼬리 메모", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await full.screenshot({ path: info.outputPath("memo-opened.png") });
+  await full.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(memoCard(page, current)).not.toHaveClass(/memo-full-page/);
+  await expect(memoCard(page, current)).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+
+  // Another year: the board moves to it and shows that year's memo.
+  const again = await open(page);
+  await links(again).nth(1).click();
+  const old = page.getByRole("dialog", { name: "지난해 메모", exact: true });
+  await expect(old).toHaveClass(/memo-full-page/);
+  await expect(old).toContainText("지난해 메모 본문");
+  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveCount(
+    0,
+  );
+  await old.getByRole("button", { name: "닫기", exact: true }).click();
+
+  // From a calendar entry: the entry closes and the annual screen opens.
+  const scheduled = await entry(page);
+  await request(page, `/calendar/entries/${scheduled.id}/document`, "PUT", {
+    markdown: `[메모](/links/memo/${teamId}/2026/${current})\n`,
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await page
+    .locator(`[data-entry-id="${scheduled.id}"] .calendar-entry-card`)
+    .first()
+    .click();
+  await links(calendarDetail(page)).click();
+  await expect(calendarDetail(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", { name: "링크할 메모", exact: true }),
+  ).toHaveClass(/memo-full-page/);
+  expect(new URL(page.url()).pathname).toBe("/");
+  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
+});
+
+test("사본 업무와 사본 메모 링크는 그 사본을 열고 사본의 업무 상세와 메모를 연다", async ({
+  page,
+}) => {
+  const id = await memo(page, "원본 메모", 2026, "원본 메모 본문");
+  const report = await copySheet(page);
+  await request(page, `/reports/${report}/memos/${id}`, "PATCH", {
+    title: "사본 메모 이름",
+    expectedTitle: "원본 메모",
+  });
+  await request(
+    page,
+    `/reports/${report}/tasks/${taskIds[1]}/documents/main`,
+    "PUT",
+    {
+      markdown: "사본 업무 문서",
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    },
+  );
+  // The copy keeps its own row title when the original is renamed.
+  await rename(page, taskIds[1], "원본만 바꾼 이름");
+  await saveTask(
+    page,
+    taskIds[0],
+    `[사본 업무](/links/report-task/${report}/${taskIds[1]}) [사본 메모](/links/report-memo/${report}/${id})\n`,
+  );
+  await page.reload();
+  const source = await open(page);
+  await expect(links(source)).toHaveText(["링크 대상 업무", "사본 메모 이름"]);
+  await links(source).nth(0).click();
+  const tab = page.getByRole("tab", { name: "링크 사본", exact: true });
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const copyTask = details(page);
+  await expect(
+    copyTask.getByRole("textbox", { name: "작업 편집", exact: true }),
+  ).toHaveValue("링크 대상 업무");
+  await expect(rich(copyTask)).toContainText("사본 업무 문서");
+  await copyTask.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(details(page)).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "원본", exact: true }).click();
+  await expect(tab).toHaveAttribute("aria-selected", "false");
+  const back = await open(page);
+  await links(back).nth(1).click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const full = page.getByRole("dialog", {
+    name: "사본 메모 이름",
+    exact: true,
+  });
+  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toContainText("원본 메모 본문");
+});
+
+test("링크로 연 일정 상세는 캘린더에서 연 것과 같은 모습이다", async ({
+  page,
+}, info) => {
+  const scheduled = await entry(page);
+  await saveTask(page, taskIds[0], `[일정](/links/calendar/${scheduled.id})\n`);
+  const look = async (dialog: Locator, name: string) => {
+    await expect(
+      dialog.getByRole("textbox", { name: "일정 제목", exact: true }),
+    ).toHaveValue("링크할 일정");
+    await expect(rich(dialog)).toBeVisible();
+    await page.mouse.move(0, 0);
+    const header = dialog.locator(":scope > header");
+    await header.screenshot({ path: info.outputPath(`${name}.png`) });
+    return {
+      header: await header.evaluate((element) => {
+        const dialog = element.parentElement!;
+        const style = (selector: string) => {
+          const css = getComputedStyle(element.querySelector(selector)!);
+          return [
+            css.color,
+            css.backgroundColor,
+            css.borderTopWidth,
+            css.borderTopColor,
+            css.fontSize,
+            css.fontWeight,
+            css.fontFamily,
+            css.height,
+          ].join(" ");
+        };
+        return {
+          dialog: [
+            getComputedStyle(dialog).backgroundColor,
+            getComputedStyle(dialog).color,
+            getComputedStyle(dialog).borderTopColor,
+          ].join(" "),
+          header: getComputedStyle(element).backgroundColor,
+          title: style(".calendar-entry-title"),
+          copy: style(".document-link-copy"),
+          expand: style(".document-expand"),
+          close: style(":scope > .button:last-child"),
+          focused: document.activeElement?.getAttribute("aria-label"),
+          ring: document.activeElement?.matches(":focus-visible"),
+        };
+      }),
+      size: (await header.boundingBox())!.height,
+    };
+  };
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await page
+    .locator(`[data-entry-id="${scheduled.id}"] .calendar-entry-card`)
+    .first()
+    .click();
+  const direct = await look(calendarDetail(page), "calendar-direct");
+  await calendarDetail(page)
+    .getByRole("button", { name: "닫기", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
+    .click();
+  const source = await open(page);
+  await links(source).click();
+  const linked = await look(calendarDetail(page), "calendar-linked");
+  expect(linked).toEqual(direct);
 });

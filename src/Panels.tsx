@@ -31,7 +31,6 @@ import {
   CalendarPlus,
   Maximize2,
   Minimize2,
-  Link,
 } from "lucide-react";
 import { api, send, download, taskQuery } from "./api";
 import { Modal, Button, ErrorNote } from "./components";
@@ -39,8 +38,8 @@ import Toast, { useToast } from "./Toast";
 import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import {
-  copyDocumentLink,
   updateDocumentLinkTitle,
   useOpenDocumentLink,
   type DocumentLinkTarget,
@@ -215,39 +214,6 @@ export const TaskDetailContent = forwardRef<
   );
 });
 
-// Copies a link to this detail for other documents (document-links.ts).
-export function CopyDocumentLinkButton({
-  target,
-  title,
-}: {
-  target: DocumentLinkTarget;
-  title: string;
-}) {
-  const [message, setMessage] = useToast();
-  const [failed, setFailed] = useState(false);
-  return (
-    <>
-      <Button
-        tooltip="링크 복사"
-        className="document-link-copy"
-        onClick={async () => {
-          try {
-            await copyDocumentLink(target, title.trim() || "제목 없음");
-            setFailed(false);
-            setMessage("링크를 복사했습니다.");
-          } catch {
-            setFailed(true);
-            setMessage("링크를 복사하지 못했습니다. 다시 시도해 주세요.");
-          }
-        }}
-      >
-        <Link size={16} aria-hidden="true" />
-      </Button>
-      <Toast message={message} failed={failed} />
-    </>
-  );
-}
-
 export function RowPanel({
   settings,
   task,
@@ -281,27 +247,30 @@ export function RowPanel({
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [documentFullPage, setDocumentFullPage] = useState(false);
-  // A copy's task has the original's ID; links open the original task.
-  const linkTarget = reportMode ? null : { kind: "task" as const, id: task.id };
-  useOpenDocumentLink(linkTarget);
+  // A copy's task keeps the original's ID, so its link also names the copy.
+  const linkTarget: DocumentLinkTarget = documentReport
+    ? { kind: "report-task", reportId: documentReport.id, id: task.id }
+    : { kind: "task", id: task.id };
   const leaving = useRef(false);
   async function leave(
     action: () => void | Promise<void>,
     keepDocumentDraft = false,
   ) {
-    if (leaving.current) return;
+    if (leaving.current) return false;
     leaving.current = true;
     try {
       if (
         detailRef.current &&
         !(await detailRef.current.flush(keepDocumentDraft))
       )
-        return;
+        return false;
       await action();
+      return true;
     } finally {
       leaving.current = false;
     }
   }
+  useOpenDocumentLink(linkTarget, () => leave(onClose));
   function act(action: string) {
     void leave(() => onAction?.(action));
   }
@@ -310,12 +279,10 @@ export function RowPanel({
       title="업무 상세"
       titleAction={
         <>
-          {linkTarget && (
-            <CopyDocumentLinkButton
-              target={linkTarget}
-              title={String(value(task, "title"))}
-            />
-          )}
+          <CopyDocumentLinkButton
+            target={linkTarget}
+            title={String(value(task, "title"))}
+          />
           <Button
             tooltip={
               documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
@@ -374,10 +341,9 @@ export function RowPanel({
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={async (request) => {
           const cells = await onSaveProperty(request);
-          if (linkTarget)
-            for (const cell of cells)
-              if (cell.taskId === task.id && cell.key === "title")
-                updateDocumentLinkTitle(linkTarget, String(cell.value));
+          for (const cell of cells)
+            if (cell.taskId === task.id && cell.key === "title")
+              updateDocumentLinkTitle(linkTarget, String(cell.value));
           return cells;
         }}
         copySaveError={copySaveError}

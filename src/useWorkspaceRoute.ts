@@ -96,11 +96,15 @@ export default function useWorkspaceRoute(
     current.current = entry;
     setRoute(next);
   }
+  // Says whether the screen is `next` afterwards.
   async function navigate(next: WorkspaceRoute) {
-    if (busy.current || next === current.current.route) return;
+    if (next === current.current.route) return true;
+    if (busy.current) return false;
     busy.current = true;
     try {
-      if (await prepareRef.current(next)) commit(next);
+      if (!(await prepareRef.current(next))) return false;
+      commit(next);
+      return true;
     } finally {
       busy.current = false;
     }

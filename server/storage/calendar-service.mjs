@@ -25,7 +25,10 @@ import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
 } from "../../shared/calendar-tags.js";
-import { DOCUMENT_LINK_BATCH } from "../../shared/document-links.js";
+import {
+  DOCUMENT_LINK_BATCH,
+  parseDocumentLinkPath,
+} from "../../shared/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();
@@ -135,11 +138,22 @@ const bodySchemas = {
     .object({ deletionId: uuid, previousRange: rangeSchema.optional() })
     .strict(),
 };
-const linkIdsSchema = z
+const linkPathsSchema = z
   .string()
   .default("")
   .transform((value) => [...new Set(value.split(",").filter(Boolean))])
-  .pipe(z.array(uuid).max(DOCUMENT_LINK_BATCH));
+  .pipe(
+    z
+      .array(
+        z
+          .string()
+          .refine(
+            (path) => !!parseDocumentLinkPath(path),
+            "문서 링크 주소를 확인하세요.",
+          ),
+      )
+      .max(DOCUMENT_LINK_BATCH),
+  );
 const querySchemas = {
   listTags: z.object({
     scope: z.enum(["personal", "team"]).default("personal"),
@@ -165,7 +179,7 @@ const querySchemas = {
     q: z.string().max(120).default(""),
     offset: z.coerce.number().int().min(0).max(100000).default(0),
   }),
-  resolveLinks: z.object({ task: linkIdsSchema, calendar: linkIdsSchema }),
+  resolveLinks: z.object({ links: linkPathsSchema }),
 };
 export const CALENDAR_ROUTES = [
   {
@@ -294,8 +308,8 @@ export const CALENDAR_ROUTES = [
     path: "/calendar/tasks/:id",
     status: 200,
   },
-  // Current titles of linked tasks and calendar entries. The repositories
-  // that open a task or an entry from the calendar also check these reads.
+  // Current titles of linked tasks, entries, memos and copy rows. The
+  // repositories that open a task or an entry from the calendar answer it.
   {
     name: "resolveLinks",
     method: "GET",

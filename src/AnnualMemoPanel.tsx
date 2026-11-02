@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useId,
   useImperativeHandle,
   useRef,
@@ -17,8 +18,14 @@ export default forwardRef<
     userId: string;
     readOnly: boolean;
     reportId?: string;
+    // A document link asking to show one of these memos.
+    openRequest?: { id: string; nonce: number } | null;
+    onOpened?: () => void;
   }
->(function AnnualMemoPanel({ teamId, year, userId, readOnly, reportId }, ref) {
+>(function AnnualMemoPanel(
+  { teamId, year, userId, readOnly, reportId, openRequest, onOpened },
+  ref,
+) {
   const storageKey = `weekly-plan:memo-open:${userId}:${teamId}:${reportId || year}`;
   const [opened, setOpened] = useState(() => {
     try {
@@ -42,6 +49,9 @@ export default forwardRef<
       (await panel.current?.selectDocument(id)) ?? false,
     scrollToRatio: (ratio) => panel.current?.scrollToRatio(ratio),
   }));
+  useEffect(() => {
+    if (openRequest) rememberOpened(true);
+  }, [openRequest?.nonce]);
   function rememberOpened(next: boolean) {
     setOpened(next);
     try {
@@ -171,6 +181,13 @@ export default forwardRef<
               `weekly-plan:memo:${userId}:${teamId}:${reportId || year}:${id}`
             }
             readOnly={readOnly}
+            documentLink={(id) =>
+              reportId
+                ? { kind: "report-memo", reportId, id }
+                : { kind: "memo", teamId, year, id }
+            }
+            openRequest={openRequest}
+            onOpened={onOpened}
             onSaved={() => {}}
             onListChanged={() => {}}
             onLoadingChange={() => {}}

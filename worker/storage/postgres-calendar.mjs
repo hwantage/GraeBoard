@@ -27,13 +27,8 @@ import { firstCalendarLane } from "../../shared/calendar-layout.js";
 import { CALENDAR_TAG_COLORS } from "../../shared/calendar-tags.js";
 import { equal } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";
-import {
-  taskCells,
-  taskView,
-  settingsFor,
-  stamp,
-  excludedYears,
-} from "../tasks.mjs";
+import { taskCells, taskView, settingsFor, stamp } from "../tasks.mjs";
+import { resolvePostgresDocumentLinks } from "./postgres-document-links.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });
 }
@@ -955,97 +950,11 @@ async function calendarOperation(ctx, operation, params, body, query) {
       settings: await settingsFor(s),
     }));
   }
-  if (operation === "resolveLinks") {
-    // Each readable team is read once for all links: tasks, their title
-    // cells and entries in one query each, as getTask/getEntry would find them.
-    const ids = (name) => (query.get(name) || "").split(",").filter(Boolean),
-      taskIds = ids("task"),
-      entryIds = ids("calendar"),
-      links = [];
-    if (!taskIds.length && !entryIds.length) return { links };
-    for (const team of await ctx.teams()) {
-      if (team.status !== "active") continue;
-      const found = await ctx.data(team.id, async (s) => {
-        const result = [],
-          live = (row) => row && !row.deleted && !row.payload.deletedAt;
-        if (taskIds.length) {
-          const excluded = await excludedYears(s),
-            tasks = await s.getMany(
-              "task",
-              taskIds.map((id) => [id]),
-            ),
-            titles = await s.getMany(
-              "cell",
-              taskIds.map((id) => [id, "title"]),
-            );
-          tasks.forEach((row, index) => {
-            const years = row?.payload.years || [];
-            if (
-              live(row) &&
-              !(years.length && years.every((year) => excluded.has(year)))
-            )
-              result.push({
-                kind: "task",
-                id: row.key[0],
-                teamId: team.id,
-                title: String(
-                  (!titles[index]?.deleted && titles[index]?.payload.value) ||
-                    "",
-                ),
-              });
-          });
-        }
-        if (entryIds.length) {
-          const entries = (
-              await s.getMany(
-                "calendar",
-                entryIds.map((id) => [id]),
-              )
-            ).filter(live),
-            owners = [
-              ...new Set(
-                entries.map((row) => row.payload.userId).filter(Boolean),
-              ),
-            ],
-            active = new Set(
-              owners.length
-                ? (
-                    await ctx.controlStore.members(team.id, {
-                      activeOnly: true,
-                    })
-                  ).map((user) => user.id)
-                : [],
-            ),
-            others = owners.filter((id) => !active.has(id)),
-            people = new Set(
-              (
-                await s.getMany(
-                  "person",
-                  others.map((id) => [id]),
-                )
-              )
-                .filter(Boolean)
-                .map((row) => row.key[0]),
-            );
-          for (const row of entries)
-            if (
-              row.payload.userId === null ||
-              active.has(row.payload.userId) ||
-              people.has(row.payload.userId)
-            )
-              result.push({
-                kind: "calendar",
-                id: row.key[0],
-                teamId: team.id,
-                title: row.payload.title,
-              });
-        }
-        return result;
-      });
-      links.push(...found);
-    }
-    return { links };
-  }
+  if (operation === "resolveLinks")
+    return resolvePostgresDocumentLinks(
+      ctx,
+      (query.get("links") || "").split(",").filter(Boolean),
+    );
   return undefined;
 }
 

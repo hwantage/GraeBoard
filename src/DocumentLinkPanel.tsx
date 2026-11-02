@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { api, ApiError } from "./api";
 import { StandaloneRowPanel } from "./Panels";
 import CalendarEntryPanel from "./CalendarEntryPanel";
 import CalendarTagManager from "./CalendarTags";
 import { canContribute, canManageTeam } from "../shared/domain.js";
+import { documentLinkPath } from "../shared/document-links.js";
 import {
   UNAVAILABLE_LINK_MESSAGE,
   type DocumentLinkTarget,
@@ -15,11 +16,23 @@ export type OpenedDocumentLink =
   | { kind: "task"; task: Task; context: CalendarContext }
   | { kind: "calendar"; entry: CalendarEntry; context: CalendarContext };
 
+// The team of a memo or copy link the user can open. These open in their own
+// sheet, so the title lookup is the check.
+export async function findDocumentLink(target: DocumentLinkTarget) {
+  const path = documentLinkPath(target);
+  const { links } = await api<{
+    links: { path: string; teamId: string }[];
+  }>(`/document-links?${new URLSearchParams({ links: path })}`);
+  const found = links.find((link) => link.path === path);
+  if (!found) throw new Error(UNAVAILABLE_LINK_MESSAGE);
+  return found.teamId;
+}
+
 // The same reads the calendar uses to open a task of any year or an entry,
 // with the target team's settings and members. Missing or forbidden targets
 // share one message.
 export async function loadDocumentLink(
-  target: DocumentLinkTarget,
+  target: DocumentLinkTarget & { kind: "task" | "calendar" },
 ): Promise<OpenedDocumentLink> {
   try {
     if (target.kind === "task") {
@@ -50,12 +63,14 @@ export default function DocumentLinkPanel({
   link,
   user,
   readOnly,
+  calendarTheme,
   onClose,
   onDeleted,
 }: {
   link: OpenedDocumentLink;
   user: User;
   readOnly: boolean;
+  calendarTheme: { theme: string; palette: string; style?: CSSProperties };
   onClose: () => void;
   onDeleted: (entry: CalendarEntry) => void;
 }) {
@@ -82,8 +97,17 @@ export default function DocumentLinkPanel({
         ? user.teamIds.includes(entry.teamId)
         : owner === user.id && canContribute(user, entry.teamId)),
     ownTags = tags.filter((tag) => tag.userId === owner);
+  // The entry window needs the calendar screen's scope and theme, as when it
+  // opens there: `.workspace[data-screen=calendar]` sets the palette and
+  // `.calendar-workspace` the window's own rules. The scope adds no box.
   return (
-    <>
+    <div
+      className="workspace calendar-workspace"
+      data-screen="calendar"
+      data-calendar-theme={calendarTheme.theme}
+      data-calendar-palette={calendarTheme.palette}
+      style={{ ...calendarTheme.style, display: "contents" }}
+    >
       <CalendarEntryPanel
         entry={entry}
         tags={ownTags}
@@ -113,6 +137,6 @@ export default function DocumentLinkPanel({
           onClose={() => setManagingTags(false)}
         />
       )}
-    </>
+    </div>
   );
 }

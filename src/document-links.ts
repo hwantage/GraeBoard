@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { api } from "./api";
 import {
   DOCUMENT_LINK_BATCH,
@@ -6,18 +6,21 @@ import {
   parseDocumentLinkPath,
 } from "../shared/document-links.js";
 
-// Links between documents point at a task detail or a calendar entry. The
-// Markdown stores `/links/<kind>/<id>` (shared/document-links.js); the
-// clipboard carries this site's absolute address of the same path.
-export type DocumentLinkKind = "task" | "calendar";
-export type DocumentLinkTarget = { kind: DocumentLinkKind; id: string };
+// Links between documents point at a task detail, a calendar entry, a tail
+// memo or a copy's task detail or memo. The Markdown stores the app path
+// (shared/document-links.js); the clipboard carries this site's absolute
+// address of the same path.
+export type DocumentLinkTarget =
+  | { kind: "task" | "calendar"; id: string }
+  | { kind: "memo"; teamId: string; year: number; id: string }
+  | { kind: "report-task" | "report-memo"; reportId: string; id: string };
 export type DocumentLinkTitle =
   | { status: "loading" }
   | { status: "ready"; title: string }
   | { status: "unavailable" };
 
-export const documentLinkKey = ({ kind, id }: DocumentLinkTarget) =>
-  `${kind}:${id}`;
+export const documentLinkKey = (target: DocumentLinkTarget): string =>
+  documentLinkPath(target);
 export const documentLinkHref = (target: DocumentLinkTarget): string =>
   documentLinkPath(target);
 export const documentLinkUrl = (target: DocumentLinkTarget) =>
@@ -106,7 +109,7 @@ const openTitles = new Set<DocumentLinkTitles>();
 export class DocumentLinkTitles {
   private titles = new Map<string, DocumentLinkTitle>();
   private watchers = new Map<string, Set<() => void>>();
-  private queued = new Map<string, DocumentLinkTarget>();
+  private queued = new Set<string>();
   private waiting = new Map<string, (() => void)[]>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private refreshed = 0;
@@ -132,7 +135,7 @@ export class DocumentLinkTitles {
     const key = documentLinkKey(target);
     if (!this.watchers.has(key)) this.watchers.set(key, new Set());
     this.watchers.get(key)!.add(listener);
-    if (!this.titles.has(key)) this.request(target);
+    if (!this.titles.has(key)) this.request(key);
     return () => {
       const listeners = this.watchers.get(key);
       listeners?.delete(listener);
@@ -144,69 +147,51 @@ export class DocumentLinkTitles {
     return new Promise<void>((resolve) => {
       const key = documentLinkKey(target);
       this.waiting.set(key, [...(this.waiting.get(key) || []), resolve]);
-      this.request(target);
+      this.request(key);
     });
   }
   refresh() {
-    for (const key of this.watchers.keys()) {
-      const [kind, id] = key.split(":") as [DocumentLinkKind, string];
-      this.request({ kind, id });
-    }
+    for (const key of this.watchers.keys()) this.request(key);
   }
   set(target: DocumentLinkTarget, title: DocumentLinkTitle) {
-    const key = documentLinkKey(target);
+    this.setKey(documentLinkKey(target), title);
+  }
+  private setKey(key: string, title: DocumentLinkTitle) {
     this.titles.set(key, title);
     for (const listener of this.watchers.get(key) || []) listener();
   }
-  private request(target: DocumentLinkTarget) {
-    this.queued.set(documentLinkKey(target), target);
+  private request(key: string) {
+    this.queued.add(key);
     this.timer ??= setTimeout(() => void this.lookup(), 0);
   }
   private async lookup() {
     this.timer = null;
     this.refreshed = Date.now();
-    const targets = [...this.queued.values()];
+    const keys = [...this.queued];
     this.queued.clear();
-    for (let offset = 0; offset < targets.length;) {
-      // At most DOCUMENT_LINK_BATCH IDs of each kind per request.
-      const batch = { task: [] as string[], calendar: [] as string[] };
-      while (
-        offset < targets.length &&
-        batch[targets[offset].kind].length < DOCUMENT_LINK_BATCH
-      )
-        batch[targets[offset].kind].push(targets[offset++].id);
-      const asked = [
-        ...batch.task.map((id) => ({ kind: "task" as const, id })),
-        ...batch.calendar.map((id) => ({ kind: "calendar" as const, id })),
-      ];
+    for (let offset = 0; offset < keys.length; offset += DOCUMENT_LINK_BATCH) {
+      const asked = keys.slice(offset, offset + DOCUMENT_LINK_BATCH);
       try {
         const { links } = await api<{
-          links: (DocumentLinkTarget & { title: string })[];
+          links: { path: string; title: string }[];
         }>(
-          `/document-links?${new URLSearchParams(
-            Object.entries(batch)
-              .filter(([, ids]) => ids.length)
-              .map(([kind, ids]) => [kind, ids.join(",")]),
-          )}`,
+          `/document-links?${new URLSearchParams({ links: asked.join(",") })}`,
         );
         if (!openTitles.has(this)) return;
-        const found = new Map(
-          links.map((link) => [documentLinkKey(link), link]),
-        );
-        for (const target of asked) {
-          const link = found.get(documentLinkKey(target));
-          this.set(
-            target,
-            link
-              ? { status: "ready", title: link.title }
-              : { status: "unavailable" },
+        const found = new Map(links.map((link) => [link.path, link.title]));
+        for (const key of asked) {
+          const title = found.get(key);
+          this.setKey(
+            key,
+            title === undefined
+              ? { status: "unavailable" }
+              : { status: "ready", title },
           );
         }
       } catch {
         // Keep the stored text; the next refresh tries again.
       }
-      for (const target of asked) {
-        const key = documentLinkKey(target);
+      for (const key of asked) {
         for (const resolve of this.waiting.get(key) || []) resolve();
         this.waiting.delete(key);
       }
@@ -228,10 +213,14 @@ export function refreshDocumentLinkTitles() {
 }
 
 // Opening a link is provided by the workspace, which knows the screens and
-// the detail windows already open.
+// the detail windows already open. `close` leaves a detail window through its
+// own save path and says whether it closed.
 export type DocumentLinkOpener = {
   open: (target: DocumentLinkTarget) => Promise<void>;
-  register: (target: DocumentLinkTarget) => () => void;
+  register: (
+    target: DocumentLinkTarget,
+    close: () => Promise<boolean>,
+  ) => () => void;
 };
 export const DocumentLinkContext = createContext<DocumentLinkOpener | null>(
   null,
@@ -240,12 +229,17 @@ export function useDocumentLinkOpener() {
   return useContext(DocumentLinkContext);
 }
 // A detail window marks its target as open, so its own link does not open
-// a second window over it.
-export function useOpenDocumentLink(target: DocumentLinkTarget | null) {
+// a second window over it, and lets a link elsewhere close it first.
+export function useOpenDocumentLink(
+  target: DocumentLinkTarget | null,
+  close: () => Promise<boolean>,
+) {
   const opener = useContext(DocumentLinkContext);
+  const latestClose = useRef(close);
+  latestClose.current = close;
   const key = target && documentLinkKey(target);
   useEffect(() => {
     if (!opener || !target) return;
-    return opener.register(target);
+    return opener.register(target, () => latestClose.current());
   }, [opener, key]);
 }

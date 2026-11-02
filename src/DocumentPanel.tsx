@@ -37,6 +37,12 @@ import {
   MAX_TASK_DOCUMENTS,
   MAX_DOCUMENT_TITLE_LENGTH,
 } from "../shared/task-documents.js";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import {
+  UNAVAILABLE_LINK_MESSAGE,
+  updateDocumentLinkTitle,
+  type DocumentLinkTarget,
+} from "./document-links";
 import "./task-document.css";
 export type { DocumentHandle } from "./DocumentEditor";
 export type DocumentPanelHandle = DocumentHandle & {
@@ -61,6 +67,10 @@ type Props = Pick<
   scrollOnOpen?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
+  // Memo cards: each card's link, and a document link asking to show a card.
+  documentLink?: (documentId: string) => DocumentLinkTarget;
+  openRequest?: { id: string; nonce: number } | null;
+  onOpened?: () => void;
 };
 type RenameDraft = {
   document: DocumentInfo;
@@ -100,6 +110,11 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [attempt, setAttempt] = useState(0);
     const [epochs, setEpochs] = useState<Record<string, number>>({});
+    const [fullPageRequest, setFullPageRequest] = useState<{
+      id: string;
+      nonce: number;
+    } | null>(null);
+    const handledOpen = useRef(0);
     const handles = useRef(new Map<string, DocumentHandle>());
     const firstReady = useRef(false);
     const focusEditor = useRef(false);
@@ -507,9 +522,24 @@ export default forwardRef<DocumentPanelHandle, Props>(
       setError("");
       return true;
     }
+    // A memo opened from a link is selected and shown in its full page.
+    useEffect(() => {
+      const request = props.openRequest;
+      if (!request || !documentsLoaded || handledOpen.current === request.nonce)
+        return;
+      handledOpen.current = request.nonce;
+      void select(request.id).then((found) => {
+        if (found) setFullPageRequest(request);
+        else setError(UNAVAILABLE_LINK_MESSAGE);
+        props.onOpened?.();
+      });
+    }, [props.openRequest?.nonce, documentsLoaded]);
     function changed(result: ListResult) {
       setDocuments(result.documents);
       props.onListChanged(result);
+      if (props.documentLink)
+        for (const doc of result.documents)
+          updateDocumentLinkTitle(props.documentLink(doc.id), doc.title);
     }
     async function add() {
       if (readOnly || busy || !(await finishRename())) return;
@@ -981,6 +1011,8 @@ export default forwardRef<DocumentPanelHandle, Props>(
                   readOnly ? undefined : () => void startRename(doc, "heading")
                 }
                 widthKey={`${props.draftKey(doc.id)}:width`}
+                link={props.documentLink?.(doc.id)}
+                fullPageRequest={fullPageRequest}
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -1087,6 +1119,8 @@ function DocumentPage({
   titleError,
   onRename,
   widthKey,
+  link,
+  fullPageRequest,
   inline,
   selected,
   loading,
@@ -1102,6 +1136,8 @@ function DocumentPage({
   titleError?: string;
   onRename?: () => void;
   widthKey: string;
+  link?: DocumentLinkTarget;
+  fullPageRequest: { id: string; nonce: number } | null;
   inline: boolean;
   selected: boolean;
   loading: boolean;
@@ -1138,6 +1174,9 @@ function DocumentPage({
     }
   }
   const [fullPage, setFullPage] = useState(false);
+  useEffect(() => {
+    if (fullPageRequest) setFullPage(fullPageRequest.id === documentId);
+  }, [fullPageRequest?.nonce]);
   const dialog = useRef<HTMLDialogElement | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
@@ -1205,6 +1244,7 @@ function DocumentPage({
                 {title}
               </span>
             ))}
+          {link && <CopyDocumentLinkButton target={link} title={title} />}
           <Button
             ref={expandButton}
             className="document-expand"

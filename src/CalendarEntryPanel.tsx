@@ -23,7 +23,7 @@ import {
   applyCalendarTagCheck,
   saveCalendarTagCheck,
 } from "./calendar-tag-checks";
-import { CopyDocumentLinkButton } from "./Panels";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import { updateDocumentLinkTitle, useOpenDocumentLink } from "./document-links";
 
 export default function CalendarEntryPanel({
@@ -72,7 +72,7 @@ export default function CalendarEntryPanel({
   const leaving = useRef(false);
   const alive = useRef(true);
   const linkTarget = { kind: "calendar" as const, id: entry.id };
-  useOpenDocumentLink(linkTarget);
+  useOpenDocumentLink(linkTarget, () => close());
   function titleChanged() {
     return draft.current.trim() !== current.current.title;
   }
@@ -295,22 +295,25 @@ export default function CalendarEntryPanel({
     }
   }
   async function close(keepDraft = false) {
-    if (leaving.current || busy || savingTags.current) return;
+    if (leaving.current || busy || savingTags.current) return false;
     leaving.current = true;
     try {
       if (keepDraft) {
         if (
-          persist() &&
-          (!rangeEditor.current || rangeEditor.current.persistDraft()) &&
-          (!editor.current || editor.current.persistDraft())
+          !persist() ||
+          (rangeEditor.current && !rangeEditor.current.persistDraft()) ||
+          (editor.current && !editor.current.persistDraft())
         )
-          onClose();
-        return;
+          return false;
+        onClose();
+        return true;
       }
-      if (!(await saveTitle())) return;
-      if (rangeEditor.current && !(await rangeEditor.current.flush())) return;
-      if (editor.current && !(await editor.current.flush())) return;
+      if (!(await saveTitle())) return false;
+      if (rangeEditor.current && !(await rangeEditor.current.flush()))
+        return false;
+      if (editor.current && !(await editor.current.flush())) return false;
       onClose();
+      return true;
     } finally {
       leaving.current = false;
     }

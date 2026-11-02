@@ -978,7 +978,7 @@
 .memo-document-heading > div {
   flex-shrink: 0;
 }
-.memo-document-heading .document-expand {
+.memo-document-heading :is(.document-expand, .document-link-copy) {
   border: 0;
   padding: 5px;
   min-height: 27px;
