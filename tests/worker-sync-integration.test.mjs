@@ -1149,6 +1149,88 @@ test(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
       );
+      // Both sites change one title from the same base: the later one is
+      // kept as a conflict. The Worker lists and resolves it on a slice of C
+      // (the whole team cost more than one Edge call), and both sites end
+      // with the submitted title and the same state.
+      ok(await inside(`/teams/${teamId}/sync/pause`, {}));
+      ok(await outside(`/teams/${teamId}/sync/pause`, {}));
+      await drain();
+      const titleBase = getTask(db, task.id).cells.title.version,
+        outsideTitle = ok(
+          await outside("/tasks?teamId=" + teamId + "&year=2026"),
+        ).tasks.find((r) => r.id === task.id).cells.title.version;
+      for (const [save, version, value] of [
+        [inside, titleBase, "Conflict inside"],
+        [outside, outsideTitle, "Conflict outside"],
+      ])
+        ok(
+          await save("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: task.id,
+                key: "title",
+                expectedVersion: version,
+                value,
+              },
+            ],
+          }),
+        );
+      await drain();
+      app.locals.sync.store(teamId).writeLink({ mode: "active" });
+      app.locals.sync.capture.refresh();
+      await pgStore.withTeamTransaction(teamId, (tx) =>
+        tx.query("UPDATE team_sync_links SET mode='active' WHERE team_id=$1", [
+          teamId,
+        ]),
+      );
+      await app.locals.sync.get(teamId).run();
+      await runTeam(env, p);
+      await app.locals.sync.get(teamId).run();
+      const [titleConflict] = ok(
+        await outside(`/teams/${teamId}/sync/conflicts`),
+      ).conflicts.filter((c) => !c.resolved);
+      assert.ok(titleConflict, "the second title is kept as a conflict");
+      assert.deepEqual(
+        ok(
+          await outside(
+            `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
+          ),
+        ).conflictId,
+        titleConflict.conflictId,
+      );
+      const submittedTitle = titleConflict.desired[0].value;
+      ok(
+        await outside(
+          `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}/resolve`,
+          {
+            expectedHead: titleConflict.expectedHead,
+            frontier: titleConflict.frontier,
+            choice: "submitted",
+          },
+        ),
+      );
+      // The resolution shows at once on the external site.
+      assert.equal(
+        ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks.find(
+          (r) => r.id === task.id,
+        ).cells.title.value,
+        submittedTitle,
+      );
+      await runTeam(env, p);
+      await app.locals.sync.get(teamId).run();
+      assert.equal(getTask(db, task.id).cells.title.value, submittedTitle);
+      assert.ok(
+        ok(await outside(`/teams/${teamId}/sync/conflicts`)).conflicts.every(
+          (c) => c.resolved,
+        ),
+      );
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
       assert.deepEqual(
         github.unexpectedCalls,
         [],
