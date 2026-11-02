@@ -93,12 +93,30 @@ function sqliteRevision(db, teamId, entity, key) {
   return Math.max(high, revision);
 }
 function sqlitePresentation(db, teamId, link) {
+  // The presentation holds a calendar document once its body is saved, or
+  // when shared state (C or P) already has it, as the external site does.
+  const shared = new Set(
+    db
+      .prepare(
+        `SELECT entity_key FROM sync_entities WHERE team_id=? AND entity='document'
+        UNION SELECT json_extract(j.value,'$.key') FROM sync_outbox o,json_each(o.payload,'$.changes') j
+        WHERE o.team_id=? AND o.status<>'acknowledged' AND json_extract(j.value,'$.entity')='document'`,
+      )
+      .all(teamId, teamId)
+      .map((row) => row.entity_key),
+  );
   const entities = applicationEntities(
-    allEntities(db, {
-      ...link,
-      team_id: teamId,
-      bootstrap_id: link?.bootstrap_id || randomUUID(),
-    }),
+    allEntities(
+      db,
+      {
+        ...link,
+        team_id: teamId,
+        bootstrap_id: link?.bootstrap_id || randomUUID(),
+      },
+      {
+        calendarDocuments: (key, saved) => saved || shared.has(canonical(key)),
+      },
+    ),
   );
   const rows = Object.values(entities).map((e) => ({
     team_id: teamId,
