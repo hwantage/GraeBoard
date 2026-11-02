@@ -32,6 +32,7 @@ export default forwardRef<
   const [scrollable, setScrollable] = useState(false);
   const draggingScroll = useRef(false);
   const panel = useRef<DocumentPanelHandle>(null);
+  const section = useRef<HTMLElement>(null);
   const scrollOnOpen = useRef(false);
   const contentId = useId();
   const ToggleIcon = opened ? ChevronUp : ChevronDown;
@@ -53,6 +54,11 @@ export default forwardRef<
   async function toggle() {
     if (closing) return;
     if (!opened) {
+      // The collapsed bar is pinned over the rows. Open it from the end of
+      // the table, where its own position matches the pinned one, so the
+      // heading stays under the pointer instead of jumping below the rows.
+      const sheet = section.current?.closest(".sheet-scroll");
+      if (sheet) sheet.scrollTop = sheet.scrollHeight;
       scrollOnOpen.current = true;
       rememberOpened(true);
       return;
@@ -65,7 +71,12 @@ export default forwardRef<
     }
   }
   return (
-    <section className="annual-memos" aria-label="연간 업무 메모 목록">
+    <section
+      ref={section}
+      className="annual-memos"
+      aria-label="연간 업무 메모 목록"
+      data-collapsed={!opened || undefined}
+    >
       <div
         className="memo-accordion-heading"
         onClick={(event) => {

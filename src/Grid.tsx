@@ -732,6 +732,9 @@ export default function Grid({
     overscan: 12,
     getItemKey,
     scrollMargin: 32,
+    // Keep rows above the horizontal scrollbar (14px) and the collapsed memo
+    // bar pinned below it (--sheet-footer-bar-height in styles.css).
+    scrollPaddingEnd: footer ? 52 : 0,
     rangeExtractor,
   });
   useLayoutEffect(() => {

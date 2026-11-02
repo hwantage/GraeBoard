@@ -822,6 +822,12 @@
   flex: none;
   background: white;
 }
+/* Rows scroll behind the collapsed bar; the sheet header and the horizontal
+   scrollbar above it stay on top. */
+.annual-memos[data-collapsed] {
+  bottom: 0;
+  z-index: 14;
+}
 .annual-memos .document-tabs {
   top: calc(32px + var(--memo-accordion-height));
 }
