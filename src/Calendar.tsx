@@ -29,7 +29,7 @@ import {
   deleteCalendarEntry,
   saveCalendarEntryTags,
 } from "./calendar-entry-actions";
-import { RowPanel } from "./Panels";
+import { StandaloneRowPanel } from "./Panels";
 import { UndoToast } from "./Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
 import CalendarEntries from "./CalendarEntries";
@@ -64,7 +64,7 @@ import {
   displayValueFor,
   todayKey,
 } from "../shared/domain.js";
-import type { BatchResult, Task, Team, User } from "./types";
+import type { Task, Team, User } from "./types";
 import type {
   CalendarContext,
   CalendarData,
@@ -84,11 +84,14 @@ const EMPTY_TAGS: CalendarTag[] = [];
 export default function Calendar({
   team,
   user,
+  reloadKey = 0,
   onBusyChange,
   onNotify,
 }: {
   team: Team;
   user: User;
+  // Changes after a detail opened from a document link has saved.
+  reloadKey?: number;
   onBusyChange: (busy: boolean) => void;
   onNotify: (message: string) => void;
 }) {
@@ -225,6 +228,12 @@ export default function Calendar({
     (item, range, lane) => void saveRange({ entry: item, range, lane }),
   );
   const locked = pending || !!rangeChange || !!dragging.drag;
+  const seenReloadKey = useRef(reloadKey);
+  useEffect(() => {
+    if (reloadKey === seenReloadKey.current) return;
+    seenReloadKey.current = reloadKey;
+    setReload((value) => value + 1);
+  }, [reloadKey]);
   useResourceSync(`/teams/${team.id}`, async () => {
     if (locked || busy.current) return false;
     setReload((value) => value + 1);
@@ -1735,7 +1744,8 @@ export default function Calendar({
         />
       )}
       {task && context && (
-        <RowPanel
+        <StandaloneRowPanel
+          key={task.id}
           task={task}
           settings={context.settings}
           user={user}
@@ -1743,19 +1753,7 @@ export default function Calendar({
           onClose={() => {
             setTask(null);
           }}
-          onDocumentSaved={(result) =>
-            setTask(
-              (previous) =>
-                previous && {
-                  ...previous,
-                  hasDocument: result.hasDocument,
-                  documentCount: result.documentCount,
-                  updatedAt: result.taskUpdatedAt,
-                },
-            )
-          }
-          onSaveProperty={async (payload) => {
-            const result = await send<BatchResult>("/cells/batch", payload);
+          onCellsSaved={(result) => {
             const titles = new Map(
               result.cells
                 .filter((cell) => cell.key === "title")
@@ -1770,26 +1768,6 @@ export default function Calendar({
                     : item,
                 ),
               }));
-            setTask(
-              (previous) =>
-                previous && {
-                  ...previous,
-                  updatedAt:
-                    result.updatedAt?.[previous.id] || previous.updatedAt,
-                  cells: {
-                    ...previous.cells,
-                    ...Object.fromEntries(
-                      result.cells
-                        .filter((cell) => cell.taskId === previous.id)
-                        .map(({ key, taskId: _taskId, ...cell }) => [
-                          key,
-                          cell,
-                        ]),
-                    ),
-                  },
-                },
-            );
-            return result.cells;
           }}
         />
       )}

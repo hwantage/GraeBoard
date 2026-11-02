@@ -1002,7 +1002,7 @@
 .workspace[data-screen="calendar"]
   .calendar-entry-modal
   > header
-  .document-expand:not(:hover) {
+  :is(.document-expand, .document-link-copy):not(:hover) {
   background: transparent;
 }
 .calendar-range-editor label {

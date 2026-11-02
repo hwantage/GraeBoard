@@ -9,6 +9,19 @@ import LoadingState from "./LoadingState";
 import SheetTabs from "./SheetTabs";
 import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
 import useWorkspaceRoute from "./useWorkspaceRoute";
+import DocumentLinkPanel, {
+  loadDocumentLink,
+  type OpenedDocumentLink,
+} from "./DocumentLinkPanel";
+import {
+  DocumentLinkContext,
+  documentLinkKey,
+  refreshDocumentLinkTitles,
+  updateDocumentLinkTitle,
+  type DocumentLinkOpener,
+  type DocumentLinkTarget,
+} from "./document-links";
+import { parseDocumentLinkPath } from "../shared/document-links.js";
 import useCalendarTheme from "./useCalendarTheme";
 import { THEMES, getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
@@ -261,6 +274,13 @@ function Workspace({
 }) {
   const { user } = boot;
   const site = useSite();
+  // A copied link address opens the app at /links/…: clean the address before
+  // the screen route reads it, and open the target once it is found.
+  const [deepLink] = useState(() => {
+    const target = parseDocumentLinkPath(location.pathname);
+    if (target) history.replaceState(history.state, "", "/");
+    return target;
+  });
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const calendarTheme = useCalendarTheme();
   const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
@@ -377,6 +397,73 @@ function Workspace({
     };
   }, [teamId, site.external, onBootstrap]);
   const [toast, setToast] = useToast();
+  // Details opened from document links, over whatever is open below.
+  const [linkPanels, setLinkPanels] = useState<
+    { key: string; link: OpenedDocumentLink }[]
+  >([]);
+  const [linkReload, setLinkReload] = useState(0);
+  const openTargets = useRef(new Map<string, number>());
+  const openingTargets = useRef(new Set<string>());
+  const documentLinks = useMemo<DocumentLinkOpener>(
+    () => ({
+      register(target) {
+        const key = documentLinkKey(target),
+          open = openTargets.current;
+        open.set(key, (open.get(key) || 0) + 1);
+        return () => {
+          const count = (open.get(key) || 1) - 1;
+          if (count) open.set(key, count);
+          else open.delete(key);
+        };
+      },
+      // A target whose detail is already open stays as it is.
+      async open(target) {
+        const key = documentLinkKey(target);
+        if (openTargets.current.has(key) || openingTargets.current.has(key))
+          return;
+        openingTargets.current.add(key);
+        try {
+          const link = await loadDocumentLink(target);
+          if (!openTargets.current.has(key))
+            setLinkPanels((panels) =>
+              panels.some((panel) => panel.key === key)
+                ? panels
+                : [...panels, { key, link }],
+            );
+        } finally {
+          openingTargets.current.delete(key);
+        }
+      },
+    }),
+    [],
+  );
+  useEffect(() => {
+    if (!deepLink) return;
+    let active = true;
+    loadDocumentLink(deepLink).then(
+      (link) => {
+        if (!active) return;
+        const target =
+          link.kind === "task" ? link.task.teamId : link.entry.teamId;
+        if (boot.teams.some((team) => team.id === target)) setTeamId(target);
+        if (link.kind === "calendar") workspaceRoute.commit("calendar", true);
+        setLinkPanels([{ key: documentLinkKey(deepLink), link }]);
+      },
+      (e) => {
+        if (active) setError((e as Error).message);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+  function closeLinkPanel(key: string) {
+    setLinkPanels((panels) => panels.filter((panel) => panel.key !== key));
+    // The detail may have renamed its target or changed what is shown below.
+    refreshDocumentLinkTitles();
+    setLinkReload((value) => value + 1);
+    if (screen === "annual" && !documentBrowser) void refresh();
+  }
   const filterNameInput = useRef<HTMLInputElement>(null);
   const filterSaveQueue = useRef(Promise.resolve());
   const filterSaveRevision = useRef(0);
@@ -1084,6 +1171,13 @@ function Workspace({
         const next = mergeCellUpdates(tasksRef.current, changes);
         tasksRef.current = next;
         setTasks(next);
+        // Open documents linking to a renamed task show the new title.
+        for (const cell of changes.cells)
+          if (cell.key === "title")
+            updateDocumentLinkTitle(
+              { kind: "task", id: cell.taskId },
+              String(cell.value),
+            );
       },
       onSnapshot: (snapshot) => {
         if (boardKey.current !== key || taskScopeRef.current !== taskScope)
@@ -2929,7 +3023,7 @@ function Workspace({
       return false;
     }
   }
-  return (
+  const workspace = (
     <div
       ref={workspaceRef}
       className={`workspace ${presentation ? "presentation-mode" : ""}`}
@@ -3276,6 +3370,7 @@ function Workspace({
             key={teamId}
             team={team}
             user={user}
+            reloadKey={linkReload}
             onBusyChange={setCalendarBusy}
             onNotify={(message) => {
               setUndoToast(null);
@@ -4081,6 +4176,16 @@ function Workspace({
           onAction={presentation ? undefined : detailAction}
         />
       )}
+      {linkPanels.map(({ key, link }) => (
+        <DocumentLinkPanel
+          key={key}
+          link={link}
+          user={user}
+          readOnly={presentation}
+          onClose={() => closeLinkPanel(key)}
+          onDeleted={() => closeLinkPanel(key)}
+        />
+      ))}
       {panel === "export" && (
         <ExportPanel
           teamId={teamId}
@@ -4392,5 +4497,10 @@ function Workspace({
         </Modal>
       )}
     </div>
+  );
+  return (
+    <DocumentLinkContext.Provider value={documentLinks}>
+      {workspace}
+    </DocumentLinkContext.Provider>
   );
 }

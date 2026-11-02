@@ -215,12 +215,23 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | `/api/reports/:id/tasks/:taskId/documents` 및 `/:documentId` | 같은 목록·추가·조회·저장·이름 변경·삭제 동작. 문서 revision은 불변 버전 UUID(빈 초기 문서는 0) |
 | `POST .../documents/:documentId/images`                      | multipart 이미지 업로드. 문서 존재 및 편집 권한 확인                                           |
 | `GET /api/document-images/:teamId/:hash.webp`                | 로그인·팀 접근 검사 후 이미지 제공                                                             |
+| `GET /api/document-links?task=…&calendar=…`                  | 링크한 업무·일정 중 열 수 있는 대상의 현재 제목. [문서 링크](#문서-링크) 참고                  |
 
 `/document`는 기본 `main` 문서의 단일 조회/저장 경로로도 제공합니다. 분기 목록과 `/document-versions/:id` 조회 API는 삭제했습니다. 원본은 해당 업무의 `canEdit`, 사본은 해당 팀의 `canContribute`를 검사하며 두 경로 모두 담당자·지원자와 관계없이 같은 팀의 팀장·팀원에게 편집을 허용합니다. 열람자와 팀 외부 사용자의 쓰기를 차단합니다.
 
 문서와 표의 낙관적 잠금은 독립적입니다. 사본 표 revision은 `documents`·`hasDocument`·`documentCount`를 제외한 JSON의 SHA-256입니다. 압축 BLOB의 해시를 키로 계산 결과 최대 256개를 재사용하며, 이미 해제한 표를 다시 해제하지 않습니다. 문서 저장은 해당 관계형 참조만 교체하고 표 저장은 최신 문서 참조를 보존합니다. 원본·사본 모두 브라우저에서 자동 저장하며, 동일 요청·작업 ID·기준 revision의 응답 유실 재시도는 중복 반영하지 않습니다. 충돌은 409와 최신 문서를 반환하고 브라우저는 입력을 보존합니다.
 
 업무 복제·행 붙여넣기는 `documents: [{id,title,markdown}]` 배열을 포함할 수 있습니다. 빈 행 삽입은 문서를 복사하지 않습니다. 업무 삭제는 문서를 유지하고 팀 영구 삭제는 관련 참조와 본문을 삭제합니다. SQLite 백업은 모든 문서·참조를 포함합니다. JSON 반출 형식은 **v6**이며 원본/사본 문서 참조를 `documents: [{id,title,markdown}]`로 풀어 제공합니다. XLSX·CSV와 셀 클립보드에는 문서 본문을 포함하지 않습니다.
+
+### 문서 링크
+
+다른 업무 상세나 캘린더 일정을 가리키는 링크는 본문 안의 일반 Markdown 링크로 저장합니다. 주소는 출처(origin) 없는 앱 경로 `/links/task/<업무 UUID>` 또는 `/links/calendar/<일정 UUID>`이므로(`shared/document-links.js`) 동기화로 ID를 보존하는 내부·외부 사이트 모두에서 열립니다. 링크 글자는 붙여넣을 때의 제목입니다. 별도 컬럼·저장 형식·변환은 없으며 서버는 본문의 링크를 해석하지 않습니다. 업무 상세의 여러 문서 중 하나가 아니라 업무 상세 전체를 가리킵니다.
+
+리치 편집은 글자가 일반 텍스트 하나(또는 빈 글자)인 이 경로의 링크를 문서 아이콘과 대상의 **현재 제목**으로 표시합니다. 열린 문서마다 표시할 링크의 제목을 아래 API로 한 번에 조회하고, 조회 중·실패·대상 없음일 때는 저장된 글자를 표시합니다. 조회한 제목을 본문에 다시 쓰지 않으므로 문서를 열기만 해서는 저장하지 않습니다. 서식이 있는 링크 글자와 토글 제목 안의 링크는 일반 링크로 표시합니다. 이 경로 외의 상대 주소와 안전하지 않은 주소는 이전처럼 Markdown 원문에서만 편집합니다.
+
+링크 복사는 `text/plain`에 현재 사이트의 절대 주소(`https://…/links/task/<UUID>`), `text/html`에 제목을 글자로 한 `<a>`를 씁니다. 리치 문서에 같은 사이트의 이 주소를 붙여넣으면 경로만 저장하고, 제목이 없는 주소만 붙여넣으면 조회한 현재 제목을 링크 글자로 저장합니다. 다른 사이트의 주소는 일반 웹 링크입니다. 앱은 `/links/…` 주소로 열리면 대상의 팀·화면으로 바꿔 상세를 열고 주소를 `/` 또는 `/calendar`로 바꿉니다. 내부 서버는 모든 화면 경로에 `index.html`을, 외부 gateway는 `not_found_handling: "single-page-application"`으로 같은 화면을 제공합니다.
+
+`GET /api/document-links?task=ID,ID&calendar=ID,ID`는 종류별 최대 100개(`DOCUMENT_LINK_BATCH`)의 UUID를 받아 `{links: [{kind, id, teamId, title}]}`을 반환합니다. 업무는 `GET /api/calendar/tasks/:id`, 일정은 `GET /api/calendar/entries/:id`와 같은 기준(팀 접근 권한, 삭제·보관 연도 제외, 개인 일정 소유자의 구성원 여부)으로 열 수 있는 대상만 포함하며, 삭제했거나 접근할 수 없는 ID는 오류 없이 응답에서 빠집니다. 업무 제목은 `title` 셀의 현재 값, 일정 제목은 일정의 현재 제목입니다. 링크를 열 때는 위 두 조회와 `GET /api/calendar/teams/:teamId`(팀 설정·구성원·태그)를 사용합니다.
 
 ### 문서 이미지 파일
 

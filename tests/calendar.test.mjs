@@ -1776,6 +1776,76 @@ test("가져온 작업 링크는 실제 작업을 조회하고 속성 변경/삭
   );
 });
 
+test("문서 링크 제목 조회는 열 수 있는 업무·일정의 현재 제목만 묶어서 돌려준다", async (t) => {
+  const f = await fixture(t),
+    task = f.task({ title: "링크한 업무" }),
+    otherTask = f.task({ title: "다른 팀 업무" }, 2026, f.otherTeam),
+    entry = (await f.create("2026-10-12", "member", "링크한 일정")).data,
+    missing = randomUUID();
+  const links = async (query, role = "member") => {
+    const result = await f.req(
+      `/document-links?${new URLSearchParams(query)}`,
+      "GET",
+      undefined,
+      role,
+    );
+    assert.equal(result.status, 200, JSON.stringify(result.data));
+    return Object.fromEntries(
+      result.data.links.map((link) => [`${link.kind}:${link.id}`, link]),
+    );
+  };
+  const query = {
+    task: [task.id, otherTask.id, missing].join(","),
+    calendar: [entry.id, missing].join(","),
+  };
+  assert.deepEqual(await links(query), {
+    [`task:${task.id}`]: {
+      kind: "task",
+      id: task.id,
+      teamId: f.teamId,
+      title: "링크한 업무",
+    },
+    [`calendar:${entry.id}`]: {
+      kind: "calendar",
+      id: entry.id,
+      teamId: f.teamId,
+      title: "링크한 일정",
+    },
+  });
+  assert.deepEqual(Object.keys(await links(query, "viewer")).sort(), [
+    `calendar:${entry.id}`,
+    `task:${task.id}`,
+  ]);
+  assert.deepEqual(Object.keys(await links(query, "outsider")), [
+    `task:${otherTask.id}`,
+  ]);
+  assert.equal(Object.keys(await links(query, "admin")).length, 3);
+  const renamed = await f.req("/cells/batch", "POST", {
+    operationId: randomUUID(),
+    createdAt: now(),
+    changes: [
+      {
+        taskId: task.id,
+        key: "title",
+        value: "바뀐 업무 이름",
+        expectedVersion: task.cells.title.version,
+      },
+    ],
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.data));
+  assert.equal(
+    (await links({ task: task.id }))[`task:${task.id}`].title,
+    "바뀐 업무 이름",
+  );
+  f.db.prepare("UPDATE tasks SET deleted_at=? WHERE id=?").run(now(), task.id);
+  assert.deepEqual(await links({ task: task.id }), {});
+  assert.equal(
+    (await f.req(`/document-links?task=${task.id},bad`)).status,
+    400,
+    "only task and entry IDs are accepted",
+  );
+});
+
 test("날짜 일정 생성·본문 저장·충돌·삭제가 연간 업무나 주간 기록을 변경하지 않는다", async (t) => {
   const f = await fixture(t),
     task = f.task();

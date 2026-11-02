@@ -1043,6 +1043,58 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
     const task = taskAccess(request.user, request.params.id);
     return { task: retentionView(db, task.teamId).task(task) };
   };
+  // Same reads as getTask/getEntry for many links at once. A deleted,
+  // hidden or inaccessible target is left out rather than refused.
+  operations.resolveLinks = (request) => {
+    const { task, calendar } = request.query;
+    const readable = new Map();
+    const canRead = (teamId) => {
+      if (!readable.has(teamId))
+        try {
+          teamAccess(request.user, teamId);
+          readable.set(teamId, true);
+        } catch (error) {
+          if (![403, 404].includes(error.status)) throw error;
+          readable.set(teamId, false);
+        }
+      return readable.get(teamId);
+    };
+    const links = [];
+    if (task.length)
+      for (const row of db
+        .prepare(
+          `SELECT t.id,t.team_id AS teamId,c.value AS title FROM tasks t LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
+          WHERE t.id IN (SELECT value FROM json_each(?)) AND t.deleted_at IS NULL ORDER BY t.id`,
+        )
+        .all(json(task)))
+        if (
+          canRead(row.teamId) &&
+          !retentionView(db, row.teamId).hidden("task", [row.id])
+        )
+          links.push({
+            kind: "task",
+            id: row.id,
+            teamId: row.teamId,
+            title: String(parse(row.title, "")),
+          });
+    if (calendar.length)
+      for (const row of db
+        .prepare(
+          `SELECT e.id,e.team_id AS teamId,e.title FROM calendar_entries e
+          WHERE e.id IN (SELECT value FROM json_each(?)) AND e.deleted_at IS NULL
+          AND (e.user_id IS NULL OR e.user_id IN (SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.team_id=e.team_id AND u.active=1) OR EXISTS (SELECT 1 FROM sync_person_refs p WHERE p.team_id=e.team_id AND p.person_id=e.user_id))
+          ORDER BY e.id`,
+        )
+        .all(json(calendar)))
+        if (canRead(row.teamId))
+          links.push({
+            kind: "calendar",
+            id: row.id,
+            teamId: row.teamId,
+            title: row.title,
+          });
+    return { links };
+  };
   return {
     operations,
     calendarDocumentAccess: { entryAccess, read: document, summary },

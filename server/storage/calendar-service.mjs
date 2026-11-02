@@ -25,6 +25,7 @@ import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
 } from "../../shared/calendar-tags.js";
+import { DOCUMENT_LINK_BATCH } from "../../shared/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();
@@ -134,6 +135,11 @@ const bodySchemas = {
     .object({ deletionId: uuid, previousRange: rangeSchema.optional() })
     .strict(),
 };
+const linkIdsSchema = z
+  .string()
+  .default("")
+  .transform((value) => [...new Set(value.split(",").filter(Boolean))])
+  .pipe(z.array(uuid).max(DOCUMENT_LINK_BATCH));
 const querySchemas = {
   listTags: z.object({
     scope: z.enum(["personal", "team"]).default("personal"),
@@ -159,6 +165,7 @@ const querySchemas = {
     q: z.string().max(120).default(""),
     offset: z.coerce.number().int().min(0).max(100000).default(0),
   }),
+  resolveLinks: z.object({ task: linkIdsSchema, calendar: linkIdsSchema }),
 };
 export const CALENDAR_ROUTES = [
   {
@@ -287,6 +294,14 @@ export const CALENDAR_ROUTES = [
     path: "/calendar/tasks/:id",
     status: 200,
   },
+  // Current titles of linked tasks and calendar entries. The repositories
+  // that open a task or an entry from the calendar also check these reads.
+  {
+    name: "resolveLinks",
+    method: "GET",
+    path: "/document-links",
+    status: 200,
+  },
 ];
 const routes = new Map(CALENDAR_ROUTES.map((route) => [route.name, route]));
 export function matchCalendarRoute(path, method) {
@@ -389,6 +404,9 @@ export class CalendarBusinessService {
   }
   getTask(request) {
     return this.execute("getTask", request);
+  }
+  resolveLinks(request) {
+    return this.execute("resolveLinks", request);
   }
 }
 export function requireCalendarWrite(user, teamId, userId) {

@@ -176,6 +176,38 @@
   color: var(--accent-strong);
   text-decoration: underline;
 }
+/* Link to another document: icon and the target's current title. */
+.document-prose .document-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+  padding: 0 2px;
+  border-radius: 4px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.document-prose .document-link > svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+.document-prose .document-link > span {
+  text-decoration: underline;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 3px;
+}
+.document-prose .document-link:hover {
+  background: var(--accent-surface);
+}
+.document-prose .document-link[data-state="unavailable"] {
+  color: var(--muted);
+}
+.document-prose .document-link[data-state="unavailable"] > span {
+  text-decoration-line: line-through;
+  text-decoration-color: currentColor;
+}
+.document-prose .document-link.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
 .document-prose table {
   width: 100%;
   border-collapse: collapse;
