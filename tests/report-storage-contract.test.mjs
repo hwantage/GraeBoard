@@ -9,6 +9,7 @@ import { unpack } from "../shared/compact.js";
 import { unpackReportPayload } from "../shared/report-sync-data.js";
 import { payloadEqual } from "../server/sync/protocol.mjs";
 import { ReportBusinessService } from "../server/storage/report-service.mjs";
+import { bucket } from "./worker-github-fixture.mjs";
 import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
 import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import {
@@ -559,4 +560,51 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
   await lease(null);
   await rename("edited copy");
   assert.equal((await reportOps()).length, before.length + 1);
+});
+
+// A copy repeats the source documents; when the image store lacks an image
+// they show, the refusal names those documents instead of asking to paste.
+test("PG copy creation names the documents whose images the store lacks", async (t) => {
+  const f = sqliteBusinessFixture(t),
+    pg = await postgresBusinessFixture(t, f);
+  if (!pg) return;
+  pg.env.BUCKET = bucket();
+  const missing = `/api/document-images/${f.teamId}/${"a".repeat(64)}.webp`,
+    key = JSON.stringify(["task", f.taskId, randomUUID()]);
+  await pg.pool.query(
+    "INSERT INTO graeboard.site_entities VALUES($1,'document',$2,$3,1,0)",
+    [
+      f.teamId,
+      key,
+      JSON.stringify({
+        title: "그림 문서",
+        position: 1,
+        markdown: `본문\n\n![그림](${missing})`,
+      }),
+    ],
+  );
+  await pg.pool.query(
+    "INSERT INTO graeboard.site_entity_revisions VALUES($1,'document',$2,1)",
+    [f.teamId, key],
+  );
+  const service = new ReportBusinessService(
+    new PostgresReportRepository({ context: pg.createContext() }),
+    f.user,
+  );
+  await assert.rejects(
+    service.create({
+      id: randomUUID(),
+      teamId: f.teamId,
+      year: 2026,
+      name: "missing image copy",
+      referenceDate: "2026-10-01",
+      view: defaultView(2026),
+      taskIds: [f.taskId],
+    }),
+    (error) =>
+      error.status === 400 &&
+      error.message.includes("이미지 1개가 서버에 없어") &&
+      error.message.includes("업무 「initial」의 문서 「그림 문서」") &&
+      error.details.missingImages[0] === missing,
+  );
 });
