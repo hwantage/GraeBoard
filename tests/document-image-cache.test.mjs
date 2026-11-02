@@ -29,7 +29,7 @@ import {
   stateHash,
 } from "../server/sync/protocol.mjs";
 import { validateSnapshot } from "../server/sync/reducer.mjs";
-import { imageReferences, R2ImageStore } from "../worker/images.mjs";
+import { imageReferences } from "../worker/images.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
 
@@ -397,7 +397,7 @@ for (const linked of [false, true])
       );
   });
 
-test("cached document syntax never caches team authorization or file existence", async (t) => {
+test("cached document syntax never caches team authorization, and a missing file never refuses a save", async (t) => {
   const f = await fixture(t),
     events = parses(t, f.writer),
     body = markdownFor(f.imageUrl);
@@ -414,29 +414,24 @@ test("cached document syntax never caches team authorization or file existence",
     0,
     "foreign-team rejection used cached syntax, not a reparsing workaround",
   );
+  // The document shows a removed image as missing; saving it goes on.
   rmSync(documentImagePath(f.images, f.imageUrl));
-  assert.equal(
-    (await f.save(body, { taskId: f.taskIds[1] })).status,
-    400,
-    "fresh file check rejects a removed image on a different document",
-  );
-  assert.equal(getTaskDocument(f.db, f.taskIds[1]).markdown, "");
+  ok(await f.save(body, { taskId: f.taskIds[1] }));
+  assert.equal(getTaskDocument(f.db, f.taskIds[1]).markdown, body);
   assert.equal(events.length, 0);
   writeDocumentImage(f.images, f.imageUrl, f.bytes);
   f.db
     .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
     .run(f.teamId, f.actorId);
   assert.equal((await f.save(body, { taskId: f.taskIds[1] })).status, 403);
-  assert.equal(f.store.readPending().length, 1);
+  assert.equal(f.store.readPending().length, 2);
   const beforeDirectChecks = events.length;
   await withDocumentImageReferences(async () => {
     documentImageUrls(body);
     const afterWarm = events.length;
-    const workerStore = new R2ImageStore({ head: async () => null }, f.teamId);
-    await assert.rejects(
-      workerStore.validate(body),
-      (error) => error.status === 400,
-    );
+    assert.deepEqual(imageReferences({ markdown: body }, f.teamId), [
+      f.imageUrl,
+    ]);
     assert.throws(
       () => imageReferences({ markdown: body }, f.otherTeam),
       (error) => error.status === 400,
@@ -444,13 +439,13 @@ test("cached document syntax never caches team authorization or file existence",
     assert.equal(
       events.length,
       afterWarm,
-      "Worker shares extraction but performs its own team and storage validation",
+      "Worker shares extraction but performs its own team validation",
     );
   });
   assert.ok(events.length <= beforeDirectChecks + 1);
 });
 
-test("failed capture flush rolls back document, audit and P; cached retry rechecks file and permission", async (t) => {
+test("failed capture flush rolls back document, audit and P; cached retry rechecks permission", async (t) => {
   const f = await fixture(t),
     events = parses(t, f.writer),
     body = markdownFor(f.imageUrl),
@@ -477,10 +472,6 @@ test("failed capture flush rolls back document, audit and P; cached retry rechec
   assert.deepEqual(counts(), before);
   assert.deepEqual({ ...getTaskDocument(f.db, f.taskIds[0]) }, original);
   assert.equal(events.length, 0);
-  rmSync(documentImagePath(f.images, f.imageUrl));
-  assert.equal((await f.save(body, { operationId })).status, 400);
-  assert.deepEqual(counts(), before);
-  writeDocumentImage(f.images, f.imageUrl, f.bytes);
   f.db
     .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
     .run(f.teamId, f.actorId);
@@ -657,7 +648,7 @@ test(
   },
 );
 
-for (const cause of ["membership", "session", "file"])
+for (const cause of ["membership", "session"])
   test(
     `async document preflight rechecks ${cause} before commit`,
     { timeout: 15000 },
@@ -680,14 +671,13 @@ for (const cause of ["membership", "session", "file"])
             f.db
               .prepare("DELETE FROM memberships WHERE team_id=? AND user_id=?")
               .run(f.teamId, f.actorId);
-          else if (cause === "session")
+          else
             f.db.prepare("DELETE FROM sessions WHERE user_id=?").run(f.actorId);
-          else rmSync(documentImagePath(f.images, f.imageUrl));
         },
       );
       assert.equal(
         response.status,
-        cause === "membership" ? 403 : cause === "session" ? 401 : 400,
+        cause === "membership" ? 403 : 401,
         JSON.stringify(response),
       );
       assert.deepEqual(counts(), before);

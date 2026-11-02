@@ -137,11 +137,7 @@ export function editReport(
       for (const task of [...tasks, ...deleted.values()])
         for (const document of task.documents || [])
           if (document.markdown !== undefined)
-            validateDocumentImages(
-              document.markdown,
-              row.team_id,
-              documentImagesDir,
-            );
+            validateDocumentImages(document.markdown, row.team_id);
       tasks = storeReportDocuments(db, tasks, row.team_id, user.id);
       const remaining = new Set(tasks.map((task) => task.id));
       const deletedTasks = reportDocumentContents(db, {

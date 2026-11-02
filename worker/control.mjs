@@ -19,6 +19,7 @@ import { R2ImageStore } from "./images.mjs";
 import { profileFields } from "../shared/profiles.js";
 import { z } from "zod";
 import { withDocumentImageReferences } from "../shared/document-image-references.js";
+import { imageReferences } from "./images.mjs";
 
 import { PostgresControlStore, userRecord } from "./storage/control-store.mjs";
 export { userRecord } from "./storage/control-store.mjs";
@@ -259,8 +260,8 @@ export class RequestContext {
             ...options,
             limits: capacityLimits(this.env),
             actorId: this.user.id,
-            validateImages: async (value) =>
-              (await this.imageStore(teamId)).validate(value),
+            // Only this team's images: a missing file never refuses a write.
+            validateImages: async (value) => imageReferences(value, teamId),
           },
         ),
       { maxEntries: Infinity, maxBytes: Infinity, ttlMs: Infinity },

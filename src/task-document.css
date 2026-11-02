@@ -444,6 +444,24 @@
   display: block;
   width: 100%;
 }
+.rich-document .ProseMirror .document-image.is-missing img[src] {
+  display: none;
+}
+.document-image-missing {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: #f8faf9;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.document-image-missing[hidden] {
+  display: none;
+}
 .document-image:hover,
 .document-image:focus-within,
 .document-image.resizing {

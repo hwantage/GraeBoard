@@ -2,7 +2,8 @@ import { digest, entityId } from "../server/sync/protocol.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { installImageReferences } from "../server/sync/retention.mjs";
 import { imageReferences, stillImage } from "./images.mjs";
-import { assert } from "./access.mjs";
+const skippedImage = (key, reason) =>
+  console.warn("GraeBoard image skipped", JSON.stringify({ key, reason }));
 export function imageSync(database, profile, r2) {
   return {
     // Every image the parent state references is already in the parent commit,
@@ -19,8 +20,14 @@ export function imageSync(database, profile, r2) {
       )) {
         const key = r2.key(url);
         if (inherited.has(key)) continue;
+        // A document may point at an image this site never received. It is
+        // shown as missing until someone pastes it again; the commit goes on
+        // without it rather than stopping the team's synchronization.
         const bytes = await r2.read(url);
-        assert(bytes, 502, "게시할 문서 이미지가 없습니다.");
+        if (!bytes) {
+          skippedImage(key, "missing from R2");
+          continue;
+        }
         yield [key, bytes];
       }
     },
@@ -77,18 +84,21 @@ export function imageSync(database, profile, r2) {
       );
       // The shared service verifies newly introduced immutable files once.
       // Existing R2 content-addressed objects need no repeated Git download.
+      // An image Git lacks or holds damaged is left out: the document shows
+      // it as missing, and the commit is still received.
       for (const url of active) {
         if (await r2.has(url)) continue;
         const key = r2.key(url),
           bytes =
             verifiedImages.get(key) || (await transport.readFile(head, key));
-        assert(
-          bytes &&
-            digest(bytes) === key.split("/").at(-1).slice(0, -5) &&
-            stillImage(bytes) === "image/webp",
-          502,
-          "활성 문서 이미지가 없거나 손상되었습니다.",
-        );
+        if (
+          !bytes ||
+          digest(bytes) !== key.split("/").at(-1).slice(0, -5) ||
+          stillImage(bytes) !== "image/webp"
+        ) {
+          skippedImage(key, bytes ? "damaged in Git" : "missing from Git");
+          continue;
+        }
         await r2.install(url, bytes);
       }
     },

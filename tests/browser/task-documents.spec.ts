@@ -3671,3 +3671,18 @@ test("문서 메뉴를 여는 저장 대기 중 원격 삭제되어도 패널이
     release();
   }
 });
+
+test("파일이 없는 이미지는 이미지 없음으로 표시하고 문서 저장을 막지 않는다", async ({
+  page,
+}) => {
+  const missing = `/api/document-images/${teamId}/${"d".repeat(64)}.webp`;
+  await save(page, taskIds[0], `앞 문단\n\n![없는 그림](${missing})`);
+  await page.reload();
+  await open(page);
+  const placeholder = rich(page).locator(".document-image-missing");
+  await expect(placeholder).toBeVisible();
+  await expect(placeholder).toHaveText(
+    "이미지 없음 · 지우고 다시 붙여넣으세요",
+  );
+  await expect(rich(page).locator(".document-image img")).toBeHidden();
+});
