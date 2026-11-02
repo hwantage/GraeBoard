@@ -1485,11 +1485,18 @@ small {
   scrollbar-color: #bacbc7 #f4f7f6;
   overscroll-behavior: contain;
 }
+/* The tail memo bar or panel sits under the table in the grid area, and the
+   table scrolls above it. */
+.grid-area.has-sheet-footer {
+  flex-direction: column;
+}
+.grid-area.has-sheet-footer > .sheet-scroll {
+  min-height: 0;
+}
 .sheet-scroll.has-sheet-footer {
-  /* Collapsed memo bar: the accordion heading (toolbar height + borders). */
-  --sheet-footer-bar-height: calc(var(--sheet-toolbar-height) + 2px);
   overflow-x: hidden;
-  /* A column lets the collapsed memo bar sit at the bottom of short tables. */
+  /* A column keeps the horizontal scrollbar right above the memos even when
+     the table is short. */
   display: flex;
   flex-direction: column;
   /* Keyboard moves keep rows above a classic horizontal scrollbar.
@@ -1499,17 +1506,8 @@ small {
 .sheet-scroll.has-sheet-footer > * {
   flex-shrink: 0;
 }
-/* The collapsed memo bar is pinned to the bottom of the sheet viewport with
-   the horizontal scrollbar right above it; at the end of the table both sit
-   in their own place after the last row. */
-.sheet-scroll:has(> .annual-memos[data-collapsed]) {
-  scroll-padding-bottom: calc(
-    var(--sheet-rail-size, 0px) + var(--sheet-footer-bar-height)
-  );
-}
-.sheet-scroll:has(> .annual-memos[data-collapsed]) > .sheet-horizontal-scroll {
+.sheet-scroll.has-sheet-footer > .sheet-horizontal-scroll {
   margin-top: auto;
-  bottom: var(--sheet-footer-bar-height);
 }
 /* The rail holds only the room a classic scrollbar needs, so the memos sit
    right under the rows. Its track hangs from the rail's bottom edge. */

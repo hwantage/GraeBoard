@@ -2,12 +2,23 @@ import {
   forwardRef,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { Button } from "./components";
 import DocumentPanel, { type DocumentPanelHandle } from "./DocumentPanel";
+
+// The open accordion is a panel pinned under the table. A height the user
+// sets is kept per user and sheet; otherwise CSS gives it about a memo card's
+// height. Either way the table keeps its header and a few rows (styles in
+// task-document.css use the same limits).
+const MIN_HEIGHT = 200;
+const TABLE_ROOM = 120;
+const panelLimit = (grid: HTMLElement) =>
+  Math.max(MIN_HEIGHT, grid.clientHeight - TABLE_ROOM);
 
 export default forwardRef<
   DocumentPanelHandle,
@@ -27,13 +38,30 @@ export default forwardRef<
       return false;
     }
   });
+  const heightKey = `weekly-plan:memo-height:${userId}:${teamId}:${reportId || year}`;
+  const [height, setHeight] = useState<number | null>(() => {
+    try {
+      const saved = Number(localStorage.getItem(heightKey));
+      return saved >= MIN_HEIGHT ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+  const currentHeight = useRef(height);
+  // The rendered height and its limit, for the separator's value only.
+  const [measured, setMeasured] = useState({ height: 0, max: MIN_HEIGHT });
+  const resize = useRef<{
+    y: number;
+    height: number;
+    previous: number | null;
+    scale: number;
+  } | null>(null);
   const [closing, setClosing] = useState(false);
   const [scrollRatio, setScrollRatio] = useState(0);
   const [scrollable, setScrollable] = useState(false);
   const draggingScroll = useRef(false);
   const panel = useRef<DocumentPanelHandle>(null);
   const section = useRef<HTMLElement>(null);
-  const scrollOnOpen = useRef(false);
   const contentId = useId();
   const ToggleIcon = opened ? ChevronUp : ChevronDown;
   useImperativeHandle(ref, () => ({
@@ -43,6 +71,34 @@ export default forwardRef<
       (await panel.current?.selectDocument(id)) ?? false,
     scrollToRatio: (ratio) => panel.current?.scrollToRatio(ratio),
   }));
+  useLayoutEffect(() => {
+    const element = section.current;
+    const grid = element?.parentElement;
+    if (!opened || !element || !grid) return;
+    const update = () =>
+      setMeasured({ height: element.offsetHeight, max: panelLimit(grid) });
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    observer.observe(grid);
+    update();
+    return () => observer.disconnect();
+  }, [opened]);
+  function updateHeight(value: number | null, save = false) {
+    const grid = section.current?.parentElement;
+    const next =
+      value === null || !grid
+        ? null
+        : Math.max(MIN_HEIGHT, Math.min(panelLimit(grid), Math.round(value)));
+    currentHeight.current = next;
+    setHeight(next);
+    if (save && next !== null) {
+      try {
+        localStorage.setItem(heightKey, String(next));
+      } catch {
+        /* retain this session's height */
+      }
+    }
+  }
   function rememberOpened(next: boolean) {
     setOpened(next);
     try {
@@ -54,12 +110,6 @@ export default forwardRef<
   async function toggle() {
     if (closing) return;
     if (!opened) {
-      // The collapsed bar is pinned over the rows. Open it from the end of
-      // the table, where its own position matches the pinned one, so the
-      // heading stays under the pointer instead of jumping below the rows.
-      const sheet = section.current?.closest(".sheet-scroll");
-      if (sheet) sheet.scrollTop = sheet.scrollHeight;
-      scrollOnOpen.current = true;
       rememberOpened(true);
       return;
     }
@@ -76,7 +126,83 @@ export default forwardRef<
       className="annual-memos"
       aria-label="연간 업무 메모 목록"
       data-collapsed={!opened || undefined}
+      style={
+        opened && height !== null
+          ? ({ "--memo-panel-height": `${height}px` } as CSSProperties)
+          : undefined
+      }
     >
+      {opened && (
+        <div
+          className="memo-height-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="꼬리 메모 높이"
+          aria-valuemin={MIN_HEIGHT}
+          aria-valuemax={measured.max}
+          aria-valuenow={measured.height}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.focus({ preventScroll: true });
+            const panelBox = section.current!;
+            const box = panelBox.getBoundingClientRect();
+            resize.current = {
+              y: event.clientY,
+              height: panelBox.offsetHeight,
+              previous: height,
+              scale: box.height / panelBox.offsetHeight || 1,
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const drag = resize.current;
+            if (drag)
+              updateHeight(drag.height - (event.clientY - drag.y) / drag.scale);
+          }}
+          onPointerUp={(event) => {
+            if (!resize.current) return;
+            resize.current = null;
+            updateHeight(currentHeight.current, true);
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onLostPointerCapture={() => {
+            if (resize.current) updateHeight(resize.current.previous);
+            resize.current = null;
+          }}
+          onPointerCancel={() => {
+            if (resize.current) updateHeight(resize.current.previous);
+            resize.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && resize.current) {
+              event.preventDefault();
+              event.stopPropagation();
+              updateHeight(resize.current.previous);
+              resize.current = null;
+              return;
+            }
+            const delta = event.shiftKey ? 100 : 20;
+            const shown = section.current!.offsetHeight;
+            const value =
+              event.key === "ArrowUp"
+                ? shown + delta
+                : event.key === "ArrowDown"
+                  ? shown - delta
+                  : event.key === "Home"
+                    ? MIN_HEIGHT
+                    : event.key === "End"
+                      ? Infinity
+                      : null;
+            if (value === null) return;
+            event.preventDefault();
+            event.stopPropagation();
+            updateHeight(value, true);
+          }}
+        />
+      )}
       <div
         className="memo-accordion-heading"
         onClick={(event) => {
@@ -162,12 +288,11 @@ export default forwardRef<
           </div>
         )}
       </div>
-      <div id={contentId} hidden={!opened}>
+      <div id={contentId} className="memo-panel-content" hidden={!opened}>
         {opened && (
           <DocumentPanel
             ref={panel}
             inline
-            scrollOnOpen={scrollOnOpen.current}
             onScrollRatioChange={(ratio, available) => {
               setScrollRatio(ratio);
               setScrollable(available);

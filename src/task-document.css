@@ -857,30 +857,71 @@
 
 .annual-memos {
   --memo-accordion-height: var(--sheet-toolbar-height);
-  position: sticky;
-  left: 0;
+  position: relative;
   width: 100%;
   min-width: 0;
   flex: none;
   background: white;
 }
-/* Rows scroll behind the collapsed bar; the sheet header and the horizontal
-   scrollbar above it stay on top. */
-.annual-memos[data-collapsed] {
-  bottom: 0;
-  z-index: 14;
+/* Open, the accordion is a panel of its own height under the table. Without
+   memo cards it holds only its heading and tabs. */
+.annual-memos:not([data-collapsed]) {
+  display: flex;
+  flex-direction: column;
+  /* Same limits as AnnualMemoPanel: 200px, and room for the table. */
+  height: var(--memo-panel-height, min(460px, 60%));
+  min-height: 200px;
+  max-height: calc(100% - 120px);
 }
-.annual-memos .document-tabs {
-  top: calc(32px + var(--memo-accordion-height));
+.annual-memos:not([data-collapsed]):not(:has(.memo-document-card)) {
+  height: auto;
+  min-height: 0;
+}
+.memo-panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.memo-panel-content[hidden],
+.annual-memos:not(:has(.memo-document-card)) .memo-height-handle {
+  display: none;
+}
+.memo-panel-content > .task-documents {
+  min-height: 0;
+}
+/* Drag the panel's top edge to change its height. */
+.memo-height-handle {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  z-index: 17;
+  height: 7px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.memo-height-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+}
+.memo-height-handle:hover::after,
+.memo-height-handle:focus-visible::after,
+.memo-height-handle:active::after {
+  background: var(--accent);
 }
 .annual-memos .document-rich-tools {
   top: 0;
 }
 .memo-accordion-heading {
-  position: sticky;
+  position: relative;
+  flex-shrink: 0;
   cursor: pointer;
-  top: 32px;
-  z-index: 6;
   margin: 0;
   background: var(--accent-surface);
   border-block: 1px solid var(--line);
@@ -942,12 +983,18 @@
 .memo-documents:empty {
   display: none;
 }
+.annual-memos .memo-documents {
+  flex: 1;
+  min-height: 0;
+}
+/* Cards fill the panel's height and scroll their own body. Cards are open
+   dialogs, so `auto` replaces the dialog's fit-content height. */
 .annual-memos .memo-document-card {
   flex: 0 0 min(var(--memo-width, 800px), 100%);
   width: min(var(--memo-width, 800px), 100%);
   min-width: 0;
-  min-height: 360px;
-  height: clamp(360px, calc(60dvh - var(--memo-accordion-height)), 600px);
+  height: auto;
+  min-height: 0;
   gap: 8px;
 }
 .memo-document-body {
@@ -1000,9 +1047,6 @@
   min-height: 27px;
   background: transparent;
   color: var(--ink);
-}
-.annual-memos .document-source {
-  min-height: 320px;
 }
 
 .annual-memos .document-tab-item {
