@@ -1783,7 +1783,9 @@ small {
   opacity: 0.35;
 }
 body.row-reordering,
-body.row-reordering * {
+body.row-reordering *,
+body.document-block-moving,
+body.document-block-moving * {
   cursor: grabbing !important;
   user-select: none !important;
 }

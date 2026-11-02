@@ -102,7 +102,8 @@
   line-height: 1.8;
 }
 .document-prose {
-  padding: 12px 21px 20px;
+  /* The left gutter holds the block handle. */
+  padding: 12px 21px 20px 30px;
 }
 .document-prose .ProseMirror {
   min-height: 300px;
@@ -290,7 +291,7 @@
 }
 @media (max-width: 600px) {
   .document-prose {
-    padding: 10px 13px 16px;
+    padding: 10px 13px 16px 24px;
   }
   .document-source {
     width: calc(100% - 12px);
@@ -372,6 +373,47 @@
 }
 .document-slash-menu [role="option"][aria-selected="true"] {
   background: var(--accent-surface);
+}
+.document-slash-menu-group {
+  padding: 6px 9px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* 블록 손잡이: 끌어서 이동하고 눌러서 블록 메뉴를 연다 */
+.document-block-handle {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+.document-block-handle:hover,
+.document-block-handle[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.document-block-handle:active {
+  cursor: grabbing;
+}
+.document-block-drop {
+  position: absolute;
+  z-index: 1;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.document-prose .document-block-dragging {
+  opacity: 0.35;
 }
 
 /* 토글 블록 */
