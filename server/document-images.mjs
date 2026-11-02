@@ -32,18 +32,15 @@ export function documentImagePath(directory, url) {
   );
   return join(resolve(directory), parts[1], `${parts[2]}.webp`);
 }
-export function validateDocumentImages(markdown, teamId, directory) {
+// Only this team's images. One whose file is missing is shown as missing in
+// the document and pasted again later; it never stops a save or a copy.
+export function validateDocumentImages(markdown, teamId) {
   for (const url of documentImageUrls(markdown)) {
     const parts = DOCUMENT_IMAGE_PATTERN.exec(url);
     requireThat(
       parts && isDocumentImage(url) && parts[1] === teamId,
       400,
       "같은 팀에 업로드한 문서 이미지만 사용할 수 있습니다.",
-    );
-    requireThat(
-      existsSync(documentImagePath(directory, url)),
-      400,
-      "문서 이미지를 찾을 수 없습니다. 이미지를 다시 붙여넣어 주세요.",
     );
   }
 }

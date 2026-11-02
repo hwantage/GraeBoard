@@ -6,6 +6,7 @@ import {
   hasDocumentContent,
 } from "../../shared/task-documents.js";
 import { assert } from "../access.mjs";
+import { imageReferences } from "../images.mjs";
 import { stamp, excludedYears } from "../tasks.mjs";
 import { databaseFor } from "../data.mjs";
 import {
@@ -355,8 +356,9 @@ export class PostgresDocumentRepository {
     const ctx = this.context,
       scope = await this.resolve(user, target, { write: method !== "GET" });
     const { teamId, prefix, documentId, kind } = scope;
-    if (body.markdown !== undefined)
-      await (await ctx.imageStore(teamId)).validate(body.markdown);
+    // Only this team's images; one whose file is missing is shown as missing
+    // in the document, never a reason to refuse saving it.
+    if (body.markdown !== undefined) imageReferences(body.markdown, teamId);
     return ctx.data(
       teamId,
       async (s) => {

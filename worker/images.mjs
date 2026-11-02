@@ -115,18 +115,6 @@ export class R2ImageStore {
     } while (cursor);
     return result;
   }
-  // Every missing image at once, so a caller can name the documents.
-  async validate(value) {
-    const missing = [];
-    for (const url of imageReferences(value, this.teamId))
-      if (!(await this.has(url))) missing.push(url);
-    assert(
-      !missing.length,
-      400,
-      "문서 이미지가 없습니다. 이미지를 다시 붙여넣으세요.",
-      { missingImages: missing },
-    );
-  }
   async check() {
     const key = `probes/${this.teamId}/${crypto.randomUUID()}`,
       bytes = crypto.getRandomValues(new Uint8Array(32));

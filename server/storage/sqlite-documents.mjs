@@ -796,11 +796,7 @@ export class SqliteDocumentRepository {
         );
         if (!replay && current.markdown !== data.markdown) {
           changed = true;
-          validateDocumentImages(
-            data.markdown,
-            context.teamId,
-            this.documentImagesDir,
-          );
+          validateDocumentImages(data.markdown, context.teamId);
           presence =
             hasDocumentContent(current.markdown) !==
             hasDocumentContent(data.markdown);

@@ -999,25 +999,8 @@ test(
           status: 503,
         });
       };
-      const originalDocument = ok(await outside(`/tasks/${task.id}/document`));
-      const failedSave = await outside(
-        `/tasks/${task.id}/document`,
-        {
-          operationId: randomUUID(),
-          expectedRevision: originalDocument.revision,
-          markdown: originalDocument.markdown + "\nR2 failure must roll back",
-        },
-        "PUT",
-      );
-      assert.equal(failedSave.status, 503);
-      assert.equal(
-        ok(await outside(`/tasks/${task.id}/document`)).revision,
-        originalDocument.revision,
-      );
-      assert.deepEqual(
-        (await pgStore.readPending(teamId)).map(digest),
-        preservedPending,
-      );
+      // Saving a document no longer looks up R2 (a missing image is shown as
+      // missing, not refused), so the outage reaches synchronization only.
       const internalCurrent = getTask(db, task.id);
       ok(
         await inside("/cells/batch", {
@@ -1090,8 +1073,8 @@ test(
         "scheduled receiver must reach the failed R2 binding after its durable deadline",
       );
       assert.ok(
-        failedR2Calls >= 3,
-        "save, manual run and eligible Cron each reached the failed binding",
+        failedR2Calls >= 2,
+        "manual run and eligible Cron each reached the failed binding",
       );
       assert.equal(
         (await pgStore.readLink(teamId)).canonical_head,
@@ -1271,7 +1254,6 @@ test(
                 pgSaveRejected: true,
                 teamPgCronFailed: true,
                 controlAccessible: true,
-                r2SaveRolledBack: true,
                 r2CronFailed: true,
                 pendingBytesPreserved: true,
                 canonicalCursorPreserved: true,

@@ -703,6 +703,8 @@ function serviceFor(config) {
     progress();
     return result;
   };
+  const skippedImage = (path, reason) =>
+    console.warn("GraeBoard image skipped", JSON.stringify({ path, reason }));
   const images = {
     async *publish(state, { parent, transport } = {}) {
       const inherited = new Set(
@@ -724,12 +726,20 @@ function serviceFor(config) {
         if (inherited.has(path)) continue;
         if (!url.startsWith(`/api/document-images/${teamId}/`))
           throw new ProtocolError("SYNC_INTEGRITY", "Foreign image reference");
-        if (
-          !existsSync(documentImagePath(documentImagesDir, url)) &&
-          !active.has(url)
-        )
+        // A document may point at an image this site does not hold: it is
+        // shown as missing, and the commit goes on without it.
+        if (!existsSync(documentImagePath(documentImagesDir, url))) {
+          if (active.has(url)) skippedImage(path, "missing locally");
           continue;
-        yield [path, readDocumentImage(documentImagesDir, url)];
+        }
+        let bytes;
+        try {
+          bytes = readDocumentImage(documentImagesDir, url);
+        } catch {
+          skippedImage(path, "damaged locally");
+          continue;
+        }
+        yield [path, bytes];
       }
     },
     async receive(state, oid, remote, { verifiedImages = new Map() } = {}) {
@@ -742,24 +752,30 @@ function serviceFor(config) {
         project(state, pending).entities,
         teamId,
       );
-      const install = async (url, required) => {
+      // An image Git lacks or holds damaged is left out: the document shows
+      // it as missing, and the commit is still received.
+      let files;
+      const install = async (url) => {
         const path = url.replace("/api/document-images/", "images/");
+        files ||= new Set(
+          (await remote.readCommit(oid)).files.map((file) => file.path),
+        );
         const bytes =
-          verifiedImages.get(path) || (await remote.readFile(oid, path));
+          verifiedImages.get(path) ||
+          (files.has(path) ? await remote.readFile(oid, path) : null);
         if (
           !bytes ||
           digest(bytes) !== path.split("/").at(-1).replace(".webp", "") ||
           bytes.length > 10 * 1024 * 1024
-        )
-          throw new ProtocolError(
-            "SYNC_INTEGRITY",
-            "Invalid image content hash or size",
-          );
-        if (required) writeDocumentImage(documentImagesDir, url, bytes);
+        ) {
+          skippedImage(path, bytes ? "damaged in Git" : "missing from Git");
+          return;
+        }
+        writeDocumentImage(documentImagesDir, url, bytes);
       };
       for (const url of active)
         if (!existsSync(documentImagePath(documentImagesDir, url)))
-          await install(url, true);
+          await install(url);
     },
   };
   const service = new SyncService({
