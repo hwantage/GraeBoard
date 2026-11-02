@@ -2384,7 +2384,8 @@ body.document-block-moving * {
 .task-detail-modal > header > .button {
   flex-shrink: 0;
 }
-.task-detail-modal > header .document-expand {
+.task-detail-modal > header .document-expand,
+.task-detail-modal > header .document-link-copy {
   color: var(--ink);
 }
 .task-detail-modal .modal-body {

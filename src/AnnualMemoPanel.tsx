@@ -307,6 +307,11 @@ export default forwardRef<
               `weekly-plan:memo:${userId}:${teamId}:${reportId || year}:${id}`
             }
             readOnly={readOnly}
+            documentLink={(id) =>
+              reportId
+                ? { kind: "report-memo", reportId, id }
+                : { kind: "memo", teamId, year, id }
+            }
             onSaved={() => {}}
             onListChanged={() => {}}
             onLoadingChange={() => {}}

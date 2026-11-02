@@ -25,6 +25,10 @@ import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
 } from "../../shared/calendar-tags.js";
+import {
+  DOCUMENT_LINK_BATCH,
+  parseDocumentLinkPath,
+} from "../../shared/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();
@@ -165,6 +169,22 @@ const bodySchemas = {
     .object({ deletionId: uuid, previousRange: rangeSchema.optional() })
     .strict(),
 };
+const linkPathsSchema = z
+  .string()
+  .default("")
+  .transform((value) => [...new Set(value.split(",").filter(Boolean))])
+  .pipe(
+    z
+      .array(
+        z
+          .string()
+          .refine(
+            (path) => !!parseDocumentLinkPath(path),
+            "문서 링크 주소를 확인하세요.",
+          ),
+      )
+      .max(DOCUMENT_LINK_BATCH),
+  );
 const querySchemas = {
   listTags: z.object({
     scope: z.enum(["personal", "team"]).default("personal"),
@@ -202,6 +222,7 @@ const querySchemas = {
         }
       }, "업무 필터 조건을 확인하세요."),
   }),
+  resolveLinks: z.object({ links: linkPathsSchema }),
 };
 export const CALENDAR_ROUTES = [
   {
@@ -342,6 +363,14 @@ export const CALENDAR_ROUTES = [
     path: "/calendar/tasks/:id",
     status: 200,
   },
+  // Current titles of linked tasks, entries, memos and copy rows. The
+  // repositories that open a task or an entry from the calendar answer it.
+  {
+    name: "resolveLinks",
+    method: "GET",
+    path: "/document-links",
+    status: 200,
+  },
 ];
 const routes = new Map(CALENDAR_ROUTES.map((route) => [route.name, route]));
 export function matchCalendarRoute(path, method) {
@@ -450,6 +479,9 @@ export class CalendarBusinessService {
   }
   getTask(request) {
     return this.execute("getTask", request);
+  }
+  resolveLinks(request) {
+    return this.execute("resolveLinks", request);
   }
 }
 export function requireCalendarWrite(user, teamId, userId) {

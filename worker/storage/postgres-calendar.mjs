@@ -36,6 +36,7 @@ import {
   settingsFor,
   stamp,
 } from "../tasks.mjs";
+import { resolvePostgresDocumentLinks } from "./postgres-document-links.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });
 }
@@ -1035,6 +1036,11 @@ async function calendarOperation(ctx, operation, params, body, query) {
       settings: await settingsFor(s),
     }));
   }
+  if (operation === "resolveLinks")
+    return resolvePostgresDocumentLinks(
+      ctx,
+      (query.get("links") || "").split(",").filter(Boolean),
+    );
   return undefined;
 }
 

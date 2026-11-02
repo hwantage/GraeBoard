@@ -1,5 +1,5 @@
 import type { DocumentPanelHandle } from "./TaskDocumentPanel";
-import type { DocumentSaveResult, SavedCell } from "./types";
+import type { BatchResult, DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
@@ -38,6 +38,12 @@ import Toast, { useToast } from "./Toast";
 import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import {
+  updateDocumentLinkTitle,
+  useOpenDocumentLink,
+  type DocumentLinkTarget,
+} from "./document-links";
 import type { Task, User, Settings } from "./types";
 import {
   fieldsFor,
@@ -113,6 +119,8 @@ export const TaskDetailContent = forwardRef<
     user: User;
     users: User[];
     readOnly?: boolean;
+    // Documents stay editable; the properties are shown only.
+    propertiesReadOnly?: boolean;
     documentReport?: { id: string; isNew: boolean };
     initialDocumentId?: string;
     onDocumentSelected?: (id: string) => void;
@@ -129,6 +137,7 @@ export const TaskDetailContent = forwardRef<
     user,
     users,
     readOnly,
+    propertiesReadOnly,
     documentReport,
     initialDocumentId,
     onDocumentSelected,
@@ -167,7 +176,7 @@ export const TaskDetailContent = forwardRef<
         task={task}
         settings={settings}
         users={users}
-        readOnly={!editable}
+        readOnly={!editable || !!propertiesReadOnly}
         onSave={onSaveProperty}
       />
       {copySaveError && (
@@ -214,8 +223,10 @@ export function RowPanel({
   user,
   users,
   readOnly = false,
+  propertiesReadOnly,
   reportMode = false,
   documentReport,
+  headerAction,
   onDocumentSaved,
   copySaveError,
   onRetryCopySave,
@@ -229,8 +240,11 @@ export function RowPanel({
   users: User[];
   // 열람자·발표 화면에서는 편집 동작을 숨긴다.
   readOnly?: boolean;
+  propertiesReadOnly?: boolean;
   reportMode?: boolean;
   documentReport?: { id: string; isNew: boolean };
+  // A single action in place of the task actions, e.g. opening the copy.
+  headerAction?: ReactNode;
   onDocumentSaved: (result: DocumentSaveResult) => void;
   copySaveError?: string;
   onRetryCopySave?: () => void;
@@ -241,24 +255,30 @@ export function RowPanel({
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [documentFullPage, setDocumentFullPage] = useState(false);
+  // A copy's task keeps the original's ID, so its link also names the copy.
+  const linkTarget: DocumentLinkTarget = documentReport
+    ? { kind: "report-task", reportId: documentReport.id, id: task.id }
+    : { kind: "task", id: task.id };
   const leaving = useRef(false);
   async function leave(
     action: () => void | Promise<void>,
     keepDocumentDraft = false,
   ) {
-    if (leaving.current) return;
+    if (leaving.current) return false;
     leaving.current = true;
     try {
       if (
         detailRef.current &&
         !(await detailRef.current.flush(keepDocumentDraft))
       )
-        return;
+        return false;
       await action();
+      return true;
     } finally {
       leaving.current = false;
     }
   }
+  useOpenDocumentLink(linkTarget, () => leave(onClose));
   function act(action: string) {
     void leave(() => onAction?.(action));
   }
@@ -266,25 +286,32 @@ export function RowPanel({
     <Modal
       title="업무 상세"
       titleAction={
-        <Button
-          tooltip={
-            documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
-          }
-          className="document-expand"
-          aria-pressed={documentFullPage}
-          onClick={() => setDocumentFullPage((value) => !value)}
-        >
-          {documentFullPage ? (
-            <Minimize2 size={16} aria-hidden="true" />
-          ) : (
-            <Maximize2 size={16} aria-hidden="true" />
-          )}
-        </Button>
+        <>
+          <CopyDocumentLinkButton
+            target={linkTarget}
+            title={String(value(task, "title"))}
+          />
+          <Button
+            tooltip={
+              documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
+            }
+            className="document-expand"
+            aria-pressed={documentFullPage}
+            onClick={() => setDocumentFullPage((value) => !value)}
+          >
+            {documentFullPage ? (
+              <Minimize2 size={16} aria-hidden="true" />
+            ) : (
+              <Maximize2 size={16} aria-hidden="true" />
+            )}
+          </Button>
+        </>
       }
       onClose={() => void leave(onClose)}
       className={`task-detail-modal${documentFullPage ? " document-full-page" : ""}`}
       headerActions={
-        onAction && (
+        headerAction ||
+        (onAction && (
           <div
             className="task-detail-actions"
             role="group"
@@ -309,7 +336,7 @@ export function RowPanel({
               </Button>
             )}
           </div>
-        )
+        ))
       }
     >
       <TaskDetailContent
@@ -319,9 +346,16 @@ export function RowPanel({
         user={user}
         users={users}
         readOnly={readOnly}
+        propertiesReadOnly={propertiesReadOnly}
         documentReport={documentReport}
         onDocumentSaved={onDocumentSaved}
-        onSaveProperty={onSaveProperty}
+        onSaveProperty={async (request) => {
+          const cells = await onSaveProperty(request);
+          for (const cell of cells)
+            if (cell.taskId === task.id && cell.key === "title")
+              updateDocumentLinkTitle(linkTarget, String(cell.value));
+          return cells;
+        }}
         copySaveError={copySaveError}
         onRetryCopySave={onRetryCopySave}
         onCloseWithDraft={() => void leave(onClose, true)}
@@ -335,6 +369,66 @@ export function RowPanel({
         </footer>
       )}
     </Modal>
+  );
+}
+
+// A task detail opened outside the annual board (calendar weekly items,
+// document links). It keeps its own copy of the task and saves cells directly.
+export function StandaloneRowPanel({
+  task: initial,
+  settings,
+  user,
+  users,
+  readOnly,
+  onClose,
+  onCellsSaved,
+  onDocumentSaved,
+}: {
+  task: Task;
+  settings: Settings;
+  user: User;
+  users: User[];
+  readOnly?: boolean;
+  onClose: () => void;
+  onCellsSaved?: (result: BatchResult) => void;
+  onDocumentSaved?: (result: DocumentSaveResult) => void;
+}) {
+  const [task, setTask] = useState(initial);
+  return (
+    <RowPanel
+      task={task}
+      settings={settings}
+      user={user}
+      users={users}
+      readOnly={readOnly}
+      onClose={onClose}
+      onDocumentSaved={(result) => {
+        onDocumentSaved?.(result);
+        setTask((previous) => ({
+          ...previous,
+          hasDocument: result.hasDocument,
+          documentCount: result.documentCount,
+          updatedAt: result.taskUpdatedAt,
+        }));
+      }}
+      onSaveProperty={async (payload) => {
+        const result = await send<BatchResult>("/cells/batch", payload);
+        onCellsSaved?.(result);
+        setTask((previous) => ({
+          ...previous,
+          updatedAt: result.updatedAt?.[previous.id] || previous.updatedAt,
+          cells: {
+            ...previous.cells,
+            ...Object.fromEntries(
+              result.cells
+                .filter((cell) => cell.taskId === previous.id)
+                .map(({ key, taskId: _taskId, ...cell }) => [key, cell]),
+            ),
+          },
+        }));
+        return result.cells;
+      }}
+    />
   );
 }
 

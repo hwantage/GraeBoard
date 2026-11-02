@@ -40,6 +40,7 @@ function fixture(t) {
     teamId = randomUUID(),
     userId = randomUUID(),
     viewerId = randomUUID(),
+    outsiderId = randomUUID(),
     refId = randomUUID(),
     stamp = new Date().toISOString();
   db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
@@ -50,6 +51,7 @@ function fixture(t) {
   for (const [id, name, role, active] of [
     [userId, "Admin", "admin", 1],
     [viewerId, "Viewer", "user", 1],
+    [outsiderId, "Outsider", "user", 1],
     [refId, "Imported person", "user", 0],
   ])
     db.prepare(
@@ -113,6 +115,10 @@ function fixture(t) {
       db,
       db.prepare("SELECT * FROM users WHERE id=?").get(viewerId),
     ),
+    outsider = userWithTeams(
+      db,
+      db.prepare("SELECT * FROM users WHERE id=?").get(outsiderId),
+    ),
     app = createApp({
       db,
       rateLimits: false,
@@ -131,6 +137,7 @@ function fixture(t) {
     teamId,
     user,
     viewer,
+    outsider,
     refId,
     taskId: task.id,
     link,
@@ -146,6 +153,7 @@ async function contract({
   teamId,
   user,
   viewer,
+  outsider,
   refId,
   taskId,
   counts,
@@ -582,6 +590,64 @@ async function contract({
       }),
     400,
   );
+  // Document links read the current titles of what the user can open.
+  const missingId = randomUUID(),
+    linkQuery = {
+      links: [
+        `/links/task/${taskId}`,
+        `/links/task/${missingId}`,
+        `/links/calendar/${entry.id}`,
+        `/links/calendar/${shared.id}`,
+        `/links/calendar/${missingId}`,
+      ].join(","),
+    },
+    sortLinks = ({ links }) =>
+      links.sort((a, b) => a.path.localeCompare(b.path));
+  const expectedLinks = sortLinks({
+    links: [
+      { path: `/links/task/${taskId}`, teamId, title: "Contract task" },
+      { path: `/links/calendar/${entry.id}`, teamId, title: "Edited" },
+      {
+        path: `/links/calendar/${shared.id}`,
+        teamId,
+        title: "Shared viewer card",
+      },
+    ],
+  });
+  assert.deepEqual(
+    sortLinks(await service.resolveLinks({ query: linkQuery })),
+    expectedLinks,
+  );
+  assert.deepEqual(
+    sortLinks(await view.resolveLinks({ query: linkQuery })),
+    expectedLinks,
+    "a viewer reads the titles it can open",
+  );
+  assert.deepEqual(
+    (await forUser(outsider).resolveLinks({ query: linkQuery })).links,
+    [],
+    "another team's titles are not disclosed",
+  );
+  assert.deepEqual((await service.resolveLinks({ query: {} })).links, []);
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      service.resolveLinks({ query: { links: "/links/task/not-a-task" } }),
+    ),
+    { name: "ZodError" },
+  );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      service.resolveLinks({
+        query: {
+          links: Array.from(
+            { length: 51 },
+            () => `/links/calendar/${randomUUID()}`,
+          ).join(","),
+        },
+      }),
+    ),
+    { name: "ZodError" },
+  );
   entry = await service.getEntry({ params: { id: entry.id } });
   const deletion = {
     deletionId: randomUUID(),
@@ -596,6 +662,15 @@ async function contract({
   await service.deleteEntry({ params: { id: entry.id }, body: deletion });
   await tombstone(entry.id);
   await rejects(() => service.getEntry({ params: { id: entry.id } }), 404);
+  assert.deepEqual(
+    (
+      await service.resolveLinks({
+        query: { links: `/links/calendar/${entry.id}` },
+      })
+    ).links,
+    [],
+    "a deleted entry is no longer resolved",
+  );
   entry = await service.restoreEntry({
     params: { id: entry.id },
     body: { deletionId: deletion.deletionId },
@@ -722,7 +797,7 @@ test("M6 same calendar service and external HTTP routes accept a real PostgreSQL
     initialize: true,
     teamId: f.teamId,
   });
-  for (const u of [f.user, f.viewer])
+  for (const u of [f.user, f.viewer, f.outsider])
     await control.query(
       "INSERT INTO graeboard.users(id,username,email,name,system_role,created_at) VALUES($1,$2,$2,$3,$4,$5)",
       [u.id, u.username, u.name, u.systemRole, new Date().toISOString()],
@@ -848,6 +923,19 @@ test("M6 same calendar service and external HTTP routes accept a real PostgreSQL
   );
   assert.equal(response.status, 200);
   assert.equal(unpack(await response.json()).title, "Edited");
+  const linkTitles = async (userId) => {
+    const found = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/document-links?links=/links/task/${f.taskId},/links/calendar/${result.entry.id}`,
+      { headers: { cookie: "weekly_session=" + userId } },
+    );
+    assert.equal(found.status, 200);
+    return unpack(await found.json()).links.map((link) => link.title);
+  };
+  assert.deepEqual((await linkTitles(f.user.id)).sort(), [
+    "Contract task",
+    "Edited",
+  ]);
+  assert.deepEqual(await linkTitles(f.outsider.id), []);
   const eventCount = async () =>
     Number(
       (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, LoaderCircle, Trash2 } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Trash2 } from "lucide-react";
 
 export function useToast() {
   const [notice, setNotice] = useState<{ message: string } | null>(null);
@@ -18,14 +18,22 @@ export function useToast() {
 export default function Toast({
   message,
   pending = false,
+  failed = false,
 }: {
   message: string;
   pending?: boolean;
+  failed?: boolean;
 }) {
   return message ? (
-    <div className="toast" role="status" aria-atomic="true">
+    <div
+      className="toast"
+      role={failed ? "alert" : "status"}
+      aria-atomic="true"
+    >
       {pending ? (
         <LoaderCircle size={16} className="spin" aria-hidden="true" />
+      ) : failed ? (
+        <CircleAlert size={16} aria-hidden="true" />
       ) : (
         <Check size={16} aria-hidden="true" />
       )}

@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { isDocumentImage } from "../shared/document-images.js";
+import { parseDocumentLinkPath } from "../shared/document-links.js";
+import { DocumentLinkTitles, useDocumentLinkOpener } from "./document-links";
+import {
+  documentLinkSchema,
+  documentLinkView,
+  openDocumentLink,
+  pasteDocumentLink,
+} from "./DocumentLinkNode";
 import { documentImageView, type ImagePreview } from "./DocumentImageView";
 import { Button, Modal } from "./components";
 import Select from "./Select";
@@ -316,7 +324,7 @@ const codeBlockMetaSchema = codeBlockSchema.extendSchema((prev) => (ctx) => {
 
 export function safeDocumentLink(url: string) {
   return (
-    /^(https?:|mailto:)/i.test(url) &&
+    (/^(https?:|mailto:)/i.test(url) || !!parseDocumentLinkPath(url)) &&
     !/[\u0000-\u0020\u007f-\u00a0\u200b-\u200d\u2028\u2029\ufeff]/u.test(url)
   );
 }
@@ -392,7 +400,7 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
       );
     if (node.type === "link" && !safeDocumentLink(node.url))
       throw new Error(
-        "HTTP(S)·메일 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
+        "HTTP(S)·메일·문서 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
       );
     if (node.type === "image" && !isDocumentImage(node.url))
       throw new Error(
@@ -482,6 +490,9 @@ export default function RichMarkdownEditor(props: Props) {
   const appliedRemote = useRef(props.remoteMarkdown);
   const latest = useRef(props);
   latest.current = props;
+  const documentLinks = useDocumentLinkOpener();
+  const linkOpener = useRef(documentLinks);
+  linkOpener.current = documentLinks;
   const [ready, setReady] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -490,6 +501,7 @@ export default function RichMarkdownEditor(props: Props) {
   const [link, setLink] = useState<string | null>(null);
   const [linkError, setLinkError] = useState("");
   const [uploadError, setUploadError] = useState("");
+  const [linkOpenError, setLinkOpenError] = useState("");
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [imageZoom, setImageZoom] = useState(false);
   type SlashState = SlashMatch & { left: number; top: number; flip: boolean };
@@ -572,6 +584,7 @@ export default function RichMarkdownEditor(props: Props) {
     let initialized = false;
     const uploads = new Set<AbortController>();
     const pendingImages = new Set<Node>();
+    const linkTitles = new DocumentLinkTitles();
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root.current);
@@ -644,7 +657,16 @@ export default function RichMarkdownEditor(props: Props) {
               if (!anchor) return false;
               event.preventDefault();
               const href = anchor.getAttribute("href") || "";
-              if (
+              const target = parseDocumentLinkPath(href);
+              if (target)
+                openDocumentLink(
+                  target,
+                  event,
+                  linkTitles,
+                  linkOpener.current,
+                  (message) => active && setLinkOpenError(message),
+                );
+              else if (
                 safeDocumentLink(href) &&
                 (latest.current.readOnly || event.metaKey || event.ctrlKey)
               )
@@ -704,6 +726,7 @@ export default function RichMarkdownEditor(props: Props) {
               return false;
             // Markdown/plain text still uses the same preservation check.
             event.preventDefault();
+            if (pasteDocumentLink(view, text, linkTitles)) return true;
             const { $from, $to } = view.state.selection;
             if (
               isInTable(view.state) &&
@@ -735,6 +758,7 @@ export default function RichMarkdownEditor(props: Props) {
             return false;
           },
           nodeViews: {
+            document_link: (node) => documentLinkView(node, linkTitles),
             image: (node, view, getPos) =>
               documentImageView(
                 node,
@@ -806,6 +830,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(commonmark)
       .use(codeBlockMetaSchema)
       .use(gfm)
+      .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)
       .use(history)
@@ -886,6 +911,7 @@ export default function RichMarkdownEditor(props: Props) {
       });
     return () => {
       active = false;
+      linkTitles.dispose();
       pendingImages.clear();
       for (const controller of uploads) controller.abort();
       latest.current.onUploading?.(0);
@@ -1053,6 +1079,11 @@ export default function RichMarkdownEditor(props: Props) {
       {uploadError && (
         <p className="document-error" role="alert">
           {uploadError}
+        </p>
+      )}
+      {linkOpenError && (
+        <p className="document-error" role="alert">
+          {linkOpenError}
         </p>
       )}
       {!props.readOnly && (

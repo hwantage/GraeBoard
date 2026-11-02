@@ -37,6 +37,11 @@ import {
   MAX_TASK_DOCUMENTS,
   MAX_DOCUMENT_TITLE_LENGTH,
 } from "../shared/task-documents.js";
+import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import {
+  updateDocumentLinkTitle,
+  type DocumentLinkTarget,
+} from "./document-links";
 import "./task-document.css";
 export type { DocumentHandle } from "./DocumentEditor";
 export type DocumentPanelHandle = DocumentHandle & {
@@ -60,6 +65,8 @@ type Props = Pick<
   inline?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
+  // Memo cards: each card's link.
+  documentLink?: (documentId: string) => DocumentLinkTarget;
 };
 type RenameDraft = {
   document: DocumentInfo;
@@ -500,6 +507,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
     function changed(result: ListResult) {
       setDocuments(result.documents);
       props.onListChanged(result);
+      if (props.documentLink)
+        for (const doc of result.documents)
+          updateDocumentLinkTitle(props.documentLink(doc.id), doc.title);
     }
     async function add() {
       if (readOnly || busy || !(await finishRename())) return;
@@ -971,6 +981,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
                   readOnly ? undefined : () => void startRename(doc, "heading")
                 }
                 widthKey={`${props.draftKey(doc.id)}:width`}
+                link={props.documentLink?.(doc.id)}
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -1068,7 +1079,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
   },
 );
 
-function DocumentPage({
+// A document page. Memo cards (`inline`) also open in a full page; a memo
+// opened from a link (`onClose`) is only that full page and closes with it.
+export function DocumentPage({
   pageId,
   tabId,
   documentId,
@@ -1077,11 +1090,13 @@ function DocumentPage({
   titleError,
   onRename,
   widthKey,
+  link,
   inline,
   selected,
   loading,
   controlsTarget,
   onSelect,
+  onClose,
   children,
 }: {
   pageId: string;
@@ -1092,11 +1107,13 @@ function DocumentPage({
   titleError?: string;
   onRename?: () => void;
   widthKey: string;
+  link?: DocumentLinkTarget;
   inline: boolean;
   selected: boolean;
   loading: boolean;
   controlsTarget: HTMLDivElement | null;
   onSelect: () => void;
+  onClose?: () => void;
   children: (controls: HTMLDivElement | null) => ReactNode;
 }) {
   const [width, setWidth] = useState(() => {
@@ -1127,7 +1144,9 @@ function DocumentPage({
       }
     }
   }
-  const [fullPage, setFullPage] = useState(false);
+  const [expanded, setFullPage] = useState(false);
+  const fullPage = expanded || !!onClose;
+  const leaveFullPage = () => (onClose ? onClose() : setFullPage(false));
   const dialog = useRef<HTMLDialogElement | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
@@ -1156,7 +1175,7 @@ function DocumentPage({
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        setFullPage(false);
+        leaveFullPage();
       }}
       id={pageId}
       style={
@@ -1195,12 +1214,13 @@ function DocumentPage({
                 {title}
               </span>
             ))}
+          {link && <CopyDocumentLinkButton target={link} title={title} />}
           <Button
             ref={expandButton}
             className="document-expand"
             tooltip={fullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"}
             aria-pressed={fullPage}
-            onClick={() => setFullPage((value) => !value)}
+            onClick={() => (fullPage ? leaveFullPage() : setFullPage(true))}
           >
             {fullPage ? (
               <Minimize2 size={16} aria-hidden="true" />
@@ -1217,7 +1237,7 @@ function DocumentPage({
             <Button
               className="memo-document-close"
               tooltip="닫기"
-              onClick={() => setFullPage(false)}
+              onClick={leaveFullPage}
             >
               <X size={20} aria-hidden="true" />
             </Button>

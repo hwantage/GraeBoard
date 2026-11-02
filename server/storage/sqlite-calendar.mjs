@@ -23,6 +23,7 @@ import {
   CALENDAR_MAX_RANGE_DAYS,
 } from "../../shared/calendar.js";
 import { readDocumentVersion } from "../document-storage.mjs";
+import { resolveSqliteDocumentLinks } from "./sqlite-document-links.mjs";
 
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
@@ -1179,6 +1180,11 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
     const task = taskAccess(request.user, request.params.id);
     return { task: retentionView(db, task.teamId).task(task) };
   };
+  operations.resolveLinks = (request) =>
+    resolveSqliteDocumentLinks(
+      { db, teamAccess, user: request.user },
+      request.query.links,
+    );
   return {
     operations,
     calendarDocumentAccess: { entryAccess, read: document, summary },

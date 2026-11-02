@@ -11,6 +11,8 @@ import sharp from "sharp";
 import { materialize } from "../worker/materialize.mjs";
 
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
+import { CalendarBusinessService } from "../server/storage/calendar-service.mjs";
+import { PostgresCalendarRepository } from "../worker/storage/postgres-calendar.mjs";
 
 const saveRequest = (markdown, expectedRevision) => ({
   markdown,
@@ -143,6 +145,66 @@ async function documentContract({ f, service, counts, failOnce }) {
   return values;
 }
 
+// Link titles follow the document routes on both engines: what the user can
+// read, current titles, nothing for deleted, missing or other teams' targets.
+async function linkContract({ f, service, links, outsiderLinks }) {
+  const memo = randomUUID(),
+    copyMemo = randomUUID(),
+    missing = randomUUID();
+  await service.create(
+    { kind: "annual", teamId: f.teamId, year: 2026 },
+    { id: memo, title: "Linked memo" },
+  );
+  await service.create(
+    { kind: "reportMemo", reportId: f.reportId },
+    { id: copyMemo, title: "Linked copy memo" },
+  );
+  const paths = {
+    task: `/links/task/${f.taskId}`,
+    calendar: `/links/calendar/${f.entryId}`,
+    memo: `/links/memo/${f.teamId}/2026/${memo}`,
+    reportTask: `/links/report-task/${f.reportId}/${f.taskId}`,
+    reportMemo: `/links/report-memo/${f.reportId}/${copyMemo}`,
+  };
+  const absent = [
+    `/links/memo/${f.teamId}/2025/${memo}`,
+    `/links/memo/${f.teamId}/2026/${missing}`,
+    `/links/report-task/${f.reportId}/${missing}`,
+    `/links/report-task/${missing}/${f.taskId}`,
+    `/links/report-memo/${f.reportId}/${missing}`,
+  ];
+  const titles = async (read, list) =>
+    Object.fromEntries(
+      (await read(list)).links.map((link) => {
+        assert.equal(link.teamId, f.teamId);
+        return [link.path, link.title];
+      }),
+    );
+  assert.deepEqual(await titles(links, [...Object.values(paths), ...absent]), {
+    [paths.task]: "initial",
+    [paths.calendar]: "Contract calendar",
+    [paths.memo]: "Linked memo",
+    [paths.reportTask]: "initial",
+    [paths.reportMemo]: "Linked copy memo",
+  });
+  assert.deepEqual(await titles(outsiderLinks, Object.values(paths)), {});
+  await service.rename(
+    { kind: "annual", teamId: f.teamId, year: 2026, documentId: memo },
+    { title: "Renamed memo", expectedTitle: "Linked memo" },
+  );
+  const read = await service.read({
+    kind: "reportMemo",
+    reportId: f.reportId,
+    documentId: copyMemo,
+  });
+  await service.remove(
+    { kind: "reportMemo", reportId: f.reportId, documentId: copyMemo },
+    { expectedRevision: read.revision },
+  );
+  assert.deepEqual(await titles(links, [paths.memo, paths.reportMemo]), {
+    [paths.memo]: "Renamed memo",
+  });
+}
 async function retentionContract({ f, service, counts, exclude }) {
   const owner = { kind: "annual", teamId: f.teamId, year: 2026 },
     scope = { ...owner, documentId: randomUUID() };
@@ -257,12 +319,26 @@ test("M6 shared document contract on SQLite retains synchronous commands, all do
     service.list({ kind: "task", taskId: f.taskId }) instanceof Promise,
     false,
   );
-  const outsider = new DocumentBusinessService(repository, {
+  const outsiderUser = {
     id: randomUUID(),
     systemRole: "user",
     teamIds: [],
     teamRoles: {},
+  };
+  const calendar = f.app.locals.calendarRepository;
+  await linkContract({
+    f,
+    service,
+    links: async (paths) =>
+      new CalendarBusinessService(calendar, f.user).resolveLinks({
+        query: { links: paths.join(",") },
+      }),
+    outsiderLinks: async (paths) =>
+      new CalendarBusinessService(calendar, outsiderUser).resolveLinks({
+        query: { links: paths.join(",") },
+      }),
   });
+  const outsider = new DocumentBusinessService(repository, outsiderUser);
   await rejected(
     () => outsider.read({ kind: "task", taskId: f.taskId, documentId: "main" }),
     403,
@@ -343,6 +419,29 @@ test("M6 identical document contract uses PostgreSQL and external HTTP task-id r
           exclusions: await tx.sync.readExclusions(),
         });
       }),
+  });
+  const outsiderUser = (
+    await f.control.query(
+      "INSERT INTO graeboard.users(id,username,email,name,system_role,created_at) VALUES($1,$2,$2,'Outsider','user',$3) RETURNING *",
+      [randomUUID(), "outsider@example.test", new Date().toISOString()],
+    )
+  ).rows[0];
+  const resolver = (user) => async (paths) =>
+    new CalendarBusinessService(
+      new PostgresCalendarRepository({ context: f.makeContext(user) }),
+      user,
+    ).resolveLinks({ query: { links: paths.join(",") } });
+  await linkContract({
+    f,
+    service,
+    links: resolver(f.user),
+    outsiderLinks: resolver({
+      id: outsiderUser.id,
+      name: outsiderUser.name,
+      systemRole: "user",
+      teamIds: [],
+      teamRoles: {},
+    }),
   });
   const target = { kind: "task", taskId: f.taskId, documentId: "main" };
   const before = await service.read(target);
