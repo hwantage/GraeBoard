@@ -682,6 +682,7 @@ export default function Calendar({
   // the same task again at its previous position, like a card's undo.
   async function removeWeekly(item: WeeklyItem) {
     if (!writable(item.userId)) return;
+    const requestScope = scope;
     await action(async () => {
       const result = await send<WeeklyRemoveResult>(
         "/calendar/weekly",
@@ -693,7 +694,7 @@ export default function Calendar({
         },
         "DELETE",
       );
-      if (!alive.current) return;
+      if (!alive.current || activeScope.current !== requestScope) return;
       updateWeekly(item.userId, item.weekStart, result.weekly);
       setDeleted(null);
       setRemovedWeekly({ item, teamId: team.id });
