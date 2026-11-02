@@ -39,7 +39,6 @@ import {
 } from "../shared/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import {
-  UNAVAILABLE_LINK_MESSAGE,
   updateDocumentLinkTitle,
   type DocumentLinkTarget,
 } from "./document-links";
@@ -67,10 +66,8 @@ type Props = Pick<
   scrollOnOpen?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
-  // Memo cards: each card's link, and a document link asking to show a card.
+  // Memo cards: each card's link.
   documentLink?: (documentId: string) => DocumentLinkTarget;
-  openRequest?: { id: string; nonce: number } | null;
-  onOpened?: () => void;
 };
 type RenameDraft = {
   document: DocumentInfo;
@@ -110,11 +107,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [attempt, setAttempt] = useState(0);
     const [epochs, setEpochs] = useState<Record<string, number>>({});
-    const [fullPageRequest, setFullPageRequest] = useState<{
-      id: string;
-      nonce: number;
-    } | null>(null);
-    const handledOpen = useRef(0);
     const handles = useRef(new Map<string, DocumentHandle>());
     const firstReady = useRef(false);
     const focusEditor = useRef(false);
@@ -522,18 +514,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
       setError("");
       return true;
     }
-    // A memo opened from a link is selected and shown in its full page.
-    useEffect(() => {
-      const request = props.openRequest;
-      if (!request || !documentsLoaded || handledOpen.current === request.nonce)
-        return;
-      handledOpen.current = request.nonce;
-      void select(request.id).then((found) => {
-        if (found) setFullPageRequest(request);
-        else setError(UNAVAILABLE_LINK_MESSAGE);
-        props.onOpened?.();
-      });
-    }, [props.openRequest?.nonce, documentsLoaded]);
     function changed(result: ListResult) {
       setDocuments(result.documents);
       props.onListChanged(result);
@@ -1012,7 +992,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 }
                 widthKey={`${props.draftKey(doc.id)}:width`}
                 link={props.documentLink?.(doc.id)}
-                fullPageRequest={fullPageRequest}
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -1110,7 +1089,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
   },
 );
 
-function DocumentPage({
+// A document page. Memo cards (`inline`) also open in a full page; a memo
+// opened from a link (`onClose`) is only that full page and closes with it.
+export function DocumentPage({
   pageId,
   tabId,
   documentId,
@@ -1120,12 +1101,12 @@ function DocumentPage({
   onRename,
   widthKey,
   link,
-  fullPageRequest,
   inline,
   selected,
   loading,
   controlsTarget,
   onSelect,
+  onClose,
   children,
 }: {
   pageId: string;
@@ -1137,12 +1118,12 @@ function DocumentPage({
   onRename?: () => void;
   widthKey: string;
   link?: DocumentLinkTarget;
-  fullPageRequest: { id: string; nonce: number } | null;
   inline: boolean;
   selected: boolean;
   loading: boolean;
   controlsTarget: HTMLDivElement | null;
   onSelect: () => void;
+  onClose?: () => void;
   children: (controls: HTMLDivElement | null) => ReactNode;
 }) {
   const [width, setWidth] = useState(() => {
@@ -1173,10 +1154,9 @@ function DocumentPage({
       }
     }
   }
-  const [fullPage, setFullPage] = useState(false);
-  useEffect(() => {
-    if (fullPageRequest) setFullPage(fullPageRequest.id === documentId);
-  }, [fullPageRequest?.nonce]);
+  const [expanded, setFullPage] = useState(false);
+  const fullPage = expanded || !!onClose;
+  const leaveFullPage = () => (onClose ? onClose() : setFullPage(false));
   const dialog = useRef<HTMLDialogElement | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
@@ -1205,7 +1185,7 @@ function DocumentPage({
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        setFullPage(false);
+        leaveFullPage();
       }}
       id={pageId}
       style={
@@ -1250,7 +1230,7 @@ function DocumentPage({
             className="document-expand"
             tooltip={fullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"}
             aria-pressed={fullPage}
-            onClick={() => setFullPage((value) => !value)}
+            onClick={() => (fullPage ? leaveFullPage() : setFullPage(true))}
           >
             {fullPage ? (
               <Minimize2 size={16} aria-hidden="true" />
@@ -1267,7 +1247,7 @@ function DocumentPage({
             <Button
               className="memo-document-close"
               tooltip="닫기"
-              onClick={() => setFullPage(false)}
+              onClick={leaveFullPage}
             >
               <X size={20} aria-hidden="true" />
             </Button>

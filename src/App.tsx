@@ -10,7 +10,6 @@ import SheetTabs from "./SheetTabs";
 import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
 import useWorkspaceRoute from "./useWorkspaceRoute";
 import DocumentLinkPanel, {
-  findDocumentLink,
   loadDocumentLink,
   type OpenedDocumentLink,
 } from "./DocumentLinkPanel";
@@ -404,15 +403,10 @@ function Workspace({
     { key: string; link: OpenedDocumentLink }[]
   >([]);
   const [linkReload, setLinkReload] = useState(0);
-  // Memo and copy links open in their own sheet instead (linkNavigation).
+  // "사본에서 열기" on a copy's task moves to that copy (linkNavigation).
   const [linkNavigation, setLinkNavigation] = useState<{
-    target: DocumentLinkTarget;
+    target: Extract<DocumentLinkTarget, { kind: "report-task" }>;
     teamId: string;
-  } | null>(null);
-  const [memoRequest, setMemoRequest] = useState<{
-    sheet: string;
-    id: string;
-    nonce: number;
   } | null>(null);
   // Detail windows open now, oldest first, with their own close paths.
   const openDetails = useRef<{ key: string; close: () => Promise<boolean> }[]>(
@@ -435,7 +429,8 @@ function Workspace({
     }),
     [],
   );
-  // A target whose detail is already open stays as it is.
+  // Every link opens over the current screen; closing returns to it. A
+  // target whose window is already open stays as it is.
   openLink.current = async (target) => {
     const key = documentLinkKey(target);
     if (
@@ -445,41 +440,44 @@ function Workspace({
       return;
     openingTargets.current.add(key);
     try {
-      if (target.kind === "task" || target.kind === "calendar") {
-        const link = await loadDocumentLink(target);
-        if (!openDetails.current.some((entry) => entry.key === key))
-          setLinkPanels((panels) =>
-            panels.some((panel) => panel.key === key)
-              ? panels
-              : [...panels, { key, link }],
-          );
-        return;
-      }
-      const targetTeam = await findDocumentLink(target);
-      if (!boot.teams.some((team) => team.id === targetTeam))
-        throw new Error(UNAVAILABLE_LINK_MESSAGE);
-      // Leave the open windows through their own save paths, topmost first.
-      for (const entry of [...openDetails.current].reverse())
-        if (!(await entry.close())) return;
-      if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
-        return;
-      setLinkNavigation({ target, teamId: targetTeam });
+      const link = await loadDocumentLink(target);
+      if (!openDetails.current.some((entry) => entry.key === key))
+        setLinkPanels((panels) =>
+          panels.some((panel) => panel.key === key)
+            ? panels
+            : [...panels, { key, link }],
+        );
     } finally {
       openingTargets.current.delete(key);
     }
   };
+  // Leaves the open windows through their own save paths, topmost first,
+  // then moves to the copy and opens the task there.
+  async function openInCopy(
+    target: Extract<DocumentLinkTarget, { kind: "report-task" }>,
+    teamId: string,
+  ) {
+    for (const entry of [...openDetails.current].reverse())
+      if (!(await entry.close())) return;
+    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
+    setLinkNavigation({ target, teamId });
+  }
+  // A link address has no screen to return to: open over the target's team,
+  // and over the calendar for an entry.
   useEffect(() => {
     if (!deepLink) return;
-    if (deepLink.kind !== "task" && deepLink.kind !== "calendar") {
-      openLink.current(deepLink).catch((e) => setError((e as Error).message));
-      return;
-    }
     let active = true;
     loadDocumentLink(deepLink).then(
       (link) => {
         if (!active) return;
         const target =
-          link.kind === "task" ? link.task.teamId : link.entry.teamId;
+          link.kind === "task"
+            ? link.task.teamId
+            : link.kind === "calendar"
+              ? link.entry.teamId
+              : link.kind === "memo"
+                ? link.teamId
+                : link.task.teamId;
         if (boot.teams.some((team) => team.id === target)) setTeamId(target);
         if (link.kind === "calendar") workspaceRoute.commit("calendar", true);
         setLinkPanels([{ key: documentLinkKey(deepLink), link }]);
@@ -720,16 +718,15 @@ function Workspace({
       reportScroll.current = null;
     }
   }, [report?.id, ready]);
-  // A memo or copy link moves to its team, year and sheet one step per render,
-  // then shows the memo or the copy's task detail.
+  // "사본에서 열기" moves to the copy's team and sheet one step per render,
+  // then opens the copy's task detail.
   const linkStep = useRef({ navigation: linkNavigation, step: "" });
   useEffect(() => {
     const navigation = linkNavigation;
     if (linkStep.current.navigation !== navigation)
       linkStep.current = { navigation, step: "" };
     if (!navigation) return;
-    const { target } = navigation,
-      sheet = "reportId" in target ? target.reportId : null;
+    const { target } = navigation;
     const stop = (message = "") => {
       setLinkNavigation(null);
       if (message) setError(message);
@@ -749,41 +746,23 @@ function Workspace({
       setTeamId(navigation.teamId);
       return;
     }
-    if (target.kind === "memo" && !report && year !== target.year) {
-      if (linkStep.current.step === "year") return stop();
-      linkStep.current.step = "year";
-      flushView();
-      calendarNavigation.current = { teamId, year: target.year };
-      setView(fullCalendarView(viewRef.current, target.year));
-      setYear(target.year);
-      return;
-    }
-    // The board of this team and year, not the one being replaced.
+    // The board of this team, not the one being replaced.
     if (!loaded || loadedScope !== taskScope) return;
-    if ((report?.id || null) !== sheet) {
-      if (linkStep.current.step === `sheet:${sheet}`) return;
-      linkStep.current.step = `sheet:${sheet}`;
-      openCopy(sheet).catch((e) => stop((e as Error).message));
+    if (report?.id !== target.reportId) {
+      if (linkStep.current.step === "sheet") return;
+      linkStep.current.step = "sheet";
+      openCopy(target.reportId).catch((e) => stop((e as Error).message));
       return;
     }
-    if (target.kind === "memo" && year !== target.year) return;
     setLinkNavigation(null);
-    if (target.kind === "report-task") {
-      const task = report?.tasks.find((item) => item.id === target.id);
-      if (task) setRowTask(task);
-      else setError(UNAVAILABLE_LINK_MESSAGE);
-    } else
-      setMemoRequest({
-        sheet: sheet || `${teamId}:${year}`,
-        id: target.id,
-        nonce: Date.now(),
-      });
+    const task = report.tasks.find((item) => item.id === target.id);
+    if (task) setRowTask(task);
+    else setError(UNAVAILABLE_LINK_MESSAGE);
   }, [
     linkNavigation,
     workspaceRoute.route,
     calendarBusy,
     teamId,
-    year,
     loaded,
     loadedScope,
     taskScope,
@@ -4015,13 +3994,6 @@ function Workspace({
                         presentation || !canAdd || (!!report && !editingReport)
                       }
                       reportId={report?.id}
-                      openRequest={
-                        memoRequest?.sheet ===
-                        (report?.id || `${teamId}:${year}`)
-                          ? memoRequest
-                          : null
-                      }
-                      onOpened={() => setMemoRequest(null)}
                     />
                   }
                   canEditPeople={canAdd}
@@ -4296,6 +4268,12 @@ function Workspace({
           calendarTheme={calendarTheme}
           onClose={() => closeLinkPanel(key)}
           onDeleted={() => closeLinkPanel(key)}
+          onOpenCopy={(target) =>
+            void openInCopy(
+              target,
+              link.kind === "report-task" ? link.task.teamId : teamId,
+            )
+          }
         />
       ))}
       {panel === "export" && (

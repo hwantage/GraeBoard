@@ -11,9 +11,11 @@ import {
 // (shared/document-links.js); the clipboard carries this site's absolute
 // address of the same path.
 export type DocumentLinkTarget =
-  | { kind: "task" | "calendar"; id: string }
+  | { kind: "task"; id: string }
+  | { kind: "calendar"; id: string }
   | { kind: "memo"; teamId: string; year: number; id: string }
-  | { kind: "report-task" | "report-memo"; reportId: string; id: string };
+  | { kind: "report-task"; reportId: string; id: string }
+  | { kind: "report-memo"; reportId: string; id: string };
 export type DocumentLinkTitle =
   | { status: "loading" }
   | { status: "ready"; title: string }

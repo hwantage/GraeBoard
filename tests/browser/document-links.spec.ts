@@ -451,6 +451,19 @@ test("⌘/Ctrl+클릭은 새 탭으로 열고 그 주소는 팀과 화면을 바
   ).toHaveValue("링크할 일정");
   await expect(page.locator(".calendar-grid")).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/calendar");
+  await calendarDetail(page)
+    .getByRole("button", { name: "닫기", exact: true })
+    .click();
+
+  // A memo address opens over its team's annual screen.
+  const id = await memo(page, "주소로 연 메모", 2026, "주소 메모 본문");
+  await page.getByLabel("팀 선택").selectOption(other);
+  await page.goto(`/links/memo/${teamId}/2026/${id}`);
+  await expect(
+    page.getByRole("dialog", { name: "주소로 연 메모", exact: true }),
+  ).toContainText("주소 메모 본문");
+  await expect(page.getByLabel("팀 선택")).toHaveValue(teamId);
+  expect(new URL(page.url()).pathname).toBe("/");
 });
 
 test("일정 상세의 링크 복사도 전체 페이지 버튼 왼쪽에 있고 일정 주소를 복사한다", async ({
@@ -608,10 +621,22 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
   expect(clip.html).toContain(">링크 대상 업무</a>");
 });
 
-test("메모 링크는 열린 상세를 닫고 그 연도의 꼬리 메모를 펼쳐 전체 페이지로 연다", async ({
+const memoPage = (page: Page, title: string) =>
+  page.getByRole("dialog", { name: title, exact: true });
+const memoToggle = (page: Page) =>
+  page
+    .getByRole("region", { name: "연간 업무 메모 목록" })
+    .getByRole("button", { name: "꼬리 메모", exact: true });
+
+test("메모 링크는 지금 화면 위에 그 메모만 전체 페이지로 열고 닫으면 보던 상세로 돌아온다", async ({
   page,
 }, info) => {
-  const current = await memo(page, "링크할 메모", 2026, "올해 메모 본문");
+  const current = await memo(
+    page,
+    "링크할 메모",
+    2026,
+    `올해 메모 본문 [대상 업무](/links/task/${taskIds[1]})\n`,
+  );
   const previous = await memo(page, "지난해 메모", 2025, "지난해 메모 본문");
   await saveTask(
     page,
@@ -621,58 +646,90 @@ test("메모 링크는 열린 상세를 닫고 그 연도의 꼬리 메모를 �
   const source = await open(page);
   await expect(links(source)).toHaveText(["링크할 메모", "지난해 메모"]);
   await links(source).nth(0).click();
-  await expect(details(page)).toHaveCount(0);
-  const full = page.getByRole("dialog", { name: "링크할 메모", exact: true });
+  const full = memoPage(page, "링크할 메모");
   await expect(full).toHaveClass(/memo-full-page/);
   await expect(full).toContainText("올해 메모 본문");
+  // The detail below stays open and the screen does not move.
+  await expect(source).toBeVisible();
+  await expect(memoToggle(page)).toHaveAttribute("aria-expanded", "false");
   await expect(
-    page
-      .getByRole("region", { name: "연간 업무 메모 목록" })
-      .getByRole("button", { name: "꼬리 메모", exact: true }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await full.screenshot({ path: info.outputPath("memo-opened.png") });
+    full.getByRole("button", { name: "링크 복사", exact: true }),
+  ).toBeVisible();
+  await full.screenshot({ path: info.outputPath("memo-overlay.png") });
+
+  // A chain stacks; each close returns one level.
+  await links(full).click();
+  const target = details(page).nth(1);
+  await expect(
+    target.getByRole("textbox", { name: "작업 편집", exact: true }),
+  ).toHaveValue("링크 대상 업무");
+  await target.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(details(page)).toHaveCount(1);
+  await expect(full).toBeVisible();
+  // The memo saves like its card.
+  await rich(full).locator("p").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" 덧붙임");
+  await expect
+    .poll(
+      async () =>
+        (await request(page, `/teams/${teamId}/years/2026/memos/${current}`))
+          .markdown,
+    )
+    .toContain("덧붙임");
   await full.getByRole("button", { name: "닫기", exact: true }).click();
-  await expect(memoCard(page, current)).not.toHaveClass(/memo-full-page/);
-  await expect(memoCard(page, current)).toHaveAttribute(
-    "data-selected",
-    "true",
-  );
+  await expect(full).toHaveCount(0);
+  await expect(source).toBeVisible();
+  await expect(rich(source)).toBeVisible();
 
-  // Another year: the board moves to it and shows that year's memo.
-  const again = await open(page);
-  await links(again).nth(1).click();
-  const old = page.getByRole("dialog", { name: "지난해 메모", exact: true });
-  await expect(old).toHaveClass(/memo-full-page/);
+  // Another year's memo opens the same way; the board stays on this year.
+  await links(source).nth(1).click();
+  const old = memoPage(page, "지난해 메모");
   await expect(old).toContainText("지난해 메모 본문");
-  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveCount(
-    0,
-  );
-  await old.getByRole("button", { name: "닫기", exact: true }).click();
+  await old.press("Escape");
+  await expect(old).toHaveCount(0);
+  await expect(source).toBeVisible();
+  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
+});
 
-  // From a calendar entry: the entry closes and the annual screen opens.
+test("일정에서 연 메모 링크를 닫으면 캘린더와 그 일정 상세가 그대로 있다", async ({
+  page,
+}) => {
+  const id = await memo(page, "링크할 메모", 2026, "메모 본문");
   const scheduled = await entry(page);
   await request(page, `/calendar/entries/${scheduled.id}/document`, "PUT", {
-    markdown: `[메모](/links/memo/${teamId}/2026/${current})\n`,
+    markdown: `[메모](/links/memo/${teamId}/2026/${id})\n`,
     expectedRevision: 0,
     operationId: randomUUID(),
   });
   await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  const scroll = page.locator(".calendar-scroll, .calendar-board").first();
   await page
     .locator(`[data-entry-id="${scheduled.id}"] .calendar-entry-card`)
     .first()
     .click();
+  const before = await scroll.evaluate((element) => element.scrollTop);
+  await expect(links(calendarDetail(page))).toHaveText("링크할 메모");
   await links(calendarDetail(page)).click();
-  await expect(calendarDetail(page)).toHaveCount(0);
+  const full = memoPage(page, "링크할 메모");
+  await expect(full).toContainText("메모 본문");
+  await full.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(full).toHaveCount(0);
+  await expect(calendarDetail(page)).toBeVisible();
   await expect(
-    page.getByRole("dialog", { name: "링크할 메모", exact: true }),
-  ).toHaveClass(/memo-full-page/);
-  expect(new URL(page.url()).pathname).toBe("/");
-  await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
+    calendarDetail(page).getByRole("textbox", {
+      name: "일정 제목",
+      exact: true,
+    }),
+  ).toHaveValue("링크할 일정");
+  expect(new URL(page.url()).pathname).toBe("/calendar");
+  await expect(page.locator(".calendar-grid")).toBeVisible();
+  expect(await scroll.evaluate((element) => element.scrollTop)).toBe(before);
 });
 
-test("사본 업무와 사본 메모 링크는 그 사본을 열고 사본의 업무 상세와 메모를 연다", async ({
+test("사본 업무와 사본 메모 링크는 지금 시트 위에 열고 사본 업무는 사본에서 열 수 있다", async ({
   page,
-}) => {
+}, info) => {
   const id = await memo(page, "원본 메모", 2026, "원본 메모 본문");
   const report = await copySheet(page);
   await request(page, `/reports/${report}/memos/${id}`, "PATCH", {
@@ -697,30 +754,47 @@ test("사본 업무와 사본 메모 링크는 그 사본을 열고 사본의 �
     `[사본 업무](/links/report-task/${report}/${taskIds[1]}) [사본 메모](/links/report-memo/${report}/${id})\n`,
   );
   await page.reload();
+  const original = page.getByRole("tab", { name: "원본", exact: true });
+  const copyTab = page.getByRole("tab", { name: "링크 사본", exact: true });
   const source = await open(page);
   await expect(links(source)).toHaveText(["링크 대상 업무", "사본 메모 이름"]);
-  await links(source).nth(0).click();
-  const tab = page.getByRole("tab", { name: "링크 사본", exact: true });
-  await expect(tab).toHaveAttribute("aria-selected", "true");
-  const copyTask = details(page);
-  await expect(
-    copyTask.getByRole("textbox", { name: "작업 편집", exact: true }),
-  ).toHaveValue("링크 대상 업무");
-  await expect(rich(copyTask)).toContainText("사본 업무 문서");
-  await copyTask.getByRole("button", { name: "닫기", exact: true }).click();
-  await expect(details(page)).toHaveCount(0);
 
-  await page.getByRole("tab", { name: "원본", exact: true }).click();
-  await expect(tab).toHaveAttribute("aria-selected", "false");
-  const back = await open(page);
-  await links(back).nth(1).click();
-  await expect(tab).toHaveAttribute("aria-selected", "true");
-  const full = page.getByRole("dialog", {
-    name: "사본 메모 이름",
+  await links(source).nth(1).click();
+  const full = memoPage(page, "사본 메모 이름");
+  await expect(full).toContainText("원본 메모 본문");
+  await full.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(source).toBeVisible();
+  await expect(original).toHaveAttribute("aria-selected", "true");
+
+  await links(source).nth(0).click();
+  const copyTask = details(page).nth(1);
+  const title = copyTask.getByRole("textbox", {
+    name: "작업 편집",
     exact: true,
   });
-  await expect(full).toHaveClass(/memo-full-page/);
-  await expect(full).toContainText("원본 메모 본문");
+  await expect(title).toHaveValue("링크 대상 업무");
+  await expect(title).not.toBeEditable();
+  await expect(rich(copyTask)).toContainText("사본 업무 문서");
+  await expect(rich(copyTask)).toBeEditable();
+  await copyTask.screenshot({ path: info.outputPath("copy-task-overlay.png") });
+  await expect(original).toHaveAttribute("aria-selected", "true");
+  await copyTask.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(details(page)).toHaveCount(1);
+  await expect(original).toHaveAttribute("aria-selected", "true");
+
+  // Opening it in the copy leaves the windows and edits it there.
+  await links(source).nth(0).click();
+  await details(page)
+    .nth(1)
+    .getByRole("button", { name: "사본에서 열기", exact: true })
+    .click();
+  await expect(copyTab).toHaveAttribute("aria-selected", "true");
+  await expect(details(page)).toHaveCount(1);
+  const inCopy = details(page)
+    .first()
+    .getByRole("textbox", { name: "작업 편집", exact: true });
+  await expect(inCopy).toHaveValue("링크 대상 업무");
+  await expect(inCopy).toBeEditable();
 });
 
 test("링크로 연 일정 상세는 캘린더에서 연 것과 같은 모습이다", async ({

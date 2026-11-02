@@ -119,6 +119,8 @@ export const TaskDetailContent = forwardRef<
     user: User;
     users: User[];
     readOnly?: boolean;
+    // Documents stay editable; the properties are shown only.
+    propertiesReadOnly?: boolean;
     documentReport?: { id: string; isNew: boolean };
     initialDocumentId?: string;
     onDocumentSelected?: (id: string) => void;
@@ -135,6 +137,7 @@ export const TaskDetailContent = forwardRef<
     user,
     users,
     readOnly,
+    propertiesReadOnly,
     documentReport,
     initialDocumentId,
     onDocumentSelected,
@@ -173,7 +176,7 @@ export const TaskDetailContent = forwardRef<
         task={task}
         settings={settings}
         users={users}
-        readOnly={!editable}
+        readOnly={!editable || !!propertiesReadOnly}
         onSave={onSaveProperty}
       />
       {copySaveError && (
@@ -220,8 +223,10 @@ export function RowPanel({
   user,
   users,
   readOnly = false,
+  propertiesReadOnly,
   reportMode = false,
   documentReport,
+  headerAction,
   onDocumentSaved,
   copySaveError,
   onRetryCopySave,
@@ -235,8 +240,11 @@ export function RowPanel({
   users: User[];
   // 열람자·발표 화면에서는 편집 동작을 숨긴다.
   readOnly?: boolean;
+  propertiesReadOnly?: boolean;
   reportMode?: boolean;
   documentReport?: { id: string; isNew: boolean };
+  // A single action in place of the task actions, e.g. opening the copy.
+  headerAction?: ReactNode;
   onDocumentSaved: (result: DocumentSaveResult) => void;
   copySaveError?: string;
   onRetryCopySave?: () => void;
@@ -302,7 +310,8 @@ export function RowPanel({
       onClose={() => void leave(onClose)}
       className={`task-detail-modal${documentFullPage ? " document-full-page" : ""}`}
       headerActions={
-        onAction && (
+        headerAction ||
+        (onAction && (
           <div
             className="task-detail-actions"
             role="group"
@@ -327,7 +336,7 @@ export function RowPanel({
               </Button>
             )}
           </div>
-        )
+        ))
       }
     >
       <TaskDetailContent
@@ -337,6 +346,7 @@ export function RowPanel({
         user={user}
         users={users}
         readOnly={readOnly}
+        propertiesReadOnly={propertiesReadOnly}
         documentReport={documentReport}
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={async (request) => {
