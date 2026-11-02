@@ -6,7 +6,11 @@ import { createNodeSync } from "../server/sync/node.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
-import { canonical, protocolVersion } from "../server/sync/protocol.mjs";
+import {
+  canonical,
+  entityId,
+  protocolVersion,
+} from "../server/sync/protocol.mjs";
 
 export async function recoverSync({
   db,
@@ -43,7 +47,12 @@ export async function recoverSync({
     const canonicalState = store.readState(),
       pending = store.readPending();
     const before = project(canonicalState, pending).entities;
-    const after = allEntities(db, link);
+    // A calendar document with no saved body is published only when shared
+    // state already has it.
+    const after = allEntities(db, link, {
+      calendarDocuments: (key, saved) =>
+        saved || !!before[entityId("document", key)],
+    });
     for (const key of Object.keys(before)) if (!after[key]) after[key] = null;
     const actorRef = db
       .prepare(
