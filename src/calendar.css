@@ -411,12 +411,31 @@
   gap: 6px;
   margin-top: 8px;
 }
+.calendar-task-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .calendar-task-search {
   width: 100%;
 }
-.calendar-task-options {
+.calendar-task-toolbar .calendar-task-search {
+  flex: 1;
+}
+.calendar-task-browser {
+  display: grid;
+  gap: 12px;
   margin: 12px 0;
-  max-height: min(400px, 45dvh);
+}
+.calendar-task-browser.has-filters {
+  grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+  align-items: start;
+}
+.calendar-task-filters .calendar-field {
+  margin: 0 0 4px;
+}
+.calendar-task-options {
+  max-height: min(440px, 50dvh);
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -424,13 +443,27 @@
 .calendar-task-options > p {
   padding: 12px;
 }
+.calendar-task-options .calendar-task-loading {
+  min-height: 160px;
+}
 .calendar-task-option {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
   cursor: pointer;
 }
+.calendar-task-details {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+
 .calendar-task-option + .calendar-task-option {
   border-top: 1px solid var(--line);
 }
@@ -573,7 +606,15 @@
   flex-direction: column;
   gap: 5px;
 }
-.calendar-week-tasks li button {
+/* The card opens the task. Its delete button is a separate corner badge. */
+.calendar-week-task {
+  position: relative;
+}
+.calendar-week-task-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 4px;
   width: 100%;
   font: inherit;
   font-size: 12px;
@@ -586,11 +627,72 @@
   padding: 4px 6px;
   overflow-wrap: anywhere;
 }
-.calendar-week-tasks li button:hover {
+.calendar-week-task-open:hover,
+.calendar-week-task:focus-within .calendar-week-task-open {
   border-color: var(--accent);
 }
 .calendar-week-tasks li .is-unavailable {
   color: var(--muted);
+}
+/* Number and icon at the bottom right, as in the annual board's title cell. */
+.calendar-week-document,
+.calendar-task-document {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--document-accent);
+  line-height: 1;
+}
+.calendar-week-document {
+  padding-bottom: 3px;
+}
+/* Directly after the title text. A full line moves it to the next line, so
+   a long title never hides it. */
+.calendar-task-document {
+  margin-left: 4px;
+  vertical-align: -1px;
+  white-space: nowrap;
+}
+/* The annual board lifts its count above overflowing text; these do not. */
+:is(.calendar-week-document, .calendar-task-document) .task-document-count {
+  margin-top: 0;
+}
+.workspace[data-calendar-theme="dark"]
+  :is(.calendar-week-document, .calendar-task-document) {
+  color: color-mix(in srgb, var(--document-accent) 35%, var(--ink));
+}
+.calendar-week-task .calendar-week-task-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--accent-border);
+  border-radius: 50%;
+  background: var(--calendar-sheet);
+  color: var(--muted);
+  opacity: 0;
+}
+.calendar-week-task:hover .calendar-week-task-remove,
+.calendar-week-task:focus-within .calendar-week-task-remove {
+  opacity: 1;
+}
+.calendar-week-task .calendar-week-task-remove:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+@media (hover: none) {
+  .calendar-week-task .calendar-week-task-remove {
+    opacity: 1;
+  }
+}
+.calendar-week-tasks .calendar-week-loading {
+  background: transparent;
 }
 .calendar-week-empty {
   font-size: 11px;
@@ -702,6 +804,13 @@
   padding: 24px 16px;
   color: var(--muted);
   font-size: 12px;
+}
+/* The row is wider than the screen; keep the loader in the visible part. */
+.calendar-member-loading .loading-state {
+  position: sticky;
+  left: 16px;
+  width: fit-content;
+  background: transparent;
 }
 .calendar-day {
   min-width: 0;
@@ -1194,6 +1303,16 @@
   accent-color: var(--calendar-mint);
 }
 @media (max-width: 700px) {
+  .calendar-task-browser.has-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .calendar-task-option {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .calendar-task-details {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
   .calendar-workspace[data-calendar-view="shared"] .calendar-grid-header,
   .calendar-workspace[data-calendar-view="shared"] .calendar-week-row {
     grid-template-columns: repeat(var(--calendar-days), minmax(122px, 1fr));

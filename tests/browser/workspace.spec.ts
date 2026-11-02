@@ -2100,10 +2100,14 @@ test("떨어진 영역의 바깥 테두리·전체 테두리는 중복 없이 �
     page.getByRole("button", { name: "실행취소", exact: true }).click(),
   ]);
   await expect(at(0, "2026-03-02")).toHaveCSS("border-left-style", "double");
-  // Overlap must be deduplicated before the atomic cell batch is sent.
-  await at(0, "2026-03-02").click({ modifiers: ["Control"] });
+  // Overlap must be deduplicated before the atomic cell batch is sent. A
+  // Command/Ctrl drag from an unselected cell adds an overlapping area; one
+  // starting on a selected cell would remove the dragged range instead.
+  await page.keyboard.down("Meta");
+  await dragSelection(page, at(2, "2026-03-09"), at(1, "2026-03-09"));
+  await page.keyboard.up("Meta");
   await expect(page.locator('.sheet-cell[aria-selected="true"]')).toHaveCount(
-    7,
+    8,
   );
   await selectFormat(page.getByLabel("글자 크기", { exact: true }), "12");
   await expect(at(2, "title")).toHaveCSS("font-size", "16px");
@@ -7910,14 +7914,16 @@ test("상단은 한 줄이고 발표 모드에서 전용 도구와 표를 표시
   expect(box.x).toBe(0);
   expect(box.y).toBe(toolsBox.height);
   expect(box.width).toBe(1366);
-  expect(box.height).toBe(900 - toolsBox.height);
+  // The table and the tail memo bar under it fill the rest of the screen.
+  const memoBar = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const memoBox = (await memoBar.boundingBox())!;
+  expect(memoBox.y).toBe(box.y + box.height);
+  expect(memoBox.y + memoBox.height).toBe(900);
+  await expect(grid.locator("button,.column-resizer,.row-resizer")).toHaveCount(
+    0,
+  );
   await expect(
-    grid.locator(
-      "button:not(.annual-memos button),.column-resizer,.row-resizer",
-    ),
-  ).toHaveCount(0);
-  await expect(
-    grid.getByRole("button", { name: "꼬리 메모", exact: true }),
+    memoBar.getByRole("button", { name: "꼬리 메모", exact: true }),
   ).toBeVisible();
   await expect(page.locator('[data-column="title"]')).toHaveText(rows);
   await expect(page.locator(".group-heading")).toHaveText(groups);

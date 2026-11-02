@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 
@@ -160,10 +160,11 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
     });
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await toggle.scrollIntoViewIfNeeded();
-    const row = (await toggle.boundingBox())!;
+    const heading = memos.locator(".memo-accordion-heading");
+    const row = (await heading.boundingBox())!;
     expect(row.width).toBeCloseTo((await memos.boundingBox())!.width, 0);
     // The empty space near the right edge must toggle the whole accordion.
-    await toggle.click({ position: { x: row.width - 60, y: row.height / 2 } });
+    await heading.click({ position: { x: row.width - 60, y: row.height / 2 } });
     await expect(
       memos.getByRole("button", {
         name: "꼬리 메모",
@@ -624,156 +625,6 @@ test("접힌 메모도 사본에 포함하고 사본 재복사 직전 입력을 
   await expect(rich("사본 회의록")).toContainText("재사본에서만 변경");
 });
 
-test("메모를 열 때 빈 상태의 버튼 위치를 유지하고 문서가 있으면 표 맨 아래로 이동한다", async ({
-  page,
-}) => {
-  await page.request.post("/api/auth/login", {
-    headers,
-    data: { username: "test@somansa.com", password: "1234" },
-  });
-  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
-  const team = unpack(
-    await (
-      await page.request.post("/api/admin/teams", {
-        headers,
-        data: {
-          name: `빈 메모 위치 ${randomUUID().slice(0, 8)}`,
-          members: [{ userId: boot.user.id, role: "lead" }],
-        },
-      })
-    ).json(),
-  );
-  await Promise.all(
-    Array.from({ length: 35 }, (_, index) =>
-      page.request.post("/api/tasks", {
-        headers,
-        data: {
-          teamId: team.id,
-          year: 2026,
-          fields: { title: `스크롤 확인 업무 ${index + 1}` },
-        },
-      }),
-    ),
-  );
-  await page.goto("/");
-  await page.getByLabel("팀 선택").selectOption(team.id);
-  await expect(page.locator('[data-column="title"]')).not.toHaveCount(0);
-  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
-  const toggle = memos.locator(".toggle-memos");
-  const grid = page.locator(".sheet-scroll");
-  await page.evaluate(() => document.fonts.ready);
-  const measure = () =>
-    toggle.evaluate(async (button) => {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
-      const box = button.getBoundingClientRect();
-      const icon = button.querySelector("svg")!.getBoundingClientRect();
-      const text = [...button.childNodes].find(
-        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
-      )!;
-      const range = document.createRange();
-      range.selectNodeContents(text);
-      const label = range.getBoundingClientRect();
-      const scroll = button.closest(".sheet-scroll")!;
-      return {
-        x: box.x,
-        y: box.y,
-        width: box.width,
-        height: box.height,
-        iconX: icon.x,
-        iconY: icon.y,
-        labelX: label.x,
-        labelY: label.y,
-        scrollTop: scroll.scrollTop,
-        scrollLeft: scroll.scrollLeft,
-      };
-    });
-  for (const width of [1366, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await grid.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    await expect
-      .poll(() =>
-        grid.evaluate(
-          (element) =>
-            element.scrollHeight - element.clientHeight - element.scrollTop,
-        ),
-      )
-      .toBeLessThan(1);
-    const before = await measure();
-    for (let index = 0; index < 6; index++) {
-      await page.mouse.click(
-        before.x + before.width / 2,
-        before.y + before.height / 2,
-      );
-      const opened = index % 2 === 0;
-      await expect(toggle).toHaveAttribute("aria-expanded", String(opened));
-      if (opened)
-        await expect(memos.locator(".memo-add-document")).toBeEnabled();
-      await expect(memos.getByRole("tabpanel")).toHaveCount(0);
-      const after = await measure();
-      for (const key of Object.keys(before) as (keyof typeof before)[]) {
-        expect(
-          Math.abs(after[key] - before[key]),
-          `${width}px ${index} ${key}`,
-        ).toBeLessThan(0.1);
-      }
-      await expect(memos.locator(".document-tabs")).toHaveCount(opened ? 1 : 0);
-    }
-  }
-  const memoPath = `/api/teams/${team.id}/years/2026/memos`;
-  await page.request.post(memoPath, {
-    headers,
-    data: { id: randomUUID(), title: "하단 문서" },
-  });
-  await page.route(`**${memoPath}`, async (route) => {
-    const response = await route.fetch();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await route.fulfill({ response });
-  });
-  for (const width of [1366, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (let index = 0; index < 2; index++) {
-      await grid.evaluate((element) => {
-        element.scrollTop = element.scrollHeight;
-      });
-      await toggle.click();
-      const memo = memos.getByRole("tabpanel", { name: "하단 문서" });
-      await expect(memo).toBeVisible();
-      await expect(toggle).toBeInViewport();
-      const headerBox = (await toggle.boundingBox())!;
-      const tabsBox = (await memos.locator(".document-tabs").boundingBox())!;
-      expect(headerBox.y).toBeGreaterThanOrEqual(
-        (await grid.boundingBox())!.y + 31,
-      );
-      expect(tabsBox.y).toBeGreaterThanOrEqual(
-        headerBox.y + headerBox.height - 1,
-      );
-      await expect
-        .poll(() =>
-          grid.evaluate(
-            (element) =>
-              element.scrollHeight - element.clientHeight - element.scrollTop,
-          ),
-        )
-        .toBeLessThan(1);
-      expect(
-        await memo.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const scroll = element
-            .closest(".sheet-scroll")!
-            .getBoundingClientRect();
-          return box.top >= scroll.top && box.bottom <= scroll.bottom;
-        }),
-      ).toBe(true);
-      await toggle.click();
-      await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    }
-  }
-});
-
 test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표 위쪽 가로 스크롤을 제공한다", async ({
   page,
 }, info) => {
@@ -967,4 +818,437 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   await expect(input).toHaveValue("회의 기록");
   await input.press("Escape");
   await memos.screenshot({ path: info.outputPath("tail-memo-mobile.png") });
+});
+
+// Positions of the rows, the horizontal scrollbar rail and the memo bar or
+// panel. `top` and `bottom` are the grid area's edges.
+// railSize is the room the rail takes: a classic scrollbar's thickness, or
+// nothing for overlay scrollbars that lie over the rows.
+const sheetLayout = (page: Page) =>
+  page.evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const sheet = document.querySelector(".sheet-scroll")!;
+    const area = document.querySelector(".grid-area")!.getBoundingClientRect();
+    const memo = document.querySelector(".annual-memos")!;
+    const memoBox = memo.getBoundingClientRect();
+    const rail = document.querySelector<HTMLElement>(
+      ".sheet-horizontal-scroll",
+    )!;
+    const railBox = rail.getBoundingClientRect();
+    const probe = rail.querySelector<HTMLElement>(".sheet-scrollbar-probe")!;
+    const rows = [...document.querySelectorAll(".sheet-row")].map(
+      (row) => row.getBoundingClientRect().bottom,
+    );
+    const hit = document.elementFromPoint(
+      memoBox.left + 200,
+      memoBox.top + memoBox.height / 2,
+    );
+    const above = document.elementFromPoint(
+      memoBox.left + 200,
+      railBox.top - 4,
+    );
+    return {
+      top: area.top,
+      bottom: area.bottom,
+      memoTop: memoBox.top,
+      memoBottom: memoBox.bottom,
+      railTop: railBox.top,
+      railBottom: railBox.bottom,
+      railSize: railBox.height,
+      scrollbar: rail.dataset.scrollbar,
+      thickness: probe.offsetHeight - probe.clientHeight,
+      lastRow: Math.max(...rows),
+      scrollTop: sheet.scrollTop,
+      maxScroll: sheet.scrollHeight - sheet.clientHeight,
+      onTop: !!hit && memo.contains(hit),
+      cellAboveRail: !!above?.closest(".sheet-cell"),
+    };
+  });
+
+test("꼬리 메모는 행 수와 관계없이 표 영역 아래에 고정되고 펼치고 접어도 표 위치를 유지한다", async ({
+  page,
+}) => {
+  await page.request.post("/api/auth/login", {
+    headers,
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  const team = unpack(
+    await (
+      await page.request.post("/api/admin/teams", {
+        headers,
+        data: {
+          name: `메모 고정 ${randomUUID().slice(0, 8)}`,
+          members: [{ userId: boot.user.id, role: "lead" }],
+        },
+      })
+    ).json(),
+  );
+  const create = (count: number, from: number) =>
+    Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        page.request.post("/api/tasks", {
+          headers,
+          data: {
+            teamId: team.id,
+            year: 2026,
+            fields: { title: `고정 확인 업무 ${from + index + 1}` },
+          },
+        }),
+      ),
+    );
+  await create(3, 0);
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const toggle = memos.locator(".toggle-memos");
+  const grid = page.locator(".sheet-scroll");
+  await expect(page.locator(".sheet-row")).toHaveCount(3);
+  const layout = () => sheetLayout(page);
+
+  // Few rows: the bar sits at the bottom of the area, the horizontal
+  // scrollbar directly above it, instead of right after the last row.
+  let box = await layout();
+  expect(box.maxScroll).toBeLessThan(1);
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+  expect(Math.abs(box.railBottom - box.memoTop)).toBeLessThan(1);
+  expect(box.lastRow).toBeLessThan(box.railTop - 100);
+  // Only a classic scrollbar takes room above the bar; overlay ones do not.
+  expect(box.railSize).toBe(box.scrollbar === "classic" ? box.thickness : 0);
+  // Open, the memos stay pinned to the bottom with the scrollbar above them.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(memos.locator(".memo-add-document")).toBeEnabled();
+  box = await layout();
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+  expect(Math.abs(box.memoTop - box.railBottom)).toBeLessThan(1);
+  expect(box.lastRow).toBeLessThan(box.railTop);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  box = await layout();
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+
+  // Many rows: the bar stays visible while the rows scroll above it.
+  await create(40, 3);
+  await page.reload();
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  await expect
+    .poll(() => page.locator(".sheet-row").count())
+    .toBeGreaterThan(20);
+  for (const width of [1366, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await grid.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    box = await layout();
+    expect(box.maxScroll, `${width}px`).toBeGreaterThan(300);
+    expect(box.scrollTop).toBe(0);
+    expect(Math.abs(box.memoBottom - box.bottom), `${width}px`).toBeLessThan(1);
+    expect(Math.abs(box.railBottom - box.memoTop)).toBeLessThan(1);
+    expect(box.onTop).toBe(true);
+    // Rows reach the bar; cells right above it still take clicks, also
+    // under an overlay scrollbar's track.
+    expect(box.cellAboveRail).toBe(true);
+    await expect(toggle).toBeInViewport();
+    // The last rows are not hidden for good: at the end they sit above it.
+    await grid.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    box = await layout();
+    expect(box.scrollTop).toBeGreaterThan(300);
+    expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+    expect(Math.abs(box.railTop - box.lastRow)).toBeLessThan(1);
+    expect(Math.abs(box.memoTop - box.lastRow - box.railSize)).toBeLessThan(1);
+  }
+  await page.setViewportSize({ width: 1366, height: 900 });
+  // Keyboard moves keep the focused row above the scrollbar and the bar.
+  await grid.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page
+    .locator(".sheet-row")
+    .first()
+    .locator('[data-column="title"]')
+    .click({ position: { x: 12, y: 10 } });
+  for (let index = 0; index < 30; index++)
+    await page.keyboard.press("ArrowDown");
+  const focused = await page
+    .locator(".sheet-cell.focused")
+    .evaluate((cell) => cell.getBoundingClientRect().bottom);
+  box = await layout();
+  expect(focused).toBeLessThanOrEqual(box.railTop + 1);
+  expect(box.scrollTop).toBeGreaterThan(0);
+  // Opening and closing leave the table where it is.
+  await grid.evaluate((element) => {
+    element.scrollTop = 120;
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(memos.locator(".memo-add-document")).toBeEnabled();
+  box = await layout();
+  expect(box.scrollTop).toBe(120);
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+  expect(Math.abs(box.memoTop - box.railBottom)).toBeLessThan(1);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  box = await layout();
+  expect(box.scrollTop).toBe(120);
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+});
+
+test("펼친 꼬리 메모는 표 아래 패널로 고정되고 위쪽 가장자리로 높이를 바꾸면 기억한다", async ({
+  page,
+}) => {
+  await page.request.post("/api/auth/login", {
+    headers,
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  const team = unpack(
+    await (
+      await page.request.post("/api/admin/teams", {
+        headers,
+        data: {
+          name: `메모 패널 ${randomUUID().slice(0, 8)}`,
+          members: [{ userId: boot.user.id, role: "lead" }],
+        },
+      })
+    ).json(),
+  );
+  await Promise.all(
+    Array.from({ length: 40 }, (_, index) =>
+      page.request.post("/api/tasks", {
+        headers,
+        data: {
+          teamId: team.id,
+          year: 2026,
+          fields: { title: `패널 확인 업무 ${index + 1}` },
+        },
+      }),
+    ),
+  );
+  const path = `/api/teams/${team.id}/years/2026/memos`;
+  const id = randomUUID();
+  await page.request.post(path, { headers, data: { id, title: "긴 메모" } });
+  await page.request.put(`${path}/${id}`, {
+    headers,
+    data: {
+      markdown: Array.from({ length: 40 }, (_, i) => `메모 줄 ${i}`).join(
+        "\n\n",
+      ),
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    },
+  });
+  const key = `weekly-plan:memo-height:${boot.user.id}:${team.id}:2026`;
+  const stored = () => page.evaluate((key) => localStorage.getItem(key), key);
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  await expect
+    .poll(() => page.locator(".sheet-row").count())
+    .toBeGreaterThan(20);
+  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const toggle = memos.locator(".toggle-memos");
+  const grid = page.locator(".sheet-scroll");
+  const card = memos.getByRole("tabpanel", { name: "긴 메모", exact: true });
+  const handle = memos.getByRole("separator", { name: "꼬리 메모 높이" });
+  const height = async () =>
+    (await sheetLayout(page)).memoBottom - (await sheetLayout(page)).memoTop;
+
+  // Opening from the middle of the table keeps the table where it is.
+  await grid.evaluate((element) => {
+    element.scrollTop = 300;
+  });
+  await toggle.click();
+  await expect(card).toBeVisible();
+  let box = await sheetLayout(page);
+  expect(box.scrollTop).toBe(300);
+  expect(Math.abs(box.memoBottom - box.bottom)).toBeLessThan(1);
+  expect(Math.abs(box.memoTop - box.railBottom)).toBeLessThan(1);
+  // About a memo card's height until resized, and the card fits in it.
+  const initial = box.memoBottom - box.memoTop;
+  expect(
+    Math.abs(initial - Math.min(460, (box.bottom - box.top) * 0.6)),
+  ).toBeLessThan(1);
+  expect(
+    (await card.boundingBox())!.y + (await card.boundingBox())!.height,
+  ).toBeLessThanOrEqual(box.memoBottom);
+  // Resizing starts from the rendered, whole-pixel height.
+  const base = Math.round(initial);
+  await expect(handle).toHaveAttribute("aria-valuenow", String(base));
+  // Scrolling the table leaves the panel in place.
+  await grid.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  expect((await sheetLayout(page)).memoTop).toBe(box.memoTop);
+  // Every row is still reachable above the panel.
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  box = await sheetLayout(page);
+  expect(Math.abs(box.railTop - box.lastRow)).toBeLessThan(1);
+  expect(box.lastRow).toBeLessThanOrEqual(box.memoTop);
+  await grid.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page
+    .locator(".sheet-row")
+    .first()
+    .locator('[data-column="title"]')
+    .click({ position: { x: 12, y: 10 } });
+  for (let index = 0; index < 20; index++)
+    await page.keyboard.press("ArrowDown");
+  const focused = await page
+    .locator(".sheet-cell.focused")
+    .evaluate((cell) => cell.getBoundingClientRect().bottom);
+  expect(focused).toBeLessThanOrEqual((await sheetLayout(page)).railTop + 1);
+
+  // Dragging the top edge resizes the panel; release keeps the height.
+  const edge = (await handle.boundingBox())!;
+  await page.mouse.move(edge.x + 300, edge.y + edge.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + 300, edge.y + edge.height / 2 - 100, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect.poll(height).toBeCloseTo(base + 100, 0);
+  expect(await stored()).toBe(String(base + 100));
+  await expect(handle).toHaveAttribute("aria-valuenow", String(base + 100));
+  // Escape cancels a drag.
+  const moved = (await handle.boundingBox())!;
+  await page.mouse.move(moved.x + 300, moved.y + moved.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(moved.x + 300, moved.y + moved.height / 2 + 80, {
+    steps: 4,
+  });
+  await expect.poll(height).toBeCloseTo(base + 20, 0);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect.poll(height).toBeCloseTo(base + 100, 0);
+  expect(await stored()).toBe(String(base + 100));
+  // Arrow keys change it by 20px, Shift by 100px; Home and End are the limits.
+  await handle.focus();
+  await handle.press("ArrowDown");
+  await expect.poll(height).toBeCloseTo(base + 80, 0);
+  await handle.press("Shift+ArrowDown");
+  await expect.poll(height).toBeCloseTo(base - 20, 0);
+  await handle.press("Home");
+  await expect.poll(height).toBeCloseTo(200, 0);
+  await handle.press("End");
+  box = await sheetLayout(page);
+  const limit = box.bottom - box.top - 120;
+  await expect.poll(height).toBeCloseTo(limit, 0);
+  expect(await stored()).toBe(String(limit));
+  // Even at the largest height the table keeps its rows reachable.
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  box = await sheetLayout(page);
+  expect(box.lastRow).toBeLessThanOrEqual(box.memoTop);
+  expect(box.maxScroll).toBeGreaterThan(0);
+  await handle.press("Shift+ArrowDown");
+  await expect.poll(height).toBeCloseTo(limit - 100, 0);
+
+  // The height is kept when closing, reopening and reloading.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect(card).toBeVisible();
+  await expect.poll(height).toBeCloseTo(limit - 100, 0);
+  await page.reload();
+  await expect(card).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(height).toBeCloseTo(limit - 100, 0);
+});
+
+test("가로로 넘치는 표의 일반 스크롤 막대는 행과 꼬리 메모 사이에 자기 높이만 차지한다", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "webkit",
+    "macOS에서 겹침 스크롤 막대를 일반 막대로 바꾸는 스타일은 WebKit만 따른다",
+  );
+  await page.addInitScript(() => {
+    addEventListener("DOMContentLoaded", () => {
+      // Windows-style scrollbars that take room, as on Windows or a mouse.
+      const style = document.createElement("style");
+      style.textContent =
+        ".sheet-horizontal-scroll-track, .sheet-scrollbar-probe { scrollbar-width: auto; scrollbar-color: auto }" +
+        " .sheet-horizontal-scroll-track::-webkit-scrollbar, .sheet-scrollbar-probe::-webkit-scrollbar { height: 12px; width: 12px; background: #ddd }" +
+        " .sheet-horizontal-scroll-track::-webkit-scrollbar-thumb { background: #888 }";
+      document.head.append(style);
+    });
+  });
+  await page.request.post("/api/auth/login", {
+    headers,
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  const team = unpack(
+    await (
+      await page.request.post("/api/admin/teams", {
+        headers,
+        data: {
+          name: `일반 막대 ${randomUUID().slice(0, 8)}`,
+          members: [{ userId: boot.user.id, role: "lead" }],
+        },
+      })
+    ).json(),
+  );
+  await Promise.all(
+    Array.from({ length: 40 }, (_, index) =>
+      page.request.post("/api/tasks", {
+        headers,
+        data: {
+          teamId: team.id,
+          year: 2026,
+          fields: { title: `일반 막대 업무 ${index + 1}` },
+        },
+      }),
+    ),
+  );
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  await expect
+    .poll(() => page.locator(".sheet-row").count())
+    .toBeGreaterThan(20);
+  const grid = page.locator(".sheet-scroll");
+  const rail = page.getByRole("group", { name: "업무 표 가로 스크롤" });
+  let box = await sheetLayout(page);
+  expect(box.scrollbar).toBe("classic");
+  expect(box.thickness).toBe(12);
+  expect(box.railSize).toBe(12);
+  expect(Math.abs(box.railBottom - box.memoTop)).toBeLessThan(1);
+  expect(box.cellAboveRail).toBe(true);
+  await rail.evaluate((element) => {
+    element.scrollLeft = 200;
+  });
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollLeft))
+    .toBe(200);
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  box = await sheetLayout(page);
+  expect(Math.abs(box.railTop - box.lastRow)).toBeLessThan(1);
+  expect(Math.abs(box.memoTop - box.lastRow - 12)).toBeLessThan(1);
+  // Keyboard moves keep rows above the scrollbar and the bar.
+  await grid.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page
+    .locator(".sheet-row")
+    .first()
+    .locator('[data-column="title"]')
+    .click({ position: { x: 12, y: 10 } });
+  for (let index = 0; index < 30; index++)
+    await page.keyboard.press("ArrowDown");
+  const focused = await page
+    .locator(".sheet-cell.focused")
+    .evaluate((cell) => cell.getBoundingClientRect().bottom);
+  box = await sheetLayout(page);
+  expect(focused).toBeLessThanOrEqual(box.railTop + 1);
 });

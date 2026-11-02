@@ -471,6 +471,64 @@ test(
         JSON.stringify(sharedReport),
         /outside@example|inside@example|password|systemRole|teamRoles|external-subject/,
       );
+      // A weekly item removed on either side is removed on the other.
+      const weeklyItem = {
+          teamId,
+          userId: internalUser,
+          weekStart: "2026-10-25",
+          taskId: task.id,
+        },
+        weeklyTasks = async (site) =>
+          ok(
+            await site(
+              `/calendar?teamId=${teamId}&userId=${internalUser}&from=2026-10-25&to=2026-10-31`,
+            ),
+          ).weekly.map((item) => item.taskId);
+      ok(
+        await inside("/calendar/weekly", {
+          teamId,
+          userId: internalUser,
+          weekStart: weeklyItem.weekStart,
+          taskIds: [task.id],
+        }),
+      );
+      await app.locals.sync.get(teamId).run();
+      await drain();
+      assert.deepEqual(await weeklyTasks(outside), [task.id]);
+      const [synced] = ok(
+        await outside(
+          `/calendar?teamId=${teamId}&userId=${internalUser}&from=2026-10-25&to=2026-10-31`,
+        ),
+      ).weekly;
+      assert.equal(
+        ok(await outside("/calendar/weekly", weeklyItem, "DELETE")).removed,
+        1,
+      );
+      await drain();
+      await app.locals.sync.get(teamId).run();
+      assert.deepEqual(await weeklyTasks(inside), []);
+      ok(
+        await outside("/calendar/weekly/restore", {
+          ...weeklyItem,
+          importedAt: synced.importedAt,
+        }),
+      );
+      await drain();
+      await app.locals.sync.get(teamId).run();
+      assert.deepEqual(await weeklyTasks(inside), [task.id]);
+      assert.equal(
+        ok(await inside("/calendar/weekly", weeklyItem, "DELETE")).removed,
+        1,
+      );
+      await app.locals.sync.get(teamId).run();
+      await drain();
+      assert.deepEqual(await weeklyTasks(outside), []);
+      assert.equal(
+        (await pgStore.readState(teamId)).entities[
+          entityId("weekly", [internalUser, "2026-10-25", task.id])
+        ].deleted,
+        true,
+      );
       // Two independently saved changes race through Git CLI and the Data API.
       ok(await inside(`/teams/${teamId}/sync/pause`, {}));
       ok(await outside(`/teams/${teamId}/sync/pause`, {}));

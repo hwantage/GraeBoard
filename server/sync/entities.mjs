@@ -272,7 +272,20 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
         deleted: ["task", "calendar"].includes(entity) && !!p.deletedAt,
       };
 }
-function allEntityKeys(db, teamId, reports) {
+// A calendar entry's "main" document is a shared entity only once its body has
+// been saved (2026-11-02). SQLite reads every entry's document with an empty
+// body, so its existence is decided by shared state, never by that read.
+export const isCalendarDocument = (entity, key) =>
+  entity === "document" && key[0] === "calendar";
+// The internal site keeps no title or position for a calendar document; it
+// shows the entry's title. Only the body is compared with shared state, so a
+// title the other site keeps never rewrites the local body.
+export function localPayloadEqual(entity, key, a, b) {
+  if (isCalendarDocument(entity, key) && a && b)
+    return a.markdown === b.markdown;
+  return payloadEqual(entity, a, b);
+}
+function allEntityKeys(db, teamId, reports, calendarDocuments) {
   const keys = [
     ["team", []],
     ["formats", []],
@@ -309,11 +322,12 @@ function allEntityKeys(db, teamId, reports) {
   }
   for (const r of rows(
     db,
-    "SELECT id FROM calendar_entries WHERE team_id=?",
+    "SELECT id,version_id IS NOT NULL AS saved FROM calendar_entries WHERE team_id=?",
     teamId,
   )) {
     add("calendar", [r.id]);
-    add("document", ["calendar", r.id, "main"]);
+    const key = ["calendar", r.id, "main"];
+    if (calendarDocuments(key, !!r.saved)) add("document", key);
   }
   for (const r of rows(
     db,
@@ -346,7 +360,14 @@ function allEntityKeys(db, teamId, reports) {
   for (const id of people) add("person", [id]);
   return keys;
 }
-export function allEntities(db, link) {
+// calendarDocuments(key, saved) says which calendar entries' main documents to
+// include. By default those whose body was saved (calendar_entries.version_id);
+// a caller that knows shared state also keeps the ones it holds.
+export function allEntities(
+  db,
+  link,
+  { calendarDocuments = (key, saved) => saved } = {},
+) {
   const result = {},
     reports = new Map(),
     styles = new Map(),
@@ -374,7 +395,12 @@ export function allEntities(db, link) {
     if (entity === "weekly") remember(key[0]);
     remember(record.payload);
   };
-  for (const [entity, key] of allEntityKeys(db, link.team_id, reports))
+  for (const [entity, key] of allEntityKeys(
+    db,
+    link.team_id,
+    reports,
+    calendarDocuments,
+  ))
     add(entity, key);
   for (const id of people)
     if (!result[entityId("person", [id])]) add("person", [id]);
@@ -751,7 +777,7 @@ export function materialize(db, teamId, entities, previous = {}, options = {}) {
   ];
   const changes = Object.entries(entities).filter(
     ([k, e]) =>
-      !payloadEqual(e.entity, e.payload, previous[k]?.payload) ||
+      !localPayloadEqual(e.entity, e.key, e.payload, previous[k]?.payload) ||
       e.deleted !== previous[k]?.deleted,
   );
   changes.sort(

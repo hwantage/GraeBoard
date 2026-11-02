@@ -63,7 +63,6 @@ type Props = Pick<
   initialDocumentId?: string;
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
-  scrollOnOpen?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
   // Memo cards: each card's link.
@@ -185,8 +184,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
       return true;
     });
     const documentOrder = documents.map((doc) => doc.id).join(":");
-    const inlineDocumentsVisible =
-      !!props.inline && documentsLoaded && documents.length > 0;
     useEffect(() => {
       const rail = documentScroll.current;
       if (!props.inline || !rail) return;
@@ -415,13 +412,6 @@ export default forwardRef<DocumentPanelHandle, Props>(
     useLayoutEffect(() => {
       if (props.inline && navigateDocument.current) scrollToDocument(selected);
     }, [selected, documentOrder, props.inline]);
-    useLayoutEffect(() => {
-      // Only an explicit accordion opening should reveal the documents.
-      // Restoring an open sheet must preserve its own scroll position.
-      if (!inlineDocumentsVisible || !props.scrollOnOpen) return;
-      const grid = documentScroll.current?.closest(".sheet-scroll");
-      grid?.scrollTo({ top: grid.scrollHeight });
-    }, [inlineDocumentsVisible, props.scrollOnOpen]);
     useEffect(() => {
       const rail = documentScroll.current;
       if (!props.inline || !rail) return;

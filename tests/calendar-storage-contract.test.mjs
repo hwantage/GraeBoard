@@ -75,6 +75,10 @@ function fixture(t) {
       year: Number(todayKey().slice(0, 4)),
       actorId: userId,
       fields: { title: "Contract task", owner: userId },
+      documents: [
+        { id: "main", title: "Contract body", markdown: "Contract body" },
+        { id: randomUUID(), title: "Empty", markdown: " \n" },
+      ],
     }),
     link = {
       team_id: teamId,
@@ -423,6 +427,126 @@ async function contract({
   });
   assert.equal(imported.existing, 1);
   assert.equal(imported.matched, 1);
+  // The picker shows owner, status and documents, and applies attribute
+  // filters before paging with the annual board's rule.
+  assert.deepEqual(
+    selected.tasks.map(({ id, owner, status, documentCount, hasDocument }) => ({
+      id,
+      owner,
+      status,
+      documentCount,
+      hasDocument,
+    })),
+    [
+      {
+        id: taskId,
+        owner: user.id,
+        status: "",
+        documentCount: 2,
+        hasDocument: true,
+      },
+    ],
+  );
+  const pick = (filters) =>
+    service.listTasks({
+      query: {
+        teamId,
+        userId: user.id,
+        weekStart,
+        q: "contract",
+        filters: JSON.stringify(filters),
+      },
+    });
+  for (const [filters, expected] of [
+    [[{ propertyId: "owner", values: [user.id], mode: "include" }], [taskId]],
+    [[{ propertyId: "owner", values: [user.id], mode: "exclude" }], []],
+    [[{ propertyId: "status", values: [""], mode: "include" }], [taskId]],
+    [
+      [
+        { propertyId: "owner", values: [user.id], mode: "include" },
+        { propertyId: "status", values: ["status-completed"], mode: "include" },
+      ],
+      [],
+    ],
+  ])
+    assert.deepEqual(
+      (await pick(filters)).tasks.map((task) => task.id),
+      expected,
+      JSON.stringify(filters),
+    );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      pick([{ propertyId: "owner", values: [], mode: "include" }]),
+    ),
+    (e) => e.name === "ZodError",
+  );
+  // A weekly item carries its task's document summary. Removing it unlinks
+  // only that week; undo links it again with the same permission as adding.
+  const week = { teamId, userId: user.id, from: weekStart, to: weekStart },
+    [item] = (await service.listEntries({ query: week })).weekly,
+    itemBody = { teamId, userId: user.id, weekStart, taskId };
+  assert.deepEqual(
+    [item.taskId, item.documentCount, item.hasDocument, item.unavailable],
+    [taskId, 2, true, false],
+  );
+  const original = await service.getTask({ params: { id: taskId } });
+  await rejects(() => view.removeWeekly({ body: itemBody }), 403);
+  await rejects(
+    () =>
+      view.restoreWeekly({
+        body: { ...itemBody, importedAt: item.importedAt },
+      }),
+    403,
+  );
+  const removed = await service.removeWeekly({ body: itemBody });
+  assert.equal(removed.removed, 1);
+  assert.deepEqual(removed.weekly, []);
+  assert.equal(
+    (await service.removeWeekly({ body: itemBody })).removed,
+    0,
+    "lost removal response is idempotent",
+  );
+  assert.deepEqual((await service.listEntries({ query: week })).weekly, []);
+  assert.equal((await pick([])).tasks[0].added, false);
+  assert.deepEqual(
+    await service.getTask({ params: { id: taskId } }),
+    original,
+    "removal never changes the original task",
+  );
+  const restored = await service.restoreWeekly({
+    body: { ...itemBody, importedAt: item.importedAt },
+  });
+  assert.equal(restored.restored, 1);
+  assert.deepEqual(
+    restored.weekly.map((w) => [w.taskId, w.documentCount, w.hasDocument]),
+    [[taskId, 2, true]],
+  );
+  assert.equal(
+    (
+      await service.restoreWeekly({
+        body: { ...itemBody, importedAt: item.importedAt },
+      })
+    ).restored,
+    0,
+    "lost undo response is idempotent",
+  );
+  await rejects(
+    () =>
+      service.restoreWeekly({
+        body: {
+          ...itemBody,
+          taskId: randomUUID(),
+          importedAt: item.importedAt,
+        },
+      }),
+    404,
+  );
+  await service.removeWeekly({ body: itemBody });
+  assert.equal(
+    (await service.addWeekly({ body: weeklyBody })).added,
+    1,
+    "a removed item can be selected again",
+  );
   // The team view reads members on one range together; each member's part
   // equals that member's own read.
   const userIds = [user.id, refId, viewer.id];

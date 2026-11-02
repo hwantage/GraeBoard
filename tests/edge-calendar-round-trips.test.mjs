@@ -119,6 +119,18 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
       calendar.listTasks({
         query: { teamId: f.teamId, userId: f.user.id, weekStart, q: "업무" },
       }),
+    filtered: () =>
+      calendar.listTasks({
+        query: {
+          teamId: f.teamId,
+          userId: f.user.id,
+          weekStart,
+          q: "업무",
+          filters: JSON.stringify([
+            { propertyId: "status", values: [""], mode: "include" },
+          ]),
+        },
+      }),
     tasks: () => tasks.query({ teamId: f.teamId, year: 2026 }),
   };
   await seed(3);
@@ -138,10 +150,16 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
   assert.ok(
     month.every((e) => e.hasDocument === Number(e.title.slice(3)) % 2 > 0),
   );
-  assert.equal(
-    (await reads.month()).weekly.filter((w) => w.title.startsWith("업무 "))
-      .length,
-    30,
+  const weeklyItems = (await reads.month()).weekly.filter((w) =>
+    w.title.startsWith("업무 "),
+  );
+  assert.equal(weeklyItems.length, 30);
+  assert.ok(
+    weeklyItems.every(
+      (w) =>
+        w.documentCount === 1 &&
+        w.hasDocument === Number(w.title.slice(3)) % 2 > 0,
+    ),
   );
   assert.deepEqual(
     (await reads.members()).members[f.user.id],
@@ -155,7 +173,18 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
   assert.ok(
     (await reads.picker()).tasks
       .filter((task) => task.title.startsWith("업무 "))
-      .every((task) => task.added),
+      .every(
+        (task) =>
+          task.added &&
+          task.documentCount === 1 &&
+          task.hasDocument === Number(task.title.slice(3)) % 2 > 0,
+      ),
+  );
+  assert.deepEqual(
+    (await reads.filtered()).tasks.map((task) => task.id),
+    (await reads.picker()).tasks
+      .filter((task) => task.status === "")
+      .map((task) => task.id),
   );
   const listed = await reads.tasks(),
     body =

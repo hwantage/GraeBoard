@@ -24,6 +24,7 @@ import { api, ApiError, send } from "./api";
 import { normalizeSearchQuery } from "../shared/search.js";
 import { busyProps } from "./busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
+import LoadingState from "./LoadingState";
 import GridHeaderMenu from "./GridHeaderMenu";
 import {
   deleteCalendarEntry,
@@ -74,6 +75,8 @@ import type {
   CalendarEntryDeletion,
   WeeklyItem,
   WeeklyAddResult,
+  WeeklyRemoveResult,
+  WeeklyRestoreResult,
 } from "./calendar-types";
 import "./calendar.css";
 
@@ -150,6 +153,15 @@ export default function Calendar({
   const [deleted, setDeleted] = useState<{
     entry: CalendarEntry;
     deletionId: string;
+  } | null>(null);
+  // Only one undo is offered at a time, for a card or for a weekly item.
+  const [removedWeekly, setRemovedWeekly] = useState<{
+    item: WeeklyItem;
+    teamId: string;
+  } | null>(null);
+  const [importing, setImporting] = useState<{
+    userId: string;
+    weekStart: string;
   } | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [creating, setCreating] = useState<{
@@ -253,11 +265,17 @@ export default function Calendar({
     showTags ||
     !!addingWeek;
   useEffect(() => {
-    if (!deleted || undoBlocked) return;
-    const timer = setTimeout(() => setDeleted(null), 8000);
+    if ((!deleted && !removedWeekly) || undoBlocked) return;
+    const timer = setTimeout(() => {
+      setDeleted(null);
+      setRemovedWeekly(null);
+    }, 8000);
     return () => clearTimeout(timer);
-  }, [deleted, undoBlocked]);
-  useEffect(() => setDeleted(null), [team.id, user.id]);
+  }, [deleted, removedWeekly, undoBlocked]);
+  useEffect(() => {
+    setDeleted(null);
+    setRemovedWeekly(null);
+  }, [team.id, user.id]);
   useEffect(() => {
     setEntryMenu(null);
     setTagEntry(null);
@@ -564,6 +582,7 @@ export default function Calendar({
           },
     );
     setDeleted({ entry: removed, deletionId });
+    setRemovedWeekly(null);
     onNotify("");
     setEntry(null);
   }
@@ -647,6 +666,8 @@ export default function Calendar({
   async function importWeek(ownerId: string, start: string) {
     const requestScope = scope;
     await action(async () => {
+      // The week's list shows the loader until the import settles.
+      setImporting({ userId: ownerId, weekStart: start });
       const result = await send<WeeklyAddResult & { unassigned: number }>(
         "/calendar/import",
         {
@@ -654,12 +675,61 @@ export default function Calendar({
           userId: ownerId,
           weekStart: start,
         },
-      );
+      ).finally(() => {
+        if (alive.current) setImporting(null);
+      });
       if (!alive.current || activeScope.current !== requestScope) return;
       updateWeekly(ownerId, start, result.weekly);
       setDeleted(null);
+      setRemovedWeekly(null);
       onNotify(
         `${members?.find((m) => m.id === ownerId)?.name} · ${weekLabel(start)}: ${result.added}개 가져옴, 기존 ${result.existing}개 유지${result.unassigned ? ` · 미지정 ${result.unassigned}개 제외` : ""}`,
+      );
+    });
+  }
+  // Removing a weekly item only unlinks the task from that week. Undo links
+  // the same task again at its previous position, like a card's undo.
+  async function removeWeekly(item: WeeklyItem) {
+    if (!writable(item.userId)) return;
+    const requestScope = scope;
+    await action(async () => {
+      const result = await send<WeeklyRemoveResult>(
+        "/calendar/weekly",
+        {
+          teamId: team.id,
+          userId: item.userId,
+          weekStart: item.weekStart,
+          taskId: item.taskId,
+        },
+        "DELETE",
+      );
+      if (!alive.current || activeScope.current !== requestScope) return;
+      updateWeekly(item.userId, item.weekStart, result.weekly);
+      setDeleted(null);
+      setRemovedWeekly({ item, teamId: team.id });
+      onNotify("");
+    });
+  }
+  async function restoreWeekly() {
+    if (!removedWeekly || undoBlocked || busy.current) return;
+    const restoring = removedWeekly;
+    await action(async () => {
+      const { item } = restoring;
+      const result = await send<WeeklyRestoreResult>(
+        "/calendar/weekly/restore",
+        {
+          teamId: restoring.teamId,
+          userId: item.userId,
+          weekStart: item.weekStart,
+          taskId: item.taskId,
+          importedAt: item.importedAt,
+        },
+      );
+      if (!alive.current || restoring.teamId !== team.id) return;
+      updateWeekly(item.userId, item.weekStart, result.weekly);
+      setRemovedWeekly(null);
+      onNotify(
+        `‘${item.title || "제목 없는 업무"}’ 업무를 주간 할 일에 되살렸습니다.`,
       );
     });
   }
@@ -850,10 +920,13 @@ export default function Calendar({
     const items = weeklyMap.get(`${ownerId}:${start}`) || [];
     const editable = writable(ownerId);
     const currentWeek = start === calendarWeek(today);
+    const loading =
+      importing?.userId === ownerId && importing.weekStart === start;
     return (
       <aside
         className="calendar-week-tasks"
         aria-label={`${members.find((m) => m.id === ownerId)?.name} ${weekLabel(start)} 주간 할 일`}
+        aria-busy={loading || undefined}
       >
         <div className="calendar-week-header">
           {view === "month" && (
@@ -876,18 +949,56 @@ export default function Calendar({
             </Button>
           )}
         </div>
-        {items.length ? (
+        {loading ? (
+          <LoadingState
+            className="compact calendar-week-loading"
+            label="업무를 불러오는 중"
+          />
+        ) : items.length ? (
           <ul>
             {items.map((item) => (
-              <li key={item.taskId}>
+              <li key={item.taskId} className="calendar-week-task">
                 <button
-                  className={item.unavailable ? "is-unavailable" : ""}
+                  className={`calendar-week-task-open${item.unavailable ? " is-unavailable" : ""}`}
+                  aria-description={
+                    item.hasDocument
+                      ? item.documentCount > 1
+                        ? `문서 ${item.documentCount}개`
+                        : "문서 있음"
+                      : undefined
+                  }
                   {...busyProps(locked)}
                   onClick={() => void openTask(item.taskId)}
                 >
-                  {item.title || "제목 없는 업무"}
-                  {item.unavailable && <span> · 조회할 수 없는 업무</span>}
+                  <span>
+                    {item.title || "제목 없는 업무"}
+                    {item.unavailable && <span> · 조회할 수 없는 업무</span>}
+                  </span>
+                  {/* Like the annual board, a single document shows the
+                      icon only and several show their count. */}
+                  {item.hasDocument && (
+                    <span className="calendar-week-document" aria-hidden="true">
+                      {item.documentCount > 1 && (
+                        <span className="task-document-count">
+                          {item.documentCount}
+                        </span>
+                      )}
+                      <FileText size={11} />
+                    </span>
+                  )}
                 </button>
+                {editable && (
+                  <button
+                    type="button"
+                    className="calendar-week-task-remove"
+                    title="주간 업무에서 삭제"
+                    aria-label={`${item.title || "제목 없는 업무"} 주간 업무에서 삭제`}
+                    {...busyProps(locked)}
+                    onClick={() => void removeWeekly(item)}
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -1340,9 +1451,10 @@ export default function Calendar({
         (view !== "team" && !data && (view === "shared" || memberId)) ? (
           !error &&
           !loadError && (
-            <p role="status" className="calendar-loading">
-              일정을 불러오고 있습니다…
-            </p>
+            <LoadingState
+              className="calendar-loading"
+              label="일정을 불러오는 중"
+            />
           )
         ) : view !== "shared" && !members.length ? (
           <p className="calendar-loading">이 팀에 활성 구성원이 없습니다.</p>
@@ -1450,9 +1562,10 @@ export default function Calendar({
                               </Button>
                             </>
                           ) : (
-                            <p role="status">
-                              {m.name}의 일정을 불러오고 있습니다…
-                            </p>
+                            <LoadingState
+                              className="compact"
+                              label={`${m.name}의 일정을 불러오는 중`}
+                            />
                           )}
                         </div>
                       )}
@@ -1718,9 +1831,18 @@ export default function Calendar({
           onUndo={() => void restoreEntry()}
         />
       )}
-      {addingWeek && (
+      {removedWeekly && (
+        <UndoToast
+          message={`‘${removedWeekly.item.title || "제목 없는 업무"}’ 업무를 주간 할 일에서 삭제했습니다.`}
+          disabled={undoBlocked}
+          onUndo={() => void restoreWeekly()}
+        />
+      )}
+      {addingWeek && context && (
         <CalendarTaskPicker
           teamId={team.id}
+          settings={context.settings}
+          members={members}
           userId={addingWeek.userId}
           ownerName={
             members.find((m) => m.id === addingWeek.userId)?.name || "구성원"
@@ -1752,6 +1874,26 @@ export default function Calendar({
           users={members}
           onClose={() => {
             setTask(null);
+          }}
+          onDocumentSaved={(result) => {
+            // Weekly items of the task show the same document count.
+            const id = task.id;
+            updateData((previous) =>
+              previous.weekly.some((item) => item.taskId === id)
+                ? {
+                    ...previous,
+                    weekly: previous.weekly.map((item) =>
+                      item.taskId === id && !item.unavailable
+                        ? {
+                            ...item,
+                            hasDocument: result.hasDocument,
+                            documentCount: result.documentCount,
+                          }
+                        : item,
+                    ),
+                  }
+                : previous,
+            );
           }}
           onCellsSaved={(result) => {
             const titles = new Map(

@@ -102,7 +102,8 @@
   line-height: 1.8;
 }
 .document-prose {
-  padding: 12px 21px 20px;
+  /* The left gutter holds the block handle. */
+  padding: 12px 21px 20px 30px;
 }
 .document-prose .ProseMirror {
   min-height: 300px;
@@ -322,7 +323,7 @@
 }
 @media (max-width: 600px) {
   .document-prose {
-    padding: 10px 13px 16px;
+    padding: 10px 13px 16px 24px;
   }
   .document-source {
     width: calc(100% - 12px);
@@ -404,6 +405,47 @@
 }
 .document-slash-menu [role="option"][aria-selected="true"] {
   background: var(--accent-surface);
+}
+.document-slash-menu-group {
+  padding: 6px 9px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* 블록 손잡이: 끌어서 이동하고 눌러서 블록 메뉴를 연다 */
+.document-block-handle {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+.document-block-handle:hover,
+.document-block-handle[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.document-block-handle:active {
+  cursor: grabbing;
+}
+.document-block-drop {
+  position: absolute;
+  z-index: 1;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.document-prose .document-block-dragging {
+  opacity: 0.35;
 }
 
 /* 토글 블록 */
@@ -847,24 +889,71 @@
 
 .annual-memos {
   --memo-accordion-height: var(--sheet-toolbar-height);
-  position: sticky;
-  left: 0;
+  position: relative;
   width: 100%;
   min-width: 0;
   flex: none;
   background: white;
 }
-.annual-memos .document-tabs {
-  top: calc(32px + var(--memo-accordion-height));
+/* Open, the accordion is a panel of its own height under the table. Without
+   memo cards it holds only its heading and tabs. */
+.annual-memos:not([data-collapsed]) {
+  display: flex;
+  flex-direction: column;
+  /* Same limits as AnnualMemoPanel: 200px, and room for the table. */
+  height: var(--memo-panel-height, min(460px, 60%));
+  min-height: 200px;
+  max-height: calc(100% - 120px);
+}
+.annual-memos:not([data-collapsed]):not(:has(.memo-document-card)) {
+  height: auto;
+  min-height: 0;
+}
+.memo-panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.memo-panel-content[hidden],
+.annual-memos:not(:has(.memo-document-card)) .memo-height-handle {
+  display: none;
+}
+.memo-panel-content > .task-documents {
+  min-height: 0;
+}
+/* Drag the panel's top edge to change its height. */
+.memo-height-handle {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  z-index: 17;
+  height: 7px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.memo-height-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+}
+.memo-height-handle:hover::after,
+.memo-height-handle:focus-visible::after,
+.memo-height-handle:active::after {
+  background: var(--accent);
 }
 .annual-memos .document-rich-tools {
   top: 0;
 }
 .memo-accordion-heading {
-  position: sticky;
+  position: relative;
+  flex-shrink: 0;
   cursor: pointer;
-  top: 32px;
-  z-index: 6;
   margin: 0;
   background: var(--accent-surface);
   border-block: 1px solid var(--line);
@@ -926,12 +1015,18 @@
 .memo-documents:empty {
   display: none;
 }
+.annual-memos .memo-documents {
+  flex: 1;
+  min-height: 0;
+}
+/* Cards fill the panel's height and scroll their own body. Cards are open
+   dialogs, so `auto` replaces the dialog's fit-content height. */
 .annual-memos .memo-document-card {
   flex: 0 0 min(var(--memo-width, 800px), 100%);
   width: min(var(--memo-width, 800px), 100%);
   min-width: 0;
-  min-height: 360px;
-  height: clamp(360px, calc(60dvh - var(--memo-accordion-height)), 600px);
+  height: auto;
+  min-height: 0;
   gap: 8px;
 }
 .memo-document-body {
@@ -984,9 +1079,6 @@
   min-height: 27px;
   background: transparent;
   color: var(--ink);
-}
-.annual-memos .document-source {
-  min-height: 320px;
 }
 
 .annual-memos .document-tab-item {
