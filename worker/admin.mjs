@@ -13,7 +13,6 @@ import {
   digest,
   protocolVersion,
 } from "../server/sync/protocol.mjs";
-import { reduce, reduceMany } from "../server/sync/reducer.mjs";
 import { assert } from "./access.mjs";
 import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
 import {
@@ -26,6 +25,8 @@ import { GitHubApiTransport } from "./git.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { beginProfileSwitch } from "./profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "./sync.mjs";
+import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
+import { materializeSlice } from "./materialize.mjs";
 
 async function serviceStatus(ctx, { check = false } = {}) {
   ctx.admin();
@@ -339,7 +340,19 @@ export async function adminRoutes(
       db = databaseFor(ctx.env, p);
     if (sync[2] === "conflicts") {
       if (method === "GET") {
-        const state = await db.readState(teamId),
+        // Only the conflicts themselves: loading C to list them cost the
+        // whole team and could exceed the Edge CPU budget.
+        const conflicts = await db.withTeamTransaction(
+            teamId,
+            async (tx) =>
+              (
+                await tx.query(
+                  "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND ($2::text IS NULL OR conflict_id=$2) ORDER BY conflict_id",
+                  [teamId, sync[3] || null],
+                )
+              ).rows.map((row) => JSON.parse(row.payload)),
+            { readOnly: true },
+          ),
           link = await db.readLink(teamId),
           view = (c) => ({
             conflictId: c.conflictId,
@@ -357,17 +370,24 @@ export async function adminRoutes(
             resolved: !!c.resolution,
           });
         if (sync[3]) {
-          assert(state.conflicts[sync[3]], 404, "충돌을 찾을 수 없습니다.");
-          return view(state.conflicts[sync[3]]);
+          assert(conflicts.length, 404, "충돌을 찾을 수 없습니다.");
+          return view(conflicts[0]);
         }
-        return { conflicts: Object.values(state.conflicts).map(view) };
+        return { conflicts: conflicts.map(view) };
       }
       assert(sync[4] === "resolve", 400, "충돌 해결 요청을 확인하세요.");
       return db.withTeamTransaction(teamId, async (tx) => {
-        const state = await tx.sync.readState(),
-          pending = await tx.sync.readPending(),
+        // The conflicts being resolved, their records and those pending
+        // operations touch (see CanonicalSlice), not the whole of C.
+        const pending = await tx.sync.readPending(),
           link = await tx.sync.readLink(),
-          conflict = state.conflicts[sync[3]];
+          frontier = body.frontier || [sync[3]],
+          slice = new CanonicalSlice(tx, teamId).include(pending);
+        if (Array.isArray(frontier))
+          for (const id of [sync[3], ...frontier])
+            if (typeof id === "string") slice.resolves.add(id);
+        let state = await slice.load();
+        const conflict = state.conflicts[sync[3]];
         assert(
           conflict && !conflict.resolution,
           409,
@@ -387,7 +407,6 @@ export async function adminRoutes(
           409,
           "팀 자료 정리 중입니다.",
         );
-        const frontier = body.frontier || [sync[3]];
         assert(
           Array.isArray(frontier) &&
             frontier.includes(sync[3]) &&
@@ -397,6 +416,9 @@ export async function adminRoutes(
           400,
           "해결 범위를 확인하세요.",
         );
+        for (const change of conflict.operation.changes)
+          slice.touch(change.entity, change.key, change.action);
+        state = await slice.load(state);
         const choice = body.choice || body.strategy || "current";
         assert(
           [
@@ -466,15 +488,21 @@ export async function adminRoutes(
           objects: [],
           resolves: frontier,
         };
-        const result = reduce(state, op);
+        const { state: resolved } = reduceSlice(
+          state,
+          [op],
+          null,
+          await slice.context(state),
+        );
         assert(
-          ["applied", "noop"].includes(result.receipt.result),
+          ["applied", "noop"].includes(resolved.receipts[op.opId].result),
           409,
           "다시 충돌했습니다. 최신 내용을 확인하세요.",
         );
         await tx.sync.enqueue(op);
-        const { materialize } = await import("./sync.mjs");
-        await materialize(tx, teamId, {
+        // C is unchanged; only what pending operations touch projects anew.
+        await materializeSlice(tx, teamId, {
+          base: state,
           state,
           pending: [...pending, op],
           exclusions: await tx.sync.readExclusions(),
