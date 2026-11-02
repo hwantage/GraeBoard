@@ -81,6 +81,7 @@ import {
   readClipboard,
   type ClipboardMatrix,
 } from "./clipboard";
+import { copyLayout } from "./selection-areas.js";
 
 const ROW_HEADER_WIDTH = 48;
 
@@ -260,6 +261,8 @@ export default function Grid({
     id: number;
     preserveHorizontalScroll?: boolean;
     scrollTop?: number;
+    // 이미 보이는 셀이면 화면을 움직이지 않는다.
+    nearest?: boolean;
   } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -751,13 +754,27 @@ export default function Grid({
         if (jump.taskId) {
           const row = taskIndexes.get(jump.taskId);
           if (row === undefined) return;
-          virtual.scrollToIndex(row, { align: "center" });
+          if (
+            !jump.nearest ||
+            virtual.getOffsetForIndex(row, "auto")?.[1] !== "auto"
+          )
+            virtual.scrollToIndex(row, { align: "center" });
         }
         const pinned =
           rowHeaderWidth +
           columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
-        if (!jump.preserveHorizontalScroll && !columns[index].fixed)
-          ref.current.scrollLeft = Math.max(0, positions[index] - pinned - 16);
+        const grid = ref.current,
+          left = positions[index];
+        if (
+          !jump.preserveHorizontalScroll &&
+          !columns[index].fixed &&
+          !(
+            jump.nearest &&
+            left >= grid.scrollLeft + pinned &&
+            left + columns[index].width <= grid.scrollLeft + grid.clientWidth
+          )
+        )
+          grid.scrollLeft = Math.max(0, left - pinned - 16);
         appliedJump.current = jump.id;
       }
     }
@@ -1460,18 +1477,21 @@ export default function Grid({
           dragOrigin.current = null;
         }}
         onCopy={(e) => {
-          if (editor || !range) return;
+          if (editor || !ranges.length) return;
           e.preventDefault();
-          if (selection?.areas?.length) {
-            onError("복사할 때는 하나의 연속된 영역을 선택하세요.");
+          const layout = copyLayout(ranges);
+          if (!layout) {
+            onError(
+              "여러 영역을 복사할 때는 같은 행 또는 같은 열의 영역을 선택하세요.",
+            );
             return;
           }
           try {
             copyToEvent(
               e.clipboardData,
               createClipboard(
-                tasks.slice(range.r1, range.r2 + 1),
-                columns.slice(range.c1, range.c2 + 1).map((c) => c.key),
+                layout.rows.map((i) => tasks[i]),
+                layout.columns.map((i) => columns[i].key),
                 users,
                 settings,
               ),
