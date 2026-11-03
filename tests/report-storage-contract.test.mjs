@@ -562,6 +562,94 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
   assert.equal((await reportOps()).length, before.length + 1);
 });
 
+// Autosaves of one document while nothing publishes leave one unsent
+// operation, from the body before them to the latest body, as copy edits do.
+// Each pending autosave carried the whole body, and dozens of them made every
+// save and sync run replay and parse every body again (2026-11-03).
+test("PG consecutive document autosaves replace the last unsent edit of that document", async (t) => {
+  const f = sqliteBusinessFixture(t),
+    pg = await postgresBusinessFixture(t, f);
+  if (!pg) return;
+  const documents = new DocumentBusinessService(
+      new PostgresDocumentRepository({ context: pg.createContext() }),
+      f.user,
+    ),
+    task = { kind: "task", taskId: f.taskId, documentId: "main" },
+    memo = {
+      kind: "annual",
+      teamId: f.teamId,
+      year: 2026,
+      documentId: randomUUID(),
+    },
+    pending = async () =>
+      (
+        await pg.pool.query(
+          "SELECT payload FROM graeboard.sync_outbox WHERE status<>'acknowledged' ORDER BY local_seq",
+        )
+      ).rows.map((row) => JSON.parse(row.payload)),
+    taskOps = async () =>
+      (await pending()).filter((op) =>
+        op.changes.some((c) => c.entity === "document" && c.key[0] === "task"),
+      ),
+    save = async (scope, markdown) =>
+      documents.save(scope, {
+        markdown,
+        expectedRevision: (await documents.read(scope)).revision,
+        operationId: randomUUID(),
+      });
+  // The first save creates the document, so it stays as it is.
+  await save(task, "first");
+  const before = (await taskOps()).length;
+  for (const body of ["second", "third", "fourth"]) await save(task, body);
+  let ops = await taskOps();
+  assert.equal(ops.length, before + 1, "one operation for the edits");
+  const [edit, ...others] = ops.at(-1).changes;
+  assert.equal(others.length, 0);
+  assert.equal(edit.action, "edit");
+  assert.equal(edit.base.markdown, "first", "from the body before them");
+  assert.equal(edit.desired.markdown, "fourth");
+  // The merged operation reaches the stored body.
+  assert.equal((await documents.read(task)).markdown, "fourth");
+  // Another document's save in between ends the run of edits.
+  await documents.create(
+    { kind: "annual", teamId: f.teamId, year: 2026 },
+    { id: memo.documentId, title: "메모" },
+  );
+  await save(memo, "memo body");
+  await save(memo, "memo body edited");
+  await save(task, "fifth");
+  ops = await taskOps();
+  assert.equal(ops.length, before + 2);
+  assert.equal(ops.at(-1).changes[0].base.markdown, "fourth");
+  const memoEdits = (await pending()).filter((op) =>
+    op.changes.some((c) => c.entity === "document" && c.key[0] === "annual"),
+  );
+  assert.equal(
+    memoEdits.at(-1).changes[0].desired.markdown,
+    "memo body edited",
+  );
+  const lease = (owner) =>
+    pg.pool.query(
+      "UPDATE graeboard.team_sync_links SET lease_owner=$1,lease_until=$2",
+      [owner, owner ? Date.now() + 600000 : null],
+    );
+  // A sync run holding the lease may have read the last row: append instead.
+  // So does an expired lease: the stopped run may have published that row.
+  await lease("run");
+  await save(task, "leased");
+  assert.equal((await taskOps()).length, before + 3);
+  await pg.pool.query("UPDATE graeboard.team_sync_links SET lease_until=$1", [
+    Date.now() - 1000,
+  ]);
+  await save(task, "expired");
+  assert.equal((await taskOps()).length, before + 4);
+  // Undone once the run is over, the edit leaves nothing to send.
+  await lease(null);
+  await save(task, "leased");
+  assert.equal((await taskOps()).length, before + 3);
+  assert.equal((await documents.read(task)).markdown, "leased");
+});
+
 // A copy repeats the source documents as they are: an image the store lacks
 // is shown as missing in the copy too, and never stops the copy.
 test("PG copy creation goes on when the image store lacks an image", async (t) => {

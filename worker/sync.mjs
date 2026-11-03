@@ -170,6 +170,9 @@ export function serviceFor(env, profile, link, options = {}) {
     // The service checks each state's capacity before handing it over.
     images: adapter,
     maxCommits: options.maxCommits || 4,
+    // One hosted invocation applies at most these commits, also when a
+    // publication finds the branch moved and receives again.
+    maxRunCommits: options.maxCommits || 4,
     maxOperations: 50,
     deferImages: !!options.deferImages,
     // SYNC_PHASE_LOG=1 logs each phase of a publishing or receiving cycle,
