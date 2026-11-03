@@ -28,7 +28,7 @@ import { createEdgeHandler } from "../edge/handler.mjs";
 import { createGateway } from "../worker/gateway.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
-import { refreshSetupKeys } from "../worker/setup-keys.mjs";
+import { refreshSetupKeys, syncSetupKeyStatus } from "../worker/setup-keys.mjs";
 import { portableHash } from "../shared/logical-format.mjs";
 import { profiles } from "../shared/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
@@ -581,6 +581,21 @@ test(
     await app.locals.sync.get(teamId).run();
     const consumed = success(await inside(`/teams/${teamId}/setup-key`)).key;
     assert.ok(consumed.usedAt && consumed.appliedAt);
+    // Unchanged, the receipt is compared with the published one alone: no
+    // business head, manifest or snapshot read and no write.
+    const receiptRef = "refs/heads/sync-setup-status/" + env.INSTALLATION_ID,
+      receiptHead = github.text(["rev-parse", receiptRef]),
+      beforeCheck = github.calls.length;
+    await syncSetupKeyStatus(env, { force: true });
+    const checkCalls = github.calls.slice(beforeCheck);
+    assert.equal(github.text(["rev-parse", receiptRef]), receiptHead);
+    assert.ok(
+      checkCalls.every(
+        (call) =>
+          call.method === "GET" && call.path !== "/git/ref/heads/sync-v1",
+      ),
+      JSON.stringify(checkCalls),
+    );
     assert.equal(
       success(await outside("lead-google", "/setup")).site,
       "external",
