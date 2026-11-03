@@ -22,6 +22,7 @@ import {
   supportedVersion,
 } from "./protocol.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
+import { withDocumentImageReferences } from "../../shared/document-image-references.js";
 import {
   SYNC_FILE_MAX_BYTES,
   SYNC_ENVELOPE_RESERVE_BYTES,
@@ -145,7 +146,17 @@ export class SyncService {
   }
   run(options = {}) {
     if (this.running) return this.running;
-    this.running = this.cycle(options).finally(() => (this.running = null));
+    // A cycle replays every pending command several times per received commit
+    // (slice reduce, image listing, materialize, commit), and each replay
+    // validates each document body's images. Each pending autosave of one
+    // document carries its own body, so dozens of them outnumber the 8 recent
+    // extractions kept between requests and every replay parsed every body
+    // again. The cycle holds those bodies until it ends anyway.
+    this.running = withDocumentImageReferences(() => this.cycle(options), {
+      maxEntries: Infinity,
+      maxBytes: Infinity,
+      ttlMs: Infinity,
+    }).finally(() => (this.running = null));
     return this.running;
   }
   async checkCommit(oid, parent) {

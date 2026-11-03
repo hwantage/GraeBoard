@@ -28,7 +28,8 @@ import {
   entityId,
   stateHash,
 } from "../server/sync/protocol.mjs";
-import { validateSnapshot } from "../server/sync/reducer.mjs";
+import { project, validateSnapshot } from "../server/sync/reducer.mjs";
+import { SyncService } from "../server/sync/service.mjs";
 import { imageReferences } from "../worker/images.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
@@ -554,6 +555,100 @@ test("cached extraction cannot bypass untrusted operation base, desired or snaps
     events.length,
     1,
     "every strict validator rejects using the same cached extraction",
+  );
+});
+
+test("one sync cycle parses each pending document body once across its replays", async (t) => {
+  const events = parses(t),
+    teamId = randomUUID(),
+    repoId = randomUUID(),
+    key = ["annual", "2026", randomUUID()],
+    id = entityId("document", key),
+    url = urlFor(teamId);
+  const link = {
+    team_id: teamId,
+    repo_id: repoId,
+    bootstrap_id: randomUUID(),
+    writer_epoch: randomUUID(),
+  };
+  // Twelve autosaves of one memo with an image, as an external site holds
+  // them while a publish cannot finish: more bodies than the 8 recent
+  // extractions kept between requests.
+  const autosaves = () => {
+    let record = {
+      entity: "document",
+      key,
+      generation: randomUUID(),
+      version: randomUUID(),
+      deleted: false,
+      payload: { title: "Memo", position: 0, markdown: markdownFor(url) },
+    };
+    const state = {
+        entities: { [id]: record },
+        receipts: {},
+        conflicts: {},
+      },
+      pending = [];
+    for (let i = 0; i < 12; i++) {
+      const next = {
+        ...record,
+        payload: {
+          ...record.payload,
+          markdown: record.payload.markdown + `edit ${i}\n`,
+        },
+      };
+      pending.push(
+        makeOperation({
+          link,
+          actorRef: randomUUID(),
+          before: { [id]: record },
+          after: { [id]: next },
+        }),
+      );
+      record = next;
+    }
+    return { state, pending, bodies: 13 };
+  };
+  // A cycle replays pending commands for the slice, image listing,
+  // materialization and commit of each received commit.
+  const replay = async ({ state, pending }) => {
+    for (let i = 0; i < 4; i++) {
+      project(state, pending);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  const unscoped = autosaves();
+  await replay(unscoped);
+  assert.equal(
+    events.length,
+    4 * unscoped.bodies,
+    "outside a cycle the recent extractions cannot hold every body",
+  );
+
+  events.length = 0;
+  const scoped = autosaves();
+  const service = new SyncService({
+    transport: {},
+    identity: { teamId, repoId },
+    store: {
+      acquire: async () => true,
+      release: async () => {},
+      readLink: async () => {
+        await replay(scoped);
+        return { mode: "paused" };
+      },
+    },
+  });
+  assert.deepEqual(await service.run({ updateStatus: false }), {
+    mode: "paused",
+  });
+  assert.equal(events.length, scoped.bodies, "each body parses once per cycle");
+  documentImageUrls(scoped.pending[0].changes[0].base.markdown);
+  assert.equal(
+    events.length,
+    scoped.bodies + 1,
+    "the cycle's extractions end with the cycle",
   );
 });
 
