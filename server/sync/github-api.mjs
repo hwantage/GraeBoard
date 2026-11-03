@@ -7,6 +7,21 @@ const assert = (condition, status, message) => {
 };
 const enc = new TextEncoder();
 const cooldowns = new WeakMap();
+// Each run builds a new transport, and a hosted site checks its branches every
+// minute, which spent most of GitHub's hourly request budget on answers that
+// had not changed. Per fetch function (one per isolate, one per test fixture)
+// later transports reuse each branch ref's last body and ETag, revalidated by a
+// conditional request that GitHub does not count when it answers 304, and the
+// small commits and metadata files of status, key and directory branches,
+// which their SHA fixes.
+const shared = new WeakMap();
+const remember = (entries, key, value, limit) => {
+  entries.delete(key);
+  if (entries.size >= limit) entries.delete(entries.keys().next().value);
+  entries.set(key, value);
+};
+const SHARED_COMMIT_FILES = 16,
+  SHARED_BLOB_BYTES = 64 * 1024;
 const retryable = (method, path) =>
   method === "GET" ||
   (method === "POST" && /^\/git\/(blobs|trees|commits)$/.test(path));
@@ -35,6 +50,13 @@ export class GitHubApiTransport {
     this.maxRetries = Math.min(2, Math.max(0, maxRetries));
     if (!cooldowns.has(fetcher)) cooldowns.set(fetcher, new Map());
     this.cooldowns = cooldowns.get(fetcher);
+    if (!shared.has(fetcher))
+      shared.set(fetcher, {
+        refs: new Map(),
+        commits: new Map(),
+        blobs: new Map(),
+      });
+    this.shared = shared.get(fetcher);
     this.cooldownKey = repository + "/" + digest(token || "");
     this.remaining = maxRequests;
     this.commits = new Map();
@@ -42,8 +64,19 @@ export class GitHubApiTransport {
   }
   async request(
     path,
-    { method = "GET", body, missing = false, raw = false } = {},
+    {
+      method = "GET",
+      body,
+      missing = false,
+      raw = false,
+      conditional = false,
+    } = {},
   ) {
+    const reuse =
+        conditional && method === "GET" && !raw
+          ? this.cooldownKey + path
+          : null,
+      known = reuse && this.shared.refs.get(reuse);
     let response;
     for (let attempt = 0; ; attempt++) {
       const cooldown = this.cooldowns.get(this.cooldownKey);
@@ -69,6 +102,7 @@ export class GitHubApiTransport {
               "X-GitHub-Api-Version": "2026-03-10",
               "User-Agent": "GraeBoard",
               ...(body ? { "Content-Type": "application/json" } : {}),
+              ...(known ? { "If-None-Match": known.etag } : {}),
             },
             ...(body ? { body: JSON.stringify(body) } : {}),
             signal: AbortSignal.timeout(20000),
@@ -122,6 +156,11 @@ export class GitHubApiTransport {
       }
       break;
     }
+    if (known && response.status === 304) {
+      remember(this.shared.refs, reuse, known, 256);
+      return JSON.parse(known.text);
+    }
+    if (reuse) this.shared.refs.delete(reuse);
     assert(
       response.status < 300 || response.status >= 400,
       502,
@@ -174,7 +213,11 @@ export class GitHubApiTransport {
       }
       return bytes;
     }
-    return response.json();
+    if (!reuse) return response.json();
+    const text = await response.text(),
+      etag = response.headers.get("etag");
+    if (etag) remember(this.shared.refs, reuse, { etag, text }, 256);
+    return JSON.parse(text);
   }
   async readHead(branch = "sync-v1") {
     const ref = await this.request(
@@ -184,13 +227,20 @@ export class GitHubApiTransport {
           .map(encodeURIComponent)
           .join("/")
           .replace(/^/, "heads/"),
-      { missing: true },
+      { missing: true, conditional: true },
     );
     return ref?.object?.sha || null;
   }
   async readCommit(oid) {
     if (this.commits.has(oid)) return this.commits.get(oid);
     assert(/^[a-f0-9]{40}$/.test(oid), 502, "잘못된 Git commit입니다.");
+    const key = this.cooldownKey + "/" + oid,
+      known = this.shared.commits.get(key);
+    if (known) {
+      remember(this.shared.commits, key, known, 64);
+      this.commits.set(oid, known);
+      return known;
+    }
     const commit = await this.request("/git/commits/" + oid),
       tree = await this.request(
         "/git/trees/" + commit.tree.sha + "?recursive=1",
@@ -228,6 +278,9 @@ export class GitHubApiTransport {
       files,
     };
     this.commits.set(oid, result);
+    // A data commit lists every event and image; it stays with this transport.
+    if (files.length <= SHARED_COMMIT_FILES)
+      remember(this.shared.commits, key, result, 64);
     return result;
   }
   async readFile(oid, path) {
@@ -240,12 +293,23 @@ export class GitHubApiTransport {
       "지원하지 않는 Git 파일입니다.",
     );
     if (this.blobs.has(entry.oid)) return this.blobs.get(entry.oid);
+    // Root metadata (manifest, status, keys, directory), never events,
+    // snapshots or images; callers get their own copy.
+    const metadata = !path.includes("/") && path.endsWith(".json"),
+      key = this.cooldownKey + "/" + entry.oid,
+      known = metadata && this.shared.blobs.get(key);
+    if (known && known.byteLength <= this.maxBlobBytes) {
+      remember(this.shared.blobs, key, known, 64);
+      return known.slice();
+    }
     const bytes = await this.request("/git/blobs/" + entry.oid, { raw: true });
     if (bytes.byteLength <= 1024 * 1024) {
       while (this.blobs.size >= 8)
         this.blobs.delete(this.blobs.keys().next().value);
       this.blobs.set(entry.oid, bytes);
     }
+    if (metadata && bytes.byteLength <= SHARED_BLOB_BYTES)
+      remember(this.shared.blobs, key, bytes.slice(), 64);
     return bytes;
   }
   async createCandidate(parent, files, message = "GraeBoard sync") {
