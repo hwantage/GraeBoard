@@ -402,6 +402,84 @@ test("350 missed commits advance in bounded REST cycles and old peer ancestry co
   assert.equal(await transport.verifyReachable(repo.head, genesis), false);
   assert.equal(repo.calls.length - n, 1);
 });
+// Pending commands behind a long remote chain: each publication from the stale
+// parent fails and receives maxCommits again, so one run applied 20 commits
+// with maxCommits 4. maxRunCommits bounds the whole run; it publishes only
+// once a later run reaches the head. The default keeps the old behavior.
+test("a run with pending commands behind the remote applies at most its commit budget and publishes from the head", async () => {
+  const { repo, state, genesis } = await fixture(20),
+    local = {
+      protocol: 1,
+      reducer: 1,
+      ...identity,
+      opId: "local-op",
+      writerEpoch: "epoch",
+      actorRef: "person",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      dependsOn: [],
+      objects: [],
+      changes: [
+        {
+          entity: "person",
+          key: ["local"],
+          generation: "g-local",
+          baseVersion: null,
+          base: null,
+          desired: { name: "Local" },
+          action: "create",
+          fields: ["name"],
+        },
+      ],
+    },
+    remoteHead = repo.head;
+  let candidates = 0;
+  const create = repo.createCandidate.bind(repo);
+  repo.createCandidate = (...args) => {
+    candidates++;
+    return create(...args);
+  };
+  const unbounded = store(emptyState(), genesis, "active", [local]);
+  await new SyncService({
+    transport: repo,
+    store: unbounded,
+    identity,
+    maxCommits: 4,
+  }).run({ updateStatus: false });
+  assert.equal(unbounded.commits.length, 20, "default: received per retry");
+  assert.equal(candidates, 4, "default: four publications from stale parents");
+  assert.equal(unbounded.pending.length, 1);
+  assert.equal(repo.head, remoteHead);
+
+  candidates = 0;
+  const bounded = store(emptyState(), genesis, "active", [local]);
+  const run = () =>
+    new SyncService({
+      transport: repo,
+      store: bounded,
+      identity,
+      maxCommits: 4,
+      maxRunCommits: 4,
+    }).run({ updateStatus: false });
+  await run();
+  assert.equal(bounded.commits.length, 4);
+  assert.equal(candidates, 0, "no publication from a stale parent");
+  assert.equal(bounded.pending.length, 1);
+  let runs = 1;
+  while (bounded.pending.length) {
+    const before = bounded.commits.length;
+    await run();
+    assert.ok(bounded.commits.length - before <= 5, "4 received + own");
+    assert.ok(++runs <= 5);
+  }
+  assert.equal(runs, 5);
+  assert.equal(candidates, 1);
+  assert.notEqual(repo.head, remoteHead);
+  assert.equal(bounded.link.canonical_head, repo.head);
+  assert.equal(
+    stateHash(bounded.state),
+    stateHash(reduceMany(state, [local], identity)),
+  );
+});
 test("verified checkpoint loads new site and explicit recovery, preserving unacknowledged P and L, then replays tail", async () => {
   const { repo, state, genesis } = await fixture(30),
     publisher = store(state, repo.head),
