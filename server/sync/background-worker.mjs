@@ -563,7 +563,14 @@ function projectionPatch(
       record = { ...current, deleted: true };
       retiredKeys.push(key);
     }
-    if (record.deleted && (!current || current.payload?.deletedAt)) continue;
+    // A deleted task keeps its row (trash) as the parent of its live cells and
+    // documents. A peer task created and deleted before this site saw it still
+    // needs that row, or the children fail the cells/task_documents foreign key.
+    if (
+      record.deleted &&
+      (current ? current.payload?.deletedAt : record.entity !== "task")
+    )
+      continue;
     if (
       !localPayloadEqual(
         record.entity,
