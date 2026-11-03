@@ -2,6 +2,7 @@ import { controlTransaction } from "./data.mjs";
 import { profiles, siteTeamId } from "../shared/sync-profiles.js";
 import { GitHubApiTransport } from "./git.mjs";
 import { assert } from "./access.mjs";
+import { canonical } from "../server/sync/protocol.mjs";
 import {
   readSetupJson,
   validateSetupKeys,
@@ -133,6 +134,59 @@ export async function refreshSetupKeys(
     { write: true },
   );
 }
+// Only current opaque key IDs and timestamps leave this site, never Google identities.
+const receiptKeys = (env, teamId, ids) =>
+  controlTransaction(
+    env,
+    async (tx) =>
+      (
+        await tx.query(
+          'SELECT id,used_at AS "usedAt" FROM setup_link_keys WHERE team_id=$1 AND id=ANY($2::text[]) ORDER BY id',
+          [teamId, ids],
+        )
+      ).rows,
+  );
+const receipt = (env, teamId, repoId, state, keys) => ({
+  format: "graeboard-setup-status",
+  version: 1,
+  teamId,
+  installationId: env.INSTALLATION_ID,
+  repoId,
+  sourceHead: state.source_head,
+  keys: keys.map((key) => ({ ...key, receivedAt: state.received_at })),
+});
+// The receipt this site published for the current snapshot names that
+// snapshot's keys. While their use and its receive time are unchanged, the
+// receipt rebuilt below from the business manifest (read with the whole
+// repository tree) and the snapshot is that same value and publishing it
+// writes nothing, yet every check and page load read both again. Anything
+// else, including a failed read, takes the full path.
+async function receiptCurrent(env, transport, branch, teamId, state) {
+  try {
+    const head = await transport.readHead(branch);
+    if (!head) return false;
+    const published = readSetupJson(
+      await transport.readFile(head, "status.json"),
+    );
+    if (
+      published?.sourceHead !== state.source_head ||
+      typeof published.repoId !== "string" ||
+      !Array.isArray(published.keys)
+    )
+      return false;
+    const keys = await receiptKeys(
+      env,
+      teamId,
+      published.keys.map((key) => key?.id),
+    );
+    return (
+      canonical(receipt(env, teamId, published.repoId, state, keys)) ===
+      canonical(published)
+    );
+  } catch {
+    return false;
+  }
+}
 async function publishSetupReceipt(
   env,
   { transport = transportFor(env) } = {},
@@ -148,6 +202,8 @@ async function publishSetupReceipt(
     return { state };
   });
   if (!data) return;
+  const branch = "sync-setup-status/" + env.INSTALLATION_ID;
+  if (await receiptCurrent(env, transport, branch, teamId, data.state)) return;
   const businessHead = await transport.readHead();
   const manifest = readSetupJson(
     await transport.readFile(businessHead, "manifest.json"),
@@ -163,30 +219,16 @@ async function publishSetupReceipt(
       repoId: manifest.repoId,
     },
   );
-  // Only current opaque key IDs and timestamps leave this site, never Google identities.
-  const keys = await controlTransaction(
+  const keys = await receiptKeys(
     env,
-    async (tx) =>
-      (
-        await tx.query(
-          'SELECT id,used_at AS "usedAt" FROM setup_link_keys WHERE team_id=$1 AND id=ANY($2::text[]) ORDER BY id',
-          [teamId, snapshot.keys.map((key) => key.id)],
-        )
-      ).rows,
+    teamId,
+    snapshot.keys.map((key) => key.id),
   );
   await publishSetupJson(
     transport,
-    "sync-setup-status/" + env.INSTALLATION_ID,
+    branch,
     "status.json",
-    {
-      format: "graeboard-setup-status",
-      version: 1,
-      teamId,
-      installationId: env.INSTALLATION_ID,
-      repoId: manifest.repoId,
-      sourceHead: data.state.source_head,
-      keys: keys.map((key) => ({ ...key, receivedAt: data.state.received_at })),
-    },
+    receipt(env, teamId, manifest.repoId, data.state, keys),
   );
 }
 const checks = new Map();
