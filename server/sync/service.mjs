@@ -106,6 +106,11 @@ export class SyncService {
     identity,
     images,
     maxCommits = 32,
+    // Commits one cycle may apply across all its receives. A publication that
+    // finds the branch moved receives again; without this bound a hosted cycle
+    // with pending commands behind a long remote chain applied maxCommits per
+    // failed publication, five times the per-invocation work it was sized for.
+    maxRunCommits = Infinity,
     maxOperations = 50,
     maxProtocol = 2,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
@@ -123,6 +128,7 @@ export class SyncService {
       identity,
       images,
       maxCommits,
+      maxRunCommits,
       maxOperations,
       maxProtocol,
       stateLimits,
@@ -133,6 +139,10 @@ export class SyncService {
     this.running = null;
     this.sizes = new WeakMap();
     this.mark = () => {};
+    // Commits the running cycle may still apply (null outside a cycle), and
+    // whether its last receive stopped short of the head it observed.
+    this.budget = null;
+    this.behind = false;
   }
   // With the state it was reduced from, measure only the changed records.
   assertCapacity(state, base) {
@@ -180,10 +190,10 @@ export class SyncService {
       throw new ProtocolError("SYNC_FORMAT", "Unsupported repository file");
     return commit;
   }
-  async readChain(head, after) {
-    if (head === after) return [];
+  async readChain(head, after, limit = this.maxCommits) {
+    if (head === after || limit <= 0) return [];
     if (this.transport.readRange)
-      return this.transport.readRange(head, after, this.maxCommits);
+      return this.transport.readRange(head, after, limit);
     throw new ProtocolError(
       "SYNC_TRANSPORT",
       "Synchronization transport must implement bounded readRange",
@@ -216,6 +226,7 @@ export class SyncService {
       observedHead === undefined
         ? await this.transport.readHead()
         : observedHead;
+    this.behind = false;
     if (!head) {
       if (link.canonical_head)
         throw new ProtocolError(
@@ -229,7 +240,8 @@ export class SyncService {
       (useCheckpoint && ["importing", "recovery"].includes(link.mode))
     )
       link = await loadCheckpoint(this, link, head);
-    const chain = await this.readChain(head, link.canonical_head);
+    const limit = Math.min(this.maxCommits, this.budget ?? Infinity),
+      chain = await this.readChain(head, link.canonical_head, limit);
     if (chain.length) this.mark("readChain", { commits: chain.length });
     // C is read only for a commit that cannot be applied to a slice of it; an
     // unchanged head needs no canonical state at all.
@@ -241,7 +253,7 @@ export class SyncService {
       }
       return state;
     };
-    for (const commit of chain.slice(0, this.maxCommits)) {
+    for (const commit of chain.slice(0, limit)) {
       let previousState = state,
         slice = false;
       const parent = link.canonical_head || null;
@@ -558,11 +570,13 @@ export class SyncService {
         mark: this.mark,
       });
       this.mark("commitCanonical", { commit: commit.oid });
+      if (this.budget !== null) this.budget--;
       // A slice is not C; a later commit that needs C reads it again.
       if (slice) state = null;
       link = await this.store.readLink();
       await new Promise((r) => setTimeout(r, 0));
     }
+    this.behind = link.canonical_head !== head;
     if (link.mode === "importing" && link.canonical_head === head) {
       await this.store.finishImport?.(head);
       link = await this.store.readLink();
@@ -667,6 +681,7 @@ export class SyncService {
     const owner = randomUUID();
     if (!(await this.store.acquire(owner))) return { busy: true };
     this.mark = phaseTimer(this.trace, this.identity.teamId);
+    this.budget = this.maxRunCommits;
     let traced = false;
     try {
       let link = await this.store.readLink();
@@ -684,6 +699,13 @@ export class SyncService {
       }
       if (!receiveOnly && link.mode !== "recovery")
         for (let attempt = 0; attempt < 4; attempt++) {
+          // With its budget spent short of the head it saw, the cycle leaves
+          // the rest to the next one: a candidate on this parent cannot be
+          // published, and receiving again would exceed the budget.
+          if (this.behind && this.budget <= 0) {
+            this.mark("behind", { head: link.canonical_head });
+            break;
+          }
           const pending = operationBatch(
             await this.store.readPending(),
             this.maxOperations,
@@ -766,6 +788,7 @@ export class SyncService {
       throw error;
     } finally {
       this.mark = () => {};
+      this.budget = null;
       await this.store.release(owner);
     }
   }
