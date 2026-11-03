@@ -439,18 +439,21 @@ export class DataSession {
       replaced,
     };
   }
-  // A copy edit carries the whole copy, and edits arrive a second apart while
-  // someone types. When the last unsent operation only edits the same copy,
-  // this capture replaces it with one operation from that operation's base to
-  // the new result, so replaying and publishing cost one copy, not one per
-  // save. Only while no sync run holds the lease: taking the lease and this
-  // capture share the team lock, so a publish never reads a row replaced here.
+  // A copy edit carries the whole copy, and a document autosave its whole body,
+  // and edits arrive a second apart while someone types. When the last unsent
+  // operation only edits the same copy or document, this capture replaces it
+  // with one operation from that operation's base to the new result, so
+  // replaying and publishing cost one body, not one per save. Only while no
+  // sync run holds the lease: taking the lease and this capture share the team
+  // lock, so a publish never reads a row replaced here. An expired lease left
+  // by a stopped run keeps rows too: that run may have published the last row
+  // before it stopped, and the next run receives it before releasing.
   replaceableOperation(link) {
     const [change, ...others] = this.changes.values();
     if (
       link.lease_owner ||
       others.length ||
-      change.entity !== "report" ||
+      !["report", "document"].includes(change.entity) ||
       !change.before ||
       change.before.deleted ||
       change.after.deleted
@@ -463,9 +466,9 @@ export class DataSession {
         operation.writerEpoch === link.writer_epoch &&
         !operation.objects.length &&
         !rest.length &&
-        previous.entity === "report" &&
+        previous.entity === change.entity &&
         previous.action === "edit" &&
-        previous.key[0] === change.key[0]
+        equal(previous.key, change.key)
         ? row.op_id
         : null;
     };
