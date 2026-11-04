@@ -661,6 +661,23 @@
   :is(.calendar-week-document, .calendar-task-document) {
   color: color-mix(in srgb, var(--document-accent) 35%, var(--ink));
 }
+/* Where a dragged item lands: a line in the gap above or below the item. */
+.calendar-week-task[data-reorder-drop]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.calendar-week-task[data-reorder-drop="before"]::after {
+  top: -4px;
+}
+.calendar-week-task[data-reorder-drop="after"]::after {
+  bottom: -4px;
+}
 .calendar-week-task .calendar-week-task-remove {
   position: absolute;
   top: -7px;
@@ -1095,8 +1112,8 @@
   min-width: 0;
 }
 .calendar-entry-modal {
-  /* 일정 팝업에는 문서 탭이 없으므로 서식 툴바를 스크롤 영역 맨 위에 고정한다. */
-  --document-tabs-height: 0px;
+  /* 일정 팝업에는 문서 탭이 없으므로 탭 줄과 같은 높이(40px + 아래 선)의 모드 전환 줄이 그 자리를 맡는다. */
+  --document-tabs-height: 41px;
 }
 .calendar-entry-heading {
   padding: 16px 28px;
@@ -1111,7 +1128,7 @@
 .workspace[data-screen="calendar"]
   .calendar-entry-modal
   > header
-  :is(.document-expand, .document-link-copy):not(:hover) {
+  :is(.document-expand, .document-link-copy, .document-full-width):not(:hover) {
   background: transparent;
 }
 .calendar-range-editor label {
@@ -1183,11 +1200,6 @@
 .calendar-entry-tools .calendar-tag-picker {
   flex: 1;
   margin: 0;
-}
-.calendar-document-controls {
-  display: flex;
-  justify-content: flex-end;
-  flex-shrink: 0;
 }
 .workspace[data-calendar-theme="dark"] .brand-wordmark {
   filter: brightness(0) invert(0.93);

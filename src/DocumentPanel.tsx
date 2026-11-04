@@ -38,6 +38,9 @@ import {
   MAX_DOCUMENT_TITLE_LENGTH,
 } from "../shared/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import DocumentFullWidthButton, {
+  useDocumentFullWidth,
+} from "./DocumentFullWidthButton";
 import {
   updateDocumentLinkTitle,
   type DocumentLinkTarget,
@@ -1146,6 +1149,7 @@ export function DocumentPage({
   }
   const [expanded, setFullPage] = useState(false);
   const fullPage = expanded || !!onClose;
+  const fullWidth = useDocumentFullWidth();
   const leaveFullPage = () => (onClose ? onClose() : setFullPage(false));
   const dialog = useRef<HTMLDialogElement | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
@@ -1171,7 +1175,7 @@ export function DocumentPage({
       ref={(element: HTMLDialogElement | HTMLDivElement | null) => {
         dialog.current = inline ? (element as HTMLDialogElement) : null;
       }}
-      className={`document-page ${inline ? "memo-document-card" : ""}${fullPage ? " memo-full-page" : ""}`}
+      className={`document-page ${inline ? "memo-document-card" : ""}${fullPage ? ` memo-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1233,6 +1237,7 @@ export function DocumentPage({
             ref={setCardControls}
             hidden={fullPage}
           />
+          {fullPage && <DocumentFullWidthButton />}
           {fullPage && (
             <Button
               className="memo-document-close"
@@ -1247,7 +1252,7 @@ export function DocumentPage({
       {inline ? (
         <div className="memo-document-body" data-loading={loading || undefined}>
           <div
-            className="memo-full-page-controls"
+            className="memo-full-page-controls document-mode-bar"
             ref={setFullPageControls}
             hidden={!fullPage}
           />

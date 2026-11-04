@@ -579,6 +579,46 @@ test(
           .status,
         403,
       );
+      // Whoever edits the team's work opens and settles its conflicts; a
+      // viewer does neither.
+      const conflicts = `/teams/${teamId}/sync/conflicts`,
+        resolveMissing = `${conflicts}/${randomUUID()}/resolve`;
+      assert.equal(
+        (await request(conflicts, undefined, "GET", viewer)).status,
+        403,
+      );
+      assert.equal(
+        (await request(resolveMissing, { choice: "current" }, "POST", viewer))
+          .status,
+        403,
+      );
+      assert.equal(
+        (
+          await request("/admin/users", {
+            username: "member@example.com",
+            name: "Member",
+            systemRole: "user",
+            memberships: [{ teamId, role: "member" }],
+          })
+        ).status,
+        200,
+      );
+      const member = {
+        "test-email": "member@example.com",
+        "test-subject": "member-sub",
+      };
+      const listed = await request(conflicts, undefined, "GET", member);
+      assert.equal(listed.status, 200, JSON.stringify(listed.body));
+      assert.deepEqual(listed.body.conflicts, []);
+      // Past the permission check, an unknown conflict is a changed state.
+      const missing = await request(
+        resolveMissing,
+        { choice: "current" },
+        "POST",
+        member,
+      );
+      assert.equal(missing.status, 409);
+      assert.equal(missing.body.error, "충돌 상태가 변경되었습니다.");
       assert.equal(
         (
           await request(

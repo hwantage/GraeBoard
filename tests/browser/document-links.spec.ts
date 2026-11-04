@@ -409,7 +409,8 @@ test("⌘/Ctrl+클릭은 새 탭으로 열고 그 주소는 팀과 화면을 바
       return null;
     };
   });
-  // A plain click on a web link only places the caret while editing.
+  // A web link opens in a new tab with or without the modifier, also while
+  // editing.
   const web = rich(source).getByRole("link", { name: "자료", exact: true });
   await web.click();
   await links(source)
@@ -418,6 +419,7 @@ test("⌘/Ctrl+클릭은 새 탭으로 열고 그 주소는 팀과 화면을 바
   await web.click({ modifiers: ["ControlOrMeta"] });
   const taskUrl = new URL(`/links/task/${taskIds[1]}`, page.url()).href;
   expect(await page.evaluate(() => (window as any).__opened)).toEqual([
+    ["https://example.com/docs", "_blank", "noopener,noreferrer"],
     [taskUrl, "_blank", "noopener,noreferrer"],
     ["https://example.com/docs", "_blank", "noopener,noreferrer"],
   ]);
@@ -575,6 +577,122 @@ test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 �
   });
   await rich(presented).getByRole("link", { name: "외부 자료" }).click();
   expect(await page.evaluate(() => (window as any).__opened)).toEqual([
+    ["https://example.com/docs", "_blank", "noopener,noreferrer"],
+  ]);
+});
+
+test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 커서가 링크에 있으면 주소와 열기·복사·수정·제거를 보인다", async ({
+  page,
+}) => {
+  await saveTask(page, taskIds[0], "앞 글자 네이버 뒤 글자\n");
+  const source = await open(page);
+  await page.evaluate(() => {
+    (window as any).__opened = [];
+    window.open = (...args: unknown[]) => {
+      (window as any).__opened.push(args);
+      return null;
+    };
+    (window as any).__copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).__copied.push(
+            await (await items[0].getType("text/plain")).text(),
+          );
+        },
+      },
+    });
+  });
+  // Select "네이버".
+  await rich(source)
+    .locator("p")
+    .first()
+    .evaluate((el) => {
+      const text = el.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, 5);
+      range.setEnd(text, 8);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await rich(source).evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await source.getByRole("button", { name: "링크", exact: true }).click();
+  const address = source.getByRole("textbox", { name: "링크 주소" });
+  const name = source.getByRole("textbox", { name: "표시 이름" });
+  await expect(address).toBeFocused();
+  await expect(address).toHaveValue("");
+  await expect(name).toHaveValue("네이버");
+  // Each label stays on its field's line.
+  for (const [label, field] of [
+    ["링크 주소", address],
+    ["표시 이름", name],
+  ] as const) {
+    const text = (await source
+      .locator(".document-link-form span", { hasText: label })
+      .boundingBox())!;
+    const box = (await field.boundingBox())!;
+    expect(text.height).toBeLessThan(box.height);
+    expect(text.x + text.width).toBeLessThanOrEqual(box.x);
+    expect(
+      Math.abs(text.y + text.height / 2 - (box.y + box.height / 2)),
+    ).toBeLessThan(4);
+  }
+  await address.fill("https://www.naver.com");
+  await name.fill("네이버 바로가기");
+  await source.getByRole("button", { name: "적용", exact: true }).click();
+  const link = rich(source).getByRole("link", { name: "네이버 바로가기" });
+  await expect(link).toHaveAttribute("href", "https://www.naver.com");
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toBe("앞 글자 [네이버 바로가기](https://www.naver.com) 뒤 글자\n");
+
+  // The caret in the link shows its address and actions below it.
+  const tip = source.getByRole("group", { name: "링크", exact: true });
+  await expect(tip).toContainText("https://www.naver.com");
+  const linkBox = (await link.boundingBox())!;
+  const tipBox = (await tip.boundingBox())!;
+  expect(tipBox.y).toBeGreaterThan(linkBox.y + linkBox.height - 1);
+  await tip.getByRole("button", { name: "링크 열기" }).click();
+  await tip.getByRole("button", { name: "링크 주소 복사" }).click();
+  await expect(
+    source.getByRole("status").filter({ hasText: "링크 주소를" }),
+  ).toHaveText("링크 주소를 복사했습니다.");
+  expect(await page.evaluate(() => (window as any).__copied)).toEqual([
+    "https://www.naver.com",
+  ]);
+  // Esc closes the form only.
+  await tip.getByRole("button", { name: "링크 수정" }).click();
+  await expect(address).toHaveValue("https://www.naver.com");
+  await expect(name).toHaveValue("네이버 바로가기");
+  await name.press("Escape");
+  await expect(address).toHaveCount(0);
+  await expect(source).toBeVisible();
+  await expect(tip).toBeVisible();
+  await tip.getByRole("button", { name: "링크 수정" }).click();
+  await address.fill("https://example.com/docs");
+  await address.press("Enter");
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toBe("앞 글자 [네이버 바로가기](https://example.com/docs) 뒤 글자\n");
+  await tip.getByRole("button", { name: "링크 제거" }).click();
+  await expect(rich(source).getByRole("link")).toHaveCount(0);
+  await expect(tip).toHaveCount(0);
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toBe("앞 글자 네이버 바로가기 뒤 글자\n");
+  // A plain click opens a web link, and its caret shows the actions.
+  await rich(source).press("ControlOrMeta+z");
+  await rich(source).getByRole("link", { name: "네이버 바로가기" }).click();
+  await expect(tip).toContainText("https://example.com/docs");
+  expect(await page.evaluate(() => (window as any).__opened)).toEqual([
+    ["https://www.naver.com", "_blank", "noopener,noreferrer"],
     ["https://example.com/docs", "_blank", "noopener,noreferrer"],
   ]);
 });

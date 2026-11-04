@@ -376,6 +376,21 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
   await a.app.locals.sync.get(teamId).run();
   await b.app.locals.sync.get(teamId).run();
   await a.app.locals.sync.get(teamId).run();
+  // A team member opens and settles the conflict box as a lead does; a
+  // viewer, who edits nothing, cannot open it.
+  b.db.prepare("UPDATE users SET system_role='user'").run();
+  b.db
+    .prepare("UPDATE memberships SET role='viewer' WHERE team_id=?")
+    .run(teamId);
+  const refused = await b.api(`/teams/${teamId}/sync/conflicts`);
+  assert.equal(refused.status, 403);
+  assert.equal(
+    refused.data.error,
+    "충돌 보관함은 팀장·팀원만 사용할 수 있습니다.",
+  );
+  b.db
+    .prepare("UPDATE memberships SET role='member' WHERE team_id=?")
+    .run(teamId);
   const conflict = ok(
     await b.api(`/teams/${teamId}/sync/conflicts`),
   ).conflicts.find((row) => !row.resolved);

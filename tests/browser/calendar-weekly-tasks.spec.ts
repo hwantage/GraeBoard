@@ -501,6 +501,72 @@ test("주간 업무는 확인 없이 삭제하고 실행취소로 같은 자리�
   await context.close();
 });
 
+test("주간 업무는 끌거나 Alt+위/아래 방향키로 순서를 바꾸고 새로고침 뒤에도 유지한다", async ({
+  page,
+}) => {
+  const titles = ["순서 첫째", "순서 둘째", "순서 셋째"];
+  const ids: string[] = [];
+  for (const title of titles) {
+    ids.push(await task(page, title, userId, "status-progress"));
+    await addToWeek(page, [ids.at(-1)!]);
+  }
+  await open(page);
+  const items = weekTasks(page).locator(".calendar-week-task-open");
+  await expect(items).toHaveText(titles);
+  const saved = async () =>
+    (
+      await request(
+        page,
+        `/calendar?teamId=${teamId}&userId=${userId}&from=${week}&to=${week}`,
+      )
+    ).weekly.map((item: any) => item.title);
+  // Drag the first item below the third. The release opens nothing.
+  const first = (await items.nth(0).boundingBox())!;
+  const third = (await items.nth(2).boundingBox())!;
+  await page.mouse.move(first.x + 20, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first.x + 20, third.y + third.height - 3, {
+    steps: 8,
+  });
+  await expect(
+    weekTasks(page).locator('.calendar-week-task[data-reorder-drop="after"]'),
+  ).toHaveText("순서 셋째");
+  await page.mouse.up();
+  await expect(items).toHaveText(["순서 둘째", "순서 셋째", "순서 첫째"]);
+  await expect.poll(saved).toEqual(["순서 둘째", "순서 셋째", "순서 첫째"]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Alt+Up moves the focused item one place up.
+  await items.nth(2).focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(items).toHaveText(["순서 둘째", "순서 첫째", "순서 셋째"]);
+  await expect.poll(saved).toEqual(["순서 둘째", "순서 첫째", "순서 셋째"]);
+  // A plain click still opens the task.
+  await items.nth(0).click();
+  await expect(page.getByRole("dialog", { name: "업무 상세" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  // The calendar opens again after reloading, in the saved order.
+  await page.reload();
+  await expect(items).toHaveText(["순서 둘째", "순서 첫째", "순서 셋째"]);
+  // A list changed elsewhere refuses the move and shows the saved order.
+  await page.route("**/api/calendar/weekly/reorder", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error:
+          "다른 곳에서 이 주의 할 일이 바뀌었습니다. 목록을 다시 확인한 뒤 순서를 바꾸세요.",
+      }),
+    }),
+  );
+  await items.nth(0).focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect(page.getByRole("alert")).toContainText(
+    "다른 곳에서 이 주의 할 일이 바뀌었습니다.",
+  );
+  await expect(items).toHaveText(["순서 둘째", "순서 첫째", "순서 셋째"]);
+  expect(pageErrors).toEqual([]);
+});
+
 test("문서가 있는 주간 업무는 오른쪽 아래에 문서 아이콘과 여러 개일 때 문서 수를 표시하고 상세에서 저장하면 바로 반영한다", async ({
   page,
 }, info) => {
