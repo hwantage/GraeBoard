@@ -332,8 +332,11 @@ export async function adminRoutes(
     );
   if (sync) {
     const teamId = sync[1];
+    // Conflicts are settled by whoever edits the team's work.
     await ctx.team(teamId, {
-      manage: method !== "GET" && !["pull", "refresh"].includes(sync[2]),
+      manage:
+        method !== "GET" && !["pull", "refresh", "conflicts"].includes(sync[2]),
+      write: sync[2] === "conflicts",
       allowUnready: true,
     });
     assert(

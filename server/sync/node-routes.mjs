@@ -9,6 +9,7 @@ import { createSyncSetupConfig } from "./setup-config.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
 import { transaction } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";
+import { canContribute } from "../../shared/domain.js";
 import {
   conflictOpIds,
   conflictOrigin,
@@ -395,8 +396,17 @@ function installTeamSyncRoutes(
     sync.clear(teamId);
     res.json(result);
   });
+  // Whoever edits the team's work settles its conflicts, not only its lead.
+  const conflictTeam = (user, teamId) => {
+    teamAccess(user, teamId);
+    requireThat(
+      canContribute(user, teamId),
+      403,
+      "충돌 보관함은 팀장·팀원만 사용할 수 있습니다.",
+    );
+  };
   app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
-    managedTeam(req.user, id(req));
+    conflictTeam(req.user, id(req));
     const s = sync.store(id(req)),
       conflicts = db
         .prepare(
@@ -476,7 +486,7 @@ function installTeamSyncRoutes(
     "/api/teams/:id/sync/conflicts/:conflictId/resolve",
     async (req, res) => {
       const teamId = id(req);
-      managedTeam(req.user, teamId);
+      conflictTeam(req.user, teamId);
       const result = await sync.resolveConflict(
         teamId,
         {
@@ -487,7 +497,7 @@ function installTeamSyncRoutes(
           frontier: req.body.frontier,
           actorRef: req.user.id,
         },
-        () => managedTeam(refreshUser(req), teamId),
+        () => conflictTeam(refreshUser(req), teamId),
       );
       res.json(result);
     },

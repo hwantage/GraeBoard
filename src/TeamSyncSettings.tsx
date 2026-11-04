@@ -12,7 +12,7 @@ import LoadingState from "./LoadingState";
 import Select from "./Select";
 import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
-import { canManageTeam } from "../shared/domain.js";
+import { canContribute, canManageTeam } from "../shared/domain.js";
 import { syncErrorMessage } from "../shared/sync-error-message.js";
 import "./team-sync-settings.css";
 
@@ -501,7 +501,7 @@ export default function TeamSyncSettings({
                     <dt>충돌 보관</dt>
                     <dd className="team-sync-conflict-count">
                       {status.conflicts}건
-                      {status.conflicts > 0 && admin && (
+                      {status.conflicts > 0 && canContribute(user, team.id) && (
                         // The same button as next to the warning in the top bar.
                         <button
                           type="button"
