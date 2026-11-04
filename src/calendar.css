@@ -1111,7 +1111,7 @@
 .workspace[data-screen="calendar"]
   .calendar-entry-modal
   > header
-  :is(.document-expand, .document-link-copy):not(:hover) {
+  :is(.document-expand, .document-link-copy, .document-full-width):not(:hover) {
   background: transparent;
 }
 .calendar-range-editor label {

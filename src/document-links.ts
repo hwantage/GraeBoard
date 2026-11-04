@@ -59,7 +59,13 @@ export async function copyDocumentLink(
   title: string,
 ) {
   const url = documentLinkUrl(target);
-  const html = `<a href="${escapeHtml(url)}">${escapeHtml(title)}</a>`;
+  await copyToClipboard(
+    url,
+    `<a href="${escapeHtml(url)}">${escapeHtml(title)}</a>`,
+  );
+}
+
+export async function copyToClipboard(text: string, html?: string) {
   if (
     window.isSecureContext &&
     typeof ClipboardItem !== "undefined" &&
@@ -67,8 +73,8 @@ export async function copyDocumentLink(
   ) {
     await navigator.clipboard.write([
       new ClipboardItem({
-        "text/plain": new Blob([url], { type: "text/plain" }),
-        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([text], { type: "text/plain" }),
+        ...(html && { "text/html": new Blob([html], { type: "text/html" }) }),
       }),
     ]);
     return;
@@ -76,11 +82,13 @@ export async function copyDocumentLink(
   // A site served over plain HTTP has no asynchronous clipboard. The click's
   // copy command still lets the page fill the clipboard; Safari only runs it
   // with a selection, so a hidden one is made when the first attempt is idle.
+  // The copy never reaches an editor, which would put its selection there.
   let copied = false;
   const fill = (event: ClipboardEvent) => {
-    event.clipboardData?.setData("text/plain", url);
-    event.clipboardData?.setData("text/html", html);
+    event.clipboardData?.setData("text/plain", text);
+    if (html) event.clipboardData?.setData("text/html", html);
     event.preventDefault();
+    event.stopPropagation();
     copied = true;
   };
   document.addEventListener("copy", fill, true);
@@ -89,7 +97,7 @@ export async function copyDocumentLink(
     if (!copied) {
       const focused = document.activeElement as HTMLElement | null;
       const holder = document.createElement("span");
-      holder.textContent = url;
+      holder.textContent = text;
       holder.style.cssText = "position:fixed;opacity:0;white-space:pre";
       (focused?.closest("dialog") || document.body).append(holder);
       const selection = getSelection();

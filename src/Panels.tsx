@@ -39,6 +39,9 @@ import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import DocumentFullWidthButton, {
+  useDocumentFullWidth,
+} from "./DocumentFullWidthButton";
 import {
   updateDocumentLinkTitle,
   useOpenDocumentLink,
@@ -255,6 +258,7 @@ export function RowPanel({
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [documentFullPage, setDocumentFullPage] = useState(false);
+  const fullWidth = useDocumentFullWidth();
   // A copy's task keeps the original's ID, so its link also names the copy.
   const linkTarget: DocumentLinkTarget = documentReport
     ? { kind: "report-task", reportId: documentReport.id, id: task.id }
@@ -308,35 +312,43 @@ export function RowPanel({
         </>
       }
       onClose={() => void leave(onClose)}
-      className={`task-detail-modal${documentFullPage ? " document-full-page" : ""}`}
+      className={`task-detail-modal${documentFullPage ? ` document-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
       headerActions={
-        headerAction ||
-        (onAction && (
-          <div
-            className="task-detail-actions"
-            role="group"
-            aria-label="업무 동작"
-          >
-            <Button tooltip="이 업무 숨기기" onClick={() => act("hide")}>
-              <EyeOff size={16} aria-hidden="true" />
-              <span className="task-detail-action-label">이 업무 숨기기</span>
-            </Button>
-            {!readOnly && canContribute(user, task.teamId) && (
-              <Button tooltip="복제" onClick={() => act("duplicate")}>
-                <Copy size={16} aria-hidden="true" />
-                <span className="task-detail-action-label">복제</span>
-              </Button>
-            )}
-            {editable && !reportMode && (
-              <Button tooltip="다음 연도에도 표시" onClick={() => act("carry")}>
-                <CalendarPlus size={16} aria-hidden="true" />
-                <span className="task-detail-action-label">
-                  다음 연도에도 표시
-                </span>
-              </Button>
-            )}
-          </div>
-        ))
+        <>
+          {headerAction ||
+            (onAction && (
+              <div
+                className="task-detail-actions"
+                role="group"
+                aria-label="업무 동작"
+              >
+                <Button tooltip="이 업무 숨기기" onClick={() => act("hide")}>
+                  <EyeOff size={16} aria-hidden="true" />
+                  <span className="task-detail-action-label">
+                    이 업무 숨기기
+                  </span>
+                </Button>
+                {!readOnly && canContribute(user, task.teamId) && (
+                  <Button tooltip="복제" onClick={() => act("duplicate")}>
+                    <Copy size={16} aria-hidden="true" />
+                    <span className="task-detail-action-label">복제</span>
+                  </Button>
+                )}
+                {editable && !reportMode && (
+                  <Button
+                    tooltip="다음 연도에도 표시"
+                    onClick={() => act("carry")}
+                  >
+                    <CalendarPlus size={16} aria-hidden="true" />
+                    <span className="task-detail-action-label">
+                      다음 연도에도 표시
+                    </span>
+                  </Button>
+                )}
+              </div>
+            ))}
+          {documentFullPage && <DocumentFullWidthButton />}
+        </>
       }
     >
       <TaskDetailContent

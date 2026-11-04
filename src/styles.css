@@ -2395,7 +2395,8 @@ body.document-block-moving * {
   flex-shrink: 0;
 }
 .task-detail-modal > header .document-expand,
-.task-detail-modal > header .document-link-copy {
+.task-detail-modal > header .document-link-copy,
+.task-detail-modal > header .document-full-width {
   color: var(--ink);
 }
 .task-detail-modal .modal-body {
