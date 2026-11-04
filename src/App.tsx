@@ -3448,7 +3448,7 @@ function Workspace({
               teamId={teamId}
               saving={pending > 0}
               failed={!!failed}
-              canResolve={canManage}
+              canResolve={canAdd}
               people={boot.users}
             />
           )}
