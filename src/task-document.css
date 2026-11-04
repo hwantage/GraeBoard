@@ -1325,8 +1325,14 @@ button.memo-document-title {
   width: min(1120px, calc(100% - 48px));
   margin-inline: auto;
 }
+/* Full width spans the window as the task and calendar details do: the
+   toolbar edge to edge, the mode toggle as far in as on their tab row. */
 .memo-document-card.memo-full-page.document-full-width .memo-document-body > * {
-  width: calc(100% - 48px);
+  width: 100%;
+}
+.memo-document-card.memo-full-page.document-full-width
+  .memo-full-page-controls {
+  padding-inline: 12px;
 }
 .memo-document-card.memo-full-page .memo-document-heading {
   width: 100%;

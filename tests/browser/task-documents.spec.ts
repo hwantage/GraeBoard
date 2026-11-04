@@ -383,7 +383,11 @@ test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 
   await expect(
     memo.getByRole("button", { name: "기본 너비로 보기" }),
   ).toBeVisible();
-  expect(await width(memo)).toBeGreaterThan(viewport.width - 100);
+  // Its toolbar spans the window edge to edge, as in the task detail.
+  const toolbar = (await memo.locator(".document-formatbar").boundingBox())!;
+  expect(toolbar.x).toBe(0);
+  expect(toolbar.width).toBe(viewport.width);
+  expect(await width(memo)).toBe(viewport.width);
   await memo.getByRole("button", { name: "기본 너비로 보기" }).click();
   expect(await width(memo)).toBeLessThanOrEqual(1120);
   expect(
