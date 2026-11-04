@@ -377,7 +377,13 @@ function BatchBar({
   const all = selectable.length > 0 && selected.size === selectable.length;
   return (
     <div className="team-sync-conflict-batch">
-      <div className="team-sync-conflict-batch-bar">
+      {/* The same names as on each card; this group applies them to the
+          checked conflicts. */}
+      <div
+        className="team-sync-conflict-batch-bar"
+        role="group"
+        aria-label="선택한 충돌 일괄 해결"
+      >
         <label>
           <input
             type="checkbox"
@@ -397,13 +403,13 @@ function BatchBar({
           {...busyProps(busy, !selected.size)}
           onClick={() => onResolve("current")}
         >
-          선택한 충돌 먼저 수정으로 유지
+          {choices.current}
         </Button>
         <Button
           {...busyProps(busy, !selected.size)}
           onClick={() => onResolve("submitted")}
         >
-          선택한 충돌 나중에 수정으로 덮어쓰기
+          {choices.submitted}
         </Button>
       </div>
       {status && (

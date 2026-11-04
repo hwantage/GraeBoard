@@ -980,9 +980,10 @@ test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결�
   await all.click();
   await expect(count).toHaveText("2개 선택");
   await expect(check(1)).toBeChecked();
-  const overwrite = box.getByRole("button", {
-    name: "선택한 충돌 나중에 수정으로 덮어쓰기",
-  });
+  // The batch buttons carry the same names as the buttons on each card.
+  const overwrite = box
+    .getByRole("group", { name: "선택한 충돌 일괄 해결" })
+    .getByRole("button", { name: "나중에 수정으로 덮어쓰기", exact: true });
   page.once("dialog", (dialog) => dialog.dismiss());
   await overwrite.click();
   expect(requests).toEqual([]);
