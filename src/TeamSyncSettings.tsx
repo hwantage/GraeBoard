@@ -969,7 +969,7 @@ export default function TeamSyncSettings({
                     <details className="sync-conflict-raw">
                       <summary>원본 JSON 보기</summary>
                       <dl>
-                        <dt>기준 내용</dt>
+                        <dt>원래 내용</dt>
                         <dd>
                           <pre
                             style={{
@@ -980,7 +980,7 @@ export default function TeamSyncSettings({
                             {display(conflict.base)}
                           </pre>
                         </dd>
-                        <dt>현재 공유 내용</dt>
+                        <dt>지금 내용</dt>
                         <dd>
                           <pre
                             style={{
@@ -991,7 +991,7 @@ export default function TeamSyncSettings({
                             {display(conflict.current)}
                           </pre>
                         </dd>
-                        <dt>제출한 내용</dt>
+                        <dt>보류된 수정</dt>
                         <dd>
                           <pre
                             style={{
@@ -1021,13 +1021,13 @@ export default function TeamSyncSettings({
                         {...busyProps(busy)}
                         onClick={() => void resolve(conflict, "current")}
                       >
-                        현재 공유 내용 유지
+                        지금 내용 유지 (보류된 수정 버림)
                       </Button>
                       <Button
                         {...busyProps(busy)}
                         onClick={() => void resolve(conflict, "submitted")}
                       >
-                        제출한 내용 적용
+                        보류된 수정으로 덮어쓰기
                       </Button>
                       {editing?.conflictId === conflict.conflictId ? (
                         <Button
@@ -1035,7 +1035,7 @@ export default function TeamSyncSettings({
                           {...busyProps(busy)}
                           onClick={() => void resolve(conflict, "edited")}
                         >
-                          편집 내용 적용
+                          고친 내용 적용
                         </Button>
                       ) : (
                         <Button
@@ -1045,7 +1045,7 @@ export default function TeamSyncSettings({
                             setDraft(display(conflict.desired));
                           }}
                         >
-                          직접 편집
+                          직접 고치기
                         </Button>
                       )}
                     </div>

@@ -5,6 +5,7 @@ import {
   conflictChanges,
   conflictReason,
   diffSides,
+  fieldLabel,
   splitContested,
 } from "../shared/conflict-diff.js";
 
@@ -28,30 +29,34 @@ const modes: {
 }[] = [
   {
     id: "result",
-    label: "현재 공유 ↔ 제출",
+    label: "덮어쓰면 바뀌는 부분",
     from: "current",
     to: "desired",
     legend:
-      "− 현재 공유 내용에만 있는 줄, + 제출한 내용에만 있는 줄입니다. 제출한 내용을 적용하면 − 줄이 + 줄로 바뀝니다.",
+      "빨간 줄은 지금 내용, 초록 줄은 보류된 수정입니다. 보류된 수정으로 덮어쓰면 빨간 줄이 초록 줄로 바뀝니다.",
   },
   {
     id: "theirs",
-    label: "기준 → 현재 공유",
+    label: "먼저 반영된 수정",
     from: "base",
     to: "current",
-    legend: "상대가 바꾼 부분입니다. − 기준 내용, + 현재 공유 내용입니다.",
+    legend:
+      "원래 내용에서 먼저 반영된 수정이 바꾼 부분입니다. 빨간 줄은 원래 내용, 초록 줄은 지금 내용입니다.",
   },
   {
     id: "mine",
-    label: "기준 → 제출",
+    label: "보류된 수정",
     from: "base",
     to: "desired",
-    legend: "제출에서 바꾼 부분입니다. − 기준 내용, + 제출한 내용입니다.",
+    legend:
+      "원래 내용에서 보류된 수정이 바꾼 부분입니다. 빨간 줄은 원래 내용, 초록 줄은 보류된 수정입니다.",
   },
 ];
 
 // Line diff of a conflict's sides so a person can see which sentence or
-// field differs before choosing current or submitted. Raw JSON stays below.
+// field differs before keeping the current content or overwriting it with the
+// held edit. "보류된 수정" is the API's desired, "지금 내용" its current and
+// "원래 내용" its base. Raw JSON stays below.
 export default function SyncConflictDiff({
   conflict,
 }: {
@@ -79,7 +84,11 @@ export default function SyncConflictDiff({
       <p className="sync-diff-summary">
         {conflictReason(conflict.result)}
         {total > 1 &&
-          ` 변경 ${total}개 중 상대도 바꾼 항목은 ${contested.length}개입니다.`}
+          ` 보류된 수정 ${total}개 항목 중 먼저 반영된 수정과 겹친 항목은 ${contested.length}개입니다.`}
+      </p>
+      <p className="sync-diff-legend">
+        원래 내용은 두 수정 전 값, 지금 내용은 지금 모두에게 보이는 값, 보류된
+        수정은 반영되지 못하고 이 보관함에 남은 수정입니다.
       </p>
       <div className="sync-diff-modes" role="group" aria-label="비교 대상">
         {modes.map((item) => (
@@ -95,7 +104,9 @@ export default function SyncConflictDiff({
       </div>
       <p className="sync-diff-legend">{selected.legend}</p>
       {contested.length === 0 && (
-        <p className="sync-diff-equal">상대가 바꾼 항목은 없습니다.</p>
+        <p className="sync-diff-equal">
+          먼저 반영된 수정과 겹친 항목은 없습니다.
+        </p>
       )}
       {list(contested, 0)}
       {clean.length > 0 && (
@@ -103,11 +114,10 @@ export default function SyncConflictDiff({
           className="sync-diff-clean"
           onToggle={(event) => setCleanOpen(event.currentTarget.open)}
         >
-          <summary>상대가 바꾸지 않은 항목 {clean.length}개</summary>
+          <summary>겹치지 않은 항목 {clean.length}개</summary>
           <p className="sync-diff-legend">
-            기준과 현재 공유 내용이 같아 부딪히지 않은 항목입니다. 제출한 내용
-            적용을 고르면 함께 반영되고, 현재 공유 내용 유지를 고르면 함께
-            취소됩니다.
+            먼저 반영된 수정과 겹치지 않은 항목입니다. 보류된 수정으로 덮어쓰면
+            함께 반영되고, 지금 내용을 유지하면 함께 버려집니다.
           </p>
           {/* A large command can carry hundreds of these; draw them on demand. */}
           {cleanOpen && list(clean, contested.length)}
@@ -140,18 +150,18 @@ function ChangeDiff({
         {change.key && <code>{change.key}</code>}
       </h5>
       <ul className="sync-diff-fields">
-        <li>상대가 바꾼 항목: {fieldList(theirs)}</li>
-        <li>제출에서 바꾼 항목: {fieldList(mine)}</li>
+        <li>먼저 반영된 수정이 바꾼 항목: {fieldList(theirs)}</li>
+        <li>보류된 수정이 바꾼 항목: {fieldList(mine)}</li>
         {both.length > 0 && (
           <li className="is-overlap">
-            양쪽이 함께 바꾼 항목: {fieldList(both)}
+            두 수정이 함께 바꾼 항목: {fieldList(both)}
           </li>
         )}
       </ul>
       {diff.equal ? (
         <p className="sync-diff-equal">
           {from === "current"
-            ? "현재 공유 내용과 제출한 내용이 같습니다."
+            ? "지금 내용과 보류된 수정이 같습니다."
             : "바뀐 부분이 없습니다."}
         </p>
       ) : (
@@ -162,7 +172,7 @@ function ChangeDiff({
 }
 
 const fieldList = (fields: string[]) =>
-  fields.length ? fields.join(", ") : "없음";
+  fields.length ? fields.map(fieldLabel).join(", ") : "없음";
 
 function DiffRows({ rows }: { rows: Rows }) {
   const [opened, setOpened] = useState<Set<number>>(() => new Set());

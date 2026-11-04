@@ -25,15 +25,42 @@ const ENTITY_NAMES = {
 const changeLabel = (entity, key) => entity + " " + key.join("/");
 
 const REASONS = {
-  "Concurrent field change": "같은 항목을 양쪽에서 수정했습니다.",
-  "Failed dependency": "이 변경이 기대던 앞선 변경이 충돌해 함께 보관했습니다.",
-  "Parent task deleted": "상위 업무가 삭제되었습니다.",
-  "Entity already exists": "같은 항목이 이미 있습니다.",
-  "Restore base changed": "복원하려던 항목이 그사이 바뀌었습니다.",
-  "Entity generation changed": "항목이 그사이 다시 만들어졌습니다.",
-  "Delete conflicts with edit": "한쪽은 삭제하고 다른 쪽은 수정했습니다.",
-  "Entity deleted": "항목이 그사이 삭제되었습니다.",
+  "Concurrent field change":
+    "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
+  "Failed dependency":
+    "이 수정보다 앞선 수정이 보류되어, 이어진 이 수정도 함께 보류했습니다.",
+  "Parent task deleted": "상위 업무가 그사이 삭제되어 보류했습니다.",
+  "Entity already exists": "같은 항목이 이미 있어 보류했습니다.",
+  "Restore base changed": "복원하려던 항목이 그사이 바뀌어 보류했습니다.",
+  "Entity generation changed": "항목이 그사이 다시 만들어져 보류했습니다.",
+  "Delete conflicts with edit":
+    "한쪽은 삭제하고 다른 쪽은 고쳐서 보류했습니다.",
+  "Entity deleted": "항목이 그사이 삭제되어 보류했습니다.",
 };
+
+const FIELD_NAMES = {
+  value: "값",
+  style: "서식",
+  markdown: "본문",
+  title: "제목",
+  position: "순서",
+  tags: "태그",
+  date: "날짜",
+  endDate: "종료일",
+  lane: "표시 줄",
+  userId: "담당자",
+  deletedAt: "삭제 시각",
+  years: "연도",
+  rules: "규칙",
+  name: "이름",
+  color: "색",
+  defaultStyle: "기본 서식",
+  rowStyle: "행 서식",
+};
+
+/** "서식(style)" for known payload fields so the diff key stays findable. */
+export const fieldLabel = (field) =>
+  FIELD_NAMES[field] ? `${FIELD_NAMES[field]}(${field})` : field;
 
 /** Korean explanation of the reducer's conflict reason, else the reason. */
 export const conflictReason = (reason) => REASONS[reason] || reason || "";

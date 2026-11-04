@@ -589,7 +589,7 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
   await expect(settings.getByRole("alert")).toHaveCount(0);
 });
 
-test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위로 비교해 보여 준다", async ({
+test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비교해 보여 준다", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1080, height: 900 });
@@ -723,13 +723,13 @@ test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위
   await first.getByText("document calendar/entry-1/main").click();
   const compare = first.getByRole("region", { name: "변경 비교" });
   await expect(compare.locator(".sync-diff-summary")).toHaveText(
-    "같은 항목을 양쪽에서 수정했습니다.",
+    "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
   );
   await expect(
-    compare.getByRole("button", { name: "현재 공유 ↔ 제출" }),
+    compare.getByRole("button", { name: "덮어쓰면 바뀌는 부분" }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(compare.locator(".sync-diff-fields")).toContainText(
-    "양쪽이 함께 바꾼 항목: markdown",
+    "두 수정이 함께 바꾼 항목: 본문(markdown)",
   );
   const removed = compare.locator(".sync-diff-line.is-removed"),
     added = compare.locator(".sync-diff-line.is-added");
@@ -745,7 +745,7 @@ test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위
   await expect(compare.locator(".sync-diff-line")).toHaveCount(28);
   await page.screenshot({ path: testInfo.outputPath("conflict-diff.png") });
 
-  await compare.getByRole("button", { name: "기준 → 현재 공유" }).click();
+  await compare.getByRole("button", { name: "먼저 반영된 수정" }).click();
   await expect(removed).toContainText("* 회의 메모 3");
   await expect(added).toContainText("회의 메모 3 (외부에서 수정)");
   await expect(compare.getByRole("button", { name: /줄 같음/ })).toBeVisible();
@@ -758,7 +758,7 @@ test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위
   );
   const largeCompare = second.getByRole("region", { name: "변경 비교" });
   await expect(largeCompare.locator(".sync-diff-summary")).toContainText(
-    "변경 41개 중 상대도 바꾼 항목은 2개입니다.",
+    "보류된 수정 41개 항목 중 먼저 반영된 수정과 겹친 항목은 2개입니다.",
   );
   await expect(largeCompare.locator(".sync-diff-change")).toHaveCount(2);
   await expect(largeCompare.locator(".sync-diff-change h5")).toHaveText([
@@ -768,17 +768,17 @@ test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위
   await expect(
     largeCompare.locator(".sync-diff-line.is-removed").first(),
   ).toContainText('backgroundColor: "#ffffff"');
-  await largeCompare.getByText("상대가 바꾸지 않은 항목 39개").click();
+  await largeCompare.getByText("겹치지 않은 항목 39개").click();
   await expect(largeCompare.locator(".sync-diff-change")).toHaveCount(41);
   await second.locator(":scope > summary").click();
 
   // Raw JSON stays available, folded, for direct editing reference.
   const raw = first.locator(".sync-conflict-raw");
-  await expect(raw.getByText("기준 내용")).toBeHidden();
+  await expect(raw.getByText("원래 내용")).toBeHidden();
   await raw.getByText("원본 JSON 보기").click();
-  await expect(raw.getByText("현재 공유 내용")).toBeVisible();
+  await expect(raw.getByText("지금 내용")).toBeVisible();
 
-  await first.getByRole("button", { name: "제출한 내용 적용" }).click();
+  await first.getByRole("button", { name: "보류된 수정으로 덮어쓰기" }).click();
   await expect.poll(() => resolutions.length).toBe(1);
   expect(resolutions[0]).toMatchObject({
     choice: "submitted",
