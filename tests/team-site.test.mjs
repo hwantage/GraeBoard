@@ -1096,6 +1096,23 @@ test(
     await app.locals.sync.get(teamId).run();
     await refreshDirectory(env, { force: true });
     assert.equal((await outside("member-google", "/bootstrap")).status, 401);
+    // The removed member's person record stays for old references, but the
+    // calendar lists only the internal team's current active members.
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT 1 FROM graeboard.site_entities WHERE team_id=$1 AND entity='person' AND entity_key=$2",
+          [teamId, JSON.stringify([member])],
+        )
+      ).rowCount,
+      1,
+    );
+    assert.deepEqual(
+      success(
+        await outside("lead-google", `/calendar/teams/${teamId}`),
+      ).members.map((m) => m.id),
+      [lead],
+    );
     assert.equal(
       (
         await pool.query(
