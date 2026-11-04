@@ -420,6 +420,48 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     stateHash(b.app.locals.sync.store(teamId).readState()),
   );
 });
+test("a peer task created and deleted before this site received it keeps its trash row for cells and documents", async (t) => {
+  const { a, b, teamId } = await fixture(t);
+  ok(await a.api("/tasks", { teamId, year: 2026, fields: { title: "base" } }));
+  await joinPeer(a, b, teamId);
+  const task = ok(
+    await b.api("/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "short-lived" },
+    }),
+  ).task;
+  ok(
+    await b.api(
+      `/tasks/${task.id}/document`,
+      { markdown: "body", expectedRevision: 0, operationId: randomUUID() },
+      "PUT",
+    ),
+  );
+  ok(
+    await b.api(
+      `/tasks/${task.id}`,
+      { updatedAt: getTask(b.db, task.id).updatedAt },
+      "DELETE",
+    ),
+  );
+  await b.app.locals.sync.get(teamId).run();
+  // Before the fix this receive failed with "FOREIGN KEY constraint failed".
+  await a.app.locals.sync.get(teamId).run();
+  const received = getTask(a.db, task.id);
+  assert.ok(received.deletedAt, "the peer's trash row is kept");
+  assert.equal(received.cells.title.value, "short-lived");
+  assert.equal(
+    a.db
+      .prepare("SELECT count(*) n FROM task_documents WHERE task_id=?")
+      .get(task.id).n,
+    1,
+  );
+  assert.equal(
+    stateHash(a.app.locals.sync.store(teamId).readState()),
+    stateHash(b.app.locals.sync.store(teamId).readState()),
+  );
+});
 test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inactive references and local-only preferences", async (t) => {
   const { a, b, teamId, userId } = await fixture(t);
   const task = ok(
