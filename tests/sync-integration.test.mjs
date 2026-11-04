@@ -18,6 +18,7 @@ import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { materialize, readEntity } from "../server/sync/entities.mjs";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { conflictChanges, diffSides } from "../shared/conflict-diff.js";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-")),
@@ -379,6 +380,21 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     await b.api(`/teams/${teamId}/sync/conflicts`),
   ).conflicts.find((row) => !row.resolved);
   assert.ok(conflict);
+  // The conflict box pairs the API's current record with the change it blocks.
+  const [change] = conflictChanges(conflict);
+  assert.equal(change.key, `${task.id}/title`);
+  assert.equal(change.current.payload.value, "inside");
+  assert.equal(change.desired.payload.value, "outside preserved");
+  assert.deepEqual(
+    diffSides(change.current, change.desired)
+      .rows.filter((row) => row.type !== "same")
+      .map((row) => row.text),
+    ['value: "inside"', 'value: "outside preserved"'],
+  );
+  // b holds its own edit; a's edit, absent from b's outbox, landed first.
+  assert.equal(conflict.origin.held.site, "internal");
+  assert.equal(conflict.origin.held.actor, "테스트");
+  assert.equal(change.writer.site, "external");
   const beforeHead = await b.transport.readHead();
   const resolution = ok(
     await b.api(
@@ -394,6 +410,23 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     await b.transport.readHead(),
     beforeHead,
     "Resolution must project before Git runs",
+  );
+  // Until it is published the conflict shows its saved resolution, and a
+  // second one is refused instead of racing the first.
+  const saved = ok(await b.api(`/teams/${teamId}/sync/conflicts`)).conflicts[0];
+  assert.equal(saved.resolved, false);
+  assert.deepEqual(
+    [saved.pendingResolution.opId, saved.pendingResolution.choice],
+    [resolution.opId, "submitted"],
+  );
+  const again = await b.api(
+    `/teams/${teamId}/sync/conflicts/${conflict.conflictId}/resolve`,
+    { choice: "current", expectedHead: conflict.expectedHead },
+  );
+  assert.equal(again.status, 409);
+  assert.equal(
+    again.data.error,
+    "이 충돌은 이미 해결 방법을 저장했습니다. 다음 동기화 때 공유됩니다.",
   );
   ok(await save(b, "follow-up edit"));
   const pending = b.app.locals.sync.store(teamId).readPending();

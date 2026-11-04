@@ -2,6 +2,7 @@ import { useSite } from "./site-context";
 import TeamSetupKey from "./TeamSetupKey";
 import SyncSetupWizard from "./SyncSetupWizard";
 import SyncConnectionDetails from "./SyncConnectionDetails";
+import SyncConflictBox from "./SyncConflictBox";
 import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
@@ -46,19 +47,6 @@ type Connection = {
   profiles: ResourceProfile[];
   switchJob?: SwitchJob | null;
 };
-type Conflict = {
-  conflictId: string;
-  opId: string;
-  createdAt: string;
-  target: string;
-  result: string;
-  base: unknown;
-  current: unknown;
-  desired: unknown;
-  expectedHead: string;
-  frontier?: string[];
-  resolved?: boolean;
-};
 const modes: Record<SyncStatus["mode"], string> = {
   unlinked: "미연결",
   initializing: "초기 게시 중",
@@ -68,11 +56,6 @@ const modes: Record<SyncStatus["mode"], string> = {
   recovery: "복구 점검 필요",
   disconnected: "연결 해제",
 };
-
-const display = (value: unknown) =>
-  typeof value === "string"
-    ? value
-    : (JSON.stringify(value, null, 2) ?? "없음");
 
 type ErrorTarget = "connection" | "actions" | `conflict:${string}`;
 const actionNames: Record<string, string> = {
@@ -145,12 +128,15 @@ export default function TeamSyncSettings({
   onSaved,
   onMessage,
   embedded = false,
+  people = [],
 }: {
   team: Team;
   user: User;
   onSaved: () => Promise<void>;
   onMessage: (message: string) => void;
   embedded?: boolean;
+  // Team members, for the avatars of people who made conflicting edits.
+  people?: User[];
 }) {
   const site = useSite();
   const admin = canManageTeam(user, team.id);
@@ -160,9 +146,7 @@ export default function TeamSyncSettings({
   const [connection, setConnection] = useState<Connection | null>(null);
   const [profileId, setProfileId] = useState("");
   const [check, setCheck] = useState<ConnectionCheck | null>(null);
-  const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [editing, setEditing] = useState<Conflict | null>(null);
-  const [draft, setDraft] = useState("");
+  const [conflictsOpen, setConflictsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState("");
   const [notice, setNotice] = useState("");
@@ -185,11 +169,8 @@ export default function TeamSyncSettings({
     includeConnection = false,
     readStatus = configured,
   ) {
-    const [nextStatus, nextConflicts, nextConnection] = await Promise.all([
+    const [nextStatus, nextConnection] = await Promise.all([
       readStatus ? api<SyncStatus>(prefix, { signal }) : Promise.resolve(null),
-      readStatus
-        ? api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, { signal })
-        : Promise.resolve({ conflicts: [] }),
       admin && includeConnection
         ? api<Connection>(`/admin/teams/${team.id}/connection`, { signal })
         : Promise.resolve(null),
@@ -197,7 +178,6 @@ export default function TeamSyncSettings({
     if (!live.current || signal?.aborted) return;
     setLoadError("");
     setStatus(nextStatus);
-    setConflicts(nextConflicts.conflicts);
     if (nextConnection) {
       setConnection(nextConnection);
       const original = nextConnection.profiles.filter(
@@ -216,10 +196,7 @@ export default function TeamSyncSettings({
     // double every status read while it is open.
     if (setupOpen) return;
     live.current = true;
-    if (!configured) {
-      setStatus(null);
-      setConflicts([]);
-    }
+    if (!configured) setStatus(null);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh(initial = false) {
@@ -345,37 +322,6 @@ export default function TeamSyncSettings({
     } finally {
       if (live.current) setBusy(false);
     }
-  }
-  async function resolve(
-    conflict: Conflict,
-    choice: "current" | "submitted" | "edited",
-  ) {
-    let desired: unknown;
-    if (choice === "edited") {
-      try {
-        desired =
-          typeof conflict.desired === "string" ? draft : JSON.parse(draft);
-      } catch {
-        showError(
-          `conflict:${conflict.conflictId}`,
-          new Error("적용할 내용의 형식을 확인하세요."),
-          "충돌 해결",
-        );
-        return;
-      }
-    }
-    await perform(
-      `conflicts/${encodeURIComponent(conflict.conflictId)}/resolve`,
-      "충돌 해결 내용을 저장했습니다.",
-      {
-        choice,
-        ...(choice === "edited" ? { desired } : {}),
-        expectedHead: conflict.expectedHead,
-        frontier: conflict.frontier || [conflict.opId],
-      },
-      `conflict:${conflict.conflictId}`,
-    );
-    // Keep manually edited text on a rejected or interrupted resolution.
   }
   async function migrateConnection(resume = false) {
     if (busy || (!resume && !profileId) || (resume && !switchJob)) return;
@@ -553,7 +499,19 @@ export default function TeamSyncSettings({
                   </div>
                   <div>
                     <dt>충돌 보관</dt>
-                    <dd>{status.conflicts}건</dd>
+                    <dd className="team-sync-conflict-count">
+                      {status.conflicts}건
+                      {status.conflicts > 0 && admin && (
+                        // The same button as next to the warning in the top bar.
+                        <button
+                          type="button"
+                          className="tag team-sync-conflict-open"
+                          onClick={() => setConflictsOpen(true)}
+                        >
+                          충돌 보관함
+                        </button>
+                      )}
+                    </dd>
                   </div>
                 </dl>
                 {status.receiptCapacity?.warning && (
@@ -952,108 +910,13 @@ export default function TeamSyncSettings({
                 onMessage={onMessage}
               />
             )}
-          {conflicts.filter((conflict) => !conflict.resolved).length > 0 && (
-            <section aria-label="충돌 보관함">
-              <h4>충돌 보관함</h4>
-              {conflicts
-                .filter((conflict) => !conflict.resolved)
-                .map((conflict) => (
-                  <details key={conflict.conflictId}>
-                    <summary>
-                      {conflict.target || "업무 변경"} ·{" "}
-                      {syncTime(conflict.createdAt)}
-                    </summary>
-                    <dl>
-                      <dt>기준 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.base)}
-                        </pre>
-                      </dd>
-                      <dt>현재 공유 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.current)}
-                        </pre>
-                      </dd>
-                      <dt>제출한 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.desired)}
-                        </pre>
-                      </dd>
-                    </dl>
-                    {editing?.conflictId === conflict.conflictId && (
-                      <label>
-                        적용할 내용
-                        <textarea
-                          aria-label="적용할 내용"
-                          rows={8}
-                          value={draft}
-                          {...busyProps(busy)}
-                          onChange={(event) => setDraft(event.target.value)}
-                        />
-                      </label>
-                    )}
-                    <div className="form-actions">
-                      <Button
-                        {...busyProps(busy)}
-                        onClick={() => void resolve(conflict, "current")}
-                      >
-                        현재 공유 내용 유지
-                      </Button>
-                      <Button
-                        {...busyProps(busy)}
-                        onClick={() => void resolve(conflict, "submitted")}
-                      >
-                        제출한 내용 적용
-                      </Button>
-                      {editing?.conflictId === conflict.conflictId ? (
-                        <Button
-                          className="primary"
-                          {...busyProps(busy)}
-                          onClick={() => void resolve(conflict, "edited")}
-                        >
-                          편집 내용 적용
-                        </Button>
-                      ) : (
-                        <Button
-                          {...busyProps(busy)}
-                          onClick={() => {
-                            setEditing(conflict);
-                            setDraft(display(conflict.desired));
-                          }}
-                        >
-                          직접 편집
-                        </Button>
-                      )}
-                    </div>
-                    <SyncErrorNote
-                      error={
-                        errorTarget === `conflict:${conflict.conflictId}`
-                          ? error
-                          : ""
-                      }
-                      reveal
-                    />
-                  </details>
-                ))}
-            </section>
+          {conflictsOpen && (
+            <SyncConflictBox
+              teamId={team.id}
+              people={people}
+              onClose={() => setConflictsOpen(false)}
+              onChanged={() => void load().catch(() => {})}
+            />
           )}
         </>
       )}

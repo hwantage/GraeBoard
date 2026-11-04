@@ -9,6 +9,12 @@ import { createSyncSetupConfig } from "./setup-config.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
 import { transaction } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";
+import {
+  conflictOpIds,
+  conflictOrigin,
+  conflictPeople,
+  pendingResolutions,
+} from "../../shared/conflict-origin.js";
 
 import { createSyncStatusReader } from "./node-status.mjs";
 const id = (req) => req.params.id;
@@ -389,7 +395,7 @@ function installTeamSyncRoutes(
     sync.clear(teamId);
     res.json(result);
   });
-  app.get("/api/teams/:id/sync/conflicts", (req, res) => {
+  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
     managedTeam(req.user, id(req));
     const s = sync.store(id(req)),
       conflicts = db
@@ -398,7 +404,49 @@ function installTeamSyncRoutes(
         )
         .all(id(req))
         .map((row) => JSON.parse(row.payload)),
-      head = s.readLink()?.canonical_head;
+      link = s.readLink(),
+      head = link?.canonical_head;
+    // This site's own operations among the held ones and the current writers;
+    // anything else came from the external site.
+    const local = new Map(
+        db
+          .prepare(
+            "SELECT op_id,json_extract(payload,'$.actorRef') actor_ref,json_extract(payload,'$.createdAt') created_at FROM sync_outbox WHERE team_id=? AND op_id IN (SELECT value FROM json_each(?))",
+          )
+          .all(id(req), JSON.stringify(conflictOpIds(conflicts)))
+          .map((row) => [
+            row.op_id,
+            { actorRef: row.actor_ref, createdAt: row.created_at },
+          ]),
+      ),
+      open = conflicts.filter((c) => !c.resolution);
+    // External operations among them: their authors come from this site's
+    // Git clone. The list still works without them.
+    let remote = new Map();
+    try {
+      remote = await sync.readOperationAuthors(
+        id(req),
+        conflictOpIds(open).filter((opId) => !local.has(opId)),
+      );
+    } catch {
+      // Authors stay unknown; sites are still shown.
+    }
+    const names = new Map(
+        db
+          .prepare(
+            "SELECT entity_key,json_extract(payload,'$.name') name FROM sync_entities WHERE team_id=? AND entity='person' AND entity_key IN (SELECT value FROM json_each(?))",
+          )
+          .all(
+            id(req),
+            JSON.stringify(
+              conflictPeople(conflicts, local, remote).map((person) =>
+                JSON.stringify([person]),
+              ),
+            ),
+          )
+          .map((row) => [JSON.parse(row.entity_key)[0], row.name]),
+      ),
+      resolutions = pendingResolutions(open, s.readPending());
     res.json({
       conflicts: conflicts.map((c) => ({
         conflictId: c.conflictId,
@@ -413,6 +461,14 @@ function installTeamSyncRoutes(
         desired: c.operation.changes.map((x) => x.desired),
         resolved: !!c.resolution,
         expectedHead: head,
+        origin: conflictOrigin(c, {
+          site: "internal",
+          local,
+          remote,
+          names,
+          writerEpoch: link?.writer_epoch,
+        }),
+        pendingResolution: resolutions.get(c.conflictId) || null,
       })),
     });
   });

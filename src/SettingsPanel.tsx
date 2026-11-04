@@ -357,6 +357,7 @@ export default function SettingsPanel({
                     key={selectedTeam.id}
                     team={selectedTeam}
                     user={user}
+                    people={users}
                     onSaved={saved}
                     onMessage={setMessage}
                   />
