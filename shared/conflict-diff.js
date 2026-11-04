@@ -26,16 +26,16 @@ const changeLabel = (entity, key) => entity + " " + key.join("/");
 
 const REASONS = {
   "Concurrent field change":
-    "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
+    "같은 항목을 두 곳에서 고쳐, 나중에 수정을 반영하지 않고 보관했습니다.",
   "Failed dependency":
-    "이 수정보다 앞선 수정이 보류되어, 이어진 이 수정도 함께 보류했습니다.",
-  "Parent task deleted": "상위 업무가 그사이 삭제되어 보류했습니다.",
-  "Entity already exists": "같은 항목이 이미 있어 보류했습니다.",
-  "Restore base changed": "복원하려던 항목이 그사이 바뀌어 보류했습니다.",
-  "Entity generation changed": "항목이 그사이 다시 만들어져 보류했습니다.",
+    "이 수정보다 앞선 수정이 보관되어, 이어진 이 수정도 함께 보관했습니다.",
+  "Parent task deleted": "상위 업무가 그사이 삭제되어 보관했습니다.",
+  "Entity already exists": "같은 항목이 이미 있어 보관했습니다.",
+  "Restore base changed": "복원하려던 항목이 그사이 바뀌어 보관했습니다.",
+  "Entity generation changed": "항목이 그사이 다시 만들어져 보관했습니다.",
   "Delete conflicts with edit":
-    "한쪽은 삭제하고 다른 쪽은 고쳐서 보류했습니다.",
-  "Entity deleted": "항목이 그사이 삭제되어 보류했습니다.",
+    "한쪽은 삭제하고 다른 쪽은 고쳐서 보관했습니다.",
+  "Entity deleted": "항목이 그사이 삭제되어 보관했습니다.",
 };
 
 const FIELD_NAMES = {
@@ -65,13 +65,21 @@ export const fieldLabel = (field) =>
 /** Korean explanation of the reducer's conflict reason, else the reason. */
 export const conflictReason = (reason) => REASONS[reason] || reason || "";
 
-/** "a, b 외 N개" so a large command does not fill the summary line. */
-export function conflictTitle(target, shown = 2) {
-  const labels = target ? target.split(", ") : [];
-  if (labels.length <= shown) return labels.join(", ");
-  return `${labels.slice(0, shown).join(", ")} 외 ${labels.length - shown}개`;
+/** "문서" or "공통 서식, 셀 390개": what a conflict's command changed. */
+export function conflictKinds(target) {
+  const counts = new Map();
+  for (const label of target ? target.split(", ") : []) {
+    const entity = label.slice(
+      0,
+      label.indexOf(" ") > 0 ? label.indexOf(" ") : undefined,
+    );
+    const name = ENTITY_NAMES[entity] || entity || "변경";
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts]
+    .map(([name, count]) => (count > 1 ? `${name} ${count}개` : name))
+    .join(", ");
 }
-
 /**
  * @typedef {{ state: "present" | "deleted" | "absent", payload: unknown }} Side
  * @typedef {{ site: "internal" | "external" | null, initial?: boolean,
@@ -133,17 +141,47 @@ const SITE_NAMES = { internal: "사내", external: "외부" };
 /** "사내" or "외부" for an origin from shared/conflict-origin.js, else "". */
 export const siteName = (origin) => SITE_NAMES[origin?.site] || "";
 
-/** "사내 · 김바다 · <time>" with whatever the origin knows. */
+/** "김정환 (외부)", "(외부)" when the name is unknown, or "처음 게시본". */
+export function personLabel(origin) {
+  if (!origin) return "";
+  if (origin.initial) return "처음 게시본";
+  const site = siteName(origin);
+  return [origin.actor, site && `(${site})`].filter(Boolean).join(" ");
+}
+
+/** "김정환 (외부) · <time>" with whatever the origin knows. */
 export function describeOrigin(origin, time = (value) => value) {
   if (!origin) return "";
-  if (origin.initial) return "처음 게시된 값";
-  return [
-    siteName(origin),
-    origin.actor,
-    origin.createdAt && time(origin.createdAt),
-  ]
+  return [personLabel(origin), origin.createdAt && time(origin.createdAt)]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** "(외부) 김정환", "(외부)" or "처음 게시본" for a title. */
+export function originLabel(origin) {
+  if (!origin) return "";
+  if (origin.initial) return "처음 게시본";
+  const site = siteName(origin);
+  return [site && `(${site})`, origin.actor].filter(Boolean).join(" ");
+}
+
+/**
+ * "(외부) 김정환 → (사내) 김바다": who made the first edit (the writers of
+ * the overlapping items) and the later one, for a conflict's title.
+ */
+export function conflictEditors(conflict) {
+  if (!conflict.origin) return "";
+  const { contested, clean } = splitContested(conflictChanges(conflict));
+  const writers = (contested.length ? contested : clean)
+    .map((change) => change.writer)
+    .filter(Boolean);
+  const labels = [...new Set(writers.map(originLabel))];
+  const sites = [...new Set(writers.map(siteName).filter(Boolean))];
+  const first =
+    labels.length > 1
+      ? `(${sites.join("·") || "?"}) 여러 명`
+      : labels[0] || "알 수 없음";
+  return `${first} → ${originLabel(conflict.origin.held) || "알 수 없음"}`;
 }
 
 /**
@@ -157,7 +195,7 @@ export function describeWriters(changes, time) {
   ];
   if (descriptions.length <= 1) return descriptions[0] || "";
   const sites = [...new Set(writers.map(siteName).filter(Boolean))];
-  return `${sites.join("·")} (항목마다 다름)`;
+  return `여러 명 (${sites.join("·")})`;
 }
 
 /**

@@ -589,7 +589,7 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
   await expect(settings.getByRole("alert")).toHaveCount(0);
 });
 
-test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비교해 보여 준다", async ({
+test("충돌 보관함은 먼저 수정과 나중에 수정을 줄 단위로 비교해 보여 준다", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1080, height: 900 });
@@ -716,8 +716,20 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
       },
     }),
   );
+  // After a resolution the server lists it as saved until the next sync.
+  const saved = () =>
+    resolutions.length
+      ? {
+          ...conflict,
+          pendingResolution: {
+            opId: "resolution-1",
+            createdAt: "2026-11-04T01:00:00.000Z",
+            choice: "submitted",
+          },
+        }
+      : conflict;
   await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
-    route.fulfill({ json: { conflicts: [conflict, large] } }),
+    route.fulfill({ json: { conflicts: [saved(), large] } }),
   );
   await page.route(
     `**/api/teams/${teamId}/sync/conflicts/conflict-1/resolve`,
@@ -727,35 +739,65 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
     },
   );
   await page.reload();
+  // Leads open the box from the warning in the top bar as well.
+  await page
+    .locator(".topbar")
+    .getByRole("button", { name: "충돌 보관함" })
+    .click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "충돌 보관함" })
+      .locator(".team-sync-conflict"),
+  ).toHaveCount(2);
+  await page
+    .getByRole("dialog", { name: "충돌 보관함" })
+    .getByRole("button", { name: "닫기" })
+    .click();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const settings = panel(page);
   await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
-  const box = settings.getByRole("region", { name: "충돌 보관함" });
-  const [first, second] = [0, 1].map((n) =>
-    box.locator(":scope > details").nth(n),
+  // The settings show the count with a button, not the list itself.
+  await expect(settings.locator(".team-sync-conflict")).toHaveCount(0);
+  await expect(settings.locator(".team-sync-conflict-count")).toContainText(
+    "2건",
   );
-  await first.getByText("document calendar/entry-1/main").click();
+  await settings.getByRole("button", { name: "충돌 보관함" }).click();
+  const box = page.getByRole("dialog", { name: "충돌 보관함" });
+  const [first, second] = [0, 1].map((n) =>
+    box.locator(".team-sync-conflict").nth(n),
+  );
+  // Titles name the kind, the first and the later editor and the time.
+  await expect(first.locator(":scope > summary")).toContainText(
+    "문서(외부) → (사내) 김바다",
+  );
+  await expect(first.locator(":scope > summary")).not.toContainText("entry-1");
+  const title = first.locator(":scope > summary");
+  await title.hover();
+  await expect(title).toHaveCSS("background-color", "rgb(241, 245, 244)");
+  await title.click();
   const compare = first.getByRole("region", { name: "변경 비교" });
   await expect(compare.locator(".sync-diff-summary")).toHaveText(
-    "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
+    "같은 항목을 두 곳에서 고쳐, 나중에 수정을 반영하지 않고 보관했습니다.",
   );
   // Where each edit came from, also in the comparison and action names.
-  await expect(compare.locator(".sync-diff-origin dd")).toHaveText([
-    /^사내 · 김바다 · 2026\. 11\. 4\./,
-    "외부",
+  // Avatar, name and site, then the time when known.
+  await expect(compare.locator(".sync-diff-origin li")).toHaveText([
+    "먼저 수정외(외부)",
+    /^나중에 수정김김바다 \(사내\)2026\. 11\. 4\./,
   ]);
+  await expect(compare.locator(".sync-diff-origin .avatar")).toHaveCount(2);
   await expect(
-    compare.getByRole("button", { name: "먼저 반영된 수정 (외부)" }),
+    compare.getByRole("button", { name: "먼저 수정 (외부)" }),
   ).toBeVisible();
   await expect(
-    compare.getByRole("button", { name: "보류된 수정 (사내)" }),
+    compare.getByRole("button", { name: "나중에 수정 (사내)" }),
   ).toBeVisible();
   await expect(compare.locator(".sync-diff-fields")).toContainText(
-    "먼저 반영된 수정(외부)이 바꾼 항목: 본문(markdown)",
+    "먼저 수정(외부)이 바꾼 항목: 본문(markdown)",
   );
   await expect(
     first.getByRole("button", {
-      name: "지금 내용 유지 (보류된 사내 수정 버림)",
+      name: "먼저 수정으로 유지",
     }),
   ).toBeVisible();
   await expect(
@@ -778,9 +820,7 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   await expect(compare.locator(".sync-diff-line")).toHaveCount(28);
   await page.screenshot({ path: testInfo.outputPath("conflict-diff.png") });
 
-  await compare
-    .getByRole("button", { name: "먼저 반영된 수정 (외부)" })
-    .click();
+  await compare.getByRole("button", { name: "먼저 수정 (외부)" }).click();
   await expect(removed).toContainText("* 회의 메모 3");
   await expect(added).toContainText("회의 메모 3 (외부에서 수정)");
   await expect(compare.getByRole("button", { name: /줄 같음/ })).toBeVisible();
@@ -789,11 +829,11 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   // only when asked.
   await second.locator(":scope > summary").click();
   await expect(second.locator(":scope > summary")).toContainText(
-    "formats , cell task-0/score 외 39개",
+    "공통 서식, 셀 40개",
   );
   const largeCompare = second.getByRole("region", { name: "변경 비교" });
   await expect(largeCompare.locator(".sync-diff-summary")).toContainText(
-    "보류된 수정 41개 항목 중 먼저 반영된 수정과 겹친 항목은 2개입니다.",
+    "나중에 수정 41개 항목 중 먼저 수정과 겹친 항목은 2개입니다.",
   );
   await expect(largeCompare.locator(".sync-diff-change")).toHaveCount(2);
   await expect(largeCompare.locator(".sync-diff-change h5")).toHaveText([
@@ -811,16 +851,167 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   const raw = first.locator(".sync-conflict-raw");
   await expect(raw.getByText("원래 내용")).toBeHidden();
   await raw.getByText("원본 JSON 보기").click();
-  await expect(raw.getByText("지금 내용")).toBeVisible();
+  await expect(raw.getByText("지금 내용(먼저 수정 반영)")).toBeVisible();
 
-  await first
-    .getByRole("button", { name: "보류된 사내 수정으로 덮어쓰기" })
-    .click();
+  // Editing can be cancelled; meanwhile only cancel and apply are offered.
+  const actions = first.locator(".form-actions button");
+  await first.getByRole("button", { name: "직접 고치기" }).click();
+  await expect(actions).toHaveText(["편집 취소", "고친 내용 적용"]);
+  await first.getByRole("button", { name: "편집 취소" }).click();
+  await expect(actions).toHaveText([
+    "먼저 수정으로 유지",
+    "나중에 수정으로 덮어쓰기",
+    "직접 고치기",
+  ]);
+
+  await first.getByRole("button", { name: "나중에 수정으로 덮어쓰기" }).click();
   await expect.poll(() => resolutions.length).toBe(1);
   expect(resolutions[0]).toMatchObject({
     choice: "submitted",
     expectedHead: "head-1",
   });
+  // A saved resolution shows what was chosen and offers no second choice.
+  await expect(first.locator(":scope > summary")).toContainText("해결 저장됨");
+  await expect(first.locator(".team-sync-conflict-notice")).toContainText(
+    "해결 방법을 저장했습니다: 나중에 수정으로 덮어쓰기",
+  );
+  await expect(actions).toHaveCount(0);
+});
+
+test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결하고 실패한 항목은 따로 알린다", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1080, height: 900 });
+  const bootstrap = await configuredBootstrap(page);
+  const saved = new Map<string, string>([["c3", "current"]]);
+  const requests: [string, string][] = [];
+  const cellConflict = (id: string) => {
+    const key = [`${id}-task`, "title"];
+    return {
+      conflictId: id,
+      opId: id,
+      createdAt: "2026-11-04T00:14:00.000Z",
+      target: "cell " + key.join("/"),
+      result: "Concurrent field change",
+      base: [{ value: "원래 값" }],
+      current: {
+        [JSON.stringify(["cell", key])]: {
+          entity: "cell",
+          key,
+          generation: "g".repeat(64),
+          version: "v".repeat(64),
+          deleted: false,
+          payload: { value: `먼저 ${id}` },
+        },
+      },
+      desired: [{ value: `나중 ${id}` }],
+      expectedHead: "head-1",
+      frontier: [id],
+      resolved: false,
+      origin: {
+        held: { site: "internal", actor: "김바다", createdAt: null },
+        writers: {},
+      },
+      pendingResolution: saved.has(id)
+        ? {
+            opId: "resolution-" + id,
+            createdAt: "2026-11-04T01:00:00.000Z",
+            choice: saved.get(id),
+          }
+        : null,
+    };
+  };
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        profileId: "local",
+        pending: 0,
+        conflicts: 3,
+        canonicalHead: "head-1",
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({
+      json: { conflicts: ["c1", "c2", "c3"].map(cellConflict) },
+    }),
+  );
+  await page.route(
+    `**/api/teams/${teamId}/sync/conflicts/*/resolve`,
+    (route) => {
+      const id = route.request().url().split("/").at(-2)!,
+        { choice } = route.request().postDataJSON();
+      requests.push([id, choice]);
+      // Another tab already saved c2's resolution.
+      if (id === "c2")
+        return route.fulfill({
+          status: 409,
+          json: {
+            error:
+              "이 충돌은 이미 해결 방법을 저장했습니다. 다음 동기화 때 공유됩니다.",
+          },
+        });
+      saved.set(id, choice);
+      return route.fulfill({ json: { opId: "resolution-" + id } });
+    },
+  );
+  await page.reload();
+  await page
+    .locator(".topbar")
+    .getByRole("button", { name: "충돌 보관함" })
+    .click();
+  const box = page.getByRole("dialog", { name: "충돌 보관함" });
+  const items = box.locator(".team-sync-conflict");
+  await expect(items).toHaveCount(3);
+  const check = (n: number) =>
+    items.nth(n).locator(".team-sync-conflict-check");
+  const count = box.locator(".team-sync-conflict-batch-count");
+  // A saved resolution cannot be chosen again; ticking does not expand.
+  await expect(check(2)).toBeDisabled();
+  await check(0).click();
+  await expect(check(0)).toBeChecked();
+  await expect(items.nth(0)).not.toHaveAttribute("open", "");
+  await expect(count).toHaveText("1개 선택");
+  const all = box.getByLabel("전체 선택");
+  await all.click();
+  await expect(count).toHaveText("2개 선택");
+  await expect(check(1)).toBeChecked();
+  const overwrite = box.getByRole("button", {
+    name: "선택한 충돌 나중에 수정으로 덮어쓰기",
+  });
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await overwrite.click();
+  expect(requests).toEqual([]);
+  let question = "";
+  page.once("dialog", (dialog) => {
+    question = dialog.message();
+    void dialog.accept();
+  });
+  await overwrite.click();
+  await expect(box.locator(".team-sync-conflict-batch-status")).toHaveText(
+    "1개 저장, 1개 실패했습니다. 실패한 항목을 펼쳐 이유를 확인하세요.",
+  );
+  expect(question).toContain(
+    "선택한 충돌 2개를 모두 나중에 수정으로 덮어씁니다.",
+  );
+  expect(requests).toEqual([
+    ["c1", "submitted"],
+    ["c2", "submitted"],
+  ]);
+  await expect(items.nth(0).locator(":scope > summary")).toContainText(
+    "해결 저장됨",
+  );
+  await expect(check(0)).toBeDisabled();
+  // The failed one stays selected with its reason on its card.
+  await expect(count).toHaveText("1개 선택");
+  await items.nth(1).locator(":scope > summary").click();
+  await expect(items.nth(1).getByRole("alert")).toContainText(
+    "이미 해결 방법을 저장했습니다",
+  );
 });
 
 test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된 작업을 이어서 실행한다", async ({

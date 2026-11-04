@@ -1273,6 +1273,23 @@ test(
           },
         ),
       );
+      // The external site shows the saved resolution until it is published
+      // and refuses a second one.
+      const savedConflict = ok(
+        await outside(
+          `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
+        ),
+      );
+      assert.equal(savedConflict.pendingResolution.choice, "submitted");
+      const again = await outside(
+        `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}/resolve`,
+        {
+          expectedHead: titleConflict.expectedHead,
+          frontier: titleConflict.frontier,
+          choice: "current",
+        },
+      );
+      assert.equal(again.status, 409, JSON.stringify(again));
       // The resolution shows at once on the external site.
       assert.equal(
         ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks.find(

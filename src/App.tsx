@@ -3448,6 +3448,8 @@ function Workspace({
               teamId={teamId}
               saving={pending > 0}
               failed={!!failed}
+              canResolve={canManage}
+              people={boot.users}
             />
           )}
           {screen === "calendar" ? (

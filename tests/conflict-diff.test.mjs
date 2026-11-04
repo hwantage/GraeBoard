@@ -4,7 +4,7 @@ import {
   changedFields,
   conflictChanges,
   conflictReason,
-  conflictTitle,
+  conflictKinds,
   diffSides,
   fieldLabel,
   payloadLines,
@@ -251,14 +251,11 @@ test("a large command lists the changes the other side also touched first", () =
       ' value: "1"',
     ],
   );
-  assert.equal(
-    conflictTitle(conflict.target),
-    "formats , cell t0/score 외 39개",
-  );
-  assert.equal(conflictTitle("cell t1/title"), "cell t1/title");
+  assert.equal(conflictKinds(conflict.target), "공통 서식, 셀 40개");
+  assert.equal(conflictKinds("document task/t1/main"), "문서");
   assert.equal(
     conflictReason("Concurrent field change"),
-    "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
+    "같은 항목을 두 곳에서 고쳐, 나중에 수정을 반영하지 않고 보관했습니다.",
   );
   assert.equal(conflictReason("Unknown reason"), "Unknown reason");
   assert.equal(fieldLabel("style"), "서식(style)");

@@ -411,6 +411,23 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     beforeHead,
     "Resolution must project before Git runs",
   );
+  // Until it is published the conflict shows its saved resolution, and a
+  // second one is refused instead of racing the first.
+  const saved = ok(await b.api(`/teams/${teamId}/sync/conflicts`)).conflicts[0];
+  assert.equal(saved.resolved, false);
+  assert.deepEqual(
+    [saved.pendingResolution.opId, saved.pendingResolution.choice],
+    [resolution.opId, "submitted"],
+  );
+  const again = await b.api(
+    `/teams/${teamId}/sync/conflicts/${conflict.conflictId}/resolve`,
+    { choice: "current", expectedHead: conflict.expectedHead },
+  );
+  assert.equal(again.status, 409);
+  assert.equal(
+    again.data.error,
+    "이 충돌은 이미 해결 방법을 저장했습니다. 다음 동기화 때 공유됩니다.",
+  );
   ok(await save(b, "follow-up edit"));
   const pending = b.app.locals.sync.store(teamId).readPending();
   assert.equal(pending.length, 2);

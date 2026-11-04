@@ -371,6 +371,56 @@ export function createNodeSync({
     .prepare("SELECT team_id FROM team_sync_links WHERE mode<>'disconnected'")
     .all())
     schedule(l.team_id, 5000);
+  // Who made peer operations, for the conflict box: this site's Git clone
+  // has their events at the applied head, found with git grep and no network.
+  // Operations never change, so answers are cached, including "not found"
+  // (an event folded into a snapshot).
+  const operationAuthors = new Map();
+  async function readOperationAuthors(teamId, opIds) {
+    const head = store(teamId).readLink()?.canonical_head,
+      missing = opIds.filter((id) => !operationAuthors.has(id));
+    if (missing.length && head) {
+      const transport = get(teamId).transport;
+      await transport.init();
+      let paths = [];
+      try {
+        paths = (
+          await transport.git([
+            "grep",
+            "-l",
+            "-F",
+            ...missing.flatMap((id) => ["-e", id]),
+            head,
+            "--",
+            "events/",
+          ])
+        )
+          .toString()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => line.slice(head.length + 1));
+      } catch (error) {
+        // git grep exits with 1 when nothing matches.
+        if (error.code !== 1) throw error;
+      }
+      for (const path of paths)
+        for (const op of JSON.parse(
+          (await transport.readFile(head, path)).toString(),
+        ).operations || [])
+          if (missing.includes(op.opId))
+            operationAuthors.set(op.opId, {
+              actorRef: op.actorRef,
+              createdAt: op.createdAt,
+            });
+      for (const id of missing)
+        if (!operationAuthors.has(id)) operationAuthors.set(id, null);
+    }
+    return new Map(
+      opIds
+        .map((id) => [id, operationAuthors.get(id)])
+        .filter(([, author]) => author),
+    );
+  }
   return {
     profiles,
     setupConfigPath:
@@ -385,6 +435,7 @@ export function createNodeSync({
     store,
     get,
     resolveConflict,
+    readOperationAuthors,
     reconnect,
     capture,
     safeProfile,

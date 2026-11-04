@@ -13,6 +13,7 @@ import {
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
+  pendingResolutions,
 } from "../../shared/conflict-origin.js";
 
 import { createSyncStatusReader } from "./node-status.mjs";
@@ -394,7 +395,7 @@ function installTeamSyncRoutes(
     sync.clear(teamId);
     res.json(result);
   });
-  app.get("/api/teams/:id/sync/conflicts", (req, res) => {
+  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
     managedTeam(req.user, id(req));
     const s = sync.store(id(req)),
       conflicts = db
@@ -418,7 +419,19 @@ function installTeamSyncRoutes(
             { actorRef: row.actor_ref, createdAt: row.created_at },
           ]),
       ),
-      names = new Map(
+      open = conflicts.filter((c) => !c.resolution);
+    // External operations among them: their authors come from this site's
+    // Git clone. The list still works without them.
+    let remote = new Map();
+    try {
+      remote = await sync.readOperationAuthors(
+        id(req),
+        conflictOpIds(open).filter((opId) => !local.has(opId)),
+      );
+    } catch {
+      // Authors stay unknown; sites are still shown.
+    }
+    const names = new Map(
         db
           .prepare(
             "SELECT entity_key,json_extract(payload,'$.name') name FROM sync_entities WHERE team_id=? AND entity='person' AND entity_key IN (SELECT value FROM json_each(?))",
@@ -426,13 +439,14 @@ function installTeamSyncRoutes(
           .all(
             id(req),
             JSON.stringify(
-              conflictPeople(conflicts, local).map((person) =>
+              conflictPeople(conflicts, local, remote).map((person) =>
                 JSON.stringify([person]),
               ),
             ),
           )
           .map((row) => [JSON.parse(row.entity_key)[0], row.name]),
-      );
+      ),
+      resolutions = pendingResolutions(open, s.readPending());
     res.json({
       conflicts: conflicts.map((c) => ({
         conflictId: c.conflictId,
@@ -450,9 +464,11 @@ function installTeamSyncRoutes(
         origin: conflictOrigin(c, {
           site: "internal",
           local,
+          remote,
           names,
           writerEpoch: link?.writer_epoch,
         }),
+        pendingResolution: resolutions.get(c.conflictId) || null,
       })),
     });
   });

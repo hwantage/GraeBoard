@@ -2,18 +2,26 @@ import { useSite } from "./site-context";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { syncTime, type SyncStatus } from "./sync-types";
+import SyncConflictBox from "./SyncConflictBox";
+import type { User } from "./types";
 
 export default function TeamSyncIndicator({
   teamId,
   saving,
   failed,
+  canResolve = false,
+  people = [],
 }: {
   teamId: string;
   saving: boolean;
   failed: boolean;
+  // Team leads and admins may open the conflict box from the warning.
+  canResolve?: boolean;
+  people?: User[];
 }) {
   const { external } = useSite();
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
@@ -105,7 +113,7 @@ export default function TeamSyncIndicator({
     { label: git, complete: published },
     { label: peer, complete: reflected },
   ];
-  return (
+  const indicator = (
     <span
       className="team-sync-indicator"
       role="status"
@@ -126,5 +134,25 @@ export default function TeamSyncIndicator({
         ))
       )}
     </span>
+  );
+  if (!status?.conflicts || !canResolve) return indicator;
+  return (
+    <>
+      {indicator}
+      <button
+        type="button"
+        className="tag team-sync-conflict-open"
+        onClick={() => setConflictsOpen(true)}
+      >
+        충돌 보관함
+      </button>
+      {conflictsOpen && (
+        <SyncConflictBox
+          teamId={teamId}
+          people={people}
+          onClose={() => setConflictsOpen(false)}
+        />
+      )}
+    </>
   );
 }

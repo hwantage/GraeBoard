@@ -2220,13 +2220,23 @@ body.document-block-moving * {
   color: var(--error-ink);
   background: var(--error-soft);
 }
+.team-sync-conflict-open {
+  border: 1px solid var(--error-border, #edc8d3);
+  color: var(--error-ink);
+  background: #fff;
+  cursor: pointer;
+}
+.team-sync-conflict-open:hover {
+  background: var(--error-soft);
+}
 @media (max-width: 720px) {
   .topbar:has(.team-sync-indicator) {
     height: auto;
     min-height: 38px;
     flex-wrap: wrap;
   }
-  .topbar .team-sync-indicator {
+  .topbar .team-sync-indicator,
+  .topbar .team-sync-conflict-open {
     order: 1;
     flex-basis: 100%;
     padding-bottom: 6px;
