@@ -406,6 +406,61 @@ test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 
     .toBeGreaterThan(0);
 });
 
+test("업무 상세와 메모 전체 페이지는 스크롤 중 모드 전환 줄과 툴바를 위에 고정한다", async ({
+  page,
+}) => {
+  const long = Array.from({ length: 80 }, (_, i) => `문단 ${i + 1}`).join(
+    "\n\n",
+  );
+  await save(page, taskIds[0], long);
+  const memoId = randomUUID();
+  const memos = `/api/teams/${teamId}/years/2026/memos`;
+  await page.request.post(memos, {
+    headers,
+    data: { id: memoId, title: "긴 메모" },
+  });
+  await page.request.put(`${memos}/${memoId}`, {
+    headers,
+    data: { markdown: long, expectedRevision: 0, operationId: randomUUID() },
+  });
+  // The toggle's row stays at the scroller's top with the toolbar right
+  // under it; the toolbar ends with a line above the text.
+  const pinned = async (scroller: Locator, row: Locator, toolbar: Locator) => {
+    await scroller.evaluate((el) => (el.scrollTop = 600));
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(600);
+    const top = (await scroller.boundingBox())!.y;
+    const box = (await row.boundingBox())!;
+    expect(box.y).toBeCloseTo(top, 0);
+    expect(box.height).toBe(41);
+    await expect(
+      row.getByRole("button", { name: "Markdown 원문", exact: true }),
+    ).toBeInViewport();
+    expect((await toolbar.boundingBox())!.y).toBeCloseTo(box.y + box.height, 0);
+    expect(
+      await toolbar.evaluate((el) => getComputedStyle(el).borderBottomWidth),
+    ).toBe("1px");
+  };
+  await open(page);
+  await expect(rich(page)).toContainText("문단 80");
+  await pinned(
+    detail(page).locator(".modal-body"),
+    detail(page).locator(".document-tabs"),
+    detail(page).locator(".document-rich-tools"),
+  );
+  await close(page);
+
+  await page.goto(`/links/memo/${teamId}/2026/${memoId}`);
+  const memo = page.getByRole("dialog", { name: "긴 메모", exact: true });
+  await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toContainText(
+    "문단 80",
+  );
+  await pinned(
+    memo.locator(".memo-document-body"),
+    memo.locator(".document-mode-bar"),
+    memo.locator(".document-rich-tools"),
+  );
+});
+
 test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 남은 높이를 채운다", async ({
   page,
 }, info) => {

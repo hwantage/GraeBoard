@@ -447,7 +447,6 @@ export default function CalendarEntryPanel({
             onCheckChange={(id, checked) => void saveCheck(id, checked)}
             onManage={onManageTags}
           />
-          <div className="calendar-document-controls" ref={setControls} />
         </div>
         <ErrorNote error={tagError} />
         <ErrorNote error={error} />
@@ -497,6 +496,7 @@ export default function CalendarEntryPanel({
             aria-hidden={loading || undefined}
             inert={loading || (busy && leaving.current)}
           >
+            <div className="document-mode-bar" ref={setControls} />
             <DocumentEditor
               ref={editor}
               path={`${path}/document`}

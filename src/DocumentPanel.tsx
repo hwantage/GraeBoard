@@ -1252,7 +1252,7 @@ export function DocumentPage({
       {inline ? (
         <div className="memo-document-body" data-loading={loading || undefined}>
           <div
-            className="memo-full-page-controls"
+            className="memo-full-page-controls document-mode-bar"
             ref={setFullPageControls}
             hidden={!fullPage}
           />

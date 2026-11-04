@@ -277,6 +277,46 @@ test("제목 선택을 팝업 바깥에서 마쳐도 닫히지 않고 삭제는 
   await expect(detail(page)).toHaveCount(0);
 });
 
+test("일정 문서도 업무 상세처럼 스크롤 중 모드 전환 줄과 툴바를 위에 고정한다", async ({
+  page,
+}) => {
+  const entry = await seed(page);
+  await request(page, `/calendar/entries/${entry.id}/document`, "PUT", {
+    markdown: Array.from({ length: 80 }, (_, i) => `문단 ${i + 1}`).join(
+      "\n\n",
+    ),
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await calendar(page);
+  await card(page, entry.id).click();
+  await expect(
+    detail(page).getByRole("textbox", { name: "일정 문서 리치 편집" }),
+  ).toContainText("문단 80");
+  const body = detail(page).locator(".modal-body");
+  const bar = detail(page).locator(".document-mode-bar");
+  const toolbar = detail(page).locator(".document-rich-tools");
+  // The toggle sits on its own row below the tags, as on the task tab row.
+  await expect(
+    bar.getByRole("button", { name: "Markdown 원문", exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail(page)
+      .locator(".calendar-entry-tools")
+      .getByRole("group", { name: "문서 편집 모드" }),
+  ).toHaveCount(0);
+  await body.evaluate((el) => (el.scrollTop = 600));
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBe(600);
+  const top = (await body.boundingBox())!.y;
+  const row = (await bar.boundingBox())!;
+  expect(row.y).toBeCloseTo(top, 0);
+  expect(row.height).toBe(41);
+  expect((await toolbar.boundingBox())!.y).toBeCloseTo(row.y + row.height, 0);
+  expect(
+    await toolbar.evaluate((el) => getComputedStyle(el).borderBottomWidth),
+  ).toBe("1px");
+});
+
 test("카드 우클릭 복제는 제목·기간·태그·체크만 복사하고 이동·삭제·실행취소한다", async ({
   page,
 }) => {
