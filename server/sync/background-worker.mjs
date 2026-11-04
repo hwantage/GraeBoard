@@ -36,6 +36,10 @@ import {
   writeDocumentImage,
 } from "../document-images.mjs";
 import {
+  RESOLUTION_PENDING,
+  resolvesAny,
+} from "../../shared/conflict-origin.js";
+import {
   activeImageReferences,
   installImageReferences,
   isExcluded,
@@ -202,6 +206,11 @@ function compute(request) {
           ),
         400,
         "해결 범위를 확인하세요.",
+      );
+      requireThat(
+        !resolvesAny(store.readPending(), frontier),
+        409,
+        RESOLUTION_PENDING,
       );
       const before = {},
         after = {},
