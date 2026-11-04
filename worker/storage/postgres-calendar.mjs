@@ -28,6 +28,7 @@ import {
 import { firstCalendarLane } from "../../shared/calendar-layout.js";
 import { CALENDAR_TAG_COLORS } from "../../shared/calendar-tags.js";
 import { equal } from "../../server/sync/protocol.mjs";
+import { siteTeamId } from "../../shared/sync-profiles.js";
 import { assert } from "../access.mjs";
 import {
   documentSummaries,
@@ -283,17 +284,22 @@ async function calendarOperation(ctx, operation, params, body, query) {
           const members = await ctx.controlStore.members(teamId, {
             activeOnly: true,
           });
+          // A team site receives the internal team's member list, so it lists
+          // only those active members. Synced person records also hold former
+          // and inactive members kept for old references; elsewhere they are
+          // the only record of the other site's members.
           const known = new Set(members.map((m) => m.id));
-          for (const p of await s.list("person"))
-            if (!known.has(p.key[0]))
-              members.push({
-                id: p.key[0],
-                name: p.payload.name,
-                active: false,
-                systemRole: "user",
-                teamIds: [],
-                teamRoles: {},
-              });
+          if (!siteTeamId(ctx.env))
+            for (const p of await s.list("person"))
+              if (!known.has(p.key[0]))
+                members.push({
+                  id: p.key[0],
+                  name: p.payload.name,
+                  active: false,
+                  systemRole: "user",
+                  teamIds: [],
+                  teamRoles: {},
+                });
           return {
             members,
             settings,
