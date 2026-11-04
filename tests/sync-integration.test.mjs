@@ -391,6 +391,10 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
       .map((row) => row.text),
     ['value: "inside"', 'value: "outside preserved"'],
   );
+  // b holds its own edit; a's edit, absent from b's outbox, landed first.
+  assert.equal(conflict.origin.held.site, "internal");
+  assert.equal(conflict.origin.held.actor, "테스트");
+  assert.equal(change.writer.site, "external");
   const beforeHead = await b.transport.readHead();
   const resolution = ok(
     await b.api(

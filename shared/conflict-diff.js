@@ -74,8 +74,10 @@ export function conflictTitle(target, shown = 2) {
 
 /**
  * @typedef {{ state: "present" | "deleted" | "absent", payload: unknown }} Side
+ * @typedef {{ site: "internal" | "external" | null, initial?: boolean,
+ *   actor: string | null, createdAt: string | null }} Origin
  * @typedef {{ label: string, entity: string, name: string, key: string,
- *   base: Side, current: Side, desired: Side }} ConflictChange
+ *   base: Side, current: Side, desired: Side, writer: Origin | null }} ConflictChange
  */
 
 /** @returns {ConflictChange[]} */
@@ -83,6 +85,7 @@ export function conflictChanges(conflict) {
   const labels = conflict.target ? conflict.target.split(", ") : [];
   const base = Array.isArray(conflict.base) ? conflict.base : [];
   const desired = Array.isArray(conflict.desired) ? conflict.desired : [];
+  const writers = conflict.origin?.writers || {};
   const records = new Map();
   const ordered = [];
   for (const [id, record] of Object.entries(conflict.current || {})) {
@@ -93,19 +96,20 @@ export function conflictChanges(conflict) {
     } catch {
       label = id;
     }
-    records.set(label, record);
-    ordered.push(record);
+    const entry = { record, writer: writers[id] || null };
+    records.set(label, entry);
+    ordered.push(entry);
   }
   const count = Math.max(labels.length, base.length, desired.length);
   return Array.from({ length: count }, (_, index) => {
     const label = labels[index] || "";
     const space = label.indexOf(" ");
     const entity = space > 0 ? label.slice(0, space) : label;
-    const record = records.has(label)
+    const { record, writer } = records.has(label)
       ? records.get(label)
       : ordered.length === count
         ? ordered[index]
-        : null;
+        : { record: null, writer: null };
     return {
       label,
       entity,
@@ -119,8 +123,41 @@ export function conflictChanges(conflict) {
           }
         : { state: "absent", payload: null },
       desired: side(desired[index]),
+      writer,
     };
   });
+}
+
+const SITE_NAMES = { internal: "사내", external: "외부" };
+
+/** "사내" or "외부" for an origin from shared/conflict-origin.js, else "". */
+export const siteName = (origin) => SITE_NAMES[origin?.site] || "";
+
+/** "사내 · 김바다 · <time>" with whatever the origin knows. */
+export function describeOrigin(origin, time = (value) => value) {
+  if (!origin) return "";
+  if (origin.initial) return "처음 게시된 값";
+  return [
+    siteName(origin),
+    origin.actor,
+    origin.createdAt && time(origin.createdAt),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * One description of who wrote the current side of several changes: the
+ * shared one, or the sites involved when they differ.
+ */
+export function describeWriters(changes, time) {
+  const writers = changes.map((change) => change.writer).filter(Boolean);
+  const descriptions = [
+    ...new Set(writers.map((writer) => describeOrigin(writer, time))),
+  ];
+  if (descriptions.length <= 1) return descriptions[0] || "";
+  const sites = [...new Set(writers.map(siteName).filter(Boolean))];
+  return `${sites.join("·")} (항목마다 다름)`;
 }
 
 /**

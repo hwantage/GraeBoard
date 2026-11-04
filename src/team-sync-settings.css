@@ -230,6 +230,23 @@
   margin: 0 0 8px;
   font-size: 12px;
 }
+.sync-diff-origin {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f4f6f7;
+  font-size: 12px;
+}
+.sync-diff-origin dt {
+  color: var(--muted);
+}
+.sync-diff-origin dd {
+  margin: 0;
+  font-weight: 600;
+}
 .sync-diff-legend,
 .sync-diff-equal {
   margin: 8px 0;

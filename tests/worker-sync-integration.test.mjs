@@ -1242,6 +1242,26 @@ test(
         ).conflictId,
         titleConflict.conflictId,
       );
+      // Each site names where the two edits came from: the external title
+      // was held, the internal one had landed first.
+      const [insideConflict] = ok(
+        await inside(`/teams/${teamId}/sync/conflicts`),
+      ).conflicts.filter((c) => c.conflictId === titleConflict.conflictId);
+      for (const view of [titleConflict, insideConflict]) {
+        assert.equal(view.origin.held.site, "external");
+        assert.equal(view.origin.held.createdAt, view.createdAt);
+        assert.deepEqual(
+          Object.values(view.origin.writers).map((writer) => writer.site),
+          ["internal"],
+        );
+      }
+      assert.equal(titleConflict.origin.held.actor, "Outside");
+      // Only the writing site knows who wrote the current value.
+      assert.equal(
+        Object.values(insideConflict.origin.writers)[0].actor,
+        "Inside",
+      );
+      assert.equal(Object.values(titleConflict.origin.writers)[0].actor, null);
       const submittedTitle = titleConflict.desired[0].value;
       ok(
         await outside(

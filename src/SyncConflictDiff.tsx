@@ -1,20 +1,34 @@
 import { useMemo, useState } from "react";
 import { Button } from "./components";
+import { syncTime } from "./sync-types";
 import {
   changedFields,
   conflictChanges,
   conflictReason,
+  describeOrigin,
+  describeWriters,
   diffSides,
   fieldLabel,
+  siteName,
   splitContested,
 } from "../shared/conflict-diff.js";
 
+export type ConflictOrigin = {
+  site: "internal" | "external" | null;
+  initial?: boolean;
+  actor: string | null;
+  createdAt: string | null;
+};
 type ConflictView = {
   target: string;
   result?: string;
   base: unknown;
   current: unknown;
   desired: unknown;
+  origin?: {
+    held: ConflictOrigin;
+    writers: Record<string, ConflictOrigin | null>;
+  };
 };
 type Change = ReturnType<typeof conflictChanges>[number];
 type Rows = ReturnType<typeof diffSides>["rows"];
@@ -70,11 +84,23 @@ export default function SyncConflictDiff({
   const [cleanOpen, setCleanOpen] = useState(false);
   const selected = modes.find((item) => item.id === mode)!;
   const total = contested.length + clean.length;
+  // Which site made each edit: the held one is the conflict's operation, the
+  // first-applied one wrote the current values of the overlapping items.
+  const held = conflict.origin?.held,
+    writers = contested.length ? contested : clean,
+    firstApplied = describeWriters(writers, syncTime),
+    sites = [...new Set(writers.map((change) => siteName(change.writer)))],
+    suffix: Record<Mode, string> = {
+      result: "",
+      theirs: sites.length === 1 && sites[0] ? ` (${sites[0]})` : "",
+      mine: siteName(held) ? ` (${siteName(held)})` : "",
+    };
   const list = (changes: Change[], offset: number) =>
     changes.map((change, index) => (
       <ChangeDiff
         key={`${offset + index}:${mode}`}
         change={change}
+        held={siteName(held)}
         from={selected.from}
         to={selected.to}
       />
@@ -86,6 +112,14 @@ export default function SyncConflictDiff({
         {total > 1 &&
           ` 보류된 수정 ${total}개 항목 중 먼저 반영된 수정과 겹친 항목은 ${contested.length}개입니다.`}
       </p>
+      {held && (
+        <dl className="sync-diff-origin">
+          <dt>보류된 수정</dt>
+          <dd>{describeOrigin(held, syncTime) || "알 수 없음"}</dd>
+          <dt>먼저 반영된 수정</dt>
+          <dd>{firstApplied || "알 수 없음"}</dd>
+        </dl>
+      )}
       <p className="sync-diff-legend">
         원래 내용은 두 수정 전 값, 지금 내용은 지금 모두에게 보이는 값, 보류된
         수정은 반영되지 못하고 이 보관함에 남은 수정입니다.
@@ -98,7 +132,7 @@ export default function SyncConflictDiff({
             aria-pressed={item.id === mode}
             onClick={() => setMode(item.id)}
           >
-            {item.label}
+            {item.label + suffix[item.id]}
           </Button>
         ))}
       </div>
@@ -129,10 +163,12 @@ export default function SyncConflictDiff({
 
 function ChangeDiff({
   change,
+  held,
   from,
   to,
 }: {
   change: Change;
+  held: string;
   from: "base" | "current";
   to: "current" | "desired";
 }) {
@@ -150,8 +186,13 @@ function ChangeDiff({
         {change.key && <code>{change.key}</code>}
       </h5>
       <ul className="sync-diff-fields">
-        <li>먼저 반영된 수정이 바꾼 항목: {fieldList(theirs)}</li>
-        <li>보류된 수정이 바꾼 항목: {fieldList(mine)}</li>
+        <li>
+          먼저 반영된 수정{site(siteName(change.writer))}이 바꾼 항목:{" "}
+          {fieldList(theirs)}
+        </li>
+        <li>
+          보류된 수정{site(held)}이 바꾼 항목: {fieldList(mine)}
+        </li>
         {both.length > 0 && (
           <li className="is-overlap">
             두 수정이 함께 바꾼 항목: {fieldList(both)}
@@ -170,6 +211,8 @@ function ChangeDiff({
     </div>
   );
 }
+
+const site = (name: string) => (name ? `(${name})` : "");
 
 const fieldList = (fields: string[]) =>
   fields.length ? fields.map(fieldLabel).join(", ") : "없음";

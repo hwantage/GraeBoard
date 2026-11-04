@@ -626,6 +626,20 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
     expectedHead: "head-1",
     frontier: ["conflict-1"],
     resolved: false,
+    origin: {
+      held: {
+        site: "internal",
+        actor: "김바다",
+        createdAt: "2026-11-03T23:29:04.995Z",
+      },
+      writers: {
+        [JSON.stringify(["document", key])]: {
+          site: "external",
+          actor: null,
+          createdAt: null,
+        },
+      },
+    },
   };
   // Shaped like the 2026-11-04 production conflict: one command with a rule
   // and many cells, of which only two were also changed on the other side.
@@ -725,6 +739,25 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   await expect(compare.locator(".sync-diff-summary")).toHaveText(
     "같은 항목을 두 곳에서 고쳐, 나중에 들어온 수정을 보류했습니다.",
   );
+  // Where each edit came from, also in the comparison and action names.
+  await expect(compare.locator(".sync-diff-origin dd")).toHaveText([
+    /^사내 · 김바다 · 2026\. 11\. 4\./,
+    "외부",
+  ]);
+  await expect(
+    compare.getByRole("button", { name: "먼저 반영된 수정 (외부)" }),
+  ).toBeVisible();
+  await expect(
+    compare.getByRole("button", { name: "보류된 수정 (사내)" }),
+  ).toBeVisible();
+  await expect(compare.locator(".sync-diff-fields")).toContainText(
+    "먼저 반영된 수정(외부)이 바꾼 항목: 본문(markdown)",
+  );
+  await expect(
+    first.getByRole("button", {
+      name: "지금 내용 유지 (보류된 사내 수정 버림)",
+    }),
+  ).toBeVisible();
   await expect(
     compare.getByRole("button", { name: "덮어쓰면 바뀌는 부분" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -745,7 +778,9 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   await expect(compare.locator(".sync-diff-line")).toHaveCount(28);
   await page.screenshot({ path: testInfo.outputPath("conflict-diff.png") });
 
-  await compare.getByRole("button", { name: "먼저 반영된 수정" }).click();
+  await compare
+    .getByRole("button", { name: "먼저 반영된 수정 (외부)" })
+    .click();
   await expect(removed).toContainText("* 회의 메모 3");
   await expect(added).toContainText("회의 메모 3 (외부에서 수정)");
   await expect(compare.getByRole("button", { name: /줄 같음/ })).toBeVisible();
@@ -778,7 +813,9 @@ test("충돌 보관함은 지금 내용과 보류된 수정을 줄 단위로 비
   await raw.getByText("원본 JSON 보기").click();
   await expect(raw.getByText("지금 내용")).toBeVisible();
 
-  await first.getByRole("button", { name: "보류된 수정으로 덮어쓰기" }).click();
+  await first
+    .getByRole("button", { name: "보류된 사내 수정으로 덮어쓰기" })
+    .click();
   await expect.poll(() => resolutions.length).toBe(1);
   expect(resolutions[0]).toMatchObject({
     choice: "submitted",

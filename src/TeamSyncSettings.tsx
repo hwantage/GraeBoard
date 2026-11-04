@@ -2,7 +2,7 @@ import { useSite } from "./site-context";
 import TeamSetupKey from "./TeamSetupKey";
 import SyncSetupWizard from "./SyncSetupWizard";
 import SyncConnectionDetails from "./SyncConnectionDetails";
-import SyncConflictDiff from "./SyncConflictDiff";
+import SyncConflictDiff, { type ConflictOrigin } from "./SyncConflictDiff";
 import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
@@ -14,7 +14,7 @@ import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
 import { canManageTeam } from "../shared/domain.js";
 import { syncErrorMessage } from "../shared/sync-error-message.js";
-import { conflictTitle } from "../shared/conflict-diff.js";
+import { conflictTitle, siteName } from "../shared/conflict-diff.js";
 import "./team-sync-settings.css";
 
 export type ResourceProfile = {
@@ -60,6 +60,10 @@ type Conflict = {
   expectedHead: string;
   frontier?: string[];
   resolved?: boolean;
+  origin?: {
+    held: ConflictOrigin;
+    writers: Record<string, ConflictOrigin | null>;
+  };
 };
 const modes: Record<SyncStatus["mode"], string> = {
   unlinked: "미연결",
@@ -70,6 +74,10 @@ const modes: Record<SyncStatus["mode"], string> = {
   recovery: "복구 점검 필요",
   disconnected: "연결 해제",
 };
+
+// "사내 수정" / "외부 수정" when the server says where the held edit came from.
+const heldEdit = (conflict: Conflict) =>
+  [siteName(conflict.origin?.held), "수정"].filter(Boolean).join(" ");
 
 const display = (value: unknown) =>
   typeof value === "string"
@@ -1021,13 +1029,13 @@ export default function TeamSyncSettings({
                         {...busyProps(busy)}
                         onClick={() => void resolve(conflict, "current")}
                       >
-                        지금 내용 유지 (보류된 수정 버림)
+                        지금 내용 유지 (보류된 {heldEdit(conflict)} 버림)
                       </Button>
                       <Button
                         {...busyProps(busy)}
                         onClick={() => void resolve(conflict, "submitted")}
                       >
-                        보류된 수정으로 덮어쓰기
+                        보류된 {heldEdit(conflict)}으로 덮어쓰기
                       </Button>
                       {editing?.conflictId === conflict.conflictId ? (
                         <Button

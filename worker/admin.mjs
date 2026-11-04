@@ -1,5 +1,10 @@
 import { receiptCapacity } from "../shared/sync-capacity.mjs";
 import {
+  conflictOpIds,
+  conflictOrigin,
+  conflictPeople,
+} from "../shared/conflict-origin.js";
+import {
   SYSTEM_AUDIT_ROUTES,
   matchBusinessRoute,
   callBusinessRoute,
@@ -342,15 +347,44 @@ export async function adminRoutes(
       if (method === "GET") {
         // Only the conflicts themselves: loading C to list them cost the
         // whole team and could exceed the Edge CPU budget.
-        const conflicts = await db.withTeamTransaction(
+        const { conflicts, local, names } = await db.withTeamTransaction(
             teamId,
-            async (tx) =>
-              (
+            async (tx) => {
+              const conflicts = (
                 await tx.query(
                   "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND ($2::text IS NULL OR conflict_id=$2) ORDER BY conflict_id",
                   [teamId, sync[3] || null],
                 )
-              ).rows.map((row) => JSON.parse(row.payload)),
+              ).rows.map((row) => JSON.parse(row.payload));
+              // This site's own operations among the held ones and the
+              // current writers; anything else came from the internal site.
+              // PostgreSQL extracts the two fields so Edge parses no payload.
+              const local = new Map(
+                (
+                  await tx.query(
+                    "SELECT op_id,payload::jsonb->>'actorRef' actor_ref,payload::jsonb->>'createdAt' created_at FROM sync_outbox WHERE team_id=$1 AND op_id=ANY($2::text[])",
+                    [teamId, conflictOpIds(conflicts)],
+                  )
+                ).rows.map((row) => [
+                  row.op_id,
+                  { actorRef: row.actor_ref, createdAt: row.created_at },
+                ]),
+              );
+              const names = new Map(
+                (
+                  await tx.query(
+                    "SELECT entity_key,payload::jsonb->>'name' name FROM sync_entities WHERE team_id=$1 AND entity='person' AND entity_key=ANY($2::text[])",
+                    [
+                      teamId,
+                      conflictPeople(conflicts, local).map((person) =>
+                        JSON.stringify([person]),
+                      ),
+                    ],
+                  )
+                ).rows.map((row) => [JSON.parse(row.entity_key)[0], row.name]),
+              );
+              return { conflicts, local, names };
+            },
             { readOnly: true },
           ),
           link = await db.readLink(teamId),
@@ -368,6 +402,12 @@ export async function adminRoutes(
             expectedHead: link.canonical_head,
             frontier: [c.opId],
             resolved: !!c.resolution,
+            origin: conflictOrigin(c, {
+              site: "external",
+              local,
+              names,
+              writerEpoch: link.writer_epoch,
+            }),
           });
         if (sync[3]) {
           assert(conflicts.length, 404, "충돌을 찾을 수 없습니다.");
