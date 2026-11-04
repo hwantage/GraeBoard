@@ -50,6 +50,25 @@
   top: var(--document-tabs-height, 40px);
   z-index: 2;
   background: white;
+  border-bottom: 1px solid var(--line);
+}
+/* The task detail keeps the mode toggle on its sticky tab row. Calendar
+   entries and memo pages have no tabs, so a row of the same height holds it
+   above the toolbar. */
+.document-mode-bar {
+  position: sticky;
+  top: 0;
+  /* Over the document's handles and menus (up to 3), under the calendar
+     heading's tag list (5) that opens across it. */
+  z-index: 4;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--document-tabs-height);
+  padding: 0 12px;
+  background: var(--surface, white);
+  border-bottom: 1px solid var(--line);
 }
 .document-formatbar {
   display: flex;
@@ -962,6 +981,7 @@ body.document-block-selecting * {
 }
 @media (max-width: 600px) {
   .document-tabs,
+  .document-mode-bar,
   .document-formatbar {
     padding-inline: 4px;
   }
@@ -1325,14 +1345,9 @@ button.memo-document-title {
   width: min(1120px, calc(100% - 48px));
   margin-inline: auto;
 }
-/* Full width spans the window as the task and calendar details do: the
-   toolbar edge to edge, the mode toggle as far in as on their tab row. */
+/* Full width spans the window as the task and calendar details do. */
 .memo-document-card.memo-full-page.document-full-width .memo-document-body > * {
   width: 100%;
-}
-.memo-document-card.memo-full-page.document-full-width
-  .memo-full-page-controls {
-  padding-inline: 12px;
 }
 .memo-document-card.memo-full-page .memo-document-heading {
   width: 100%;
@@ -1358,15 +1373,12 @@ button.memo-document-title {
 .memo-document-heading .document-full-width + .memo-document-close {
   margin-left: 0;
 }
-/* A top padding on the scrolling body would also drop the sticky toolbar. */
-.memo-full-page .memo-full-page-controls {
-  margin-top: 16px;
+.memo-full-page {
+  /* The tab row's 40px and its bottom line. */
+  --document-tabs-height: 41px;
 }
-.memo-full-page-controls {
-  display: flex;
-  justify-content: flex-end;
-  flex-shrink: 0;
-  margin-bottom: 8px;
+.annual-memos .memo-full-page .document-rich-tools {
+  top: var(--document-tabs-height);
 }
 .memo-full-page-controls[hidden] {
   display: none;
