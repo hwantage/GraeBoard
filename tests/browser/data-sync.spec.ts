@@ -223,11 +223,9 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
   ).toBeEnabled();
   // The result stays under the buttons and names what reached Git.
   await expect(
-    settings
-      .getByRole("status")
-      .filter({
-        hasText: /^초기 게시를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
-      }),
+    settings.getByRole("status").filter({
+      hasText: /^초기 게시를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
+    }),
   ).toBeVisible();
   await settings
     .getByRole("button", { name: "팀장 연결 키 발급", exact: true })
@@ -338,11 +336,9 @@ test("설정에서 실제 Git 초기 게시·일시정지·재개와 연도 정�
     settings.getByRole("button", { name: "지금 동기화", exact: true }),
   ).toBeEnabled();
   await expect(
-    settings
-      .getByRole("status")
-      .filter({
-        hasText: /^동기화를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
-      }),
+    settings.getByRole("status").filter({
+      hasText: /^동기화를 완료했습니다\. Git 반영 .+ · 공유 대기 \d+건$/,
+    }),
   ).toBeVisible();
   // A run that met another run's lease did nothing; it must not read as done.
   await page.route(`**/api/teams/${teamId}/sync/run`, async (route) => {
@@ -591,6 +587,203 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
   failRefresh = false;
   await run.click();
   await expect(settings.getByRole("alert")).toHaveCount(0);
+});
+
+test("충돌 보관함은 현재 공유 내용과 제출한 내용을 줄 단위로 비교해 보여 준다", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1080, height: 900 });
+  const bootstrap = await configuredBootstrap(page);
+  const body = Array.from({ length: 24 }, (_, i) => `* 회의 메모 ${i + 1}`);
+  const theirs = [...body],
+    mine = [...body];
+  theirs[2] = "* 회의 메모 3 (외부에서 수정)";
+  mine[2] = "* 회의 메모 3 (사내에서 수정)";
+  const document = (lines: string[]) => ({
+    markdown: lines.join("\n"),
+    position: 0,
+    title: "문서 1",
+  });
+  const key = ["calendar", "entry-1", "main"];
+  const conflict = {
+    conflictId: "conflict-1",
+    opId: "conflict-1",
+    createdAt: "2026-11-04T00:14:00.000Z",
+    target: "document " + key.join("/"),
+    result: "Concurrent field change",
+    base: [document(body)],
+    current: {
+      [JSON.stringify(["document", key])]: {
+        entity: "document",
+        key,
+        generation: "g".repeat(64),
+        version: "v".repeat(64),
+        deleted: false,
+        payload: document(theirs),
+      },
+    },
+    desired: [document(mine)],
+    expectedHead: "head-1",
+    frontier: ["conflict-1"],
+    resolved: false,
+  };
+  // Shaped like the 2026-11-04 production conflict: one command with a rule
+  // and many cells, of which only two were also changed on the other side.
+  const cellKeys = Array.from({ length: 40 }, (_, i) => [`task-${i}`, "score"]);
+  const cell = (backgroundColor: string, textAlign?: string) => ({
+    value: "1",
+    style: textAlign ? { backgroundColor, textAlign } : { backgroundColor },
+  });
+  const large = {
+    ...conflict,
+    conflictId: "conflict-2",
+    opId: "conflict-2",
+    target: [
+      "formats ",
+      ...cellKeys.map((cellKey) => "cell " + cellKey.join("/")),
+    ].join(", "),
+    base: [{ rules: [] }, ...cellKeys.map(() => cell("#d1eee6", "right"))],
+    current: Object.fromEntries([
+      [
+        JSON.stringify(["formats", []]),
+        {
+          ...conflict.current[JSON.stringify(["document", key])],
+          entity: "formats",
+          key: [],
+          payload: { rules: [] },
+        },
+      ],
+      ...cellKeys.map((cellKey, i) => [
+        JSON.stringify(["cell", cellKey]),
+        {
+          entity: "cell",
+          key: cellKey,
+          generation: "g".repeat(64),
+          version: "v".repeat(64),
+          deleted: false,
+          payload: cell([7, 31].includes(i) ? "#ffffff" : "#d1eee6", "right"),
+        },
+      ]),
+    ]),
+    desired: [
+      { rules: [{ id: "rule-1", style: { textAlign: "right" } }] },
+      ...cellKeys.map(() => cell("#d1eee6")),
+    ],
+    frontier: ["conflict-2"],
+  };
+  const resolutions: unknown[] = [];
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
+  await page.route(`**/api/admin/teams/${teamId}/connection`, (route) =>
+    route.fulfill({
+      json: {
+        profileId: "local",
+        revision: 1,
+        profiles: [
+          {
+            profileId: "local",
+            teamId,
+            name: "동기화 연결",
+            repository: "test/local",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        profileId: "local",
+        pending: 0,
+        conflicts: 2,
+        canonicalHead: "head-1",
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({ json: { conflicts: [conflict, large] } }),
+  );
+  await page.route(
+    `**/api/teams/${teamId}/sync/conflicts/conflict-1/resolve`,
+    (route) => {
+      resolutions.push(route.request().postDataJSON());
+      return route.fulfill({ json: { opId: "resolution-1" } });
+    },
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).click();
+  const box = settings.getByRole("region", { name: "충돌 보관함" });
+  const [first, second] = [0, 1].map((n) =>
+    box.locator(":scope > details").nth(n),
+  );
+  await first.getByText("document calendar/entry-1/main").click();
+  const compare = first.getByRole("region", { name: "변경 비교" });
+  await expect(compare.locator(".sync-diff-summary")).toHaveText(
+    "같은 항목을 양쪽에서 수정했습니다.",
+  );
+  await expect(
+    compare.getByRole("button", { name: "현재 공유 ↔ 제출" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(compare.locator(".sync-diff-fields")).toContainText(
+    "양쪽이 함께 바꾼 항목: markdown",
+  );
+  const removed = compare.locator(".sync-diff-line.is-removed"),
+    added = compare.locator(".sync-diff-line.is-added");
+  await expect(removed).toHaveCount(1);
+  await expect(removed).toContainText("회의 메모 3 (외부에서 수정)");
+  await expect(added).toHaveCount(1);
+  await expect(added).toContainText("회의 메모 3 (사내에서 수정)");
+  await expect(added.locator("mark")).toHaveText("사내");
+  await expect(added).toHaveCSS("background-color", "rgb(231, 246, 236)");
+  // The unchanged rest of the body is folded and expands on request.
+  await expect(compare.locator(".sync-diff-line")).toHaveCount(8);
+  await compare.getByRole("button", { name: /20줄 같음/ }).click();
+  await expect(compare.locator(".sync-diff-line")).toHaveCount(28);
+  await page.screenshot({ path: testInfo.outputPath("conflict-diff.png") });
+
+  await compare.getByRole("button", { name: "기준 → 현재 공유" }).click();
+  await expect(removed).toContainText("* 회의 메모 3");
+  await expect(added).toContainText("회의 메모 3 (외부에서 수정)");
+  await expect(compare.getByRole("button", { name: /줄 같음/ })).toBeVisible();
+
+  // A large command shows the two contested cells first and draws the rest
+  // only when asked.
+  await second.locator(":scope > summary").click();
+  await expect(second.locator(":scope > summary")).toContainText(
+    "formats , cell task-0/score 외 39개",
+  );
+  const largeCompare = second.getByRole("region", { name: "변경 비교" });
+  await expect(largeCompare.locator(".sync-diff-summary")).toContainText(
+    "변경 41개 중 상대도 바꾼 항목은 2개입니다.",
+  );
+  await expect(largeCompare.locator(".sync-diff-change")).toHaveCount(2);
+  await expect(largeCompare.locator(".sync-diff-change h5")).toHaveText([
+    "셀task-7/score",
+    "셀task-31/score",
+  ]);
+  await expect(
+    largeCompare.locator(".sync-diff-line.is-removed").first(),
+  ).toContainText('backgroundColor: "#ffffff"');
+  await largeCompare.getByText("상대가 바꾸지 않은 항목 39개").click();
+  await expect(largeCompare.locator(".sync-diff-change")).toHaveCount(41);
+  await second.locator(":scope > summary").click();
+
+  // Raw JSON stays available, folded, for direct editing reference.
+  const raw = first.locator(".sync-conflict-raw");
+  await expect(raw.getByText("기준 내용")).toBeHidden();
+  await raw.getByText("원본 JSON 보기").click();
+  await expect(raw.getByText("현재 공유 내용")).toBeVisible();
+
+  await first.getByRole("button", { name: "제출한 내용 적용" }).click();
+  await expect.poll(() => resolutions.length).toBe(1);
+  expect(resolutions[0]).toMatchObject({
+    choice: "submitted",
+    expectedHead: "head-1",
+  });
 });
 
 test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된 작업을 이어서 실행한다", async ({

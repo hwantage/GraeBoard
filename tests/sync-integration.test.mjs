@@ -18,6 +18,7 @@ import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { materialize, readEntity } from "../server/sync/entities.mjs";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { conflictChanges, diffSides } from "../shared/conflict-diff.js";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-")),
@@ -379,6 +380,17 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     await b.api(`/teams/${teamId}/sync/conflicts`),
   ).conflicts.find((row) => !row.resolved);
   assert.ok(conflict);
+  // The conflict box pairs the API's current record with the change it blocks.
+  const [change] = conflictChanges(conflict);
+  assert.equal(change.key, `${task.id}/title`);
+  assert.equal(change.current.payload.value, "inside");
+  assert.equal(change.desired.payload.value, "outside preserved");
+  assert.deepEqual(
+    diffSides(change.current, change.desired)
+      .rows.filter((row) => row.type !== "same")
+      .map((row) => row.text),
+    ['value: "inside"', 'value: "outside preserved"'],
+  );
   const beforeHead = await b.transport.readHead();
   const resolution = ok(
     await b.api(

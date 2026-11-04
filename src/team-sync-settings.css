@@ -218,3 +218,121 @@
     width: 44px;
   }
 }
+.sync-conflict-diff {
+  margin: 12px 0;
+}
+.sync-diff-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sync-diff-summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.sync-diff-legend,
+.sync-diff-equal {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sync-diff-change {
+  margin-top: 14px;
+}
+.sync-diff-change h5 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sync-diff-change h5 code {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.sync-diff-fields {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.sync-diff-fields .is-overlap {
+  color: #893c52;
+  font-weight: 600;
+}
+.sync-diff-lines {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sync-diff-line {
+  display: grid;
+  grid-template-columns: 3.2em 3.2em 1.6em minmax(0, 1fr);
+}
+.sync-diff-number {
+  padding-right: 6px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.sync-diff-marker {
+  text-align: center;
+  user-select: none;
+}
+.sync-diff-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sync-diff-line.is-removed {
+  background: #fdecee;
+}
+.sync-diff-line.is-added {
+  background: #e7f6ec;
+}
+.sync-diff-line.is-removed mark {
+  background: #f6bcc7;
+}
+.sync-diff-line.is-added mark {
+  background: #a9e2bb;
+}
+.sync-diff-line mark {
+  color: inherit;
+  border-radius: 2px;
+}
+.sync-diff-fold button {
+  width: 100%;
+  padding: 2px 8px;
+  border: 0;
+  color: var(--muted);
+  background: #f4f6f7;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sync-diff-fold button:hover {
+  color: inherit;
+  background: #eaeef0;
+}
+.sync-diff-clean {
+  margin-top: 14px;
+}
+.sync-diff-clean > summary {
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sync-conflict-raw {
+  margin: 8px 0 12px;
+}
+.sync-conflict-raw summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}

@@ -2,6 +2,7 @@ import { useSite } from "./site-context";
 import TeamSetupKey from "./TeamSetupKey";
 import SyncSetupWizard from "./SyncSetupWizard";
 import SyncConnectionDetails from "./SyncConnectionDetails";
+import SyncConflictDiff from "./SyncConflictDiff";
 import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
@@ -13,6 +14,7 @@ import { busyProps } from "./busyProps";
 import type { Team, User } from "./types";
 import { canManageTeam } from "../shared/domain.js";
 import { syncErrorMessage } from "../shared/sync-error-message.js";
+import { conflictTitle } from "../shared/conflict-diff.js";
 import "./team-sync-settings.css";
 
 export type ResourceProfile = {
@@ -960,44 +962,48 @@ export default function TeamSyncSettings({
                 .map((conflict) => (
                   <details key={conflict.conflictId}>
                     <summary>
-                      {conflict.target || "업무 변경"} ·{" "}
+                      {conflictTitle(conflict.target) || "업무 변경"} ·{" "}
                       {syncTime(conflict.createdAt)}
                     </summary>
-                    <dl>
-                      <dt>기준 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.base)}
-                        </pre>
-                      </dd>
-                      <dt>현재 공유 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.current)}
-                        </pre>
-                      </dd>
-                      <dt>제출한 내용</dt>
-                      <dd>
-                        <pre
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                          }}
-                        >
-                          {display(conflict.desired)}
-                        </pre>
-                      </dd>
-                    </dl>
+                    <SyncConflictDiff conflict={conflict} />
+                    <details className="sync-conflict-raw">
+                      <summary>원본 JSON 보기</summary>
+                      <dl>
+                        <dt>기준 내용</dt>
+                        <dd>
+                          <pre
+                            style={{
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {display(conflict.base)}
+                          </pre>
+                        </dd>
+                        <dt>현재 공유 내용</dt>
+                        <dd>
+                          <pre
+                            style={{
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {display(conflict.current)}
+                          </pre>
+                        </dd>
+                        <dt>제출한 내용</dt>
+                        <dd>
+                          <pre
+                            style={{
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {display(conflict.desired)}
+                          </pre>
+                        </dd>
+                      </dl>
+                    </details>
                     {editing?.conflictId === conflict.conflictId && (
                       <label>
                         적용할 내용
