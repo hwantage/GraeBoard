@@ -321,7 +321,9 @@ const payloadFields = {
   calendar: ["userId", "date", "endDate", "lane", "title", "deletedAt", "tags"],
   tag: ["userId", "name", "color", "kind"],
   rule: ["propertyId", "values", "mode"],
-  weekly: ["title"],
+  // importedAt orders a week's items (2026-11-04). Items shared before it
+  // have none and keep their place by the time each site first saw them.
+  weekly: ["title", "importedAt"],
   filter: ["name", "data"],
   formats: ["rules"],
   protocol: ["version", "reducer"],
@@ -393,6 +395,15 @@ export function validateEntityPayload(
     string("name", 200);
   if (["document", "weekly", "calendar"].includes(entity))
     string("title", 1000);
+  if (
+    entity === "weekly" &&
+    payload.importedAt !== undefined &&
+    !(
+      typeof payload.importedAt === "string" &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(payload.importedAt)
+    )
+  )
+    throw new Error("Invalid weekly importedAt");
   if (
     entity === "team" &&
     (!plain(payload.settings) ||

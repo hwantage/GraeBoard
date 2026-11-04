@@ -28,6 +28,7 @@
     "sync:history-maintenance": "node --env-file-if-exists=.env scripts/sync-history-maintenance.mjs",
     "sync:maintenance-recover": "node --env-file-if-exists=.env scripts/sync-maintenance-recover.mjs",
     "sync:recover": "node --env-file-if-exists=.env scripts/sync-recover.mjs",
+    "sync:weekly-order": "node --env-file-if-exists=.env scripts/sync-weekly-order.mjs",
     "sync:external-import": "node scripts/sync-external-import.mjs",
     "dev:snapshot-import": "node --env-file-if-exists=.env scripts/dev-snapshot-import.mjs",
     "transfer": "node --env-file-if-exists=.env scripts/transfer.mjs",

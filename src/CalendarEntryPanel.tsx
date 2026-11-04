@@ -24,6 +24,9 @@ import {
   saveCalendarTagCheck,
 } from "./calendar-tag-checks";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
+import DocumentFullWidthButton, {
+  useDocumentFullWidth,
+} from "./DocumentFullWidthButton";
 import { updateDocumentLinkTitle, useOpenDocumentLink } from "./document-links";
 
 export default function CalendarEntryPanel({
@@ -59,6 +62,7 @@ export default function CalendarEntryPanel({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [documentFullPage, setDocumentFullPage] = useState(false);
+  const fullWidth = useDocumentFullWidth();
   const deletionId = useRef(crypto.randomUUID());
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
   const editor = useRef<DocumentHandle>(null);
@@ -350,7 +354,8 @@ export default function CalendarEntryPanel({
   return (
     <Modal
       title="캘린더 일정"
-      className={`task-detail-modal calendar-entry-modal${documentFullPage ? " document-full-page" : ""}`}
+      className={`task-detail-modal calendar-entry-modal${documentFullPage ? ` document-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
+      headerActions={documentFullPage && <DocumentFullWidthButton />}
       titleAction={
         <>
           <CopyDocumentLinkButton target={linkTarget} title={title} />

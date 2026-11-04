@@ -11,6 +11,7 @@ import {
   validateOperation,
   assertCanonical,
   digestShared,
+  validateEntityPayload,
 } from "../server/sync/protocol.mjs";
 import {
   reduce,
@@ -543,5 +544,28 @@ test("digestShared hashes like digest when objects repeat", () => {
   assert.equal(digestShared(copy(true)), digest(copy(false)));
   assert.throws(() =>
     digestShared({ a: formatting, b: formatting, c: Number.NaN }),
+  );
+});
+
+test("weekly items may carry the time that orders their week", () => {
+  const key = ["user", "2026-11-01", "task"],
+    valid = (payload) =>
+      validateEntityPayload("weekly", key, payload, "team", 1);
+  // Items shared before 2026-11-04 have only a title.
+  valid({ title: "업무" });
+  valid({ title: "업무", importedAt: "2026-11-02T01:00:00.000Z" });
+  for (const importedAt of [
+    "2026-11-02T01:00:00Z",
+    "2026-11-02",
+    1762045200000,
+    null,
+  ])
+    assert.throws(
+      () => valid({ title: "업무", importedAt }),
+      /Invalid weekly importedAt/,
+    );
+  assert.throws(
+    () => valid({ title: "업무", position: 1 }),
+    /Unsupported entity payload/,
   );
 });

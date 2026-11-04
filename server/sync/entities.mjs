@@ -243,13 +243,18 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
     case "weekly":
       r = one(
         db,
-        "SELECT title FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
+        "SELECT title,imported_at FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
         teamId,
         a,
         b,
         c,
       );
-      if (r) p = { title: r.title };
+      if (r) {
+        const time = Date.parse(r.imported_at);
+        p = Number.isFinite(time)
+          ? { title: r.title, importedAt: new Date(time).toISOString() }
+          : { title: r.title };
+      }
       break;
     case "filter":
       r = one(
@@ -739,9 +744,18 @@ export function materializeEntity(
         "DELETE FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
       ).run(teamId, a, b, c);
     else
+      // Without a shared importedAt the item keeps its local order.
       db.prepare(
-        "INSERT INTO calendar_weekly_items VALUES(?,?,?,?,?,?) ON CONFLICT(team_id,user_id,week_start,task_id) DO UPDATE SET title=excluded.title",
-      ).run(teamId, a, b, c, p.title, stamp);
+        "INSERT INTO calendar_weekly_items VALUES(?,?,?,?,?,?) ON CONFLICT(team_id,user_id,week_start,task_id) DO UPDATE SET title=excluded.title,imported_at=COALESCE(?,calendar_weekly_items.imported_at)",
+      ).run(
+        teamId,
+        a,
+        b,
+        c,
+        p.title,
+        p.importedAt ?? stamp,
+        p.importedAt ?? null,
+      );
     return;
   }
   if (e.entity === "filter") {

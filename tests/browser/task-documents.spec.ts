@@ -90,6 +90,40 @@ async function pasteText(page: Page, text: string) {
   await pasteClipboard(page, text);
 }
 
+// The editor's copy serializer, without the OS clipboard.
+async function copyRich(page: Page) {
+  await settleRichSelection(page);
+  return rich(page).evaluate((el) => {
+    const data = new Map<string, string>();
+    const event = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        clearData: () => data.clear(),
+        setData: (type: string, value: string) => data.set(type, value),
+      },
+    });
+    el.dispatchEvent(event);
+    return {
+      html: data.get("text/html") || "",
+      text: data.get("text/plain") || "",
+    };
+  });
+}
+
+async function selectContents(page: Page, selector: string) {
+  await rich(page)
+    .locator(selector)
+    .first()
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/*", (route) =>
     new URL(route.request().url()).hostname === "127.0.0.1"
@@ -292,6 +326,80 @@ test("문서가 없는 업무는 캐릭터 안내에서 명시적으로 작성�
     .click({ button: "right" });
   await expect(rich(page)).toContainText("버튼을 눌러 시작한 문서");
   await expect(start).toHaveCount(0);
+});
+
+test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 너비 보기를 브라우저에 기억한다", async ({
+  page,
+}) => {
+  const long = Array.from({ length: 80 }, (_, i) => `문단 ${i + 1}`).join(
+    "\n\n",
+  );
+  await save(page, taskIds[0], long);
+  const memoId = randomUUID();
+  const memos = `/api/teams/${teamId}/years/2026/memos`;
+  await page.request.post(memos, {
+    headers,
+    data: { id: memoId, title: "긴 메모" },
+  });
+  await page.request.put(`${memos}/${memoId}`, {
+    headers,
+    data: { markdown: long, expectedRevision: 0, operationId: randomUUID() },
+  });
+  const viewport = page.viewportSize()!;
+  const width = async (dialog: Locator) =>
+    (await dialog.locator(".document-prose").boundingBox())!.width;
+  await open(page);
+  const wide = detail(page).getByRole("button", { name: "전체 너비로 보기" });
+  // Only the full page offers the width.
+  await expect(wide).toHaveCount(0);
+  await detail(page)
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .click();
+  const close = detail(page).getByRole("button", { name: "닫기", exact: true });
+  const toggle = (await wide.boundingBox())!;
+  const closeBox = (await close.boundingBox())!;
+  expect(toggle.x + toggle.width).toBeLessThanOrEqual(closeBox.x);
+  expect(closeBox.x - toggle.x - toggle.width).toBeLessThan(16);
+  expect(await width(detail(page))).toBeLessThanOrEqual(1120);
+  await wide.click();
+  const narrow = detail(page).getByRole("button", { name: "기본 너비로 보기" });
+  await expect(narrow).toHaveAttribute("aria-pressed", "true");
+  expect(await width(detail(page))).toBeGreaterThan(viewport.width - 40);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("weekly-plan:document-full-width"),
+    ),
+  ).toBe("1");
+  await detail(page)
+    .getByRole("button", { name: "전체 페이지 닫기", exact: true })
+    .click();
+  await expect(narrow).toHaveCount(0);
+  await close.click();
+
+  // A memo's full page opens wide too, and its blank sides scroll the page.
+  await page.goto(`/links/memo/${teamId}/2026/${memoId}`);
+  const memo = page.getByRole("dialog", { name: "긴 메모", exact: true });
+  await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toBeVisible();
+  await expect(
+    memo.getByRole("button", { name: "기본 너비로 보기" }),
+  ).toBeVisible();
+  expect(await width(memo)).toBeGreaterThan(viewport.width - 100);
+  await memo.getByRole("button", { name: "기본 너비로 보기" }).click();
+  expect(await width(memo)).toBeLessThanOrEqual(1120);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("weekly-plan:document-full-width"),
+    ),
+  ).toBe("0");
+  const scroller = memo.locator(".memo-document-body");
+  const box = (await scroller.boundingBox())!;
+  expect(box.x).toBe(0);
+  expect(box.width).toBe(viewport.width);
+  await page.mouse.move(viewport.width - 30, box.y + box.height / 2);
+  await page.mouse.wheel(0, 400);
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
 });
 
 test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 남은 높이를 채운다", async ({
@@ -1449,6 +1557,15 @@ test("리치 문서의 표와 텍스트를 함께 복사하면 서식과 구조�
   }
   expect(copied.html).toContain("<table");
   expect(copied.html).toContain("<strong");
+  // Plain text is the Markdown, which chat apps and the source keep.
+  for (const line of [
+    "## 복사할 제목",
+    "**굵게**와 *기울임*, ~~취소선~~, `코드`, [자료](https://example.com/docs)",
+    "> 인용 문장",
+    "* [x] 완료 항목\n* [ ] 대기 항목",
+    "| **표 안 굵게** | 첫 줄<br />둘째 줄 |",
+  ])
+    expect(copied.text).toContain(line);
   await rich(page)
     .locator(":scope > p")
     .last()
@@ -1518,6 +1635,48 @@ test("리치 문서의 표와 텍스트를 함께 복사하면 서식과 구조�
   await page.reload();
   await open(page);
   await preserved();
+});
+
+test("복사한 일반 텍스트는 Markdown이며 HTML 없이 붙여도 다른 문서에서 서식이 살아난다", async ({
+  page,
+}) => {
+  const markdown =
+    "# 회의 기록\n\n앞 **굵게** 뒤 [자료](https://example.com/docs)\n\n* 하나\n* 둘\n\n```js\nconst a = 1;\n```\n\n\\[완료] a\\*b\n";
+  await save(page, taskIds[0], markdown);
+  await open(page);
+  // Part of one line keeps only its inline formatting.
+  await selectContents(page, ":scope > p");
+  expect((await copyRich(page)).text).toBe(
+    "앞 **굵게** 뒤 [자료](https://example.com/docs)",
+  );
+  // Plain words keep their brackets and stars without Markdown escapes.
+  await selectContents(page, ":scope > p:last-of-type");
+  expect((await copyRich(page)).text).toBe("[완료] a*b");
+  // Inside a code block the code stays plain.
+  await selectContents(page, "pre code");
+  expect((await copyRich(page)).text).toBe("const a = 1;");
+  await rich(page).press("ControlOrMeta+a");
+  const { text } = await copyRich(page);
+  expect(text).toBe(
+    "# 회의 기록\n\n앞 **굵게** 뒤 [자료](https://example.com/docs)\n\n* 하나\n* 둘\n\n```js\nconst a = 1;\n```\n\n\\[완료] a\\*b",
+  );
+  await close(page);
+  // Another document rebuilds the formatting from the Markdown alone.
+  await open(page, taskIds[1]);
+  await rich(page).focus();
+  await pasteClipboard(page, text);
+  await expect(
+    rich(page).getByRole("heading", { name: "회의 기록" }),
+  ).toBeVisible();
+  await expect(rich(page).locator("strong")).toHaveText("굵게");
+  await expect(rich(page).locator("li")).toHaveText(["하나", "둘"]);
+  await expect(rich(page).locator("pre code")).toHaveText("const a = 1;");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[1]}/documents/main`)).markdown,
+    )
+    .toBe(`${text}\n`);
 });
 
 test("HTML 붙여넣기는 서식을 보존하고 지원하지 않는 내용은 일반 텍스트로 남긴다", async ({

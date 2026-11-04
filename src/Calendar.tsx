@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import {
   CalendarDays,
@@ -44,6 +45,7 @@ import {
   saveCalendarTagCheck,
 } from "./calendar-tag-checks";
 import { useCalendarDrag, type CalendarRange } from "./useCalendarDrag";
+import { reorderItems, useListReorder } from "./useListReorder";
 import { useCalendarData } from "./useCalendarData";
 import {
   mergeCalendarLayout,
@@ -83,6 +85,51 @@ import "./calendar.css";
 const EMPTY_MEMBERS: User[] = [];
 const EMPTY_ENTRIES: CalendarEntry[] = [];
 const EMPTY_TAGS: CalendarTag[] = [];
+
+// A week's to-do items in their order. Dragging an item or Alt+Up/Down on it
+// moves it; the item itself is the handle, as calendar cards are.
+type ReorderHandle = ReturnType<
+  ReturnType<typeof useListReorder>["handleProps"]
+>;
+function WeeklyTaskList({
+  items,
+  disabled,
+  onMove,
+  renderItem,
+}: {
+  items: WeeklyItem[];
+  disabled: boolean;
+  onMove: (taskIds: string[]) => void;
+  renderItem: (item: WeeklyItem, handle: ReorderHandle) => ReactNode;
+}) {
+  const ids = items.map((item) => item.taskId);
+  const reorder = useListReorder<HTMLUListElement>(
+    ids,
+    (id, targetId, placement) => {
+      const next = reorderItems(
+        ids.map((taskId) => ({ id: taskId })),
+        id,
+        targetId,
+        placement,
+      ).map((item) => item.id);
+      if (next.join() !== ids.join()) onMove(next);
+    },
+    disabled,
+  );
+  return (
+    <ul ref={reorder.root}>
+      {items.map((item) => (
+        <li
+          key={item.taskId}
+          className="calendar-week-task"
+          {...reorder.itemProps(item.taskId)}
+        >
+          {renderItem(item, reorder.handleProps(item.taskId))}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function Calendar({
   team,
@@ -710,6 +757,37 @@ export default function Calendar({
       onNotify("");
     });
   }
+  // Moving a weekly item saves the week's new order. The list shows it at
+  // once and returns to the saved order when saving fails.
+  async function reorderWeekly(
+    ownerId: string,
+    start: string,
+    items: WeeklyItem[],
+    taskIds: string[],
+  ) {
+    if (!writable(ownerId) || busy.current) return;
+    const requestScope = scope;
+    const byId = new Map(items.map((item) => [item.taskId, item]));
+    updateWeekly(
+      ownerId,
+      start,
+      taskIds.map((id) => byId.get(id)!),
+    );
+    await action(async () => {
+      try {
+        const result = await send<{ weekly: WeeklyItem[] }>(
+          "/calendar/weekly/reorder",
+          { teamId: team.id, userId: ownerId, weekStart: start, taskIds },
+        );
+        if (!alive.current || activeScope.current !== requestScope) return;
+        updateWeekly(ownerId, start, result.weekly);
+      } catch (error) {
+        if (alive.current && activeScope.current === requestScope)
+          updateWeekly(ownerId, start, items);
+        throw error;
+      }
+    });
+  }
   async function restoreWeekly() {
     if (!removedWeekly || undoBlocked || busy.current) return;
     const restoring = removedWeekly;
@@ -955,11 +1033,22 @@ export default function Calendar({
             label="업무를 불러오는 중"
           />
         ) : items.length ? (
-          <ul>
-            {items.map((item) => (
-              <li key={item.taskId} className="calendar-week-task">
+          <WeeklyTaskList
+            items={items}
+            disabled={!editable || locked}
+            onMove={(taskIds) =>
+              void reorderWeekly(ownerId, start, items, taskIds)
+            }
+            renderItem={(item, handle) => (
+              <>
                 <button
                   className={`calendar-week-task-open${item.unavailable ? " is-unavailable" : ""}`}
+                  aria-keyshortcuts={
+                    editable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+                  }
+                  onPointerDown={handle.onPointerDown}
+                  onKeyDown={handle.onKeyDown}
+                  onClickCapture={handle.onClickCapture}
                   aria-description={
                     item.hasDocument
                       ? item.documentCount > 1
@@ -999,9 +1088,9 @@ export default function Calendar({
                     <X size={12} aria-hidden="true" />
                   </button>
                 )}
-              </li>
-            ))}
-          </ul>
+              </>
+            )}
+          />
         ) : (
           <p className="calendar-week-empty">등록된 업무가 없습니다.</p>
         )}

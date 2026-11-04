@@ -80,6 +80,12 @@ function fixture(t) {
         { id: randomUUID(), title: "Empty", markdown: " \n" },
       ],
     }),
+    second = insertTask(db, {
+      teamId,
+      year: Number(todayKey().slice(0, 4)),
+      actorId: userId,
+      fields: { title: "Reorder second" },
+    }),
     link = {
       team_id: teamId,
       repo_id: randomUUID(),
@@ -140,6 +146,7 @@ function fixture(t) {
     outsider,
     refId,
     taskId: task.id,
+    secondTaskId: second.id,
     link,
     state,
     app,
@@ -156,6 +163,7 @@ async function contract({
   outsider,
   refId,
   taskId,
+  secondTaskId,
   counts,
   failOnce,
   tombstone = async () => {},
@@ -547,6 +555,43 @@ async function contract({
     1,
     "a removed item can be selected again",
   );
+  // Reordering gives the week's items their times again in the new order.
+  // It needs the same permission as adding and the week's current items.
+  await service.addWeekly({
+    body: { ...weeklyBody, taskIds: [secondTaskId] },
+  });
+  const ordered = async () =>
+      (await service.listEntries({ query: week })).weekly.map((w) => w.taskId),
+    reorderBody = (taskIds) => ({
+      teamId,
+      userId: user.id,
+      weekStart,
+      taskIds,
+    });
+  await rejects(
+    () => view.reorderWeekly({ body: reorderBody([secondTaskId, taskId]) }),
+    403,
+  );
+  await rejects(
+    () => service.reorderWeekly({ body: reorderBody([taskId]) }),
+    409,
+  );
+  for (const order of [
+    [secondTaskId, taskId],
+    [taskId, secondTaskId],
+    [secondTaskId, taskId],
+  ]) {
+    assert.deepEqual(
+      (await service.reorderWeekly({ body: reorderBody(order) })).weekly.map(
+        (w) => w.taskId,
+      ),
+      order,
+    );
+    assert.deepEqual(await ordered(), order);
+  }
+  await service.removeWeekly({
+    body: { ...itemBody, taskId: secondTaskId },
+  });
   // The team view reads members on one range together; each member's part
   // equals that member's own read.
   const userIds = [user.id, refId, viewer.id];

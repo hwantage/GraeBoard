@@ -1,7 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { isDocumentImage } from "../shared/document-images.js";
 import { parseDocumentLinkPath } from "../shared/document-links.js";
-import { DocumentLinkTitles, useDocumentLinkOpener } from "./document-links";
+import {
+  DocumentLinkTitles,
+  copyToClipboard,
+  useDocumentLinkOpener,
+} from "./document-links";
 import {
   documentLinkSchema,
   documentLinkView,
@@ -10,12 +20,15 @@ import {
 } from "./DocumentLinkNode";
 import { documentImageView, type ImagePreview } from "./DocumentImageView";
 import { Button, Modal } from "./components";
+import Toast, { useToast } from "./Toast";
 import Select from "./Select";
 import DocumentLoading from "./DocumentLoading";
 import DocumentBlockHandle, {
   BLOCK_FORMATS,
   blockDrag,
   blockMoveKeydown,
+  blockSelect,
+  blockSelectKeydown,
   type BlockHandleApi,
 } from "./DocumentBlockHandle";
 import DocumentSlashMenu, {
@@ -85,6 +98,7 @@ import {
   Fragment,
   NodeRange,
   Slice,
+  type Mark,
   type Node,
 } from "@milkdown/kit/prose/model";
 import { keydownHandler } from "@milkdown/kit/prose/keymap";
@@ -107,7 +121,11 @@ import {
   Italic,
   Strikethrough,
   Code,
+  Copy,
+  ExternalLink,
   Link,
+  Pencil,
+  Unlink,
   Undo2,
   Redo2,
   List,
@@ -442,6 +460,79 @@ function safeClipboardSlice(slice: Slice) {
   return safe;
 }
 
+// The clipboard's plain text is the selection's Markdown, as Notion copies,
+// so chat apps and the Markdown source keep headings, lists and links. Part
+// of one line keeps only its inline formatting, and code inside a code block
+// stays plain code.
+function clipboardMarkdown(ctx: Ctx, slice: Slice) {
+  let { content, openStart, openEnd } = slice;
+  let line: Node | null = null;
+  while (content.childCount === 1 && openStart > 0 && openEnd > 0) {
+    const only = content.firstChild!;
+    if (only.isTextblock) {
+      line = only;
+      break;
+    }
+    content = only.content;
+    openStart--;
+    openEnd--;
+  }
+  // Plain words stay as written, without Markdown escapes such as "\[".
+  let plain = !!line;
+  line?.forEach((node) => {
+    if (!node.isText || node.marks.length) plain = false;
+  });
+  if (line && (plain || line.type.spec.code)) return line.textContent;
+  const { schema } = ctx.get(editorViewCtx).state;
+  try {
+    const doc = schema.topNodeType.createChecked(
+      null,
+      line ? schema.nodes.paragraph.create(null, line.content) : slice.content,
+    );
+    return ctx.get(serializerCtx)(doc).replace(/\n+$/, "");
+  } catch {
+    // ProseMirror falls back to the selection's text.
+    return "";
+  }
+}
+
+type LinkRange = { from: number; to: number; mark: Mark };
+// The link around the caret, including its edges, or the one link that holds
+// the whole selection. Between two links the caret belongs to the one before,
+// as typing there would extend it.
+function linkAround(state: EditorState): LinkRange | null {
+  const type = state.schema.marks.link;
+  const { selection } = state;
+  const { $from, $to } = selection;
+  if (!type || !(selection instanceof TextSelection) || !$from.sameParent($to))
+    return null;
+  const parent = $from.parent;
+  const offset = $from.parentOffset;
+  let mark: Mark | null | undefined = null;
+  let index = -1;
+  for (const hit of [
+    offset ? parent.childBefore(offset) : null,
+    parent.childAfter(offset),
+  ]) {
+    mark = hit?.node && type.isInSet(hit.node.marks);
+    if (mark) {
+      index = hit!.index;
+      break;
+    }
+  }
+  if (!mark) return null;
+  let first = index;
+  let last = index + 1;
+  while (first > 0 && mark.isInSet(parent.child(first - 1).marks)) first--;
+  while (last < parent.childCount && mark.isInSet(parent.child(last).marks))
+    last++;
+  let from = $from.start();
+  for (let i = 0; i < first; i++) from += parent.child(i).nodeSize;
+  let to = from;
+  for (let i = first; i < last; i++) to += parent.child(i).nodeSize;
+  return $from.pos >= from && $to.pos <= to ? { from, to, mark } : null;
+}
+
 function tableCellPaste(ctx: Ctx, text: string) {
   const { schema } = ctx.get(editorViewCtx).state;
   // GFM cells hold one paragraph. Store line breaks as supported inline HTML
@@ -498,8 +589,24 @@ export default function RichMarkdownEditor(props: Props) {
   const [canRedo, setCanRedo] = useState(false);
   const [inTable, setInTable] = useState(false);
   const [canDeleteRow, setCanDeleteRow] = useState(false);
-  const [link, setLink] = useState<string | null>(null);
+  // `original` is the target's text when the form opened.
+  type LinkForm = {
+    href: string;
+    text: string;
+    original: string;
+    editText: boolean;
+  };
+  const [link, setLink] = useState<LinkForm | null>(null);
+  const linkFormOpen = useRef(false);
+  linkFormOpen.current = link !== null;
   const [linkError, setLinkError] = useState("");
+  type LinkTip = { href: string; left: number; top: number };
+  const [linkTip, setLinkTip] = useState<LinkTip | null>(null);
+  const linkTipRef = useRef<LinkTip | null>(null);
+  const linkTipBox = useRef<HTMLDivElement>(null);
+  const linkTitlesRef = useRef<DocumentLinkTitles | null>(null);
+  const [notice, notify] = useToast();
+  const [noticeFailed, setNoticeFailed] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [linkOpenError, setLinkOpenError] = useState("");
   const [preview, setPreview] = useState<ImagePreview | null>(null);
@@ -579,12 +686,45 @@ export default function RichMarkdownEditor(props: Props) {
     slashRef.current = next;
     setSlash(next);
   }
+  // The link under the caret shows its address with actions below it.
+  function syncLinkTip(view: EditorView, focused = view.hasFocus()) {
+    const range =
+      focused && !latest.current.readOnly && !linkFormOpen.current
+        ? linkAround(view.state)
+        : null;
+    const box = shell.current;
+    let next: LinkTip | null = null;
+    if (range && box) {
+      const rect = box.getBoundingClientRect();
+      const scale = rect.width / box.offsetWidth || 1;
+      const start = view.coordsAtPos(range.from, 1);
+      const end = view.coordsAtPos(range.to, -1);
+      next = {
+        href: range.mark.attrs.href,
+        left: Math.max(0, (start.left - rect.left) / scale),
+        top: (end.bottom - rect.top) / scale + 6,
+      };
+    }
+    const current = linkTipRef.current;
+    if (
+      current === next ||
+      (current &&
+        next &&
+        current.href === next.href &&
+        Math.abs(current.left - next.left) < 0.5 &&
+        Math.abs(current.top - next.top) < 0.5)
+    )
+      return;
+    linkTipRef.current = next;
+    setLinkTip(next);
+  }
   useEffect(() => {
     let active = true;
     let initialized = false;
     const uploads = new Set<AbortController>();
     const pendingImages = new Set<Node>();
     const linkTitles = new DocumentLinkTitles();
+    linkTitlesRef.current = linkTitles;
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root.current);
@@ -647,9 +787,20 @@ export default function RichMarkdownEditor(props: Props) {
             spellcheck: "false",
             translate: "no",
           },
+          clipboardTextSerializer: (slice) => clipboardMarkdown(ctx, slice),
           handleDOMEvents: {
-            blur: () => {
+            focus: (view) => {
+              syncLinkTip(view, true);
+              return false;
+            },
+            blur: (view, event) => {
               closeSlash();
+              if (
+                !linkTipBox.current?.contains(
+                  (event as FocusEvent).relatedTarget as globalThis.Node,
+                )
+              )
+                syncLinkTip(view, false);
               return false;
             },
             click: (_view, event) => {
@@ -666,9 +817,14 @@ export default function RichMarkdownEditor(props: Props) {
                   linkOpener.current,
                   (message) => active && setLinkOpenError(message),
                 );
+              // A click opens a web link; selecting its text by dragging
+              // does not. The caret stays there for the link's actions.
               else if (
                 safeDocumentLink(href) &&
-                (latest.current.readOnly || event.metaKey || event.ctrlKey)
+                (latest.current.readOnly ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  document.getSelection()?.isCollapsed !== false)
               )
                 window.open(href, "_blank", "noopener,noreferrer");
               return true;
@@ -679,6 +835,7 @@ export default function RichMarkdownEditor(props: Props) {
               return false;
             if (blockHandle.current?.keydown(event)) return true;
             if (slashKeydown(event)) return true;
+            if (blockSelectKeydown(view, event)) return true;
             if (toggleKeydown(view, event)) return true;
             if (listFormatKeydown(view, event)) return true;
             if (blockMoveKeydown(view, event)) return true;
@@ -796,7 +953,8 @@ export default function RichMarkdownEditor(props: Props) {
                 if (next.type !== node.type) return false;
                 node = next;
                 const task = node.attrs.checked != null;
-                dom.className = task ? "document-check-item" : "";
+                // Keep classes from decorations, such as selected blocks.
+                dom.classList.toggle("document-check-item", task);
                 checkbox.hidden = !task;
                 checkbox.checked = !!node.attrs.checked;
                 checkbox.disabled = latest.current.readOnly;
@@ -837,6 +995,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(upload)
       .use(trailing)
       .use(blockDrag)
+      .use(blockSelect)
       .use(
         $prose(
           (ctx) =>
@@ -863,6 +1022,7 @@ export default function RichMarkdownEditor(props: Props) {
                     setInTable(isInTable(view.state));
                     setCanDeleteRow(deleteTableRow(view.state));
                     syncSlash(view);
+                    syncLinkTip(view);
                     blockHandle.current?.update(view, previous);
                   }
                   if (
@@ -911,6 +1071,7 @@ export default function RichMarkdownEditor(props: Props) {
       });
     return () => {
       active = false;
+      linkTitlesRef.current = null;
       linkTitles.dispose();
       pendingImages.clear();
       for (const controller of uploads) controller.abort();
@@ -960,7 +1121,12 @@ export default function RichMarkdownEditor(props: Props) {
     }
   }, [ready, props.remoteMarkdown]);
   useEffect(() => {
-    if (props.readOnly) closeSlash();
+    if (props.readOnly) {
+      closeSlash();
+      setLink(null);
+      linkTipRef.current = null;
+      setLinkTip(null);
+    }
     editorRef.current?.action((ctx) =>
       ctx.get(editorViewCtx).setProps({ editable: () => !props.readOnly }),
     );
@@ -970,6 +1136,25 @@ export default function RichMarkdownEditor(props: Props) {
         input.disabled = props.readOnly;
       });
   }, [props.readOnly]);
+  // The form above the text moves the link when it opens or closes, and a
+  // narrower window wraps it elsewhere.
+  useLayoutEffect(() => {
+    const sync = () => {
+      const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
+      if (view) syncLinkTip(view);
+    };
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, [link === null]);
+  // Keep the link's actions inside the document beside a link at its edge.
+  useLayoutEffect(() => {
+    const tip = linkTipBox.current;
+    const box = shell.current;
+    if (!tip || !box || !linkTip) return;
+    const overflow = linkTip.left + tip.offsetWidth - box.clientWidth;
+    tip.style.left = `${Math.max(0, linkTip.left - Math.max(0, overflow))}px`;
+  }, [linkTip]);
   function run(action: (ctx: Ctx) => unknown) {
     if (props.readOnly || !editorRef.current) return;
     editorRef.current.action(action);
@@ -1014,6 +1199,120 @@ export default function RichMarkdownEditor(props: Props) {
     if (value === "code") return commands.get(createCodeBlockCommand.key)();
     return null;
   }
+  // The form edits the link around the caret, or links the selection. The
+  // name can change when the target is plain text within one line.
+  function linkTarget(state: EditorState) {
+    const around = linkAround(state);
+    const { from, to } = around ?? state.selection;
+    const $from = state.doc.resolve(from);
+    let editText =
+      $from.parent.isTextblock && $from.sameParent(state.doc.resolve(to));
+    state.doc.nodesBetween(from, to, (node) => {
+      if (node.isInline && !node.isText) editText = false;
+    });
+    return {
+      from,
+      to,
+      around,
+      editText,
+      text: editText ? state.doc.textBetween(from, to) : "",
+    };
+  }
+  function openLinkForm() {
+    const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
+    if (!view || props.readOnly) return;
+    const target = linkTarget(view.state);
+    linkTipRef.current = null;
+    setLinkTip(null);
+    setLinkError("");
+    setLink({
+      href: target.around?.mark.attrs.href ?? "",
+      text: target.text,
+      original: target.text,
+      editText: target.editText,
+    });
+  }
+  function closeLinkForm() {
+    linkFormOpen.current = false;
+    setLink(null);
+    editorRef.current?.action((ctx) => ctx.get(editorViewCtx).focus());
+  }
+  function applyLink(form: LinkForm) {
+    const href = form.href.trim();
+    if (!safeDocumentLink(href)) {
+      setLinkError("https:// 또는 mailto:로 시작하는 주소를 입력하세요.");
+      return;
+    }
+    linkFormOpen.current = false;
+    setLink(null);
+    run((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const { state } = view;
+      const type = linkSchema.type(ctx);
+      const { from, to, around, editText, text: current } = linkTarget(state);
+      const mark = type.create({ ...around?.mark.attrs, href });
+      const text = form.text.trim() ? form.text : href;
+      // The name replaces only the text the form opened on, or fills an
+      // empty caret; a selection made since then is linked as it is.
+      const rename =
+        form.editText &&
+        editText &&
+        text !== current &&
+        (current === form.original || from === to);
+      const tr = state.tr;
+      if (rename) {
+        const marks =
+          from < to
+            ? (state.doc.nodeAt(from)?.marks ?? [])
+            : (state.storedMarks ?? state.selection.$from.marks());
+        tr.replaceWith(
+          from,
+          to,
+          state.schema.text(text, mark.addToSet(type.removeFromSet(marks))),
+        );
+        tr.setSelection(TextSelection.create(tr.doc, from + text.length));
+      } else if (from < to)
+        tr.removeMark(from, to, type).addMark(from, to, mark);
+      else return;
+      view.dispatch(tr.scrollIntoView());
+    });
+  }
+  function removeLink() {
+    run((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const around = linkAround(view.state);
+      if (around)
+        view.dispatch(
+          view.state.tr.removeMark(
+            around.from,
+            around.to,
+            linkSchema.type(ctx),
+          ),
+        );
+    });
+  }
+  function openLink(href: string, event: MouseEvent) {
+    const target = parseDocumentLinkPath(href);
+    if (target && linkTitlesRef.current)
+      openDocumentLink(
+        target,
+        event,
+        linkTitlesRef.current,
+        linkOpener.current,
+        setLinkOpenError,
+      );
+    else window.open(href, "_blank", "noopener,noreferrer");
+  }
+  async function copyLink(href: string) {
+    try {
+      await copyToClipboard(href);
+      setNoticeFailed(false);
+      notify("링크 주소를 복사했습니다.");
+    } catch {
+      setNoticeFailed(true);
+      notify("링크 주소를 복사하지 못했습니다. 다시 시도해 주세요.");
+    }
+  }
   function setBlock(value: string) {
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -1053,10 +1352,8 @@ export default function RichMarkdownEditor(props: Props) {
         else if (id === "table")
           command(insertTableCommand.key, { row: 3, col: 3 });
         else if (id === "hr") command(insertHrCommand.key);
-        else if (id === "link") {
-          setLink("");
-          setLinkError("");
-        } else setBlock(id);
+        else if (id === "link") openLinkForm();
+        else setBlock(id);
       },
     }),
   );
@@ -1130,14 +1427,7 @@ export default function RichMarkdownEditor(props: Props) {
               ["글머리 목록", List, () => setListFormat("bullet")],
               ["번호 목록", ListOrdered, () => setListFormat("ordered")],
               ["체크리스트", ListChecks, () => setListFormat("task")],
-              [
-                "링크",
-                Link,
-                () => {
-                  setLink("");
-                  setLinkError("");
-                },
-              ],
+              ["링크", Link, openLinkForm],
               [
                 "표 삽입",
                 Table2,
@@ -1229,41 +1519,37 @@ export default function RichMarkdownEditor(props: Props) {
               className="document-link-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!safeDocumentLink(link)) {
-                  setLinkError(
-                    "https:// 또는 mailto:로 시작하는 주소를 입력하세요.",
-                  );
-                  return;
-                }
-                run((ctx) => {
-                  const view = ctx.get(editorViewCtx),
-                    { from, to } = view.state.selection;
-                  let tr = view.state.tr;
-                  if (from === to) tr = tr.insertText(link, from);
-                  view.dispatch(
-                    tr
-                      .addMark(
-                        from,
-                        from === to ? from + link.length : to,
-                        linkSchema.type(ctx).create({ href: link }),
-                      )
-                      .scrollIntoView(),
-                  );
-                });
-                setLink(null);
+                applyLink(link);
+              }}
+              onKeyDown={(e) => {
+                // Esc closes the form, not the detail around it.
+                if (e.key !== "Escape") return;
+                e.preventDefault();
+                e.stopPropagation();
+                closeLinkForm();
               }}
             >
               <label>
-                링크 주소{" "}
+                <span>링크 주소</span>
                 <input
                   autoFocus
-                  value={link}
-                  onChange={(e) => setLink(e.target.value)}
+                  value={link.href}
+                  onChange={(e) => setLink({ ...link, href: e.target.value })}
                   placeholder="https://"
                 />
               </label>
+              {link.editText && (
+                <label>
+                  <span>표시 이름</span>
+                  <input
+                    value={link.text}
+                    onChange={(e) => setLink({ ...link, text: e.target.value })}
+                    placeholder="비워 두면 링크 주소"
+                  />
+                </label>
+              )}
               <button type="submit">적용</button>
-              <button type="button" onClick={() => setLink(null)}>
+              <button type="button" onClick={closeLinkForm}>
                 취소
               </button>
               {linkError && <span role="alert">{linkError}</span>}
@@ -1304,6 +1590,51 @@ export default function RichMarkdownEditor(props: Props) {
           onOpen={() => closeSlash()}
         />
       )}
+      {linkTip && (
+        <div
+          ref={linkTipBox}
+          className="document-link-tip"
+          role="group"
+          aria-label="링크"
+          style={{ left: linkTip.left, top: linkTip.top }}
+          onBlur={(event) => {
+            const next = event.relatedTarget as globalThis.Node | null;
+            if (
+              !event.currentTarget.contains(next) &&
+              !root.current?.contains(next)
+            ) {
+              linkTipRef.current = null;
+              setLinkTip(null);
+            }
+          }}
+        >
+          <span className="document-link-tip-href" title={linkTip.href}>
+            {linkTip.href}
+          </span>
+          {[
+            [
+              "링크 열기",
+              ExternalLink,
+              (event: MouseEvent) => openLink(linkTip.href, event),
+            ],
+            ["링크 주소 복사", Copy, () => void copyLink(linkTip.href)],
+            ["링크 수정", Pencil, openLinkForm],
+            ["링크 제거", Unlink, removeLink],
+          ].map(([label, Icon, onClick]: any) => (
+            <button
+              type="button"
+              key={label}
+              aria-label={label}
+              data-tooltip={label}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => onClick(e.nativeEvent)}
+            >
+              <Icon size={16} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      )}
+      <Toast message={notice} failed={noticeFailed} />
       {slash && !props.readOnly && visibleSlashItems.length > 0 && (
         <DocumentSlashMenu
           items={visibleSlashItems}

@@ -19,6 +19,7 @@ import {
   calendarWeek,
   calendarRuleProblem,
   nextCalendarCopyTitle,
+  weeklyOrderStamps,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
 } from "../../shared/calendar.js";
@@ -785,10 +786,51 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           data.weekStart,
           data.taskId,
           String(parse(task.title, "") || "제목 없음"),
-          data.importedAt,
+          new Date(data.importedAt).toISOString(),
         ).changes;
       return {
         restored: Number(restored),
+        weekly: weeklyItems(
+          data.teamId,
+          data.userId,
+          data.weekStart,
+          data.weekStart,
+        ),
+      };
+    });
+  };
+  // A new order gives the week's items their times again in that order
+  // (weeklyOrderStamps). The list must still hold exactly these items.
+  operations.reorderWeekly = (request) => {
+    const data = request.body;
+    writable(request.user, data.teamId, data.userId);
+    return transaction(db, () => {
+      const current = db
+        .prepare(
+          "SELECT task_id AS taskId,imported_at AS importedAt FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? ORDER BY imported_at,task_id",
+        )
+        .all(data.teamId, data.userId, data.weekStart);
+      requireThat(
+        current.length === data.taskIds.length &&
+          current.every((item) => data.taskIds.includes(item.taskId)),
+        409,
+        "다른 곳에서 이 주의 할 일이 바뀌었습니다. 목록을 다시 확인한 뒤 순서를 바꾸세요.",
+      );
+      const update = db.prepare(
+        "UPDATE calendar_weekly_items SET imported_at=? WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
+      );
+      for (const [taskId, importedAt] of weeklyOrderStamps(
+        current,
+        data.taskIds,
+      ))
+        update.run(
+          importedAt,
+          data.teamId,
+          data.userId,
+          data.weekStart,
+          taskId,
+        );
+      return {
         weekly: weeklyItems(
           data.teamId,
           data.userId,

@@ -261,15 +261,67 @@
   font-size: 12px;
   background: var(--accent-soft);
 }
-.document-link-form label {
+/* Outranks the stacked labels of forms in dialogs: one line per field. */
+.rich-document .document-link-form > label:not(.checkbox) {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  font-size: inherit;
+  font-weight: 500;
+}
+.document-link-form label > span {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .document-link-form input {
   width: 100%;
   min-width: 100px;
+}
+/* The link under the caret: its address and actions below it. Only the
+   buttons take clicks, so the text the tip covers stays clickable. */
+.document-link-tip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: min(440px, 100%);
+  padding: 5px 6px 5px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+.document-link-tip-href {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 8px;
+  overflow: hidden;
+  font-family: "Nanum Gothic Coding", monospace;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.document-link-tip button {
+  pointer-events: auto;
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.document-link-tip button:hover,
+.document-link-tip button:focus-visible {
+  background: var(--accent-pastel);
+  color: var(--ink);
 }
 .document-link-form button,
 .document-error button,
@@ -357,6 +409,19 @@
 .document-full-page .modal-body > * {
   width: min(1120px, 100%);
   margin-inline: auto;
+}
+.document-full-page.document-full-width .modal-body > * {
+  width: 100%;
+}
+/* The width toggle sits left of the close button, also without actions. */
+.modal > header > .modal-heading + .document-full-width {
+  margin-left: auto;
+}
+.task-detail-modal > header .document-full-width {
+  flex-shrink: 0;
+}
+.task-detail-modal > header > .document-full-width + .button {
+  margin-left: 0;
 }
 .document-full-page .document-prose .ProseMirror {
   min-height: 55dvh;
@@ -446,6 +511,27 @@
 }
 .document-prose .document-block-dragging {
   opacity: 0.35;
+}
+/* Blocks selected together; their text selection is not drawn twice. */
+.document-prose .document-block-selected {
+  border-radius: 4px;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.document-prose .document-blocks-selected ::selection {
+  background: transparent;
+}
+.document-block-marquee {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+body.document-block-selecting,
+body.document-block-selecting * {
+  user-select: none !important;
 }
 
 /* 토글 블록 */
@@ -1073,7 +1159,8 @@
 .memo-document-heading > div {
   flex-shrink: 0;
 }
-.memo-document-heading :is(.document-expand, .document-link-copy) {
+.memo-document-heading
+  :is(.document-expand, .document-link-copy, .document-full-width) {
   border: 0;
   padding: 5px;
   min-height: 27px;
@@ -1225,11 +1312,21 @@ button.memo-document-title {
   box-sizing: border-box;
   overflow: hidden;
 }
+/* The page scrolls across the window's whole width, with its scrollbar at
+   the window's edge; the document stays in the middle column. */
 .memo-document-card.memo-full-page .memo-document-body {
-  width: min(1120px, calc(100% - 48px));
-  margin: 16px auto;
+  width: 100%;
+  margin: 0;
+  padding-bottom: 16px;
   border: 0;
   border-radius: 0;
+}
+.memo-document-card.memo-full-page .memo-document-body > * {
+  width: min(1120px, calc(100% - 48px));
+  margin-inline: auto;
+}
+.memo-document-card.memo-full-page.document-full-width .memo-document-body > * {
+  width: calc(100% - 48px);
 }
 .memo-document-card.memo-full-page .memo-document-heading {
   width: 100%;
@@ -1241,6 +1338,9 @@ button.memo-document-title {
 .memo-full-page .memo-document-title {
   font-size: 20px;
 }
+.memo-document-heading .document-full-width {
+  margin-left: auto;
+}
 .memo-document-heading .memo-document-close {
   margin-left: auto;
   border: 0;
@@ -1248,6 +1348,13 @@ button.memo-document-title {
   min-height: 27px;
   background: transparent;
   color: var(--muted);
+}
+.memo-document-heading .document-full-width + .memo-document-close {
+  margin-left: 0;
+}
+/* A top padding on the scrolling body would also drop the sticky toolbar. */
+.memo-full-page .memo-full-page-controls {
+  margin-top: 16px;
 }
 .memo-full-page-controls {
   display: flex;

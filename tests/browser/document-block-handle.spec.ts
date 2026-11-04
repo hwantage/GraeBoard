@@ -357,6 +357,167 @@ test("Alt+Shift+위/아래 방향키로 현재 블록을 옮기고 목록·토�
   );
 });
 
+// Select the text from the start of one element to the end of another.
+async function selectAcross(
+  page: Page,
+  first: ReturnType<Page["locator"]>,
+  last: ReturnType<Page["locator"]>,
+) {
+  const end = await last.elementHandle();
+  await first.evaluate((start, end) => {
+    const range = document.createRange();
+    range.setStart(start, 0);
+    range.setEnd(end!, end!.childNodes.length);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    (start.closest("[contenteditable]") as HTMLElement).focus();
+  }, end);
+  await rich(page).evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+}
+const selected = (page: Page) => rich(page).locator(".document-block-selected");
+
+test("여러 블록에 걸친 선택은 손잡이·메뉴·방향키로 함께 옮기고 복제·삭제한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "하나\n\n둘\n\n셋\n\n넷\n\n다섯");
+  await open(page);
+  const blocks = rich(page).locator(":scope > *");
+  await selectAcross(page, blocks.nth(1), blocks.nth(2));
+  // Any selected block's handle drags all of them.
+  await hover(page, blocks.nth(2));
+  const fourth = (await blocks.nth(3).boundingBox())!;
+  const box = (await handle(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, fourth.y + fourth.height - 3, {
+    steps: 8,
+  });
+  await expect(rich(page).locator(".document-block-dragging")).toHaveText([
+    "둘",
+    "셋",
+  ]);
+  await page.mouse.up();
+  await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("하나\n\n넷\n\n둘\n\n셋\n\n다섯"));
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(blocks).toHaveText(["하나", "둘", "셋", "넷", "다섯"]);
+
+  // The keys move the selected blocks one step at a time.
+  await selectAcross(page, blocks.nth(1), blocks.nth(2));
+  await page.keyboard.press("Alt+Shift+ArrowUp");
+  await expect(blocks).toHaveText(["둘", "셋", "하나", "넷", "다섯"]);
+  await page.keyboard.press("Alt+Shift+ArrowDown");
+  await page.keyboard.press("Alt+Shift+ArrowDown");
+  await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
+
+  // The menu duplicates and deletes them together.
+  await hover(page, blocks.nth(2));
+  await handle(page).click();
+  await option(page, "복제").click();
+  await expect(blocks).toHaveText([
+    "하나",
+    "넷",
+    "둘",
+    "셋",
+    "둘",
+    "셋",
+    "다섯",
+  ]);
+  await hover(page, blocks.nth(4));
+  await handle(page).click();
+  await option(page, "삭제").click();
+  await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("하나\n\n넷\n\n둘\n\n셋\n\n다섯"));
+});
+
+test("커서가 토글 제목에 있어도 안쪽 블록의 손잡이는 그 블록만 다룬다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "<details open>\n<summary>토글 제목</summary>\n\n안쪽 하나\n\n안쪽 둘\n\n</details>\n\n바깥 문단",
+  );
+  await open(page);
+  await place(page, rich(page).locator(".document-toggle-title"));
+  const inner = rich(page).locator(".document-toggle-content p");
+  await hover(page, inner.nth(0));
+  await handle(page).click();
+  await option(page, "삭제").click();
+  await expect(inner).toHaveText(["안쪽 둘"]);
+  await expect(rich(page).locator(".document-toggle-title")).toHaveText(
+    "토글 제목",
+  );
+  await expect
+    .poll(() => markdown(page))
+    .toContain("<summary>토글 제목</summary>\n\n안쪽 둘\n\n</details>");
+});
+
+test("본문 옆 여백을 끌거나 Shift+클릭으로 블록을 선택해 옮기고 지운다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "하나\n\n둘\n\n---\n\n* 가\n* 나\n* 다\n\n끝");
+  await open(page);
+  const blocks = rich(page).locator(":scope > *");
+  const prose = (await detail(page).locator(".document-prose").boundingBox())!;
+  const first = (await blocks.nth(0).boundingBox())!;
+  const divider = (await blocks.nth(2).boundingBox())!;
+  // Dragging down the left margin selects the blocks it passes, the divider
+  // included, and Esc cancels.
+  await page.mouse.move(prose.x + 6, first.y + 4);
+  await page.mouse.down();
+  await page.mouse.move(prose.x + 120, divider.y + divider.height / 2, {
+    steps: 6,
+  });
+  await expect(detail(page).locator(".document-block-marquee")).toBeVisible();
+  await expect(selected(page)).toHaveCount(3);
+  await page.mouse.up();
+  await expect(detail(page).locator(".document-block-marquee")).toHaveCount(0);
+  await expect(selected(page)).toHaveCount(3);
+  await expect(rich(page)).toBeFocused();
+  await page.keyboard.press("Alt+Shift+ArrowDown");
+  await expect(blocks.nth(0)).toHaveText("가나다");
+  await expect(selected(page)).toHaveCount(3);
+  await page.keyboard.press("Backspace");
+  await expect(blocks).toHaveText(["가나다", "끝"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("* 가\n* 나\n* 다\n\n끝"));
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(blocks).toHaveCount(5);
+  await expect(selected(page)).toHaveCount(0);
+
+  // Shift+click on a handle selects from the caret's block to that block.
+  const items = rich(page).locator("li");
+  await place(page, items.nth(0));
+  await hover(page, items.nth(1));
+  await handle(page).click({ modifiers: ["Shift"] });
+  await expect(selected(page)).toHaveText(["가", "나"]);
+  await expect(menu(page)).toHaveCount(0);
+  await page.keyboard.press("Alt+Shift+ArrowDown");
+  await expect(items).toHaveText(["다", "가", "나"]);
+  await expect.poll(() => markdown(page)).toContain("* 다\n* 가\n* 나");
+  // Esc keeps the caret and ends the block selection, not the detail.
+  await page.keyboard.press("Escape");
+  await expect(selected(page)).toHaveCount(0);
+  await expect(detail(page)).toBeVisible();
+  // A click in the margin also ends it.
+  await place(page, items.nth(0));
+  await hover(page, items.nth(2));
+  await handle(page).click({ modifiers: ["Shift"] });
+  await expect(selected(page)).toHaveText(["다", "가", "나"]);
+  await page.mouse.click(prose.x + 6, (await items.nth(0).boundingBox())!.y);
+  await expect(selected(page)).toHaveCount(0);
+});
+
 test("읽기 전용 문서와 원문 모드에는 블록 손잡이가 없다", async ({ page }) => {
   await save(page, taskIds[0], "# 읽기 전용\n\n둘째 문단");
   await open(page);
