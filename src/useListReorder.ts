@@ -32,7 +32,8 @@ export function useListReorder<T extends HTMLElement>(
 ) {
   const root = useRef<T>(null);
   const cleanup = useRef<(() => void) | null>(null);
-  const suppressClickUntil = useRef(0);
+  // The release that ends a drag is no click on the dragged item.
+  const suppressClick = useRef({ id: "", until: 0 });
   const horizontal = axis === "horizontal";
   const [drag, setDrag] = useState<{
     id: string;
@@ -131,7 +132,7 @@ export function useListReorder<T extends HTMLElement>(
           pointer = { x: position.clientX, y: position.clientY };
           locate();
         }
-        if (horizontal && moved) suppressClickUntil.current = Date.now() + 250;
+        if (moved) suppressClick.current = { id, until: Date.now() + 250 };
         cancelAnimationFrame(frame);
         cleanup.current = null;
         setDrag(null);
@@ -172,7 +173,10 @@ export function useListReorder<T extends HTMLElement>(
         ? "드래그하여 순서 이동 · Alt+왼쪽/오른쪽 방향키"
         : "드래그하여 순서 이동 · Alt+위/아래 방향키",
       onClickCapture: (event: MouseEvent<HTMLButtonElement>) => {
-        if (horizontal && Date.now() < suppressClickUntil.current) {
+        if (
+          suppressClick.current.id === id &&
+          Date.now() < suppressClick.current.until
+        ) {
           event.preventDefault();
           event.stopPropagation();
         }

@@ -661,6 +661,23 @@
   :is(.calendar-week-document, .calendar-task-document) {
   color: color-mix(in srgb, var(--document-accent) 35%, var(--ink));
 }
+/* Where a dragged item lands: a line in the gap above or below the item. */
+.calendar-week-task[data-reorder-drop]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.calendar-week-task[data-reorder-drop="before"]::after {
+  top: -4px;
+}
+.calendar-week-task[data-reorder-drop="after"]::after {
+  bottom: -4px;
+}
 .calendar-week-task .calendar-week-task-remove {
   position: absolute;
   top: -7px;

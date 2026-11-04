@@ -121,6 +121,19 @@ const bodySchemas = {
   restoreWeekly: weeklyItemSchema
     .extend({ importedAt: z.string().datetime() })
     .strict(),
+  // The week's items in their new order, all of them.
+  reorderWeekly: weeklyScopeSchema
+    .extend({
+      taskIds: z
+        .array(uuid)
+        .min(1)
+        .max(500)
+        .refine(
+          (ids) => new Set(ids).size === ids.length,
+          "같은 업무를 중복으로 지정할 수 없습니다.",
+        ),
+    })
+    .strict(),
   createEntry: scopeSchema
     .extend({
       userId: uuid.nullable(),
@@ -316,6 +329,12 @@ export const CALENDAR_ROUTES = [
     status: 200,
   },
   {
+    name: "reorderWeekly",
+    method: "POST",
+    path: "/calendar/weekly/reorder",
+    status: 200,
+  },
+  {
     name: "createEntry",
     method: "POST",
     path: "/calendar/entries",
@@ -455,6 +474,9 @@ export class CalendarBusinessService {
   }
   restoreWeekly(request) {
     return this.execute("restoreWeekly", request);
+  }
+  reorderWeekly(request) {
+    return this.execute("reorderWeekly", request);
   }
   createEntry(request) {
     return this.execute("createEntry", request);

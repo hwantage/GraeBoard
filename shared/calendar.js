@@ -106,3 +106,26 @@ export function nextCalendarCopyTitle(title, existingTitles) {
     number++;
   }
 }
+
+// A week's to-do items are listed by importedAt, then task ID. Reordering
+// hands the same times out again in the new order, made strictly increasing,
+// so items added later still come last. Both sites use this, and only items
+// whose time changes are written.
+/**
+ * @param {{taskId: string, importedAt: string}[]} current items in their order
+ * @param {string[]} taskIds the same items in the new order
+ * @returns {Map<string, string>} new importedAt by task ID, changed ones only
+ */
+export function weeklyOrderStamps(current, taskIds) {
+  const times = current.map((item) => Date.parse(item.importedAt));
+  times.sort((a, b) => a - b);
+  for (let i = 1; i < times.length; i++)
+    if (times[i] <= times[i - 1]) times[i] = times[i - 1] + 1;
+  const before = new Map(current.map((item) => [item.taskId, item.importedAt]));
+  const changed = new Map();
+  taskIds.forEach((taskId, index) => {
+    const stamp = new Date(times[index]).toISOString();
+    if (before.get(taskId) !== stamp) changed.set(taskId, stamp);
+  });
+  return changed;
+}

@@ -23,6 +23,7 @@ import {
   calendarWeek,
   calendarRuleProblem,
   nextCalendarCopyTitle,
+  weeklyOrderStamps,
   CALENDAR_DAYS,
 } from "../../shared/calendar.js";
 import { firstCalendarLane } from "../../shared/calendar-layout.js";
@@ -187,15 +188,28 @@ async function checkedTags(s, userId, ids, checked = []) {
   }
   return tags;
 }
+// The time an item joined its week orders the list, as on the internal site.
+// Items shared before importedAt use the time this site stored them.
+const weeklyImportedAt = (r) => r.payload.importedAt || stamp(r);
+const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 async function weekly(s, userId, from, to) {
-  const rows = (await s.list("weekly")).filter(
-    (r) =>
-      !(
-        (userId && r.key[0] !== userId) ||
-        (from && r.key[1] < calendarWeek(from)) ||
-        (to && r.key[1] > to)
-      ),
-  );
+  const rows = (await s.list("weekly"))
+    .filter(
+      (r) =>
+        !(
+          (userId && r.key[0] !== userId) ||
+          (from && r.key[1] < calendarWeek(from)) ||
+          (to && r.key[1] > to)
+        ),
+    )
+    .map((r) => ({ r, importedAt: weeklyImportedAt(r) }))
+    .sort(
+      (a, b) =>
+        compareText(a.r.key[1], b.r.key[1]) ||
+        compareText(a.importedAt, b.importedAt) ||
+        compareText(a.r.key[2], b.r.key[2]),
+    )
+    .map(({ r }) => r);
   // Each item shows its task's current title; read them together.
   await s.getMany(
     "task",
@@ -222,7 +236,7 @@ async function weekly(s, userId, from, to) {
       title: available
         ? String(title?.payload.value || r.payload.title)
         : r.payload.title,
-      importedAt: stamp(r),
+      importedAt: weeklyImportedAt(r),
       unavailable: !available,
       documentCount: summary?.count || 0,
       hasDocument: !!summary?.content,
@@ -589,8 +603,8 @@ async function calendarOperation(ctx, operation, params, body, query) {
             await s.put("weekly", key, existing.payload, { deleted: true });
           return { removed: Number(linked), weekly: await weekItems(s, body) };
         }
-        // Undo links the task again, also when its original was deleted.
-        // PostgreSQL lists weekly items by key, so the position returns too.
+        // Undo links the task again at its earlier time, so in its earlier
+        // place, also when its original was deleted.
         const task = await s.get("task", [body.taskId]);
         assert(
           task && !task.deleted,
@@ -603,8 +617,36 @@ async function calendarOperation(ctx, operation, params, body, query) {
               (await s.get("cell", [body.taskId, "title"]))?.payload.value ||
                 "제목 없음",
             ),
+            importedAt: new Date(body.importedAt).toISOString(),
           });
         return { restored: Number(!linked), weekly: await weekItems(s, body) };
+      },
+      { write: true, body, action: "calendar-weekly" },
+    );
+  }
+  // A new order gives the week's items their times again in that order
+  // (weeklyOrderStamps). The list must still hold exactly these items.
+  if (operation === "reorderWeekly") {
+    await writable(ctx, body.teamId, body.userId);
+    return ctx.data(
+      body.teamId,
+      async (s) => {
+        const current = await weekItems(s, body);
+        assert(
+          current.length === body.taskIds.length &&
+            current.every((item) => body.taskIds.includes(item.taskId)),
+          409,
+          "다른 곳에서 이 주의 할 일이 바뀌었습니다. 목록을 다시 확인한 뒤 순서를 바꾸세요.",
+        );
+        for (const [taskId, importedAt] of weeklyOrderStamps(
+          current,
+          body.taskIds,
+        )) {
+          const key = [body.userId, body.weekStart, taskId];
+          const existing = await s.get("weekly", key);
+          await s.put("weekly", key, { ...existing.payload, importedAt });
+        }
+        return { weekly: await weekItems(s, body) };
       },
       { write: true, body, action: "calendar-weekly" },
     );
@@ -661,6 +703,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
           "업무 목록을 확인하세요.",
         );
         let added = 0;
+        const importedAt = new Date().toISOString();
         await s.getMany(
           "task",
           ids.map((id) => [id]),
@@ -689,6 +732,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
                 (await s.get("cell", [id, "title"]))?.payload.value ||
                   "제목 없음",
               ),
+              importedAt,
             });
             added++;
           }
