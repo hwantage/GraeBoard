@@ -65,8 +65,9 @@ export default function ColorMenu({
             aria-label={label}
             onKeyDown={onKeyDown}
             onMouseDown={(event) => {
-              // WebKit can focus the surrounding modal before a button click.
-              if ((event.target as Element).closest("button"))
+              // WebKit focuses the surrounding modal when a non-input part of
+              // the popup is pressed, which reads as an outside focus.
+              if (!(event.target instanceof HTMLInputElement))
                 event.preventDefault();
             }}
           >
@@ -77,7 +78,6 @@ export default function ColorMenu({
                 onApply(color);
                 close();
               }}
-              onCancel={close}
             />
           </div>,
           container(),

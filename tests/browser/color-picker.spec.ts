@@ -36,24 +36,42 @@ async function save(page: Page, action: () => Promise<unknown>) {
     page.getByRole("button", { name: "배경색", exact: true }),
   ).toBeEnabled();
 }
-async function custom(page: Page, label: string) {
+async function open(page: Page, label: string) {
   await page.getByRole("button", { name: label, exact: true }).click();
   const popup = page.getByRole("dialog", { name: label, exact: true });
-  await popup.getByRole("button", { name: "다른 색", exact: true }).click();
   await expect(
-    popup.getByRole("textbox", { name: "HEX", exact: true }),
-  ).toBeFocused();
+    popup.getByRole("textbox", { name: `${label} HEX`, exact: true }),
+  ).toBeVisible();
   return popup;
 }
-async function drag(page: Page, surface: Locator) {
-  const rect = (await surface.boundingBox())!;
-  await page.mouse.move(rect.x + rect.width * 0.1, rect.y + rect.height * 0.2);
-  await page.mouse.down();
-  await page.mouse.move(rect.x + rect.width * 0.9, rect.y + rect.height * 0.7, {
-    steps: 12,
-  });
-  await page.mouse.up();
+// The browser's own picker is native UI, so replay what it sends: one
+// "input" per color passed while dragging and one "change" on confirm.
+async function drag(
+  popup: Locator,
+  label: string,
+  colors: string[],
+  confirm = true,
+) {
+  await popup.getByLabel(`${label} 직접 선택`, { exact: true }).evaluate(
+    (input: HTMLInputElement, { colors, confirm }) => {
+      const set = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      for (const color of colors) {
+        set.call(input, color);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (confirm) input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { colors, confirm },
+  );
+  return colors.at(-1)!;
 }
+const sweep = Array.from(
+  { length: 12 },
+  (_, i) => `#${(0x203040 + i * 0x0a0b0c).toString(16)}`,
+);
 function writes(page: Page) {
   const requests: string[] = [];
   page.on("request", (r) => {
@@ -104,117 +122,111 @@ test.beforeEach(async ({ page }) => {
   await target(page).click();
 });
 
-test("사각형·색상 막대 드래그는 확인 때 한 번 저장하고 한 번 실행취소한다", async ({
+test("기본 선택기로 끄는 동안은 저장하지 않고 확정할 때 한 번 저장·한 번 실행취소한다", async ({
   page,
 }) => {
   const before = await stored(page);
   const requests = writes(page);
-  const popup = await custom(page, "배경색");
-  await drag(
-    page,
-    popup.getByRole("slider", { name: "채도와 명도", exact: true }),
-  );
-  await drag(page, popup.getByRole("slider", { name: "색상", exact: true }));
-  const hex = await popup
-    .getByRole("textbox", { name: "HEX", exact: true })
-    .inputValue();
+  const popup = await open(page, "배경색");
+  const last = await drag(popup, "배경색", sweep, false);
+  await expect(
+    popup.getByRole("textbox", { name: "배경색 HEX", exact: true }),
+  ).toHaveValue(last);
   expect(requests).toEqual([]);
   expect(await stored(page)).toEqual(before);
-  await save(page, () =>
-    popup.getByRole("button", { name: "확인", exact: true }).click(),
-  );
+  await save(page, () => drag(popup, "배경색", [last]));
+  await expect(popup).toHaveCount(0);
   expect(requests).toEqual(["/api/cells/batch"]);
-  expect((await stored(page)).backgroundColor).toBe(hex);
+  expect((await stored(page)).backgroundColor).toBe(last);
   await save(page, () =>
     page.getByRole("button", { name: "실행취소", exact: true }).click(),
   );
   expect(await stored(page)).toEqual(before);
 });
 
-test("HEX 기본 초점·유효성·Enter와 키보드 조절·Esc 취소를 지원한다", async ({
+test("다른 색의 HEX 칸은 처음부터 현재 색을 보이고 유효성·Enter·Esc를 지원한다", async ({
   page,
 }) => {
   const requests = writes(page);
-  let popup = await custom(page, "배경색");
-  const hex = popup.getByRole("textbox", { name: "HEX", exact: true });
+  let popup = await open(page, "배경색");
+  let hex = popup.getByRole("textbox", { name: "배경색 HEX", exact: true });
+  await expect(hex).toHaveValue("#ffffff");
+  await expect(popup.getByRole("alert")).toHaveCount(0);
   await hex.fill("#1234567");
   await hex.press("Enter");
   await expect(hex).toHaveAttribute("aria-invalid", "true");
-  expect(requests).toEqual([]);
   await hex.fill("#gggggg");
   await hex.press("Enter");
-  await expect(hex).toHaveAttribute("aria-invalid", "true");
   await expect(popup.getByRole("alert")).toBeVisible();
-  await expect(
-    popup.getByRole("button", { name: "확인", exact: true }),
-  ).toBeDisabled();
   expect(requests).toEqual([]);
   await hex.fill("#aBc");
   await save(page, () => hex.press("Enter"));
   expect((await stored(page)).backgroundColor).toBe("#aabbcc");
-  popup = await custom(page, "배경색");
-  await popup.getByRole("textbox", { name: "HEX", exact: true }).fill("123ABC");
-  await save(page, () => page.keyboard.press("Enter"));
+  popup = await open(page, "배경색");
+  hex = popup.getByRole("textbox", { name: "배경색 HEX", exact: true });
+  await expect(hex).toHaveValue("#aabbcc");
+  await hex.fill("123ABC");
+  await save(page, () => hex.press("Enter"));
   expect((await stored(page)).backgroundColor).toBe("#123abc");
   const count = requests.length;
-  popup = await custom(page, "배경색");
-  const saturation = popup.getByRole("slider", {
-    name: "채도와 명도",
-    exact: true,
-  });
-  await saturation.focus();
-  await saturation.press("ArrowLeft");
-  await saturation.press("ArrowUp");
+  popup = await open(page, "배경색");
   await popup
-    .getByRole("slider", { name: "색상", exact: true })
-    .press("Shift+ArrowRight");
+    .getByRole("textbox", { name: "배경색 HEX", exact: true })
+    .fill("#ffffff");
   await page.keyboard.press("Escape");
   await expect(popup).toHaveCount(0);
   expect(requests).toHaveLength(count);
   expect((await stored(page)).backgroundColor).toBe("#123abc");
-  popup = await custom(page, "배경색");
-  await popup.getByRole("button", { name: "취소", exact: true }).press("Enter");
-  await expect(popup).toHaveCount(0);
-  expect(requests).toHaveLength(count);
 });
 
-test("드래그 중 Escape·pointercancel과 바깥 클릭은 저장·최근 색 없이 취소한다", async ({
+test("스포이드로 고른 색은 바로 한 번 적용하고 지원하지 않는 브라우저에서는 숨긴다", async ({
+  page,
+}) => {
+  // EyeDropper is native UI; replace it with one that returns a fixed color.
+  await page.addInitScript(() => {
+    (window as any).EyeDropper = class {
+      open() {
+        return Promise.resolve({ sRGBHex: "#3a7bd5" });
+      }
+    };
+  });
+  await page.reload();
+  await target(page).click();
+  const requests = writes(page);
+  const popup = await open(page, "배경색");
+  await save(page, () =>
+    popup.getByRole("button", { name: "스포이드", exact: true }).click(),
+  );
+  await expect(popup).toHaveCount(0);
+  expect(requests).toEqual(["/api/cells/batch"]);
+  expect((await stored(page)).backgroundColor).toBe("#3a7bd5");
+  await expect(
+    (await open(page, "배경색")).getByRole("button", {
+      name: "최근 색 #3a7bd5",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.addInitScript(() => delete (window as any).EyeDropper);
+  await page.reload();
+  await target(page).click();
+  await expect(
+    (await open(page, "배경색")).getByRole("button", {
+      name: "스포이드",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
+test("기본 선택기를 끄다가 Esc·바깥 클릭으로 닫으면 저장·최근 색 없이 취소한다", async ({
   page,
 }) => {
   const requests = writes(page);
-  for (const cancel of ["Escape", "pointercancel", "outside"]) {
-    const popup = await custom(page, "배경색");
-    const surface = popup.getByRole("slider", {
-      name: "채도와 명도",
-      exact: true,
-    });
-    if (cancel === "outside") {
-      await drag(page, surface);
-      await target(page).click();
-    } else {
-      const box = (await surface.boundingBox())!;
-      await page.mouse.move(box.x + 10, box.y + 10);
-      await surface.evaluate((element) =>
-        element.addEventListener(
-          "pointerdown",
-          (event) =>
-            element.setAttribute(
-              "data-test-pointer",
-              String((event as PointerEvent).pointerId),
-            ),
-          { once: true },
-        ),
-      );
-      await page.mouse.down();
-      await page.mouse.move(box.x + 80, box.y + 80);
-      if (cancel === "Escape") await page.keyboard.press("Escape");
-      else
-        await surface.dispatchEvent("pointercancel", {
-          pointerId: Number(await surface.getAttribute("data-test-pointer")),
-          pointerType: "mouse",
-        });
-      await page.mouse.up();
-    }
+  for (const cancel of ["Escape", "outside"]) {
+    const popup = await open(page, "배경색");
+    await drag(popup, "배경색", sweep, false);
+    if (cancel === "Escape") await page.keyboard.press("Escape");
+    else await target(page).click();
     await expect(popup).toHaveCount(0);
     expect(requests).toEqual([]);
     expect(
@@ -350,22 +362,16 @@ test("중첩 테두리 색 선택은 초안을 유지하고 테두리 적용을 
 }) => {
   const requests = writes(page);
   await page.getByRole("button", { name: "테두리", exact: true }).click();
-  let popup = await custom(page, "테두리 선 색상");
-  await drag(
-    page,
-    popup.getByRole("slider", { name: "채도와 명도", exact: true }),
-  );
-  await drag(page, popup.getByRole("slider", { name: "색상", exact: true }));
-  const color = await popup
-    .getByRole("textbox", { name: "HEX", exact: true })
-    .inputValue();
+  let popup = await open(page, "테두리 선 색상");
+  const color = await drag(popup, "테두리 선 색상", sweep, false);
   expect(requests).toEqual([]);
-  await popup.getByRole("button", { name: "확인", exact: true }).click();
+  await drag(popup, "테두리 선 색상", [color]);
+  await expect(popup).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "선택 영역 테두리", exact: true }),
   ).toBeVisible();
   expect(requests).toEqual([]);
-  popup = await custom(page, "테두리 선 색상");
+  popup = await open(page, "테두리 선 색상");
   await page.keyboard.press("Escape");
   await expect(popup).toHaveCount(0);
   await expect(
@@ -378,7 +384,7 @@ test("중첩 테두리 색 선택은 초안을 유지하고 테두리 적용을 
   expect((await stored(page)).borderBottom.color).toBe(color);
 });
 
-test("기본 서식 모달 안 중첩 테두리 색은 드래그·확인 후 한 번 적용하고 실행취소한다", async ({
+test("기본 서식 모달 안 중첩 테두리 색은 기본 선택기 확정 후 한 번 적용하고 실행취소한다", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -390,16 +396,8 @@ test("기본 서식 모달 안 중첩 테두리 색은 드래그·확인 후 한
   );
   const requests = writes(page);
   await settings.getByRole("button", { name: "테두리", exact: true }).click();
-  const popup = await custom(page, "테두리 선 색상");
-  await drag(
-    page,
-    popup.getByRole("slider", { name: "채도와 명도", exact: true }),
-  );
-  await drag(page, popup.getByRole("slider", { name: "색상", exact: true }));
-  const color = await popup
-    .getByRole("textbox", { name: "HEX", exact: true })
-    .inputValue();
-  await popup.getByRole("button", { name: "확인", exact: true }).click();
+  const popup = await open(page, "테두리 선 색상");
+  const color = await drag(popup, "테두리 선 색상", sweep);
   await page.getByRole("button", { name: "모든 테두리", exact: true }).click();
   await expect
     .poll(() =>
@@ -439,12 +437,9 @@ test("속성·점·주차 머리글·경계선은 드래그 중 저장 없이 �
   await page.getByLabel("속성 값 1 이름", { exact: true }).fill("색 값");
   const requests = writes(page);
   for (const label of ["색 값 배경색", "색 값 점 색상"]) {
-    const popup = await custom(page, label);
-    await drag(
-      page,
-      popup.getByRole("slider", { name: "채도와 명도", exact: true }),
-    );
-    await popup.getByRole("button", { name: "확인", exact: true }).click();
+    const popup = await open(page, label);
+    await drag(popup, label, sweep);
+    await expect(popup).toHaveCount(0);
   }
   await page.locator(".week-column-select").click();
   await page
@@ -455,9 +450,9 @@ test("속성·점·주차 머리글·경계선은 드래그 중 저장 없이 �
     "주차 머리글 글자색",
     "왼쪽 경계선 색상",
   ]) {
-    const popup = await custom(page, label);
-    await drag(page, popup.getByRole("slider", { name: "색상", exact: true }));
-    await popup.getByRole("button", { name: "확인", exact: true }).click();
+    const popup = await open(page, label);
+    await drag(popup, label, sweep);
+    await expect(popup).toHaveCount(0);
   }
   expect(requests).toEqual([]);
   await Promise.all([
@@ -475,13 +470,9 @@ test("아바타 색은 드래그 중 요청 없이 프로필 저장을 한 번 �
   await page.getByRole("button", { name: "내 계정", exact: true }).click();
   await page.getByRole("menuitem", { name: "프로필", exact: true }).click();
   const requests = writes(page);
-  const popup = await custom(page, "아바타 배경색");
-  await drag(
-    page,
-    popup.getByRole("slider", { name: "채도와 명도", exact: true }),
-  );
-  await drag(page, popup.getByRole("slider", { name: "색상", exact: true }));
-  await popup.getByRole("button", { name: "확인", exact: true }).click();
+  const popup = await open(page, "아바타 배경색");
+  await drag(popup, "아바타 배경색", sweep);
+  await expect(popup).toHaveCount(0);
   expect(requests).toEqual([]);
   await Promise.all([
     page.waitForResponse(
@@ -492,60 +483,62 @@ test("아바타 색은 드래그 중 요청 없이 프로필 저장을 한 번 �
   expect(requests).toEqual(["/api/auth/profile"]);
 });
 
-test("390px·데스크톱 폭에서 팔레트·최근 색·HEX 선택기가 화면 안에 위치한다", async ({
+test("390px·데스크톱 폭에서 팔레트·최근 색·HEX 칸이 화면 안에 위치한다", async ({
   page,
 }, info) => {
   await save(page, () => pickColor(page, "배경색", "#112233"));
-  for (const width of [1366, 390]) {
+  // Phones (700px and below) hide the sheet's cell formatting tools, so the
+  // toolbar popups are checked at the narrowest width that still shows them.
+  for (const width of [1366, 720]) {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole("button", { name: "배경색", exact: true }).click();
     const popup = page.getByRole("dialog", { name: "배경색", exact: true });
-    for (const custom of [false, true]) {
-      if (custom)
-        await popup
-          .getByRole("button", { name: "다른 색", exact: true })
-          .click();
-      await expect
-        .poll(async () => {
-          const box = (await popup.boundingBox())!;
-          return (
-            box.x >= 8 &&
-            box.y >= 8 &&
-            box.x + box.width <= width - 8 &&
-            box.y + box.height <= 836
-          );
-        })
-        .toBe(true);
-      await page.screenshot({
-        path: info.outputPath(
-          `color-${width}-${custom ? "hex" : "palette"}.png`,
-        ),
-      });
-    }
+    await expect
+      .poll(async () => {
+        const box = (await popup.boundingBox())!;
+        return (
+          box.x >= 8 &&
+          box.y >= 8 &&
+          box.x + box.width <= width - 8 &&
+          box.y + box.height <= 836
+        );
+      })
+      .toBe(true);
+    await expect(
+      popup.getByRole("textbox", { name: "배경색 HEX", exact: true }),
+    ).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: info.outputPath(`color-${width}.png`) });
     await page.keyboard.press("Escape");
   }
+  let width = 720;
   await page.getByRole("button", { name: "테두리", exact: true }).click();
-  let popup = await custom(page, "테두리 선 색상");
+  let popup = await open(page, "테두리 선 색상");
   const inside = async () => {
     const box = (await popup.boundingBox())!;
     return (
       box.x >= 8 &&
       box.y >= 8 &&
-      box.x + box.width <= 382 &&
+      box.x + box.width <= width - 8 &&
       box.y + box.height <= 836
     );
   };
   await expect.poll(inside).toBe(true);
-  await page.screenshot({ path: info.outputPath("color-390-border.png") });
+  await page.screenshot({ path: info.outputPath("color-720-border.png") });
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
+  width = 390;
+  await page.setViewportSize({ width, height: 844 });
+  await expect(
+    page.getByRole("button", { name: "배경색", exact: true }),
+  ).toBeHidden();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.locator(".week-column-select").click();
-  popup = await custom(page, "주차 머리글 배경색");
+  popup = await open(page, "주차 머리글 배경색");
   await expect.poll(inside).toBe(true);
   await page.screenshot({ path: info.outputPath("color-390-settings.png") });
-  await popup.getByRole("button", { name: "취소", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "설정", exact: true }),
   ).toBeVisible();
