@@ -143,7 +143,7 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   });
   await page.goto("/");
   await page.getByLabel("팀 선택").selectOption(team.id);
-  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const memos = page.locator(".annual-memos");
   const rail = memos.locator(".memo-documents");
   const card = (name: string) =>
     memos.getByRole("tabpanel", { name, exact: true });
@@ -661,7 +661,7 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   }
   await page.goto("/");
   await page.getByLabel("팀 선택").selectOption(team.id);
-  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  const memos = page.locator(".annual-memos");
   const open = () =>
     memos
       .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
@@ -801,7 +801,8 @@ test("꼬리 메모는 항목별 메뉴·선택 표시·독립 폭 저장과 표
   await expect(card("회의 기록")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 900 });
   await select("회의 기록");
-  expect(await width("회의 기록")).toBeLessThan(390);
+  await expect(memos).toHaveClass(/document-full-page/);
+  expect(await width("회의 기록")).toBeCloseTo(390, 0);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);

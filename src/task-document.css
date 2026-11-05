@@ -419,7 +419,7 @@
 .document-conflict > button {
   margin-top: 8px;
 }
-@media (max-width: 600px) {
+@media (max-width: 700px) {
   .document-prose {
     padding: 10px 13px 16px 24px;
   }
@@ -1006,7 +1006,7 @@ body.document-block-selecting * {
   inset: 0;
   visibility: hidden;
 }
-@media (max-width: 600px) {
+@media (max-width: 700px) {
   .document-tabs,
   .document-mode-bar,
   .document-formatbar {
@@ -1417,5 +1417,77 @@ button.memo-document-title {
     transform: translateY(-50%);
     width: min(200px, calc(100% - 160px));
     min-width: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .document-rich-tools,
+  .document-modes,
+  .document-mode-bar,
+  .document-block-handle {
+    display: none;
+  }
+}
+
+/* Keep the same memo panel and editors mounted when its presentation changes. */
+dialog.annual-memos.memo-panel {
+  display: flex;
+  flex-direction: column;
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  border: 0;
+  color: inherit;
+}
+@media (max-width: 700px) {
+  .button.document-expand,
+  .button.document-full-width {
+    display: none;
+  }
+  dialog.annual-memos.memo-panel.document-full-page {
+    zoom: calc(1 / var(--grid-zoom, 1));
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+  }
+  .memo-panel.document-full-page .memo-height-handle,
+  .memo-panel.document-full-page .memo-scroll-slider,
+  .memo-panel.document-full-page .memo-accordion-icon,
+  .memo-panel.document-full-page .memo-width-handle,
+  .memo-panel.document-full-page .memo-document-card:not([data-selected]) {
+    display: none;
+  }
+  .memo-panel.document-full-page .memo-accordion-heading {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  .memo-panel-close {
+    margin-left: auto;
+    margin-right: 6px;
+  }
+  .memo-panel.document-full-page .memo-documents {
+    padding: 0;
+  }
+  .memo-panel.document-full-page .memo-document-card {
+    flex-basis: 100%;
+    width: 100%;
+    gap: 0;
+  }
+  .memo-panel.document-full-page .memo-document-body {
+    border: 0;
+    border-radius: 0;
+  }
+  .memo-panel.document-full-page .memo-document-body > * {
+    width: 100%;
+  }
+  .memo-document-card.memo-full-page .memo-document-heading {
+    padding: 8px 12px;
+    min-height: 40px;
   }
 }

@@ -3782,6 +3782,7 @@ function Workspace({
                         <button
                           type="button"
                           className="button saved-filter-trigger"
+                          data-tooltip="저장된 필터"
                           aria-label="저장된 필터"
                           aria-expanded={viewMenu}
                           onClick={() => {

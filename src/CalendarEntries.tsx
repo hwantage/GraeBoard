@@ -1,9 +1,5 @@
-import {
-  useMemo,
-  type KeyboardEvent,
-  type PointerEvent,
-  type MouseEvent,
-} from "react";
+import { useMemo, type KeyboardEvent, type PointerEvent } from "react";
+import { useTouchPress } from "./useTouchPress";
 import { busyProps } from "./busyProps";
 import { FileText } from "lucide-react";
 import { normalizeSearchQuery } from "../shared/search.js";
@@ -19,6 +15,12 @@ import type {
   CalendarDragMode,
   CalendarRange,
 } from "./useCalendarDrag";
+
+type EntryMenuPosition = {
+  clientX: number;
+  clientY: number;
+  currentTarget: HTMLElement;
+};
 
 type Segment = {
   item: CalendarEntry;
@@ -59,7 +61,7 @@ export default function CalendarEntries({
   savingId?: string;
   searchQuery: string;
   onOpen: (entry: CalendarEntry) => void;
-  onContextMenu: (event: MouseEvent<HTMLElement>, entry: CalendarEntry) => void;
+  onContextMenu: (event: EntryMenuPosition, entry: CalendarEntry) => void;
   onDragStart: (
     event: PointerEvent<HTMLButtonElement>,
     entry: CalendarEntry,
@@ -70,6 +72,7 @@ export default function CalendarEntries({
   onCheckTag: (entry: CalendarEntry, tagId: string, checked: boolean) => void;
   canClick: () => boolean;
 }) {
+  const touchPress = useTouchPress();
   const dates = useMemo(
     () => weekdays.map((day) => addDays(start, day)),
     [start, weekdays],
@@ -182,7 +185,11 @@ export default function CalendarEntries({
         onContextMenu={
           isPreview || disabled || readOnly
             ? undefined
-            : (event) => onContextMenu(event, item)
+            : (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!touchPress.isTouch.current) onContextMenu(event, item);
+              }
         }
         className={`calendar-entry-segment${before ? " continues-before" : ""}${after ? " continues-after" : ""}${isSource ? " is-drag-source" : ""}${isPreview ? " is-drag-preview" : ""}${!isSource && changingId === item.id ? " is-changing" : ""}`}
         style={{
@@ -211,11 +218,23 @@ export default function CalendarEntries({
               aria-describedby={readOnly ? undefined : "calendar-drag-help"}
               title={item.title}
               onClick={(e) => open(e.detail)}
-              onPointerDown={
-                readOnly || disabled
-                  ? undefined
-                  : (e) => onDragStart(e, item, "move")
-              }
+              onPointerDown={(event) => {
+                if (event.pointerType === "touch") {
+                  const position = {
+                    clientX: event.clientX,
+                    clientY: event.clientY,
+                    currentTarget: event.currentTarget.closest<HTMLElement>(
+                      ".calendar-entry-segment",
+                    )!,
+                  };
+                  touchPress.start(event, {
+                    onLongPress: () => {
+                      if (!readOnly && !disabled) onContextMenu(position, item);
+                    },
+                  });
+                } else if (!readOnly && !disabled)
+                  onDragStart(event, item, "move");
+              }}
               onKeyDown={(e) => keyboard(e, item, "move")}
             >
               {content}
@@ -269,7 +288,10 @@ export default function CalendarEntries({
     );
   }
   return (
-    <div className="calendar-week-events">
+    <div
+      className="calendar-week-events"
+      onClickCapture={touchPress.onClickCapture}
+    >
       {segments.map((item) => render(item))}
       {preview &&
         previewSpan &&

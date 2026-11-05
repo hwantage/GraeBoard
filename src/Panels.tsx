@@ -39,9 +39,8 @@ import HistoryTime, { HistoryTimeline } from "./HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton, {
-  useDocumentFullWidth,
-} from "./DocumentFullWidthButton";
+import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   useOpenDocumentLink,
@@ -257,8 +256,9 @@ export function RowPanel({
 }) {
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
-  const [documentFullPage, setDocumentFullPage] = useState(false);
-  const fullWidth = useDocumentFullWidth();
+  const [preferredFullPage, setDocumentFullPage] = useState(false);
+  const { fullPage: documentFullPage, fullWidth } =
+    useDocumentFullPage(preferredFullPage);
   // A copy's task keeps the original's ID, so its link also names the copy.
   const linkTarget: DocumentLinkTarget = documentReport
     ? { kind: "report-task", reportId: documentReport.id, id: task.id }

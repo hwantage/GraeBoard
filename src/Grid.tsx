@@ -1,3 +1,5 @@
+import { useTouchPress } from "./useTouchPress";
+import { useMobileLayout } from "./useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
@@ -15,7 +17,7 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { trackPointerDrag } from "./trackPointerDrag";
 import { useVirtualizer, defaultRangeExtractor } from "@tanstack/react-virtual";
 import {
@@ -88,6 +90,8 @@ import {
 } from "./selection-areas.js";
 
 const ROW_HEADER_WIDTH = 48;
+// Returning from another screen must not refocus the prepared IME input after a touch.
+let lastPointerWasTouch = false;
 
 export type Column = {
   key: string;
@@ -273,6 +277,18 @@ export default function Grid({
   } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const mobile = useMobileLayout();
+  const [touchInput, setTouchInput] = useState(lastPointerWasTouch);
+  const touchInputRef = useRef(lastPointerWasTouch);
+  useEffect(() => {
+    const rememberPointer = (event: PointerEvent) => {
+      lastPointerWasTouch = event.pointerType === "touch";
+    };
+    window.addEventListener("pointerdown", rememberPointer, true);
+    return () =>
+      window.removeEventListener("pointerdown", rememberPointer, true);
+  }, []);
+  const touchPress = useTouchPress();
   const focusTarget = useRef(selection?.focus);
   const latestSelection = useRef(selection);
   latestSelection.current = selection;
@@ -312,17 +328,22 @@ export default function Grid({
     taskId: string;
     height: number;
   } | null>(null);
-  const columns = useMemo(
-    () =>
-      columnResize
-        ? baseColumns.map((c) =>
-            c.key === columnResize.key
-              ? { ...c, width: columnResize.width }
-              : c,
-          )
-        : baseColumns,
-    [baseColumns, columnResize],
-  );
+  const columns = useMemo(() => {
+    const resized = columnResize
+      ? baseColumns.map((column) =>
+          column.key === columnResize.key
+            ? { ...column, width: columnResize.width }
+            : column,
+        )
+      : baseColumns;
+    // A pinned title can cover the entire phone screen. Preserve the saved
+    // layout, but let all data columns scroll in the compact view.
+    return mobile
+      ? resized.map((column) =>
+          column.fixed ? { ...column, fixed: false } : column,
+        )
+      : resized;
+  }, [baseColumns, columnResize, mobile]);
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   // ⌘/Ctrl로 선택한 셀에서 시작한 드래그는 시작 전 선택에서 끈 범위를 뺀다.
   const removing = useRef<{
@@ -897,6 +918,14 @@ export default function Grid({
     index: number,
   ) {
     if (e.button !== 0 || presentation) return;
+    if (e.pointerType === "touch") {
+      e.preventDefault();
+      touchPress.start(e, {
+        onTap: () => selectHeader(kind, index),
+        onLongPress: () => showHeaderMenu(kind, index, e.clientX, e.clientY),
+      });
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     setHeaderMenu(null);
@@ -1044,7 +1073,7 @@ export default function Grid({
     index: number,
   ) {
     e.preventDefault();
-    if (e.ctrlKey) return;
+    if (e.ctrlKey || touchInputRef.current) return;
     showHeaderMenu(kind, index, e.clientX, e.clientY);
   }
   function showHeaderMenu(
@@ -1300,9 +1329,11 @@ export default function Grid({
     requestAnimationFrame(() => {
       if (!ref.current?.querySelector(".inline-editor"))
         (
-          ref.current?.querySelector<HTMLTextAreaElement>(
-            ".cell-input-ready textarea",
-          ) || ref.current
+          (!touchInputRef.current &&
+            ref.current?.querySelector<HTMLTextAreaElement>(
+              ".cell-input-ready textarea",
+            )) ||
+          ref.current
         )?.focus({ preventScroll: true });
     });
   }
@@ -1487,6 +1518,34 @@ export default function Grid({
   const handlers: GridActions = {
     cellPointerDown(e, point) {
       if (e.button !== 0) return;
+      if (e.pointerType === "touch") {
+        // Suppress compatibility mouse focus/clicks; native touch panning stays enabled.
+        e.preventDefault();
+        touchPress.start(e, {
+          onTap: () => {
+            const current = latestSelection.current;
+            const same =
+              current &&
+              !current.kind &&
+              !current.areas?.length &&
+              current.anchor.taskId === point.taskId &&
+              current.anchor.key === point.key &&
+              current.focus.taskId === point.taskId &&
+              current.focus.key === point.key;
+            // iOS requires the layout-effect focus inside this pointerup event.
+            flushSync(() => {
+              if (same) actions.edit(point);
+              else pick(point);
+            });
+          },
+          onLongPress: () => {
+            const index = taskIndexes.get(point.taskId);
+            if (index !== undefined)
+              showHeaderMenu("rows", index, e.clientX, e.clientY);
+          },
+        });
+        return;
+      }
       dragOrigin.current = { x: e.clientX, y: e.clientY };
       e.preventDefault();
       const r = taskIndexes.get(point.taskId) ?? -1,
@@ -1504,7 +1563,11 @@ export default function Grid({
       } else pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
       startFormatDrag(e);
     },
+    doubleClick(point) {
+      if (!touchInputRef.current && !formatPainting) onEdit(point);
+    },
     dragSelect(e, point) {
+      if (e.pointerType === "touch") return;
       const start = dragOrigin.current;
       const remove = removing.current;
       if (
@@ -1580,8 +1643,25 @@ export default function Grid({
         className={`sheet-scroll${footer ? " has-sheet-footer" : ""}`}
         data-density={density}
         data-format-painting={formatPainting || undefined}
+        onPointerDownCapture={(e) => {
+          const touch = e.pointerType === "touch";
+          touchInputRef.current = touch;
+          setTouchInput(touch);
+          if (touch) {
+            dragOrigin.current = null;
+            removing.current = null;
+            const active = document.activeElement;
+            if (
+              active instanceof HTMLElement &&
+              active.closest(".cell-input-ready")
+            )
+              active.blur();
+          }
+        }}
+        onClickCapture={touchPress.onClickCapture}
         onFocus={(e) => {
-          if (e.target !== e.currentTarget || editor) return;
+          if (touchInputRef.current || e.target !== e.currentTarget || editor)
+            return;
           const input = e.currentTarget.querySelector<HTMLTextAreaElement>(
             ".cell-input-ready textarea",
           );
@@ -1859,6 +1939,7 @@ export default function Grid({
                   }
                   editor={editor?.point.taskId === task.id ? editor : null}
                   editorActive={!!editor}
+                  touchInput={touchInput}
                   resizeEnd={
                     row.index === tasks.length - 1
                       ? "edge"
@@ -1978,6 +2059,7 @@ export default function Grid({
 type GridActions = {
   cellPointerDown(e: React.PointerEvent, point: Point): void;
   dragSelect(e: React.PointerEvent, point: Point): void;
+  doubleClick(point: Point): void;
   edit(point: Point, initial?: string): boolean;
   memberOptions(): User[];
   rowMenu(task: Task): void;
@@ -2041,6 +2123,7 @@ const RowBody = memo(function RowBody({
   focusKey,
   editor,
   editorActive,
+  touchInput,
   resizeEnd,
   actions,
 }: {
@@ -2071,6 +2154,7 @@ const RowBody = memo(function RowBody({
   focusKey: string | null;
   editor: EditorState | null;
   editorActive: boolean;
+  touchInput: boolean;
   // 이 행 아래쪽 끝에 높이 손잡이를 둘지. 마지막 행은 경계에 걸치고,
   // 묶음 제목 바로 위 행은 제목에 가려지지 않게 행 안쪽에 둔다.
   resizeEnd: "" | "edge" | "inside";
@@ -2260,6 +2344,7 @@ const RowBody = memo(function RowBody({
             property={property}
             selection={selectionEdges(selectedSpans, ci)}
             focused={focusKey === c.key}
+            touchInput={touchInput}
             editor={editing ? editor : null}
             editable={editable}
             canEditPeople={canEditPeople}
@@ -2302,6 +2387,7 @@ const GridCell = memo(function GridCell({
   property,
   selection,
   focused,
+  touchInput,
   editor,
   editable,
   canEditPeople,
@@ -2323,6 +2409,7 @@ const GridCell = memo(function GridCell({
   // 선택되지 않았으면 null, 선택됐으면 영역 외곽에 닿은 변(t·r·b·l).
   selection: string | null;
   focused: boolean;
+  touchInput: boolean;
   editor: EditorState | null;
   editable: boolean;
   canEditPeople: boolean;
@@ -2351,6 +2438,7 @@ const GridCell = memo(function GridCell({
   const showDetailAction =
     c.key === "title" && !editing && (!presentation || task.hasDocument);
   const prepareText =
+    !touchInput &&
     focused &&
     editable &&
     !choice &&
@@ -2454,8 +2542,13 @@ const GridCell = memo(function GridCell({
       title={text || undefined}
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
       onPointerMove={(e) => actions.dragSelect(e, point)}
-      onDoubleClick={() => editable && actions.edit(point)}
+      onDoubleClick={() => editable && actions.doubleClick(point)}
       onContextMenu={(e) => {
+        // Touch text selection can emit contextmenu after opening the editor.
+        if (touchInput) {
+          if (!editing) e.preventDefault();
+          return;
+        }
         e.preventDefault();
         // macOS emits a context menu for Ctrl+click as well.
         if (e.ctrlKey) return;
