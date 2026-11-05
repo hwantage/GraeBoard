@@ -119,15 +119,10 @@ type Open = {
   node: Details;
   body: MdNode[];
   siblings: MdNode[];
-  origin: MdNode;
   closed: boolean;
 };
 
-function parseOpen(
-  html: string,
-  origin: MdNode,
-  parse: ParseFragment,
-): Open | null {
+function parseOpen(html: string, parse: ParseFragment): Open | null {
   const match = DETAILS_OPEN.exec(html);
   if (!match) return null;
   const summary = parseSummary(html.slice(match[0].length), parse);
@@ -143,7 +138,6 @@ function parseOpen(
     },
     body: rest.trim() ? (parse(rest).children ?? []) : [],
     siblings: [],
-    origin,
     closed,
   };
 }
@@ -160,7 +154,7 @@ function groupDetails(children: MdNode[], parse: ParseFragment): MdNode[] {
   for (const child of children) {
     const html = blockHtml(child);
     if (html !== null) {
-      const open = parseOpen(html, child, parse);
+      const open = parseOpen(html, parse);
       if (open) {
         if (open.closed) finish(open);
         else stack.push(open);
@@ -178,13 +172,12 @@ function groupDetails(children: MdNode[], parse: ParseFragment): MdNode[] {
       child.children = groupDetails(child.children, parse);
     push(child);
   }
-  // Unclosed blocks keep their original html so the source stays untouched.
-  let rest: MdNode[] = [];
-  while (stack.length) {
-    const entry = stack.pop()!;
-    rest = [entry.origin, ...entry.siblings, ...rest];
-  }
-  return out.concat(rest);
+  // A supported opening/summary without </details> contains the rest of this
+  // container. Close inner toggles first, just as for explicit closing tags.
+  // The editor preserves the original source until an actual edit serializes
+  // it; unsupported HTML still reaches checkMarkdown's preservation guard.
+  while (stack.length) finish(stack.pop()!);
+  return out;
 }
 
 type ToMarkdownState = {
