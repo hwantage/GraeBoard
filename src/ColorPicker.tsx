@@ -1,7 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { Pipette } from "lucide-react";
 import { PALETTE } from "../shared/domain.js";
 import { normalizeHex } from "./color";
 import { useRecentColors } from "./recent-colors";
+
+type EyeDropperConstructor = new () => {
+  open: () => Promise<{ sRGBHex: string }>;
+};
+// Only Chromium (Chrome, Edge) exposes EyeDropper to pages; Safari and
+// Firefox have none, so the button is not shown there.
+const eyeDropper = () =>
+  (window as { EyeDropper?: EyeDropperConstructor }).EyeDropper;
 
 // "Other color" keeps the browser's own picker. It only previews while open
 // and applies once on its native change event, so a drag no longer saves
@@ -80,13 +89,27 @@ export default function ColorPicker({
         </div>
       )}
       <div className="color-custom">
-        <input
-          ref={native}
-          type="color"
-          aria-label={`${label} 직접 선택`}
-          value={color || normalizeHex(value) || "#000000"}
-          onChange={(event) => setHex(event.target.value)}
-        />
+        {eyeDropper() && (
+          <button
+            type="button"
+            className="button color-eyedropper"
+            aria-label="스포이드"
+            title="스포이드: 화면에서 색 고르기"
+            onClick={async () => {
+              const EyeDropper = eyeDropper()!;
+              try {
+                const picked = normalizeHex(
+                  (await new EyeDropper().open()).sRGBHex,
+                );
+                if (picked) apply(picked);
+              } catch {
+                // Escape keeps the current color.
+              }
+            }}
+          >
+            <Pipette size={16} aria-hidden="true" />
+          </button>
+        )}
         <input
           className="color-hex-input"
           aria-label={`${label} HEX`}
@@ -101,6 +124,13 @@ export default function ColorPicker({
             event.preventDefault();
             if (color) apply(color);
           }}
+        />
+        <input
+          ref={native}
+          type="color"
+          aria-label={`${label} 직접 선택`}
+          value={color || normalizeHex(value) || "#000000"}
+          onChange={(event) => setHex(event.target.value)}
         />
       </div>
       {invalid && (

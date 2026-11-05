@@ -179,6 +179,45 @@ test("다른 색의 HEX 칸은 처음부터 현재 색을 보이고 유효성·E
   expect((await stored(page)).backgroundColor).toBe("#123abc");
 });
 
+test("스포이드로 고른 색은 바로 한 번 적용하고 지원하지 않는 브라우저에서는 숨긴다", async ({
+  page,
+}) => {
+  // EyeDropper is native UI; replace it with one that returns a fixed color.
+  await page.addInitScript(() => {
+    (window as any).EyeDropper = class {
+      open() {
+        return Promise.resolve({ sRGBHex: "#3a7bd5" });
+      }
+    };
+  });
+  await page.reload();
+  await target(page).click();
+  const requests = writes(page);
+  const popup = await open(page, "배경색");
+  await save(page, () =>
+    popup.getByRole("button", { name: "스포이드", exact: true }).click(),
+  );
+  await expect(popup).toHaveCount(0);
+  expect(requests).toEqual(["/api/cells/batch"]);
+  expect((await stored(page)).backgroundColor).toBe("#3a7bd5");
+  await expect(
+    (await open(page, "배경색")).getByRole("button", {
+      name: "최근 색 #3a7bd5",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.addInitScript(() => delete (window as any).EyeDropper);
+  await page.reload();
+  await target(page).click();
+  await expect(
+    (await open(page, "배경색")).getByRole("button", {
+      name: "스포이드",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
 test("기본 선택기를 끄다가 Esc·바깥 클릭으로 닫으면 저장·최근 색 없이 취소한다", async ({
   page,
 }) => {
