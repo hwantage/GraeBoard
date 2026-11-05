@@ -2071,11 +2071,8 @@ body.document-block-moving * {
   color: var(--muted);
   font-size: 12px;
 }
-.color-custom > span {
-  margin-right: auto;
-}
 .color-custom .color-hex-input {
-  width: 84px;
+  flex: 1;
   min-width: 0 !important;
   font-family: monospace;
 }
@@ -2083,6 +2080,7 @@ body.document-block-moving * {
   border-color: #b43c36;
 }
 .color-custom input[type="color"] {
+  flex: 0 0 auto;
   width: 40px;
   height: 24px;
   padding: 0 2px;

@@ -80,7 +80,13 @@ export default function ColorPicker({
         </div>
       )}
       <div className="color-custom">
-        <span>다른 색</span>
+        <input
+          ref={native}
+          type="color"
+          aria-label={`${label} 직접 선택`}
+          value={color || normalizeHex(value) || "#000000"}
+          onChange={(event) => setHex(event.target.value)}
+        />
         <input
           className="color-hex-input"
           aria-label={`${label} HEX`}
@@ -95,13 +101,6 @@ export default function ColorPicker({
             event.preventDefault();
             if (color) apply(color);
           }}
-        />
-        <input
-          ref={native}
-          type="color"
-          aria-label={`${label} 직접 선택`}
-          value={color || normalizeHex(value) || "#000000"}
-          onChange={(event) => setHex(event.target.value)}
         />
       </div>
       {invalid && (
