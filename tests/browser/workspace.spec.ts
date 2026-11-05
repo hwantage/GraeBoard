@@ -302,8 +302,7 @@ async function applyBorders(
     await page
       .getByLabel("테두리 선 스타일", { exact: true })
       .selectOption(style);
-  if (color)
-    await page.getByLabel("테두리 선 색상", { exact: true }).fill(color);
+  if (color) await pickColor(page, "테두리 선 색상", color);
   await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
     page.getByRole("button", { name: preset, exact: true }).click(),
@@ -834,7 +833,7 @@ test("기본 서식 공통 툴바는 미리보기·실행취소·테두리와 �
   await page
     .getByLabel("테두리 선 스타일", { exact: true })
     .selectOption("double");
-  await page.getByLabel("테두리 선 색상", { exact: true }).fill("#2255aa");
+  await pickColor(page, "테두리 선 색상", "#2255aa");
   await page.getByRole("button", { name: "모든 테두리", exact: true }).click();
   await expect(preview).toHaveCSS("border-bottom-style", "double");
   await panel.getByRole("button", { name: "테두리", exact: true }).click();
@@ -899,8 +898,8 @@ test("주차 머리글 색은 속성에서 저장하고 날짜 머리글에만 �
   await expect(
     page.getByLabel("왼쪽 경계선 스타일", { exact: true }),
   ).toHaveValue("none");
-  await page.getByLabel("주차 머리글 배경색", { exact: true }).fill("#2255aa");
-  await page.getByLabel("주차 머리글 글자색", { exact: true }).fill("#ffffff");
+  await pickColor(page, "주차 머리글 배경색", "#2255aa");
+  await pickColor(page, "주차 머리글 글자색", "#ffffff");
   await expect(page.locator(".week-header-preview")).toHaveCSS(
     "background-color",
     "rgb(34, 85, 170)",
@@ -978,11 +977,11 @@ test("주차 기본 경계선은 기간 선택·날짜 숨김·월 이동 후에
   await page
     .getByLabel("왼쪽 경계선 스타일", { exact: true })
     .selectOption("double");
-  await page.getByLabel("왼쪽 경계선 색상", { exact: true }).fill("#2255aa");
+  await pickColor(page, "왼쪽 경계선 색상", "#2255aa");
   await page
     .getByLabel("오른쪽 경계선 스타일", { exact: true })
     .selectOption("dashed");
-  await page.getByLabel("오른쪽 경계선 색상", { exact: true }).fill("#bb3344");
+  await pickColor(page, "오른쪽 경계선 색상", "#bb3344");
   await page.screenshot({
     path: info.outputPath("week-boundary-settings.png"),
   });
@@ -1120,17 +1119,15 @@ test("이번 주 테두리는 양 끝 경계선과 구분해 설정하고 직접
   await page
     .getByLabel("왼쪽 경계선 스타일", { exact: true })
     .selectOption("solid");
-  await page.getByLabel("왼쪽 경계선 색상", { exact: true }).fill("#2255aa");
+  await pickColor(page, "왼쪽 경계선 색상", "#2255aa");
   await page
     .getByLabel("오른쪽 경계선 스타일", { exact: true })
     .selectOption("solid");
-  await page.getByLabel("오른쪽 경계선 색상", { exact: true }).fill("#2255aa");
+  await pickColor(page, "오른쪽 경계선 색상", "#2255aa");
   await page
     .getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true })
     .selectOption("double");
-  await page
-    .getByLabel("이번 주 오른쪽 테두리 색상", { exact: true })
-    .fill("#bb3344");
+  await pickColor(page, "이번 주 오른쪽 테두리 색상", "#bb3344");
   await page.screenshot({ path: info.outputPath("current-week-settings.png") });
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
@@ -1190,9 +1187,7 @@ test("이번 주 테두리는 양 끝 경계선과 구분해 설정하고 직접
   await page
     .getByLabel("이번 주 왼쪽 테두리 스타일", { exact: true })
     .selectOption("dashed");
-  await page
-    .getByLabel("이번 주 왼쪽 테두리 색상", { exact: true })
-    .fill("#2255aa");
+  await pickColor(page, "이번 주 왼쪽 테두리 색상", "#2255aa");
   await page
     .getByLabel("이번 주 오른쪽 테두리 스타일", { exact: true })
     .selectOption("none");
@@ -2661,7 +2656,7 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   await profile.getByLabel("이름", { exact: true }).fill("내가 정한 이름");
   await profile.getByRole("radio", { name: "직접 입력", exact: true }).check();
   await profile.getByLabel("아바타 글자", { exact: true }).fill("M12");
-  await profile.getByLabel("아바타 배경색", { exact: true }).fill("#3377bb");
+  await pickColor(profile, "아바타 배경색", "#3377bb");
   await page.screenshot({ path: info.outputPath("my-profile.png") });
   const save = profile.getByRole("button", {
     name: "프로필 저장",
@@ -2886,7 +2881,7 @@ test("팀원 아바타의 이니셜·이미지·기본 글자와 배경색을 �
   const initials = page.getByLabel("아바타 글자", { exact: true });
   await initials.fill("WWW");
   await expect(initials).toHaveValue("WWW");
-  await page.getByLabel("아바타 배경색", { exact: true }).fill("#888888");
+  await pickColor(page, "아바타 배경색", "#888888");
   await expect(page.locator(".avatar-preview .avatar")).toHaveText("WWW");
   await page.screenshot({
     path: info.outputPath("avatar-editor.png"),
@@ -6075,8 +6070,8 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
     ).toHaveValue("");
     await page.keyboard.insertText(name);
   }
-  await page.getByLabel("A 프로젝트 배경색").fill("#fff2c6");
-  await page.getByLabel("A 프로젝트 점 색상").fill("#e84a2f");
+  await pickColor(page, "A 프로젝트 배경색", "#fff2c6");
+  await pickColor(page, "A 프로젝트 점 색상", "#e84a2f");
   await page
     .getByRole("button", { name: "C 프로젝트 값 순서 이동", exact: true })
     .press("Alt+ArrowUp");
@@ -6149,9 +6144,7 @@ test("프로젝트 속성의 값·모양·색·순서를 편집하고 해당 속
   await page.getByLabel("속성 이름", { exact: true }).fill("제품 프로젝트");
   await page.getByLabel("속성 값 2 이름", { exact: true }).fill("A 서비스");
   await page.getByLabel("표시 모양").selectOption("emoji");
-  await expect(
-    page.locator('.property-editor input[type="color"]'),
-  ).toHaveCount(0);
+  await expect(page.locator(".property-editor .color-input")).toHaveCount(0);
   await page.getByLabel("A 서비스 이모지").fill("🚀");
   await page.getByRole("button", { name: "속성 저장", exact: true }).click();
   await expect(
@@ -6505,15 +6498,25 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
     const headingGroup = (await dialog
       .locator(":scope > header > .modal-heading")
       .boundingBox())!;
-    const expandBox = (await dialog
-      .locator(":scope > header")
-      .getByRole("button", {
-        name: /^(문서 전체 페이지로 보기|전체 페이지 닫기)$/,
-      })
-      .boundingBox())!;
-    expect(expandBox.x).toBeGreaterThanOrEqual(headingBox.x + headingBox.width);
-    expect(expandBox.x - headingBox.x - headingBox.width).toBeLessThan(16);
-    expect(expandBox.y).toBeLessThan(headingBox.y + headingBox.height);
+    const expand = dialog.locator(":scope > header .document-expand");
+    if (page.viewportSize()!.width <= 700) {
+      await expect(expand).toBeHidden();
+      await expect(dialog).toHaveClass(/document-full-page/);
+      await expect(dialog).toHaveClass(/document-full-width/);
+    } else {
+      const expandBox = (await expand.boundingBox())!;
+      expect(expandBox.x).toBeGreaterThanOrEqual(
+        headingBox.x + headingBox.width,
+      );
+      const linkBox = (await dialog
+        .locator(":scope > header")
+        .getByRole("button", { name: "링크 복사", exact: true })
+        .boundingBox())!;
+      expect(linkBox.x).toBeGreaterThanOrEqual(headingBox.x + headingBox.width);
+      expect(expandBox.x - linkBox.x - linkBox.width).toBeLessThan(16);
+      expect(expandBox.x).toBeGreaterThanOrEqual(linkBox.x + linkBox.width);
+      expect(expandBox.y).toBeLessThan(headingBox.y + headingBox.height);
+    }
     const actionsBox = (await actions.boundingBox())!;
     const closeBox = (await dialog
       .getByRole("button", {
@@ -6556,7 +6559,7 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await page.setViewportSize({ width: 320, height: 700 });
   await aligned();
   await headerActionsFit();
-  await dialog.getByRole("button", { name: "문서 전체 페이지로 보기" }).click();
+  await expect(dialog).toHaveClass(/document-full-page/);
   await headerActionsFit();
   await expect(dialog.locator(".task-detail-year")).toBeVisible();
   await expect(dialog.locator(".task-detail-properties")).toBeVisible();
@@ -6567,6 +6570,10 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await dialog.screenshot({
     path: info.outputPath("task-detail-full-page-mobile.png"),
   });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await expect(dialog).not.toHaveClass(/document-full-page/);
+  await dialog.getByRole("button", { name: "문서 전체 페이지로 보기" }).click();
+  await headerActionsFit();
   await dialog
     .getByRole("button", { name: "전체 페이지 닫기", exact: true })
     .click();

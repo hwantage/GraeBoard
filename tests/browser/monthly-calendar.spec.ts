@@ -416,12 +416,15 @@ test("주간 업무 검색은 페이지와 좁은 화면에서도 선택을 유�
         owner: userId,
       },
     });
-  await page.setViewportSize({ width: 390, height: 844 });
   await enter(page);
   await calendar(page)
     .locator(`.calendar-week-row[data-week="${calendarWeek(todayKey())}"]`)
     .getByRole("button", { name: "업무 추가", exact: true })
     .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    calendar(page).locator(".calendar-week-tasks").first(),
+  ).toBeHidden();
   const picker = page.getByRole("dialog", {
     name: "주간 업무 추가",
     exact: true,
@@ -1416,7 +1419,7 @@ test("본문 충돌은 서버와 내 입력을 함께 보여 주며 명시적 �
   ).toBe("현재 창의 미저장 입력");
 });
 
-test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은 화면에서 주간 열을 유지한다", async ({
+test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 모바일은 모든 요일을 표시한다", async ({
   page,
   browserName,
 }, info) => {
@@ -1473,12 +1476,12 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
   await scroller.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
-  const sticky = await calendar(page)
-    .locator(".calendar-week-tasks")
-    .first()
-    .boundingBox();
-  expect(sticky!.x).toBeGreaterThanOrEqual(0);
-  expect(sticky!.width).toBeGreaterThanOrEqual(170);
+  await expect(
+    calendar(page).locator(".calendar-week-tasks").first(),
+  ).toBeHidden();
+  expect(
+    await scroller.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
@@ -1486,6 +1489,7 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
     path: info.outputPath("mobile-calendar.png"),
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1366, height: 900 });
   // macOS WebKit uses Option+Tab to include buttons in keyboard navigation.
   const tabKey =
     browserName === "webkit" && process.platform === "darwin"
@@ -1540,12 +1544,36 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 좁은
       .getByRole("group", { name: "캘린더 팀원" })
       .getByRole("button")
       .all()),
+    calendar(page).getByRole("button", {
+      name: "시크릿 일정 숨기기",
+      exact: true,
+    }),
+    calendar(page).getByRole("searchbox", {
+      name: "일정 제목 검색",
+      exact: true,
+    }),
     calendar(page).getByRole("button", { name: "오늘", exact: true }),
   ]) {
     await current.press(tabKey);
     await expect(next).toBeFocused();
     current = next;
   }
+  await calendar(page)
+    .getByRole("button", { name: "팀 월간 보기", exact: true })
+    .click();
+  await expect(calendar(page).locator(".calendar-secret-toggle")).toHaveCount(
+    0,
+  );
+  await calendar(page)
+    .getByRole("button", { name: "다음 달", exact: true })
+    .press(tabKey);
+  await expect(
+    calendar(page).getByRole("searchbox", { name: "일정 제목 검색" }),
+  ).toBeFocused();
+  await page.keyboard.press(tabKey);
+  await expect(
+    calendar(page).getByRole("button", { name: "오늘", exact: true }),
+  ).toBeFocused();
 });
 
 test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 조회 범위를 유지한다", async ({
@@ -3536,7 +3564,7 @@ test("팀 주간에서 드롭·취소 뒤 일반 클릭과 다음 양끝 드래�
   );
 });
 
-test("터치 포인터를 캡처한 뒤에도 카드 이동과 끝부분 조정이 끝까지 저장된다", async ({
+test("터치 포인터로 카드나 끝부분을 쓸어도 일정 기간을 바꾸지 않는다", async ({
   page,
   browserName,
 }) => {
@@ -3547,10 +3575,10 @@ test("터치 포인터를 캡처한 뒤에도 카드 이동과 끝부분 조정�
   const entry = await seedEntry(page, "터치 일정", userId, "2026-10-12");
   await october(page);
   const input = await page.context().newCDPSession(page);
-  for (const [mode, to, endDate] of [
-    ["move", "2026-10-14", "2026-10-14"],
-    ["end", "2026-10-22", "2026-10-22"],
-    ["end", "2026-10-15", "2026-10-15"],
+  for (const [mode, to] of [
+    ["move", "2026-10-14"],
+    ["end", "2026-10-22"],
+    ["end", "2026-10-15"],
   ]) {
     const item = segment(page, entry.id).last();
     const source =
@@ -3582,7 +3610,10 @@ test("터치 포인터를 캡처한 뒤에도 카드 이동과 끝부분 조정�
       type: "touchEnd",
       touchPoints: [],
     });
-    await expectRange(page, entry.id, "2026-10-14", endDate);
+    await expectRange(page, entry.id, "2026-10-12", "2026-10-12");
+    await expect(
+      calendar(page).getByLabel("달력 가로·세로 스크롤"),
+    ).not.toHaveAttribute("data-dragging");
     await expect(entryDialog(page)).toHaveCount(0);
   }
   await input.detach();
@@ -4032,11 +4063,13 @@ test("아래쪽 자동 스크롤로 다음 달까지 기간을 늘리고 팀원�
     el.scrollLeft = el.scrollWidth;
   });
   const label = (await card.locator(".calendar-entry-content").boundingBox())!;
-  const weeklyColumn = (await calendar(page)
-    .locator(".calendar-week-tasks")
-    .first()
-    .boundingBox())!;
-  expect(label.x).toBeGreaterThanOrEqual(weeklyColumn.x + weeklyColumn.width);
+  await expect(
+    calendar(page).locator(".calendar-week-tasks").first(),
+  ).toBeHidden();
+  expect(label.x).toBeGreaterThanOrEqual((await scroller.boundingBox())!.x);
+  expect(
+    await scroller.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
   expect(label.x + label.width).toBeLessThanOrEqual(390);
   await page.screenshot({
     path: info.outputPath("calendar-range-mobile.png"),

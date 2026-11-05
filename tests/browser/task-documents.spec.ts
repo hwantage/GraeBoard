@@ -470,6 +470,15 @@ test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 �
   await raw(page);
   const fits = async () => {
     const body = detail(page).locator(".modal-body");
+    if (page.viewportSize()!.width <= 700) {
+      await expect(source(page)).toHaveCount(0);
+      await expect(rich(page)).toContainText("높이 검증");
+      await expect(detail(page).locator(".document-rich-tools")).toBeHidden();
+      expect(
+        await body.evaluate((el) => el.scrollHeight - el.clientHeight),
+      ).toBeGreaterThan(100);
+      return;
+    }
     await expect
       .poll(async () => {
         const footer = (await detail(page).locator("footer").boundingBox())!;
@@ -499,6 +508,7 @@ test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 �
       path: info.outputPath(`document-source-${viewport.width}.png`),
     });
   }
+  await page.setViewportSize({ width: 1366, height: 900 });
   await detail(page)
     .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
     .click();
@@ -778,7 +788,8 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
         return (
           !!element &&
           getComputedStyle(element).visibility === "visible" &&
-          element.getClientRects().length > 0
+          element.getBoundingClientRect().width > 0 &&
+          element.getBoundingClientRect().height > 0
         );
       };
       const sample = () => {
@@ -836,9 +847,14 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
         detail(page).locator(".document-formatbar"),
       ).not.toBeVisible();
       await expect(rich(page)).not.toBeVisible();
-      await expect(
-        detail(page).getByRole("button", { name: "문서 전체 페이지로 보기" }),
-      ).toBeVisible();
+      if (width > 700) {
+        await expect(
+          detail(page).getByRole("button", { name: "문서 전체 페이지로 보기" }),
+        ).toBeVisible();
+      } else {
+        await expect(detail(page)).toHaveClass(/document-full-page/);
+        await expect(detail(page).locator(".document-expand")).toBeHidden();
+      }
     };
     await loading();
     releaseChunk();
@@ -877,8 +893,13 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
     releaseEditor();
     await expect(rich(page)).toBeVisible();
     await expect(spinner).toHaveCount(0);
-    await expect(detail(page).locator(".document-controls")).toBeVisible();
-    await expect(detail(page).locator(".document-formatbar")).toBeVisible();
+    if (width > 700) {
+      await expect(detail(page).locator(".document-controls")).toBeVisible();
+      await expect(detail(page).locator(".document-formatbar")).toBeVisible();
+    } else {
+      await expect(detail(page).locator(".document-controls")).toBeHidden();
+      await expect(detail(page).locator(".document-formatbar")).toBeHidden();
+    }
     const frames = await page.evaluate(async () => {
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -891,16 +912,25 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
         content: boolean;
       }[];
     });
-    expect(
-      frames.some((frame) => frame.controls && frame.toolbar && frame.content),
-    ).toBe(true);
-    expect(
-      frames.filter(
-        (frame) =>
-          (frame.controls || frame.toolbar || frame.content) &&
-          !(frame.controls && frame.toolbar && frame.content),
-      ),
-    ).toEqual([]);
+    if (width > 700) {
+      expect(
+        frames.some(
+          (frame) => frame.controls && frame.toolbar && frame.content,
+        ),
+      ).toBe(true);
+      expect(
+        frames.filter(
+          (frame) =>
+            (frame.controls || frame.toolbar || frame.content) &&
+            !(frame.controls && frame.toolbar && frame.content),
+        ),
+      ).toEqual([]);
+    } else {
+      expect(frames.some((frame) => frame.content)).toBe(true);
+      expect(frames.some((frame) => frame.controls || frame.toolbar)).toBe(
+        false,
+      );
+    }
     await stable();
     const scrolling = await detail(page)
       .locator(".modal-body")
@@ -909,7 +939,7 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
     await detail(page).screenshot({
       path: info.outputPath(`document-stable-${width}.png`),
     });
-    await raw(page);
+    if (width > 700) await raw(page);
     await stable();
     await close(page);
     await page.unroute(chunkPattern);
@@ -2621,6 +2651,10 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   await detail(page).screenshot({
     path: info.outputPath("document-mobile.png"),
   });
+  await expect(detail(page).locator(".document-modes")).toBeHidden();
+  await expect(detail(page).locator(".document-rich-tools")).toBeHidden();
+  // Mode switching and its keyboard navigation remain available on desktop.
+  await page.setViewportSize({ width: 1366, height: 900 });
   await detail(page)
     .getByRole("button", { name: "Markdown 원문", exact: true })
     .focus();
@@ -3000,6 +3034,9 @@ test("두 문서의 탭 제목을 입력 중 번갈아 더블클릭해도 저장
   });
   expect(errors).toEqual([]);
   await close(page);
+  await expect(page.locator(".annual-memos")).toHaveClass(/document-full-page/);
+  // Return to the sheet beside the memo before reopening the task.
+  await page.setViewportSize({ width: 1366, height: 900 });
   await open(page);
   await expect(tabs.getByRole("tab")).toHaveCount(2);
   await expect(rich(page)).toContainText("유지할 첫 문서 본문");
@@ -3381,11 +3418,7 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     await detail(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
   ).toBe(true);
   const headerBox = (await header.boundingBox())!;
-  const controlsBox = (await controls.boundingBox())!;
-  expect(controlsBox.y).toBeGreaterThanOrEqual(headerBox.y);
-  expect(controlsBox.y + controlsBox.height).toBeLessThanOrEqual(
-    headerBox.y + headerBox.height,
-  );
+  await expect(controls).toBeHidden();
   expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
     true,
   );
@@ -3484,6 +3517,9 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     path: info.outputPath("document-inline-title-mobile.png"),
   });
   await input.press("Escape");
+  await expect(header.locator(".document-modes")).toBeHidden();
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await expect(controls).toBeVisible();
   await raw(page);
   await source(page).fill("마지막 문서에만 저장되는 본문");
   await last.press("Home");

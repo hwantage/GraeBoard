@@ -1,11 +1,9 @@
-import {
-  useMemo,
-  type KeyboardEvent,
-  type PointerEvent,
-  type MouseEvent,
-} from "react";
+import { useMemo, type KeyboardEvent, type PointerEvent } from "react";
+import { useTouchPress } from "./useTouchPress";
+import { isSecretEntry } from "./secret-calendar";
+import { calendarDisplayLane } from "./secret-calendar-layout";
 import { busyProps } from "./busyProps";
-import { FileText } from "lucide-react";
+import { FileText, LockKeyhole } from "lucide-react";
 import { normalizeSearchQuery } from "../shared/search.js";
 import { addDays, moveCalendarRange } from "../shared/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
@@ -19,6 +17,12 @@ import type {
   CalendarDragMode,
   CalendarRange,
 } from "./useCalendarDrag";
+
+type EntryMenuPosition = {
+  clientX: number;
+  clientY: number;
+  currentTarget: HTMLElement;
+};
 
 type Segment = {
   item: CalendarEntry;
@@ -59,7 +63,7 @@ export default function CalendarEntries({
   savingId?: string;
   searchQuery: string;
   onOpen: (entry: CalendarEntry) => void;
-  onContextMenu: (event: MouseEvent<HTMLElement>, entry: CalendarEntry) => void;
+  onContextMenu: (event: EntryMenuPosition, entry: CalendarEntry) => void;
   onDragStart: (
     event: PointerEvent<HTMLButtonElement>,
     entry: CalendarEntry,
@@ -70,6 +74,7 @@ export default function CalendarEntries({
   onCheckTag: (entry: CalendarEntry, tagId: string, checked: boolean) => void;
   canClick: () => boolean;
 }) {
+  const touchPress = useTouchPress();
   const dates = useMemo(
     () => weekdays.map((day) => addDays(start, day)),
     [start, weekdays],
@@ -89,7 +94,7 @@ export default function CalendarEntries({
     return entries.flatMap((item) => {
       const span = columns(item);
       if (!span) return [];
-      return [{ item, ...span, lane: item.lane }];
+      return [{ item, ...span, lane: calendarDisplayLane(item) }];
     });
   }, [entries, dates]);
   const previewSpan = preview && columns(preview);
@@ -99,17 +104,26 @@ export default function CalendarEntries({
     item: CalendarEntry,
     mode: CalendarDragMode,
   ) {
-    if (readOnly || disabled || (mode === "move" && !event.altKey)) return;
+    if (
+      (readOnly && !isSecretEntry(item)) ||
+      disabled ||
+      (mode === "move" && !event.altKey)
+    )
+      return;
     if (
       mode === "move" &&
-      event.shiftKey &&
+      (event.shiftKey || isSecretEntry(item)) &&
       ["ArrowUp", "ArrowDown"].includes(event.key)
     ) {
       event.preventDefault();
       event.stopPropagation();
       onOrderChange(
         item,
-        Math.max(0, item.lane + (event.key === "ArrowUp" ? -1 : 1)),
+        Math.max(
+          0,
+          (isSecretEntry(item) ? calendarDisplayLane(item) : item.lane) +
+            (event.key === "ArrowUp" ? -1 : 1),
+        ),
       );
       return;
     }
@@ -130,6 +144,7 @@ export default function CalendarEntries({
   }
 
   function render({ item, first, last, lane }: Segment, isPreview = false) {
+    const itemReadOnly = readOnly && !isSecretEntry(item);
     const entryTags = item.tagIds.flatMap((id) => tags.get(id) || []);
     const separateTags =
       !isPreview && entryTags.some((tag) => tag.kind === "check");
@@ -142,7 +157,14 @@ export default function CalendarEntries({
     const content = (
       <span className="calendar-entry-content">
         <strong>
-          <span>
+          {isSecretEntry(item) && (
+            <LockKeyhole
+              size={12}
+              className="calendar-secret-icon"
+              aria-label="시크릿 일정"
+            />
+          )}
+          <span className="calendar-entry-title">
             {before && <i aria-hidden="true">← </i>}
             {item.title}
             {after && <i aria-hidden="true"> →</i>}
@@ -174,15 +196,24 @@ export default function CalendarEntries({
         data-range-start={item.date}
         data-range-end={item.endDate}
         data-entry-lane={lane}
-        data-readonly={readOnly || undefined}
+        data-server-lane={isSecretEntry(item) ? undefined : item.lane}
+        data-readonly={itemReadOnly || undefined}
+        data-secret={isSecretEntry(item) || undefined}
+        data-secret-tagged={
+          (isSecretEntry(item) && entryTags.length > 0) || undefined
+        }
         role="group"
         aria-hidden={isPreview || undefined}
         aria-busy={savingId === item.id || undefined}
         aria-label={`${item.title} · ${item.date} ~ ${item.endDate}`}
         onContextMenu={
-          isPreview || disabled || readOnly
+          isPreview || disabled || itemReadOnly
             ? undefined
-            : (event) => onContextMenu(event, item)
+            : (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!touchPress.isTouch.current) onContextMenu(event, item);
+              }
         }
         className={`calendar-entry-segment${before ? " continues-before" : ""}${after ? " continues-after" : ""}${isSource ? " is-drag-source" : ""}${isPreview ? " is-drag-preview" : ""}${!isSource && changingId === item.id ? " is-changing" : ""}`}
         style={{
@@ -208,14 +239,27 @@ export default function CalendarEntries({
               {...busyProps(disabled && !drag)}
               aria-disabled={disabled || undefined}
               aria-label={`${item.title}${item.preview ? ` ${item.preview}` : ""}${entryTags.length ? ` · 태그: ${entryTags.map((tag) => tag.name).join(", ")}` : ""}`}
-              aria-describedby={readOnly ? undefined : "calendar-drag-help"}
+              aria-describedby={itemReadOnly ? undefined : "calendar-drag-help"}
               title={item.title}
               onClick={(e) => open(e.detail)}
-              onPointerDown={
-                readOnly || disabled
-                  ? undefined
-                  : (e) => onDragStart(e, item, "move")
-              }
+              onPointerDown={(event) => {
+                if (event.pointerType === "touch") {
+                  const position = {
+                    clientX: event.clientX,
+                    clientY: event.clientY,
+                    currentTarget: event.currentTarget.closest<HTMLElement>(
+                      ".calendar-entry-segment",
+                    )!,
+                  };
+                  touchPress.start(event, {
+                    onLongPress: () => {
+                      if (!itemReadOnly && !disabled)
+                        onContextMenu(position, item);
+                    },
+                  });
+                } else if (!itemReadOnly && !disabled)
+                  onDragStart(event, item, "move");
+              }}
               onKeyDown={(e) => keyboard(e, item, "move")}
             >
               {content}
@@ -247,7 +291,7 @@ export default function CalendarEntries({
             {savingId === item.id && (
               <span className="calendar-entry-saving">저장 중…</span>
             )}
-            {!readOnly &&
+            {!itemReadOnly &&
               (["start", "end"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -269,11 +313,17 @@ export default function CalendarEntries({
     );
   }
   return (
-    <div className="calendar-week-events">
+    <div
+      className="calendar-week-events"
+      onClickCapture={touchPress.onClickCapture}
+    >
       {segments.map((item) => render(item))}
       {preview &&
         previewSpan &&
-        render({ item: preview, ...previewSpan, lane: preview.lane }, true)}
+        render(
+          { item: preview, ...previewSpan, lane: calendarDisplayLane(preview) },
+          true,
+        )}
     </div>
   );
 }

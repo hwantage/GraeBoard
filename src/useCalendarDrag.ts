@@ -7,6 +7,8 @@ import {
 } from "react";
 import { moveCalendarRange } from "../shared/calendar.js";
 import type { CalendarEntry } from "./calendar-types";
+import { isSecretEntry } from "./secret-calendar";
+import { calendarDisplayLane } from "./secret-calendar-layout";
 import { trackPointerDrag } from "./trackPointerDrag";
 
 export type CalendarRange = Pick<CalendarEntry, "date" | "endDate">;
@@ -50,7 +52,14 @@ export function useCalendarDrag(
     mode: CalendarDragMode,
   ) {
     const grid = root.current;
-    if (!grid || disabled || event.button !== 0 || !event.isPrimary) return;
+    if (
+      !grid ||
+      disabled ||
+      event.button !== 0 ||
+      !event.isPrimary ||
+      event.pointerType === "touch"
+    )
+      return;
     cleanup.current?.();
     suppressClick.current = false;
     const pointerId = event.pointerId;
@@ -102,17 +111,21 @@ export function useCalendarDrag(
       );
     };
     const anchor = locate()?.dataset.date || entry.date;
-    const maximumLane = Math.max(
-      entry.lane,
-      ...Array.from(
-        events?.querySelectorAll<HTMLElement>("[data-entry-lane]") || [],
+    const rows = Array.from(
+      events?.querySelectorAll<HTMLElement>("[data-entry-lane]") || [],
+    )
+      .filter(
+        (item) =>
+          (isSecretEntry(entry) || !item.dataset.secret) &&
+          item.dataset.rangeStart! <= anchor &&
+          item.dataset.rangeEnd! >= anchor,
       )
-        .filter(
-          (item) =>
-            item.dataset.rangeStart! <= anchor &&
-            item.dataset.rangeEnd! >= anchor,
-        )
-        .map((item) => Number(item.dataset.entryLane)),
+      .sort(
+        (a, b) => Number(a.dataset.entryLane) - Number(b.dataset.entryLane),
+      );
+    const maximumLane = Math.max(
+      calendarDisplayLane(entry),
+      ...rows.map((item) => Number(item.dataset.entryLane)),
     );
     const update = () => {
       const cell = locate();
@@ -137,7 +150,24 @@ export function useCalendarDrag(
               Math.round((pointer.y - grabOffset - top) / pitch),
             ),
           );
-          target = { date: entry.date, endDate: entry.endDate, lane };
+          const serverRow =
+            rows.find((item) => Number(item.dataset.entryLane) >= lane) ||
+            rows.at(-1);
+          target = {
+            date: entry.date,
+            endDate: entry.endDate,
+            lane:
+              isSecretEntry(entry) ||
+              !rows.some(
+                (item) => item.dataset.serverLane !== item.dataset.entryLane,
+              )
+                ? lane
+                : Number(
+                    serverRow?.dataset.serverLane ??
+                      serverRow?.dataset.entryLane ??
+                      entry.lane,
+                  ),
+          };
         }
       } else
         target = date ? moveCalendarRange(entry, mode, anchor, date) : null;
@@ -145,7 +175,7 @@ export function useCalendarDrag(
         id: entry.id,
         date: entry.date,
         endDate: entry.endDate,
-        lane: entry.lane,
+        lane: isSecretEntry(entry) ? calendarDisplayLane(entry) : entry.lane,
         ...target,
         mode: target?.lane === undefined ? mode : ("order" as const),
         valid: !!target,
@@ -228,7 +258,11 @@ export function useCalendarDrag(
           target &&
           (target.date !== entry.date ||
             target.endDate !== entry.endDate ||
-            (target.lane !== undefined && target.lane !== entry.lane))
+            (target.lane !== undefined &&
+              target.lane !==
+                (isSecretEntry(entry)
+                  ? calendarDisplayLane(entry)
+                  : entry.lane)))
         )
           onDrop(
             entry,

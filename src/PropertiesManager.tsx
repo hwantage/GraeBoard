@@ -1,4 +1,5 @@
 import Select from "./Select";
+import ColorMenu from "./ColorMenu";
 import { useEffect, useRef, useState } from "react";
 import { Plus, GripVertical, Trash2 } from "lucide-react";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
@@ -249,12 +250,12 @@ export default function PropertiesManager({
               ).map(([key, label, fallback]) => (
                 <label key={key}>
                   {label}
-                  <input
-                    type="color"
-                    aria-label={`주차 머리글 ${label}`}
+                  <ColorMenu
+                    compact
+                    disabled={busy}
+                    label={`주차 머리글 ${label}`}
                     value={settings.weekHeader?.[key] || fallback}
-                    onChange={(e) => {
-                      const color = e.target.value;
+                    onApply={(color) => {
                       setSettings((s) => ({
                         ...s,
                         weekHeader: { ...s.weekHeader, [key]: color },
@@ -577,13 +578,14 @@ export default function PropertiesManager({
                           </td>
                           {property.display !== "emoji" && (
                             <td>
-                              <input
-                                type="color"
-                                aria-label={`${v.label} 배경색`}
+                              <ColorMenu
+                                compact
+                                disabled={busy}
+                                label={`${v.label} 배경색`}
                                 value={v.backgroundColor}
-                                onChange={(e) =>
+                                onApply={(color) =>
                                   patchValue(v.id, {
-                                    backgroundColor: e.target.value,
+                                    backgroundColor: color,
                                   })
                                 }
                               />
@@ -591,12 +593,13 @@ export default function PropertiesManager({
                           )}
                           {property.display === "dot" && (
                             <td>
-                              <input
-                                type="color"
-                                aria-label={`${v.label} 점 색상`}
+                              <ColorMenu
+                                compact
+                                disabled={busy}
+                                label={`${v.label} 점 색상`}
                                 value={v.dotColor}
-                                onChange={(e) =>
-                                  patchValue(v.id, { dotColor: e.target.value })
+                                onApply={(color) =>
+                                  patchValue(v.id, { dotColor: color })
                                 }
                               />
                             </td>

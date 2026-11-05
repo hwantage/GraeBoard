@@ -1,3 +1,4 @@
+import type { DocumentImages } from "./document-storage";
 import {
   useEffect,
   useLayoutEffect,
@@ -9,6 +10,7 @@ import { isDocumentImage } from "../shared/document-images.js";
 import { parseDocumentLinkPath } from "../shared/document-links.js";
 import {
   DocumentLinkTitles,
+  documentLinkTarget,
   copyToClipboard,
   useDocumentLinkOpener,
 } from "./document-links";
@@ -19,6 +21,10 @@ import {
   pasteDocumentLink,
 } from "./DocumentLinkNode";
 import { documentImageView, type ImagePreview } from "./DocumentImageView";
+import {
+  documentCodeBlockSelection,
+  documentCodeBlockView,
+} from "./DocumentCodeBlockView";
 import { Button, Modal } from "./components";
 import Toast, { useToast } from "./Toast";
 import Select from "./Select";
@@ -114,8 +120,9 @@ import {
   isInTable,
   selectedRect,
 } from "@milkdown/kit/prose/tables";
-import { $prose, callCommand } from "@milkdown/kit/utils";
+import { $prose, $remark, callCommand } from "@milkdown/kit/utils";
 import type { Ctx } from "@milkdown/kit/ctx";
+import type { MarkdownNode, Root } from "@milkdown/kit/transformer";
 import {
   Bold,
   Italic,
@@ -141,6 +148,7 @@ import {
   Heading3,
   Quote,
   SquareCode,
+  Workflow,
   Minus,
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
@@ -351,6 +359,31 @@ function isPlainLineBreak(value: unknown): value is string {
   return typeof value === "string" && /^<br\s*\/?\s*>$/i.test(value.trim());
 }
 
+// GFM can parse rows wider or narrower than the header. Pad missing cells
+// before both the loss check and ProseMirror parsing so all existing cells
+// survive, and the table editor starts with a rectangular table. This does
+// not write back to the source until the user actually edits the document.
+const remarkTableShape = $remark("remarkDocumentTableShape", () => () => {
+  function visit(node: MarkdownNode) {
+    if (node.type === "table" && node.children?.length) {
+      const width = node.children.reduce(
+        (max, row) => Math.max(max, row.children?.length ?? 0),
+        0,
+      );
+      const align = (node.align as (string | null)[] | undefined) ?? [];
+      while (align.length < width) align.push(null);
+      node.align = align;
+      for (const row of node.children) {
+        row.children ??= [];
+        while (row.children.length < width)
+          row.children.push({ type: "tableCell", children: [] });
+      }
+    }
+    node.children?.forEach(visit);
+  }
+  return (tree: Root) => visit(tree as MarkdownNode);
+});
+
 // Compare meaning, not choices of delimiters, indentation or table spacing.
 // Unrepresented AST nodes must never be silently discarded by rich editing.
 function semanticTree(node: any): any {
@@ -379,7 +412,11 @@ function semanticTree(node: any): any {
       .map((k) => [k, semanticTree(node[k])]),
   );
 }
-function checkMarkdown(ctx: Ctx, markdown: string) {
+function checkMarkdown(
+  ctx: Ctx,
+  markdown: string,
+  options?: Pick<Props, "images" | "documentLinks">,
+) {
   const remark = ctx.get(remarkCtx);
   // Validate after Milkdown's remark transforms: they keep unsupported HTML
   // as html nodes, restore serializer-generated <br /> placeholders to empty
@@ -416,11 +453,18 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
       throw new Error(
         "HTML·각주·참조 링크 등은 Markdown 원문에서 편집하세요. 원문은 그대로 보존됩니다.",
       );
-    if (node.type === "link" && !safeDocumentLink(node.url))
+    if (
+      node.type === "link" &&
+      (!safeDocumentLink(node.url) ||
+        (options?.documentLinks === false && !!documentLinkTarget(node.url)))
+    )
       throw new Error(
         "HTTP(S)·메일·문서 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
       );
-    if (node.type === "image" && !isDocumentImage(node.url))
+    if (
+      node.type === "image" &&
+      !(options?.images?.accepts || isDocumentImage)(node.url)
+    )
       throw new Error(
         "외부 이미지는 Markdown 원문에 보존됩니다. 리치 문서에는 이미지를 직접 붙여넣어 주세요.",
       );
@@ -441,17 +485,26 @@ function checkMarkdown(ctx: Ctx, markdown: string) {
   return doc;
 }
 
-function safeClipboardSlice(slice: Slice) {
+function safeClipboardSlice(
+  slice: Slice,
+  options?: Pick<Props, "images" | "documentLinks">,
+) {
   let safe = true;
   slice.content.descendants((node) => {
     if (
       (node.type.name === "html" && !isPlainLineBreak(node.attrs.value)) ||
-      (node.type.name === "image" && !isDocumentImage(node.attrs.src)) ||
+      (node.type.name === "image" &&
+        !(options?.images?.accepts || isDocumentImage)(node.attrs.src)) ||
+      (options?.documentLinks === false &&
+        node.type.name === "document_link") ||
       node.type.name === "footnote_definition" ||
       node.type.name === "footnote_reference" ||
       node.marks.some(
         (mark) =>
-          mark.type.name === "link" && !safeDocumentLink(mark.attrs.href),
+          mark.type.name === "link" &&
+          (!safeDocumentLink(mark.attrs.href) ||
+            (options?.documentLinks === false &&
+              !!documentLinkTarget(mark.attrs.href))),
       )
     )
       safe = false;
@@ -564,6 +617,8 @@ function tableCellPaste(ctx: Ctx, text: string) {
 
 type Props = {
   label?: string;
+  images?: DocumentImages;
+  documentLinks?: boolean;
   initialMarkdown: string;
   remoteMarkdown?: { markdown: string; sequence: number };
   readOnly: boolean;
@@ -753,7 +808,7 @@ export default function RichMarkdownEditor(props: Props) {
                   controller.signal,
                 );
                 if (!active || controller.signal.aborted) return [];
-                if (!isDocumentImage(url))
+                if (!(latest.current.images?.accepts || isDocumentImage)(url))
                   throw new Error("이미지 주소를 확인할 수 없습니다.");
                 nodes.push(
                   schema.nodes.image.create({
@@ -809,6 +864,11 @@ export default function RichMarkdownEditor(props: Props) {
               event.preventDefault();
               const href = anchor.getAttribute("href") || "";
               const target = parseDocumentLinkPath(href);
+              if (
+                latest.current.documentLinks === false &&
+                documentLinkTarget(href)
+              )
+                return true;
               if (target)
                 openDocumentLink(
                   target,
@@ -878,12 +938,16 @@ export default function RichMarkdownEditor(props: Props) {
             if (
               view.state.selection.$from.parent.type.spec.code ||
               (event.clipboardData?.getData("text/html") &&
-                safeClipboardSlice(slice))
+                safeClipboardSlice(slice, latest.current))
             )
               return false;
             // Markdown/plain text still uses the same preservation check.
             event.preventDefault();
-            if (pasteDocumentLink(view, text, linkTitles)) return true;
+            if (
+              latest.current.documentLinks !== false &&
+              pasteDocumentLink(view, text, linkTitles)
+            )
+              return true;
             const { $from, $to } = view.state.selection;
             if (
               isInTable(view.state) &&
@@ -898,7 +962,7 @@ export default function RichMarkdownEditor(props: Props) {
               return true;
             }
             try {
-              const doc = checkMarkdown(ctx, text);
+              const doc = checkMarkdown(ctx, text, latest.current);
               view.dispatch(
                 view.state.tr.replaceSelection(doc.slice(0)).scrollIntoView(),
               );
@@ -915,7 +979,14 @@ export default function RichMarkdownEditor(props: Props) {
             return false;
           },
           nodeViews: {
-            document_link: (node) => documentLinkView(node, linkTitles),
+            code_block: documentCodeBlockView,
+            document_link: (node) => {
+              if (latest.current.documentLinks !== false)
+                return documentLinkView(node, linkTitles);
+              const dom = document.createElement("span");
+              dom.textContent = node.attrs.text;
+              return { dom };
+            },
             image: (node, view, getPos) =>
               documentImageView(
                 node,
@@ -926,6 +997,7 @@ export default function RichMarkdownEditor(props: Props) {
                   setImageZoom(false);
                   setPreview(image);
                 },
+                latest.current.images,
               ),
             toggle_summary: (node, view, getPos) =>
               toggleSummaryView(
@@ -987,10 +1059,12 @@ export default function RichMarkdownEditor(props: Props) {
       })
       .use(commonmark)
       .use(codeBlockMetaSchema)
+      .use(documentCodeBlockSelection)
       .use(gfm)
       .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)
+      .use(remarkTableShape)
       .use(history)
       .use(upload)
       .use(trailing)
@@ -1045,7 +1119,7 @@ export default function RichMarkdownEditor(props: Props) {
         if (!active) return editor.destroy();
         try {
           const doc = editor.action((ctx) =>
-            checkMarkdown(ctx, latest.current.initialMarkdown),
+            checkMarkdown(ctx, latest.current.initialMarkdown, latest.current),
           );
           editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
@@ -1092,7 +1166,11 @@ export default function RichMarkdownEditor(props: Props) {
       applyingRemote.current = true;
       editorRef.current?.action((ctx) => {
         const view = ctx.get(editorViewCtx);
-        const parsed = checkMarkdown(ctx, props.remoteMarkdown!.markdown);
+        const parsed = checkMarkdown(
+          ctx,
+          props.remoteMarkdown!.markdown,
+          latest.current,
+        );
         // Compare against the same trailing paragraph the view keeps so a
         // caret resting there is not moved by every remote save.
         const doc = needsTrailingParagraph(parsed.lastChild)
@@ -1239,7 +1317,10 @@ export default function RichMarkdownEditor(props: Props) {
   }
   function applyLink(form: LinkForm) {
     const href = form.href.trim();
-    if (!safeDocumentLink(href)) {
+    if (
+      !safeDocumentLink(href) ||
+      (props.documentLinks === false && !!documentLinkTarget(href))
+    ) {
       setLinkError("https:// 또는 mailto:로 시작하는 주소를 입력하세요.");
       return;
     }
@@ -1293,6 +1374,7 @@ export default function RichMarkdownEditor(props: Props) {
   }
   function openLink(href: string, event: MouseEvent) {
     const target = parseDocumentLinkPath(href);
+    if (props.documentLinks === false && documentLinkTarget(href)) return;
     if (target && linkTitlesRef.current)
       openDocumentLink(
         target,
@@ -1329,6 +1411,12 @@ export default function RichMarkdownEditor(props: Props) {
     ["task", "체크리스트", "todo task check 할 일", <ListChecks size={16} />],
     ["quote", "인용", "quote blockquote", <Quote size={16} />],
     ["code", "코드 블록", "code pre", <SquareCode size={16} />],
+    [
+      "mermaid",
+      "Mermaid 다이어그램",
+      "diagram chart 순서도",
+      <Workflow size={16} />,
+    ],
     ["table", "표", "table", <Table2 size={16} />],
     ["hr", "구분선", "divider hr rule 구분 선", <Minus size={16} />],
     ["toggle0", "토글", "toggle details 접기", <ListCollapse size={16} />],
@@ -1353,6 +1441,15 @@ export default function RichMarkdownEditor(props: Props) {
           command(insertTableCommand.key, { row: 3, col: 3 });
         else if (id === "hr") command(insertHrCommand.key);
         else if (id === "link") openLinkForm();
+        else if (id === "mermaid")
+          run((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            ctx.get(commandsCtx).call(createCodeBlockCommand.key, "mermaid");
+            if (!view.state.selection.$from.parent.textContent)
+              view.dispatch(
+                view.state.tr.insertText("flowchart LR\n  A[시작] --> B[완료]"),
+              );
+          });
         else setBlock(id);
       },
     }),
