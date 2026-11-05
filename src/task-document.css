@@ -192,6 +192,33 @@
 .document-prose pre code {
   padding: 0;
 }
+.document-mermaid {
+  margin: 16px 0;
+  min-width: 0;
+}
+.document-mermaid.has-preview:not(.has-error) > pre {
+  display: none;
+}
+.ProseMirror-focused .document-mermaid.document-code-selected > pre {
+  display: block;
+}
+.document-mermaid-preview {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.document-mermaid-preview > svg {
+  display: block;
+  max-width: none !important;
+  height: auto;
+  margin: 0 auto;
+}
+.document-mermaid-render {
+  position: fixed;
+  top: 0;
+  left: -100000px;
+  visibility: hidden;
+  pointer-events: none;
+}
 .document-prose a {
   color: var(--accent-strong);
   text-decoration: underline;
