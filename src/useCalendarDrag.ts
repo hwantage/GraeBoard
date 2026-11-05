@@ -50,7 +50,14 @@ export function useCalendarDrag(
     mode: CalendarDragMode,
   ) {
     const grid = root.current;
-    if (!grid || disabled || event.button !== 0 || !event.isPrimary) return;
+    if (
+      !grid ||
+      disabled ||
+      event.button !== 0 ||
+      !event.isPrimary ||
+      event.pointerType === "touch"
+    )
+      return;
     cleanup.current?.();
     suppressClick.current = false;
     const pointerId = event.pointerId;

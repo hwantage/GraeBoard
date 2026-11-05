@@ -6505,15 +6505,25 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
     const headingGroup = (await dialog
       .locator(":scope > header > .modal-heading")
       .boundingBox())!;
-    const expandBox = (await dialog
-      .locator(":scope > header")
-      .getByRole("button", {
-        name: /^(문서 전체 페이지로 보기|전체 페이지 닫기)$/,
-      })
-      .boundingBox())!;
-    expect(expandBox.x).toBeGreaterThanOrEqual(headingBox.x + headingBox.width);
-    expect(expandBox.x - headingBox.x - headingBox.width).toBeLessThan(16);
-    expect(expandBox.y).toBeLessThan(headingBox.y + headingBox.height);
+    const expand = dialog.locator(":scope > header .document-expand");
+    if (page.viewportSize()!.width <= 700) {
+      await expect(expand).toBeHidden();
+      await expect(dialog).toHaveClass(/document-full-page/);
+      await expect(dialog).toHaveClass(/document-full-width/);
+    } else {
+      const expandBox = (await expand.boundingBox())!;
+      expect(expandBox.x).toBeGreaterThanOrEqual(
+        headingBox.x + headingBox.width,
+      );
+      const linkBox = (await dialog
+        .locator(":scope > header")
+        .getByRole("button", { name: "링크 복사", exact: true })
+        .boundingBox())!;
+      expect(linkBox.x).toBeGreaterThanOrEqual(headingBox.x + headingBox.width);
+      expect(expandBox.x - linkBox.x - linkBox.width).toBeLessThan(16);
+      expect(expandBox.x).toBeGreaterThanOrEqual(linkBox.x + linkBox.width);
+      expect(expandBox.y).toBeLessThan(headingBox.y + headingBox.height);
+    }
     const actionsBox = (await actions.boundingBox())!;
     const closeBox = (await dialog
       .getByRole("button", {
@@ -6556,7 +6566,7 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await page.setViewportSize({ width: 320, height: 700 });
   await aligned();
   await headerActionsFit();
-  await dialog.getByRole("button", { name: "문서 전체 페이지로 보기" }).click();
+  await expect(dialog).toHaveClass(/document-full-page/);
   await headerActionsFit();
   await expect(dialog.locator(".task-detail-year")).toBeVisible();
   await expect(dialog.locator(".task-detail-properties")).toBeVisible();
@@ -6567,6 +6577,10 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await dialog.screenshot({
     path: info.outputPath("task-detail-full-page-mobile.png"),
   });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await expect(dialog).not.toHaveClass(/document-full-page/);
+  await dialog.getByRole("button", { name: "문서 전체 페이지로 보기" }).click();
+  await headerActionsFit();
   await dialog
     .getByRole("button", { name: "전체 페이지 닫기", exact: true })
     .click();

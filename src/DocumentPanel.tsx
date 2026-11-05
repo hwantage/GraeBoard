@@ -38,9 +38,8 @@ import {
   MAX_DOCUMENT_TITLE_LENGTH,
 } from "../shared/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton, {
-  useDocumentFullWidth,
-} from "./DocumentFullWidthButton";
+import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   type DocumentLinkTarget,
@@ -1148,8 +1147,11 @@ export function DocumentPage({
     }
   }
   const [expanded, setFullPage] = useState(false);
-  const fullPage = expanded || !!onClose;
-  const fullWidth = useDocumentFullWidth();
+  const layout = useDocumentFullPage(expanded || !!onClose);
+  // Inline cards share AnnualMemoPanel's mobile page and tabs. A linked memo
+  // owns its page; embedded task documents use their parent detail's page.
+  const fullPage = !!onClose || (inline && !layout.mobile && expanded);
+  const fullWidth = layout.fullWidth;
   const leaveFullPage = () => (onClose ? onClose() : setFullPage(false));
   const dialog = useRef<HTMLDialogElement | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);

@@ -7,7 +7,8 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { ChevronDown, ChevronUp, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, X } from "lucide-react";
+import { useDocumentFullPage } from "./useDocumentFullPage";
 import { Button } from "./components";
 import DocumentPanel, { type DocumentPanelHandle } from "./DocumentPanel";
 
@@ -61,7 +62,48 @@ export default forwardRef<
   const [scrollable, setScrollable] = useState(false);
   const draggingScroll = useRef(false);
   const panel = useRef<DocumentPanelHandle>(null);
-  const section = useRef<HTMLElement>(null);
+  const section = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const { fullPage: mobilePage, fullWidth } = useDocumentFullPage();
+  const fullPage = opened && mobilePage;
+  useLayoutEffect(() => {
+    const element = section.current;
+    if (!element) return;
+    const active = document.activeElement;
+    if (fullPage) {
+      const show = () => {
+        if (element.matches(":modal")) return;
+        // A task/link dialog opened above the desktop memo keeps its place
+        // when the viewport narrows. Open the memo after that dialog closes.
+        if (
+          [...document.querySelectorAll("dialog:modal")].some(
+            (other) => !element.contains(other),
+          )
+        )
+          return;
+        element.close();
+        element.showModal();
+        closeButton.current?.focus({ preventScroll: true });
+      };
+      show();
+      const observer = new MutationObserver(show);
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["open"],
+      });
+      return () => observer.disconnect();
+    } else if (element.matches(":modal")) {
+      // CSS renders the desktop region without an open dialog, keeping the
+      // sheet's Escape and presentation handlers active.
+      element.close();
+      if (active instanceof HTMLElement && element.contains(active))
+        element
+          .querySelector<HTMLButtonElement>(".toggle-memos")
+          ?.focus({ preventScroll: true });
+    }
+  }, [fullPage]);
   const contentId = useId();
   const ToggleIcon = opened ? ChevronUp : ChevronDown;
   useImperativeHandle(ref, () => ({
@@ -121,10 +163,16 @@ export default forwardRef<
     }
   }
   return (
-    <section
+    <dialog
       ref={section}
-      className="annual-memos"
+      className={`annual-memos memo-panel${fullPage ? ` document-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
+      role={fullPage ? "dialog" : "region"}
       aria-label="연간 업무 메모 목록"
+      onCancel={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void toggle();
+      }}
       data-collapsed={!opened || undefined}
       style={
         opened && height !== null
@@ -287,6 +335,17 @@ export default forwardRef<
             <span>드래그하여 좌우 스크롤</span>
           </div>
         )}
+        {fullPage && (
+          <Button
+            ref={closeButton}
+            className="memo-panel-close"
+            tooltip="닫기"
+            disabled={closing}
+            onClick={() => void toggle()}
+          >
+            <X size={18} aria-hidden="true" />
+          </Button>
+        )}
       </div>
       <div id={contentId} className="memo-panel-content" hidden={!opened}>
         {opened && (
@@ -318,6 +377,6 @@ export default forwardRef<
           />
         )}
       </div>
-    </section>
+    </dialog>
   );
 });

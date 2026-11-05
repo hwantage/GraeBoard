@@ -362,10 +362,11 @@ test("주간 업무 추가 창은 넓게 열려 팀원·상태·문서를 보여
   );
   expect(saved.weekly.map((item: any) => item.taskId)).toEqual([progress]);
 
-  await page.setViewportSize({ width: 390, height: 844 });
   await weekTasks(page)
     .getByRole("button", { name: "업무 추가", exact: true })
     .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(weekTasks(page)).toBeHidden();
   await dialog.getByRole("button", { name: "속성 필터", exact: true }).click();
   await expect(
     dialog.getByRole("checkbox", { name: "주간 후보 완료", exact: true }),

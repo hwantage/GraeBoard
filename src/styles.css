@@ -5475,3 +5475,146 @@ body.document-block-moving * {
   color: var(--muted);
   font-size: 12px;
 }
+
+@media (max-width: 700px) {
+  .topbar {
+    gap: 4px;
+    min-height: 42px;
+  }
+  .topbar .brand-home {
+    display: none;
+  }
+  .topbar .top-account {
+    padding-left: 4px;
+  }
+  .workspace .format-toolbar > .toolbar-group,
+  .workspace .format-toolbar > .selection-label,
+  .workspace .format-toolbar > .zoom-controls,
+  .workspace .page-heading:not(.calendar-heading) .heading-actions,
+  .workspace .row-drag-handle,
+  .workspace .row-resizer,
+  .workspace .column-resizer {
+    display: none;
+  }
+  .workspace .format-toolbar > .toolbar-group:first-of-type {
+    display: flex;
+  }
+  .workspace .format-toolbar [aria-label="서식 복사"] {
+    display: none;
+  }
+  .workspace .date-search-controls {
+    flex-wrap: wrap;
+  }
+  .workspace .date-controls {
+    flex-basis: 100%;
+  }
+  .workspace .sheet-cell .task-document-indicator.is-empty {
+    opacity: 0.65;
+    pointer-events: auto;
+  }
+  .modal.wide.settings-modal {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-nav {
+    max-height: 132px;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-nav ul {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+  .settings-nav li {
+    flex-shrink: 0;
+  }
+  .settings-nav button {
+    width: auto;
+  }
+  .settings-nav .settings-version {
+    display: none;
+  }
+  .settings-content {
+    padding: 12px;
+    min-width: 0;
+  }
+  .settings-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .settings-tabs [role="tab"] {
+    flex-shrink: 0;
+  }
+  .settings-danger {
+    flex-wrap: wrap;
+  }
+  .auth-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .auth-form {
+    min-width: 0;
+    padding: 24px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .sheet-cell:not(.editing),
+  .sheet-scroll .header-cell,
+  .sheet-scroll .row-number,
+  .calendar-entry-card {
+    -webkit-touch-callout: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .workspace .board > .view-controls:has(.date-search-controls) {
+    gap: 4px;
+    padding: 4px 6px;
+  }
+  .workspace .date-search-controls {
+    display: contents;
+  }
+  .workspace .date-controls {
+    flex: 1 1 100%;
+    gap: 5px;
+    scrollbar-width: none;
+  }
+  .workspace .date-controls .year-control {
+    height: 36px;
+  }
+  .workspace .date-controls .period-grid {
+    grid-template-rows: 18px 16px;
+  }
+  .workspace .date-search-controls > .search-box {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    height: 32px;
+    gap: 3px;
+    padding-inline: 4px;
+  }
+  .view-controls:has(.date-search-controls) > .view-bar {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+  .workspace .saved-filter-control {
+    min-width: 0;
+    height: 32px;
+  }
+  .workspace .saved-filter-trigger {
+    padding-inline: 7px;
+    gap: 3px;
+  }
+  .workspace .saved-filter-trigger > span {
+    display: none;
+  }
+}

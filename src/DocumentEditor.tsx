@@ -17,6 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError } from "./api";
+import { useMobileLayout } from "./useMobileLayout";
 import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
 import { MAX_IMAGE_BYTES } from "../shared/document-images.js";
 import { MAX_DOCUMENT_BYTES, documentBytes } from "../shared/task-documents.js";
@@ -101,7 +102,21 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     const [loaded, setLoaded] = useState(false);
     const [editorReady, setEditorReady] = useState(false);
     const [editorFailed, setEditorFailed] = useState(false);
-    const [mode, setMode] = useState<"rich" | "source">("rich");
+    const [preferredMode, setMode] = useState<DocumentMode>("rich");
+    const mobile = useMobileLayout();
+    const [sourceRequired, setSourceRequired] = useState(false);
+    const mode = mobile && !sourceRequired ? "rich" : preferredMode;
+    const previousMobile = useRef(mobile);
+    useLayoutEffect(() => {
+      if (
+        mobile &&
+        !previousMobile.current &&
+        preferredMode === "source" &&
+        !sourceRequired
+      )
+        setEditorReady(false);
+      previousMobile.current = mobile;
+    }, [mobile, preferredMode, sourceRequired]);
     const [notice, setNotice] = useState("");
     const [error, setError] = useState("");
     const [status, setStatus] = useState("문서를 불러오고 있습니다…");
@@ -122,6 +137,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     }, [loading, props.onLoadingChange]);
     function changeMode(value: DocumentMode) {
       if (value === "rich" && mode !== value) {
+        setSourceRequired(false);
         setEditorReady(false);
         setEditorFailed(false);
       }
@@ -623,7 +639,10 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
               />
             ) : (
               <EditorBoundary
-                onSource={() => changeMode("source")}
+                onSource={() => {
+                  setSourceRequired(true);
+                  changeMode("source");
+                }}
                 onError={() => setEditorFailed(true)}
               >
                 <Suspense fallback={null}>
@@ -639,6 +658,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     onReady={() => setEditorReady(true)}
                     onUnsupported={(message) => {
                       setNotice(message);
+                      setSourceRequired(true);
                       setMode("source");
                     }}
                   />

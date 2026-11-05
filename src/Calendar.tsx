@@ -17,6 +17,7 @@ import {
   Search,
   Plus,
   SlidersHorizontal,
+  Settings,
   Tags,
   Users,
   X,
@@ -170,6 +171,12 @@ export default function Calendar({
   const [reload, setReload] = useState(0);
   const [contextAttempt, setContextAttempt] = useState(0);
   const [showDays, setShowDays] = useState(false);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const [settingsMenu, setSettingsMenu] = useState<{
+    x: number;
+    y: number;
+    anchor: HTMLButtonElement;
+  } | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [search, setSearch] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
@@ -304,6 +311,7 @@ export default function Calendar({
     !!entry ||
     !!tagEntry ||
     !!entryMenu ||
+    !!settingsMenu ||
     !!task ||
     !!creating ||
     showDays ||
@@ -378,6 +386,7 @@ export default function Calendar({
         !!entry ||
         !!tagEntry ||
         !!entryMenu ||
+        !!settingsMenu ||
         !!task ||
         !!creating ||
         showDays ||
@@ -392,6 +401,7 @@ export default function Calendar({
     entry,
     tagEntry,
     entryMenu,
+    settingsMenu,
     task,
     creating,
     showDays,
@@ -969,7 +979,9 @@ export default function Calendar({
       data-date={date}
       data-weekday={weekdays[column]}
       data-owner-id={ownerId ?? "team"}
-      style={{ gridColumn: column + (ownerId === null ? 1 : 2), gridRow: 1 }}
+      style={
+        { "--calendar-day-column": column + 1, gridRow: 1 } as CSSProperties
+      }
     >
       <div className="calendar-date">
         <time
@@ -1046,7 +1058,10 @@ export default function Calendar({
                   aria-keyshortcuts={
                     editable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
                   }
-                  onPointerDown={handle.onPointerDown}
+                  onPointerDown={(event) => {
+                    if (event.pointerType !== "touch")
+                      handle.onPointerDown(event);
+                  }}
                   onKeyDown={handle.onKeyDown}
                   onClickCapture={handle.onClickCapture}
                   aria-description={
@@ -1152,8 +1167,6 @@ export default function Calendar({
           searchQuery={searchQuery}
           onOpen={setEntry}
           onContextMenu={(event, item) => {
-            event.preventDefault();
-            event.stopPropagation();
             setEntryMenu({
               entry: item,
               x: event.clientX,
@@ -1198,6 +1211,15 @@ export default function Calendar({
   function changeMemberWeek(ownerId: string, start: string) {
     setMemberWeeks((previous) => ({ ...previous, [ownerId]: start }));
     setMemberId(ownerId);
+  }
+  function openRule() {
+    void action(async () => {
+      const latest = await api<CalendarContext>(`/calendar/teams/${team.id}`);
+      if (alive.current) {
+        setContext(latest);
+        setShowRule(true);
+      }
+    });
   }
   const gridHeader = () => (
     <div className="calendar-grid-header">
@@ -1264,22 +1286,26 @@ export default function Calendar({
             개인 월간 보기
           </Button>
         </div>
+        <Button
+          ref={settingsButton}
+          className="calendar-settings-toggle"
+          tooltip="캘린더 설정"
+          aria-haspopup="menu"
+          aria-expanded={!!settingsMenu}
+          {...busyProps(locked, !context)}
+          onClick={() => {
+            const anchor = settingsButton.current!;
+            const box = anchor.getBoundingClientRect();
+            setSettingsMenu(
+              settingsMenu ? null : { x: box.left, y: box.bottom, anchor },
+            );
+          }}
+        >
+          <Settings size={16} aria-hidden="true" />
+        </Button>
         <div className="heading-actions calendar-view-options">
           {manageable && view !== "shared" && (
-            <Button
-              {...busyProps(locked, !context)}
-              onClick={() =>
-                void action(async () => {
-                  const latest = await api<CalendarContext>(
-                    `/calendar/teams/${team.id}`,
-                  );
-                  if (alive.current) {
-                    setContext(latest);
-                    setShowRule(true);
-                  }
-                })
-              }
-            >
+            <Button {...busyProps(locked, !context)} onClick={openRule}>
               <ListFilter size={13} />
               주간 할 일 기준
             </Button>
@@ -1377,6 +1403,7 @@ export default function Calendar({
                         className="calendar-owner-button"
                         data-member-id={member.id}
                         tooltip={member.name}
+                        aria-label={member.name}
                         data-tooltip-tone="black"
                         active={memberId === member.id}
                         aria-pressed={memberId === member.id}
@@ -1609,11 +1636,17 @@ export default function Calendar({
                           </Button>
                           <strong className="calendar-member-period">
                             <time dateTime={start}>
-                              {start.replaceAll("-", ".")}
+                              <span className="calendar-member-year">
+                                {start.slice(0, 4)}.
+                              </span>
+                              {start.slice(5).replace("-", ".")}
                             </time>
                             <span>~</span>
                             <time dateTime={addDays(start, 6)}>
-                              {addDays(start, 6).replaceAll("-", ".")}
+                              <span className="calendar-member-year">
+                                {addDays(start, 6).slice(0, 4)}.
+                              </span>
+                              {addDays(start, 6).slice(5).replace("-", ".")}
                             </time>
                           </strong>
                           <Button
@@ -1666,6 +1699,40 @@ export default function Calendar({
           </div>
         )}
       </div>
+      {settingsMenu && (
+        <GridHeaderMenu
+          x={settingsMenu.x}
+          y={settingsMenu.y}
+          anchor={settingsMenu.anchor}
+          title="캘린더 설정"
+          onClose={(restore) => {
+            setSettingsMenu(null);
+            if (restore) settingsMenu.anchor.focus({ preventScroll: true });
+          }}
+          actions={[
+            ...(manageable && view !== "shared"
+              ? [
+                  {
+                    label: "주간 할 일 기준",
+                    icon: <ListFilter size={15} />,
+                    run: openRule,
+                  },
+                ]
+              : []),
+            {
+              label: calendarTagManagerLabel(tagOwner),
+              icon: <Tags size={15} />,
+              disabled: tagOwner === "",
+              run: () => setShowTags(true),
+            },
+            {
+              label: "표시 요일",
+              icon: <SlidersHorizontal size={15} />,
+              run: () => setShowDays(true),
+            },
+          ]}
+        />
+      )}
       {showHidden && (
         <Modal title="숨긴 요일의 일정" onClose={() => setShowHidden(false)}>
           <ul className="calendar-hidden-entries">
