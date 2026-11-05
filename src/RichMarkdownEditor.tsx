@@ -19,6 +19,10 @@ import {
   pasteDocumentLink,
 } from "./DocumentLinkNode";
 import { documentImageView, type ImagePreview } from "./DocumentImageView";
+import {
+  documentCodeBlockSelection,
+  documentCodeBlockView,
+} from "./DocumentCodeBlockView";
 import { Button, Modal } from "./components";
 import Toast, { useToast } from "./Toast";
 import Select from "./Select";
@@ -142,6 +146,7 @@ import {
   Heading3,
   Quote,
   SquareCode,
+  Workflow,
   Minus,
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
@@ -941,6 +946,7 @@ export default function RichMarkdownEditor(props: Props) {
             return false;
           },
           nodeViews: {
+            code_block: documentCodeBlockView,
             document_link: (node) => documentLinkView(node, linkTitles),
             image: (node, view, getPos) =>
               documentImageView(
@@ -1013,6 +1019,7 @@ export default function RichMarkdownEditor(props: Props) {
       })
       .use(commonmark)
       .use(codeBlockMetaSchema)
+      .use(documentCodeBlockSelection)
       .use(gfm)
       .use(documentLinkSchema)
       .use(toggle)
@@ -1356,6 +1363,12 @@ export default function RichMarkdownEditor(props: Props) {
     ["task", "체크리스트", "todo task check 할 일", <ListChecks size={16} />],
     ["quote", "인용", "quote blockquote", <Quote size={16} />],
     ["code", "코드 블록", "code pre", <SquareCode size={16} />],
+    [
+      "mermaid",
+      "Mermaid 다이어그램",
+      "diagram chart 순서도",
+      <Workflow size={16} />,
+    ],
     ["table", "표", "table", <Table2 size={16} />],
     ["hr", "구분선", "divider hr rule 구분 선", <Minus size={16} />],
     ["toggle0", "토글", "toggle details 접기", <ListCollapse size={16} />],
@@ -1380,6 +1393,15 @@ export default function RichMarkdownEditor(props: Props) {
           command(insertTableCommand.key, { row: 3, col: 3 });
         else if (id === "hr") command(insertHrCommand.key);
         else if (id === "link") openLinkForm();
+        else if (id === "mermaid")
+          run((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            ctx.get(commandsCtx).call(createCodeBlockCommand.key, "mermaid");
+            if (!view.state.selection.$from.parent.textContent)
+              view.dispatch(
+                view.state.tr.insertText("flowchart LR\n  A[시작] --> B[완료]"),
+              );
+          });
         else setBlock(id);
       },
     }),
