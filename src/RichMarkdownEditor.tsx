@@ -114,8 +114,9 @@ import {
   isInTable,
   selectedRect,
 } from "@milkdown/kit/prose/tables";
-import { $prose, callCommand } from "@milkdown/kit/utils";
+import { $prose, $remark, callCommand } from "@milkdown/kit/utils";
 import type { Ctx } from "@milkdown/kit/ctx";
+import type { MarkdownNode, Root } from "@milkdown/kit/transformer";
 import {
   Bold,
   Italic,
@@ -350,6 +351,31 @@ export function safeDocumentLink(url: string) {
 function isPlainLineBreak(value: unknown): value is string {
   return typeof value === "string" && /^<br\s*\/?\s*>$/i.test(value.trim());
 }
+
+// GFM can parse rows wider or narrower than the header. Pad missing cells
+// before both the loss check and ProseMirror parsing so all existing cells
+// survive, and the table editor starts with a rectangular table. This does
+// not write back to the source until the user actually edits the document.
+const remarkTableShape = $remark("remarkDocumentTableShape", () => () => {
+  function visit(node: MarkdownNode) {
+    if (node.type === "table" && node.children?.length) {
+      const width = node.children.reduce(
+        (max, row) => Math.max(max, row.children?.length ?? 0),
+        0,
+      );
+      const align = (node.align as (string | null)[] | undefined) ?? [];
+      while (align.length < width) align.push(null);
+      node.align = align;
+      for (const row of node.children) {
+        row.children ??= [];
+        while (row.children.length < width)
+          row.children.push({ type: "tableCell", children: [] });
+      }
+    }
+    node.children?.forEach(visit);
+  }
+  return (tree: Root) => visit(tree as MarkdownNode);
+});
 
 // Compare meaning, not choices of delimiters, indentation or table spacing.
 // Unrepresented AST nodes must never be silently discarded by rich editing.
@@ -991,6 +1017,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)
+      .use(remarkTableShape)
       .use(history)
       .use(upload)
       .use(trailing)
