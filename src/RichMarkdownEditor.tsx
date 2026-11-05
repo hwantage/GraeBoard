@@ -1,5 +1,10 @@
 import type { DocumentImages } from "./document-storage";
 import {
+  configureDocumentInputRules,
+  documentInputKeydown,
+} from "./DocumentInputRules";
+import { documentLinkTitle, pasteExternalLink } from "./DocumentLinkTitle";
+import {
   useEffect,
   useLayoutEffect,
   useRef,
@@ -619,6 +624,7 @@ type Props = {
   label?: string;
   images?: DocumentImages;
   documentLinks?: boolean;
+  linkTitles?: boolean;
   initialMarkdown: string;
   remoteMarkdown?: { markdown: string; sequence: number };
   readOnly: boolean;
@@ -833,6 +839,7 @@ export default function RichMarkdownEditor(props: Props) {
           shouldAppend: needsTrailingParagraph,
           getNode: (state) => state.schema.nodes.paragraph.create(),
         });
+        configureDocumentInputRules(ctx);
         ctx.set(editorViewOptionsCtx, {
           editable: () => !latest.current.readOnly,
           attributes: {
@@ -844,6 +851,8 @@ export default function RichMarkdownEditor(props: Props) {
           },
           clipboardTextSerializer: (slice) => clipboardMarkdown(ctx, slice),
           handleDOMEvents: {
+            keydown: (_view, event) =>
+              latest.current.readOnly && event.key === "Tab",
             focus: (view) => {
               syncLinkTip(view, true);
               return false;
@@ -896,9 +905,25 @@ export default function RichMarkdownEditor(props: Props) {
             if (blockHandle.current?.keydown(event)) return true;
             if (slashKeydown(event)) return true;
             if (blockSelectKeydown(view, event)) return true;
+            if (documentInputKeydown(view, event)) return true;
             if (toggleKeydown(view, event)) return true;
             if (listFormatKeydown(view, event)) return true;
             if (blockMoveKeydown(view, event)) return true;
+            if (event.key === "Escape") {
+              if (linkTipRef.current) {
+                linkTipRef.current = null;
+                setLinkTip(null);
+              } else {
+                const focused = document.activeElement;
+                if (
+                  focused instanceof HTMLElement &&
+                  view.dom.contains(focused)
+                )
+                  focused.blur();
+              }
+              event.stopPropagation();
+              return true;
+            }
             if (
               event.key !== "Enter" ||
               !event.shiftKey ||
@@ -932,6 +957,19 @@ export default function RichMarkdownEditor(props: Props) {
             }
             const text = event.clipboardData?.getData("text/plain");
             if (text === undefined || latest.current.readOnly) return false;
+            if (!view.state.selection.$from.parent.type.spec.code) {
+              if (
+                pasteDocumentLink(view, text, linkTitles) ||
+                pasteExternalLink(
+                  view,
+                  text,
+                  latest.current.linkTitles !== false,
+                )
+              ) {
+                event.preventDefault();
+                return true;
+              }
+            }
             // ProseMirror has already parsed HTML through the editor schema.
             // Keep its slice boundaries, marks and table paste handling instead
             // of replacing rich clipboard content with its plain-text fallback.
@@ -1061,6 +1099,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(codeBlockMetaSchema)
       .use(documentCodeBlockSelection)
       .use(gfm)
+      .use(documentLinkTitle)
       .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)

@@ -1,3 +1,4 @@
+import { requestEdgeLinkTitle } from "./link-title.mjs";
 import pg from "pg";
 import { createEdgeHandler } from "./handler.mjs";
 import { resourceBindings } from "./resources.mjs";
@@ -38,4 +39,10 @@ const env = {
   },
 };
 const execution = { waitUntil: (promise) => EdgeRuntime.waitUntil(promise) };
-Deno.serve(createEdgeHandler({ env, execution }));
+Deno.serve(
+  createEdgeHandler({
+    env,
+    execution,
+    linkTitleOptions: { request: requestEdgeLinkTitle },
+  }),
+);

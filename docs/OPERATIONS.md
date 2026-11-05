@@ -48,6 +48,7 @@ npm run build
 | `HOST`                | `127.0.0.1`               | 서버 바인딩 주소                                                   |
 | `PORT`                | `4310`                    | API와 정적 파일 제공 포트                                          |
 | `DB_PATH`             | `data/weekly-plan.sqlite` | 데이터베이스 위치. 절대 경로 또는 실행 디렉터리 기준 상대 경로     |
+| `GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS` | 없음(사설망 차단) | 링크 제목 조회에서 사설 IP를 허용할 호스트·접미사(쉼표 구분), 예: `somansa.com` |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
 | `GRAEBOARD_SITE` | Node: `internal`, Edge: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
@@ -62,6 +63,8 @@ npm run build
 | `GRAEBOARD_SYNC_KEY_ID` | `default` | 암호화 키 식별자 |
 | `GRAEBOARD_SHUTDOWN_TIMEOUT_MS` | `30000` | HTTP·동기화 종료 대기 상한(ms), 100~600000. 초과하면 P를 지우지 않고 exit 1 |
 | `NODE_EXTRA_CA_CERTS` | 없음 | 사내 신뢰 CA PEM 파일의 절대 경로. Node 시작 전 PM2·서비스 실행 환경에 등록하고 재시작 |
+
+문서의 외부 링크 제목은 로그인과 `X-Requested-With: WeeklyPlan` 헤더를 요구하는 `GET /api/link-title?url=…`로 조회합니다. Node와 Supabase Edge는 같은 모듈을 사용합니다. 사용자별 런타임 인스턴스당 분당 20회, 전체 요청 5초, 리다이렉트 3회, HTML 앞 256KiB로 제한합니다. DNS의 모든 IP를 검사한 뒤 검사한 IP에 직접 연결하고 원래 Host·TLS 인증서 검증을 유지합니다. 기본은 사설망을 차단하며, `GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS=somansa.com`은 정확한 호스트와 하위 도메인의 RFC1918·IPv6 ULA만 허용합니다. 루프백·링크로컬·메타데이터·IPv6 매핑 주소는 이 설정으로도 허용하지 않습니다. 내부는 서비스 환경 변수, 외부는 Supabase Edge secret에 같은 값을 설정하고 재시작·재배포합니다. 외부 런타임에서도 해당 사내망에 접근할 네트워크 경로가 있어야 하며, 제목을 받지 못하면 문서에 주소를 유지합니다.
 
 내부 Node 서버에는 `GRAEBOARD_SITE=internal`, 외부 Edge에는 `GRAEBOARD_SITE=external`을 지정합니다. 이 값은 `NODE_ENV`의 개발·운영 구분이나 접속 주소와 무관하며 네트워크 방화벽 설정을 대신하지 않습니다. 기존 설치에서 생략하면 호스트의 고정 역할을 사용합니다. Node에 external을 지정하거나 외부 API에 internal을 지정하면 다른 인증 방식으로 전환하지 않고 설정 오류로 중단합니다. 서버는 `/api/setup`·`/api/bootstrap`의 `site`로 화면에 역할을 알립니다. 내부만 초기 게시와 팀장 연결 키 발급을 제공하며 외부의 최초 연결은 외부 동기화 화면의 팀 가져오기를 사용합니다. 외부 `/sync/enable` 요청은 403으로 거절합니다.
 
