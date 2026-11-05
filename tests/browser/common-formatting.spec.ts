@@ -247,7 +247,7 @@ test("행 전체 글자 크기·테두리는 빈 셀을 늘리지 않고 행 높
   await page
     .getByLabel("테두리 선 스타일", { exact: true })
     .selectOption("double");
-  await page.getByLabel("테두리 선 색상", { exact: true }).fill("#856060");
+  await pickColor(page, "테두리 선 색상", "#856060");
   await save(page, () =>
     page.getByRole("button", { name: "모든 테두리", exact: true }).click(),
   );

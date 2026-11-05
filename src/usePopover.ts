@@ -23,16 +23,25 @@ export function usePopover(width: number) {
           8,
           Math.min(rect.bottom + 4, window.innerHeight - height - 8),
         ),
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+        left: Math.max(
+          8,
+          Math.min(
+            rect.left,
+            window.innerWidth - (popup.current?.offsetWidth || width) - 8,
+          ),
+        ),
       });
     };
     place();
     popup.current?.querySelector("button")?.focus();
+    const observer = new ResizeObserver(place);
+    if (popup.current) observer.observe(popup.current);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      observer.disconnect();
     };
   }, [open]);
   useEffect(() => {
@@ -68,7 +77,11 @@ export function usePopover(width: number) {
       e.stopPropagation();
       close();
     },
-    // 모달 안에서는 모달의 최상위 층(dialog)에 붙여야 팝업이 가려지지 않는다.
-    container: () => trigger.current?.closest("dialog") || document.body,
+    // Nested border colors stay inside their parent popup for outside/focus checks.
+    // 모달 안에서는 최상위 층(dialog)에 붙여야 팝업이 가려지지 않는다.
+    container: () =>
+      trigger.current?.closest(".border-popover") ||
+      trigger.current?.closest("dialog") ||
+      document.body,
   };
 }

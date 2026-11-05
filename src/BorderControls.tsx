@@ -1,4 +1,5 @@
 import Select from "./Select";
+import ColorMenu from "./ColorMenu";
 import type { Border } from "./types";
 import { BORDER_OPTIONS, borderCSS } from "../shared/borders.js";
 
@@ -49,12 +50,12 @@ export default function BorderControls({
         <>
           <label>
             색상
-            <input
-              type="color"
-              aria-label={`${label} 색상`}
+            <ColorMenu
+              compact
+              label={`${label} 색상`}
               value={defaultSelected ? "#e7eded" : border.color}
               disabled={defaultSelected}
-              onChange={(e) => onChange({ ...border, color: e.target.value })}
+              onApply={(color) => onChange({ ...border, color })}
             />
           </label>
           <span
