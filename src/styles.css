@@ -2064,9 +2064,38 @@ body.document-block-moving * {
   outline-offset: 1px;
 }
 .color-custom {
-  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 12px;
-  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.color-custom > span {
+  margin-right: auto;
+}
+.color-custom .color-hex-input {
+  width: 84px;
+  min-width: 0 !important;
+  font-family: monospace;
+}
+.color-custom .color-hex-input[aria-invalid="true"] {
+  border-color: #b43c36;
+}
+.color-custom input[type="color"] {
+  width: 40px;
+  height: 24px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+.color-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #b43c36;
 }
 .color-input {
   display: inline-flex;
@@ -2090,71 +2119,6 @@ body.document-block-moving * {
   margin-top: 12px;
   font-size: 11px;
   color: var(--muted);
-}
-.color-picker {
-  display: grid;
-  gap: 14px;
-}
-.color-saturation,
-.color-hue {
-  position: relative;
-  touch-action: none;
-  cursor: crosshair;
-  border-radius: 3px;
-}
-.color-saturation {
-  height: 128px;
-  background-image:
-    linear-gradient(to top, #000, transparent),
-    linear-gradient(to right, #fff, transparent);
-}
-.color-hue {
-  height: 14px;
-  background: linear-gradient(to right, red, #ff0, #0f0, #0ff, #00f, #f0f, red);
-}
-.color-picker-thumb {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border: 2px solid white;
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px #243642;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.color-hue .color-picker-thumb {
-  top: 50%;
-  height: 18px;
-  border-radius: 3px;
-}
-.color-picker .color-hex {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 24px;
-  gap: 6px;
-  align-items: center;
-  font-size: 12px;
-}
-.color-hex input {
-  width: 100%;
-  min-width: 0 !important;
-  font-family: monospace;
-}
-.color-hex input[aria-invalid="true"] {
-  border-color: #b43c36;
-}
-.color-preview {
-  height: 24px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px #293c4226;
-}
-.color-picker small {
-  font-size: 11px;
-  color: #b43c36;
-}
-.color-picker-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
 }
 .border-presets {
   display: grid;
