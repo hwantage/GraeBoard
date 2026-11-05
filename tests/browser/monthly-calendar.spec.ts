@@ -1544,6 +1544,10 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 모바
       .getByRole("group", { name: "캘린더 팀원" })
       .getByRole("button")
       .all()),
+    calendar(page).getByRole("button", {
+      name: "시크릿 일정 숨기기",
+      exact: true,
+    }),
     calendar(page).getByRole("searchbox", {
       name: "일정 제목 검색",
       exact: true,
@@ -1554,6 +1558,22 @@ test("늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 모바
     await expect(next).toBeFocused();
     current = next;
   }
+  await calendar(page)
+    .getByRole("button", { name: "팀 월간 보기", exact: true })
+    .click();
+  await expect(calendar(page).locator(".calendar-secret-toggle")).toHaveCount(
+    0,
+  );
+  await calendar(page)
+    .getByRole("button", { name: "다음 달", exact: true })
+    .press(tabKey);
+  await expect(
+    calendar(page).getByRole("searchbox", { name: "일정 제목 검색" }),
+  ).toBeFocused();
+  await page.keyboard.press(tabKey);
+  await expect(
+    calendar(page).getByRole("button", { name: "오늘", exact: true }),
+  ).toBeFocused();
 });
 
 test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 조회 범위를 유지한다", async ({
