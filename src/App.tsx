@@ -1,3 +1,4 @@
+import { RecentColorsProvider } from "./recent-colors";
 import { queryPolicyFor } from "./query-policy";
 import { joinQuery } from "./shared-query";
 import AnnualMemoPanel from "./AnnualMemoPanel";
@@ -264,12 +265,14 @@ export default function App() {
   if (!boot) return <Auth onLogin={setBoot} />;
   return (
     <SiteContext.Provider value={siteFor(boot)}>
-      <Workspace
-        key={boot.user.id}
-        boot={boot}
-        onBootstrap={setBoot}
-        onLogout={() => setBoot(null)}
-      />
+      <RecentColorsProvider key={boot.user.id} userId={boot.user.id}>
+        <Workspace
+          key={boot.user.id}
+          boot={boot}
+          onBootstrap={setBoot}
+          onLogout={() => setBoot(null)}
+        />
+      </RecentColorsProvider>
     </SiteContext.Provider>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ColorMenu from "./ColorMenu";
 import type { User } from "./types";
 import { Avatar, ErrorNote } from "./components";
 
@@ -154,11 +155,11 @@ export default function AvatarEditor({
           )}
           <label className="avatar-color">
             아바타 배경색
-            <input
-              type="color"
-              aria-label="아바타 배경색"
+            <ColorMenu
+              compact
+              label="아바타 배경색"
               value={user.color || "#177b70"}
-              onChange={(e) => onChange({ color: e.target.value })}
+              onApply={(color) => onChange({ color })}
             />
           </label>
           <ErrorNote error={error} />
