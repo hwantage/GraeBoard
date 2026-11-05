@@ -46,7 +46,16 @@ async function custom(page: Page, label: string) {
   return popup;
 }
 async function drag(page: Page, surface: Locator) {
-  const rect = (await surface.boundingBox())!;
+  // The popup repositions after "다른 색" grows it; press only once it settles.
+  let rect = (await surface.boundingBox())!;
+  await expect
+    .poll(async () => {
+      const next = (await surface.boundingBox())!;
+      const settled = next.x === rect.x && next.y === rect.y;
+      rect = next;
+      return settled;
+    })
+    .toBe(true);
   await page.mouse.move(rect.x + rect.width * 0.1, rect.y + rect.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(rect.x + rect.width * 0.9, rect.y + rect.height * 0.7, {
@@ -496,7 +505,9 @@ test("390px·데스크톱 폭에서 팔레트·최근 색·HEX 선택기가 화�
   page,
 }, info) => {
   await save(page, () => pickColor(page, "배경색", "#112233"));
-  for (const width of [1366, 390]) {
+  // Phones (700px and below) hide the sheet's cell formatting tools, so the
+  // toolbar popups are checked at the narrowest width that still shows them.
+  for (const width of [1366, 720]) {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole("button", { name: "배경색", exact: true }).click();
     const popup = page.getByRole("dialog", { name: "배경색", exact: true });
@@ -524,6 +535,7 @@ test("390px·데스크톱 폭에서 팔레트·최근 색·HEX 선택기가 화�
     }
     await page.keyboard.press("Escape");
   }
+  let width = 720;
   await page.getByRole("button", { name: "테두리", exact: true }).click();
   let popup = await custom(page, "테두리 선 색상");
   const inside = async () => {
@@ -531,14 +543,19 @@ test("390px·데스크톱 폭에서 팔레트·최근 색·HEX 선택기가 화�
     return (
       box.x >= 8 &&
       box.y >= 8 &&
-      box.x + box.width <= 382 &&
+      box.x + box.width <= width - 8 &&
       box.y + box.height <= 836
     );
   };
   await expect.poll(inside).toBe(true);
-  await page.screenshot({ path: info.outputPath("color-390-border.png") });
+  await page.screenshot({ path: info.outputPath("color-720-border.png") });
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
+  width = 390;
+  await page.setViewportSize({ width, height: 844 });
+  await expect(
+    page.getByRole("button", { name: "배경색", exact: true }),
+  ).toBeHidden();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "속성", exact: true }).click();
   await page.locator(".week-column-select").click();

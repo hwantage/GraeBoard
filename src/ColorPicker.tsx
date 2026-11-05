@@ -132,6 +132,11 @@ export default function ColorPicker({
   return (
     <div
       className="color-picker"
+      // WebKit focuses the enclosing dialog when a non-focusable part of the
+      // picker is pressed, which reads as an outside focus and closes it.
+      onMouseDown={(event) => {
+        if (!(event.target instanceof HTMLInputElement)) event.preventDefault();
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
