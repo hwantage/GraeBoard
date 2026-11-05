@@ -7,6 +7,8 @@ import {
   withDocumentImageWidth,
 } from "../shared/document-images.js";
 
+import type { DocumentImages } from "./document-storage";
+
 export type ImagePreview = { src: string; alt: string };
 export function iconButton(label: string, paths: string[]) {
   const button = document.createElement("button");
@@ -41,8 +43,13 @@ export function documentImageView(
   getPos: () => number | undefined,
   readOnly: () => boolean,
   onPreview: (image: ImagePreview) => void,
+  images?: DocumentImages,
 ): NodeView {
   let node = initial;
+  let active = true;
+  let sourceKey = "";
+  const widthOf = images?.width || documentImageWidth;
+  const withWidth = images?.withWidth || withDocumentImageWidth;
   const dom = document.createElement("span");
   dom.className = "document-image";
   dom.contentEditable = "false";
@@ -97,21 +104,39 @@ export function documentImageView(
   const update = (next: Node) => {
     if (next.type !== node.type) return false;
     node = next;
-    const src = documentImageSource(node.attrs.src);
-    if (src && img.getAttribute("src") !== src) {
-      showMissing(false);
-      img.src = src;
+    if (images) {
+      const key =
+        typeof node.attrs.src === "string" ? node.attrs.src.split("#")[0] : "";
+      if (sourceKey !== key) {
+        sourceKey = key;
+        img.removeAttribute("src");
+        void Promise.resolve(images.source(key))
+          .then((src) => {
+            if (!active || sourceKey !== key) return;
+            showMissing(!src);
+            if (src) img.src = src;
+          })
+          .catch(() => {
+            if (active && sourceKey === key) showMissing(true);
+          });
+      }
+    } else {
+      const src = documentImageSource(node.attrs.src);
+      if (src && img.getAttribute("src") !== src) {
+        showMissing(false);
+        img.src = src;
+      }
+      if (!src) img.removeAttribute("src");
     }
-    if (!src) img.removeAttribute("src");
     img.alt = node.attrs.alt || "";
     img.title = node.attrs.title || "";
-    renderWidth(documentImageWidth(node.attrs.src));
+    renderWidth(widthOf(node.attrs.src));
     return true;
   };
   const commit = (width: number | null) => {
     const pos = getPos();
     if (readOnly() || pos === undefined) return;
-    const src = withDocumentImageWidth(node.attrs.src, width);
+    const src = withWidth(node.attrs.src, width);
     if (!src || src === node.attrs.src) return;
     // One resize gesture is one undo step, separate from typing before/after it.
     view.dispatch(
@@ -123,7 +148,9 @@ export function documentImageView(
     view.dispatch(closeHistory(view.state.tr));
   };
   const preview = () => {
-    const src = documentImageSource(node.attrs.src);
+    const src = images
+      ? img.getAttribute("src")
+      : documentImageSource(node.attrs.src);
     if (src) onPreview({ src, alt: node.attrs.alt || "문서 이미지" });
   };
   enlarge.addEventListener("click", preview);
@@ -133,7 +160,7 @@ export function documentImageView(
   });
   img.addEventListener("load", () => {
     showMissing(false);
-    if (!drag) renderWidth(documentImageWidth(node.attrs.src));
+    if (!drag) renderWidth(widthOf(node.attrs.src));
   });
   img.addEventListener("error", () => {
     if (img.getAttribute("src")) showMissing(true);
@@ -170,7 +197,7 @@ export function documentImageView(
     if (handle.hasPointerCapture(event.pointerId))
       handle.releasePointerCapture(event.pointerId);
     if (save) commit(width);
-    renderWidth(documentImageWidth(node.attrs.src));
+    renderWidth(widthOf(node.attrs.src));
   };
   handle.addEventListener("pointerup", (event) => finish(event, true));
   handle.addEventListener("pointercancel", (event) => finish(event, false));
@@ -179,8 +206,7 @@ export function documentImageView(
   );
   handle.addEventListener("keydown", (event) => {
     if (readOnly()) return;
-    const width =
-      documentImageWidth(node.attrs.src) || dom.getBoundingClientRect().width;
+    const width = widthOf(node.attrs.src) || dom.getBoundingClientRect().width;
     const step = event.shiftKey ? 50 : 10;
     const next = {
       ArrowLeft: width - step,
@@ -201,6 +227,9 @@ export function documentImageView(
   return {
     dom,
     update,
+    destroy: () => {
+      active = false;
+    },
     selectNode: () => dom.classList.add("ProseMirror-selectednode"),
     deselectNode: () => dom.classList.remove("ProseMirror-selectednode"),
     stopEvent: (event) =>

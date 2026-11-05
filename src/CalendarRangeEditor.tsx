@@ -31,6 +31,7 @@ export default function CalendarRangeEditor({
   onSaved,
   onCloseWithDraft,
   ref,
+  storage,
 }: {
   entry: CalendarEntry;
   userId: string;
@@ -38,6 +39,14 @@ export default function CalendarRangeEditor({
   onSaved: (saved: CalendarEntryUpdate) => void;
   onCloseWithDraft: () => void;
   ref: Ref<CalendarRangeHandle>;
+  storage?: {
+    label: string;
+    save: (
+      range: CalendarRange,
+      expected: CalendarRange,
+    ) => Promise<CalendarEntryUpdate>;
+    read: () => Promise<CalendarEntryUpdate>;
+  };
 }) {
   const key = `weekly-plan:calendar-range:${userId}:${entry.teamId}:${entry.id}`;
   const path = `/calendar/entries/${entry.id}`;
@@ -93,7 +102,7 @@ export default function CalendarRangeEditor({
           conflictRef.current = base.current;
           setConflict(base.current);
           setError(
-            "서버의 일정 기간이 바뀌었습니다. 보관된 기간과 비교해 주세요.",
+            `${storage?.label || "서버"}의 일정 기간이 바뀌었습니다. 보관된 기간과 비교해 주세요.`,
           );
         }
       }
@@ -127,15 +136,17 @@ export default function CalendarRangeEditor({
     setSaving(true);
     inFlight.current = (async () => {
       try {
-        const result = await send<CalendarEntryUpdate>(
-          path,
-          {
-            ...submitted,
-            expectedDate: expected.date,
-            expectedEndDate: expected.endDate,
-          },
-          "PATCH",
-        );
+        const result = await (storage
+          ? storage.save(submitted, expected)
+          : send<CalendarEntryUpdate>(
+              path,
+              {
+                ...submitted,
+                expectedDate: expected.date,
+                expectedEndDate: expected.endDate,
+              },
+              "PATCH",
+            ));
         base.current = { date: result.date, endDate: result.endDate };
         persistDraft();
         onSaved(result);
@@ -165,8 +176,12 @@ export default function CalendarRangeEditor({
   function acceptServerRange() {
     if (inFlight.current) return;
     setSaving(true);
-    inFlight.current = api<CalendarEntryUpdate>(
-      `${path}?${new URLSearchParams({ placements: "1", from: base.current.date, to: base.current.endDate })}`,
+    inFlight.current = (
+      storage
+        ? storage.read()
+        : api<CalendarEntryUpdate>(
+            `${path}?${new URLSearchParams({ placements: "1", from: base.current.date, to: base.current.endDate })}`,
+          )
     )
       .then((latest) => {
         if (!alive.current) return false;
@@ -225,7 +240,8 @@ export default function CalendarRangeEditor({
       {conflict && (
         <div className="document-conflict">
           <p>
-            최신 서버 기간: {conflict.date} ~ {conflict.endDate}
+            최신 {storage?.label || "서버"} 기간: {conflict.date} ~{" "}
+            {conflict.endDate}
           </p>
           {!readOnly && (
             <Button
@@ -241,7 +257,7 @@ export default function CalendarRangeEditor({
             </Button>
           )}
           <Button disabled={saving} onClick={acceptServerRange}>
-            서버 기간 사용
+            {storage?.label || "서버"} 기간 사용
           </Button>
         </div>
       )}

@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ListFilter,
+  LockKeyhole,
+  EyeOff,
   FileText,
   Search,
   Plus,
@@ -35,6 +37,28 @@ import {
 import { StandaloneRowPanel } from "./Panels";
 import { UndoToast } from "./Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
+import SecretCalendarEntryPanel from "./SecretCalendarEntryPanel";
+import useSecretCalendar from "./useSecretCalendar";
+import {
+  calendarDisplayLane,
+  mergeSecretCalendarLayout,
+  moveSecretEntries,
+} from "./secret-calendar-layout";
+import {
+  markSecretDocumentDeleted,
+  discardSecretDocument,
+} from "./secret-document-storage";
+import {
+  copySecretEntry,
+  deleteSecretEntry,
+  setSecretEntryTags,
+  setSecretTagChecked,
+  isSecretEntry,
+  moveSecretEntry,
+  saveSecretEntry,
+  setSecretCalendarVisible,
+  type SecretCalendarEntry,
+} from "./secret-calendar";
 import CalendarEntries from "./CalendarEntries";
 import CalendarTaskPicker from "./CalendarTaskPicker";
 import CalendarTagManager, {
@@ -82,6 +106,7 @@ import type {
   WeeklyRestoreResult,
 } from "./calendar-types";
 import "./calendar.css";
+import "./secret-calendar.css";
 
 const EMPTY_MEMBERS: User[] = [];
 const EMPTY_ENTRIES: CalendarEntry[] = [];
@@ -159,6 +184,7 @@ export default function Calendar({
   const [weekdays, setWeekdays] = useState<number[]>(CALENDAR_DAYS);
   const [context, setContext] = useState<CalendarContext | null>(null);
   const [error, setError] = useState("");
+  const secret = useSecretCalendar(user.id, team.id);
   const [pending, setPending] = useState(false);
   const [rangeChange, setRangeChange] = useState<{
     entry: CalendarEntry;
@@ -219,6 +245,7 @@ export default function Calendar({
   } | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [creating, setCreating] = useState<{
+    secret: boolean;
     id: string;
     date: string;
     userId: string | null;
@@ -331,6 +358,19 @@ export default function Calendar({
     setDeleted(null);
     setRemovedWeekly(null);
   }, [team.id, user.id]);
+  useEffect(
+    () => () => {
+      if (deleted && isSecretEntry(deleted.entry)) {
+        const entry = deleted.entry;
+        void discardSecretDocument(entry.userId, entry.teamId, entry.id).catch(
+          (error) => {
+            if (alive.current) setError(error.message);
+          },
+        );
+      }
+    },
+    [deleted],
+  );
   useEffect(() => {
     setEntryMenu(null);
     setTagEntry(null);
@@ -458,21 +498,43 @@ export default function Calendar({
                 }).map((item) => [item.id, item]),
               )
             : null;
-          const displayed = entries
-            .map((item) => {
+          const local =
+            ownerId === user.id && secret.visible && schedule?.data
+              ? secret.entries
+              : [];
+          const layout = placed
+            ? [...placed.values()]
+            : schedule?.data?.layout || [];
+          const merged = new Map(
+            mergeSecretCalendarLayout(layout, local).map((item) => [
+              item.id,
+              item.lane,
+            ]),
+          );
+          const displayed = [
+            ...entries.map((item) => {
               const position = placed?.get(item.id);
               return position ? { ...item, ...position } : item;
-            })
+            }),
+            ...local.filter(
+              (item) =>
+                item.date <= schedule!.query.to &&
+                item.endDate >= schedule!.query.from,
+            ),
+          ]
+            .map((item) => ({
+              ...item,
+              displayLane: merged.get(item.id) ?? item.lane,
+            }))
             .sort(
               (a, b) =>
-                a.lane - b.lane ||
-                a.date.localeCompare(b.date) ||
-                a.id.localeCompare(b.id),
+                calendarDisplayLane(a) - calendarDisplayLane(b) ||
+                a.date.localeCompare(b.date),
             );
           return [ownerId, displayed] as const;
         }),
       ),
-    [schedules, rangeChange],
+    [schedules, rangeChange, secret.entries, secret.visible, user.id],
   );
   const displayEntries = useMemo(
     () => [...displayedCalendars.values()].flat(),
@@ -481,17 +543,43 @@ export default function Calendar({
   const dragPreview = useMemo(() => {
     const drag = dragging.drag;
     if (!drag?.valid) return null;
-    const entry = data?.entries.find((item) => item.id === drag.id);
+    const entry = displayEntries.find((item) => item.id === drag.id);
     if (!entry) return null;
     const layout = schedules.get(entry.userId)!.data!.layout;
-    const position = placeCalendarEntry(layout, {
+    if (isSecretEntry(entry)) {
+      const moved = moveSecretEntries(
+        layout,
+        secret.entries,
+        entry.id,
+        drag,
+        drag.mode === "order" ? drag.lane : undefined,
+      );
+      const position = mergeSecretCalendarLayout(layout, moved).find(
+        (item) => item.id === entry.id,
+      )!;
+      return { ...entry, ...position, displayLane: position.lane };
+    }
+    const positions = placeCalendarEntry(layout, {
       ...entry,
       date: drag.date,
       endDate: drag.endDate,
       lane: drag.lane,
-    }).find((item) => item.id === drag.id)!;
-    return { ...entry, ...position };
-  }, [dragging.drag, data, schedules]);
+    });
+    const position = positions.find((item) => item.id === drag.id)!;
+    const display = mergeSecretCalendarLayout(
+      positions,
+      entry.userId === user.id && secret.visible ? secret.entries : [],
+    ).find((item) => item.id === drag.id)!;
+    return { ...entry, ...position, displayLane: display.lane };
+  }, [
+    dragging.drag,
+    displayEntries,
+    schedules,
+    secret.entries,
+    secret.visible,
+    user.id,
+  ]);
+
   const weeklyMap = useMemo(() => {
     const map = new Map<string, CalendarData["weekly"]>();
     for (const item of data?.weekly || []) {
@@ -502,7 +590,8 @@ export default function Calendar({
     return map;
   }, [data]);
   function upsert({ placements = [], layout, ...saved }: CalendarEntryUpdate) {
-    if (activeScope.current !== scope || !alive.current) return;
+    if (isSecretEntry(saved) || activeScope.current !== scope || !alive.current)
+      return;
     const positions = new Map(placements.map((item) => [item.id, item.lane]));
     updateData((previous, query) =>
       query.userId !== saved.userId
@@ -570,7 +659,7 @@ export default function Calendar({
       };
     });
     setTagEntry((previous) =>
-      previous && previous.userId === tagOwner
+      previous && previous.userId === tagOwner && !isSecretEntry(previous)
         ? {
             ...previous,
             tagIds: previous.tagIds.filter((id) => available.has(id)),
@@ -643,7 +732,39 @@ export default function Calendar({
     onNotify("");
     setEntry(null);
   }
+  function localAction(work: () => unknown) {
+    setError("");
+    try {
+      void Promise.resolve(work()).catch((error) =>
+        setError((error as Error).message),
+      );
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
+  async function removeSecret(source: SecretCalendarEntry) {
+    await markSecretDocumentDeleted(
+      source.userId,
+      source.teamId,
+      source.id,
+      true,
+    );
+    const removed = deleteSecretEntry(source);
+    setDeleted({ entry: removed, deletionId: "" });
+    setRemovedWeekly(null);
+    onNotify("");
+    setEntry(null);
+  }
   async function duplicateEntry(source: CalendarEntry) {
+    if (isSecretEntry(source)) {
+      localAction(() => {
+        copySecretEntry(
+          source,
+          schedules.get(source.userId)?.data?.layout || [],
+        );
+      });
+      return;
+    }
     if (!writable(source.userId)) return;
     if (copyRequest.current?.source.id !== source.id)
       copyRequest.current = { source, id: crypto.randomUUID() };
@@ -658,6 +779,10 @@ export default function Calendar({
     });
   }
   async function removeEntry(source: CalendarEntry) {
+    if (isSecretEntry(source)) {
+      localAction(() => removeSecret(source));
+      return;
+    }
     if (!writable(source.userId)) return;
     const deletionId =
       deleteRequests.current.get(source.id) || crypto.randomUUID();
@@ -670,6 +795,12 @@ export default function Calendar({
     });
   }
   async function updateEntryTags(source: CalendarEntry, ids: string[]) {
+    if (isSecretEntry(source)) {
+      localAction(() => {
+        setTagEntry(setSecretEntryTags(source, ids));
+      });
+      return;
+    }
     await action(async () => {
       try {
         const saved = await saveCalendarEntryTags(source, ids);
@@ -690,6 +821,20 @@ export default function Calendar({
   async function restoreEntry() {
     if (!deleted || undoBlocked || busy.current) return;
     const restoring = deleted;
+    if (isSecretEntry(restoring.entry)) {
+      localAction(async () => {
+        await markSecretDocumentDeleted(
+          user.id,
+          restoring.entry.teamId,
+          restoring.entry.id,
+          false,
+        );
+        saveSecretEntry(user.id, restoring.entry, true);
+        setDeleted(null);
+        onNotify(`‘${restoring.entry.title}’ 일정을 되살렸습니다.`);
+      });
+      return;
+    }
     await action(async () => {
       const saved = await send<CalendarEntryUpdate>(
         `/calendar/entries/${restoring.entry.id}/restore`,
@@ -825,6 +970,18 @@ export default function Calendar({
     change: { entry: CalendarEntry; range: CalendarRange; lane?: number },
     expected?: CalendarRange & { lane?: number },
   ) {
+    if (isSecretEntry(change.entry)) {
+      if (busy.current) return;
+      localAction(() =>
+        moveSecretEntry(
+          change.entry as SecretCalendarEntry,
+          schedules.get(change.entry.userId)?.data?.layout || [],
+          change.range,
+          change.lane,
+        ),
+      );
+      return;
+    }
     const reordering = change.lane !== undefined;
     if (
       busy.current ||
@@ -883,6 +1040,12 @@ export default function Calendar({
     tagId: string,
     checked: boolean,
   ) {
+    if (isSecretEntry(item)) {
+      localAction(() => {
+        setSecretTagChecked(item, tagId, checked);
+      });
+      return;
+    }
     if (locked || !writable(item.userId)) return;
     const requestScope = scope;
     const apply = (change: {
@@ -930,6 +1093,8 @@ export default function Calendar({
       ? saved.tagIds.filter((id: string) => tagMap.get(id)?.userId === ownerId)
       : [];
     setCreating({
+      secret:
+        ownerId === user.id && (saved?.secret === true || !writable(ownerId)),
       id: typeof saved?.id === "string" ? saved.id : crypto.randomUUID(),
       date,
       userId: ownerId,
@@ -957,9 +1122,38 @@ export default function Calendar({
   function saveCreating() {
     if (!creating || locked || !creating.title.trim() || composingTitle.current)
       return;
+    if (creating.secret) {
+      if (creating.userId !== user.id) return;
+      localAction(() => {
+        saveSecretEntry(
+          user.id,
+          {
+            id: `secret:${creating.id}`,
+            teamId: team.id,
+            title: creating.title,
+            date: creating.date,
+            endDate: creating.date,
+            lane: 0,
+            tagIds: creating.tagIds,
+            checkedTagIds: creating.checkedTagIds,
+          },
+          true,
+          schedules.get(user.id)?.data?.layout || [],
+        );
+        try {
+          sessionStorage.removeItem(draftKey);
+        } catch {
+          /* Saved locally. */
+        }
+        setCreating(null);
+      });
+      return;
+    }
+    if (!writable(creating.userId)) return;
     void action(async () => {
+      const { secret: _secret, ...input } = creating;
       const saved = await send<CalendarEntry>("/calendar/entries", {
-        ...creating,
+        ...input,
         teamId: team.id,
       });
       if (!alive.current) return;
@@ -994,7 +1188,7 @@ export default function Calendar({
             : date.slice(8).replace(/^0/, "")}
           {date === today && <span>오늘</span>}
         </time>
-        {writable(ownerId) && (
+        {(writable(ownerId) || ownerId === user.id) && (
           <Button
             title={`${date} ${ownerId === null ? "팀 공용" : members.find((m) => m.id === ownerId)?.name} 일정 추가`}
             {...busyProps(locked)}
@@ -1433,6 +1627,28 @@ export default function Calendar({
                 숨긴 요일에 일정 {hiddenEntries.length}개
               </Button>
             )}
+            {view !== "shared" && (
+              <Button
+                className="calendar-secret-toggle"
+                tooltip={
+                  secret.visible ? "시크릿 일정 숨기기" : "시크릿 일정 보이기"
+                }
+                aria-pressed={secret.visible}
+                active={secret.visible}
+                {...busyProps(locked)}
+                onClick={() =>
+                  localAction(() =>
+                    setSecretCalendarVisible(user.id, !secret.visible),
+                  )
+                }
+              >
+                {secret.visible ? (
+                  <LockKeyhole size={16} aria-hidden="true" />
+                ) : (
+                  <EyeOff size={16} aria-hidden="true" />
+                )}
+              </Button>
+            )}
             <div
               className="search-box calendar-search"
               role="search"
@@ -1490,7 +1706,7 @@ export default function Calendar({
             )}
           </div>
         </div>
-        <ErrorNote error={error || loadError} />
+        <ErrorNote error={error || loadError || secret.error} />
         {rangeChange && !pending && (
           <div className="calendar-range-pending" role="status">
             <span>
@@ -1547,8 +1763,9 @@ export default function Calendar({
         <span id="calendar-drag-help" className="visually-hidden">
           같은 날짜에서 카드를 위아래로 드래그하거나 Alt+Shift와 위아래 방향키로
           순서를 변경합니다. 다른 날짜로 드래그하거나 Alt와 방향키로 이동합니다.
-          양 끝을 드래그하거나 끝부분에서 방향키로 기간을 조정합니다. Enter로
-          상세 기간을 편집하고 Escape로 드래그를 취소합니다.
+          시크릿 일정은 Alt와 위아래 방향키로도 순서를 변경합니다. 양 끝을
+          드래그하거나 끝부분에서 방향키로 기간을 조정합니다. Enter로 상세
+          기간을 편집하고 Escape로 드래그를 취소합니다.
         </span>
         {(error || loadError) && !rangeChange && (
           <div>
@@ -1746,6 +1963,9 @@ export default function Calendar({
                   }}
                 >
                   <strong>
+                    {isSecretEntry(item) && (
+                      <LockKeyhole size={12} aria-label="시크릿 일정" />
+                    )}
                     {item.title}
                     {(item.hasDocument ?? !!item.preview) && (
                       <FileText size={12} aria-label="문서 있음" />
@@ -1832,7 +2052,14 @@ export default function Calendar({
             checkedIds={tagEntry.checkedTagIds}
             disabled={locked}
             onChange={(ids) => void updateEntryTags(tagEntry, ids)}
-            onCheckChange={(tagId, checked) =>
+            onCheckChange={(tagId, checked) => {
+              if (isSecretEntry(tagEntry)) {
+                const source = tagEntry;
+                localAction(() => {
+                  setTagEntry(setSecretTagChecked(source, tagId, checked));
+                });
+                return;
+              }
               void action(async () => {
                 setTagEntry(
                   applyCalendarTagCheck(tagEntry, {
@@ -1854,8 +2081,8 @@ export default function Calendar({
                   setTagEntry(tagEntry);
                   throw error;
                 }
-              })
-            }
+              });
+            }}
             onManage={() => setShowTags(true)}
           />
           <ErrorNote error={error} />
@@ -1931,6 +2158,30 @@ export default function Calendar({
                 }}
               />
             </label>
+            {creating.userId === user.id && (
+              <label className="switch-field">
+                <span>시크릿 일정</span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="시크릿 일정"
+                  checked={creating.secret}
+                  disabled={locked || !writable(creating.userId)}
+                  onChange={(event) =>
+                    changeCreating({
+                      ...creating,
+                      secret: event.target.checked,
+                    })
+                  }
+                />
+                <span className="switch-track" aria-hidden="true" />
+              </label>
+            )}
+            {creating.secret && (
+              <p className="calendar-hint">
+                이 브라우저에만 저장되며 다른 사람·관리자에게 보이지 않습니다.
+              </p>
+            )}
             <CalendarTagPicker
               userId={creating.userId}
               tags={tagsFor(creating.userId)}
@@ -1967,7 +2218,17 @@ export default function Calendar({
           </form>
         </Modal>
       )}
-      {entry && (
+      {entry && isSecretEntry(entry) && (
+        <SecretCalendarEntryPanel
+          key={entry.id}
+          entry={entry}
+          tags={tagsFor(entry.userId)}
+          onManageTags={() => setShowTags(true)}
+          onClose={() => setEntry(null)}
+          onDeleted={removeSecret}
+        />
+      )}
+      {entry && !isSecretEntry(entry) && (
         <CalendarEntryPanel
           key={entry.id}
           entry={entry}

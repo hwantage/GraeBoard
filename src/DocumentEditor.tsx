@@ -25,6 +25,10 @@ import {
   mergeDocument,
   mapDocumentPosition,
 } from "../shared/document-merge.js";
+import {
+  DocumentStorageConflict,
+  type DocumentStorage,
+} from "./document-storage";
 import type { TaskDocument } from "./types";
 import "./task-document.css";
 
@@ -69,7 +73,8 @@ export type SharedDocumentEditorProps = {
   emptyUntilSaved?: boolean;
   live?: boolean;
   onRemoteDocument?: (document: TaskDocument) => void;
-  saveDocument: (input: DocumentWrite) => Promise<TaskDocument>;
+  saveDocument?: (input: DocumentWrite) => Promise<TaskDocument>;
+  storage?: DocumentStorage;
   onCloseWithDraft?: () => void;
   onLoadingChange: (loading: boolean) => void;
 };
@@ -327,7 +332,9 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       setStatus("저장 중…");
       const request = (async () => {
         try {
-          const result = await latest.current.saveDocument({
+          const result = await (
+            latest.current.storage?.save || latest.current.saveDocument!
+          )({
             markdown: submitted,
             expectedRevision: state.base.revision,
             operationId,
@@ -344,12 +351,13 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           }
           return true;
         } catch (e) {
-          if (
-            e instanceof ApiError &&
-            e.status === 409 &&
-            e.details?.current &&
-            mergeRemote(e.details.current)
-          ) {
+          const remote =
+            e instanceof DocumentStorageConflict
+              ? e.current
+              : e instanceof ApiError && e.status === 409
+                ? e.details?.current
+                : null;
+          if (remote && mergeRemote(remote)) {
             setError("");
             setConflict(null);
             return true;
@@ -359,8 +367,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           if (mounted.current) {
             setError((e as Error).message);
             setStatus("저장하지 못함 · 입력 보존됨");
-            if (e instanceof ApiError && e.status === 409 && e.details?.current)
-              setConflict(e.details.current);
+            if (remote) setConflict(remote);
           }
           return false;
         } finally {
@@ -386,7 +393,9 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       const controller = new AbortController();
       const local = props.emptyUntilSaved
         ? Promise.resolve(blank)
-        : api<TaskDocument>(path, { signal: controller.signal });
+        : props.storage
+          ? props.storage.load()
+          : api<TaskDocument>(path, { signal: controller.signal });
       void local
         .then((data) => {
           if (controller.signal.aborted) return;
@@ -400,7 +409,9 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             blocked.current = true;
             setConflict(data);
             setError(
-              "보관된 입력과 서버 문서가 다릅니다. 최신 문서와 비교한 뒤 저장하세요.",
+              props.storage
+                ? "보관된 입력과 브라우저 문서가 다릅니다. 최신 문서와 비교한 뒤 저장하세요."
+                : "보관된 입력과 서버 문서가 다릅니다. 최신 문서와 비교한 뒤 저장하세요.",
             );
           } else {
             current.current.base = data;
@@ -440,9 +451,17 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         controller.abort();
         if (timer.current) clearTimeout(timer.current);
       };
-    }, [path, props.emptyUntilSaved, loadAttempt]);
+    }, [path, props.storage, props.emptyUntilSaved, loadAttempt]);
     useEffect(() => {
       if (!live || !loaded) return;
+      if (props.storage)
+        return props.storage.subscribe(
+          (document) => receive.current(document),
+          (error) => {
+            blocked.current = true;
+            setError(error.message);
+          },
+        );
       const events = new EventStream(`/api${path}/events`);
       events.addEventListener("document", (event: MessageEvent) => {
         try {
@@ -467,7 +486,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         if (!retryableRejection(event.data)) denied();
       });
       return () => events.close();
-    }, [path, live, loaded]);
+    }, [path, props.storage, live, loaded]);
     useEffect(() => {
       const beforeUnload = (event: BeforeUnloadEvent) => {
         if (
@@ -492,6 +511,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         throw new Error("문서 수정 상태에서 이미지를 붙여넣어 주세요.");
       if (file.size > MAX_IMAGE_BYTES)
         throw new Error("이미지는 파일당 10MiB까지 붙여넣을 수 있습니다.");
+      if (latest.current.storage)
+        return latest.current.storage.uploadImage(file, signal);
       const body = new FormData();
       body.append("image", file);
       const result = await api<{ url: string }>(path + "/images", {
@@ -601,7 +622,10 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           {conflict && (
             <div className="document-conflict">
               <details>
-                <summary>최신 서버 문서 확인 (내 입력은 아래에 유지)</summary>
+                <summary>
+                  최신 {props.storage ? "브라우저" : "서버"} 문서 확인 (내
+                  입력은 아래에 유지)
+                </summary>
                 <pre>{conflict.markdown || "빈 문서"}</pre>
               </details>
               {!docReadOnly && (
@@ -653,6 +677,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
                     onChange={change}
+                    images={props.storage?.images}
+                    documentLinks={!props.storage}
                     onUpload={uploadImage}
                     onUploading={uploading}
                     onReady={() => setEditorReady(true)}
