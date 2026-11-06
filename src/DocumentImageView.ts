@@ -1,6 +1,13 @@
 import type { Node } from "@milkdown/kit/prose/model";
-import type { EditorView, NodeView } from "@milkdown/kit/prose/view";
+import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
+import {
+  Decoration,
+  DecorationSet,
+  type EditorView,
+  type NodeView,
+} from "@milkdown/kit/prose/view";
 import { closeHistory } from "@milkdown/kit/prose/history";
+import { $prose } from "@milkdown/kit/utils";
 import {
   documentImageSource,
   documentImageWidth,
@@ -10,6 +17,37 @@ import {
 import type { DocumentImages } from "./document-storage";
 
 export type ImagePreview = { src: string; alt: string };
+
+// Browsers differ on the caret beside an image, which is not editable text:
+// Chromium draws none and WebKit one as tall as the image. The image beside
+// the caret marks that side; the stylesheet draws the caret there and hides
+// the browser's own. The marker is an attribute on the image, so typing next
+// to it, Korean composition included, meets no extra DOM.
+export const imageCaret = $prose(
+  () =>
+    new Plugin({
+      props: {
+        decorations: (state) => {
+          const { selection } = state;
+          if (!(selection instanceof TextSelection) || !selection.empty)
+            return null;
+          const { pos, nodeBefore, nodeAfter } = selection.$head;
+          const caret =
+            nodeBefore?.type.name === "image"
+              ? Decoration.node(pos - nodeBefore.nodeSize, pos, {
+                  "data-caret": "after",
+                })
+              : nodeAfter?.type.name === "image"
+                ? Decoration.node(pos, pos + nodeAfter.nodeSize, {
+                    "data-caret": "before",
+                  })
+                : null;
+          return caret && DecorationSet.create(state.doc, [caret]);
+        },
+      },
+    }),
+);
+
 export function iconButton(label: string, paths: string[]) {
   const button = document.createElement("button");
   button.type = "button";

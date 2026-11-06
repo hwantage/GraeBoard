@@ -1,4 +1,10 @@
-import { test, expect, type Page, type Request } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Request,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 
@@ -93,6 +99,71 @@ async function pasteImage(page: Page, color = "#408378") {
     Object.defineProperty(event, "clipboardData", { value: data });
     element.dispatchEvent(event);
   }, color);
+}
+// Stores a plain image for the task's document and returns its address.
+async function uploadImage(page: Page, width: number, height: number) {
+  const png = await page.evaluate(
+    ({ width, height }) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d")!;
+      context.fillStyle = "#984c48";
+      context.fillRect(0, 0, width, height);
+      return canvas.toDataURL("image/png").split(",")[1];
+    },
+    { width, height },
+  );
+  const res = await page.request.post(
+    `/api/tasks/${taskIds[0]}/documents/main/images`,
+    {
+      headers,
+      multipart: {
+        image: {
+          name: "그림.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(png, "base64"),
+        },
+      },
+    },
+  );
+  expect(res.ok(), await res.text()).toBeTruthy();
+  return (await res.json()).url as string;
+}
+// The editor's copy or cut, without the OS clipboard.
+async function clipboardEvent(page: Page, type: "copy" | "cut") {
+  return rich(page).evaluate((element, type) => {
+    const data = new Map<string, string>();
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        clearData: () => data.clear(),
+        setData: (kind: string, value: string) => data.set(kind, value),
+      },
+    });
+    element.dispatchEvent(event);
+    return {
+      html: data.get("text/html") || "",
+      text: data.get("text/plain") || "",
+    };
+  }, type);
+}
+// The caret drawn beside an image: its side, whether it shows, its height
+// against the image's, and the editor's own caret color.
+function imageCaret(image: Locator) {
+  return image.evaluate((element) => {
+    const caret = getComputedStyle(element, "::after");
+    return {
+      side: element.getAttribute("data-caret"),
+      shown: caret.content !== "none",
+      left: caret.left,
+      right: caret.right,
+      height: Math.round(
+        parseFloat(caret.height) - element.getBoundingClientRect().height,
+      ),
+      native: getComputedStyle(element.closest(".ProseMirror")!).caretColor,
+    };
+  });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -558,4 +629,219 @@ test("붙여넣은 이미지 뒤와 문서 끝 블록 아래에서 바로 이어
   await expect
     .poll(async () => (await document(page)).markdown)
     .not.toContain("<br />");
+});
+
+test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘라내며 양옆에 커서를 표시한다", async ({
+  page,
+}) => {
+  const url = await uploadImage(page, 200, 120);
+  const original = `앞 글자![가운데](${url})뒤 글자\n\n![단독](${url})\n\n끝 문단`;
+  await save(page, taskIds[0], original);
+  await open(page);
+  const images = rich(page).locator(".document-image");
+  const [inline, lone] = [images.nth(0), images.nth(1)];
+  await expect
+    .poll(() =>
+      lone.locator("img").evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBe(200);
+
+  // A click selects the image alone, shown in the accent color while the
+  // pointer still rests on it, and Backspace deletes only the image.
+  await lone.locator("img").click();
+  await expect(lone).toHaveClass(/ProseMirror-selectednode/);
+  await expect(rich(page).locator(".ProseMirror-selectednode")).toHaveCount(1);
+  const selected = await lone.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--accent)";
+    element.closest(".rich-document")!.append(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(element);
+    return { accent, color: style.outlineColor, width: style.outlineWidth };
+  });
+  expect(selected.color).toBe(selected.accent);
+  expect(selected.width).toBe("2px");
+  await page.keyboard.press("Backspace");
+  await expect(images).toHaveCount(1);
+  await expect(
+    rich(page).locator(":scope > p").first().locator(".document-image"),
+  ).toHaveCount(1);
+  await expect(rich(page).locator(":scope > p").nth(1)).toHaveText("");
+  await expect(rich(page).locator(":scope > p").last()).toHaveText("끝 문단");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(`앞 글자![가운데](${url})뒤 글자\n\n<br />\n\n끝 문단`));
+  await detail(page)
+    .getByRole("button", { name: "문서 실행취소", exact: true })
+    .click();
+  await expect(images).toHaveCount(2);
+
+  // Arrow keys step onto the image and past it. A caret beside it is drawn
+  // as tall as the image on that side, in place of the browser's own.
+  await inline.locator("img").click();
+  await expect(inline).toHaveClass(/ProseMirror-selectednode/);
+  await page.keyboard.press("ArrowRight");
+  await expect(inline).not.toHaveClass(/ProseMirror-selectednode/);
+  expect(await imageCaret(inline)).toEqual({
+    side: "after",
+    shown: true,
+    left: expect.any(String),
+    right: "-2px",
+    height: 0,
+    native: "rgba(0, 0, 0, 0)",
+  });
+  await page.keyboard.press("ArrowLeft");
+  await expect(inline).toHaveClass(/ProseMirror-selectednode/);
+  expect((await imageCaret(inline)).side).toBeNull();
+  await page.keyboard.press("ArrowLeft");
+  expect(await imageCaret(inline)).toMatchObject({
+    side: "before",
+    shown: true,
+    left: "-2px",
+    height: 0,
+    native: "rgba(0, 0, 0, 0)",
+  });
+  await page.keyboard.press("ArrowLeft");
+  await settleRichSelection(page);
+  expect(await imageCaret(inline)).toMatchObject({
+    side: null,
+    shown: false,
+  });
+  expect((await imageCaret(inline)).native).not.toBe("rgba(0, 0, 0, 0)");
+  // An image alone on its line has the caret at the start and the end.
+  await lone.locator("img").click();
+  await page.keyboard.press("ArrowLeft");
+  expect(await imageCaret(lone)).toMatchObject({
+    side: "before",
+    shown: true,
+    left: "-2px",
+  });
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  expect(await imageCaret(lone)).toMatchObject({
+    side: "after",
+    shown: true,
+    right: "-2px",
+  });
+  // Typing there continues after the image; an unfocused editor shows none.
+  await rich(page).pressSequentially("설명");
+  await expect(rich(page).locator(":scope > p").nth(1)).toContainText("설명");
+  expect((await imageCaret(lone)).side).toBeNull();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await settleRichSelection(page);
+  expect((await imageCaret(lone)).side).toBe("after");
+  await rich(page).evaluate((element) => (element as HTMLElement).blur());
+  expect((await imageCaret(lone)).shown).toBe(false);
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(
+      exact(
+        `앞 글자![가운데](${url})뒤 글자\n\n![단독](${url})설명\n\n끝 문단`,
+      ),
+    );
+
+  // Copying or cutting the selected image takes just the image.
+  await inline.locator("img").click();
+  const copied = await clipboardEvent(page, "copy");
+  expect(copied.text).toBe(`![가운데](${url})`);
+  expect(copied.html).toContain("<img");
+  expect((await clipboardEvent(page, "cut")).text).toBe(copied.text);
+  await expect(images).toHaveCount(1);
+  await expect(rich(page).locator(":scope > p").first()).toHaveText(
+    "앞 글자뒤 글자",
+  );
+  await rich(page).getByText("끝 문단", { exact: true }).click();
+  await page.keyboard.press("End");
+  await settleRichSelection(page);
+  await rich(page).evaluate((element, data) => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        types: ["text/plain", "text/html"],
+        getData: (type: string) =>
+          type === "text/html" ? data.html : data.text,
+      },
+    });
+    element.dispatchEvent(event);
+  }, copied);
+  await expect(images).toHaveCount(2);
+  // Pasted HTML gives the image its alt text as a title, as before.
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toContain(
+      `앞 글자뒤 글자\n\n![단독](${url})설명\n\n끝 문단![가운데](${url}`,
+    );
+});
+
+test("이미지를 끌면 글자 사이에 놓을 위치를 표시하고 그 자리로 옮기며 한 번에 실행취소한다", async ({
+  page,
+}) => {
+  const url = await uploadImage(page, 120, 80);
+  const original = `앞 글자![옮길 그림](${url})뒤 글자\n\n가나다라마바사`;
+  await save(page, taskIds[0], original);
+  await open(page);
+  const image = rich(page).locator(".document-image");
+  await expect
+    .poll(() =>
+      image
+        .locator("img")
+        .evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBe(120);
+  const target = rich(page).locator(":scope > p").nth(1);
+  // Between 다 and 라.
+  const point = await target.evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.firstChild!, 3);
+    range.collapse(true);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.left, y: rect.top + rect.height / 2 };
+  });
+  const box = (await image.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 6, box.y + box.height / 2 + 6, {
+    steps: 3,
+  });
+  await page.mouse.move(point.x + 1, point.y, { steps: 10 });
+  // The drop cursor marks that spot in the accent color, apart from the
+  // block handle's drop line.
+  const cursor = detail(page).locator(".document-drop-cursor");
+  await expect(cursor).toBeVisible();
+  const line = (await cursor.boundingBox())!;
+  expect(Math.abs(line.x + line.width / 2 - point.x)).toBeLessThan(3);
+  expect(line.y).toBeLessThan(point.y);
+  expect(line.y + line.height).toBeGreaterThan(point.y);
+  await expect(detail(page).locator(".document-block-drop")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(cursor).toHaveCount(0);
+  await expect(rich(page).locator(":scope > p").first()).toHaveText(
+    "앞 글자뒤 글자",
+  );
+  await expect(target.locator(".document-image")).toHaveCount(1);
+  expect(
+    await target.evaluate((element) =>
+      [...element.childNodes].map((node) =>
+        node.nodeType === Node.TEXT_NODE ? node.textContent : "그림",
+      ),
+    ),
+  ).toEqual(["가나다", "그림", "라마바사"]);
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(`앞 글자뒤 글자\n\n가나다![옮길 그림](${url})라마바사`));
+  const undo = detail(page).getByRole("button", {
+    name: "문서 실행취소",
+    exact: true,
+  });
+  await undo.click();
+  await expect(
+    rich(page).locator(":scope > p").first().locator("img"),
+  ).toHaveCount(1);
+  await expect(target).toHaveText("가나다라마바사");
+  await expect(undo).toBeDisabled();
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(original));
 });

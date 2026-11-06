@@ -606,3 +606,74 @@ test("이미지 문단도 끌어서 옮기며 이미지를 다시 올리지 않�
     .toMatch(exact(`![옮길 그림](${url})\n\n첫째 문단\n\n둘째 문단`));
   expect(uploads).toHaveLength(1);
 });
+
+test("큰 이미지 문단은 위가 가려져도 보이는 부분 옆에 손잡이를 두고 끌어 옮긴다", async ({
+  page,
+}) => {
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 600;
+    canvas.height = 1400;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#408378";
+    context.fillRect(0, 0, 600, 1400);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  const res = await page.request.post(
+    `/api/tasks/${taskIds[0]}/documents/main/images`,
+    {
+      headers,
+      multipart: {
+        image: {
+          name: "긴 그림.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(png, "base64"),
+        },
+      },
+    },
+  );
+  expect(res.ok(), await res.text()).toBeTruthy();
+  const { url } = await res.json();
+  await save(page, taskIds[0], `첫째 문단\n\n![긴 그림](${url})\n\n둘째 문단`);
+  await open(page);
+  const image = rich(page).locator(".document-image");
+  await expect
+    .poll(() =>
+      image
+        .locator("img")
+        .evaluate((img: HTMLImageElement) => img.naturalHeight),
+    )
+    .toBe(1400);
+  // On the image's line, the handle sits at its top like a first line.
+  let box = (await image.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + 60);
+  await expect(handle(page)).toBeVisible();
+  let grip = (await handle(page).boundingBox())!;
+  expect(grip.x + grip.width).toBeLessThanOrEqual(box.x);
+  expect(Math.abs(grip.y + grip.height / 2 - (box.y + 20))).toBeLessThan(4);
+
+  // With the top scrolled under the toolbar, the handle stays beside the
+  // part in view.
+  await rich(page).locator("p").last().scrollIntoViewIfNeeded();
+  box = (await image.boundingBox())!;
+  const tools = (await detail(page)
+    .locator(".document-rich-tools")
+    .boundingBox())!;
+  expect(box.y).toBeLessThan(tools.y);
+  await page.mouse.move(box.x + 40, tools.y + tools.height + 200, {
+    steps: 4,
+  });
+  await expect(handle(page)).toBeVisible();
+  grip = (await handle(page).boundingBox())!;
+  expect(grip.x + grip.width).toBeLessThanOrEqual(box.x);
+  expect(grip.y).toBeGreaterThanOrEqual(tools.y + tools.height);
+  expect(grip.y).toBeLessThan(tools.y + tools.height + 16);
+
+  // Dragging it moves the image's paragraph like any block.
+  const last = (await rich(page).locator("p").last().boundingBox())!;
+  await drag(page, last.y + last.height - 3);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`첫째 문단\n\n둘째 문단\n\n![긴 그림](${url})`));
+  await expect(rich(page).locator("p").nth(1)).toHaveText("둘째 문단");
+});
