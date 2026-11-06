@@ -382,6 +382,13 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
               : e instanceof ApiError && e.status === 409
                 ? e.details?.current
                 : null;
+          // Merging now would rewrite the text under a composition, which
+          // ends it. The conflict waits like any remote change and merges,
+          // then saves again, once the composition ends (drainRemote).
+          if (remote && composing.current) {
+            receiveRemote(remote);
+            return false;
+          }
           if (remote && mergeRemote(remote)) {
             setError("");
             setConflict(null);

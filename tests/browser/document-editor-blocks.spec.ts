@@ -855,6 +855,92 @@ test("Chromium IME로 이미지 바로 뒤에서 한글을 조합하면 이미�
     .toMatch(exact(`![단독](${url})한글\n\n끝 문단`));
 });
 
+test("Chromium IME 조합 중 끝난 저장 충돌은 조합이 끝난 뒤 병합하고 다시 저장한다", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "IME 조합 명령은 Chromium CDP에서 제공",
+  );
+  const url = await uploadImage(page, 200, 120);
+  const saved = await save(
+    page,
+    taskIds[0],
+    `![단독](${url})\n\n가운데\n\n끝 문단`,
+  );
+  await open(page);
+  const image = rich(page).locator(".document-image");
+  const paragraphs = rich(page).locator(":scope > p");
+  const typed = () =>
+    paragraphs.first().evaluate((element) =>
+      [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent)
+        .join("")
+        .replace(/\u200b/g, ""),
+    );
+  // The save of an edit made before the composition is held at the server's
+  // door until the composition has started.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const puts: string[] = [];
+  await page.route("**/api/tasks/*/documents/main", async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    puts.push(route.request().postDataJSON().markdown);
+    if (puts.length === 1) await gate;
+    await route.continue();
+  });
+  await paragraphs.nth(2).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("!");
+  await expect.poll(() => puts.length).toBe(1);
+  await image.locator("img").click();
+  await page.keyboard.press("ArrowRight");
+  const client = await page.context().newCDPSession(page);
+  await client.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Process",
+    code: "KeyG",
+    windowsVirtualKeyCode: 229,
+  });
+  await client.send("Input.imeSetComposition", {
+    text: "ㅎ",
+    selectionStart: 1,
+    selectionEnd: 1,
+  });
+  await expect.poll(typed).toBe("ㅎ");
+  // Another tab changes the middle line, so the held save meets a conflict.
+  await save(
+    page,
+    taskIds[0],
+    `![단독](${url})\n\n가운데 원격\n\n끝 문단`,
+    saved.revision,
+  );
+  release();
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(`![단독](${url})\n\n가운데 원격\n\n끝 문단`));
+  await page.waitForTimeout(300);
+  // The composition goes on untouched by the conflict.
+  await expect(paragraphs.nth(1)).toHaveText("가운데");
+  for (const text of ["하", "한"]) {
+    await client.send("Input.imeSetComposition", {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    });
+    await expect.poll(typed).toBe(text);
+  }
+  await client.send("Input.insertText", { text: "한" });
+  // Once it ends, the other tab's line merges in and the edits save again.
+  await expect(paragraphs.nth(1)).toHaveText("가운데 원격");
+  await expect.poll(typed).toBe("한");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(`![단독](${url})한\n\n가운데 원격\n\n끝 문단!`));
+});
+
 test("이미지를 끌면 글자 사이에 놓을 위치를 표시하고 그 자리로 옮기며 한 번에 실행취소한다", async ({
   page,
 }, info) => {
