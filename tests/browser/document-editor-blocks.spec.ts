@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../shared/compact.js";
 
@@ -153,20 +153,45 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
     .toContain(
       "<details open>\n<summary>접는 제목</summary>\n\n숨긴 내용\n\n</details>",
     );
+  // Folding changes only this view, as in Notion: nothing is saved, and the
+  // fold stays while the rest of the document is edited.
+  const folded = (await document(page)).revision;
+  const writes: string[] = [];
+  const recordWrite = (request: Request) => {
+    if (request.method() === "PUT" && request.url().includes("/documents/"))
+      writes.push(request.url());
+  };
+  page.on("request", recordWrite);
   await toggle.getByRole("button", { name: "토글 접기", exact: true }).click();
   await expect(toggle.locator(".document-toggle-content")).toBeHidden();
   await expect(
     toggle.getByRole("button", { name: "토글 펼치기", exact: true }),
   ).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toHaveAttribute("data-open", "true");
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  await page.waitForTimeout(1000);
+  expect(writes).toEqual([]);
+  expect((await document(page)).revision).toBe(folded);
+  page.off("request", recordWrite);
+  await toggle.locator(".document-toggle-title").click();
+  await settleRichSelection(page);
+  await page.keyboard.press("End");
+  await page.keyboard.insertText("!");
   await expect
     .poll(async () => (await document(page)).markdown)
-    .toContain("<details>\n<summary>접는 제목</summary>");
+    .toContain("<details open>\n<summary>접는 제목!</summary>");
+  await expect(toggle.locator(".document-toggle-content")).toBeHidden();
   await raw(page);
   await expect(source(page)).toHaveValue(
-    /<details>\n<summary>접는 제목<\/summary>\n\n숨긴 내용\n\n<\/details>/,
+    /<details open>\n<summary>접는 제목!<\/summary>\n\n숨긴 내용\n\n<\/details>/,
   );
   await richMode(page);
-  await expect(toggle).toHaveAttribute("data-open", "false");
+  // A new view opens the toggle as stored.
+  await expect(toggle.locator(".document-toggle-content p")).toBeVisible();
+  await toggle.getByRole("button", { name: "토글 접기", exact: true }).click();
+  await expect(toggle.locator(".document-toggle-content")).toBeHidden();
   await toggle
     .getByRole("button", { name: "토글 펼치기", exact: true })
     .click();
@@ -177,17 +202,17 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
     .getByRole("combobox", { name: "문서 블록" })
     .selectOption("toggle2");
   await expect(rich(page).locator("h2.document-toggle-summary")).toHaveText(
-    "접는 제목",
+    "접는 제목!",
   );
   await expect
     .poll(async () => (await document(page)).markdown)
-    .toContain("<summary><h2>접는 제목</h2></summary>");
+    .toContain("<summary><h2>접는 제목!</h2></summary>");
   await detail(page)
     .getByRole("combobox", { name: "문서 블록" })
     .selectOption("paragraph");
   await expect(toggle).toHaveCount(0);
   await expect(rich(page).locator(":scope > p").first()).toHaveText(
-    "접는 제목",
+    "접는 제목!",
   );
   await expect(rich(page)).toContainText("숨긴 내용");
   await detail(page)
@@ -197,12 +222,10 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
   await close(page);
 
   // Markdown written elsewhere: same-line bodies, inline marks, nesting and
-  // the closed state all open in the rich editor.
-  await save(
-    page,
-    taskIds[1],
-    "앞 문단\n\n<details>\n<summary>**굵은** 제목</summary>\n내용 한 줄\n\n* 목록 항목\n\n<details open>\n<summary><h3>안쪽</h3></summary>\n\n안쪽 내용\n\n</details>\n\n</details>\n\n뒤 문단",
-  );
+  // the closed state all open in the rich editor. Unfolding saves nothing.
+  const elsewhere =
+    "앞 문단\n\n<details>\n<summary>**굵은** 제목</summary>\n내용 한 줄\n\n* 목록 항목\n\n<details open>\n<summary><h3>안쪽</h3></summary>\n\n안쪽 내용\n\n</details>\n\n</details>\n\n뒤 문단";
+  await save(page, taskIds[1], elsewhere);
   await open(page, taskIds[1]);
   const outer = rich(page).locator(":scope > .document-toggle");
   await expect(outer).toHaveCount(1);
@@ -218,12 +241,9 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
     outer.locator(".document-toggle h3.document-toggle-summary"),
   ).toHaveText("안쪽");
   await raw(page);
-  await expect(source(page)).toHaveValue(
-    exact(
-      "앞 문단\n\n<details open>\n<summary>**굵은** 제목</summary>\n\n내용 한 줄\n\n* 목록 항목\n\n<details open>\n<summary><h3>안쪽</h3></summary>\n\n안쪽 내용\n\n</details>\n\n</details>\n\n뒤 문단",
-    ),
-  );
+  await expect(source(page)).toHaveValue(exact(elsewhere));
   await close(page);
+  expect((await document(page, taskIds[1])).markdown).toBe(elsewhere);
 
   // Unsupported attributes keep the document in the Markdown source editor.
   const unsupported =

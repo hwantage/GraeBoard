@@ -3,11 +3,18 @@ import type { MarkdownNode, Root } from "@milkdown/kit/transformer";
 import type { Node, NodeType, ResolvedPos } from "@milkdown/kit/prose/model";
 import {
   Plugin,
+  PluginKey,
   TextSelection,
   type Command,
   type EditorState,
+  type Transaction,
 } from "@milkdown/kit/prose/state";
-import type { EditorView, NodeView } from "@milkdown/kit/prose/view";
+import {
+  Decoration,
+  DecorationSet,
+  type EditorView,
+  type NodeView,
+} from "@milkdown/kit/prose/view";
 import { closeHistory } from "@milkdown/kit/prose/history";
 import { keydownHandler } from "@milkdown/kit/prose/keymap";
 import { iconButton } from "./DocumentImageView";
@@ -351,6 +358,67 @@ export const toggleContentSchema = $nodeSchema("toggle_content", () => ({
   },
 }));
 
+// Folding a toggle only changes this view, as in Notion: the stored `open`
+// attribute is the state a toggle opens in, and clicking it must not save the
+// document. A toggle shown otherwise carries a `data-view` decoration.
+const toggleFoldKey = new PluginKey<DecorationSet>("toggle-fold");
+function shownOpen(state: EditorState, pos: number, node: Node) {
+  const [fold] =
+    toggleFoldKey
+      .getState(state)
+      ?.find(pos, pos + 1, (spec) => spec.toggleFold)
+      .filter((deco) => deco.from === pos) ?? [];
+  return fold ? fold.spec.open === true : node.attrs.open !== false;
+}
+// Show the toggle at `pos` open or folded in this view only.
+export function foldToggle(tr: Transaction, pos: number, open: boolean) {
+  return tr.setMeta(toggleFoldKey, { pos, open });
+}
+const toggleFold = $prose(
+  () =>
+    new Plugin<DecorationSet>({
+      key: toggleFoldKey,
+      state: {
+        init: () => DecorationSet.empty,
+        apply: (tr, set) => {
+          set = set.map(tr.mapping, tr.doc);
+          const fold = tr.getMeta(toggleFoldKey) as
+            { pos: number; open: boolean } | undefined;
+          // A fold whose toggle is gone or now stored the same way is dropped.
+          const stale = (deco: Decoration) => {
+            const node = tr.doc.nodeAt(deco.from);
+            return (
+              node?.type.name !== "toggle" ||
+              node.attrs.open === deco.spec.open ||
+              deco.from === fold?.pos
+            );
+          };
+          if (tr.docChanged || fold) set = set.remove(set.find().filter(stale));
+          const node = fold && tr.doc.nodeAt(fold.pos);
+          if (
+            fold &&
+            node?.type.name === "toggle" &&
+            node.attrs.open !== fold.open
+          )
+            set = set.add(tr.doc, [
+              Decoration.node(
+                fold.pos,
+                fold.pos + node.nodeSize,
+                { "data-view": fold.open ? "open" : "closed" },
+                { toggleFold: true, open: fold.open },
+              ),
+            ]);
+          return set;
+        },
+      },
+      props: { decorations: (state) => toggleFoldKey.getState(state) },
+    }),
+);
+const domOpen = (toggle: HTMLElement | null) =>
+  toggle?.dataset.view
+    ? toggle.dataset.view === "open"
+    : toggle?.dataset.open !== "false";
+
 function syncToggleButton(button: HTMLElement, open: boolean) {
   const label = open ? "토글 접기" : "토글 펼치기";
   if (button.getAttribute("aria-expanded") === String(open)) return;
@@ -372,8 +440,7 @@ export const toggleButtonSync = $prose(
           ))
             syncToggleButton(
               button,
-              button.closest<HTMLElement>(".document-toggle")?.dataset.open !==
-                "false",
+              domOpen(button.closest<HTMLElement>(".document-toggle")),
             );
         },
       }),
@@ -384,6 +451,7 @@ export const toggle = [
   toggleSchema,
   toggleSummarySchema,
   toggleContentSchema,
+  toggleFold,
   toggleButtonSync,
 ].flat();
 
@@ -497,9 +565,7 @@ const enterInToggle: Command = (state, dispatch) => {
   if (!found) return false;
   const { nodes } = state.schema;
   if ($from.parent.type === nodes.toggle_summary) {
-    const tr = state.tr;
-    if (!found.node.attrs.open)
-      tr.setNodeMarkup(found.start, undefined, { open: true });
+    const tr = foldToggle(state.tr, found.start, true);
     const contentStart = $from.after($from.depth) + 1;
     const first = found.node.child(1).firstChild;
     if (!first?.isTextblock) tr.insert(contentStart, nodes.paragraph.create());
@@ -586,31 +652,27 @@ export function toggleSummaryView(
       summaryEnd: pos + node.nodeSize - 1,
     };
   };
-  syncToggleButton(button, parent()?.node.attrs.open !== false);
+  const shown = parent();
+  syncToggleButton(
+    button,
+    !shown || shownOpen(view.state, shown.pos, shown.node),
+  );
   button.addEventListener("mousedown", (event) => event.preventDefault());
   button.addEventListener("click", () => {
     const target = parent();
     if (!target) return;
-    const open = !target.node.attrs.open;
-    if (readOnly()) {
-      // Readers fold locally; the document itself stays unchanged.
-      const toggle = dom.parentElement;
-      if (toggle) toggle.dataset.open = String(open);
-      syncToggleButton(button, open);
-      return;
-    }
-    let tr = view.state.tr.setNodeMarkup(target.pos, undefined, {
-      ...target.node.attrs,
-      open,
-    });
+    // Everyone folds in their own view; the document itself stays unchanged.
+    const open = !shownOpen(view.state, target.pos, target.node);
+    let tr = foldToggle(view.state.tr, target.pos, open);
     const { from, to } = view.state.selection;
+    if (readOnly()) return view.dispatch(tr);
     if (
       !open &&
       from > target.summaryEnd &&
       to <= target.pos + target.node.nodeSize
     )
       tr = tr.setSelection(TextSelection.create(tr.doc, target.summaryEnd));
-    view.dispatch(closeHistory(tr));
+    view.dispatch(tr);
     view.focus();
   });
   dom.append(button, contentDOM);
