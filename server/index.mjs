@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
 import { createApp } from "./app.mjs";
 const port = Number(process.env.PORT || 4310),
   host = process.env.HOST || "127.0.0.1";
@@ -11,9 +13,24 @@ if (
   console.error("외부 접속용 첫 설정에는 SETUP_TOKEN 환경 변수가 필요합니다.");
   process.exit(1);
 }
-const server = app.listen(port, host, () =>
-  console.log(`GraeBoard: http://${host}:${server.address().port}`),
-);
+const { TLS_CERT_FILE, TLS_KEY_FILE } = process.env;
+if (Boolean(TLS_CERT_FILE) !== Boolean(TLS_KEY_FILE)) {
+  console.error(
+    "TLS_CERT_FILE과 TLS_KEY_FILE은 함께 지정해야 합니다. 둘 다 비우면 앱이 평문 HTTP로 뜨고, 앞단 리버스 프록시가 TLS를 처리할 수 있습니다.",
+  );
+  process.exit(1);
+}
+const scheme = TLS_CERT_FILE ? "https" : "http";
+const server = TLS_CERT_FILE
+  ? createHttpsServer(
+      { cert: readFileSync(TLS_CERT_FILE), key: readFileSync(TLS_KEY_FILE) },
+      app,
+    ).listen(port, host, () =>
+      console.log(`GraeBoard: ${scheme}://${host}:${server.address().port}`),
+    )
+  : app.listen(port, host, () =>
+      console.log(`GraeBoard: ${scheme}://${host}:${server.address().port}`),
+    );
 let stopping = false;
 server.prependListener("request", (_request, response) => {
   response.once("finish", () => {

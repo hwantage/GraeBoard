@@ -55,6 +55,7 @@ npm run build
 | `APP_ORIGIN`          | 없음                      | 프록시 뒤 실제 서비스 Origin, 예: `https://graeboard.example.com`  |
 | `COOKIE_SECURE`       | `0`과 같은 동작           | HTTPS에서는 `1`                                                    |
 | `TRUST_PROXY`         | `0`과 같은 동작           | 신뢰하는 프록시가 정확히 하나일 때 `1`                             |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | 없음 | 역방향 프록시 없이 이 프로세스가 직접 TLS를 종료할 때의 인증서·개인키 PEM 절대 경로. 둘 다 지정하거나 둘 다 비움 |
 | `GRAEBOARD_INSTALLATION_ID` | 없음 | 내부 설치의 고정 UUID. 복구 사본에 활성 원본 ID를 재사용하지 않음 |
 | `GRAEBOARD_SYNC_PROFILES` | `[]` | 팀·프로필·Git 저장소·토큰 환경변수 이름을 연결하는 JSON 배열 |
 | `GRAEBOARD_SYNC_DIR` | `data/sync` | 프로필별 bare Git clone 상위 경로. 운영에서는 릴리스 밖 절대 경로 |
@@ -102,6 +103,8 @@ NODE_ENV=production HOST=127.0.0.1 PORT=4310 npm start
 ```
 
 HTTPS 역방향 프록시가 앱으로 요청을 전달하도록 구성하고 앱 포트의 직접 외부 접근을 제한합니다. `APP_ORIGIN`, `COOKIE_SECURE`, `TRUST_PROXY`는 실제 프록시 구성과 일치시킵니다. 프로세스 재시작 정책과 파일 접근 권한은 운영 환경에서 관리합니다.
+
+앞단에 별도 리버스 프록시를 두기 어려운 경우에는 `TLS_CERT_FILE`·`TLS_KEY_FILE`에 인증서·개인키 PEM 절대 경로를 지정해 이 Node 프로세스가 직접 TLS를 종료할 수 있습니다. 이때는 `TRUST_PROXY=0`을 유지하고 `APP_ORIGIN`·`COOKIE_SECURE=1`을 실제 `https://` 접속 주소에 맞춥니다. 둘 중 하나만 지정하면 시작을 거절합니다. 두 변수를 비우면 기존처럼 평문 HTTP로 뜨므로 역방향 프록시 구성은 그대로 동작합니다.
 
 브라우저의 셀·문서 본문·문서 목록·원본 및 사본 시트 동기화는 SharedWorker에서 같은 Origin의 `POST /api/events` SSE 연결 하나를 공유합니다. 프록시가 POST 응답도 버퍼링 없이 스트리밍하도록 구성합니다. 개별 GET 경로인 `/api/cells/events`와 리소스별 `/events`도 유지합니다. 집계용 `GET /api/events`는 제공하지 않습니다([경로 명세](DATA_FORMAT.md#실시간-동기화)). 모든 SSE 경로의 프록시 응답 버퍼링·압축을 끄고 15초 heartbeat가 전달되도록 읽기 제한 시간을 60초 이상으로 둡니다. 앱도 `X-Accel-Buffering: no`, `Cache-Control: no-store, no-transform`을 보내며 SSE 응답은 압축하지 않습니다. SharedWorker 연결 공유에는 인증서나 HTTP/2가 필요하지 않으며 기존 `npm run start` 실행 방식을 유지합니다. 미지원 브라우저나 서로 다른 앱 버전의 탭은 연결을 별도로 사용하므로, 이 경우까지 연결 수 여유를 늘리려면 앞단 HTTPS 프록시의 HTTP/2를 추가로 사용할 수 있습니다. SSE 재전송 버퍼는 앱 프로세스별 메모리에 있으므로 앱은 단일 프로세스로 실행합니다. 프로세스 재시작 시 클라이언트는 DB의 최신 셀·문서·시트로 다시 동기화합니다.
 
