@@ -631,31 +631,20 @@
   font-size: 13px;
   white-space: nowrap;
 }
-.document-toc-levels {
-  display: flex;
-  margin-left: auto;
-}
-.document-toc-levels button,
 .document-toc-close {
   display: grid;
   flex-shrink: 0;
   place-items: center;
   min-width: 22px;
   height: 24px;
+  margin-left: auto;
   padding: 0 3px;
   border-radius: 4px;
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
 }
-.document-toc-levels button:hover,
 .document-toc-close:hover {
   background: var(--accent-soft);
   color: var(--ink);
-}
-.document-toc-levels button[aria-pressed="true"] {
-  background: var(--accent-pastel);
-  color: var(--accent-strong);
 }
 .document-toc-list {
   position: relative;

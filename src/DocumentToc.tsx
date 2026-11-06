@@ -29,7 +29,6 @@ type Props = {
   onClose: () => void;
 };
 
-const LEVELS = [1, 2, 3, 4, 5];
 // Narrower documents keep their text width; the pane covers its right edge.
 const SIDE_BY_SIDE_WIDTH = 640;
 // Room above a heading the contents scrolled to.
@@ -83,7 +82,6 @@ export default forwardRef<TocApi, Props>(function DocumentToc(
   ref,
 ) {
   const [headings, setHeadings] = useState<Heading[]>([]);
-  const [depth, setDepth] = useState<number | null>(null);
   const [active, setActive] = useState(-1);
   const pane = useRef<HTMLElement>(null);
   const list = useRef<HTMLOListElement>(null);
@@ -185,12 +183,9 @@ export default forwardRef<TocApi, Props>(function DocumentToc(
     };
   }, []);
 
-  const shown = headings
-    .map((heading, index) => ({ ...heading, index }))
-    .filter((heading) => depth === null || heading.level <= depth);
+  const shown = headings.map((heading, index) => ({ ...heading, index }));
   const base = Math.min(...shown.map((heading) => heading.level));
-  // A heading hidden by the level filter marks the one above it instead.
-  const current = shown.findLast((heading) => heading.index <= active)?.index;
+  const current = active >= 0 ? active : undefined;
 
   // Keep the current heading visible in a long contents list.
   useEffect(() => {
@@ -203,7 +198,7 @@ export default forwardRef<TocApi, Props>(function DocumentToc(
       box.scrollTop + box.clientHeight
     )
       box.scrollTop = item.offsetTop + item.offsetHeight - box.clientHeight;
-  }, [current, depth]);
+  }, [current]);
 
   function jump(index: number, event: MouseEvent) {
     const view = getView();
@@ -251,25 +246,6 @@ export default forwardRef<TocApi, Props>(function DocumentToc(
         <div className="document-toc-header">
           <TableOfContents size={16} aria-hidden="true" />
           <strong>목차</strong>
-          <div
-            className="document-toc-levels"
-            role="group"
-            aria-label="표시할 제목 수준"
-          >
-            {LEVELS.map((level) => (
-              <button
-                key={level}
-                type="button"
-                aria-label={`H${level}까지 보기`}
-                data-tooltip={`H${level}까지 보기`}
-                aria-pressed={depth === level}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setDepth(depth === level ? null : level)}
-              >
-                H{level}
-              </button>
-            ))}
-          </div>
           <button
             type="button"
             className="document-toc-close"

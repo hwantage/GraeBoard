@@ -123,7 +123,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toBeVisible();
 });
 
-test("목차는 리치 문서 오른쪽에 열고 닫으며 제목 수준을 거르고 제목으로 이동한다", async ({
+test("목차는 리치 문서 오른쪽에 열고 닫으며 제목으로 이동한다", async ({
   page,
 }, info) => {
   await save(page, taskIds[0], markdown);
@@ -131,7 +131,7 @@ test("목차는 리치 문서 오른쪽에 열고 닫으며 제목 수준을 거
   const body = detail(page).locator(".modal-body");
   const tools = detail(page).locator(".document-rich-tools");
   const button = tocButton(detail(page));
-  // The button ends the toolbar just left of the mode switch.
+  // The button ends the toolbar, just right of the mode switch.
   await expect(tools.getByRole("button", { name: "목차" })).toBeVisible();
   await expect(button).toHaveAttribute("aria-pressed", "false");
   const modes = detail(page).getByRole("group", { name: "문서 편집 모드" });
@@ -140,9 +140,9 @@ test("목차는 리치 문서 오른쪽에 열고 닫으며 제목 수준을 거
     modes.boundingBox(),
     tools.boundingBox(),
   ]);
-  expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(modesBox!.x);
-  expect(modesBox!.x - (buttonBox!.x + buttonBox!.width)).toBeLessThan(12);
-  expect(modesBox!.x + modesBox!.width).toBeGreaterThan(
+  expect(modesBox!.x + modesBox!.width).toBeLessThanOrEqual(buttonBox!.x);
+  expect(buttonBox!.x - (modesBox!.x + modesBox!.width)).toBeLessThan(12);
+  expect(buttonBox!.x + buttonBox!.width).toBeGreaterThan(
     toolsBox!.x + toolsBox!.width - 24,
   );
   await expect(toc(detail(page))).toHaveCount(0);
@@ -172,22 +172,10 @@ test("목차는 리치 문서 오른쪽에 열고 닫으며 제목 수준을 거
     0,
   );
 
-  // H2 shows H1 and H2 only; pressing it again shows every level.
-  const h2 = toc(detail(page)).getByRole("button", {
-    name: "H2까지 보기",
-    exact: true,
-  });
-  await h2.click();
-  await expect(h2).toHaveAttribute("aria-pressed", "true");
-  await expect(items(detail(page))).toHaveText([
-    "전체 아키텍처",
-    "1. Slack 연결",
-    "2. Codex CLI 준비",
-    "토글 제목",
-  ]);
-  await h2.click();
-  await expect(h2).toHaveAttribute("aria-pressed", "false");
-  await expect(items(detail(page))).toHaveText(titles);
+  // The header holds the title and the close button only.
+  await expect(
+    toc(detail(page)).locator(".document-toc-header").getByRole("button"),
+  ).toHaveCount(1);
 
   // A heading scrolls to the top of the detail, below the pinned toolbar.
   const target = rich(detail(page)).getByRole("heading", {

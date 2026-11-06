@@ -644,8 +644,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           createPortal(
             <div className="document-controls">
               {(mode === "source" || docReadOnly || editorFailed) && saveStatus}
-              {tocToggle}
               {modeToggle}
+              {tocToggle}
             </div>,
             props.controlsTarget,
           )}
@@ -759,8 +759,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     modeControl={
                       toolbarModes && (
                         <>
-                          {tocToggle}
                           {modeToggle}
+                          {tocToggle}
                         </>
                       )
                     }
