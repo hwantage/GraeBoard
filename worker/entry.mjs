@@ -1,3 +1,4 @@
+import { createLinkTitleService } from "../shared/link-title.mjs";
 import { accessTokenRoutes } from "./access-tokens.mjs";
 import {
   isSyncRequest,
@@ -146,7 +147,9 @@ export function createWorker({
       });
   },
   publish = schedulePublish,
+  linkTitleOptions,
 } = {}) {
+  const linkTitles = new WeakMap();
   return {
     async fetch(original, env, execution = { waitUntil() {} }) {
       try {
@@ -209,6 +212,24 @@ export function createWorker({
           return json(await setup(env, identity, body), 201);
         const user = await authenticate(env, identity, request),
           ctx = new RequestContext(env, user, identity, request, execution);
+        if (path === "/link-title" && method === "GET") {
+          assert(
+            request.headers.get("x-requested-with") === "WeeklyPlan",
+            403,
+            "요청 헤더를 확인하세요.",
+          );
+          if (!linkTitles.has(env))
+            linkTitles.set(
+              env,
+              createLinkTitleService({
+                privateHosts: env.GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS,
+                ...linkTitleOptions,
+              }),
+            );
+          return json(
+            await linkTitles.get(env)(user.id, url.searchParams.get("url")),
+          );
+        }
         if (path === "/health") return json({ ok: true, site: "external" });
         if (path === "/admin/service-connections/guide") {
           ctx.admin();

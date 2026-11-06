@@ -452,7 +452,7 @@ test("/ 메뉴는 입력한 글자로 형식을 거르고 방향키·Enter·Esc�
   const options = slashMenu(page).getByRole("option");
   await expect(options.first()).toHaveText("본문");
   await expect(options.first()).toHaveAttribute("aria-selected", "true");
-  await expect(options).toHaveCount(16);
+  await expect(options).toHaveCount(17);
   await page.keyboard.press("Escape");
   await expect(slashMenu(page)).toHaveCount(0);
   await rich(page).pressSequentially("표");

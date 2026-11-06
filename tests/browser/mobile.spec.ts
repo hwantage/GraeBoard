@@ -373,8 +373,12 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
   await expect(memo.locator(".document-rich-tools")).toBeHidden();
   await screenshot(page, info, "memo-page");
   await page.setViewportSize(desktop);
-  await expect(memo.locator(".document-mode-bar")).toBeVisible();
   await expect(memo.locator(".document-rich-tools")).toBeVisible();
+  await expect(
+    memo
+      .locator(".document-rich-tools")
+      .getByRole("group", { name: "문서 편집 모드" }),
+  ).toBeVisible();
 });
 
 test("로그인·상단 메뉴·설정은 휴대폰 너비 안에 보인다", async ({

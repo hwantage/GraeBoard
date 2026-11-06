@@ -40,6 +40,20 @@ async function open(page: Page, id = taskIds[0]) {
   if (await start.isVisible()) await start.click();
   await expect(rich(page)).toBeVisible();
 }
+// Row, column and table actions live in the table tool's arrow menu.
+const tableMenu = (page: Page) =>
+  detail(page).getByRole("button", { name: "표 행·열 편집", exact: true });
+async function tableAction(page: Page, name: string) {
+  await tableMenu(page).click();
+  return detail(page).getByRole("menuitem", { name, exact: true });
+}
+async function expectTableAction(page: Page, name: string, enabled: boolean) {
+  const item = await tableAction(page, name);
+  if (enabled) await expect(item).toBeEnabled();
+  else await expect(item).toBeDisabled();
+  await tableMenu(page).click();
+  await expect(item).toHaveCount(0);
+}
 async function raw(page: Page) {
   await detail(page)
     .getByRole("button", { name: "Markdown 원문", exact: true })
@@ -406,7 +420,7 @@ test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 
     .toBeGreaterThan(0);
 });
 
-test("업무 상세와 메모 전체 페이지는 스크롤 중 모드 전환 줄과 툴바를 위에 고정한다", async ({
+test("업무 상세와 메모 전체 페이지는 스크롤 중 탭 줄과 모드 전환이 있는 툴바를 위에 고정한다", async ({
   page,
 }) => {
   const long = Array.from({ length: 80 }, (_, i) => `문단 ${i + 1}`).join(
@@ -423,19 +437,23 @@ test("업무 상세와 메모 전체 페이지는 스크롤 중 모드 전환 �
     headers,
     data: { markdown: long, expectedRevision: 0, operationId: randomUUID() },
   });
-  // The toggle's row stays at the scroller's top with the toolbar right
-  // under it; the toolbar ends with a line above the text.
-  const pinned = async (scroller: Locator, row: Locator, toolbar: Locator) => {
+  // The task's tab row stays at the scroller's top with the toolbar right
+  // under it; a memo page has no row above its toolbar. The toolbar holds
+  // the mode switch and ends with a line above the text.
+  const pinned = async (scroller: Locator, toolbar: Locator, row?: Locator) => {
     await scroller.evaluate((el) => (el.scrollTop = 600));
     await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(600);
-    const top = (await scroller.boundingBox())!.y;
-    const box = (await row.boundingBox())!;
-    expect(box.y).toBeCloseTo(top, 0);
-    expect(box.height).toBe(41);
+    let top = (await scroller.boundingBox())!.y;
+    if (row) {
+      const box = (await row.boundingBox())!;
+      expect(box.y).toBeCloseTo(top, 0);
+      expect(box.height).toBe(41);
+      top = box.y + box.height;
+    }
+    expect((await toolbar.boundingBox())!.y).toBeCloseTo(top, 0);
     await expect(
-      row.getByRole("button", { name: "Markdown 원문", exact: true }),
+      toolbar.getByRole("button", { name: "Markdown 원문", exact: true }),
     ).toBeInViewport();
-    expect((await toolbar.boundingBox())!.y).toBeCloseTo(box.y + box.height, 0);
     expect(
       await toolbar.evaluate((el) => getComputedStyle(el).borderBottomWidth),
     ).toBe("1px");
@@ -444,8 +462,8 @@ test("업무 상세와 메모 전체 페이지는 스크롤 중 모드 전환 �
   await expect(rich(page)).toContainText("문단 80");
   await pinned(
     detail(page).locator(".modal-body"),
-    detail(page).locator(".document-tabs"),
     detail(page).locator(".document-rich-tools"),
+    detail(page).locator(".document-tabs"),
   );
   await close(page);
 
@@ -454,9 +472,9 @@ test("업무 상세와 메모 전체 페이지는 스크롤 중 모드 전환 �
   await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toContainText(
     "문단 80",
   );
+  await expect(memo.locator(".document-mode-bar")).toBeHidden();
   await pinned(
     memo.locator(".memo-document-body"),
-    memo.locator(".document-mode-bar"),
     memo.locator(".document-rich-tools"),
   );
 });
@@ -795,7 +813,7 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
       const sample = () => {
         if (state.done) return;
         frames.push({
-          controls: visible(".document-controls"),
+          controls: visible(".document-modes"),
           toolbar: visible(".document-formatbar"),
           content: visible(".rich-document .ProseMirror h1"),
         });
@@ -840,9 +858,7 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
       await expect(
         detail(page).locator(".task-document-surface"),
       ).toHaveAttribute("inert", "");
-      await expect(
-        detail(page).locator(".document-controls"),
-      ).not.toBeVisible();
+      await expect(detail(page).locator(".document-modes")).not.toBeVisible();
       await expect(
         detail(page).locator(".document-formatbar"),
       ).not.toBeVisible();
@@ -894,10 +910,10 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
     await expect(rich(page)).toBeVisible();
     await expect(spinner).toHaveCount(0);
     if (width > 700) {
-      await expect(detail(page).locator(".document-controls")).toBeVisible();
+      await expect(detail(page).locator(".document-modes")).toBeVisible();
       await expect(detail(page).locator(".document-formatbar")).toBeVisible();
     } else {
-      await expect(detail(page).locator(".document-controls")).toBeHidden();
+      await expect(detail(page).locator(".document-modes")).toBeHidden();
       await expect(detail(page).locator(".document-formatbar")).toBeHidden();
     }
     const frames = await page.evaluate(async () => {
@@ -1424,13 +1440,9 @@ test("표 삽입·행과 열 추가·링크 도구가 Markdown으로 저장됨",
   await expect(table.locator("tr")).toHaveCount(3);
   await table.locator("th").first().click();
   await page.keyboard.insertText("담당");
-  await detail(page)
-    .getByRole("button", { name: "표 행 +", exact: true })
-    .click();
+  await (await tableAction(page, "아래에 행 추가")).click();
   await expect(table.locator("tr")).toHaveCount(4);
-  await detail(page)
-    .getByRole("button", { name: "표 열 +", exact: true })
-    .click();
+  await (await tableAction(page, "오른쪽에 열 추가")).click();
   await expect(table.locator("tr").first().locator("th")).toHaveCount(4);
   await raw(page);
   await expect(source(page)).toHaveValue(
@@ -1440,6 +1452,111 @@ test("표 삽입·행과 열 추가·링크 도구가 Markdown으로 저장됨",
   await close(page);
   await icon(page).click();
   await expect(rich(page).locator("table tr")).toHaveCount(4);
+});
+
+test("툴바의 인용·코드 블록·토글과 토글 제목 메뉴가 블록을 바꿔 저장한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "첫 줄\n\n둘째 줄\n\n셋째 줄\n\n넷째 줄\n");
+  await open(page);
+  const tool = (name: string) =>
+    detail(page).getByRole("button", { name, exact: true });
+  await rich(page).getByText("첫 줄", { exact: true }).click();
+  await tool("인용").click();
+  await expect(rich(page).locator("blockquote")).toHaveText("첫 줄");
+  await rich(page).getByText("둘째 줄", { exact: true }).click();
+  await tool("코드 블록").click();
+  await expect(rich(page).locator("pre")).toContainText("둘째 줄");
+  await rich(page).getByText("셋째 줄", { exact: true }).click();
+  await tool("토글").click();
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText(
+    "셋째 줄",
+  );
+  // The arrow opens the toggle headings; a click keeps the caret in place.
+  await rich(page).getByText("넷째 줄", { exact: true }).click();
+  const arrow = tool("토글 제목 선택");
+  await arrow.click();
+  await expect(arrow).toHaveAttribute("aria-expanded", "true");
+  const menu = detail(page).getByRole("menu", { name: "토글 제목 선택" });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "토글 제목 1",
+    "토글 제목 2",
+    "토글 제목 3",
+  ]);
+  await expect(rich(page)).toBeFocused();
+  await menu.getByRole("menuitem", { name: "토글 제목 2" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(rich(page)).toBeFocused();
+  await expect(rich(page).locator("h2.document-toggle-summary")).toHaveText(
+    "넷째 줄",
+  );
+  // The keyboard enters the menu; Esc closes it and returns to the arrow.
+  await arrow.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "토글 제목 1" }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    menu.getByRole("menuitem", { name: "토글 제목 3" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(arrow).toBeFocused();
+  await expect(detail(page)).toBeVisible();
+  // Esc in the document closes a menu opened by a click first.
+  await rich(page).getByText("첫 줄", { exact: true }).click();
+  await arrow.click();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(rich(page)).toBeFocused();
+  await raw(page);
+  for (const part of [
+    /^> 첫 줄$/m,
+    /^```\n둘째 줄\n```$/m,
+    /<details open>\n<summary>셋째 줄<\/summary>/,
+    /<details open>\n<summary><h2>넷째 줄<\/h2><\/summary>/,
+  ])
+    await expect(source(page)).toHaveValue(part);
+});
+
+test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝의 같은 자리에 있다", async ({
+  page,
+}) => {
+  await open(page);
+  const tools = detail(page).locator(".document-rich-tools");
+  const modes = detail(page).getByRole("group", { name: "문서 편집 모드" });
+  await expect(
+    detail(page).locator(".document-tabs .document-modes"),
+  ).toHaveCount(0);
+  await expect(tools.getByRole("group", { name: "문서 서식" })).toBeVisible();
+  await expect(tools.locator(".document-modes")).toHaveCount(1);
+  const toolbar = (await tools.boundingBox())!;
+  const richBox = (await modes.boundingBox())!;
+  expect(richBox.x + richBox.width).toBeGreaterThan(
+    toolbar.x + toolbar.width - 24,
+  );
+  await raw(page);
+  await expect(tools.getByRole("group", { name: "문서 서식" })).toHaveCount(0);
+  await expect(tools.getByRole("group", { name: "문서 도구" })).toBeVisible();
+  await expect(tools.locator(".document-save-state")).toBeVisible();
+  const sourceBox = (await modes.boundingBox())!;
+  expect(sourceBox.x).toBeCloseTo(richBox.x, 0);
+  expect(sourceBox.y).toBeCloseTo(richBox.y, 0);
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(tools.getByRole("group", { name: "문서 서식" })).toBeVisible();
+  // Keyboard focus follows the switch into the other mode's toolbar.
+  for (const name of ["Markdown 원문", "리치 문서"]) {
+    const button = detail(page).getByRole("button", { name, exact: true });
+    await button.focus();
+    await page.keyboard.press("Enter");
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(button).toBeFocused();
+  }
+  await expect(rich(page)).toBeVisible();
 });
 
 for (const cellType of ["th", "td"])
@@ -1460,9 +1577,7 @@ for (const cellType of ["th", "td"])
         .allTextContents();
       await target.locator("p").click({ position: { x: 1, y: 8 } });
       await page.keyboard.press("ArrowRight");
-      await expect(
-        detail(page).getByRole("button", { name: "표 열 +", exact: true }),
-      ).toBeEnabled();
+      await expectTableAction(page, "오른쪽에 열 추가", true);
       expect(
         await target.evaluate((el) => {
           const selection = window.getSelection()!;
@@ -1524,9 +1639,7 @@ for (const cellType of ["th", "td"])
     await target.locator("p").click({ position: { x: 1, y: 8 } });
     await page.keyboard.press("ArrowRight");
     await settleRichSelection(page);
-    await expect(
-      detail(page).getByRole("button", { name: "표 열 +", exact: true }),
-    ).toBeEnabled();
+    await expectTableAction(page, "오른쪽에 열 추가", true);
     await page.keyboard.press("Shift+Enter");
     await expect(target.locator("br")).toHaveCount(1);
     await detail(page).getByRole("button", { name: "문서 실행취소" }).click();
@@ -1579,9 +1692,7 @@ test("리치 표 셀은 선택한 글자를 교체하고 빈 셀에도 블록·H
   await expect
     .poll(() => page.evaluate(() => window.getSelection()!.toString()))
     .toBe("교체");
-  await expect(
-    detail(page).getByRole("button", { name: "표 열 +", exact: true }),
-  ).toBeEnabled();
+  await expectTableAction(page, "오른쪽에 열 추가", true);
   await pasteText(page, "- 첫 항목\r\n- 다음 | 내용");
   await expect(cells.first()).toHaveText("- 첫 항목- 다음 | 내용");
   await rich(page).press("Tab");
@@ -1863,9 +1974,7 @@ test("Chromium 실제 클립보드로 복사한 문장은 리치 표 셀 안에 
   const target = rich(page).locator("td").first();
   await target.locator("p").click({ position: { x: 1, y: 8 } });
   await page.keyboard.press("ArrowRight");
-  await expect(
-    detail(page).getByRole("button", { name: "표 열 +", exact: true }),
-  ).toBeEnabled();
+  await expectTableAction(page, "오른쪽에 열 추가", true);
   await page.keyboard.press("ControlOrMeta+v");
   await expect(target).toHaveText("앞복사할 문장뒤");
   await expect(rich(page).locator("table")).toHaveCount(1);
@@ -1884,18 +1993,14 @@ test("표 열 삭제는 선택한 열만 지우고 실행취소·저장·마지�
   );
   await open(page);
   const table = rich(page).locator("table").first();
-  const remove = detail(page).getByRole("button", {
-    name: "표 열 -",
-    exact: true,
-  });
   const undo = detail(page).getByRole("button", { name: "문서 실행취소" });
   const redo = detail(page).getByRole("button", { name: "문서 재실행" });
   await expect(undo).toBeDisabled();
   await expect(redo).toBeDisabled();
   await rich(page).getByText("표 앞 문장", { exact: true }).click();
-  await expect(remove).toBeDisabled();
+  await expectTableAction(page, "열 삭제", false);
   await table.locator("td").nth(1).click();
-  await remove.click();
+  await (await tableAction(page, "열 삭제")).click();
   await expect(table.locator("th, td")).toHaveText([
     "이름",
     "상태",
@@ -1937,11 +2042,22 @@ test("표 열 삭제는 선택한 열만 지우고 실행취소·저장·마지�
     "완료",
   ]);
   await table.locator("th").first().click();
-  await remove.click();
+  await (await tableAction(page, "열 삭제")).click();
   await expect(table.locator("th, td")).toHaveText(["상태", "진행", "완료"]);
   // Keyboard activation must retain the editor's selected column, too.
-  await remove.focus();
-  await remove.press("Enter");
+  await tableMenu(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    detail(page).getByRole("menuitem", { name: "아래에 행 추가" }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowUp");
+  const removeColumn = detail(page).getByRole("menuitem", {
+    name: "열 삭제",
+    exact: true,
+  });
+  await expect(removeColumn).toBeFocused();
+  await removeColumn.press("Enter");
   await expect(rich(page).locator("table")).toHaveCount(1);
   await expect(table.locator("th, td")).toHaveText(["다른 표", "유지"]);
   await undo.click();
@@ -1967,23 +2083,15 @@ test("표 행·전체 삭제는 주변 내용을 보존하고 문서 실행취�
   );
   await open(page);
   const table = rich(page).locator("table");
-  const removeRow = detail(page).getByRole("button", {
-    name: "표 행 -",
-    exact: true,
-  });
-  const removeTable = detail(page).getByRole("button", {
-    name: "표 삭제",
-    exact: true,
-  });
   const undo = detail(page).getByRole("button", { name: "문서 실행취소" });
   const redo = detail(page).getByRole("button", { name: "문서 재실행" });
   await rich(page).getByText("앞 문장", { exact: true }).click();
-  await expect(removeRow).toBeDisabled();
-  await expect(removeTable).toBeDisabled();
+  await expectTableAction(page, "행 삭제", false);
+  await expectTableAction(page, "표 삭제", false);
   await table.locator("th").first().click();
-  await expect(removeRow).toBeDisabled();
+  await expectTableAction(page, "행 삭제", false);
   await table.getByText("작업 B", { exact: true }).click();
-  await removeRow.click();
+  await (await tableAction(page, "행 삭제")).click();
   await expect(table.locator("th, td")).toHaveText([
     "이름",
     "상태",
@@ -1997,7 +2105,7 @@ test("표 행·전체 삭제는 주변 내용을 보존하고 문서 실행취�
   await expect(table.getByText("작업 B", { exact: true })).toBeVisible();
   await redo.click();
   await table.getByText("작업 A", { exact: true }).click();
-  await removeRow.click();
+  await (await tableAction(page, "행 삭제")).click();
   await expect(table.locator("th, td")).toHaveText([
     "이름",
     "상태",
@@ -2005,8 +2113,8 @@ test("표 행·전체 삭제는 주변 내용을 보존하고 문서 실행취�
     "대기",
   ]);
   await table.getByText("작업 C", { exact: true }).click();
-  await expect(removeRow).toBeDisabled();
-  await removeTable.click();
+  await expectTableAction(page, "행 삭제", false);
+  await (await tableAction(page, "표 삭제")).click();
   await expect(table).toHaveCount(0);
   await expect(rich(page)).toContainText("앞 문장");
   await expect(rich(page)).toContainText("뒤 문장");
@@ -2653,8 +2761,12 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   });
   await expect(detail(page).locator(".document-modes")).toBeHidden();
   await expect(detail(page).locator(".document-rich-tools")).toBeHidden();
-  // Mode switching and its keyboard navigation remain available on desktop.
+  // Mode switching and its keyboard navigation remain available on desktop,
+  // where the switch moves into the toolbar.
   await page.setViewportSize({ width: 1366, height: 900 });
+  await expect(
+    detail(page).locator(".document-rich-tools .document-modes"),
+  ).toBeVisible();
   await detail(page)
     .getByRole("button", { name: "Markdown 원문", exact: true })
     .focus();
@@ -3410,8 +3522,10 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     exact: true,
   });
   const header = detail(page).locator(".document-tabs");
-  const controls = header.locator(".document-controls");
+  // The mode switch ends the toolbar and stays out of the tab row.
+  const controls = detail(page).locator(".document-modes");
   await expect(controls).toHaveCount(1);
+  await expect(header.locator(".document-modes")).toHaveCount(0);
   await expect(strip).toHaveCSS("overscroll-behavior-x", "contain");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
@@ -3525,7 +3639,7 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
   await last.press("Home");
   await expect(rich(page)).toContainText("첫 문서");
   await expect(
-    header.getByRole("button", { name: "리치 문서", exact: true }),
+    detail(page).getByRole("button", { name: "리치 문서", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.setViewportSize({ width: 1366, height: 900 });
   await detail(page).screenshot({
@@ -3550,14 +3664,18 @@ test("문서 제목 탭과 리치 도구는 긴 문서에서 고정되고 이미
   await body.evaluate((el) => (el.scrollTop = 700));
   const bounds = await body.boundingBox(),
     tabs = await detail(page).locator(".document-tabs").boundingBox(),
-    controls = await detail(page).locator(".document-controls").boundingBox(),
+    controls = await detail(page).locator(".document-modes").boundingBox(),
     tools = await detail(page).locator(".document-rich-tools").boundingBox();
   expect(tabs!.y).toBeCloseTo(bounds!.y, 0);
-  expect(controls!.y).toBeGreaterThanOrEqual(tabs!.y);
-  expect(controls!.y + controls!.height).toBeLessThanOrEqual(
-    tabs!.y + tabs!.height,
-  );
   expect(tools!.y).toBeCloseTo(tabs!.y + tabs!.height, 0);
+  // The mode switch is pinned with the toolbar, at its right end.
+  expect(controls!.y).toBeGreaterThanOrEqual(tools!.y);
+  expect(controls!.y + controls!.height).toBeLessThanOrEqual(
+    tools!.y + tools!.height,
+  );
+  expect(controls!.x + controls!.width).toBeGreaterThan(
+    tools!.x + tools!.width - 24,
+  );
   await body.evaluate((el) => (el.scrollTop = 0));
   await rich(page).focus();
   await rich(page).press("ControlOrMeta+Home");

@@ -1,3 +1,4 @@
+import { installLinkTitleRoute } from "./link-title.mjs";
 import { installHttpBoundary, installHttpFallback } from "./http-boundary.mjs";
 import { installAccessTokenRoutes } from "./access-tokens.mjs";
 import { installLocalAuth } from "./local-auth.mjs";
@@ -50,6 +51,7 @@ export function createApp({
   staticDir = resolve("dist"),
   allowSetup = true,
   rateLimits = true,
+  linkTitleOptions,
   cellEventOptions,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
@@ -71,6 +73,10 @@ export function createApp({
     site,
     allowSetup,
     rateLimits,
+  });
+  installLinkTitleRoute(app, {
+    privateHosts: process.env.GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS,
+    ...linkTitleOptions,
   });
   installAccessTokenRoutes(app, { db });
   const {

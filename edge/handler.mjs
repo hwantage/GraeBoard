@@ -6,7 +6,8 @@ export function createEdgeHandler({
   env,
   execution,
   verify = verifyAccess,
-  app = createWorker({ verify }),
+  linkTitleOptions,
+  app = createWorker({ verify, linkTitleOptions }),
   prefix = "/graeboard",
 }) {
   return async function handle(request) {
