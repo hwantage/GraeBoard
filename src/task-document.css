@@ -21,7 +21,7 @@
   place-items: center;
   width: 36px;
   height: 30px;
-  color: var(--ink);
+  color: var(--muted);
 }
 .document-modes button:first-child {
   border-radius: 8px 0 0 8px;
@@ -30,8 +30,14 @@
   border-radius: 0 8px 8px 0;
   border-left: 1px solid var(--line);
 }
+/* Only the current mode is filled with the accent, like a picked date. */
 .document-modes button[aria-pressed="true"] {
-  background: #e9ecec;
+  background: var(--accent);
+  color: white;
+}
+.document-modes
+  button[aria-pressed="true"]:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--accent-strong);
 }
 .document-modes button:focus-visible {
   outline: 2px solid var(--accent);
@@ -117,6 +123,7 @@
 /* The mode switch ends the toolbar while editing. */
 .document-formatbar .document-modes {
   margin-left: 4px;
+  background: transparent;
 }
 .document-formatbar .document-modes button {
   width: 32px;

@@ -1277,9 +1277,13 @@
 .workspace[data-calendar-theme="dark"] :is(.toast, .toast-action) {
   color: var(--calendar-on-orange);
 }
-.workspace[data-calendar-theme="dark"]
-  :is(.document-modes button[aria-pressed="true"], .document-image-canvas) {
+.workspace[data-calendar-theme="dark"] .document-image-canvas {
   background: var(--accent-surface);
+}
+.workspace[data-calendar-theme="dark"]
+  .document-modes
+  button[aria-pressed="true"] {
+  color: var(--calendar-on-orange);
 }
 .workspace[data-calendar-theme="dark"] .calendar-entry-card {
   background: color-mix(
