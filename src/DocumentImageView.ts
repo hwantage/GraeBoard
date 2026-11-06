@@ -1,5 +1,5 @@
 import type { Node } from "@milkdown/kit/prose/model";
-import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
+import { Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
 import {
   Decoration,
   DecorationSet,
@@ -43,6 +43,69 @@ export const imageCaret = $prose(
                   })
                 : null;
           return caret && DecorationSet.create(state.doc, [caret]);
+        },
+      },
+    }),
+);
+
+// Chromium commits the first jamo of a Korean composition started right
+// after an image that ends its paragraph: as the text arrives, ProseMirror
+// drops the separator and line break it keeps after the image (Chromium and
+// Safari only), and Chromium ends a composition whose surroundings change. A
+// zero-width space typed first gives the composition a text to follow. It
+// never enters the undo history and leaves once the composition has ended.
+const SPACER = "\u200b";
+const spacerKey = new PluginKey<number | null>("document-image-spacer");
+export const imageComposition = $prose(
+  () =>
+    new Plugin<number | null>({
+      key: spacerKey,
+      state: {
+        init: () => null,
+        apply: (tr, pos) => {
+          const meta = tr.getMeta(spacerKey);
+          if (meta !== undefined) return meta;
+          if (pos === null) return null;
+          const mapped = tr.mapping.mapResult(pos);
+          return mapped.deleted ? null : mapped.pos;
+        },
+      },
+      props: {
+        handleDOMEvents: {
+          compositionstart: (view) => {
+            const { selection } = view.state;
+            if (!(selection instanceof TextSelection) || !selection.empty)
+              return false;
+            const { $head } = selection;
+            const image = $head.nodeBefore;
+            if (image?.type.name !== "image" || $head.nodeAfter) return false;
+            const separator = view.nodeDOM($head.pos - image.nodeSize)
+              ?.nextSibling as Element | null | undefined;
+            if (!separator?.classList?.contains("ProseMirror-separator"))
+              return false;
+            view.dispatch(
+              view.state.tr
+                .insertText(SPACER, $head.pos)
+                .setMeta("addToHistory", false)
+                .setMeta(spacerKey, $head.pos),
+            );
+            return false;
+          },
+          compositionend: (view) => {
+            if (spacerKey.getState(view.state) == null) return false;
+            // ProseMirror reads the composed text after this event.
+            setTimeout(() => {
+              const pos = spacerKey.getState(view.state);
+              if (pos == null || view.isDestroyed) return;
+              const tr = view.state.tr
+                .setMeta(spacerKey, null)
+                .setMeta("addToHistory", false);
+              if (view.state.doc.textBetween(pos, pos + 1) === SPACER)
+                tr.delete(pos, pos + 1);
+              view.dispatch(tr);
+            });
+            return false;
+          },
         },
       },
     }),

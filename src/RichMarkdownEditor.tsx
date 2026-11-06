@@ -28,6 +28,7 @@ import {
 import {
   documentImageView,
   imageCaret,
+  imageComposition,
   type ImagePreview,
 } from "./DocumentImageView";
 import {
@@ -1132,6 +1133,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(blockDrag)
       .use(blockSelect)
       .use(imageCaret)
+      .use(imageComposition)
       .use(dropIndicator)
       .use(
         $prose(

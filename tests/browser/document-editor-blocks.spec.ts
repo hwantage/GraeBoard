@@ -783,6 +783,74 @@ test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘�
     );
 });
 
+test("Chromium IME로 이미지 바로 뒤에서 한글을 조합하면 이미지 커서 대신 기본 커서로 입력한다", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "IME 조합 명령은 Chromium CDP에서 제공",
+  );
+  const url = await uploadImage(page, 200, 120);
+  await save(page, taskIds[0], `![단독](${url})\n\n끝 문단`);
+  await open(page);
+  const image = rich(page).locator(".document-image");
+  // The paragraph's text after the image, without the image's own labels.
+  const typed = () =>
+    rich(page)
+      .locator(":scope > p")
+      .first()
+      .evaluate((element) =>
+        [...element.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join("")
+          // A zero-width space holds the composition's place; it is removed.
+          .replace(/\u200b/g, ""),
+      );
+  await image.locator("img").click();
+  await page.keyboard.press("ArrowRight");
+  expect((await imageCaret(image)).side).toBe("after");
+  const original = await image.elementHandle();
+  const client = await page.context().newCDPSession(page);
+  await client.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Process",
+    code: "KeyG",
+    windowsVirtualKeyCode: 229,
+  });
+  // The composing text follows the image; the drawn caret gives way to the
+  // browser's own, and the image is not redrawn under the composition.
+  for (const text of ["ㅎ", "하", "한"]) {
+    await client.send("Input.imeSetComposition", {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    });
+    await expect.poll(typed).toBe(text);
+    await expect.poll(async () => (await imageCaret(image)).side).toBeNull();
+    expect((await imageCaret(image)).native).not.toBe("rgba(0, 0, 0, 0)");
+    expect(await original!.evaluate((element) => element.isConnected)).toBe(
+      true,
+    );
+  }
+  await client.send("Input.insertText", { text: "한" });
+  // The placeholder leaves with the composition, before anything is saved.
+  await expect
+    .poll(() =>
+      rich(page)
+        .locator(":scope > p")
+        .first()
+        .evaluate((element) => element.textContent!.includes("\u200b")),
+    )
+    .toBe(false);
+  await rich(page).pressSequentially("글");
+  await expect.poll(typed).toBe("한글");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact(`![단독](${url})한글\n\n끝 문단`));
+});
+
 test("이미지를 끌면 글자 사이에 놓을 위치를 표시하고 그 자리로 옮기며 한 번에 실행취소한다", async ({
   page,
 }, info) => {
