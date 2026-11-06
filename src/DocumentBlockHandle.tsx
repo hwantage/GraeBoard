@@ -728,10 +728,13 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
       }
     // A first line taller than the view, such as a large image, keeps the
     // handle beside its visible part when its top is scrolled under the
-    // sticky toolbar or out of view.
-    const visible = shell.current
-      ?.querySelector(".document-rich-tools")
-      ?.getBoundingClientRect().bottom;
+    // sticky toolbar or out of view. Ordinary lines skip the lookup.
+    const visible =
+      lineBottom - top > 2 * HANDLE_HEIGHT * scale
+        ? shell.current
+            ?.querySelector(".document-rich-tools")
+            ?.getBoundingClientRect().bottom
+        : undefined;
     if (
       visible !== undefined &&
       top < visible &&
