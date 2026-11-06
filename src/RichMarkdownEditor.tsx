@@ -34,6 +34,7 @@ import { Button, Modal } from "./components";
 import Toast, { useToast } from "./Toast";
 import Select from "./Select";
 import DocumentLoading from "./DocumentLoading";
+import DocumentToolMenu from "./DocumentToolMenu";
 import DocumentBlockHandle, {
   BLOCK_FORMATS,
   blockDrag,
@@ -155,6 +156,11 @@ import {
   SquareCode,
   Workflow,
   Minus,
+  BetweenHorizontalStart,
+  BetweenVerticalStart,
+  TableRowsSplit,
+  TableColumnsSplit,
+  Trash2,
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
@@ -629,6 +635,7 @@ type Props = {
   remoteMarkdown?: { markdown: string; sequence: number };
   readOnly: boolean;
   saveStatus?: ReactNode;
+  modeControl?: ReactNode;
   onChange: (markdown: string) => void;
   onUnsupported: (message: string) => void;
   onReady: () => void;
@@ -1564,11 +1571,8 @@ export default function RichMarkdownEditor(props: Props) {
               ["번호 목록", ListOrdered, () => setListFormat("ordered")],
               ["체크리스트", ListChecks, () => setListFormat("task")],
               ["링크", Link, openLinkForm],
-              [
-                "표 삽입",
-                Table2,
-                () => command(insertTableCommand.key, { row: 3, col: 3 }),
-              ],
+              ["인용", Quote, () => setBlock("quote")],
+              ["코드 블록", SquareCode, () => setBlock("code")],
             ].map(([label, Icon, onClick]: any) => (
               <button
                 type="button"
@@ -1582,49 +1586,66 @@ export default function RichMarkdownEditor(props: Props) {
                 <Icon size={16} />
               </button>
             ))}
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => command(addRowAfterCommand.key)}
-            >
-              표 행 +
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => command(addColAfterCommand.key)}
-            >
-              표 열 +
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !canDeleteRow}
-              data-tooltip="선택한 행 삭제 (머리글과 마지막 본문 행 제외)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTableRow)}
-            >
-              표 행 -
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              data-tooltip="선택한 열 삭제 (마지막 열은 표 전체 삭제)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTableColumn)}
-            >
-              표 열 -
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              data-tooltip="현재 표 전체 삭제"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTable)}
-            >
-              표 삭제
-            </button>
+            <DocumentToolMenu
+              label="토글"
+              menuLabel="토글 제목 선택"
+              icon={<ListCollapse size={16} />}
+              disabled={!ready}
+              onClick={() => setBlock("toggle0")}
+              items={TOGGLE_LEVELS.map((level) => ({
+                label: `토글 제목 ${level}`,
+                icon: [
+                  <Heading1 size={16} />,
+                  <Heading2 size={16} />,
+                  <Heading3 size={16} />,
+                ][level - 1],
+                run: () => setBlock(`toggle${level}`),
+              }))}
+            />
+            <DocumentToolMenu
+              label="표 삽입"
+              menuLabel="표 행·열 편집"
+              icon={<Table2 size={16} />}
+              disabled={!ready}
+              onClick={() =>
+                command(insertTableCommand.key, { row: 3, col: 3 })
+              }
+              items={[
+                {
+                  label: "아래에 행 추가",
+                  icon: <BetweenHorizontalStart size={16} />,
+                  disabled: !inTable,
+                  run: () => command(addRowAfterCommand.key),
+                },
+                {
+                  label: "오른쪽에 열 추가",
+                  icon: <BetweenVerticalStart size={16} />,
+                  disabled: !inTable,
+                  run: () => command(addColAfterCommand.key),
+                },
+                {
+                  label: "행 삭제",
+                  icon: <TableRowsSplit size={16} />,
+                  tooltip: "선택한 행 삭제 (머리글과 마지막 본문 행 제외)",
+                  disabled: !canDeleteRow,
+                  run: () => removeFromTable(deleteTableRow),
+                },
+                {
+                  label: "열 삭제",
+                  icon: <TableColumnsSplit size={16} />,
+                  tooltip: "선택한 열 삭제 (마지막 열은 표 전체 삭제)",
+                  disabled: !inTable,
+                  run: () => removeFromTable(deleteTableColumn),
+                },
+                {
+                  label: "표 삭제",
+                  icon: <Trash2 size={16} />,
+                  tooltip: "현재 표 전체 삭제",
+                  disabled: !inTable,
+                  run: () => removeFromTable(deleteTable),
+                },
+              ]}
+            />
             <div className="document-history-tools">
               {props.saveStatus}
               {[
@@ -1648,6 +1669,7 @@ export default function RichMarkdownEditor(props: Props) {
                   <Icon size={16} />
                 </button>
               ))}
+              {props.modeControl}
             </div>
           </div>
           {link !== null && (

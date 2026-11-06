@@ -8,7 +8,8 @@ import {
 
 // 도구 모음 버튼 아래에 띄우는 작은 팝업. 화면 안에 위치를 맞추고, 바깥을
 // 누르거나 포커스가 나가면 닫으며, Esc는 팝업을 닫고 버튼으로 포커스를 돌린다.
-export function usePopover(width: number) {
+// focusOnOpen이 false이면 열 때 포커스를 옮기지 않는다.
+export function usePopover(width: number, focusOnOpen = true) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const popup = useRef<HTMLDivElement>(null);
@@ -33,7 +34,7 @@ export function usePopover(width: number) {
       });
     };
     place();
-    popup.current?.querySelector("button")?.focus();
+    if (focusOnOpen) popup.current?.querySelector("button")?.focus();
     const observer = new ResizeObserver(place);
     if (popup.current) observer.observe(popup.current);
     window.addEventListener("resize", place);
