@@ -20,10 +20,14 @@ function fitTextEditor(input: HTMLTextAreaElement) {
   const box = cell.getBoundingClientRect();
   const gridBox = grid.getBoundingClientRect();
   const scale = box.width / cell.offsetWidth;
+  // 열 머리글과 묶음 보기에서 고정한 묶음 제목 아래까지만 펼친다.
   const top = Math.max(
     0,
     gridBox.top,
     grid.querySelector(".sheet-header")?.getBoundingClientRect().bottom || 0,
+    grid
+      .querySelector(".group-heading-pin .group-heading")
+      ?.getBoundingClientRect().bottom || 0,
   );
   const bottom =
     Math.min(window.innerHeight, gridBox.top + grid.clientHeight * scale) - 4;
