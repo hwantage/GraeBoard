@@ -5470,7 +5470,7 @@ test("정확한 주차 범위·속성 묶음·열 메뉴의 고정 영역을 저
 
 test("묶음 보기의 묶음 제목은 스크롤해도 열 머리글 아래에 고정되고 다음 묶음 제목이 밀어낸다", async ({
   page,
-}) => {
+}, info) => {
   for (let i = 1; i <= 17; i++)
     await post(page, "/tasks", {
       teamId,
@@ -5538,6 +5538,7 @@ test("묶음 보기의 묶음 제목은 스크롤해도 열 머리글 아래에 
   await expect(pinned).toHaveCSS("background-color", /rgb\(/);
   expect((await box(pinned)).y).toBeCloseTo(await headerBottom(), 0);
   expect((await box(pinned)).height).toBeCloseTo(28, 0);
+  await grid.screenshot({ path: info.outputPath("group-pinned.png") });
 
   // 다음 묶음 제목이 10px 아래에 오면 고정한 제목을 18px 밀어 올린다.
   await scroll(other - 10);
@@ -5547,6 +5548,7 @@ test("묶음 보기의 묶음 제목은 스크롤해도 열 머리글 아래에 
     .toBeCloseTo(-18, 0);
   const next = page.locator(".sheet-row .group-heading", { hasText: "기타" });
   expect((await box(next)).y).toBeCloseTo((await headerBottom()) + 10, 0);
+  await grid.screenshot({ path: info.outputPath("group-pushed.png") });
 
   // 다음 묶음 제목이 고정 위치에 닿으면 겹쳐 그리지 않고, 지나가면 그 제목을 고정한다.
   await scroll(other);
