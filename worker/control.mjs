@@ -284,6 +284,16 @@ export class RequestContext {
     }
     throw new HttpError(404, "자료를 찾을 수 없습니다.");
   }
+  // locate() for callers that need only the team: the record is not read.
+  async locateTeam(entity, id, { write = false } = {}) {
+    for (const team of await this.teams()) {
+      if (team.status !== "active") continue;
+      if (write && !canContribute(this.user, team.id)) continue;
+      if (await this.data(team.id, (s) => s.alive(entity, [id])))
+        return team.id;
+    }
+    throw new HttpError(404, "자료를 찾을 수 없습니다.");
+  }
   bootstrap() {
     return new ControlBusinessService(
       new PostgresControlRepository({ context: this }),

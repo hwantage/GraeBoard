@@ -133,6 +133,9 @@ export function createExternalRouteApp({ env, defaultUserId, contextFor }) {
       const server = createServer(async (incoming, outgoing) => {
         const controller = new AbortController();
         outgoing.once("close", () => controller.abort());
+        // A stream still polling when its client leaves writes to a closed
+        // socket; that ends the request like a close does.
+        outgoing.on("error", () => controller.abort());
         try {
           const origin = `http://${incoming.headers.host}`;
           runtime.APP_ORIGIN = origin;

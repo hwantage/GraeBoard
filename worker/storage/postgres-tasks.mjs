@@ -16,6 +16,7 @@ import {
 } from "../task-view.mjs";
 import { prepareCellChange } from "../../server/storage/task-service.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
+import { sheetQuiet } from "../event-scope.mjs";
 
 export class PostgresTaskRepository extends PostgresTaskCommands {
   constructor({ context }) {
@@ -71,7 +72,7 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
         Number(after[1]) < oldest - 1
       )
         return { cursor: eventId, reset: true, events: [] };
-      const rows = (
+      let rows = (
         await s.tx.query(
           "SELECT kind,payload,cursor FROM site_events WHERE team_id=$1 AND cursor>$2 ORDER BY cursor LIMIT 513",
           [teamId, Number(after[1])],
@@ -79,10 +80,17 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
       ).rows;
       if (
         rows.length > 512 ||
-        rows.some((row) => row.kind !== "cells") ||
+        // A write of documents, calendar entries or copies leaves the sheet's
+        // cells as they are; anything else may change the rows themselves.
+        rows.some(
+          (row) =>
+            row.kind !== "cells" &&
+            !sheetQuiet({ kind: row.kind, payload: JSON.parse(row.payload) }),
+        ) ||
         (rows.length && Number(rows[0].cursor) > Number(after[1]) + 1)
       )
         return { cursor: eventId, reset: true, events: [] };
+      rows = rows.filter((row) => row.kind === "cells");
       // Most polls find nothing new; they need no retention lookup.
       if (!rows.length) return { cursor: eventId, reset: false, events: [] };
       const hidden = await excludedYears(s),

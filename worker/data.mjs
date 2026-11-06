@@ -195,6 +195,20 @@ export class DataSession {
     }
     return this.cache.get(id);
   }
+  // Whether a live record exists, without reading its payload. A copy's row is
+  // megabytes of JSON that a parent or team lookup never looks at.
+  async alive(entity, key) {
+    const id = entityId(entity, key);
+    if (this.cache.has(id)) {
+      const row = this.cache.get(id);
+      return !!row && !row.deleted;
+    }
+    const q = await this.tx.query(
+      "SELECT deleted FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=$3",
+      [this.teamId, entity, JSON.stringify(key)],
+    );
+    return !!q.rows[0] && !Number(q.rows[0].deleted);
+  }
   // Several records of one entity in one query. They land in the cache get()
   // reads, so a per-item get() afterwards costs no round trip.
   async getMany(entity, keys) {

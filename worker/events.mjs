@@ -4,8 +4,63 @@ import { stringify } from "../shared/compact.js";
 import { assert } from "./access.mjs";
 import { authenticate } from "./control.mjs";
 import { documentScope, documentRoutes } from "./documents.mjs";
+import { streamScope, eventTouches } from "./event-scope.mjs";
 const encoder = new TextEncoder();
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const FEED_LIMIT = 512;
+const position = (cursor) => {
+  const m = /^pg:(\d+)$/.exec(cursor);
+  return m && Number.isSafeInteger(Number(m[1])) ? Number(m[1]) : null;
+};
+// One team's events since the oldest cursor its streams hold, read once per
+// poll. Cell deltas are skipped by every stream here, so their payload is not
+// read. `until` marks a read cut at the limit: streams behind it, like streams
+// behind removed events, treat everything as changed.
+async function readFeed(ctx, teamId, channels) {
+  return ctx.data(teamId, async (s) => {
+    const range = (
+      await s.tx.query(
+        "SELECT COALESCE(MAX(cursor),0) AS cursor,COALESCE(MIN(cursor),0) AS oldest FROM site_events WHERE team_id=$1",
+        [teamId],
+      )
+    ).rows[0];
+    const cursor = Number(range.cursor),
+      oldest = Number(range.oldest),
+      behind = channels
+        .filter((c) => c.teamId === teamId && c.type !== "cells" && !c.closed)
+        .map((c) => position(c.cursor))
+        .filter((at) => at !== null && at < cursor && at >= oldest - 1);
+    const feed = { cursor, oldest, from: cursor, events: [] };
+    if (!behind.length) return feed;
+    feed.from = Math.min(...behind);
+    const rows = (
+      await s.tx.query(
+        "SELECT cursor,kind,CASE WHEN kind='cells' THEN NULL ELSE payload END AS payload FROM site_events WHERE team_id=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
+        [teamId, feed.from, FEED_LIMIT + 1],
+      )
+    ).rows;
+    // Streams before a gap or past the read limit cannot tell what changed.
+    if (rows.length > FEED_LIMIT)
+      feed.until = Number(rows[FEED_LIMIT - 1].cursor);
+    feed.events = rows.slice(0, FEED_LIMIT).map((row) => ({
+      cursor: Number(row.cursor),
+      kind: row.kind,
+      payload: row.payload == null ? null : JSON.parse(row.payload),
+    }));
+    return feed;
+  });
+}
+// Whether anything this stream shows may have changed since its cursor.
+function changedFor(channel, feed) {
+  const at = position(channel.cursor);
+  if (at === feed.cursor) return false;
+  if (at === null || at > feed.cursor || at < feed.oldest - 1 || at < feed.from)
+    return true;
+  if (feed.until !== undefined) return true;
+  return feed.events.some(
+    (event) => event.cursor > at && eventTouches(channel.scope, event),
+  );
+}
 export async function eventResponse(
   ctx,
   streams,
@@ -43,6 +98,7 @@ export async function eventResponse(
     );
     const path = url.pathname.slice(4, -7);
     let teamId,
+      scope,
       type = "resource";
     if (path === "/cells") {
       teamId = url.searchParams.get("teamId");
@@ -57,13 +113,16 @@ export async function eventResponse(
       if ((m = /^\/teams\/([^/]+)$/.exec(path))) {
         teamId = m[1];
         await ctx.team(teamId);
+        scope = streamScope(path);
       } else if ((m = /^\/reports\/([^/]+)$/.exec(path))) {
-        teamId = (await ctx.locate("report", m[1])).teamId;
+        teamId = await ctx.locateTeam("report", m[1]);
+        scope = streamScope(path);
       } else {
-        const scope = await documentScope(ctx, path);
-        assert(scope, 400, "등록되지 않은 구독 경로입니다.");
-        teamId = scope.teamId;
-        type = scope.documentId ? "document" : "resource";
+        const document = await documentScope(ctx, path);
+        assert(document, 400, "등록되지 않은 구독 경로입니다.");
+        teamId = document.teamId;
+        type = document.documentId ? "document" : "resource";
+        scope = streamScope(path, document);
       }
     }
     channels.push({
@@ -72,6 +131,7 @@ export async function eventResponse(
       url,
       teamId,
       type,
+      scope,
       cursor: item.lastEventId || url.searchParams.get("after") || "",
       lastRevision: null,
       closed: false,
@@ -107,7 +167,7 @@ export async function eventResponse(
             );
             ctx.user = await authenticate(ctx.env, ctx.identity, ctx.request);
             ctx.teamCache.clear();
-            const batches = new Map();
+            const feeds = new Map();
             for (const channel of channels) {
               if (channel.closed) continue;
               try {
@@ -141,22 +201,15 @@ export async function eventResponse(
                   continue;
                 }
                 await ctx.team(channel.teamId);
-                let snapshot = batches.get(channel.teamId);
-                if (!snapshot) {
-                  snapshot = await ctx.data(channel.teamId, async (s) => {
-                    const q = await s.tx.query(
-                      "SELECT COALESCE(MAX(cursor),0) AS cursor FROM site_events WHERE team_id=$1",
-                      [channel.teamId],
-                    );
-                    return { cursor: Number(q.rows[0].cursor) };
-                  });
-                  batches.set(channel.teamId, snapshot);
+                let feed = feeds.get(channel.teamId);
+                if (!feed) {
+                  feed = await readFeed(ctx, channel.teamId, channels);
+                  feeds.set(channel.teamId, feed);
                 }
-                const eventId = "pg:" + snapshot.cursor;
-                if (
-                  channel.cursor !== eventId ||
-                  channel.lastRevision === null
-                ) {
+                const eventId = "pg:" + feed.cursor;
+                // A document is read only when an event since this stream's
+                // cursor names it; nothing is sent for other records.
+                if (changedFor(channel, feed)) {
                   let payload;
                   if (channel.type === "document")
                     payload = await documentRoutes(
@@ -166,11 +219,8 @@ export async function eventResponse(
                       {},
                       channel.url.searchParams,
                     );
-                  else payload = { revision: snapshot.cursor };
-                  if (
-                    channel.lastRevision !== payload.revision &&
-                    channel.cursor !== eventId
-                  )
+                  else payload = { revision: feed.cursor };
+                  if (channel.lastRevision !== payload.revision)
                     write(
                       channel,
                       "document",
@@ -181,7 +231,7 @@ export async function eventResponse(
                         // the transport and must not replace a document stamp.
                         sync: payload.sync || {
                           session: "postgres",
-                          sequence: snapshot.cursor,
+                          sequence: feed.cursor,
                         },
                       },
                       eventId,

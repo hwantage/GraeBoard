@@ -123,7 +123,7 @@ async function mutationTeam(ctx, path, body) {
   )
     return (await ctx.locate("task", m[1])).teamId;
   if ((m = /^\/reports\/([^/]+)/.exec(path)))
-    return (await ctx.locate("report", m[1])).teamId;
+    return ctx.locateTeam("report", m[1]);
   if ((m = /^\/calendar\/(entries|tags)\/([^/]+)/.exec(path)))
     return (await ctx.locate(m[1] === "entries" ? "calendar" : "tag", m[2]))
       .teamId;
