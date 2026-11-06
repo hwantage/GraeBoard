@@ -1,5 +1,7 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# CodeRabbit PR review settings. Reviews run on PRs into main only (default).
+# CodeRabbit PR review settings. Automatic reviews apply to PRs into main only
+# (default). The free OSS plan skips them below 10 stars, so comment
+# "@coderabbitai review" on a PR to request one.
 language: ko-KR
 reviews:
   profile: chill
