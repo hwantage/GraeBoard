@@ -1005,12 +1005,26 @@ test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대�
   await dialog.screenshot({ path: info.outputPath("new-tab-tooltip.png") });
 
   // Typed just before the click: the click saves it before the tab reads it.
+  // A slow save still finishes before the tab reads the document.
+  const documentUrl = `/api/tasks/${taskIds[1]}/documents/main`;
+  await page.route(`**${documentUrl}`, async (route) => {
+    if (route.request().method() === "PUT")
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
   const order: string[] = [];
-  page.context().on("request", (request) => {
-    if (request.url().endsWith(`/api/tasks/${taskIds[1]}/documents/main`))
-      order.push(
-        `${request.frame().page() === page ? "here" : "tab"} ${request.method()}`,
-      );
+  const context = page.context();
+  context.on("requestfinished", (request) => {
+    if (request.url().endsWith(documentUrl) && request.method() === "PUT")
+      order.push("here saved");
+  });
+  context.on("request", (request) => {
+    if (
+      request.url().endsWith(documentUrl) &&
+      request.method() === "GET" &&
+      request.frame().page() !== page
+    )
+      order.push("tab read");
   });
   await rich(dialog).click();
   await page.keyboard.type("새 탭에서 읽을 내용");
@@ -1021,8 +1035,9 @@ test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대�
     opened.getByRole("textbox", { name: "작업 편집", exact: true }),
   ).toHaveValue("링크 대상 업무");
   await expect(rich(opened)).toContainText("새 탭에서 읽을 내용");
-  expect(order.indexOf("here PUT")).toBeGreaterThanOrEqual(0);
-  expect(order.indexOf("here PUT")).toBeLessThan(order.indexOf("tab GET"));
+  expect(order.indexOf("here saved")).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf("here saved")).toBeLessThan(order.indexOf("tab read"));
+  await page.unroute(`**${documentUrl}`);
   // The flag is read once and the address cleaned like any link address.
   expect(new URL(tab.url()).pathname).toBe("/");
   expect(new URL(tab.url()).search).toBe("");
@@ -1135,4 +1150,35 @@ test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으
   ).toHaveValue("링크 대상 업무");
   await tab.close();
   await expect(detail).not.toHaveClass(/document-full-page/);
+});
+
+test("저장하지 못하면 전체 페이지 버튼으로 연 새 탭을 닫고 입력을 지금 창에 남긴다", async ({
+  page,
+}) => {
+  const dialog = await open(page, taskIds[1]);
+  await page.route(
+    `**/api/tasks/${taskIds[1]}/documents/main`,
+    async (route) =>
+      route.request().method() === "PUT"
+        ? route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "저장 실패 시험" }),
+          })
+        : route.continue(),
+  );
+  await rich(dialog).click();
+  await page.keyboard.type("저장 실패 입력");
+  const tab = await openInNewTab(
+    page,
+    dialog.getByRole("button", {
+      name: "문서 전체 페이지로 보기",
+      exact: true,
+    }),
+  );
+  // The failed save closes the tab, which may happen before it is reported.
+  await expect.poll(() => tab.isClosed()).toBe(true);
+  await expect(dialog.getByText("저장 실패 시험")).toBeVisible();
+  await expect(rich(dialog)).toContainText("저장 실패 입력");
+  await expect(dialog).not.toHaveClass(/document-full-page/);
 });

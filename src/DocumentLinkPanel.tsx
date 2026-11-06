@@ -299,7 +299,7 @@ function MemoLinkPanel({
         title={title}
         widthKey={`${draftKey}:width`}
         link={target}
-        onNewTab={() => void editor.current?.flush()}
+        onNewTab={() => editor.current?.flush() ?? Promise.resolve(true)}
         inline
         selected
         loading={loading}

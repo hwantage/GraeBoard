@@ -5,8 +5,10 @@ import { documentFullPageUrl, type DocumentLinkTarget } from "./document-links";
 // The full-page toggle of a task detail, calendar entry or memo card. With
 // the document's link, ⌘/Ctrl+click or a middle click opens the document in
 // a new tab already in full page, like a link, and leaves this one as it is.
-// `onNewTab` starts this window's own save so the new tab reads the latest
-// text; the tab opens in the click without waiting for it.
+// `onNewTab` saves this window's text first. The tab opens in the click, as
+// popup blockers require, and loads the document once the save has finished;
+// a save that cannot finish yet (composing, uploading or failed) closes it,
+// as closing the window would wait.
 export default function DocumentFullPageButton({
   fullPage,
   link,
@@ -17,15 +19,25 @@ export default function DocumentFullPageButton({
   fullPage: boolean;
   link?: DocumentLinkTarget;
   onToggle: () => void;
-  onNewTab?: () => void;
+  onNewTab?: () => Promise<boolean>;
   ref?: RefObject<HTMLButtonElement | null>;
 }) {
   const label = fullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기";
   function openNewTab(event: MouseEvent) {
     if (!link) return false;
     event.preventDefault();
-    onNewTab?.();
-    window.open(documentFullPageUrl(link), "_blank", "noopener,noreferrer");
+    const url = documentFullPageUrl(link);
+    if (!onNewTab) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return true;
+    }
+    const tab = window.open("", "_blank");
+    if (!tab) return true;
+    tab.opener = null;
+    onNewTab().then(
+      (saved) => (saved ? tab.location.replace(url) : tab.close()),
+      () => tab.close(),
+    );
     return true;
   }
   // The name stays the action; the tooltip adds the new tab, as the format

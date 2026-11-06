@@ -301,7 +301,7 @@ export function RowPanel({
             fullPage={documentFullPage}
             link={linkTarget}
             onToggle={() => setDocumentFullPage((value) => !value)}
-            onNewTab={() => void detailRef.current?.flush()}
+            onNewTab={() => detailRef.current?.flush() ?? Promise.resolve(true)}
           />
         </>
       }

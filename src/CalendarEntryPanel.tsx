@@ -367,7 +367,7 @@ export default function CalendarEntryPanel({
             fullPage={documentFullPage}
             link={linkTarget}
             onToggle={() => setDocumentFullPage((value) => !value)}
-            onNewTab={() => void flush()}
+            onNewTab={flush}
           />
         </>
       }

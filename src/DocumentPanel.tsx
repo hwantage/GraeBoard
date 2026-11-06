@@ -976,7 +976,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 }
                 widthKey={`${props.draftKey(doc.id)}:width`}
                 link={props.documentLink?.(doc.id)}
-                onNewTab={() => void handles.current.get(doc.id)?.flush()}
+                onNewTab={() =>
+                  handles.current.get(doc.id)?.flush() ?? Promise.resolve(true)
+                }
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -1104,8 +1106,8 @@ export function DocumentPage({
   onRename?: () => void;
   widthKey: string;
   link?: DocumentLinkTarget;
-  // Saves this memo when its full-page button opens it in a new tab.
-  onNewTab?: () => void;
+  // Saves this memo before its full-page button loads it in a new tab.
+  onNewTab?: () => Promise<boolean>;
   inline: boolean;
   selected: boolean;
   loading: boolean;
