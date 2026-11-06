@@ -29,8 +29,6 @@ import {
   Copy,
   EyeOff,
   CalendarPlus,
-  Maximize2,
-  Minimize2,
 } from "lucide-react";
 import { api, send, download, taskQuery } from "./api";
 import { Modal, Button, ErrorNote } from "./components";
@@ -40,6 +38,7 @@ import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import DocumentFullPageButton from "./DocumentFullPageButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
@@ -229,6 +228,7 @@ export function RowPanel({
   reportMode = false,
   documentReport,
   headerAction,
+  initialFullPage = false,
   onDocumentSaved,
   copySaveError,
   onRetryCopySave,
@@ -247,6 +247,8 @@ export function RowPanel({
   documentReport?: { id: string; isNew: boolean };
   // A single action in place of the task actions, e.g. opening the copy.
   headerAction?: ReactNode;
+  // Opened from another tab's full-page button (DocumentFullPageButton).
+  initialFullPage?: boolean;
   onDocumentSaved: (result: DocumentSaveResult) => void;
   copySaveError?: string;
   onRetryCopySave?: () => void;
@@ -256,7 +258,7 @@ export function RowPanel({
 }) {
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
-  const [preferredFullPage, setDocumentFullPage] = useState(false);
+  const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
   const { fullPage: documentFullPage, fullWidth } =
     useDocumentFullPage(preferredFullPage);
   // A copy's task keeps the original's ID, so its link also names the copy.
@@ -295,20 +297,12 @@ export function RowPanel({
             target={linkTarget}
             title={String(value(task, "title"))}
           />
-          <Button
-            tooltip={
-              documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
-            }
-            className="document-expand"
-            aria-pressed={documentFullPage}
-            onClick={() => setDocumentFullPage((value) => !value)}
-          >
-            {documentFullPage ? (
-              <Minimize2 size={16} aria-hidden="true" />
-            ) : (
-              <Maximize2 size={16} aria-hidden="true" />
-            )}
-          </Button>
+          <DocumentFullPageButton
+            fullPage={documentFullPage}
+            link={linkTarget}
+            onToggle={() => setDocumentFullPage((value) => !value)}
+            onNewTab={() => void detailRef.current?.flush()}
+          />
         </>
       }
       onClose={() => void leave(onClose)}
@@ -392,6 +386,7 @@ export function StandaloneRowPanel({
   user,
   users,
   readOnly,
+  initialFullPage,
   onClose,
   onCellsSaved,
   onDocumentSaved,
@@ -401,6 +396,7 @@ export function StandaloneRowPanel({
   user: User;
   users: User[];
   readOnly?: boolean;
+  initialFullPage?: boolean;
   onClose: () => void;
   onCellsSaved?: (result: BatchResult) => void;
   onDocumentSaved?: (result: DocumentSaveResult) => void;
@@ -413,6 +409,7 @@ export function StandaloneRowPanel({
       user={user}
       users={users}
       readOnly={readOnly}
+      initialFullPage={initialFullPage}
       onClose={onClose}
       onDocumentSaved={(result) => {
         onDocumentSaved?.(result);

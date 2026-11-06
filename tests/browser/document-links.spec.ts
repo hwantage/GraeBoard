@@ -979,3 +979,160 @@ test("링크로 연 일정 상세는 캘린더에서 연 것과 같은 모습이
   const linked = await look(calendarDetail(page), "calendar-linked");
   expect(linked).toEqual(direct);
 });
+
+const fullPageHint = "문서 전체 페이지로 보기 (⌘/Ctrl+클릭: 새 탭)";
+// ⌘/Ctrl+click, or a middle click, on a full-page button opens a new tab.
+async function openInNewTab(page: Page, button: Locator, middle = false) {
+  const [tab] = await Promise.all([
+    page.context().waitForEvent("page"),
+    middle
+      ? button.click({ button: "middle" })
+      : button.click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  return tab;
+}
+
+test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대로 두고 방금 입력까지 저장해 새 탭에서 전체 페이지로 연다", async ({
+  page,
+}, info) => {
+  const dialog = await open(page, taskIds[1]);
+  const expand = dialog.getByRole("button", {
+    name: "문서 전체 페이지로 보기",
+    exact: true,
+  });
+  await expand.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(fullPageHint);
+  await dialog.screenshot({ path: info.outputPath("new-tab-tooltip.png") });
+
+  // Typed just before the click: the click saves it before the tab reads it.
+  const order: string[] = [];
+  page.context().on("request", (request) => {
+    if (request.url().endsWith(`/api/tasks/${taskIds[1]}/documents/main`))
+      order.push(
+        `${request.frame().page() === page ? "here" : "tab"} ${request.method()}`,
+      );
+  });
+  await rich(dialog).click();
+  await page.keyboard.type("새 탭에서 읽을 내용");
+  let tab = await openInNewTab(page, expand);
+  const opened = details(tab);
+  await expect(opened).toHaveClass(/document-full-page/);
+  await expect(
+    opened.getByRole("textbox", { name: "작업 편집", exact: true }),
+  ).toHaveValue("링크 대상 업무");
+  await expect(rich(opened)).toContainText("새 탭에서 읽을 내용");
+  expect(order.indexOf("here PUT")).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf("here PUT")).toBeLessThan(order.indexOf("tab GET"));
+  // The flag is read once and the address cleaned like any link address.
+  expect(new URL(tab.url()).pathname).toBe("/");
+  expect(new URL(tab.url()).search).toBe("");
+  await opened.screenshot({ path: info.outputPath("new-tab-task.png") });
+  // A plain click there still leaves full page.
+  await opened
+    .getByRole("button", { name: "전체 페이지 닫기", exact: true })
+    .click();
+  await expect(opened).not.toHaveClass(/document-full-page/);
+  await tab.close();
+
+  // This tab did not change.
+  await expect(details(page)).toHaveCount(1);
+  await expect(dialog).not.toHaveClass(/document-full-page/);
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+  // A plain click toggles full page as before; its tooltip stays short.
+  await expand.click();
+  await expect(dialog).toHaveClass(/document-full-page/);
+  const leave = dialog.getByRole("button", {
+    name: "전체 페이지 닫기",
+    exact: true,
+  });
+  await leave.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("전체 페이지 닫기");
+  await leave.click();
+  await expect(dialog).not.toHaveClass(/document-full-page/);
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+
+  // A calendar entry opens on the calendar, with a title typed just now.
+  const scheduled = await entry(page);
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await page
+    .locator(`[data-entry-id="${scheduled.id}"] .calendar-entry-card`)
+    .first()
+    .click();
+  const calendar = calendarDetail(page);
+  await calendar
+    .getByRole("textbox", { name: "일정 제목", exact: true })
+    .fill("새 탭 일정");
+  const calendarExpand = calendar.locator(".document-expand");
+  await expect(calendarExpand).toHaveAttribute("data-tooltip", fullPageHint);
+  tab = await openInNewTab(page, calendarExpand);
+  await expect(calendarDetail(tab)).toHaveClass(/document-full-page/);
+  await expect(
+    calendarDetail(tab).getByRole("textbox", {
+      name: "일정 제목",
+      exact: true,
+    }),
+  ).toHaveValue("새 탭 일정");
+  await expect(tab.locator(".calendar-grid")).toBeAttached();
+  expect(new URL(tab.url()).pathname).toBe("/calendar");
+  await tab.close();
+  await expect(calendar).not.toHaveClass(/document-full-page/);
+  await expect(calendarExpand).toHaveAttribute("aria-pressed", "false");
+});
+
+test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으로 새 탭에 열고 가운데 클릭도 같다", async ({
+  page,
+}) => {
+  const id = await memo(page, "새 탭 메모", 2026, "새 탭 메모 본문");
+  await copySheet(page);
+  await page.reload();
+  await openMemos(page);
+  const card = memoCard(page, id);
+  const expand = card.getByRole("button", {
+    name: "문서 전체 페이지로 보기",
+    exact: true,
+  });
+  await expand.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(fullPageHint);
+  let tab = await openInNewTab(page, expand, true);
+  const full = memoPage(tab, "새 탭 메모");
+  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toContainText("새 탭 메모 본문");
+  await tab.close();
+  await expect(card).not.toHaveClass(/memo-full-page/);
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+  // In full page the button also opens a new tab and keeps this page.
+  await expand.click();
+  await expect(card).toHaveClass(/memo-full-page/);
+  tab = await openInNewTab(
+    page,
+    card.getByRole("button", { name: "전체 페이지 닫기", exact: true }),
+  );
+  await expect(memoPage(tab, "새 탭 메모")).toHaveClass(/memo-full-page/);
+  await tab.close();
+  await expect(card).toHaveClass(/memo-full-page/);
+  await card
+    .getByRole("button", { name: "전체 페이지 닫기", exact: true })
+    .click();
+  await expect(card).not.toHaveClass(/memo-full-page/);
+
+  // A copy's task opens as the copy's task.
+  const copyTab = page.getByRole("tab", { name: "링크 사본", exact: true });
+  await copyTab.click();
+  await expect(copyTab).toHaveAttribute("aria-selected", "true");
+  await page
+    .locator(`[data-cell="${taskIds[1]}:title"]`)
+    .click({ button: "right" });
+  const detail = details(page);
+  await expect(detail).toBeVisible();
+  tab = await openInNewTab(page, detail.locator(".document-expand"));
+  const copied = details(tab);
+  await expect(copied).toHaveClass(/document-full-page/);
+  await expect(
+    copied.getByRole("button", { name: "사본에서 열기", exact: true }),
+  ).toBeVisible();
+  await expect(
+    copied.getByRole("textbox", { name: "작업 편집", exact: true }),
+  ).toHaveValue("링크 대상 업무");
+  await tab.close();
+  await expect(detail).not.toHaveClass(/document-full-page/);
+});
