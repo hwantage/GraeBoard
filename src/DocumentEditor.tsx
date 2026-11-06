@@ -140,6 +140,31 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     useLayoutEffect(() => {
       props.onLoadingChange(loading);
     }, [loading, props.onLoadingChange]);
+    // The mode switch moves to the other mode's toolbar; keyboard focus
+    // follows it once that toolbar is shown.
+    const section = useRef<HTMLElement>(null);
+    const modeFocus = useRef(false);
+    useLayoutEffect(() => {
+      if (!modeFocus.current || loading) return;
+      modeFocus.current = false;
+      const focus = () =>
+        section.current
+          ?.querySelector<HTMLButtonElement>(
+            '.document-modes [aria-pressed="true"]',
+          )
+          ?.focus();
+      focus();
+      // The host keeps the document inert until it hears loading ended. Retry
+      // only while nothing else took focus meanwhile.
+      if (!section.current?.contains(document.activeElement))
+        requestAnimationFrame(() => {
+          if (
+            section.current &&
+            document.activeElement?.contains(section.current)
+          )
+            focus();
+        });
+    }, [mode, loading]);
     function changeMode(value: DocumentMode) {
       if (value === "rich" && mode !== value) {
         setSourceRequired(false);
@@ -542,8 +567,32 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         {saveState}
       </span>
     );
+    const modeToggle = (
+      <DocumentModeToggle
+        mode={mode}
+        disabled={!!uploadCount}
+        onChange={(value) => {
+          if (composing.current) return;
+          modeFocus.current = !!section.current
+            ?.querySelector(".document-modes")
+            ?.contains(document.activeElement);
+          setNotice("");
+          changeMode(value);
+        }}
+      />
+    );
+    // While editing, the mode switch sits at the right end of the toolbar in
+    // both modes. Read-only, failed and mobile views keep it in the host's
+    // control area, which has no toolbar beside it.
+    const toolbarModes =
+      !!props.controlsTarget &&
+      !(error && !loaded) &&
+      !docReadOnly &&
+      !editorFailed &&
+      !mobile;
     return (
       <section
+        ref={section}
         className="task-document"
         data-mode={mode}
         aria-label={label}
@@ -568,18 +617,11 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         }}
       >
         {props.controlsTarget &&
+          !toolbarModes &&
           createPortal(
             <div className="document-controls">
               {(mode === "source" || docReadOnly || editorFailed) && saveStatus}
-              <DocumentModeToggle
-                mode={mode}
-                disabled={!!uploadCount}
-                onChange={(value) => {
-                  if (composing.current) return;
-                  setNotice("");
-                  changeMode(value);
-                }}
-              />
+              {modeToggle}
             </div>,
             props.controlsTarget,
           )}
@@ -649,6 +691,20 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
               {notice}
             </p>
           )}
+          {loaded && mode === "source" && toolbarModes && (
+            <div className="document-rich-tools">
+              <div
+                className="document-formatbar"
+                role="group"
+                aria-label="문서 도구"
+              >
+                <div className="document-history-tools">
+                  {saveStatus}
+                  {modeToggle}
+                </div>
+              </div>
+            </div>
+          )}
           {loaded &&
             (mode === "source" ? (
               <textarea
@@ -676,9 +732,11 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     remoteMarkdown={remoteMarkdown}
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
+                    modeControl={toolbarModes && modeToggle}
                     onChange={change}
                     images={props.storage?.images}
                     documentLinks={!props.storage}
+                    linkTitles={!props.storage}
                     onUpload={uploadImage}
                     onUploading={uploading}
                     onReady={() => setEditorReady(true)}

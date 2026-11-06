@@ -1,5 +1,10 @@
 import type { DocumentImages } from "./document-storage";
 import {
+  configureDocumentInputRules,
+  documentInputKeydown,
+} from "./DocumentInputRules";
+import { documentLinkTitle, pasteExternalLink } from "./DocumentLinkTitle";
+import {
   useEffect,
   useLayoutEffect,
   useRef,
@@ -29,6 +34,7 @@ import { Button, Modal } from "./components";
 import Toast, { useToast } from "./Toast";
 import Select from "./Select";
 import DocumentLoading from "./DocumentLoading";
+import DocumentToolMenu from "./DocumentToolMenu";
 import DocumentBlockHandle, {
   BLOCK_FORMATS,
   blockDrag,
@@ -150,6 +156,11 @@ import {
   SquareCode,
   Workflow,
   Minus,
+  BetweenHorizontalStart,
+  BetweenVerticalStart,
+  TableRowsSplit,
+  TableColumnsSplit,
+  Trash2,
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
@@ -619,10 +630,12 @@ type Props = {
   label?: string;
   images?: DocumentImages;
   documentLinks?: boolean;
+  linkTitles?: boolean;
   initialMarkdown: string;
   remoteMarkdown?: { markdown: string; sequence: number };
   readOnly: boolean;
   saveStatus?: ReactNode;
+  modeControl?: ReactNode;
   onChange: (markdown: string) => void;
   onUnsupported: (message: string) => void;
   onReady: () => void;
@@ -833,6 +846,7 @@ export default function RichMarkdownEditor(props: Props) {
           shouldAppend: needsTrailingParagraph,
           getNode: (state) => state.schema.nodes.paragraph.create(),
         });
+        configureDocumentInputRules(ctx);
         ctx.set(editorViewOptionsCtx, {
           editable: () => !latest.current.readOnly,
           attributes: {
@@ -844,6 +858,8 @@ export default function RichMarkdownEditor(props: Props) {
           },
           clipboardTextSerializer: (slice) => clipboardMarkdown(ctx, slice),
           handleDOMEvents: {
+            keydown: (_view, event) =>
+              latest.current.readOnly && event.key === "Tab",
             focus: (view) => {
               syncLinkTip(view, true);
               return false;
@@ -896,9 +912,25 @@ export default function RichMarkdownEditor(props: Props) {
             if (blockHandle.current?.keydown(event)) return true;
             if (slashKeydown(event)) return true;
             if (blockSelectKeydown(view, event)) return true;
+            if (documentInputKeydown(view, event)) return true;
             if (toggleKeydown(view, event)) return true;
             if (listFormatKeydown(view, event)) return true;
             if (blockMoveKeydown(view, event)) return true;
+            if (event.key === "Escape") {
+              if (linkTipRef.current) {
+                linkTipRef.current = null;
+                setLinkTip(null);
+              } else {
+                const focused = document.activeElement;
+                if (
+                  focused instanceof HTMLElement &&
+                  view.dom.contains(focused)
+                )
+                  focused.blur();
+              }
+              event.stopPropagation();
+              return true;
+            }
             if (
               event.key !== "Enter" ||
               !event.shiftKey ||
@@ -932,6 +964,19 @@ export default function RichMarkdownEditor(props: Props) {
             }
             const text = event.clipboardData?.getData("text/plain");
             if (text === undefined || latest.current.readOnly) return false;
+            if (!view.state.selection.$from.parent.type.spec.code) {
+              if (
+                pasteDocumentLink(view, text, linkTitles) ||
+                pasteExternalLink(
+                  view,
+                  text,
+                  latest.current.linkTitles !== false,
+                )
+              ) {
+                event.preventDefault();
+                return true;
+              }
+            }
             // ProseMirror has already parsed HTML through the editor schema.
             // Keep its slice boundaries, marks and table paste handling instead
             // of replacing rich clipboard content with its plain-text fallback.
@@ -1061,6 +1106,7 @@ export default function RichMarkdownEditor(props: Props) {
       .use(codeBlockMetaSchema)
       .use(documentCodeBlockSelection)
       .use(gfm)
+      .use(documentLinkTitle)
       .use(documentLinkSchema)
       .use(toggle)
       .use(remarkToggle)
@@ -1525,11 +1571,8 @@ export default function RichMarkdownEditor(props: Props) {
               ["번호 목록", ListOrdered, () => setListFormat("ordered")],
               ["체크리스트", ListChecks, () => setListFormat("task")],
               ["링크", Link, openLinkForm],
-              [
-                "표 삽입",
-                Table2,
-                () => command(insertTableCommand.key, { row: 3, col: 3 }),
-              ],
+              ["인용", Quote, () => setBlock("quote")],
+              ["코드 블록", SquareCode, () => setBlock("code")],
             ].map(([label, Icon, onClick]: any) => (
               <button
                 type="button"
@@ -1543,49 +1586,66 @@ export default function RichMarkdownEditor(props: Props) {
                 <Icon size={16} />
               </button>
             ))}
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => command(addRowAfterCommand.key)}
-            >
-              표 행 +
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => command(addColAfterCommand.key)}
-            >
-              표 열 +
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !canDeleteRow}
-              data-tooltip="선택한 행 삭제 (머리글과 마지막 본문 행 제외)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTableRow)}
-            >
-              표 행 -
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              data-tooltip="선택한 열 삭제 (마지막 열은 표 전체 삭제)"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTableColumn)}
-            >
-              표 열 -
-            </button>
-            <button
-              type="button"
-              disabled={!ready || !inTable}
-              data-tooltip="현재 표 전체 삭제"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => removeFromTable(deleteTable)}
-            >
-              표 삭제
-            </button>
+            <DocumentToolMenu
+              label="토글"
+              menuLabel="토글 제목 선택"
+              icon={<ListCollapse size={16} />}
+              disabled={!ready}
+              onClick={() => setBlock("toggle0")}
+              items={TOGGLE_LEVELS.map((level) => ({
+                label: `토글 제목 ${level}`,
+                icon: [
+                  <Heading1 size={16} />,
+                  <Heading2 size={16} />,
+                  <Heading3 size={16} />,
+                ][level - 1],
+                run: () => setBlock(`toggle${level}`),
+              }))}
+            />
+            <DocumentToolMenu
+              label="표 삽입"
+              menuLabel="표 행·열 편집"
+              icon={<Table2 size={16} />}
+              disabled={!ready}
+              onClick={() =>
+                command(insertTableCommand.key, { row: 3, col: 3 })
+              }
+              items={[
+                {
+                  label: "아래에 행 추가",
+                  icon: <BetweenHorizontalStart size={16} />,
+                  disabled: !inTable,
+                  run: () => command(addRowAfterCommand.key),
+                },
+                {
+                  label: "오른쪽에 열 추가",
+                  icon: <BetweenVerticalStart size={16} />,
+                  disabled: !inTable,
+                  run: () => command(addColAfterCommand.key),
+                },
+                {
+                  label: "행 삭제",
+                  icon: <TableRowsSplit size={16} />,
+                  tooltip: "선택한 행 삭제 (머리글과 마지막 본문 행 제외)",
+                  disabled: !canDeleteRow,
+                  run: () => removeFromTable(deleteTableRow),
+                },
+                {
+                  label: "열 삭제",
+                  icon: <TableColumnsSplit size={16} />,
+                  tooltip: "선택한 열 삭제 (마지막 열은 표 전체 삭제)",
+                  disabled: !inTable,
+                  run: () => removeFromTable(deleteTableColumn),
+                },
+                {
+                  label: "표 삭제",
+                  icon: <Trash2 size={16} />,
+                  tooltip: "현재 표 전체 삭제",
+                  disabled: !inTable,
+                  run: () => removeFromTable(deleteTable),
+                },
+              ]}
+            />
             <div className="document-history-tools">
               {props.saveStatus}
               {[
@@ -1609,6 +1669,7 @@ export default function RichMarkdownEditor(props: Props) {
                   <Icon size={16} />
                 </button>
               ))}
+              {props.modeControl}
             </div>
           </div>
           {link !== null && (

@@ -202,8 +202,15 @@ test("연간 메모는 필요할 때 열고 저장 후 닫으며 800px 문서를
   const body = (await card("메모 1")
     .locator(".memo-document-body")
     .boundingBox())!;
+  const toolbar = (await card("메모 1")
+    .locator(".document-formatbar")
+    .boundingBox())!;
   expect(titleLine.y + titleLine.height).toBeLessThan(body.y);
-  expect(modes.y + modes.height).toBeLessThan(body.y);
+  // The mode switch ends the memo's toolbar, below the title line.
+  expect(modes.y).toBeGreaterThanOrEqual(toolbar.y);
+  expect(modes.y + modes.height).toBeLessThanOrEqual(
+    toolbar.y + toolbar.height,
+  );
 
   await card("메모 1")
     .getByRole("button", { name: "Markdown 원문", exact: true })

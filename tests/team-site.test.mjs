@@ -416,6 +416,10 @@ test(
     const errors = [],
       cookies = new Map();
     const worker = createWorker({
+      linkTitleOptions: {
+        resolve: async () => [{ address: "93.184.215.14" }],
+        request: async () => ({ title: "외부 링크 제목" }),
+      },
       verify: async (request) => ({
         issuer: env.ACCESS_ISSUER,
         subject: request.headers.get("test-google"),
@@ -603,6 +607,29 @@ test(
     assert.equal(
       success(await outside("lead-google", "/bootstrap")).site,
       "external",
+    );
+    assert.deepEqual(
+      success(
+        await outside(
+          "lead-google",
+          "/link-title?url=https%3A%2F%2Fexample.com",
+        ),
+      ),
+      { title: "외부 링크 제목" },
+    );
+    assert.equal(
+      (await outside("lead-google", "/link-title?url=http%3A%2F%2F127.0.0.1"))
+        .status,
+      400,
+    );
+    assert.equal(
+      (
+        await outside(
+          "not-registered",
+          "/link-title?url=https%3A%2F%2Fexample.com",
+        )
+      ).status,
+      401,
     );
     const beforeEnable = await transport.readHead();
     const externalEnable = await outside(
