@@ -828,6 +828,10 @@ test("Chromium IME로 이미지 바로 뒤에서 한글을 조합하면 이미�
       selectionEnd: text.length,
     });
     await expect.poll(typed).toBe(text);
+    // The draft kept in the tab has the composing text, not the placeholder.
+    const drafts = await page.evaluate(() => Object.values(sessionStorage));
+    expect(drafts.some((draft) => draft.includes(text))).toBe(true);
+    expect(drafts.some((draft) => draft.includes("\u200b"))).toBe(false);
     await expect.poll(async () => (await imageCaret(image)).side).toBeNull();
     expect((await imageCaret(image)).native).not.toBe("rgba(0, 0, 0, 0)");
     expect(await original!.evaluate((element) => element.isConnected)).toBe(

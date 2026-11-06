@@ -1,5 +1,10 @@
 import type { Node } from "@milkdown/kit/prose/model";
-import { Plugin, PluginKey, TextSelection } from "@milkdown/kit/prose/state";
+import {
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type EditorState,
+} from "@milkdown/kit/prose/state";
 import {
   Decoration,
   DecorationSet,
@@ -110,6 +115,15 @@ export const imageComposition = $prose(
       },
     }),
 );
+
+// The document to save: drafts and saves never carry the placeholder, even
+// when the composition is cut off before it leaves.
+export function withoutImageSpacer(state: EditorState) {
+  const pos = spacerKey.getState(state);
+  return pos != null && state.doc.textBetween(pos, pos + 1) === SPACER
+    ? state.tr.delete(pos, pos + 1).doc
+    : state.doc;
+}
 
 export function iconButton(label: string, paths: string[]) {
   const button = document.createElement("button");

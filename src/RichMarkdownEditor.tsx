@@ -29,6 +29,7 @@ import {
   documentImageView,
   imageCaret,
   imageComposition,
+  withoutImageSpacer,
   type ImagePreview,
 } from "./DocumentImageView";
 import {
@@ -1171,7 +1172,7 @@ export default function RichMarkdownEditor(props: Props) {
                     !view.state.doc.eq(previous.doc)
                   )
                     latest.current.onChange(
-                      ctx.get(serializerCtx)(view.state.doc),
+                      ctx.get(serializerCtx)(withoutImageSpacer(view.state)),
                     );
                 },
               }),
