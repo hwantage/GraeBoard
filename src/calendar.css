@@ -1255,6 +1255,8 @@
 .workspace[data-calendar-theme="dark"]
   :is(
     .document-modes,
+    .document-toc,
+    .document-controls .document-toc-toggle,
     .document-rich-tools,
     .document-source,
     .document-image-actions,
@@ -1284,6 +1286,11 @@
   .document-modes
   button[aria-pressed="true"] {
   color: var(--calendar-on-orange);
+}
+.workspace[data-calendar-theme="dark"]
+  .document-toc-toggle[aria-pressed="true"] {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
 }
 .workspace[data-calendar-theme="dark"] .calendar-entry-card {
   background: color-mix(

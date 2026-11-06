@@ -353,7 +353,12 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
   await expect(
     calendar.getByRole("textbox", { name: "일정 문서 리치 편집" }),
   ).toBeVisible();
-  await expect(calendar.locator(".document-mode-bar")).toBeHidden();
+  // The row above the document holds the contents button alone.
+  const calendarRow = calendar.locator(".document-mode-bar");
+  await expect(calendarRow.getByRole("button")).toHaveCount(1);
+  await expect(
+    calendarRow.getByRole("button", { name: "목차", exact: true }),
+  ).toBeVisible();
   await expect(calendar.locator(".document-rich-tools")).toBeHidden();
   await screenshot(page, info, "calendar-entry");
   const memoId = randomUUID(),
@@ -369,7 +374,11 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
   await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toContainText(
     "메모 본문",
   );
-  await expect(memo.locator(".document-mode-bar")).toBeHidden();
+  const memoRow = memo.locator(".document-mode-bar");
+  await expect(memoRow.getByRole("button")).toHaveCount(1);
+  await expect(
+    memoRow.getByRole("button", { name: "목차", exact: true }),
+  ).toBeVisible();
   await expect(memo.locator(".document-rich-tools")).toBeHidden();
   await screenshot(page, info, "memo-page");
   await page.setViewportSize(desktop);
