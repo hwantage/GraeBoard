@@ -131,8 +131,8 @@
   height: 26px;
   padding: 0;
 }
-/* The contents button sits left of the mode switch: framed like the switch
-   above the document, a plain button in the toolbar. */
+/* The contents button ends the row, right of the mode switch: framed like
+   the switch above the document, a plain button in the toolbar. */
 .document-controls .document-toc-toggle {
   display: grid;
   flex-shrink: 0;
@@ -150,6 +150,10 @@
 .document-toc-toggle[aria-pressed="true"] {
   background: var(--accent-pastel);
   color: var(--accent-strong);
+}
+/* Its place in the Markdown source, which keeps the mode switch still. */
+.document-toc-toggle[data-reserved] {
+  visibility: hidden;
 }
 /* The control row above the document is empty then and takes no space. */
 .document-mode-bar:empty {
@@ -1631,7 +1635,7 @@ button.memo-document-title {
   .document-rich-tools,
   .document-modes,
   /* The row stays for the contents button alone. */
-  .document-mode-bar:not(:has(.document-toc-toggle)),
+  .document-mode-bar:not(:has(.document-toc-toggle:not([data-reserved]))),
   .document-block-handle {
     display: none;
   }

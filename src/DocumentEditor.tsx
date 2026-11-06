@@ -595,12 +595,14 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         }}
       />
     );
-    // The rich view only: the contents jump within its text.
-    const tocToggle = mode === "rich" && !editorFailed && (
+    // The rich view only: the contents jump within its text. The source
+    // keeps its place so the mode switch does not move.
+    const tocToggle = !editorFailed && (
       <DocumentTocToggle
         ref={tocButton}
         open={toc}
         disabled={!editorReady}
+        reserved={mode !== "rich"}
         onChange={setToc}
       />
     );
@@ -725,6 +727,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                 <div className="document-history-tools">
                   {saveStatus}
                   {modeToggle}
+                  {tocToggle}
                 </div>
               </div>
             </div>

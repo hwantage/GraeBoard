@@ -1521,7 +1521,7 @@ test("툴바의 인용·코드 블록·토글과 토글 제목 메뉴가 블록�
     await expect(source(page)).toHaveValue(part);
 });
 
-test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝의 같은 자리에 있다", async ({
+test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝 목차 버튼 앞의 같은 자리에 있다", async ({
   page,
 }) => {
   await open(page);
@@ -1534,13 +1534,21 @@ test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝�
   await expect(tools.locator(".document-modes")).toHaveCount(1);
   const toolbar = (await tools.boundingBox())!;
   const richBox = (await modes.boundingBox())!;
-  expect(richBox.x + richBox.width).toBeGreaterThan(
+  const contents = (await tools
+    .getByRole("button", { name: "목차", exact: true })
+    .boundingBox())!;
+  expect(contents.x - (richBox.x + richBox.width)).toBeLessThan(12);
+  expect(contents.x + contents.width).toBeGreaterThan(
     toolbar.x + toolbar.width - 24,
   );
   await raw(page);
   await expect(tools.getByRole("group", { name: "문서 서식" })).toHaveCount(0);
   await expect(tools.getByRole("group", { name: "문서 도구" })).toBeVisible();
   await expect(tools.locator(".document-save-state")).toBeVisible();
+  // The source has no contents, but keeps its place for the switch.
+  await expect(
+    tools.getByRole("button", { name: "목차", exact: true }),
+  ).toHaveCount(0);
   const sourceBox = (await modes.boundingBox())!;
   expect(sourceBox.x).toBeCloseTo(richBox.x, 0);
   expect(sourceBox.y).toBeCloseTo(richBox.y, 0);
@@ -3665,15 +3673,20 @@ test("문서 제목 탭과 리치 도구는 긴 문서에서 고정되고 이미
   const bounds = await body.boundingBox(),
     tabs = await detail(page).locator(".document-tabs").boundingBox(),
     controls = await detail(page).locator(".document-modes").boundingBox(),
+    contents = await detail(page)
+      .getByRole("button", { name: "목차", exact: true })
+      .boundingBox(),
     tools = await detail(page).locator(".document-rich-tools").boundingBox();
   expect(tabs!.y).toBeCloseTo(bounds!.y, 0);
   expect(tools!.y).toBeCloseTo(tabs!.y + tabs!.height, 0);
-  // The mode switch is pinned with the toolbar, at its right end.
+  // The mode switch is pinned with the toolbar, at its right end before
+  // the contents button.
   expect(controls!.y).toBeGreaterThanOrEqual(tools!.y);
   expect(controls!.y + controls!.height).toBeLessThanOrEqual(
     tools!.y + tools!.height,
   );
-  expect(controls!.x + controls!.width).toBeGreaterThan(
+  expect(contents!.x - (controls!.x + controls!.width)).toBeLessThan(12);
+  expect(contents!.x + contents!.width).toBeGreaterThan(
     tools!.x + tools!.width - 24,
   );
   await body.evaluate((el) => (el.scrollTop = 0));
