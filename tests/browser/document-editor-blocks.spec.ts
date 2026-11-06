@@ -633,7 +633,7 @@ test("붙여넣은 이미지 뒤와 문서 끝 블록 아래에서 바로 이어
 
 test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘라내며 양옆에 커서를 표시한다", async ({
   page,
-}) => {
+}, info) => {
   const url = await uploadImage(page, 200, 120);
   const original = `앞 글자![가운데](${url})뒤 글자\n\n![단독](${url})\n\n끝 문단`;
   await save(page, taskIds[0], original);
@@ -662,6 +662,10 @@ test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘�
   });
   expect(selected.color).toBe(selected.accent);
   expect(selected.width).toBe("2px");
+  await rich(page).screenshot({
+    path: info.outputPath("image-selected.png"),
+    animations: "disabled",
+  });
   await page.keyboard.press("Backspace");
   await expect(images).toHaveCount(1);
   await expect(
@@ -690,6 +694,10 @@ test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘�
     right: "-2px",
     height: 0,
     native: "rgba(0, 0, 0, 0)",
+  });
+  await rich(page).screenshot({
+    path: info.outputPath("image-caret.png"),
+    animations: "disabled",
   });
   await page.keyboard.press("ArrowLeft");
   await expect(inline).toHaveClass(/ProseMirror-selectednode/);
@@ -777,7 +785,7 @@ test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘�
 
 test("이미지를 끌면 글자 사이에 놓을 위치를 표시하고 그 자리로 옮기며 한 번에 실행취소한다", async ({
   page,
-}) => {
+}, info) => {
   const url = await uploadImage(page, 120, 80);
   const original = `앞 글자![옮길 그림](${url})뒤 글자\n\n가나다라마바사`;
   await save(page, taskIds[0], original);
@@ -815,6 +823,9 @@ test("이미지를 끌면 글자 사이에 놓을 위치를 표시하고 그 자
   expect(line.y).toBeLessThan(point.y);
   expect(line.y + line.height).toBeGreaterThan(point.y);
   await expect(detail(page).locator(".document-block-drop")).toHaveCount(0);
+  await rich(page).screenshot({
+    path: info.outputPath("image-drop-cursor.png"),
+  });
   await page.mouse.up();
   await expect(cursor).toHaveCount(0);
   await expect(rich(page).locator(":scope > p").first()).toHaveText(
