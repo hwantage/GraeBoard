@@ -387,6 +387,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           // then saves again, once the composition ends (drainRemote).
           if (remote && composing.current) {
             receiveRemote(remote);
+            if (mounted.current) setStatus("저장 대기");
             return false;
           }
           if (remote && mergeRemote(remote)) {

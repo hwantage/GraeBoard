@@ -917,11 +917,16 @@ test("Chromium IME 조합 중 끝난 저장 충돌은 조합이 끝난 뒤 병�
     `![단독](${url})\n\n가운데 원격\n\n끝 문단`,
     saved.revision,
   );
+  const conflict = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" && response.status() === 409,
+  );
   release();
-  await expect
-    .poll(async () => (await document(page)).markdown)
-    .toMatch(exact(`![단독](${url})\n\n가운데 원격\n\n끝 문단`));
-  await page.waitForTimeout(300);
+  await conflict;
+  // The editor has handled the conflict: the edit waits to be saved again.
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장 대기",
+  );
   // The composition goes on untouched by the conflict.
   await expect(paragraphs.nth(1)).toHaveText("가운데");
   for (const text of ["하", "한"]) {
