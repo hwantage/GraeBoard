@@ -341,6 +341,10 @@ npm run licenses
 
 검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 내부 인증은 로컬 계정·세션 방식이며 외부는 전용 Cloudflare Access JWT와 앱 사용자·팀 권한을 검증합니다. 실제 Cloudflare Access/Images/Supabase 계정 배포와 모바일 실기기의 OS 키보드·터치 동작은 로컬 브라우저 검증과 구분합니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
 
+2026-11-06 서버가 역방향 프록시 없이도 TLS를 직접 종료할 수 있도록 `server/index.mjs`에 `TLS_CERT_FILE`·`TLS_KEY_FILE` 환경 변수를 추가했습니다. 둘 다 지정하면 `node:https`의 `createServer`로 해당 PEM 인증서·개인키를 읽어 기존 Express 앱을 그대로 제공하고, 둘 다 비우면 기존 평문 HTTP(`app.listen`)를 그대로 사용합니다. 하나만 지정하면 시작 로그에 안내를 남기고 `exit(1)`로 거절합니다. 종료 처리·SSE·DB 핸들은 기존 `server`를 그대로 참조해 변경하지 않았습니다. `docs/OPERATIONS.md`의 사내 서버 배치 절과 환경 변수 표, `.env.example`에 선택 항목으로 반영했습니다.
+
+검증: 새 `tests/server-tls.test.mjs`는 자체 서명 인증서(`openssl req -x509 -newkey rsa:2048 -nodes`)로 실제 `server/index.mjs` 자식 프로세스를 띄워 `https://` 응답과 `TLS_CERT_FILE`만 지정했을 때의 거절을 확인하며, 이 저장소의 Windows 개발 장비에서 반복 실행 모두 통과했습니다. 같은 장비에서 `npm run build`·`npm run build:edge`와 변경 파일의 Prettier·`git diff --check`도 통과했습니다. 전체 `npm test`는 이 Windows 장비에서 끝까지 실행하지 못했습니다. 실패한 103건을 모두 확인한 결과 이번 변경과 무관한 이 저장소의 기존 Windows 비호환 원인 세 가지(일부 테스트 픽스처의 `/tmp/...` 경로 하드코딩, `sync-git-askpass` 검사의 `/usr/bin/which` 의존, SIGTERM 처리 검사가 기대하는 POSIX 신호 의미)로만 실패했고 새 TLS 코드와 관련된 실패는 없었습니다. `TEST_PG_BIN`과 Unix 셸이 있는 개발 환경에서 `npm test` 전체 재확인을 권장합니다.
+
 ## 저장소 범위
 
 소스, 잠금 파일, 테스트 코드, 실행 안내와 데이터 명세를 관리합니다. DB·백업·반출 파일·실제 환경 설정·로그·스크린샷·원본 시트가 참조된 초기 RFP는 Git에 포함하지 않습니다. `.env.example`에는 비밀값 없이 설정 항목만 제공합니다.
