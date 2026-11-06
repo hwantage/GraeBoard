@@ -30,7 +30,7 @@ export async function reportRoutes(ctx, path, method, body, query) {
     });
   const batch = /^\/reports\/([^/]+)\/documents\/batch$/.exec(path);
   if (batch && method === "POST") {
-    const { teamId } = await ctx.locate("report", batch[1]);
+    const teamId = await ctx.locateTeam("report", batch[1]);
     assert(
       Array.isArray(body.taskIds) &&
         body.taskIds.length > 0 &&

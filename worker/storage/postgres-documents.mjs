@@ -27,17 +27,18 @@ async function annualHidden(s, scope) {
     (await excludedYears(s)).has(Number(scope.prefix[1]))
   );
 }
+// The live record a document belongs to, or null. A copy memo's parent is the
+// copy, whose payload (megabytes) is not needed: copies have no deletedAt.
+async function liveParent(s, scope) {
+  if (scope.kind === "reportMemo")
+    return (await s.alive("report", [scope.prefix[1]])) || null;
+  const parent = await s.get(scope.kind, [scope.prefix[1]]);
+  return parent && !parent.deleted && !parent.payload.deletedAt ? parent : null;
+}
 export async function requireUploadDocument(s, scope) {
   if (scope.kind !== "annual") {
-    const parent = await s.get(
-      scope.kind === "reportMemo" ? "report" : scope.kind,
-      [scope.prefix[1]],
-    );
-    assert(
-      parent && !parent.deleted && !parent.payload.deletedAt,
-      404,
-      "문서의 원본 자료를 찾을 수 없습니다.",
-    );
+    const parent = await liveParent(s, scope);
+    assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
     if (scope.kind === "report")
       assert(
         parent.payload.data.tasks.some((task) => task.id === scope.prefix[2]),
@@ -205,15 +206,19 @@ export class PostgresDocumentRepository {
       return { teamId, prefix: ["task", target.taskId], documentId, kind };
     }
     if (["report", "reportMemo"].includes(kind)) {
-      const { teamId, row } = await ctx.locate("report", target.reportId, {
-        write,
-      });
-      if (kind === "report")
+      // A copy memo needs only the copy's team; only a copy row's documents
+      // read the copy to find the row.
+      let teamId;
+      if (kind === "report") {
+        const located = await ctx.locate("report", target.reportId, { write });
+        teamId = located.teamId;
         assert(
-          row.payload.data.tasks.some((t) => t.id === target.taskId),
+          located.row.payload.data.tasks.some((t) => t.id === target.taskId),
           404,
           "사본 업무를 찾을 수 없습니다.",
         );
+      } else
+        teamId = await ctx.locateTeam("report", target.reportId, { write });
       return {
         teamId,
         prefix:
@@ -363,13 +368,8 @@ export class PostgresDocumentRepository {
       teamId,
       async (s) => {
         if (kind !== "annual") {
-          const parentKind = kind === "reportMemo" ? "report" : kind;
-          const parent = await s.get(parentKind, [prefix[1]]);
-          assert(
-            parent && !parent.deleted && !parent.payload.deletedAt,
-            404,
-            "문서의 원본 자료를 찾을 수 없습니다.",
-          );
+          const parent = await liveParent(s, scope);
+          assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
           if (kind === "report")
             assert(
               parent.payload.data.tasks.some((t) => t.id === prefix[2]),

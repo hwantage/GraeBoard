@@ -258,7 +258,7 @@ async function execute(ctx, command, body, reportId) {
       { write: true, body, action: "report-delete" },
     );
   if (["read", "rename", "edit"].includes(command)) {
-    const { teamId } = await ctx.locate("report", reportId, {
+    const teamId = await ctx.locateTeam("report", reportId, {
       write: command !== "read",
     });
     return ctx.data(

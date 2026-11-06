@@ -615,8 +615,9 @@ body.document-block-selecting * {
 .document-prose .document-toggle-button svg {
   transition: transform 0.15s;
 }
+/* data-view is this viewer's fold; data-open is the stored state. */
 .document-prose
-  .document-toggle[data-open="true"]
+  .document-toggle:is([data-open="true"]:not([data-view]), [data-view="open"])
   > .document-toggle-summary
   .document-toggle-button
   svg {
@@ -635,7 +636,12 @@ body.document-block-selecting * {
 .document-prose .document-toggle-content {
   padding-left: 22px;
 }
-.document-prose .document-toggle[data-open="false"] > .document-toggle-content {
+.document-prose
+  .document-toggle:is(
+    [data-open="false"]:not([data-view]),
+    [data-view="closed"]
+  )
+  > .document-toggle-content {
   display: none;
 }
 
