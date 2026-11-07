@@ -1,4 +1,5 @@
 import { channel } from "node:diagnostics_channel";
+import { createHash } from "node:crypto";
 import { splitReportRecord, applicationEntities } from "./versions.mjs";
 import { expandStyle } from "../../shared/compact.js";
 import {
@@ -29,6 +30,74 @@ import { entityId, initialToken, payloadEqual } from "./protocol.mjs";
 const reportDecoded = channel("graeboard.sync.report.decode");
 const one = (db, sql, ...args) => db.prepare(sql).get(...args);
 const rows = (db, sql, ...args) => db.prepare(sql).all(...args);
+// 동기화로 받은 사람 참조(tasks.created_by, calendar_entries.user_id, *.actor_id 등)는
+// users 행이 있어야 FK를 통과한다. 보내는 쪽이 person을 빠뜨렸거나 아직 오지 않은
+// ID는 ID를 이름으로 하는 자리표시 행(password '!', active 0)으로 두어 수신을
+// 멈추지 않는다. 실제 person이 오면 자리표시의 이름만 갱신하고 로컬 실제 계정은
+// 건드리지 않는다.
+const placeholderUser =
+  "INSERT INTO users(id,username,name,password,active,created_at) VALUES(?,?,?,'!',0,?)";
+const personRefs =
+  "INSERT INTO sync_person_refs(team_id,person_id,profile,local_user_id) VALUES(?,?,?,?)";
+const placeholderUsername = (id) => "sync-" + id + "@invalid.local";
+export function materializePerson(db, teamId, id, name, stamp) {
+  db.prepare(
+    placeholderUser +
+      " ON CONFLICT(id) DO UPDATE SET name=excluded.name WHERE users.password='!' AND users.active=0",
+  ).run(id, placeholderUsername(id), name, stamp);
+  db.prepare(
+    personRefs +
+      " ON CONFLICT(team_id,person_id) DO UPDATE SET profile=excluded.profile",
+  ).run(teamId, id, JSON.stringify({ name }), id);
+}
+// Returns the referenced ID once a users row exists for it, creating a
+// placeholder named by the ID when needed; null for an absent reference.
+export function ensurePersonReference(db, teamId, id, stamp) {
+  if (typeof id !== "string" || !id) return null;
+  const existing = one(
+    db,
+    "SELECT name,password,active FROM users WHERE id=?",
+    id,
+  );
+  if (!existing)
+    db.prepare(placeholderUser + " ON CONFLICT(id) DO NOTHING").run(
+      id,
+      placeholderUsername(id),
+      id,
+      stamp,
+    );
+  if (!existing || (existing.password === "!" && !existing.active))
+    db.prepare(personRefs + " ON CONFLICT(team_id,person_id) DO NOTHING").run(
+      teamId,
+      id,
+      JSON.stringify({ name: existing ? existing.name : id }),
+      id,
+    );
+  return id;
+}
+// Received documents carry no author. They are recorded under one placeholder
+// actor per team rather than an arbitrary local account.
+export const SYNC_ACTOR_NAME = "외부 동기화";
+export function syncActorId(teamId) {
+  const hex = createHash("sha256")
+    .update("graeboard:sync-actor:" + teamId)
+    .digest("hex");
+  const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+function syncActor(db, teamId, stamp) {
+  const id = syncActorId(teamId);
+  if (
+    !one(
+      db,
+      "SELECT 1 FROM sync_person_refs WHERE team_id=? AND person_id=?",
+      teamId,
+      id,
+    )
+  )
+    materializePerson(db, teamId, id, SYNC_ACTOR_NAME, stamp);
+  return id;
+}
 const style = (db, id, cache) => {
   if (cache?.has(id)) return cache.get(id);
   const value = expandStyle(
@@ -487,15 +556,12 @@ export function materializeEntity(
   }
 
   if (e.entity === "person") {
-    db.prepare(
-      "INSERT INTO users(id,username,name,password,active,created_at) VALUES(?,?,?,'!',0,?) ON CONFLICT(id) DO NOTHING",
-    ).run(a, "sync-" + a + "@invalid.local", p.name, stamp);
-    db.prepare(
-      "INSERT INTO sync_person_refs(team_id,person_id,profile,local_user_id) VALUES(?,?,?,?) ON CONFLICT(team_id,person_id) DO UPDATE SET profile=excluded.profile",
-    ).run(teamId, a, JSON.stringify(p), a);
+    materializePerson(db, teamId, a, p.name, stamp);
     return;
   }
-  actorId ||= p?.createdBy || one(db, "SELECT id FROM users LIMIT 1")?.id;
+  const creator = ensurePersonReference(db, teamId, p?.createdBy, stamp);
+  actorId = ensurePersonReference(db, teamId, actorId, stamp) ?? creator;
+  const author = () => actorId ?? (actorId = syncActor(db, teamId, stamp));
   if (e.entity === "team") {
     if (dead) throw new Error("Remote team deletion forbidden");
     r = one(db, "SELECT settings FROM teams WHERE id=?", teamId);
@@ -528,7 +594,7 @@ export function materializeEntity(
       dead ? p.deletedAt || stamp : null,
       write(p.defaultStyle),
       write(p.rowStyle),
-      p.createdBy,
+      creator ?? author(),
       p.createdAt,
       r ? nextTaskStamp(r.updated_at) : stamp,
     );
@@ -589,7 +655,7 @@ export function materializeEntity(
         })),
       })),
     };
-    data.tasks = storeReportDocuments(db, data.tasks, teamId, actorId);
+    data.tasks = storeReportDocuments(db, data.tasks, teamId, author());
     db.prepare(
       "INSERT INTO reports VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET year=excluded.year,name=excluded.name,reference_date=excluded.reference_date,data=excluded.data",
     ).run(
@@ -598,7 +664,7 @@ export function materializeEntity(
       p.year,
       p.name,
       p.referenceDate,
-      p.createdBy,
+      creator ?? author(),
       p.createdAt,
       encodeReport(data),
     );
@@ -632,7 +698,7 @@ export function materializeEntity(
         teamId,
         documentId: JSON.stringify(e.key),
         markdown: p.markdown,
-        actorId,
+        actorId: author(),
       });
       const cols = [
         ...target.columns,
@@ -654,7 +720,7 @@ export function materializeEntity(
         Number(hasDocumentContent(p.markdown)),
         Math.max(r?.revision || 0, high) + 1,
         stamp,
-        actorId,
+        author(),
       );
       return;
     }
@@ -664,11 +730,11 @@ export function materializeEntity(
         teamId,
         documentId: JSON.stringify(e.key),
         markdown: p.markdown,
-        actorId,
+        actorId: author(),
       });
       db.prepare(
         "UPDATE calendar_entries SET version_id=?,revision=revision+1,preview=?,updated_at=?,actor_id=?,operation_id=NULL,request_hash=NULL WHERE team_id=? AND id=?",
-      ).run(v, p.markdown.slice(0, 200), stamp, actorId, teamId, b);
+      ).run(v, p.markdown.slice(0, 200), stamp, author(), teamId, b);
       return;
     }
     if (a === "report") {
@@ -682,7 +748,7 @@ export function materializeEntity(
         teamId,
         documentId: JSON.stringify(e.key),
         markdown: p.markdown,
-        actorId,
+        actorId: author(),
       });
       db.prepare(
         "INSERT INTO report_documents VALUES(?,?,?,?) ON CONFLICT(report_id,task_id,document_id) DO UPDATE SET version_id=excluded.version_id",
@@ -696,13 +762,13 @@ export function materializeEntity(
     ).run(
       a,
       teamId,
-      p.userId,
+      ensurePersonReference(db, teamId, p.userId, stamp),
       p.date,
       p.endDate,
       p.lane,
       p.title,
       stamp,
-      actorId,
+      author(),
       dead ? p.deletedAt || stamp : null,
     );
     db.prepare("DELETE FROM calendar_entry_tags WHERE entry_id=?").run(a);
@@ -725,7 +791,14 @@ export function materializeEntity(
     }
     db.prepare(
       "INSERT INTO calendar_tags VALUES(?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,kind=excluded.kind,revision=calendar_tags.revision+1",
-    ).run(a, teamId, p.userId, p.name, p.color, p.kind);
+    ).run(
+      a,
+      teamId,
+      ensurePersonReference(db, teamId, p.userId, stamp),
+      p.name,
+      p.color,
+      p.kind,
+    );
     return;
   }
   if (e.entity === "rule") {
@@ -743,7 +816,8 @@ export function materializeEntity(
       db.prepare(
         "DELETE FROM calendar_weekly_items WHERE team_id=? AND user_id=? AND week_start=? AND task_id=?",
       ).run(teamId, a, b, c);
-    else
+    else {
+      ensurePersonReference(db, teamId, a, stamp);
       // Without a shared importedAt the item keeps its local order.
       db.prepare(
         "INSERT INTO calendar_weekly_items VALUES(?,?,?,?,?,?) ON CONFLICT(team_id,user_id,week_start,task_id) DO UPDATE SET title=excluded.title,imported_at=COALESCE(?,calendar_weekly_items.imported_at)",
@@ -756,6 +830,7 @@ export function materializeEntity(
         p.importedAt ?? stamp,
         p.importedAt ?? null,
       );
+    }
     return;
   }
   if (e.entity === "filter") {
