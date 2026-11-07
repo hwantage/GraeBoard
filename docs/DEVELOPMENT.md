@@ -357,13 +357,3 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
 
 v1/v2의 기준 이력 재생, 일시정지한 양쪽의 명시 전환 수신, reportTask/reportCell 독립성, receipt 별도 용량, SQLite·PostgreSQL migration 및 정리 경계는 합성 DB에서 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 운영 백업은 별도 새 DB·이미지 경로에 실제 복구하고, `migrate --dry-run` 사전 검사와 실제 사본 migration·행/이미지 보존 결과를 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 내부 SQLite의 `npm run restore -- 백업.sqlite 새경로.sqlite`에는 dry-run 옵션이 없습니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.
-
-## 문서 변경 이력
-
-- 2026-11-07: 복구 명령·TLS 리허설·스키마 버전·용량 제한·배포 조건·설정값 보관 설명을 현재 구현에 맞췄습니다. 과거 구현·검증은 [별도 이력](DEVELOPMENT_HISTORY.md)으로 옮기고 현재 색 선택·시크릿 캘린더·모바일 구현 요약을 남겼습니다.
-
-검증: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`는 하위 검사를 포함해 661건 통과(실패·skip 0), `npm run build`·`npm run build:edge`는 성공했습니다. 문서 13개의 내부 링크·제목 연결 215개, npm 스크립트 이름, Bash·Zsh 셸 예시 문법과 이동한 과거 기록 16개 구간의 원문 보존을 확인했습니다. TLS 값이 있는 임시 환경 파일에 리허설의 빈 TLS 환경 변수를 적용해 HTTP health 200을 확인했습니다. 문서만 변경해 브라우저 회귀 검사는 다시 실행하지 않았으며 운영 DB·배포는 검증 대상에 포함하지 않았습니다.
-
-- 2026-11-07 후속: v33에서 운영을 시작한 기준에 맞춰 설치 안내의 v29~v32 → v33 업그레이드 절과 v33 변환이 필요하다는 문구를 제거했습니다. 이후 절 번호와 관련 문서 링크를 갱신하고, 향후 DB 버전 변경은 기존 운영 업데이트·DB 변경 지침을 참조하도록 정리했습니다.
-
-후속 검증: 문서 13개의 내부 링크·제목 연결 218개와 1~14절의 연속 번호, 설치 안내 셸 예시의 Bash·Zsh 문법, `npm run build:edge`·`git diff --check`를 확인했습니다. 앞서 통과한 전체 테스트·프런트엔드 빌드는 앱·테스트 코드 변경이 없어 반복하지 않았습니다.

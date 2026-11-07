@@ -66,7 +66,7 @@ npm start
 | [클라우드 설치 안내](docs/CLOUD_SETUP.md)           | 내부 SQLite·외부 Edge, Pages·Access·Git·R2 설정과 복구 |
 | [동기화 프로토콜](docs/SYNC_PROTOCOL.md)            | 확정 이력·미전송·사이트별 정리·충돌 규칙                    |
 | [DB 변경 지침](docs/DATABASE_CHANGES.md)            | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존    |
-| [패치 체크리스트](docs/PATCH_GUIDE.md)              | 사본 복구 리허설, 마이그레이션, 운영 전환과 롤백             |
+| [패치 체크리스트](docs/PATCH_GUIDE.md)              | v33 운영의 사본 복구·전환·롤백 상세 예시, 구버전·최초 연결 참고 |
 | [프로젝트 작업 규칙](AGENTS.md)                     | 핵심 작업 원칙과 작업별 문서 안내                           |
 | [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록                            |
 
