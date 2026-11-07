@@ -6,6 +6,7 @@ import {
   type Locator,
 } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { unpack } from "../../shared/compact.js";
 import { todayKey } from "../../shared/domain.js";
 import { addDays } from "../../shared/calendar.js";
@@ -1309,6 +1310,51 @@ test("시크릿 문서 크기·이미지 형식·용량을 검사하고 서버 �
   expectPrivate(requests, title, "보존된 문서", "invalid private image");
 });
 
+test("시크릿 문서는 로컬 이미지를 넣어 내려받고 서버에 내용을 보내지 않는다", async ({
+  page,
+}) => {
+  const title = `내려받기 ${randomUUID()}`,
+    body = `비밀 본문 ${randomUUID()}`;
+  await create(page, title);
+  await card(page, title).click();
+  const requests = observe(page);
+  await sourceMode(page);
+  await source(page).fill(`# ${body}\n\n두 번째 문단\n`);
+  await documentSaved(page);
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(rich(page)).toContainText(body);
+  await attachLocalImage(page, "paste");
+  await expect(rich(page).locator("img[src^='data:image/']")).toHaveCount(1);
+  await documentSaved(page);
+  const download = async (item: string) => {
+    await detail(page)
+      .getByRole("button", { name: "다운로드", exact: true })
+      .click();
+    const saved = page.waitForEvent("download");
+    await page
+      .getByRole("menu", { name: "다운로드 형식", exact: true })
+      .getByRole("menuitem", { name: item })
+      .click();
+    return saved;
+  };
+  const md = await download("Markdown (.md)");
+  // The entry's title names the file.
+  expect(md.suggestedFilename().normalize("NFC")).toBe(`${title}.md`);
+  const markdown = await readFile((await md.path())!, "utf8");
+  expect(markdown).toMatch(new RegExp(`^# ${body}\\n\\n두 번째 문단`));
+  expect(markdown).toMatch(/!\[[^\]]*\]\(data:image\/[a-z]+;base64,/);
+  expect(markdown).not.toContain("secret-image:");
+  const html = await readFile(
+    (await (await download("HTML (.html)")).path())!,
+    "utf8",
+  );
+  expect(html).toMatch(/<img [^>]*src="data:image\//);
+  expect(html).not.toContain("secret-image:");
+  expectPrivate(requests, title, body);
+});
+
 // Guards link-title lookups as well: a pasted address is document content.
 test("시크릿 문서에 붙여넣은 외부 주소는 어떤 서버 요청에도 실리지 않는다", async ({
   page,
@@ -1908,17 +1954,26 @@ test("팀 월간은 시크릿 토글·생성 스위치를 숨기고 개인 월�
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "팀 월간 보기", exact: true }).click();
   await expect(toggle).toHaveCount(0);
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
   for (const view of [
     "개인 월간 보기",
     "팀 주간 일정 보기",
     "개인 월간 보기",
   ]) {
     await page.getByRole("button", { name: view, exact: true }).click();
+    await expect(toggle).toHaveCount(1);
     await expect(toggle).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
     await expect(card(page, title)).toHaveCount(0);
     await toggle.press(tabKey);
-    await expect(search).toBeFocused();
+    // The team week keeps it left of the user's own week dates.
+    await expect(
+      view === "팀 주간 일정 보기"
+        ? mine.getByRole("button", { name: /이전 주$/ })
+        : search,
+    ).toBeFocused();
     expect(await page.evaluate((key) => localStorage.getItem(key), key())).toBe(
       stored,
     );
@@ -1926,4 +1981,72 @@ test("팀 월간은 시크릿 토글·생성 스위치를 숨기고 개인 월�
   await toggle.click();
   await expect(card(page, title)).toBeVisible();
   expectPrivate(requests, title);
+});
+
+test("시크릿 토글은 내 개인 월간과 팀 주간의 내 주간 날짜 왼쪽에만 있다", async ({
+  page,
+}, testInfo) => {
+  const toggle = page.locator(".calendar-secret-toggle");
+  const toolbar = page.locator(".calendar-toolbar");
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(1);
+  // Another member's personal month has no secret entries to show or hide.
+  await page
+    .locator(`.calendar-owner-button[data-member-id="${memberId}"]`)
+    .click();
+  await expect(toggle).toHaveCount(0);
+  await page
+    .locator(`.calendar-owner-button[data-member-id="${userId}"]`)
+    .click();
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(1);
+
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
+  await expect(toggle).toHaveCount(1);
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(0);
+  await expect(
+    page
+      .locator(`.calendar-team-section[data-member-id="${memberId}"]`)
+      .locator(".calendar-secret-toggle"),
+  ).toHaveCount(0);
+  const navigation = mine.locator(".calendar-member-navigation");
+  await expect(navigation.locator(".calendar-secret-toggle")).toBeVisible();
+  const box = (await toggle.boundingBox())!;
+  const dates = (await navigation
+    .locator(".calendar-period-control")
+    .boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(dates.x);
+  expect(
+    Math.abs(box.y + box.height / 2 - dates.y - dates.height / 2),
+  ).toBeLessThanOrEqual(1);
+  await mine.screenshot({ path: testInfo.outputPath("secret-team-week.png") });
+
+  // Moving another member's week keeps the toggle in the user's own section,
+  // and the personal month that follows is that member's.
+  await page
+    .locator(`.calendar-team-section[data-member-id="${memberId}"]`)
+    .getByRole("button", { name: /다음 주$/ })
+    .click();
+  await expect(navigation.locator(".calendar-secret-toggle")).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "개인 월간 보기", exact: true })
+    .click();
+  await expect(toggle).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  await expect(navigation.locator(".calendar-secret-toggle")).toBeInViewport({
+    ratio: 1,
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390);
+  await mine.screenshot({
+    path: testInfo.outputPath("secret-team-week-mobile.png"),
+  });
 });

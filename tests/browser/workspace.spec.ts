@@ -5468,6 +5468,222 @@ test("정확한 주차 범위·속성 묶음·열 메뉴의 고정 영역을 저
   ).toBeInViewport();
 });
 
+test("묶음 보기의 묶음 제목은 스크롤해도 열 머리글 아래에 고정되고 다음 묶음 제목이 밀어낸다", async ({
+  page,
+}, info) => {
+  for (let i = 1; i <= 17; i++)
+    await post(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: `UX 업무 ${i}`, category: "category-ux" },
+    });
+  for (let i = 1; i <= 20; i++)
+    await post(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: `기타 업무 ${i}`, category: "category-other" },
+    });
+  for (let i = 1; i <= 6; i++)
+    await post(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: `미지정 업무 ${i}` },
+    });
+  await page.reload();
+  await expect(page.locator('[data-column="title"]').first()).toBeVisible();
+  await groupByColumn(page, "category");
+  const grid = page.getByRole("grid");
+  const pinned = page.locator(".group-heading-pin .group-heading");
+  const box = async (locator: Locator) => (await locator.boundingBox())!;
+  const headerBottom = async () => {
+    const header = await box(page.locator(".sheet-header"));
+    return header.y + header.height;
+  };
+  const scroll = async (top: number, left?: number) => {
+    await grid.evaluate(
+      (el, [top, left]) => {
+        el.scrollTop = top!;
+        if (left !== undefined) el.scrollLeft = left;
+      },
+      [top, left],
+    );
+    await expect
+      .poll(() => grid.evaluate((el) => el.scrollTop))
+      .toBeCloseTo(top, 0);
+  };
+  const row = (title: string) =>
+    page.locator(".sheet-row", {
+      has: page.locator('[data-column="title"]', {
+        hasText: new RegExp(`^${title}$`),
+      }),
+    });
+  // 묶음 제목이 있는 행의 위치(행 영역 기준)
+  const groupTop = (label: string) =>
+    page
+      .locator(".sheet-row .group-heading", { hasText: label })
+      .evaluate(
+        (el) =>
+          new DOMMatrixReadOnly(
+            getComputedStyle(el.closest(".sheet-row")!).transform,
+          ).m42,
+      );
+  await expect(pinned).toHaveCount(0);
+  const other = await groupTop("기타");
+  expect(other).toBeGreaterThan(500);
+
+  // 첫 묶음 안: 첫 묶음 제목을 머리글 바로 아래에 고정한다.
+  await scroll(120);
+  await expect(pinned).toContainText("UX 개선");
+  await expect(pinned).toContainText("20개 업무");
+  await expect(pinned).toHaveCSS("background-color", /rgb\(/);
+  expect((await box(pinned)).y).toBeCloseTo(await headerBottom(), 0);
+  expect((await box(pinned)).height).toBeCloseTo(28, 0);
+  await grid.screenshot({ path: info.outputPath("group-pinned.png") });
+
+  // 다음 묶음 제목이 10px 아래에 오면 고정한 제목을 18px 밀어 올린다.
+  await scroll(other - 10);
+  await expect(pinned).toContainText("UX 개선");
+  await expect
+    .poll(async () => (await box(pinned)).y - (await headerBottom()))
+    .toBeCloseTo(-18, 0);
+  const next = page.locator(".sheet-row .group-heading", { hasText: "기타" });
+  expect((await box(next)).y).toBeCloseTo((await headerBottom()) + 10, 0);
+  await grid.screenshot({ path: info.outputPath("group-pushed.png") });
+
+  // 다음 묶음 제목이 고정 위치에 닿으면 겹쳐 그리지 않고, 지나가면 그 제목을 고정한다.
+  await scroll(other);
+  await expect(pinned).toHaveCount(0);
+  expect((await box(next)).y).toBeCloseTo(await headerBottom(), 0);
+  await scroll(other + 60);
+  await expect(pinned).toContainText("기타");
+  await expect(pinned).toContainText("20개 업무");
+  expect((await box(pinned)).y).toBeCloseTo(await headerBottom(), 0);
+
+  // 가로로 스크롤해도 제목 글자는 행의 묶음 제목처럼 왼쪽에 남는다.
+  await scroll(other + 60, 600);
+  expect(await grid.evaluate((el) => el.scrollLeft)).toBe(600);
+  const label = pinned.locator("span").first();
+  await expect(label).toBeInViewport();
+  expect((await box(label)).x).toBeCloseTo((await box(grid)).x + 16, 0);
+  await scroll(other + 60, 0);
+
+  // 방향키로 위쪽 행을 고르면 열 머리글과 고정한 제목에 가리지 않게 스크롤한다.
+  const uncovered = async () => {
+    const cell = page.locator(".sheet-cell.focused");
+    const { x, y, width, height } = await box(cell);
+    return cell.evaluate(
+      (el, points) =>
+        points.every(([px, py]) =>
+          el.contains(document.elementFromPoint(px, py)),
+        ),
+      [
+        [x + width / 2, y + 2],
+        [x + width / 2, y + height - 2],
+      ],
+    );
+  };
+  await scroll(other + 400);
+  const titles = page.locator('[data-column="title"]');
+  const below = (await pinned.boundingBox())!;
+  const tops = await titles.evaluateAll((cells) =>
+    cells.map((cell) => ({
+      text: cell.textContent,
+      top: cell.getBoundingClientRect().top,
+    })),
+  );
+  const start = tops
+    .filter((cell) => cell.top >= below.y + below.height)
+    .sort((a, b) => a.top - b.top)[0];
+  expect(start.text).toMatch(/^기타 업무 \d+$/);
+  await page.locator('[data-column="title"]', { hasText: start.text! }).click();
+  for (let i = Number(start.text!.split(" ").at(-1)); i > 1; i--) {
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator(".sheet-cell.focused")).toHaveText(
+      `기타 업무 ${i - 1}`,
+    );
+    await expect.poll(uncovered).toBe(true);
+  }
+  // 묶음의 첫 행은 자기 묶음 제목을 머리글 바로 아래에 둔다.
+  await expect(pinned).toHaveCount(0);
+  expect((await box(next)).y).toBeCloseTo(await headerBottom(), 0);
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".sheet-cell.focused")).toHaveText("UX 업무 17");
+  await expect.poll(uncovered).toBe(true);
+  await expect(pinned).toContainText("UX 개선");
+
+  // 확대해도 머리글 아래에 고정하고, 고정한 제목에 가린 행에도 끌어 놓을 수 있다.
+  // Firefox는 확대한 표에서 계산된 transform에 배율을 곱하므로 확대 전에 잰다.
+  const target = row("기타 업무 5");
+  const targetTop = await target.evaluate(
+    (el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).m42,
+  );
+  const zoom = page.getByRole("spinbutton", { name: "확대율", exact: true });
+  await zoom.fill("150");
+  await zoom.press("Enter");
+  await scroll(targetTop);
+  await expect(pinned).toContainText("기타");
+  expect((await box(pinned)).y).toBeCloseTo(await headerBottom(), 0);
+  expect((await box(pinned)).height).toBeCloseTo(42, 0);
+  const handle = await box(row("기타 업무 12").locator(".row-drag-handle"));
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    (await box(grid)).x + 400,
+    (await headerBottom()) + 20,
+    {
+      steps: 10,
+    },
+  );
+  await expect(target).toHaveClass(/row-drop-before/);
+  await page.mouse.up();
+  await expect
+    .poll(async () => {
+      const texts = await titles.allTextContents();
+      return texts.indexOf("기타 업무 5") - texts.indexOf("기타 업무 12");
+    })
+    .toBe(1);
+  await zoom.fill("100");
+  await zoom.press("Enter");
+
+  // 행 번호를 끌어 고정한 제목 위로 가져가면 그 아래에 가린 행까지 선택한다.
+  // 자동 스크롤(머리글 아래 16px)이 닿지 않는 고정한 제목의 아래쪽을 쓴다.
+  await scroll(other + 400);
+  const heading = await box(pinned);
+  const y = heading.y + heading.height - 6;
+  const covered = await titles.evaluateAll(
+    (cells, y) =>
+      cells
+        .map((cell) => ({
+          text: cell.textContent!,
+          box: cell.getBoundingClientRect(),
+        }))
+        .find(({ box }) => box.top <= y && box.bottom > y)!.text,
+    y,
+  );
+  expect(covered).toMatch(/^기타 업무 \d+$/);
+  const anchor = await box(row("기타 업무 14").locator(".row-select"));
+  await page.mouse.move(
+    anchor.x + anchor.width / 2,
+    anchor.y + anchor.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(anchor.x + anchor.width / 2, y, { steps: 8 });
+  await expect(row(covered).locator(".row-number")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.mouse.up();
+
+  await page.locator('[data-header-key="category"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: "묶음 해제", exact: true }).click();
+  await expect(page.locator(".group-heading")).toHaveCount(0);
+  await scroll(300);
+  await expect(pinned).toHaveCount(0);
+});
+
 test("여러 줄 텍스트 편집창은 내용에 맞춰 늘고 줄며 행 높이를 유지한다", async ({
   page,
 }, info) => {

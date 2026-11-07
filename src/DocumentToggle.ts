@@ -374,6 +374,18 @@ function shownOpen(state: EditorState, pos: number, node: Node) {
 export function foldToggle(tr: Transaction, pos: number, open: boolean) {
   return tr.setMeta(toggleFoldKey, { pos, open });
 }
+// Show the folded toggles whose content holds `pos` open in this view, as a
+// jump to a heading inside them needs. A toggle's own summary stays visible
+// while it is folded, so that toggle keeps its fold.
+export function unfoldTogglesAround(view: EditorView, pos: number) {
+  const $pos = view.state.doc.resolve(pos);
+  for (let depth = 1; depth < $pos.depth; depth++) {
+    const node = $pos.node(depth);
+    const start = $pos.before(depth);
+    if (node.type.name === "toggle" && !shownOpen(view.state, start, node))
+      view.dispatch(foldToggle(view.state.tr, start, true));
+  }
+}
 const toggleFold = $prose(
   () =>
     new Plugin<DecorationSet>({

@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit PR review settings. Automatic reviews apply to PRs into main only
+# (default). The free OSS plan skips them below 10 stars, so comment
+# "@coderabbitai review" on a PR to request one.
+language: ko-KR
+reviews:
+  profile: chill
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!package-lock.json"
+    - "!docs/THIRD_PARTY_NOTICES.*"
+    - "!assets/**"
+  path_instructions:
+    - path: "server/**"
+      instructions: "운영 중인 서비스다. DB 스키마·저장 형식·기존 데이터 변환이 바뀌면 반드시 지적한다."
+    - path: "edge/**"
+      instructions: "사내 Node 서버(server/)와 기능이 같아야 한다. 한쪽에만 생긴 동작 차이를 지적한다."
+    - path: "worker/**"
+      instructions: "사내 Node 서버(server/)와 기능이 같아야 한다. 한쪽에만 생긴 동작 차이를 지적한다."

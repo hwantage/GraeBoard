@@ -87,10 +87,13 @@ export async function loadDocumentLink(
 
 // A linked target opens over the current screen with the window of its own
 // screen, so the linking document stays open below; closing returns to it.
+// `fullPage` opens a detail in full page, as a full-page button's new tab
+// asks; a memo always opens in full page.
 export default function DocumentLinkPanel({
   link,
   user,
   readOnly,
+  fullPage,
   calendarTheme,
   onClose,
   onDeleted,
@@ -99,6 +102,7 @@ export default function DocumentLinkPanel({
   link: OpenedDocumentLink;
   user: User;
   readOnly: boolean;
+  fullPage?: boolean;
   calendarTheme: { theme: string; palette: string; style?: CSSProperties };
   onClose: () => void;
   onDeleted: (entry: CalendarEntry) => void;
@@ -112,6 +116,7 @@ export default function DocumentLinkPanel({
         user={user}
         users={link.context.members}
         readOnly={readOnly}
+        initialFullPage={fullPage}
         onClose={onClose}
       />
     );
@@ -122,6 +127,7 @@ export default function DocumentLinkPanel({
         context={link.context}
         user={user}
         readOnly={readOnly}
+        fullPage={fullPage}
         calendarTheme={calendarTheme}
         onClose={onClose}
         onDeleted={onDeleted}
@@ -150,6 +156,7 @@ export default function DocumentLinkPanel({
       propertiesReadOnly
       reportMode
       documentReport={{ id: link.report.id, isNew: false }}
+      initialFullPage={fullPage}
       headerAction={
         <div
           className="task-detail-actions"
@@ -179,6 +186,7 @@ function CalendarLinkPanel({
   context,
   user,
   readOnly,
+  fullPage,
   calendarTheme,
   onClose,
   onDeleted,
@@ -187,6 +195,7 @@ function CalendarLinkPanel({
   context: CalendarContext;
   user: User;
   readOnly: boolean;
+  fullPage?: boolean;
   calendarTheme: { theme: string; palette: string; style?: CSSProperties };
   onClose: () => void;
   onDeleted: (entry: CalendarEntry) => void;
@@ -219,6 +228,7 @@ function CalendarLinkPanel({
         onManageTags={() => setManagingTags(true)}
         userId={user.id}
         readOnly={readOnly || !writable}
+        initialFullPage={fullPage}
         onSaved={() => {}}
         onClose={onClose}
         onDeleted={(removed) => onDeleted(removed)}
@@ -289,6 +299,7 @@ function MemoLinkPanel({
         title={title}
         widthKey={`${draftKey}:width`}
         link={target}
+        onNewTab={() => editor.current?.flush() ?? Promise.resolve(true)}
         inline
         selected
         loading={loading}

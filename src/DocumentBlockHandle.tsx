@@ -7,7 +7,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  GripVertical,
+  ListEnd,
+  ListStart,
+  Trash2,
+} from "lucide-react";
 import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
 import {
   NodeSelection,
@@ -33,7 +41,7 @@ import { TOGGLE_LEVELS } from "./DocumentToggle";
 import { trackPointerDrag } from "./trackPointerDrag";
 
 // The handle in the left gutter moves a block by dragging and opens a menu to
-// convert, duplicate, move or delete it. A block is a top-level block, a list
+// add a block above or below it, convert, duplicate, move or delete it. A block is a top-level block, a list
 // item or a block inside a toggle's content; tables, quotes and code blocks
 // move as a whole. Blocks a selection spans move together: a text selection
 // across blocks, the blocks a drag in the margin selects, or a range extended
@@ -476,6 +484,38 @@ function duplicateRange(state: EditorState, range: Range) {
   return closeHistory(tr);
 }
 
+// An empty block above or below the range, where the caret goes: an item of
+// the same list, unchecked in a checklist, or a paragraph elsewhere. Below
+// the last block the empty line kept for typing is used instead.
+function insertBlock(state: EditorState, range: Range, step: -1 | 1) {
+  const { doc, schema } = state;
+  const at = step < 0 ? range.from : range.to;
+  const $at = doc.resolve(at);
+  const next = $at.nodeAfter;
+  const tr = state.tr;
+  if (step > 0 && next && isTypingArea(doc, { pos: at, node: next }))
+    tr.setSelection(TextSelection.create(doc, at + 1));
+  else {
+    const paragraph = schema.nodes.paragraph.create();
+    const item = step < 0 ? next : $at.nodeBefore;
+    const node =
+      LISTS.has($at.parent.type.name) && item
+        ? item.type.create(
+            {
+              ...item.attrs,
+              checked: item.attrs.checked == null ? null : false,
+            },
+            paragraph,
+          )
+        : paragraph;
+    if (!$at.parent.canReplaceWith($at.index(), $at.index(), node.type))
+      return null;
+    tr.insert(at, node);
+    tr.setSelection(Selection.near(tr.doc.resolve(at + 1)));
+  }
+  return closeHistory(tr.setMeta(selectKey, null));
+}
+
 function deleteRange(state: EditorState, range: Range) {
   const tr = state.tr;
   removeRange(tr, range);
@@ -670,7 +710,7 @@ type Marquee = { left: number; top: number; width: number; height: number };
 // A drag in the margin selects blocks; it never starts on controls, text or
 // another dialog.
 const MARQUEE_SKIP =
-  "button, a, input, textarea, select, label, [contenteditable], [role='separator'], .document-rich-tools, .document-link-tip, .document-slash-menu";
+  "button, a, input, textarea, select, label, [contenteditable], [role='separator'], .document-rich-tools, .document-link-tip, .document-slash-menu, .document-toc";
 const HANDLE_WIDTH = 18;
 const HANDLE_HEIGHT = 24;
 const HANDLE_GAP = 4;
@@ -715,15 +755,34 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         : null;
     let top = rect.top;
     let bottom = Math.min(rect.bottom, top + 28 * scale);
+    let lineBottom = bottom;
     const text = firstText(block);
     if (text !== null)
       try {
         const caret = view.coordsAtPos(text);
         top = caret.top;
+        lineBottom = caret.bottom;
         bottom = Math.min(caret.bottom, top + 40 * scale);
       } catch {
         // Keep the block's own top edge.
       }
+    // A first line taller than the view, such as a large image, keeps the
+    // handle beside its visible part when its top is scrolled under the
+    // sticky toolbar or out of view. Ordinary lines skip the lookup.
+    const visible =
+      lineBottom - top > 2 * HANDLE_HEIGHT * scale
+        ? shell.current
+            ?.querySelector(".document-rich-tools")
+            ?.getBoundingClientRect().bottom
+        : undefined;
+    if (
+      visible !== undefined &&
+      top < visible &&
+      lineBottom - HANDLE_HEIGHT * scale > visible
+    ) {
+      top = visible;
+      bottom = Math.min(lineBottom, top + 40 * scale);
+    }
     return {
       pos: block.pos,
       left:
@@ -807,6 +866,20 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         current.focus();
       };
     const items: SlashItem[] = [
+      {
+        id: "above",
+        label: "위에 추가",
+        keywords: "",
+        icon: <ListStart size={16} />,
+        run: act((state, target) => insertBlock(state, target, -1)),
+      },
+      {
+        id: "below",
+        label: "아래에 추가",
+        keywords: "",
+        icon: <ListEnd size={16} />,
+        run: act((state, target) => insertBlock(state, target, 1)),
+      },
       {
         id: "duplicate",
         label: "복제",
@@ -1029,7 +1102,9 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
       if (
         !view.editable ||
         view.composing ||
-        target?.closest(".document-rich-tools, .document-slash-menu")
+        target?.closest(
+          ".document-rich-tools, .document-slash-menu, .document-toc",
+        )
       ) {
         setSpot(null);
         return;

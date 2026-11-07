@@ -3318,6 +3318,15 @@ body.document-block-moving * {
   font-size: 9px;
   color: var(--accent-muted);
 }
+/* 스크롤해 지나간 묶음의 제목을 열 머리글(32px) 아래에 고정한다. 높이가 없어
+   행 배치를 바꾸지 않는다. 편집 중인 행(z-index 10)보다 위, 열 머리글과 가로
+   스크롤 막대보다 아래에 그린다. */
+.group-heading-pin {
+  position: sticky;
+  top: 32px;
+  height: 0;
+  z-index: 11;
+}
 
 /* Inline editing stays inside the grid and preserves its navigation model. */
 .cell-input-ready {

@@ -17,6 +17,7 @@ import DocumentLinkPanel, {
 import {
   DocumentLinkContext,
   UNAVAILABLE_LINK_MESSAGE,
+  documentLinkFullPage,
   documentLinkKey,
   refreshDocumentLinkTitles,
   updateDocumentLinkTitle,
@@ -288,11 +289,14 @@ function Workspace({
   const { user } = boot;
   const site = useSite();
   // A copied link address opens the app at /links/…: clean the address before
-  // the screen route reads it, and open the target once it is found.
+  // the screen route reads it, and open the target once it is found. A
+  // full-page button's new tab also asks for full page (document-links.ts).
   const [deepLink] = useState(() => {
     const target = parseDocumentLinkPath(location.pathname);
-    if (target) history.replaceState(history.state, "", "/");
-    return target;
+    if (!target) return null;
+    const fullPage = documentLinkFullPage(location.search);
+    history.replaceState(history.state, "", "/");
+    return { target, fullPage };
   });
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const calendarTheme = useCalendarTheme();
@@ -420,7 +424,7 @@ function Workspace({
   const [toast, setToast] = useToast();
   // Details opened from document links, over whatever is open below.
   const [linkPanels, setLinkPanels] = useState<
-    { key: string; link: OpenedDocumentLink }[]
+    { key: string; link: OpenedDocumentLink; fullPage?: boolean }[]
   >([]);
   const [linkReload, setLinkReload] = useState(0);
   // "사본에서 열기" on a copy's task moves to that copy (linkNavigation).
@@ -487,7 +491,7 @@ function Workspace({
   useEffect(() => {
     if (!deepLink) return;
     let active = true;
-    loadDocumentLink(deepLink).then(
+    loadDocumentLink(deepLink.target).then(
       (link) => {
         if (!active) return;
         const target =
@@ -500,7 +504,13 @@ function Workspace({
                 : link.task.teamId;
         if (boot.teams.some((team) => team.id === target)) setTeamId(target);
         if (link.kind === "calendar") workspaceRoute.commit("calendar", true);
-        setLinkPanels([{ key: documentLinkKey(deepLink), link }]);
+        setLinkPanels([
+          {
+            key: documentLinkKey(deepLink.target),
+            link,
+            fullPage: deepLink.fullPage,
+          },
+        ]);
       },
       (e) => {
         if (active) setError((e as Error).message);
@@ -4398,12 +4408,13 @@ function Workspace({
           onAction={presentation ? undefined : detailAction}
         />
       )}
-      {linkPanels.map(({ key, link }) => (
+      {linkPanels.map(({ key, link, fullPage }) => (
         <DocumentLinkPanel
           key={key}
           link={link}
           user={user}
           readOnly={presentation}
+          fullPage={fullPage}
           calendarTheme={calendarTheme}
           onClose={() => closeLinkPanel(key)}
           onDeleted={() => closeLinkPanel(key)}

@@ -16,9 +16,13 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { Download, FileCode, FileText, Printer } from "lucide-react";
 import { api, ApiError } from "./api";
 import { useMobileLayout } from "./useMobileLayout";
 import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
+import DocumentTocToggle from "./DocumentTocToggle";
+import DocumentToolMenu from "./DocumentToolMenu";
+import type { DocumentExportFormat } from "./document-export";
 import { MAX_IMAGE_BYTES } from "../shared/document-images.js";
 import { MAX_DOCUMENT_BYTES, documentBytes } from "../shared/task-documents.js";
 import {
@@ -68,6 +72,8 @@ export type SharedDocumentEditorProps = {
   path: string;
   draftKey: string;
   label?: string;
+  // Names the downloaded file.
+  title?: string;
   controlsTarget: HTMLDivElement | null;
   readOnly: boolean;
   emptyUntilSaved?: boolean;
@@ -165,6 +171,44 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             focus();
         });
     }, [mode, loading]);
+    // The table of contents belongs to this view of the document only.
+    const [toc, setToc] = useState(false);
+    const tocButton = useRef<HTMLButtonElement>(null);
+    function closeToc() {
+      // Keyboard focus in the closing contents returns to its button.
+      if (
+        section.current
+          ?.querySelector(".document-toc")
+          ?.contains(document.activeElement)
+      )
+        tocButton.current?.focus({ preventScroll: true });
+      setToc(false);
+    }
+    // A download is the text as shown, saved or not. One runs at a time;
+    // the button stays enabled so keyboard focus can return to it.
+    const exporting = useRef(false);
+    async function download(format: DocumentExportFormat) {
+      if (exporting.current) return;
+      exporting.current = true;
+      setNotice("");
+      try {
+        const { exportDocument } = await import("./document-export");
+        const missing = await exportDocument(format, {
+          markdown: current.current.markdown,
+          title: latest.current.title?.trim() || label,
+          images: latest.current.storage?.images,
+        });
+        if (missing && mounted.current)
+          setNotice(
+            `이미지 ${missing}개는 불러오지 못해 파일에 넣지 못했습니다.`,
+          );
+      } catch {
+        if (mounted.current)
+          setNotice("문서를 내려받지 못했습니다. 잠시 뒤 다시 시도하세요.");
+      } finally {
+        exporting.current = false;
+      }
+    }
     function changeMode(value: DocumentMode) {
       if (value === "rich" && mode !== value) {
         setSourceRequired(false);
@@ -382,6 +426,14 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
               : e instanceof ApiError && e.status === 409
                 ? e.details?.current
                 : null;
+          // Merging now would rewrite the text under a composition, which
+          // ends it. The conflict waits like any remote change and merges,
+          // then saves again, once the composition ends (drainRemote).
+          if (remote && composing.current) {
+            receiveRemote(remote);
+            if (mounted.current) setStatus("저장 대기");
+            return false;
+          }
           if (remote && mergeRemote(remote)) {
             setError("");
             setConflict(null);
@@ -581,6 +633,44 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         }}
       />
     );
+    // Left of the contents button, in every mode and view.
+    const downloadMenu = (
+      <DocumentToolMenu
+        label="다운로드"
+        menuLabel="다운로드 형식"
+        icon={<Download size={16} aria-hidden="true" />}
+        className="document-download"
+        disabled={!loaded}
+        items={[
+          {
+            label: "PDF (인쇄 창에서 저장)",
+            icon: <Printer size={16} aria-hidden="true" />,
+            run: () => void download("pdf"),
+          },
+          {
+            label: "Markdown (.md)",
+            icon: <FileText size={16} aria-hidden="true" />,
+            run: () => void download("markdown"),
+          },
+          {
+            label: "HTML (.html)",
+            icon: <FileCode size={16} aria-hidden="true" />,
+            run: () => void download("html"),
+          },
+        ]}
+      />
+    );
+    // The rich view only: the contents jump within its text. The source
+    // keeps its place so the mode switch does not move.
+    const tocToggle = !editorFailed && (
+      <DocumentTocToggle
+        ref={tocButton}
+        open={toc}
+        disabled={!editorReady}
+        reserved={mode !== "rich"}
+        onChange={setToc}
+      />
+    );
     // While editing, the mode switch sits at the right end of the toolbar in
     // both modes. Read-only, failed and mobile views keep it in the host's
     // control area, which has no toolbar beside it.
@@ -622,6 +712,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             <div className="document-controls">
               {(mode === "source" || docReadOnly || editorFailed) && saveStatus}
               {modeToggle}
+              {downloadMenu}
+              {tocToggle}
             </div>,
             props.controlsTarget,
           )}
@@ -701,6 +793,8 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                 <div className="document-history-tools">
                   {saveStatus}
                   {modeToggle}
+                  {downloadMenu}
+                  {tocToggle}
                 </div>
               </div>
             </div>
@@ -732,7 +826,17 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     remoteMarkdown={remoteMarkdown}
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
-                    modeControl={toolbarModes && modeToggle}
+                    modeControl={
+                      toolbarModes && (
+                        <>
+                          {modeToggle}
+                          {downloadMenu}
+                          {tocToggle}
+                        </>
+                      )
+                    }
+                    toc={toc}
+                    onTocClose={closeToc}
                     onChange={change}
                     images={props.storage?.images}
                     documentLinks={!props.storage}

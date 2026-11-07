@@ -10,16 +10,7 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import {
-  Plus,
-  ChevronDown,
-  Pencil,
-  Trash2,
-  FileText,
-  Maximize2,
-  Minimize2,
-  X,
-} from "lucide-react";
+import { Plus, ChevronDown, Pencil, Trash2, FileText, X } from "lucide-react";
 import { api, send, ApiError } from "./api";
 import { reorderItems, useListReorder, type Placement } from "./useListReorder";
 import { Button, ErrorNote } from "./components";
@@ -39,6 +30,7 @@ import {
 } from "../shared/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import DocumentFullPageButton from "./DocumentFullPageButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
@@ -984,6 +976,9 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 }
                 widthKey={`${props.draftKey(doc.id)}:width`}
                 link={props.documentLink?.(doc.id)}
+                onNewTab={() =>
+                  handles.current.get(doc.id)?.flush() ?? Promise.resolve(true)
+                }
                 inline={!!props.inline}
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
@@ -1000,6 +995,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
                         path={`${path}/${doc.id}`}
                         draftKey={props.draftKey(doc.id)}
                         label={label}
+                        title={doc.title}
                         readOnly={readOnly}
                         // Inline memo cards remain visible when another card is selected.
                         live={!!props.inline || selected === doc.id}
@@ -1093,6 +1089,7 @@ export function DocumentPage({
   onRename,
   widthKey,
   link,
+  onNewTab,
   inline,
   selected,
   loading,
@@ -1110,6 +1107,8 @@ export function DocumentPage({
   onRename?: () => void;
   widthKey: string;
   link?: DocumentLinkTarget;
+  // Saves this memo before its full-page button loads it in a new tab.
+  onNewTab?: () => Promise<boolean>;
   inline: boolean;
   selected: boolean;
   loading: boolean;
@@ -1221,19 +1220,13 @@ export function DocumentPage({
               </span>
             ))}
           {link && <CopyDocumentLinkButton target={link} title={title} />}
-          <Button
+          <DocumentFullPageButton
             ref={expandButton}
-            className="document-expand"
-            tooltip={fullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"}
-            aria-pressed={fullPage}
-            onClick={() => (fullPage ? leaveFullPage() : setFullPage(true))}
-          >
-            {fullPage ? (
-              <Minimize2 size={16} aria-hidden="true" />
-            ) : (
-              <Maximize2 size={16} aria-hidden="true" />
-            )}
-          </Button>
+            fullPage={fullPage}
+            link={link}
+            onToggle={() => (fullPage ? leaveFullPage() : setFullPage(true))}
+            onNewTab={onNewTab}
+          />
           <div
             className="memo-document-controls"
             ref={setCardControls}

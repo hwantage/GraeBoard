@@ -68,7 +68,11 @@ let renderId = 0;
 let renderQueue: Promise<unknown> = Promise.resolve();
 class MermaidLoadError extends Error {}
 
-function renderMermaid(source: string, dark: boolean, current: () => boolean) {
+export function renderMermaid(
+  source: string,
+  dark: boolean,
+  current: () => boolean,
+) {
   // Mermaid has global configuration. Serialize initialize + render together
   // so diagrams in different editor/theme contexts cannot change each other.
   const result = renderQueue.then(async () => {

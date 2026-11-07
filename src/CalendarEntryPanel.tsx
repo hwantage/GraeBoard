@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Minimize2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Button, ErrorNote, Modal } from "./components";
 import { api, ApiError, send } from "./api";
 import {
@@ -25,6 +25,7 @@ import {
 } from "./calendar-tag-checks";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import DocumentFullPageButton from "./DocumentFullPageButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import { updateDocumentLinkTitle, useOpenDocumentLink } from "./document-links";
 
@@ -34,6 +35,7 @@ export default function CalendarEntryPanel({
   onManageTags,
   userId,
   readOnly,
+  initialFullPage = false,
   onSaved,
   onDeleted,
   onClose,
@@ -43,6 +45,8 @@ export default function CalendarEntryPanel({
   onManageTags: () => void;
   userId: string;
   readOnly: boolean;
+  // Opened from another tab's full-page button (DocumentFullPageButton).
+  initialFullPage?: boolean;
   onSaved: (entry: CalendarEntryUpdate) => void;
   onDeleted: (entry: CalendarEntry, result: CalendarEntryDeletion) => void;
   onClose: () => void;
@@ -60,7 +64,7 @@ export default function CalendarEntryPanel({
   const [ready, setReady] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [preferredFullPage, setDocumentFullPage] = useState(false);
+  const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
   const { fullPage: documentFullPage, fullWidth } =
     useDocumentFullPage(preferredFullPage);
   const deletionId = useRef(crypto.randomUUID());
@@ -298,6 +302,14 @@ export default function CalendarEntryPanel({
       if (alive.current) setBusy(false);
     }
   }
+  // Saves the title, range and document. Closing and deleting start here.
+  async function flush() {
+    return (
+      (await saveTitle()) &&
+      (!rangeEditor.current || (await rangeEditor.current.flush())) &&
+      (!editor.current || (await editor.current.flush()))
+    );
+  }
   async function close(keepDraft = false) {
     if (leaving.current || busy || savingTags.current) return false;
     leaving.current = true;
@@ -312,10 +324,7 @@ export default function CalendarEntryPanel({
         onClose();
         return true;
       }
-      if (!(await saveTitle())) return false;
-      if (rangeEditor.current && !(await rangeEditor.current.flush()))
-        return false;
-      if (editor.current && !(await editor.current.flush())) return false;
+      if (!(await flush())) return false;
       onClose();
       return true;
     } finally {
@@ -328,12 +337,7 @@ export default function CalendarEntryPanel({
     leaving.current = true;
     setBusy(true);
     try {
-      if (
-        !(await saveTitle()) ||
-        (rangeEditor.current && !(await rangeEditor.current.flush())) ||
-        (editor.current && !(await editor.current.flush()))
-      )
-        return;
+      if (!(await flush())) return;
       const result = await deleteCalendarEntry(
         current.current,
         deletionId.current,
@@ -359,20 +363,12 @@ export default function CalendarEntryPanel({
       titleAction={
         <>
           <CopyDocumentLinkButton target={linkTarget} title={title} />
-          <Button
-            tooltip={
-              documentFullPage ? "전체 페이지 닫기" : "문서 전체 페이지로 보기"
-            }
-            className="document-expand"
-            aria-pressed={documentFullPage}
-            onClick={() => setDocumentFullPage((value) => !value)}
-          >
-            {documentFullPage ? (
-              <Minimize2 size={16} aria-hidden="true" />
-            ) : (
-              <Maximize2 size={16} aria-hidden="true" />
-            )}
-          </Button>
+          <DocumentFullPageButton
+            fullPage={documentFullPage}
+            link={linkTarget}
+            onToggle={() => setDocumentFullPage((value) => !value)}
+            onNewTab={flush}
+          />
         </>
       }
       onClose={() => void close()}
@@ -502,6 +498,7 @@ export default function CalendarEntryPanel({
               path={`${path}/document`}
               draftKey={`weekly-plan:calendar-document:${userId}:${entry.teamId}:${entry.userId}:${entry.id}`}
               label="일정 문서"
+              title={title}
               live
               onRemoteDocument={(data) => {
                 const remote = data as CalendarDocument;

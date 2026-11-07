@@ -1255,6 +1255,9 @@
 .workspace[data-calendar-theme="dark"]
   :is(
     .document-modes,
+    .document-toc,
+    .document-controls .document-toc-toggle,
+    .document-controls .document-download,
     .document-rich-tools,
     .document-source,
     .document-image-actions,
@@ -1284,6 +1287,14 @@
   .document-modes
   button[aria-pressed="true"] {
   color: var(--calendar-on-orange);
+}
+.workspace[data-calendar-theme="dark"]
+  :is(
+    .document-toc-toggle[aria-pressed="true"],
+    .document-download[aria-expanded="true"]
+  ) {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
 }
 .workspace[data-calendar-theme="dark"] .calendar-entry-card {
   background: color-mix(

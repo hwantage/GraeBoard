@@ -197,6 +197,8 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
   await expect(menu(page)).toBeVisible();
   await expect(handle(page)).toHaveAttribute("aria-expanded", "true");
   await expect(menu(page).getByRole("option")).toHaveText([
+    "위에 추가",
+    "아래에 추가",
     "복제",
     "위로 이동",
     "아래로 이동",
@@ -218,9 +220,16 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
   await expect(menu(page)).toContainText("전환");
   await expect(option(page, "위로 이동")).toBeDisabled();
   await expect(option(page, "본문")).toBeDisabled();
-  await expect(option(page, "복제")).toHaveAttribute("aria-selected", "true");
+  await expect(option(page, "위에 추가")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(rich(page)).toBeFocused();
   // Keyboard navigation skips unavailable entries, like the "/" menu.
+  for (const name of ["아래에 추가", "복제"]) {
+    await page.keyboard.press("ArrowDown");
+    await expect(option(page, name)).toHaveAttribute("aria-selected", "true");
+  }
   await page.keyboard.press("ArrowDown");
   await expect(option(page, "아래로 이동")).toHaveAttribute(
     "aria-selected",
@@ -260,6 +269,8 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
   // Duplicate, then delete one copy with the keyboard; undo brings it back.
   await hover(page, blocks.last());
   await handle(page).click();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(blocks).toHaveText([
     "첫째 문단",
@@ -283,6 +294,74 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
     "셋째 문단",
     "셋째 문단",
   ]);
+});
+
+test("손잡이 메뉴의 위에 추가·아래에 추가는 빈 블록을 만들고 커서를 둔다", async ({
+  page,
+}, info) => {
+  await save(
+    page,
+    taskIds[0],
+    "첫째 문단\n\n* 하나\n* 둘\n\n- [x] 끝난 일\n\n<details open>\n<summary>토글</summary>\n\n토글 안\n\n</details>\n\n마지막 문단",
+  );
+  await open(page);
+  const blocks = rich(page).locator(":scope > *");
+  // A paragraph above the first block; typing goes into it.
+  await hover(page, blocks.nth(0));
+  await handle(page).click();
+  await page.screenshot({ path: info.outputPath("menu.png") });
+  await option(page, "위에 추가").click();
+  await expect(menu(page)).toHaveCount(0);
+  await expect(rich(page)).toBeFocused();
+  await page.keyboard.type("새 첫 문단");
+  await expect(blocks.nth(0)).toHaveText("새 첫 문단");
+  await expect(blocks.nth(1)).toHaveText("첫째 문단");
+  // In a list the new block is an item of the same list.
+  await hover(page, rich(page).locator("ul > li").first());
+  await handle(page).click();
+  await option(page, "아래에 추가").click();
+  await page.keyboard.type("하나 반");
+  await expect(rich(page).locator("ul").first().locator("> li")).toHaveText([
+    "하나",
+    "하나 반",
+    "둘",
+  ]);
+  // A checklist item starts unchecked.
+  await hover(page, rich(page).getByText("끝난 일"));
+  await handle(page).click();
+  await option(page, "위에 추가").click();
+  await page.keyboard.type("새 할 일");
+  const tasks = rich(page).locator("li.document-check-item");
+  await expect(tasks).toHaveText(["새 할 일", "끝난 일"]);
+  await expect(tasks.nth(0).locator("> input")).not.toBeChecked();
+  await expect(tasks.nth(1).locator("> input")).toBeChecked();
+  // Inside a toggle the paragraph stays in the toggle.
+  await hover(page, rich(page).getByText("토글 안"));
+  await handle(page).click();
+  await option(page, "아래에 추가").click();
+  await page.keyboard.type("토글 안 둘째");
+  await expect(rich(page).locator(".document-toggle-content > p")).toHaveText([
+    "토글 안",
+    "토글 안 둘째",
+  ]);
+  // Below the last block the empty typing line takes the caret.
+  await hover(page, rich(page).getByText("마지막 문단"));
+  await handle(page).click();
+  await option(page, "아래에 추가").click();
+  await page.keyboard.type("끝에 추가");
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(
+      exact(
+        "새 첫 문단\n\n첫째 문단\n\n* 하나\n* 하나 반\n* 둘\n\n- [ ] 새 할 일\n- [x] 끝난 일\n\n<details open>\n<summary>토글</summary>\n\n토글 안\n\n토글 안 둘째\n\n</details>\n\n마지막 문단\n\n끝에 추가",
+      ),
+    );
+  // Each addition is its own undo step, typing aside.
+  await detail(page)
+    .getByRole("button", { name: "문서 실행취소", exact: true })
+    .click();
+  await expect(rich(page)).not.toContainText("끝에 추가");
+  await expect(rich(page)).toContainText("토글 안 둘째");
 });
 
 test("Alt+Shift+위/아래 방향키로 현재 블록을 옮기고 목록·토글 경계를 넘는다", async ({
@@ -605,4 +684,75 @@ test("이미지 문단도 끌어서 옮기며 이미지를 다시 올리지 않�
     .poll(() => markdown(page))
     .toMatch(exact(`![옮길 그림](${url})\n\n첫째 문단\n\n둘째 문단`));
   expect(uploads).toHaveLength(1);
+});
+
+test("큰 이미지 문단은 위가 가려져도 보이는 부분 옆에 손잡이를 두고 끌어 옮긴다", async ({
+  page,
+}) => {
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 600;
+    canvas.height = 1400;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#408378";
+    context.fillRect(0, 0, 600, 1400);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  const res = await page.request.post(
+    `/api/tasks/${taskIds[0]}/documents/main/images`,
+    {
+      headers,
+      multipart: {
+        image: {
+          name: "긴 그림.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(png, "base64"),
+        },
+      },
+    },
+  );
+  expect(res.ok(), await res.text()).toBeTruthy();
+  const { url } = await res.json();
+  await save(page, taskIds[0], `첫째 문단\n\n![긴 그림](${url})\n\n둘째 문단`);
+  await open(page);
+  const image = rich(page).locator(".document-image");
+  await expect
+    .poll(() =>
+      image
+        .locator("img")
+        .evaluate((img: HTMLImageElement) => img.naturalHeight),
+    )
+    .toBe(1400);
+  // On the image's line, the handle sits at its top like a first line.
+  let box = (await image.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + 60);
+  await expect(handle(page)).toBeVisible();
+  let grip = (await handle(page).boundingBox())!;
+  expect(grip.x + grip.width).toBeLessThanOrEqual(box.x);
+  expect(Math.abs(grip.y + grip.height / 2 - (box.y + 20))).toBeLessThan(4);
+
+  // With the top scrolled under the toolbar, the handle stays beside the
+  // part in view.
+  await rich(page).locator("p").last().scrollIntoViewIfNeeded();
+  box = (await image.boundingBox())!;
+  const tools = (await detail(page)
+    .locator(".document-rich-tools")
+    .boundingBox())!;
+  expect(box.y).toBeLessThan(tools.y);
+  await page.mouse.move(box.x + 40, tools.y + tools.height + 200, {
+    steps: 4,
+  });
+  await expect(handle(page)).toBeVisible();
+  grip = (await handle(page).boundingBox())!;
+  expect(grip.x + grip.width).toBeLessThanOrEqual(box.x);
+  expect(grip.y).toBeGreaterThanOrEqual(tools.y + tools.height);
+  expect(grip.y).toBeLessThan(tools.y + tools.height + 16);
+
+  // Dragging it moves the image's paragraph like any block.
+  const last = (await rich(page).locator("p").last().boundingBox())!;
+  await drag(page, last.y + last.height - 3);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`첫째 문단\n\n둘째 문단\n\n![긴 그림](${url})`));
+  await expect(rich(page).locator("p").nth(1)).toHaveText("둘째 문단");
 });
