@@ -631,6 +631,55 @@ test("붙여넣은 이미지 뒤와 문서 끝 블록 아래에서 바로 이어
     .not.toContain("<br />");
 });
 
+// The pasted capture is 320 device pixels wide (pasteImage).
+const imageWidth = async (page: Page) =>
+  Math.round(
+    (await rich(page).locator(".document-image").boundingBox())!.width,
+  );
+test("일반 화면에서 붙여넣은 이미지는 픽셀 크기 그대로 들어간다", async ({
+  page,
+}) => {
+  await open(page);
+  await pasteImage(page);
+  await expect(rich(page).locator("img[src]")).toHaveCount(1);
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(/^!\[붙여넣기\]\(\/api\/document-images\/[^)\s#]+\)\n?$/);
+  await expect.poll(() => imageWidth(page)).toBe(320);
+});
+
+test.describe("레티나 화면", () => {
+  test.use({ deviceScaleFactor: 2 });
+  test("화면 캡처를 붙여넣으면 캡처한 크기로 들어가고 원래 크기 버튼은 모든 픽셀을 보인다", async ({
+    page,
+  }, info) => {
+    await open(page);
+    test.skip(
+      (await page.evaluate(() => window.devicePixelRatio)) !== 2,
+      "Playwright Firefox does not apply deviceScaleFactor",
+    );
+    await pasteImage(page);
+    await expect(rich(page).locator("img[src]")).toHaveCount(1);
+    // Half the device pixels: the size the capture had on this screen.
+    await expect
+      .poll(async () => (await document(page)).markdown)
+      .toMatch(
+        /^!\[붙여넣기\]\(\/api\/document-images\/[^)\s#]+#width=160\)\n?$/,
+      );
+    await expect.poll(() => imageWidth(page)).toBe(160);
+    await page.screenshot({ path: info.outputPath("retina-paste.png") });
+    const image = rich(page).locator(".document-image");
+    await image.hover();
+    await image
+      .getByRole("button", { name: "이미지 원래 크기", exact: true })
+      .click();
+    await expect.poll(() => imageWidth(page)).toBe(320);
+    await expect
+      .poll(async () => (await document(page)).markdown)
+      .not.toContain("#width=");
+  });
+});
+
 test("이미지를 누르면 이미지만 선택하고 지우거나 복사·잘라내며 양옆에 커서를 표시한다", async ({
   page,
 }, info) => {
