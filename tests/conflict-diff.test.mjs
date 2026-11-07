@@ -181,7 +181,7 @@ test("payloads render with sorted keys, nested lists and visible string quotes",
   );
 });
 
-test("equal current and submitted sides report no difference", () => {
+test("equal current and submitted sides sheetClone no difference", () => {
   const payload = { value: "same", style: {} };
   const [change] = conflictChanges({
     target: "cell t1/title",

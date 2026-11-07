@@ -1,8 +1,8 @@
-import { applyReportOperation } from "./report-editing.js";
+import { applySheetCloneOperation } from "./sheet-clone-editing.js";
 
-// Rebase independent pending cell edits onto a fresh report. Structural edits
+// Rebase independent pending cell edits onto a fresh sheetClone. Structural edits
 // retain the existing revision conflict flow instead of guessing their intent.
-export function rebaseReportCells(base, remote, operations, context) {
+export function rebaseSheetCloneCells(base, remote, operations, context) {
   if (operations.some((operation) => operation.kind !== "cells")) return null;
   let before = base;
   let after = remote;
@@ -23,8 +23,8 @@ export function rebaseReportCells(base, remote, operations, context) {
       )
         return null;
     }
-    before = applyReportOperation(before, operation, context);
-    after = applyReportOperation(after, operation, context);
+    before = applySheetCloneOperation(before, operation, context);
+    after = applySheetCloneOperation(after, operation, context);
     history.push(after);
   }
   return { tasks: after, history };

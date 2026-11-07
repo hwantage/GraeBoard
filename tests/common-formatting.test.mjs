@@ -20,7 +20,7 @@ import {
   rowFontSize,
 } from "../shared/formatting.js";
 import { pack, unpack, stringify } from "../shared/compact.js";
-import { encodeReport, decodeReport } from "../server/reports.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
 import { formatScopes } from "../src/format-selection.js";
 import { applyBorderPreset } from "../shared/borders.js";
 
@@ -276,8 +276,8 @@ test("행 공통 서식은 빈 주차를 만들지 않고 다음 해 1월·2월�
       "#d1eee6",
     );
   }
-  const snapshot = decodeReport(
-    encodeReport({
+  const snapshot = decodeSheetClone(
+    encodeSheetClone({
       tasks: [stored],
       users: [],
       view: {},

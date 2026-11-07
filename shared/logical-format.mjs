@@ -11,6 +11,7 @@ export const TEAM_TRANSFER_TABLES = [
   ["sync_conflicts", "conflict_id"],
   ["sync_objects", "hash"],
   ["sync_person_refs", "person_id"],
+  ["sync_conversions", "team_id"],
   ["site_retention", "site_id,kind,entity_key,generation"],
   ["site_maintenance_jobs", "job_id"],
   ["site_entity_revisions", "entity,entity_key"],
@@ -57,18 +58,35 @@ export const databaseRow = (row) =>
     ]),
   );
 export const portableHash = (value) => digest(canonical(value));
-export function sealTransfer(payload) {
+// Version 2 carries sheet clones under their SheetClone names (sync protocol
+// 3/4, SQLite v34, PostgreSQL team v3). A version 1 bundle is restored with the
+// release that wrote it into an isolated database, which `npm run migrate`
+// then converts.
+export const TRANSFER_VERSION = 2;
+// A source whose schema predates SheetClone (backup of an unconverted
+// database) is sealed as version 1, the format its rows are in.
+export function sealTransfer(payload, version = TRANSFER_VERSION) {
   return {
     format: "graeboard-team-transfer",
-    version: 1,
+    version,
     payload,
     hash: portableHash(payload),
   };
 }
-export function verifyTransfer(bundle) {
+// legacy: also read a version 1 bundle as rows (a backup of an unconverted
+// source while it is written); restoring one is never allowed.
+export function verifyTransfer(bundle, { legacy = false } = {}) {
+  if (
+    bundle?.format === "graeboard-team-transfer" &&
+    bundle.version === 1 &&
+    !legacy
+  )
+    throw new Error(
+      "Logical transfer version 1 predates SheetClone: restore it with the release that wrote it into an isolated database, then run npm run migrate",
+    );
   if (
     bundle?.format !== "graeboard-team-transfer" ||
-    bundle.version !== 1 ||
+    ![TRANSFER_VERSION, ...(legacy ? [1] : [])].includes(bundle.version) ||
     portableHash(bundle.payload) !== bundle.hash
   )
     throw new Error("Logical transfer checksum or version mismatch");
@@ -82,6 +100,7 @@ export function verifyTransfer(bundle) {
   )
     throw new Error("Invalid logical transfer tables");
   for (const [table] of TEAM_TRANSFER_TABLES) {
+    if (bundle.version === 1 && table === "sync_conversions") continue;
     if (!Array.isArray(p.tables[table]))
       throw new Error("Missing logical table " + table);
     for (const row of p.tables[table]) {

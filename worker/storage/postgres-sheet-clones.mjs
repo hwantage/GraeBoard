@@ -1,7 +1,7 @@
-import { prepareReportEdits } from "../../server/storage/report-command-rules.mjs";
+import { prepareSheetCloneEdits } from "../../server/storage/sheet-clone-command-rules.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
 import { z } from "zod";
-import { applyReportOperation } from "../../shared/report-editing.js";
+import { applySheetCloneOperation } from "../../shared/sheet-clone-editing.js";
 import {
   propertiesFor,
   normalizeView,
@@ -13,7 +13,7 @@ import {
   displayValue,
 } from "../../shared/domain.js";
 import {
-  reportNameSchema,
+  sheetCloneNameSchema,
   dateSchema,
   yearSchema,
   viewSchema,
@@ -26,20 +26,20 @@ import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
 import { documentListsUnder } from "./postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../control.mjs";
-export const reportRevision = (data) =>
+export const sheetCloneRevision = (data) =>
   digestShared({
     ...data,
     tasks: data.tasks.map(
       ({ documents, hasDocument, documentCount, ...task }) => task,
     ),
   });
-// What the report list shows, without the data: PostgreSQL drops it, so the
-// list does not transfer and unpack every report's sheet. A payload that
+// What the sheetClone list shows, without the data: PostgreSQL drops it, so the
+// list does not transfer and unpack every sheetClone's sheet. A payload that
 // jsonb cannot read (\u0000 or a lone surrogate escape) comes whole instead.
-async function reportSummaries(s) {
+async function sheetCloneSummaries(s) {
   return (
     await s.tx.query(
-      "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='report' AND deleted=0 ORDER BY entity_key",
+      "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND deleted=0 ORDER BY entity_key",
       [s.teamId, "\\\\u(0000|[dD][89a-fA-F])"],
     )
   ).rows.map((row) => ({
@@ -47,10 +47,14 @@ async function reportSummaries(s) {
     payload: JSON.parse(row.payload),
   }));
 }
-export async function reportView(s, row) {
+export async function sheetCloneView(s, row) {
   const p = row.payload,
     data = p.data;
-  const lists = await documentListsUnder(s, ["report", row.key[0]], "report");
+  const lists = await documentListsUnder(
+    s,
+    ["sheetClone", row.key[0]],
+    "sheetClone",
+  );
   const tasks = [];
   for (const task of data.tasks) {
     const documents = await lists.list(task.id);
@@ -68,17 +72,17 @@ export async function reportView(s, row) {
     createdAt: p.createdAt,
     ...data,
     tasks,
-    revision: reportRevision(data),
+    revision: sheetCloneRevision(data),
   };
 }
-async function execute(ctx, command, body, reportId) {
+async function execute(ctx, command, body, sheetCloneId) {
   if (command === "list") {
     await ctx.team(body.teamId);
     const authors = new Map(
       (await ctx.controlStore.users()).map((row) => [row.id, row.name]),
     );
     return ctx.data(body.teamId, async (s) => {
-      const rows = await reportSummaries(s);
+      const rows = await sheetCloneSummaries(s);
       // Authors who left the team are named by their record; read them at once.
       await s.getMany(
         "person",
@@ -87,7 +91,7 @@ async function execute(ctx, command, body, reportId) {
           .map((r) => [r.payload.createdBy]),
       );
       return {
-        reports: await Promise.all(
+        sheetClones: await Promise.all(
           rows
             .sort((a, b) =>
               b.payload.createdAt.localeCompare(a.payload.createdAt),
@@ -110,7 +114,7 @@ async function execute(ctx, command, body, reportId) {
   if (command === "create") {
     const teamId = body.teamId,
       id = body.id || crypto.randomUUID(),
-      name = reportNameSchema.parse(body.name),
+      name = sheetCloneNameSchema.parse(body.name),
       year = yearSchema.parse(body.year),
       referenced = new Set(
         (await ctx.data(teamId, (s) => s.list("person"))).map(
@@ -130,7 +134,7 @@ async function execute(ctx, command, body, reportId) {
     return ctx.data(
       teamId,
       async (s) => {
-        const exists = await s.get("report", [id]);
+        const exists = await s.get("sheetClone", [id]);
         assert(
           !exists,
           409,
@@ -139,12 +143,12 @@ async function execute(ctx, command, body, reportId) {
         // Names come without each copy's sheet, so the check does not grow
         // with the copies the team keeps.
         assert(
-          !(await reportSummaries(s)).some((r) => r.payload.name === name),
+          !(await sheetCloneSummaries(s)).some((r) => r.payload.name === name),
           409,
           "같은 이름의 사본이 있습니다.",
         );
         const source = body.sourceId
-          ? await s.get("report", [body.sourceId])
+          ? await s.get("sheetClone", [body.sourceId])
           : null;
         assert(
           !body.sourceId || (source && !source.deleted),
@@ -186,7 +190,7 @@ async function execute(ctx, command, body, reportId) {
         const docs = new Map();
         for (const d of await s.listChildren(
           "document",
-          source ? ["report", body.sourceId] : ["task"],
+          source ? ["sheetClone", body.sourceId] : ["task"],
         )) {
           const taskId = d.key.at(-2);
           if (!docs.has(taskId)) docs.set(taskId, []);
@@ -201,20 +205,20 @@ async function execute(ctx, command, body, reportId) {
           for (const doc of sourceDocs)
             await s.put(
               "document",
-              ["report", id, task.id, doc.key.at(-1)],
+              ["sheetClone", id, task.id, doc.key.at(-1)],
               doc.payload,
             );
         }
         for (const memo of await s.listChildren(
           "document",
-          source ? ["reportMemo", body.sourceId] : ["annual", String(year)],
+          source ? ["sheetCloneMemo", body.sourceId] : ["annual", String(year)],
         ))
           await s.put(
             "document",
-            ["reportMemo", id, memo.key.at(-1)],
+            ["sheetCloneMemo", id, memo.key.at(-1)],
             memo.payload,
           );
-        await s.put("report", [id], {
+        await s.put("sheetClone", [id], {
           year: source?.payload.year || year,
           name,
           referenceDate: body.referenceDate,
@@ -226,8 +230,8 @@ async function execute(ctx, command, body, reportId) {
       },
       {
         write: true,
-        body: { ...body, operationId: "report-create:" + id },
-        action: "report",
+        body: { ...body, operationId: "sheet-clone-create:" + id },
+        action: "sheet-clone",
       },
     );
   }
@@ -243,49 +247,49 @@ async function execute(ctx, command, body, reportId) {
           "사본 목록을 확인하세요.",
         );
         for (const id of body.ids) {
-          const row = await s.get("report", [id]);
+          const row = await s.get("sheetClone", [id]);
           assert(row && !row.deleted, 404, "사본을 찾을 수 없습니다.");
           for (const doc of await s.list("document"))
             if (
-              ["report", "reportMemo"].includes(doc.key[0]) &&
+              ["sheetClone", "sheetCloneMemo"].includes(doc.key[0]) &&
               doc.key[1] === id
             )
               await s.put("document", doc.key, doc.payload, { deleted: true });
-          await s.put("report", row.key, row.payload, { deleted: true });
+          await s.put("sheetClone", row.key, row.payload, { deleted: true });
         }
         return { ok: true };
       },
-      { write: true, body, action: "report-delete" },
+      { write: true, body, action: "sheet-clone-delete" },
     );
   if (["read", "rename", "edit"].includes(command)) {
-    const teamId = await ctx.locateTeam("report", reportId, {
+    const teamId = await ctx.locateTeam("sheetClone", sheetCloneId, {
       write: command !== "read",
     });
     return ctx.data(
       teamId,
       async (s) => {
-        const row = await s.get("report", [reportId]);
+        const row = await s.get("sheetClone", [sheetCloneId]);
         assert(row && !row.deleted, 404, "사본을 찾을 수 없습니다.");
-        if (command === "read") return reportView(s, row);
+        if (command === "read") return sheetCloneView(s, row);
         if (command === "rename") {
-          const name = reportNameSchema.parse(body.name);
+          const name = sheetCloneNameSchema.parse(body.name);
           assert(
             row.payload.name === body.expectedName || row.payload.name === name,
             409,
             "사본 이름이 변경되었습니다.",
           );
           assert(
-            !(await s.list("report")).some(
-              (r) => r.key[0] !== reportId && r.payload.name === name,
+            !(await s.list("sheetClone")).some(
+              (r) => r.key[0] !== sheetCloneId && r.payload.name === name,
             ),
             409,
             "같은 이름의 사본이 있습니다.",
           );
-          await s.put("report", row.key, { ...row.payload, name });
+          await s.put("sheetClone", row.key, { ...row.payload, name });
           return { id: row.key[0], name };
         }
         assert(
-          body.revision === reportRevision(row.payload.data),
+          body.revision === sheetCloneRevision(row.payload.data),
           409,
           "다른 사용자가 사본을 수정했습니다. 입력은 유지됩니다.",
         );
@@ -295,14 +299,18 @@ async function execute(ctx, command, body, reportId) {
           "사본 변경 요청을 확인하세요.",
         );
         const data = structuredClone(row.payload.data),
-          lists = await documentListsUnder(s, ["report", reportId], "report");
+          lists = await documentListsUnder(
+            s,
+            ["sheetClone", sheetCloneId],
+            "sheetClone",
+          );
         for (const task of data.tasks)
           task.documents = await lists.list(task.id, { content: true });
         const available = (await ctx.controlStore.members(teamId)).filter(
           (row) => ["lead", "member"].includes(row.role),
         );
-        const prepared = prepareReportEdits({
-          report: data,
+        const prepared = prepareSheetCloneEdits({
+          sheetClone: data,
           operations: body.operations,
           teamId,
           year: body.view?.year ?? row.payload.year,
@@ -319,11 +327,15 @@ async function execute(ctx, command, body, reportId) {
         for (const task of tasks)
           for (const doc of task.documents || [])
             if (typeof doc.markdown === "string")
-              await s.put("document", ["report", row.key[0], task.id, doc.id], {
-                title: doc.title,
-                position: (task.documents || []).indexOf(doc),
-                markdown: doc.markdown,
-              });
+              await s.put(
+                "document",
+                ["sheetClone", row.key[0], task.id, doc.id],
+                {
+                  title: doc.title,
+                  position: (task.documents || []).indexOf(doc),
+                  markdown: doc.markdown,
+                },
+              );
         data.tasks = tasks.map((t) => ({
           ...t,
           documents: (t.documents || []).map((d) => ({
@@ -332,38 +344,38 @@ async function execute(ctx, command, body, reportId) {
           })),
         }));
         if (body.view) data.view = viewSchema.parse(body.view);
-        const saved = await s.put("report", row.key, {
+        const saved = await s.put("sheetClone", row.key, {
           ...row.payload,
           year: body.view?.year ?? row.payload.year,
           data,
         });
-        return reportView(s, saved);
+        return sheetCloneView(s, saved);
       },
-      { write: command !== "read", body, action: "report-edit" },
+      { write: command !== "read", body, action: "sheet-clone-edit" },
     );
   }
-  throw new Error("Unsupported report command");
+  throw new Error("Unsupported sheetClone command");
 }
 
-export class PostgresReportRepository {
+export class PostgresSheetCloneRepository {
   constructor({ context }) {
     this.context = context;
   }
-  async call(user, command, body, reportId) {
+  async call(user, command, body, sheetCloneId) {
     assert(
       user.id === this.context.user.id,
       403,
       "요청 사용자 정보가 일치하지 않습니다.",
     );
     const before = this.context.lastCommittedChange?.sequence || 0;
-    const result = await execute(this.context, command, body, reportId);
+    const result = await execute(this.context, command, body, sheetCloneId);
     const change = this.context.lastCommittedChange;
     this.changes =
       change && change.sequence > before
         ? {
             teamIds: [change.teamId],
-            reportIds:
-              command === "remove" ? body.ids : [reportId || result.id],
+            sheetCloneIds:
+              command === "remove" ? body.ids : [sheetCloneId || result.id],
           }
         : null;
     return result;
@@ -371,7 +383,7 @@ export class PostgresReportRepository {
   resourceChanges() {
     return this.changes;
   }
-  subscribe(user, reportId, port) {
+  subscribe(user, sheetCloneId, port) {
     return subscribePostgresEvents({
       user,
       ...port,
@@ -383,8 +395,11 @@ export class PostgresReportRepository {
         );
         this.context.user = currentUser;
         this.context.teamCache.clear();
-        const { teamId, row } = await this.context.locate("report", reportId);
-        const next = `pg:report:${reportId}:${row.revision}`;
+        const { teamId, row } = await this.context.locate(
+          "sheetClone",
+          sheetCloneId,
+        );
+        const next = `pg:sheet-clone:${sheetCloneId}:${row.revision}`;
         return {
           cursor: next,
           events:
@@ -410,7 +425,7 @@ export class PostgresReportRepository {
       403,
       "요청 사용자 정보가 일치하지 않습니다.",
     );
-    const { row } = await this.context.locate("report", id);
+    const { row } = await this.context.locate("sheetClone", id);
     return { revision: row.revision };
   }
   list(user, query) {

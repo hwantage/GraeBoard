@@ -20,7 +20,7 @@ import {
   transaction,
   writeFormatting,
 } from "../server/db.mjs";
-import { isPackedReportData } from "../shared/report-sync-data.js";
+import { isPackedSheetCloneData } from "../shared/sheet-clone-sync-data.js";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
@@ -432,7 +432,7 @@ test(
         digest(webp),
       );
       // A column rule carrying row IDs is attached to every task row. An outside
-      // report must still travel in the shared-dictionary storage form.
+      // sheetClone must still travel in the shared-dictionary storage form.
       transaction(db, () =>
         writeFormatting(db, teamId, {
           revision: 1,
@@ -450,11 +450,11 @@ test(
       );
       await app.locals.sync.get(teamId).run();
       await drain();
-      const report = ok(
-        await outside("/reports", {
+      const sheetClone = ok(
+        await outside("/sheet-clones", {
           teamId,
           year: 2026,
-          name: "Outside report",
+          name: "Outside sheetClone",
           referenceDate: "2026-10-27",
           taskIds: [task.id],
           view: defaultView(2026),
@@ -462,22 +462,27 @@ test(
       );
       await drain();
       await app.locals.sync.get(teamId).run();
-      const insideReport = ok(await inside("/reports/" + report.id));
-      assert.equal(insideReport.tasks.length, 1);
+      const insideSheetClone = ok(
+        await inside("/sheet-clones/" + sheetClone.id),
+      );
+      assert.equal(insideSheetClone.tasks.length, 1);
       assert.equal(
-        insideReport.tasks[0].formatting?.rules[0]?.id,
+        insideSheetClone.tasks[0].formatting?.rules[0]?.id,
         "bridge-rule",
       );
       assert.match(
-        ok(await inside(`/reports/${report.id}/tasks/${task.id}/document`))
-          .markdown,
+        ok(
+          await inside(
+            `/sheet-clones/${sheetClone.id}/tasks/${task.id}/document`,
+          ),
+        ).markdown,
         /Outside image/,
       );
-      const sharedReport = (await pgStore.readState(teamId)).entities[
-        entityId("report", [report.id])
+      const sharedSheetClone = (await pgStore.readState(teamId)).entities[
+        entityId("sheetClone", [sheetClone.id])
       ];
       assert.doesNotMatch(
-        JSON.stringify(sharedReport),
+        JSON.stringify(sharedSheetClone),
         /outside@example|inside@example|password|systemRole|teamRoles|external-subject/,
       );
       // A weekly item removed on either side is removed on the other.

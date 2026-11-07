@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { applyReportOperation } from "../shared/report-editing.js";
-import { rebaseReportCells } from "../shared/report-sync.js";
+import { applySheetCloneOperation } from "../shared/sheet-clone-editing.js";
+import { rebaseSheetCloneCells } from "../shared/sheet-clone-sync.js";
 import { api, ApiError, send } from "./api";
 import type {
   Cell,
   CellChange,
   FormatScope,
-  Report,
+  SheetClone,
   Task,
   View,
 } from "./types";
@@ -37,7 +37,7 @@ type Command =
     };
 type Operation = Command & { at: string };
 type Draft = {
-  report: Report;
+  sheetClone: SheetClone;
   tasks: Task[];
   operations: Operation[];
   history: Task[][];
@@ -53,12 +53,12 @@ type Batch = {
   view: View;
 };
 
-export default function useReportDraft(teamId: string, actorId: string) {
+export default function useSheetCloneDraft(teamId: string, actorId: string) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const ref = useRef(draft);
-  const running = useRef<Promise<Report | null> | null>(null);
+  const running = useRef<Promise<SheetClone | null> | null>(null);
   const documentChanges = useRef(
     new Map<
       string,
@@ -71,17 +71,17 @@ export default function useReportDraft(teamId: string, actorId: string) {
     ref.current = next;
     setDraft(next);
   }
-  function begin(report: Report) {
+  function begin(sheetClone: SheetClone) {
     documentChanges.current.clear();
     retryBatch.current = null;
     setError("");
     update({
-      report,
-      tasks: report.tasks,
+      sheetClone,
+      tasks: sheetClone.tasks,
       operations: [],
-      history: [report.tasks],
+      history: [sheetClone.tasks],
       cursor: 0,
-      view: report.view,
+      view: sheetClone.view,
       viewSequence: 0,
       savedViewSequence: 0,
     });
@@ -94,11 +94,11 @@ export default function useReportDraft(teamId: string, actorId: string) {
         "저장하지 못한 변경이 많습니다. 저장 오류를 확인해 주세요.",
       );
     const operation = { ...command, at: new Date().toISOString() };
-    const tasks = applyReportOperation(current.tasks, operation, {
+    const tasks = applySheetCloneOperation(current.tasks, operation, {
       teamId,
       actorId,
       year: current.view.year,
-      settings: current.report.settings,
+      settings: current.sheetClone.settings,
     }) as Task[];
     const history = [
       ...current.history.slice(0, current.cursor + 1),
@@ -150,17 +150,17 @@ export default function useReportDraft(teamId: string, actorId: string) {
       return next;
     };
     const tasks = patch(current.tasks);
-    const reportTasks = patch(current.report.tasks);
+    const sheetCloneTasks = patch(current.sheetClone.tasks);
     const history = current.history.map(patch);
     if (
       tasks === current.tasks &&
-      reportTasks === current.report.tasks &&
+      sheetCloneTasks === current.sheetClone.tasks &&
       history.every((tasks, index) => tasks === current.history[index])
     )
       return;
     update({
       ...current,
-      report: { ...current.report, tasks: reportTasks },
+      sheetClone: { ...current.sheetClone, tasks: sheetCloneTasks },
       tasks,
       history,
     });
@@ -224,16 +224,17 @@ export default function useReportDraft(teamId: string, actorId: string) {
   }
   function rename(name: string) {
     const current = ref.current;
-    if (current) update({ ...current, report: { ...current.report, name } });
+    if (current)
+      update({ ...current, sheetClone: { ...current.sheetClone, name } });
   }
-  function receive(report: Report, duringSave = false) {
+  function receive(sheetClone: SheetClone, duringSave = false) {
     const current = ref.current;
-    if (!current || current.report.id !== report.id) return true;
-    if (current.report.revision === report.revision) {
-      if (current.report.name !== report.name) rename(report.name);
+    if (!current || current.sheetClone.id !== sheetClone.id) return true;
+    if (current.sheetClone.revision === sheetClone.revision) {
+      if (current.sheetClone.name !== sheetClone.name) rename(sheetClone.name);
       // Document metadata is deliberately excluded from the sheet revision.
       const tasks = new Map(current.tasks.map((task) => [task.id, task]));
-      for (const task of report.tasks) {
+      for (const task of sheetClone.tasks) {
         const previous = tasks.get(task.id);
         if (
           previous &&
@@ -245,29 +246,29 @@ export default function useReportDraft(teamId: string, actorId: string) {
       return true;
     }
     if (running.current && !duringSave) return false;
-    const merged = rebaseReportCells(
-      current.report.tasks,
-      report.tasks,
+    const merged = rebaseSheetCloneCells(
+      current.sheetClone.tasks,
+      sheetClone.tasks,
       current.operations,
       {
         teamId,
         actorId,
-        year: report.year,
-        settings: report.settings,
+        year: sheetClone.year,
+        settings: sheetClone.settings,
       },
     );
     if (!merged) return false;
     retryBatch.current = null;
     update({
       ...current,
-      report,
+      sheetClone,
       tasks: merged.tasks,
       history: merged.history,
       cursor: merged.history.length - 1,
     });
     return true;
   }
-  function save(): Promise<Report | null> {
+  function save(): Promise<SheetClone | null> {
     if (running.current) return running.current;
     setError("");
     const work = async () => {
@@ -279,11 +280,11 @@ export default function useReportDraft(teamId: string, actorId: string) {
             !current.operations.length &&
             current.savedViewSequence === current.viewSequence
           )
-            return current.report;
+            return current.sheetClone;
           const batch = retryBatch.current || {
             data: {
               operationId: crypto.randomUUID(),
-              revision: current.report.revision,
+              revision: current.sheetClone.revision,
               operations: current.operations.slice(),
               view: current.view,
             },
@@ -291,25 +292,28 @@ export default function useReportDraft(teamId: string, actorId: string) {
           };
           retryBatch.current = batch;
           const sequence = documentSequence.current;
-          let saved: Report;
+          let saved: SheetClone;
           try {
-            saved = await send<Report>(
-              `/reports/${current.report.id}`,
+            saved = await send<SheetClone>(
+              `/sheet-clones/${current.sheetClone.id}`,
               batch.data,
               "PATCH",
             );
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) {
-              const remote = await api<Report>(`/reports/${current.report.id}`);
+              const remote = await api<SheetClone>(
+                `/sheet-clones/${current.sheetClone.id}`,
+              );
               if (
-                remote.revision !== current.report.revision &&
+                remote.revision !== current.sheetClone.revision &&
                 receive(remote, true)
               )
                 continue;
             }
             throw error;
           }
-          if (ref.current?.report.id !== current.report.id) return saved;
+          if (ref.current?.sheetClone.id !== current.sheetClone.id)
+            return saved;
           const latest = ref.current;
           const operations = latest.operations.slice(
             batch.data.operations.length,
@@ -317,7 +321,7 @@ export default function useReportDraft(teamId: string, actorId: string) {
           // Apply input made while the response was in flight to the saved base.
           let tasks = saved.tasks;
           for (const operation of operations)
-            tasks = applyReportOperation(tasks, operation, {
+            tasks = applySheetCloneOperation(tasks, operation, {
               teamId,
               actorId,
               year: saved.year,
@@ -338,7 +342,7 @@ export default function useReportDraft(teamId: string, actorId: string) {
             ...latest,
             // Names are saved separately; an older sheet response must not
             // overwrite a rename, including when replaying a failed request.
-            report: { ...saved, name: latest.report.name },
+            sheetClone: { ...saved, name: latest.sheetClone.name },
             tasks,
             operations,
             savedViewSequence: batch.viewSequence,

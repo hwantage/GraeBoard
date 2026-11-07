@@ -141,12 +141,12 @@ export function installDocumentImageRoutes(app, { refreshUser }) {
   }).single("image");
   for (const route of [
     "/api/teams/:teamId/years/:year/memos/:documentId/images",
-    "/api/reports/:reportId/memos/:documentId/images",
+    "/api/sheet-clones/:sheetCloneId/memos/:documentId/images",
     "/api/calendar/entries/:id/document/images",
     "/api/tasks/:id/document/images",
     "/api/tasks/:id/documents/:documentId/images",
-    "/api/reports/:id/tasks/:taskId/document/images",
-    "/api/reports/:id/tasks/:taskId/documents/:documentId/images",
+    "/api/sheet-clones/:id/tasks/:taskId/document/images",
+    "/api/sheet-clones/:id/tasks/:taskId/documents/:documentId/images",
   ]) {
     app.post(
       route,

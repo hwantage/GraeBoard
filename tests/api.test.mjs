@@ -321,7 +321,7 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
     ).settings.weekHeader,
     weekHeader,
   );
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "경계선 보고본",
@@ -329,7 +329,7 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
     taskIds: [created.id],
     view: defaultView(2026),
   });
-  assert.equal(report.status, 201, JSON.stringify(report.data));
+  assert.equal(sheetClone.status, 201, JSON.stringify(sheetClone.data));
   const exported = await post("/export", {
     teamId: tid,
     year: 2026,
@@ -391,7 +391,7 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
   });
   assert.equal(clear.status, 200);
   assert.deepEqual(clear.data.settings.weekHeader, {});
-  const snapshot = (await request(`/reports/${report.data.id}`)).data;
+  const snapshot = (await request(`/sheet-clones/${sheetClone.data.id}`)).data;
   assert.deepEqual(snapshot.settings.weekHeader, weekHeader);
 });
 
@@ -460,7 +460,7 @@ test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범�
     ).settings.weekBorders,
     weekBorders,
   );
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "주차 경계 보고본",
@@ -468,7 +468,7 @@ test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범�
     taskIds: [created.id],
     view: defaultView(2026),
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   const exportSheet = async (keys, taskIds = [created.id]) => {
     const response = await post("/export", {
       teamId: tid,
@@ -565,7 +565,8 @@ test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범�
   assert.equal(cleared.status, 200);
   assert.deepEqual(cleared.data.settings.weekBorders, {});
   assert.deepEqual(
-    (await request(`/reports/${report.data.id}`)).data.settings.weekBorders,
+    (await request(`/sheet-clones/${sheetClone.data.id}`)).data.settings
+      .weekBorders,
     weekBorders,
   );
   sheet = await exportSheet(["title", "2026-03-09", "status"]);
@@ -631,7 +632,7 @@ test("이번 주 테두리는 설정·사본·JSON에 보존하고 XLSX에서 �
     ).settings.currentWeekBorders,
     currentWeekBorders,
   );
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "이번 주 사본",
@@ -639,7 +640,7 @@ test("이번 주 테두리는 설정·사본·JSON에 보존하고 XLSX에서 �
     taskIds: [created.id],
     view: defaultView(2026),
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   const exportData = async (keys, format = "xlsx") => {
     const response = await post("/export", {
       teamId: tid,
@@ -727,7 +728,7 @@ test("이번 주 테두리는 설정·사본·JSON에 보존하고 XLSX에서 �
     .settings;
   assert.deepEqual(settings.currentWeekBorders, {});
   assert.deepEqual(
-    (await request(`/reports/${report.data.id}`)).data.settings
+    (await request(`/sheet-clones/${sheetClone.data.id}`)).data.settings
       .currentWeekBorders,
     currentWeekBorders,
   );
@@ -1285,7 +1286,7 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
       200,
     );
   }
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "삭제할 보고본",
@@ -1293,7 +1294,7 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
     taskIds: [second.id],
     view: defaultView(2026),
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   const workbook = new ExcelJS.Workbook(),
     sheet = workbook.addWorksheet("팀 삭제 이관");
   sheet.addRow(["작업", "2026-10-09"]);
@@ -1317,7 +1318,7 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
       .all()
       .map((r) => r.id),
   );
-  for (const mode of ["tasks", "report"])
+  for (const mode of ["tasks", "create-sheet-clone"])
     assert.equal(
       (
         await post(`/import/${preview.data.id}/apply`, {
@@ -1358,7 +1359,7 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
     "views",
     "filter_states",
     "saved_filters",
-    "reports",
+    "sheet_clones",
     "imports",
     "audit",
     "memberships",
@@ -1387,7 +1388,10 @@ test("팀 삭제는 확인·관리자 권한을 검사하고 모든 연도의 �
     db.prepare("SELECT * FROM users ORDER BY id").all(),
     usersBefore,
   );
-  assert.equal((await request(`/reports/${report.data.id}`)).status, 404);
+  assert.equal(
+    (await request(`/sheet-clones/${sheetClone.data.id}`)).status,
+    404,
+  );
   assert.equal((await request(`/tasks?teamId=${tid}&year=2026`)).status, 404);
   assert.equal((await remove()).status, 404);
   assert(!(await request("/bootstrap")).data.teams.some((t) => t.id === tid));
@@ -2093,7 +2097,7 @@ test("개인 보기의 배치와 숨김을 저장하며 필터 조건을 섞거�
 });
 test("주간 보고본은 원본 셀 수정 이후에도 고정된다", async () => {
   const before = getTask(db, task.id).cells.title.value;
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId,
     year: 2026,
     name: "10월 9일 보고",
@@ -2101,16 +2105,17 @@ test("주간 보고본은 원본 셀 수정 이후에도 고정된다", async ()
     taskIds: [task.id],
     view: defaultView(2026),
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   assert.equal(
     (await batch([change("title", "이후 변경한 제목")])).status,
     200,
   );
-  const stored = await request(`/reports/${report.data.id}`);
+  const stored = await request(`/sheet-clones/${sheetClone.data.id}`);
   assert.equal(stored.status, 200);
   assert.equal(stored.data.tasks[0].cells.title.value, before);
   assert.equal(
-    (await request(`/reports/${report.data.id}`, { cookie: other })).status,
+    (await request(`/sheet-clones/${sheetClone.data.id}`, { cookie: other }))
+      .status,
     403,
   );
 });
@@ -2123,7 +2128,7 @@ test("스냅샷 선택 삭제는 팀장 권한과 팀 범위를 검사하고 전
   ).data.id;
   const create = async (team, name, cookie = admin) => {
     const result = await post(
-      "/reports",
+      "/sheet-clones",
       {
         teamId: team,
         year: 2026,
@@ -2142,7 +2147,7 @@ test("스냅샷 선택 삭제는 팀장 권한과 팀 범위를 검사하고 전
   const keep = await create(tid, "유지");
   const foreign = await create(teamId, "다른 팀 스냅샷");
   const remove = (team, ids, cookie = admin) =>
-    request("/reports", {
+    request("/sheet-clones", {
       method: "DELETE",
       body: { teamId: team, ids },
       cookie,
@@ -2152,27 +2157,29 @@ test("스냅샷 선택 삭제는 팀장 권한과 팀 범위를 검사하고 전
   assert.equal((await remove(tid, [], member)).status, 400);
   assert.equal((await remove(tid, [first, foreign], member)).status, 404);
   assert.equal(
-    (await request(`/reports/${first}`, { cookie: member })).status,
+    (await request(`/sheet-clones/${first}`, { cookie: member })).status,
     200,
   );
   assert.equal((await remove(tid, [first, randomUUID()], member)).status, 404);
   assert.equal(
-    (await request(`/reports/${first}`, { cookie: member })).status,
+    (await request(`/sheet-clones/${first}`, { cookie: member })).status,
     200,
   );
   assert.equal((await remove(tid, [first, second, first], member)).status, 200);
-  assert.equal((await request(`/reports/${first}`)).status, 404);
-  assert.equal((await request(`/reports/${second}`)).status, 404);
-  assert.equal((await request(`/reports/${keep}`)).status, 200);
-  assert.equal((await request(`/reports/${foreign}`)).status, 200);
+  assert.equal((await request(`/sheet-clones/${first}`)).status, 404);
+  assert.equal((await request(`/sheet-clones/${second}`)).status, 404);
+  assert.equal((await request(`/sheet-clones/${keep}`)).status, 200);
+  assert.equal((await request(`/sheet-clones/${foreign}`)).status, 200);
   assert.deepEqual(
-    (await request(`/reports?teamId=${tid}`)).data.reports.map((r) => r.id),
+    (await request(`/sheet-clones?teamId=${tid}`)).data.sheetClones.map(
+      (r) => r.id,
+    ),
     [keep],
   );
   assert.equal(
     db
       .prepare(
-        "SELECT COUNT(*) AS n FROM audit WHERE team_id=? AND action='report-delete'",
+        "SELECT COUNT(*) AS n FROM audit WHERE team_id=? AND action='sheet-clone-delete'",
       )
       .get(tid).n,
     2,
@@ -2315,7 +2322,7 @@ test("CSV·XLSX 내보내기는 범위, 한글, 서식과 수식 비실행을 �
   assert.equal(c.font.size, 18);
   assert.equal(c.fill.fgColor.argb, "FFFFEEAA");
   const data = await post("/export", { ...body, format: "json" });
-  assert.equal(data.data.schemaVersion, 6);
+  assert.equal(data.data.schemaVersion, 7);
   assert.deepEqual(Object.keys(data.data.tasks[0].cells).sort(), [
     "2026-10-05",
     "title",
@@ -2791,7 +2798,7 @@ test("동적 속성의 이름·값·모양 변경은 업무 연결과 과거 보
     400,
     "다른 팀 속성은 거절",
   );
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "속성 보고",
@@ -2799,7 +2806,7 @@ test("동적 속성의 이름·값·모양 변경은 업무 연결과 과거 보
     view: { ...defaultView(2026), visibleFields: ["title", pid], groupBy: pid },
     taskIds: [created.id],
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   const stale = structuredClone(settings);
   const property = settings.properties.find((p) => p.id === pid);
   property.name = "제품 프로젝트";
@@ -2816,7 +2823,7 @@ test("동적 속성의 이름·값·모양 변경은 업무 연결과 과거 보
     409,
   );
   assert.equal(getTask(db, created.id).cells[pid].value, oid);
-  const frozen = (await request(`/reports/${report.data.id}`)).data;
+  const frozen = (await request(`/sheet-clones/${sheetClone.data.id}`)).data;
   assert.equal(
     frozen.settings.properties.find((p) => p.id === pid).name,
     "프로젝트",
@@ -2943,7 +2950,7 @@ test("날짜 뒤 열 배치는 구 설정 저장·팀 양식·보고본·내보�
   ).data.task;
   const before = getTask(db, created.id);
   const view = normalizeView(defaultView(2026), settings);
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "날짜 뒤 배치 보고",
@@ -2951,7 +2958,7 @@ test("날짜 뒤 열 배치는 구 설정 저장·팀 양식·보고본·내보�
     taskIds: [created.id],
     view,
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
 
   const body = { teamId: tid, year: 2026, scope: "all" };
   const headers = [
@@ -3041,7 +3048,7 @@ test("날짜 뒤 열 배치는 구 설정 저장·팀 양식·보고본·내보�
     "beforeWeeks",
   );
   assert.equal((await save(stale)).status, 409);
-  const frozen = (await request(`/reports/${report.data.id}`)).data;
+  const frozen = (await request(`/sheet-clones/${sheetClone.data.id}`)).data;
   assert.equal(
     frozen.settings.properties.find((p) => p.id === "progress").placement,
     "afterWeeks",
@@ -3555,7 +3562,7 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
       400,
     );
   }
-  const report = await post("/reports", {
+  const sheetClone = await post("/sheet-clones", {
     teamId: tid,
     year: 2026,
     name: "완료 제외 보고본",
@@ -3563,9 +3570,10 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
     taskIds: [],
     view,
   });
-  assert.equal(report.status, 201);
+  assert.equal(sheetClone.status, 201);
   assert.deepEqual(
-    (await request(`/reports/${report.data.id}`)).data.view.propertyFilterModes,
+    (await request(`/sheet-clones/${sheetClone.data.id}`)).data.view
+      .propertyFilterModes,
     { status: "exclude" },
   );
   settings.properties
@@ -3580,8 +3588,8 @@ test("컬럼 필터의 제외 모드는 보기·보고본과 값 이름 변경�
   assert.deepEqual((await load()).propertyFilters.status, ["status-completed"]);
   assert.deepEqual((await load()).propertyFilterModes, { status: "exclude" });
   assert.deepEqual(
-    (await request(`/reports/${report.data.id}`)).data.view.propertyFilters
-      .status,
+    (await request(`/sheet-clones/${sheetClone.data.id}`)).data.view
+      .propertyFilters.status,
     ["status-completed"],
   );
 });

@@ -1,4 +1,5 @@
 import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
+import { PROTOCOL, conversionStatus } from "./protocol.mjs";
 export function createSyncStatusReader({ db, sync }) {
   const capacity = createReceiptCapacityGuard(db);
   return (teamId) => {
@@ -15,13 +16,15 @@ export function createSyncStatusReader({ db, sync }) {
         link.installation_id === sync.installationId,
       canonicalHead: link.canonical_head,
       canonicalHash: link.canonical_hash,
-      protocol: db
-        .prepare(
-          "SELECT 1 FROM sync_entities WHERE team_id=? AND entity='protocol' AND deleted=0",
-        )
-        .get(teamId)
-        ? 2
-        : 1,
+      protocol:
+        JSON.parse(
+          db
+            .prepare(
+              "SELECT payload FROM sync_entities WHERE team_id=? AND entity='protocol' AND deleted=0",
+            )
+            .get(teamId)?.payload || "null",
+        )?.version ?? PROTOCOL,
+      conversion: conversionStatus(store.readConversion()),
       pending: db
         .prepare(
           "SELECT COUNT(*) n FROM sync_outbox INDEXED BY sync_outbox_pending_idx WHERE team_id=? AND status<>'acknowledged'",

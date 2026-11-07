@@ -6,11 +6,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/compact.js";
-import { unpackReportPayload } from "../shared/report-sync-data.js";
+import { unpackSheetClonePayload } from "../shared/sheet-clone-sync-data.js";
 import { payloadEqual } from "../server/sync/protocol.mjs";
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import { bucket } from "./worker-github-fixture.mjs";
-import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import {
   sqliteBusinessFixture,
@@ -26,7 +26,7 @@ async function contract({ f, service, documents, counts, failOnce }) {
     id: randomUUID(),
     teamId: f.teamId,
     year: 2026,
-    name: "contract report",
+    name: "contract sheetClone",
     referenceDate: "2026-10-01",
     view: defaultView(2026),
     taskIds: [f.taskId],
@@ -46,13 +46,13 @@ async function contract({ f, service, documents, counts, failOnce }) {
   );
   assert.deepEqual(await counts(), after);
   assert.ok(
-    (await service.list({ teamId: f.teamId })).reports.some(
+    (await service.list({ teamId: f.teamId })).sheetClones.some(
       (row) => row.id === input.id,
     ),
   );
-  const report = await service.read(input.id);
-  assert.equal(report.tasks.length, 1);
-  assert.equal(report.tasks[0].cells.title.value, "initial");
+  const sheetClone = await service.read(input.id);
+  assert.equal(sheetClone.tasks.length, 1);
+  assert.equal(sheetClone.tasks[0].cells.title.value, "initial");
   await service.rename(input.id, { name: "renamed", expectedName: input.name });
   const beforeEdit = await service.read(input.id),
     edit = {
@@ -85,7 +85,7 @@ async function contract({ f, service, documents, counts, failOnce }) {
   assert.deepEqual(
     await counts(),
     after,
-    "stale edit leaves report/P/audit unchanged",
+    "stale edit leaves sheetClone/P/audit unchanged",
   );
   failOnce();
   await assert.rejects(
@@ -101,14 +101,14 @@ async function contract({ f, service, documents, counts, failOnce }) {
   );
   assert.equal((await service.read(input.id)).name, "renamed");
   const scope = {
-    kind: "report",
-    reportId: input.id,
+    kind: "sheetClone",
+    sheetCloneId: input.id,
     taskId: f.taskId,
     documentId: "main",
   };
   const oldDocument = await documents.read(scope);
   await documents.save(scope, {
-    markdown: "copy this report body",
+    markdown: "copy this sheetClone body",
     expectedRevision: oldDocument.revision,
     operationId: randomUUID(),
   });
@@ -129,7 +129,7 @@ async function contract({ f, service, documents, counts, failOnce }) {
   });
   assert.equal(
     (await documents.read({ ...scope, taskId: copiedId })).markdown,
-    "copy this report body",
+    "copy this sheetClone body",
     "source-row copy preserves stored document bytes",
   );
   const stored = await counts();
@@ -176,7 +176,7 @@ async function contract({ f, service, documents, counts, failOnce }) {
   assert.deepEqual(
     await counts(),
     stored,
-    "invalid restore cannot change report/audit/P",
+    "invalid restore cannot change sheetClone/audit/P",
   );
   const changedYear = await service.edit(input.id, {
     revision: current.revision,
@@ -188,11 +188,16 @@ async function contract({ f, service, documents, counts, failOnce }) {
   assert.equal(changedYear.view.year, 2027);
   return input.id;
 }
-test("M6 report service preserves SQLite create/edit/retry/CAS/rollback and synchronous reads", async (t) => {
+test("M6 sheetClone service preserves SQLite create/edit/retry/CAS/rollback and synchronous reads", async (t) => {
   const f = sqliteBusinessFixture(t),
-    service = new ReportBusinessService(f.app.locals.reportRepository, f.user);
+    service = new SheetCloneBusinessService(
+      f.app.locals.sheetCloneRepository,
+      f.user,
+    );
   const counts = () => ({
-    reports: f.db.prepare("SELECT id,name,data FROM reports ORDER BY id").all(),
+    sheetClones: f.db
+      .prepare("SELECT id,name,data FROM sheet_clones ORDER BY id")
+      .all(),
     pending: f.db
       .prepare("SELECT payload FROM sync_outbox ORDER BY local_seq")
       .all(),
@@ -217,13 +222,13 @@ test("M6 report service preserves SQLite create/edit/retry/CAS/rollback and sync
   });
   assert.equal(service.list({ teamId: f.teamId }) instanceof Promise, false);
 });
-test("M6 same report service uses PG and actual external HTTP reads report with no SQLite report mirror", async (t) => {
+test("M6 same sheetClone service uses PG and actual external HTTP reads sheetClone with no SQLite sheetClone mirror", async (t) => {
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
   const context = pg.createContext(),
-    repository = new PostgresReportRepository({ context }),
-    service = new ReportBusinessService(repository, f.user);
+    repository = new PostgresSheetCloneRepository({ context }),
+    service = new SheetCloneBusinessService(repository, f.user);
   let fail = false;
   const data = context.data.bind(context);
   context.data = (teamId, work, options) =>
@@ -244,9 +249,9 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
       options,
     );
   const counts = async () => ({
-    reports: (
+    sheetClones: (
       await pg.pool.query(
-        "SELECT entity_key,payload FROM graeboard.site_entities WHERE entity='report' ORDER BY entity_key",
+        "SELECT entity_key,payload FROM graeboard.site_entities WHERE entity='sheetClone' ORDER BY entity_key",
       )
     ).rows,
     pending: (
@@ -258,7 +263,7 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
       await pg.pool.query("SELECT id FROM graeboard.site_audit ORDER BY id")
     ).rows,
   });
-  const reportId = await contract({
+  const sheetCloneId = await contract({
     f,
     service,
     documents: new DocumentBusinessService(
@@ -270,7 +275,7 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
       fail = true;
     },
   });
-  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM reports").get().n, 0);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM sheet_clones").get().n, 0);
   const app = createExternalRouteApp({
       env: pg.env,
       defaultUserId: f.user.id,
@@ -284,7 +289,7 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
     await app.close();
   });
   const response = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/reports/${reportId}`,
+    `http://127.0.0.1:${server.address().port}/api/sheet-clones/${sheetCloneId}`,
     { headers: { Cookie: "weekly_session=" + f.user.id } },
   );
   assert.equal(response.status, 200);
@@ -293,7 +298,7 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
   const controller = new AbortController();
   t.after(() => controller.abort());
   const stream = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/reports/${reportId}/events`,
+    `http://127.0.0.1:${server.address().port}/api/sheet-clones/${sheetCloneId}/events`,
     {
       headers: { Cookie: "weekly_session=" + f.user.id },
       signal: controller.signal,
@@ -322,17 +327,17 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
       const next = await Promise.race([
         reader.read(),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("report SSE timeout")), 3000),
+          setTimeout(() => reject(new Error("sheetClone SSE timeout")), 3000),
         ),
       ]);
       if (next.done) throw new Error("SSE closed");
       buffer += decoder.decode(next.value, { stream: true });
     }
-    throw new Error("missing report SSE");
+    throw new Error("missing sheetClone SSE");
   }
   const first = await documentFrame();
   const renamed = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/reports/${reportId}/name`,
+    `http://127.0.0.1:${server.address().port}/api/sheet-clones/${sheetCloneId}/name`,
     {
       method: "PATCH",
       headers: {
@@ -340,14 +345,17 @@ test("M6 same report service uses PG and actual external HTTP reads report with 
         "Content-Type": "application/json",
         "X-Requested-With": "WeeklyPlan",
       },
-      body: JSON.stringify({ name: "HTTP PG report", expectedName: "renamed" }),
+      body: JSON.stringify({
+        name: "HTTP PG sheetClone",
+        expectedName: "renamed",
+      }),
     },
   );
   assert.equal(renamed.status, 200, await renamed.text());
   const next = await documentFrame();
   assert.ok(
     next.revision > first.revision,
-    "actual PG event reaches Node subscriber without SQLite report",
+    "actual PG event reaches Node subscriber without SQLite sheetClone",
   );
   controller.abort();
 });
@@ -359,8 +367,8 @@ test("PG copy audit and retry records stay packed and read back whole", async (t
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
-  const service = new ReportBusinessService(
-      new PostgresReportRepository({ context: pg.createContext() }),
+  const service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: pg.createContext() }),
       f.user,
     ),
     history = new PostgresHistoryRepository({ context: pg.createContext() }),
@@ -382,11 +390,11 @@ test("PG copy audit and retry records stay packed and read back whole", async (t
     taskIds: [f.taskId],
   });
   assert.deepEqual(
-    (await audit("report")).map((row) => JSON.parse(row.payload)),
+    (await audit("sheet-clone")).map((row) => JSON.parse(row.payload)),
     [
       [
         {
-          entity: "report",
+          entity: "sheetClone",
           key: [id],
           before: null,
           after: { name: "packed copy", count: 1 },
@@ -439,11 +447,11 @@ test("PG copy audit and retry records stay packed and read back whole", async (t
     ],
   });
   assert.ok(!current.tasks.some((task) => task.id === added));
-  const edits = await audit("report-edit");
+  const edits = await audit("sheet-clone-edit");
   assert.ok(
     edits.every((row) =>
       JSON.parse(row.payload)
-        .filter((c) => c.entity === "report")
+        .filter((c) => c.entity === "sheetClone")
         .every((c) => c.after.data.$styles),
     ),
     "copy edits are audited in their stored form",
@@ -469,8 +477,8 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
   const f = sqliteBusinessFixture(t),
     pg = await postgresBusinessFixture(t, f);
   if (!pg) return;
-  const service = new ReportBusinessService(
-      new PostgresReportRepository({ context: pg.createContext() }),
+  const service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: pg.createContext() }),
       f.user,
     ),
     pending = async () =>
@@ -479,9 +487,9 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
           "SELECT payload FROM graeboard.sync_outbox WHERE status<>'acknowledged' ORDER BY local_seq",
         )
       ).rows.map((row) => JSON.parse(row.payload)),
-    reportOps = async () =>
+    sheetCloneOps = async () =>
       (await pending()).filter((op) =>
-        op.changes.some((c) => c.entity === "report"),
+        op.changes.some((c) => c.entity === "sheetClone"),
       ),
     id = randomUUID();
   await service.create({
@@ -516,28 +524,30 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
   };
   // The first edit also creates the copy's document, so it stays as it is.
   await title("first");
-  const before = await reportOps(),
-    original = before.at(-1).changes.find((c) => c.entity === "report").desired;
+  const before = await sheetCloneOps(),
+    original = before
+      .at(-1)
+      .changes.find((c) => c.entity === "sheetClone").desired;
   for (const value of ["second", "third", "fourth"]) await title(value);
-  const ops = await reportOps();
+  const ops = await sheetCloneOps();
   assert.equal(ops.length, before.length + 1, "one operation for the edits");
   const [edit] = ops.at(-1).changes;
   assert.equal(ops.at(-1).changes.length, 1);
   assert.deepEqual(edit.base, original, "from the copy before them");
   assert.equal(
-    unpackReportPayload(edit.desired).data.tasks[0].cells.title.value,
+    unpackSheetClonePayload(edit.desired).data.tasks[0].cells.title.value,
     "fourth",
   );
   // The merged operation reaches the stored content.
   const stored = JSON.parse(
     (
       await pg.pool.query(
-        "SELECT payload FROM graeboard.site_entities WHERE entity='report' AND entity_key=$1",
+        "SELECT payload FROM graeboard.site_entities WHERE entity='sheetClone' AND entity_key=$1",
         [JSON.stringify([id])],
       )
     ).rows[0].payload,
   );
-  assert.ok(payloadEqual("report", edit.desired, stored));
+  assert.ok(payloadEqual("sheetClone", edit.desired, stored));
   const lease = (owner) =>
       pg.pool.query(
         "UPDATE graeboard.team_sync_links SET lease_owner=$1,lease_until=$2",
@@ -547,19 +557,19 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
       pg.createContext().data(
         f.teamId,
         async (s) => {
-          const row = await s.get("report", [id]);
-          await s.put("report", [id], { ...row.payload, name });
+          const row = await s.get("sheetClone", [id]);
+          await s.put("sheetClone", [id], { ...row.payload, name });
         },
-        { write: true, body: {}, action: "report-rename" },
+        { write: true, body: {}, action: "sheet-clone-rename" },
       );
   // A sync run holding the lease may have read the last row: append instead.
   await lease("run");
   await rename("renamed");
-  assert.equal((await reportOps()).length, before.length + 2);
+  assert.equal((await sheetCloneOps()).length, before.length + 2);
   // Undone once the run is over, the rename leaves nothing to send.
   await lease(null);
   await rename("edited copy");
-  assert.equal((await reportOps()).length, before.length + 1);
+  assert.equal((await sheetCloneOps()).length, before.length + 1);
 });
 
 // Autosaves of one document while nothing publishes leave one unsent
@@ -673,8 +683,8 @@ test("PG copy creation goes on when the image store lacks an image", async (t) =
     "INSERT INTO graeboard.site_entity_revisions VALUES($1,'document',$2,1)",
     [f.teamId, key],
   );
-  const service = new ReportBusinessService(
-      new PostgresReportRepository({ context: pg.createContext() }),
+  const service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: pg.createContext() }),
       f.user,
     ),
     id = randomUUID();
@@ -690,7 +700,7 @@ test("PG copy creation goes on when the image store lacks an image", async (t) =
   const copied = (
     await pg.pool.query(
       "SELECT payload FROM graeboard.site_entities WHERE entity='document' AND entity_key=$1",
-      [JSON.stringify(["report", id, f.taskId, documentId])],
+      [JSON.stringify(["sheetClone", id, f.taskId, documentId])],
     )
   ).rows[0];
   assert.equal(JSON.parse(copied.payload).markdown, markdown);

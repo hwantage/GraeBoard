@@ -8,16 +8,16 @@ import {
   scopeMatches,
 } from "./formatting.js";
 
-export class ReportEditError extends Error {}
+export class SheetCloneEditError extends Error {}
 
-// Both the draft and the server operate only on the report's own task objects.
+// Both the draft and the server operate only on the sheetClone's own task objects.
 // No live task IDs are resolved through the database here.
-export function applyReportOperation(tasks, operation, context) {
+export function applySheetCloneOperation(tasks, operation, context) {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const get = (id) => {
     const task = byId.get(id);
     if (!task)
-      throw new ReportEditError("사본에서 해당 업무를 찾지 못했습니다.");
+      throw new SheetCloneEditError("사본에서 해당 업무를 찾지 못했습니다.");
     return task;
   };
   const stamp = operation.at;
@@ -113,9 +113,9 @@ export function applyReportOperation(tasks, operation, context) {
   }
   if (operation.kind === "create") {
     if (byId.has(operation.taskId))
-      throw new ReportEditError("이미 추가된 사본 업무입니다.");
+      throw new SheetCloneEditError("이미 추가된 사본 업무입니다.");
     if (tasks.length >= 20000)
-      throw new ReportEditError(
+      throw new SheetCloneEditError(
         "사본에는 업무를 20,000개까지 저장할 수 있습니다.",
       );
     const source = operation.sourceId ? get(operation.sourceId) : null;
@@ -190,7 +190,7 @@ export function applyReportOperation(tasks, operation, context) {
     get(operation.targetId);
     operation.taskIds.forEach(get);
     if (ids.has(operation.targetId))
-      throw new ReportEditError("이동할 행과 기준 행은 달라야 합니다.");
+      throw new SheetCloneEditError("이동할 행과 기준 행은 달라야 합니다.");
     const ordered = [...tasks].sort((a, b) => a.position - b.position);
     const moving = ordered.filter((task) => ids.has(task.id));
     const rest = ordered.filter((task) => !ids.has(task.id));
@@ -206,5 +206,5 @@ export function applyReportOperation(tasks, operation, context) {
       updatedAt: stamp,
     }));
   }
-  throw new ReportEditError("지원하지 않는 사본 편집입니다.");
+  throw new SheetCloneEditError("지원하지 않는 사본 편집입니다.");
 }

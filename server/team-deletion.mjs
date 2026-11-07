@@ -45,7 +45,7 @@ export function deleteTeam(db, teamId, actorId) {
       .prepare("SELECT id,data FROM imports WHERE team_id=?")
       .all(teamId)) {
       for (const sheet of parse(preview.data, [])) {
-        for (const mode of ["tasks", "report"]) {
+        for (const mode of ["tasks", "create-sheet-clone"]) {
           for (let year = 2000; year <= 2100; year++)
             removeOperation.run(
               stableId(`${preview.id}:${sheet.name}:${mode}:${year}`),
@@ -68,7 +68,7 @@ export function deleteTeam(db, teamId, actorId) {
       "views",
       "filter_states",
       "saved_filters",
-      "reports",
+      "sheet_clones",
       "audit",
       "imports",
       "memberships",
@@ -79,6 +79,7 @@ export function deleteTeam(db, teamId, actorId) {
       "sync_conflicts",
       "sync_objects",
       "sync_person_refs",
+      "sync_conversions",
       "site_retention",
       "site_maintenance_jobs",
       "site_entity_revisions",

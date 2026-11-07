@@ -3,7 +3,10 @@ import {
   MAX_TASK_DOCUMENTS,
   documentBytes,
 } from "./task-documents.js";
-import { normalizeReportName, MAX_REPORT_NAME_LENGTH } from "./report-names.js";
+import {
+  normalizeSheetCloneName,
+  MAX_SHEET_CLONE_NAME_LENGTH,
+} from "./sheet-clone-names.js";
 import { z } from "zod";
 import { BORDER_STYLES } from "./borders.js";
 import {
@@ -19,16 +22,16 @@ import {
 } from "./domain.js";
 import { HttpError, requireThat } from "./http-error.js";
 export { HttpError, requireThat };
-export const reportNameSchema = z
+export const sheetCloneNameSchema = z
   .string()
-  .transform(normalizeReportName)
+  .transform(normalizeSheetCloneName)
   .pipe(
     z
       .string()
       .min(1)
       .max(
-        MAX_REPORT_NAME_LENGTH,
-        `사본 제목은 최대 ${MAX_REPORT_NAME_LENGTH}자까지 입력할 수 있습니다.`,
+        MAX_SHEET_CLONE_NAME_LENGTH,
+        `사본 제목은 최대 ${MAX_SHEET_CLONE_NAME_LENGTH}자까지 입력할 수 있습니다.`,
       ),
   );
 export const yearSchema = z.coerce.number().int().min(2000).max(2100);

@@ -8,12 +8,20 @@ import {
 } from "../server/migrations/postgres.mjs";
 import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
+import { postgresSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
+import { revertTeamToV2, withoutMarker } from "./postgres-legacy-schema.mjs";
 
-test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewriting released history or data", async (t) => {
+const convert = postgresSheetCloneConversion({});
+
+test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 without rewriting released history or data", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
-  const before = stateHash(await f.adapter.readState(f.teamId));
+  // The conversion keeps every record; only the marker names protocol 3 anew.
+  const records = async () =>
+      stateHash(withoutMarker(await f.adapter.readState(f.teamId))),
+    before = await records();
   const resetTeam = async () => {
+    if ((await teamVersion()) >= 3) await revertTeamToV2(f.pool);
     await f.pool.query("DROP INDEX graeboard.sync_outbox_team_sequence");
     await f.pool.query(
       "DELETE FROM graeboard.schema_migrations WHERE version=2",
@@ -37,9 +45,10 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
         scope: "team",
         teamId: f.teamId,
         dryRun: true,
+        convert,
       })
     ).to,
-    2,
+    3,
   );
   assert.equal(await teamVersion(), 1);
   assert.equal(
@@ -55,6 +64,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
       migratePostgres(f.pool, {
         scope: "team",
         teamId: f.teamId,
+        convert,
         afterDdl() {
           throw new Error("index crash");
         },
@@ -62,8 +72,14 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
     /index crash/,
   );
   assert.equal(await teamVersion(), 1);
-  await migratePostgres(f.pool, { scope: "team", teamId: f.teamId });
-  assert.equal(await teamVersion(), 2);
+  await assert.rejects(
+    () => migratePostgres(f.pool, { scope: "team", teamId: f.teamId }),
+    /converts stored sheet clone data/,
+  );
+  assert.equal(await teamVersion(), 1);
+  await migratePostgres(f.pool, { scope: "team", teamId: f.teamId, convert });
+  assert.equal(await teamVersion(), 3);
+  assert.equal(await records(), before);
   assert.deepEqual(
     (
       await f.pool.query(
@@ -98,9 +114,10 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
   const created = await migratePostgres(f.pool, {
     scope: "site",
     teamId: f.teamId,
+    convert,
   });
-  assert.equal(created.teamTo, 2);
-  assert.equal(await teamVersion(), 2);
+  assert.equal(created.teamTo, 3);
+  assert.equal(await teamVersion(), 3);
   await f.pool.query(
     "DROP TABLE graeboard_site.access_tokens; DELETE FROM graeboard_site.schema_migrations WHERE version>=3",
   );
@@ -123,6 +140,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
         migratePostgres(f.pool, {
           scope: "site",
           teamId: f.teamId,
+          convert,
           afterDdl() {
             throw new Error("site crash");
           },
@@ -143,18 +161,19 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically without rewrit
     const result = await migratePostgres(f.pool, {
       scope: "site",
       teamId: f.teamId,
+      convert,
     });
     assert.equal(result.teamFrom, 1);
-    assert.equal(result.teamTo, 2);
+    assert.equal(result.teamTo, 3);
     assert.equal(result.to, 3);
-    assert.equal(stateHash(await f.adapter.readState(f.teamId)), before);
+    assert.equal(await records(), before);
   }
   await resetTeam();
   await f.pool.query(siteKeyMigrationSql(f.teamId));
   assert.equal(
     await teamVersion(),
     2,
-    "SQL Editor deployment also migrates an existing team v1 atomically",
+    "SQL Editor deployment also migrates an existing team v1 atomically; team v3 needs the CLI",
   );
   await f.pool.query(siteKeyMigrationSql(f.teamId));
   assert.equal(await teamVersion(), 2);

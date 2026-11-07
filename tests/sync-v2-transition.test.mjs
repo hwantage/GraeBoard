@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { SyncService } from "../server/sync/service.mjs";
-import { unpackReportData } from "../shared/report-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
 import {
   canonical,
   digest,
@@ -19,8 +19,8 @@ import {
 import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { boundStore } from "../worker/sync-store.mjs";
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
-import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { applicationEntities } from "../server/sync/versions.mjs";
 
 function store(f, head, state = f.state) {
@@ -85,7 +85,7 @@ async function repository(t, f) {
   return { transport, head };
 }
 
-test("A3/A6 two paused peers perform one immutable v2 transition, preserve v1 backup and reject unsupported readers without advancing cursors", async (t) => {
+test("A3/A6 two paused peers perform one immutable protocol 4 transition, preserve protocol 3 backup and reject unsupported readers without advancing cursors", async (t) => {
   const f = sqliteFixture(t),
     { transport, head } = await repository(t, f),
     identity = { teamId: f.teamId, repoId: f.link.repo_id };
@@ -98,7 +98,7 @@ test("A3/A6 two paused peers perform one immutable v2 transition, preserve v1 ba
       transport,
       store: legacy,
       identity,
-      maxProtocol: 1,
+      maxProtocol: 3,
     }),
     options = {
       expectedHead: head,
@@ -110,7 +110,7 @@ test("A3/A6 two paused peers perform one immutable v2 transition, preserve v1 ba
     (error) => error.status === 400,
   );
   const published = await service.upgrade(options);
-  assert.equal(published.protocol, 2);
+  assert.equal(published.protocol, 4);
   assert.notEqual(published.head, head);
   assert.equal(a.link.mode, "paused");
   await assert.rejects(old.receive(legacy.link, published.head), /protocol/i);
@@ -180,7 +180,7 @@ test("A3/A6 two paused peers perform one immutable v2 transition, preserve v1 ba
     transport,
     store: oldFresh,
     identity,
-    maxProtocol: 1,
+    maxProtocol: 3,
   });
   await assert.rejects(
     oldImporter.run({
@@ -194,7 +194,7 @@ test("A3/A6 two paused peers perform one immutable v2 transition, preserve v1 ba
   assert.equal(stateHash(oldFresh.state), stateHash(emptyState()));
 });
 
-test("A3/A6 actual PostgreSQL receiver validates paused transition then publishes ordinary v2 report edits", async (t) => {
+test("A3/A6 actual PostgreSQL receiver validates paused transition then publishes ordinary protocol 4 sheetClone edits", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const { transport, head } = await repository(t, f),
@@ -224,12 +224,12 @@ test("A3/A6 actual PostgreSQL receiver validates paused transition then publishe
     stateHash(await f.adapter.readState(f.teamId)),
     stateHash(node.state),
   );
-  const reports = new ReportBusinessService(
-      new PostgresReportRepository({ context: f.makeContext() }),
+  const sheetClones = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: f.makeContext() }),
       f.user,
     ),
-    before = await reports.read(f.reportId);
-  await reports.edit(f.reportId, {
+    before = await sheetClones.read(f.sheetCloneId);
+  await sheetClones.edit(f.sheetCloneId, {
     operationId: randomUUID(),
     revision: before.revision,
     operations: [
@@ -261,9 +261,10 @@ test("A3/A6 actual PostgreSQL receiver validates paused transition then publishe
     stateHash(node.state),
   );
   assert.equal(
-    unpackReportData(
-      applicationEntities(node.state.entities)[entityId("report", [f.reportId])]
-        .payload.data,
+    unpackSheetCloneData(
+      applicationEntities(node.state.entities)[
+        entityId("sheetClone", [f.sheetCloneId])
+      ].payload.data,
     ).tasks[0].cells.title.value,
     "PG v2 edit",
   );

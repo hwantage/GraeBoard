@@ -18,7 +18,45 @@ import {
   assertSqliteHistory,
   assertSqliteIntegrity,
   sqliteVersion,
+  accessTokenSql,
+  accessTokenChecksum,
+  maintenanceSql,
+  sheetCloneChecksum,
 } from "../server/migrations/sqlite.mjs";
+import { sqliteSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
+
+// v34 converts what the rows store; these legacy rows hold no earlier name
+// besides the copy tables themselves, so every row survives as it was.
+const convert = sqliteSheetCloneConversion({ now: "2026-11-08T00:00:00.000Z" });
+const RENAMED = {
+  reports: "sheet_clones",
+  report_documents: "sheet_clone_documents",
+  report_memos: "sheet_clone_memos",
+};
+// node:sqlite rows have no prototype; a renamed column keeps its position.
+const renamed = (table, rows) =>
+  RENAMED[table]
+    ? rows.map((row) =>
+        Object.assign(
+          Object.create(null),
+          Object.fromEntries(
+            Object.entries(row).map(([key, value]) => [
+              key === "report_id" ? "sheet_clone_id" : key,
+              value,
+            ]),
+          ),
+        ),
+      )
+    : rows;
+const preserved = (after, before, skip = []) => {
+  for (const [table, rows] of Object.entries(before))
+    if (!skip.includes(table))
+      assert.deepEqual(
+        after[RENAMED[table] || table],
+        renamed(table, rows),
+        table,
+      );
+};
 
 function legacy(path = ":memory:") {
   const db = new DatabaseSync(path);
@@ -72,21 +110,35 @@ function shape(db) {
     .all();
 }
 
-test("v29 → v32 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
+test("v29 → v34 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
   const upgraded = legacy(),
     fresh = new DatabaseSync(":memory:");
   try {
     const before = contents(upgraded);
-    assert.deepEqual(migrateSqlite(upgraded, { dryRun: true }).applied, false);
+    assert.deepEqual(
+      migrateSqlite(upgraded, { dryRun: true, convert }).applied,
+      false,
+    );
     assert.equal(sqliteVersion(upgraded), 29);
     assert.deepEqual(contents(upgraded), before);
-    assert.equal(migrateSqlite(upgraded).applied, true);
+    assert.throws(
+      () => migrateSqlite(upgraded),
+      /converts stored sheet clone data/,
+    );
+    assert.deepEqual(contents(upgraded), before);
+    assert.equal(migrateSqlite(upgraded, { convert }).applied, true);
     const after = contents(upgraded);
-    for (const [table, rows] of Object.entries(before))
-      assert.deepEqual(after[table], rows, table);
+    preserved(after, before);
+    for (const table of Object.keys(RENAMED))
+      assert.equal(after[table], undefined);
+    assert.deepEqual(
+      after.data_conversions.map((row) => [row.name, row.schema_version]),
+      [["sheet-clone-1", 34]],
+    );
+    assert.deepEqual(after.sync_conversions, []);
     assertSqliteHistory(upgraded);
     assertSqliteIntegrity(upgraded);
-    assert.equal(migrateSqlite(upgraded).applied, false);
+    assert.equal(migrateSqlite(upgraded, { convert }).applied, false);
     migrateSqlite(fresh, { initialize: true });
     assert.deepEqual(shape(fresh), shape(upgraded));
   } finally {
@@ -103,6 +155,7 @@ test("migration DDL/history/version roll back together and the same migration ca
     assert.throws(
       () =>
         migrateSqlite(db, {
+          convert,
           afterDdl() {
             throw new Error("injected crash before history");
           },
@@ -112,7 +165,21 @@ test("migration DDL/history/version roll back together and the same migration ca
     assert.equal(sqliteVersion(db), 29);
     assert.deepEqual(contents(db), before);
     assert.deepEqual(shape(db), previousSchema);
-    assert.equal(migrateSqlite(db).applied, true);
+    // An interruption after the v34 conversion keeps v33 and every row.
+    assert.throws(
+      () =>
+        migrateSqlite(db, {
+          convert,
+          afterDdl(version) {
+            if (version === 34) throw new Error("interrupted34");
+          },
+        }),
+      /interrupted34/,
+    );
+    assert.equal(sqliteVersion(db), 29);
+    assert.deepEqual(contents(db), before);
+    assert.deepEqual(shape(db), previousSchema);
+    assert.equal(migrateSqlite(db, { convert }).applied, true);
     assertSqliteHistory(db);
   } finally {
     db.close();
@@ -141,16 +208,22 @@ test("unsupported versions, occupied version zero, malformed v29 and altered his
   const db = legacy();
   try {
     db.exec("DROP TABLE calendar_preferences");
-    assert.throws(() => migrateSqlite(db), /Unsupported SQLite schema/);
+    assert.throws(
+      () => migrateSqlite(db, { convert }),
+      /Unsupported SQLite schema/,
+    );
     assert.equal(sqliteVersion(db), 29);
   } finally {
     db.close();
   }
   const migrated = legacy();
   try {
-    migrateSqlite(migrated);
+    migrateSqlite(migrated, { convert });
     migrated.exec("UPDATE schema_migrations SET checksum='tampered'");
-    assert.throws(() => migrateSqlite(migrated), /checksum mismatch/);
+    assert.throws(
+      () => migrateSqlite(migrated, { convert }),
+      /checksum mismatch/,
+    );
     assert.equal(
       migrated.prepare("SELECT version FROM cells").get().version,
       14,
@@ -164,7 +237,10 @@ test("integrity failures are refused before conversion and empty initialization 
   const db = legacy();
   try {
     db.exec("PRAGMA foreign_keys=OFF; DELETE FROM users WHERE id='person'");
-    assert.throws(() => migrateSqlite(db), /integrity\/foreign key/);
+    assert.throws(
+      () => migrateSqlite(db, { convert }),
+      /integrity\/foreign key/,
+    );
     assert.equal(sqliteVersion(db), 29);
   } finally {
     db.close();
@@ -216,7 +292,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
   }
 });
 
-test("released v30 upgrades atomically to v32, retaining the original migration checksum and all rows", () => {
+test("released v30 upgrades atomically to v34, retaining the original migration checksum and all rows", () => {
   const db = legacy();
   try {
     db.exec(syncSql);
@@ -226,11 +302,15 @@ test("released v30 upgrades atomically to v32, retaining the original migration 
     );
     db.exec("PRAGMA user_version=30");
     const before = contents(db);
-    assert.equal(migrateSqlite(db, { dryRun: true }).to, SQLITE_VERSION);
+    assert.equal(
+      migrateSqlite(db, { dryRun: true, convert }).to,
+      SQLITE_VERSION,
+    );
     assert.deepEqual(contents(db), before);
     assert.throws(
       () =>
         migrateSqlite(db, {
+          convert,
           afterDdl(version) {
             if (version === 31) throw new Error("interrupted31");
           },
@@ -239,17 +319,77 @@ test("released v30 upgrades atomically to v32, retaining the original migration 
     );
     assert.equal(sqliteVersion(db), 30);
     assert.deepEqual(contents(db), before);
-    migrateSqlite(db);
-    for (const [table, rows] of Object.entries(before))
-      if (table !== "schema_migrations")
-        assert.deepEqual(contents(db)[table], rows, table);
+    migrateSqlite(db, { convert });
+    preserved(contents(db), before, ["schema_migrations"]);
     assert.deepEqual(
       db.prepare("SELECT * FROM schema_migrations WHERE version=30").get(),
       before.schema_migrations[0],
     );
     assertSqliteHistory(db);
     assertSqliteIntegrity(db);
-    assert.equal(migrateSqlite(db).applied, false);
+    assert.equal(migrateSqlite(db, { convert }).applied, false);
+  } finally {
+    db.close();
+  }
+});
+
+test("released v33 upgrades to v34 with every earlier checksum kept; an interrupted conversion keeps v33", () => {
+  const db = legacy();
+  try {
+    db.exec(syncSql);
+    db.exec(keySql);
+    db.exec(maintenanceSql);
+    db.exec(accessTokenSql);
+    for (const [version, checksum] of [
+      [30, syncChecksum],
+      [31, keyChecksum],
+      [32, maintenanceChecksum],
+      [33, accessTokenChecksum],
+    ])
+      db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(
+        version,
+        checksum,
+        "original" + version,
+      );
+    db.exec("PRAGMA user_version=33");
+    const before = contents(db),
+      shapeBefore = shape(db);
+    assert.throws(
+      () =>
+        migrateSqlite(db, {
+          convert: (connection) => {
+            convert(connection);
+            throw new Error("interrupted conversion");
+          },
+        }),
+      /interrupted conversion/,
+    );
+    assert.equal(sqliteVersion(db), 33);
+    assert.deepEqual(contents(db), before);
+    assert.deepEqual(shape(db), shapeBefore);
+    assert.equal(migrateSqlite(db, { convert }).applied, true);
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT * FROM schema_migrations WHERE version<34 ORDER BY version",
+        )
+        .all(),
+      before.schema_migrations,
+    );
+    assert.equal(
+      db
+        .prepare("SELECT checksum FROM schema_migrations WHERE version=34")
+        .get().checksum,
+      sheetCloneChecksum,
+    );
+    preserved(contents(db), before, ["schema_migrations"]);
+    assert.match(
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE name='sheet_clone_memos'")
+        .get().sql,
+      /REFERENCES "sheet_clones"\(id\)/,
+    );
+    assertSqliteIntegrity(db);
   } finally {
     db.close();
   }
@@ -272,6 +412,7 @@ test("released v31 index upgrade preserves old checksums, rolls back DDL and use
     assert.throws(
       () =>
         migrateSqlite(db, {
+          convert,
           afterDdl(version) {
             if (version === 32) throw new Error("interrupted32");
           },
@@ -281,7 +422,7 @@ test("released v31 index upgrade preserves old checksums, rolls back DDL and use
     assert.deepEqual(contents(db), before);
     assert.deepEqual(shape(db), shapeBefore);
     assert.equal(sqliteVersion(db), 31);
-    migrateSqlite(db);
+    migrateSqlite(db, { convert });
     assert.deepEqual(
       db
         .prepare(
@@ -311,7 +452,7 @@ test("released v31 index upgrade preserves old checksums, rolls back DDL and use
   }
 });
 
-test("v31 startup preserves the database and directs operators to the explicit migration before booting v32", () => {
+test("v31 startup preserves the database and directs operators to the explicit migration before booting v34", () => {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-v31-startup-")),
     path = join(dir, "existing.sqlite");
   let db = legacy(path);
@@ -357,10 +498,7 @@ test("v31 startup preserves the database and directs operators to the explicit m
     assert.equal(sqliteVersion(db), SQLITE_VERSION);
     assertSqliteHistory(db);
     assertSqliteIntegrity(db);
-    const after = contents(db);
-    for (const [table, rows] of Object.entries(before))
-      if (table !== "schema_migrations")
-        assert.deepEqual(after[table], rows, table);
+    preserved(contents(db), before, ["schema_migrations"]);
   } finally {
     db?.close();
     rmSync(dir, { recursive: true, force: true });

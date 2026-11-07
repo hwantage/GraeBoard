@@ -5,11 +5,11 @@ import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { writeFormatting, readFormatting } from "../server/db.mjs";
-import { decodeReport } from "../server/reports.mjs";
+import { decodeSheetClone } from "../server/sheet-clones.mjs";
 import { allEntities, readEntity } from "../server/sync/entities.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
-import { splitReportRecord } from "../server/sync/versions.mjs";
+import { splitSheetCloneRecord } from "../server/sync/versions.mjs";
 import {
   canonical,
   emptyState,
@@ -20,11 +20,11 @@ import {
 import { defaultView } from "../shared/domain.js";
 import { stringify } from "../shared/compact.js";
 import {
-  isPackedReportData,
-  packReportData,
-  unpackReportData,
-  unpackReportPayload,
-} from "../shared/report-sync-data.js";
+  isPackedSheetCloneData,
+  packSheetCloneData,
+  unpackSheetCloneData,
+  unpackSheetClonePayload,
+} from "../shared/sheet-clone-sync-data.js";
 
 const MiB = 1024 * 1024;
 // 운영 팀과 같은 모양: 규칙 5개는 약 430개 행 ID, 3개는 19개 행 ID를 가진 열 규칙.
@@ -81,7 +81,7 @@ test("사본 저장의 동기화 명령은 저장 BLOB과 같은 공유 사전 �
       80 * 1024,
   );
   const year = new Date().getFullYear();
-  const response = await post(f, "/api/reports", {
+  const response = await post(f, "/api/sheet-clones", {
     teamId: f.teamId,
     year,
     name: "공유 사전 사본",
@@ -95,29 +95,29 @@ test("사본 저장의 동기화 명령은 저장 BLOB과 같은 공유 사전 �
     .prepare("SELECT payload FROM sync_outbox ORDER BY local_seq DESC LIMIT 1")
     .get();
   const operation = JSON.parse(outbox.payload),
-    change = operation.changes.find((c) => c.entity === "report");
+    change = operation.changes.find((c) => c.entity === "sheetClone");
   assert.equal(change.action, "create");
-  assert.ok(isPackedReportData(change.desired.data));
+  assert.ok(isPackedSheetCloneData(change.desired.data));
   assert.equal(change.desired.data.$formats.length, 1);
   assert.ok(
     Buffer.byteLength(outbox.payload) < 4 * MiB,
     `operation ${Buffer.byteLength(outbox.payload)} bytes`,
   );
   // 같은 사본을 평문으로 풀면 운영에서 32MiB 한도를 넘겼던 크기가 된다.
-  const expanded = unpackReportData(change.desired.data);
+  const expanded = unpackSheetCloneData(change.desired.data);
   assert.equal(expanded.tasks.length, 438);
   assert.ok(Buffer.byteLength(canonical(expanded)) > 32 * MiB);
   // DB BLOB을 푼 결과와 동기화 payload를 푼 결과는 같은 내용이다.
   const row = f.db
-    .prepare("SELECT data FROM reports WHERE id=?")
+    .prepare("SELECT data FROM sheet_clones WHERE id=?")
     .get(created.id);
-  const stored = decodeReport(row.data);
+  const stored = decodeSheetClone(row.data);
   assert.deepEqual(
     expanded.tasks.map((task) => task.formatting),
     stored.tasks.map((task) => task.formatting),
   );
   assert.equal(
-    readEntity(f.db, f.teamId, "report", [created.id]).payload.data.$formats
+    readEntity(f.db, f.teamId, "sheetClone", [created.id]).payload.data.$formats
       .length,
     1,
   );
@@ -126,56 +126,56 @@ test("사본 저장의 동기화 명령은 저장 BLOB과 같은 공유 사전 �
 test("공유 사전 직렬화는 키 순서와 무관하게 같은 바이트를 내고 풀면 원래 내용으로 돌아온다", (t) => {
   const f = sqliteFixture(t);
   const row = f.db
-      .prepare("SELECT data FROM reports WHERE id=?")
-      .get(f.reportId),
-    decoded = decodeReport(row.data),
+      .prepare("SELECT data FROM sheet_clones WHERE id=?")
+      .get(f.sheetCloneId),
+    decoded = decodeSheetClone(row.data),
     reordered = JSON.parse(canonical(decoded));
-  const a = packReportData(decoded),
-    b = packReportData(reordered);
-  assert.ok(isPackedReportData(a));
+  const a = packSheetCloneData(decoded),
+    b = packSheetCloneData(reordered);
+  assert.ok(isPackedSheetCloneData(a));
   assert.equal(canonical(a), canonical(b));
-  assert.deepEqual(unpackReportData(a), decoded);
+  assert.deepEqual(unpackSheetCloneData(a), decoded);
   assert.deepEqual(
-    unpackReportData(packReportData(unpackReportData(a))),
+    unpackSheetCloneData(packSheetCloneData(unpackSheetCloneData(a))),
     decoded,
   );
-  assert.equal(canonical(packReportData(a)), canonical(a));
+  assert.equal(canonical(packSheetCloneData(a)), canonical(a));
   // 저장 BLOB의 사전 형태와 같은 코덱이다.
   assert.deepEqual(JSON.parse(stringify(decoded)).$styles, a.$styles);
   // 사전이 필요 없는 사본은 평문 그대로이며 푸는 쪽도 그대로 돌려준다.
   const plain = { tasks: [], users: [], view: {}, settings: {} };
-  assert.ok(!isPackedReportData(packReportData(plain)));
-  assert.deepEqual(packReportData(plain), plain);
-  assert.equal(unpackReportData(plain), plain);
+  assert.ok(!isPackedSheetCloneData(packSheetCloneData(plain)));
+  assert.deepEqual(packSheetCloneData(plain), plain);
+  assert.equal(unpackSheetCloneData(plain), plain);
 });
 
 test("사본 payload 검증은 공유 사전 형태를 받아들이고 잘못된 사전은 거절한다", (t) => {
   const f = sqliteFixture(t);
-  const record = f.state.entities[entityId("report", [f.reportId])];
-  assert.ok(isPackedReportData(record.payload.data));
-  validateEntityPayload("report", record.key, record.payload, f.teamId, 1);
+  const record = f.state.entities[entityId("sheetClone", [f.sheetCloneId])];
+  assert.ok(isPackedSheetCloneData(record.payload.data));
+  validateEntityPayload("sheetClone", record.key, record.payload, f.teamId, 3);
   validateEntityPayload(
-    "report",
+    "sheetClone",
     record.key,
-    unpackReportPayload(record.payload),
+    unpackSheetClonePayload(record.payload),
     f.teamId,
-    1,
+    3,
   );
   assert.throws(
     () =>
       validateEntityPayload(
-        "report",
+        "sheetClone",
         record.key,
         { ...record.payload, data: { $styles: "x", $data: {} } },
         f.teamId,
-        1,
+        3,
       ),
-    /Invalid report payload/,
+    /Invalid sheetClone payload/,
   );
   assert.throws(
     () =>
       validateEntityPayload(
-        "report",
+        "sheetClone",
         record.key,
         {
           ...record.payload,
@@ -188,33 +188,33 @@ test("사본 payload 검증은 공유 사전 형태를 받아들이고 잘못된
           },
         },
         f.teamId,
-        1,
+        3,
       ),
     /Private account data/,
   );
-  // v2 분할은 공유 사전 형태와 평문에서 같은 행·셀 레코드를 만든다.
+  // 프로토콜 4 분할은 공유 사전 형태와 평문에서 같은 행·셀 레코드를 만든다.
   assert.deepEqual(
-    splitReportRecord(record).map((r) => [r.entity, r.key, r.payload]),
-    splitReportRecord({
+    splitSheetCloneRecord(record).map((r) => [r.entity, r.key, r.payload]),
+    splitSheetCloneRecord({
       ...record,
-      payload: unpackReportPayload(record.payload),
+      payload: unpackSheetClonePayload(record.payload),
     }).map((r) => [r.entity, r.key, r.payload]),
   );
 });
 
 test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편집·삭제가 충돌로 바뀌지 않는다", (t) => {
   const f = sqliteFixture(t);
-  const id = entityId("report", [f.reportId]),
+  const id = entityId("sheetClone", [f.sheetCloneId]),
     packed = f.state.entities[id];
   const legacy = structuredClone(f.state);
   legacy.entities[id] = {
     ...packed,
-    payload: unpackReportPayload(packed.payload),
+    payload: unpackSheetClonePayload(packed.payload),
   };
-  assert.ok(!isPackedReportData(legacy.entities[id].payload.data));
+  assert.ok(!isPackedSheetCloneData(legacy.entities[id].payload.data));
   assert.notEqual(stateHash(legacy), stateHash(f.state));
   // 풀린 객체는 참조가 없는 가지를 원본과 공유하므로 수정 전에 복제한다.
-  const data = structuredClone(unpackReportData(packed.payload.data));
+  const data = structuredClone(unpackSheetCloneData(packed.payload.data));
   data.tasks[0].cells.title = {
     ...data.tasks[0].cells.title,
     value: "공유 사전 편집",
@@ -226,7 +226,7 @@ test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편
     after: {
       [id]: {
         ...packed,
-        payload: { ...packed.payload, data: packReportData(data) },
+        payload: { ...packed.payload, data: packSheetCloneData(data) },
       },
     },
   });
@@ -238,9 +238,9 @@ test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편
     JSON.stringify(edited.receipt),
   );
   const after = edited.state.entities[id];
-  assert.ok(isPackedReportData(after.payload.data));
+  assert.ok(isPackedSheetCloneData(after.payload.data));
   assert.equal(
-    unpackReportData(after.payload.data).tasks[0].cells.title.value,
+    unpackSheetCloneData(after.payload.data).tasks[0].cells.title.value,
     "공유 사전 편집",
   );
   const removal = makeOperation({
@@ -269,7 +269,7 @@ test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편
       after: {
         [id]: {
           ...packed,
-          payload: { ...packed.payload, data: packReportData(stale) },
+          payload: { ...packed.payload, data: packSheetCloneData(stale) },
         },
       },
     }),
@@ -312,7 +312,7 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
     return { status: response.status, data: await response.json() };
   };
   try {
-    const created = await call("/api/reports", {
+    const created = await call("/api/sheet-clones", {
       teamId: f.teamId,
       year: 2026,
       name: "외부 공유 사전 사본",
@@ -326,12 +326,12 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
     );
     const stored = (
       await f.pool.query(
-        "SELECT payload FROM graeboard.site_entities WHERE entity='report' AND entity_key=$1",
+        "SELECT payload FROM graeboard.site_entities WHERE entity='sheetClone' AND entity_key=$1",
         [canonical([created.data.id])],
       )
     ).rows[0];
     const storedData = JSON.parse(stored.payload).data;
-    assert.ok(isPackedReportData(storedData));
+    assert.ok(isPackedSheetCloneData(storedData));
     assert.equal(storedData.$formats.length, 1);
     const outbox = (
       await f.pool.query(
@@ -339,23 +339,23 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
       )
     ).rows[0];
     const change = JSON.parse(outbox.payload).changes.find(
-      (c) => c.entity === "report",
+      (c) => c.entity === "sheetClone",
     );
     assert.equal(change.action, "create");
-    assert.ok(isPackedReportData(change.desired.data));
+    assert.ok(isPackedSheetCloneData(change.desired.data));
     assert.equal(canonical(change.desired.data), canonical(storedData));
-    const read = await call("/api/reports/" + created.data.id);
+    const read = await call("/api/sheet-clones/" + created.data.id);
     assert.equal(read.status, 200, JSON.stringify(read.data));
-    const view = unpackReportData(read.data);
+    const view = unpackSheetCloneData(read.data);
     assert.equal(view.tasks[0].formatting.rules.length, 1);
     assert.equal(view.tasks[0].formatting.rules[0].id, "outside-rule");
     assert.deepEqual(
       view.tasks[0].formatting,
-      unpackReportData(storedData).tasks[0].formatting,
+      unpackSheetCloneData(storedData).tasks[0].formatting,
     );
     // 이름 변경처럼 data를 바꾸지 않는 편집은 같은 저장 형태를 유지한다.
     const renamed = await call(
-      `/api/reports/${created.data.id}/name`,
+      `/api/sheet-clones/${created.data.id}/name`,
       { name: "외부 사본 이름", expectedName: "외부 공유 사전 사본" },
       "PATCH",
     );
@@ -366,10 +366,10 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
       )
     ).rows[0];
     const rename = JSON.parse(latest.payload).changes.find(
-      (c) => c.entity === "report",
+      (c) => c.entity === "sheetClone",
     );
     assert.deepEqual(rename.fields, ["name"]);
-    assert.ok(isPackedReportData(rename.base.data));
+    assert.ok(isPackedSheetCloneData(rename.base.data));
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await app.close();

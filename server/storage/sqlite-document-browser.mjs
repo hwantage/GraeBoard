@@ -9,9 +9,12 @@ import {
   groupValue,
   propertiesFor,
 } from "../../shared/domain.js";
-import { reportBrowseIndex, reportUsersWithAvatars } from "../reports.mjs";
-import { readReport } from "../document-storage.mjs";
-import { reportRevision } from "../report-editing.mjs";
+import {
+  sheetCloneBrowseIndex,
+  sheetCloneUsersWithAvatars,
+} from "../sheet-clones.mjs";
+import { readSheetClone } from "../document-storage.mjs";
+import { sheetCloneRevision } from "../sheet-clone-editing.mjs";
 
 import {
   sourceSchema,
@@ -33,12 +36,12 @@ function browserOperations({
   }
   const liveWhere = `t.team_id=? AND t.deleted_at IS NULL AND EXISTS (
     SELECT 1 FROM json_each(t.years) WHERE value=?)`;
-  function reportRow(id, teamId) {
+  function sheetCloneRow(id, teamId) {
     const row = db
-      .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+      .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
       .get(id, teamId);
     requireThat(row, 404, "사본을 찾을 수 없습니다.");
-    retentionView(db, teamId).requireVisible("report", [id]);
+    retentionView(db, teamId).requireVisible("sheetClone", [id]);
     return row;
   }
   operations.sources = (user, query) => {
@@ -49,10 +52,10 @@ function browserOperations({
       FROM tasks t JOIN task_documents d ON d.task_id=t.id WHERE ${liveWhere}`,
       )
       .get(s.teamId, s.year);
-    const reports = db
+    const sheetClones = db
       .prepare(
         `SELECT r.id,r.name,COUNT(DISTINCT d.task_id) AS taskCount,COUNT(d.document_id) AS documentCount
-      FROM reports r LEFT JOIN report_documents d ON d.report_id=r.id
+      FROM sheet_clones r LEFT JOIN sheet_clone_documents d ON d.sheet_clone_id=r.id
       WHERE r.team_id=? AND r.year=? GROUP BY r.id ORDER BY r.created_at DESC,r.id`,
       )
       .all(s.teamId, s.year);
@@ -62,8 +65,8 @@ function browserOperations({
       // The usual path retains its aggregate-only queries when L is empty.
       const counts = new Map([
         ["live", { tasks: new Set(), documents: 0 }],
-        ...reports.map((report) => [
-          report.id,
+        ...sheetClones.map((sheetClone) => [
+          sheetClone.id,
           { tasks: new Set(), documents: 0 },
         ]),
       ]);
@@ -81,31 +84,31 @@ function browserOperations({
       }
       for (const row of db
         .prepare(
-          `SELECT d.report_id AS reportId,d.task_id AS taskId,d.document_id AS documentId
-         FROM report_documents d JOIN reports r ON r.id=d.report_id
+          `SELECT d.sheet_clone_id AS sheetCloneId,d.task_id AS taskId,d.document_id AS documentId
+         FROM sheet_clone_documents d JOIN sheet_clones r ON r.id=d.sheet_clone_id
          WHERE r.team_id=? AND r.year=?`,
         )
         .all(s.teamId, s.year)) {
         if (
           visibility.hidden("document", [
-            "report",
-            row.reportId,
+            "sheetClone",
+            row.sheetCloneId,
             row.taskId,
             row.documentId,
           ])
         )
           continue;
-        const count = counts.get(row.reportId);
+        const count = counts.get(row.sheetCloneId);
         count.tasks.add(row.taskId);
         count.documents++;
       }
       const liveCount = counts.get("live");
       live.taskCount = liveCount.tasks.size;
       live.documentCount = liveCount.documents;
-      for (const report of reports) {
-        const count = counts.get(report.id);
-        report.taskCount = count.tasks.size;
-        report.documentCount = count.documents;
+      for (const sheetClone of sheetClones) {
+        const count = counts.get(sheetClone.id);
+        sheetClone.taskCount = count.tasks.size;
+        sheetClone.documentCount = count.documents;
       }
     }
     return {
@@ -113,7 +116,9 @@ function browserOperations({
         ? []
         : [
             { id: "live", name: "원본", ...live },
-            ...reports.filter((row) => !visibility.hidden("report", [row.id])),
+            ...sheetClones.filter(
+              (row) => !visibility.hidden("sheetClone", [row.id]),
+            ),
           ],
     };
   };
@@ -160,17 +165,17 @@ function browserOperations({
         byId.get(task_id).documents.push(doc);
       }
     } else {
-      const row = reportRow(source, s.teamId);
+      const row = sheetCloneRow(source, s.teamId);
       requireThat(row.year === s.year, 404, "선택한 연도의 사본이 아닙니다.");
-      const index = reportBrowseIndex(row.data);
+      const index = sheetCloneBrowseIndex(row.data);
       settings = index.settings;
       users = index.users;
-      // Current versions live in report_documents, independently of the BLOB.
+      // Current versions live in sheet_clone_documents, independently of the BLOB.
       const refs = new Map(
         db
           .prepare(
             `SELECT d.task_id,d.document_id,v.has_content AS hasContent
-        FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=?`,
+        FROM sheet_clone_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.sheet_clone_id=?`,
           )
           .all(source)
           .map((d) => [`${d.task_id}:${d.document_id}`, d]),
@@ -208,11 +213,11 @@ function browserOperations({
               `SELECT d.task_id,d.${source === "live" ? "id" : "document_id"} AS document_id,
               substr(v.markdown,1,${previewInputLength + 1}) AS excerpt
               FROM json_each(?) requested
-              JOIN ${source === "live" ? "task_documents" : "report_documents"} d
+              JOIN ${source === "live" ? "task_documents" : "sheet_clone_documents"} d
                 ON d.task_id=json_extract(requested.value,'$[0]')
                 AND d.${source === "live" ? "id" : "document_id"}=json_extract(requested.value,'$[1]')
               JOIN document_versions v ON v.id=d.version_id
-              ${source === "live" ? "" : "WHERE d.report_id=?"}`,
+              ${source === "live" ? "" : "WHERE d.sheet_clone_id=?"}`,
             )
             .all(
               JSON.stringify(documents),
@@ -233,7 +238,7 @@ function browserOperations({
       (id) => users.find((user) => user.id === id) || { id, name: id },
     );
     const profiles =
-      source === "live" ? pageUsers : reportUsersWithAvatars(db, pageUsers);
+      source === "live" ? pageUsers : sheetCloneUsersWithAvatars(db, pageUsers);
     return {
       ...result,
       owners: Object.fromEntries(
@@ -257,19 +262,19 @@ function browserOperations({
         users: referencedUsers(s.teamId),
       };
     }
-    const row = reportRow(source, s.teamId);
-    const report = readReport(db, row);
-    const task = report.tasks.find((task) => task.id === taskId);
+    const row = sheetCloneRow(source, s.teamId);
+    const sheetClone = readSheetClone(db, row);
+    const task = sheetClone.tasks.find((task) => task.id === taskId);
     requireThat(task, 404, "사본에서 해당 업무를 찾지 못했습니다.");
     const { documents, ...metadata } = task;
     const people = new Map(teamUsers(s.teamId).map((user) => [user.id, user]));
-    for (const user of report.users)
+    for (const user of sheetClone.users)
       people.set(user.id, { ...people.get(user.id), ...user });
     return {
       task: metadata,
-      settings: report.settings,
+      settings: sheetClone.settings,
       users: [...people.values()],
-      revision: reportRevision(row.data, report),
+      revision: sheetCloneRevision(row.data, sheetClone),
     };
   };
   return operations;

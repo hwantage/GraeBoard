@@ -1,7 +1,7 @@
 import {
-  applyReportOperation,
-  ReportEditError,
-} from "../../shared/report-editing.js";
+  applySheetCloneOperation,
+  SheetCloneEditError,
+} from "../../shared/sheet-clone-editing.js";
 import { propertiesFor } from "../../shared/domain.js";
 import {
   validateCellValue,
@@ -11,8 +11,8 @@ import {
 
 // Engine-neutral validation + row transformation; adapters supply authorized
 // people and hydrated document references and retain their own storage format.
-export function prepareReportEdits({
-  report,
+export function prepareSheetCloneEdits({
+  sheetClone,
   operations,
   teamId,
   year,
@@ -20,10 +20,10 @@ export function prepareReportEdits({
   available = [],
 }) {
   // A copied row may contain archived columns/options that were already
-  // present in this report. Keep them without importing the live schema.
+  // present in this sheetClone. Keep them without importing the live schema.
   const copySettings = {
-    ...report.settings,
-    properties: propertiesFor(report.settings, true).map((property) => ({
+    ...sheetClone.settings,
+    properties: propertiesFor(sheetClone.settings, true).map((property) => ({
       ...property,
       archived: false,
       values: property.values.map((option) => ({
@@ -32,12 +32,14 @@ export function prepareReportEdits({
       })),
     })),
   };
-  const people = new Map((report.users || []).map((user) => [user.id, user]));
+  const people = new Map(
+    (sheetClone.users || []).map((user) => [user.id, user]),
+  );
   for (const user of available)
     if (!people.has(user.id))
       people.set(user.id, { id: user.id, name: user.name });
   const assignable = new Set(people.keys());
-  let tasks = report.tasks;
+  let tasks = sheetClone.tasks;
   const deleted = new Map();
   let changedCells = 0;
   for (const operation of operations) {
@@ -86,7 +88,7 @@ export function prepareReportEdits({
           teamId,
           change.key,
           change.value,
-          report.settings,
+          sheetClone.settings,
           task.cells[change.key]?.value,
           assignable,
         );
@@ -99,7 +101,7 @@ export function prepareReportEdits({
           teamId,
           key,
           value,
-          report.settings,
+          sheetClone.settings,
           undefined,
           assignable,
         );
@@ -118,7 +120,7 @@ export function prepareReportEdits({
       for (const scope of operation.scopes)
         for (const key of [...(scope.keys || []), ...(scope.excludeKeys || [])])
           requireThat(
-            validCellKey(key, report.settings),
+            validCellKey(key, sheetClone.settings),
             400,
             "사본에 없는 속성입니다.",
           );
@@ -129,17 +131,17 @@ export function prepareReportEdits({
     );
     try {
       const previous = tasks;
-      tasks = applyReportOperation(tasks, operation, {
+      tasks = applySheetCloneOperation(tasks, operation, {
         teamId: teamId,
         year: year,
         actorId: actorId,
-        settings: report.settings,
+        settings: sheetClone.settings,
       });
       const remaining = new Set(tasks.map((task) => task.id));
       for (const task of previous)
         if (!remaining.has(task.id)) deleted.set(task.id, task);
     } catch (error) {
-      if (!(error instanceof ReportEditError)) throw error;
+      if (!(error instanceof SheetCloneEditError)) throw error;
       requireThat(false, 400, error.message);
     }
   }

@@ -17,6 +17,8 @@ export const SITE_KEY_CHECKSUM =
   "36ac6929900353521f57dda03ab45d11066ad869329d5efa4bcea251029974ad";
 export const TEAM_MAINTENANCE_CHECKSUM =
   "ceb14347ad6c7a237694b61202f4384bc07aaf08e7c6998f0c325adc10228acc";
+export const TEAM_SHEET_CLONE_CHECKSUM =
+  "945d523ee4f58ff6e705529f307fc0eb16f2e01693588a50830f4d4a635050ad";
 export const ACCESS_TOKEN_CHECKSUM =
   "93267cbac2c6ec29df185703716f1a557241b9a9309790ecd0a17e3436478bb1";
 export function postgresHistoryVersion(
@@ -31,7 +33,9 @@ export function postgresHistoryVersion(
   const expected = [
     POSTGRES_CHECKSUMS[scope],
     ...(scope === "site" ? [SITE_KEY_CHECKSUM, ACCESS_TOKEN_CHECKSUM] : []),
-    ...(scope === "team" ? [TEAM_MAINTENANCE_CHECKSUM] : []),
+    ...(scope === "team"
+      ? [TEAM_MAINTENANCE_CHECKSUM, TEAM_SHEET_CLONE_CHECKSUM]
+      : []),
     ...(scope === "control" ? [ACCESS_TOKEN_CHECKSUM] : []),
   ];
   const allowPrevious =

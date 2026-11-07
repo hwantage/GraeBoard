@@ -50,16 +50,17 @@ export class CanonicalSlice {
     if (entity === "cell") this.want("task", [key[0]]);
     if (entity === "document") {
       if (["task", "calendar"].includes(key[0])) this.want(key[0], [key[1]]);
-      else if (key[0].startsWith("report")) this.want("report", [key[1]]);
+      else if (key[0].startsWith("sheetClone"))
+        this.want("sheetClone", [key[1]]);
     }
-    if (entity === "reportTask") this.want("report", [key[0]]);
-    if (entity === "reportCell") {
-      this.want("report", [key[0]]);
-      this.want("reportTask", key.slice(0, 2));
+    if (entity === "sheetCloneTask") this.want("sheetClone", [key[0]]);
+    if (entity === "sheetCloneCell") {
+      this.want("sheetClone", [key[0]]);
+      this.want("sheetCloneTask", key.slice(0, 2));
     }
-    if (entity === "report") {
-      this.children("reportTask", [key[0]]);
-      this.children("reportCell", [key[0]]);
+    if (entity === "sheetClone") {
+      this.children("sheetCloneTask", [key[0]]);
+      this.children("sheetCloneCell", [key[0]]);
     }
     if (entity === "tag") this.tags.add(key[0]);
     if (action === "restore") this.restored(entity, key);
@@ -155,7 +156,7 @@ export class CanonicalSlice {
       tagUsers = new Map();
     for (const row of (
       await this.tx.query(
-        "SELECT entity,entity_key,deleted,payload::json->>'name' AS name,payload::json->>'userId' AS user_id FROM sync_entities WHERE team_id=$1 AND entity IN ('tag','filter','report')",
+        "SELECT entity,entity_key,deleted,payload::json->>'name' AS name,payload::json->>'userId' AS user_id FROM sync_entities WHERE team_id=$1 AND entity IN ('tag','filter','sheetClone')",
         [this.teamId],
       )
     ).rows) {

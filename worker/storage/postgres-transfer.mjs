@@ -27,7 +27,7 @@ import {
 } from "../../shared/validation.js";
 import { assert } from "../access.mjs";
 import { taskList, settingsFor, excludedYears } from "../tasks.mjs";
-import { reportView } from "../reports.mjs";
+import { sheetCloneView } from "../sheet-clones.mjs";
 import { imageReferences } from "../images.mjs";
 import {
   transferDownload as download,
@@ -61,23 +61,25 @@ export class PostgresTransferRepository {
       "내보내기 형식을 확인하세요.",
     );
     const data = await ctx.data(teamId, async (s) => {
-      const report = body.reportId
-        ? await s.get("report", [body.reportId])
+      const sheetClone = body.sheetCloneId
+        ? await s.get("sheetClone", [body.sheetCloneId])
         : null;
       assert(
-        !body.reportId || (report && !report.deleted),
+        !body.sheetCloneId || (sheetClone && !sheetClone.deleted),
         404,
         "사본을 찾을 수 없습니다.",
       );
-      const reportData = report ? await reportView(s, report) : null;
-      if (reportData)
+      const sheetCloneData = sheetClone
+        ? await sheetCloneView(s, sheetClone)
+        : null;
+      if (sheetCloneData)
         assert(
-          reportData.revision === body.revision,
+          sheetCloneData.revision === body.revision,
           409,
           "사본이 변경되었습니다.",
         );
       let tasks =
-        reportData?.tasks ||
+        sheetCloneData?.tasks ||
         (await taskList(s, {
           year,
           startMonth: body.scope === "all" ? 1 : body.startMonth || 1,
@@ -92,7 +94,7 @@ export class PostgresTransferRepository {
         );
         tasks = selected;
       }
-      const settings = reportData?.settings || (await settingsFor(s)),
+      const settings = sheetCloneData?.settings || (await settingsFor(s)),
         allowed = orderColumns(
           fieldsFor(settings),
           weeksForPeriod(year, body.startMonth || 1),
@@ -108,9 +110,9 @@ export class PostgresTransferRepository {
         ...t,
         documents: docs
           .filter((d) =>
-            report
-              ? d.key[0] === "report" &&
-                d.key[1] === body.reportId &&
+            sheetClone
+              ? d.key[0] === "sheetClone" &&
+                d.key[1] === body.sheetCloneId &&
                 d.key[2] === t.id
               : d.key[0] === "task" && d.key[1] === t.id,
           )
@@ -122,15 +124,19 @@ export class PostgresTransferRepository {
       }));
       const memos = docs
         .filter((d) =>
-          report
-            ? d.key[0] === "reportMemo" && d.key[1] === body.reportId
+          sheetClone
+            ? d.key[0] === "sheetCloneMemo" && d.key[1] === body.sheetCloneId
             : d.key[0] === "annual" && d.key[1] === String(year),
         )
         .map((d) => ({ id: d.key.at(-1), ...d.payload }));
       const view = await s.get("view", [ctx.user.id, String(year)]),
-        reports = [];
-      if (!report && body.scope === "all" && canManageTeam(ctx.user, teamId))
-        for (const row of await s.list("report"))
+        sheetClones = [];
+      if (
+        !sheetClone &&
+        body.scope === "all" &&
+        canManageTeam(ctx.user, teamId)
+      )
+        for (const row of await s.list("sheetClone"))
           if (row.payload.year === year) {
             const data = structuredClone(row.payload.data);
             data.tasks = data.tasks.map((t) => ({
@@ -138,7 +144,7 @@ export class PostgresTransferRepository {
               documents: docs
                 .filter(
                   (d) =>
-                    d.key[0] === "report" &&
+                    d.key[0] === "sheetClone" &&
                     d.key[1] === row.key[0] &&
                     d.key[2] === t.id,
                 )
@@ -146,10 +152,10 @@ export class PostgresTransferRepository {
             }));
             data.memos = docs
               .filter(
-                (d) => d.key[0] === "reportMemo" && d.key[1] === row.key[0],
+                (d) => d.key[0] === "sheetCloneMemo" && d.key[1] === row.key[0],
               )
               .map((d) => ({ id: d.key.at(-1), ...d.payload }));
-            reports.push({
+            sheetClones.push({
               name: row.payload.name,
               year,
               referenceDate: row.payload.referenceDate,
@@ -161,9 +167,9 @@ export class PostgresTransferRepository {
         tasks,
         settings,
         keys,
-        users: reportData?.users || bootstrap.users,
+        users: sheetCloneData?.users || bootstrap.users,
         memos,
-        reports,
+        sheetClones,
         views: view ? [{ name: "__current", data: view.payload }] : [],
         filters: (await s.list("filter")).map((r) => ({
           id: r.key[0],
@@ -215,7 +221,7 @@ export class PostgresTransferRepository {
     const images = await ctx.imageStore(teamId),
       documentImages = [];
     for (const url of imageReferences(
-      { tasks: data.tasks, memos: data.memos, reports: data.reports },
+      { tasks: data.tasks, memos: data.memos, sheetClones: data.sheetClones },
       teamId,
     )) {
       const bytes = await images.read(url);
@@ -230,7 +236,7 @@ export class PostgresTransferRepository {
       JSON.stringify(
         pack({
           format: "weekly-plan",
-          schemaVersion: 6,
+          schemaVersion: 7,
           exportedAt: new Date().toISOString(),
           team: { id: teamId, name: team.name, settings: data.settings },
           year,
@@ -246,7 +252,7 @@ export class PostgresTransferRepository {
             }),
           ),
           memos: data.memos,
-          reports: data.reports,
+          sheetClones: data.sheetClones,
           views: data.views,
           filters: data.filters,
           currentFilters: data.currentFilters,
@@ -261,7 +267,7 @@ export class PostgresTransferRepository {
     const ctx = this.check(user);
     const teamId = input.teamId,
       year = input.year,
-      reportId = input.reportId || null,
+      sheetCloneId = input.sheetCloneId || null,
       file = { name: input.file.name, size: input.file.bytes.byteLength };
     await ctx.team(teamId, { manage: true });
     assert(
@@ -275,18 +281,26 @@ export class PostgresTransferRepository {
     const options = importSheetOptionsSchema.parse(input.sheetOptions),
       bytes = Buffer.from(input.file.bytes),
       id = stableId(
-        teamId + year + (reportId || "") + digest(bytes) + canonical(options),
+        teamId +
+          year +
+          (sheetCloneId || "") +
+          digest(bytes) +
+          canonical(options),
       );
     let settings = await ctx.data(teamId, settingsFor);
-    if (reportId)
+    if (sheetCloneId)
       settings = await ctx.data(teamId, async (s) => {
-        const report = await s.get("report", [reportId]);
-        assert(report && !report.deleted, 404, "사본을 찾을 수 없습니다.");
-        return report.payload.data.settings;
+        const sheetClone = await s.get("sheetClone", [sheetCloneId]);
+        assert(
+          sheetClone && !sheetClone.deleted,
+          404,
+          "사본을 찾을 수 없습니다.",
+        );
+        return sheetClone.payload.data.settings;
       });
     const sheets = clean(
         await inspectWorkbook(bytes, year, settings, options),
-      ).map((s) => ({ ...s, ...(reportId ? { reportId } : {}) })),
+      ).map((s) => ({ ...s, ...(sheetCloneId ? { sheetCloneId } : {}) })),
       users = (await ctx.bootstrap()).users.filter((u) =>
         ["lead", "member"].includes(u.teamRoles?.[teamId]),
       ),
@@ -303,9 +317,13 @@ export class PostgresTransferRepository {
           409,
           "이 사이트에서 정리한 연도입니다. 먼저 복원하세요.",
         );
-        if (reportId) {
-          const report = await s.get("report", [reportId]);
-          assert(report && !report.deleted, 404, "사본을 찾을 수 없습니다.");
+        if (sheetCloneId) {
+          const sheetClone = await s.get("sheetClone", [sheetCloneId]);
+          assert(
+            sheetClone && !sheetClone.deleted,
+            404,
+            "사본을 찾을 수 없습니다.",
+          );
         }
         const old = await s.get("import", [id]);
         if (!old)
@@ -366,7 +384,9 @@ export class PostgresTransferRepository {
     dateSchema.parse(body.referenceDate);
     assert(
       body.acceptWarnings === true &&
-        ["tasks", "report", "copy"].includes(body.mode),
+        ["tasks", "create-sheet-clone", "append-to-sheet-clone"].includes(
+          body.mode,
+        ),
       400,
       "이관 검토와 반영 방법을 확인하세요.",
     );
@@ -375,7 +395,7 @@ export class PostgresTransferRepository {
       ),
       allowed = new Set(users.map((u) => u.id)),
       opKey = stableId(
-        `${importId}:${body.sheet}:${body.mode}:${body.year}${body.reportId ? ":" + body.reportId : ""}`,
+        `${importId}:${body.sheet}:${body.mode}:${body.year}${body.sheetCloneId ? ":" + body.sheetCloneId : ""}`,
       );
     return ctx.data(
       teamId,
@@ -384,8 +404,8 @@ export class PostgresTransferRepository {
           sheet = imp.payload.sheets.find((s) => s.name === body.sheet);
         assert(sheet?.rows.length, 400, "업무가 있는 시트를 선택하세요.");
         assert(
-          (sheet.reportId || null) === (body.reportId || null) &&
-            (body.mode === "copy") === !!body.reportId,
+          (sheet.sheetCloneId || null) === (body.sheetCloneId || null) &&
+            (body.mode === "append-to-sheet-clone") === !!body.sheetCloneId,
           400,
           "미리보기와 반영 대상이 다릅니다.",
         );
@@ -395,11 +415,11 @@ export class PostgresTransferRepository {
             400,
             `담당자 ${name} 연결을 확인하세요.`,
           );
-        const existing = body.reportId
-          ? await s.get("report", [body.reportId])
+        const existing = body.sheetCloneId
+          ? await s.get("sheetClone", [body.sheetCloneId])
           : null;
         assert(
-          !body.reportId ||
+          !body.sheetCloneId ||
             (existing &&
               !existing.deleted &&
               existing.payload.year === body.year),
@@ -408,7 +428,7 @@ export class PostgresTransferRepository {
         );
         if (existing)
           assert(
-            (await reportView(s, existing)).revision === body.revision,
+            (await sheetCloneView(s, existing)).revision === body.revision,
             409,
             "사본이 변경되었습니다.",
           );
@@ -491,7 +511,7 @@ export class PostgresTransferRepository {
           );
         } else if (existing) {
           const data = existing.payload.data;
-          await s.put("report", existing.key, {
+          await s.put("sheetClone", existing.key, {
             ...existing.payload,
             data: {
               ...data,
@@ -514,13 +534,13 @@ export class PostgresTransferRepository {
           });
         } else {
           assert(
-            !(await s.list("report")).some(
+            !(await s.list("sheetClone")).some(
               (r) => r.payload.name === sheet.name,
             ),
             409,
             "같은 이름의 사본이 있습니다.",
           );
-          await s.put("report", [stableId(opKey + ":report")], {
+          await s.put("sheetClone", [stableId(opKey + ":sheetClone")], {
             year: body.year,
             name: sheet.name,
             referenceDate: body.referenceDate,
@@ -545,7 +565,7 @@ export class PostgresTransferRepository {
           warningCount: sheet.warnings.length,
           mode: body.mode,
           ...(existing
-            ? { reportId: body.reportId, name: existing.payload.name }
+            ? { sheetCloneId: body.sheetCloneId, name: existing.payload.name }
             : {}),
         };
       },

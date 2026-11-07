@@ -1,4 +1,5 @@
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
@@ -16,12 +17,7 @@ import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { materialize, boundStore, refreshTeam } from "../worker/sync.mjs";
-import {
-  emptyState,
-  entityId,
-  digest,
-  canonical,
-} from "../server/sync/protocol.mjs";
+import { entityId, digest, canonical } from "../server/sync/protocol.mjs";
 import {
   normalizeSettings,
   DEFAULT_SETTINGS,
@@ -29,7 +25,7 @@ import {
 } from "../shared/domain.js";
 import { THEME_IDS } from "../shared/themes.js";
 import { unpack } from "../shared/compact.js";
-import { unpackReportData } from "../shared/report-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
 import { ProtocolError } from "../server/sync/errors.mjs";
 import {
   databaseCapacity,
@@ -199,7 +195,7 @@ test(
         [adminId, teamId],
       );
       const adapter = new PostgresDatabase(team, { teamId });
-      const state = emptyState();
+      const state = markedState();
       for (const [entity, key, payload] of [
         [
           "team",
@@ -454,11 +450,11 @@ test(
         ).body.entries[0].title,
         "Outside calendar",
       );
-      const reportId = randomUUID();
+      const sheetCloneId = randomUUID();
       assert.equal(
         (
-          await request("/reports", {
-            id: reportId,
+          await request("/sheet-clones", {
+            id: sheetCloneId,
             teamId,
             year: 2026,
             name: "Copy",
@@ -469,42 +465,45 @@ test(
         ).status,
         200,
       );
-      const reportOperation = (await adapter.readPending(teamId))
+      const sheetCloneOperation = (await adapter.readPending(teamId))
         .flatMap((op) => op.changes)
-        .find((c) => c.entity === "report" && c.key[0] === reportId);
-      // The command carries report data in the shared-dictionary storage form.
+        .find((c) => c.entity === "sheetClone" && c.key[0] === sheetCloneId);
+      // The command carries sheetClone data in the shared-dictionary storage form.
       assert.deepEqual(
         Object.keys(
-          unpackReportData(reportOperation.desired.data).users[0],
+          unpackSheetCloneData(sheetCloneOperation.desired.data).users[0],
         ).sort(),
         ["id", "name"],
       );
       assert.doesNotMatch(
-        JSON.stringify(reportOperation.desired),
+        JSON.stringify(sheetCloneOperation.desired),
         /admin@example\.com|admin-sub|systemRole|teamRoles|username|sessionToken/,
       );
-      const report = (await request("/reports/" + reportId)).body;
-      assert.equal(report.tasks.length, 1);
+      const sheetClone = (await request("/sheet-clones/" + sheetCloneId)).body;
+      assert.equal(sheetClone.tasks.length, 1);
       assert.equal(
         (
-          await request(`/reports/${reportId}/documents/batch`, {
+          await request(`/sheet-clones/${sheetCloneId}/documents/batch`, {
             taskIds: [task.id],
           })
         ).body.tasks[0].documents[0].markdown,
         "Worker document",
       );
       assert.equal(
-        (await request(`/reports/${reportId}/tasks/${task.id}/document`)).body
-          .markdown,
+        (
+          await request(
+            `/sheet-clones/${sheetCloneId}/tasks/${task.id}/document`,
+          )
+        ).body.markdown,
         "Worker document",
       );
       assert.equal(
         (
           await request(
-            "/reports/" + reportId,
+            "/sheet-clones/" + sheetCloneId,
             {
               operationId: randomUUID(),
-              revision: report.revision,
+              revision: sheetClone.revision,
               operations: [
                 {
                   kind: "cells",
@@ -513,7 +512,7 @@ test(
                     {
                       taskId: task.id,
                       key: "title",
-                      expectedVersion: report.tasks[0].cells.title.version,
+                      expectedVersion: sheetClone.tasks[0].cells.title.version,
                       value: "Copy changed",
                     },
                   ],
@@ -825,7 +824,7 @@ test(
         format: "json",
         scope: "all",
       });
-      assert.equal(exported.body.schemaVersion, 6);
+      assert.equal(exported.body.schemaVersion, 7);
       assert.equal(
         exported.body.tasks[0].documents[0].markdown,
         "Worker document",

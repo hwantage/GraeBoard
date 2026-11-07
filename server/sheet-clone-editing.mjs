@@ -1,18 +1,18 @@
-import { prepareReportEdits } from "./storage/report-command-rules.mjs";
+import { prepareSheetCloneEdits } from "./storage/sheet-clone-command-rules.mjs";
 import { validateDocumentImages } from "./document-images.mjs";
 import {
-  storeReportDocuments,
-  syncReportDocuments,
+  storeSheetCloneDocuments,
+  syncSheetCloneDocuments,
   pruneDocumentVersions,
-  reportDocumentContents,
-  readReport,
+  sheetCloneDocumentContents,
+  readSheetClone,
 } from "./document-storage.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  applyReportOperation,
-  ReportEditError,
-} from "../shared/report-editing.js";
+  applySheetCloneOperation,
+  SheetCloneEditError,
+} from "../shared/sheet-clone-editing.js";
 import { transaction, audit, parse } from "./db.mjs";
 import { taskAuditSnapshot } from "../shared/formatting.js";
 import { propertiesFor, canContribute } from "../shared/domain.js";
@@ -27,27 +27,27 @@ import {
   requireThat,
 } from "../shared/validation.js";
 import {
-  encodeReport,
-  decodeReport,
-  reportUsersWithAvatars,
-  reportDataKey,
-  withReportDecodeCache,
-} from "./reports.mjs";
+  encodeSheetClone,
+  decodeSheetClone,
+  sheetCloneUsersWithAvatars,
+  sheetCloneDataKey,
+  withSheetCloneDecodeCache,
+} from "./sheet-clones.mjs";
 
-import { editSchema } from "./storage/report-command-schema.mjs";
+import { editSchema } from "./storage/sheet-clone-command-schema.mjs";
 
 // Sheet edits and document edits have independent optimistic locks. Always apply
-// sheet operations to the latest stored report to preserve its document refs.
+// sheet operations to the latest stored sheetClone to preserve its document refs.
 const revisions = new Map();
-export function reportRevision(data, decoded) {
-  const key = reportDataKey(data);
+export function sheetCloneRevision(data, decoded) {
+  const key = sheetCloneDataKey(data);
   if (revisions.has(key)) return revisions.get(key);
-  const report = decoded || decodeReport(data);
+  const sheetClone = decoded || decodeSheetClone(data);
   const revision = createHash("sha256")
     .update(
       JSON.stringify({
-        ...report,
-        tasks: report.tasks.map(
+        ...sheetClone,
+        tasks: sheetClone.tasks.map(
           ({ documents, hasDocument, documentCount, ...task }) => task,
         ),
       }),
@@ -58,34 +58,36 @@ export function reportRevision(data, decoded) {
   return revision;
 }
 
-export function reportResponse(db, row) {
-  const report = readReport(db, row);
+export function sheetCloneResponse(db, row) {
+  const sheetClone = readSheetClone(db, row);
   return {
     id: row.id,
     name: row.name,
     year: row.year,
     referenceDate: row.reference_date,
     createdAt: row.created_at,
-    ...report,
-    tasks: report.tasks.map(({ documents, ...task }) => ({
+    ...sheetClone,
+    tasks: sheetClone.tasks.map(({ documents, ...task }) => ({
       ...task,
       documentCount: documents?.length || 0,
     })),
-    revision: reportRevision(row.data, report),
-    users: reportUsersWithAvatars(db, report.users),
+    revision: sheetCloneRevision(row.data, sheetClone),
+    users: sheetCloneUsersWithAvatars(db, sheetClone.users),
   };
 }
 
-export function editReport(
+export function editSheetClone(
   { db, teamAccess, documentImagesDir },
   user,
-  reportId,
+  sheetCloneId,
   input,
 ) {
   const data = editSchema.parse(input);
-  const result = withReportDecodeCache(() =>
+  const result = withSheetCloneDecodeCache(() =>
     transaction(db, () => {
-      const row = db.prepare("SELECT * FROM reports WHERE id=?").get(reportId);
+      const row = db
+        .prepare("SELECT * FROM sheet_clones WHERE id=?")
+        .get(sheetCloneId);
       requireThat(row, 404, "사본을 찾을 수 없습니다.");
       teamAccess(user, row.team_id);
       requireThat(
@@ -93,17 +95,17 @@ export function editReport(
         403,
         "사본을 편집할 권한이 없습니다.",
       );
-      const report = readReport(db, row);
-      const revision = reportRevision(row.data, report);
+      const sheetClone = readSheetClone(db, row);
+      const revision = sheetCloneRevision(row.data, sheetClone);
       const requestHash = createHash("sha256")
         .update(JSON.stringify(data))
         .digest("hex");
       if (revision !== data.revision) {
         // A lost response may be retried after the save committed. Reuse only
-        // this actor's exact request while its saved report is still current.
+        // this actor's exact request while its saved sheetClone is still current.
         const last = db
           .prepare(
-            "SELECT after_json FROM audit WHERE team_id=? AND action='report-edit' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            "SELECT after_json FROM audit WHERE team_id=? AND action='sheet-clone-edit' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
           )
           .get(row.team_id, row.id, user.id);
         const previous = last && parse(last.after_json);
@@ -112,7 +114,7 @@ export function editReport(
           previous.requestHash === requestHash &&
           previous.revision === revision
         )
-          return reportResponse(db, row);
+          return sheetCloneResponse(db, row);
       }
       requireThat(
         revision === data.revision,
@@ -124,8 +126,8 @@ export function editReport(
           "SELECT u.id,u.name FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=? AND m.role IN ('lead','member')",
         )
         .all(row.team_id);
-      const prepared = prepareReportEdits({
-        report,
+      const prepared = prepareSheetCloneEdits({
+        sheetClone,
         operations: data.operations,
         teamId: row.team_id,
         year: data.view?.year ?? row.year,
@@ -138,17 +140,17 @@ export function editReport(
         for (const document of task.documents || [])
           if (document.markdown !== undefined)
             validateDocumentImages(document.markdown, row.team_id);
-      tasks = storeReportDocuments(db, tasks, row.team_id, user.id);
+      tasks = storeSheetCloneDocuments(db, tasks, row.team_id, user.id);
       const remaining = new Set(tasks.map((task) => task.id));
-      const deletedTasks = reportDocumentContents(db, {
-        tasks: storeReportDocuments(
+      const deletedTasks = sheetCloneDocumentContents(db, {
+        tasks: storeSheetCloneDocuments(
           db,
           [...deleted.values()].filter((task) => !remaining.has(task.id)),
           row.team_id,
           user.id,
         ),
       }).tasks.map(taskAuditSnapshot);
-      const memberKeys = propertiesFor(report.settings, true)
+      const memberKeys = propertiesFor(sheetClone.settings, true)
         .filter((p) => p.kind === "member")
         .map((p) => p.id);
       const deletedMemberIds = new Set(
@@ -156,20 +158,20 @@ export function editReport(
           memberKeys.flatMap((key) => task.cells[key]?.value || []),
         ),
       );
-      const saved = encodeReport({
-        ...report,
+      const saved = encodeSheetClone({
+        ...sheetClone,
         ...(data.view ? { view: data.view } : {}),
         tasks,
         users: [...people.values()],
       });
-      db.prepare("UPDATE reports SET data=?,year=? WHERE id=?").run(
+      db.prepare("UPDATE sheet_clones SET data=?,year=? WHERE id=?").run(
         saved,
         data.view?.year ?? row.year,
         row.id,
       );
-      syncReportDocuments(db, row.id, tasks);
+      syncSheetCloneDocuments(db, row.id, tasks);
       pruneDocumentVersions(db, row.team_id);
-      const response = reportResponse(db, {
+      const response = sheetCloneResponse(db, {
         ...row,
         year: data.view?.year ?? row.year,
         data: saved,
@@ -178,12 +180,12 @@ export function editReport(
         db,
         user.id,
         row.team_id,
-        "report-edit",
+        "sheet-clone-edit",
         row.id,
         {
           name: row.name,
           revision: data.revision,
-          count: report.tasks.length,
+          count: sheetClone.tasks.length,
           ...(deletedTasks.length
             ? {
                 deletedTasks,

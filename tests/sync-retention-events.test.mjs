@@ -156,7 +156,7 @@ test("document exclusion and restore invalidate conditional task snapshots", asy
   assert.equal(unpack(await restored.json()).tasks[0].documentCount, 1);
 });
 
-test("unused-image cleanup preserves a deleted report document through Git and audit restore without resetting cells", async (t) => {
+test("unused-image cleanup preserves a deleted sheetClone document through Git and audit restore without resetting cells", async (t) => {
   const f = await fixture(t);
   const task = ok(
     await f.api("/tasks", {
@@ -165,8 +165,8 @@ test("unused-image cleanup preserves a deleted report document through Git and a
       fields: { title: "source" },
     }),
   ).task;
-  const report = ok(
-    await f.api("/reports", {
+  const sheetClone = ok(
+    await f.api("/sheet-clones", {
       teamId: f.teamId,
       year: 2026,
       name: "restore image",
@@ -175,7 +175,7 @@ test("unused-image cleanup preserves a deleted report document through Git and a
       view: defaultView(2026),
     }),
   );
-  const docPath = `/reports/${report.id}/tasks/${task.id}/document`;
+  const docPath = `/sheet-clones/${sheetClone.id}/tasks/${task.id}/document`;
   const bytes = await sharp({
     create: { width: 1, height: 1, channels: 3, background: "#f09234" },
   })
@@ -209,10 +209,10 @@ test("unused-image cleanup preserves a deleted report document through Git and a
     ),
   );
   ok(await f.api(`/teams/${f.teamId}/sync/enable`, {}));
-  const current = ok(await f.api(`/reports/${report.id}`));
+  const current = ok(await f.api(`/sheet-clones/${sheetClone.id}`));
   const deleted = ok(
     await f.api(
-      `/reports/${report.id}`,
+      `/sheet-clones/${sheetClone.id}`,
       {
         operationId: randomUUID(),
         revision: current.revision,
@@ -225,7 +225,7 @@ test("unused-image cleanup preserves a deleted report document through Git and a
   );
   await f.app.locals.sync.get(f.teamId).run();
   const tombstone = f.app.locals.sync.store(f.teamId).readState().entities[
-    entityId("document", ["report", report.id, task.id, "main"])
+    entityId("document", ["sheetClone", sheetClone.id, task.id, "main"])
   ];
   assert.equal(
     tombstone.deleted,
@@ -284,7 +284,7 @@ test("unused-image cleanup preserves a deleted report document through Git and a
   );
   stream.close();
   const entry = ok(
-    await f.api(`/audit?teamId=${f.teamId}&sheetId=${report.id}`),
+    await f.api(`/audit?teamId=${f.teamId}&sheetId=${sheetClone.id}`),
   ).entries.find((row) => row.restorableTaskIds.length);
   ok(await f.api(`/audit/${entry.id}/restore`, { revision: deleted.revision }));
   assert.equal(ok(await f.api(docPath)).markdown, markdown);
@@ -330,8 +330,8 @@ test("local cleanup revokes open and new multiplexed document subscriptions for 
       "PUT",
     ),
   );
-  const report = ok(
-    await f.api("/reports", {
+  const sheetClone = ok(
+    await f.api("/sheet-clones", {
       teamId: f.teamId,
       year: 2026,
       name: "snapshot",
@@ -376,8 +376,8 @@ test("local cleanup revokes open and new multiplexed document subscriptions for 
       markdown: "task original body",
     },
     {
-      key: ["report", report.id, task.id, "main"],
-      path: `/reports/${report.id}/tasks/${task.id}/document`,
+      key: ["sheetClone", sheetClone.id, task.id, "main"],
+      path: `/sheet-clones/${sheetClone.id}/tasks/${task.id}/document`,
       markdown: "task original body",
     },
     {
@@ -386,8 +386,8 @@ test("local cleanup revokes open and new multiplexed document subscriptions for 
       markdown: "memo original body",
     },
     {
-      key: ["reportMemo", report.id, memoId],
-      path: `/reports/${report.id}/memos/${memoId}`,
+      key: ["sheetCloneMemo", sheetClone.id, memoId],
+      path: `/sheet-clones/${sheetClone.id}/memos/${memoId}`,
       markdown: "memo original body",
     },
     {
@@ -469,11 +469,11 @@ test("local cleanup revokes open and new multiplexed document subscriptions for 
     );
     assert.equal(sources.find((source) => source.id === "live").taskCount, 0);
     assert.equal(
-      sources.find((source) => source.id === report.id).documentCount,
+      sources.find((source) => source.id === sheetClone.id).documentCount,
       id < 1 ? 1 : 0,
     );
     assert.equal(
-      sources.find((source) => source.id === report.id).taskCount,
+      sources.find((source) => source.id === sheetClone.id).taskCount,
       id < 1 ? 1 : 0,
     );
     const reconnect = await documentStream(t, f.baseURL, "/api", f.token, "", {
@@ -535,8 +535,8 @@ test("image upload rechecks exact document exclusion after asynchronous decoding
       "PUT",
     ),
   );
-  const report = ok(
-    await f.api("/reports", {
+  const sheetClone = ok(
+    await f.api("/sheet-clones", {
       teamId: f.teamId,
       year: 2026,
       name: "image copy",
@@ -598,8 +598,8 @@ test("image upload rechecks exact document exclusion after asynchronous decoding
       path: `/tasks/${task.id}/document/images`,
     },
     {
-      key: ["report", report.id, task.id, "main"],
-      path: `/reports/${report.id}/tasks/${task.id}/document/images`,
+      key: ["sheetClone", sheetClone.id, task.id, "main"],
+      path: `/sheet-clones/${sheetClone.id}/tasks/${task.id}/document/images`,
     },
   ]) {
     const upload = async () => {
@@ -793,7 +793,7 @@ test("year cleanup resets live cell streams and replay buffers while preserving 
   multiplex.close();
 });
 
-test("v2 year cleanup and restore reassemble complete copies while preserving canonical children and pending edits", async (t) => {
+test("protocol 4 year cleanup and restore reassemble complete copies while preserving canonical children and pending edits", async (t) => {
   const f = await fixture(t),
     tasks = [];
   for (let i = 0; i < 2; i++) {
@@ -817,8 +817,8 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
     );
     tasks.push(task);
   }
-  const report = ok(
-    await f.api("/reports", {
+  const sheetClone = ok(
+    await f.api("/sheet-clones", {
       teamId: f.teamId,
       year: 2026,
       name: "complete v2 copy",
@@ -844,10 +844,10 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
       peersStopped: true,
     }),
   );
-  const initial = ok(await f.api(`/reports/${report.id}`));
+  const initial = ok(await f.api(`/sheet-clones/${sheetClone.id}`));
   ok(
     await f.api(
-      `/reports/${report.id}`,
+      `/sheet-clones/${sheetClone.id}`,
       {
         operationId: randomUUID(),
         revision: initial.revision,
@@ -869,7 +869,7 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
       "PATCH",
     ),
   );
-  const expected = ok(await f.api(`/reports/${report.id}`)),
+  const expected = ok(await f.api(`/sheet-clones/${sheetClone.id}`)),
     stateBefore = stateHash(store.readState()),
     pendingBefore = canonical(store.readPending()),
     headBefore = store.readLink().canonical_head;
@@ -882,7 +882,7 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
   while (job.hasMore)
     job = ok(await f.api(path + "/resume", { jobId: job.jobId }));
   assert.equal(job.phase, "complete");
-  assert.equal((await f.api(`/reports/${report.id}`)).status, 409);
+  assert.equal((await f.api(`/sheet-clones/${sheetClone.id}`)).status, 409);
   assert.equal(stateHash(store.readState()), stateBefore);
   assert.equal(canonical(store.readPending()), pendingBefore);
   const retention = ok(await f.api(path)).retention.find(
@@ -897,7 +897,7 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
   while (job.hasMore)
     job = ok(await f.api(path + "/resume", { jobId: job.jobId }));
   assert.equal(job.phase, "complete");
-  const restored = ok(await f.api(`/reports/${report.id}`));
+  const restored = ok(await f.api(`/sheet-clones/${sheetClone.id}`));
   assert.deepEqual(
     restored.tasks,
     expected.tasks,
@@ -905,8 +905,9 @@ test("v2 year cleanup and restore reassemble complete copies while preserving ca
   );
   for (const [index, task] of tasks.entries()) {
     assert.equal(
-      ok(await f.api(`/reports/${report.id}/tasks/${task.id}/document`))
-        .markdown,
+      ok(
+        await f.api(`/sheet-clones/${sheetClone.id}/tasks/${task.id}/document`),
+      ).markdown,
       "body " + index,
     );
     assert.equal(getTask(f.db, task.id).cells.title.value, "row " + index);

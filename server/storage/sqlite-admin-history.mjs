@@ -53,7 +53,7 @@ function storageByTeam(db) {
   for (const scope of scopes.values())
     Object.assign(scope, {
       currentBytes: 0,
-      reportBytes: 0,
+      sheetCloneBytes: 0,
       importBytes: 0,
       audit: { count: 0, bytes: 0 },
       operations: { count: 0, bytes: 0 },
@@ -90,8 +90,8 @@ function storageByTeam(db) {
       `SELECT team_id,sum(${length("data")}) AS bytes FROM ${table} GROUP BY team_id`,
     ]),
     [
-      "reportBytes",
-      "SELECT team_id,sum(length(data)) AS bytes FROM reports GROUP BY team_id",
+      "sheetCloneBytes",
+      "SELECT team_id,sum(length(data)) AS bytes FROM sheet_clones GROUP BY team_id",
     ],
     [
       "importBytes",
@@ -117,7 +117,7 @@ function storageByTeam(db) {
     ...scope,
     totalBytes:
       scope.currentBytes +
-      scope.reportBytes +
+      scope.sheetCloneBytes +
       scope.importBytes +
       scope.audit.bytes +
       scope.operations.bytes,

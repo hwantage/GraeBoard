@@ -2,23 +2,23 @@ import { requireThat } from "../../shared/validation.js";
 import { z } from "zod";
 import {
   yearSchema,
-  reportNameSchema,
+  sheetCloneNameSchema,
   dateSchema,
   viewSchema,
 } from "../../shared/validation.js";
-import { editSchema } from "./report-command-schema.mjs";
-const reportCreateSchema = z.object({
+import { editSchema } from "./sheet-clone-command-schema.mjs";
+const sheetCloneCreateSchema = z.object({
   id: z.string().uuid().optional(),
   teamId: z.string().uuid(),
   year: yearSchema,
-  name: reportNameSchema,
+  name: sheetCloneNameSchema,
   sourceId: z.string().uuid().optional(),
   referenceDate: dateSchema,
   view: viewSchema,
   taskIds: z.array(z.string().uuid()).max(20000),
 });
 const renameSchema = z
-  .object({ name: reportNameSchema, expectedName: z.string().max(120) })
+  .object({ name: sheetCloneNameSchema, expectedName: z.string().max(120) })
   .strict();
 const removeSchema = z
   .object({
@@ -26,7 +26,7 @@ const removeSchema = z
     ids: z.array(z.string().uuid()).min(1).max(20000),
   })
   .strict();
-export class ReportBusinessService {
+export class SheetCloneBusinessService {
   constructor(repository, user, { documentEvents, clientId } = {}) {
     this.repository = repository;
     this.user = user;
@@ -42,16 +42,19 @@ export class ReportBusinessService {
       const changes = this.repository.resourceChanges?.();
       for (const teamId of changes?.teamIds || [])
         this.documentEvents?.invalidate("team:" + teamId, this.clientId);
-      for (const reportId of changes?.reportIds || [])
-        this.documentEvents?.invalidate("report:" + reportId, this.clientId);
+      for (const sheetCloneId of changes?.sheetCloneIds || [])
+        this.documentEvents?.invalidate(
+          "sheet-clone:" + sheetCloneId,
+          this.clientId,
+        );
       return value;
     };
     return result && typeof result.then === "function"
       ? result.then(done)
       : done(result);
   }
-  watch(reportId) {
-    return this.repository.watchRevision(this.user, reportId);
+  watch(sheetCloneId) {
+    return this.repository.watchRevision(this.user, sheetCloneId);
   }
   list(query) {
     return this.repository.list(this.user, {
@@ -59,7 +62,7 @@ export class ReportBusinessService {
     });
   }
   create(input) {
-    const request = reportCreateSchema.parse(input);
+    const request = sheetCloneCreateSchema.parse(input);
     this.repository.authorizeCreate?.(this.user, request);
     requireThat(
       request.year === request.view.year,
@@ -68,14 +71,14 @@ export class ReportBusinessService {
     );
     return this.mutate("create", [request]);
   }
-  read(reportId) {
-    return this.repository.read(this.user, reportId);
+  read(sheetCloneId) {
+    return this.repository.read(this.user, sheetCloneId);
   }
-  rename(reportId, input) {
-    return this.mutate("rename", [reportId, renameSchema.parse(input)]);
+  rename(sheetCloneId, input) {
+    return this.mutate("rename", [sheetCloneId, renameSchema.parse(input)]);
   }
-  edit(reportId, input) {
-    return this.mutate("edit", [reportId, editSchema.parse(input)]);
+  edit(sheetCloneId, input) {
+    return this.mutate("edit", [sheetCloneId, editSchema.parse(input)]);
   }
   remove(input) {
     return this.mutate("remove", [removeSchema.parse(input)]);

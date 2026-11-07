@@ -51,7 +51,7 @@ export function installHttpBoundary(app) {
     next();
   });
   app.use("/api/cells/batch", express.json({ limit: "32mb" }));
-  app.use("/api/reports", express.json({ limit: "32mb" }));
+  app.use("/api/sheet-clones", express.json({ limit: "32mb" }));
   app.use(express.json({ limit: "5mb" }));
   app.use((req, res, next) => {
     try {

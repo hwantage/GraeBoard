@@ -1,8 +1,11 @@
 import { retentionView } from "../sync/visibility.mjs";
 import { exportDocumentImages } from "../document-images.mjs";
 import { memoContents } from "../memo-storage.mjs";
-import { reportDocumentContents, readReport } from "../document-storage.mjs";
-import { reportRevision } from "../report-editing.mjs";
+import {
+  sheetCloneDocumentContents,
+  readSheetClone,
+} from "../document-storage.mjs";
+import { sheetCloneRevision } from "../sheet-clone-editing.mjs";
 import { withTaskDocuments } from "../task-documents.mjs";
 import { filtersFor, currentFiltersFor } from "../filters.mjs";
 import ExcelJS from "exceljs";
@@ -15,10 +18,10 @@ import {
 import { checkWorkbookArchive } from "../archive.mjs";
 import { profileSnapshot } from "../../shared/profiles.js";
 import {
-  encodeReport,
-  decodeReport,
-  requireUniqueReportName,
-} from "../reports.mjs";
+  encodeSheetClone,
+  decodeSheetClone,
+  requireUniqueSheetCloneName,
+} from "../sheet-clones.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -92,7 +95,7 @@ export class SqliteTransferRepository {
     const d = z
       .object({
         teamId: z.string().uuid(),
-        reportId: z.string().uuid().optional(),
+        sheetCloneId: z.string().uuid().optional(),
         revision: z.string().optional(),
         year: yearSchema,
         startMonth: z.number().int().min(1).max(12).default(1),
@@ -104,33 +107,39 @@ export class SqliteTransferRepository {
       .parse(input);
     periodScopeSchema.parse(d);
     const team = teamAccess(user, d.teamId);
-    const reportRow =
-      d.reportId &&
+    const sheetCloneRow =
+      d.sheetCloneId &&
       db
-        .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-        .get(d.reportId, d.teamId);
-    requireThat(!d.reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
+        .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
+        .get(d.sheetCloneId, d.teamId);
     requireThat(
-      !reportRow || d.revision === reportRevision(reportRow.data),
+      !d.sheetCloneId || sheetCloneRow,
+      404,
+      "사본을 찾을 수 없습니다.",
+    );
+    requireThat(
+      !sheetCloneRow || d.revision === sheetCloneRevision(sheetCloneRow.data),
       409,
       "사본이 변경되었습니다. 최신 내용을 확인한 뒤 내보내세요.",
     );
-    if (reportRow)
-      retentionView(db, d.teamId).requireVisible("report", [reportRow.id]);
-    const report = reportRow ? readReport(db, reportRow) : null;
+    if (sheetCloneRow)
+      retentionView(db, d.teamId).requireVisible("sheetClone", [
+        sheetCloneRow.id,
+      ]);
+    const sheetClone = sheetCloneRow ? readSheetClone(db, sheetCloneRow) : null;
     requireThat(
-      !reportRow || d.year === reportRow.year,
+      !sheetCloneRow || d.year === sheetCloneRow.year,
       409,
       "사본의 표시 연도가 변경되었습니다. 다시 내보내세요.",
     );
     const startMonth =
-      d.scope === "all" ? report?.view.startMonth || 1 : d.startMonth;
-    const settings = report?.settings || team.settings;
-    let tasks = report
-      ? report.tasks
+      d.scope === "all" ? sheetClone?.view.startMonth || 1 : d.startMonth;
+    const settings = sheetClone?.settings || team.settings;
+    let tasks = sheetClone
+      ? sheetClone.tasks
       : getTasks(db, d.teamId, periodYears(d.year, startMonth));
     const visibility = retentionView(db, d.teamId);
-    tasks = visibility.tasks(tasks, reportRow?.id);
+    tasks = visibility.tasks(tasks, sheetCloneRow?.id);
     if (d.scope === "view") {
       const selected = new Set(d.taskIds);
       const taskMap = new Map(tasks.map((t) => [t.id, t]));
@@ -153,12 +162,14 @@ export class SqliteTransferRepository {
       400,
       "내보낼 열을 확인하세요.",
     );
-    const users = report?.users || referencedUsers(d.teamId);
+    const users = sheetClone?.users || referencedUsers(d.teamId);
     audit(db, user.id, d.teamId, "export", id(), undefined, {
       format: d.format,
       scope: d.scope,
       count: tasks.length,
-      ...(reportRow ? { reportId: reportRow.id, name: reportRow.name } : {}),
+      ...(sheetCloneRow
+        ? { sheetCloneId: sheetCloneRow.id, name: sheetCloneRow.name }
+        : {}),
     });
     const filename = `graeboard-${d.year}${startMonth > 1 ? `-${d.year + 1}` : ""}.${d.format}`;
     if (d.format === "xlsx")
@@ -183,24 +194,27 @@ export class SqliteTransferRepository {
         filename,
       );
     }
-    const reports =
-      !report && canManageTeam(user, d.teamId) && d.scope === "all"
+    const sheetClones =
+      !sheetClone && canManageTeam(user, d.teamId) && d.scope === "all"
         ? db
             .prepare(
-              "SELECT id,name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM reports WHERE team_id=? AND year=?",
+              "SELECT id,name,year,reference_date AS referenceDate,created_at AS createdAt,data FROM sheet_clones WHERE team_id=? AND year=?",
             )
             .all(d.teamId, d.year)
-            .filter((row) => !visibility.hidden("report", [row.id]))
+            .filter((row) => !visibility.hidden("sheetClone", [row.id]))
             .map(({ id, ...r }) => ({
               ...r,
               data: {
-                ...reportDocumentContents(db, readReport(db, { id, ...r })),
-                memos: memoContents(db, { reportId: id }),
+                ...sheetCloneDocumentContents(
+                  db,
+                  readSheetClone(db, { id, ...r }),
+                ),
+                memos: memoContents(db, { sheetCloneId: id }),
               },
             }))
         : [];
-    const views = report
-      ? [{ name: "__current", data: viewLayout(report.view) }]
+    const views = sheetClone
+      ? [{ name: "__current", data: viewLayout(sheetClone.view) }]
       : db
           .prepare(
             "SELECT name,data FROM views WHERE user_id=? AND team_id=? AND name='__current' AND year=?",
@@ -211,41 +225,43 @@ export class SqliteTransferRepository {
             data: viewLayout(parse(v.data)),
           }));
     const documentTasks = visibility.tasks(
-      report
-        ? reportDocumentContents(db, { ...report, tasks }).tasks
+      sheetClone
+        ? sheetCloneDocumentContents(db, { ...sheetClone, tasks }).tasks
         : withTaskDocuments(db, tasks),
-      reportRow?.id,
+      sheetCloneRow?.id,
     );
     const memos = visibility.documents(
       memoContents(db, {
-        reportId: reportRow?.id,
+        sheetCloneId: sheetCloneRow?.id,
         teamId: d.teamId,
         year: d.year,
       }),
-      reportRow ? ["reportMemo", reportRow.id] : ["annual", String(d.year)],
+      sheetCloneRow
+        ? ["sheetCloneMemo", sheetCloneRow.id]
+        : ["annual", String(d.year)],
     );
-    for (const saved of reports) {
+    for (const saved of sheetClones) {
       const original = db
-        .prepare("SELECT id FROM reports WHERE team_id=? AND name=?")
+        .prepare("SELECT id FROM sheet_clones WHERE team_id=? AND name=?")
         .get(d.teamId, saved.name);
       if (original) {
         saved.data.tasks = visibility.tasks(saved.data.tasks, original.id);
         saved.data.memos = visibility.documents(saved.data.memos, [
-          "reportMemo",
+          "sheetCloneMemo",
           original.id,
         ]);
       }
     }
     const documentImages = exportDocumentImages(documentImagesDir, [
       ...memos.map((memo) => memo.markdown),
-      ...reports.flatMap((report) =>
-        report.data.memos.map((memo) => memo.markdown),
+      ...sheetClones.flatMap((sheetClone) =>
+        sheetClone.data.memos.map((memo) => memo.markdown),
       ),
       ...documentTasks.flatMap((task) =>
         (task.documents || []).map((doc) => doc.markdown),
       ),
-      ...reports.flatMap((report) =>
-        report.data.tasks.flatMap((task) =>
+      ...sheetClones.flatMap((sheetClone) =>
+        sheetClone.data.tasks.flatMap((task) =>
           (task.documents || []).map((doc) => doc.markdown),
         ),
       ),
@@ -253,11 +269,11 @@ export class SqliteTransferRepository {
     return transferDownload(
       json({
         format: "weekly-plan",
-        schemaVersion: 6,
+        schemaVersion: 7,
         exportedAt: now(),
         team: { ...team, settings },
-        ...(reportRow
-          ? { sheet: { id: reportRow.id, name: reportRow.name } }
+        ...(sheetCloneRow
+          ? { sheet: { id: sheetCloneRow.id, name: sheetCloneRow.name } }
           : {}),
         year: d.year,
         startMonth,
@@ -275,11 +291,11 @@ export class SqliteTransferRepository {
         ),
         users: users.map(profileSnapshot),
         views,
-        filters: report ? [] : filtersFor(db, user, team),
-        currentFilters: report
-          ? { selectedId: "", data: savedFilter(report.view, settings) }
+        filters: sheetClone ? [] : filtersFor(db, user, team),
+        currentFilters: sheetClone
+          ? { selectedId: "", data: savedFilter(sheetClone.view, settings) }
           : currentFiltersFor(db, user, team),
-        reports,
+        sheetClones,
       }),
       "application/json",
       filename,
@@ -287,12 +303,12 @@ export class SqliteTransferRepository {
   }
   authorizePreview(user, input) {
     this.managedTeam(user, input.teamId, "팀장만 자료를 가져올 수 있습니다.");
-    const reportId = z.string().uuid().optional().parse(input.reportId);
+    const sheetCloneId = z.string().uuid().optional().parse(input.sheetCloneId);
     requireThat(
-      !reportId ||
+      !sheetCloneId ||
         this.db
-          .prepare("SELECT 1 FROM reports WHERE id=? AND team_id=?")
-          .get(reportId, input.teamId),
+          .prepare("SELECT 1 FROM sheet_clones WHERE id=? AND team_id=?")
+          .get(sheetCloneId, input.teamId),
       404,
       "사본을 찾을 수 없습니다.",
     );
@@ -302,22 +318,27 @@ export class SqliteTransferRepository {
     const teamId = z.string().uuid().parse(input.teamId),
       year = yearSchema.parse(input.year);
     const team = managedTeam(user, teamId, "팀장만 자료를 가져올 수 있습니다.");
-    const reportId = z.string().uuid().optional().parse(input.reportId);
-    const reportRow =
-      reportId &&
+    const sheetCloneId = z.string().uuid().optional().parse(input.sheetCloneId);
+    const sheetCloneRow =
+      sheetCloneId &&
       db
-        .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-        .get(reportId, teamId);
-    requireThat(!reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
+        .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
+        .get(sheetCloneId, teamId);
+    requireThat(
+      !sheetCloneId || sheetCloneRow,
+      404,
+      "사본을 찾을 수 없습니다.",
+    );
     const visibility = retentionView(db, teamId);
     requireThat(
       !visibility.years.has(String(year)),
       409,
       "이 사이트에서 정리한 연도입니다. 먼저 복원하세요.",
     );
-    if (reportRow) visibility.requireVisible("report", [reportRow.id]);
-    const settings = reportRow
-      ? decodeReport(reportRow.data).settings
+    if (sheetCloneRow)
+      visibility.requireVisible("sheetClone", [sheetCloneRow.id]);
+    const settings = sheetCloneRow
+      ? decodeSheetClone(sheetCloneRow.data).settings
       : team.settings;
     requireThat(input.file, 400, "가져올 XLSX 파일을 선택하세요.");
     requireThat(
@@ -350,7 +371,7 @@ export class SqliteTransferRepository {
     const importId = stableId(
       teamId +
         year +
-        (reportId || "") +
+        (sheetCloneId || "") +
         createHash("sha256").update(input.file.bytes).digest("hex") +
         optionsKey,
     );
@@ -366,7 +387,8 @@ export class SqliteTransferRepository {
         settings,
         sheetOptions,
       );
-      if (reportId) sheets = sheets.map((sheet) => ({ ...sheet, reportId }));
+      if (sheetCloneId)
+        sheets = sheets.map((sheet) => ({ ...sheet, sheetCloneId }));
       db.prepare(
         "INSERT INTO imports(id,team_id,actor_id,filename,data,created_at) VALUES(?,?,?,?,?,?)",
       ).run(importId, teamId, user.id, input.file.name, json(sheets), now());
@@ -425,8 +447,12 @@ export class SqliteTransferRepository {
           sheet: stringSchema(),
           year: yearSchema,
           personMap: z.record(z.string(), z.string().uuid()),
-          mode: z.enum(["tasks", "report", "copy"]),
-          reportId: z.string().uuid().optional(),
+          mode: z.enum([
+            "tasks",
+            "create-sheet-clone",
+            "append-to-sheet-clone",
+          ]),
+          sheetCloneId: z.string().uuid().optional(),
           revision: z.string().optional(),
           referenceDate: dateSchema,
           acceptWarnings: z.literal(true),
@@ -436,47 +462,54 @@ export class SqliteTransferRepository {
       requireThat(imp, 404, "이관 미리보기를 찾을 수 없습니다.");
       const team = managedTeam(user, imp.team_id);
       requireThat(
-        (d.mode === "copy") === !!d.reportId,
+        (d.mode === "append-to-sheet-clone") === !!d.sheetCloneId,
         400,
         "가져올 시트를 확인하세요.",
       );
-      const reportRow =
-        d.reportId &&
+      const sheetCloneRow =
+        d.sheetCloneId &&
         db
-          .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-          .get(d.reportId, team.id);
-      requireThat(!d.reportId || reportRow, 404, "사본을 찾을 수 없습니다.");
+          .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
+          .get(d.sheetCloneId, team.id);
+      requireThat(
+        !d.sheetCloneId || sheetCloneRow,
+        404,
+        "사본을 찾을 수 없습니다.",
+      );
       const visibility = retentionView(db, team.id);
       requireThat(
         !visibility.years.has(String(d.year)),
         409,
         "이 사이트에서 정리한 연도입니다. 먼저 복원하세요.",
       );
-      if (reportRow) visibility.requireVisible("report", [reportRow.id]);
+      if (sheetCloneRow)
+        visibility.requireVisible("sheetClone", [sheetCloneRow.id]);
       const sheet = parse(imp.data).find((s) => s.name === d.sheet);
       requireThat(sheet?.rows.length, 400, "업무가 있는 시트를 선택하세요.");
       requireThat(
-        (sheet.reportId || null) === (d.reportId || null),
+        (sheet.sheetCloneId || null) === (d.sheetCloneId || null),
         400,
         "미리보기와 반영할 시트가 다릅니다. 파일을 다시 선택하세요.",
       );
       const opKey = stableId(
-          `${imp.id}:${d.sheet}:${d.mode}:${d.year}${d.reportId ? `:${d.reportId}` : ""}`,
+          `${imp.id}:${d.sheet}:${d.mode}:${d.year}${d.sheetCloneId ? `:${d.sheetCloneId}` : ""}`,
         ),
         old = db
           .prepare("SELECT response FROM operations WHERE id=?")
           .get(opKey);
       if (old) return { ...parse(old.response), repeated: true };
       requireThat(
-        !reportRow ||
-          (d.revision === reportRevision(reportRow.data) &&
-            d.year === reportRow.year),
+        !sheetCloneRow ||
+          (d.revision === sheetCloneRevision(sheetCloneRow.data) &&
+            d.year === sheetCloneRow.year),
         409,
         "사본이 변경되었습니다. 최신 내용을 확인한 뒤 다시 가져오세요.",
       );
-      const report = reportRow ? readReport(db, reportRow) : null;
+      const sheetClone = sheetCloneRow
+        ? readSheetClone(db, sheetCloneRow)
+        : null;
       requireThat(
-        !report || report.tasks.length + sheet.rows.length <= 20000,
+        !sheetClone || sheetClone.tasks.length + sheet.rows.length <= 20000,
         400,
         "사본에는 최대 20,000개 업무를 저장할 수 있습니다.",
       );
@@ -489,16 +522,16 @@ export class SqliteTransferRepository {
           `담당자 “${name}” 연결을 확인하세요.`,
         );
       const result = transaction(db, () => {
-        const reportName =
-          d.mode === "report"
-            ? requireUniqueReportName(db, team.id, sheet.name)
+        const sheetCloneName =
+          d.mode === "create-sheet-clone"
+            ? requireUniqueSheetCloneName(db, team.id, sheet.name)
             : null;
         const tasks = [],
           hiddenRows = [],
           rowHeights = {};
-        const settings = structuredClone(report?.settings || team.settings);
-        const lastPosition = report
-          ? Math.max(-1, ...report.tasks.map((task) => task.position))
+        const settings = structuredClone(sheetClone?.settings || team.settings);
+        const lastPosition = sheetClone
+          ? Math.max(-1, ...sheetClone.tasks.map((task) => task.position))
           : 0;
         extendImportProperties(settings, sheet.rows);
         for (const row of sheet.rows) {
@@ -524,7 +557,7 @@ export class SqliteTransferRepository {
               id: taskId,
               teamId: team.id,
               years: [d.year],
-              position: report ? lastPosition + tasks.length + 1 : row.row,
+              position: sheetClone ? lastPosition + tasks.length + 1 : row.row,
               createdBy: user.id,
               createdAt: now(),
               updatedAt: now(),
@@ -546,35 +579,37 @@ export class SqliteTransferRepository {
             weeksForYear(d.year).some((w) => w.key === k),
           ),
         };
-        if (report) {
-          const people = new Map(report.users.map((user) => [user.id, user]));
+        if (sheetClone) {
+          const people = new Map(
+            sheetClone.users.map((user) => [user.id, user]),
+          );
           for (const user of users)
             if (!people.has(user.id)) people.set(user.id, user);
           const nextView = {
-            ...report.view,
-            rowHeights: { ...report.view.rowHeights, ...rowHeights },
-            hiddenRows: [...report.view.hiddenRows, ...hiddenRows],
+            ...sheetClone.view,
+            rowHeights: { ...sheetClone.view.rowHeights, ...rowHeights },
+            hiddenRows: [...sheetClone.view.hiddenRows, ...hiddenRows],
           };
-          db.prepare("UPDATE reports SET data=? WHERE id=?").run(
-            encodeReport({
-              ...report,
-              tasks: [...report.tasks, ...tasks],
+          db.prepare("UPDATE sheet_clones SET data=? WHERE id=?").run(
+            encodeSheetClone({
+              ...sheetClone,
+              tasks: [...sheetClone.tasks, ...tasks],
               settings,
               users: [...people.values()],
               view: nextView,
             }),
-            reportRow.id,
+            sheetCloneRow.id,
           );
-        } else if (d.mode === "report") {
-          db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
+        } else if (d.mode === "create-sheet-clone") {
+          db.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
             id(),
             team.id,
             d.year,
-            reportName,
+            sheetCloneName,
             d.referenceDate,
             user.id,
             now(),
-            encodeReport({
+            encodeSheetClone({
               tasks,
               users,
               view,
@@ -602,8 +637,8 @@ export class SqliteTransferRepository {
           count: tasks.length,
           warningCount: sheet.warnings.length,
           mode: d.mode,
-          ...(reportRow
-            ? { reportId: reportRow.id, name: reportRow.name }
+          ...(sheetCloneRow
+            ? { sheetCloneId: sheetCloneRow.id, name: sheetCloneRow.name }
             : {}),
         };
         db.prepare("INSERT INTO operations VALUES(?,?,?,?)").run(
@@ -633,8 +668,11 @@ export class SqliteTransferRepository {
       .get(importId);
     if (imp) {
       this.documentEvents?.invalidate("team:" + imp.team_id, clientId);
-      if (input.reportId)
-        this.documentEvents?.invalidate("report:" + input.reportId, clientId);
+      if (input.sheetCloneId)
+        this.documentEvents?.invalidate(
+          "sheet-clone:" + input.sheetCloneId,
+          clientId,
+        );
     }
     return value;
   }

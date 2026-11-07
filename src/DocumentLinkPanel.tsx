@@ -16,18 +16,24 @@ import {
   type DocumentLinkTarget,
 } from "./document-links";
 import type { CalendarContext, CalendarEntry } from "./calendar-types";
-import type { Report, Settings, Task, TaskDocument, User } from "./types";
+import type { SheetClone, Settings, Task, TaskDocument, User } from "./types";
 
-type MemoLink = Extract<DocumentLinkTarget, { kind: "memo" | "report-memo" }>;
-type CopyTaskLink = Extract<DocumentLinkTarget, { kind: "report-task" }>;
+type MemoLink = Extract<
+  DocumentLinkTarget,
+  { kind: "memo" | "sheet-clone-memo" }
+>;
+type SheetCloneTaskLink = Extract<
+  DocumentLinkTarget,
+  { kind: "sheet-clone-task" }
+>;
 export type OpenedDocumentLink =
   | { kind: "task"; task: Task; context: CalendarContext }
   | { kind: "calendar"; entry: CalendarEntry; context: CalendarContext }
   | { kind: "memo"; target: MemoLink; teamId: string; title: string }
   | {
-      kind: "report-task";
-      target: CopyTaskLink;
-      report: Report;
+      kind: "sheet-clone-task";
+      target: SheetCloneTaskLink;
+      sheetClone: SheetClone;
       task: Task;
       settings: Settings;
     };
@@ -69,15 +75,17 @@ export async function loadDocumentLink(
       return { kind: "calendar", entry, context };
     }
     const { teamId, title } = await findDocumentLink(target);
-    if (target.kind !== "report-task")
+    if (target.kind !== "sheet-clone-task")
       return { kind: "memo", target, teamId, title };
-    const report = await api<Report>(`/reports/${target.reportId}`);
-    const task = report.tasks.find((item) => item.id === target.id);
+    const sheetClone = await api<SheetClone>(
+      `/sheet-clones/${target.sheetCloneId}`,
+    );
+    const task = sheetClone.tasks.find((item) => item.id === target.id);
     if (!task) throw new Error(UNAVAILABLE_LINK_MESSAGE);
     const settings =
-      report.settings ||
+      sheetClone.settings ||
       (await api<CalendarContext>(`/calendar/teams/${teamId}`)).settings;
-    return { kind: "report-task", target, report, task, settings };
+    return { kind: "sheet-clone-task", target, sheetClone, task, settings };
   } catch (error) {
     if (error instanceof ApiError && [403, 404].includes(error.status))
       throw new Error(UNAVAILABLE_LINK_MESSAGE);
@@ -97,7 +105,7 @@ export default function DocumentLinkPanel({
   calendarTheme,
   onClose,
   onDeleted,
-  onOpenCopy,
+  onOpenSheetClone,
 }: {
   link: OpenedDocumentLink;
   user: User;
@@ -106,7 +114,7 @@ export default function DocumentLinkPanel({
   calendarTheme: { theme: string; palette: string; style?: CSSProperties };
   onClose: () => void;
   onDeleted: (entry: CalendarEntry) => void;
-  onOpenCopy: (target: CopyTaskLink) => void;
+  onOpenSheetClone: (target: SheetCloneTaskLink) => void;
 }) {
   if (link.kind === "task")
     return (
@@ -151,11 +159,11 @@ export default function DocumentLinkPanel({
       task={link.task}
       settings={link.settings}
       user={user}
-      users={link.report.users}
+      users={link.sheetClone.users}
       readOnly={readOnly}
       propertiesReadOnly
-      reportMode
-      documentReport={{ id: link.report.id, isNew: false }}
+      sheetCloneMode
+      documentSheetClone={{ id: link.sheetClone.id, isNew: false }}
       initialFullPage={fullPage}
       headerAction={
         <div
@@ -165,7 +173,7 @@ export default function DocumentLinkPanel({
         >
           <Button
             tooltip="사본에서 열기"
-            onClick={() => onOpenCopy(link.target)}
+            onClick={() => onOpenSheetClone(link.target)}
           >
             <ExternalLink size={16} aria-hidden="true" />
             <span className="task-detail-action-label">사본에서 열기</span>
@@ -279,10 +287,10 @@ function MemoLinkPanel({
   const collection =
     target.kind === "memo"
       ? `/teams/${target.teamId}/years/${target.year}/memos`
-      : `/reports/${target.reportId}/memos`;
+      : `/sheet-clones/${target.sheetCloneId}/memos`;
   const path = `${collection}/${target.id}`;
   // AnnualMemoPanel's key, so a draft is shared with the memo card.
-  const draftKey = `weekly-plan:memo:${user.id}:${teamId}:${target.kind === "memo" ? target.year : target.reportId}:${target.id}`;
+  const draftKey = `weekly-plan:memo:${user.id}:${teamId}:${target.kind === "memo" ? target.year : target.sheetCloneId}:${target.id}`;
   const close = async () => {
     if (editor.current && !(await editor.current.flush())) return false;
     onClose();

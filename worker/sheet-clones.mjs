@@ -1,5 +1,5 @@
 import {
-  REPORT_ROUTES,
+  SHEET_CLONE_ROUTES,
   FILTER_ROUTES,
   BROWSER_ROUTES,
   matchBusinessRoute,
@@ -10,27 +10,27 @@ import { assert } from "./access.mjs";
 
 import { documentListsUnder } from "./documents.mjs";
 
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import {
-  PostgresReportRepository,
-  reportView,
-} from "./storage/postgres-reports.mjs";
-export { reportView } from "./storage/postgres-reports.mjs";
-export async function reportRoutes(ctx, path, method, body, query) {
-  const service = new ReportBusinessService(
-    new PostgresReportRepository({ context: ctx }),
+  PostgresSheetCloneRepository,
+  sheetCloneView,
+} from "./storage/postgres-sheet-clones.mjs";
+export { sheetCloneView } from "./storage/postgres-sheet-clones.mjs";
+export async function sheetCloneRoutes(ctx, path, method, body, query) {
+  const service = new SheetCloneBusinessService(
+    new PostgresSheetCloneRepository({ context: ctx }),
     ctx.user,
   );
-  const match = matchBusinessRoute(REPORT_ROUTES, path, method);
+  const match = matchBusinessRoute(SHEET_CLONE_ROUTES, path, method);
   if (match)
     return callBusinessRoute(service, match.route, {
       params: match.params,
       body,
       query,
     });
-  const batch = /^\/reports\/([^/]+)\/documents\/batch$/.exec(path);
+  const batch = /^\/sheet-clones\/([^/]+)\/documents\/batch$/.exec(path);
   if (batch && method === "POST") {
-    const teamId = await ctx.locateTeam("report", batch[1]);
+    const teamId = await ctx.locateTeam("sheetClone", batch[1]);
     assert(
       Array.isArray(body.taskIds) &&
         body.taskIds.length > 0 &&
@@ -39,13 +39,17 @@ export async function reportRoutes(ctx, path, method, body, query) {
       "사본 업무 목록을 확인하세요.",
     );
     return ctx.data(teamId, async (s) => {
-      const report = await s.get("report", [batch[1]]),
-        // Every requested task's documents from one read of the report's.
-        documents = await documentListsUnder(s, ["report", batch[1]], "report"),
+      const sheetClone = await s.get("sheetClone", [batch[1]]),
+        // Every requested task's documents from one read of the sheetClone's.
+        documents = await documentListsUnder(
+          s,
+          ["sheetClone", batch[1]],
+          "sheetClone",
+        ),
         tasks = [];
       for (const id of body.taskIds) {
         assert(
-          report.payload.data.tasks.some((t) => t.id === id),
+          sheetClone.payload.data.tasks.some((t) => t.id === id),
           404,
           "사본 업무를 찾을 수 없습니다.",
         );

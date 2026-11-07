@@ -45,8 +45,8 @@ for (const copy of [false, true]) {
           })
         ).task,
       );
-    const report = copy
-      ? await api(page, "/reports", "POST", {
+    const sheetClone = copy
+      ? await api(page, "/sheet-clones", "POST", {
           teamId: team.id,
           year: 2026,
           name: "공동 사본",
@@ -84,13 +84,16 @@ for (const copy of [false, true]) {
       const gate = new Promise<void>((resolve) => (release = resolve));
       let held = false;
       if (copy)
-        await page.route(`**/api/reports/${report.id}`, async (route) => {
-          if (route.request().method() === "PATCH" && !held) {
-            held = true;
-            await gate;
-          }
-          await route.continue();
-        });
+        await page.route(
+          `**/api/sheet-clones/${sheetClone.id}`,
+          async (route) => {
+            if (route.request().method() === "PATCH" && !held) {
+              held = true;
+              await gate;
+            }
+            await route.continue();
+          },
+        );
       await edit(page, tasks[0].id, "내가 수정한 업무");
       if (copy) await expect.poll(() => held).toBeTruthy();
       await edit(peer, tasks[1].id, "상대가 수정한 업무");
@@ -107,10 +110,10 @@ for (const copy of [false, true]) {
         ).toHaveText("상대가 수정한 업무", { timeout: 4000 });
       }
       const documentPath = copy
-        ? `/reports/${report.id}/tasks/${tasks[0].id}/documents/main`
+        ? `/sheet-clones/${sheetClone.id}/tasks/${tasks[0].id}/documents/main`
         : `/tasks/${tasks[0].id}/documents/main`;
       const sheetRevision = copy
-        ? (await api(page, `/reports/${report.id}`)).revision
+        ? (await api(page, `/sheet-clones/${sheetClone.id}`)).revision
         : null;
       const marker = peer.locator(
         `[data-cell="${tasks[0].id}:title"] .task-document-indicator`,
@@ -133,13 +136,13 @@ for (const copy of [false, true]) {
           await expect(marker).toHaveClass(/\bis-empty\b/, { timeout: 3000 });
       }
       if (copy)
-        expect((await api(page, `/reports/${report.id}`)).revision).toBe(
-          sheetRevision,
-        );
+        expect(
+          (await api(page, `/sheet-clones/${sheetClone.id}`)).revision,
+        ).toBe(sheetRevision);
       let addedId = randomUUID();
       if (copy) {
-        const latest = await api(page, `/reports/${report.id}`);
-        await api(page, `/reports/${report.id}`, "PATCH", {
+        const latest = await api(page, `/sheet-clones/${sheetClone.id}`);
+        await api(page, `/sheet-clones/${sheetClone.id}`, "PATCH", {
           operationId: randomUUID(),
           revision: latest.revision,
           operations: [
@@ -164,8 +167,8 @@ for (const copy of [false, true]) {
         { timeout: 3000 },
       );
       if (copy) {
-        const latest = await api(page, `/reports/${report.id}`);
-        await api(page, `/reports/${report.id}`, "PATCH", {
+        const latest = await api(page, `/sheet-clones/${sheetClone.id}`);
+        await api(page, `/sheet-clones/${sheetClone.id}`, "PATCH", {
           operationId: randomUUID(),
           revision: latest.revision,
           operations: [

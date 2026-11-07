@@ -28,10 +28,13 @@ export default forwardRef<
     year: number;
     userId: string;
     readOnly: boolean;
-    reportId?: string;
+    sheetCloneId?: string;
   }
->(function AnnualMemoPanel({ teamId, year, userId, readOnly, reportId }, ref) {
-  const storageKey = `weekly-plan:memo-open:${userId}:${teamId}:${reportId || year}`;
+>(function AnnualMemoPanel(
+  { teamId, year, userId, readOnly, sheetCloneId },
+  ref,
+) {
+  const storageKey = `weekly-plan:memo-open:${userId}:${teamId}:${sheetCloneId || year}`;
   const [opened, setOpened] = useState(() => {
     try {
       return localStorage.getItem(storageKey) === "true";
@@ -39,7 +42,7 @@ export default forwardRef<
       return false;
     }
   });
-  const heightKey = `weekly-plan:memo-height:${userId}:${teamId}:${reportId || year}`;
+  const heightKey = `weekly-plan:memo-height:${userId}:${teamId}:${sheetCloneId || year}`;
   const [height, setHeight] = useState<number | null>(() => {
     try {
       const saved = Number(localStorage.getItem(heightKey));
@@ -358,17 +361,17 @@ export default forwardRef<
             }}
             label="연간 업무 메모"
             path={
-              reportId
-                ? `/reports/${reportId}/memos`
+              sheetCloneId
+                ? `/sheet-clones/${sheetCloneId}/memos`
                 : `/teams/${teamId}/years/${year}/memos`
             }
             draftKey={(id) =>
-              `weekly-plan:memo:${userId}:${teamId}:${reportId || year}:${id}`
+              `weekly-plan:memo:${userId}:${teamId}:${sheetCloneId || year}:${id}`
             }
             readOnly={readOnly}
             documentLink={(id) =>
-              reportId
-                ? { kind: "report-memo", reportId, id }
+              sheetCloneId
+                ? { kind: "sheet-clone-memo", sheetCloneId, id }
                 : { kind: "memo", teamId, year, id }
             }
             onSaved={() => {}}

@@ -300,18 +300,20 @@ export async function measureReviewScenarios({
     await peer.api(path + "/upgrade", upgrade);
     const upgraded = f.app.locals.sync.store(f.teamId).readState();
     if (
-      protocolVersion(upgraded) !== 2 ||
+      protocolVersion(upgraded) !== 4 ||
       stateHash(upgraded) !==
         stateHash(peer.app.locals.sync.store(f.teamId).readState())
     )
-      throw new Error("Both paused sites must complete the same v2 upgrade");
+      throw new Error(
+        "Both paused sites must complete the same protocol 4 upgrade",
+      );
     await f.api(path + "/resume", {});
     log(
-      "C11: linked protocol-v2 report create and edit with 1000 tasks and 100 documents",
+      "C11: linked protocol-v2 sheetClone create and edit with 1000 tasks and 100 documents",
     );
-    const reportIds = [],
-      reportCreate = await measure(async (i) => {
-        const result = await f.api("/reports", {
+    const sheetCloneIds = [],
+      sheetCloneCreate = await measure(async (i) => {
+        const result = await f.api("/sheet-clones", {
           teamId: f.teamId,
           year: 2026,
           name: "Review " + i,
@@ -319,21 +321,28 @@ export async function measureReviewScenarios({
           view: defaultView(2026),
           taskIds: f.taskIds,
         });
-        reportIds.push(result.id);
+        sheetCloneIds.push(result.id);
       }, 3);
-    let report = await f.api("/reports/" + reportIds[0]);
-    const reportDocumentCount = f.db
-      .prepare("SELECT COUNT(*) n FROM report_documents WHERE report_id=?")
-      .get(reportIds[0]).n;
-    if (report.tasks.length !== rows || reportDocumentCount !== documents)
-      throw new Error("Report workload size did not match requested fixture");
-    const reportEdit = await measure(async (i) => {
-      const task = report.tasks[i % report.tasks.length];
-      report = await f.api(
-        "/reports/" + reportIds[0],
+    let sheetClone = await f.api("/sheet-clones/" + sheetCloneIds[0]);
+    const sheetCloneDocumentCount = f.db
+      .prepare(
+        "SELECT COUNT(*) n FROM sheet_clone_documents WHERE sheet_clone_id=?",
+      )
+      .get(sheetCloneIds[0]).n;
+    if (
+      sheetClone.tasks.length !== rows ||
+      sheetCloneDocumentCount !== documents
+    )
+      throw new Error(
+        "SheetClone workload size did not match requested fixture",
+      );
+    const sheetCloneEdit = await measure(async (i) => {
+      const task = sheetClone.tasks[i % sheetClone.tasks.length];
+      sheetClone = await f.api(
+        "/sheet-clones/" + sheetCloneIds[0],
         {
           operationId: randomUUID(),
-          revision: report.revision,
+          revision: sheetClone.revision,
           operations: [
             {
               kind: "cells",
@@ -342,7 +351,7 @@ export async function measureReviewScenarios({
                 {
                   taskId: task.id,
                   key: "title",
-                  value: "Review report edit " + i,
+                  value: "Review sheetClone edit " + i,
                   expectedVersion: task.cells.title.version,
                 },
               ],
@@ -353,10 +362,10 @@ export async function measureReviewScenarios({
         "PATCH",
       );
       if (
-        report.tasks.find((row) => row.id === task.id).cells.title.value !==
-        "Review report edit " + i
+        sheetClone.tasks.find((row) => row.id === task.id).cells.title.value !==
+        "Review sheetClone edit " + i
       )
-        throw new Error("Report edit did not persist");
+        throw new Error("SheetClone edit did not persist");
     });
     log("C11: retention-active task queries");
     const queryPath = `/tasks?teamId=${f.teamId}&year=2026`,
@@ -479,17 +488,17 @@ export async function measureReviewScenarios({
         capturedOperations: otherPending,
       },
       users1000: { users, unlinked, linked: linkedIdle },
-      reportCreate: {
-        ...reportCreate,
+      sheetCloneCreate: {
+        ...sheetCloneCreate,
         tasks: rows,
-        documents: reportDocumentCount,
-        protocol: 2,
+        documents: sheetCloneDocumentCount,
+        protocol: 4,
         upgradeHead: upgrade.expectedHead,
       },
-      reportEdit: {
-        ...reportEdit,
+      sheetCloneEdit: {
+        ...sheetCloneEdit,
         tasks: rows,
-        documents: reportDocumentCount,
+        documents: sheetCloneDocumentCount,
       },
       retentionQuery: {
         baseline: queryBaseline,
@@ -508,7 +517,8 @@ export async function measureReviewScenarios({
       mergeCpu,
       acceptance: {
         linkedIdleSaveP95Within10Percent: degradationPercent <= 10,
-        report1000Tasks100DocumentsEditUnder100Ms: reportEdit.maxMs < 100,
+        sheetClone1000Tasks100DocumentsEditUnder100Ms:
+          sheetCloneEdit.maxMs < 100,
         browserMetadataWithoutSnapshotRefetch:
           !includeBrowser ||
           (remoteBrowsers.renderedClients === clients &&

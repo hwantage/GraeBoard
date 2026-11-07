@@ -38,7 +38,7 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
         tasks = of("task"),
         entries = of("calendar"),
         memos = of("memo").filter(({ link }) => link.teamId === team.id),
-        copies = of("report-task", "report-memo"),
+        copies = of("sheet-clone-task", "sheet-clone-memo"),
         excluded =
           tasks.length || memos.length ? await excludedYears(s) : new Set();
       if (tasks.length) {
@@ -121,10 +121,10 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
         const present = new Set(
           (
             await s.tx.query(
-              "SELECT entity_key FROM site_entities WHERE team_id=$1 AND entity='report' AND deleted=0 AND entity_key=ANY($2::text[])",
+              "SELECT entity_key FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND deleted=0 AND entity_key=ANY($2::text[])",
               [
                 s.teamId,
-                [...new Set(copies.map(({ link }) => link.reportId))].map(
+                [...new Set(copies.map(({ link }) => link.sheetCloneId))].map(
                   (id) => JSON.stringify([id]),
                 ),
               ],
@@ -133,11 +133,13 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
         );
         const rows = copies.filter(
             ({ link }) =>
-              link.kind === "report-task" && present.has(link.reportId),
+              link.kind === "sheet-clone-task" &&
+              present.has(link.sheetCloneId),
           ),
           copyMemos = copies.filter(
             ({ link }) =>
-              link.kind === "report-memo" && present.has(link.reportId),
+              link.kind === "sheet-clone-memo" &&
+              present.has(link.sheetCloneId),
           );
         if (rows.length) {
           // A copy's data is stored plain or as the shared dictionary form
@@ -145,29 +147,36 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
           const titles = new Map(
             (
               await s.tx.query(
-                `SELECT r.entity_key::jsonb->>0 AS report,t->>'id' AS id,t->'cells'->'title'->>'value' AS title
+                `SELECT r.entity_key::jsonb->>0 AS sheet_clone_id,t->>'id' AS id,t->'cells'->'title'->>'value' AS title
                 FROM site_entities r
                 CROSS JOIN LATERAL jsonb_array_elements(COALESCE(r.payload::jsonb#>'{data,$data,tasks}',r.payload::jsonb#>'{data,tasks}')) t
-                WHERE r.team_id=$1 AND r.entity='report' AND r.deleted=0 AND r.entity_key=ANY($2::text[]) AND t->>'id'=ANY($3::text[])`,
+                WHERE r.team_id=$1 AND r.entity='sheetClone' AND r.deleted=0 AND r.entity_key=ANY($2::text[]) AND t->>'id'=ANY($3::text[])`,
                 [
                   s.teamId,
-                  [...new Set(rows.map(({ link }) => link.reportId))].map(
+                  [...new Set(rows.map(({ link }) => link.sheetCloneId))].map(
                     (id) => JSON.stringify([id]),
                   ),
                   [...new Set(rows.map(({ link }) => link.id))],
                 ],
               )
-            ).rows.map((row) => [`${row.report}/${row.id}`, row.title ?? ""]),
+            ).rows.map((row) => [
+              `${row.sheet_clone_id}/${row.id}`,
+              row.title ?? "",
+            ]),
           );
           for (const { path, link } of rows) {
-            const title = titles.get(`${link.reportId}/${link.id}`);
+            const title = titles.get(`${link.sheetCloneId}/${link.id}`);
             if (title !== undefined) add(path, title);
           }
         }
         (
           await documentTitles(
             s,
-            copyMemos.map(({ link }) => ["reportMemo", link.reportId, link.id]),
+            copyMemos.map(({ link }) => [
+              "sheetCloneMemo",
+              link.sheetCloneId,
+              link.id,
+            ]),
           )
         ).forEach((title, index) => {
           if (title !== null) add(copyMemos[index].path, title);

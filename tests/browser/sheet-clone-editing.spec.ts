@@ -29,7 +29,7 @@ async function rowAction(page: Page, taskId: string, name: string) {
     .click({ button: "right" });
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
-async function openReport(page: Page) {
+async function openSheetClone(page: Page) {
   await page.getByRole("tab", { name: "편집 사본", exact: true }).click();
   await expect(page.getByRole("grid")).toHaveAttribute(
     "aria-readonly",
@@ -42,7 +42,7 @@ const saved = (page: Page) =>
 test("사본은 가져오기·내보내기·다중 삭제·이력 복구를 독립적으로 처리한다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   await expect(
     page.getByRole("button", { name: "업무로 돌아가기", exact: true }),
   ).toHaveCount(0);
@@ -78,7 +78,7 @@ test("사본은 가져오기·내보내기·다중 삭제·이력 복구를 독�
   await importer.getByRole("button", { name: "1개 반영", exact: true }).click();
   await expect(importer).toHaveCount(0);
   await expect(page.locator('[data-column="title"]')).toHaveCount(3);
-  const copy = await get(page, `/reports/${reportId}`);
+  const copy = await get(page, `/sheet-clones/${sheetCloneId}`);
   const imported = copy.tasks.find(
     (t: any) => t.cells.title.value === "사본으로 가져온 업무",
   );
@@ -130,7 +130,7 @@ test("사본은 가져오기·내보내기·다중 삭제·이력 복구를 독�
   await expect(history).not.toContainText("업무 삭제 · 2개");
 });
 
-let teamId: string, taskIds: string[], reportId: string;
+let teamId: string, taskIds: string[], sheetCloneId: string;
 test.beforeEach(async ({ page }) => {
   await page.route("**/*", (route) =>
     new URL(route.request().url()).hostname === "127.0.0.1"
@@ -174,8 +174,8 @@ test.beforeEach(async ({ page }) => {
     });
     taskIds.push(task.id);
   }
-  reportId = (
-    await post(page, "/reports", {
+  sheetCloneId = (
+    await post(page, "/sheet-clones", {
       teamId,
       year: 2026,
       name: "편집 사본",
@@ -209,14 +209,15 @@ test.beforeEach(async ({ page }) => {
 test("하단 사본은 즉시 편집·자동 저장하고 원본과 필터를 유지한다", async ({
   page,
 }, info) => {
-  await openReport(page);
+  await openSheetClone(page);
   await expect(
     page.getByRole("button", { name: "스냅샷 수정", exact: true }),
   ).toHaveCount(0);
   await edit(page, taskIds[0], "title", "사본에서만 수정");
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).tasks[0].cells.title.value,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks[0].cells.title
+      .value,
   ).toBe("사본에서만 수정");
   await page.getByRole("tab", { name: "원본", exact: true }).click();
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
@@ -225,7 +226,7 @@ test("하단 사본은 즉시 편집·자동 저장하고 원본과 필터를 �
   await expect(page.locator(".active-saved-filter-banner")).toContainText(
     "돌아갈 필터",
   );
-  await openReport(page);
+  await openSheetClone(page);
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
     "사본에서만 수정",
   );
@@ -241,11 +242,11 @@ test("하단 사본은 즉시 편집·자동 저장하고 원본과 필터를 �
 test("느린 자동 저장 중에도 새 셀 입력을 이어서 저장하고 저장 후 실행취소·재실행한다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   let release!: () => void;
   const wait = new Promise<void>((r) => (release = r));
   let first = true;
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${sheetCloneId}`, async (route) => {
     if (route.request().method() === "PATCH" && first) {
       first = false;
       const res = await route.fetch();
@@ -259,7 +260,7 @@ test("느린 자동 저장 중에도 새 셀 입력을 이어서 저장하고 �
   await edit(page, taskIds[1], "title", "저장 중 추가 입력");
   release();
   await saved(page);
-  let current = await get(page, `/reports/${reportId}`);
+  let current = await get(page, `/sheet-clones/${sheetCloneId}`);
   expect(current.tasks.map((t: any) => t.cells.title.value)).toEqual([
     "첫 저장",
     "저장 중 추가 입력",
@@ -267,23 +268,25 @@ test("느린 자동 저장 중에도 새 셀 입력을 이어서 저장하고 �
   await page.getByRole("button", { name: "실행취소", exact: true }).click();
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).tasks[1].cells.title.value,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks[1].cells.title
+      .value,
   ).toBe("보고 전 둘째 업무");
   await page.getByRole("button", { name: "재실행", exact: true }).click();
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).tasks[1].cells.title.value,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks[1].cells.title
+      .value,
   ).toBe("저장 중 추가 입력");
 });
 
 test("이름 변경 뒤 늦게 도착한 표 자동 저장 응답은 새 사본 이름을 유지한다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   let release!: () => void;
   const wait = new Promise<void>((r) => (release = r));
   let responseReady = false;
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${sheetCloneId}`, async (route) => {
     if (route.request().method() !== "PATCH") return route.continue();
     const response = await route.fetch();
     responseReady = true;
@@ -307,7 +310,9 @@ test("이름 변경 뒤 늦게 도착한 표 자동 저장 응답은 새 사본 
   await expect(
     page.getByRole("tab", { name: "새 사본 이름", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  expect((await get(page, `/reports/${reportId}`)).name).toBe("새 사본 이름");
+  expect((await get(page, `/sheet-clones/${sheetCloneId}`)).name).toBe(
+    "새 사본 이름",
+  );
   await page.getByRole("tab", { name: "원본", exact: true }).click();
   await page.getByRole("tab", { name: "새 사본 이름", exact: true }).click();
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
@@ -318,9 +323,9 @@ test("이름 변경 뒤 늦게 도착한 표 자동 저장 응답은 새 사본 
 test("사본 저장 실패는 입력과 탭을 보존하고 재시도 후 전환한다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   let fail = true;
-  await page.route(`**/api/reports/${reportId}`, (route) =>
+  await page.route(`**/api/sheet-clones/${sheetCloneId}`, (route) =>
     route.request().method() === "PATCH" && fail
       ? route.fulfill({
           status: 503,
@@ -344,38 +349,47 @@ test("사본 저장 실패는 입력과 탭을 보존하고 재시도 후 전환
   await page.getByRole("button", { name: "저장 재시도", exact: true }).click();
   await saved(page);
   await page.getByRole("tab", { name: "원본", exact: true }).click();
-  await openReport(page);
+  await openSheetClone(page);
   await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
     "실패해도 남는 입력",
   );
 });
 
 test("사본 서식·행 복제·삭제·복원은 원본에 영향이 없다", async ({ page }) => {
-  await openReport(page);
+  await openSheetClone(page);
   await page.locator(`[data-cell="${taskIds[0]}:title"]`).click();
   await pickColor(page, "배경색", "#fff4aa");
   await saved(page);
   expect(
-    cell((await get(page, `/reports/${reportId}`)).tasks[0], "title").style
-      .backgroundColor,
+    cell((await get(page, `/sheet-clones/${sheetCloneId}`)).tasks[0], "title")
+      .style.backgroundColor,
   ).toBe("#fff4aa");
   await rowAction(page, taskIds[0], "복사");
   await rowAction(page, taskIds[0], "복사한 행 붙여넣기");
   await saved(page);
   await expect
-    .poll(async () => (await get(page, `/reports/${reportId}`)).tasks.length)
+    .poll(
+      async () =>
+        (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks.length,
+    )
     .toBe(3);
   await rowAction(page, taskIds[1], "행 삭제");
   await saved(page);
   await expect
-    .poll(async () => (await get(page, `/reports/${reportId}`)).tasks.length)
+    .poll(
+      async () =>
+        (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks.length,
+    )
     .toBe(2);
   const toast = page.locator(".toast");
   await expect(toast).toContainText("사본에서 업무를 삭제했습니다.");
   await toast.getByRole("button", { name: "실행취소", exact: true }).click();
   await saved(page);
   await expect
-    .poll(async () => (await get(page, `/reports/${reportId}`)).tasks.length)
+    .poll(
+      async () =>
+        (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks.length,
+    )
     .toBe(3);
   const original = await get(page, `/tasks?teamId=${teamId}&year=2026`);
   expect(original.tasks.length).toBe(2);
@@ -387,9 +401,9 @@ test("사본 서식·행 복제·삭제·복원은 원본에 영향이 없다", 
 test("사본 다중 삭제 알림은 즉시 복구하고 시트 전환·후속 편집 때 사라진다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   // The sheet still shows empty documents; another editor saved after it loaded.
-  const documentPath = `/reports/${reportId}/tasks/${taskIds[0]}/documents/main`;
+  const documentPath = `/sheet-clones/${sheetCloneId}/tasks/${taskIds[0]}/documents/main`;
   const lateDocument = await page.request.put(`/api${documentPath}`, {
     headers,
     data: {
@@ -402,7 +416,7 @@ test("사본 다중 삭제 알림은 즉시 복구하고 시트 전환·후속 �
   const documentReads: string[] = [];
   page.on("request", (request) => {
     if (
-      request.url().includes(`/reports/${reportId}/`) &&
+      request.url().includes(`/sheet-clones/${sheetCloneId}/`) &&
       (request.url().includes("/documents/batch") ||
         request.url().includes("content=1"))
     )
@@ -415,7 +429,9 @@ test("사본 다중 삭제 알림은 즉시 복구하고 시트 전환·후속 �
   await rowAction(page, taskIds[0], "행 삭제");
   const toast = page.locator(".toast");
   await expect(toast).toContainText("사본에서 2개 업무를 삭제했습니다.");
-  expect(documentReads).toEqual([`/api/reports/${reportId}/documents/batch`]);
+  expect(documentReads).toEqual([
+    `/api/sheet-clones/${sheetCloneId}/documents/batch`,
+  ]);
   await toast.getByRole("button", { name: "실행취소", exact: true }).click();
   await expect(page.locator('[data-column="title"]')).toHaveCount(2);
   // 되살린 두 행을 선택하므로 다음 삭제는 첫 행만 다시 골라 지운다.
@@ -444,7 +460,7 @@ test("사본 다중 삭제 알림은 즉시 복구하고 시트 전환·후속 �
   await page.getByRole("tab", { name: "원본", exact: true }).click();
   await expect(page.locator('[data-column="title"]')).toHaveCount(2);
   await expect(toast).toHaveCount(0);
-  await openReport(page);
+  await openSheetClone(page);
   await expect(page.locator('[data-column="title"]')).toHaveCount(0);
   await expect(toast).toHaveCount(0);
 });
@@ -469,7 +485,7 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
   const originalFilters = await get(page, `/filters?teamId=${teamId}`);
   const banner = page.getByRole("region", { name: "필터 보기", exact: true });
   const titles = page.locator('[data-column="title"]');
-  await openReport(page);
+  await openSheetClone(page);
   await expect(banner).toHaveCount(0);
   await expect
     .poll(
@@ -489,17 +505,19 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
     "12월",
   ]);
   await saved(page);
-  expect((await get(page, `/reports/${reportId}`)).view).toMatchObject({
-    startMonth: 2,
-    fromMonth: 10,
-    toMonth: 11,
-  });
+  expect((await get(page, `/sheet-clones/${sheetCloneId}`)).view).toMatchObject(
+    {
+      startMonth: 2,
+      fromMonth: 10,
+      toMonth: 11,
+    },
+  );
   await page.getByRole("button", { name: "다음 연도", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "2027년 전체 선택", exact: true }),
   ).toBeVisible();
   await saved(page);
-  expect((await get(page, `/reports/${reportId}`)).year).toBe(2027);
+  expect((await get(page, `/sheet-clones/${sheetCloneId}`)).year).toBe(2027);
   await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
   await page
     .locator(".saved-views")
@@ -519,7 +537,7 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
   await page.getByRole("button", { name: "저장된 필터 닫기" }).click();
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).view.propertyFilters,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).view.propertyFilters,
   ).toEqual(copyFilter.propertyFilters);
   await page.screenshot({ path: info.outputPath("copy-filter-banner.png") });
 
@@ -532,14 +550,14 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
   await expect(titles).toHaveText(["보고 전 둘째 업무"]);
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).view.propertyFilterModes,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).view.propertyFilterModes,
   ).toEqual({ title: "exclude" });
   await banner.getByRole("button", { name: "필터 보기 종료" }).click();
   await expect(banner).toHaveCount(0);
   await expect(titles).toHaveText(["보고 전 첫 업무", "보고 전 둘째 업무"]);
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).view.propertyFilters,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).view.propertyFilters,
   ).toEqual({});
 
   await page.getByRole("button", { name: "저장된 필터", exact: true }).click();
@@ -562,9 +580,9 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
 test("사본 상세 속성은 자동 저장하고 실패 안내·재시도를 팝업 안에 표시한다", async ({
   page,
 }) => {
-  await openReport(page);
+  await openSheetClone(page);
   let fail = true;
-  await page.route(`**/api/reports/${reportId}`, (route) =>
+  await page.route(`**/api/sheet-clones/${sheetCloneId}`, (route) =>
     route.request().method() === "PATCH" && fail
       ? route.fulfill({
           status: 503,
@@ -589,7 +607,8 @@ test("사본 상세 속성은 자동 저장하고 실패 안내·재시도를 �
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
   await saved(page);
   expect(
-    (await get(page, `/reports/${reportId}`)).tasks[0].cells.title.value,
+    (await get(page, `/sheet-clones/${sheetCloneId}`)).tasks[0].cells.title
+      .value,
   ).toBe("팝업에서 편집한 사본");
   expect(
     (await get(page, `/tasks?teamId=${teamId}&year=2026`)).tasks[0].cells.title

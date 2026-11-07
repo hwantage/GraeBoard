@@ -5,22 +5,25 @@ import { canContribute, periodYears } from "../../shared/domain.js";
 import {
   requireThat,
   yearSchema,
-  reportNameSchema,
+  sheetCloneNameSchema,
   dateSchema,
   viewSchema,
 } from "../../shared/validation.js";
 import {
   withTaskDocumentReferences,
-  syncReportDocuments,
+  syncSheetCloneDocuments,
   pruneDocumentVersions,
-  readReport,
+  readSheetClone,
 } from "../document-storage.mjs";
-import { copyReportMemos } from "../memo-storage.mjs";
-import { encodeReport, requireUniqueReportName } from "../reports.mjs";
-import { reportResponse, editReport } from "../report-editing.mjs";
+import { copySheetCloneMemos } from "../memo-storage.mjs";
+import {
+  encodeSheetClone,
+  requireUniqueSheetCloneName,
+} from "../sheet-clones.mjs";
+import { sheetCloneResponse, editSheetClone } from "../sheet-clone-editing.mjs";
 import { retentionView } from "../sync/visibility.mjs";
 
-export class SqliteReportRepository {
+export class SqliteSheetCloneRepository {
   constructor({
     db,
     teamAccess,
@@ -36,30 +39,32 @@ export class SqliteReportRepository {
       documentEvents,
     });
   }
-  watchRevision(user, reportId) {
+  watchRevision(user, sheetCloneId) {
     const row = this.db
-      .prepare("SELECT team_id FROM reports WHERE id=?")
-      .get(reportId);
+      .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
+      .get(sheetCloneId);
     requireThat(row, 404, "사본을 찾을 수 없습니다.");
     this.teamAccess(user, row.team_id);
-    retentionView(this.db, row.team_id).requireVisible("report", [reportId]);
+    retentionView(this.db, row.team_id).requireVisible("sheetClone", [
+      sheetCloneId,
+    ]);
   }
   afterCommit(user, command, args, result, { clientId } = {}) {
-    const reportId =
+    const sheetCloneId =
       command === "create" ? result.id : command === "remove" ? null : args[0];
     const teamId =
       command === "create" || command === "remove"
         ? args[0].teamId
         : this.db
-            .prepare("SELECT team_id FROM reports WHERE id=?")
-            .get(reportId)?.team_id;
+            .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
+            .get(sheetCloneId)?.team_id;
     if (teamId) this.documentEvents?.invalidate("team:" + teamId, clientId);
     for (const id of command === "remove"
       ? args[0].ids
-      : reportId
-        ? [reportId]
+      : sheetCloneId
+        ? [sheetCloneId]
         : [])
-      this.documentEvents?.invalidate("report:" + id, clientId);
+      this.documentEvents?.invalidate("sheet-clone:" + id, clientId);
   }
   list(user, query) {
     const { db, teamAccess, referencedUsers } = this;
@@ -68,12 +73,12 @@ export class SqliteReportRepository {
     teamAccess(user, teamId);
     const view = retentionView(db, teamId);
     return {
-      reports: db
+      sheetClones: db
         .prepare(
-          "SELECT r.id,r.name,r.year,r.reference_date AS referenceDate,r.created_at AS createdAt,u.name AS author FROM reports r JOIN users u ON r.created_by=u.id WHERE r.team_id=? ORDER BY r.created_at DESC",
+          "SELECT r.id,r.name,r.year,r.reference_date AS referenceDate,r.created_at AS createdAt,u.name AS author FROM sheet_clones r JOIN users u ON r.created_by=u.id WHERE r.team_id=? ORDER BY r.created_at DESC",
         )
         .all(teamId)
-        .filter((row) => !view.hidden("report", [row.id])),
+        .filter((row) => !view.hidden("sheetClone", [row.id])),
     };
   }
   authorizeCreate(user, request) {
@@ -92,7 +97,7 @@ export class SqliteReportRepository {
         id: z.string().uuid().optional(),
         teamId: z.string().uuid(),
         year: yearSchema,
-        name: reportNameSchema,
+        name: sheetCloneNameSchema,
         sourceId: z.string().uuid().optional(),
         referenceDate: dateSchema,
         view: viewSchema,
@@ -106,26 +111,26 @@ export class SqliteReportRepository {
       409,
       "이 사이트에서 정리한 연도입니다. 설정에서 복원한 뒤 사용하세요.",
     );
-    if (d.sourceId) localView.requireVisible("report", [d.sourceId]);
+    if (d.sourceId) localView.requireVisible("sheetClone", [d.sourceId]);
     requireThat(
       canContribute(user, d.teamId),
       403,
       "사본을 만들 권한이 없습니다.",
     );
-    const reportId = d.id || id();
+    const sheetCloneId = d.id || id();
     const requestHash = createHash("sha256")
       .update(JSON.stringify(d))
       .digest("hex");
     const replay = () => {
       const existing = db
-        .prepare("SELECT * FROM reports WHERE id=?")
-        .get(reportId);
+        .prepare("SELECT * FROM sheet_clones WHERE id=?")
+        .get(sheetCloneId);
       if (existing) {
         const last = db
           .prepare(
-            "SELECT after_json FROM audit WHERE action='report' AND target=? AND actor_id=?",
+            "SELECT after_json FROM audit WHERE action='sheet-clone' AND target=? AND actor_id=?",
           )
-          .get(reportId, user.id);
+          .get(sheetCloneId, user.id);
         requireThat(
           existing.team_id === d.teamId &&
             existing.created_by === user.id &&
@@ -137,7 +142,7 @@ export class SqliteReportRepository {
       }
       return false;
     };
-    if (replay()) return { id: reportId };
+    if (replay()) return { id: sheetCloneId };
     requireThat(
       d.view.year === d.year,
       400,
@@ -156,15 +161,15 @@ export class SqliteReportRepository {
     );
     transaction(db, () => {
       if (replay()) return;
-      requireUniqueReportName(db, d.teamId, d.name);
+      requireUniqueSheetCloneName(db, d.teamId, d.name);
       const source = d.sourceId
         ? db
-            .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
+            .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
             .get(d.sourceId, d.teamId)
         : null;
       requireThat(!d.sourceId || source, 404, "사본을 찾을 수 없습니다.");
       const data = source
-        ? readReport(db, source)
+        ? readSheetClone(db, source)
         : {
             tasks: withTaskDocumentReferences(db, tasks),
             users: referencedUsers(d.teamId),
@@ -173,19 +178,19 @@ export class SqliteReportRepository {
           };
       const visibility = retentionView(db, d.teamId);
       data.tasks = visibility.tasks(data.tasks, source?.id);
-      db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
-        reportId,
+      db.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
+        sheetCloneId,
         d.teamId,
         source ? source.year : d.year,
         d.name,
         d.referenceDate,
         user.id,
         now(),
-        encodeReport(data),
+        encodeSheetClone(data),
       );
-      syncReportDocuments(db, reportId, data.tasks);
-      copyReportMemos(db, {
-        reportId,
+      syncSheetCloneDocuments(db, sheetCloneId, data.tasks);
+      copySheetCloneMemos(db, {
+        sheetCloneId,
         sourceId: source?.id,
         teamId: d.teamId,
         year: d.year,
@@ -196,32 +201,36 @@ export class SqliteReportRepository {
                 !visibility.hidden(
                   "document",
                   source
-                    ? ["reportMemo", source.id, documentId]
+                    ? ["sheetCloneMemo", source.id, documentId]
                     : ["annual", String(d.year), documentId],
                 ),
             }
           : {}),
       });
-      audit(db, user.id, d.teamId, "report", reportId, undefined, {
+      audit(db, user.id, d.teamId, "sheet-clone", sheetCloneId, undefined, {
         name: d.name,
         count: data.tasks.length,
         requestHash,
       });
     });
-    return { id: reportId };
+    return { id: sheetCloneId };
   }
-  rename(user, reportId, input) {
+  rename(user, sheetCloneId, input) {
     const { db, teamAccess, referencedUsers } = this;
 
     const data = z
-      .object({ name: reportNameSchema, expectedName: z.string().max(120) })
+      .object({ name: sheetCloneNameSchema, expectedName: z.string().max(120) })
       .strict()
       .parse(input);
     return transaction(db, () => {
-      const row = db.prepare("SELECT * FROM reports WHERE id=?").get(reportId);
+      const row = db
+        .prepare("SELECT * FROM sheet_clones WHERE id=?")
+        .get(sheetCloneId);
       requireThat(row, 404, "사본을 찾을 수 없습니다.");
       teamAccess(user, row.team_id);
-      retentionView(db, row.team_id).requireVisible("report", [reportId]);
+      retentionView(db, row.team_id).requireVisible("sheetClone", [
+        sheetCloneId,
+      ]);
       requireThat(
         canContribute(user, row.team_id),
         403,
@@ -233,13 +242,16 @@ export class SqliteReportRepository {
         "사본 이름이 변경되었습니다. 목록을 다시 불러오세요.",
       );
       if (row.name !== data.name)
-        requireUniqueReportName(db, row.team_id, data.name);
-      db.prepare("UPDATE reports SET name=? WHERE id=?").run(data.name, row.id);
+        requireUniqueSheetCloneName(db, row.team_id, data.name);
+      db.prepare("UPDATE sheet_clones SET name=? WHERE id=?").run(
+        data.name,
+        row.id,
+      );
       audit(
         db,
         user.id,
         row.team_id,
-        "report-rename",
+        "sheet-clone-rename",
         row.id,
         { name: row.name },
         { name: data.name },
@@ -247,16 +259,18 @@ export class SqliteReportRepository {
       return { id: row.id, name: data.name };
     });
   }
-  read(user, reportId) {
+  read(user, sheetCloneId) {
     const { db, teamAccess, referencedUsers } = this;
 
-    const r = db.prepare("SELECT * FROM reports WHERE id=?").get(reportId);
+    const r = db
+      .prepare("SELECT * FROM sheet_clones WHERE id=?")
+      .get(sheetCloneId);
     requireThat(r, 404, "사본을 찾을 수 없습니다.");
     teamAccess(user, r.team_id);
     const view = retentionView(db, r.team_id);
-    view.requireVisible("report", [reportId]);
-    const response = reportResponse(db, r);
-    return { ...response, tasks: view.tasks(response.tasks, reportId) };
+    view.requireVisible("sheetClone", [sheetCloneId]);
+    const response = sheetCloneResponse(db, r);
+    return { ...response, tasks: view.tasks(response.tasks, sheetCloneId) };
   }
   remove(user, input) {
     const { db, teamAccess, referencedUsers } = this;
@@ -276,11 +290,11 @@ export class SqliteReportRepository {
     );
     const ids = [...new Set(d.ids)];
     const visibility = retentionView(db, d.teamId);
-    ids.forEach((id) => visibility.requireVisible("report", [id]));
+    ids.forEach((id) => visibility.requireVisible("sheetClone", [id]));
     transaction(db, () => {
       const rows = db
         .prepare(
-          `SELECT id,name,reference_date AS referenceDate FROM reports WHERE team_id=? AND id IN (${ids.map(() => "?").join(",")})`,
+          `SELECT id,name,reference_date AS referenceDate FROM sheet_clones WHERE team_id=? AND id IN (${ids.map(() => "?").join(",")})`,
         )
         .all(d.teamId, ...ids);
       requireThat(
@@ -288,10 +302,12 @@ export class SqliteReportRepository {
         404,
         "일부 사본을 찾을 수 없습니다. 목록을 새로 열어 확인하세요.",
       );
-      const remove = db.prepare("DELETE FROM reports WHERE id=? AND team_id=?");
+      const remove = db.prepare(
+        "DELETE FROM sheet_clones WHERE id=? AND team_id=?",
+      );
       for (const row of rows) {
         remove.run(row.id, d.teamId);
-        audit(db, user.id, d.teamId, "report-delete", row.id, {
+        audit(db, user.id, d.teamId, "sheet-clone-delete", row.id, {
           name: row.name,
           referenceDate: row.referenceDate,
         });
@@ -300,13 +316,15 @@ export class SqliteReportRepository {
     });
     return { ok: true };
   }
-  edit(user, reportId, input) {
+  edit(user, sheetCloneId, input) {
     const row = this.db
-      .prepare("SELECT team_id FROM reports WHERE id=?")
-      .get(reportId);
+      .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
+      .get(sheetCloneId);
     requireThat(row, 404, "사본을 찾을 수 없습니다.");
     this.teamAccess(user, row.team_id);
-    retentionView(this.db, row.team_id).requireVisible("report", [reportId]);
-    return editReport(this, user, reportId, input);
+    retentionView(this.db, row.team_id).requireVisible("sheetClone", [
+      sheetCloneId,
+    ]);
+    return editSheetClone(this, user, sheetCloneId, input);
   }
 }

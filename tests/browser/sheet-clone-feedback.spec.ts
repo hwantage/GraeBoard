@@ -50,7 +50,7 @@ async function create(page: Page, name: string) {
     "aria-selected",
     "true",
   );
-  return (await get(page, `/reports?teamId=${teamId}`)).reports.find(
+  return (await get(page, `/sheet-clones?teamId=${teamId}`)).sheetClones.find(
     (r: any) => r.name === name,
   ).id;
 }
@@ -101,7 +101,7 @@ test("빈 사본 문서는 작성 버튼으로 시작하고 원본의 빈 안내
   await (await source(page)).fill("사본에서 명시적으로 작성한 문서");
   await close(page);
   expect(
-    (await get(page, `/reports/${copy}/tasks/${taskId}/documents/main`))
+    (await get(page, `/sheet-clones/${copy}/tasks/${taskId}/documents/main`))
       .markdown,
   ).toBe("사본에서 명시적으로 작성한 문서");
   expect((await get(page, `/tasks/${taskId}/documents/main`)).markdown).toBe(
@@ -192,8 +192,8 @@ test("문서 제목 탭 추가·이름 변경·빠른 전환과 사본별 독립
     2,
   );
   expect(
-    (await get(page, `/reports/${copy}/tasks/${taskId}/documents`)).documents
-      .length,
+    (await get(page, `/sheet-clones/${copy}/tasks/${taskId}/documents`))
+      .documents.length,
   ).toBe(3);
 });
 
@@ -258,7 +258,7 @@ test("하단 사본 탭의 생성·이름 변경·중복 방지·삭제와 좁�
     page.getByRole("tab", { name: "확정 사본", exact: true }),
   ).toBeVisible();
   expect(
-    (await get(page, `/reports?teamId=${teamId}`)).reports.map(
+    (await get(page, `/sheet-clones?teamId=${teamId}`)).sheetClones.map(
       (r: any) => r.name,
     ),
   ).toEqual(["확정 사본", "기획 사본"]);
@@ -320,18 +320,18 @@ test("원본 오른쪽의 추가 버튼·최신 사본 순서와 양 끝 스크�
   await expect(left).toBeDisabled();
   await expect(right).toBeDisabled();
   const first = await create(page, "처음 사본");
-  const report = await get(page, `/reports/${first}`);
+  const sheetClone = await get(page, `/sheet-clones/${first}`);
   const names = ["처음 사본"];
   for (let i = 1; i <= 6; i++) {
     const name = `차례로 추가한 검토 사본 ${i}`;
     names.unshift(name);
-    await post(page, "/reports", {
+    await post(page, "/sheet-clones", {
       teamId,
       year: 2026,
       name,
       sourceId: first,
       referenceDate: "2026-10-16",
-      view: report.view,
+      view: sheetClone.view,
       taskIds: [taskId],
     });
   }
@@ -443,9 +443,9 @@ test("원본 오른쪽의 추가 버튼·최신 사본 순서와 양 끝 스크�
   await expect(
     bar.getByRole("tab", { name: "포커스 이동으로 저장", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  expect((await get(page, `/reports?teamId=${teamId}`)).reports[0].name).toBe(
-    "포커스 이동으로 저장",
-  );
+  expect(
+    (await get(page, `/sheet-clones?teamId=${teamId}`)).sheetClones[0].name,
+  ).toBe("포커스 이동으로 저장");
 });
 
 test("사본 기본 이름은 오늘 날짜와 괄호 번호를 쓰고 확인 버튼을 오른쪽에 배치한다", async ({
@@ -491,7 +491,7 @@ test("사본 기본 이름은 오늘 날짜와 괄호 번호를 쓰고 확인 �
     ).toHaveAttribute("aria-selected", "true");
   }
   expect(
-    (await get(page, `/reports?teamId=${teamId}`)).reports.map(
+    (await get(page, `/sheet-clones?teamId=${teamId}`)).sheetClones.map(
       (r: any) => r.name,
     ),
   ).toEqual([

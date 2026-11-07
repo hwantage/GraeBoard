@@ -68,10 +68,10 @@ function sqliteRevision(db, teamId, entity, key) {
           Number(b),
           c,
         )?.revision || 0;
-    if (a === "reportMemo")
+    if (a === "sheetCloneMemo")
       revision =
         one(
-          "SELECT revision FROM report_memos WHERE report_id=? AND id=?",
+          "SELECT revision FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
           b,
           c,
         )?.revision || 0;
@@ -200,11 +200,22 @@ export async function exportTeam(
       throw new Error(
         "Pause synchronization and freeze writes before logical transfer",
       );
+    // An unconverted team schema (before v3) is read only as a backup
+    // source; its rows keep the earlier names and format version 1.
+    const legacy =
+      Number(
+        (
+          await tx.query(
+            "SELECT COUNT(*) AS n FROM schema_migrations WHERE scope='team'",
+          )
+        ).rows[0].n,
+      ) < 3;
     const tables = {};
     for (const [table, order] of TEAM_TRANSFER_TABLES) {
       if (
-        adapter.engine === "sqlite" &&
-        ["site_entities", "site_audit", "site_operations"].includes(table)
+        (adapter.engine === "sqlite" &&
+          ["site_entities", "site_audit", "site_operations"].includes(table)) ||
+        (legacy && table === "sync_conversions")
       )
         continue;
       const rows = (
@@ -222,12 +233,15 @@ export async function exportTeam(
     }
     if (adapter.engine === "sqlite")
       throw new Error("Unexpected asynchronous SQLite export");
-    return sealTransfer({
-      teamId,
-      sourceEngine: adapter.engine,
-      createdAt: stamp(),
-      tables,
-    });
+    return sealTransfer(
+      {
+        teamId,
+        sourceEngine: adapter.engine,
+        createdAt: stamp(),
+        tables,
+      },
+      legacy ? 1 : undefined,
+    );
   };
   if (adapter.engine !== "sqlite")
     return adapter.withTeamTransaction(teamId, capture, { readOnly: true });
@@ -480,9 +494,9 @@ function restoreSqlitePresentation(db, teamId, rows) {
         db.prepare(
           "UPDATE annual_memos SET revision=? WHERE team_id=? AND year=? AND id=?",
         ).run(r, teamId, Number(b), c);
-      if (a === "reportMemo")
+      if (a === "sheetCloneMemo")
         db.prepare(
-          "UPDATE report_memos SET revision=? WHERE report_id=? AND id=?",
+          "UPDATE sheet_clone_memos SET revision=? WHERE sheet_clone_id=? AND id=?",
         ).run(r, b, c);
     }
     for (const [entity, table] of [
@@ -576,7 +590,7 @@ export async function importTeam(adapter, bundle, options = {}) {
           if (adapter.engine === "sqlite")
             for (const table of [
               "tasks",
-              "reports",
+              "sheet_clones",
               "annual_memos",
               "document_versions",
               "calendar_entries",

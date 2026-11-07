@@ -314,6 +314,28 @@ const methods = {
     if (changed.rowCount !== 1)
       throw new Error("Canonical head changed; recompute before retry");
   },
+  // The offline SheetClone conversion of C (protocol 1 -> 3 or 2 -> 4) and
+  // whether its transition commit was applied.
+  *readConversion() {
+    const row = (yield query(
+      "SELECT * FROM sync_conversions WHERE team_id=$1",
+      [this.teamId],
+    )).rows[0];
+    return row
+      ? {
+          ...row,
+          from_protocol: integer(row.from_protocol),
+          to_protocol: integer(row.to_protocol),
+          previous_snapshot: new Uint8Array(row.previous_snapshot),
+        }
+      : null;
+  },
+  *completeConversion(head) {
+    yield query(
+      "UPDATE sync_conversions SET completed_head=$2,completed_at=$3 WHERE team_id=$1 AND completed_head IS NULL",
+      [this.teamId, head, new Date().toISOString()],
+    );
+  },
   *readExclusions(siteId) {
     const result = yield query(
       `SELECT * FROM site_retention WHERE team_id=$1${siteId ? " AND site_id=$2" : ""} ORDER BY site_id,kind,entity_key,generation`,

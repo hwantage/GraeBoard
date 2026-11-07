@@ -18,7 +18,7 @@ import {
   sampleProperties,
   defaultView,
 } from "../shared/domain.js";
-import { encodeReport } from "../server/reports.mjs";
+import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
@@ -56,7 +56,7 @@ export function sqliteFixture(t, { documents = true } = {}) {
       actorId: userId,
       fields: { title: "initial", description: "second", owner: userId },
     }),
-    reportId = randomUUID(),
+    sheetCloneId = randomUUID(),
     entryId = randomUUID(),
     link = {
       team_id: teamId,
@@ -71,15 +71,15 @@ export function sqliteFixture(t, { documents = true } = {}) {
     },
     state = emptyState();
   if (documents) {
-    db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
-      reportId,
+    db.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
+      sheetCloneId,
       teamId,
       2026,
-      "Contract report",
+      "Contract sheetClone",
       "2026-10-01",
       userId,
       stamp,
-      encodeReport({
+      encodeSheetClone({
         settings: DEFAULT_SETTINGS,
         view: defaultView(2026),
         users: [{ id: userId, name: "Contract" }],
@@ -120,7 +120,7 @@ export function sqliteFixture(t, { documents = true } = {}) {
     user,
     teamId,
     taskId: task.id,
-    reportId,
+    sheetCloneId,
     entryId,
     link,
     state,
@@ -252,7 +252,7 @@ export async function postgresFixture(t, providedFixture) {
   };
 }
 
-// Stable shared fixture API: no report/calendar seeds unless explicitly requested.
+// Stable shared fixture API: no sheetClone/calendar seeds unless explicitly requested.
 export const sqliteBusinessFixture = (t) =>
   sqliteFixture(t, { documents: false });
 export const postgresBusinessFixture = (t, fixture) =>

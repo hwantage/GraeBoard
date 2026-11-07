@@ -12,7 +12,10 @@ import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { unpack } from "../shared/compact.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
+import { revertToV33 } from "./sqlite-legacy-schema.mjs";
+import { sqliteSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
 import {
+  SQLITE_VERSION,
   migrateSqlite,
   sqliteVersion,
   assertSqliteIntegrity,
@@ -27,6 +30,7 @@ import {
 } from "../shared/postgres-schema-version.js";
 import { accessTokenRoutes } from "../worker/access-tokens.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
+const convert = sqliteSheetCloneConversion({});
 
 async function http(t, app, userId) {
   const server = app.listen(0, "127.0.0.1");
@@ -234,15 +238,20 @@ test("actual PostgreSQL control routes enforce the same owner and secret contrac
 
 test("SQLite v32 → v33 is atomic, preserves data and is retryable", (t) => {
   const f = sqliteBusinessFixture(t);
+  revertToV33(f.db);
   f.db.exec(
     "DROP TABLE access_tokens; DELETE FROM schema_migrations WHERE version>=33; PRAGMA user_version=32",
   );
   const before = f.db.prepare("SELECT * FROM cells").all();
-  assert.equal(migrateSqlite(f.db, { dryRun: true }).to, 33);
+  assert.equal(
+    migrateSqlite(f.db, { dryRun: true, convert }).to,
+    SQLITE_VERSION,
+  );
   assert.equal(sqliteVersion(f.db), 32);
   assert.throws(
     () =>
       migrateSqlite(f.db, {
+        convert,
         afterDdl(version) {
           if (version === 33) throw new Error("token ddl crash");
         },
@@ -256,7 +265,7 @@ test("SQLite v32 → v33 is atomic, preserves data and is retryable", (t) => {
       .get(),
     undefined,
   );
-  assert.equal(migrateSqlite(f.db).to, 33);
+  assert.equal(migrateSqlite(f.db, { convert }).to, SQLITE_VERSION);
   assert.deepEqual(f.db.prepare("SELECT * FROM cells").all(), before);
   assert.equal(migrateSqlite(f.db).applied, false);
   assertSqliteIntegrity(f.db);

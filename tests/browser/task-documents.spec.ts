@@ -2210,7 +2210,7 @@ for (const copy of [false, true])
     for (let n = 2; n <= 10; n++)
       await post(page, `/tasks/${taskIds[1]}/documents`, { id: randomUUID() });
     if (copy)
-      await post(page, "/reports", {
+      await post(page, "/sheet-clones", {
         teamId,
         year: 2026,
         name: "문서 개수 사본",
@@ -3020,7 +3020,7 @@ test("이미지 붙여넣기·업로드 대기·원문 왕복·스냅샷과 보�
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).revision,
   ).toBe(original.revision);
   const id = (
-    await post(page, "/reports", {
+    await post(page, "/sheet-clones", {
       teamId,
       year: 2026,
       name: "이미지 보관 보고본",
@@ -3049,7 +3049,7 @@ test("이미지 붙여넣기·업로드 대기·원문 왕복·스냅샷과 보�
   await expect(img).toHaveCount(2);
   const saved = await get(
     page,
-    `/reports/${id}/tasks/${taskIds[0]}/documents/main`,
+    `/sheet-clones/${id}/tasks/${taskIds[0]}/documents/main`,
   );
   expect(saved.markdown.match(/\/api\/document-images\//g)).toHaveLength(2);
   expect(
@@ -3974,7 +3974,7 @@ test("다른 탭의 상세 열기·문서 전환은 현재 탭의 시트 재조�
     const path = new URL(request.url()).pathname;
     if (
       request.method() === "GET" &&
-      ["/api/tasks", "/api/bootstrap", "/api/reports"].includes(path)
+      ["/api/tasks", "/api/bootstrap", "/api/sheet-clones"].includes(path)
     )
       requests.push(path);
   });

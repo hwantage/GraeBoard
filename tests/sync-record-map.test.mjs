@@ -1,7 +1,8 @@
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { forkRecordMap } from "../shared/record-map.mjs";
-import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
+import { canonical, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 
 test("receipt workspaces share old records without copying their keys on creation and preserve canonical own fields", () => {
@@ -67,11 +68,11 @@ test("receipt compaction preserves every field through 100 immutable forks, incl
   assert.equal(canonical(map), canonical(expected));
 });
 test("reduceMany public result remains structured-cloneable while internal receipt ownership matches the same canonical state", () => {
-  const base = emptyState(),
+  const base = markedState(),
     identity = { teamId: "team", repoId: "repo" };
   const op = {
-    protocol: 1,
-    reducer: 1,
+    protocol: 3,
+    reducer: 3,
     ...identity,
     opId: "op",
     writerEpoch: "epoch",

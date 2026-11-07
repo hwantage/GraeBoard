@@ -18,7 +18,7 @@ async function request(
   expect(response.ok(), await response.text()).toBeTruthy();
   return unpack(await response.json());
 }
-for (const kind of ["task", "report-task", "memo", "report-memo"]) {
+for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
   test(`${kind}: 두 사용자의 문서 수정·동시 병합·다시 연결`, async ({
     page,
     browser,
@@ -55,10 +55,10 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
         username,
         password: "local-peer-password",
       });
-      let reportId = "";
-      if (kind.startsWith("report"))
-        reportId = (
-          await request(page, "/reports", "POST", {
+      let sheetCloneId = "";
+      if (kind.startsWith("sheetClone"))
+        sheetCloneId = (
+          await request(page, "/sheet-clones", "POST", {
             teamId: team.id,
             year: 2026,
             name: "동기화 사본",
@@ -70,11 +70,11 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
       const memo = kind.endsWith("memo");
       const id = memo ? randomUUID() : "main";
       const collection = memo
-        ? reportId
-          ? `/reports/${reportId}/memos`
+        ? sheetCloneId
+          ? `/sheet-clones/${sheetCloneId}/memos`
           : `/teams/${team.id}/years/2026/memos`
-        : reportId
-          ? `/reports/${reportId}/tasks/${task.id}/documents`
+        : sheetCloneId
+          ? `/sheet-clones/${sheetCloneId}/tasks/${task.id}/documents`
           : `/tasks/${task.id}/documents`;
       if (memo) await request(page, collection, "POST", { id });
       const path = `${collection}/${id}`;
@@ -87,16 +87,16 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
       const label = memo ? "연간 업무 메모" : "업무 문서";
       const source = (p: Page) =>
         p.getByRole("textbox", { name: `${label} Markdown 원문`, exact: true });
-      async function selectReport(p: Page) {
+      async function selectSheetClone(p: Page) {
         const tab = p.getByRole("tab", { name: "동기화 사본", exact: true });
         await tab.click();
-        // Selection follows report loading and its task-dialog reset.
+        // Selection follows sheetClone loading and its task-dialog reset.
         await expect(tab).toHaveAttribute("aria-selected", "true");
       }
       async function open(p: Page) {
         await p.goto("/");
         await p.getByLabel("팀 선택").selectOption(team.id);
-        if (reportId) await selectReport(p);
+        if (sheetCloneId) await selectSheetClone(p);
         if (memo)
           await p
             .getByRole("button", {
@@ -210,7 +210,7 @@ for (const kind of ["task", "report-task", "memo", "report-memo"]) {
         peer.getByRole("textbox", { name: `${label} 리치 편집`, exact: true }),
       ).toContainText("추가 문단");
       await peer.reload();
-      if (reportId) await selectReport(peer);
+      if (sheetCloneId) await selectSheetClone(peer);
       if (memo)
         await expect(
           peer.getByRole("button", {
@@ -330,7 +330,7 @@ test("SIGTERM 재시작 뒤 두 탭의 셀·시트·문서 목록·본문·사�
         fields: { title: "재시작 뒤 추가 업무" },
       })
     ).task;
-    await request(page, "/reports", "POST", {
+    await request(page, "/sheet-clones", "POST", {
       teamId,
       year: 2026,
       name: "재시작 뒤 사본",
@@ -376,7 +376,7 @@ test("SIGTERM 재시작 뒤 두 탭의 셀·시트·문서 목록·본문·사�
             "team-sheet",
             "document-list",
             "document-body",
-            "report-tabs",
+            "sheet-clone-tabs",
           ],
         },
         null,
@@ -389,8 +389,8 @@ test("SIGTERM 재시작 뒤 두 탭의 셀·시트·문서 목록·본문·사�
   }
 });
 
-for (const report of [false, true]) {
-  test(`${report ? "사본" : "원본"} 꼬리 메모: 선택하지 않은 열린 메모도 리치·원문에 자동 반영`, async ({
+for (const sheetClone of [false, true]) {
+  test(`${sheetClone ? "사본" : "원본"} 꼬리 메모: 선택하지 않은 열린 메모도 리치·원문에 자동 반영`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1900, height: 1000 });
@@ -410,9 +410,9 @@ for (const report of [false, true]) {
         fields: { title: "메모 자동 반영 확인" },
       })
     ).task;
-    const reportId = report
+    const sheetCloneId = sheetClone
       ? (
-          await request(page, "/reports", "POST", {
+          await request(page, "/sheet-clones", "POST", {
             teamId: team.id,
             year: 2026,
             name: "여러 메모 사본",
@@ -422,8 +422,8 @@ for (const report of [false, true]) {
           })
         ).id
       : "";
-    const collection = reportId
-      ? `/reports/${reportId}/memos`
+    const collection = sheetCloneId
+      ? `/sheet-clones/${sheetCloneId}/memos`
       : `/teams/${team.id}/years/2026/memos`;
     const ids = [randomUUID(), randomUUID()];
     async function change(index: number, markdown: string) {
@@ -445,7 +445,7 @@ for (const report of [false, true]) {
     }
     await page.goto("/");
     await page.getByLabel("팀 선택").selectOption(team.id);
-    if (reportId) {
+    if (sheetCloneId) {
       const tab = page.getByRole("tab", {
         name: "여러 메모 사본",
         exact: true,

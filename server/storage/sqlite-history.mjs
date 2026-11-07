@@ -12,10 +12,10 @@ import {
 import { requireThat } from "../../shared/validation.js";
 import {
   auditSheetSql,
-  deletedReportTasks,
-  restoreReportTasks,
+  deletedSheetCloneTasks,
+  restoreSheetCloneTasks,
 } from "../sheet-history.mjs";
-import { decodeReport } from "../reports.mjs";
+import { decodeSheetClone } from "../sheet-clones.mjs";
 import { applyFormatting } from "../formatting.mjs";
 import { retentionView } from "../sync/visibility.mjs";
 export class SqliteHistoryRepository {
@@ -45,7 +45,7 @@ export class SqliteHistoryRepository {
     if (sheetId && sheetId !== "original")
       requireThat(
         db
-          .prepare("SELECT id FROM reports WHERE id=? AND team_id=?")
+          .prepare("SELECT id FROM sheet_clones WHERE id=? AND team_id=?")
           .get(sheetId, teamId),
         404,
         "사본을 찾을 수 없습니다.",
@@ -58,29 +58,36 @@ export class SqliteHistoryRepository {
       );
     const rows = db
       .prepare(
-        `SELECT a.*,u.name AS actor, ${auditSheetSql} AS report_id FROM audit a JOIN users u ON a.actor_id=u.id WHERE a.team_id=?
+        `SELECT a.*,u.name AS actor, ${auditSheetSql} AS sheet_clone_id FROM audit a JOIN users u ON a.actor_id=u.id WHERE a.team_id=?
           AND (? IS NULL OR COALESCE(${auditSheetSql},'original')=?)
           AND (? IS NULL OR a.target=? OR EXISTS(SELECT 1 FROM json_each(CASE WHEN a.action='cells' THEN COALESCE(json_extract(a.after_json,'$.$data'),a.after_json) ELSE '[]' END) c WHERE json_extract(c.value,'$.taskId')=?) OR (a.action='format' AND EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(a.after_json,'$.$data.taskIds'),json_extract(a.after_json,'$.taskIds'),'[]')) t WHERE t.value=?))) ORDER BY a.created_at DESC,a.rowid DESC LIMIT ?`,
       )
       .all(teamId, sheetId, sheetId, taskId, taskId, taskId, taskId, limit);
-    const reports = new Map();
-    const reportSnapshots = new Map();
+    const sheetClones = new Map();
+    const sheetCloneSnapshots = new Map();
     for (const row of rows) {
-      if (!row.report_id || reports.has(row.report_id)) continue;
-      reports.set(
-        row.report_id,
+      if (!row.sheet_clone_id || sheetClones.has(row.sheet_clone_id)) continue;
+      sheetClones.set(
+        row.sheet_clone_id,
         db
-          .prepare("SELECT * FROM reports WHERE id=? AND team_id=?")
-          .get(row.report_id, teamId),
+          .prepare("SELECT * FROM sheet_clones WHERE id=? AND team_id=?")
+          .get(row.sheet_clone_id, teamId),
       );
     }
     return {
       entries: rows.map((r) => {
         const before = parse(r.before_json),
           after = parse(r.after_json);
-        const report = reports.get(r.report_id);
-        if (before?.deletedTasks && report && !reportSnapshots.has(report.id))
-          reportSnapshots.set(report.id, decodeReport(report.data));
+        const sheetClone = sheetClones.get(r.sheet_clone_id);
+        if (
+          before?.deletedTasks &&
+          sheetClone &&
+          !sheetCloneSnapshots.has(sheetClone.id)
+        )
+          sheetCloneSnapshots.set(
+            sheetClone.id,
+            decodeSheetClone(sheetClone.data),
+          );
         const task =
           r.action === "delete" &&
           db
@@ -102,18 +109,22 @@ export class SqliteHistoryRepository {
           before,
           after,
           sheet: {
-            id: r.report_id || "original",
-            name: r.report_id
-              ? report?.name || after?.name || before?.name || "삭제된 사본"
+            id: r.sheet_clone_id || "original",
+            name: r.sheet_clone_id
+              ? sheetClone?.name || after?.name || before?.name || "삭제된 사본"
               : "원본",
           },
           restorableTaskIds:
             r.action === "delete" && latestDeletion?.id === r.id
               ? [r.target]
-              : r.action === "report-edit" && before?.deletedTasks && report
-                ? deletedReportTasks(db, r, reportSnapshots.get(report.id)).map(
-                    (t) => t.id,
-                  )
+              : r.action === "sheet-clone-edit" &&
+                  before?.deletedTasks &&
+                  sheetClone
+                ? deletedSheetCloneTasks(
+                    db,
+                    r,
+                    sheetCloneSnapshots.get(sheetClone.id),
+                  ).map((t) => t.id)
                 : [],
           createdAt: r.created_at,
         };
@@ -128,12 +139,12 @@ export class SqliteHistoryRepository {
     const work = () => {
       const entry = db.prepare("SELECT * FROM audit WHERE id=?").get(entryId);
       requireThat(entry, 404, "이력을 찾을 수 없습니다.");
-      if (entry.action === "report-edit") {
+      if (entry.action === "sheet-clone-edit") {
         teamAccess(user, entry.team_id);
-        retentionView(db, entry.team_id).requireVisible("report", [
+        retentionView(db, entry.team_id).requireVisible("sheetClone", [
           entry.target,
         ]);
-        return restoreReportTasks(db, user, entry, body.revision);
+        return restoreSheetCloneTasks(db, user, entry, body.revision);
       }
       const team = managedTeam(
         user,
@@ -236,8 +247,11 @@ export class SqliteHistoryRepository {
       .get(entryId);
     if (entry) {
       this.documentEvents?.invalidate("team:" + entry.team_id, clientId);
-      if (entry.action === "report-edit")
-        this.documentEvents?.invalidate("report:" + entry.target, clientId);
+      if (entry.action === "sheet-clone-edit")
+        this.documentEvents?.invalidate(
+          "sheet-clone:" + entry.target,
+          clientId,
+        );
     }
     return value;
   }

@@ -523,6 +523,7 @@ export function createNodeSync({
           "sync_conflicts",
           "sync_objects",
           "sync_person_refs",
+          "sync_conversions",
           "site_retention",
           "site_maintenance_jobs",
           "site_entity_revisions",

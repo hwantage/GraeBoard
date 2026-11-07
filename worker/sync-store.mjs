@@ -9,6 +9,7 @@ import {
   entityId,
   emptyState,
   protocolVersion,
+  PROTOCOL,
   stateSumFrom,
 } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
@@ -94,7 +95,7 @@ export function boundStore(
               if (!link?.canonical_head) return null;
               const slice = new CanonicalSlice(tx, teamId),
                 base = await slice.include(operations).include(cover).load();
-              if (protocolVersion(base) !== 1) return null;
+              if (protocolVersion(base) !== PROTOCOL) return null;
               const context = await slice.context(base);
               mark("readSlice", {
                 entities: Object.keys(base.entities).length,
@@ -197,6 +198,10 @@ export function boundStore(
         { readOnly: true },
       ),
     readPending: () => database.readPending(teamId),
+    readConversion: () =>
+      database.withTeamTransaction(teamId, (tx) => tx.sync.readConversion(), {
+        readOnly: true,
+      }),
     async acquire(id) {
       return call(async (tx) => {
         if (
@@ -297,6 +302,8 @@ export function boundStore(
                 ? { ...projection, previousState: options.previousState }
                 : projection,
             );
+          if (options.conversion === true)
+            await tx.sync.completeConversion(head);
           // C's totals follow every change to C, or are dropped so the next
           // reader measures C again.
           if (options.stateSum && options.stateSize)

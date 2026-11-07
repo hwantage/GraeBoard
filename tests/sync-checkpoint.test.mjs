@@ -1,15 +1,11 @@
 import { fileEntries } from "../server/sync/file-entries.mjs";
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { SyncService } from "../server/sync/service.mjs";
 import { GitHubApiTransport } from "../server/sync/github-api.mjs";
-import {
-  canonical,
-  digest,
-  emptyState,
-  stateHash,
-} from "../server/sync/protocol.mjs";
+import { canonical, digest, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import { ProtocolError } from "../server/sync/errors.mjs";
@@ -139,7 +135,7 @@ class Repository {
   };
 }
 function store(
-  state = emptyState(),
+  state = markedState(),
   head = null,
   mode = "active",
   pending = [],
@@ -187,7 +183,7 @@ function store(
 }
 async function fixture(count = 5) {
   const repo = new Repository();
-  let state = emptyState();
+  let state = markedState();
   const bytes = encodeSnapshot({ state, hash: stateHash(state) });
   repo.head = await repo.createCandidate(null, {
     "manifest.json": canonical({
@@ -204,8 +200,8 @@ async function fixture(count = 5) {
     states = new Map([[genesis, state]]);
   for (let i = 0; i < count; i++) {
     const op = {
-      protocol: 1,
-      reducer: 1,
+      protocol: 3,
+      reducer: 3,
       ...identity,
       opId: "op-" + i,
       writerEpoch: "epoch",
@@ -230,7 +226,7 @@ async function fixture(count = 5) {
     const parent = repo.head;
     repo.head = await repo.createCandidate(parent, {
       ["events/op-" + i + ".json"]: canonical({
-        protocol: 1,
+        protocol: 3,
         kind: "operations",
         parent,
         operations: [op],
@@ -317,8 +313,8 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
       ? { ...payload, markdown: String(i - 1).repeat(250 * 1024) }
       : null;
     ops.push({
-      protocol: 1,
-      reducer: 1,
+      protocol: 3,
+      reducer: 3,
       ...identity,
       opId: "large-" + i,
       writerEpoch: "epoch",
@@ -338,7 +334,7 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
       })),
     });
   }
-  const local = store(emptyState(), genesis, "active", ops);
+  const local = store(markedState(), genesis, "active", ops);
   const publisher = new SyncService({
     transport: repo,
     store: local,
@@ -355,7 +351,7 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
   );
   for (const event of events)
     assert.ok(repo.blobs.get(event.oid).byteLength <= SYNC_FILE_MAX_BYTES);
-  const external = store(emptyState(), genesis);
+  const external = store(markedState(), genesis);
   await new SyncService({
     transport: boundedTransport(repo),
     store: external,
@@ -368,7 +364,7 @@ test("multi-megabyte pending commands split into receiver-safe events and conver
 });
 test("350 missed commits advance in bounded REST cycles and old peer ancestry costs one comparison", async () => {
   const { repo, state, genesis } = await fixture(350),
-    local = store(emptyState(), genesis);
+    local = store(markedState(), genesis);
   let cycles = 0,
     maxRequests = 0;
   while (local.link.canonical_head !== repo.head) {
@@ -409,8 +405,8 @@ test("350 missed commits advance in bounded REST cycles and old peer ancestry co
 test("a run with pending commands behind the remote applies at most its commit budget and publishes from the head", async () => {
   const { repo, state, genesis } = await fixture(20),
     local = {
-      protocol: 1,
-      reducer: 1,
+      protocol: 3,
+      reducer: 3,
       ...identity,
       opId: "local-op",
       writerEpoch: "epoch",
@@ -438,7 +434,7 @@ test("a run with pending commands behind the remote applies at most its commit b
     candidates++;
     return create(...args);
   };
-  const unbounded = store(emptyState(), genesis, "active", [local]);
+  const unbounded = store(markedState(), genesis, "active", [local]);
   await new SyncService({
     transport: repo,
     store: unbounded,
@@ -451,7 +447,7 @@ test("a run with pending commands behind the remote applies at most its commit b
   assert.equal(repo.head, remoteHead);
 
   candidates = 0;
-  const bounded = store(emptyState(), genesis, "active", [local]);
+  const bounded = store(markedState(), genesis, "active", [local]);
   const run = () =>
     new SyncService({
       transport: repo,
@@ -487,8 +483,8 @@ test("verified checkpoint loads new site and explicit recovery, preserving unack
   await svc.checkpoint();
   const checkpoint = repo.head;
   const tail = {
-    protocol: 1,
-    reducer: 1,
+    protocol: 3,
+    reducer: 3,
     ...identity,
     opId: "tail",
     writerEpoch: "epoch",
@@ -512,7 +508,7 @@ test("verified checkpoint loads new site and explicit recovery, preserving unack
   const finalState = reduceMany(state, [tail], identity);
   repo.head = await repo.createCandidate(checkpoint, {
     "events/tail.json": canonical({
-      protocol: 1,
+      protocol: 3,
       kind: "operations",
       parent: checkpoint,
       operations: [tail],
@@ -520,8 +516,8 @@ test("verified checkpoint loads new site and explicit recovery, preserving unack
     }),
   });
   const localPending = {
-    protocol: 1,
-    reducer: 1,
+    protocol: 3,
+    reducer: 3,
     ...identity,
     opId: "local",
     writerEpoch: "local-epoch",
@@ -546,7 +542,7 @@ test("verified checkpoint loads new site and explicit recovery, preserving unack
     [null, "importing", false],
     [genesis, "recovery", true],
   ]) {
-    const local = store(emptyState(), head, mode, [localPending]),
+    const local = store(markedState(), head, mode, [localPending]),
       L = canonical(local.exclusions);
     const transport = new GitHubApiTransport({
       repository: "fixture/team",
@@ -571,7 +567,7 @@ test("verified checkpoint loads new site and explicit recovery, preserving unack
     assert.equal(canonical(local.exclusions), L);
     assert.equal(local.link.mode, mode === "importing" ? "active" : "recovery");
   }
-  const active = store(emptyState(), genesis);
+  const active = store(markedState(), genesis);
   await new SyncService({
     transport: repo,
     store: active,
@@ -633,7 +629,7 @@ test("tampered checkpoint metadata/state, incompatible history, pending hash and
         ? await repo.createCandidate(null, { "manifest.json": "{}" })
         : genesis;
     const local = store(
-        emptyState(),
+        markedState(),
         foreign,
         "recovery",
         fault === "receipt" ? [{ opId: "op-0", changed: true }] : [],

@@ -17,20 +17,20 @@ export const captureDetectors = {
     ["annual", String(r.year), r.id],
     r.team_id,
   ],
-  reports: (r) => ["report", [r.id], r.team_id],
-  report_documents: (r) => [
+  sheet_clones: (r) => ["sheetClone", [r.id], r.team_id],
+  sheet_clone_documents: (r) => [
     "document",
-    ["report", r.report_id, r.task_id, r.document_id],
+    ["sheetClone", r.sheet_clone_id, r.task_id, r.document_id],
     null,
-    "reports",
-    r.report_id,
+    "sheet_clones",
+    r.sheet_clone_id,
   ],
-  report_memos: (r) => [
+  sheet_clone_memos: (r) => [
     "document",
-    ["reportMemo", r.report_id, r.id],
+    ["sheetCloneMemo", r.sheet_clone_id, r.id],
     null,
-    "reports",
-    r.report_id,
+    "sheet_clones",
+    r.sheet_clone_id,
   ],
   calendar_entries: (r) => ["calendar", [r.id], r.team_id],
   calendar_entry_tags: (r) => [
@@ -69,7 +69,7 @@ export function defineCaptureTriggers(db, triggerDefinitions) {
           "task_id",
           "key",
           "year",
-          "report_id",
+          "sheet_clone_id",
           "document_id",
           "entry_id",
           "user_id",
@@ -99,8 +99,8 @@ export function defineCaptureTriggers(db, triggerDefinitions) {
           ? `${prefix}.team_id`
           : table === "cells" || table === "task_documents"
             ? `(SELECT team_id FROM tasks WHERE id=${prefix}.task_id)`
-            : table === "report_documents" || table === "report_memos"
-              ? `(SELECT team_id FROM reports WHERE id=${prefix}.report_id)`
+            : table === "sheet_clone_documents" || table === "sheet_clone_memos"
+              ? `(SELECT team_id FROM sheet_clones WHERE id=${prefix}.sheet_clone_id)`
               : `(SELECT team_id FROM calendar_entries WHERE id=${prefix}.entry_id)`,
         conditions = [
           `EXISTS(SELECT 1 FROM sync_capture_teams WHERE team_id=${table === "teams" ? `${prefix}.id` : teamExpression})`,

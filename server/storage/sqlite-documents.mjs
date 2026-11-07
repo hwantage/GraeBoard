@@ -24,17 +24,17 @@ import {
   listTaskDocuments,
   withTaskDocuments,
 } from "../task-documents.mjs";
-import { reportTaskDocument } from "../report-documents.mjs";
+import { sheetCloneTaskDocument } from "../sheet-clone-documents.mjs";
 import {
   readDocumentVersion,
   storeDocumentVersion,
-  storeReportDocuments,
-  syncReportDocuments,
+  storeSheetCloneDocuments,
+  syncSheetCloneDocuments,
   pruneDocumentVersions,
-  readReport,
-  reportDocumentTasks,
+  readSheetClone,
+  sheetCloneDocumentTasks,
 } from "../document-storage.mjs";
-import { encodeReport } from "../reports.mjs";
+import { encodeSheetClone } from "../sheet-clones.mjs";
 import {
   validateDocumentImages,
   writeDocumentImage,
@@ -69,7 +69,7 @@ export class SqliteDocumentRepository {
     });
   }
   validateRevision(scope, value) {
-    (scope.kind === "report"
+    (scope.kind === "sheetClone"
       ? z.union([z.literal(0), z.string().uuid()])
       : z.number().int().nonnegative()
     ).parse(value);
@@ -85,25 +85,30 @@ export class SqliteDocumentRepository {
     if (scope.kind === "task") {
       const task = this.control.taskAccess(user, scope.taskId, write);
       context = { task, teamId: task.teamId, prefix: ["task", task.id] };
-    } else if (["report", "reportMemo"].includes(scope.kind)) {
+    } else if (["sheetClone", "sheetCloneMemo"].includes(scope.kind)) {
       const row = db
-        .prepare("SELECT * FROM reports WHERE id=?")
-        .get(scope.reportId);
+        .prepare("SELECT * FROM sheet_clones WHERE id=?")
+        .get(scope.sheetCloneId);
       requireThat(row, 404, "사본을 찾을 수 없습니다.");
       this.control.teamAccess(user, row.team_id);
       if (write)
         requireThat(
           canContribute(user, row.team_id),
           403,
-          scope.kind === "reportMemo"
+          scope.kind === "sheetCloneMemo"
             ? "메모 편집 권한이 없습니다."
             : image
               ? "사본에 이미지를 추가할 권한이 없습니다."
               : "사본을 편집할 권한이 없습니다.",
         );
-      retentionView(db, row.team_id).requireVisible("report", [row.id]);
-      context = { row, reportId: row.id, teamId: row.team_id, year: row.year };
-      if (scope.kind === "report") {
+      retentionView(db, row.team_id).requireVisible("sheetClone", [row.id]);
+      context = {
+        row,
+        sheetCloneId: row.id,
+        teamId: row.team_id,
+        year: row.year,
+      };
+      if (scope.kind === "sheetClone") {
         // Reuse the decoded BLOB index when only document references changed.
         // Fresh references, membership and retention checks still run below.
         if (
@@ -111,7 +116,11 @@ export class SqliteDocumentRepository {
           Buffer.from(row.data).equals(Buffer.from(previous.row.data))
         )
           row.data = previous.row.data;
-        const tasks = reportDocumentTasks(db, row, taskIds || [scope.taskId]);
+        const tasks = sheetCloneDocumentTasks(
+          db,
+          row,
+          taskIds || [scope.taskId],
+        );
         requireThat(
           tasks?.length,
           404,
@@ -120,13 +129,13 @@ export class SqliteDocumentRepository {
         Object.assign(context, {
           task: tasks[0],
           tasks,
-          prefix: ["report", row.id, scope.taskId],
+          prefix: ["sheetClone", row.id, scope.taskId],
         });
       } else
         Object.assign(context, {
-          prefix: ["reportMemo", row.id],
-          table: "report_memos",
-          where: "report_id=?",
+          prefix: ["sheetCloneMemo", row.id],
+          table: "sheet_clone_memos",
+          where: "sheet_clone_id=?",
           args: [row.id],
         });
     } else if (scope.kind === "annual") {
@@ -184,7 +193,7 @@ export class SqliteDocumentRepository {
       documents = content
         ? withTaskDocuments(db, [task])[0].documents
         : listTaskDocuments(db, task.id);
-    else if (scope.kind === "report") {
+    else if (scope.kind === "sheetClone") {
       documents = (task.documents || []).map((doc) => ({
         id: doc.id,
         title: doc.title,
@@ -245,7 +254,7 @@ export class SqliteDocumentRepository {
           .get(task.id).updated_at,
       };
     }
-    if (scope.kind === "report") {
+    if (scope.kind === "sheetClone") {
       const documents = context.visibility.documents(
         task.documents || [],
         context.prefix,
@@ -280,9 +289,9 @@ export class SqliteDocumentRepository {
         ...getTaskDocument(this.db, scope.taskId, scope.documentId),
         ...(summary ? this.summary(context) : {}),
       };
-    if (scope.kind === "report")
+    if (scope.kind === "sheetClone")
       return {
-        ...reportTaskDocument(this.db, context.task, scope.documentId),
+        ...sheetCloneTaskDocument(this.db, context.task, scope.documentId),
         ...this.summary(context),
       };
     if (scope.kind === "calendar")
@@ -338,7 +347,7 @@ export class SqliteDocumentRepository {
   }
   read(user, scope, { summary = false } = {}) {
     const context = this.access(user, scope);
-    return scope.kind === "report"
+    return scope.kind === "sheetClone"
       ? { ...this.body(context), ...this.result(context) }
       : this.body(context, { summary });
   }
@@ -353,8 +362,8 @@ export class SqliteDocumentRepository {
     if (!events) return;
     if (presence) {
       events.invalidate(
-        context.scope.kind.startsWith("report")
-          ? `report:${context.scope.reportId}`
+        context.scope.kind.startsWith("sheetClone")
+          ? `sheet-clone:${context.scope.sheetCloneId}`
           : `team:${context.teamId}`,
         clientId,
       );
@@ -383,11 +392,11 @@ export class SqliteDocumentRepository {
         actorId,
       );
   }
-  persistReport(context, documents, actorId, bodyOnly) {
+  persistSheetClone(context, documents, actorId, bodyOnly) {
     const { db } = this,
       { row, task } = context;
     if (bodyOnly) {
-      const [saved] = storeReportDocuments(
+      const [saved] = storeSheetCloneDocuments(
         db,
         [
           {
@@ -402,27 +411,27 @@ export class SqliteDocumentRepository {
       );
       const version = saved.documents.find((doc) => doc.id === bodyOnly.id);
       db.prepare(
-        "UPDATE report_documents SET version_id=? WHERE report_id=? AND task_id=? AND document_id=?",
+        "UPDATE sheet_clone_documents SET version_id=? WHERE sheet_clone_id=? AND task_id=? AND document_id=?",
       ).run(version.versionId, row.id, task.id, bodyOnly.id);
       pruneDocumentVersions(db, row.team_id, [bodyOnly.versionId]);
       context.task = saved;
     } else {
-      const report = readReport(db, row),
-        original = report.tasks.find((item) => item.id === task.id);
-      const [saved] = storeReportDocuments(
+      const sheetClone = readSheetClone(db, row),
+        original = sheetClone.tasks.find((item) => item.id === task.id);
+      const [saved] = storeSheetCloneDocuments(
         db,
         [{ ...original, documents }],
         row.team_id,
         actorId,
       );
-      const tasks = report.tasks.map((item) =>
+      const tasks = sheetClone.tasks.map((item) =>
         item.id === task.id ? saved : item,
       );
-      db.prepare("UPDATE reports SET data=? WHERE id=?").run(
-        encodeReport({ ...report, tasks }),
+      db.prepare("UPDATE sheet_clones SET data=? WHERE id=?").run(
+        encodeSheetClone({ ...sheetClone, tasks }),
         row.id,
       );
-      syncReportDocuments(db, row.id, tasks);
+      syncSheetCloneDocuments(db, row.id, tasks);
       pruneDocumentVersions(db, row.team_id);
       context.task = saved;
     }
@@ -432,10 +441,15 @@ export class SqliteDocumentRepository {
       this.db,
       user.id,
       context.teamId,
-      context.scope.kind === "reportMemo" ? `report-${action}` : action,
+      context.scope.kind === "sheetCloneMemo"
+        ? `sheet-clone-${action}`
+        : action,
       target,
       before,
-      { ...after, ...(context.reportId ? { reportId: context.reportId } : {}) },
+      {
+        ...after,
+        ...(context.sheetCloneId ? { sheetCloneId: context.sheetCloneId } : {}),
+      },
     );
   }
   create(user, scope, data, { clientId } = {}) {
@@ -457,7 +471,7 @@ export class SqliteDocumentRepository {
       requireThat(
         documents.length < MAX_TASK_DOCUMENTS,
         400,
-        ["annual", "reportMemo"].includes(scope.kind)
+        ["annual", "sheetCloneMemo"].includes(scope.kind)
           ? `메모는 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`
           : `업무마다 문서를 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`,
       );
@@ -486,11 +500,11 @@ export class SqliteDocumentRepository {
           undefined,
           { documentId: data.id },
         );
-      } else if (scope.kind === "report") {
+      } else if (scope.kind === "sheetClone") {
         const docs = context.task.documents?.length
           ? context.task.documents
           : [{ id: "main", title: DEFAULT_DOCUMENT_TITLE, markdown: "" }];
-        this.persistReport(
+        this.persistSheetClone(
           context,
           [...docs, { id: data.id, title, markdown: "" }],
           user.id,
@@ -500,7 +514,7 @@ export class SqliteDocumentRepository {
           user.id,
           context.teamId,
           "document-create",
-          `${scope.reportId}:${scope.taskId}`,
+          `${scope.sheetCloneId}:${scope.taskId}`,
           undefined,
           { documentId: data.id },
         );
@@ -512,13 +526,13 @@ export class SqliteDocumentRepository {
           .get(...context.args).value;
         const versionId = storeDocumentVersion(this.db, {
           teamId: context.teamId,
-          documentId: `memo:${context.reportId || context.year}:${data.id}`,
+          documentId: `memo:${context.sheetCloneId || context.year}:${data.id}`,
           markdown: "",
           actorId: user.id,
         });
         this.db
           .prepare(
-            `INSERT INTO ${context.table}(${context.reportId ? "report_id" : "team_id,year"},id,title,position,version_id,has_content,revision,updated_at,actor_id) VALUES(${context.reportId ? "?" : "?,?"},?,?,?,?,0,0,?,?)`,
+            `INSERT INTO ${context.table}(${context.sheetCloneId ? "sheet_clone_id" : "team_id,year"},id,title,position,version_id,has_content,revision,updated_at,actor_id) VALUES(${context.sheetCloneId ? "?" : "?,?"},?,?,?,?,0,0,?,?)`,
           )
           .run(
             ...context.args,
@@ -555,11 +569,11 @@ export class SqliteDocumentRepository {
           .prepare("UPDATE task_documents SET title=? WHERE task_id=? AND id=?")
           .run(data.title, scope.taskId, scope.documentId);
         touchTasks(this.db, [context.task]);
-      } else if (scope.kind === "report") {
+      } else if (scope.kind === "sheetClone") {
         const docs = context.task.documents?.length
           ? context.task.documents
           : [{ id: "main", title: DEFAULT_DOCUMENT_TITLE, markdown: "" }];
-        this.persistReport(
+        this.persistSheetClone(
           context,
           docs.map((doc) =>
             doc.id === scope.documentId ? { ...doc, title: data.title } : doc,
@@ -607,8 +621,8 @@ export class SqliteDocumentRepository {
           scope.taskId,
           { documentId: scope.documentId, title: current.title },
         );
-      } else if (scope.kind === "report") {
-        this.persistReport(
+      } else if (scope.kind === "sheetClone") {
+        this.persistSheetClone(
           context,
           (context.task.documents || []).filter(
             (doc) => doc.id !== scope.documentId,
@@ -620,7 +634,7 @@ export class SqliteDocumentRepository {
           user.id,
           context.teamId,
           "document-delete",
-          `${scope.reportId}:${scope.taskId}`,
+          `${scope.sheetCloneId}:${scope.taskId}`,
           { documentId: scope.documentId, title: current.title },
         );
       } else {
@@ -749,14 +763,14 @@ export class SqliteDocumentRepository {
             )
             .get(scope.taskId, scope.documentId);
         else if (scope.kind === "calendar") previous = context.row;
-        else if (scope.kind === "report") {
+        else if (scope.kind === "sheetClone") {
           const last = this.db
             .prepare(
-              "SELECT after_json FROM audit WHERE team_id=? AND action='report-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+              "SELECT after_json FROM audit WHERE team_id=? AND action='sheet-clone-document' AND target=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
             )
             .get(
               context.teamId,
-              `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
+              `${scope.sheetCloneId}:${scope.taskId}:${scope.documentId}`,
               user.id,
             );
           const value = last && parse(last.after_json);
@@ -765,7 +779,7 @@ export class SqliteDocumentRepository {
             value.requestHash === hash &&
             value.revision === current.revision;
         } else previous = this.memo(context, scope.documentId);
-        if (scope.kind !== "report")
+        if (scope.kind !== "sheetClone")
           replay =
             previous?.operation_id === data.operationId &&
             previous.actor_id === user.id &&
@@ -800,7 +814,7 @@ export class SqliteDocumentRepository {
           presence =
             hasDocumentContent(current.markdown) !==
             hasDocumentContent(data.markdown);
-          if (scope.kind === "report") {
+          if (scope.kind === "sheetClone") {
             const docs = context.task.documents || [],
               existing = docs.find((doc) => doc.id === scope.documentId),
               document = {
@@ -809,7 +823,7 @@ export class SqliteDocumentRepository {
                 title: current.title,
                 markdown: data.markdown,
               };
-            this.persistReport(
+            this.persistSheetClone(
               context,
               [...docs, document],
               user.id,
@@ -819,11 +833,11 @@ export class SqliteDocumentRepository {
               this.db,
               user.id,
               context.teamId,
-              "report-document",
-              `${scope.reportId}:${scope.taskId}:${scope.documentId}`,
+              "sheet-clone-document",
+              `${scope.sheetCloneId}:${scope.taskId}:${scope.documentId}`,
               { revision: current.revision },
               {
-                revision: reportTaskDocument(
+                revision: sheetCloneTaskDocument(
                   this.db,
                   context.task,
                   scope.documentId,
@@ -941,7 +955,7 @@ export class SqliteDocumentRepository {
     );
     this.invalidate(context, {
       clientId,
-      presence: ["task", "report"].includes(scope.kind)
+      presence: ["task", "sheetClone"].includes(scope.kind)
         ? presence
         : scope.kind === "calendar" && changed,
     });
@@ -949,14 +963,14 @@ export class SqliteDocumentRepository {
       ? this.documentEvents.publish(documentEventKey(scope), result)
       : result;
   }
-  readBatch(user, reportId, taskIds) {
+  readBatch(user, sheetCloneId, taskIds) {
     const result = [];
     let bytes = 0;
     const base = this.access(
       user,
       {
-        kind: "report",
-        reportId,
+        kind: "sheetClone",
+        sheetCloneId,
         taskId: taskIds[0],
       },
       false,
@@ -968,8 +982,8 @@ export class SqliteDocumentRepository {
       const context = {
         ...base,
         task,
-        scope: { kind: "report", reportId, taskId: task.id },
-        prefix: ["report", reportId, task.id],
+        scope: { kind: "sheetClone", sheetCloneId, taskId: task.id },
+        prefix: ["sheetClone", sheetCloneId, task.id],
       };
       const documents = this.rows(context, { content: true });
       const size = documents.reduce(

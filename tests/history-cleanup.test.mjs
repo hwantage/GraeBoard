@@ -54,7 +54,7 @@ async function fixture(t) {
     fields: { title: "다른 팀 업무" },
   });
   // Unrelated stored data must remain byte-for-byte intact.
-  db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
+  db.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
     randomUUID(),
     team,
     2026,
@@ -247,7 +247,7 @@ test("한국 시간 날짜 경계·UTF-8 용량대로 선택한 팀만 정리하
     "memberships",
     "tasks",
     "cells",
-    "reports",
+    "sheet_clones",
     "imports",
     "team_revisions",
   ];
@@ -489,7 +489,7 @@ test("팀별 저장 용량은 실제 본문·서식·압축 스냅샷 바이트�
         0,
       ),
   );
-  assert.equal(team.reportBytes, Buffer.byteLength("snapshot bytes"));
+  assert.equal(team.sheetCloneBytes, Buffer.byteLength("snapshot bytes"));
   assert.equal(team.importBytes, Buffer.byteLength("{}"));
   assert.equal(team.audit.bytes, byteLength("한글 이력") * 2);
   assert.equal(other.audit.bytes, byteLength("다른 팀") * 2);
@@ -510,7 +510,7 @@ test("팀별 저장 용량은 실제 본문·서식·압축 스냅샷 바이트�
     assert.equal(
       scope.totalBytes,
       scope.currentBytes +
-        scope.reportBytes +
+        scope.sheetCloneBytes +
         scope.importBytes +
         scope.audit.bytes +
         scope.operations.bytes,

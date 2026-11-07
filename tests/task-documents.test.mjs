@@ -1,8 +1,8 @@
 import {
-  reportDocumentContents,
-  readReport,
-  storeReportDocuments,
-  syncReportDocuments,
+  sheetCloneDocumentContents,
+  readSheetClone,
+  storeSheetCloneDocuments,
+  syncSheetCloneDocuments,
 } from "../server/document-storage.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -32,11 +32,11 @@ import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
 import {
-  decodeReport,
-  encodeReport,
-  reportBrowseIndex,
-  reportDocumentIndex,
-} from "../server/reports.mjs";
+  decodeSheetClone,
+  encodeSheetClone,
+  sheetCloneBrowseIndex,
+  sheetCloneDocumentIndex,
+} from "../server/sheet-clones.mjs";
 
 // Transport ordering changes on each read; saved content must remain identical.
 function withoutSync({ sync: _sync, ...document }) {
@@ -46,11 +46,11 @@ function withoutSync({ sync: _sync, ...document }) {
 test("큰 사본의 목록 캐시와 별개로 문서 조회·저장의 메타데이터 캐시를 재사용한다", async (t) => {
   const f = await fixture(t);
   await f.save("캐시 검증 본문");
-  const id = await f.report();
-  const report = decodeReport(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+  const id = await f.sheetClone();
+  const sheetClone = decodeSheetClone(
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(id).data,
   );
-  report.settings.properties.push({
+  sheetClone.settings.properties.push({
     id: "description",
     name: "설명",
     kind: "text",
@@ -58,53 +58,53 @@ test("큰 사본의 목록 캐시와 별개로 문서 조회·저장의 메타�
     values: [],
     visible: true,
   });
-  const task = report.tasks[0];
-  report.tasks = Array.from({ length: 10000 }, (_, i) => ({
+  const task = sheetClone.tasks[0];
+  sheetClone.tasks = Array.from({ length: 10000 }, (_, i) => ({
     ...task,
     id: i ? randomUUID() : task.id,
     position: i,
     cells: { ...task.cells, description: { value: "가".repeat(1000) } },
   }));
-  const data = encodeReport(report);
-  f.db.prepare("UPDATE reports SET data=? WHERE id=?").run(data, id);
-  const index = reportDocumentIndex(data);
+  const data = encodeSheetClone(sheetClone);
+  f.db.prepare("UPDATE sheet_clones SET data=? WHERE id=?").run(data, id);
+  const index = sheetCloneDocumentIndex(data);
   // Property values exceed the browse cache budget; document metadata still fits.
-  reportBrowseIndex(data);
-  assert.ok(reportDocumentIndex(data) === index);
-  const path = `/reports/${id}/tasks/${task.id}/documents/main`;
+  sheetCloneBrowseIndex(data);
+  assert.ok(sheetCloneDocumentIndex(data) === index);
+  const path = `/sheet-clones/${id}/tasks/${task.id}/documents/main`;
   assert.equal((await f.req(path)).data.markdown, "캐시 검증 본문");
-  assert.equal((await f.saveReport(id, "캐시 이후 저장")).status, 200);
+  assert.equal((await f.saveSheetClone(id, "캐시 이후 저장")).status, 200);
   assert.equal((await f.req(path)).data.markdown, "캐시 이후 저장");
-  assert.ok(reportDocumentIndex(data) === index);
+  assert.ok(sheetCloneDocumentIndex(data) === index);
 });
 
 test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참조를 복제·반출·복구한다", async (t) => {
   const f = await fixture(t);
   await f.save("원본 본문");
-  const id = await f.report();
-  const path = `/reports/${id}`;
+  const id = await f.sheetClone();
+  const path = `/sheet-clones/${id}`;
   const docPath = `${path}/tasks/${f.task.id}/documents/main`;
   const initial = (await f.req(path)).data;
   const before = f.db
-    .prepare("SELECT data FROM reports WHERE id=?")
+    .prepare("SELECT data FROM sheet_clones WHERE id=?")
     .get(id).data;
-  const saved = await f.saveReport(id, "사본의 최신 본문");
+  const saved = await f.saveSheetClone(id, "사본의 최신 본문");
   assert.equal(saved.status, 200);
   assert.deepEqual(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(id).data,
     before,
   );
   assert.equal((await f.req(path)).data.revision, initial.revision);
   assert.equal((await f.req(docPath)).data.markdown, "사본의 최신 본문");
-  await f.saveReport(id, "");
+  await f.saveSheetClone(id, "");
   assert.equal((await f.req(path)).data.tasks[0].hasDocument, false);
-  await f.saveReport(id, "본문만 다시 저장");
+  await f.saveSheetClone(id, "본문만 다시 저장");
   assert.deepEqual(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(id).data,
     before,
   );
   assert.equal((await f.req(path)).data.tasks[0].hasDocument, true);
-  const clone = await f.req("/reports", "POST", {
+  const clone = await f.req("/sheet-clones", "POST", {
     teamId: f.teamId,
     sourceId: id,
     year: 2026,
@@ -115,8 +115,8 @@ test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참
   });
   assert.equal(clone.status, 201);
   assert.equal(
-    (await f.req(`/reports/${clone.data.id}/tasks/${f.task.id}/document`)).data
-      .markdown,
+    (await f.req(`/sheet-clones/${clone.data.id}/tasks/${f.task.id}/document`))
+      .data.markdown,
     "본문만 다시 저장",
   );
   const exported = await f.req("/export", "POST", {
@@ -127,9 +127,9 @@ test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참
   });
   assert.equal(exported.status, 200);
   assert.ok(
-    exported.data.reports.every(
-      (report) =>
-        report.data.tasks[0].documents[0].markdown === "본문만 다시 저장",
+    exported.data.sheetClones.every(
+      (sheetClone) =>
+        sheetClone.data.tasks[0].documents[0].markdown === "본문만 다시 저장",
     ),
   );
   const backup = backupDatabase(f.path, join(f.dir, "fast-body.sqlite"));
@@ -137,10 +137,12 @@ test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참
     restoreDatabase(backup, join(f.dir, "fast-restored.sqlite")),
   );
   try {
-    const row = recovered.prepare("SELECT * FROM reports WHERE id=?").get(id);
+    const row = recovered
+      .prepare("SELECT * FROM sheet_clones WHERE id=?")
+      .get(id);
     assert.equal(
-      reportDocumentContents(recovered, readReport(recovered, row)).tasks[0]
-        .documents[0].markdown,
+      sheetCloneDocumentContents(recovered, readSheetClone(recovered, row))
+        .tasks[0].documents[0].markdown,
       "본문만 다시 저장",
     );
   } finally {
@@ -178,7 +180,7 @@ test("사본 본문 자동 저장은 표 BLOB을 다시 쓰지 않고 최신 참
 
 test("사본 문서 일괄 조회는 권한·없는 행을 검사하고 문서 없는 행도 함께 반환한다", async (t) => {
   const f = await fixture(t);
-  const created = await f.req("/reports", "POST", {
+  const created = await f.req("/sheet-clones", "POST", {
     teamId: f.teamId,
     year: 2026,
     name: "일괄 조회",
@@ -187,9 +189,9 @@ test("사본 문서 일괄 조회는 권한·없는 행을 검사하고 문서 �
     taskIds: [f.task.id, f.unassigned.id],
   });
   const id = created.data.id;
-  const path = `/reports/${id}/documents/batch`;
+  const path = `/sheet-clones/${id}/documents/batch`;
   const taskIds = [f.task.id, f.unassigned.id];
-  await f.saveReport(id, "조회 직전에 추가한 문서");
+  await f.saveSheetClone(id, "조회 직전에 추가한 문서");
   const found = await f.req(path, "POST", { taskIds }, "viewer");
   assert.equal(found.status, 200);
   assert.deepEqual(found.data.tasks, [
@@ -217,10 +219,10 @@ test("사본 문서 일괄 조회는 권한·없는 행을 검사하고 문서 �
 
 test("큰 문서 여러 행의 일괄 조회는 응답 크기를 나누고 다음 행부터 이어 읽는다", async (t) => {
   const f = await fixture(t);
-  const id = await f.report();
-  const row = f.db.prepare("SELECT * FROM reports WHERE id=?").get(id);
-  const report = readReport(f.db, row);
-  const tasks = storeReportDocuments(
+  const id = await f.sheetClone();
+  const row = f.db.prepare("SELECT * FROM sheet_clones WHERE id=?").get(id);
+  const sheetClone = readSheetClone(f.db, row);
+  const tasks = storeSheetCloneDocuments(
     f.db,
     [f.task, f.unassigned].map((task) => ({
       ...task,
@@ -234,10 +236,10 @@ test("큰 문서 여러 행의 일괄 조회는 응답 크기를 나누고 다�
     f.people.lead.id,
   );
   f.db
-    .prepare("UPDATE reports SET data=? WHERE id=?")
-    .run(encodeReport({ ...report, tasks }), id);
-  syncReportDocuments(f.db, id, tasks);
-  const path = `/reports/${id}/documents/batch`;
+    .prepare("UPDATE sheet_clones SET data=? WHERE id=?")
+    .run(encodeSheetClone({ ...sheetClone, tasks }), id);
+  syncSheetCloneDocuments(f.db, id, tasks);
+  const path = `/sheet-clones/${id}/documents/batch`;
   const first = await f.req(path, "POST", {
     taskIds: tasks.map((task) => task.id),
   });
@@ -384,9 +386,9 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
       { markdown, expectedRevision, operationId },
       role,
     );
-  const report = async (name = "보존 보고본") =>
+  const sheetClone = async (name = "보존 보고본") =>
     (
-      await req("/reports", "POST", {
+      await req("/sheet-clones", "POST", {
         teamId,
         year: 2026,
         name,
@@ -395,15 +397,15 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
         taskIds: [task.id],
       })
     ).data.id;
-  async function saveReport(
-    reportId,
+  async function saveSheetClone(
+    sheetCloneId,
     markdown,
     taskId = task.id,
     role = "lead",
     expectedRevision,
     operationId = randomUUID(),
   ) {
-    const path = `/reports/${reportId}/tasks/${taskId}/document`;
+    const path = `/sheet-clones/${sheetCloneId}/tasks/${taskId}/document`;
     const revision = expectedRevision ?? (await req(path)).data.revision;
     return req(
       path,
@@ -425,8 +427,8 @@ async function fixture(t, { imagesFromEnv = false } = {}) {
     people,
     req,
     save,
-    report,
-    saveReport,
+    sheetClone,
+    saveSheetClone,
   };
 }
 
@@ -648,14 +650,14 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
       },
     })
   ).data.task;
-  const reportId = await f.report();
-  let snapshot = (await f.req(`/reports/${reportId}`)).data;
+  const sheetCloneId = await f.sheetClone();
+  let snapshot = (await f.req(`/sheet-clones/${sheetCloneId}`)).data;
   assert.equal(snapshot.tasks[0].hasDocument, true);
   assert.ok(!("document" in snapshot.tasks[0]));
-  const reportDocPath = `/reports/${reportId}/tasks/${f.task.id}/document?revision=${snapshot.revision}`;
-  assert.equal((await f.req(reportDocPath)).data.markdown, original);
+  const sheetCloneDocPath = `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/document?revision=${snapshot.revision}`;
+  assert.equal((await f.req(sheetCloneDocPath)).data.markdown, original);
   assert.equal(
-    (await f.req(reportDocPath, "GET", undefined, "outsider")).status,
+    (await f.req(sheetCloneDocPath, "GET", undefined, "outsider")).status,
     403,
   );
   await f.save("원본만 수정", 1);
@@ -673,13 +675,13 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
     format: "json",
     scope: "all",
   });
-  assert.equal(exported.data.schemaVersion, 6);
+  assert.equal(exported.data.schemaVersion, 7);
   assert.equal(
     exported.data.tasks.find((t) => t.id === f.task.id).documents[0].markdown,
     "원본만 수정",
   );
   assert.equal(
-    exported.data.reports[0].data.tasks[0].documents[0].markdown,
+    exported.data.sheetClones[0].data.tasks[0].documents[0].markdown,
     original,
   );
   const deleted = await f.req(`/tasks/${f.task.id}`, "DELETE", {
@@ -688,7 +690,7 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
   assert.equal(deleted.status, 200);
   assert.equal((await f.req(`/tasks/${f.task.id}/document`)).status, 404);
   assert.equal((await f.save("삭제 후 저장", 2)).status, 404);
-  assert.equal((await f.req(reportDocPath)).data.markdown, original);
+  assert.equal((await f.req(sheetCloneDocPath)).data.markdown, original);
   assert.equal(
     (await f.req(`/tasks/${f.task.id}/restore`, "POST", {})).status,
     200,
@@ -704,11 +706,13 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
   try {
     assert.equal(getTaskDocument(recovered, f.task.id).markdown, "원본만 수정");
     assert.equal(
-      reportDocumentContents(
+      sheetCloneDocumentContents(
         recovered,
-        readReport(
+        readSheetClone(
           recovered,
-          recovered.prepare("SELECT * FROM reports WHERE id=?").get(reportId),
+          recovered
+            .prepare("SELECT * FROM sheet_clones WHERE id=?")
+            .get(sheetCloneId),
         ),
       ).tasks[0].documents[0].markdown,
       original,
@@ -721,9 +725,9 @@ test("문서 복제·행 붙여넣기·휴지통·백업 복구·JSON과 스냅�
 test("보고본 문서 수정은 revision·권한·원자성·재시도를 검사하며 원본을 바꾸지 않음", async (t) => {
   const f = await fixture(t);
   await f.save("원본");
-  const reportId = await f.report(),
-    report = (await f.req(`/reports/${reportId}`)).data;
-  const path = `/reports/${reportId}/tasks/${f.task.id}/document`;
+  const sheetCloneId = await f.sheetClone(),
+    sheetClone = (await f.req(`/sheet-clones/${sheetCloneId}`)).data;
+  const path = `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/document`;
   const initial = (await f.req(path)).data;
   const body = {
     operationId: randomUUID(),
@@ -733,8 +737,15 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   for (const role of ["viewer", "outsider"])
     assert.equal((await f.req(path, "PUT", body, role)).status, 403);
   assert.equal(
-    (await f.saveReport(reportId, "없는 업무", f.unassigned.id, "lead", 0))
-      .status,
+    (
+      await f.saveSheetClone(
+        sheetCloneId,
+        "없는 업무",
+        f.unassigned.id,
+        "lead",
+        0,
+      )
+    ).status,
     404,
   );
   assert.equal(
@@ -747,8 +758,8 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
     400,
   );
   assert.equal(
-    (await f.req(`/reports/${reportId}`)).data.revision,
-    report.revision,
+    (await f.req(`/sheet-clones/${sheetCloneId}`)).data.revision,
+    sheetClone.revision,
   );
   const saved = await f.req(path, "PUT", body);
   assert.equal(saved.status, 200);
@@ -764,8 +775,8 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   assert.equal(conflict.status, 409);
   assert.equal(conflict.data.details.current.markdown, "보고본만 수정");
   assert.equal(
-    (await f.req(`/reports/${reportId}`)).data.revision,
-    report.revision,
+    (await f.req(`/sheet-clones/${sheetCloneId}`)).data.revision,
+    sheetClone.revision,
     "문서 저장은 표 revision을 변경하지 않는다",
   );
   assert.equal((await f.req(path)).data.markdown, "보고본만 수정");
@@ -774,9 +785,9 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
     "원본",
   );
   const newId = randomUUID();
-  const copied = await f.req(`/reports/${reportId}`, "PATCH", {
+  const copied = await f.req(`/sheet-clones/${sheetCloneId}`, "PATCH", {
     operationId: randomUUID(),
-    revision: report.revision,
+    revision: sheetClone.revision,
     operations: [
       {
         kind: "create",
@@ -791,7 +802,7 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   assert.equal(
     (
       await f.req(
-        `/reports/${reportId}/tasks/${newId}/document?revision=${copied.data.revision}`,
+        `/sheet-clones/${sheetCloneId}/tasks/${newId}/document?revision=${copied.data.revision}`,
       )
     ).data.markdown,
     "보고본만 수정",
@@ -799,7 +810,7 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   // The detail popup sends copiedRow along with sourceId so its local draft
   // can display the lazily loaded body immediately. Preserve the server ref.
   const detailCopyId = randomUUID();
-  const detailCopy = await f.req(`/reports/${reportId}`, "PATCH", {
+  const detailCopy = await f.req(`/sheet-clones/${sheetCloneId}`, "PATCH", {
     operationId: randomUUID(),
     revision: copied.data.revision,
     operations: [
@@ -825,12 +836,14 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
     2,
   );
   const refs = f.db
-    .prepare("SELECT version_id FROM report_documents WHERE report_id=?")
-    .all(reportId);
+    .prepare(
+      "SELECT version_id FROM sheet_clone_documents WHERE sheet_clone_id=?",
+    )
+    .all(sheetCloneId);
   assert.equal(refs.length, 3);
   assert.equal(new Set(refs.map((r) => r.version_id)).size, 1);
-  const changedCopy = await f.saveReport(
-    reportId,
+  const changedCopy = await f.saveSheetClone(
+    sheetCloneId,
     "복제한 행만 변경",
     detailCopyId,
   );
@@ -842,7 +855,7 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
   assert.equal(
     (
       await f.req(
-        `/reports/${reportId}/tasks/${f.task.id}/document?revision=${detailCopy.data.revision}`,
+        `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/document?revision=${detailCopy.data.revision}`,
       )
     ).data.markdown,
     "보고본만 수정",
@@ -851,18 +864,18 @@ test("보고본 문서 수정은 revision·권한·원자성·재시도를 검�
 
 test("본문 없는 기존 스냅샷과 문서 삭제 표시, 팀 영구 삭제", async (t) => {
   const f = await fixture(t),
-    reportId = await f.report();
-  const report = (await f.req(`/reports/${reportId}`)).data;
+    sheetCloneId = await f.sheetClone();
+  const sheetClone = (await f.req(`/sheet-clones/${sheetCloneId}`)).data;
   assert.equal(
     (
       await f.req(
-        `/reports/${reportId}/tasks/${f.task.id}/document?revision=${report.revision}`,
+        `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/document?revision=${sheetClone.revision}`,
       )
     ).data.markdown,
     "",
   );
-  assert.equal((await f.saveReport(reportId, "처음 작성")).status, 200);
-  const cleared = await f.saveReport(reportId, "");
+  assert.equal((await f.saveSheetClone(sheetCloneId, "처음 작성")).status, 200);
+  const cleared = await f.saveSheetClone(sheetCloneId, "");
   assert.equal(cleared.status, 200);
   assert.ok(!cleared.data.hasDocument);
   await f.save("삭제할 문서");
@@ -883,7 +896,7 @@ test("본문 없는 기존 스냅샷과 문서 삭제 표시, 팀 영구 삭제"
     0,
   );
   assert.equal(
-    f.db.prepare("SELECT COUNT(*) AS n FROM report_documents").get().n,
+    f.db.prepare("SELECT COUNT(*) AS n FROM sheet_clone_documents").get().n,
     0,
   );
 });
@@ -891,8 +904,8 @@ test("본문 없는 기존 스냅샷과 문서 삭제 표시, 팀 영구 삭제"
 test("표의 미저장 변경과 문서 저장은 충돌하지 않고 표의 재시도도 새 문서를 보존한다", async (t) => {
   const f = await fixture(t);
   await f.save("원문");
-  const id = await f.report();
-  const sheet = (await f.req(`/reports/${id}`)).data;
+  const id = await f.sheetClone();
+  const sheet = (await f.req(`/sheet-clones/${id}`)).data;
   const request = {
     operationId: randomUUID(),
     revision: sheet.revision,
@@ -911,22 +924,23 @@ test("표의 미저장 변경과 문서 저장은 충돌하지 않고 표의 재
       },
     ],
   };
-  const doc = await f.saveReport(id, "독립 문서 저장");
+  const doc = await f.saveSheetClone(id, "독립 문서 저장");
   assert.equal(doc.status, 200);
-  const beforeSheet = (await f.req(`/reports/${id}`)).data;
+  const beforeSheet = (await f.req(`/sheet-clones/${id}`)).data;
   assert.equal(
     beforeSheet.tasks[0].cells.title.value,
     f.task.cells.title.value,
   );
   assert.equal(beforeSheet.revision, sheet.revision);
-  const savedSheet = await f.req(`/reports/${id}`, "PATCH", request);
+  const savedSheet = await f.req(`/sheet-clones/${id}`, "PATCH", request);
   assert.equal(savedSheet.status, 200);
   assert.notEqual(savedSheet.data.revision, sheet.revision);
   assert.equal(
-    (await f.req(`/reports/${id}/tasks/${f.task.id}/document`)).data.markdown,
+    (await f.req(`/sheet-clones/${id}/tasks/${f.task.id}/document`)).data
+      .markdown,
     "독립 문서 저장",
   );
-  const secondDoc = await f.saveReport(
+  const secondDoc = await f.saveSheetClone(
     id,
     "표 저장 후 문서 저장",
     f.task.id,
@@ -934,19 +948,20 @@ test("표의 미저장 변경과 문서 저장은 충돌하지 않고 표의 재
     doc.data.revision,
   );
   assert.equal(secondDoc.status, 200, "문서 revision은 표 저장과 무관하다");
-  const replay = await f.req(`/reports/${id}`, "PATCH", request);
+  const replay = await f.req(`/sheet-clones/${id}`, "PATCH", request);
   assert.equal(
     replay.status,
     200,
     "표 응답 유실 후 재시도는 중간 문서 저장과 무관하다",
   );
   assert.equal(
-    (await f.req(`/reports/${id}/tasks/${f.task.id}/document`)).data.markdown,
+    (await f.req(`/sheet-clones/${id}/tasks/${f.task.id}/document`)).data
+      .markdown,
     "표 저장 후 문서 저장",
   );
   assert.equal(
     (
-      await f.req(`/reports/${id}`, "PATCH", {
+      await f.req(`/sheet-clones/${id}`, "PATCH", {
         ...request,
         operationId: randomUUID(),
       })
@@ -955,7 +970,7 @@ test("표의 미저장 변경과 문서 저장은 충돌하지 않고 표의 재
   );
   assert.equal(
     (
-      await f.req(`/reports/${id}`, "PATCH", {
+      await f.req(`/sheet-clones/${id}`, "PATCH", {
         operationId: randomUUID(),
         revision: savedSheet.data.revision,
         operations: [
@@ -1090,8 +1105,8 @@ test("문서 이미지가 스냅샷·행 복사·JSON·설정 경로의 백업 �
     assert.equal((await f.save(`![잘못된 크기](${url}${suffix})`)).status, 400);
   }
   assert.equal((await f.save(markdown)).status, 200);
-  const id = await f.report();
-  const imagePath = `/reports/${id}/tasks/${f.task.id}/document/images`;
+  const id = await f.sheetClone();
+  const imagePath = `/sheet-clones/${id}/tasks/${f.task.id}/document/images`;
   assert.equal((await f.req(imagePath, "POST", form(), "viewer")).status, 403);
   assert.equal((await f.req(imagePath, "POST", form())).data.url, url);
   assert.equal(
@@ -1100,7 +1115,7 @@ test("문서 이미지가 스냅샷·행 복사·JSON·설정 경로의 백업 �
     "붙여넣기 업로드만으로 문서를 복사하지 않는다",
   );
   assert.equal(
-    (await f.saveReport(id, markdown + "\n\n보관 메모")).status,
+    (await f.saveSheetClone(id, markdown + "\n\n보관 메모")).status,
     200,
   );
   await f.save("원본에서 이미지 삭제", 1);
@@ -1142,11 +1157,11 @@ test("문서 이미지가 스냅샷·행 복사·JSON·설정 경로의 백업 �
   const restored = openDatabase(restoredPath);
   try {
     assert.match(
-      reportDocumentContents(
+      sheetCloneDocumentContents(
         restored,
-        readReport(
+        readSheetClone(
           restored,
-          restored.prepare("SELECT * FROM reports WHERE id=?").get(id),
+          restored.prepare("SELECT * FROM sheet_clones WHERE id=?").get(id),
         ),
       ).tasks[0].documents[0].markdown,
       /api\/document-images/,
@@ -1198,10 +1213,10 @@ test("문서 이미지가 스냅샷·행 복사·JSON·설정 경로의 백업 �
 
 test("원본과 사본 문서 제목의 생성·이름 변경은 50자까지 허용하고 초과 입력을 거부한다", async (t) => {
   const f = await fixture(t);
-  const copy = await f.report("제목 제한 사본");
+  const copy = await f.sheetClone("제목 제한 사본");
   for (const base of [
     `/tasks/${f.task.id}/documents`,
-    `/reports/${copy}/tasks/${f.task.id}/documents`,
+    `/sheet-clones/${copy}/tasks/${f.task.id}/documents`,
   ]) {
     const id = randomUUID();
     const before = (await f.req(base)).data.documents;
@@ -1292,11 +1307,11 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
     ).status,
     409,
   );
-  const first = await f.report("사본 A"),
-    other = await f.report("사본 B");
-  const copyBase = `/reports/${first}/tasks/${f.task.id}/documents`,
-    otherBase = `/reports/${other}/tasks/${f.task.id}/documents`;
-  const originalCopy = (await f.req(`/reports/${first}`)).data;
+  const first = await f.sheetClone("사본 A"),
+    other = await f.sheetClone("사본 B");
+  const copyBase = `/sheet-clones/${first}/tasks/${f.task.id}/documents`,
+    otherBase = `/sheet-clones/${other}/tasks/${f.task.id}/documents`;
+  const originalCopy = (await f.req(`/sheet-clones/${first}`)).data;
   assert.equal(originalCopy.tasks[0].documentCount, 2);
   const initial = (await f.req(`${copyBase}/${second}`)).data;
   assert.equal(
@@ -1338,7 +1353,7 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
     "추가 본문",
     (await f.req(`${copyBase}/${third}`)).data.revision,
   );
-  const updatedCopy = (await f.req(`/reports/${first}`)).data;
+  const updatedCopy = (await f.req(`/sheet-clones/${first}`)).data;
   assert.equal(updatedCopy.tasks[0].documentCount, 3);
   assert.equal(
     updatedCopy.revision,
@@ -1346,7 +1361,7 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
     "문서 개수가 바뀌어도 표의 낙관적 잠금은 독립적이다",
   );
   assert.equal(
-    (await f.req(`/reports/${other}`)).data.tasks[0].documentCount,
+    (await f.req(`/sheet-clones/${other}`)).data.tasks[0].documentCount,
     2,
   );
   assert.equal((await f.req(base)).data.documents.length, 2);
@@ -1395,7 +1410,7 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
   assert.equal(all.length, 2);
   assert.equal(all.find((doc) => doc.id === third).markdown, "추가 본문");
   const clone = await f.req(
-    "/reports",
+    "/sheet-clones",
     "POST",
     {
       teamId: f.teamId,
@@ -1412,12 +1427,13 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
   assert.deepEqual(
     (
       await f.req(
-        `/reports/${clone.data.id}/tasks/${f.task.id}/documents?content=1`,
+        `/sheet-clones/${clone.data.id}/tasks/${f.task.id}/documents?content=1`,
       )
     ).data.documents,
     all,
   );
-  const clonedTask = (await f.req(`/reports/${clone.data.id}`)).data.tasks[0];
+  const clonedTask = (await f.req(`/sheet-clones/${clone.data.id}`)).data
+    .tasks[0];
   assert.equal(clonedTask.documentCount, 2);
   assert.equal(
     clonedTask.documents,
@@ -1431,7 +1447,7 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
   assert.equal(removed.data.documentCount, 1);
   assert.equal(getTask(f.db, f.task.id).documentCount, 1);
   assert.equal(
-    (await f.req(`/reports/${first}`)).data.tasks[0].documentCount,
+    (await f.req(`/sheet-clones/${first}`)).data.tasks[0].documentCount,
     2,
   );
 });
@@ -1439,14 +1455,16 @@ test("여러 문서의 추가·제목·본문·삭제와 사본끼리의 독립�
 test("사본을 반복 자동 저장해도 최신 참조만 보관하고 셀 복원은 독립 문서를 되돌리지 않는다", async (t) => {
   const f = await fixture(t);
   await f.save("원본 본문");
-  const id = await f.report(),
-    path = `/reports/${id}`,
+  const id = await f.sheetClone(),
+    path = `/sheet-clones/${id}`,
     doc = `${path}/tasks/${f.task.id}/document`;
   for (let n = 0; n < 6; n++)
-    assert.equal((await f.saveReport(id, `문서 ${n}`)).status, 200);
+    assert.equal((await f.saveSheetClone(id, `문서 ${n}`)).status, 200);
   assert.equal(
     f.db
-      .prepare("SELECT count(*) n FROM report_documents WHERE report_id=?")
+      .prepare(
+        "SELECT count(*) n FROM sheet_clone_documents WHERE sheet_clone_id=?",
+      )
       .get(id).n,
     1,
   );
@@ -1456,10 +1474,10 @@ test("사본을 반복 자동 저장해도 최신 참조만 보관하고 셀 복
     "원본과 사본의 현재 본문만 필요하다",
   );
   const initial = (await f.req(path)).data;
-  const patch = async (report, operations) =>
+  const patch = async (sheetClone, operations) =>
     f.req(path, "PATCH", {
       operationId: randomUUID(),
-      revision: report.revision,
+      revision: sheetClone.revision,
       operations,
     });
   let saved = await patch(initial, [
@@ -1477,7 +1495,7 @@ test("사본을 반복 자동 저장해도 최신 참조만 보관하고 셀 복
     },
   ]);
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
-  await f.saveReport(id, "독립적으로 먼저 저장한 문서");
+  await f.saveSheetClone(id, "독립적으로 먼저 저장한 문서");
   saved = await patch(saved.data, [
     { kind: "restore", at: now(), tasks: initial.tasks },
   ]);
@@ -1516,9 +1534,9 @@ test("사본을 반복 자동 저장해도 최신 참조만 보관하고 셀 복
 
 test("사본 이름 변경은 중복·이전 이름 충돌·열람자 권한을 확인한다", async (t) => {
   const f = await fixture(t),
-    a = await f.report("첫 사본"),
-    b = await f.report("둘째 사본");
-  const path = `/reports/${a}/name`;
+    a = await f.sheetClone("첫 사본"),
+    b = await f.sheetClone("둘째 사본");
+  const path = `/sheet-clones/${a}/name`;
   assert.equal(
     (
       await f.req(
@@ -1563,13 +1581,13 @@ test("사본 이름 변경은 중복·이전 이름 충돌·열람자 권한을 
     ).status,
     409,
   );
-  assert.equal((await f.req(`/reports/${b}`)).data.name, "둘째 사본");
+  assert.equal((await f.req(`/sheet-clones/${b}`)).data.name, "둘째 사본");
 });
 
 test("사본 생성 응답 유실 재시도는 원래 사본이 삭제되어도 중복 없이 성공한다", async (t) => {
   const f = await fixture(t);
   await f.save("복사할 본문");
-  const source = await f.report("출발 사본");
+  const source = await f.sheetClone("출발 사본");
   const data = {
     id: randomUUID(),
     sourceId: source,
@@ -1580,12 +1598,12 @@ test("사본 생성 응답 유실 재시도는 원래 사본이 삭제되어도 
     view: defaultView(2026),
     taskIds: [],
   };
-  const first = await f.req("/reports", "POST", data, "member");
+  const first = await f.req("/sheet-clones", "POST", data, "member");
   assert.equal(first.status, 201, JSON.stringify(first.data));
   assert.equal(
     (
       await f.req(
-        "/reports",
+        "/sheet-clones",
         "DELETE",
         { teamId: f.teamId, ids: [source] },
         "member",
@@ -1595,23 +1613,35 @@ test("사본 생성 응답 유실 재시도는 원래 사본이 삭제되어도 
   );
   assert.deepEqual(
     await f
-      .req("/reports", "POST", data, "member")
+      .req("/sheet-clones", "POST", data, "member")
       .then(({ status, data }) => ({ status, data })),
     { status: 201, data: { id: first.data.id } },
   );
   assert.equal(
-    (await f.req("/reports", "POST", { ...data, name: "다른 요청" }, "member"))
-      .status,
+    (
+      await f.req(
+        "/sheet-clones",
+        "POST",
+        { ...data, name: "다른 요청" },
+        "member",
+      )
+    ).status,
     409,
   );
-  assert.equal((await f.req("/reports", "POST", data, "viewer")).status, 403);
   assert.equal(
-    (await f.req(`/reports?teamId=${f.teamId}`)).data.reports.length,
+    (await f.req("/sheet-clones", "POST", data, "viewer")).status,
+    403,
+  );
+  assert.equal(
+    (await f.req(`/sheet-clones?teamId=${f.teamId}`)).data.sheetClones.length,
     1,
   );
   assert.equal(
-    (await f.req(`/reports/${first.data.id}/tasks/${f.task.id}/documents/main`))
-      .data.markdown,
+    (
+      await f.req(
+        `/sheet-clones/${first.data.id}/tasks/${f.task.id}/documents/main`,
+      )
+    ).data.markdown,
     "복사할 본문",
   );
 });
@@ -1625,9 +1655,9 @@ test("문서 브라우저 집계는 가상 빈 문서를 제외하고 등록된 
     id: empty,
     title: "등록한 빈 문서",
   });
-  const reportId = await f.report();
+  const sheetCloneId = await f.sheetClone();
   const result = (await f.req(base)).data.sources;
-  for (const id of ["live", reportId]) {
+  for (const id of ["live", sheetCloneId]) {
     const source = result.find((source) => source.id === id);
     assert.equal(source.taskCount, 1);
     assert.equal(source.documentCount, 2);
@@ -1650,7 +1680,7 @@ test("문서 브라우저 집계는 가상 빈 문서를 제외하고 등록된 
     1,
   );
   assert.equal(
-    (await f.req(base)).data.sources.find((s) => s.id === reportId)
+    (await f.req(base)).data.sources.find((s) => s.id === sheetCloneId)
       .documentCount,
     2,
   );
@@ -1664,7 +1694,7 @@ test("작업 이름 검색은 모든 문서를 표시하고 첫 문서 삭제 �
     id: second,
     title: "후속 검색 문서",
   });
-  const copy = await f.report();
+  const copy = await f.sheetClone();
   for (const source of ["live", copy]) {
     const path = `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}&q=문서가`;
     const found = (await f.req(path)).data.tasks[0];
@@ -1672,7 +1702,7 @@ test("작업 이름 검색은 모든 문서를 표시하고 첫 문서 삭제 �
       found.documents.map((doc) => doc.id),
       ["main", second],
     );
-    const main = `${source === "live" ? "" : `/reports/${source}`}/tasks/${f.task.id}/documents/main`;
+    const main = `${source === "live" ? "" : `/sheet-clones/${source}`}/tasks/${f.task.id}/documents/main`;
     assert.equal(
       (
         await f.req(main, "DELETE", {
@@ -1696,12 +1726,14 @@ test("문서 브라우저는 작업 이름만 검색하고 미리보기는 사�
     id: second,
     title: "문서전용검색어",
   });
-  const a = await f.report("첫 사본"),
-    b = await f.report("둘째 사본");
-  const blob = f.db.prepare("SELECT data FROM reports WHERE id=?").get(a).data;
-  await f.saveReport(a, "사본에서만 찾는 바다별 검색어");
+  const a = await f.sheetClone("첫 사본"),
+    b = await f.sheetClone("둘째 사본");
+  const blob = f.db
+    .prepare("SELECT data FROM sheet_clones WHERE id=?")
+    .get(a).data;
+  await f.saveSheetClone(a, "사본에서만 찾는 바다별 검색어");
   assert.deepEqual(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(a).data,
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(a).data,
     blob,
   );
   const list = async (source, q) =>
@@ -1740,16 +1772,16 @@ test("문서 브라우저는 작업 이름만 검색하고 미리보기는 사�
       (await list(source, "")).tasks[0].documents[0].preview,
       "원본에만 있는 고유문구",
     );
-  await f.req(`/reports/${a}/tasks/${f.task.id}/documents/main`, "PATCH", {
+  await f.req(`/sheet-clones/${a}/tasks/${f.task.id}/documents/main`, "PATCH", {
     title: "찾을 제목",
     expectedTitle: "문서 1",
   });
   assert.equal((await list(a, "찾을 제목")).matchedDocumentCount, 0);
   assert.equal((await list(a, "문서가 있는 업무")).matchedTaskCount, 1);
-  const report = (await f.req(`/reports/${a}`)).data;
-  const renamed = await f.req(`/reports/${a}`, "PATCH", {
+  const sheetClone = (await f.req(`/sheet-clones/${a}`)).data;
+  const renamed = await f.req(`/sheet-clones/${a}`, "PATCH", {
     operationId: randomUUID(),
-    revision: report.revision,
+    revision: sheetClone.revision,
     operations: [
       {
         kind: "cells",
@@ -1759,7 +1791,7 @@ test("문서 브라우저는 작업 이름만 검색하고 미리보기는 사�
             taskId: f.task.id,
             key: "title",
             value: "검토 Alpha 작업",
-            expectedVersion: report.tasks[0].cells.title.version,
+            expectedVersion: sheetClone.tasks[0].cells.title.version,
           },
         ],
       },
@@ -1790,7 +1822,7 @@ test("문서 미리보기는 페이지와 문서별로 구분한 짧은 한 줄�
     title: "빈 문서",
   });
   await f.save("다른 작업의 main 본문", 0, "lead", f.unassigned.id);
-  const copy = await f.report();
+  const copy = await f.sheetClone();
   const list = async (source, extra = "") => {
     const response = await f.req(
       `/document-browser/tasks?teamId=${f.teamId}&year=2026&source=${source}${extra}`,
@@ -1850,7 +1882,7 @@ test("문서 미리보기는 페이지와 문서별로 구분한 짧은 한 줄�
 test("문서 브라우저 담당자는 원본과 사본의 속성을 따르고 변경·미지정을 반영한다", async (t) => {
   const f = await fixture(t);
   await f.save("담당자를 표시할 문서");
-  const copy = await f.report();
+  const copy = await f.sheetClone();
   const owner = async (source) => {
     const list = (
       await f.req(
@@ -1877,10 +1909,10 @@ test("문서 브라우저 담당자는 원본과 사본의 속성을 따르고 �
   assert.equal((await changeOwner(f.people.lead.id)).status, 200);
   assert.equal(await owner("live"), "lead");
   assert.equal(await owner(copy), "member");
-  const report = (await f.req(`/reports/${copy}`)).data;
-  const result = await f.req(`/reports/${copy}`, "PATCH", {
+  const sheetClone = (await f.req(`/sheet-clones/${copy}`)).data;
+  const result = await f.req(`/sheet-clones/${copy}`, "PATCH", {
     operationId: randomUUID(),
-    revision: report.revision,
+    revision: sheetClone.revision,
     operations: [
       {
         kind: "cells",
@@ -1890,8 +1922,9 @@ test("문서 브라우저 담당자는 원본과 사본의 속성을 따르고 �
             taskId: f.task.id,
             key: "owner",
             value: f.people.supporter.id,
-            expectedVersion: report.tasks.find((task) => task.id === f.task.id)
-              .cells.owner.version,
+            expectedVersion: sheetClone.tasks.find(
+              (task) => task.id === f.task.id,
+            ).cells.owner.version,
           },
         ],
       },
@@ -1908,9 +1941,9 @@ test("문서 브라우저 담당자는 원본과 사본의 속성을 따르고 �
 test("문서 브라우저 프로필은 페이지에서 중복하지 않고 사본의 저장된 이름과 현재 아바타를 함께 표시한다", async (t) => {
   const f = await fixture(t);
   await f.save("프로필 검증 첫 문서");
-  const copy = await f.report();
+  const copy = await f.sheetClone();
   const blob = f.db
-    .prepare("SELECT data FROM reports WHERE id=?")
+    .prepare("SELECT data FROM sheet_clones WHERE id=?")
     .get(copy).data;
   await f.save("프로필 검증 둘째 문서", 0, "lead", f.unassigned.id);
   f.db
@@ -1984,7 +2017,7 @@ test("문서 브라우저 프로필은 페이지에서 중복하지 않고 사�
     image,
   );
   assert.deepEqual(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(copy).data,
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(copy).data,
     blob,
   );
 });
@@ -1992,7 +2025,7 @@ test("문서 브라우저 프로필은 페이지에서 중복하지 않고 사�
 test("문서 브라우저 모든 조회는 팀 권한·범위·페이지 한도를 검사한다", async (t) => {
   const f = await fixture(t);
   await f.save("검증 본문");
-  const copy = await f.report();
+  const copy = await f.sheetClone();
   for (const path of [
     `/document-browser/sources?teamId=${f.teamId}&year=2026`,
     ...["live", copy].flatMap((source) => [
@@ -2030,7 +2063,7 @@ test("문서 브라우저 집계·목록·작업 이름 검색은 선택 연도�
   f.db
     .prepare("UPDATE tasks SET years=? WHERE id=?")
     .run(json([2026, 2027]), f.task.id);
-  const currentCopy = await f.report();
+  const currentCopy = await f.sheetClone();
   const nextTask = (
     await f.req("/tasks", "POST", {
       teamId: f.teamId,
@@ -2044,7 +2077,7 @@ test("문서 브라우저 집계·목록·작업 이름 검색은 선택 연도�
     operationId: randomUUID(),
   });
   const nextCopy = (
-    await f.req("/reports", "POST", {
+    await f.req("/sheet-clones", "POST", {
       teamId: f.teamId,
       year: 2027,
       name: "다음 연도 사본",
@@ -2419,8 +2452,8 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
     view: defaultView(2026),
     taskIds: [],
   };
-  assert.equal((await f.req("/reports", "POST", payload)).status, 201);
-  const copy = `/reports/${id}/memos`;
+  assert.equal((await f.req("/sheet-clones", "POST", payload)).status, 201);
+  const copy = `/sheet-clones/${id}/memos`;
   assert.deepEqual(
     (await f.req(copy)).data.documents.map((doc) => [doc.id, doc.title]),
     [
@@ -2428,8 +2461,8 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
       [a, "연간 회의록"],
     ],
   );
-  const row = f.db.prepare("SELECT data FROM reports WHERE id=?").get(id);
-  assert.equal(decodeReport(row.data).tasks.length, 0);
+  const row = f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(id);
+  assert.equal(decodeSheetClone(row.data).tasks.length, 0);
   assert.ok(row.data.length < 5000, "사본 표 BLOB에 메모 본문을 넣지 않는다");
   assert.equal(
     versions(),
@@ -2441,11 +2474,13 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
     .get(a).version_id;
   assert.equal(
     f.db
-      .prepare("SELECT version_id FROM report_memos WHERE report_id=? AND id=?")
+      .prepare(
+        "SELECT version_id FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
+      )
       .get(id, a).version_id,
     originalRef,
   );
-  const sheet = (await f.req(`/reports/${id}`)).data;
+  const sheet = (await f.req(`/sheet-clones/${id}`)).data;
   assert.equal(JSON.stringify(sheet).includes("저장 시점 기록"), false);
   assert.equal((await f.req(copy)).data.documents[1].markdown, undefined);
   assert.equal((await f.req(`${copy}/${a}`)).data.markdown, markdown);
@@ -2454,7 +2489,7 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
     expectedRevision: 1,
     operationId: randomUUID(),
   });
-  assert.equal((await f.req("/reports", "POST", payload)).status, 201);
+  assert.equal((await f.req("/sheet-clones", "POST", payload)).status, 201);
   assert.equal(
     (await f.req(`${copy}/${a}`)).data.markdown,
     markdown,
@@ -2479,7 +2514,7 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
   );
   await f.req(`${copy}/reorder`, "POST", { ids: [a, b], expectedIds: [b, a] });
   const beforeClone = versions();
-  const clone = await f.req("/reports", "POST", {
+  const clone = await f.req("/sheet-clones", "POST", {
     ...payload,
     id: randomUUID(),
     name: "메모 재복사",
@@ -2487,7 +2522,7 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
   });
   assert.equal(clone.status, 201);
   assert.equal(versions(), beforeClone);
-  const cloned = `/reports/${clone.data.id}/memos`;
+  const cloned = `/sheet-clones/${clone.data.id}/memos`;
   assert.deepEqual(
     (await f.req(cloned)).data.documents.map((doc) => [doc.id, doc.title]),
     [
@@ -2497,11 +2532,14 @@ test("사본 메모는 제목·순서·빈 문서도 복사하고 본문 버전�
   );
   assert.equal((await f.req(`${cloned}/${a}`)).data.markdown, edit.markdown);
   assert.deepEqual(
-    f.db.prepare("SELECT data FROM reports WHERE id=?").get(id).data,
+    f.db.prepare("SELECT data FROM sheet_clones WHERE id=?").get(id).data,
     row.data,
     "메모 본문·제목·순서는 표 BLOB을 다시 쓰지 않는다",
   );
-  assert.equal((await f.req(`/reports/${id}`)).data.revision, sheet.revision);
+  assert.equal(
+    (await f.req(`/sheet-clones/${id}`)).data.revision,
+    sheet.revision,
+  );
   assert.equal(
     (await f.req(`${copy}/${a}`, "DELETE", { expectedRevision: 1 })).status,
     200,
@@ -2517,9 +2555,9 @@ test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분�
     b = randomUUID();
   await f.req(original, "POST", { id: a });
   await f.req(original, "POST", { id: b });
-  const id = await f.report("메모 권한 사본");
-  const base = `/reports/${id}/memos`;
-  const sheet = (await f.req(`/reports/${id}`)).data;
+  const id = await f.sheetClone("메모 권한 사본");
+  const base = `/sheet-clones/${id}/memos`;
+  const sheet = (await f.req(`/sheet-clones/${id}`)).data;
   for (const role of ["viewer", "outsider"]) {
     const expectStatus = role === "viewer" ? 200 : 403;
     assert.equal(
@@ -2590,7 +2628,7 @@ test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분�
     ).status,
     409,
   );
-  const edited = await f.req(`/reports/${id}`, "PATCH", {
+  const edited = await f.req(`/sheet-clones/${id}`, "PATCH", {
     operationId: randomUUID(),
     revision: sheet.revision,
     operations: [
@@ -2612,10 +2650,13 @@ test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분�
   assert.equal((await f.req(`${base}/${a}`)).data.markdown, "사본 독립 저장");
   assert.equal((await f.req(`${original}/${a}`)).data.markdown, "");
   assert.equal((await f.req(`${original}/${c}`)).status, 404);
-  assert.equal((await f.req(`/reports/${randomUUID()}/memos`)).status, 404);
+  assert.equal(
+    (await f.req(`/sheet-clones/${randomUUID()}/memos`)).status,
+    404,
+  );
   await f.req(`${base}/${a}`, "DELETE", { expectedRevision: 1 });
   assert.equal((await f.req(`${original}/${a}`)).status, 200);
-  const empty = await f.req("/reports", "POST", {
+  const empty = await f.req("/sheet-clones", "POST", {
     teamId: f.teamId,
     year: 2027,
     name: "빈 메모 사본",
@@ -2624,7 +2665,7 @@ test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분�
     taskIds: [],
   });
   assert.deepEqual(
-    (await f.req(`/reports/${empty.data.id}/memos`)).data.documents,
+    (await f.req(`/sheet-clones/${empty.data.id}/memos`)).data.documents,
     [],
   );
 });
@@ -2657,10 +2698,12 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
     expectedRevision: 0,
     operationId: randomUUID(),
   });
-  const id = await f.report("이미지 메모 사본");
-  const base = `/reports/${id}/memos`;
+  const id = await f.sheetClone("이미지 메모 사본");
+  const base = `/sheet-clones/${id}/memos`;
   const versionId = f.db
-    .prepare("SELECT version_id FROM report_memos WHERE report_id=? AND id=?")
+    .prepare(
+      "SELECT version_id FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
+    )
     .get(id, memoId).version_id;
   await f.req(`${original}/${memoId}`, "DELETE", { expectedRevision: 1 });
   await f.save("무관한 업무 문서 정리");
@@ -2673,20 +2716,22 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
     (await f.req(`${base}/${memoId}/images`, "POST", image, "member")).status,
     201,
   );
-  const report = (await f.req(`/reports/${id}`)).data;
+  const sheetClone = (await f.req(`/sheet-clones/${id}`)).data;
   for (const source of [undefined, id]) {
     const exported = await f.req("/export", "POST", {
       teamId: f.teamId,
       year: 2026,
       format: "json",
       scope: "all",
-      ...(source ? { reportId: source, revision: report.revision } : {}),
+      ...(source
+        ? { sheetCloneId: source, revision: sheetClone.revision }
+        : {}),
     });
     assert.equal(exported.status, 200);
-    assert.equal(exported.data.schemaVersion, 6);
+    assert.equal(exported.data.schemaVersion, 7);
     const memos = source
       ? exported.data.memos
-      : exported.data.reports.find((row) => row.name === "이미지 메모 사본")
+      : exported.data.sheetClones.find((row) => row.name === "이미지 메모 사본")
           .data.memos;
     assert.deepEqual(memos, [{ id: memoId, title: "메모 1", markdown }]);
     assert.ok(exported.data.documentImages.some((item) => item.url === url));
@@ -2710,7 +2755,7 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
     assert.equal(
       restored
         .prepare(
-          "SELECT version_id FROM report_memos WHERE report_id=? AND id=?",
+          "SELECT version_id FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
         )
         .get(id, memoId).version_id,
       versionId,
@@ -2719,11 +2764,14 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
     restored.close();
   }
   assert.equal(
-    (await f.req("/reports", "DELETE", { teamId: f.teamId, ids: [id] })).status,
+    (await f.req("/sheet-clones", "DELETE", { teamId: f.teamId, ids: [id] }))
+      .status,
     200,
   );
   assert.equal(
-    f.db.prepare("SELECT 1 FROM report_memos WHERE report_id=?").get(id),
+    f.db
+      .prepare("SELECT 1 FROM sheet_clone_memos WHERE sheet_clone_id=?")
+      .get(id),
     undefined,
   );
   assert.equal(
@@ -2733,16 +2781,16 @@ test("사본에서만 참조하는 메모 이미지·본문은 정리·JSON 반�
 });
 
 for (const transport of ["direct", "shared"])
-  for (const kind of ["task", "report-task", "memo", "report-memo"]) {
+  for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
     test(`${transport} ${kind} 문서 SSE는 별도 문서 격리·UUID/숫자 순서·재연결·권한 회수를 보장한다`, async (t) => {
       const { documentStream } = await import("./document-events-helper.mjs");
       const f = await fixture(t);
-      const reportId = await f.report();
+      const sheetCloneId = await f.sheetClone();
       const memoId = randomUUID();
       const collection =
         kind === "memo"
           ? `/teams/${f.teamId}/years/2026/memos`
-          : `/reports/${reportId}/memos`;
+          : `/sheet-clones/${sheetCloneId}/memos`;
       if (kind.endsWith("memo"))
         assert.equal(
           (await f.req(collection, "POST", { id: memoId })).status,
@@ -2751,8 +2799,8 @@ for (const transport of ["direct", "shared"])
       const path =
         kind === "task"
           ? `/tasks/${f.task.id}/documents/main`
-          : kind === "report-task"
-            ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
+          : kind === "sheet-clone-task"
+            ? `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/documents/main`
             : `${collection}/${memoId}`;
       assert.equal(
         (await f.req(`${path}/events`, "GET", undefined, "outsider")).status,
@@ -2793,12 +2841,12 @@ for (const transport of ["direct", "shared"])
       assert.deepEqual(remote.sync, first.data.sync);
       assert.equal(
         typeof remote.revision,
-        kind === "report-task" ? "string" : "number",
+        kind === "sheet-clone-task" ? "string" : "number",
       );
       // Copies are isolated even where their source task/document IDs match.
       const otherPath =
         kind === "task"
-          ? `/reports/${reportId}/tasks/${f.task.id}/documents/main`
+          ? `/sheet-clones/${sheetCloneId}/tasks/${f.task.id}/documents/main`
           : `/tasks/${f.task.id}/documents/main`;
       assert.equal((await f.req(otherPath)).data.markdown, "");
       stream.close();
@@ -2867,19 +2915,19 @@ test("팀·사본·문서 목록 변경 알림은 권한을 검사하고 실패�
   assert.equal((await list.next()).data.clientId, "test-client");
   assert.equal((await stream.next()).data.clientId, "test-client");
   assert.equal((await unchanged.next()).data.clientId, "test-client");
-  const reportId = await f.report();
-  const report = await documentStream(
+  const sheetCloneId = await f.sheetClone();
+  const sheetClone = await documentStream(
     t,
     f.baseURL,
-    `/reports/${reportId}`,
+    `/sheet-clones/${sheetCloneId}`,
     f.people.viewer.token,
   );
-  await report.next();
-  await f.req(`/reports/${reportId}/name`, "PATCH", {
+  await sheetClone.next();
+  await f.req(`/sheet-clones/${sheetCloneId}/name`, "PATCH", {
     name: "다른 이름",
     expectedName: "보존 보고본",
   });
-  assert.equal((await report.next()).event, "document");
+  assert.equal((await sheetClone.next()).event, "document");
 });
 
 test(`POST 공유 SSE는 셀·목록·본문을 분리 전달하고 커서 복구·개별 권한 회수를 유지한다`, async (t) => {

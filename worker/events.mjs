@@ -114,8 +114,8 @@ export async function eventResponse(
         teamId = m[1];
         await ctx.team(teamId);
         scope = streamScope(path);
-      } else if ((m = /^\/reports\/([^/]+)$/.exec(path))) {
-        teamId = await ctx.locateTeam("report", m[1]);
+      } else if ((m = /^\/sheet-clones\/([^/]+)$/.exec(path))) {
+        teamId = await ctx.locateTeam("sheetClone", m[1]);
         scope = streamScope(path);
       } else {
         const document = await documentScope(ctx, path);

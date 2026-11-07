@@ -393,7 +393,7 @@ test("M6 external control routes authorize PG HTTP and dedicated/multiplex cell 
   );
   assert.equal(response.status, 200, JSON.stringify(response.data));
   response = await api(
-    `/api/reports?teamId=${f.teamId}`,
+    `/api/sheet-clones?teamId=${f.teamId}`,
     "GET",
     undefined,
     memberCookie,

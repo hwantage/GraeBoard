@@ -20,7 +20,7 @@ type Storage = {
   id: string;
   name: string;
   currentBytes: number;
-  reportBytes: number;
+  sheetCloneBytes: number;
   importBytes: number;
   totalBytes: number;
   audit: Count;
@@ -261,7 +261,7 @@ export default function HistoryCleanup({
                       {bytes(scope.audit.bytes)}
                       <small>{number(scope.audit.count)}건</small>
                     </td>
-                    <td>{bytes(scope.reportBytes)}</td>
+                    <td>{bytes(scope.sheetCloneBytes)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -123,6 +123,7 @@ export function createNodeMutationBridge({
           { retiredKeys: prepared.retiredKeys },
         );
         raw.advanceHead(expectedHead, newHead, prepared.hash);
+        if (data?.conversion === true) raw.completeConversion(newHead);
         db.prepare(
           "UPDATE team_sync_links SET mode=CASE WHEN mode='initializing' THEN 'active' ELSE mode END,last_published_at=CASE WHEN ? THEN ? ELSE last_published_at END,lease_until=? WHERE team_id=?",
         ).run(

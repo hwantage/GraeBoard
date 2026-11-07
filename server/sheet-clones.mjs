@@ -5,30 +5,32 @@ import { channel } from "node:diagnostics_channel";
 import { propertiesFor } from "../shared/domain.js";
 import { stringify, parseCompact } from "../shared/compact.js";
 import {
-  normalizeReportName,
-  DUPLICATE_REPORT_NAME,
-} from "../shared/report-names.js";
-import { requireThat, reportNameSchema } from "../shared/validation.js";
+  normalizeSheetCloneName,
+  DUPLICATE_SHEET_CLONE_NAME,
+} from "../shared/sheet-clone-names.js";
+import { requireThat, sheetCloneNameSchema } from "../shared/validation.js";
 
 // Call inside the insertion's BEGIN IMMEDIATE transaction so two writers cannot
 // both claim a name. Compare stored names too, including decomposed Korean text.
-export function requireUniqueReportName(db, teamId, name) {
-  const normalized = reportNameSchema.parse(name);
+export function requireUniqueSheetCloneName(db, teamId, name) {
+  const normalized = sheetCloneNameSchema.parse(name);
   requireThat(
     !db
-      .prepare("SELECT name FROM reports WHERE team_id=?")
+      .prepare("SELECT name FROM sheet_clones WHERE team_id=?")
       .all(teamId)
-      .some((report) => normalizeReportName(report.name) === normalized),
+      .some(
+        (sheetClone) => normalizeSheetCloneName(sheetClone.name) === normalized,
+      ),
     409,
-    DUPLICATE_REPORT_NAME,
-    { code: "DUPLICATE_REPORT_NAME" },
+    DUPLICATE_SHEET_CLONE_NAME,
+    { code: "DUPLICATE_SHEET_CLONE_NAME" },
   );
   return normalized;
 }
 
 // 보고서의 셀과 필터를 해석하는 데 필요한 이름만 보관한다.
 // 프로필 이미지·색상·권한과 보고서에 등장하지 않는 팀원은 복사하지 않는다.
-export function encodeReport({ tasks, users, view, settings }) {
+export function encodeSheetClone({ tasks, users, view, settings }) {
   const memberKeys = new Set([
     "owner",
     "supporters",
@@ -58,15 +60,15 @@ export function encodeReport({ tasks, users, view, settings }) {
   );
 }
 
-const decodedReports = new AsyncLocalStorage();
-const reportDecoded = channel("graeboard.report.decode");
-// The immutable report-edit path shares only decompressed JSON for its own
+const decodedSheetClones = new AsyncLocalStorage();
+const sheetCloneDecoded = channel("graeboard.sheetClone.decode");
+// The immutable sheet-clone-edit path shares only decompressed JSON for its own
 // synchronous transaction, including capture.flush. Hydrated document bodies
 // and owner identity never enter this cache, and requests do not share it.
-export function withReportDecodeCache(work) {
+export function withSheetCloneDecodeCache(work) {
   const scope = { entries: new Map(), closed: false };
   try {
-    return decodedReports.run(scope, work);
+    return decodedSheetClones.run(scope, work);
   } finally {
     // onPending may schedule timers inside this context. Async descendants must
     // neither retain decoded sheets nor reuse a completed transaction's cache.
@@ -74,15 +76,15 @@ export function withReportDecodeCache(work) {
     scope.entries.clear();
   }
 }
-export function decodeReport(data) {
-  const scope = decodedReports.getStore(),
+export function decodeSheetClone(data) {
+  const scope = decodedSheetClones.getStore(),
     cache = scope && !scope.closed ? scope.entries : null,
-    key = cache && reportDataKey(data);
+    key = cache && sheetCloneDataKey(data);
   if (cache?.has(key)) return cache.get(key);
-  const report = parseCompact(gunzipSync(data).toString("utf8"));
-  cache?.set(key, report);
-  reportDecoded.publish({ bytes: data.byteLength });
-  return report;
+  const sheetClone = parseCompact(gunzipSync(data).toString("utf8"));
+  cache?.set(key, sheetClone);
+  sheetCloneDecoded.publish({ bytes: data.byteLength });
+  return sheetClone;
 }
 
 // Document access only needs row identity and tab metadata, never the cells.
@@ -91,11 +93,11 @@ export function decodeReport(data) {
 const documentIndexes = new Map();
 const MAX_DOCUMENT_INDEX_BYTES = 16 * 1024 * 1024;
 let documentIndexBytes = 0;
-export function reportDataKey(data) {
+export function sheetCloneDataKey(data) {
   return createHash("sha256").update(data).digest("hex");
 }
-export function reportDocumentIndex(data, decoded) {
-  const key = reportDataKey(data);
+export function sheetCloneDocumentIndex(data, decoded) {
+  const key = sheetCloneDataKey(data);
   const cached = documentIndexes.get(key);
   if (cached) {
     documentIndexes.delete(key);
@@ -104,7 +106,7 @@ export function reportDocumentIndex(data, decoded) {
   }
   const tasks = new Map();
   let bytes = 128;
-  for (const task of (decoded || decodeReport(data)).tasks) {
+  for (const task of (decoded || decodeSheetClone(data)).tasks) {
     const documents = task.documents || [];
     tasks.set(task.id, { id: task.id, updatedAt: task.updatedAt, documents });
     bytes +=
@@ -126,8 +128,8 @@ export function reportDocumentIndex(data, decoded) {
 const browseIndexes = new Map();
 const MAX_BROWSE_INDEX_BYTES = 16 * 1024 * 1024;
 let browseIndexBytes = 0;
-export function reportBrowseIndex(data, decoded) {
-  const key = reportDataKey(data);
+export function sheetCloneBrowseIndex(data, decoded) {
+  const key = sheetCloneDataKey(data);
   const cached = browseIndexes.get(key);
   if (cached) {
     browseIndexes.delete(key);
@@ -136,9 +138,11 @@ export function reportBrowseIndex(data, decoded) {
   }
   const tasks = new Map();
   let bytes = 128;
-  const report = decoded || decodeReport(data);
-  const keys = new Set(propertiesFor(report.settings, true).map((p) => p.id));
-  for (const task of report.tasks) {
+  const sheetClone = decoded || decodeSheetClone(data);
+  const keys = new Set(
+    propertiesFor(sheetClone.settings, true).map((p) => p.id),
+  );
+  for (const task of sheetClone.tasks) {
     const documents = task.documents || [];
     const metadata = {
       id: task.id,
@@ -155,7 +159,11 @@ export function reportBrowseIndex(data, decoded) {
     tasks.set(task.id, metadata);
     bytes += 256 + JSON.stringify(metadata).length * 2;
   }
-  const index = { tasks, settings: report.settings, users: report.users };
+  const index = {
+    tasks,
+    settings: sheetClone.settings,
+    users: sheetClone.users,
+  };
   bytes += JSON.stringify([index.settings, index.users]).length * 2;
   if (bytes <= MAX_BROWSE_INDEX_BYTES) {
     while (browseIndexBytes + bytes > MAX_BROWSE_INDEX_BYTES) {
@@ -171,7 +179,7 @@ export function reportBrowseIndex(data, decoded) {
 
 // 저장 당시 이름은 보존하고, 스냅샷을 열 때 현재 아바타만 연결한다.
 // 현재 팀에서 빠졌거나 원본 업무에서 제거된 팀원도 스냅샷의 ID로 조회한다.
-export function reportUsersWithAvatars(db, users) {
+export function sheetCloneUsersWithAvatars(db, users) {
   if (!users.length) return users;
   const profiles = new Map(
     db

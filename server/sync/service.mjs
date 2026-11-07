@@ -20,6 +20,9 @@ import {
   stateSum,
   protocolVersion,
   supportedVersion,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
+  SHEET_CLONE_CONVERSION,
 } from "./protocol.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../shared/document-image-references.js";
@@ -112,7 +115,7 @@ export class SyncService {
     // failed publication, five times the per-invocation work it was sized for.
     maxRunCommits = Infinity,
     maxOperations = 50,
-    maxProtocol = 2,
+    maxProtocol = SPLIT_PROTOCOL,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
     snapshotDecoder = decodeSnapshot,
     // An operator-side first import may commit the state first and install the
@@ -406,14 +409,30 @@ export class SyncService {
               "SYNC_TRANSITION_PENDING",
               "Pause this writer before accepting a protocol transition",
             );
+          // A SheetClone conversion commit confirms the C this site converted
+          // offline; a structural one splits protocol 3 into protocol 4.
+          const conversion =
+            envelope.conversion === undefined
+              ? null
+              : await this.store.readConversion?.();
           if (
-            protocolVersion(state) !== 1 ||
-            envelope.protocol !== 2 ||
-            envelope.reducer !== 2 ||
-            envelope.fromProtocol !== 1 ||
-            envelope.previousHash !== stateHash(state) ||
+            envelope.reducer !== envelope.protocol ||
             !snapshotPath(envelope.path) ||
-            !snapshotPath(envelope.previousPath)
+            !snapshotPath(envelope.previousPath) ||
+            (envelope.conversion === undefined
+              ? protocolVersion(state) !== PROTOCOL ||
+                envelope.protocol !== SPLIT_PROTOCOL ||
+                envelope.fromProtocol !== PROTOCOL ||
+                envelope.previousHash !== stateHash(state)
+              : envelope.conversion !== SHEET_CLONE_CONVERSION ||
+                !conversion ||
+                conversion.completed_head ||
+                conversion.base_head !== parent ||
+                conversion.from_protocol !== envelope.fromProtocol ||
+                conversion.to_protocol !== envelope.protocol ||
+                conversion.base_hash !== envelope.previousHash ||
+                conversion.result_hash !== envelope.resultHash ||
+                protocolVersion(state) !== envelope.protocol)
           )
             throw new ProtocolError(
               "SYNC_VERSION",
@@ -445,11 +464,15 @@ export class SyncService {
               "SYNC_INTEGRITY",
               "Protocol transition snapshot checksum mismatch",
             );
+          // The earlier snapshot is kept as published and compared by its
+          // canonical hash only; this runtime does not interpret its records.
           const bundle = protocolValidation(() => this.snapshotDecoder(bytes)),
             previous = protocolValidation(() =>
               this.snapshotDecoder(previousBytes),
             );
-          const expected = protocolValidation(() => upgradeState(state));
+          const expected = conversion
+            ? state
+            : protocolValidation(() => upgradeState(state));
           if (
             bundle.atCommit !== parent ||
             previous.atCommit !== parent ||
@@ -465,7 +488,7 @@ export class SyncService {
             validateSnapshot(bundle.state, this.identity),
           );
           this.assertCapacity(state);
-          transition = true;
+          transition = conversion ? "conversion" : true;
         } else if (envelope.kind === "checkpoint" && unchanged) {
           // Verified above by the state sum.
         } else if (envelope.kind === "checkpoint") {
@@ -562,7 +585,8 @@ export class SyncService {
       this.mark("receiveImages");
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
         previousState,
-        transition,
+        transition: !!transition,
+        conversion: transition === "conversion",
         stateHash: verifiedHash,
         stateSum: verifiedSum,
         stateSize,
@@ -900,6 +924,27 @@ export class SyncService {
           ),
           { status: 409, code: "SYNC_TRANSITION_PENDING" },
         );
+      const conversion = await this.store.readConversion?.(),
+        converting = !!conversion && !conversion.completed_head;
+      if (
+        converting &&
+        (conversion.base_head !== expectedHead ||
+          conversion.result_hash !== expectedHash ||
+          protocolVersion(state) !== conversion.to_protocol)
+      )
+        throw Object.assign(
+          new Error(
+            "The converted state does not match the recorded SheetClone conversion; data preserved",
+          ),
+          { status: 409, code: "SYNC_UPGRADE_HEAD" },
+        );
+      const result = (head, hash, fields) => ({
+        head,
+        stateHash: hash,
+        protocol: fields.protocol,
+        reducer: fields.protocol,
+        ...fields,
+      });
       const remoteHead = await this.transport.readHead();
       if (remoteHead !== expectedHead) {
         const remote =
@@ -926,40 +971,49 @@ export class SyncService {
             new Error("Remote head is not a protocol transition"),
             { status: 409, code: "SYNC_UPGRADE_HEAD" },
           );
-        const received = await this.receive(link, remoteHead);
-        return {
-          head: received.canonical_head,
-          stateHash: stateHash(await this.store.readState()),
-          protocol: 2,
-          reducer: 2,
+        const received = await this.receive(link, remoteHead),
+          after = await this.store.readState();
+        return result(received.canonical_head, stateHash(after), {
+          protocol: protocolVersion(after),
           upgraded: true,
           received: true,
-        };
+          ...(converting ? { conversion: SHEET_CLONE_CONVERSION } : {}),
+        });
       }
-      if (protocolVersion(state) === 2)
-        return {
-          head: expectedHead,
-          stateHash: expectedHash,
-          protocol: 2,
-          reducer: 2,
+      if (!converting && protocolVersion(state) === SPLIT_PROTOCOL)
+        return result(expectedHead, expectedHash, {
+          protocol: SPLIT_PROTOCOL,
           upgraded: false,
-        };
+        });
       protocolValidation(() => validateSnapshot(state, this.identity));
-      const next = protocolValidation(() =>
-        validateSnapshot(upgradeState(state), this.identity),
-      );
+      // The conversion publishes the C both sites converted offline with the
+      // earlier snapshot it recorded; the structural transition derives the
+      // split state from C.
+      const next = converting
+        ? state
+        : protocolValidation(() =>
+            validateSnapshot(upgradeState(state), this.identity),
+          );
       this.assertCapacity(next);
       const path = "snapshots/" + randomUUID() + ".json.gz",
         previousPath = "snapshots/" + randomUUID() + ".json.gz",
         bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
-        previousBytes = encodeSnapshot({ atCommit: expectedHead, state }),
+        previousBytes = converting
+          ? conversion.previous_snapshot
+          : encodeSnapshot({ atCommit: expectedHead, state }),
+        protocol = converting ? conversion.to_protocol : SPLIT_PROTOCOL,
         envelope = {
-          protocol: 2,
-          reducer: 2,
+          protocol,
+          reducer: protocol,
           kind: "transition",
-          fromProtocol: 1,
+          ...(converting
+            ? {
+                conversion: SHEET_CLONE_CONVERSION,
+                fromProtocol: conversion.from_protocol,
+                previousHash: conversion.base_hash,
+              }
+            : { fromProtocol: PROTOCOL, previousHash: expectedHash }),
           parent: expectedHead,
-          previousHash: expectedHash,
           resultHash: stateHash(next),
           path,
           previousPath,
@@ -979,13 +1033,11 @@ export class SyncService {
           { status: 409, code: "SYNC_PUBLICATION_CONFLICT" },
         );
       const received = await this.receive(link, oid);
-      return {
-        head: received.canonical_head,
-        stateHash: envelope.resultHash,
-        protocol: 2,
-        reducer: 2,
+      return result(received.canonical_head, envelope.resultHash, {
+        protocol,
         upgraded: true,
-      };
+        ...(converting ? { conversion: SHEET_CLONE_CONVERSION } : {}),
+      });
     } finally {
       await this.store.release(owner);
     }

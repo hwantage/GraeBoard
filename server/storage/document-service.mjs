@@ -63,8 +63,8 @@ const scopeSchema = z.discriminatedUnion("kind", [
     .strict(),
   z
     .object({
-      kind: z.literal("report"),
-      reportId: uuid,
+      kind: z.literal("sheetClone"),
+      sheetCloneId: uuid,
       taskId: uuid,
       documentId: documentIdSchema.optional(),
     })
@@ -79,8 +79,8 @@ const scopeSchema = z.discriminatedUnion("kind", [
     .strict(),
   z
     .object({
-      kind: z.literal("reportMemo"),
-      reportId: uuid,
+      kind: z.literal("sheetCloneMemo"),
+      sheetCloneId: uuid,
       documentId: uuid.optional(),
     })
     .strict(),
@@ -163,7 +163,7 @@ export class DocumentBusinessService {
   reorder(scope, body) {
     const target = scopeSchema.parse(scope);
     requireThat(
-      ["annual", "reportMemo"].includes(target.kind),
+      ["annual", "sheetCloneMemo"].includes(target.kind),
       400,
       "문서 순서를 변경할 수 없는 범위입니다.",
     );
@@ -191,10 +191,10 @@ export class DocumentBusinessService {
       return result?.then ? result.then(deliver) : deliver(result);
     });
   }
-  readBatch(reportId, taskIds) {
+  readBatch(sheetCloneId, taskIds) {
     return this.repository.readBatch(
       this.user,
-      uuid.parse(reportId),
+      uuid.parse(sheetCloneId),
       z.array(uuid).min(1).max(100).parse(taskIds),
     );
   }
@@ -202,7 +202,7 @@ export class DocumentBusinessService {
     const target = scopeSchema.parse(scope);
     if (
       !target.documentId &&
-      ["task", "report", "calendar"].includes(target.kind)
+      ["task", "sheetClone", "calendar"].includes(target.kind)
     )
       target.documentId = "main";
     requireThat(target.documentId, 400, "문서를 선택하세요.");
@@ -245,7 +245,7 @@ export function requireDocumentOrder(currentIds, request, documents) {
   return replay;
 }
 export function nextDocumentTitle(documents, kind = "task") {
-  const prefix = ["annual", "reportMemo", "memo"].includes(kind)
+  const prefix = ["annual", "sheetCloneMemo", "memo"].includes(kind)
     ? "메모"
     : "문서";
   const titles = new Set(documents.map((doc) => doc.title));
@@ -265,21 +265,21 @@ export function blankDocument(id = DEFAULT_DOCUMENT_ID) {
 export function documentEventKey(scope) {
   const id = scope.documentId || "main";
   if (scope.kind === "task") return `task:${scope.taskId}:${id}`;
-  if (scope.kind === "report")
-    return `report-task:${scope.reportId}:${scope.taskId}:${id}`;
+  if (scope.kind === "sheetClone")
+    return `sheet-clone-task:${scope.sheetCloneId}:${scope.taskId}:${id}`;
   if (scope.kind === "annual")
     return `annual_memos:${scope.teamId}:${scope.year}:${id}`;
-  if (scope.kind === "reportMemo")
-    return `report_memos:${scope.reportId}:${id}`;
+  if (scope.kind === "sheetCloneMemo")
+    return `sheet_clone_memos:${scope.sheetCloneId}:${id}`;
   return `calendar:${scope.entryId}`;
 }
 export function documentCollectionKey(scope) {
   if (scope.kind === "task") return `list:/api/tasks/${scope.taskId}/documents`;
-  if (scope.kind === "report")
-    return `list:/api/reports/${scope.reportId}/tasks/${scope.taskId}/documents`;
+  if (scope.kind === "sheetClone")
+    return `list:/api/sheet-clones/${scope.sheetCloneId}/tasks/${scope.taskId}/documents`;
   if (scope.kind === "annual")
     return `list:/api/teams/${scope.teamId}/years/${scope.year}/memos`;
-  if (scope.kind === "reportMemo")
-    return `list:/api/reports/${scope.reportId}/memos`;
+  if (scope.kind === "sheetCloneMemo")
+    return `list:/api/sheet-clones/${scope.sheetCloneId}/memos`;
   return null;
 }

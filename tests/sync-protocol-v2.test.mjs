@@ -1,16 +1,16 @@
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import {
   applicationEntities,
   upgradeState,
-  splitReportRecord,
+  splitSheetCloneRecord,
 } from "../server/sync/versions.mjs";
 import {
   canonical,
   digest,
-  emptyState,
   entityId,
   stateHash,
   protocolVersion,
@@ -22,23 +22,24 @@ import {
   validateSnapshot,
 } from "../server/sync/reducer.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
-import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { materialize } from "../worker/materialize.mjs";
 import { adminRoutes } from "../worker/admin.mjs";
 import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { getTask, transaction, openDatabase } from "../server/db.mjs";
 import { channel } from "node:diagnostics_channel";
-import { encodeReport } from "../server/reports.mjs";
+import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import {
-  packReportData,
-  unpackReportData,
-} from "../shared/report-sync-data.js";
-// Report data travels and is stored in the shared-dictionary form; tests read it expanded.
-const reportTasks = (record) => unpackReportData(record.payload.data).tasks;
+  packSheetCloneData,
+  unpackSheetCloneData,
+} from "../shared/sheet-clone-sync-data.js";
+// SheetClone data travels and is stored in the shared-dictionary form; tests read it expanded.
+const sheetCloneTasks = (record) =>
+  unpackSheetCloneData(record.payload.data).tasks;
 import {
-  storeReportDocuments,
-  syncReportDocuments,
+  storeSheetCloneDocuments,
+  syncSheetCloneDocuments,
 } from "../server/document-storage.mjs";
 import { allEntities, readEntity } from "../server/sync/entities.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
@@ -49,9 +50,9 @@ import {
 } from "../server/storage/logical-transfer.mjs";
 import { join } from "node:path";
 
-const editRequest = (f, report, value) => ({
+const editRequest = (f, sheetClone, value) => ({
   operationId: randomUUID(),
-  revision: report.revision,
+  revision: sheetClone.revision,
   operations: [
     {
       kind: "cells",
@@ -61,19 +62,19 @@ const editRequest = (f, report, value) => ({
           taskId: f.taskId,
           key: "title",
           value,
-          expectedVersion: report.tasks[0].cells.title.version,
+          expectedVersion: sheetClone.tasks[0].cells.title.version,
         },
       ],
     },
   ],
 });
 
-test("A3 v1 to v2 preserves all report metadata, cells, document identities, receipts and v3-compatible snapshots", (t) => {
+test("A3 protocol 3 to 4 preserves all sheetClone metadata, cells, document identities, receipts and v3-compatible snapshots", (t) => {
   const f = sqliteFixture(t),
     beforeHash = stateHash(f.state),
     next = upgradeState(f.state);
   validateSnapshot(next, { teamId: f.teamId, repoId: f.link.repo_id });
-  assert.equal(protocolVersion(next), 2);
+  assert.equal(protocolVersion(next), 4);
   assert.equal(
     stateHash(f.state),
     beforeHash,
@@ -82,35 +83,38 @@ test("A3 v1 to v2 preserves all report metadata, cells, document identities, rec
   assert.deepEqual(next.receipts, f.state.receipts);
   assert.deepEqual(next.conflicts, f.state.conflicts);
   for (const [id, before] of Object.entries(f.state.entities)) {
+    // The protocol marker is not application data.
+    if (before.entity === "protocol") continue;
     const restored = applicationEntities(next.entities)[id];
     assert.deepEqual(restored.payload, before.payload, id);
     assert.equal(restored.deleted, before.deleted);
   }
   assert.equal(
-    next.entities[entityId("report", [f.reportId])].payload.data.tasks,
+    next.entities[entityId("sheetClone", [f.sheetCloneId])].payload.data.tasks,
     undefined,
   );
   assert.equal(
-    next.entities[entityId("reportCell", [f.reportId, f.taskId, "title"])]
-      .payload.data.value,
+    next.entities[
+      entityId("sheetCloneCell", [f.sheetCloneId, f.taskId, "title"])
+    ].payload.data.value,
     "initial",
   );
   const restored = decodeSnapshot(
     encodeSnapshot({ atCommit: f.link.canonical_head, state: next }),
   ).state;
   assert.equal(stateHash(restored), stateHash(next));
-  assert.throws(() => upgradeState(next), /version 1/);
+  assert.throws(() => upgradeState(next), /version 3/);
 });
 
-test("A3 v2 changes independent copy cells without modifying original cells and rejects mixed protocol commands", (t) => {
+test("A3 protocol 4 changes independent copy cells without modifying original cells and rejects mixed protocol commands", (t) => {
   const f = sqliteFixture(t),
     state = upgradeState(f.state),
-    report = state.entities[entityId("report", [f.reportId])];
+    sheetClone = state.entities[entityId("sheetClone", [f.sheetCloneId])];
   const operation = (key, value) => {
-    const id = entityId("reportCell", [f.reportId, f.taskId, key]),
+    const id = entityId("sheetCloneCell", [f.sheetCloneId, f.taskId, key]),
       before = state.entities[id];
     return makeOperation({
-      link: { ...f.link, protocol: 2 },
+      link: { ...f.link, protocol: 4 },
       actorRef: f.user.id,
       before: { [id]: before },
       after: {
@@ -130,16 +134,19 @@ test("A3 v2 changes independent copy cells without modifying original cells and 
     ab.entities[entityId("cell", [f.taskId, "title"])].payload.value,
     "initial",
   );
-  assert.strictEqual(ab.entities[entityId("report", [f.reportId])], report);
+  assert.strictEqual(
+    ab.entities[entityId("sheetClone", [f.sheetCloneId])],
+    sheetClone,
+  );
   assert.ok(Buffer.byteLength(canonical(a)) < 2000);
   assert.throws(
-    () => reduce(state, { ...a, protocol: 1, reducer: 1 }),
+    () => reduce(state, { ...a, protocol: 3, reducer: 3 }),
     /Unsupported protocol/,
   );
   assert.throws(() => reduce(f.state, a), /Unsupported protocol/);
 });
 
-test("A6 reducer v1 retains its old merge budget while v2 has a deterministic 2000-edit boundary and preserves conflicts", (t) => {
+test("A6 reducer 3 retains the 20000-edit merge budget while reducer 4 has the deterministic 2000-edit boundary and preserves conflicts", (t) => {
   const base = "a".repeat(3000) + "middle" + "b".repeat(3000);
   const changed = (count) => [
     "c".repeat(count) + base.slice(count),
@@ -147,7 +154,7 @@ test("A6 reducer v1 retains its old merge budget while v2 has a deterministic 20
   ];
   const [allowedA, allowedB] = changed(1000);
   assert.equal(
-    mergeMarkdown(base, allowedA, allowedB, 2),
+    mergeMarkdown(base, allowedA, allowedB, 4),
     "c".repeat(1000) + base.slice(1000, -1000) + "d".repeat(1000),
   );
   const [current, desired] = changed(1001);
@@ -155,7 +162,8 @@ test("A6 reducer v1 retains its old merge budget while v2 has a deterministic 20
     mergeMarkdown(base, current, desired),
     "c".repeat(1001) + base.slice(1001, -1001) + "d".repeat(1001),
   );
-  assert.equal(mergeMarkdown(base, current, desired, 2), null);
+  assert.equal(mergeMarkdown(base, current, desired, 4), null);
+  assert.throws(() => mergeMarkdown(base, current, desired, 2), /reducer/);
   const f = sqliteFixture(t),
     state = upgradeState(f.state),
     id = entityId("document", ["annual", "2026", "budget"]);
@@ -172,7 +180,7 @@ test("A6 reducer v1 retains its old merge budget while v2 has a deterministic 20
     payload: { ...state.entities[id].payload, markdown: base },
   };
   const op = makeOperation({
-    link: { ...f.link, protocol: 2 },
+    link: { ...f.link, protocol: 4 },
     actorRef: f.user.id,
     before: { [id]: before },
     after: {
@@ -192,49 +200,53 @@ test("A6 reducer v1 retains its old merge budget while v2 has a deterministic 20
   );
 });
 
-test("A3 Node ordinary report save captures only the changed v2 copy cell", async (t) => {
+test("A3 Node ordinary sheetClone save captures only the changed protocol 4 copy cell", async (t) => {
   const f = sqliteFixture(t),
     next = upgradeState(f.state);
   f.adapter.withTeamTransaction(f.teamId, (tx) =>
     tx.sync.writeState(next, f.link.canonical_head),
   );
   f.db.syncCapture.refresh();
-  const service = new ReportBusinessService(
-      f.app.locals.reportRepository,
+  const service = new SheetCloneBusinessService(
+      f.app.locals.sheetCloneRepository,
       f.user,
     ),
-    before = service.read(f.reportId);
+    before = service.read(f.sheetCloneId);
   const result = await service.edit(
-    f.reportId,
+    f.sheetCloneId,
     editRequest(f, before, "Node copy"),
   );
   assert.equal(result.tasks[0].cells.title.value, "Node copy");
   const pending = f.adapter.readPending(f.teamId);
   assert.equal(pending.length, 1);
-  assert.equal(pending[0].protocol, 2);
-  assert.ok(!pending[0].changes.some((change) => change.entity === "report"));
+  assert.equal(pending[0].protocol, 4);
+  assert.ok(
+    !pending[0].changes.some((change) => change.entity === "sheetClone"),
+  );
   assert.equal(
-    pending[0].changes.filter((change) => change.entity === "reportCell")
+    pending[0].changes.filter((change) => change.entity === "sheetCloneCell")
       .length,
     1,
   );
   assert.ok(
     pending[0].changes.every((change) =>
-      ["reportCell", "reportTask", "document"].includes(change.entity),
+      ["sheetCloneCell", "sheetCloneTask", "document"].includes(change.entity),
     ),
   );
   assert.ok(Buffer.byteLength(canonical(pending[0])) < 5000);
   assert.equal(getTask(f.db, f.taskId).cells.title.value, "initial");
   const projected = reduceMany(next, pending);
   assert.equal(
-    reportTasks(
-      applicationEntities(projected.entities)[entityId("report", [f.reportId])],
+    sheetCloneTasks(
+      applicationEntities(projected.entities)[
+        entityId("sheetClone", [f.sheetCloneId])
+      ],
     )[0].cells.title.value,
     "Node copy",
   );
 });
 
-test("A3 actual PostgreSQL report save and materialization retain copy-cell separation under v2", async (t) => {
+test("A3 actual PostgreSQL sheetClone save and materialization retain copy-cell separation under protocol 4", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const state = upgradeState(f.state);
@@ -242,35 +254,39 @@ test("A3 actual PostgreSQL report save and materialization retain copy-cell sepa
     await tx.sync.writeState(state, f.link.canonical_head);
     await materialize(tx, f.teamId, { state, pending: [], exclusions: [] });
   });
-  const service = new ReportBusinessService(
-      new PostgresReportRepository({ context: f.makeContext() }),
+  const service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: f.makeContext() }),
       f.user,
     ),
-    before = await service.read(f.reportId);
+    before = await service.read(f.sheetCloneId);
   const result = await service.edit(
-    f.reportId,
+    f.sheetCloneId,
     editRequest(f, before, "Edge copy"),
   );
   assert.equal(result.tasks[0].cells.title.value, "Edge copy");
   const pending = await f.adapter.readPending(f.teamId);
   assert.equal(pending.length, 1);
-  assert.equal(pending[0].protocol, 2);
-  assert.ok(!pending[0].changes.some((change) => change.entity === "report"));
+  assert.equal(pending[0].protocol, 4);
+  assert.ok(
+    !pending[0].changes.some((change) => change.entity === "sheetClone"),
+  );
   assert.equal(
-    pending[0].changes.filter((change) => change.entity === "reportCell")
+    pending[0].changes.filter((change) => change.entity === "sheetCloneCell")
       .length,
     1,
   );
   assert.ok(
     pending[0].changes.every((change) =>
-      ["reportCell", "reportTask", "document"].includes(change.entity),
+      ["sheetCloneCell", "sheetCloneTask", "document"].includes(change.entity),
     ),
   );
   assert.ok(Buffer.byteLength(canonical(pending[0])) < 5000);
   const projected = reduceMany(state, pending);
   assert.equal(
-    reportTasks(
-      applicationEntities(projected.entities)[entityId("report", [f.reportId])],
+    sheetCloneTasks(
+      applicationEntities(projected.entities)[
+        entityId("sheetClone", [f.sheetCloneId])
+      ],
     )[0].cells.title.value,
     "Edge copy",
   );
@@ -282,20 +298,29 @@ test("A3 actual PostgreSQL report save and materialization retain copy-cell sepa
     pending.map((op) => op.opId),
     (tx, data) => materialize(tx, f.teamId, data),
   );
-  const restored = await service.read(f.reportId);
+  const restored = await service.read(f.sheetCloneId);
   assert.equal(restored.tasks[0].cells.title.value, "Edge copy");
 });
 
 // Frozen with the pre-review v1 reducer from 8be6e298ea9420e64771e4de7b98eb8e2332b888.
-// This history needs more than 2000 edit steps and must keep its old success result.
-test("A6 frozen v1 history keeps identical canonical, receipt and conflict hashes", () => {
+// This history needs more than 2000 edit steps and must keep its old success
+// result. Reducer 3 is reducer 1 under the SheetClone names: replayed as
+// protocol 3, the same history must give the frozen v1 state once its
+// commands are hashed as the v1 commands they were and C drops its marker.
+test("A6 frozen v1 history keeps identical canonical, receipt and conflict hashes under reducer 3", () => {
   const base = "a".repeat(3000) + "middle" + "b".repeat(3000),
     current = "c".repeat(1001) + base.slice(1001),
     desired = base.slice(0, -1001) + "d".repeat(1001),
     body = (markdown) => ({ title: "Budget", position: 0, markdown });
-  const op = (opId, desired, before = null, baseVersion = null) => ({
-    protocol: 1,
-    reducer: 1,
+  const op = (
+    opId,
+    desired,
+    before = null,
+    baseVersion = null,
+    protocol = 3,
+  ) => ({
+    protocol,
+    reducer: protocol,
     repoId: "golden-repo",
     teamId: "golden-team",
     opId,
@@ -317,17 +342,34 @@ test("A6 frozen v1 history keeps identical canonical, receipt and conflict hashe
     ],
     objects: [],
   });
-  const state = reduceMany(emptyState(), [
-    op("golden-create", base),
-    op("golden-current", current, base, "golden-create:0"),
-    op("golden-desired", desired, base, "golden-create:0"),
-  ]);
+  const history = (protocol) => [
+    op("golden-create", base, null, null, protocol),
+    op("golden-current", current, base, "golden-create:0", protocol),
+    op("golden-desired", desired, base, "golden-create:0", protocol),
+  ];
+  const state = reduceMany(markedState(), history(3));
+  // The v1 commands themselves are no longer accepted.
+  assert.throws(
+    () => reduceMany(markedState(), history(1)),
+    /Unsupported protocol/,
+  );
+  const v1 = Object.fromEntries(
+      history(1).map((item) => [item.opId, digest(item)]),
+    ),
+    { [entityId("protocol", [])]: marker, ...entities } = state.entities,
+    receipts = Object.fromEntries(
+      Object.entries(state.receipts).map(([id, receipt]) => [
+        id,
+        { ...receipt, payloadHash: v1[id] },
+      ]),
+    ),
+    frozen = { entities, receipts, conflicts: state.conflicts };
   assert.equal(
-    stateHash(state),
+    stateHash(frozen),
     "cf6c01007d9e0badcfbf663042f877102bfc7e50277d3806faddc425f5e1974d",
   );
   assert.equal(
-    digest(state.receipts),
+    digest(receipts),
     "90dd3bda9d59fd4ccb582dc367ec1d11f2b6c03a5abff8af6989506553da7cde",
   );
   assert.equal(
@@ -339,11 +381,13 @@ test("A6 frozen v1 history keeps identical canonical, receipt and conflict hashe
 test("A3 deleting and restoring a copy never revives previously deleted rows or cells", (t) => {
   const f = sqliteFixture(t),
     source = structuredClone(f.state),
-    reportId = entityId("report", [f.reportId]);
+    sheetCloneId = entityId("sheetClone", [f.sheetCloneId]);
   const secondTask = randomUUID(),
-    sourceData = unpackReportData(source.entities[reportId].payload.data),
+    sourceData = unpackSheetCloneData(
+      source.entities[sheetCloneId].payload.data,
+    ),
     originalTask = sourceData.tasks[0];
-  source.entities[reportId].payload.data = packReportData({
+  source.entities[sheetCloneId].payload.data = packSheetCloneData({
     ...sourceData,
     tasks: [
       ...sourceData.tasks,
@@ -356,7 +400,7 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
       Object.keys(after).map((id) => [id, state.entities[id] || null]),
     );
     const operation = makeOperation({
-      link: { ...f.link, protocol: 2 },
+      link: { ...f.link, protocol: 4 },
       actorRef: f.user.id,
       before,
       after,
@@ -365,8 +409,8 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
     assert.equal(result.receipt.result, "applied");
     state = result.state;
   };
-  const removedCell = entityId("reportCell", [
-    f.reportId,
+  const removedCell = entityId("sheetCloneCell", [
+    f.sheetCloneId,
     f.taskId,
     "description",
   ]);
@@ -374,45 +418,46 @@ test("A3 deleting and restoring a copy never revives previously deleted rows or 
   const removedTaskIds = Object.entries(state.entities)
     .filter(
       ([, record]) =>
-        ["reportTask", "reportCell"].includes(record.entity) &&
+        ["sheetCloneTask", "sheetCloneCell"].includes(record.entity) &&
         record.key[1] === secondTask,
     )
     .map(([id]) => id);
   command(Object.fromEntries(removedTaskIds.map((id) => [id, null])));
-  const active = applicationEntities(state.entities)[reportId];
-  assert.equal(reportTasks(active).length, 1);
-  assert.equal(reportTasks(active)[0].cells.description, undefined);
-  const visible = splitReportRecord(active);
+  const active = applicationEntities(state.entities)[sheetCloneId];
+  assert.equal(sheetCloneTasks(active).length, 1);
+  assert.equal(sheetCloneTasks(active)[0].cells.description, undefined);
+  const visible = splitSheetCloneRecord(active);
   command(
     Object.fromEntries(
       visible.map((record) => [entityId(record.entity, record.key), null]),
     ),
   );
-  const deleted = applicationEntities(state.entities)[reportId];
+  const deleted = applicationEntities(state.entities)[sheetCloneId];
   assert.equal(deleted.deleted, true);
-  assert.equal(reportTasks(deleted).length, 1);
-  assert.equal(reportTasks(deleted)[0].cells.description, undefined);
-  const restored = splitReportRecord({ ...deleted, deleted: false });
+  assert.equal(sheetCloneTasks(deleted).length, 1);
+  assert.equal(sheetCloneTasks(deleted)[0].cells.description, undefined);
+  const restored = splitSheetCloneRecord({ ...deleted, deleted: false });
   command(
     Object.fromEntries(
       restored.map((record) => [entityId(record.entity, record.key), record]),
     ),
   );
-  const final = applicationEntities(state.entities)[reportId];
-  assert.equal(reportTasks(final).length, 1);
-  assert.equal(reportTasks(final)[0].cells.description, undefined);
+  const final = applicationEntities(state.entities)[sheetCloneId];
+  assert.equal(sheetCloneTasks(final).length, 1);
+  assert.equal(sheetCloneTasks(final)[0].cells.description, undefined);
   assert.equal(
-    state.entities[entityId("reportTask", [f.reportId, secondTask])].deleted,
+    state.entities[entityId("sheetCloneTask", [f.sheetCloneId, secondTask])]
+      .deleted,
     true,
   );
   assert.equal(state.entities[removedCell].deleted, true);
   validateSnapshot(state, { teamId: f.teamId, repoId: f.link.repo_id });
 });
 
-test("A3 a pre-existing v1 deleted copy retains exactly its tombstone body after upgrade", (t) => {
+test("A3 a pre-existing protocol 3 deleted copy retains exactly its tombstone body after upgrade", (t) => {
   const f = sqliteFixture(t),
     state = structuredClone(f.state),
-    id = entityId("report", [f.reportId]);
+    id = entityId("sheetClone", [f.sheetCloneId]);
   state.entities[id].deleted = true;
   const next = upgradeState(state);
   assert.deepEqual(
@@ -431,13 +476,13 @@ test("A3 a pre-existing v1 deleted copy retains exactly its tombstone body after
 
 test("A3 1000-row 100-document copy decodes once per phase and invalidates after rollback", async (t) => {
   const f = sqliteFixture(t),
-    report = structuredClone(
-      unpackReportData(
-        f.state.entities[entityId("report", [f.reportId])].payload.data,
+    sheetClone = structuredClone(
+      unpackSheetCloneData(
+        f.state.entities[entityId("sheetClone", [f.sheetCloneId])].payload.data,
       ),
     ),
-    prototype = report.tasks[0];
-  report.tasks = Array.from({ length: 1000 }, (_, index) => ({
+    prototype = sheetClone.tasks[0];
+  sheetClone.tasks = Array.from({ length: 1000 }, (_, index) => ({
     ...structuredClone(prototype),
     id: index ? randomUUID() : f.taskId,
     documents:
@@ -445,29 +490,29 @@ test("A3 1000-row 100-document copy decodes once per phase and invalidates after
   }));
   f.db.syncCapture.without(() =>
     transaction(f.db, () => {
-      report.tasks = storeReportDocuments(
+      sheetClone.tasks = storeSheetCloneDocuments(
         f.db,
-        report.tasks,
+        sheetClone.tasks,
         f.teamId,
         f.user.id,
       );
       f.db
-        .prepare("UPDATE reports SET data=? WHERE id=?")
-        .run(encodeReport(report), f.reportId);
-      syncReportDocuments(f.db, f.reportId, report.tasks);
+        .prepare("UPDATE sheet_clones SET data=? WHERE id=?")
+        .run(encodeSheetClone(sheetClone), f.sheetCloneId);
+      syncSheetCloneDocuments(f.db, f.sheetCloneId, sheetClone.tasks);
     }),
   );
   const counts = [],
-    observer = ({ reportId }) => counts.push(reportId),
-    diagnostic = channel("graeboard.sync.report.decode");
+    observer = ({ sheetCloneId }) => counts.push(sheetCloneId),
+    diagnostic = channel("graeboard.sync.sheetClone.decode");
   diagnostic.subscribe(observer);
   t.after(() => diagnostic.unsubscribe(observer));
   const actualDecodes = [],
-    decoded = channel("graeboard.report.decode"),
+    decoded = channel("graeboard.sheetClone.decode"),
     countDecode = (sample) => actualDecodes.push(sample);
   decoded.subscribe(countDecode);
   t.after(() => decoded.unsubscribe(countDecode));
-  const source = { ...emptyState(), entities: allEntities(f.db, f.link) };
+  const source = { ...markedState(), entities: allEntities(f.db, f.link) };
   assert.equal(
     counts.length,
     1,
@@ -496,13 +541,13 @@ test("A3 1000-row 100-document copy decodes once per phase and invalidates after
     }
     return statement;
   });
-  const service = new ReportBusinessService(
-    f.app.locals.reportRepository,
+  const service = new SheetCloneBusinessService(
+    f.app.locals.sheetCloneRepository,
     f.user,
   );
-  const first = service.read(f.reportId);
+  const first = service.read(f.sheetCloneId);
   actualDecodes.length = 0;
-  await service.edit(f.reportId, editRequest(f, first, "1000-row edit"));
+  await service.edit(f.sheetCloneId, editRequest(f, first, "1000-row edit"));
   assert.equal(
     counts.length,
     2,
@@ -516,10 +561,10 @@ test("A3 1000-row 100-document copy decodes once per phase and invalidates after
   const pending = f.adapter.readPending(f.teamId);
   assert.equal(pending.length, 1);
   assert.equal(
-    pending[0].changes.filter((c) => c.entity === "reportCell").length,
+    pending[0].changes.filter((c) => c.entity === "sheetCloneCell").length,
     1,
   );
-  assert.ok(!pending[0].changes.some((c) => c.entity === "report"));
+  assert.ok(!pending[0].changes.some((c) => c.entity === "sheetClone"));
   assert.ok(Buffer.byteLength(canonical(pending[0])) < 5000);
   assert.equal(getTask(f.db, f.taskId).cells.title.value, "initial");
   counts.length = 0;
@@ -527,17 +572,17 @@ test("A3 1000-row 100-document copy decodes once per phase and invalidates after
     () =>
       transaction(f.db, () => {
         f.db
-          .prepare("UPDATE reports SET name='rolled back' WHERE id=?")
-          .run(f.reportId);
+          .prepare("UPDATE sheet_clones SET name='rolled back' WHERE id=?")
+          .run(f.sheetCloneId);
         throw new Error("rollback fixture");
       }),
     /rollback fixture/,
   );
   assert.equal(counts.length, 1);
   counts.length = 0;
-  const second = service.read(f.reportId);
+  const second = service.read(f.sheetCloneId);
   actualDecodes.length = 0;
-  await service.edit(f.reportId, editRequest(f, second, "after rollback"));
+  await service.edit(f.sheetCloneId, editRequest(f, second, "after rollback"));
   assert.equal(
     counts.length,
     2,
@@ -564,13 +609,14 @@ test("A3 1000-row 100-document copy decodes once per phase and invalidates after
   }
   const result = reduceMany(state, f.adapter.readPending(f.teamId));
   assert.equal(
-    applicationEntities(result.entities)[entityId("report", [f.reportId])]
-      .payload.name,
-    "Contract report",
+    applicationEntities(result.entities)[
+      entityId("sheetClone", [f.sheetCloneId])
+    ].payload.name,
+    "Contract sheetClone",
   );
 });
 
-test("A6 v2 Unicode, deletion and same-position insertion rules are deterministic", () => {
+test("A6 protocol 4 Unicode, deletion and same-position insertion rules are deterministic", () => {
   const examples = [
     [
       "가나다라마바사",
@@ -584,46 +630,46 @@ test("A6 v2 Unicode, deletion and same-position insertion rules are deterministi
     ["ab", "aXb", "aXb", "aXb"],
   ];
   for (const [base, current, desired, expected] of examples) {
-    assert.equal(mergeMarkdown(base, current, desired, 2), expected);
-    assert.equal(mergeMarkdown(base, desired, current, 2), expected);
+    assert.equal(mergeMarkdown(base, current, desired, 4), expected);
+    assert.equal(mergeMarkdown(base, desired, current, 4), expected);
   }
 });
 
-test("A3 v2 logical transfer preserves canonical children and exports the established report view", async (t) => {
+test("A3 protocol 4 logical transfer preserves canonical children and exports the established sheetClone view", async (t) => {
   const f = sqliteFixture(t),
     state = upgradeState(f.state);
   f.adapter.withTeamTransaction(f.teamId, (tx) =>
     tx.sync.writeState(state, f.link.canonical_head),
   );
   f.db.syncCapture.refresh();
-  const service = new ReportBusinessService(
-      f.app.locals.reportRepository,
+  const service = new SheetCloneBusinessService(
+      f.app.locals.sheetCloneRepository,
       f.user,
     ),
-    before = service.read(f.reportId);
+    before = service.read(f.sheetCloneId);
   await service.edit(
-    f.reportId,
+    f.sheetCloneId,
     editRequest(f, before, "pending transfer copy"),
   );
   const pending = f.adapter.readPending(f.teamId),
     job = await freezeTeam(f.adapter, f.teamId),
     bundle = await exportTeam(f.adapter, f.teamId, { omitJobId: job });
-  const report = bundle.payload.tables.site_entities.find(
-    (row) => row.entity === "report",
+  const sheetClone = bundle.payload.tables.site_entities.find(
+    (row) => row.entity === "sheetClone",
   );
   assert.equal(
-    unpackReportData(JSON.parse(report.payload).data).tasks[0].cells.title
-      .value,
+    unpackSheetCloneData(JSON.parse(sheetClone.payload).data).tasks[0].cells
+      .title.value,
     "pending transfer copy",
   );
   assert.ok(
     !bundle.payload.tables.site_entities.some((row) =>
-      ["protocol", "reportTask", "reportCell"].includes(row.entity),
+      ["protocol", "sheetCloneTask", "sheetCloneCell"].includes(row.entity),
     ),
   );
   assert.ok(
     bundle.payload.tables.sync_entities.some(
-      (row) => row.entity === "reportCell",
+      (row) => row.entity === "sheetCloneCell",
     ),
   );
   const db = openDatabase(join(f.dir, "restored-v2.sqlite"));
@@ -633,22 +679,22 @@ test("A3 v2 logical transfer preserves canonical children and exports the establ
   assert.equal(stateHash(restored.readState(f.teamId)), stateHash(state));
   assert.deepEqual(restored.readPending(f.teamId), pending);
   assert.equal(
-    reportTasks(readEntity(db, f.teamId, "report", [f.reportId]))[0].cells.title
-      .value,
+    sheetCloneTasks(readEntity(db, f.teamId, "sheetClone", [f.sheetCloneId]))[0]
+      .cells.title.value,
     "pending transfer copy",
   );
   assert.equal(restored.readLink(f.teamId).mode, "recovery");
 });
 
-test("A3 actual Edge conflict resolution creates a v2 operation and preserves both original submissions", async (t) => {
+test("A3 actual Edge conflict resolution creates a protocol 4 operation and preserves both original submissions", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const state = upgradeState(f.state),
-    id = entityId("reportCell", [f.reportId, f.taskId, "title"]),
+    id = entityId("sheetCloneCell", [f.sheetCloneId, f.taskId, "title"]),
     original = state.entities[id];
   const edit = (value) =>
     makeOperation({
-      link: { ...f.link, protocol: 2 },
+      link: { ...f.link, protocol: 4 },
       actorRef: f.user.id,
       before: { [id]: original },
       after: {
@@ -678,8 +724,8 @@ test("A3 actual Edge conflict resolution creates a v2 operation and preserves bo
   );
   const pending = await f.adapter.readPending(f.teamId);
   assert.equal(pending.length, 1);
-  assert.equal(pending[0].protocol, 2);
-  assert.equal(pending[0].reducer, 2);
+  assert.equal(pending[0].protocol, 4);
+  assert.equal(pending[0].reducer, 4);
   assert.deepEqual(
     (await f.adapter.readState(f.teamId)).conflicts[b.opId],
     conflicted.conflicts[b.opId],

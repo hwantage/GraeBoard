@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SQLITE_VERSION = 33;
+export const SQLITE_VERSION = 34;
 export const baseSql = readFileSync(
   new URL("./sqlite/029-base.sql", import.meta.url),
   "utf8",
@@ -32,11 +32,27 @@ export const accessTokenSql = readFileSync(
 export const accessTokenChecksum = createHash("sha256")
   .update(accessTokenSql)
   .digest("hex");
+export const sheetCloneSql = readFileSync(
+  new URL("./sqlite/034-sheet-clones.sql", import.meta.url),
+  "utf8",
+);
+export const sheetCloneChecksum = createHash("sha256")
+  .update(sheetCloneSql)
+  .digest("hex");
+// v34 renames the copy tables and converts what the rows store (convert, the
+// offline SheetClone conversion of server/migrations/sheet-clone). A new empty
+// database has nothing to convert.
 const migrations = [
   { version: 30, sql: syncSql, checksum: syncChecksum },
   { version: 31, sql: keySql, checksum: keyChecksum },
   { version: 32, sql: maintenanceSql, checksum: maintenanceChecksum },
   { version: 33, sql: accessTokenSql, checksum: accessTokenChecksum },
+  {
+    version: 34,
+    sql: sheetCloneSql,
+    checksum: sheetCloneChecksum,
+    convert: true,
+  },
 ];
 
 // Read the released v29 definition, never the current application's initializer.
@@ -80,7 +96,7 @@ export function sqliteVersion(db) {
   return db.prepare("PRAGMA user_version").get().user_version;
 }
 export function assertSqliteHistory(db, { version = SQLITE_VERSION } = {}) {
-  if (![30, 31, 32, 33].includes(version) || sqliteVersion(db) !== version)
+  if (![30, 31, 32, 33, 34].includes(version) || sqliteVersion(db) !== version)
     throw new Error(
       "DB migration required: npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
     );
@@ -115,7 +131,7 @@ export function assertSqliteIntegrity(db) {
 }
 export function migrateSqlite(
   db,
-  { dryRun = false, initialize = false, afterDdl } = {},
+  { dryRun = false, initialize = false, afterDdl, convert } = {},
 ) {
   const from = sqliteVersion(db);
   if (from === SQLITE_VERSION) {
@@ -123,7 +139,7 @@ export function migrateSqlite(
     assertSqliteIntegrity(db);
     return { from, to: from, applied: false };
   }
-  if (![0, 29, 30, 31, 32].includes(from))
+  if (![0, 29, 30, 31, 32, 33].includes(from))
     throw new Error(`Unsupported SQLite version ${from}; data preserved`);
   if (from === 0) {
     if (
@@ -141,6 +157,11 @@ export function migrateSqlite(
   if (from === 29) assertSqliteBaseline(db);
   if (from >= 30) assertSqliteHistory(db, { version: from });
   assertSqliteIntegrity(db);
+  // Converting stored data needs the conversion; checks no row before writing.
+  if (from !== 0 && !convert)
+    throw new Error(
+      "SQLite v34 converts stored sheet clone data; run npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
+    );
   if (dryRun) {
     assertSqliteIntegrity(db);
     return {
@@ -148,9 +169,10 @@ export function migrateSqlite(
       to: SQLITE_VERSION,
       applied: false,
       dryRun: true,
-      checksum: accessTokenChecksum,
+      checksum: sheetCloneChecksum,
     };
   }
+  const conversions = [];
   db.exec("BEGIN IMMEDIATE");
   try {
     // Recheck under the exclusive writer boundary; concurrent invocations never duplicate a migration.
@@ -159,6 +181,12 @@ export function migrateSqlite(
     if (from === 0) db.exec(baseSql);
     for (const migration of migrations.filter((m) => m.version > from)) {
       db.exec(migration.sql);
+      if (migration.convert && from !== 0) {
+        const result = convert(db);
+        if (result && typeof result.then === "function")
+          throw new Error("SQLite conversions must be synchronous");
+        conversions.push(result);
+      }
       const hook = afterDdl?.(migration.version);
       if (hook && typeof hook.then === "function")
         throw new Error("SQLite migration hooks must be synchronous");
@@ -179,6 +207,7 @@ export function migrateSqlite(
     from,
     to: SQLITE_VERSION,
     applied: true,
-    checksum: accessTokenChecksum,
+    checksum: sheetCloneChecksum,
+    ...(conversions.length ? { conversion: conversions[0] } : {}),
   };
 }

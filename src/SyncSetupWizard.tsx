@@ -274,7 +274,7 @@ export default function SyncSetupWizard({
     live.current = true;
     const controller = new AbortController();
     if (!external && team.sync?.configured)
-      // Only unlocks direct navigation; the embedded settings report status
+      // Only unlocks direct navigation; the embedded settings sheetClone status
       // errors themselves.
       void api<SyncStatus>(prefix, { signal: controller.signal })
         .then((current) => {
