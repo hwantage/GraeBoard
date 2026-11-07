@@ -439,6 +439,17 @@ test("일정 문서와 메모 카드·전체 페이지에도 목차가 있다", 
   await expect(rich(card)).toContainText("전체 아키텍처");
   await tocButton(card).click();
   await expect(items(card)).toHaveText(titles);
+  // Headings outside the task detail never fall below the text, and each
+  // level stays at least the size of the next.
+  const sizes = await rich(card).evaluate((element) => {
+    const size = (selector: string) =>
+      parseFloat(getComputedStyle(element.querySelector(selector)!).fontSize);
+    return ["p", "h1", "h2", "h3", "h4", "h5", "h6"].map(size);
+  });
+  const [text, ...levels] = sizes;
+  for (const level of levels) expect(level).toBeGreaterThanOrEqual(text);
+  for (let index = 1; index < levels.length; index++)
+    expect(levels[index]).toBeLessThanOrEqual(levels[index - 1]);
   const memoHeading = rich(card).getByRole("heading", {
     name: "2. Codex CLI 준비",
   });
