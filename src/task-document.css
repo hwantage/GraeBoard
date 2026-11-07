@@ -131,6 +131,30 @@
   height: 26px;
   padding: 0;
 }
+/* The contents button ends the row, right of the mode switch: framed like
+   the switch above the document, a plain button in the toolbar. */
+.document-controls .document-toc-toggle {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  color: var(--muted);
+}
+.document-controls .document-toc-toggle:focus-visible {
+  outline-offset: 2px;
+}
+.document-toc-toggle[aria-pressed="true"] {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+}
+/* Its place in the Markdown source, which keeps the mode switch still. */
+.document-toc-toggle[data-reserved] {
+  visibility: hidden;
+}
 /* The control row above the document is empty then and takes no space. */
 .document-mode-bar:empty {
   display: none;
@@ -219,6 +243,21 @@
 }
 .document-prose p {
   margin: 0.7em 0;
+}
+/* Headings never fall below the 15px text: the app's own h3 is 13px, and
+   the browser's h5 and h6 are smaller still. The task detail sets its own
+   sizes below. */
+.document-prose h3 {
+  font-size: 17px;
+}
+.document-prose h4 {
+  font-size: 16px;
+}
+.document-prose :is(h5, h6) {
+  font-size: 15px;
+}
+.document-prose :is(h3, h4, h5, h6) {
+  font-weight: 600;
 }
 .task-detail-modal .document-prose h1 {
   font-size: 28px;
@@ -555,6 +594,113 @@
 .document-upload-placeholder {
   color: var(--muted);
   font-size: 0.85em;
+}
+
+/* 목차: 넓으면 본문 오른쪽에 나란히, 좁으면 본문 폭을 두고 오른쪽 끝을 덮는다 */
+.document-body[data-toc] {
+  position: relative;
+  display: flex;
+}
+.document-body[data-toc] > .document-prose {
+  flex: 1;
+  min-width: 0;
+}
+.document-toc {
+  /* Positioned to stay above anything the text lets overflow. */
+  position: relative;
+  order: 1;
+  flex: 0 0 240px;
+  /* The text alone sets the height; the pane stretches to it. */
+  contain: size;
+  border-left: 1px solid var(--line);
+  background: white;
+}
+.document-toc[data-overlay] {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(240px, calc(100% - 24px));
+  box-shadow: -6px 0 16px #203a3c1a;
+}
+/* The panel stays below the pinned rows while the document scrolls. */
+.document-toc-panel {
+  position: sticky;
+  top: var(--document-toc-top, 0px);
+  display: flex;
+  flex-direction: column;
+  max-height: min(var(--document-toc-height, 100vh), 100%);
+  background: inherit;
+}
+.document-toc-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.document-toc-header > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.document-toc-header > strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.document-toc-close {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  min-width: 22px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 3px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.document-toc-close:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.document-toc-list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+}
+.document-toc-list button {
+  display: block;
+  width: 100%;
+  padding: 4px 8px 4px calc(8px + var(--document-toc-indent, 0) * 12px);
+  overflow: hidden;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.document-toc-list button:hover {
+  background: var(--accent-surface);
+}
+.document-toc-list button[aria-current] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.document-toc-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 /* "/" 편집 형식 메뉴 */
@@ -1544,7 +1690,8 @@ button.memo-document-title {
 @media (max-width: 700px) {
   .document-rich-tools,
   .document-modes,
-  .document-mode-bar,
+  /* The row stays for the contents button alone. */
+  .document-mode-bar:not(:has(.document-toc-toggle:not([data-reserved]))),
   .document-block-handle {
     display: none;
   }

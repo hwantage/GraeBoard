@@ -49,6 +49,7 @@ import DocumentBlockHandle, {
   blockSelectKeydown,
   type BlockHandleApi,
 } from "./DocumentBlockHandle";
+import DocumentToc, { type TocApi } from "./DocumentToc";
 import DocumentSlashMenu, {
   filterSlashItems,
   slashMatch,
@@ -653,6 +654,9 @@ type Props = {
   readOnly: boolean;
   saveStatus?: ReactNode;
   modeControl?: ReactNode;
+  // The table of contents beside the text; its button is the host's.
+  toc?: boolean;
+  onTocClose?: () => void;
   onChange: (markdown: string) => void;
   onUnsupported: (message: string) => void;
   onReady: () => void;
@@ -701,6 +705,7 @@ export default function RichMarkdownEditor(props: Props) {
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const blockHandle = useRef<BlockHandleApi>(null);
+  const toc = useRef<TocApi>(null);
   const slashRef = useRef<SlashState | null>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const slashIndexRef = useRef(0);
@@ -1164,6 +1169,7 @@ export default function RichMarkdownEditor(props: Props) {
                     syncSlash(view);
                     syncLinkTip(view);
                     blockHandle.current?.update(view, previous);
+                    toc.current?.update(view, previous);
                   }
                   if (
                     active &&
@@ -1529,6 +1535,7 @@ export default function RichMarkdownEditor(props: Props) {
     Math.max(0, visibleSlashItems.length - 1),
   );
   slashIndexRef.current = activeSlash;
+  const tocShown = ready && !!props.toc;
   return (
     <div
       className="rich-document"
@@ -1735,23 +1742,36 @@ export default function RichMarkdownEditor(props: Props) {
           )}
         </div>
       )}
-      <div
-        ref={root}
-        className="document-prose"
-        data-readonly={props.readOnly || undefined}
-        onMouseDown={(event) => {
-          // Clicks on the padding below the text continue at the end.
-          if (event.target !== root.current || props.readOnly) return;
-          event.preventDefault();
-          editorRef.current?.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            view.dispatch(
-              view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
-            );
-            view.focus();
-          });
-        }}
-      />
+      <div className="document-body" data-toc={tocShown || undefined}>
+        {/* Before the text for the keyboard, shown on its right. */}
+        {tocShown && (
+          <DocumentToc
+            ref={toc}
+            view={() =>
+              editorRef.current?.action((ctx) => ctx.get(editorViewCtx)) ?? null
+            }
+            shell={shell}
+            onClose={() => props.onTocClose?.()}
+          />
+        )}
+        <div
+          ref={root}
+          className="document-prose"
+          data-readonly={props.readOnly || undefined}
+          onMouseDown={(event) => {
+            // Clicks on the padding below the text continue at the end.
+            if (event.target !== root.current || props.readOnly) return;
+            event.preventDefault();
+            editorRef.current?.action((ctx) => {
+              const view = ctx.get(editorViewCtx);
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+              );
+              view.focus();
+            });
+          }}
+        />
+      </div>
       {ready && !props.readOnly && (
         <DocumentBlockHandle
           ref={blockHandle}

@@ -670,7 +670,7 @@ type Marquee = { left: number; top: number; width: number; height: number };
 // A drag in the margin selects blocks; it never starts on controls, text or
 // another dialog.
 const MARQUEE_SKIP =
-  "button, a, input, textarea, select, label, [contenteditable], [role='separator'], .document-rich-tools, .document-link-tip, .document-slash-menu";
+  "button, a, input, textarea, select, label, [contenteditable], [role='separator'], .document-rich-tools, .document-link-tip, .document-slash-menu, .document-toc";
 const HANDLE_WIDTH = 18;
 const HANDLE_HEIGHT = 24;
 const HANDLE_GAP = 4;
@@ -1048,7 +1048,9 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
       if (
         !view.editable ||
         view.composing ||
-        target?.closest(".document-rich-tools, .document-slash-menu")
+        target?.closest(
+          ".document-rich-tools, .document-slash-menu, .document-toc",
+        )
       ) {
         setSpot(null);
         return;

@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { api, ApiError } from "./api";
 import { useMobileLayout } from "./useMobileLayout";
 import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
+import DocumentTocToggle from "./DocumentTocToggle";
 import { MAX_IMAGE_BYTES } from "../shared/document-images.js";
 import { MAX_DOCUMENT_BYTES, documentBytes } from "../shared/task-documents.js";
 import {
@@ -165,6 +166,19 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             focus();
         });
     }, [mode, loading]);
+    // The table of contents belongs to this view of the document only.
+    const [toc, setToc] = useState(false);
+    const tocButton = useRef<HTMLButtonElement>(null);
+    function closeToc() {
+      // Keyboard focus in the closing contents returns to its button.
+      if (
+        section.current
+          ?.querySelector(".document-toc")
+          ?.contains(document.activeElement)
+      )
+        tocButton.current?.focus({ preventScroll: true });
+      setToc(false);
+    }
     function changeMode(value: DocumentMode) {
       if (value === "rich" && mode !== value) {
         setSourceRequired(false);
@@ -589,6 +603,17 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         }}
       />
     );
+    // The rich view only: the contents jump within its text. The source
+    // keeps its place so the mode switch does not move.
+    const tocToggle = !editorFailed && (
+      <DocumentTocToggle
+        ref={tocButton}
+        open={toc}
+        disabled={!editorReady}
+        reserved={mode !== "rich"}
+        onChange={setToc}
+      />
+    );
     // While editing, the mode switch sits at the right end of the toolbar in
     // both modes. Read-only, failed and mobile views keep it in the host's
     // control area, which has no toolbar beside it.
@@ -630,6 +655,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             <div className="document-controls">
               {(mode === "source" || docReadOnly || editorFailed) && saveStatus}
               {modeToggle}
+              {tocToggle}
             </div>,
             props.controlsTarget,
           )}
@@ -709,6 +735,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                 <div className="document-history-tools">
                   {saveStatus}
                   {modeToggle}
+                  {tocToggle}
                 </div>
               </div>
             </div>
@@ -740,7 +767,16 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     remoteMarkdown={remoteMarkdown}
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
-                    modeControl={toolbarModes && modeToggle}
+                    modeControl={
+                      toolbarModes && (
+                        <>
+                          {modeToggle}
+                          {tocToggle}
+                        </>
+                      )
+                    }
+                    toc={toc}
+                    onTocClose={closeToc}
                     onChange={change}
                     images={props.storage?.images}
                     documentLinks={!props.storage}
