@@ -391,6 +391,17 @@ test("키보드로 메뉴를 열어 형식을 고르면 다운로드 버튼으�
   expect(await text(await saved)).toBe("# 키보드\n\n본문");
   await expect(menu(page)).toHaveCount(0);
   await expect(button).toBeFocused();
+  // Printing focuses its frame; focus comes back once the dialog closes.
+  await page.keyboard.press("Enter");
+  await expect(
+    menu(page).getByRole("menuitem", { name: "PDF (인쇄 창에서 저장)" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).printed.length))
+    .toBe(1);
+  await expect(page.locator(".document-print-frame")).toHaveCount(0);
+  await expect(button).toBeFocused();
 });
 
 test("좁은 화면에서도 다운로드 버튼이 목차 왼쪽에 있다", async ({

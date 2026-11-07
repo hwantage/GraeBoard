@@ -353,6 +353,9 @@ function fontFaces() {
 // page's title, not the frame's, so the page carries the document's title
 // while the dialog is open.
 async function printPage(html: string, title: string) {
+  // Printing focuses the frame; focus returns where it was, such as the
+  // download button a keyboard pick went back to.
+  const focused = document.activeElement as HTMLElement | null;
   // A frame left by a dialog that never reported closing.
   document.querySelector(".document-print-frame")?.remove();
   const frame = document.createElement("iframe");
@@ -374,6 +377,8 @@ async function printPage(html: string, title: string) {
   const restore = () => {
     if (document.title === title) document.title = pageTitle;
     frame.remove();
+    if (document.activeElement === document.body)
+      focused?.focus({ preventScroll: true });
   };
   view.addEventListener("afterprint", () => setTimeout(restore), {
     once: true,
