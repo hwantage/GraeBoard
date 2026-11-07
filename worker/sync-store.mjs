@@ -202,6 +202,12 @@ export function boundStore(
       database.withTeamTransaction(teamId, (tx) => tx.sync.readConversion(), {
         readOnly: true,
       }),
+    readConversionSnapshot: () =>
+      database.withTeamTransaction(
+        teamId,
+        (tx) => tx.sync.readConversionSnapshot(),
+        { readOnly: true },
+      ),
     async acquire(id) {
       return call(async (tx) => {
         if (

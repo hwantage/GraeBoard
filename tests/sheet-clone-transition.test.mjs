@@ -323,7 +323,21 @@ for (const [label, from, to, port] of [
       };
 
       // Before the transition commit: both report the conversion, no site
-      // takes a write and neither resumes.
+      // takes a write and neither resumes. None of this reads the earlier
+      // snapshot the conversion keeps; only publishing the transition does.
+      const traced = [],
+        clientQuery = Client.prototype.query;
+      Client.prototype.query = function (text, ...rest) {
+        traced.push(typeof text === "string" ? text : text?.text);
+        return clientQuery.call(this, text, ...rest);
+      };
+      t.after(() => (Client.prototype.query = clientQuery));
+      const snapshotReads = () =>
+        traced.filter((sql) =>
+          /\bprevious_snapshot\b|sync_conversions\b[^;]*\*|\*[^;]*sync_conversions\b/.test(
+            sql || "",
+          ),
+        );
       const internalStatus = ok(await inside(`/teams/${teamId}/sync`)),
         externalStatus = ok(await outside(`/teams/${teamId}/sync`));
       for (const status of [internalStatus, externalStatus]) {
@@ -385,6 +399,8 @@ for (const [label, from, to, port] of [
         (await outside(`/teams/${teamId}/sync/resume`, {})).status,
         409,
       );
+      assert.ok(traced.some((sql) => /\bsync_conversions\b/.test(sql || "")));
+      assert.deepEqual(snapshotReads(), []);
       // A wrong expectation changes nothing.
       const confirmation = {
         expectedHead: base.head,
@@ -403,9 +419,14 @@ for (const [label, from, to, port] of [
       assert.equal(git("rev-parse", "refs/heads/sync-v1"), base.head);
 
       // External first, then internal, as OPERATIONS.md describes.
+      traced.length = 0;
       const published = ok(
         await outside(`/teams/${teamId}/sync/upgrade`, confirmation),
       );
+      assert.deepEqual(snapshotReads(), [
+        "SELECT previous_snapshot FROM sync_conversions WHERE team_id=$1 AND completed_head IS NULL",
+      ]);
+      Client.prototype.query = clientQuery;
       assert.equal(published.upgraded, true);
       assert.equal(published.protocol, to);
       assert.equal(published.conversion, "sheet-clone-1");

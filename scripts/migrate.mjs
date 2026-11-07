@@ -22,7 +22,7 @@ const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/pat
        npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL [--initialize] [--dry-run]
        npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id <existing-uuid> [--site-origin https://origin ...] [--initialize] [--dry-run]
        npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id <existing-uuid> [--site-origin https://origin ...] [--initialize] [--dry-run]
-       npm run migrate -- --engine export --input /path/export-v6.json --output /path/export-v7.json [--site-origin https://origin ...]
+       npm run migrate -- --engine export --input /path/export-v6.json --output /path/export-v7.json [--site-origin https://origin ...] [--dry-run]
 
 SQLite upgrades v29/v30/v31/v32/v33 to v34, or initializes a new empty database with --initialize.
 PostgreSQL upgrades control v1 to v2 and team v1/v2 to v3, or initializes the dedicated graeboard schema with --initialize.
@@ -31,7 +31,7 @@ SQLite v34 and team v3 convert the stored sheet clone names, links and synchroni
 --site-origin (repeatable) names an origin of this deployment whose absolute /links/ addresses are converted too;
 use the same list for both sites of a team. Relative addresses are always converted.
 A SQLite --dry-run converts a temporary copy and prints the result; the source file is only read.
-The export engine converts a JSON export of schemaVersion 6 into a new v7 file and never overwrites one.
+The export engine converts a JSON export of schemaVersion 6 into a new v7 file and never overwrites one; with --dry-run it only prints the result.
 For an existing team database without graeboard_site, omit --initialize to add the site schema, apply required team migrations, and preserve business data.
 --dry-run never commits; SQLite missing-file initialization is validated in memory.
 The PostgreSQL URL is read from the named environment variable, never a command argument.
@@ -155,10 +155,11 @@ async function main() {
       JSON.parse(readFileSync(resolve(values.input), "utf8")),
       { origins: values["site-origin"] },
     );
-    writeFileSync(output, JSON.stringify(converted.export), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    if (!values["dry-run"])
+      writeFileSync(output, JSON.stringify(converted.export), {
+        flag: "wx",
+        mode: 0o600,
+      });
     console.log(
       JSON.stringify(
         {
@@ -168,6 +169,7 @@ async function main() {
           to: 7,
           links: converted.links,
           kept: converted.kept,
+          ...(values["dry-run"] ? { applied: false, dryRun: true } : {}),
         },
         null,
         2,

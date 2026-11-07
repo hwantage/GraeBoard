@@ -8,19 +8,26 @@ import remarkGfm from "remark-gfm";
 //   /links/report-memo/<사본>/<메모>  ->  /links/sheet-clone-memo/<사본>/<메모>
 //
 // Only real link destinations change: inline and reference links, autolinks,
-// `href` of HTML anchors and the link of a toggle title (`<summary>` keeps
-// Markdown, see src/DocumentToggle.ts). Text, code, inline code and link text
-// stay as written. A relative address always belongs to this app; an absolute
-// one only for the operator's origins. Query and fragment are kept. Every edit
-// replaces exactly the old segment, so the rest of the body is byte-identical.
+// the `href` of an `<a>` tag and the links of a toggle title. Text, code,
+// inline code, html comments and link text stay as written. A relative address
+// always belongs to this app; an absolute one only for the operator's origins.
+// Query and fragment are kept. Every edit replaces exactly the old segment
+// once, so the rest of the body is byte-identical.
 const parser = unified().use(remarkParse).use(remarkGfm);
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const LEGACY_PATH = new RegExp(
   `^/links/report-(task|memo)/(${UUID})/(${UUID}|main)$`,
 );
-const SUMMARY = /<summary>([^\n]*?)<\/summary>/gi;
+// A toggle title is Markdown on the summary line right after `<details>`,
+// with an optional `<hN>`, as src/DocumentToggle.ts reads it.
+const DETAILS_OPEN =
+  /^<details((?:\s+open(?:\s*=\s*(?:""|''|"open"|'open'|open))?)?)\s*>[ \t]*\r?\n?/i;
+const SUMMARY = /^[ \t]*<summary>([^\n]*?)<\/summary>[ \t]*(?:\r?\n|$)/i;
 const SUMMARY_HEADING = /^(\s*<h([1-6])>)([^\n]*?)<\/h\2>\s*$/i;
-const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+const COMMENT = /<!--[\s\S]*?(?:-->|$)/g;
+const ANCHOR = /<a(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+const ATTRIBUTE =
+  /([^\s"'=<>/`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 // The new address of a link destination, or null when it is not one of ours.
 function convertLinkUrl(url, origins = []) {
@@ -94,26 +101,45 @@ function editsOf(markdown, origins, base, report) {
       return literal ? false : undefined;
     }
     if (node.type === "html") {
+      if (!node.value.includes("/links/report-")) return false;
       const start = node.position.start.offset,
         value = markdown.slice(start, node.position.end.offset);
       if (value !== node.value) {
         report.unverified.push(node.value);
         return false;
       }
-      for (const m of value.matchAll(HREF)) {
-        const url = m[1] ?? m[2] ?? m[3],
-          next = convertLinkUrl(url, origins);
-        if (next) replace(start + m.index + m[0].lastIndexOf(url), url, next);
-        else if (url.includes("/links/report-")) report.kept.push(url);
+      // The title is parsed as the Markdown it is; its own `<a>` tags are
+      // found there, not again below.
+      const skip = [...value.matchAll(COMMENT)].map((m) => [
+        m.index,
+        m.index + m[0].length,
+      ]);
+      const open = DETAILS_OPEN.exec(value),
+        summary = open && SUMMARY.exec(value.slice(open[0].length));
+      if (summary) {
+        const heading = SUMMARY_HEADING.exec(summary[1]),
+          title = heading ? heading[3] : summary[1],
+          from =
+            open[0].length +
+            summary[0].indexOf("<summary>") +
+            "<summary>".length +
+            (heading?.[1].length || 0);
+        skip.push([from, from + title.length]);
+        edits.push(...editsOf(title, origins, base + start + from, report));
       }
-      // A toggle title is Markdown inside `<summary>` and an optional
-      // `<hN>`, as the editor reads it (SUMMARY_HEADING in DocumentToggle).
-      for (const m of value.matchAll(SUMMARY)) {
-        const heading = SUMMARY_HEADING.exec(m[1]),
-          title = heading ? heading[3] : m[1],
-          offset =
-            start + m.index + m[0].indexOf(m[1]) + (heading?.[1].length || 0);
-        edits.push(...editsOf(title, origins, base + offset, report));
+      for (const tag of value.matchAll(ANCHOR)) {
+        if (skip.some(([from, to]) => tag.index >= from && tag.index < to))
+          continue;
+        for (const attribute of tag[0].slice(2).matchAll(ATTRIBUTE)) {
+          const url = attribute[2] ?? attribute[3] ?? attribute[4];
+          if (attribute[1].toLowerCase() !== "href" || url === undefined)
+            continue;
+          const next = convertLinkUrl(url, origins),
+            at =
+              tag.index + 2 + attribute.index + attribute[0].lastIndexOf(url);
+          if (next) replace(start + at, url, next);
+          else if (url.includes("/links/report-")) report.kept.push(url);
+        }
       }
       return false;
     }
@@ -131,6 +157,11 @@ export function convertMarkdownLinks(markdown, { origins = [] } = {}) {
   const edits = editsOf(markdown, origins, 0, report).sort(
     (a, b) => b.start - a.start,
   );
+  // One stored segment is one destination; two edits of it mean the reading
+  // above is wrong, and the body is refused rather than rewritten twice.
+  for (let i = 1; i < edits.length; i++)
+    if (edits[i].end > edits[i - 1].start)
+      report.unverified.push(markdown.slice(edits[i].start, edits[i].end));
   let text = markdown;
   for (const edit of edits)
     text = text.slice(0, edit.start) + edit.next + text.slice(edit.end);

@@ -315,10 +315,12 @@ const methods = {
       throw new Error("Canonical head changed; recompute before retry");
   },
   // The offline SheetClone conversion of C (protocol 1 -> 3 or 2 -> 4) and
-  // whether its transition commit was applied.
+  // whether its transition commit was applied. Status and write checks read
+  // only this record; the earlier snapshot it keeps is read once, to publish
+  // the transition (readConversionSnapshot).
   *readConversion() {
     const row = (yield query(
-      "SELECT * FROM sync_conversions WHERE team_id=$1",
+      "SELECT team_id,conversion,from_protocol,to_protocol,base_head,base_hash,result_hash,previous_snapshot_hash,options,created_at,completed_head,completed_at FROM sync_conversions WHERE team_id=$1",
       [this.teamId],
     )).rows[0];
     return row
@@ -326,9 +328,15 @@ const methods = {
           ...row,
           from_protocol: integer(row.from_protocol),
           to_protocol: integer(row.to_protocol),
-          previous_snapshot: new Uint8Array(row.previous_snapshot),
         }
       : null;
+  },
+  *readConversionSnapshot() {
+    const row = (yield query(
+      "SELECT previous_snapshot FROM sync_conversions WHERE team_id=$1 AND completed_head IS NULL",
+      [this.teamId],
+    )).rows[0];
+    return row ? new Uint8Array(row.previous_snapshot) : null;
   },
   *completeConversion(head) {
     yield query(

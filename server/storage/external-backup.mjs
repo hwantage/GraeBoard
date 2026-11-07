@@ -137,8 +137,8 @@ export class S3ImageStore {
     this.client.destroy?.();
   }
 }
-export function stateFrom(bundle, options) {
-  const tables = verifyTransfer(bundle, options).tables,
+export function stateFrom(bundle) {
+  const tables = verifyTransfer(bundle).tables,
     state = { entities: {}, receipts: {}, conflicts: {} };
   for (const row of tables.sync_entities) {
     const key = JSON.parse(row.entity_key);
@@ -251,7 +251,7 @@ export async function backupExternal({ control, teams, destination }) {
           requireFrozen: false,
           omitJobId: jobId,
         }),
-        snapshot = stateFrom(bundle, { legacy: true }),
+        snapshot = stateFrom(bundle),
         folder = join(partial, teamId);
       await mkdir(join(folder, "images"), { recursive: true, mode: 0o700 });
       await writeFile(

@@ -63,30 +63,22 @@ export const portableHash = (value) => digest(canonical(value));
 // release that wrote it into an isolated database, which `npm run migrate`
 // then converts.
 export const TRANSFER_VERSION = 2;
-// A source whose schema predates SheetClone (backup of an unconverted
-// database) is sealed as version 1, the format its rows are in.
-export function sealTransfer(payload, version = TRANSFER_VERSION) {
+export function sealTransfer(payload) {
   return {
     format: "graeboard-team-transfer",
-    version,
+    version: TRANSFER_VERSION,
     payload,
     hash: portableHash(payload),
   };
 }
-// legacy: also read a version 1 bundle as rows (a backup of an unconverted
-// source while it is written); restoring one is never allowed.
-export function verifyTransfer(bundle, { legacy = false } = {}) {
-  if (
-    bundle?.format === "graeboard-team-transfer" &&
-    bundle.version === 1 &&
-    !legacy
-  )
+export function verifyTransfer(bundle) {
+  if (bundle?.format === "graeboard-team-transfer" && bundle.version === 1)
     throw new Error(
       "Logical transfer version 1 predates SheetClone: restore it with the release that wrote it into an isolated database, then run npm run migrate",
     );
   if (
     bundle?.format !== "graeboard-team-transfer" ||
-    ![TRANSFER_VERSION, ...(legacy ? [1] : [])].includes(bundle.version) ||
+    bundle.version !== TRANSFER_VERSION ||
     portableHash(bundle.payload) !== bundle.hash
   )
     throw new Error("Logical transfer checksum or version mismatch");
@@ -100,7 +92,6 @@ export function verifyTransfer(bundle, { legacy = false } = {}) {
   )
     throw new Error("Invalid logical transfer tables");
   for (const [table] of TEAM_TRANSFER_TABLES) {
-    if (bundle.version === 1 && table === "sync_conversions") continue;
     if (!Array.isArray(p.tables[table]))
       throw new Error("Missing logical table " + table);
     for (const row of p.tables[table]) {

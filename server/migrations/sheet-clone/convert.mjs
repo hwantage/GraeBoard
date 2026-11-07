@@ -425,23 +425,20 @@ function* convertSiteLocal(teamId, options, report) {
   return stats.unverified;
 }
 
-// The import retry key: stableId(import:sheet:mode:year[:copy]). The old key
-// is reproduced from what the import stored and must exist; only then is the
-// new key computed with the new mode name. Nothing is guessed.
-function importKeys(importId, sheets, mode, copyId, existing) {
-  const suffix = copyId ? ":" + copyId : "";
-  for (const sheet of sheets)
-    for (const year of YEARS) {
-      const key = stableId(`${importId}:${sheet}:${mode}:${year}${suffix}`);
-      if (existing.has(key))
-        return {
-          old: key,
-          next: stableId(
-            `${importId}:${sheet}:${importMode(mode)}:${year}${suffix}`,
-          ),
-        };
-    }
-  return null;
+// The import retry key: stableId(import:sheet:mode:year[:copy]). The year is
+// not recorded with the import, and one sheet may have been applied to
+// several years, so every year the application accepts (yearSchema) is a
+// candidate: old key -> the same key under the new mode name. An existing key
+// is moved only when it is one of these; nothing is guessed.
+function importKeys(importId, sheet, mode, copyId) {
+  const suffix = copyId ? ":" + copyId : "",
+    keys = new Map();
+  for (const year of YEARS)
+    keys.set(
+      stableId(`${importId}:${sheet}:${mode}:${year}${suffix}`),
+      stableId(`${importId}:${sheet}:${importMode(mode)}:${year}${suffix}`),
+    );
+  return keys;
 }
 
 function* convertSqliteApplication(options, report, problems) {
@@ -454,23 +451,25 @@ function* convertSqliteApplication(options, report, problems) {
   const legacyOperations = new Map(
     [...operations].filter(([, value]) => isLegacyImportMode(value.mode)),
   );
-  const keys = new Map();
+  // Each applied import left one audit entry with its sheet and mode.
+  const candidates = new Map();
   for (const row of (yield query(
     "SELECT target,after_json FROM audit WHERE action='import'",
   )).rows) {
     const after = parse(row.after_json);
     if (!isLegacyImportMode(after?.mode)) continue;
-    const found = importKeys(
+    for (const [old, next] of importKeys(
       row.target,
-      [after.sheet],
+      after.sheet,
       after.mode,
       after.reportId,
-      legacyOperations,
-    );
-    if (found) keys.set(found.old, found.next);
+    ))
+      candidates.set(old, next);
   }
+  const keys = new Map();
   for (const id of legacyOperations.keys())
-    if (!keys.has(id))
+    if (candidates.has(id)) keys.set(id, candidates.get(id));
+    else
       problems.push(
         `import retry ${id}: its import, sheet, mode and year cannot be reproduced`,
       );
@@ -664,19 +663,15 @@ function* convertPostgresApplication(teamId, options, report, problems) {
     const body = response?.$data || response;
     if (!isLegacyImportMode(body?.mode) || typeof body.count !== "number")
       continue;
-    let found = null;
+    let next;
     for (const row of imports) {
-      const payload = parse(row.payload);
-      found = importKeys(
-        JSON.parse(row.entity_key)[0],
-        (payload?.sheets || []).map((sheet) => sheet.name),
-        body.mode,
-        body.reportId,
-        new Set([id]),
-      );
-      if (found) break;
+      const importId = JSON.parse(row.entity_key)[0];
+      for (const sheet of parse(row.payload)?.sheets || [])
+        next ??= importKeys(importId, sheet.name, body.mode, body.reportId).get(
+          id,
+        );
     }
-    if (found) keys.set(found.old, found.next);
+    if (next) keys.set(id, next);
     else
       problems.push(
         `team ${teamId}: import retry ${id}: its import, sheet, mode and year cannot be reproduced`,

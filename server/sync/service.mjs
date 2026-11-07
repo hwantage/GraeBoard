@@ -999,7 +999,7 @@ export class SyncService {
         previousPath = "snapshots/" + randomUUID() + ".json.gz",
         bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
         previousBytes = converting
-          ? conversion.previous_snapshot
+          ? await this.store.readConversionSnapshot()
           : encodeSnapshot({ atCommit: expectedHead, state }),
         protocol = converting ? conversion.to_protocol : SPLIT_PROTOCOL,
         envelope = {
@@ -1020,6 +1020,16 @@ export class SyncService {
           snapshotHash: digest(bytes),
           previousSnapshotHash: digest(previousBytes),
         };
+      if (
+        converting &&
+        envelope.previousSnapshotHash !== conversion.previous_snapshot_hash
+      )
+        throw Object.assign(
+          new Error(
+            "The recorded snapshot of the SheetClone conversion does not match; data preserved",
+          ),
+          { status: 409, code: "SYNC_UPGRADE_HEAD" },
+        );
       const oid = await this.transport.createCandidate(expectedHead, {
         [path]: bytes,
         [previousPath]: previousBytes,

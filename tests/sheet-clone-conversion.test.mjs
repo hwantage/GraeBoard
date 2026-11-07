@@ -24,6 +24,9 @@ import {
   convertExport,
 } from "../server/migrations/sheet-clone/convert.mjs";
 import { convertMarkdownLinks } from "../server/migrations/sheet-clone/markdown-links.mjs";
+import { stableId } from "../shared/workbook.mjs";
+import { createTeamStore, executeSync } from "../shared/sync-team-store.mjs";
+import { digest } from "../server/sync/protocol.mjs";
 
 const FIXTURE = new URL("./fixtures/sheet-clone-legacy/", import.meta.url),
   read = (name) => readFileSync(new URL(name, FIXTURE), "utf8"),
@@ -489,6 +492,175 @@ test("SQLite conversion refuses pending, held, unresolved, active and unreproduc
   }
 });
 
+test("an import applied to several years moves every retry key; a key no import explains or one already taken still refuses", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-import-years-"));
+  try {
+    const convert = sqliteSheetCloneConversion({ origins: ORIGINS, now: NOW });
+    // stableId(import:sheet:mode:year[:copy]) as the released import wrote it.
+    const key = (audit, mode, year) =>
+      stableId(
+        `${audit.target}:${audit.after.sheet}:${mode}:${year}${audit.after.reportId ? `:${audit.after.reportId}` : ""}`,
+      );
+    const open = (name) => {
+      const path = join(dir, name + ".sqlite");
+      loadLegacySqlite(path, "v1");
+      const db = new DatabaseSync(path);
+      db.exec("PRAGMA foreign_keys=ON");
+      const audits = db
+        .prepare("SELECT * FROM audit WHERE action='import' ORDER BY rowid")
+        .all()
+        .map((row) => ({ ...row, after: JSON.parse(row.after_json) }));
+      assert.deepEqual(
+        audits.map((audit) => audit.after.mode),
+        ["report", "copy"],
+      );
+      return { db, audits };
+    };
+    const copyOperation = (db, from, to) =>
+      db
+        .prepare(
+          "INSERT INTO operations(id,actor_id,response,created_at) SELECT ?,actor_id,response,created_at FROM operations WHERE id=?",
+        )
+        .run(to, from);
+    {
+      // The same sheet applied again to 2027 and 2100 (renamed or deleted in
+      // between): one audit entry and one retry key per application.
+      const { db, audits } = open("years");
+      for (const audit of audits)
+        for (const year of [2027, 2100]) {
+          copyOperation(
+            db,
+            key(audit, audit.after.mode, 2026),
+            key(audit, audit.after.mode, year),
+          );
+          db.prepare(
+            "INSERT INTO audit(id,actor_id,team_id,action,target,before_json,after_json,created_at) SELECT ?,actor_id,team_id,action,target,before_json,after_json,created_at FROM audit WHERE id=?",
+          ).run(randomUUID(), audit.id);
+        }
+      const summary = migrateSqlite(db, { convert }).conversion;
+      assert.equal(summary.retries.importKeys, 6);
+      const mode = {
+        report: "create-sheet-clone",
+        copy: "append-to-sheet-clone",
+      };
+      for (const audit of audits)
+        for (const year of [2026, 2027, 2100]) {
+          assert.equal(
+            db
+              .prepare("SELECT 1 FROM operations WHERE id=?")
+              .get(key(audit, audit.after.mode, year)),
+            undefined,
+          );
+          assert.equal(
+            JSON.parse(
+              db
+                .prepare("SELECT response FROM operations WHERE id=?")
+                .get(key(audit, mode[audit.after.mode], year)).response,
+            ).mode,
+            mode[audit.after.mode],
+          );
+        }
+      db.close();
+    }
+    for (const [name, setup, pattern] of [
+      [
+        "unexplained",
+        (db, [audit]) =>
+          copyOperation(
+            db,
+            key(audit, "report", 2026),
+            key(audit, "report", 1999),
+          ),
+        /cannot be reproduced/,
+      ],
+      [
+        "taken",
+        (db, [audit]) =>
+          copyOperation(
+            db,
+            key(audit, "report", 2026),
+            key(audit, "create-sheet-clone", 2026),
+          ),
+        /already exists/,
+      ],
+    ]) {
+      const { db, audits } = open(name);
+      setup(db, audits);
+      const before = JSON.stringify(
+        db.prepare("SELECT * FROM operations ORDER BY id").all(),
+      );
+      assert.throws(
+        () => migrateSqlite(db, { convert }),
+        (error) =>
+          error.code === "SHEET_CLONE_PREFLIGHT" && pattern.test(error.message),
+        name,
+      );
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 33);
+      assert.equal(
+        JSON.stringify(
+          db.prepare("SELECT * FROM operations ORDER BY id").all(),
+        ),
+        before,
+        name,
+      );
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the conversion record is read without its earlier snapshot, which is read only until the transition is applied", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-record-"));
+  try {
+    const path = join(dir, "legacy.sqlite");
+    loadLegacySqlite(path, "v1");
+    const db = new DatabaseSync(path);
+    migrateSqlite(db, {
+      convert: sqliteSheetCloneConversion({ origins: ORIGINS, now: NOW }),
+    });
+    const traced = [],
+      store = createTeamStore(teamId, (generator) =>
+        executeSync(generator, (sql, params) => {
+          traced.push(sql);
+          const bindings = [],
+            statement = db.prepare(
+              sql.replace(/\$(\d+)/g, (_, n) => {
+                bindings.push(params[Number(n) - 1]);
+                return "?";
+              }),
+            );
+          return /^\s*SELECT/i.test(sql)
+            ? { rows: statement.all(...bindings) }
+            : {
+                rows: [],
+                rowCount: Number(statement.run(...bindings).changes),
+              };
+        }),
+      );
+    // What sync status, resume and write checks read.
+    const record = store.readConversion();
+    assert.equal(record.base_head, manifest.sync.v1.head);
+    assert.equal(record.from_protocol, 1);
+    assert.equal(record.to_protocol, 3);
+    assert.equal("previous_snapshot" in record, false);
+    assert.deepEqual(
+      traced.filter((sql) => /\bprevious_snapshot\b|\*/.test(sql)),
+      [],
+    );
+    // What publishing the transition reads: the bytes recorded offline.
+    const bytes = store.readConversionSnapshot();
+    assert.ok(bytes instanceof Uint8Array && bytes.length > 0);
+    assert.equal(digest(bytes), record.previous_snapshot_hash);
+    store.completeConversion("f".repeat(40));
+    assert.equal(store.readConversionSnapshot(), null);
+    assert.equal(store.readConversion().completed_head, "f".repeat(40));
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the CLI dry-run converts a copy only, refuses without the conversion and prints the same result as the real run", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-cli-"));
   try {
@@ -549,6 +721,50 @@ test("Markdown links: only destinations move, byte for byte, and the conversion 
   assert.match(relativeOnly, /\]\(\/links\/sheet-clone-task\//);
 });
 
+test("Markdown links: each destination changes once; comments, escaped code and other html keep their bytes", () => {
+  const C = "11111111-1111-1111-1111-111111111111",
+    T = "22222222-2222-2222-2222-222222222222",
+    old = (kind) => `/links/report-${kind}/${C}/${T}`,
+    next = (kind) => `/links/sheet-clone-${kind}/${C}/${T}`,
+    convert = (markdown) =>
+      convertMarkdownLinks(markdown, { origins: ORIGINS });
+  const cases = [
+    // A toggle title holding an `<a>` tag: one range, one edit.
+    [
+      `<details>\n<summary><a href="${old("task")}">제목</a></summary>\n\n본문\n</details>`,
+      `<details>\n<summary><a href="${next("task")}">제목</a></summary>\n\n본문\n</details>`,
+      1,
+    ],
+    [
+      `<details open>\n<summary><h3><a href='${old("memo")}'>h</a> [m](${old("task")})</h3></summary>\n\n</details>`,
+      `<details open>\n<summary><h3><a href='${next("memo")}'>h</a> [m](${next("task")})</h3></summary>\n\n</details>`,
+      2,
+    ],
+    // Comments and escaped code are text, not links.
+    [
+      `<!-- <a href="${old("task")}">x</a> [y](${old("task")}) -->\n\n<pre><code>&lt;a href="${old("task")}"&gt;</code></pre>\n\n앞 <!-- [z](${old("memo")}) --> 뒤\n`,
+      null,
+      0,
+    ],
+    // A summary that is not a toggle title stays the html it is.
+    [`<summary>[x](${old("task")})</summary>\n`, null, 0],
+    // Ordinary Markdown: inline, reference, autolink and an inline anchor
+    // whose other attribute only mentions an address.
+    [
+      `[a](${old("task")}) [r][ref] <${ORIGINS[0]}${old("memo")}> <a title="href=${old("task")}" href="${old("memo")}?v=1#s">b</a> \`${old("task")}\`\n\n\`\`\`\n[c](${old("task")})\n\`\`\`\n\n[ref]: ${old("memo")} "t"\n`,
+      `[a](${next("task")}) [r][ref] <${ORIGINS[0]}${next("memo")}> <a title="href=${old("task")}" href="${next("memo")}?v=1#s">b</a> \`${old("task")}\`\n\n\`\`\`\n[c](${old("task")})\n\`\`\`\n\n[ref]: ${next("memo")} "t"\n`,
+      4,
+    ],
+  ];
+  for (const [markdown, expected, changes] of cases) {
+    const converted = convert(markdown);
+    assert.equal(converted.markdown, expected ?? markdown, markdown);
+    assert.equal(converted.changes, changes, markdown);
+    assert.deepEqual(converted.unverified, [], markdown);
+    assert.equal(convert(converted.markdown).changes, 0, markdown);
+  }
+});
+
 test("a JSON export v6 converts to v7 with sheetClones and converted links", () => {
   const legacy = JSON.parse(read("export-v6.json")),
     { export: converted, links } = convertExport(legacy, { origins: ORIGINS });
@@ -567,6 +783,56 @@ test("a JSON export v6 converts to v7 with sheetClones and converted links", () 
     ),
   );
   assert.throws(() => convertExport(converted, {}), /schemaVersion 6/);
+});
+
+test("the export CLI dry-run writes nothing; the real run writes the converted file once", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-export-cli-"));
+  try {
+    const output = join(dir, "export-v7.json"),
+      run = (...args) =>
+        spawnSync(
+          process.execPath,
+          [
+            "scripts/migrate.mjs",
+            "--engine",
+            "export",
+            "--input",
+            new URL("export-v6.json", FIXTURE).pathname,
+            "--output",
+            output,
+            ...ORIGINS.flatMap((origin) => ["--site-origin", origin]),
+            ...args,
+          ],
+          { encoding: "utf8" },
+        );
+    const dry = run("--dry-run");
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.equal(existsSync(output), false);
+    const preview = JSON.parse(dry.stdout);
+    assert.equal(preview.dryRun, true);
+    assert.equal(preview.applied, false);
+    const real = run();
+    assert.equal(real.status, 0, real.stderr);
+    const { dryRun, applied, ...result } = preview;
+    assert.deepEqual(JSON.parse(real.stdout), result);
+    const written = readFileSync(output, "utf8");
+    assert.equal(
+      written,
+      JSON.stringify(
+        convertExport(JSON.parse(read("export-v6.json")), { origins: ORIGINS })
+          .export,
+      ),
+    );
+    // An existing file is neither previewed over nor replaced.
+    for (const args of [[], ["--dry-run"]]) {
+      const again = run(...args);
+      assert.notEqual(again.status, 0);
+      assert.match(again.stderr, /Refusing to overwrite/);
+      assert.equal(readFileSync(output, "utf8"), written);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a final v33 backup restores as v33, converts to v34 and keeps its recovery state and images", async (t) => {

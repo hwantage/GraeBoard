@@ -200,22 +200,11 @@ export async function exportTeam(
       throw new Error(
         "Pause synchronization and freeze writes before logical transfer",
       );
-    // An unconverted team schema (before v3) is read only as a backup
-    // source; its rows keep the earlier names and format version 1.
-    const legacy =
-      Number(
-        (
-          await tx.query(
-            "SELECT COUNT(*) AS n FROM schema_migrations WHERE scope='team'",
-          )
-        ).rows[0].n,
-      ) < 3;
     const tables = {};
     for (const [table, order] of TEAM_TRANSFER_TABLES) {
       if (
-        (adapter.engine === "sqlite" &&
-          ["site_entities", "site_audit", "site_operations"].includes(table)) ||
-        (legacy && table === "sync_conversions")
+        adapter.engine === "sqlite" &&
+        ["site_entities", "site_audit", "site_operations"].includes(table)
       )
         continue;
       const rows = (
@@ -233,15 +222,12 @@ export async function exportTeam(
     }
     if (adapter.engine === "sqlite")
       throw new Error("Unexpected asynchronous SQLite export");
-    return sealTransfer(
-      {
-        teamId,
-        sourceEngine: adapter.engine,
-        createdAt: stamp(),
-        tables,
-      },
-      legacy ? 1 : undefined,
-    );
+    return sealTransfer({
+      teamId,
+      sourceEngine: adapter.engine,
+      createdAt: stamp(),
+      tables,
+    });
   };
   if (adapter.engine !== "sqlite")
     return adapter.withTeamTransaction(teamId, capture, { readOnly: true });
