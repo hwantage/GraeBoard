@@ -94,7 +94,7 @@ test.beforeEach(async ({ page }) => {
   // The print dialog cannot open in a test browser. Record what the page
   // would print and report the dialog closed.
   await page.addInitScript(() => {
-    const printed: { title: string; html: string }[] = [];
+    const printed: { title: string; pageTitle: string; html: string }[] = [];
     Object.assign(window, { printed });
     new MutationObserver((records) => {
       for (const record of records)
@@ -107,6 +107,7 @@ test.beforeEach(async ({ page }) => {
             view.print = () => {
               printed.push({
                 title: view.document.title,
+                pageTitle: document.title,
                 html: view.document.documentElement.outerHTML,
               });
               view.dispatchEvent(new Event("afterprint"));
@@ -303,6 +304,7 @@ test("PDF는 모든 토글을 펼친 문서만 인쇄 창으로 보낸다", asyn
   const image = await uploadImage(page);
   await save(page, taskIds[0], sample(image));
   await open(page);
+  const siteTitle = await page.title();
   await downloadButton(detail(page)).click();
   await menu(page)
     .getByRole("menuitem", { name: "PDF (인쇄 창에서 저장)" })
@@ -311,16 +313,19 @@ test("PDF는 모든 토글을 펼친 문서만 인쇄 창으로 보낸다", asyn
     .poll(() => page.evaluate(() => (window as any).printed.length))
     .toBe(1);
   const [printed] = await page.evaluate(() => (window as any).printed);
-  // The frame's title names the PDF.
+  // The document's title names the PDF: Chromium takes the page's title,
+  // others the frame's.
   expect(printed.title).toBe("문서 1");
+  expect(printed.pageTitle).toBe("문서 1");
   expect(printed.html).toContain('<details open=""><summary><h2>접힌 토글');
   expect(printed.html).toMatch(/<img [^>]*src="data:image\/webp;base64,/);
   expect(printed.html).toMatch(/<figure class="mermaid"><svg /);
   // The app's fonts come along, and the page prints without its chrome.
   expect(printed.html).toMatch(/@font-face\s*{[^}]*Pretendard/);
   expect(printed.html).not.toContain("document-rich-tools");
-  // The frame goes once the dialog closes.
+  // The frame goes and the page's title returns once the dialog closes.
   await expect(page.locator(".document-print-frame")).toHaveCount(0);
+  await expect(page).toHaveTitle(siteTitle);
   await expect(downloadButton(detail(page))).toBeEnabled();
   const preview = await page.context().newPage();
   await preview.setContent(printed.html);

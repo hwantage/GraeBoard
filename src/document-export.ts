@@ -56,7 +56,7 @@ export async function exportDocument(
         }),
         fileName(input.title, "html"),
       );
-    else await printPage(page(input.title, body, fontFaces()));
+    else await printPage(page(input.title, body, fontFaces()), input.title);
   }
   // Images that could not be read stay out of the file.
   return files.missing.size;
@@ -349,8 +349,10 @@ function fontFaces() {
 }
 
 // A frame written by this page takes the page's address, which the print
-// dialog shows instead of about:blank. Its title names the PDF.
-async function printPage(html: string) {
+// dialog shows instead of about:blank. Chromium names the PDF after the
+// page's title, not the frame's, so the page carries the document's title
+// while the dialog is open.
+async function printPage(html: string, title: string) {
   // A frame left by a dialog that never reported closing.
   document.querySelector(".document-print-frame")?.remove();
   const frame = document.createElement("iframe");
@@ -368,11 +370,22 @@ async function printPage(html: string) {
     [...doc.images].map((image) => image.decode().catch(() => {})),
   );
   await doc.fonts?.ready;
-  view.addEventListener("afterprint", () => setTimeout(() => frame.remove()), {
+  const pageTitle = document.title;
+  const restore = () => {
+    if (document.title === title) document.title = pageTitle;
+    frame.remove();
+  };
+  view.addEventListener("afterprint", () => setTimeout(restore), {
     once: true,
   });
-  view.focus();
-  view.print();
+  document.title = title;
+  try {
+    view.focus();
+    view.print();
+  } catch (error) {
+    restore();
+    throw error;
+  }
 }
 
 // The document's look on screen, without the app around it.
