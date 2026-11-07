@@ -20,10 +20,13 @@ export type DocumentToolMenuItem = {
 // A toolbar button with a small arrow beside it. The button runs the main
 // action; the arrow opens related actions. Picking one returns to the text.
 // A click keeps the caret in the document; the keyboard moves into the menu.
+// Without a main action the button itself opens the menu, and a pick from
+// the keyboard returns to it.
 export default function DocumentToolMenu({
   label,
   menuLabel,
   icon,
+  className,
   disabled,
   onClick,
   items,
@@ -31,8 +34,9 @@ export default function DocumentToolMenu({
   label: string;
   menuLabel: string;
   icon: ReactNode;
+  className?: string;
   disabled?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
   items: DocumentToolMenuItem[];
 }) {
   const { open, setOpen, position, popup, trigger, onKeyDown, container } =
@@ -82,25 +86,15 @@ export default function DocumentToolMenu({
     event.preventDefault();
     enabled[next].focus();
   }
-  return (
-    <span className="document-split-tool">
-      <button
-        type="button"
-        disabled={disabled}
-        aria-label={label}
-        data-tooltip={label}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={onClick}
-      >
-        {icon}
-      </button>
+  const menu = (
+    <>
       <button
         ref={trigger}
         type="button"
-        className="document-split-arrow"
+        className={onClick ? "document-split-arrow" : className}
         disabled={disabled}
-        aria-label={menuLabel}
-        data-tooltip={menuLabel}
+        aria-label={onClick ? menuLabel : label}
+        data-tooltip={onClick ? menuLabel : label}
         aria-haspopup="menu"
         aria-expanded={open}
         onMouseDown={(event) => event.preventDefault()}
@@ -115,7 +109,7 @@ export default function DocumentToolMenu({
           setOpen(true);
         }}
       >
-        <ChevronDown size={12} aria-hidden="true" />
+        {onClick ? <ChevronDown size={12} aria-hidden="true" /> : icon}
       </button>
       {open &&
         createPortal(
@@ -139,6 +133,11 @@ export default function DocumentToolMenu({
                 disabled={item.disabled}
                 data-tooltip={item.tooltip}
                 onClick={() => {
+                  if (
+                    !onClick &&
+                    popup.current?.contains(document.activeElement)
+                  )
+                    trigger.current?.focus();
                   setOpen(false);
                   item.run();
                 }}
@@ -150,6 +149,22 @@ export default function DocumentToolMenu({
           </div>,
           container(),
         )}
+    </>
+  );
+  if (!onClick) return menu;
+  return (
+    <span className="document-split-tool">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={label}
+        data-tooltip={label}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClick}
+      >
+        {icon}
+      </button>
+      {menu}
     </span>
   );
 }

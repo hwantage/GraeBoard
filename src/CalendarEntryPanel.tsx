@@ -498,6 +498,7 @@ export default function CalendarEntryPanel({
               path={`${path}/document`}
               draftKey={`weekly-plan:calendar-document:${userId}:${entry.teamId}:${entry.userId}:${entry.id}`}
               label="일정 문서"
+              title={title}
               live
               onRemoteDocument={(data) => {
                 const remote = data as CalendarDocument;

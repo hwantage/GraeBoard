@@ -409,6 +409,8 @@ const remarkTableShape = $remark("remarkDocumentTableShape", () => () => {
   }
   return (tree: Root) => visit(tree as MarkdownNode);
 });
+// Downloads parse the source with the same schema (document-export.ts).
+export { codeBlockMetaSchema, remarkTableShape };
 
 // Compare meaning, not choices of delimiters, indentation or table spacing.
 // Unrepresented AST nodes must never be silently discarded by rich editing.

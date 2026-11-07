@@ -131,9 +131,10 @@
   height: 26px;
   padding: 0;
 }
-/* The contents button ends the row, right of the mode switch: framed like
-   the switch above the document, a plain button in the toolbar. */
-.document-controls .document-toc-toggle {
+/* The contents button ends the row, right of the mode switch, with the
+   download button between them: framed like the switch above the document,
+   plain buttons in the toolbar. */
+.document-controls :is(.document-toc-toggle, .document-download) {
   display: grid;
   flex-shrink: 0;
   place-items: center;
@@ -144,10 +145,11 @@
   background: white;
   color: var(--muted);
 }
-.document-controls .document-toc-toggle:focus-visible {
+.document-controls :is(.document-toc-toggle, .document-download):focus-visible {
   outline-offset: 2px;
 }
-.document-toc-toggle[aria-pressed="true"] {
+.document-toc-toggle[aria-pressed="true"],
+.document-download[aria-expanded="true"] {
   background: var(--accent-pastel);
   color: var(--accent-strong);
 }
@@ -180,6 +182,15 @@
 }
 .document-formatbar .document-split-arrow[aria-expanded="true"] {
   background: var(--accent-pastel);
+}
+/* The page a PDF prints from, out of sight. */
+.document-print-frame {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 210mm;
+  height: 297mm;
+  border: 0;
 }
 .document-tool-menu {
   position: fixed;
@@ -1690,8 +1701,10 @@ button.memo-document-title {
 @media (max-width: 700px) {
   .document-rich-tools,
   .document-modes,
-  /* The row stays for the contents button alone. */
-  .document-mode-bar:not(:has(.document-toc-toggle:not([data-reserved]))),
+  /* The row stays for the download and contents buttons alone. */
+  .document-mode-bar:not(
+      :has(.document-download, .document-toc-toggle:not([data-reserved]))
+    ),
   .document-block-handle {
     display: none;
   }

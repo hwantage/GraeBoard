@@ -353,9 +353,12 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
   await expect(
     calendar.getByRole("textbox", { name: "일정 문서 리치 편집" }),
   ).toBeVisible();
-  // The row above the document holds the contents button alone.
+  // The row above the document holds the download and contents buttons.
   const calendarRow = calendar.locator(".document-mode-bar");
-  await expect(calendarRow.getByRole("button")).toHaveCount(1);
+  await expect(calendarRow.getByRole("button")).toHaveCount(2);
+  await expect(
+    calendarRow.getByRole("button", { name: "다운로드", exact: true }),
+  ).toBeVisible();
   await expect(
     calendarRow.getByRole("button", { name: "목차", exact: true }),
   ).toBeVisible();
@@ -375,7 +378,10 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
     "메모 본문",
   );
   const memoRow = memo.locator(".document-mode-bar");
-  await expect(memoRow.getByRole("button")).toHaveCount(1);
+  await expect(memoRow.getByRole("button")).toHaveCount(2);
+  await expect(
+    memoRow.getByRole("button", { name: "다운로드", exact: true }),
+  ).toBeVisible();
   await expect(
     memoRow.getByRole("button", { name: "목차", exact: true }),
   ).toBeVisible();

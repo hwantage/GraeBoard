@@ -1537,7 +1537,12 @@ test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝 
   const contents = (await tools
     .getByRole("button", { name: "목차", exact: true })
     .boundingBox())!;
-  expect(contents.x - (richBox.x + richBox.width)).toBeLessThan(12);
+  const download = (await tools
+    .getByRole("button", { name: "다운로드", exact: true })
+    .boundingBox())!;
+  // The switch, the download button and the contents button end the row.
+  expect(download.x - (richBox.x + richBox.width)).toBeLessThan(12);
+  expect(contents.x - (download.x + download.width)).toBeLessThan(12);
   await tools.screenshot({ path: info.outputPath("toolbar-rich.png") });
   expect(contents.x + contents.width).toBeGreaterThan(
     toolbar.x + toolbar.width - 24,
@@ -2785,7 +2790,9 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   await expect(source(page)).toHaveCSS("font-family", /^"?Pretendard"?,/);
   await expect(source(page)).toHaveCSS("font-size", "15px");
   const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
-  for (const name of ["리치 문서"]) {
+  // The download button follows the switch; the hidden contents place does
+  // not take focus.
+  for (const name of ["리치 문서", "다운로드"]) {
     await page.keyboard.press(tab);
     await expect(
       detail(page).getByRole("button", { name, exact: true }),
@@ -3678,16 +3685,20 @@ test("문서 제목 탭과 리치 도구는 긴 문서에서 고정되고 이미
     contents = await detail(page)
       .getByRole("button", { name: "목차", exact: true })
       .boundingBox(),
+    download = await detail(page)
+      .getByRole("button", { name: "다운로드", exact: true })
+      .boundingBox(),
     tools = await detail(page).locator(".document-rich-tools").boundingBox();
   expect(tabs!.y).toBeCloseTo(bounds!.y, 0);
   expect(tools!.y).toBeCloseTo(tabs!.y + tabs!.height, 0);
   // The mode switch is pinned with the toolbar, at its right end before
-  // the contents button.
+  // the download and contents buttons.
   expect(controls!.y).toBeGreaterThanOrEqual(tools!.y);
   expect(controls!.y + controls!.height).toBeLessThanOrEqual(
     tools!.y + tools!.height,
   );
-  expect(contents!.x - (controls!.x + controls!.width)).toBeLessThan(12);
+  expect(download!.x - (controls!.x + controls!.width)).toBeLessThan(12);
+  expect(contents!.x - (download!.x + download!.width)).toBeLessThan(12);
   expect(contents!.x + contents!.width).toBeGreaterThan(
     tools!.x + tools!.width - 24,
   );
