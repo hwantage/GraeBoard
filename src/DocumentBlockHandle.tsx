@@ -715,15 +715,34 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         : null;
     let top = rect.top;
     let bottom = Math.min(rect.bottom, top + 28 * scale);
+    let lineBottom = bottom;
     const text = firstText(block);
     if (text !== null)
       try {
         const caret = view.coordsAtPos(text);
         top = caret.top;
+        lineBottom = caret.bottom;
         bottom = Math.min(caret.bottom, top + 40 * scale);
       } catch {
         // Keep the block's own top edge.
       }
+    // A first line taller than the view, such as a large image, keeps the
+    // handle beside its visible part when its top is scrolled under the
+    // sticky toolbar or out of view. Ordinary lines skip the lookup.
+    const visible =
+      lineBottom - top > 2 * HANDLE_HEIGHT * scale
+        ? shell.current
+            ?.querySelector(".document-rich-tools")
+            ?.getBoundingClientRect().bottom
+        : undefined;
+    if (
+      visible !== undefined &&
+      top < visible &&
+      lineBottom - HANDLE_HEIGHT * scale > visible
+    ) {
+      top = visible;
+      bottom = Math.min(lineBottom, top + 40 * scale);
+    }
     return {
       pos: block.pos,
       left:

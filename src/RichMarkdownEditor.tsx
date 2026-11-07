@@ -25,7 +25,13 @@ import {
   openDocumentLink,
   pasteDocumentLink,
 } from "./DocumentLinkNode";
-import { documentImageView, type ImagePreview } from "./DocumentImageView";
+import {
+  documentImageView,
+  imageCaret,
+  imageComposition,
+  withoutImageSpacer,
+  type ImagePreview,
+} from "./DocumentImageView";
 import {
   documentCodeBlockSelection,
   documentCodeBlockView,
@@ -114,6 +120,7 @@ import {
   type Node,
 } from "@milkdown/kit/prose/model";
 import { keydownHandler } from "@milkdown/kit/prose/keymap";
+import { dropCursor } from "@milkdown/kit/prose/dropcursor";
 import {
   closeHistory,
   undoDepth,
@@ -290,6 +297,13 @@ function needsTrailingParagraph(last: Node | null) {
     return last.lastChild?.type.name === "image";
   return true;
 }
+
+// Shows where a dragged image or text lands, between characters or between
+// blocks, at the point the drop itself uses. Milkdown's cursor plugin would
+// also add a gap cursor and drop images only between blocks.
+const dropIndicator = $prose(() =>
+  dropCursor({ color: false, width: 2, class: "document-drop-cursor" }),
+);
 
 // Uploaded images land at the end of their paragraph without a visible caret.
 // Continue typing in the paragraph below, creating it when needed.
@@ -541,13 +555,16 @@ function clipboardMarkdown(ctx: Ctx, slice: Slice) {
     openStart--;
     openEnd--;
   }
+  const { schema } = ctx.get(editorViewCtx).state;
+  // A selected image, or another inline node, is copied as its own line.
+  if (!line && content.firstChild?.isInline)
+    line = schema.nodes.paragraph.create(null, content);
   // Plain words stay as written, without Markdown escapes such as "\[".
   let plain = !!line;
   line?.forEach((node) => {
     if (!node.isText || node.marks.length) plain = false;
   });
   if (line && (plain || line.type.spec.code)) return line.textContent;
-  const { schema } = ctx.get(editorViewCtx).state;
   try {
     const doc = schema.topNodeType.createChecked(
       null,
@@ -1116,6 +1133,9 @@ export default function RichMarkdownEditor(props: Props) {
       .use(trailing)
       .use(blockDrag)
       .use(blockSelect)
+      .use(imageCaret)
+      .use(imageComposition)
+      .use(dropIndicator)
       .use(
         $prose(
           (ctx) =>
@@ -1152,7 +1172,7 @@ export default function RichMarkdownEditor(props: Props) {
                     !view.state.doc.eq(previous.doc)
                   )
                     latest.current.onChange(
-                      ctx.get(serializerCtx)(view.state.doc),
+                      ctx.get(serializerCtx)(withoutImageSpacer(view.state)),
                     );
                 },
               }),
