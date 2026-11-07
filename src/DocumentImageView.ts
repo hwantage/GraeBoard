@@ -23,6 +23,24 @@ import type { DocumentImages } from "./document-storage";
 
 export type ImagePreview = { src: string; alt: string };
 
+// A screen capture holds the display's device pixels, twice its size on
+// screen on a Retina display. A pasted or dropped image starts at this width
+// so it shows at the size it was captured; the reset button shows every
+// pixel.
+export async function capturedWidth(file: Blob) {
+  const scale = window.devicePixelRatio;
+  if (!(scale > 1)) return null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const width = bitmap.width;
+    bitmap.close();
+    return Math.round(width / scale);
+  } catch {
+    // An image the browser cannot read keeps its own width.
+    return null;
+  }
+}
+
 // Browsers differ on the caret beside an image, which is not editable text:
 // Chromium draws none and WebKit one as tall as the image. The image beside
 // the caret marks that side; the stylesheet draws the caret there and hides

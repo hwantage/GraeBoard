@@ -11,7 +11,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { isDocumentImage } from "../shared/document-images.js";
+import {
+  isDocumentImage,
+  withDocumentImageWidth,
+} from "../shared/document-images.js";
 import { parseDocumentLinkPath } from "../shared/document-links.js";
 import {
   DocumentLinkTitles,
@@ -26,6 +29,7 @@ import {
   pasteDocumentLink,
 } from "./DocumentLinkNode";
 import {
+  capturedWidth,
   documentImageView,
   imageCaret,
   imageComposition,
@@ -840,16 +844,18 @@ export default function RichMarkdownEditor(props: Props) {
             try {
               const nodes = [];
               for (const file of Array.from(files)) {
-                const url = await latest.current.onUpload(
-                  file,
-                  controller.signal,
-                );
+                const [url, width] = await Promise.all([
+                  latest.current.onUpload(file, controller.signal),
+                  capturedWidth(file),
+                ]);
                 if (!active || controller.signal.aborted) return [];
                 if (!(latest.current.images?.accepts || isDocumentImage)(url))
                   throw new Error("이미지 주소를 확인할 수 없습니다.");
+                const withWidth =
+                  latest.current.images?.withWidth || withDocumentImageWidth;
                 nodes.push(
                   schema.nodes.image.create({
-                    src: url,
+                    src: (width && withWidth(url, width)) || url,
                     alt: file.name.replace(/\.[^.]+$/, "") || "붙여넣은 이미지",
                   }),
                 );
