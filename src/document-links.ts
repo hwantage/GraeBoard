@@ -27,6 +27,13 @@ export const documentLinkHref = (target: DocumentLinkTarget): string =>
   documentLinkPath(target);
 export const documentLinkUrl = (target: DocumentLinkTarget) =>
   new URL(documentLinkPath(target), location.origin).href;
+// The full-page button opens its document in a new tab at this address. The
+// workspace reads the flag once and cleans the address (App.tsx); stored and
+// copied links never carry it.
+export const documentFullPageUrl = (target: DocumentLinkTarget) =>
+  `${documentLinkUrl(target)}?view=full`;
+export const documentLinkFullPage = (search: string) =>
+  new URLSearchParams(search).get("view") === "full";
 export const UNAVAILABLE_LINK_MESSAGE =
   "링크한 문서를 열 수 없습니다. 삭제되었거나 접근 권한이 없습니다.";
 
