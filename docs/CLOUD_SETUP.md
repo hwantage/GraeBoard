@@ -95,7 +95,7 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 전용 DB 접속 URL과 GitHub 토큰은 Supabase Edge Secrets에 보관합니다. Supabase 기본 `SUPABASE_DB_URL`을 사용할 때는 별도 DB Secret을 만들지 않습니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
 
-## 3. SQLite v29·v30·v31을 v32로 올리기
+## 3. SQLite v29·v30·v31·v32를 v33으로 올리기
 
 실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32 → v33**입니다. 일반 서버 시작은 기존 v29·v30·v31·v32 DB를 자동 변환하지 않습니다.
 
@@ -275,7 +275,7 @@ npm run build:pages
 
 이 경로는 GitHub·Supabase·Cloudflare 웹 화면만으로 진행하며 사내망·운영자 PC 작업이 없습니다. 설정 안내의 **배포** 단계에서 토큰 세 개(Cloudflare API, Supabase 액세스, 외부용 GitHub)와 Cloudflare Account ID를 입력하고 **배포 설정 만들기**를 누르면 Fork에 넣을 값 두 개가 만들어집니다. Worker 이름과 주소, Edge 설정, 비밀 키를 Cloudflare·Supabase 화면에 옮겨 적지 않습니다. 토큰은 브라우저 메모리에서 값을 만드는 데만 쓰고 사내 서버로 보내거나 저장하지 않습니다. 앞 단계의 외부 접속 주소·Access 값·bucket·Reference ID·Account ID처럼 비밀이 아닌 값만 팀별로 브라우저(`localStorage`)에 기억해 새로고침 뒤에도 같은 설정을 만듭니다. `TEAM_SITE_SECRETS`의 `GRAEBOARD_GATEWAY_SECRET`·`GRAEBOARD_RESOURCE_SECRET`·`GRAEBOARD_ACCESS_TOKEN_KEY`는 만들 때마다 `crypto.getRandomValues`로 새로 정하며, 배포 스크립트는 Supabase에 `GRAEBOARD_ACCESS_TOKEN_KEY`가 이미 있으면 그 값을 유지해 발급한 접속 토큰을 보존합니다. gateway 두 키는 같은 실행에서 양쪽에 함께 바뀝니다. 워크플로는 Secret 안의 각 값을 로그에서 가립니다.
 
-Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settings → Secrets and variables → Actions**에 다음 두 값을 넣습니다. `TEAM_SITE_CONFIG`나 `TEAM_SITE_DEPLOY`가 없는 저장소(원본 포함)에서는 아무것도 배포하지 않습니다.
+Fork에서는 **Actions** 탭에서 워크플로 실행을 허용하고 **Settings → Secrets and variables → Actions**에 다음 두 값을 넣습니다. `TEAM_SITE_CONFIG`가 비어 있지 않거나 기존 `TEAM_SITE_DEPLOY`가 `enabled`이면 워크플로가 실행됩니다. 두 조건 모두 해당하지 않는 저장소(원본 포함)에서는 배포하지 않습니다.
 
 | 종류          | 이름                | 값                                                                                           |
 | ------------- | ------------------- | -------------------------------------------------------------------------------------------- |

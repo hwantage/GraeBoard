@@ -1,5 +1,7 @@
 # 데이터 동기화 개선 작업 완료 보고 및 잔여 사항
 
+이 문서는 2026-10-29 작업과 당시 후속 논의를 보존한 과거 기록입니다. 현재 구현·용량·지원 버전은 [개발 안내](DEVELOPMENT.md), [데이터 형식](DATA_FORMAT.md), [설치 안내](CLOUD_SETUP.md)를 따릅니다. 이후 변경과 검증은 [개발 변경·검증 이력](DEVELOPMENT_HISTORY.md)에서 확인합니다.
+
 작업 기준은 `draft/data-sync-review-handoff-20261029.md`입니다. A2·A3·A4 인덱스/정리·A6은 사용자가 승인한 `draft/data-sync-review-design-20261029.md` 전체 설계에 따라 구현했습니다. 운영 DB 변환·삭제·배포는 실행하지 않았습니다.
 
 전체 50개 항목 중 **49개 완료, C11 1개 보류**입니다. C11 측정기와 요구 시나리오는 구현·실행했고 사본 편집과 실제 브라우저 30개의 재조회 기준을 통과했습니다. 연결 유휴 저장 p95는 미연결 대비 32.670% 증가하여 10% 이내 목표를 충족하지 못했습니다. 입증된 추가 개선 없이 통과로 처리하거나 측정 기준을 완화하지 않았습니다.
@@ -83,7 +85,7 @@
 
 전체 검사에서 발견한 구형 fixture 가정도 수정했습니다. worker 장애는 한 번만 주입한 뒤 같은 lane의 실제 production worker 재시작과 P 해소를 확인합니다. 미래 DB 버전 검사는 최신 migration 행만 교체·복원합니다. Cron 장애 검사는 저장된 publishAfter 이후 실제 R2 호출 증가와 복구 수렴을 확인합니다.
 
-로그·원시 측정값은 Git에서 제외하는 `docs/validation/`에 보관합니다. [전체 테스트 로그](validation/npm-test-20261029.log), [PostgreSQL strict 로그](validation/postgres-strict-20261029.log)를 참고합니다.
+당시 로그·원시 측정값은 Git 제외 경로 `docs/validation/`에 로컬로 보관했습니다. 파일명은 `npm-test-20261029.log`와 `postgres-strict-20261029.log`이며 새로 clone한 저장소에는 포함되지 않습니다. 이 보고서의 수치는 당시 기록이고 현재 커밋의 재검증 결과가 아닙니다. 재검증 절차는 [개발 안내의 검증](DEVELOPMENT.md#검증)을 따릅니다.
 
 ## 데이터 안전과 검증 범위
 

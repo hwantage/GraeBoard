@@ -121,7 +121,7 @@ npm run test:e2e
 | 런타임 | OS·CPU, Node.js/npm 버전과 실행 파일 경로 |
 | 서비스 | 실행 계정, 작업 디렉터리, 프로세스 수, 시작·정지·로그 명령, 자동 재시작·예약 작업 |
 | DB·이미지 | 실제 DB 파일과 이미지 폴더의 절대 경로, 디스크 여유·권한 |
-| 접속 | HOST·PORT·APP_ORIGIN·COOKIE_SECURE·TRUST_PROXY, 역방향 프록시 설정 |
+| 접속 | HOST·PORT·APP_ORIGIN·COOKIE_SECURE·TRUST_PROXY, 직접 TLS의 TLS_CERT_FILE·TLS_KEY_FILE 또는 역방향 프록시 설정 |
 | 동기화 | 사용 여부, 설치 UUID, 프로필, Git clone 절대 경로, 암호화 키·토큰의 보관 위치 |
 | 복구 | 이전 릴리스 보존 위치, 백업 보관 위치, 복구 소요 시간 |
 
@@ -262,12 +262,13 @@ npm run migrate -- --engine sqlite --database "$PATCH_REHEARSAL/check.sqlite"
 
 ### 4-3. 원격 동기화를 끈 사본 서버 확인
 
-다음은 비어 있는 로컬 포트 `4312`를 사용하는 예시입니다. `$PATCH_NEW`에서 실행하고, 복구한 사본만 연결합니다.
+다음은 비어 있는 로컬 포트 `4312`에서 HTTP로 확인하는 예시입니다. `$PATCH_NEW`에서 실행하고, 복구한 사본만 연결합니다. 직접 HTTPS를 쓰는 운영 `.env`가 연결되어 있어도 이 명령에서만 TLS 변수 두 개를 빈 값으로 재정의합니다. 환경 변수가 `.env`보다 우선하므로 운영 인증서 설정 파일은 수정하지 않습니다.
 
 ```sh
 PATCH_REHEARSAL_ID="$(node --input-type=module -e "import { randomUUID } from 'node:crypto'; console.log(randomUUID())")"
 NODE_ENV=production GRAEBOARD_SITE=internal HOST=127.0.0.1 PORT=4312 \
   APP_ORIGIN=http://127.0.0.1:4312 COOKIE_SECURE=0 TRUST_PROXY=0 \
+  TLS_CERT_FILE='' TLS_KEY_FILE='' \
   DB_PATH="$PATCH_REHEARSAL/check.sqlite" \
   DOCUMENT_IMAGES_DIR="$PATCH_REHEARSAL/document-images" \
   GRAEBOARD_SYNC_DIR="$PATCH_REHEARSAL/sync" \
