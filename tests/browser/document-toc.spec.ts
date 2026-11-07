@@ -131,17 +131,21 @@ test("목차는 리치 문서 오른쪽에 열고 닫으며 제목으로 이동�
   const body = detail(page).locator(".modal-body");
   const tools = detail(page).locator(".document-rich-tools");
   const button = tocButton(detail(page));
-  // The button ends the toolbar, just right of the mode switch.
+  // The button ends the toolbar, right of the mode switch and the download
+  // button.
   await expect(tools.getByRole("button", { name: "목차" })).toBeVisible();
   await expect(button).toHaveAttribute("aria-pressed", "false");
   const modes = detail(page).getByRole("group", { name: "문서 편집 모드" });
-  const [buttonBox, modesBox, toolsBox] = await Promise.all([
+  const [buttonBox, modesBox, downloadBox, toolsBox] = await Promise.all([
     button.boundingBox(),
     modes.boundingBox(),
+    tools.getByRole("button", { name: "다운로드", exact: true }).boundingBox(),
     tools.boundingBox(),
   ]);
-  expect(modesBox!.x + modesBox!.width).toBeLessThanOrEqual(buttonBox!.x);
-  expect(buttonBox!.x - (modesBox!.x + modesBox!.width)).toBeLessThan(12);
+  expect(modesBox!.x + modesBox!.width).toBeLessThanOrEqual(downloadBox!.x);
+  expect(downloadBox!.x - (modesBox!.x + modesBox!.width)).toBeLessThan(12);
+  expect(downloadBox!.x + downloadBox!.width).toBeLessThanOrEqual(buttonBox!.x);
+  expect(buttonBox!.x - (downloadBox!.x + downloadBox!.width)).toBeLessThan(12);
   expect(buttonBox!.x + buttonBox!.width).toBeGreaterThan(
     toolsBox!.x + toolsBox!.width - 24,
   );

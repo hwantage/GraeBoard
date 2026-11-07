@@ -6,6 +6,7 @@ import {
   type Locator,
 } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { unpack } from "../../shared/compact.js";
 import { todayKey } from "../../shared/domain.js";
 import { addDays } from "../../shared/calendar.js";
@@ -1307,6 +1308,51 @@ test("시크릿 문서 크기·이미지 형식·용량을 검사하고 서버 �
   await expect(source(page)).toBeVisible();
   await expect(source(page)).toHaveValue(/서버 이미지/);
   expectPrivate(requests, title, "보존된 문서", "invalid private image");
+});
+
+test("시크릿 문서는 로컬 이미지를 넣어 내려받고 서버에 내용을 보내지 않는다", async ({
+  page,
+}) => {
+  const title = `내려받기 ${randomUUID()}`,
+    body = `비밀 본문 ${randomUUID()}`;
+  await create(page, title);
+  await card(page, title).click();
+  const requests = observe(page);
+  await sourceMode(page);
+  await source(page).fill(`# ${body}\n\n두 번째 문단\n`);
+  await documentSaved(page);
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(rich(page)).toContainText(body);
+  await attachLocalImage(page, "paste");
+  await expect(rich(page).locator("img[src^='data:image/']")).toHaveCount(1);
+  await documentSaved(page);
+  const download = async (item: string) => {
+    await detail(page)
+      .getByRole("button", { name: "다운로드", exact: true })
+      .click();
+    const saved = page.waitForEvent("download");
+    await page
+      .getByRole("menu", { name: "다운로드 형식", exact: true })
+      .getByRole("menuitem", { name: item })
+      .click();
+    return saved;
+  };
+  const md = await download("Markdown (.md)");
+  // The entry's title names the file.
+  expect(md.suggestedFilename().normalize("NFC")).toBe(`${title}.md`);
+  const markdown = await readFile((await md.path())!, "utf8");
+  expect(markdown).toMatch(new RegExp(`^# ${body}\\n\\n두 번째 문단`));
+  expect(markdown).toMatch(/!\[[^\]]*\]\(data:image\/[a-z]+;base64,/);
+  expect(markdown).not.toContain("secret-image:");
+  const html = await readFile(
+    (await (await download("HTML (.html)")).path())!,
+    "utf8",
+  );
+  expect(html).toMatch(/<img [^>]*src="data:image\//);
+  expect(html).not.toContain("secret-image:");
+  expectPrivate(requests, title, body);
 });
 
 // Guards link-title lookups as well: a pasted address is document content.

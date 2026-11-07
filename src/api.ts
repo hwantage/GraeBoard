@@ -199,13 +199,18 @@ export async function logout() {
 }
 export async function download(path: string, body: unknown) {
   const res = await send<Response>(path, body);
-  const blob = await res.blob();
+  saveFile(
+    await res.blob(),
+    res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1] ||
+      "graeboard",
+  );
+}
+// Saves a file the page made itself, such as a downloaded document.
+export function saveFile(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download =
-    res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1] ||
-    "graeboard";
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

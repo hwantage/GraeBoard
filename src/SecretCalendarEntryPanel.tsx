@@ -283,6 +283,7 @@ export default function SecretCalendarEntryPanel({
             storage={storage}
             draftKey={`weekly-plan:secret-document:${entry.userId}:${entry.teamId}:${entry.id}`}
             label="일정 문서"
+            title={title}
             controlsTarget={controls}
             readOnly={false}
             onLoadingChange={setLoading}

@@ -995,6 +995,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
                         path={`${path}/${doc.id}`}
                         draftKey={props.draftKey(doc.id)}
                         label={label}
+                        title={doc.title}
                         readOnly={readOnly}
                         // Inline memo cards remain visible when another card is selected.
                         live={!!props.inline || selected === doc.id}
