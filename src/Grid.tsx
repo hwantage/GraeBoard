@@ -16,10 +16,15 @@ import {
   type CSSProperties,
   type ReactNode,
   type KeyboardEvent,
+  type RefObject,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { trackPointerDrag } from "./trackPointerDrag";
-import { useVirtualizer, defaultRangeExtractor } from "@tanstack/react-virtual";
+import {
+  useVirtualizer,
+  defaultRangeExtractor,
+  type VirtualItem,
+} from "@tanstack/react-virtual";
 import {
   MoreHorizontal,
   Plus,
@@ -90,6 +95,14 @@ import {
 } from "./selection-areas.js";
 
 const ROW_HEADER_WIDTH = 48;
+const GROUP_HEADING_HEIGHT = 28;
+// 고정한 묶음 제목은 클릭을 막지만, 행을 끌어 옮기거나 선택할 때는 그 아래의
+// 행을 대상으로 찾는다.
+function elementBelowPinnedHeading(x: number, y: number) {
+  return document
+    .elementsFromPoint(x, y)
+    .find((element) => !element.closest(".group-heading-pin"));
+}
 // Returning from another screen must not refocus the prepared IME input after a touch.
 let lastPointerWasTouch = false;
 
@@ -613,9 +626,9 @@ export default function Grid({
     const target = () => {
       rowDragPointer.current = { x, y };
       positionRowDragPreview();
-      const element = document
-        .elementFromPoint(x, y)
-        ?.closest<HTMLElement>(".sheet-row");
+      const element = elementBelowPinnedHeading(x, y)?.closest<HTMLElement>(
+        ".sheet-row",
+      );
       const item = tasks.find((t) => t.id === element?.dataset.rowId);
       if (!item || movingIds.has(item.id) || !element) {
         drop = null;
@@ -702,7 +715,7 @@ export default function Grid({
         !!group &&
         (i === 0 ||
           groupValue(t, groupKey) !== groupValue(tasks[i - 1], groupKey))
-          ? 28
+          ? GROUP_HEADING_HEIGHT
           : 0,
       ),
     [tasks, group, groupKey],
@@ -717,6 +730,11 @@ export default function Grid({
       }
     return counts;
   }, [tasks, group, groupKey]);
+  // 묶음마다 첫 행의 순번. 스크롤 위치에서 고정할 묶음 제목을 이 목록으로 찾는다.
+  const groupStarts = useMemo(
+    () => groupHeights.flatMap((height, i) => (height ? [i] : [])),
+    [groupHeights],
+  );
   // 셀 글자 크기에 맞춘 행 높이. 렌더·스크롤마다 전체 업무를 다시 계산하지 않도록
   // 업무 목록이나 높이 설정이 바뀔 때만 구한다.
   const density = settings.defaultDensity || "compact";
@@ -776,6 +794,23 @@ export default function Grid({
   useLayoutEffect(() => {
     virtual.measure();
   }, [estimateSize]);
+  // 행의 위쪽이 가려지면 보이게 할 스크롤 위치. 열 머리글(scrollMargin)과 고정한
+  // 묶음 제목이 행을 가린다. 묶음의 첫 행은 자기 제목이 고정 위치에 오므로
+  // 열 머리글만 피한다. 1px 미만으로 걸친 행은 보이는 것으로 본다.
+  function coveredRowOffset(index: number) {
+    const item = virtual.measurementsCache[index];
+    const cover =
+      virtual.options.scrollMargin +
+      (group && !groupHeights[index] ? GROUP_HEADING_HEIGHT : 0);
+    return item && item.start - cover + 1 <= (ref.current?.scrollTop ?? 0)
+      ? item.start - cover
+      : null;
+  }
+  function scrollToRow(index: number) {
+    const offset = coveredRowOffset(index);
+    if (offset === null) virtual.scrollToIndex(index, { align: "auto" });
+    else virtual.scrollToOffset(offset);
+  }
   useLayoutEffect(() => {
     if (jump && ref.current && appliedJump.current !== jump.id) {
       if (jump.key === null) {
@@ -792,6 +827,7 @@ export default function Grid({
           if (row === undefined) return;
           if (
             !jump.nearest ||
+            coveredRowOffset(row) !== null ||
             virtual.getOffsetForIndex(row, "auto")?.[1] !== "auto"
           )
             virtual.scrollToIndex(row, { align: "center" });
@@ -819,7 +855,7 @@ export default function Grid({
     const grid = ref.current;
     if (!editor || !grid) return;
     const ri = tasks.findIndex((t) => t.id === editor.point.taskId);
-    if (ri >= 0) virtual.scrollToIndex(ri, { align: "auto" });
+    if (ri >= 0) scrollToRow(ri);
     const ci = columns.findIndex((c) => c.key === editor.point.key);
     if (ci < 0 || columns[ci].fixed) return;
     const pinned =
@@ -860,7 +896,7 @@ export default function Grid({
         nextC = Math.max(0, Math.min(columns.length - 1, nextC));
       }
       pick({ taskId: tasks[nextR].id, key: columns[nextC].key });
-      virtual.scrollToIndex(nextR, { align: "auto" });
+      scrollToRow(nextR);
     }
     return true;
   }
@@ -976,7 +1012,7 @@ export default function Grid({
       const grid = ref.current;
       if (!grid) return;
       const box = grid.getBoundingClientRect();
-      const element = document.elementFromPoint(
+      const element = elementBelowPinnedHeading(
         Math.max(box.left + 2, Math.min(x, box.right - 14)),
         kind === "columns"
           ? box.top + 16 * zoom
@@ -1403,14 +1439,14 @@ export default function Grid({
         ["ArrowUp", "ArrowDown"].includes(e.key)
       ) {
         selectHeader("rows", r, true);
-        virtual.scrollToIndex(r, { align: "auto" });
+        scrollToRow(r);
         return;
       }
       pick(
         { taskId: tasks[r].id, key: columns[c].key },
         e.shiftKey && e.key !== "Tab",
       );
-      virtual.scrollToIndex(r, { align: "auto" });
+      scrollToRow(r);
       const el = ref.current?.querySelector(
         `[data-cell="${tasks[r].id}:${columns[c].key}"]`,
       );
@@ -1622,6 +1658,8 @@ export default function Grid({
             )(...args),
       }),
   );
+  // 행 위치(measurementsCache)도 함께 갱신한다.
+  const virtualRows = virtual.getVirtualItems();
   return (
     <div
       className={`grid-area${footer ? " has-sheet-footer" : ""}`}
@@ -1862,11 +1900,25 @@ export default function Grid({
           ))}
           {columnMarker(columnGaps.trailing, columns.length)}
         </div>
+        {group && (
+          <PinnedGroupHeading
+            scroller={ref}
+            starts={groupStarts}
+            measurements={virtual.measurementsCache}
+            scrollMargin={virtual.options.scrollMargin}
+            tasks={tasks}
+            group={group}
+            counts={groupCounts}
+            users={users}
+            settings={settings}
+            width={totalWidth}
+          />
+        )}
         <div
           className="virtual-body"
           style={{ height: virtual.getTotalSize(), width: totalWidth }}
         >
-          {virtual.getVirtualItems().map((row) => {
+          {virtualRows.map((row) => {
             const task = tasks[row.index];
             const marker = rowMarkers.get(task.id);
             const rowNumber = marker?.number || row.index + 1;
@@ -2094,6 +2146,135 @@ type GridActions = {
 };
 type RowGap = { ids: string[]; start: number; end: number };
 
+// 묶음의 첫 행 위에 그리는 묶음 제목. 표 위에 고정한 제목도 같은 모양을 쓴다.
+function GroupHeading({
+  task,
+  group,
+  count,
+  users,
+  settings,
+  shift = 0,
+}: {
+  task: Task;
+  group: Property | undefined;
+  count: number | undefined;
+  users: User[];
+  settings: Settings;
+  shift?: number;
+}) {
+  const groupKey = group?.id || "";
+  return (
+    <div
+      className="group-heading"
+      role="presentation"
+      style={shift ? { transform: `translateY(${shift}px)` } : undefined}
+    >
+      <span>
+        {group && value(task, groupKey) ? (
+          group.kind === "option" ? (
+            <PropertyBadge
+              property={group}
+              value={groupValue(task, groupKey)}
+            />
+          ) : (
+            displayValue(task, groupKey, users, settings)
+          )
+        ) : (
+          `${group?.name || "속성"} 미지정`
+        )}{" "}
+        <small>{count}개 업무</small>
+      </span>
+    </div>
+  );
+}
+
+// 묶음 보기에서 스크롤해 지나간 묶음의 제목을 열 머리글 아래에 고정한다. 다음 묶음의
+// 제목이 닿으면 위로 밀어내고 그 제목으로 바뀐다. 행은 가상 스크롤로 옮겨 그리므로
+// 행 안의 제목에 sticky를 쓸 수 없어, 스크롤 위치와 행 위치로 고정할 묶음을 찾는다.
+// 스크롤마다 표 전체가 아니라 이 제목만 다시 그린다.
+function PinnedGroupHeading({
+  scroller,
+  starts,
+  measurements,
+  scrollMargin,
+  tasks,
+  group,
+  counts,
+  users,
+  settings,
+  width,
+}: {
+  scroller: RefObject<HTMLDivElement | null>;
+  // 묶음마다 첫 행의 순번
+  starts: number[];
+  measurements: VirtualItem[];
+  scrollMargin: number;
+  tasks: Task[];
+  group: Property | undefined;
+  counts: Map<string, number>;
+  users: User[];
+  settings: Settings;
+  width: number;
+}) {
+  const [pinned, setPinned] = useState<{
+    index: number;
+    shift: number;
+  } | null>(null);
+  const current = useRef(pinned);
+  useLayoutEffect(() => {
+    const grid = scroller.current;
+    if (!grid) return;
+    // 행 영역에서 묶음 제목의 위치. 열 머리글 높이가 scrollMargin이다.
+    const top = (i: number) => measurements[starts[i]].start - scrollMargin;
+    const update = (sync: boolean) => {
+      // 열 머리글 바로 아래에 보이는 행 영역의 위치
+      const y = grid.scrollTop;
+      let low = 0,
+        high = starts.length - 1;
+      while (low < high) {
+        const mid = (low + high + 1) >> 1;
+        if (top(mid) <= y) low = mid;
+        else high = mid - 1;
+      }
+      // 묶음 제목이 제자리에 보이면 겹쳐 그리지 않는다.
+      const next =
+        starts.length && top(low) < y
+          ? {
+              index: starts[low],
+              shift:
+                low + 1 < starts.length
+                  ? Math.min(0, top(low + 1) - y - GROUP_HEADING_HEIGHT)
+                  : 0,
+            }
+          : null;
+      const old = current.current;
+      if (old?.index === next?.index && old?.shift === next?.shift) return;
+      current.current = next;
+      // 스크롤과 같은 프레임에 제목을 옮겨 행과 어긋나 보이지 않게 한다.
+      if (sync) flushSync(() => setPinned(next));
+      else setPinned(next);
+    };
+    update(false);
+    const scroll = () => update(true);
+    grid.addEventListener("scroll", scroll, { passive: true });
+    return () => grid.removeEventListener("scroll", scroll);
+  }, [scroller, starts, measurements, scrollMargin]);
+  const task = pinned && tasks[pinned.index];
+  if (!pinned || !task) return null;
+  return (
+    <div className="group-heading-pin" aria-hidden="true" style={{ width }}>
+      <GroupHeading
+        task={task}
+        group={group}
+        count={counts.get(groupValue(task, group?.id || ""))}
+        users={users}
+        settings={settings}
+        shift={pinned.shift}
+      />
+    </div>
+  );
+}
+
 // 한 행의 머리글과 셀. 스크롤·다른 행 선택처럼 이 행과 무관한 변경에서는 다시 그리지 않는다.
 const RowBody = memo(function RowBody({
   task,
@@ -2160,7 +2341,6 @@ const RowBody = memo(function RowBody({
   resizeEnd: "" | "edge" | "inside";
   actions: GridActions;
 }) {
-  const groupKey = group?.id || "";
   const selectedSpans = spans
     ? spans
         .slice(0, -1)
@@ -2181,23 +2361,13 @@ const RowBody = memo(function RowBody({
   return (
     <>
       {!!groupHeight && (
-        <div className="group-heading" role="presentation">
-          <span>
-            {group && value(task, groupKey) ? (
-              group.kind === "option" ? (
-                <PropertyBadge
-                  property={group}
-                  value={groupValue(task, groupKey)}
-                />
-              ) : (
-                displayValue(task, groupKey, users, settings)
-              )
-            ) : (
-              `${group?.name || "속성"} 미지정`
-            )}{" "}
-            <small>{groupCount}개 업무</small>
-          </span>
-        </div>
+        <GroupHeading
+          task={task}
+          group={group}
+          count={groupCount}
+          users={users}
+          settings={settings}
+        />
       )}
       <div
         className="row-number"

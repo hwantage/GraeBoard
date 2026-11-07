@@ -1415,6 +1415,27 @@ export default function Calendar({
       }
     });
   }
+  // Secret entries show only on the user's own calendar, so the toggle sits
+  // there: in the toolbar of the user's own personal month, and left of the
+  // user's own week dates in the team week.
+  const secretToggle = () => (
+    <Button
+      className="calendar-secret-toggle"
+      tooltip={secret.visible ? "시크릿 일정 숨기기" : "시크릿 일정 보이기"}
+      aria-pressed={secret.visible}
+      active={secret.visible}
+      {...busyProps(locked)}
+      onClick={() =>
+        localAction(() => setSecretCalendarVisible(user.id, !secret.visible))
+      }
+    >
+      {secret.visible ? (
+        <LockKeyhole size={16} aria-hidden="true" />
+      ) : (
+        <EyeOff size={16} aria-hidden="true" />
+      )}
+    </Button>
+  );
   const gridHeader = () => (
     <div className="calendar-grid-header">
       {view !== "shared" && (
@@ -1627,28 +1648,7 @@ export default function Calendar({
                 숨긴 요일에 일정 {hiddenEntries.length}개
               </Button>
             )}
-            {view !== "shared" && (
-              <Button
-                className="calendar-secret-toggle"
-                tooltip={
-                  secret.visible ? "시크릿 일정 숨기기" : "시크릿 일정 보이기"
-                }
-                aria-pressed={secret.visible}
-                active={secret.visible}
-                {...busyProps(locked)}
-                onClick={() =>
-                  localAction(() =>
-                    setSecretCalendarVisible(user.id, !secret.visible),
-                  )
-                }
-              >
-                {secret.visible ? (
-                  <LockKeyhole size={16} aria-hidden="true" />
-                ) : (
-                  <EyeOff size={16} aria-hidden="true" />
-                )}
-              </Button>
-            )}
+            {view === "month" && memberId === user.id && secretToggle()}
             <div
               className="search-box calendar-search"
               role="search"
@@ -1841,6 +1841,7 @@ export default function Calendar({
                         role="group"
                         aria-label={`${m.name} 주간 탐색`}
                       >
+                        {m.id === user.id && secretToggle()}
                         <div className="year-control calendar-period-control">
                           <Button
                             title={`${m.name} 이전 주`}

@@ -899,6 +899,47 @@ body.document-block-selecting * {
 .document-image.resizing {
   outline: 1px solid var(--accent-border);
 }
+/* A clicked image is selected on its own, also while the pointer rests on it:
+   Backspace deletes it and copying or dragging takes just the image. */
+.rich-document .ProseMirror .document-image.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The caret beside an image, on the side imageCaret marks. */
+.document-prose .ProseMirror:has(.document-image[data-caret]) {
+  caret-color: transparent;
+}
+.document-prose .ProseMirror-focused .document-image[data-caret]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: currentColor;
+  pointer-events: none;
+  animation: document-image-caret 1s step-end infinite;
+}
+.document-prose .document-image[data-caret="before"]::after {
+  left: -2px;
+}
+.document-prose .document-image[data-caret="after"]::after {
+  right: -2px;
+}
+@keyframes document-image-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-prose .document-image[data-caret]::after {
+    animation: none;
+  }
+}
+/* Where a dragged image or text lands (see dropIndicator). */
+.document-drop-cursor {
+  border-radius: 1px;
+  background: var(--accent);
+}
 .document-image-actions {
   position: absolute;
   top: 5px;
