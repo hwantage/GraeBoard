@@ -1908,17 +1908,26 @@ test("팀 월간은 시크릿 토글·생성 스위치를 숨기고 개인 월�
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "팀 월간 보기", exact: true }).click();
   await expect(toggle).toHaveCount(0);
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
   for (const view of [
     "개인 월간 보기",
     "팀 주간 일정 보기",
     "개인 월간 보기",
   ]) {
     await page.getByRole("button", { name: view, exact: true }).click();
+    await expect(toggle).toHaveCount(1);
     await expect(toggle).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
     await expect(card(page, title)).toHaveCount(0);
     await toggle.press(tabKey);
-    await expect(search).toBeFocused();
+    // The team week keeps it left of the user's own week dates.
+    await expect(
+      view === "팀 주간 일정 보기"
+        ? mine.getByRole("button", { name: /이전 주$/ })
+        : search,
+    ).toBeFocused();
     expect(await page.evaluate((key) => localStorage.getItem(key), key())).toBe(
       stored,
     );
@@ -1926,4 +1935,72 @@ test("팀 월간은 시크릿 토글·생성 스위치를 숨기고 개인 월�
   await toggle.click();
   await expect(card(page, title)).toBeVisible();
   expectPrivate(requests, title);
+});
+
+test("시크릿 토글은 내 개인 월간과 팀 주간의 내 주간 날짜 왼쪽에만 있다", async ({
+  page,
+}, testInfo) => {
+  const toggle = page.locator(".calendar-secret-toggle");
+  const toolbar = page.locator(".calendar-toolbar");
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(1);
+  // Another member's personal month has no secret entries to show or hide.
+  await page
+    .locator(`.calendar-owner-button[data-member-id="${memberId}"]`)
+    .click();
+  await expect(toggle).toHaveCount(0);
+  await page
+    .locator(`.calendar-owner-button[data-member-id="${userId}"]`)
+    .click();
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(1);
+
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
+  await expect(toggle).toHaveCount(1);
+  await expect(toolbar.locator(".calendar-secret-toggle")).toHaveCount(0);
+  await expect(
+    page
+      .locator(`.calendar-team-section[data-member-id="${memberId}"]`)
+      .locator(".calendar-secret-toggle"),
+  ).toHaveCount(0);
+  const navigation = mine.locator(".calendar-member-navigation");
+  await expect(navigation.locator(".calendar-secret-toggle")).toBeVisible();
+  const box = (await toggle.boundingBox())!;
+  const dates = (await navigation
+    .locator(".calendar-period-control")
+    .boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(dates.x);
+  expect(
+    Math.abs(box.y + box.height / 2 - dates.y - dates.height / 2),
+  ).toBeLessThanOrEqual(1);
+  await mine.screenshot({ path: testInfo.outputPath("secret-team-week.png") });
+
+  // Moving another member's week keeps the toggle in the user's own section,
+  // and the personal month that follows is that member's.
+  await page
+    .locator(`.calendar-team-section[data-member-id="${memberId}"]`)
+    .getByRole("button", { name: /다음 주$/ })
+    .click();
+  await expect(navigation.locator(".calendar-secret-toggle")).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "개인 월간 보기", exact: true })
+    .click();
+  await expect(toggle).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  await expect(navigation.locator(".calendar-secret-toggle")).toBeInViewport({
+    ratio: 1,
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390);
+  await mine.screenshot({
+    path: testInfo.outputPath("secret-team-week-mobile.png"),
+  });
 });
