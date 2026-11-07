@@ -203,7 +203,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 `document_versions`는 내용 해시로 중복을 제거하는 불변 본문 저장소입니다. `task_documents`는 `(task_id,id)` 기본키, `title`, `position`, `version_id`, `has_content`, 정수 `revision`, `updated_at`, `actor_id`, 재시도용 `operation_id`·`request_hash`를 보관합니다. 실제 원본 문서 저장은 문서 revision·업무 시각·감사 기록을 같은 트랜잭션에서 갱신합니다. 본문을 비워도 revision을 유지합니다.
 
-사본 BLOB의 각 업무는 `documents: [{id,title,versionId,hasContent}]`로 문서 목록·제목·순서를 보관합니다. 최신 본문 버전의 기준은 `sheet_clone_documents`의 `(sheet_clone_id,task_id,document_id)` 기본키와 `version_id` FK입니다. 기존 문서의 본문 자동 저장은 이 참조만 교체하며 표 BLOB을 다시 압축하지 않습니다. 따라서 BLOB에 남은 `versionId`·`hasContent`는 이전 값일 수 있고, 조회·표 편집·복제·반출·이력 복구는 `readReport`로 최신 참조와 내용 유무를 합칩니다. 문서를 추가·삭제하거나 제목을 바꿀 때는 BLOB의 목록과 참조를 같은 트랜잭션에서 갱신합니다. 처음에는 불변 본문을 공유하며 `sourceVersionId`나 최초 분기 참조는 저장하지 않습니다. 어떤 원본/사본에서도 사용하지 않는 이전 버전은 정리합니다. 원본과 각 사본의 문서 목록·제목·내용은 서로 독립적입니다.
+사본 BLOB의 각 업무는 `documents: [{id,title,versionId,hasContent}]`로 문서 목록·제목·순서를 보관합니다. 최신 본문 버전의 기준은 `sheet_clone_documents`의 `(sheet_clone_id,task_id,document_id)` 기본키와 `version_id` FK입니다. 기존 문서의 본문 자동 저장은 이 참조만 교체하며 표 BLOB을 다시 압축하지 않습니다. 따라서 BLOB에 남은 `versionId`·`hasContent`는 이전 값일 수 있고, 조회·표 편집·복제·반출·이력 복구는 `readSheetClone`으로 최신 참조와 내용 유무를 합칩니다. 문서를 추가·삭제하거나 제목을 바꿀 때는 BLOB의 목록과 참조를 같은 트랜잭션에서 갱신합니다. 처음에는 불변 본문을 공유하며 `sourceVersionId`나 최초 분기 참조는 저장하지 않습니다. 어떤 원본/사본에서도 사용하지 않는 이전 버전은 정리합니다. 원본과 각 사본의 문서 목록·제목·내용은 서로 독립적입니다.
 
 일반·삭제 상태 업무 목록과 사본 표 조회에는 본문·문서 목록을 보내지 않습니다. 내용이 있는 문서가 하나라도 있을 때 `hasDocument: true`를 제공하며, `documentCount`는 빈 문서를 포함한 저장된 문서 수입니다. 개수는 기존 문서 목록에서 계산하며 별도 DB 열을 추가하지 않습니다. 문서 목록은 제목 탭을 열 때, 본문은 해당 탭을 처음 열 때 조회합니다. 문서별 편집기는 방문한 탭 안에서 유지해 원문 모드·입력·실행취소를 보존합니다.
 

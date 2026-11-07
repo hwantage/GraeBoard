@@ -735,10 +735,12 @@ test("Markdown links: each destination changes once; comments, escaped code and 
       `<details>\n<summary><a href="${next("task")}">제목</a></summary>\n\n본문\n</details>`,
       1,
     ],
+    // A title holding html is not a toggle title for the editor
+    // (parseSummary): the block is html, so only its `<a>` moves.
     [
       `<details open>\n<summary><h3><a href='${old("memo")}'>h</a> [m](${old("task")})</h3></summary>\n\n</details>`,
-      `<details open>\n<summary><h3><a href='${next("memo")}'>h</a> [m](${next("task")})</h3></summary>\n\n</details>`,
-      2,
+      `<details open>\n<summary><h3><a href='${next("memo")}'>h</a> [m](${old("task")})</h3></summary>\n\n</details>`,
+      1,
     ],
     // Comments and escaped code are text, not links.
     [
@@ -758,6 +760,68 @@ test("Markdown links: each destination changes once; comments, escaped code and 
   ];
   for (const [markdown, expected, changes] of cases) {
     const converted = convert(markdown);
+    assert.equal(converted.markdown, expected ?? markdown, markdown);
+    assert.equal(converted.changes, changes, markdown);
+    assert.deepEqual(converted.unverified, [], markdown);
+    assert.equal(convert(converted.markdown).changes, 0, markdown);
+  }
+});
+
+test("Markdown links in toggles follow the editor's toggle grammar: any case, a body without a blank line, nesting, text after </details>, lists and quotes", () => {
+  const C = "11111111-1111-1111-1111-111111111111",
+    T = "22222222-2222-2222-2222-222222222222",
+    task = `/links/report-task/${C}/${T}`,
+    memo = `/links/report-memo/${C}/${T}`,
+    convert = (markdown) => convertMarkdownLinks(markdown, { origins: [] });
+  // The stored body with exactly these destinations moved, each once.
+  const moved = (markdown, ...positions) => {
+    let text = markdown;
+    for (const at of positions.sort((a, b) => b - a))
+      text =
+        text.slice(0, at) +
+        text.slice(at).replace(/^\/links\/report-/, "/links/sheet-clone-");
+    return text;
+  };
+  const nth = (markdown, url, n) => {
+    let at = -1;
+    for (let i = 0; i <= n; i++) at = markdown.indexOf(url, at + 1);
+    return at;
+  };
+  const upper = `<DETAILS>\n<SUMMARY>[title](${task})</SUMMARY>\n\nbody\n</DETAILS>`,
+    tight = `<details>\n<summary>title</summary>\n[body link](${task})\n</details>`,
+    nested = `<details open>\n<summary><h2>outer [o](${task})</h2></summary>\n\n<details>\n<summary>inner</summary>\n[i](${memo}) \`${task}\` <!-- [c](${task}) -->\n</details>\n\n</details>\n[after](${task})\n`,
+    fenced =
+      "<details>\n<summary>t</summary>\n```text\n[f](" +
+      task +
+      ")\n```\n</details>\n",
+    list = `- <details>\n  <summary>[t](${task})</summary>\n  [b](${memo})\n  </details>\n`,
+    quote = `> <details>\n> <summary>[t](${task})</summary>\n>\n> body [b](${memo})\n> </details>\n`,
+    anchor = `<A TITLE="a > b" HREF="${task}">x</A> <a data-x='${memo}' href='${memo}'>y</a>\n`;
+  for (const [markdown, expected] of [
+    [upper, upper.replace(task, task.replace("report-", "sheet-clone-"))],
+    [tight, tight.replace(task, task.replace("report-", "sheet-clone-"))],
+    [
+      nested,
+      moved(
+        nested,
+        nth(nested, task, 0),
+        nth(nested, memo, 0),
+        nth(nested, task, 3),
+      ),
+    ],
+    [fenced, fenced],
+    // No toggle is open, or the editor keeps the html as html: text stays.
+    [`</details>\n[x](${task})\n`, null],
+    [
+      `<details class="x">\n<summary>t</summary>\n[x](${task})\n</details>\n`,
+      null,
+    ],
+    [list, moved(list, nth(list, task, 0), nth(list, memo, 0))],
+    [quote, moved(quote, nth(quote, task, 0), nth(quote, memo, 0))],
+    [anchor, moved(anchor, nth(anchor, task, 0), nth(anchor, memo, 1))],
+  ]) {
+    const converted = convert(markdown),
+      changes = expected ? expected.split("/links/sheet-clone-").length - 1 : 0;
     assert.equal(converted.markdown, expected ?? markdown, markdown);
     assert.equal(converted.changes, changes, markdown);
     assert.deepEqual(converted.unverified, [], markdown);
