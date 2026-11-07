@@ -7,7 +7,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  GripVertical,
+  ListEnd,
+  ListStart,
+  Trash2,
+} from "lucide-react";
 import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
 import {
   NodeSelection,
@@ -33,7 +41,7 @@ import { TOGGLE_LEVELS } from "./DocumentToggle";
 import { trackPointerDrag } from "./trackPointerDrag";
 
 // The handle in the left gutter moves a block by dragging and opens a menu to
-// convert, duplicate, move or delete it. A block is a top-level block, a list
+// add a block above or below it, convert, duplicate, move or delete it. A block is a top-level block, a list
 // item or a block inside a toggle's content; tables, quotes and code blocks
 // move as a whole. Blocks a selection spans move together: a text selection
 // across blocks, the blocks a drag in the margin selects, or a range extended
@@ -476,6 +484,38 @@ function duplicateRange(state: EditorState, range: Range) {
   return closeHistory(tr);
 }
 
+// An empty block above or below the range, where the caret goes: an item of
+// the same list, unchecked in a checklist, or a paragraph elsewhere. Below
+// the last block the empty line kept for typing is used instead.
+function insertBlock(state: EditorState, range: Range, step: -1 | 1) {
+  const { doc, schema } = state;
+  const at = step < 0 ? range.from : range.to;
+  const $at = doc.resolve(at);
+  const next = $at.nodeAfter;
+  const tr = state.tr;
+  if (step > 0 && next && isTypingArea(doc, { pos: at, node: next }))
+    tr.setSelection(TextSelection.create(doc, at + 1));
+  else {
+    const paragraph = schema.nodes.paragraph.create();
+    const item = step < 0 ? next : $at.nodeBefore;
+    const node =
+      LISTS.has($at.parent.type.name) && item
+        ? item.type.create(
+            {
+              ...item.attrs,
+              checked: item.attrs.checked == null ? null : false,
+            },
+            paragraph,
+          )
+        : paragraph;
+    if (!$at.parent.canReplaceWith($at.index(), $at.index(), node.type))
+      return null;
+    tr.insert(at, node);
+    tr.setSelection(Selection.near(tr.doc.resolve(at + 1)));
+  }
+  return closeHistory(tr.setMeta(selectKey, null));
+}
+
 function deleteRange(state: EditorState, range: Range) {
   const tr = state.tr;
   removeRange(tr, range);
@@ -826,6 +866,20 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         current.focus();
       };
     const items: SlashItem[] = [
+      {
+        id: "above",
+        label: "위에 추가",
+        keywords: "",
+        icon: <ListStart size={16} />,
+        run: act((state, target) => insertBlock(state, target, -1)),
+      },
+      {
+        id: "below",
+        label: "아래에 추가",
+        keywords: "",
+        icon: <ListEnd size={16} />,
+        run: act((state, target) => insertBlock(state, target, 1)),
+      },
       {
         id: "duplicate",
         label: "복제",
