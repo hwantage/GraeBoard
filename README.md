@@ -21,7 +21,7 @@
 
 외부 설치는 [클라우드 설치 안내](docs/CLOUD_SETUP.md)를 따릅니다. 일반 업무 API는 공통 명령 계약을 사용하며, 내부 Node는 SQLite·파일 이미지 저장소, 외부 Supabase Edge는 PostgreSQL·R2 이미지 저장소로 실행합니다. 내부 서버의 DB를 PostgreSQL로 바꾸는 모드는 제공하지 않습니다. [개발 안내](docs/DEVELOPMENT.md#업무-저장소-계약)에서 저장소 연결 방법을, 설치 안내에서 외부 용량·검증 한계를 확인하세요.
 
-PostgreSQL 팀 업무 저장소는 Node와 외부 Edge 모두 공유 상태·미전송 명령 **4 MiB**, 공유 엔티티 **12,000개** 한도를 적용합니다. 엔티티 수는 업무 행 수와 다르며, SQLite의 10,000행 성능 결과는 PostgreSQL 지원 규모를 뜻하지 않습니다.
+외부 PostgreSQL의 공유 업무·충돌·미전송 명령 용량과 공유 엔티티 수에는 **기본 상한이 없습니다.** 운영자가 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 해당 한도를 적용합니다. 이벤트 파일은 32 MiB, 스냅샷은 압축·해제 각각 64 MiB, 수신 이력(receipt)은 별도 16 MiB 한도(12 MiB부터 경고)를 유지합니다. 내부 SQLite에는 외부 업무 용량 한도를 적용하지 않습니다. 엔티티 수는 업무 행 수와 다르며, SQLite 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다. [실행 한도와 검증 범위](docs/CLOUD_SETUP.md#14-실행-한도와-검증-범위)를 참고하세요.
 
 새 팀의 기본 속성은 **작업·팀원·상태**입니다. 상태는 예정·검토 중·진행 중·완료·보류를 제공하며, 기본 서식은 **9pt**, 세로 정렬은 **중간**, 셀 높이는 **편안하게**, 왼쪽 열은 **고정 안 함**입니다.
 
@@ -61,23 +61,26 @@ npm start
 | [사용 안내](docs/USER_GUIDE.md)                     | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본              |
 | [운영 안내](docs/OPERATIONS.md)                     | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트        |
 | [개발 안내](docs/DEVELOPMENT.md)                    | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위           |
+| [개발 변경·검증 이력](docs/DEVELOPMENT_HISTORY.md) | 날짜별 구현 변경과 당시 측정·검증 기록                      |
 | [데이터 형식과 API](docs/DATA_FORMAT.md)            | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
 | [클라우드 설치 안내](docs/CLOUD_SETUP.md)           | 내부 SQLite·외부 Edge, Pages·Access·Git·R2 설정과 복구 |
 | [동기화 프로토콜](docs/SYNC_PROTOCOL.md)            | 확정 이력·미전송·사이트별 정리·충돌 규칙                    |
 | [DB 변경 지침](docs/DATABASE_CHANGES.md)            | 변경 사전 승인, 마이그레이션 설계·검증, 운영 데이터 보존    |
+| [패치 체크리스트](docs/PATCH_GUIDE.md)              | v33 운영의 사본 복구·전환·롤백 상세 예시, 구버전·최초 연결 참고 |
 | [프로젝트 작업 규칙](AGENTS.md)                     | 핵심 작업 원칙과 작업별 문서 안내                           |
 | [외부 구성요소 고지](docs/THIRD_PARTY_NOTICES.json) | 의존 패키지와 글꼴 라이선스 목록                            |
 
 ## 검증
 
 ```sh
-npm test
+TEST_PG_BIN=/절대경로/PostgreSQL/bin npm test
 npm run build
+npm run build:edge
 npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
 
-자동 검사는 임시 데이터베이스를 사용합니다. 브라우저 검사는 `4311` 포트를 사용하므로 해당 포트를 비워 두세요. 자세한 절차와 결과 범위는 [개발 안내](docs/DEVELOPMENT.md#검증)를 참고하세요.
+`TEST_PG_BIN`은 PostgreSQL 서버 바이너리 경로로 바꿉니다. 자동 검사는 임시 데이터베이스를 사용합니다. 브라우저 검사는 `4311` 포트를 사용하므로 해당 포트를 비워 두세요. 자세한 절차와 결과 범위는 [개발 안내](docs/DEVELOPMENT.md#검증)를 참고하세요.
 
 ## 구성과 운영 범위
 

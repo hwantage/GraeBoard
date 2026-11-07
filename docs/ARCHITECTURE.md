@@ -70,7 +70,7 @@ Edge는 `pg.Pool`로 PostgreSQL에 연결합니다. `PG_SITE`는 프로필에서
 
 `GRAEBOARD_SITE`는 서버의 고정 역할을 확인하는 설정입니다. 접속 주소나 네트워크 연결 여부로 자동 추측하지 않으며, 방화벽을 설정하는 변수도 아닙니다. 내부 Node에 `external`, 외부 API에 `internal`을 지정하면 설정 오류로 거절합니다.
 
-팀장 연결 키는 내부 화면에서 생성한 256비트 난수이며 24시간 동안 한 번만 사용할 수 있습니다. 원문은 발급 응답에서만 보여 줍니다. 해시·대상 팀/사용자·유효기간을 GitHub로 전달하고, 외부 PostgreSQL에서 검증·소비·Google 신원 연결을 한 트랜잭션으로 처리합니다. 사용자는 소스 코드나 `setup-token.txt`를 확인할 필요가 없습니다. 내부 첫 관리자 생성용 `SETUP_TOKEN`과 다른 기능입니다. 상세 절차는 [Google Access와 계정 연결](CLOUD_SETUP.md#8-graeboard-전용-google-access)에 있습니다.
+팀장 연결 키는 내부 화면에서 생성한 256비트 난수이며 24시간 동안 한 번만 사용할 수 있습니다. 원문은 발급 응답에서만 보여 줍니다. 해시·대상 팀/사용자·유효기간을 GitHub로 전달하고, 외부 PostgreSQL에서 검증·소비·Google 신원 연결을 한 트랜잭션으로 처리합니다. 사용자는 소스 코드나 `setup-token.txt`를 확인할 필요가 없습니다. 내부 첫 관리자 생성용 `SETUP_TOKEN`과 다른 기능입니다. 상세 절차는 [Google Access와 계정 연결](CLOUD_SETUP.md#7-graeboard-전용-google-access)에 있습니다.
 
 `*.프로젝트.pages.dev` 미리보기 정책과 `프로젝트.pages.dev` 운영 주소 보호를 각각 설정합니다. 유효한 Google/Access 세션이 있으면 로그인 화면을 매번 다시 표시하지 않습니다. Access 통과 후에도 앱의 계정 연결·팀 권한 검사를 통과해야 업무를 사용할 수 있습니다.
 
@@ -114,9 +114,9 @@ sequenceDiagram
 - Pages Functions·Service binding 변경은 Pages 재배포가 필요합니다. 운영 주소는 선택한 Production branch를 사용합니다.
 - 이전 전체 Worker 이름의 Service binding은 `worker/forwarder.mjs`로 gateway에 전달할 수 있습니다. 이전 Worker의 DB·Git·Hyperdrive binding과 Cron은 제거합니다. 전체 Worker 업무 실행용 설정·빌드·호환성 테스트는 제거했습니다.
 - 동기화 명령의 형식·검증·병합 규칙이 바뀌는 릴리스는 사내 서버(Node)와 외부 서버(Supabase `graeboard` 함수)를 같은 버전으로 연이어 배포합니다. 새 형식을 읽을 수 있는 쪽을 먼저 배포하며, 2026-10-30의 사본 공유 사전 형식은 **외부 서버 → 사내 서버** 순서입니다. [운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)
-- Edge 전환은 DB 스키마 변경과 별개입니다. 접속 토큰 도입까지 포함한 현재 버전은 SQLite v33, PostgreSQL team v2/site v3(분리형 control v2), 외부 백업 v3입니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#12-정리중단복구)를 따릅니다.
+- Edge 전환은 DB 스키마 변경과 별개입니다. 접속 토큰 도입까지 포함한 현재 버전은 SQLite v33, PostgreSQL team v2/site v3(분리형 control v2), 외부 백업 v3입니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#11-정리중단복구)를 따릅니다.
 
-Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의 실행·요청 한도는 남습니다. 과거 workerd 성능 측정과 현재 Edge 실행 검증을 구분합니다. [실행 한도와 검증 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)
+Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의 실행·요청 한도는 남습니다. 과거 workerd 성능 측정과 현재 Edge 실행 검증을 구분합니다. [실행 한도와 검증 범위](CLOUD_SETUP.md#14-실행-한도와-검증-범위)
 
 ## 리뷰 반영 구조
 
