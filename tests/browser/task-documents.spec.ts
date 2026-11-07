@@ -1523,7 +1523,7 @@ test("툴바의 인용·코드 블록·토글과 토글 제목 메뉴가 블록�
 
 test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝 목차 버튼 앞의 같은 자리에 있다", async ({
   page,
-}) => {
+}, info) => {
   await open(page);
   const tools = detail(page).locator(".document-rich-tools");
   const modes = detail(page).getByRole("group", { name: "문서 편집 모드" });
@@ -1538,6 +1538,7 @@ test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝 
     .getByRole("button", { name: "목차", exact: true })
     .boundingBox())!;
   expect(contents.x - (richBox.x + richBox.width)).toBeLessThan(12);
+  await tools.screenshot({ path: info.outputPath("toolbar-rich.png") });
   expect(contents.x + contents.width).toBeGreaterThan(
     toolbar.x + toolbar.width - 24,
   );
@@ -1550,6 +1551,7 @@ test("문서 편집 모드 전환은 리치·원문 모두 툴바 오른쪽 끝 
     tools.getByRole("button", { name: "목차", exact: true }),
   ).toHaveCount(0);
   const sourceBox = (await modes.boundingBox())!;
+  await tools.screenshot({ path: info.outputPath("toolbar-source.png") });
   expect(sourceBox.x).toBeCloseTo(richBox.x, 0);
   expect(sourceBox.y).toBeCloseTo(richBox.y, 0);
   await detail(page)
