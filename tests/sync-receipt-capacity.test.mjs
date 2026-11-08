@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 import { canonical, emptyState, stateHash } from "../server/sync/core/protocol.mjs";
 import { encodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import {

@@ -19,7 +19,7 @@ import { createWorker } from "../worker/entry.mjs";
 import { runTeam } from "../worker/sync/sync.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
-import { recoverSync } from "../scripts/sync-recover.mjs";
+import { recoverSync } from "../scripts/sync/sync-recover.mjs";
 
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 const ok = (result) => {

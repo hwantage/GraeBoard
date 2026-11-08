@@ -4,9 +4,9 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Pool } from "pg";
-import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { localHistoryMaintenance } from "../shared/sync/local-history-maintenance.mjs";
+import { SqliteDatabase } from "../../server/storage/sqlite.mjs";
+import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
+import { localHistoryMaintenance } from "../../shared/sync/local-history-maintenance.mjs";
 
 export async function main() {
   const { values } = parseArgs({

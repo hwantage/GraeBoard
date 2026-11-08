@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 import { transaction, upsertCellStatement, getTask } from "../server/db.mjs";
 import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";

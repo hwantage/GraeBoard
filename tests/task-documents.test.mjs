@@ -29,8 +29,8 @@ import { getTaskDocument } from "../server/documents/task-documents.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
-import { backupDatabase } from "../scripts/backup.mjs";
-import { restoreDatabase } from "../scripts/restore.mjs";
+import { backupDatabase } from "../scripts/transfer/backup.mjs";
+import { restoreDatabase } from "../scripts/transfer/restore.mjs";
 import {
   decodeSheetClone,
   encodeSheetClone,

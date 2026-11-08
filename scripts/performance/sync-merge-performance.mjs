@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import { mergeMarkdown } from "../server/sync/core/reducer.mjs";
+import { mergeMarkdown } from "../../server/sync/core/reducer.mjs";
 
 const summarize = (values) => {
   const sorted = [...values].sort((a, b) => a - b);

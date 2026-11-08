@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { chromium } from "@playwright/test";
-import { createApp } from "../server/app.mjs";
+import { createApp } from "../../server/app.mjs";
 import {
   openDatabase,
   id,
@@ -13,13 +13,13 @@ import {
   passwordHash,
   transaction,
   upsertCellStatement,
-} from "../server/db.mjs";
+} from "../../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
   sampleProperties,
   weeksForYear,
   dateKey,
-} from "../shared/domain.js";
+} from "../../shared/domain.js";
 
 const dir = mkdtempSync(join(tmpdir(), "weekly-perf-")),
   db = openDatabase(join(dir, "perf.sqlite")),

@@ -5,16 +5,16 @@ import { runMergePerformance } from "./sync-merge-performance.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { openDatabase, json, transaction } from "../server/db.mjs";
-import { createApp } from "../server/app.mjs";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
-import { stateHash, protocolVersion } from "../server/sync/core/protocol.mjs";
+import { openDatabase, json, transaction } from "../../server/db.mjs";
+import { createApp } from "../../server/app.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
+import { stateHash, protocolVersion } from "../../server/sync/core/protocol.mjs";
 import {
   DEFAULT_SETTINGS,
   defaultView,
   weeksForYear,
-} from "../shared/domain.js";
-import { unpack } from "../shared/formatting/compact.js";
+} from "../../shared/domain.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 async function drainCommands(site, teamId) {
   const store = site.app.locals.sync.store(teamId);

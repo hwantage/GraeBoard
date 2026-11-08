@@ -3,14 +3,14 @@ import { lookup } from "node:dns/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs, parseEnv } from "node:util";
 import pg from "pg";
-import { resourceBindings } from "../edge/resources.mjs";
-import { databaseFor, controlTransaction } from "../worker/storage/data.mjs";
-import { GitHubApiTransport } from "../worker/sync/git.mjs";
-import { importTeam, imageSync } from "../worker/sync/sync.mjs";
-import { materialize } from "../worker/sync/materialize.mjs";
-import { R2ImageStore } from "../worker/documents/images.mjs";
-import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
-import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync/sync-limits.js";
+import { resourceBindings } from "../../edge/resources.mjs";
+import { databaseFor, controlTransaction } from "../../worker/storage/data.mjs";
+import { GitHubApiTransport } from "../../worker/sync/git.mjs";
+import { importTeam, imageSync } from "../../worker/sync/sync.mjs";
+import { materialize } from "../../worker/sync/materialize.mjs";
+import { R2ImageStore } from "../../worker/documents/images.mjs";
+import { profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../../shared/sync/sync-limits.js";
 
 // A first import reads every object of the genesis commit (one GitHub request
 // per image), which exceeds the per-invocation budget of a hosted runtime. The

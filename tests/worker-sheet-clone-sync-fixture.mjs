@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";

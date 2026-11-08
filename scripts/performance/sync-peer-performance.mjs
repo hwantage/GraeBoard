@@ -3,17 +3,17 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { makeOperation } from "../server/sync/core/operations.mjs";
-import { operationBatch } from "../server/sync/core/service.mjs";
-import { reduce } from "../server/sync/core/reducer.mjs";
+import { sqliteTeamStore } from "../../server/storage/sqlite.mjs";
+import { makeOperation } from "../../server/sync/core/operations.mjs";
+import { operationBatch } from "../../server/sync/core/service.mjs";
+import { reduce } from "../../server/sync/core/reducer.mjs";
 import {
   canonical,
   entityId,
   stateHash,
   protocolVersion,
-} from "../server/sync/core/protocol.mjs";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+} from "../../server/sync/core/protocol.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 
 try {
   const {

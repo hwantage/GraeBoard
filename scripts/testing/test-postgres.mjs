@@ -2,7 +2,7 @@ import { accessSync, constants, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { runNodeTests } from "./testing/run-node-tests.mjs";
+import { runNodeTests } from "./run-node-tests.mjs";
 
 export function requirePostgresBinaries(value = process.env.TEST_PG_BIN) {
   if (!value)
@@ -32,7 +32,7 @@ export function requirePostgresBinaries(value = process.env.TEST_PG_BIN) {
 
 export async function main() {
   const bin = requirePostgresBinaries(),
-    root = fileURLToPath(new URL("../", import.meta.url));
+    root = fileURLToPath(new URL("../../", import.meta.url));
   await runNodeTests({
     root,
     env: { ...process.env, TEST_PG_BIN: bin },

@@ -1,11 +1,11 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { openDatabase, transaction } from "../server/db.mjs";
-import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { readEntity } from "../server/sync/node/entities.mjs";
-import { project } from "../server/sync/core/reducer.mjs";
-import { makeOperation } from "../server/sync/core/operations.mjs";
-import { canonical, protocolVersion } from "../server/sync/core/protocol.mjs";
+import { openDatabase, transaction } from "../../server/db.mjs";
+import { sqliteTeamStore } from "../../server/storage/sqlite.mjs";
+import { readEntity } from "../../server/sync/node/entities.mjs";
+import { project } from "../../server/sync/core/reducer.mjs";
+import { makeOperation } from "../../server/sync/core/operations.mjs";
+import { canonical, protocolVersion } from "../../server/sync/core/protocol.mjs";
 
 // One-time step of the 2026-11-04 update. Weekly to-do items shared before
 // `importedAt` joined their synchronized payload have none in shared state,

@@ -457,138 +457,6 @@
   ],
   "legacyRootFiles": [
     {
-      "path": "scripts/admin.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/backup-external.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/backup.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/build-edge.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/dev-snapshot-import.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/e2e-server.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/external-backup-options.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/image-resources.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/load-test.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/migrate.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/restore-external.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/restore.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/site-key-migration-sql.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-browser-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-credential.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-external-import.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-fault-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-history-maintenance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-import-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-maintenance-recover.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-merge-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-peer-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-recover.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-review-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-sheet-clone-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-upgrade.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/sync-weekly-order.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/team-site-deploy.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/test-postgres.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/transfer.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "scripts/ui-performance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "tests/access-tokens.test.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1110,14 +978,14 @@
     },
     {
       "paths": [
-        "scripts/admin.mjs",
+        "scripts/admin/admin.mjs",
         "worker/control/admin.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "scripts/transfer.mjs",
+        "scripts/transfer/transfer.mjs",
         "server/transfer/transfer.mjs",
         "worker/transfer/transfer.mjs"
       ],

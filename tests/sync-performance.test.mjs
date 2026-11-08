@@ -4,7 +4,7 @@ import {
   performanceFixture,
   runTwoTeamPerformance,
   runReviewPerformance,
-} from "../scripts/sync-performance.mjs";
+} from "../scripts/performance/sync-performance.mjs";
 import {
   createNodeBackground,
   assertSnapshotGuard,

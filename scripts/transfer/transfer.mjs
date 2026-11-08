@@ -9,19 +9,19 @@ import {
   exportTransferAssets,
   verifyTransferAssets,
   installTransferAssets,
-} from "../server/storage/transfer/logical-assets.mjs";
+} from "../../server/storage/transfer/logical-assets.mjs";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Pool } from "pg";
-import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { PostgresDatabase } from "../worker/storage/postgres.mjs";
+import { SqliteDatabase } from "../../server/storage/sqlite.mjs";
+import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
 import {
   exportTeam,
   importTeam,
   freezeTeam,
   releaseTransfer,
-} from "../server/storage/transfer/logical-transfer.mjs";
-import { verifyTransfer } from "../shared/transfer/logical-format.mjs";
+} from "../../server/storage/transfer/logical-transfer.mjs";
+import { verifyTransfer } from "../../shared/transfer/logical-format.mjs";
 
 export async function openTransferDatabase({
   engine,

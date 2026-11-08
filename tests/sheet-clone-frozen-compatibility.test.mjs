@@ -32,7 +32,7 @@ import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { runTeam } from "../worker/sync/sync.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
-import { recoverSync } from "../scripts/sync-recover.mjs";
+import { recoverSync } from "../scripts/sync/sync-recover.mjs";
 import {
   frozenCutoverModule,
   frozenCutoverSource,

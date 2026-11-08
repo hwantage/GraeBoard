@@ -5,7 +5,7 @@ import {
   externalEnvironment,
   importExternalTeam,
   main,
-} from "../scripts/sync-external-import.mjs";
+} from "../scripts/sync/sync-external-import.mjs";
 
 const settings = {
   GRAEBOARD_DATABASE_URL: "postgres://user:secret@127.0.0.1:1/graeboard",

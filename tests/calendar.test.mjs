@@ -33,8 +33,8 @@ import { placeCalendarEntry } from "../shared/calendar/calendar-layout.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
 import { CALENDAR_TAG_COLORS } from "../shared/calendar/calendar-tags.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { backupDatabase } from "../scripts/backup.mjs";
-import { restoreDatabase } from "../scripts/restore.mjs";
+import { backupDatabase } from "../scripts/transfer/backup.mjs";
+import { restoreDatabase } from "../scripts/transfer/restore.mjs";
 
 const deletionFor = (entry) => ({
   deletionId: randomUUID(),

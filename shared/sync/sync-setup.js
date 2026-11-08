@@ -112,7 +112,7 @@ export function setupExamples(team, setup, draft) {
     profile: JSON.stringify(externalProfile, null, 2),
     gateway: JSON.stringify(gateway, null, 2),
     // The fork's single TEAM_SITE_CONFIG variable; the release workflow deploys
-    // from it and fills both sides' settings (scripts/team-site-deploy.mjs).
+    // from it and fills both sides' settings (scripts/deploy/team-site-deploy.mjs).
     siteConfig: JSON.stringify(
       {
         cloudflareAccountId: draft.accountId,
@@ -124,7 +124,7 @@ export function setupExamples(team, setup, draft) {
       2,
     ),
     deploy:
-      'npm ci\nnpm run build\nnpm run build:edge\nexport TEAM_SITE_CONFIG="$(cat team-site-config.json)"\nexport TEAM_SITE_SECRETS="$(cat team-site-secrets.json)"\nnode scripts/team-site-deploy.mjs\nunset TEAM_SITE_SECRETS',
+      'npm ci\nnpm run build\nnpm run build:edge\nexport TEAM_SITE_CONFIG="$(cat team-site-config.json)"\nexport TEAM_SITE_SECRETS="$(cat team-site-secrets.json)"\nnode scripts/deploy/team-site-deploy.mjs\nunset TEAM_SITE_SECRETS',
   };
 }
 export function syncVerification(status, now = Date.now()) {

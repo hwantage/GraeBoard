@@ -5,7 +5,7 @@ import { Pool } from "pg";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { openTransferDatabase } from "../scripts/transfer.mjs";
+import { openTransferDatabase } from "../scripts/transfer/transfer.mjs";
 import {
   backupExternal,
   readExternalBackup,

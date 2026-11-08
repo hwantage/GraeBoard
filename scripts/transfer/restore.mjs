@@ -10,18 +10,18 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { SCHEMA_VERSION } from "../server/db.mjs";
+import { SCHEMA_VERSION } from "../../server/db.mjs";
 import { randomUUID } from "node:crypto";
-import { assertSqliteHistory } from "../server/migrations/sqlite.mjs";
-import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { project } from "../server/sync/core/reducer.mjs";
-import { activeImageReferences } from "../server/sync/core/retention.mjs";
+import { assertSqliteHistory } from "../../server/migrations/sqlite.mjs";
+import { sqliteTeamStore } from "../../server/storage/sqlite.mjs";
+import { project } from "../../server/sync/core/reducer.mjs";
+import { activeImageReferences } from "../../server/sync/core/retention.mjs";
 import {
   databaseImageUrls,
   documentImagesDirectory,
   readDocumentImage,
   writeDocumentImage,
-} from "../server/documents/document-images.mjs";
+} from "../../server/documents/document-images.mjs";
 
 // Restore into a NEW destination. Switching DB_PATH is a separate operator action.
 export function restoreDatabase(

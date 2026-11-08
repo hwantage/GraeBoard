@@ -18,6 +18,11 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #100 P7 개발·배포·운영 도구
+
+- 기존 scripts 33개를 admin/deploy/performance/sync/testing/transfer로 이동했습니다. npm·CI·Playwright webServer·운영 문서·설치 안내의 실행 명령과 소스 기준 상대 경로를 갱신했습니다. CLI의 직접 실행 분기와 환경/데이터 경로 의미는 유지합니다.
+- 검증: P7 구조 600개/오류 0, strict PG 실행기·재귀 수집·배포·SQL 초기화·외부 가져오기·프로토콜 전환·백업 선택 검사 21건 pass/fail 0/skip 0. 기준 import/Worker URL graph 차이 0이며 AST 차이는 구조 검사기와 필요한 배포 명령 문구 갱신으로 한정됩니다.
+
 ## 2026-11-09 — #100 P6 이식 가능한 동기화와 Node/외부 호스트
 
 - sync 48개를 core 17개·Node 20개·외부 11개로 이동했습니다. 직접 허용 portable 16개·공통 서비스/규칙 14개의 정확한 경로와 간접 의존 제한, background Worker·동적 import·설치 안내 읽기 경로를 유지했습니다.

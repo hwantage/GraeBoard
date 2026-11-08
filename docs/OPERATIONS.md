@@ -292,7 +292,7 @@ SIGTERM/SIGINT는 새 접속·구독을 차단하고 진행 중 HTTP 요청과 �
 
 팀장 연결 키는 SQLite v31과 외부 계정 관리 site v2에서 추가됐습니다. 현재 릴리스는 SQLite v34·PostgreSQL site v3(분리형 control v2)·team v3까지 명시적으로 변환하며, v34·team v3 단계는 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)입니다. SQLite v32/team v2 단계에서 일반 outbox 인덱스를, v33/site v3/control v2 단계에서 접속 토큰 테이블을 추가합니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run cutover:sheet-clone`의 `--dry-run`과 실제 전환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 기존 릴리스 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본을 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환) 순서로 전환하고 서버를 시작합니다. SQLite v34에는 v30·v31·v32·v33·v34 다섯 migration checksum이 필요하며 기존 이력은 수정하지 않습니다.
 
-site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키·접속 토큰 테이블, site v2/v3 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
+site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/admin/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키·접속 토큰 테이블, site v2/v3 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
 
 기존 Google 연결은 유지됩니다. 초기 키 방식으로 되돌리기 위해 예전 API 코드만 배포하지 않습니다. 접속 재개 전 실패는 백업과 대응 릴리스로 함께 복구하고, 재개 후에는 현재 데이터를 보존한 채 수정 배포를 우선합니다. 백업 복구는 백업 이후 저장을 잃을 수 있으므로 재개 후 전체 복구 전에는 그 사이 데이터를 별도 보존해야 합니다. 복구된 미사용 연결 키는 폐기하며 내부에서 재발급합니다.
 

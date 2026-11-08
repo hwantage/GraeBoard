@@ -13,8 +13,8 @@ import {
   passwordHash,
 } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { backupDatabase } from "../scripts/backup.mjs";
-import { restoreDatabase } from "../scripts/restore.mjs";
+import { backupDatabase } from "../scripts/transfer/backup.mjs";
+import { restoreDatabase } from "../scripts/transfer/restore.mjs";
 import { checkWorkbookArchive } from "../server/transfer/archive.mjs";
 import ExcelJS from "exceljs";
 

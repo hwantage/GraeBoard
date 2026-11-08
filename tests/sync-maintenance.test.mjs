@@ -24,7 +24,7 @@ import {
   retentionId,
 } from "../server/sync/core/retention.mjs";
 import { makeOperation } from "../server/sync/core/operations.mjs";
-import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
+import { recoverMaintenanceJob } from "../scripts/sync/sync-maintenance-recover.mjs";
 
 function fixture(t, options = {}) {
   const db = openDatabase(options.databasePath || ":memory:"),

@@ -16,7 +16,7 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까�
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
 | JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
-| DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
+| DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
 | 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
 | 동기화 프로토콜    | 3(사본 한 레코드)·4(사본 행·셀 분할)         | C의 `protocol`/`[]` 표식. 1·2는 사본 명칭 전환 전 형식이며 이 런타임은 읽지 않음                                 |

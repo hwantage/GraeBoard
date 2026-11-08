@@ -10,7 +10,7 @@ import {
   hasSecret,
   readDeployConfig,
   workerOrigin,
-} from "../scripts/team-site-deploy.mjs";
+} from "../scripts/deploy/team-site-deploy.mjs";
 import { setupExamples } from "../shared/sync/sync-setup.js";
 
 const key = () => randomBytes(32).toString("base64");
@@ -262,7 +262,7 @@ test("the workers.dev address belongs to the deployed Worker name", () => {
 test("--check masks every token and key in GitHub Actions and reports missing values", () => {
   const { secrets, env } = siteEnv();
   const check = (extra) =>
-    spawnSync(process.execPath, ["scripts/team-site-deploy.mjs", "--check"], {
+    spawnSync(process.execPath, ["scripts/deploy/team-site-deploy.mjs", "--check"], {
       encoding: "utf8",
       env: { PATH: process.env.PATH, ...extra },
     });

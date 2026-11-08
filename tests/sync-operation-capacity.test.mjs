@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 
 test("an oversized captured API command returns 400 and rolls back business rows, outbox and audit while retaining request data", async (t) => {
   const f = await performanceFixture({ rows: 2000, clients: 1, users: 1 });

@@ -1,5 +1,5 @@
 import { commitCanonicalForTest } from "./canonical-storage-fixture.mjs";
-import { recoverSync } from "../scripts/sync-recover.mjs";
+import { recoverSync } from "../scripts/sync/sync-recover.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

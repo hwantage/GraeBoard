@@ -23,9 +23,11 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 동기화는 `server/sync/core/` 17개(간접 전용 cache 포함)·`server/sync/node/` 20개·`worker/sync/` 11개로 배치합니다. 외부 direct import는 portable 16개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
 
+`scripts/`는 `admin/`·`deploy/`·`performance/`·`sync/`·`testing/`·`transfer/`로 실행 목적을 구분하고 루트 `licenses.mjs`를 유지합니다. npm 명령은 같은 저장소 루트의 환경·데이터 경로를 사용합니다.
+
 아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
-외부 런타임은 `edge/main.mjs`(Supabase/Deno) → `edge/handler.mjs` → 기존 `worker/entry.mjs`의 API·repository를 재사용합니다. `worker/gateway.mjs`는 Cloudflare에서 HTTP 전달·정적 파일·R2/Images binding을 담당합니다. `scripts/build-edge.mjs`가 공통 모듈과 고정 버전 npm import를 묶습니다. `tests/edge-gateway.test.mjs`는 실제 workerd 전달/자원 경계를, `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → PostgreSQL 및 내부 SQLite/Git 흐름을 확인합니다. Deno 호환성은 생성 함수의 실행과 실제 Supabase 배포로 별도 확인합니다.
+외부 런타임은 `edge/main.mjs`(Supabase/Deno) → `edge/handler.mjs` → 기존 `worker/entry.mjs`의 API·repository를 재사용합니다. `worker/gateway.mjs`는 Cloudflare에서 HTTP 전달·정적 파일·R2/Images binding을 담당합니다. `scripts/deploy/build-edge.mjs`가 공통 모듈과 고정 버전 npm import를 묶습니다. `tests/edge-gateway.test.mjs`는 실제 workerd 전달/자원 경계를, `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → PostgreSQL 및 내부 SQLite/Git 흐름을 확인합니다. Deno 호환성은 생성 함수의 실행과 실제 Supabase 배포로 별도 확인합니다.
 
 | 경로                                                                                                                                                                                                                                                    | 역할                                                                                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -101,7 +103,7 @@ Vite는 `5173`, API는 `4310` 포트를 사용합니다. 개발 프록시는 `/a
 
 운영은 빌드한 프런트엔드와 서버 소스·런타임 의존성을 함께 배포합니다. `dist/`만으로는 인증·업무 저장·문서·캘린더 API가 동작하지 않습니다. `start`가 `NODE_ENV=production`을 자동 설정하지 않으므로 운영 `.env` 또는 서비스 환경에서 지정합니다. 기존 운영 환경의 업데이트는 [운영 안내](OPERATIONS.md)의 절차를 따릅니다.
 
-로컬 브라우저 테스트는 `npm run build` 후 `node scripts/e2e-server.mjs`로 실행합니다. 기본 주소는 `http://127.0.0.1:4311`이며, 기본 테스트 계정은 **`test@somansa.com` / `1234`**입니다. 이 계정은 테스트 전용 임시 DB에 생성되며 서버 종료 시 테스트 데이터가 삭제됩니다. 다른 포트는 `E2E_PORT`로 지정합니다.
+로컬 브라우저 테스트는 `npm run build` 후 `node scripts/testing/e2e-server.mjs`로 실행합니다. 기본 주소는 `http://127.0.0.1:4311`이며, 기본 테스트 계정은 **`test@somansa.com` / `1234`**입니다. 이 계정은 테스트 전용 임시 DB에 생성되며 서버 종료 시 테스트 데이터가 삭제됩니다. 다른 포트는 `E2E_PORT`로 지정합니다.
 
 ## 운영 데이터에 영향을 주는 변경
 
@@ -327,7 +329,7 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 
 `server/sync/core/sync-operation-cache.mjs`는 한 동기화 실행에서 읽은 동일 outbox JSON을 깊게 동결해 재사용합니다(입력 8MiB·128건, canonical 텍스트 8MiB 한도). 동결한 입력의 구조·본문 검증과 canonical 직렬화를 재사용하되 현재 상태의 protocol·identity·resolution·receipt·의존성·이름·부모 검사는 계속 수행합니다. 변경된 JSON, 일반 mutable 호출자, 한도를 넘는 입력은 검증·파싱을 다시 하고, 실행 성공·실패 뒤에는 캐시를 비웁니다. `tests/worker-sheet-clone-sync-performance.test.mjs`는 합성 480업무·공유 서식·주간 셀·11문서의 외부 생성 API, 실제 PG, GitHub 에뮬레이터/SQLite를 연결해 큰 명령 발행, 매 실행 사이 원격 변경 추가, 수신 도중 편집 저장, CAS 이동, 이름 충돌과 문서 편집 보존을 확인합니다. `TEST_PG_BIN=/테스트/PG/bin node --test --test-concurrency=1 tests/worker-sheet-clone-sync-performance.test.mjs`로 재현하며 CPU·wall time·실행별 파싱/수신 횟수와 최종 해시를 출력합니다. 시간 임계값 대신 중복 작업 횟수와 결과 보존을 검사합니다.
 
-같은 PG 행·outbox·Git 부모를 복원하는 전후 비교는 기준 커밋을 별도 임시 디렉토리에 `git archive`로 풀고 그 디렉토리에 기존 `node_modules`를 연결한 뒤 `TEST_PG_BIN=/테스트/PG/bin node scripts/sync-sheet-clone-performance.mjs --baseline /임시/기준소스 --output docs/validation/sheet-clone-sync-performance.json`으로 실행합니다. `--backlog 0`은 원격 이력이 없는 발행 비교입니다. `--hotpath-output /tmp/clone-hotpath.json`을 더하면 같은 합성 명령을 Deno 보조 검사에 사용할 수 있습니다: `deno run --allow-read --node-modules-dir=manual --no-config --no-lock tests/worker-sheet-clone-sync-deno.mjs /비교할/소스 /tmp/clone-hotpath.json`. Deno 보조 검사는 반복 투영·검증·직렬화의 첫 실행/워밍 후 시간을 측정하며 PG·Git·Supabase의 실행 한도 검증을 대신하지 않습니다.
+같은 PG 행·outbox·Git 부모를 복원하는 전후 비교는 기준 커밋을 별도 임시 디렉토리에 `git archive`로 풀고 그 디렉토리에 기존 `node_modules`를 연결한 뒤 `TEST_PG_BIN=/테스트/PG/bin node scripts/performance/sync-sheet-clone-performance.mjs --baseline /임시/기준소스 --output docs/validation/sheet-clone-sync-performance.json`으로 실행합니다. `--backlog 0`은 원격 이력이 없는 발행 비교입니다. `--hotpath-output /tmp/clone-hotpath.json`을 더하면 같은 합성 명령을 Deno 보조 검사에 사용할 수 있습니다: `deno run --allow-read --node-modules-dir=manual --no-config --no-lock tests/worker-sheet-clone-sync-deno.mjs /비교할/소스 /tmp/clone-hotpath.json`. Deno 보조 검사는 반복 투영·검증·직렬화의 첫 실행/워밍 후 시간을 측정하며 PG·Git·Supabase의 실행 한도 검증을 대신하지 않습니다.
 
 공유 상태 전체에는 기본 상한이 없고 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(`shared/sync/sync-capacity.mjs`의 `capacityLimits`). snapshot은 64MiB, 이벤트 파일은 32MiB(사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 정한 값), receipt는 별도 16MiB로 검사합니다. `tests/sync-state-capacity.test.mjs`는 27.88MiB·30,714개 합성 자료(2026-11-02 이전 28.76MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)의 SQLite 최초 게시, 외부 `serviceFor`의 PG 가져오기, 기존 4MiB 환경값에서의 원자적 거절, HTTP 후속 저장·역방향 수신을 검증합니다. 상태·파일 예산을 결합해 이벤트 제한까지 풀리는 회귀, 미전송 변경의 임의 삭제, DB 계수와 메모리 계수의 불일치를 확인합니다. Node 테스트의 성공은 Supabase/Deno 자원 한도 내 실행 보장이 아닙니다. 형식과 스키마를 유지한 한도 상향에는 DB 버전 증가를 하지 않으며 양쪽 런타임 배포와 기존 낮은 환경값 확인이 필요합니다.
 

@@ -13,22 +13,22 @@ import { pathToFileURL } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { Worker } from "node:worker_threads";
-import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
+import { storeDocumentVersion } from "../../server/documents/document-storage.mjs";
 import { performance, monitorEventLoopDelay } from "node:perf_hooks";
 import {
   openDatabase,
   transaction,
   json,
   upsertCellStatement,
-} from "../server/db.mjs";
-import { createApp } from "../server/app.mjs";
+} from "../../server/db.mjs";
+import { createApp } from "../../server/app.mjs";
 import {
   DEFAULT_SETTINGS,
   sampleProperties,
   weeksForYear,
-} from "../shared/domain.js";
-import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+} from "../../shared/domain.js";
+import { unpack } from "../../shared/formatting/compact.js";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 
 export const percentile = (samples, fraction = 0.95) =>
   samples.toSorted((a, b) => a - b)[
@@ -773,11 +773,11 @@ export function runReviewPerformance(options = {}) {
       }).trim(),
       harnessSha256: Object.fromEntries(
         [
-          "scripts/sync-performance.mjs",
-          "scripts/sync-review-performance.mjs",
-          "scripts/sync-peer-performance.mjs",
-          "scripts/sync-browser-performance.mjs",
-          "scripts/sync-merge-performance.mjs",
+          "scripts/performance/sync-performance.mjs",
+          "scripts/performance/sync-review-performance.mjs",
+          "scripts/performance/sync-peer-performance.mjs",
+          "scripts/performance/sync-browser-performance.mjs",
+          "scripts/performance/sync-merge-performance.mjs",
         ].map((path) => [
           path,
           createHash("sha256").update(readFileSync(path)).digest("hex"),
@@ -919,7 +919,7 @@ export async function runSyncPerformance({
         new Promise((resolve, reject) => {
           const child = spawn(
             process.execPath,
-            ["scripts/sync-fault-performance.mjs"],
+            ["scripts/performance/sync-fault-performance.mjs"],
             {
               cwd: process.cwd(),
               env: process.env,
@@ -959,7 +959,7 @@ export async function runSyncPerformance({
       const backup = new Promise((resolve, reject) => {
         const child = spawn(
           process.execPath,
-          ["scripts/backup.mjs", join(fixture.dir, "backup.sqlite")],
+          ["scripts/transfer/backup.mjs", join(fixture.dir, "backup.sqlite")],
           {
             cwd: process.cwd(),
             env: {
@@ -1107,7 +1107,7 @@ export async function runSyncPerformance({
         new Promise((resolve, reject) => {
           const child = spawn(
             process.execPath,
-            ["scripts/sync-import-performance.mjs"],
+            ["scripts/performance/sync-import-performance.mjs"],
             {
               cwd: process.cwd(),
               env: {
@@ -1229,11 +1229,11 @@ export async function runSyncPerformance({
         isolatedSnapshot: process.env.SYNC_PERF_ISOLATED === "1",
         harnessSha256: Object.fromEntries(
           [
-            "scripts/sync-performance.mjs",
-            "scripts/sync-review-performance.mjs",
-            "scripts/sync-fault-performance.mjs",
-            "scripts/sync-peer-performance.mjs",
-            "scripts/sync-import-performance.mjs",
+            "scripts/performance/sync-performance.mjs",
+            "scripts/performance/sync-review-performance.mjs",
+            "scripts/performance/sync-fault-performance.mjs",
+            "scripts/performance/sync-peer-performance.mjs",
+            "scripts/performance/sync-import-performance.mjs",
             "tests/sync-performance.test.mjs",
           ].map((path) => [
             path,

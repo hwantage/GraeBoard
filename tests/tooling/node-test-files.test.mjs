@@ -33,8 +33,8 @@ function fixture(t) {
         join(root, `scripts/testing/${name}.mjs`),
       );
     copyFileSync(
-      new URL("../../scripts/test-postgres.mjs", import.meta.url),
-      join(root, "scripts/test-postgres.mjs"),
+      new URL("../../scripts/testing/test-postgres.mjs", import.meta.url),
+      join(root, "scripts/testing/test-postgres.mjs"),
     );
   };
   return { root, put, copyRunner };
@@ -111,7 +111,7 @@ test("strict command fails before testing absent/unusable PG and uses the same d
     'import test from "node:test"; test("strict child marker", () => { throw new Error("strict deep failure"); });\n',
   );
   const run = (bin) =>
-    spawnSync(process.execPath, ["scripts/test-postgres.mjs"], {
+    spawnSync(process.execPath, ["scripts/testing/test-postgres.mjs"], {
       cwd: f.root,
       env: { ...cliEnv, TEST_PG_BIN: bin },
       encoding: "utf8",

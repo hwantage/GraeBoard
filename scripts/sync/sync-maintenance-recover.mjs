@@ -4,12 +4,12 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { assertSqliteHistory } from "../server/migrations/sqlite.mjs";
-import { canonical } from "../server/sync/core/protocol.mjs";
+import { assertSqliteHistory } from "../../server/migrations/sqlite.mjs";
+import { canonical } from "../../server/sync/core/protocol.mjs";
 import {
   abandonedBackup,
   recoverBackupJob,
-} from "../shared/transfer/backup-recovery.mjs";
+} from "../../shared/transfer/backup-recovery.mjs";
 
 export function recoverMaintenanceJob(
   db,
@@ -128,7 +128,7 @@ async function main() {
   if (values.engine === "postgres") {
     if (!values["url-env"] || !values["team-id"] || !values["job-id"])
       throw new Error("PostgreSQL requires --url-env, --team-id and --job-id.");
-    const { openTransferDatabase } = await import("./transfer.mjs");
+    const { openTransferDatabase } = await import("../transfer/transfer.mjs");
     const resource = await openTransferDatabase({
       engine: "postgres",
       urlEnv: values["url-env"],

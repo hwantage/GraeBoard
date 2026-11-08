@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { S3ImageStore } from "../server/storage/transfer/external-backup.mjs";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { S3ImageStore } from "../../server/storage/transfer/external-backup.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 
 export function assetResources(file, teamId) {
   const config = JSON.parse(readFileSync(file, "utf8")),

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { upgradeArguments, runUpgrade } from "../scripts/sync-upgrade.mjs";
+import { upgradeArguments, runUpgrade } from "../scripts/sync/sync-upgrade.mjs";
 const team = "11111111-1111-4111-8111-111111111111";
 const base = ["--url", "http://127.0.0.1:4311", "--team", team];
 test("protocol upgrade preview cannot issue a write, and execution requires exact state and peer-stop confirmation", async () => {

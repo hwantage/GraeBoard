@@ -4,7 +4,7 @@ import {
   passwordHash,
   transaction,
   audit,
-} from "../server/db.mjs";
+} from "../../server/db.mjs";
 
 // Password enters through stdin; it is never a CLI argument or log field.
 const [action, username] = process.argv.slice(2),

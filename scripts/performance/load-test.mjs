@@ -15,12 +15,12 @@ import {
   parse,
   passwordHash,
   upsertCellStatement,
-} from "../server/db.mjs";
+} from "../../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
   sampleProperties,
   weeksForYear,
-} from "../shared/domain.js";
+} from "../../shared/domain.js";
 
 const scenarios = process.argv.slice(2).length
   ? process.argv.slice(2).map((s) => {
@@ -57,7 +57,7 @@ const stats = (values) => {
   };
 };
 const serverCode = `
-import {createApp} from ${JSON.stringify(new URL("../server/app.mjs", import.meta.url).href)};
+import {createApp} from ${JSON.stringify(new URL("../../server/app.mjs", import.meta.url).href)};
 const app=createApp({allowSetup:false});
 const server=app.listen(0,'127.0.0.1',()=>process.send({port:server.address().port}));
 process.on('message',m=>{if(m==='memory')process.send({memory:process.memoryUsage()});});

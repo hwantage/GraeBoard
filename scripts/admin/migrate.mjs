@@ -2,8 +2,8 @@ import { existsSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { migrateSqlite } from "../server/migrations/sqlite.mjs";
-import { migratePostgres } from "../server/migrations/postgres.mjs";
+import { migrateSqlite } from "../../server/migrations/sqlite.mjs";
+import { migratePostgres } from "../../server/migrations/postgres.mjs";
 
 const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/path.sqlite [--dry-run] [--initialize]
        npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL [--initialize] [--dry-run]

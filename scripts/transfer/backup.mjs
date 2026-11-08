@@ -11,13 +11,13 @@ import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { unfinishedJobError } from "../shared/transfer/backup-recovery.mjs";
+import { unfinishedJobError } from "../../shared/transfer/backup-recovery.mjs";
 import {
   databaseImageUrls,
   documentImagesDirectory,
   readDocumentImage,
   writeDocumentImage,
-} from "../server/documents/document-images.mjs";
+} from "../../server/documents/document-images.mjs";
 
 export function backupDatabase(
   source,

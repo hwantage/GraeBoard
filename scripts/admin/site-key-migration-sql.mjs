@@ -6,7 +6,7 @@ import {
   teamMaintenanceMigration,
   teamSheetCloneMigration,
   accessTokenMigrations,
-} from "../server/migrations/postgres.mjs";
+} from "../../server/migrations/postgres.mjs";
 
 export function siteKeyMigrationSql(teamId) {
   if (

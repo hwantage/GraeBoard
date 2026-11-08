@@ -48,8 +48,8 @@ import {
 } from "../server/sync/core/protocol.mjs";
 import { makeOperation } from "../server/sync/core/operations.mjs";
 import { reduce } from "../server/sync/core/reducer.mjs";
-import { backupDatabase } from "../scripts/backup.mjs";
-import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
+import { backupDatabase } from "../scripts/transfer/backup.mjs";
+import { recoverMaintenanceJob } from "../scripts/sync/sync-maintenance-recover.mjs";
 import { recoverBackupJob } from "../shared/transfer/backup-recovery.mjs";
 
 function sourceFixture(dir) {
@@ -275,7 +275,7 @@ test("M5 abandoned SQLite backup guard requires drained confirmation and release
   const command = spawnSync(
     process.execPath,
     [
-      "scripts/sync-maintenance-recover.mjs",
+      "scripts/sync/sync-maintenance-recover.mjs",
       "--database",
       join(dir, "source.sqlite"),
       "--job-id",
@@ -445,7 +445,7 @@ test("SQLite logical export freezes writes, verifies checksums and restores exac
   ])
     writeDocumentImage(sourceImages, url, bytes);
   command([
-    "scripts/transfer.mjs",
+    "scripts/transfer/transfer.mjs",
     "--action",
     "export",
     "--engine",
@@ -462,7 +462,7 @@ test("SQLite logical export freezes writes, verifies checksums and restores exac
     sourceImages,
   ]);
   command([
-    "scripts/migrate.mjs",
+    "scripts/admin/migrate.mjs",
     "--engine",
     "sqlite",
     "--database",
@@ -470,7 +470,7 @@ test("SQLite logical export freezes writes, verifies checksums and restores exac
     "--initialize",
   ]);
   command([
-    "scripts/transfer.mjs",
+    "scripts/transfer/transfer.mjs",
     "--action",
     "import",
     "--engine",
@@ -485,7 +485,7 @@ test("SQLite logical export freezes writes, verifies checksums and restores exac
   assert.equal(empty.prepare("SELECT COUNT(*) n FROM teams").get().n, 0);
   empty.close();
   command([
-    "scripts/transfer.mjs",
+    "scripts/transfer/transfer.mjs",
     "--action",
     "import",
     "--engine",
@@ -729,7 +729,7 @@ test("actual PostgreSQL roundtrip and complete R2/Git backup preserve C/P/L and 
   const command = spawnSync(
     process.execPath,
     [
-      "scripts/sync-maintenance-recover.mjs",
+      "scripts/sync/sync-maintenance-recover.mjs",
       "--engine",
       "postgres",
       "--url-env",

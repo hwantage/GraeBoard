@@ -6,12 +6,12 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { performance } from "node:perf_hooks";
-import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
-import { SyncService } from "../server/sync/core/service.mjs";
-import { boundStore } from "../worker/sync/sync.mjs";
-import { boundedTransport } from "../worker/storage/capacity.mjs";
+import { migratePostgres } from "../../server/migrations/postgres.mjs";
+import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
+import { SyncService } from "../../server/sync/core/service.mjs";
+import { boundStore } from "../../worker/sync/sync.mjs";
+import { boundedTransport } from "../../worker/storage/capacity.mjs";
 
 const config = JSON.parse(process.env.SYNC_IMPORT_PERF_CONFIG || "{}"),
   bin = process.env.TEST_PG_BIN;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 import { allEntities } from "../server/sync/node/entities.mjs";
 import { makeOperation } from "../server/sync/core/operations.mjs";
 import { entityId, stateHash } from "../server/sync/core/protocol.mjs";

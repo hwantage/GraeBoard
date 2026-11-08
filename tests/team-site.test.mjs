@@ -1,4 +1,4 @@
-import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
+import { siteKeyMigrationSql } from "../scripts/admin/site-key-migration-sql.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {

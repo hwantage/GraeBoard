@@ -10,8 +10,8 @@ import {
 } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { unpack } from "../shared/formatting/compact.js";
-import { backupDatabase } from "../scripts/backup.mjs";
-import { restoreDatabase } from "../scripts/restore.mjs";
+import { backupDatabase } from "../scripts/transfer/backup.mjs";
+import { restoreDatabase } from "../scripts/transfer/restore.mjs";
 import { revertToV33 } from "./sqlite-legacy-schema.mjs";
 import { frozenCutoverModule } from "./support/frozen-cutover-source.mjs";
 const { sqliteSheetCloneConversion } = await frozenCutoverModule(

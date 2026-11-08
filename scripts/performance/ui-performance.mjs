@@ -1,5 +1,5 @@
-import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
-// 표 화면 반응 속도 측정: npm run build 후 node scripts/ui-performance.mjs [업무 수] [CPU 감속 배수] [업무별 문서 KiB]
+import { storeDocumentVersion } from "../../server/documents/document-storage.mjs";
+// 표 화면 반응 속도 측정: npm run build 후 node scripts/performance/ui-performance.mjs [업무 수] [CPU 감속 배수] [업무별 문서 KiB]
 // 셀 선택, 스크롤 프레임, 행 높이 조절의 지연을 브라우저에서 측정합니다.
 // STATIC_DIR 환경 변수로 다른 빌드(dist)와 비교할 수 있습니다.
 import { mkdtempSync, rmSync } from "node:fs";
@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { chromium } from "@playwright/test";
-import { unpack } from "../shared/formatting/compact.js";
-import { createApp } from "../server/app.mjs";
+import { unpack } from "../../shared/formatting/compact.js";
+import { createApp } from "../../server/app.mjs";
 import {
   openDatabase,
   id,
@@ -17,12 +17,12 @@ import {
   passwordHash,
   transaction,
   upsertCellStatement,
-} from "../server/db.mjs";
+} from "../../server/db.mjs";
 import {
   DEFAULT_SETTINGS,
   sampleProperties,
   weeksForYear,
-} from "../shared/domain.js";
+} from "../../shared/domain.js";
 
 const taskCount = Number(process.argv[2] || 2000),
   throttle = Number(process.argv[3] || 4),

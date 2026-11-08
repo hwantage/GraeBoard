@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { openTransferDatabase } from "./transfer.mjs";
-import { S3ImageStore } from "../server/storage/transfer/external-backup.mjs";
-import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { S3ImageStore } from "../../server/storage/transfer/external-backup.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 
 export async function externalResources(file, { restore = false } = {}) {
   if (!file) throw new Error("--config is required");

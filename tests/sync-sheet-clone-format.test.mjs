@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { performanceFixture } from "../scripts/sync-performance.mjs";
+import { performanceFixture } from "../scripts/performance/sync-performance.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { writeFormatting, readFormatting } from "../server/db.mjs";

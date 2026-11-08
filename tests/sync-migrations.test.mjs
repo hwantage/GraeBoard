@@ -264,7 +264,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; a
   const run = (...args) =>
     spawnSync(
       process.execPath,
-      ["scripts/migrate.mjs", "--engine", "sqlite", ...args],
+      ["scripts/admin/migrate.mjs", "--engine", "sqlite", ...args],
       { encoding: "utf8" },
     );
   try {
