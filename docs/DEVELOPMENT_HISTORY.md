@@ -287,6 +287,8 @@ Markdown은 원문을 바꾸지 않고 remark AST의 위치로 이미지 주소�
 
 ## 문서 정리
 
+2026-11-08 #100 P2: 문서 20개·편집기 내부 10개·캘린더 21개를 이동하고 문서 lazy import, 전역/기능 CSS 참조, RichMarkdownEditor 브라우저 fixture와 캘린더 source-loader를 갱신했습니다. 관련 Node 169건(pass 169/fail 0/skip 0), 프런트엔드·Edge 빌드, `check:structure -- --migration-phase P2`, `git diff --check`를 통과했습니다. 실행 import의 정규화 결과는 P0/P1과 같고 실제 파일로 해석되지 않는 로컬 import는 0개입니다. 공용 DocumentPanel·DocumentEditor 재사용과 개인 일정 저장 소속을 유지했으며, 관련 세 브라우저 검사는 P3 최종 변경에서 합쳐 실행합니다.
+
 2026-11-08 #100 P1: platform 11개·UI 17개를 basename과 공개 심벌 그대로 이동하고 다른 기능의 호출자, main 적재 순서, SharedWorker URL, source-loader 및 import 치환 패턴을 함께 갱신했습니다. SSE·프런트엔드 조회·오류·도구·import 경계 62건(pass 62/fail 0/skip 0), 프런트엔드·Edge 빌드, `check:structure -- --migration-phase P1`, `git diff --check`를 통과했습니다. 원본 경로로 정규화한 실행 import 3,699개와 기존 파일 순환 묶음 3개가 동일하며 누락 대상은 0개입니다. 관련 세 브라우저 검사는 P3 최종 변경에서 합쳐 실행합니다.
 
 2026-11-08 #100 P0: 최신 main `cb87426`에서 608개 전체 manifest와 별도 추가 8개를 작성했습니다. 명명·배치·정확한 예외·중복·단계별 목록·고정 16개 SHA-256 검사, 공통 재귀 Node 수집기와 일반/PG strict 실행기, main PR 전체의 경량 CI를 구현했습니다. 기존 114개 Node suite가 일대일 보존되며 도구 suite 2개만 추가됐고 Playwright spec 43개도 보존했습니다. 임시 Git 트리의 도구/기존 import 경계 검사 15건(새 위반·보호 바이트·직간접 native 의존·PG 환경 실패·깊은 자식 실패·종료 신호 포함), `check:structure -- --migration-phase P0`, 프런트엔드·Edge 빌드, `git diff --check`를 통과했습니다. 전체 DB·브라우저 검증은 P1~P3 최종 변경에서 추가 기록합니다. 보호 도구·fixture와 migration은 변경하지 않았습니다.

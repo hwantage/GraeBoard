@@ -1,19 +1,19 @@
 import { RecentColorsProvider } from "./ui/recent-colors";
 import { queryPolicyFor } from "./platform/query-policy";
 import { joinQuery } from "./platform/shared-query";
-import AnnualMemoPanel from "./AnnualMemoPanel";
-import type { DocumentPanelHandle } from "./DocumentPanel";
-import Calendar from "./Calendar";
+import AnnualMemoPanel from "./documents/AnnualMemoPanel";
+import type { DocumentPanelHandle } from "./documents/DocumentPanel";
+import Calendar from "./calendar/Calendar";
 import { busyProps } from "./ui/busyProps";
 import Select from "./ui/Select";
 import LoadingState from "./ui/LoadingState";
 import SheetTabs from "./SheetTabs";
-import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
+import DocumentBrowser, { type DocumentBrowserHandle } from "./documents/DocumentBrowser";
 import useWorkspaceRoute from "./useWorkspaceRoute";
 import DocumentLinkPanel, {
   loadDocumentLink,
   type OpenedDocumentLink,
-} from "./DocumentLinkPanel";
+} from "./documents/DocumentLinkPanel";
 import {
   DocumentLinkContext,
   UNAVAILABLE_LINK_MESSAGE,
@@ -23,9 +23,9 @@ import {
   updateDocumentLinkTitle,
   type DocumentLinkOpener,
   type DocumentLinkTarget,
-} from "./document-links";
+} from "./documents/document-links";
 import { parseDocumentLinkPath } from "../shared/document-links.js";
-import useCalendarTheme from "./useCalendarTheme";
+import useCalendarTheme from "./calendar/useCalendarTheme";
 import { THEMES, getTheme, themeVariables } from "../shared/themes.js";
 import { applyBorderPreset } from "../shared/borders.js";
 import { formatScopes } from "./format-selection.js";

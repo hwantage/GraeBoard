@@ -1,0 +1,860 @@
+import {
+  EventStream,
+  retryableRejection,
+  streamErrorStatus,
+} from "../platform/event-stream";
+import {
+  Component,
+  forwardRef,
+  lazy,
+  Suspense,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { Download, FileCode, FileText, Printer } from "lucide-react";
+import { api, ApiError } from "../platform/api";
+import { useMobileLayout } from "../ui/useMobileLayout";
+import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
+import DocumentTocToggle from "./DocumentTocToggle";
+import DocumentToolMenu from "./DocumentToolMenu";
+import type { DocumentExportFormat } from "./document-export";
+import { MAX_IMAGE_BYTES } from "../../shared/document-images.js";
+import { MAX_DOCUMENT_BYTES, documentBytes } from "../../shared/task-documents.js";
+import {
+  mergeDocument,
+  mapDocumentPosition,
+} from "../../shared/document-merge.js";
+import {
+  DocumentStorageConflict,
+  type DocumentStorage,
+} from "./document-storage";
+import type { TaskDocument } from "../types";
+import "./task-document.css";
+
+const RichMarkdownEditor = lazy(() => import("./editor/RichMarkdownEditor"));
+class EditorBoundary extends Component<
+  { children: ReactNode; onSource: () => void; onError: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onError();
+  }
+  render() {
+    return this.state.failed ? (
+      <p role="alert">
+        리치 편집기를 불러오지 못했습니다.{" "}
+        <button onClick={this.props.onSource}>Markdown 원문 열기</button>
+      </p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+export type DocumentHandle = {
+  flush: () => Promise<boolean>;
+  persistDraft: () => boolean;
+};
+export type DocumentWrite = {
+  markdown: string;
+  expectedRevision: number | string;
+  operationId: string;
+};
+export type SharedDocumentEditorProps = {
+  path: string;
+  draftKey: string;
+  label?: string;
+  // Names the downloaded file.
+  title?: string;
+  controlsTarget: HTMLDivElement | null;
+  readOnly: boolean;
+  emptyUntilSaved?: boolean;
+  live?: boolean;
+  onRemoteDocument?: (document: TaskDocument) => void;
+  saveDocument?: (input: DocumentWrite) => Promise<TaskDocument>;
+  storage?: DocumentStorage;
+  onCloseWithDraft?: () => void;
+  onLoadingChange: (loading: boolean) => void;
+};
+type LocalDraft = {
+  markdown: string;
+  base: TaskDocument;
+  operationId?: string;
+  submitted?: string;
+};
+const blank: TaskDocument = { markdown: "", revision: 0, updatedAt: null };
+export function readDocumentDraft(key: string): LocalDraft | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (
+      typeof saved?.markdown === "string" &&
+      typeof saved.base?.markdown === "string" &&
+      (Number.isSafeInteger(saved.base.revision) ||
+        typeof saved.base.revision === "string")
+    )
+      return saved;
+  } catch {
+    // Invalid or unavailable local storage must not prevent server loading.
+  }
+  return null;
+}
+
+export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
+  function DocumentEditor(props, ref) {
+    const [markdown, setMarkdown] = useState("");
+    const [loaded, setLoaded] = useState(false);
+    const [editorReady, setEditorReady] = useState(false);
+    const [editorFailed, setEditorFailed] = useState(false);
+    const [preferredMode, setMode] = useState<DocumentMode>("rich");
+    const mobile = useMobileLayout();
+    const [sourceRequired, setSourceRequired] = useState(false);
+    const mode = mobile && !sourceRequired ? "rich" : preferredMode;
+    const previousMobile = useRef(mobile);
+    useLayoutEffect(() => {
+      if (
+        mobile &&
+        !previousMobile.current &&
+        preferredMode === "source" &&
+        !sourceRequired
+      )
+        setEditorReady(false);
+      previousMobile.current = mobile;
+    }, [mobile, preferredMode, sourceRequired]);
+    const [notice, setNotice] = useState("");
+    const [error, setError] = useState("");
+    const [status, setStatus] = useState("문서를 불러오고 있습니다…");
+    const [conflict, setConflict] = useState<TaskDocument | null>(null);
+    const [loadAttempt, setLoadAttempt] = useState(0);
+    const [uploadCount, setUploadCount] = useState(0);
+    const [remoteMarkdown, setRemoteMarkdown] = useState<{
+      markdown: string;
+      sequence: number;
+    }>();
+    const sourceInput = useRef<HTMLTextAreaElement>(null);
+    const pendingRemote = useRef<TaskDocument | null>(null);
+    const loading = !loaded
+      ? !error
+      : mode === "rich" && !editorReady && !editorFailed;
+    useLayoutEffect(() => {
+      props.onLoadingChange(loading);
+    }, [loading, props.onLoadingChange]);
+    // The mode switch moves to the other mode's toolbar; keyboard focus
+    // follows it once that toolbar is shown.
+    const section = useRef<HTMLElement>(null);
+    const modeFocus = useRef(false);
+    useLayoutEffect(() => {
+      if (!modeFocus.current || loading) return;
+      modeFocus.current = false;
+      const focus = () =>
+        section.current
+          ?.querySelector<HTMLButtonElement>(
+            '.document-modes [aria-pressed="true"]',
+          )
+          ?.focus();
+      focus();
+      // The host keeps the document inert until it hears loading ended. Retry
+      // only while nothing else took focus meanwhile.
+      if (!section.current?.contains(document.activeElement))
+        requestAnimationFrame(() => {
+          if (
+            section.current &&
+            document.activeElement?.contains(section.current)
+          )
+            focus();
+        });
+    }, [mode, loading]);
+    // The table of contents belongs to this view of the document only.
+    const [toc, setToc] = useState(false);
+    const tocButton = useRef<HTMLButtonElement>(null);
+    function closeToc() {
+      // Keyboard focus in the closing contents returns to its button.
+      if (
+        section.current
+          ?.querySelector(".document-toc")
+          ?.contains(document.activeElement)
+      )
+        tocButton.current?.focus({ preventScroll: true });
+      setToc(false);
+    }
+    // A download is the text as shown, saved or not. One runs at a time;
+    // the button stays enabled so keyboard focus can return to it.
+    const exporting = useRef(false);
+    async function download(format: DocumentExportFormat) {
+      if (exporting.current) return;
+      exporting.current = true;
+      setNotice("");
+      try {
+        const { exportDocument } = await import("./document-export");
+        const missing = await exportDocument(format, {
+          markdown: current.current.markdown,
+          title: latest.current.title?.trim() || label,
+          images: latest.current.storage?.images,
+        });
+        if (missing && mounted.current)
+          setNotice(
+            `이미지 ${missing}개는 불러오지 못해 파일에 넣지 못했습니다.`,
+          );
+      } catch {
+        if (mounted.current)
+          setNotice("문서를 내려받지 못했습니다. 잠시 뒤 다시 시도하세요.");
+      } finally {
+        exporting.current = false;
+      }
+    }
+    function changeMode(value: DocumentMode) {
+      if (value === "rich" && mode !== value) {
+        setSourceRequired(false);
+        setEditorReady(false);
+        setEditorFailed(false);
+      }
+      setMode(value);
+    }
+    const uploads = useRef(0);
+    const docReadOnly = props.readOnly || !!props.emptyUntilSaved;
+    const readOnlyRef = useRef(docReadOnly);
+    readOnlyRef.current = docReadOnly;
+    const latest = useRef(props);
+    latest.current = props;
+    const mounted = useRef(true);
+    const composing = useRef(false);
+    const current = useRef<LocalDraft>({ markdown: "", base: blank });
+    const initialized = useRef(false);
+    const blocked = useRef(false);
+    const saving = useRef<Promise<boolean> | null>(null);
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const storageKey = props.draftKey;
+    const path = props.path;
+    const live = props.live !== false && !props.emptyUntilSaved;
+    const label = props.label || "업무 문서";
+    function persist() {
+      try {
+        if (current.current.markdown === current.current.base.markdown)
+          sessionStorage.removeItem(storageKey);
+        else
+          sessionStorage.setItem(storageKey, JSON.stringify(current.current));
+        return true;
+      } catch {
+        if (mounted.current)
+          setNotice(
+            "브라우저에 임시 보관할 공간이 부족합니다. 저장 완료를 확인하거나 원문을 복사해 보관하세요.",
+          );
+        return false;
+      }
+    }
+    function change(value: string) {
+      if (!initialized.current || readOnlyRef.current) return;
+      current.current.markdown = value;
+      setMarkdown(value);
+      persist();
+      if (!blocked.current)
+        setStatus(
+          value === current.current.base.markdown ? "저장됨" : "저장 대기",
+        );
+      schedule();
+    }
+    function schedule() {
+      if (timer.current) clearTimeout(timer.current);
+      if (!composing.current && !blocked.current)
+        timer.current = setTimeout(() => void flush(), 700);
+    }
+    function displayRemote(value: string) {
+      const input = sourceInput.current;
+      const selection =
+        input && document.activeElement === input
+          ? {
+              start: mapDocumentPosition(
+                current.current.markdown,
+                value,
+                input.selectionStart,
+              ),
+              end: mapDocumentPosition(
+                current.current.markdown,
+                value,
+                input.selectionEnd,
+              ),
+              direction: input.selectionDirection,
+              scrollTop: input.scrollTop,
+            }
+          : null;
+      current.current.markdown = value;
+      setMarkdown(value);
+      setRemoteMarkdown((previous) => ({
+        markdown: value,
+        sequence: (previous?.sequence || 0) + 1,
+      }));
+      if (input && selection)
+        requestAnimationFrame(() => {
+          if (!input.isConnected) return;
+          input.setSelectionRange(
+            selection.start,
+            selection.end,
+            selection.direction,
+          );
+          input.scrollTop = selection.scrollTop;
+        });
+    }
+    function mergeRemote(remote: TaskDocument) {
+      const state = current.current;
+      if (
+        remote.sync &&
+        state.base.sync &&
+        remote.sync.session === state.base.sync.session &&
+        remote.sync.sequence <= state.base.sync.sequence
+      )
+        return true;
+      if (remote.revision === state.base.revision) {
+        state.base = remote;
+        latest.current.onRemoteDocument?.(remote);
+        return true;
+      }
+      const merged = mergeDocument(
+        state.base.markdown,
+        state.markdown,
+        remote.markdown,
+      );
+      if (merged === null) {
+        blocked.current = true;
+        setConflict(remote);
+        setError(
+          "같은 부분이 서로 다르게 수정되었습니다. 입력은 보존됩니다. 최신 문서와 비교해 주세요.",
+        );
+        setStatus("저장하지 못함 · 입력 보존됨");
+        return false;
+      }
+      state.base = remote;
+      state.operationId = undefined;
+      state.submitted = undefined;
+      if (merged !== state.markdown) displayRemote(merged);
+      latest.current.onRemoteDocument?.(remote);
+      persist();
+      setStatus(merged === remote.markdown ? "저장됨" : "저장 대기");
+      return true;
+    }
+    function receiveRemote(remote: TaskDocument) {
+      if (
+        !initialized.current ||
+        saving.current ||
+        composing.current ||
+        uploads.current ||
+        blocked.current
+      ) {
+        if (
+          !pendingRemote.current?.sync ||
+          !remote.sync ||
+          remote.sync.session !== pendingRemote.current.sync.session ||
+          remote.sync.sequence > pendingRemote.current.sync.sequence
+        )
+          pendingRemote.current = remote;
+        return;
+      }
+      if (
+        mergeRemote(remote) &&
+        current.current.markdown !== current.current.base.markdown
+      )
+        schedule();
+    }
+    function drainRemote() {
+      const remote = pendingRemote.current;
+      pendingRemote.current = null;
+      if (remote) receiveRemote(remote);
+    }
+    const receive = useRef(receiveRemote);
+    receive.current = receiveRemote;
+    async function flush(explicit = false): Promise<boolean> {
+      if (timer.current) clearTimeout(timer.current);
+      if (composing.current || uploads.current) return false;
+      if (saving.current) {
+        const success = await saving.current;
+        return success ? flush(explicit) : false;
+      }
+      if (
+        !initialized.current ||
+        current.current.markdown === current.current.base.markdown
+      )
+        return true;
+      if (latest.current.readOnly || blocked.current) return false;
+      const state = current.current;
+      if (documentBytes(state.markdown) > MAX_DOCUMENT_BYTES) {
+        setError(
+          "문서는 UTF-8 기준 256KiB까지 저장할 수 있습니다. 입력은 유지됩니다. 내용을 줄인 뒤 다시 저장하세요.",
+        );
+        setStatus("저장하지 못함");
+        blocked.current = true;
+        return false;
+      }
+      const submitted = state.markdown;
+      const operationId =
+        state.submitted === submitted && state.operationId
+          ? state.operationId
+          : crypto.randomUUID();
+      state.submitted = submitted;
+      state.operationId = operationId;
+      persist();
+      setStatus("저장 중…");
+      const request = (async () => {
+        try {
+          const result = await (
+            latest.current.storage?.save || latest.current.saveDocument!
+          )({
+            markdown: submitted,
+            expectedRevision: state.base.revision,
+            operationId,
+          });
+          // Keep edits typed during the request. Only the saved base advances.
+          state.base = result;
+          state.operationId = undefined;
+          state.submitted = undefined;
+          persist();
+          if (mounted.current) {
+            setStatus(state.markdown === submitted ? "저장됨" : "저장 대기");
+            setError("");
+            setConflict(null);
+          }
+          return true;
+        } catch (e) {
+          const remote =
+            e instanceof DocumentStorageConflict
+              ? e.current
+              : e instanceof ApiError && e.status === 409
+                ? e.details?.current
+                : null;
+          // Merging now would rewrite the text under a composition, which
+          // ends it. The conflict waits like any remote change and merges,
+          // then saves again, once the composition ends (drainRemote).
+          if (remote && composing.current) {
+            receiveRemote(remote);
+            if (mounted.current) setStatus("저장 대기");
+            return false;
+          }
+          if (remote && mergeRemote(remote)) {
+            setError("");
+            setConflict(null);
+            return true;
+          }
+          blocked.current = true;
+          persist();
+          if (mounted.current) {
+            setError((e as Error).message);
+            setStatus("저장하지 못함 · 입력 보존됨");
+            if (remote) setConflict(remote);
+          }
+          return false;
+        } finally {
+          saving.current = null;
+          drainRemote();
+        }
+      })();
+      saving.current = request;
+      const success = await request;
+      return success && mounted.current ? flush(explicit) : success;
+    }
+    useImperativeHandle(ref, () => ({
+      flush: () => flush(),
+      persistDraft: () => !composing.current && !uploads.current && persist(),
+    }));
+    useEffect(() => {
+      mounted.current = true;
+      initialized.current = false;
+      setLoaded(false);
+      setError("");
+      setEditorReady(false);
+      setEditorFailed(false);
+      const controller = new AbortController();
+      const local = props.emptyUntilSaved
+        ? Promise.resolve(blank)
+        : props.storage
+          ? props.storage.load()
+          : api<TaskDocument>(path, { signal: controller.signal });
+      void local
+        .then((data) => {
+          if (controller.signal.aborted) return;
+          const restored = readDocumentDraft(storageKey);
+          current.current = restored || { markdown: data.markdown, base: data };
+          if (
+            restored &&
+            restored.markdown !== data.markdown &&
+            restored.base.markdown !== data.markdown
+          ) {
+            blocked.current = true;
+            setConflict(data);
+            setError(
+              props.storage
+                ? "보관된 입력과 브라우저 문서가 다릅니다. 최신 문서와 비교한 뒤 저장하세요."
+                : "보관된 입력과 서버 문서가 다릅니다. 최신 문서와 비교한 뒤 저장하세요.",
+            );
+          } else {
+            current.current.base = data;
+            blocked.current = false;
+            setError("");
+          }
+          if (
+            props.readOnly &&
+            restored &&
+            restored.markdown !== data.markdown
+          ) {
+            blocked.current = true;
+            setError(
+              "현재는 읽기 전용입니다. 보관된 입력을 복사하거나 초안을 보관하고 닫아 주세요.",
+            );
+          }
+          initialized.current = true;
+          setMarkdown(current.current.markdown);
+          setLoaded(true);
+          setStatus(
+            restored && restored.markdown !== data.markdown
+              ? "미저장 입력 복원됨"
+              : "저장됨",
+          );
+          persist();
+          drainRemote();
+          if (restored && !blocked.current) schedule();
+        })
+        .catch((e) => {
+          if (!controller.signal.aborted) {
+            setError((e as Error).message);
+            setStatus("문서를 불러오지 못함");
+          }
+        });
+      return () => {
+        mounted.current = false;
+        controller.abort();
+        if (timer.current) clearTimeout(timer.current);
+      };
+    }, [path, props.storage, props.emptyUntilSaved, loadAttempt]);
+    useEffect(() => {
+      if (!live || !loaded) return;
+      if (props.storage)
+        return props.storage.subscribe(
+          (document) => receive.current(document),
+          (error) => {
+            blocked.current = true;
+            setError(error.message);
+          },
+        );
+      const events = new EventStream(`/api${path}/events`);
+      events.addEventListener("document", (event: MessageEvent) => {
+        try {
+          receive.current(JSON.parse(event.data));
+        } catch {
+          /* reconnect sends a fresh snapshot */
+        }
+      });
+      const denied = () => {
+        events.close();
+        blocked.current = true;
+        setError(
+          "문서 접근 권한이 변경되었거나 문서가 삭제되었습니다. 입력은 보존됩니다.",
+        );
+      };
+      events.addEventListener("access-revoked", (event: MessageEvent) => {
+        // Session loss uses the existing save/reauthentication flow. Preserve
+        // editing and the subscription held by this mounted document.
+        if (streamErrorStatus(event.data) !== 401) denied();
+      });
+      events.addEventListener("rejected", (event: MessageEvent) => {
+        if (!retryableRejection(event.data)) denied();
+      });
+      return () => events.close();
+    }, [path, props.storage, live, loaded]);
+    useEffect(() => {
+      const beforeUnload = (event: BeforeUnloadEvent) => {
+        if (
+          initialized.current &&
+          current.current.markdown !== current.current.base.markdown
+        ) {
+          persist();
+          event.preventDefault();
+          event.returnValue = "";
+        }
+      };
+      window.addEventListener("beforeunload", beforeUnload);
+      return () => window.removeEventListener("beforeunload", beforeUnload);
+    }, []);
+    async function retry() {
+      blocked.current = false;
+      setError("");
+      await flush();
+    }
+    async function uploadImage(file: File, signal: AbortSignal) {
+      if (readOnlyRef.current)
+        throw new Error("문서 수정 상태에서 이미지를 붙여넣어 주세요.");
+      if (file.size > MAX_IMAGE_BYTES)
+        throw new Error("이미지는 파일당 10MiB까지 붙여넣을 수 있습니다.");
+      if (latest.current.storage)
+        return latest.current.storage.uploadImage(file, signal);
+      const body = new FormData();
+      body.append("image", file);
+      const result = await api<{ url: string }>(path + "/images", {
+        method: "POST",
+        body,
+        signal,
+      });
+      return result.url;
+    }
+    function uploading(count: number) {
+      uploads.current = count;
+      if (mounted.current) setUploadCount(count);
+      if (!count) drainRemote();
+    }
+    const saveState = uploadCount
+      ? "이미지 업로드 중…"
+      : docReadOnly
+        ? "읽기 전용"
+        : status;
+    const saveStatus = (
+      <span
+        className="document-save-state"
+        role="status"
+        aria-live="polite"
+        title={saveState}
+      >
+        {saveState}
+      </span>
+    );
+    const modeToggle = (
+      <DocumentModeToggle
+        mode={mode}
+        disabled={!!uploadCount}
+        onChange={(value) => {
+          if (composing.current) return;
+          modeFocus.current = !!section.current
+            ?.querySelector(".document-modes")
+            ?.contains(document.activeElement);
+          setNotice("");
+          changeMode(value);
+        }}
+      />
+    );
+    // Left of the contents button, in every mode and view.
+    const downloadMenu = (
+      <DocumentToolMenu
+        label="다운로드"
+        menuLabel="다운로드 형식"
+        icon={<Download size={16} aria-hidden="true" />}
+        className="document-download"
+        disabled={!loaded}
+        items={[
+          {
+            label: "PDF (인쇄 창에서 저장)",
+            icon: <Printer size={16} aria-hidden="true" />,
+            run: () => void download("pdf"),
+          },
+          {
+            label: "Markdown (.md)",
+            icon: <FileText size={16} aria-hidden="true" />,
+            run: () => void download("markdown"),
+          },
+          {
+            label: "HTML (.html)",
+            icon: <FileCode size={16} aria-hidden="true" />,
+            run: () => void download("html"),
+          },
+        ]}
+      />
+    );
+    // The rich view only: the contents jump within its text. The source
+    // keeps its place so the mode switch does not move.
+    const tocToggle = !editorFailed && (
+      <DocumentTocToggle
+        ref={tocButton}
+        open={toc}
+        disabled={!editorReady}
+        reserved={mode !== "rich"}
+        onChange={setToc}
+      />
+    );
+    // While editing, the mode switch sits at the right end of the toolbar in
+    // both modes. Read-only, failed and mobile views keep it in the host's
+    // control area, which has no toolbar beside it.
+    const toolbarModes =
+      !!props.controlsTarget &&
+      !(error && !loaded) &&
+      !docReadOnly &&
+      !editorFailed &&
+      !mobile;
+    return (
+      <section
+        ref={section}
+        className="task-document"
+        data-mode={mode}
+        aria-label={label}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+            e.preventDefault();
+            void flush();
+          }
+          e.stopPropagation();
+        }}
+        onCopy={(e) => e.stopPropagation()}
+        onPaste={(e) => e.stopPropagation()}
+        onCut={(e) => e.stopPropagation()}
+        onCompositionStart={() => {
+          composing.current = true;
+          if (timer.current) clearTimeout(timer.current);
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          drainRemote();
+          schedule();
+        }}
+      >
+        {props.controlsTarget &&
+          !toolbarModes &&
+          createPortal(
+            <div className="document-controls">
+              {(mode === "source" || docReadOnly || editorFailed) && saveStatus}
+              {modeToggle}
+              {downloadMenu}
+              {tocToggle}
+            </div>,
+            props.controlsTarget,
+          )}
+        <div className="document-current">
+          {props.emptyUntilSaved && (
+            <p className="document-notice">
+              업무를 저장하고 있습니다. 저장이 끝나면 문서를 작성할 수 있습니다.
+            </p>
+          )}
+          {error && (
+            <div className="document-error" role="alert">
+              <p>{error}</p>
+              {!loaded ? (
+                <button
+                  type="button"
+                  onClick={() => setLoadAttempt((n) => n + 1)}
+                >
+                  문서 다시 불러오기
+                </button>
+              ) : (
+                !conflict &&
+                !docReadOnly && (
+                  <button type="button" onClick={() => void retry()}>
+                    저장 다시 시도
+                  </button>
+                )
+              )}
+              {loaded && props.onCloseWithDraft && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (persist()) props.onCloseWithDraft?.();
+                  }}
+                >
+                  초안 보관하고 닫기
+                </button>
+              )}
+            </div>
+          )}
+          {conflict && (
+            <div className="document-conflict">
+              <details>
+                <summary>
+                  최신 {props.storage ? "브라우저" : "서버"} 문서 확인 (내
+                  입력은 아래에 유지)
+                </summary>
+                <pre>{conflict.markdown || "빈 문서"}</pre>
+              </details>
+              {!docReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    current.current.base = conflict;
+                    current.current.operationId = undefined;
+                    current.current.submitted = undefined;
+                    setConflict(null);
+                    void retry();
+                  }}
+                >
+                  내 입력으로 최신 문서 교체
+                </button>
+              )}
+            </div>
+          )}
+          {notice && (
+            <p className="document-notice" role="status">
+              {notice}
+            </p>
+          )}
+          {loaded && mode === "source" && toolbarModes && (
+            <div className="document-rich-tools">
+              <div
+                className="document-formatbar"
+                role="group"
+                aria-label="문서 도구"
+              >
+                <div className="document-history-tools">
+                  {saveStatus}
+                  {modeToggle}
+                  {downloadMenu}
+                  {tocToggle}
+                </div>
+              </div>
+            </div>
+          )}
+          {loaded &&
+            (mode === "source" ? (
+              <textarea
+                ref={sourceInput}
+                className="document-source"
+                aria-label={`${label} Markdown 원문`}
+                spellCheck={false}
+                readOnly={docReadOnly}
+                value={markdown}
+                onChange={(e) => change(e.target.value)}
+                placeholder={`# ${label}\n\n배경, 결정 사항, 진행 내용을 남겨 보세요.`}
+              />
+            ) : (
+              <EditorBoundary
+                onSource={() => {
+                  setSourceRequired(true);
+                  changeMode("source");
+                }}
+                onError={() => setEditorFailed(true)}
+              >
+                <Suspense fallback={null}>
+                  <RichMarkdownEditor
+                    label={`${label} 리치 편집`}
+                    initialMarkdown={current.current.markdown}
+                    remoteMarkdown={remoteMarkdown}
+                    readOnly={docReadOnly}
+                    saveStatus={saveStatus}
+                    modeControl={
+                      toolbarModes && (
+                        <>
+                          {modeToggle}
+                          {downloadMenu}
+                          {tocToggle}
+                        </>
+                      )
+                    }
+                    toc={toc}
+                    onTocClose={closeToc}
+                    onChange={change}
+                    images={props.storage?.images}
+                    documentLinks={!props.storage}
+                    linkTitles={!props.storage}
+                    onUpload={uploadImage}
+                    onUploading={uploading}
+                    onReady={() => setEditorReady(true)}
+                    onUnsupported={(message) => {
+                      setNotice(message);
+                      setSourceRequired(true);
+                      setMode("source");
+                    }}
+                  />
+                </Suspense>
+              </EditorBoundary>
+            ))}
+        </div>
+      </section>
+    );
+  },
+);

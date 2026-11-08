@@ -953,10 +953,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/AnnualMemoPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/App.tsx",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -973,34 +969,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/Calendar.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarEntries.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarEntryPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarRangeEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarSettings.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarTags.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CalendarTaskPicker.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/CellDatePicker.tsx",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1009,87 +977,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/CopyDocumentLinkButton.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/DefaultStyleManager.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentBlockHandle.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentBrowser.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentCodeBlockView.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentFullPageButton.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentFullWidthButton.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentImageView.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentInputRules.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentLinkNode.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentLinkPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentLinkTitle.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentLoading.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentModeToggle.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentSlashMenu.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentToc.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentTocToggle.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentToggle.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DocumentToolMenu.tsx",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1153,15 +1041,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/RichMarkdownEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/SaveStatus.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SecretCalendarEntryPanel.tsx",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1205,14 +1085,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/TaskDocumentEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TaskDocumentPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/TaskPropertyEditor.tsx",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1249,26 +1121,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/calendar-entry-actions.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/calendar-tag-checks.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/calendar-tags.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/calendar-types.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/calendar.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/cell-sync.ts",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1281,43 +1133,11 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/document-browser.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/document-export.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/document-links.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/document-storage.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/format-selection.js",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
       "path": "src/history.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/secret-calendar-layout.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/secret-calendar.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/secret-calendar.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/secret-document-storage.ts",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1337,31 +1157,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/task-document.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "src/team-sync-settings.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useCalendarData.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useCalendarDrag.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useCalendarTheme.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useDocumentFullPage.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useSecretCalendar.ts",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {

@@ -1,11 +1,11 @@
-import type { DocumentPanelHandle } from "./TaskDocumentPanel";
+import type { DocumentPanelHandle } from "./documents/TaskDocumentPanel";
 import type { BatchResult, DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
 } from "./TaskPropertyEditor";
 import Select from "./ui/Select";
-import DocumentLoading from "./DocumentLoading";
+import DocumentLoading from "./documents/DocumentLoading";
 import LoadingState from "./ui/LoadingState";
 import {
   Component,
@@ -36,15 +36,15 @@ import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
-import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton from "./DocumentFullWidthButton";
-import DocumentFullPageButton from "./DocumentFullPageButton";
-import { useDocumentFullPage } from "./useDocumentFullPage";
+import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
+import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
+import DocumentFullPageButton from "./documents/DocumentFullPageButton";
+import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   useOpenDocumentLink,
   type DocumentLinkTarget,
-} from "./document-links";
+} from "./documents/document-links";
 import type { Task, User, Settings } from "./types";
 import {
   fieldsFor,
@@ -57,7 +57,7 @@ import {
   todayKey,
 } from "../shared/domain.js";
 
-const TaskDocumentPanel = lazy(() => import("./TaskDocumentPanel"));
+const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
 class DocumentLoadBoundary extends Component<
   { children: ReactNode; onError: () => void },
   { failed: boolean }

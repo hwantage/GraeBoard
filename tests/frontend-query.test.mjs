@@ -11,7 +11,7 @@ const sourcePaths = {
   "query-policy": "../src/platform/query-policy.ts",
   "shared-query": "../src/platform/shared-query.ts",
   api: "../src/platform/api.ts",
-  useCalendarData: "../src/useCalendarData.ts",
+  useCalendarData: "../src/calendar/useCalendarData.ts",
 };
 const source = (name) =>
   stripTypeScriptTypes(
@@ -183,7 +183,7 @@ async function calendarHarness(t) {
       ),
     )
     .replace(
-      '"./platform/api"',
+      '"../platform/api"',
       JSON.stringify(
         moduleURL(
           "export const api = (...a) => globalThis.__calendarQueryTest.api(...a);",
@@ -191,7 +191,7 @@ async function calendarHarness(t) {
       ),
     )
     .replace(
-      '"../shared/calendar.js"',
+      '"../../shared/calendar.js"',
       JSON.stringify(new URL("../shared/calendar.js", import.meta.url).href),
     );
   const { useCalendarData } = await import(moduleURL(code));
