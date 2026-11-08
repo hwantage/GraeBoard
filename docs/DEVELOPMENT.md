@@ -252,12 +252,17 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/workbook
 ## 검증
 
 ```sh
+npm run check:structure
 TEST_PG_BIN=/절대경로/PostgreSQL/bin npm test
 npm run build
 npm run build:edge
 npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
+
+`npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 시작 기준 `cb87426`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개입니다. `tests/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
+
+`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P0`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. PR의 경량 CI는 구조·도구·import 경계를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다.
 
 `TEST_PG_BIN`은 실행 가능한 PostgreSQL 서버 바이너리 경로로 바꿉니다([외부 동기화 개발·검증](#외부-동기화-개발검증)). `npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `DEBUG_HTTP=1`로 실행하면 서버가 거절한 요청(4xx)의 경로와 사유를 콘솔에 남겨 테스트 실패 원인을 바로 볼 수 있습니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
 

@@ -287,6 +287,8 @@ Markdown은 원문을 바꾸지 않고 remark AST의 위치로 이미지 주소�
 
 ## 문서 정리
 
+2026-11-08 #100 P0: 최신 main `cb87426`에서 608개 전체 manifest와 별도 추가 8개를 작성했습니다. 명명·배치·정확한 예외·중복·단계별 목록·고정 16개 SHA-256 검사, 공통 재귀 Node 수집기와 일반/PG strict 실행기, main PR 전체의 경량 CI를 구현했습니다. 기존 114개 Node suite가 일대일 보존되며 도구 suite 2개만 추가됐고 Playwright spec 43개도 보존했습니다. 임시 Git 트리의 도구/기존 import 경계 검사 15건(새 위반·보호 바이트·직간접 native 의존·PG 환경 실패·깊은 자식 실패·종료 신호 포함), `check:structure -- --migration-phase P0`, 프런트엔드·Edge 빌드, `git diff --check`를 통과했습니다. 전체 DB·브라우저 검증은 P1~P3 최종 변경에서 추가 기록합니다. 보호 도구·fixture와 migration은 변경하지 않았습니다.
+
 - 2026-11-07: 복구 명령·TLS 리허설·스키마 버전·용량 제한·배포 조건·설정값 보관 설명을 현재 구현에 맞췄습니다. 과거 구현·검증은 [별도 이력](DEVELOPMENT_HISTORY.md)으로 옮기고 현재 색 선택·시크릿 캘린더·모바일 구현 요약을 남겼습니다.
 
 검증: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`는 하위 검사를 포함해 661건 통과(실패·skip 0), `npm run build`·`npm run build:edge`는 성공했습니다. 문서 13개의 내부 링크·제목 연결 215개, npm 스크립트 이름, Bash·Zsh 셸 예시 문법과 이동한 과거 기록 16개 구간의 원문 보존을 확인했습니다. TLS 값이 있는 임시 환경 파일에 리허설의 빈 TLS 환경 변수를 적용해 HTTP health 200을 확인했습니다. 문서만 변경해 브라우저 회귀 검사는 다시 실행하지 않았으며 운영 DB·배포는 검증 대상에 포함하지 않았습니다.

@@ -10,7 +10,7 @@
     "dev": "concurrently -k -n api,web \"node --env-file-if-exists=.env --watch server/index.mjs\" \"vite --host 127.0.0.1\"",
     "build": "tsc -b && vite build",
     "start": "node --env-file-if-exists=.env server/index.mjs",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "node scripts/testing/run-node-tests.mjs",
     "test:postgres": "node scripts/test-postgres.mjs",
     "test:e2e": "playwright test",
     "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
@@ -36,7 +36,8 @@
     "restore:external": "node --env-file-if-exists=.env scripts/restore-external.mjs",
     "performance:sync": "node scripts/sync-performance.mjs",
     "sync:upgrade": "node scripts/sync-upgrade.mjs",
-    "cutover:sheet-clone": "node --env-file-if-exists=.env tools/sheet-clone-cutover/cli.mjs"
+    "cutover:sheet-clone": "node --env-file-if-exists=.env tools/sheet-clone-cutover/cli.mjs",
+    "check:structure": "node scripts/testing/check-code-organization.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",
