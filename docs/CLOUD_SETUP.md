@@ -1,5 +1,7 @@
 # 외부 서비스와 팀 동기화 설치
 
+
+SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 별도 checkout**에서 실행합니다. 개발 전환은 완료했으며 운영 전환은 전체 리팩토링 뒤에 수행합니다. 소스·lockfile·환경 파일·절대 데이터/Git 경로의 준비와 실행·재개는 [운영 안내](OPERATIONS.md#고정-전환-소스-준비)를 따릅니다.
 [구성도](ARCHITECTURE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [동기화 규약](SYNC_PROTOCOL.md)
 
 이 안내는 내부 Node/SQLite 서버와 외부 Supabase Edge Functions 서버를 연결하는 관리자를 위한 절차입니다. Cloudflare Pages 주소·Access Google 로그인·R2 이미지는 유지합니다. 운영 자원 생성·배포·운영 DB 변환은 대상과 점검 시간이 승인된 뒤 수행합니다. 개발 환경의 검증과 실제 클라우드 계정의 연결 검사는 서로 다른 단계입니다.

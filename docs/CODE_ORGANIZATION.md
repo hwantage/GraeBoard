@@ -4,7 +4,7 @@
 
 신규 코드 작성, 기존 기능 수정, 파일 이동, 디렉토리 분리·통합에 적용하는 기준입니다. 파일명으로 역할을 식별하고, 디렉토리로 관련 파일을 찾으며, 실행 환경과 공통 코드의 경계를 유지하는 것이 목적입니다.
 
-가이드를 먼저 검토·확정한 뒤 이에 맞춰 리팩토링합니다. 현재 P0 검사 도구·재귀 수집기·경량 CI와 P1의 `src/platform/` 11개·`src/ui/` 17개 이동을 완료했습니다. P2의 문서·편집기·캘린더 51개 이동도 완료했습니다. P3의 앱·인증·시트·설정·동기화 UI 59개 이동까지 구현했습니다. P4~P8은 미구현이며 전환 완료 기록과 별도 정리 커밋을 확인한 후 착수합니다. 아래의 **목표 배치**와 **이동 예시**는 후속 작업의 기준이며, 현재 구현 경로는 [개발 안내의 구조](DEVELOPMENT.md#구조)를 참고합니다. 모든 기존 파일이 이미 이 규칙을 만족한다는 뜻은 아닙니다.
+가이드를 먼저 검토·확정한 뒤 이에 맞춰 리팩토링합니다. 현재 P0 검사 도구·재귀 수집기·경량 CI와 P1의 `src/platform/` 11개·`src/ui/` 17개 이동을 완료했습니다. P2의 문서·편집기·캘린더 51개 이동도 완료했습니다. P3의 앱·인증·시트·설정·동기화 UI 59개 이동까지 구현했습니다. P4~P8은 후속 구현 대상입니다. 개발 SheetClone 전환은 완료했으며 운영 전환은 전체 리팩토링 뒤에 수행합니다. P4 전에는 아래 고정 소스 정책을 반영하고 최신 앱의 한시적 도구 의존성을 별도 커밋으로 분리합니다. 아래의 **목표 배치**와 **이동 예시**는 후속 작업의 기준이며, 현재 구현 경로는 [개발 안내의 구조](DEVELOPMENT.md#구조)를 참고합니다. 모든 기존 파일이 이미 이 규칙을 만족한다는 뜻은 아닙니다.
 
 현재 리팩토링의 전체 파일 대응표, 유지 대상, 단계별 작업·검증, 검사 도구와 CI 명세는 [이슈 #100의 실행 설계](https://github.com/hwantage/GraeBoard/issues/100)에 있습니다. 이 가이드는 이후에도 적용할 규칙이며, 이슈의 대응표는 명시한 기준 커밋의 실행 계획입니다. 아래 예시 몇 개만으로 전체 이동을 결정하지 않습니다.
 
@@ -47,9 +47,11 @@
 
 새 예외가 필요하면 해당 PR에 정확한 경로, 필요한 이유, 사용처·실행 환경, 적용 범위를 기록하고 이 문서의 예외 기준도 함께 갱신합니다. 단지 기존에 비슷한 이름이 있다는 이유로 예외를 늘리지 않습니다.
 
-SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, `tools/sheet-clone-cutover/cutover.mjs`, `tools/sheet-clone-cutover/convert.mjs`, `tools/sheet-clone-cutover/names.mjs`, `tools/sheet-clone-cutover/markdown-links.mjs`의 정확한 경로·이름·바이트를 유지합니다. 오프라인 Node CLI이며, `cutover:sheet-clone` 명령과 변환·migration 회귀 검사가 사용하고 앱·Edge 런타임은 의존하지 않습니다. `toolDigest()`는 `convert.mjs`·`cutover.mjs`·`markdown-links.mjs`·`names.mjs`의 이름과 바이트를 해시합니다. **import 경로만 수정해도 실행 기록과 해시가 달라져 전환을 재개할 수 없습니다.** 도구가 참조하는 공통·서버·동기화 모듈을 옮기기 전에 개발·운영 전환 완료 기록과 [정리 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)에 따른 별도 정리 커밋을 확인합니다. 이슈 #100의 P0~P3은 먼저 진행할 수 있고 P4 전에 이 조건을 확인합니다. 정리 변경은 일반 검사에 남은 도구 의존성까지 해소하고 도구와 이 예외를 함께 제거합니다. 다른 도구나 새 범용 파일명까지 허용하는 예외는 아닙니다.
+SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`**에 고정합니다. 운영 전환은 전체 리팩토링 뒤에 진행하며, 운영 전환 완료를 P4~P8의 선행 조건으로 삼지 않습니다. 고정 소스는 도구 5개뿐 아니라 `server/`·`shared/`·동기화 모듈·`package-lock.json`·검사와 fixture를 같은 커밋으로 재현합니다. `toolDigest()`를 구성하는 이름·바이트와 원본 fixture 11개의 SHA-256은 변경하지 않습니다. 현재 앱의 import만 고친 도구, 옛 경로 wrapper, 도구 digest 완화는 허용하지 않습니다.
 
-`tests/fixtures/sheet-clone-legacy/`의 11개 파일도 정리 전까지 경로·바이트를 보존합니다. 생성기 `generate-f744ead.mjs`는 과거 `f744ead` 코드 전용이므로 내부의 옛 경로·명칭을 현재 코드에 맞추거나 fixture를 재생성하지 않습니다. 전환 검사 `tests/sheet-clone-conversion.test.mjs`·`tests/sheet-clone-cutover.test.mjs`는 원래 경로와 수집을 유지하되 일반 모듈의 import는 갱신할 수 있습니다. `tests/postgres-legacy-schema.mjs`·`tests/sqlite-legacy-schema.mjs`의 옛 명칭은 migration 검사에 필요하므로 유지하며, 별도 호출자 확인 없이 이 helper들을 일회성 도구와 함께 삭제하지 않습니다.
+먼저 [운영 안내의 고정 소스 준비·실행 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)를 확정하고, 별도 분리 커밋에서 최신 앱의 도구·원본 fixture·전환 전용 suite·npm 명령과 한시적 예외를 제거합니다. 보호 hash는 고정 소스 검증 목록에 원본 값 그대로 보관하며 최신 앱의 이동 예외로 남기지 않습니다. 개발자와 CI는 정확한 커밋을 Git에서 재현해 원래 전환 검사를 실행합니다. shallow clone에 커밋이 없으면 명시적으로 fetch해야 하며 누락을 skip 성공으로 처리하지 않습니다.
+
+일반 `access-tokens`·`sync-migrations`·`sync-postgres-maintenance-migration` 검사는 삭제하거나 약화하지 않습니다. 변환 결과 생성에만 고정 전체 소스를 사용하고 현재 앱의 권한·기동 거절·migration·무결성 회귀를 유지합니다. `postgres-legacy-schema.mjs`·`sqlite-legacy-schema.mjs`는 일반 회귀에서도 사용하므로 유지합니다. 최종 앱이 고정 도구로 전환한 fixture를 내부 SQLite·외부 PostgreSQL API, 동기화·checkpoint 복구에서 읽고 수정·재개하는 교차 검증도 수행합니다. 배포된 SQL migration과 checksum은 최신 앱에도 그대로 남습니다.
 
 ## 3. 새 파일의 위치를 정하는 순서
 
@@ -73,7 +75,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 | `edge/`                      | Supabase/Deno 진입점, 실행 환경·DB 연결·자원 어댑터. 기존 업무 API를 재사용합니다.                                                                 |
 | `functions/`                 | Cloudflare Pages 진입과 gateway 전달. 업무 로직을 추가하지 않습니다.                                                                               |
 | `scripts/`                   | 빌드, 개발·검증, 운영·백업·복구 도구. CLI 전용 실행과 앱이 재사용하는 로직의 경계를 유지합니다.                                                    |
-| `tools/sheet-clone-cutover/` | 위의 정확한 경로 예외에 해당하는 일회성 오프라인 전환 도구. 개발·운영 전환 후 제거하며, 일반 운영 도구는 `scripts/`에 둡니다.                      |
+| 고정 커밋의 `tools/sheet-clone-cutover/` | 미래 운영 전환용 오프라인 도구. 전체 고정 소스에서만 실행하며 최신 앱과 분리합니다. 일반 운영 도구는 `scripts/`에 둡니다. |
 | `tests/`                     | 자동 검사와 가상 fixture. 브라우저 검사는 `tests/browser/`에 두며 소스의 기능명을 유지합니다.                                                      |
 | `public/`                    | 앱에서 제공하는 정적 자산과 정적 배포 설정. 기능 소스나 운영 데이터를 두지 않습니다.                                                               |
 | `supabase/`                  | Supabase 설정과 Edge 배포 산출물. `supabase/functions/graeboard/index.mjs`는 `build:edge`가 생성하므로 직접 리팩토링하지 않습니다.                 |
@@ -176,7 +178,7 @@ npm run build:edge
 
 후속 리팩토링에는 신규·이동 파일의 범용 이름과 중복 이름 검사, 기존 import 경계 검사 연계를 포함합니다. 기존 예외는 정확한 경로로 한정하고, 새 위반을 넣었을 때 검사가 실제 실패하는지도 확인합니다. **P0의 자동 검사는 구현되어 있습니다.** `npm run check:structure`와 `--migration-phase P3`로 현재 규칙·전체 대응표를 확인하고, 임시 Git 트리의 두 도구 suite에서 실패 사례를 검증합니다. P1~P3의 138개 이동을 구현했고 P4~P8은 단계별로 별도 추적합니다.
 
-명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`, `tools/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 한시적 전환 도구·원본 fixture는 정확한 경로와 기준 커밋의 SHA-256으로 보존 여부를 검사하며, `tools/` 전체를 제외하지 않습니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
+명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`, `tools/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 한시적 전환 도구·원본 fixture의 원본 hash는 고정 소스에서 검사하며, `tools/` 전체를 제외하지 않습니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
 
 검사기는 위반 시 규칙·경로·원인을 출력하고 실패해야 하며, 예외나 소스를 자동 수정하지 않습니다. 범용 이름의 기본 목록은 `types`, `utils`, `helpers`, `constants`, `styles`, `components`, `service`, `storage`, `index`입니다. 정확한 경로로 등록한 기존 예외만 허용하고, 새 중복 파일·미등록 폴더·지워진 파일의 예외 등록을 검출합니다. 이름에서 확장자만 다른 경우는 역할 검토 대상으로 구분합니다.
 

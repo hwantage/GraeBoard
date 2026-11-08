@@ -326,26 +326,48 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 - 전환 전에 일반 문서를 모두 저장하고 브라우저 탭과 기존 세션을 닫습니다. 저장하지 않은 초안은 저장한 뒤 닫으며 localStorage·sessionStorage를 지우지 않습니다. 전환 후에는 새 빌드를 다시 엽니다. 시크릿 문서는 변환 대상이 아닙니다.
 - 전환 전 세션의 생성 요청 재시도는 새 키(`sheet-clone-create:<id>`)에서 기록한 요청 해시와 맞지 않아 409로 거절되며 사본을 다시 만들지 않습니다. XLSX 가져오기 재시도 키는 기록에서 재현해 새 mode 이름의 키로 옮기며, 재현하지 못하면 거절합니다.
 - 절대 주소 링크(`https://…/links/report-task/…`)는 `--site-origin`으로 지정한 운영 사이트 주소만 바꿉니다. 상대 주소는 항상 바꾸고 다른 사이트 주소·문장·코드는 그대로 둡니다. 한 번의 실행이 두 DB를 같은 목록으로 변환합니다.
-- 도구는 사내 서버 호스트의 새 릴리스 디렉터리에서 실행합니다. Git은 사내 사이트의 프로필(`GRAEBOARD_SYNC_PROFILES`, 저장된 인증 정보, `.env`)로, 외부 DB는 `--pg-url-env`가 가리키는 환경 변수의 접속 주소로 접근합니다.
+- 도구는 사내 서버 호스트에서 아래의 정확한 고정 커밋 디렉터리로 실행합니다. 최신 앱 디렉터리와 섞지 않습니다. Git은 사내 사이트의 프로필(`GRAEBOARD_SYNC_PROFILES`, 저장된 인증 정보, `.env`)로, 외부 DB는 `--pg-url-env`가 가리키는 환경 변수의 접속 주소로 접근합니다.
 
 점검 시간: 운영 규모 자료의 전환 시간(두 DB의 미리보기와 변환, 문서 링크 재작성, 경계·checkpoint 게시)은 이 릴리스에서 측정하지 않았습니다. 도구는 실제 변경 전에 두 DB를 사본과 ROLLBACK 트랜잭션으로 한 번씩 미리 변환하므로 변환 시간은 두 번 듭니다. 실제 실행 전에 운영과 같은 규모의 격리된 사본(사내 SQLite 사본, 외부 PostgreSQL 복제 DB, 별도 Git 저장소)에서 아래 순서를 그대로 실행해 단계별 시간을 재고, 그 측정값으로 점검 시간을 정합니다. 측정 없이 추정한 시간을 공지하지 않습니다.
+
+### 고정 전환 소스 준비
+
+개발 전환은 완료했으며 **운영 전환은 전체 리팩토링 뒤에 별도 승인된 점검 시간에 수행**합니다. 리팩토링한 앱에는 전환 도구나 `cutover:sheet-clone` 명령이 없습니다. 아래 명령은 고정 커밋의 전체 소스에서만 제공합니다. 기존 오류 메시지의 `npm run cutover:sheet-clone` 안내도 이 디렉터리에서 실행한다는 뜻입니다.
+
+기준 커밋은 `7fec065d1adc241da29d54474af06b390d12d72b`, 그 `package-lock.json` SHA-256은 `61e4874a625e9f17fc4d98a84bdac77b0933055659eab32a0da3197c1f7dc4b5`입니다. 임시 archive나 특정 개발 PC의 워크트리 경로를 기준으로 삼지 않습니다. 도구만 복사하지 말고 전체 커밋을 별도 디렉터리에 checkout합니다. 예시 경로는 실제 승인된 경로로 바꿉니다.
+
+```sh
+git clone --no-checkout https://github.com/hwantage/GraeBoard.git /approved/sheet-clone-cutover-source
+git -C /approved/sheet-clone-cutover-source fetch origin 7fec065d1adc241da29d54474af06b390d12d72b
+git -C /approved/sheet-clone-cutover-source checkout --detach 7fec065d1adc241da29d54474af06b390d12d72b
+cd /approved/sheet-clone-cutover-source
+test "$(git rev-parse HEAD)" = 7fec065d1adc241da29d54474af06b390d12d72b
+test -z "$(git status --porcelain --untracked-files=all)"
+node --version
+node --input-type=module -e 'import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; if(createHash("sha256").update(readFileSync("package-lock.json")).digest("hex")!=="61e4874a625e9f17fc4d98a84bdac77b0933055659eab32a0da3197c1f7dc4b5") process.exit(1)'
+npm ci --include=dev
+```
+
+Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 버전·실행 파일 경로를 기록합니다. 준비 검증은 Node 22.17.1에서 수행했으며, 다른 런타임에서는 먼저 격리 사본으로 검증합니다. 원본 `tools/sheet-clone-cutover/` 5개와 fixture 11개의 hash 목록은 최신 앱의 고정 소스 검증 설정으로 대조합니다. 원본 커밋에서 `git diff --exit-code`·clean tree를 다시 확인하고, 기존 전환 회귀는 `TEST_PG_BIN=/approved/postgresql/bin node --test --test-concurrency=1 tests/sheet-clone-conversion.test.mjs tests/sheet-clone-cutover.test.mjs`로 실행합니다. 합성 fixture 검사 통과가 운영 사본 검증을 대신하지 않습니다. 실행 기록이 이미 있다면 동일 커밋·의존성·Node와 기존 `toolDigest`를 유지해 재개합니다.
+
+고정 소스에 운영 `.env`를 복사하거나 상대 경로를 그대로 적용하지 않습니다. `--env-file=/approved/runtime/production.env`로 **실제 파일을 절대 경로로** 읽고, 아래 환경 변수와 인자는 기존 운영 경로를 절대 경로로 지정합니다. `GRAEBOARD_SYNC_DIR`은 기존 clone들의 부모이며 프로필 ID가 뒤에 붙습니다. 프로필·설치 UUID·저장된 인증 키와 PostgreSQL URL 환경 변수는 기존 서비스와 같아야 합니다. DB·이미지·Git clone·journal은 소스 checkout과 별도로 유지합니다. 실행 전에 파일 존재·clone remote·현재 head·DB 버전을 읽기 전용으로 대조하며 빈 DB나 새 Git을 만들어 오류를 우회하지 않습니다. PostgreSQL 비밀번호와 토큰은 인자·로그에 출력하지 않습니다.
 
 전환 순서(실제 경로·주소·UUID는 승인된 대상의 값으로 바꿉니다):
 
 1. 양쪽 사이트를 UI에서 **일시정지**하고 두 사이트의 상태(`mode:paused`, `pending:0`, `conflicts:0`, 같은 canonical head)를 기록합니다. 사용자 쓰기·자동 작업을 멈춥니다.
 2. **기존 릴리스의 도구**로 사내 DB·이미지(`npm run backup`)와 외부 DB·R2(`backup:external`)의 최종 백업을 만들고 Git 기준 head와 함께 대응시켜 보관합니다.
 3. 사내 서버를 멈추고, 외부 Edge 함수(또는 그 앞의 gateway)를 멈춰 어느 쪽에도 요청이 들어오지 않게 합니다.
-4. 사내 서버 호스트에서 새 릴리스로 미리보기를 실행합니다. 아무것도 쓰지 않습니다.
+4. 사내 서버 호스트의 위 **고정 소스 디렉터리**에서 미리보기를 실행합니다. 아무것도 쓰지 않습니다.
 
    ```sh
-   npm run cutover:sheet-clone -- --database /절대경로/자료.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --dry-run
+   DB_PATH=/approved/data/weekly-plan.sqlite GRAEBOARD_SYNC_DIR=/approved/data/sync DOCUMENT_IMAGES_DIR=/approved/data/document-images node --env-file=/approved/runtime/production.env tools/sheet-clone-cutover/cli.mjs --database /approved/data/weekly-plan.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --dry-run
    ```
 
    `plan.baseHead`가 1단계에 기록한 head인지, `fromProtocol`·`toProtocol`·`resultHash`와 `internal`·`external` 요약(바뀐 행·링크 수, 남긴 주소 `links.keptSamples`)을 확인합니다.
 5. `--dry-run` 대신 실행 기록 디렉터리를 지정해 실행합니다. 새 디렉터리이거나 같은 전환의 기록이 있는 디렉터리여야 합니다.
 
    ```sh
-   npm run cutover:sheet-clone -- --database /절대경로/자료.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --journal /안전경로/sheet-clone-cutover-팀UUID
+   DB_PATH=/approved/data/weekly-plan.sqlite GRAEBOARD_SYNC_DIR=/approved/data/sync DOCUMENT_IMAGES_DIR=/approved/data/document-images node --env-file=/approved/runtime/production.env tools/sheet-clone-cutover/cli.mjs --database /approved/data/weekly-plan.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --journal /approved/journals/sheet-clone-cutover-팀UUID
    ```
 
    도구는 먼저 4단계와 같은 미리보기를 다시 하고, 그다음 사내 DB 변환, 외부 DB 변환, Git 경계 커밋 게시, 표준 checkpoint 게시, 사내 커서 이동, 외부 커서 이동을 차례로 진행합니다. 각 DB 변환은 자기 트랜잭션 하나이고 계획한 결과 hash가 아니면 커밋하지 않습니다. Git 게시는 기대 head를 확인하는 CAS입니다. 끝나면 `checkpoint`·`resultHash`를 출력하며, 두 DB의 canonical head가 그 checkpoint, hash가 `resultHash`입니다. 실행 기록 `journal.json`은 끝난 단계와 도구 코드의 digest(`toolDigest`)를 담으므로 최종 백업과 함께 보관합니다.
@@ -360,7 +382,7 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 - 게시 후에는 Git 이력에서 경계를 지우지 않습니다(이력은 바꾸지 않습니다). 이전 런타임은 경계 커밋을 읽지 못하므로 코드만 이전 릴리스로 되돌리지 않고, 같은 명령을 다시 실행해 전환을 끝냅니다. 쓰기 재개 후 문제가 발견되면 먼저 쓰기를 멈추고 그 사이 변경을 보존한 상태에서 복구 계획을 정합니다.
 - 전환을 끝낸 뒤에는 전환 전 백업을 그대로 복구 대상으로 쓰지 않습니다. 전환 후의 복구는 이 릴리스의 백업과 `sync:recover`를 씁니다. 새 사이트와 복구는 checkpoint부터 읽습니다.
 
-정리 시점: 운영과 개발 환경의 전환을 모두 마친 뒤 후속 변경에서 `tools/sheet-clone-cutover`, 그 검사(`tests/sheet-clone-conversion.test.mjs`, `tests/sheet-clone-cutover.test.mjs`)와 fixture(`tests/fixtures/sheet-clone-legacy`), `cutover:sheet-clone` 스크립트를 지웁니다. 그 뒤에도 전환이 필요하면 이 도구가 들어 있는 릴리스 태그의 코드로 실행하고, 실행 기록의 `toolDigest`로 같은 코드인지 확인합니다. SQLite v34·PostgreSQL team v3 migration과 checksum, 동기화 프로토콜 3/4 표시, 논리 이관 v2의 v1 거절은 계속 남습니다.
+소스 분리 시점: 개발 전환 완료 후 리팩토링의 별도 커밋에서 최신 앱의 도구·원본 fixture·전환 전용 suite·npm 명령을 제거합니다. 운영 전환 완료는 이 분리의 선행 조건이 아닙니다. 미래 운영 실행·재개는 위의 고정 전체 커밋에서만 수행하며, 전환 후에만 새 앱을 배포합니다. 일반 migration·권한 검사는 최신 앱에 남고 변환 생성만 격리 고정 소스를 사용합니다. 최종 앱과 전환 결과의 내부/외부 API·동기화·checkpoint 복구 호환성을 별도 검사합니다. SQLite v34·PostgreSQL team v3 migration과 checksum, 프로토콜 3/4 표시, 논리 이관 v2의 v1 거절도 계속 남습니다. 고정 소스와 journal·최종 백업은 운영 전환·복구 검증이 끝나기 전에 정리하지 않습니다.
 
 ## 동기화 프로토콜 4 명시 전환
 

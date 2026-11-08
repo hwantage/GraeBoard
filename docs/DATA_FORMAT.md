@@ -1,5 +1,7 @@
 # 그래보드 데이터 형식과 접근 규칙
 
+
+SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 별도 checkout**에서 실행합니다. 개발 전환은 완료했으며 운영 전환은 전체 리팩토링 뒤에 수행합니다. 소스·lockfile·환경 파일·절대 데이터/Git 경로의 준비와 실행·재개는 [운영 안내](OPERATIONS.md#고정-전환-소스-준비)를 따릅니다.
 [처음으로](../README.md) · [개발 안내](DEVELOPMENT.md) · [운영 안내](OPERATIONS.md) · [DB 변경 지침](DATABASE_CHANGES.md)
 
 ## 기준
