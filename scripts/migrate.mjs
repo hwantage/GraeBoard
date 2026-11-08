@@ -77,23 +77,25 @@ async function main() {
       origins: values["site-origin"],
     });
     // A dry-run must not create the requested file or change its journal mode.
-    // An existing database is copied consistently and the copy converted.
+    // An existing database is copied consistently and the copy converted; the
+    // copy is removed however the run ends, including a failed copy or open.
     let scratch = null,
-      target = values["dry-run"] && !exists ? ":memory:" : path;
-    if (values["dry-run"] && exists) {
-      scratch = mkdtempSync(join(tmpdir(), "graeboard-migrate-dry-run-"));
-      const source = new DatabaseSync(path, { readOnly: true });
-      try {
-        source.exec(
-          `VACUUM INTO '${join(scratch, "copy.sqlite").replaceAll("'", "''")}'`,
-        );
-      } finally {
-        source.close();
-      }
-      target = join(scratch, "copy.sqlite");
-    }
-    const db = new DatabaseSync(target);
+      db = null;
     try {
+      let target = values["dry-run"] && !exists ? ":memory:" : path;
+      if (values["dry-run"] && exists) {
+        scratch = mkdtempSync(join(tmpdir(), "graeboard-migrate-dry-run-"));
+        const source = new DatabaseSync(path, { readOnly: true });
+        try {
+          source.exec(
+            `VACUUM INTO '${join(scratch, "copy.sqlite").replaceAll("'", "''")}'`,
+          );
+        } finally {
+          source.close();
+        }
+        target = join(scratch, "copy.sqlite");
+      }
+      db = new DatabaseSync(target);
       db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
       const result = migrateSqlite(db, {
         initialize: values.initialize,
@@ -114,7 +116,7 @@ async function main() {
         ),
       );
     } finally {
-      db.close();
+      db?.close();
       if (scratch) rmSync(scratch, { recursive: true, force: true });
     }
   } else if (values.engine === "postgres") {

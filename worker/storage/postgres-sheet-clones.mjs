@@ -21,6 +21,7 @@ import {
   savedFilterSchema,
 } from "../../shared/validation.js";
 import { digestShared, equal } from "../../server/sync/protocol.mjs";
+import { requireFreeSheetCloneName } from "../../shared/sheet-clone-names.js";
 import { assert } from "../access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
 import { documentListsUnder } from "./postgres-documents.mjs";
@@ -36,7 +37,8 @@ export const sheetCloneRevision = (data) =>
 // What the sheetClone list shows, without the data: PostgreSQL drops it, so the
 // list does not transfer and unpack every sheetClone's sheet. A payload that
 // jsonb cannot read (\u0000 or a lone surrogate escape) comes whole instead.
-async function sheetCloneSummaries(s) {
+// The team's copies without their sheets: names and metadata only.
+export async function sheetCloneSummaries(s) {
   return (
     await s.tx.query(
       "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND deleted=0 ORDER BY entity_key",
@@ -142,10 +144,9 @@ async function execute(ctx, command, body, sheetCloneId) {
         );
         // Names come without each copy's sheet, so the check does not grow
         // with the copies the team keeps.
-        assert(
-          !(await sheetCloneSummaries(s)).some((r) => r.payload.name === name),
-          409,
-          "같은 이름의 사본이 있습니다.",
+        requireFreeSheetCloneName(
+          (await sheetCloneSummaries(s)).map((r) => r.payload.name),
+          name,
         );
         const source = body.sourceId
           ? await s.get("sheetClone", [body.sourceId])
@@ -278,13 +279,11 @@ async function execute(ctx, command, body, sheetCloneId) {
             409,
             "사본 이름이 변경되었습니다.",
           );
-          assert(
-            !(await s.list("sheetClone")).some(
-              (r) => r.key[0] !== sheetCloneId && r.payload.name === name,
-            ),
-            409,
-            "같은 이름의 사본이 있습니다.",
-          );
+          if (row.payload.name !== name)
+            requireFreeSheetCloneName(
+              (await sheetCloneSummaries(s)).map((r) => r.payload.name),
+              name,
+            );
           await s.put("sheetClone", row.key, { ...row.payload, name });
           return { id: row.key[0], name };
         }

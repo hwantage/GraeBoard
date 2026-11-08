@@ -5,10 +5,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync, readFileSync, existsSync, cpSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  existsSync,
+  cpSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { openDatabase } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
@@ -26,7 +35,10 @@ import {
 import { convertMarkdownLinks } from "../server/migrations/sheet-clone/markdown-links.mjs";
 import { stableId } from "../shared/workbook.mjs";
 import { createTeamStore, executeSync } from "../shared/sync-team-store.mjs";
-import { digest } from "../server/sync/protocol.mjs";
+import {
+  CONVERSION_PENDING_MESSAGE,
+  digest,
+} from "../server/sync/protocol.mjs";
 
 const FIXTURE = new URL("./fixtures/sheet-clone-legacy/", import.meta.url),
   read = (name) => readFileSync(new URL(name, FIXTURE), "utf8"),
@@ -114,7 +126,11 @@ async function serve(t, db) {
     db,
     rateLimits: false,
     documentImagesDir: join(tmpdir(), "gb-sheet-clone-images-" + randomUUID()),
-    syncOptions: { profiles: [], schedule: false },
+    syncOptions: {
+      profiles: [],
+      schedule: false,
+      installationId: manifest.installations.internal,
+    },
   });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
@@ -125,7 +141,7 @@ async function serve(t, db) {
     manifest.users.lead,
     Date.now() + 3600000,
   );
-  return async (path, body, method = body ? "POST" : "GET") => {
+  const call = async (path, body, method = body ? "POST" : "GET") => {
     const response = await fetch(
       `http://127.0.0.1:${server.address().port}/api${path}`,
       {
@@ -145,6 +161,8 @@ async function serve(t, db) {
     } catch {}
     return { status: response.status, data };
   };
+  call.app = app;
+  return call;
 }
 const ok = (result) => {
   assert.ok(result.status < 300, JSON.stringify(result));
@@ -661,6 +679,92 @@ test("the conversion record is read without its earlier snapshot, which is read 
   }
 });
 
+test("until its transition is applied a converted team takes no business write, paused or disconnected, and a disconnected one does not reconnect", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-locked-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "legacy.sqlite");
+  loadLegacySqlite(path, "v1");
+  let db = new DatabaseSync(path);
+  migrateSqlite(db, {
+    convert: sqliteSheetCloneConversion({ origins: ORIGINS, now: NOW }),
+  });
+  db.close();
+  db = openDatabase(path);
+  t.after(() => db.close());
+  const api = await serve(t, db),
+    sync = api.app.locals.sync;
+  const version = () =>
+      db
+        .prepare("SELECT version FROM cells WHERE task_id=? AND key=?")
+        .get(T1, "2026-11-02")?.version ?? 0,
+    cell = (value) =>
+      api("/cells/batch", {
+        operationId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        changes: [
+          { taskId: T1, key: "2026-11-02", value, expectedVersion: version() },
+        ],
+      });
+  const state = () =>
+    JSON.stringify(
+      [
+        "SELECT * FROM cells ORDER BY task_id,key",
+        "SELECT id,data FROM sheet_clones ORDER BY id",
+        "SELECT * FROM sync_outbox ORDER BY local_seq",
+        "SELECT mode,generation,canonical_head FROM team_sync_links",
+        "SELECT completed_head FROM sync_conversions",
+      ].map((sql) => db.prepare(sql).all()),
+    );
+  const mode = (value) => {
+    db.prepare("UPDATE team_sync_links SET mode=? WHERE team_id=?").run(
+      value,
+      teamId,
+    );
+    sync.capture.refresh();
+  };
+  const clone = ok(await api(`/sheet-clones/${R2}`));
+  for (const value of ["paused", "disconnected"]) {
+    mode(value);
+    const before = state();
+    assert.equal((await cell("during " + value)).status, 409, value);
+    assert.equal(
+      (
+        await api(
+          `/sheet-clones/${R2}/name`,
+          { name: `${clone.name} ${value}`, expectedName: clone.name },
+          "PATCH",
+        )
+      ).status,
+      409,
+      value,
+    );
+    if (value === "disconnected") {
+      const reconnect = await api(`/teams/${teamId}/sync/reconnect`, {});
+      assert.equal(reconnect.status, 409);
+      assert.equal(reconnect.data.error, CONVERSION_PENDING_MESSAGE);
+    }
+    assert.equal(state(), before, value);
+  }
+  // Once the transition is applied the disconnected team edits as before,
+  // locally and without capture.
+  db.prepare(
+    "UPDATE sync_conversions SET completed_head=?,completed_at=? WHERE team_id=?",
+  ).run("f".repeat(40), NOW, teamId);
+  sync.capture.refresh();
+  const outbox = db.prepare("SELECT COUNT(*) n FROM sync_outbox").get().n;
+  ok(await cell("after the transition"));
+  assert.equal(
+    db
+      .prepare("SELECT value FROM cells WHERE task_id=? AND key=?")
+      .get(T1, "2026-11-02").value,
+    JSON.stringify("after the transition"),
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(*) n FROM sync_outbox").get().n,
+    outbox,
+  );
+});
+
 test("the CLI dry-run converts a copy only, refuses without the conversion and prints the same result as the real run", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-cli-"));
   try {
@@ -695,6 +799,45 @@ test("the CLI dry-run converts a copy only, refuses without the conversion and p
       { convertedAt: b, ...realConversion } = applied.conversion;
     assert.deepEqual(realConversion, dryConversion);
     assert.equal(JSON.parse(run(...origins).stdout).applied, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a SQLite dry-run that fails to copy or convert leaves no copy of the database behind", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-dry-run-failure-"));
+  try {
+    const scratch = join(dir, "tmp"),
+      run = (path) =>
+        spawnSync(
+          process.execPath,
+          [
+            "scripts/migrate.mjs",
+            "--engine",
+            "sqlite",
+            "--database",
+            path,
+            "--dry-run",
+          ],
+          { encoding: "utf8", env: { ...process.env, TMPDIR: scratch } },
+        );
+    mkdirSync(scratch);
+    // Not a database: the consistent copy itself fails.
+    const corrupt = join(dir, "corrupt.sqlite");
+    writeFileSync(corrupt, randomBytes(8192));
+    // A copy that converts but is refused by the preflight.
+    const active = join(dir, "active.sqlite");
+    loadLegacySqlite(active, "v1");
+    const db = new DatabaseSync(active);
+    db.exec("UPDATE team_sync_links SET mode='active'");
+    db.close();
+    for (const path of [corrupt, active]) {
+      const bytes = sha(path),
+        result = run(path);
+      assert.notEqual(result.status, 0, path);
+      assert.deepEqual(readdirSync(scratch), [], path);
+      assert.equal(sha(path), bytes, path);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

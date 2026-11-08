@@ -36,7 +36,7 @@ export function maintenanceRevision(snapshot) {
 export function maintenanceLabel(record) {
   if (record.entity === "task") return `업무 ${record.key[0]}`;
   if (record.entity === "sheetClone")
-    return record.payload.name || `보고서 ${record.key[0]}`;
+    return record.payload.name || `사본 ${record.key[0]}`;
   return record.payload.title || `${record.key[0]} 문서 ${record.key.at(-1)}`;
 }
 
@@ -257,7 +257,7 @@ export class MaintenanceService {
       task: "업무",
       cell: "셀",
       document: "문서",
-      sheetClone: "보고서",
+      sheetClone: "사본",
     };
     return {
       token: job.jobId,

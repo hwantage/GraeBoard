@@ -27,7 +27,11 @@ import {
   postgresSheetCloneConversion,
 } from "../server/migrations/sheet-clone/convert.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { canonical, stateHash } from "../server/sync/protocol.mjs";
+import {
+  CONVERSION_PENDING_MESSAGE,
+  canonical,
+  stateHash,
+} from "../server/sync/protocol.mjs";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
@@ -401,6 +405,30 @@ for (const [label, from, to, port] of [
       );
       assert.ok(traced.some((sql) => /\bsync_conversions\b/.test(sql || "")));
       assert.deepEqual(snapshotReads(), []);
+      // Nor does a disconnected site reconnect ahead of the transition: its
+      // differences from C would be enqueued and published before it.
+      const local = () =>
+        JSON.stringify([
+          db.prepare("SELECT * FROM sync_outbox ORDER BY local_seq").all(),
+          db
+            .prepare(
+              "SELECT mode,generation,canonical_head FROM team_sync_links WHERE team_id=?",
+            )
+            .get(teamId),
+        ]);
+      db.prepare(
+        "UPDATE team_sync_links SET mode='disconnected' WHERE team_id=?",
+      ).run(teamId);
+      app.locals.sync.capture.refresh();
+      const disconnected = local(),
+        reconnect = await inside(`/teams/${teamId}/sync/reconnect`, {});
+      assert.equal(reconnect.status, 409, JSON.stringify(reconnect));
+      assert.equal(reconnect.data.error, CONVERSION_PENDING_MESSAGE);
+      assert.equal(local(), disconnected);
+      db.prepare(
+        "UPDATE team_sync_links SET mode='paused' WHERE team_id=?",
+      ).run(teamId);
+      app.locals.sync.capture.refresh();
       // A wrong expectation changes nothing.
       const confirmation = {
         expectedHead: base.head,

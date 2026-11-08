@@ -24,10 +24,13 @@ import {
   styleSchema,
   validateCellValue,
   dateSchema,
+  sheetCloneNameSchema,
 } from "../../shared/validation.js";
+import { requireFreeSheetCloneName } from "../../shared/sheet-clone-names.js";
 import { assert } from "../access.mjs";
 import { taskList, settingsFor, excludedYears } from "../tasks.mjs";
 import { sheetCloneView } from "../sheet-clones.mjs";
+import { sheetCloneSummaries } from "./postgres-sheet-clones.mjs";
 import { imageReferences } from "../images.mjs";
 import {
   transferDownload as download,
@@ -426,11 +429,27 @@ export class PostgresTransferRepository {
           404,
           "사본을 찾을 수 없습니다.",
         );
-        if (existing)
+        if (existing) {
           assert(
             (await sheetCloneView(s, existing)).revision === body.revision,
             409,
             "사본이 변경되었습니다.",
+          );
+          assert(
+            existing.payload.data.tasks.length + sheet.rows.length <= 20000,
+            400,
+            "사본에는 최대 20,000개 업무를 저장할 수 있습니다.",
+          );
+        }
+        // A new copy is named after its sheet, as the internal site names it.
+        const sheetCloneName =
+          body.mode === "create-sheet-clone"
+            ? sheetCloneNameSchema.parse(sheet.name)
+            : null;
+        if (sheetCloneName)
+          requireFreeSheetCloneName(
+            (await sheetCloneSummaries(s)).map((r) => r.payload.name),
+            sheetCloneName,
           );
         const settings = structuredClone(
             existing?.payload.data.settings || (await settingsFor(s)),
@@ -533,16 +552,9 @@ export class PostgresTransferRepository {
             },
           });
         } else {
-          assert(
-            !(await s.list("sheetClone")).some(
-              (r) => r.payload.name === sheet.name,
-            ),
-            409,
-            "같은 이름의 사본이 있습니다.",
-          );
           await s.put("sheetClone", [stableId(opKey + ":sheetClone")], {
             year: body.year,
-            name: sheet.name,
+            name: sheetCloneName,
             referenceDate: body.referenceDate,
             createdBy: ctx.user.id,
             createdAt: new Date().toISOString(),

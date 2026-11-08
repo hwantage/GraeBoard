@@ -4,26 +4,19 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { channel } from "node:diagnostics_channel";
 import { propertiesFor } from "../shared/domain.js";
 import { stringify, parseCompact } from "../shared/compact.js";
-import {
-  normalizeSheetCloneName,
-  DUPLICATE_SHEET_CLONE_NAME,
-} from "../shared/sheet-clone-names.js";
-import { requireThat, sheetCloneNameSchema } from "../shared/validation.js";
+import { requireFreeSheetCloneName } from "../shared/sheet-clone-names.js";
+import { sheetCloneNameSchema } from "../shared/validation.js";
 
 // Call inside the insertion's BEGIN IMMEDIATE transaction so two writers cannot
 // both claim a name. Compare stored names too, including decomposed Korean text.
 export function requireUniqueSheetCloneName(db, teamId, name) {
   const normalized = sheetCloneNameSchema.parse(name);
-  requireThat(
-    !db
+  requireFreeSheetCloneName(
+    db
       .prepare("SELECT name FROM sheet_clones WHERE team_id=?")
       .all(teamId)
-      .some(
-        (sheetClone) => normalizeSheetCloneName(sheetClone.name) === normalized,
-      ),
-    409,
-    DUPLICATE_SHEET_CLONE_NAME,
-    { code: "DUPLICATE_SHEET_CLONE_NAME" },
+      .map((sheetClone) => sheetClone.name),
+    normalized,
   );
   return normalized;
 }
