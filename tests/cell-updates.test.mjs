@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeCellUpdates, mergeSnapshotCells } from "../src/cell-updates.js";
+import {
+  mergeCellUpdates,
+  mergeSnapshotCells,
+} from "../src/sheet/cell-updates.js";
 
 const task = (id, version = 1, value = "기존 값") => ({
   id,

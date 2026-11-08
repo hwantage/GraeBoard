@@ -71,8 +71,23 @@ const graph = new Map(
 );
 const isPortableSync = (path) =>
   path.startsWith("server/sync/") && portableSync.has(path.slice(12, -4));
-const isService = (path) =>
-  /^server\/storage\/[^/]+-(?:service|command-rules)\.mjs$/.test(path);
+const businessServices = new Set([
+  "server/storage/access-token-service.mjs",
+  "server/storage/control-service.mjs",
+  "server/storage/calendar-service.mjs",
+  "server/storage/document-browser-service.mjs",
+  "server/storage/document-service.mjs",
+  "server/storage/admin-history-service.mjs",
+  "server/storage/history-service.mjs",
+  "server/storage/filter-service.mjs",
+  "server/storage/settings-service.mjs",
+  "server/storage/task-command-rules.mjs",
+  "server/storage/task-service.mjs",
+  "server/storage/sheet-clone-command-rules.mjs",
+  "server/storage/sheet-clone-service.mjs",
+  "server/storage/transfer-service.mjs",
+]);
+const isService = (path) => businessServices.has(path);
 
 test("SQLite hosts and shared modules never import the external host; PostgreSQL repositories live only under worker/storage", () => {
   const violations = [];

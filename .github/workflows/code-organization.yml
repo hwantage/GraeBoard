@@ -1,0 +1,22 @@
+name: 코드 구조 검사
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - run: npm run check:structure
+      - run: node --test --test-concurrency=1 tests/tooling/code-organization.test.mjs tests/tooling/node-test-files.test.mjs tests/storage-import-boundaries.test.mjs

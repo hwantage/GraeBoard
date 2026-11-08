@@ -6,9 +6,16 @@ import { setImmediate } from "node:timers/promises";
 
 const moduleURL = (code) =>
   `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+const sourcePaths = {
+  site: "../src/platform/site.ts",
+  "query-policy": "../src/platform/query-policy.ts",
+  "shared-query": "../src/platform/shared-query.ts",
+  api: "../src/platform/api.ts",
+  useCalendarData: "../src/calendar/useCalendarData.ts",
+};
 const source = (name) =>
   stripTypeScriptTypes(
-    readFileSync(new URL(`../src/${name}.ts`, import.meta.url), "utf8"),
+    readFileSync(new URL(sourcePaths[name], import.meta.url), "utf8"),
     { mode: "transform" },
   );
 const { siteFor } = await import(moduleURL(source("site")));
@@ -98,11 +105,11 @@ test("only successful business mutations dispatch the local-save signal", async 
   const code = source("api")
     .replace('"./site"', JSON.stringify(moduleURL(source("site"))))
     .replace(
-      '"../shared/compact.js"',
+      '"../../shared/compact.js"',
       JSON.stringify(new URL("../shared/compact.js", import.meta.url).href),
     )
     .replace(
-      '"../shared/api-error-message.js"',
+      '"../../shared/api-error-message.js"',
       JSON.stringify(
         new URL("../shared/api-error-message.js", import.meta.url).href,
       ),
@@ -176,7 +183,7 @@ async function calendarHarness(t) {
       ),
     )
     .replace(
-      '"./api"',
+      '"../platform/api"',
       JSON.stringify(
         moduleURL(
           "export const api = (...a) => globalThis.__calendarQueryTest.api(...a);",
@@ -184,7 +191,7 @@ async function calendarHarness(t) {
       ),
     )
     .replace(
-      '"../shared/calendar.js"',
+      '"../../shared/calendar.js"',
       JSON.stringify(new URL("../shared/calendar.js", import.meta.url).href),
     );
   const { useCalendarData } = await import(moduleURL(code));

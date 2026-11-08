@@ -1,7 +1,8 @@
-import { accessSync, constants, readdirSync, realpathSync } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { runNodeTests } from "./testing/run-node-tests.mjs";
 
 export function requirePostgresBinaries(value = process.env.TEST_PG_BIN) {
   if (!value)
@@ -32,29 +33,9 @@ export function requirePostgresBinaries(value = process.env.TEST_PG_BIN) {
 export async function main() {
   const bin = requirePostgresBinaries(),
     root = fileURLToPath(new URL("../", import.meta.url));
-  const files = readdirSync(join(root, "tests"))
-    .filter((name) => name.endsWith(".test.mjs"))
-    .sort()
-    .map((name) => "tests/" + name);
-  const child = spawn(
-    process.execPath,
-    ["--test", "--test-concurrency=1", ...files],
-    {
-      cwd: root,
-      env: { ...process.env, TEST_PG_BIN: bin },
-      stdio: "inherit",
-    },
-  );
-  await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal)
-        reject(new Error("Strict PostgreSQL validation terminated: " + signal));
-      else {
-        process.exitCode = code;
-        resolve();
-      }
-    });
+  await runNodeTests({
+    root,
+    env: { ...process.env, TEST_PG_BIN: bin },
   });
 }
 

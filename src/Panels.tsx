@@ -1,12 +1,12 @@
-import type { DocumentPanelHandle } from "./TaskDocumentPanel";
+import type { DocumentPanelHandle } from "./documents/TaskDocumentPanel";
 import type { BatchResult, DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
-} from "./TaskPropertyEditor";
-import Select from "./Select";
-import DocumentLoading from "./DocumentLoading";
-import LoadingState from "./LoadingState";
+} from "./sheet/TaskPropertyEditor";
+import Select from "./ui/Select";
+import DocumentLoading from "./documents/DocumentLoading";
+import LoadingState from "./ui/LoadingState";
 import {
   Component,
   forwardRef,
@@ -30,21 +30,21 @@ import {
   EyeOff,
   CalendarPlus,
 } from "lucide-react";
-import { api, send, download, taskQuery } from "./api";
+import { api, send, download, taskQuery } from "./platform/api";
 import { Modal, Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
-import HistoryTime, { HistoryTimeline } from "./HistoryTime";
-import { describeStyle } from "./history";
+import Toast, { useToast } from "./ui/Toast";
+import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
+import { describeStyle } from "./sheet/history";
 import { pack, compactStyle } from "../shared/compact.js";
-import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton from "./DocumentFullWidthButton";
-import DocumentFullPageButton from "./DocumentFullPageButton";
-import { useDocumentFullPage } from "./useDocumentFullPage";
+import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
+import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
+import DocumentFullPageButton from "./documents/DocumentFullPageButton";
+import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   useOpenDocumentLink,
   type DocumentLinkTarget,
-} from "./document-links";
+} from "./documents/document-links";
 import type { Task, User, Settings } from "./types";
 import {
   fieldsFor,
@@ -57,7 +57,7 @@ import {
   todayKey,
 } from "../shared/domain.js";
 
-const TaskDocumentPanel = lazy(() => import("./TaskDocumentPanel"));
+const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
 class DocumentLoadBoundary extends Component<
   { children: ReactNode; onError: () => void },
   { failed: boolean }

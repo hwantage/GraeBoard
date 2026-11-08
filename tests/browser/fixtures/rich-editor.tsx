@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import RichMarkdownEditor from "../../../src/RichMarkdownEditor";
+import RichMarkdownEditor from "../../../src/documents/editor/RichMarkdownEditor";
 
 function Fixture() {
   const [error, setError] = useState("");

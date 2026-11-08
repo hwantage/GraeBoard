@@ -1,0 +1,3087 @@
+{
+  "baseline": "ad1e57dcd802d089618026f979546cca970d42bd",
+  "entries": [
+    {
+      "from": "edge/globals.mjs",
+      "to": "edge/globals.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "edge/handler.mjs",
+      "to": "edge/handler.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "edge/link-title.mjs",
+      "to": "edge/link-title.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "edge/main.mjs",
+      "to": "edge/main.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "edge/resources.mjs",
+      "to": "edge/resources.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "edge/security.mjs",
+      "to": "edge/security.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "functions/[[path]].js",
+      "to": "functions/[[path]].js",
+      "phase": "keep"
+    },
+    {
+      "from": "scripts/admin.mjs",
+      "to": "scripts/admin/admin.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/backup-external.mjs",
+      "to": "scripts/transfer/backup-external.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/backup.mjs",
+      "to": "scripts/transfer/backup.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/build-edge.mjs",
+      "to": "scripts/deploy/build-edge.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/dev-snapshot-import.mjs",
+      "to": "scripts/transfer/dev-snapshot-import.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/e2e-server.mjs",
+      "to": "scripts/testing/e2e-server.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/external-backup-options.mjs",
+      "to": "scripts/transfer/external-backup-options.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/image-resources.mjs",
+      "to": "scripts/transfer/image-resources.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/licenses.mjs",
+      "to": "scripts/licenses.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "scripts/load-test.mjs",
+      "to": "scripts/performance/load-test.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/migrate.mjs",
+      "to": "scripts/admin/migrate.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/performance.mjs",
+      "to": "scripts/performance/performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/restore-external.mjs",
+      "to": "scripts/transfer/restore-external.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/restore.mjs",
+      "to": "scripts/transfer/restore.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/site-key-migration-sql.mjs",
+      "to": "scripts/admin/site-key-migration-sql.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-browser-performance.mjs",
+      "to": "scripts/performance/sync-browser-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-credential.mjs",
+      "to": "scripts/sync/sync-credential.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-external-import.mjs",
+      "to": "scripts/sync/sync-external-import.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-fault-performance.mjs",
+      "to": "scripts/performance/sync-fault-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-history-maintenance.mjs",
+      "to": "scripts/sync/sync-history-maintenance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-import-performance.mjs",
+      "to": "scripts/performance/sync-import-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-maintenance-recover.mjs",
+      "to": "scripts/sync/sync-maintenance-recover.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-merge-performance.mjs",
+      "to": "scripts/performance/sync-merge-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-peer-performance.mjs",
+      "to": "scripts/performance/sync-peer-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-performance.mjs",
+      "to": "scripts/performance/sync-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-recover.mjs",
+      "to": "scripts/sync/sync-recover.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-review-performance.mjs",
+      "to": "scripts/performance/sync-review-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-sheet-clone-performance.mjs",
+      "to": "scripts/performance/sync-sheet-clone-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-upgrade.mjs",
+      "to": "scripts/sync/sync-upgrade.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/sync-weekly-order.mjs",
+      "to": "scripts/sync/sync-weekly-order.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/team-site-deploy.mjs",
+      "to": "scripts/deploy/team-site-deploy.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/test-postgres.mjs",
+      "to": "scripts/testing/test-postgres.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/transfer.mjs",
+      "to": "scripts/transfer/transfer.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "scripts/ui-performance.mjs",
+      "to": "scripts/performance/ui-performance.mjs",
+      "phase": "P7"
+    },
+    {
+      "from": "server/access-token-key.mjs",
+      "to": "server/auth/access-token-key.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/access-tokens.mjs",
+      "to": "server/auth/access-tokens.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/app.mjs",
+      "to": "server/app.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/archive.mjs",
+      "to": "server/transfer/archive.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/calendar.mjs",
+      "to": "server/calendar/calendar.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/cell-events.mjs",
+      "to": "server/events/cell-events.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/cell-operations.mjs",
+      "to": "server/sheet/cell-operations.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/control-business-routes.mjs",
+      "to": "server/control/control-business-routes.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/db.mjs",
+      "to": "server/db.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/document-browser.mjs",
+      "to": "server/documents/document-browser.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-business-routes.mjs",
+      "to": "server/documents/document-business-routes.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-events.mjs",
+      "to": "server/events/document-events.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-image-preparation.mjs",
+      "to": "server/documents/document-image-preparation.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-image-worker.mjs",
+      "to": "server/documents/document-image-worker.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-images.mjs",
+      "to": "server/documents/document-images.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/document-storage.mjs",
+      "to": "server/documents/document-storage.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/event-streams.mjs",
+      "to": "server/events/event-streams.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/filters.mjs",
+      "to": "server/sheet/filters.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/formatting.mjs",
+      "to": "server/sheet/formatting.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/history-cleanup.mjs",
+      "to": "server/history/history-cleanup.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/history-service-routes.mjs",
+      "to": "server/history/history-service-routes.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/http-boundary.mjs",
+      "to": "server/http/http-boundary.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/index.mjs",
+      "to": "server/index.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/link-title.mjs",
+      "to": "server/http/link-title.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/local-auth.mjs",
+      "to": "server/auth/local-auth.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/memo-storage.mjs",
+      "to": "server/documents/memo-storage.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/migrations/postgres.mjs",
+      "to": "server/migrations/postgres.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/001-control.sql",
+      "to": "server/migrations/postgres/001-control.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/001-site.sql",
+      "to": "server/migrations/postgres/001-site.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/001-team.sql",
+      "to": "server/migrations/postgres/001-team.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/002-control-access-tokens.sql",
+      "to": "server/migrations/postgres/002-control-access-tokens.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/002-site-setup-keys.sql",
+      "to": "server/migrations/postgres/002-site-setup-keys.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/002-team-maintenance.sql",
+      "to": "server/migrations/postgres/002-team-maintenance.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/003-site-access-tokens.sql",
+      "to": "server/migrations/postgres/003-site-access-tokens.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/postgres/003-team-sheet-clones.sql",
+      "to": "server/migrations/postgres/003-team-sheet-clones.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/site-initialize-sql.mjs",
+      "to": "server/migrations/site-initialize-sql.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite.mjs",
+      "to": "server/migrations/sqlite.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/029-base.sql",
+      "to": "server/migrations/sqlite/029-base.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/030-sync.sql",
+      "to": "server/migrations/sqlite/030-sync.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/031-setup-keys.sql",
+      "to": "server/migrations/sqlite/031-setup-keys.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/032-sync-maintenance.sql",
+      "to": "server/migrations/sqlite/032-sync-maintenance.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/033-access-tokens.sql",
+      "to": "server/migrations/sqlite/033-access-tokens.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/migrations/sqlite/034-sheet-clones.sql",
+      "to": "server/migrations/sqlite/034-sheet-clones.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "server/profiles.mjs",
+      "to": "server/control/profiles.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/resource-events.mjs",
+      "to": "server/events/resource-events.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/settings.mjs",
+      "to": "server/control/settings.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sheet-clone-documents.mjs",
+      "to": "server/sheet-clones/sheet-clone-documents.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sheet-clone-editing.mjs",
+      "to": "server/sheet-clones/sheet-clone-editing.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sheet-clone-service-routes.mjs",
+      "to": "server/sheet-clones/sheet-clone-service-routes.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sheet-clones.mjs",
+      "to": "server/sheet-clones/sheet-clones.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sheet-history.mjs",
+      "to": "server/history/sheet-history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sqlite-access.mjs",
+      "to": "server/auth/sqlite-access.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/access-token-service.mjs",
+      "to": "server/storage/control/access-token-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/admin-history-service.mjs",
+      "to": "server/storage/history/admin-history-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/backup-recovery.mjs",
+      "to": "server/storage/transfer/backup-recovery.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/calendar-service.mjs",
+      "to": "server/storage/calendar/calendar-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/control-service.mjs",
+      "to": "server/storage/control/control-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/control-store.mjs",
+      "to": "server/storage/control/control-store.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/database-adapter.mjs",
+      "to": "server/storage/database-adapter.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/storage/document-browser-service.mjs",
+      "to": "server/storage/documents/document-browser-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/document-service.mjs",
+      "to": "server/storage/documents/document-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/external-backup.mjs",
+      "to": "server/storage/transfer/external-backup.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/file-images.mjs",
+      "to": "server/storage/documents/file-images.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/filter-service.mjs",
+      "to": "server/storage/settings/filter-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/history-service.mjs",
+      "to": "server/storage/history/history-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/logical-assets.mjs",
+      "to": "server/storage/transfer/logical-assets.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/logical-format.mjs",
+      "to": "server/storage/transfer/logical-format.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/logical-transfer.mjs",
+      "to": "server/storage/transfer/logical-transfer.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/schema-version.mjs",
+      "to": "server/storage/schema-version.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/storage/settings-service.mjs",
+      "to": "server/storage/settings/settings-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sheet-clone-command-rules.mjs",
+      "to": "server/storage/sheet-clones/sheet-clone-command-rules.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sheet-clone-command-schema.mjs",
+      "to": "server/storage/sheet-clones/sheet-clone-command-schema.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sheet-clone-service.mjs",
+      "to": "server/storage/sheet-clones/sheet-clone-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-admin-history.mjs",
+      "to": "server/storage/history/sqlite-admin-history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-calendar.mjs",
+      "to": "server/storage/calendar/sqlite-calendar.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-control.mjs",
+      "to": "server/storage/control/sqlite-control.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-document-browser.mjs",
+      "to": "server/storage/documents/sqlite-document-browser.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-document-links.mjs",
+      "to": "server/storage/documents/sqlite-document-links.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-documents.mjs",
+      "to": "server/storage/documents/sqlite-documents.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-filters.mjs",
+      "to": "server/storage/settings/sqlite-filters.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-history.mjs",
+      "to": "server/storage/history/sqlite-history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-settings.mjs",
+      "to": "server/storage/settings/sqlite-settings.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-sheet-clones.mjs",
+      "to": "server/storage/sheet-clones/sqlite-sheet-clones.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-task-commands.mjs",
+      "to": "server/storage/tasks/sqlite-task-commands.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-tasks.mjs",
+      "to": "server/storage/tasks/sqlite-tasks.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite-transfer.mjs",
+      "to": "server/storage/transfer/sqlite-transfer.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/sqlite.mjs",
+      "to": "server/storage/sqlite.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/storage/task-command-rules.mjs",
+      "to": "server/storage/tasks/task-command-rules.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/task-command-schema.mjs",
+      "to": "server/storage/tasks/task-command-schema.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/task-service.mjs",
+      "to": "server/storage/tasks/task-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/storage/team-store.mjs",
+      "to": "server/storage/team-store.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "server/storage/transfer-service.mjs",
+      "to": "server/storage/transfer/transfer-service.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/sync/background-worker.mjs",
+      "to": "server/sync/node/background-worker.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/branch-publication.mjs",
+      "to": "server/sync/core/branch-publication.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/capture-triggers.mjs",
+      "to": "server/sync/node/capture-triggers.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/capture.mjs",
+      "to": "server/sync/node/capture.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/checkpoint.mjs",
+      "to": "server/sync/core/checkpoint.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/credentials.mjs",
+      "to": "server/sync/node/credentials.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/directory.mjs",
+      "to": "server/sync/core/directory.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/entities.mjs",
+      "to": "server/sync/node/entities.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/errors.mjs",
+      "to": "server/sync/core/errors.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/file-entries.mjs",
+      "to": "server/sync/core/file-entries.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/git-cli.mjs",
+      "to": "server/sync/node/git-cli.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/github-api.mjs",
+      "to": "server/sync/core/github-api.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/maintenance-sqlite.mjs",
+      "to": "server/sync/node/maintenance-sqlite.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/maintenance.mjs",
+      "to": "server/sync/core/maintenance.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-background.mjs",
+      "to": "server/sync/node/node-background.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-errors.mjs",
+      "to": "server/sync/node/node-errors.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-leases.mjs",
+      "to": "server/sync/node/node-leases.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-mutations.mjs",
+      "to": "server/sync/node/node-mutations.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-routes.mjs",
+      "to": "server/sync/node/node-routes.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node-status.mjs",
+      "to": "server/sync/node/node-status.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/node.mjs",
+      "to": "server/sync/node/node.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/notifications.mjs",
+      "to": "server/sync/node/notifications.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/operations.mjs",
+      "to": "server/sync/core/operations.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/profiles.mjs",
+      "to": "server/sync/node/profiles.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/projection.mjs",
+      "to": "server/sync/core/projection.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/protocol.mjs",
+      "to": "server/sync/core/protocol.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/receipt-capacity.mjs",
+      "to": "server/sync/node/receipt-capacity.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/reducer.mjs",
+      "to": "server/sync/core/reducer.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/retention.mjs",
+      "to": "server/sync/core/retention.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/service.mjs",
+      "to": "server/sync/core/service.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/setup-config.mjs",
+      "to": "server/sync/node/setup-config.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/setup-key-issuer.mjs",
+      "to": "server/sync/node/setup-key-issuer.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/setup-keys.mjs",
+      "to": "server/sync/core/setup-keys.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/snapshot.mjs",
+      "to": "server/sync/core/snapshot.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/sync-operation-cache.mjs",
+      "to": "server/sync/core/sync-operation-cache.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/versions.mjs",
+      "to": "server/sync/core/versions.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/sync/visibility.mjs",
+      "to": "server/sync/node/visibility.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "server/system-audit.mjs",
+      "to": "server/history/system-audit.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/task-business-routes.mjs",
+      "to": "server/sheet/task-business-routes.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/task-cache.mjs",
+      "to": "server/sheet/task-cache.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/task-documents.mjs",
+      "to": "server/documents/task-documents.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/task-position.mjs",
+      "to": "server/sheet/task-position.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/team-deletion.mjs",
+      "to": "server/control/team-deletion.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/transfer.mjs",
+      "to": "server/transfer/transfer.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "server/validation.mjs",
+      "to": "server/validation.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/api-error-message.js",
+      "to": "shared/http/api-error-message.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/backup-recovery.mjs",
+      "to": "shared/transfer/backup-recovery.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/borders.js",
+      "to": "shared/formatting/borders.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/business-routes.js",
+      "to": "shared/http/business-routes.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/calendar-layout.js",
+      "to": "shared/calendar/calendar-layout.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/calendar-tags.js",
+      "to": "shared/calendar/calendar-tags.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/calendar.js",
+      "to": "shared/calendar/calendar.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/compact.js",
+      "to": "shared/formatting/compact.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/conflict-diff.js",
+      "to": "shared/sync/conflict-diff.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/conflict-origin.js",
+      "to": "shared/sync/conflict-origin.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/control-records.js",
+      "to": "shared/identity/control-records.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/coreProperties.js",
+      "to": "shared/coreProperties.js",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/database-adapter.js",
+      "to": "shared/storage/database-adapter.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/date-validation.js",
+      "to": "shared/date-validation.js",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/document-image-references.js",
+      "to": "shared/documents/document-image-references.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/document-image-validation.js",
+      "to": "shared/documents/document-image-validation.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/document-images.js",
+      "to": "shared/documents/document-images.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/document-links.js",
+      "to": "shared/documents/document-links.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/document-merge.js",
+      "to": "shared/documents/document-merge.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/document-routes.js",
+      "to": "shared/documents/document-routes.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/domain.js",
+      "to": "shared/domain.js",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/fonts.js",
+      "to": "shared/formatting/fonts.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/formatting.js",
+      "to": "shared/formatting/formatting.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/http-error.js",
+      "to": "shared/http/http-error.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/link-title.mjs",
+      "to": "shared/http/link-title.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/local-history-maintenance.mjs",
+      "to": "shared/sync/local-history-maintenance.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/logical-format.mjs",
+      "to": "shared/transfer/logical-format.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/postgres-schema-version.js",
+      "to": "shared/storage/postgres-schema-version.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/profiles.js",
+      "to": "shared/identity/profiles.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/record-map.mjs",
+      "to": "shared/sync/record-map.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/search.js",
+      "to": "shared/search.js",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/session-contract.ts",
+      "to": "shared/identity/session-contract.ts",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/setup-guide.js",
+      "to": "shared/site/setup-guide.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sheet-clone-editing.js",
+      "to": "shared/sheet-clones/sheet-clone-editing.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sheet-clone-names.js",
+      "to": "shared/sheet-clones/sheet-clone-names.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sheet-clone-sync-data.js",
+      "to": "shared/sheet-clones/sheet-clone-sync-data.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sheet-clone-sync.js",
+      "to": "shared/sheet-clones/sheet-clone-sync.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/site-mode.js",
+      "to": "shared/site/site-mode.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-capacity.mjs",
+      "to": "shared/sync/sync-capacity.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-error-message.js",
+      "to": "shared/sync/sync-error-message.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-image-references.js",
+      "to": "shared/sync/sync-image-references.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-limits.js",
+      "to": "shared/sync/sync-limits.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-profiles.js",
+      "to": "shared/sync/sync-profiles.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-setup.js",
+      "to": "shared/sync/sync-setup.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/sync-team-store.mjs",
+      "to": "shared/sync/sync-team-store.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/task-documents.js",
+      "to": "shared/documents/task-documents.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/themes.js",
+      "to": "shared/formatting/themes.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/validation.js",
+      "to": "shared/validation.js",
+      "phase": "keep"
+    },
+    {
+      "from": "shared/workbook-archive.js",
+      "to": "shared/transfer/workbook-archive.js",
+      "phase": "P4"
+    },
+    {
+      "from": "shared/workbook.mjs",
+      "to": "shared/transfer/workbook.mjs",
+      "phase": "P4"
+    },
+    {
+      "from": "src/AccessTokens.tsx",
+      "to": "src/auth/AccessTokens.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/AccountLinkRequests.tsx",
+      "to": "src/auth/AccountLinkRequests.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/AccountMenu.tsx",
+      "to": "src/auth/AccountMenu.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ActiveFilterConditions.tsx",
+      "to": "src/sheet/ActiveFilterConditions.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/AnnualMemoPanel.tsx",
+      "to": "src/documents/AnnualMemoPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/App.tsx",
+      "to": "src/app/App.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/AvatarEditor.tsx",
+      "to": "src/auth/AvatarEditor.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/BorderControls.tsx",
+      "to": "src/sheet/BorderControls.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/BorderMenu.tsx",
+      "to": "src/sheet/BorderMenu.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/Brand.tsx",
+      "to": "src/ui/Brand.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/Calendar.tsx",
+      "to": "src/calendar/Calendar.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarEntries.tsx",
+      "to": "src/calendar/CalendarEntries.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarEntryPanel.tsx",
+      "to": "src/calendar/CalendarEntryPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarRangeEditor.tsx",
+      "to": "src/calendar/CalendarRangeEditor.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarSettings.tsx",
+      "to": "src/calendar/CalendarSettings.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarTags.tsx",
+      "to": "src/calendar/CalendarTags.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CalendarTaskPicker.tsx",
+      "to": "src/calendar/CalendarTaskPicker.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/CellDatePicker.tsx",
+      "to": "src/sheet/CellDatePicker.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/CellOptionPicker.tsx",
+      "to": "src/sheet/CellOptionPicker.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ColorMenu.tsx",
+      "to": "src/ui/ColorMenu.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/ColorPicker.tsx",
+      "to": "src/ui/ColorPicker.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/CopyDocumentLinkButton.tsx",
+      "to": "src/documents/CopyDocumentLinkButton.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DefaultStyleManager.tsx",
+      "to": "src/settings/DefaultStyleManager.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/DocumentBlockHandle.tsx",
+      "to": "src/documents/editor/DocumentBlockHandle.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentBrowser.tsx",
+      "to": "src/documents/DocumentBrowser.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentCodeBlockView.ts",
+      "to": "src/documents/editor/DocumentCodeBlockView.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentEditor.tsx",
+      "to": "src/documents/DocumentEditor.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentFullPageButton.tsx",
+      "to": "src/documents/DocumentFullPageButton.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentFullWidthButton.tsx",
+      "to": "src/documents/DocumentFullWidthButton.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentImageView.ts",
+      "to": "src/documents/editor/DocumentImageView.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentInputRules.ts",
+      "to": "src/documents/editor/DocumentInputRules.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentLinkNode.ts",
+      "to": "src/documents/editor/DocumentLinkNode.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentLinkPanel.tsx",
+      "to": "src/documents/DocumentLinkPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentLinkTitle.ts",
+      "to": "src/documents/editor/DocumentLinkTitle.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentLoading.tsx",
+      "to": "src/documents/DocumentLoading.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentModeToggle.tsx",
+      "to": "src/documents/DocumentModeToggle.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentPanel.tsx",
+      "to": "src/documents/DocumentPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentSlashMenu.tsx",
+      "to": "src/documents/editor/DocumentSlashMenu.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentToc.tsx",
+      "to": "src/documents/editor/DocumentToc.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentTocToggle.tsx",
+      "to": "src/documents/DocumentTocToggle.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentToggle.ts",
+      "to": "src/documents/editor/DocumentToggle.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/DocumentToolMenu.tsx",
+      "to": "src/documents/DocumentToolMenu.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/ExternalAccountLogin.tsx",
+      "to": "src/auth/ExternalAccountLogin.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ExternalLogin.tsx",
+      "to": "src/auth/ExternalLogin.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/FindBar.tsx",
+      "to": "src/sheet/FindBar.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/FormatSelect.tsx",
+      "to": "src/sheet/FormatSelect.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/Grid.tsx",
+      "to": "src/sheet/Grid.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/GridHeaderMenu.tsx",
+      "to": "src/ui/GridHeaderMenu.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/HistoryCleanup.tsx",
+      "to": "src/settings/HistoryCleanup.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/HistoryTime.tsx",
+      "to": "src/ui/HistoryTime.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/InlineCellEditor.tsx",
+      "to": "src/sheet/InlineCellEditor.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/LoadingState.tsx",
+      "to": "src/ui/LoadingState.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/MemberValue.tsx",
+      "to": "src/sheet/MemberValue.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/Panels.tsx",
+      "to": "src/Panels.tsx",
+      "phase": "keep"
+    },
+    {
+      "from": "src/PeriodPicker.tsx",
+      "to": "src/sheet/PeriodPicker.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/PresentationTools.tsx",
+      "to": "src/app/PresentationTools.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ProfilePanel.tsx",
+      "to": "src/auth/ProfilePanel.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/PropertiesManager.tsx",
+      "to": "src/settings/PropertiesManager.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/PropertyBadge.tsx",
+      "to": "src/sheet/PropertyBadge.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/PropertyColumnOrder.tsx",
+      "to": "src/sheet/PropertyColumnOrder.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/PropertyFilter.tsx",
+      "to": "src/sheet/PropertyFilter.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/RichMarkdownEditor.tsx",
+      "to": "src/documents/editor/RichMarkdownEditor.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/SaveStatus.tsx",
+      "to": "src/app/SaveStatus.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SecretCalendarEntryPanel.tsx",
+      "to": "src/calendar/SecretCalendarEntryPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/Select.tsx",
+      "to": "src/ui/Select.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/ServiceConnections.tsx",
+      "to": "src/settings/ServiceConnections.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SettingsPanel.tsx",
+      "to": "src/settings/SettingsPanel.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SheetHorizontalScroll.tsx",
+      "to": "src/sheet/SheetHorizontalScroll.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SheetTabs.tsx",
+      "to": "src/sheet/SheetTabs.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SiteMaintenance.tsx",
+      "to": "src/settings/SiteMaintenance.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SyncConflictBox.tsx",
+      "to": "src/sync/SyncConflictBox.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SyncConflictDiff.tsx",
+      "to": "src/sync/SyncConflictDiff.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SyncConnectionDetails.tsx",
+      "to": "src/sync/SyncConnectionDetails.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SyncSetupWizard.tsx",
+      "to": "src/sync/SyncSetupWizard.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/SystemAuditLog.tsx",
+      "to": "src/settings/SystemAuditLog.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/TaskDocumentEditor.tsx",
+      "to": "src/documents/TaskDocumentEditor.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/TaskDocumentPanel.tsx",
+      "to": "src/documents/TaskDocumentPanel.tsx",
+      "phase": "P2"
+    },
+    {
+      "from": "src/TaskPropertyEditor.tsx",
+      "to": "src/sheet/TaskPropertyEditor.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/TeamSettings.tsx",
+      "to": "src/settings/TeamSettings.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/TeamSetupKey.tsx",
+      "to": "src/sync/TeamSetupKey.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/TeamSyncIndicator.tsx",
+      "to": "src/sync/TeamSyncIndicator.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/TeamSyncSettings.tsx",
+      "to": "src/sync/TeamSyncSettings.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ThemePicker.tsx",
+      "to": "src/settings/ThemePicker.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/Toast.tsx",
+      "to": "src/ui/Toast.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/Toolbar.tsx",
+      "to": "src/sheet/Toolbar.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/Tooltip.tsx",
+      "to": "src/ui/Tooltip.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/UserAccounts.tsx",
+      "to": "src/settings/UserAccounts.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/ZoomControls.tsx",
+      "to": "src/app/ZoomControls.tsx",
+      "phase": "P3"
+    },
+    {
+      "from": "src/api.ts",
+      "to": "src/platform/api.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/app-version.d.ts",
+      "to": "src/app-version.d.ts",
+      "phase": "keep"
+    },
+    {
+      "from": "src/busyProps.ts",
+      "to": "src/ui/busyProps.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/calendar-entry-actions.ts",
+      "to": "src/calendar/calendar-entry-actions.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/calendar-tag-checks.ts",
+      "to": "src/calendar/calendar-tag-checks.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/calendar-tags.css",
+      "to": "src/calendar/calendar-tags.css",
+      "phase": "P2"
+    },
+    {
+      "from": "src/calendar-types.ts",
+      "to": "src/calendar/calendar-types.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/calendar.css",
+      "to": "src/calendar/calendar.css",
+      "phase": "P2"
+    },
+    {
+      "from": "src/cell-sync.ts",
+      "to": "src/sheet/cell-sync.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/cell-updates.js",
+      "to": "src/sheet/cell-updates.js",
+      "phase": "P3"
+    },
+    {
+      "from": "src/clipboard.ts",
+      "to": "src/sheet/clipboard.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/color.ts",
+      "to": "src/ui/color.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/components.tsx",
+      "to": "src/components.tsx",
+      "phase": "keep"
+    },
+    {
+      "from": "src/document-browser.css",
+      "to": "src/documents/document-browser.css",
+      "phase": "P2"
+    },
+    {
+      "from": "src/document-export.ts",
+      "to": "src/documents/document-export.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/document-links.ts",
+      "to": "src/documents/document-links.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/document-storage.ts",
+      "to": "src/documents/document-storage.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/event-stream-broker.ts",
+      "to": "src/platform/event-stream-broker.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/event-stream.ts",
+      "to": "src/platform/event-stream.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/event-stream.worker.ts",
+      "to": "src/platform/event-stream.worker.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/format-selection.js",
+      "to": "src/sheet/format-selection.js",
+      "phase": "P3"
+    },
+    {
+      "from": "src/history.ts",
+      "to": "src/sheet/history.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/main.tsx",
+      "to": "src/main.tsx",
+      "phase": "keep"
+    },
+    {
+      "from": "src/polyfills.ts",
+      "to": "src/platform/polyfills.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/query-policy.ts",
+      "to": "src/platform/query-policy.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/recent-colors.tsx",
+      "to": "src/ui/recent-colors.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/roles.ts",
+      "to": "src/platform/roles.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/secret-calendar-layout.ts",
+      "to": "src/calendar/secret-calendar-layout.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/secret-calendar.css",
+      "to": "src/calendar/secret-calendar.css",
+      "phase": "P2"
+    },
+    {
+      "from": "src/secret-calendar.ts",
+      "to": "src/calendar/secret-calendar.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/secret-document-storage.ts",
+      "to": "src/calendar/secret-document-storage.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/selection-areas.js",
+      "to": "src/sheet/selection-areas.js",
+      "phase": "P3"
+    },
+    {
+      "from": "src/service-connections.css",
+      "to": "src/settings/service-connections.css",
+      "phase": "P3"
+    },
+    {
+      "from": "src/shared-query.ts",
+      "to": "src/platform/shared-query.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/site-context.tsx",
+      "to": "src/platform/site-context.tsx",
+      "phase": "P1"
+    },
+    {
+      "from": "src/site.ts",
+      "to": "src/platform/site.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/styles.css",
+      "to": "src/styles.css",
+      "phase": "keep"
+    },
+    {
+      "from": "src/sync-setup.css",
+      "to": "src/sync/sync-setup.css",
+      "phase": "P3"
+    },
+    {
+      "from": "src/sync-types.ts",
+      "to": "src/sync/sync-types.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/task-document.css",
+      "to": "src/documents/task-document.css",
+      "phase": "P2"
+    },
+    {
+      "from": "src/team-sync-settings.css",
+      "to": "src/sync/team-sync-settings.css",
+      "phase": "P3"
+    },
+    {
+      "from": "src/trackPointerDrag.ts",
+      "to": "src/ui/trackPointerDrag.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/types.ts",
+      "to": "src/types.ts",
+      "phase": "keep"
+    },
+    {
+      "from": "src/useCalendarData.ts",
+      "to": "src/calendar/useCalendarData.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/useCalendarDrag.ts",
+      "to": "src/calendar/useCalendarDrag.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/useCalendarTheme.ts",
+      "to": "src/calendar/useCalendarTheme.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/useDocumentFullPage.ts",
+      "to": "src/documents/useDocumentFullPage.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/useListReorder.ts",
+      "to": "src/ui/useListReorder.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/useMobileLayout.ts",
+      "to": "src/ui/useMobileLayout.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/usePopover.ts",
+      "to": "src/ui/usePopover.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/useResourceSync.ts",
+      "to": "src/platform/useResourceSync.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/useSecretCalendar.ts",
+      "to": "src/calendar/useSecretCalendar.ts",
+      "phase": "P2"
+    },
+    {
+      "from": "src/useSheetCloneDraft.ts",
+      "to": "src/sheet/useSheetCloneDraft.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/useTodayKey.ts",
+      "to": "src/sheet/useTodayKey.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "src/useTouchPress.ts",
+      "to": "src/ui/useTouchPress.ts",
+      "phase": "P1"
+    },
+    {
+      "from": "src/useWorkspaceRoute.ts",
+      "to": "src/app/useWorkspaceRoute.ts",
+      "phase": "P3"
+    },
+    {
+      "from": "tests/access-tokens.test.mjs",
+      "to": "tests/auth/access-tokens.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/admin-history-storage-contract.test.mjs",
+      "to": "tests/history/admin-history-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/api-error-message.test.mjs",
+      "to": "tests/site/api-error-message.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/api.test.mjs",
+      "to": "tests/site/api.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/backup.test.mjs",
+      "to": "tests/transfer/backup.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/annual-memos.spec.ts",
+      "to": "tests/browser/documents/annual-memos.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/api-errors.spec.ts",
+      "to": "tests/browser/platform/api-errors.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/auth-setup.spec.ts",
+      "to": "tests/browser/auth/auth-setup.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/calendar-controls.spec.ts",
+      "to": "tests/browser/calendar/calendar-controls.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/calendar-improvements.spec.ts",
+      "to": "tests/browser/calendar/calendar-improvements.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/calendar-tags.spec.ts",
+      "to": "tests/browser/calendar/calendar-tags.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/calendar-theme.spec.ts",
+      "to": "tests/browser/calendar/calendar-theme.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/calendar-weekly-tasks.spec.ts",
+      "to": "tests/browser/calendar/calendar-weekly-tasks.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/cell-sync.spec.ts",
+      "to": "tests/browser/sheet/cell-sync.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/color-picker.spec.ts",
+      "to": "tests/browser/platform/color-picker.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/colors.ts",
+      "to": "tests/browser/support/colors.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/common-formatting.spec.ts",
+      "to": "tests/browser/sheet/common-formatting.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/data-sync.spec.ts",
+      "to": "tests/browser/sync/data-sync.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-block-handle.spec.ts",
+      "to": "tests/browser/documents/document-block-handle.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-browser.spec.ts",
+      "to": "tests/browser/documents/document-browser.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-download.spec.ts",
+      "to": "tests/browser/documents/document-download.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-editor-blocks.spec.ts",
+      "to": "tests/browser/documents/document-editor-blocks.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-input.spec.ts",
+      "to": "tests/browser/documents/document-input.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-links.spec.ts",
+      "to": "tests/browser/documents/document-links.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-mermaid.spec.ts",
+      "to": "tests/browser/documents/document-mermaid.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-sync.spec.ts",
+      "to": "tests/browser/documents/document-sync.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/document-toc.spec.ts",
+      "to": "tests/browser/documents/document-toc.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/external-loading.spec.ts",
+      "to": "tests/browser/platform/external-loading.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/find.spec.ts",
+      "to": "tests/browser/sheet/find.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/fixtures/rich-editor.tsx",
+      "to": "tests/browser/fixtures/rich-editor.tsx",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/browser/git-draft-sync.spec.ts",
+      "to": "tests/browser/sync/git-draft-sync.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/history-cleanup.spec.ts",
+      "to": "tests/browser/settings/history-cleanup.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/login-persistence.spec.ts",
+      "to": "tests/browser/auth/login-persistence.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/mobile.spec.ts",
+      "to": "tests/browser/platform/mobile.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/monthly-calendar.spec.ts",
+      "to": "tests/browser/calendar/monthly-calendar.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/preferences.ts",
+      "to": "tests/browser/support/preferences.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/restart-server.ts",
+      "to": "tests/browser/support/restart-server.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/rolling-period.spec.ts",
+      "to": "tests/browser/sheet/rolling-period.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/row-menu.spec.ts",
+      "to": "tests/browser/sheet/row-menu.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/secret-calendar.spec.ts",
+      "to": "tests/browser/calendar/secret-calendar.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/selection-copy-undo.spec.ts",
+      "to": "tests/browser/sheet/selection-copy-undo.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/sheet-clone-editing.spec.ts",
+      "to": "tests/browser/sheet-clones/sheet-clone-editing.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/sheet-clone-feedback.spec.ts",
+      "to": "tests/browser/sheet-clones/sheet-clone-feedback.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/sheet-format-memo.spec.ts",
+      "to": "tests/browser/sheet/sheet-format-memo.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/sheet-sync.spec.ts",
+      "to": "tests/browser/sheet/sheet-sync.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/sync-setup.spec.ts",
+      "to": "tests/browser/sync/sync-setup.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/system-audit.spec.ts",
+      "to": "tests/browser/settings/system-audit.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/task-documents.spec.ts",
+      "to": "tests/browser/documents/task-documents.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/team-sync-indicator.spec.ts",
+      "to": "tests/browser/sync/team-sync-indicator.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/workspace-improvements.spec.ts",
+      "to": "tests/browser/sheet/workspace-improvements.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/workspace-navigation.spec.ts",
+      "to": "tests/browser/sheet/workspace-navigation.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/browser/workspace.spec.ts",
+      "to": "tests/browser/sheet/workspace.spec.ts",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/business-storage-fixture.mjs",
+      "to": "tests/support/business-storage-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/calendar-storage-contract.test.mjs",
+      "to": "tests/calendar/calendar-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/calendar.test.mjs",
+      "to": "tests/calendar/calendar.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/canonical-storage-fixture.mjs",
+      "to": "tests/support/canonical-storage-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/cell-events.test.mjs",
+      "to": "tests/events/cell-events.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/cell-operations.test.mjs",
+      "to": "tests/sheet/cell-operations.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/cell-updates.test.mjs",
+      "to": "tests/sheet/cell-updates.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/common-formatting.test.mjs",
+      "to": "tests/formatting/common-formatting.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/compact-storage.test.mjs",
+      "to": "tests/formatting/compact-storage.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/conflict-diff.test.mjs",
+      "to": "tests/sync/protocol/conflict-diff.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/conflict-origin.test.mjs",
+      "to": "tests/sync/protocol/conflict-origin.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/control-security-contract.test.mjs",
+      "to": "tests/auth/control-security-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/control-storage-contract.test.mjs",
+      "to": "tests/auth/control-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/control-store.test.mjs",
+      "to": "tests/auth/control-store.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/document-events-helper.mjs",
+      "to": "tests/support/document-events-helper.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/document-image-cache.test.mjs",
+      "to": "tests/documents/document-image-cache.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/document-image-preparation.test.mjs",
+      "to": "tests/documents/document-image-preparation.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/document-merge.test.mjs",
+      "to": "tests/documents/document-merge.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/document-storage-contract.test.mjs",
+      "to": "tests/documents/document-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/edge-calendar-round-trips.test.mjs",
+      "to": "tests/calendar/edge-calendar-round-trips.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/edge-document-round-trips.test.mjs",
+      "to": "tests/documents/edge-document-round-trips.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/edge-gateway.test.mjs",
+      "to": "tests/site/edge-gateway.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/edge-stream-scope.test.mjs",
+      "to": "tests/events/edge-stream-scope.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/edge-write-round-trips.test.mjs",
+      "to": "tests/site/edge-write-round-trips.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/event-stream-broker.test.mjs",
+      "to": "tests/events/event-stream-broker.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/event-stream-client.test.mjs",
+      "to": "tests/events/event-stream-client.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/external-route-fixture.mjs",
+      "to": "tests/support/external-route-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/expected-f744ead.json",
+      "to": "tests/fixtures/sheet-clone-legacy/expected-f744ead.json",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/export-v6.json",
+      "to": "tests/fixtures/sheet-clone-legacy/export-v6.json",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/external-control.sql",
+      "to": "tests/fixtures/sheet-clone-legacy/external-control.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/external-team-v1.sql",
+      "to": "tests/fixtures/sheet-clone-legacy/external-team-v1.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/external-team-v2.sql",
+      "to": "tests/fixtures/sheet-clone-legacy/external-team-v2.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs",
+      "to": "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
+      "to": "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/internal-v1.sql",
+      "to": "tests/fixtures/sheet-clone-legacy/internal-v1.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/internal-v2.sql",
+      "to": "tests/fixtures/sheet-clone-legacy/internal-v2.sql",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/manifest.json",
+      "to": "tests/fixtures/sheet-clone-legacy/manifest.json",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/fixtures/sheet-clone-legacy/sync.bundle",
+      "to": "tests/fixtures/sheet-clone-legacy/sync.bundle",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/format-scope-contract.test.mjs",
+      "to": "tests/formatting/format-scope-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/frontend-query.test.mjs",
+      "to": "tests/site/frontend-query.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/github-request-reuse.test.mjs",
+      "to": "tests/sync/transport/github-request-reuse.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/history-cleanup.test.mjs",
+      "to": "tests/history/history-cleanup.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/internal-api-contract-regressions.test.mjs",
+      "to": "tests/site/internal-api-contract-regressions.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/link-title.test.mjs",
+      "to": "tests/documents/link-title.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/missing-images.test.mjs",
+      "to": "tests/documents/missing-images.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/ordinary-data-contract.test.mjs",
+      "to": "tests/site/ordinary-data-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/pages-gateway.test.mjs",
+      "to": "tests/site/pages-gateway.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/postgres-legacy-schema.mjs",
+      "to": "tests/support/postgres-legacy-schema.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/property-filters.test.mjs",
+      "to": "tests/sheet/property-filters.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/retention-serving-performance.test.mjs",
+      "to": "tests/sync/integration/retention-serving-performance.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/rolling-period.test.mjs",
+      "to": "tests/sheet/rolling-period.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/row-menu.test.mjs",
+      "to": "tests/sheet/row-menu.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/search.test.mjs",
+      "to": "tests/sheet/search.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/selection-areas.test.mjs",
+      "to": "tests/sheet/selection-areas.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/server-shutdown.test.mjs",
+      "to": "tests/site/server-shutdown.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/server-tls.test.mjs",
+      "to": "tests/site/server-tls.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/settings-filter-storage-contract.test.mjs",
+      "to": "tests/sheet/settings-filter-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sheet-clone-conversion.test.mjs",
+      "to": "tests/sheet-clone-conversion.test.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/sheet-clone-cutover.test.mjs",
+      "to": "tests/sheet-clone-cutover.test.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tests/sheet-clone-decode-cache.test.mjs",
+      "to": "tests/sheet-clones/sheet-clone-decode-cache.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sheet-clone-site-parity.test.mjs",
+      "to": "tests/sheet-clones/sheet-clone-site-parity.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sheet-clone-storage-contract.test.mjs",
+      "to": "tests/sheet-clones/sheet-clone-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sheet-clone-sync.test.mjs",
+      "to": "tests/sheet-clones/sheet-clone-sync.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sheet-clones.test.mjs",
+      "to": "tests/sheet-clones/sheet-clones.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/site-initialize-sql.test.mjs",
+      "to": "tests/site/site-initialize-sql.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/site-mode.test.mjs",
+      "to": "tests/site/site-mode.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sqlite-legacy-schema.mjs",
+      "to": "tests/support/sqlite-legacy-schema.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/storage-contract.test.mjs",
+      "to": "tests/site/storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/storage-import-boundaries.test.mjs",
+      "to": "tests/tooling/storage-import-boundaries.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/storage-transfer.test.mjs",
+      "to": "tests/transfer/storage-transfer.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-backup-compatibility.test.mjs",
+      "to": "tests/sync/recovery/sync-backup-compatibility.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-calendar-documents.test.mjs",
+      "to": "tests/sync/integration/sync-calendar-documents.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-capture.test.mjs",
+      "to": "tests/sync/integration/sync-capture.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-checkpoint.test.mjs",
+      "to": "tests/sync/recovery/sync-checkpoint.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-error-message.test.mjs",
+      "to": "tests/sync/protocol/sync-error-message.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-external-import.test.mjs",
+      "to": "tests/sync/recovery/sync-external-import.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-git-askpass.test.mjs",
+      "to": "tests/sync/transport/sync-git-askpass.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-git-timeout.test.mjs",
+      "to": "tests/sync/transport/sync-git-timeout.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-github-faults.test.mjs",
+      "to": "tests/sync/transport/sync-github-faults.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-history-maintenance.test.mjs",
+      "to": "tests/sync/recovery/sync-history-maintenance.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-image-reference-review.test.mjs",
+      "to": "tests/sync/integration/sync-image-reference-review.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-integration.test.mjs",
+      "to": "tests/sync/integration/sync-integration.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-lifecycle-review.test.mjs",
+      "to": "tests/sync/integration/sync-lifecycle-review.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-maintenance.test.mjs",
+      "to": "tests/sync/recovery/sync-maintenance.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-metadata-publication.test.mjs",
+      "to": "tests/sync/transport/sync-metadata-publication.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-migrations.test.mjs",
+      "to": "tests/sync/recovery/sync-migrations.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-operation-cache.test.mjs",
+      "to": "tests/sync/protocol/sync-operation-cache.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-operation-capacity.test.mjs",
+      "to": "tests/sync/protocol/sync-operation-capacity.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-pending-projection.test.mjs",
+      "to": "tests/sync/protocol/sync-pending-projection.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-performance.test.mjs",
+      "to": "tests/sync/integration/sync-performance.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-person-placeholders.test.mjs",
+      "to": "tests/sync/integration/sync-person-placeholders.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-postgres-maintenance-migration.test.mjs",
+      "to": "tests/sync/recovery/sync-postgres-maintenance-migration.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-protocol-v2.test.mjs",
+      "to": "tests/sync/protocol/sync-protocol-v2.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-protocol.test.mjs",
+      "to": "tests/sync/protocol/sync-protocol.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-receipt-capacity.test.mjs",
+      "to": "tests/sync/protocol/sync-receipt-capacity.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-record-map.test.mjs",
+      "to": "tests/sync/protocol/sync-record-map.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-resolve.test.mjs",
+      "to": "tests/sync/integration/sync-resolve.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-retention-events.test.mjs",
+      "to": "tests/sync/integration/sync-retention-events.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-review-safety.test.mjs",
+      "to": "tests/sync/integration/sync-review-safety.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-setup.test.mjs",
+      "to": "tests/sync/integration/sync-setup.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-sheet-clone-format.test.mjs",
+      "to": "tests/sync/protocol/sync-sheet-clone-format.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-slice-hash.test.mjs",
+      "to": "tests/sync/protocol/sync-slice-hash.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-state-capacity.test.mjs",
+      "to": "tests/sync/protocol/sync-state-capacity.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-state-fixture.mjs",
+      "to": "tests/support/sync-state-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-status-query.test.mjs",
+      "to": "tests/sync/integration/sync-status-query.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-team-availability.test.mjs",
+      "to": "tests/sync/integration/sync-team-availability.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-upgrade-cli.test.mjs",
+      "to": "tests/sync/recovery/sync-upgrade-cli.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-upgrade-write-guard.test.mjs",
+      "to": "tests/sync/recovery/sync-upgrade-write-guard.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/sync-v2-transition.test.mjs",
+      "to": "tests/sync/protocol/sync-v2-transition.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/system-audit.test.mjs",
+      "to": "tests/history/system-audit.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/task-cache.test.mjs",
+      "to": "tests/sheet/task-cache.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/task-command-contract.test.mjs",
+      "to": "tests/sheet/task-command-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/task-documents.test.mjs",
+      "to": "tests/documents/task-documents.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/task-storage-contract.test.mjs",
+      "to": "tests/sheet/task-storage-contract.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/task-storage-events.test.mjs",
+      "to": "tests/sheet/task-storage-events.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/team-site-deploy.test.mjs",
+      "to": "tests/site/team-site-deploy.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/team-site.test.mjs",
+      "to": "tests/site/team-site.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/test-postgres-command.test.mjs",
+      "to": "tests/tooling/test-postgres-command.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/text-links.test.mjs",
+      "to": "tests/documents/text-links.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/transfer-text.test.mjs",
+      "to": "tests/transfer/transfer-text.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/week-borders.test.mjs",
+      "to": "tests/formatting/week-borders.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-api.test.mjs",
+      "to": "tests/site/worker-api.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-github-fixture.mjs",
+      "to": "tests/support/worker-github-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-incremental-images.test.mjs",
+      "to": "tests/sync/transport/worker-incremental-images.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-publisher.test.mjs",
+      "to": "tests/sync/transport/worker-publisher.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-security.test.mjs",
+      "to": "tests/site/worker-security.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-sheet-clone-sync-deno.mjs",
+      "to": "tests/support/worker-sheet-clone-sync-deno.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-sheet-clone-sync-fixture.mjs",
+      "to": "tests/support/worker-sheet-clone-sync-fixture.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-sheet-clone-sync-performance.test.mjs",
+      "to": "tests/sync/integration/worker-sheet-clone-sync-performance.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tests/worker-sync-integration.test.mjs",
+      "to": "tests/sync/integration/worker-sync-integration.test.mjs",
+      "phase": "P8"
+    },
+    {
+      "from": "tools/sheet-clone-cutover/cli.mjs",
+      "to": "tools/sheet-clone-cutover/cli.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tools/sheet-clone-cutover/convert.mjs",
+      "to": "tools/sheet-clone-cutover/convert.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tools/sheet-clone-cutover/cutover.mjs",
+      "to": "tools/sheet-clone-cutover/cutover.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tools/sheet-clone-cutover/markdown-links.mjs",
+      "to": "tools/sheet-clone-cutover/markdown-links.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "tools/sheet-clone-cutover/names.mjs",
+      "to": "tools/sheet-clone-cutover/names.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "worker/access-tokens.mjs",
+      "to": "worker/control/access-tokens.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/access.mjs",
+      "to": "worker/control/access.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/admin.mjs",
+      "to": "worker/control/admin.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/calendar.mjs",
+      "to": "worker/calendar/calendar.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/capacity.mjs",
+      "to": "worker/storage/capacity.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/config.mjs",
+      "to": "worker/sync/config.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/control.mjs",
+      "to": "worker/control/control.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/data.mjs",
+      "to": "worker/storage/data.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/directory.mjs",
+      "to": "worker/sync/directory.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/documents.mjs",
+      "to": "worker/documents/documents.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/entry.mjs",
+      "to": "worker/entry.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "worker/event-scope.mjs",
+      "to": "worker/events/event-scope.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/events.mjs",
+      "to": "worker/events/events.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/forwarder.mjs",
+      "to": "worker/forwarder.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "worker/gateway.mjs",
+      "to": "worker/gateway.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "worker/git.mjs",
+      "to": "worker/sync/git.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/history.mjs",
+      "to": "worker/history/history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/images.mjs",
+      "to": "worker/documents/images.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/maintenance.mjs",
+      "to": "worker/sync/maintenance.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/materialize.mjs",
+      "to": "worker/sync/materialize.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/profile-switch.mjs",
+      "to": "worker/sync/profile-switch.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/recovery.mjs",
+      "to": "worker/sync/recovery.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/settings.mjs",
+      "to": "worker/sheet/settings.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/setup-keys.mjs",
+      "to": "worker/control/setup-keys.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/sheet-clones.mjs",
+      "to": "worker/sheet-clones/sheet-clones.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/site-auth.mjs",
+      "to": "worker/control/site-auth.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/control-store.mjs",
+      "to": "worker/storage/control/control-store.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-admin-history.mjs",
+      "to": "worker/storage/history/postgres-admin-history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-calendar.mjs",
+      "to": "worker/storage/calendar/postgres-calendar.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-control.mjs",
+      "to": "worker/storage/control/postgres-control.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-document-browser.mjs",
+      "to": "worker/storage/documents/postgres-document-browser.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-document-links.mjs",
+      "to": "worker/storage/documents/postgres-document-links.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-documents.mjs",
+      "to": "worker/storage/documents/postgres-documents.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-events.mjs",
+      "to": "worker/storage/events/postgres-events.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-filters.mjs",
+      "to": "worker/storage/settings/postgres-filters.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-history.mjs",
+      "to": "worker/storage/history/postgres-history.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-settings.mjs",
+      "to": "worker/storage/settings/postgres-settings.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-sheet-clones.mjs",
+      "to": "worker/storage/sheet-clones/postgres-sheet-clones.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-task-commands.mjs",
+      "to": "worker/storage/tasks/postgres-task-commands.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-tasks.mjs",
+      "to": "worker/storage/tasks/postgres-tasks.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres-transfer.mjs",
+      "to": "worker/storage/transfer/postgres-transfer.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/storage/postgres.mjs",
+      "to": "worker/storage/postgres.mjs",
+      "phase": "keep"
+    },
+    {
+      "from": "worker/sync-images.mjs",
+      "to": "worker/sync/sync-images.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/sync-partial.mjs",
+      "to": "worker/sync/sync-partial.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/sync-store.mjs",
+      "to": "worker/sync/sync-store.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/sync.mjs",
+      "to": "worker/sync/sync.mjs",
+      "phase": "P6"
+    },
+    {
+      "from": "worker/task-view.mjs",
+      "to": "worker/sheet/task-view.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/tasks.mjs",
+      "to": "worker/sheet/tasks.mjs",
+      "phase": "P5"
+    },
+    {
+      "from": "worker/transfer.mjs",
+      "to": "worker/transfer/transfer.mjs",
+      "phase": "P5"
+    }
+  ],
+  "additions": [
+    {
+      "path": "docs/code-organization-moves.json",
+      "phase": "P0",
+      "reason": "Issue #100 baseline and phase manifest"
+    },
+    {
+      "path": "scripts/testing/code-organization-rules.json",
+      "phase": "P0",
+      "reason": "Explicit naming, placement and protected-byte rules"
+    },
+    {
+      "path": "scripts/testing/check-code-organization.mjs",
+      "phase": "P0",
+      "reason": "Read-only structure and migration checker"
+    },
+    {
+      "path": "scripts/testing/node-test-files.mjs",
+      "phase": "P0",
+      "reason": "Shared recursive Node suite collector"
+    },
+    {
+      "path": "scripts/testing/run-node-tests.mjs",
+      "phase": "P0",
+      "reason": "Node test runner and list command"
+    },
+    {
+      "path": "tests/tooling/code-organization.test.mjs",
+      "phase": "P0",
+      "reason": "Structure checker failure and success fixtures"
+    },
+    {
+      "path": "tests/tooling/node-test-files.test.mjs",
+      "phase": "P0",
+      "reason": "Recursive collection and runner regression checks"
+    },
+    {
+      "path": ".github/workflows/code-organization.yml",
+      "phase": "P0",
+      "reason": "Lightweight PR structure and tooling checks"
+    }
+  ]
+}

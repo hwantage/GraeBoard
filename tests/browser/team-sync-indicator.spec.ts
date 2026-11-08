@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { unpack } from "../../shared/compact.js";
-import type { SyncStatus } from "../../src/sync-types";
+import type { SyncStatus } from "../../src/sync/sync-types";
 
 const indicator = (page: Page) =>
   page.getByRole("status", { name: "팀 동기화 상태", exact: true });
