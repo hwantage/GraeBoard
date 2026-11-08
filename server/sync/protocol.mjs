@@ -481,6 +481,17 @@ export function validateEntityPayload(
       !Number.isInteger(payload.lane))
   )
     throw new Error("Invalid calendar payload");
+  // A personal entry or tag names its owner; a team one carries null. The
+  // receiver creates a placeholder user for an unknown owner, so the reference
+  // must at least be a usable ID.
+  if (
+    ["calendar", "tag"].includes(entity) &&
+    payload.userId !== null &&
+    (typeof payload.userId !== "string" ||
+      !payload.userId ||
+      payload.userId.length > 200)
+  )
+    throw new Error("Invalid " + entity + " userId");
   if (entity === "formats" && !Array.isArray(payload.rules))
     throw new Error("Invalid formats payload");
   if (
