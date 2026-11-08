@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { openDatabase, json } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { materializeEntity } from "../server/sync/entities.mjs";
-import { MaintenanceService } from "../server/sync/maintenance.mjs";
-import { sqliteMaintenanceAdapter } from "../server/sync/maintenance-sqlite.mjs";
+import { materializeEntity } from "../server/sync/node/entities.mjs";
+import { MaintenanceService } from "../server/sync/core/maintenance.mjs";
+import { sqliteMaintenanceAdapter } from "../server/sync/node/maintenance-sqlite.mjs";
 import {
   canonical,
   digest,
@@ -17,13 +17,13 @@ import {
   stateHash,
   protocolMarker,
   PROTOCOL,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import {
   activeImageReferences,
   isExcluded,
   retentionId,
-} from "../server/sync/retention.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
+} from "../server/sync/core/retention.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
 import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
 
 function fixture(t, options = {}) {

@@ -22,7 +22,7 @@ import {
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { POSTGRES_CHECKSUMS } from "../shared/storage/postgres-schema-version.js";
-import { canonical, digest, entityId } from "../server/sync/protocol.mjs";
+import { canonical, digest, entityId } from "../server/sync/core/protocol.mjs";
 
 const link = (teamId) => ({
   repo_id: randomUUID(),

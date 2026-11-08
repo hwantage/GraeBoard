@@ -1,5 +1,5 @@
 import { gunzipSync } from "node:zlib";
-import { canonical } from "../../server/sync/protocol.mjs";
+import { canonical } from "../../server/sync/core/protocol.mjs";
 import {
   SYNC_FILE_MAX_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,

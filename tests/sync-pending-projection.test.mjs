@@ -7,11 +7,11 @@ import {
   entityId,
   emptyState,
   protocolMarker,
-} from "../server/sync/protocol.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { project, reduceMany } from "../server/sync/reducer.mjs";
-import { pendingNeedsProjection } from "../server/sync/projection.mjs";
-import { imageSync } from "../worker/sync-images.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { project, reduceMany } from "../server/sync/core/reducer.mjs";
+import { pendingNeedsProjection } from "../server/sync/core/projection.mjs";
+import { imageSync } from "../worker/sync/sync-images.mjs";
 
 const identity = {
   teamId: "11111111-1111-4111-8111-111111111111",

@@ -16,14 +16,14 @@ import {
   materialize,
   syncActorId,
   SYNC_ACTOR_NAME,
-} from "../server/sync/entities.mjs";
-import { upgradeState } from "../server/sync/versions.mjs";
+} from "../server/sync/node/entities.mjs";
+import { upgradeState } from "../server/sync/core/versions.mjs";
 import {
   entityId,
   validateEntityPayload,
   PROTOCOL,
   SPLIT_PROTOCOL,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 
 // 받는 쪽은 보내는 쪽이 사람마다 person 엔티티를 실어 준다는 전제로 users 행을
 // 참조한다(created_by, user_id, actor_id FK). 그 전제가 깨져도 수신이 멈추지 않고

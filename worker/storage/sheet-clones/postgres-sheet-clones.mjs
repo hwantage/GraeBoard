@@ -20,7 +20,7 @@ import {
   validateCellValue,
   savedFilterSchema,
 } from "../../../shared/validation.js";
-import { digestShared, equal } from "../../../server/sync/protocol.mjs";
+import { digestShared, equal } from "../../../server/sync/core/protocol.mjs";
 import { requireFreeSheetCloneName } from "../../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../../control/access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../../sheet/task-view.mjs";

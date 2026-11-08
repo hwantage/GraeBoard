@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canonical, digest } from "../../server/sync/protocol.mjs";
+import { canonical, digest } from "../../server/sync/core/protocol.mjs";
 import { executeSync, executeAsync } from "./sync-team-store.mjs";
 import { requireThat } from "../http/http-error.js";
 

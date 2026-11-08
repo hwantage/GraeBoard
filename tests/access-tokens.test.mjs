@@ -32,7 +32,7 @@ import {
   postgresHistoryVersion,
 } from "../shared/storage/postgres-schema-version.js";
 import { accessTokenRoutes } from "../worker/control/access-tokens.mjs";
-import { stateHash } from "../server/sync/protocol.mjs";
+import { stateHash } from "../server/sync/core/protocol.mjs";
 const convert = sqliteSheetCloneConversion({});
 
 async function http(t, app, userId) {

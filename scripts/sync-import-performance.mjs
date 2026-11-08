@@ -8,9 +8,9 @@ import { Pool } from "pg";
 import { performance } from "node:perf_hooks";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { SyncService } from "../server/sync/service.mjs";
-import { boundStore } from "../worker/sync.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { SyncService } from "../server/sync/core/service.mjs";
+import { boundStore } from "../worker/sync/sync.mjs";
 import { boundedTransport } from "../worker/storage/capacity.mjs";
 
 const config = JSON.parse(process.env.SYNC_IMPORT_PERF_CONFIG || "{}"),

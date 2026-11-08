@@ -10,7 +10,7 @@ import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/pos
 import { PostgresDocumentBrowserRepository } from "../worker/storage/documents/postgres-document-browser.mjs";
 import { DataSession } from "../worker/storage/data.mjs";
 import { sheetCloneRoutes } from "../worker/sheet-clones/sheet-clones.mjs";
-import { canonical, entityId } from "../server/sync/protocol.mjs";
+import { canonical, entityId } from "../server/sync/core/protocol.mjs";
 import { packSheetClonePayload } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round

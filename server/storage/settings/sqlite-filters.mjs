@@ -1,7 +1,7 @@
 import { savedFilter } from "../../../shared/domain.js";
 import { id, json, now, parse, transaction } from "../../db.mjs";
 import { requireThat } from "../../../shared/validation.js";
-import { equal } from "../../sync/protocol.mjs";
+import { equal } from "../../sync/core/protocol.mjs";
 import {
   normalizeFilterInput,
   canEditSavedFilter,

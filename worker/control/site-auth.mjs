@@ -1,12 +1,12 @@
 import { refreshSetupKeys } from "./setup-keys.mjs";
 import { deploymentSite } from "../../shared/site/site-mode.js";
-import { setupKeyId } from "../../server/sync/setup-keys.mjs";
+import { setupKeyId } from "../../server/sync/core/setup-keys.mjs";
 import { controlTransaction } from "../storage/data.mjs";
 import { siteTeamId } from "../../shared/sync/sync-profiles.js";
-import { refreshDirectory } from "../directory.mjs";
+import { refreshDirectory } from "../sync/directory.mjs";
 import { assert, verifySetupToken } from "./access.mjs";
 import { userRecord } from "../storage/control/control-store.mjs";
-import { digest } from "../../server/sync/protocol.mjs";
+import { digest } from "../../server/sync/core/protocol.mjs";
 
 const COOKIE = "__Host-graeboard_account";
 const SESSION_MS = 30 * 86400000;

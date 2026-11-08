@@ -25,12 +25,12 @@ import {
 } from "./sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "./calendar/calendar.mjs";
 import { transferRoutes } from "./transfer/transfer.mjs";
-import { recoveryRoutes } from "./recovery.mjs";
-import { profileSwitchRoutes } from "./profile-switch.mjs";
+import { recoveryRoutes } from "./sync/recovery.mjs";
+import { profileSwitchRoutes } from "./sync/profile-switch.mjs";
 import { auditRoutes, historyCleanupRoutes } from "./history/history.mjs";
-import { maintenanceRoutes } from "./maintenance.mjs";
+import { maintenanceRoutes } from "./sync/maintenance.mjs";
 import { eventResponse } from "./events/events.mjs";
-import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
+import { schedulePublish, refreshTeam, scheduled } from "./sync/sync.mjs";
 import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { siteAuthRoute, accessRequestRoutes } from "./control/site-auth.mjs";
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";

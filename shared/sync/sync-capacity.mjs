@@ -1,5 +1,5 @@
 import { HttpError } from "../http/http-error.js";
-import { canonical, entityId } from "../../server/sync/protocol.mjs";
+import { canonical, entityId } from "../../server/sync/core/protocol.mjs";
 import {
   SYNC_RECEIPT_MAX_BYTES,
   SYNC_RECEIPT_WARNING_BYTES,

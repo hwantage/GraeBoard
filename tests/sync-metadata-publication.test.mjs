@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { publishDirectory } from "../server/sync/directory.mjs";
-import { publishSetupJson } from "../server/sync/setup-keys.mjs";
-import { SyncService } from "../server/sync/service.mjs";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { publishDirectory } from "../server/sync/core/directory.mjs";
+import { publishSetupJson } from "../server/sync/core/setup-keys.mjs";
+import { SyncService } from "../server/sync/core/service.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 
 function repository() {
   const heads = new Map(),

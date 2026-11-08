@@ -4,7 +4,7 @@ import {
   stableId,
   importSheetOptionsSchema,
 } from "../../../shared/transfer/workbook.mjs";
-import { canonical, digest } from "../../../server/sync/protocol.mjs";
+import { canonical, digest } from "../../../server/sync/core/protocol.mjs";
 import { pack } from "../../../shared/formatting/compact.js";
 import {
   fieldsFor,

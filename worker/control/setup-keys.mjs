@@ -1,14 +1,14 @@
 import { controlTransaction } from "../storage/data.mjs";
 import { profiles, siteTeamId } from "../../shared/sync/sync-profiles.js";
-import { GitHubApiTransport } from "../git.mjs";
+import { GitHubApiTransport } from "../sync/git.mjs";
 import { assert } from "./access.mjs";
-import { canonical } from "../../server/sync/protocol.mjs";
+import { canonical } from "../../server/sync/core/protocol.mjs";
 import {
   readSetupJson,
   validateSetupKeys,
   publishSetupJson,
   SETUP_KEY_MAX_BYTES,
-} from "../../server/sync/setup-keys.mjs";
+} from "../../server/sync/core/setup-keys.mjs";
 
 function transportFor(env) {
   const profile = profiles(env)[0];

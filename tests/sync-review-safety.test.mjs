@@ -2,18 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
-import { createNodeBackground } from "../server/sync/node-background.mjs";
-import { entityId } from "../server/sync/protocol.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { reduceMany } from "../server/sync/reducer.mjs";
-import { materialize, readEntity } from "../server/sync/entities.mjs";
+import { createNodeBackground } from "../server/sync/node/node-background.mjs";
+import { entityId } from "../server/sync/core/protocol.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { reduceMany } from "../server/sync/core/reducer.mjs";
+import { materialize, readEntity } from "../server/sync/node/entities.mjs";
 import { transaction } from "../server/db.mjs";
 import { prepareStatePatch } from "../shared/sync/sync-team-store.mjs";
-import { isRecoveryError } from "../server/sync/errors.mjs";
+import { isRecoveryError } from "../server/sync/core/errors.mjs";
 import {
   pendingEntityKeys,
   canRetireProjection,
-} from "../server/sync/projection.mjs";
+} from "../server/sync/core/projection.mjs";
 
 test("status reads the latest local sequence including acknowledged input", async (t) => {
   const f = await performanceFixture({ rows: 1, clients: 1, users: 1 });
@@ -275,11 +275,11 @@ test("remote task metadata publishes a delta and empty commits emit no invalidat
 test("paused protocol 4 transition rejects late disjoint pending input at the final SQLite writer and preserves C, P and local rows", async (t) => {
   const { sqliteFixture } = await import("./business-storage-fixture.mjs");
   const { createNodeMutationBridge } =
-    await import("../server/sync/node-mutations.mjs");
-  const { snapshotGuard } = await import("../server/sync/node-background.mjs");
-  const { upgradeState } = await import("../server/sync/versions.mjs");
+    await import("../server/sync/node/node-mutations.mjs");
+  const { snapshotGuard } = await import("../server/sync/node/node-background.mjs");
+  const { upgradeState } = await import("../server/sync/core/versions.mjs");
   const { canonical, stateHash, protocolVersion } =
-    await import("../server/sync/protocol.mjs");
+    await import("../server/sync/core/protocol.mjs");
   const f = sqliteFixture(t),
     raw = f.app.locals.sync.store(f.teamId);
   assert.equal(raw.acquire("transition-review"), true);

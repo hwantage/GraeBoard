@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { sheetCloneSyncFixture } from "../tests/worker-sheet-clone-sync-fixture.mjs";
 import { requirePostgresBinaries } from "./test-postgres.mjs";
-import { serviceFor } from "../worker/sync.mjs";
-import { stateHash } from "../server/sync/protocol.mjs";
+import { serviceFor } from "../worker/sync/sync.mjs";
+import { stateHash } from "../server/sync/core/protocol.mjs";
 
 // Local synthetic data only. Restores the very same PG rows/outbox/Git parent
 // between BASE and FIX, rather than comparing independently generated teams.

@@ -2,15 +2,15 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { openDatabase, transaction } from "../server/db.mjs";
-import { createNodeSync } from "../server/sync/node.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
-import { project } from "../server/sync/reducer.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
+import { createNodeSync } from "../server/sync/node/node.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { project } from "../server/sync/core/reducer.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
 import {
   canonical,
   entityId,
   protocolVersion,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 
 export async function recoverSync({
   db,

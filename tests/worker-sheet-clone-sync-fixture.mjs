@@ -17,10 +17,10 @@ import {
   DEFAULT_SETTINGS,
   weeksForYear,
 } from "../shared/domain.js";
-import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
-import { serviceFor } from "../worker/sync.mjs";
-import { preparedSyncOperation } from "../server/sync/sync-operation-cache.mjs";
-import { GitHubApiTransport } from "../worker/git.mjs";
+import { canonical, entityId, stateHash } from "../server/sync/core/protocol.mjs";
+import { serviceFor } from "../worker/sync/sync.mjs";
+import { preparedSyncOperation } from "../server/sync/core/sync-operation-cache.mjs";
+import { GitHubApiTransport } from "../worker/sync/git.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 

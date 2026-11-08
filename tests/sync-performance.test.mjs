@@ -8,8 +8,8 @@ import {
 import {
   createNodeBackground,
   assertSnapshotGuard,
-} from "../server/sync/node-background.mjs";
-import { entityId } from "../server/sync/protocol.mjs";
+} from "../server/sync/node/node-background.mjs";
+import { entityId } from "../server/sync/core/protocol.mjs";
 import { randomUUID } from "node:crypto";
 
 test("two-team performance fixture verifies simultaneous Git heads and bulk-paste SSE without hiding a failed job", async () => {

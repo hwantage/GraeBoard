@@ -18,7 +18,7 @@ import {
   MAX_TASK_DOCUMENTS,
   hasDocumentContent,
 } from "../../../shared/documents/task-documents.js";
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import {
   getTaskDocument,
   listTaskDocuments,

@@ -20,8 +20,8 @@ import { unpack } from "../shared/formatting/compact.js";
 import {
   createSyncSetupConfig,
   patchSyncEnv,
-} from "../server/sync/setup-config.mjs";
-import { tokenPreview } from "../server/sync/credentials.mjs";
+} from "../server/sync/node/setup-config.mjs";
+import { tokenPreview } from "../server/sync/node/credentials.mjs";
 import {
   setupExamples,
   setupStep,

@@ -5,7 +5,7 @@ import { AdminHistoryBusinessService } from "../server/storage/history/admin-his
 import { SqliteAdminHistoryRepository } from "../server/storage/history/sqlite-admin-history.mjs";
 import { PostgresAdminHistoryRepository } from "../worker/storage/history/postgres-admin-history.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import { canonical } from "../server/sync/core/protocol.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();

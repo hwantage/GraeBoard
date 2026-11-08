@@ -2,7 +2,7 @@ import {
   entityId,
   protocolMarker,
   PROTOCOL,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 
 // An empty canonical state of the current protocol: every C names its
 // protocol, so a hand-built genesis carries the marker the bootstrap writes.

@@ -11,13 +11,13 @@ import { openDatabase, json, getTask } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { canonical, stateHash } from "../server/sync/protocol.mjs";
-import { SyncService } from "../server/sync/service.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { canonical, stateHash } from "../server/sync/core/protocol.mjs";
+import { SyncService } from "../server/sync/core/service.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
-import { project } from "../server/sync/reducer.mjs";
-import { materialize, readEntity } from "../server/sync/entities.mjs";
-import { decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { project } from "../server/sync/core/reducer.mjs";
+import { materialize, readEntity } from "../server/sync/node/entities.mjs";
+import { decodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import { conflictChanges, diffSides } from "../shared/sync/conflict-diff.js";
 
 async function fixture(t) {

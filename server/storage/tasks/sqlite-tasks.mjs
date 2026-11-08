@@ -16,7 +16,7 @@ import {
   storeCellOperation,
   replayCellOperation,
 } from "../../sheet/cell-operations.mjs";
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import { prepareCellChange } from "./task-service.mjs";
 
 export class SqliteTaskRepository extends SqliteTaskCommands {

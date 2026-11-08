@@ -1,4 +1,4 @@
-import { canonical } from "../../server/sync/protocol.mjs";
+import { canonical } from "../../server/sync/core/protocol.mjs";
 
 export function unfinishedJobError(row) {
   return Object.assign(

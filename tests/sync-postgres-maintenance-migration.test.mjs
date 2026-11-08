@@ -7,7 +7,7 @@ import {
   teamMaintenanceMigration,
 } from "../server/migrations/postgres.mjs";
 import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
-import { stateHash } from "../server/sync/protocol.mjs";
+import { stateHash } from "../server/sync/core/protocol.mjs";
 import { frozenCutoverModule } from "./support/frozen-cutover-source.mjs";
 const { postgresSheetCloneConversion } = await frozenCutoverModule(
   "tools/sheet-clone-cutover/convert.mjs",

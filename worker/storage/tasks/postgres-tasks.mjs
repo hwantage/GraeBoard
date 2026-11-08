@@ -3,7 +3,7 @@ import { canManageTeam, periodYears } from "../../../shared/domain.js";
 import { scopeKey, scopeMatches } from "../../../shared/formatting/formatting.js";
 import { styleNormalizer, stringify } from "../../../shared/formatting/compact.js";
 import { validateCellValue } from "../../../shared/validation.js";
-import { equal, digest } from "../../../server/sync/protocol.mjs";
+import { equal, digest } from "../../../server/sync/core/protocol.mjs";
 import { assert } from "../../control/access.mjs";
 import {
   stamp,

@@ -16,7 +16,7 @@ import { TransferBusinessService } from "../server/storage/transfer/transfer-ser
 import { PostgresTransferRepository } from "../worker/storage/transfer/postgres-transfer.mjs";
 import { getTask } from "../server/db.mjs";
 import { unpack } from "../shared/formatting/compact.js";
-import { materialize } from "../worker/materialize.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
 const decoded = (value) => value.data || unpack(JSON.parse(value.encoded.body));
 const taskCommand = (taskId, value, expectedVersion) => ({
   operationId: randomUUID(),

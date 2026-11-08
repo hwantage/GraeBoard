@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { GitHubApiTransport } from "../server/sync/github-api.mjs";
+import { GitHubApiTransport } from "../server/sync/core/github-api.mjs";
 
 test("an empty GitHub repository has no head, while other conflicts remain errors", async () => {
   let response = () =>

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { localHistoryMaintenance } from "../shared/sync/local-history-maintenance.mjs";
 import { executeSync, executeAsync } from "../shared/sync/sync-team-store.mjs";
-import { canonical, digest, stateHash } from "../server/sync/protocol.mjs";
-import { reduceMany } from "../server/sync/reducer.mjs";
+import { canonical, digest, stateHash } from "../server/sync/core/protocol.mjs";
+import { reduceMany } from "../server/sync/core/reducer.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 
 const asOf = "2026-10-29T00:00:00.000Z",

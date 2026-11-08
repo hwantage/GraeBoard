@@ -21,7 +21,7 @@ import {
   digest,
   protocolVersion,
   PROTOCOL,
-} from "../../server/sync/protocol.mjs";
+} from "../../server/sync/core/protocol.mjs";
 import { assert } from "./access.mjs";
 import { profiles, profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
 import {
@@ -30,12 +30,12 @@ import {
   controlPool,
   DataSession,
 } from "../storage/data.mjs";
-import { GitHubApiTransport } from "../git.mjs";
+import { GitHubApiTransport } from "../sync/git.mjs";
 import { R2ImageStore } from "../documents/images.mjs";
-import { beginProfileSwitch } from "../profile-switch.mjs";
-import { runTeam, refreshTeam, importTeam } from "../sync.mjs";
-import { CanonicalSlice, reduceSlice } from "../sync-partial.mjs";
-import { materializeSlice } from "../materialize.mjs";
+import { beginProfileSwitch } from "../sync/profile-switch.mjs";
+import { runTeam, refreshTeam, importTeam } from "../sync/sync.mjs";
+import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
+import { materializeSlice } from "../sync/materialize.mjs";
 
 async function serviceStatus(ctx, { check = false } = {}) {
   ctx.admin();
@@ -600,7 +600,7 @@ export async function adminRoutes(
         403,
         "시스템 관리자 권한이 필요합니다.",
       );
-      const { serviceFor } = await import("../sync.mjs");
+      const { serviceFor } = await import("../sync/sync.mjs");
       await db.withTeamTransaction(
         teamId,
         async (tx) => {
@@ -619,7 +619,7 @@ export async function adminRoutes(
       });
     }
     if (sync[2] === "checkpoint") {
-      const { serviceFor } = await import("../sync.mjs"),
+      const { serviceFor } = await import("../sync/sync.mjs"),
         link = await db.readLink(teamId);
       assert(
         link?.mode === "active",

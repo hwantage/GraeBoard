@@ -25,9 +25,9 @@ import { PostgresDocumentRepository } from "../worker/storage/documents/postgres
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
 import { RequestContext } from "../worker/control/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
-import { materialize } from "../worker/materialize.mjs";
-import { canonical, emptyState } from "../server/sync/protocol.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
+import { canonical, emptyState } from "../server/sync/core/protocol.mjs";
 
 export function sqliteFixture(t, { documents = true } = {}) {
   const dir = mkdtempSync("/tmp/gb-document-contract-"),

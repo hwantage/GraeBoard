@@ -6,24 +6,26 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const portableSync = new Set([
-  "protocol",
-  "versions",
-  "reducer",
-  "service",
-  "retention",
-  "github-api",
-  "errors",
-  "checkpoint",
-  "snapshot",
-  "file-entries",
-  "operations",
-  "projection",
-  "directory",
-  "setup-keys",
-  "branch-publication",
-  "maintenance",
-]);
+const portableSync = new Set(
+  [
+    "protocol",
+    "versions",
+    "reducer",
+    "service",
+    "retention",
+    "github-api",
+    "errors",
+    "checkpoint",
+    "snapshot",
+    "file-entries",
+    "operations",
+    "projection",
+    "directory",
+    "setup-keys",
+    "branch-publication",
+    "maintenance",
+  ].map((name) => `server/sync/core/${name}.mjs`),
+);
 function files(directory) {
   return readdirSync(resolve(root, directory), { withFileTypes: true }).flatMap(
     (entry) => {
@@ -69,8 +71,7 @@ const graph = new Map(
     ),
   ]),
 );
-const isPortableSync = (path) =>
-  path.startsWith("server/sync/") && portableSync.has(path.slice(12, -4));
+const isPortableSync = (path) => portableSync.has(path);
 const businessServices = new Set([
   "server/storage/control/access-token-service.mjs",
   "server/storage/control/control-service.mjs",

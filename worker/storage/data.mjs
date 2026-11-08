@@ -1,10 +1,10 @@
-import { splitSheetCloneRecord } from "../../server/sync/versions.mjs";
+import { splitSheetCloneRecord } from "../../server/sync/core/versions.mjs";
 import { pack, unpack } from "../../shared/formatting/compact.js";
 import {
   protocolVersion,
   PROTOCOL,
   SPLIT_PROTOCOL,
-} from "../../server/sync/protocol.mjs";
+} from "../../server/sync/core/protocol.mjs";
 import pg from "pg";
 import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
 import {
@@ -25,9 +25,9 @@ import {
   emptyState,
   equal,
   ENTITIES,
-} from "../../server/sync/protocol.mjs";
-import { reduceMany, reduce } from "../../server/sync/reducer.mjs";
-import { CanonicalSlice, reduceSlice } from "../sync-partial.mjs";
+} from "../../server/sync/core/protocol.mjs";
+import { reduceMany, reduce } from "../../server/sync/core/reducer.mjs";
+import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
 import { assert } from "../control/access.mjs";
 import {
   packSheetClonePayload,

@@ -4,7 +4,7 @@ import {
   executeAsync,
   prepareStatePatch,
 } from "../../shared/sync/sync-team-store.mjs";
-import { digest } from "../../server/sync/protocol.mjs";
+import { digest } from "../../server/sync/core/protocol.mjs";
 import {
   postgresHistoryVersion,
   postgresLayout,

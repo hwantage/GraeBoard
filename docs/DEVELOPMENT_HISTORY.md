@@ -18,10 +18,16 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #100 P6 이식 가능한 동기화와 Node/외부 호스트
+
+- sync 48개를 core 17개·Node 20개·외부 11개로 이동했습니다. 직접 허용 portable 16개·공통 서비스/규칙 14개의 정확한 경로와 간접 의존 제한, background Worker·동적 import·설치 안내 읽기 경로를 유지했습니다.
+- 과거 성능 BASE archive의 경로는 보존하고 수동 Deno probe는 입력 source root의 현재/과거 배치를 명시적으로 구분했습니다. 자동 수집에는 probe를 포함하지 않습니다. 경계 검사 모형의 문자열 import도 새 실제 경로로 갱신했습니다.
+- 검증: P6 구조 600개/오류 0, 프로토콜 3/4·checkpoint·백업·사람 참조·내부/외부 Git/PG 왕복과 import 경계 선택 검사 66건 pass/fail 0/skip 0, tooling 결함 탐지 10건 pass. 기준 런타임 AST와 import/Worker URL의 앱 차이 0입니다.
+
 ## 2026-11-09 — #100 P5 인증·제어·이력·이관과 이벤트 경계
 
 - P5 나머지 인증·계정/제어·감사/정리·이관·HTTP/SSE 라우트와 저장소를 분류해 총 109개 이동을 완료했습니다. 진입점과 공통 database adapter, 배포 SQL·checksum은 유지했습니다.
-- 검증: P5 구조 600개/오류 0, 실제 SQLite/PG 권한·제어·이력·이관 및 import 경계 선택 검사 13건 pass/fail 0/skip 0. 기준 런타임 AST와 import/Worker URL 비교의 앱 차이 0입니다.
+- 검증: P5 구조 600개/오류 0, 실제 SQLite/PG 권한·제어·이력·이관 및 import 경계 선택 검사 15건 pass/fail 0/skip 0. 기준 런타임 AST와 import/Worker URL 비교의 앱 차이 0입니다.
 
 ## 2026-11-09 — #100 P5 업무·사본·설정 저장 경계
 

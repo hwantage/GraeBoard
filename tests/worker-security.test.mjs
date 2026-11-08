@@ -5,14 +5,14 @@ import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from "jose";
 import { verifyAccess, assertOrigin } from "../worker/control/access.mjs";
 import { profiles } from "../shared/sync/sync-profiles.js";
 import { createWorker } from "../worker/entry.mjs";
-import { GitHubApiTransport } from "../worker/git.mjs";
+import { GitHubApiTransport } from "../worker/sync/git.mjs";
 import {
   stillImage,
   convertImage,
   R2ImageStore,
   imageReferences,
 } from "../worker/documents/images.mjs";
-import { digest } from "../server/sync/protocol.mjs";
+import { digest } from "../server/sync/core/protocol.mjs";
 import sharp from "sharp";
 
 test("unexpected Worker failures are logged without exposing their details in the response", async (t) => {

@@ -22,8 +22,8 @@ import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.m
 import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
 import { RequestContext } from "../worker/control/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
-import { canonical, emptyState } from "../server/sync/protocol.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { canonical, emptyState } from "../server/sync/core/protocol.mjs";
 
 function sqliteFixture(t) {
   const dir = mkdtempSync("/tmp/gb-task-contract-"),

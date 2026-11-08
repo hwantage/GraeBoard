@@ -1,4 +1,4 @@
-import { retentionView } from "../sync/visibility.mjs";
+import { retentionView } from "../sync/node/visibility.mjs";
 
 import { id, json, usersWithTeams, teamSettings, getTask } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";

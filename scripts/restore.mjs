@@ -14,8 +14,8 @@ import { SCHEMA_VERSION } from "../server/db.mjs";
 import { randomUUID } from "node:crypto";
 import { assertSqliteHistory } from "../server/migrations/sqlite.mjs";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
-import { project } from "../server/sync/reducer.mjs";
-import { activeImageReferences } from "../server/sync/retention.mjs";
+import { project } from "../server/sync/core/reducer.mjs";
+import { activeImageReferences } from "../server/sync/core/retention.mjs";
 import {
   databaseImageUrls,
   documentImagesDirectory,

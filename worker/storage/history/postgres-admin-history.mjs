@@ -1,6 +1,6 @@
 import { assert } from "../../control/access.mjs";
 import { dateSchema } from "../../../shared/validation.js";
-import { canonical } from "../../../server/sync/protocol.mjs";
+import { canonical } from "../../../server/sync/core/protocol.mjs";
 import { todayKey } from "../../../shared/domain.js";
 import { controlTransaction, databaseFor } from "../data.mjs";
 const empty = () => ({ count: 0, bytes: 0 });

@@ -1,8 +1,8 @@
 import { mkdir, writeFile, readFile, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { digest } from "../../sync/protocol.mjs";
-import { imageReferences, activeImageReferences } from "../../sync/retention.mjs";
-import { project } from "../../sync/reducer.mjs";
+import { digest } from "../../sync/core/protocol.mjs";
+import { imageReferences, activeImageReferences } from "../../sync/core/retention.mjs";
+import { project } from "../../sync/core/reducer.mjs";
 import { portableHash, verifyTransfer } from "../../../shared/transfer/logical-format.mjs";
 import { stateFrom } from "./external-backup.mjs";
 import { documentImagePath, writeDocumentImage } from "../../documents/document-images.mjs";

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { GitCliTransport } from "../../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 import { createApp } from "../../server/app.mjs";
 import { openDatabase, getTask } from "../../server/db.mjs";
 import { unpack } from "../../shared/formatting/compact.js";

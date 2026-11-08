@@ -20,14 +20,14 @@ import { imageReferences as workerImageReferences } from "../worker/documents/im
 import {
   activeImageReferences,
   installImageReferences,
-} from "../server/sync/retention.mjs";
+} from "../server/sync/core/retention.mjs";
 import sharp from "sharp";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 import {
   digest,
   entityId,
   validateEntityPayload,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
 

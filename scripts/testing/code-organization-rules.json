@@ -1077,50 +1077,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/config.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/directory.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/git.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/maintenance.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/materialize.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/profile-switch.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/recovery.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/sync-images.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/sync-partial.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/sync-store.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/sync.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "tests/sheet-clone-frozen-compatibility.test.mjs",
       "reason": "Current runtime compatibility suite; moved to sync/recovery in P8"
     }
@@ -1139,7 +1095,7 @@
       "reason": "Exact existing generic filename retained by issue #100"
     },
     {
-      "path": "server/sync/service.mjs",
+      "path": "server/sync/core/service.mjs",
       "reason": "Exact existing generic filename retained by issue #100"
     }
   ],
@@ -1198,7 +1154,7 @@
     {
       "paths": [
         "server/control/profiles.mjs",
-        "server/sync/profiles.mjs"
+        "server/sync/node/profiles.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
@@ -1239,21 +1195,21 @@
     },
     {
       "paths": [
-        "server/sync/directory.mjs",
-        "worker/directory.mjs"
+        "server/sync/core/directory.mjs",
+        "worker/sync/directory.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/sync/maintenance.mjs",
-        "worker/maintenance.mjs"
+        "server/sync/core/maintenance.mjs",
+        "worker/sync/maintenance.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/sync/setup-keys.mjs",
+        "server/sync/core/setup-keys.mjs",
         "worker/control/setup-keys.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"

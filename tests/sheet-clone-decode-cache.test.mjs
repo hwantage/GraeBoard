@@ -15,7 +15,7 @@ import {
 } from "../server/documents/document-storage.mjs";
 import { prepareSheetCloneEdits } from "../server/storage/sheet-clones/sheet-clone-command-rules.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import { canonical } from "../server/sync/core/protocol.mjs";
 import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 const freeze = (value) => {

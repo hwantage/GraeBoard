@@ -1,4 +1,4 @@
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import { parse } from "../../db.mjs";
 import { sheetCloneBrowseIndex } from "../../sheet-clones/sheet-clones.mjs";
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";

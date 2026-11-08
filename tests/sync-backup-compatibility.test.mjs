@@ -17,11 +17,11 @@ import {
   entityId,
   protocolVersion,
   stateHash,
-} from "../server/sync/protocol.mjs";
-import { upgradeState } from "../server/sync/versions.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { reduceMany } from "../server/sync/reducer.mjs";
-import { materialize } from "../worker/materialize.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { upgradeState } from "../server/sync/core/versions.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { reduceMany } from "../server/sync/core/reducer.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
 const images = {
   list: async () => [],
   read: async () => null,

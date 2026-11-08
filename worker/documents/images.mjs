@@ -1,4 +1,4 @@
-import { digest } from "../../server/sync/protocol.mjs";
+import { digest } from "../../server/sync/core/protocol.mjs";
 import {
   MAX_IMAGE_BYTES,
   DOCUMENT_IMAGE_PATTERN,

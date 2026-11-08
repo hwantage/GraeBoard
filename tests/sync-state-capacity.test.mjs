@@ -8,18 +8,18 @@ import { transaction, upsertCellStatement, getTask } from "../server/db.mjs";
 import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
-import { allEntities } from "../server/sync/entities.mjs";
-import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { canonical, emptyState, stateHash } from "../server/sync/core/protocol.mjs";
 import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
-import { decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { decodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import {
   capacityLimits,
   assertStateCapacity,
   assertFileCapacity,
   databaseCapacity,
 } from "../worker/storage/capacity.mjs";
-import { serviceFor } from "../worker/sync.mjs";
-import { GitHubApiTransport } from "../worker/git.mjs";
+import { serviceFor } from "../worker/sync/sync.mjs";
+import { GitHubApiTransport } from "../worker/sync/git.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";

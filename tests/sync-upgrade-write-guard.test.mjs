@@ -5,7 +5,7 @@ import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import { canonical } from "../server/sync/core/protocol.mjs";
 
 const command = (taskId, expectedVersion, value) => ({
   operationId: randomUUID(),

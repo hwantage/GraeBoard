@@ -4,7 +4,7 @@ import {
   withSyncOperationCache,
   parseSyncOperation,
   preparedSyncOperation,
-} from "../server/sync/sync-operation-cache.mjs";
+} from "../server/sync/core/sync-operation-cache.mjs";
 import {
   canonical,
   digest,
@@ -12,9 +12,9 @@ import {
   entityId,
   protocolMarker,
   validateOperation,
-} from "../server/sync/protocol.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { reduce } from "../server/sync/reducer.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { reduce } from "../server/sync/core/reducer.mjs";
 import { SYNC_OPERATION_MAX_BYTES } from "../shared/sync/sync-limits.js";
 
 const identity = { teamId: "cache-team", repoId: "cache-repo" };

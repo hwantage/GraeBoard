@@ -6,7 +6,7 @@ import {
   convertSettingsValue,
   normalizeSettingsAuxiliary,
 } from "../../../server/storage/settings/settings-service.mjs";
-import { entityId } from "../../../server/sync/protocol.mjs";
+import { entityId } from "../../../server/sync/core/protocol.mjs";
 
 export async function savePostgresSettings(session, input, people) {
   const row = await session.get("team", []);

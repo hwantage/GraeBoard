@@ -32,7 +32,7 @@ import {
   viewLayout,
 } from "../../../shared/domain.js";
 import { taskAuditSnapshot } from "../../../shared/formatting/formatting.js";
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import { withTaskDocuments } from "../../documents/task-documents.mjs";
 import { validateDocumentImages } from "../../documents/document-images.mjs";
 import { insertionPosition } from "../../sheet/task-position.mjs";

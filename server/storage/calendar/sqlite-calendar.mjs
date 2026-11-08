@@ -1,4 +1,4 @@
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import {
   audit,
   json,

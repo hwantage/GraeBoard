@@ -28,7 +28,7 @@ import {
   weeksForYear,
 } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 
 export const percentile = (samples, fraction = 0.95) =>
   samples.toSorted((a, b) => a - b)[

@@ -9,8 +9,8 @@ import { openDatabase, json, transaction, getTask } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { entityId } from "../server/sync/protocol.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { entityId } from "../server/sync/core/protocol.mjs";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-capture-")),

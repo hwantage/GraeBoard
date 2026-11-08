@@ -17,9 +17,9 @@ import { createDocumentImagePreparation } from "./documents/document-image-prepa
 import { installDocumentBusinessRoutes } from "./documents/document-business-routes.mjs";
 import { TaskBusinessService } from "./storage/tasks/task-service.mjs";
 import { SqliteTaskRepository } from "./storage/tasks/sqlite-tasks.mjs";
-import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
-import { installMaintenanceRoutes } from "./sync/maintenance-sqlite.mjs";
-import { installRetentionContext } from "./sync/visibility.mjs";
+import { createNodeSync, installSyncRoutes } from "./sync/node/node.mjs";
+import { installMaintenanceRoutes } from "./sync/node/maintenance-sqlite.mjs";
+import { installRetentionContext } from "./sync/node/visibility.mjs";
 import { installEventStreams } from "./events/event-streams.mjs";
 import {
   documentImagesDirectory,

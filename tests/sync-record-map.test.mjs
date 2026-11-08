@@ -2,8 +2,8 @@ import test from "node:test";
 import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { forkRecordMap } from "../shared/sync/record-map.mjs";
-import { canonical, stateHash } from "../server/sync/protocol.mjs";
-import { reduceMany } from "../server/sync/reducer.mjs";
+import { canonical, stateHash } from "../server/sync/core/protocol.mjs";
+import { reduceMany } from "../server/sync/core/reducer.mjs";
 
 test("receipt workspaces share old records without copying their keys on creation and preserve canonical own fields", () => {
   const base = { a: { value: 1 }, b: { value: 2 } };

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { assertSqliteHistory } from "../server/migrations/sqlite.mjs";
-import { canonical } from "../server/sync/protocol.mjs";
+import { canonical } from "../server/sync/core/protocol.mjs";
 import {
   abandonedBackup,
   recoverBackupJob,

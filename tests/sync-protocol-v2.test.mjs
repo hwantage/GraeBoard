@@ -7,26 +7,26 @@ import {
   applicationEntities,
   upgradeState,
   splitSheetCloneRecord,
-} from "../server/sync/versions.mjs";
+} from "../server/sync/core/versions.mjs";
 import {
   canonical,
   digest,
   entityId,
   stateHash,
   protocolVersion,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import {
   mergeMarkdown,
   reduce,
   reduceMany,
   validateSnapshot,
-} from "../server/sync/reducer.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
+} from "../server/sync/core/reducer.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
-import { materialize } from "../worker/materialize.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
 import { adminRoutes } from "../worker/control/admin.mjs";
-import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { encodeSnapshot, decodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import { getTask, transaction, openDatabase } from "../server/db.mjs";
 import { channel } from "node:diagnostics_channel";
 import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
@@ -41,7 +41,7 @@ import {
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,
 } from "../server/documents/document-storage.mjs";
-import { allEntities, readEntity } from "../server/sync/entities.mjs";
+import { allEntities, readEntity } from "../server/sync/node/entities.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import {
   exportTeam,

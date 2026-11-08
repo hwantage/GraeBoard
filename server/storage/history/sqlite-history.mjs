@@ -17,7 +17,7 @@ import {
 } from "../../history/sheet-history.mjs";
 import { decodeSheetClone } from "../../sheet-clones/sheet-clones.mjs";
 import { applyFormatting } from "../../sheet/formatting.mjs";
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 export class SqliteHistoryRepository {
   constructor({ db, control, documentEvents }) {
     Object.assign(this, { db, control, documentEvents });

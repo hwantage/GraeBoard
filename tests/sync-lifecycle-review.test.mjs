@@ -18,7 +18,7 @@ import {
 } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 
 const ok = (result) => {
   assert.ok(
@@ -77,7 +77,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 // The pool restarts only the failed lane. Inject the fault once, then let the
 // replacement execute the actual production worker in the same lane.
 if (existsSync(${JSON.stringify(acquired)})) {
-  await import(${JSON.stringify(new URL("../server/sync/background-worker.mjs", import.meta.url).href)});
+  await import(${JSON.stringify(new URL("../server/sync/node/background-worker.mjs", import.meta.url).href)});
 } else parentPort.on('message', (message) => {
   if (message.request) parentPort.postMessage({ mutation: { id: 1, action: 'acquire', teamId: message.request.config.teamId, owner: 'fault-worker' } });
   else if (message.mutationId === 1 && message.result === true) {

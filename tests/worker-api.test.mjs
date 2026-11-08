@@ -16,8 +16,8 @@ import { Pool } from "pg";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { materialize, boundStore, refreshTeam } from "../worker/sync.mjs";
-import { entityId, digest, canonical } from "../server/sync/protocol.mjs";
+import { materialize, boundStore, refreshTeam } from "../worker/sync/sync.mjs";
+import { entityId, digest, canonical } from "../server/sync/core/protocol.mjs";
 import {
   normalizeSettings,
   DEFAULT_SETTINGS,
@@ -26,7 +26,7 @@ import {
 import { THEME_IDS } from "../shared/formatting/themes.js";
 import { unpack } from "../shared/formatting/compact.js";
 import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
-import { ProtocolError } from "../server/sync/errors.mjs";
+import { ProtocolError } from "../server/sync/core/errors.mjs";
 import {
   databaseCapacity,
   assertStateCapacity,

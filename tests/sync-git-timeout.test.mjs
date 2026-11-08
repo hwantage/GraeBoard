@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 
 test("M8 real slow Git upload-pack uses a separate bounded network timeout", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-slow-git-"));

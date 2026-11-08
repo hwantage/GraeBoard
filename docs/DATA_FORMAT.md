@@ -504,7 +504,7 @@ Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 
 operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 같습니다.
 
 - C의 기록마다 `sha256(구분 "\n" ID "\n" canonical(값))`을 구합니다. 구분은 엔티티 `e`(ID는 `entityId`), 영수증 `r`(opId), 충돌 `c`(conflictId)입니다.
-- 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/protocol.mjs`의 `stateSum`).
+- 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/core/protocol.mjs`의 `stateSum`).
 - 순서와 무관한 합이라 커밋은 바뀐 기록의 이전값과 새값만 빼고 더해 갱신합니다(`stateSumFrom`). PostgreSQL에서도 정렬 없는 집계 한 번으로 계산합니다.
 - 목적은 사이트 사이의 우발적 불일치를 감지하는 것이며, 의도적으로 만든 충돌에 대한 내성은 목표가 아닙니다.
 

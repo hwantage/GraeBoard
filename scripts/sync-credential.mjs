@@ -1,5 +1,5 @@
 import {openDatabase} from '../server/db.mjs';
-import {sealToken} from '../server/sync/credentials.mjs';
+import {sealToken} from '../server/sync/node/credentials.mjs';
 const profileId=process.argv[2];
 try{
  if(!profileId||!/^[a-zA-Z0-9_-]{1,80}$/.test(profileId)||process.argv.length!==3)throw new Error('Usage: npm run sync:credential -- profileId < token-file');

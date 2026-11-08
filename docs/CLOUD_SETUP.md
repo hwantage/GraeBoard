@@ -450,7 +450,7 @@ if (!token) {
   console.error('지정한 프로필과 토큰 등록 여부를 확인하세요.');
   process.exit(1);
 }
-const { repositoryUrl } = await import('./server/sync/git-cli.mjs');
+const { repositoryUrl } = await import('./server/sync/node/git-cli.mjs');
 const repository = repositoryUrl(profile.repository).replace('https://github.com/', '');
 try {
   const response = await fetch(`https://api.github.com/repos/${repository}`, {
@@ -563,7 +563,7 @@ rm /private/external-import.env
 
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
-외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
+외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
 
 이 방식 이전에는 업무 430여 개 팀(공유 기록 31,541개, 정규 JSON 19MB)의 게시 한 번이 전체 상태 읽기 1.3초·해시 0.4초를 쓰고 `CPU Time exceeded`(546)로 중단되었습니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 7분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
 
@@ -584,7 +584,7 @@ rm /private/external-import.env
 
 ### 최초 게시 스냅샷의 용량 초과
 
-`Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
+`Snapshot exceeds uncompressed byte budget`은 `server/sync/core/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
 
 게시 측과 수신 측의 상한을 함께 확인해야 합니다.
 
@@ -608,8 +608,8 @@ GRAEBOARD_DIAG_DB=/srv/graeboard/data/weekly-plan.sqlite \
 GRAEBOARD_DIAG_TEAM=11111111-1111-4111-8111-111111111111 \
 node --input-type=module <<'NODE'
 import { DatabaseSync } from 'node:sqlite';
-import { allEntities } from './server/sync/entities.mjs';
-import { canonical } from './server/sync/protocol.mjs';
+import { allEntities } from './server/sync/node/entities.mjs';
+import { canonical } from './server/sync/core/protocol.mjs';
 const db = new DatabaseSync(process.env.GRAEBOARD_DIAG_DB, { readOnly: true });
 try {
   db.exec('PRAGMA query_only=ON; BEGIN');

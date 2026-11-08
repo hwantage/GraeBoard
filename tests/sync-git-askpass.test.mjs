@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 
 test("M9 HTTPS credential helper uses the running Node executable when service PATH has no node", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "gb-askpass-")),

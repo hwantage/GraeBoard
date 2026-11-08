@@ -7,7 +7,7 @@ import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
 import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { calendarWeek } from "../shared/calendar/calendar.js";
-import { entityId } from "../server/sync/protocol.mjs";
+import { entityId } from "../server/sync/core/protocol.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round

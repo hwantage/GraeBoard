@@ -8,7 +8,7 @@ import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 import sharp from "sharp";
-import { materialize } from "../worker/materialize.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
 
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar/calendar-service.mjs";

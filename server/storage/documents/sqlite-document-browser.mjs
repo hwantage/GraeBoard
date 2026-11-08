@@ -1,4 +1,4 @@
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import { z } from "zod";
 import { parse } from "../../db.mjs";
 import { yearSchema, requireThat } from "../../../shared/validation.js";

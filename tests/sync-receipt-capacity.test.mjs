@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
-import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
-import { encodeSnapshot } from "../server/sync/snapshot.mjs";
+import { canonical, emptyState, stateHash } from "../server/sync/core/protocol.mjs";
+import { encodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import {
   decodeBoundedSnapshot,
   assertFileCapacity,
@@ -20,7 +20,7 @@ import {
   SYNC_SNAPSHOT_MAX_BYTES,
   SYNC_FILE_MAX_BYTES,
 } from "../shared/sync/sync-limits.js";
-import { createReceiptCapacityGuard } from "../server/sync/receipt-capacity.mjs";
+import { createReceiptCapacityGuard } from "../server/sync/node/receipt-capacity.mjs";
 import { transaction } from "../server/db.mjs";
 
 const receipt = (id) => ({

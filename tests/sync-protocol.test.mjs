@@ -12,14 +12,14 @@ import {
   assertCanonical,
   digestShared,
   validateEntityPayload,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import {
   reduce,
   reduceMany,
   mergeMarkdown,
   project,
-} from "../server/sync/reducer.mjs";
-import { operationBatch } from "../server/sync/service.mjs";
+} from "../server/sync/core/reducer.mjs";
+import { operationBatch } from "../server/sync/core/service.mjs";
 const identity = { repoId: "repo", teamId: "team" };
 const operation = (id, changes, dependsOn = []) => ({
   protocol: 3,
@@ -435,7 +435,7 @@ test("batch replay matches isolated command reduction including dependent failur
 });
 
 test("T14 snapshots reject authority metadata and foreign image/sheetClone rows before installation", async () => {
-  const { validateSnapshot } = await import("../server/sync/reducer.mjs");
+  const { validateSnapshot } = await import("../server/sync/core/reducer.mjs");
   const state = reduce(
     markedState(),
     operation("create", [change({ name: "allowed" })]),

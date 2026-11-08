@@ -11,14 +11,27 @@ assert.ok(
   root && input,
   "deno run --allow-read --node-modules-dir=manual --no-config --no-lock tests/worker-sheet-clone-sync-deno.mjs <source-root> <synthetic-input.json>",
 );
-const moduleAt = (file) => pathToFileURL(join(resolve(root), file));
+// A supplied source root may be a historical BASE archive or the current app.
+const currentModules = {
+  "server/sync/protocol.mjs": "server/sync/core/protocol.mjs",
+  "server/sync/reducer.mjs": "server/sync/core/reducer.mjs",
+  "server/sync/sync-operation-cache.mjs":
+    "server/sync/core/sync-operation-cache.mjs",
+  "shared/sync-team-store.mjs": "shared/sync/sync-team-store.mjs",
+  "shared/sync-capacity.mjs": "shared/sync/sync-capacity.mjs",
+};
+const sourcePath = (file) => {
+  const current = join(resolve(root), currentModules[file] || file);
+  return existsSync(current) ? current : join(resolve(root), file);
+};
+const moduleAt = (file) => pathToFileURL(sourcePath(file));
 const protocol = await import(moduleAt("server/sync/protocol.mjs")),
   { project, reduceMany } = await import(moduleAt("server/sync/reducer.mjs")),
   { prepareStatePatch } = await import(moduleAt("shared/sync-team-store.mjs")),
   { assertStateCapacity, assertStateCapacityFrom } = await import(
     moduleAt("shared/sync-capacity.mjs")
   );
-const cachePath = join(resolve(root), "server/sync/sync-operation-cache.mjs");
+const cachePath = sourcePath("server/sync/sync-operation-cache.mjs");
 const cache = existsSync(cachePath)
   ? await import(pathToFileURL(cachePath))
   : null;

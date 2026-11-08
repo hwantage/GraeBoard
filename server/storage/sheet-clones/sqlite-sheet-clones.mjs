@@ -21,7 +21,7 @@ import {
   requireUniqueSheetCloneName,
 } from "../../sheet-clones/sheet-clones.mjs";
 import { sheetCloneResponse, editSheetClone } from "../../sheet-clones/sheet-clone-editing.mjs";
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 
 export class SqliteSheetCloneRepository {
   constructor({

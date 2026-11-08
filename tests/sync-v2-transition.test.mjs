@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { SyncService } from "../server/sync/service.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { SyncService } from "../server/sync/core/service.mjs";
 import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 import {
   canonical,
@@ -15,13 +15,13 @@ import {
   emptyState,
   stateHash,
   entityId,
-} from "../server/sync/protocol.mjs";
-import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { boundStore } from "../worker/sync-store.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { encodeSnapshot, decodeSnapshot } from "../server/sync/core/snapshot.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { boundStore } from "../worker/sync/sync-store.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
-import { applicationEntities } from "../server/sync/versions.mjs";
+import { applicationEntities } from "../server/sync/core/versions.mjs";
 
 function store(f, head, state = f.state) {
   return {

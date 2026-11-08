@@ -284,7 +284,10 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
   f.put("server/storage/tasks/task-service.mjs");
   f.put("server/db.mjs", 'import "node:sqlite";\n');
   f.put("server/sync/node/git-cli.mjs", 'import "node:child_process";\n');
-  f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
+  f.put(
+    "worker/entry.mjs",
+    'import "../server/storage/tasks/task-service.mjs";\n',
+  );
   const suite = "tests/storage-import-boundaries.test.mjs";
   mkdirSync(join(f.root, "tests"));
   copyFileSync(
@@ -316,27 +319,33 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     1,
     "a new service is not automatically an external import exception",
   );
-  f.put("server/sync/sync-operation-cache.mjs");
+  f.put("server/sync/core/sync-operation-cache.mjs");
   for (const target of [
     "db",
     "sync/node/git-cli",
-    "sync/sync-operation-cache",
+    "sync/core/sync-operation-cache",
   ]) {
     f.put("worker/entry.mjs", `import "../server/${target}.mjs";\n`);
     assert.equal(run().status, 1, target);
   }
-  f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
-  f.put("server/storage/tasks/task-service.mjs", 'import "../db.mjs";\n');
+  f.put(
+    "worker/entry.mjs",
+    'import "../server/storage/tasks/task-service.mjs";\n',
+  );
+  f.put("server/storage/tasks/task-service.mjs", 'import "../../db.mjs";\n');
   assert.equal(run().status, 1);
-  f.put("server/sync/service.mjs", 'import "./sync-operation-cache.mjs";\n');
-  f.put("worker/entry.mjs", 'import "../server/sync/service.mjs";\n');
+  f.put(
+    "server/sync/core/service.mjs",
+    'import "./sync-operation-cache.mjs";\n',
+  );
+  f.put("worker/entry.mjs", 'import "../server/sync/core/service.mjs";\n');
   assert.equal(
     run().status,
     0,
     "the existing portable service may depend indirectly on the cache",
   );
-  f.put("server/sync/service.mjs", 'import "./node/git-cli.mjs";\n');
-  f.put("worker/entry.mjs", 'import "../server/sync/service.mjs";\n');
+  f.put("server/sync/core/service.mjs", 'import "../node/git-cli.mjs";\n');
+  f.put("worker/entry.mjs", 'import "../server/sync/core/service.mjs";\n');
   assert.equal(
     run().status,
     1,

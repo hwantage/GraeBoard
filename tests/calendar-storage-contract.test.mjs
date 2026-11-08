@@ -26,13 +26,13 @@ import { CalendarBusinessService } from "../server/storage/calendar/calendar-ser
 import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
 import { RequestContext } from "../worker/control/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
 import {
   canonical,
   emptyState,
   entityId,
   initialToken,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 
 function fixture(t) {
   const dir = mkdtempSync("/tmp/gb-calendar-contract-"),

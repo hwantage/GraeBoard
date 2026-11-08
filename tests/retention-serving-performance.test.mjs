@@ -5,7 +5,7 @@ import { sqliteFixture } from "./business-storage-fixture.mjs";
 import {
   retentionView,
   withRetentionViews,
-} from "../server/sync/visibility.mjs";
+} from "../server/sync/node/visibility.mjs";
 import { parseCompact } from "../shared/formatting/compact.js";
 import { getTasks } from "../server/db.mjs";
 

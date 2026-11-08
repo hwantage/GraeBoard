@@ -25,12 +25,12 @@ import { openDatabase } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
-import { canonical, stateHash } from "../server/sync/protocol.mjs";
-import { decodeSnapshot } from "../server/sync/snapshot.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
+import { canonical, stateHash } from "../server/sync/core/protocol.mjs";
+import { decodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { runTeam } from "../worker/sync.mjs";
+import { runTeam } from "../worker/sync/sync.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 import { recoverSync } from "../scripts/sync-recover.mjs";
 import {

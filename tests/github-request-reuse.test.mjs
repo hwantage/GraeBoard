@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GitHubApiTransport } from "../server/sync/github-api.mjs";
+import { GitHubApiTransport } from "../server/sync/core/github-api.mjs";
 
 // GitHub's hourly request budget is shared with the person whose token a site
 // uses, and a hosted site checks its branches every minute with a new

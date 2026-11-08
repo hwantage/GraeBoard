@@ -24,21 +24,21 @@ import { isPackedSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { GitCliTransport } from "../server/sync/git-cli.mjs";
+import { GitCliTransport } from "../server/sync/node/git-cli.mjs";
 import {
   stateHash,
   digest,
   entityId,
   protocolVersion,
-} from "../server/sync/protocol.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
 import { calendarWeek } from "../shared/calendar/calendar.js";
 import { backfillWeeklyOrder } from "../scripts/sync-weekly-order.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { runTeam, scheduled } from "../worker/sync.mjs";
+import { runTeam, scheduled } from "../worker/sync/sync.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";

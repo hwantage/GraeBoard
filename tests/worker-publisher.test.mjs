@@ -14,16 +14,16 @@ import {
   runTeam,
   scheduled,
   refreshTeam,
-} from "../worker/sync.mjs";
+} from "../worker/sync/sync.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
-import { GitHubApiTransport } from "../worker/git.mjs";
-import { encodeSnapshot } from "../server/sync/snapshot.mjs";
+import { GitHubApiTransport } from "../worker/sync/git.mjs";
+import { encodeSnapshot } from "../server/sync/core/snapshot.mjs";
 import {
   canonical,
   digest,
   stateHash,
   entityId,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 
 function controlledClock(t) {

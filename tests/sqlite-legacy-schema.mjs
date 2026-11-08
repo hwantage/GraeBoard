@@ -1,4 +1,4 @@
-import { stateHash } from "../server/sync/protocol.mjs";
+import { stateHash } from "../server/sync/core/protocol.mjs";
 
 // A fresh v34 database put back into the released v33 shape: the copy tables
 // regain their earlier names, the v34 history is removed and the

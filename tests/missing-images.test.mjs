@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { imageSync } from "../worker/sync-images.mjs";
+import { imageSync } from "../worker/sync/sync-images.mjs";
 import { R2ImageStore } from "../worker/documents/images.mjs";
-import { emptyState, entityId } from "../server/sync/protocol.mjs";
+import { emptyState, entityId } from "../server/sync/core/protocol.mjs";
 import { bucket } from "./worker-github-fixture.mjs";
 
 // A document may point at an image a site never received or no longer holds.

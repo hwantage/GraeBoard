@@ -6,17 +6,17 @@ import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { writeFormatting, readFormatting } from "../server/db.mjs";
 import { decodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
-import { allEntities, readEntity } from "../server/sync/entities.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { reduce } from "../server/sync/reducer.mjs";
-import { splitSheetCloneRecord } from "../server/sync/versions.mjs";
+import { allEntities, readEntity } from "../server/sync/node/entities.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { reduce } from "../server/sync/core/reducer.mjs";
+import { splitSheetCloneRecord } from "../server/sync/core/versions.mjs";
 import {
   canonical,
   emptyState,
   entityId,
   stateHash,
   validateEntityPayload,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import { defaultView } from "../shared/domain.js";
 import { stringify } from "../shared/formatting/compact.js";
 import {

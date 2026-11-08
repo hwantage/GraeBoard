@@ -18,8 +18,8 @@ import {
 } from "../server/db.mjs";
 import { defaultView, normalizeSettings } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
-import { materialize } from "../worker/materialize.mjs";
-import { canonical, entityId } from "../server/sync/protocol.mjs";
+import { materialize } from "../worker/sync/materialize.mjs";
+import { canonical, entityId } from "../server/sync/core/protocol.mjs";
 const reject = (work, status) =>
   assert.rejects(
     Promise.resolve().then(work),

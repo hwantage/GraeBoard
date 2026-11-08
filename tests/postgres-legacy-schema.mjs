@@ -1,4 +1,4 @@
-import { entityId, stateHash } from "../server/sync/protocol.mjs";
+import { entityId, stateHash } from "../server/sync/core/protocol.mjs";
 
 // A fresh team v3 schema put back into the released team v2 shape: the v3
 // history is removed and the stored rows return to the earlier

@@ -1,4 +1,4 @@
-import { retentionView } from "../../sync/visibility.mjs";
+import { retentionView } from "../../sync/node/visibility.mjs";
 import { exportDocumentImages } from "../../documents/document-images.mjs";
 import { memoContents } from "../../documents/memo-storage.mjs";
 import {

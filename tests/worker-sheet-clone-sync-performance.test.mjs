@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { sheetCloneSyncFixture } from "./worker-sheet-clone-sync-fixture.mjs";
-import { createPublisher } from "../worker/sync.mjs";
+import { createPublisher } from "../worker/sync/sync.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
+import { canonical, entityId, stateHash } from "../server/sync/core/protocol.mjs";
 import { defaultView } from "../shared/domain.js";
 
 test(

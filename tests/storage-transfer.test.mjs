@@ -39,15 +39,15 @@ import {
   restoreExternal,
   readExternalBackup,
 } from "../server/storage/transfer/external-backup.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
 import {
   canonical,
   digest,
   entityId,
   stateHash,
-} from "../server/sync/protocol.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { reduce } from "../server/sync/reducer.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { reduce } from "../server/sync/core/reducer.mjs";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
 import { recoverBackupJob } from "../shared/transfer/backup-recovery.mjs";

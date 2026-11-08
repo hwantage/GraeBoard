@@ -22,15 +22,15 @@ import {
   documentImagePath,
   writeDocumentImage,
 } from "../server/documents/document-images.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
 import {
   validateOperation,
   entityId,
   stateHash,
-} from "../server/sync/protocol.mjs";
-import { project, validateSnapshot } from "../server/sync/reducer.mjs";
-import { SyncService } from "../server/sync/service.mjs";
+} from "../server/sync/core/protocol.mjs";
+import { project, validateSnapshot } from "../server/sync/core/reducer.mjs";
+import { SyncService } from "../server/sync/core/service.mjs";
 import { imageReferences } from "../worker/documents/images.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";

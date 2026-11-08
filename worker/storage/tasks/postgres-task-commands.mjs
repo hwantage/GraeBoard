@@ -23,7 +23,7 @@ import {
   validateCellValue,
   viewSchema,
 } from "../../../shared/validation.js";
-import { digest } from "../../../server/sync/protocol.mjs";
+import { digest } from "../../../server/sync/core/protocol.mjs";
 import { assert } from "../../control/access.mjs";
 import {
   stamp,

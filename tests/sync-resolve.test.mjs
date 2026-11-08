@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
-import { allEntities } from "../server/sync/entities.mjs";
-import { makeOperation } from "../server/sync/operations.mjs";
-import { entityId, stateHash } from "../server/sync/protocol.mjs";
-import { reduceMany, project } from "../server/sync/reducer.mjs";
+import { allEntities } from "../server/sync/node/entities.mjs";
+import { makeOperation } from "../server/sync/core/operations.mjs";
+import { entityId, stateHash } from "../server/sync/core/protocol.mjs";
+import { reduceMany, project } from "../server/sync/core/reducer.mjs";
 import { getTask } from "../server/db.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 

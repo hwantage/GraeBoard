@@ -5,7 +5,7 @@ import {
   canonicalHashes,
   sliceChanges,
   computeTotals,
-} from "../worker/sync-partial.mjs";
+} from "../worker/sync/sync-partial.mjs";
 import { capacityTotals } from "../worker/storage/capacity.mjs";
 import { assertStateCapacity } from "../shared/sync/sync-capacity.mjs";
 import {
@@ -14,7 +14,7 @@ import {
   emptyState,
   stateSum,
   stateSumFrom,
-} from "../server/sync/protocol.mjs";
+} from "../server/sync/core/protocol.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 
 const record = (entity, key, payload, extra = {}) => ({
