@@ -5,6 +5,7 @@ import {
   equal,
 } from "../server/sync/protocol.mjs";
 import { ProtocolError } from "../server/sync/errors.mjs";
+import { parseSyncOperation } from "../server/sync/sync-operation-cache.mjs";
 
 const parse = (text) => (text === null ? null : JSON.parse(text));
 const query = (sql, values = []) => ({ sql, values });
@@ -189,7 +190,7 @@ const methods = {
     )).rows.map((row) => ({
       ...row,
       local_seq: integer(row.local_seq),
-      operation: parse(row.payload),
+      operation: parseSyncOperation(row.payload),
     }));
   },
   *readPending() {

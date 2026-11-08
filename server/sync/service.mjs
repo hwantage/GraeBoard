@@ -27,6 +27,8 @@ import {
   PROTOCOL,
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
+import { withSyncOperationCache } from "./sync-operation-cache.mjs";
+import { pendingNeedsProjection } from "./projection.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../shared/document-image-references.js";
 import {
@@ -51,6 +53,7 @@ export function operationBatch(
   pending,
   maxOperations = 50,
   maxBytes = SYNC_FILE_MAX_BYTES,
+  workBytes = Infinity,
 ) {
   // Reserve space for the envelope and hashes before making a remote commit.
   // Each immutable user command stays whole, including large bulk edits.
@@ -66,15 +69,19 @@ export function operationBatch(
         );
       break;
     }
+    // An atomic command may exceed the work allowance on its own. Do not add
+    // more commands to that batch; the next run publishes them in order.
+    if (result.length && bytes + size > workBytes) break;
     result.push(operation);
     bytes += size;
   }
   return result;
 }
 // A hosted runtime stops an invocation at its CPU budget without unwinding, so
-// each phase is reported as soon as it ends: the last line before the runtime's
-// limit message names the phase that ran out. Wall time equals CPU time only
-// for the synchronous phases; Supabase Edge has no process.cpuUsage().
+// each phase is reported as soon as it ends. The last completed phase brackets
+// the interruption; CPU spent earlier in the invocation contributes too. Wall
+// time equals CPU time only for synchronous phases; Supabase Edge has no
+// process.cpuUsage().
 export function phaseTimer(trace, label) {
   if (!trace) return () => {};
   const start = performance.now();
@@ -117,6 +124,9 @@ export class SyncService {
     // with pending commands behind a long remote chain applied maxCommits per
     // failed publication, five times the per-invocation work it was sized for.
     maxRunCommits = Infinity,
+    // Hosted callers also bound repeated work by payload size. Small commands
+    // keep their commit/count throughput; one large atomic command stays whole.
+    maxRunBytes = Infinity,
     maxOperations = 50,
     maxProtocol = SPLIT_PROTOCOL,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
@@ -135,6 +145,7 @@ export class SyncService {
       images,
       maxCommits,
       maxRunCommits,
+      maxRunBytes,
       maxOperations,
       maxProtocol,
       stateLimits,
@@ -149,6 +160,19 @@ export class SyncService {
     // whether its last receive stopped short of the head it observed.
     this.budget = null;
     this.behind = false;
+    this.runBytes = null;
+  }
+  workExhausted() {
+    return this.runBytes !== null && this.runBytes >= this.maxRunBytes;
+  }
+  chargeBytes(bytes) {
+    if (this.runBytes !== null && Number.isFinite(this.maxRunBytes))
+      this.runBytes += bytes;
+  }
+  chargeOperations(operations) {
+    if (this.runBytes !== null && Number.isFinite(this.maxRunBytes))
+      for (const operation of operations)
+        this.runBytes += Buffer.byteLength(canonical(operation));
   }
   // With the state it was reduced from, measure only the changed records.
   assertCapacity(state, base) {
@@ -168,11 +192,14 @@ export class SyncService {
     // document carries its own body, so dozens of them outnumber the 8 recent
     // extractions kept between requests and every replay parsed every body
     // again. The cycle holds those bodies until it ends anyway.
-    this.running = withDocumentImageReferences(() => this.cycle(options), {
-      maxEntries: Infinity,
-      maxBytes: Infinity,
-      ttlMs: Infinity,
-    }).finally(() => (this.running = null));
+    this.running = withDocumentImageReferences(
+      () => withSyncOperationCache(() => this.cycle(options)),
+      {
+        maxEntries: Infinity,
+        maxBytes: Infinity,
+        ttlMs: Infinity,
+      },
+    ).finally(() => (this.running = null));
     return this.running;
   }
   async checkCommit(oid, parent) {
@@ -246,7 +273,9 @@ export class SyncService {
       (useCheckpoint && ["importing", "recovery"].includes(link.mode))
     )
       link = await loadCheckpoint(this, link, head);
-    const limit = Math.min(this.maxCommits, this.budget ?? Infinity),
+    const limit = this.workExhausted()
+        ? 0
+        : Math.min(this.maxCommits, this.budget ?? Infinity),
       chain = await this.readChain(head, link.canonical_head, limit);
     if (chain.length) this.mark("readChain", { commits: chain.length });
     // C is read only for a commit that cannot be applied to a slice of it; an
@@ -260,6 +289,23 @@ export class SyncService {
       return state;
     };
     for (const commit of chain.slice(0, limit)) {
+      if (this.workExhausted()) break;
+      let projectionBytes = 0;
+      const onPendingProjection = (pending) => {
+        if (this.runBytes === null || !Number.isFinite(this.maxRunBytes))
+          return;
+        const bytes = pending.reduce(
+          (n, op) => n + Buffer.byteLength(canonical(op)),
+          0,
+        );
+        // Image and transactional projection each read fresh P. Count the
+        // largest replayed P once for this commit, including concurrent saves.
+        if (bytes > projectionBytes) {
+          this.chargeBytes(bytes - projectionBytes);
+          projectionBytes = bytes;
+          this.mark("pendingProjection", { operations: pending.length, bytes });
+        }
+      };
       let previousState = state,
         slice = false;
       const parent = link.canonical_head || null;
@@ -346,10 +392,11 @@ export class SyncService {
         const events = added.filter((f) => f.path.startsWith("events/"));
         if (events.length !== 1)
           throw new ProtocolError("SYNC_FORMAT", "Expected one event envelope");
-        const envelope = decode(
-          await this.transport.readFile(commit.oid, events[0].path),
-          64 * 1024 * 1024,
-        );
+        const envelopeBytes = await this.transport.readFile(
+            commit.oid,
+            events[0].path,
+          ),
+          envelope = decode(envelopeBytes, 64 * 1024 * 1024);
         if (
           envelope.parent !== parent ||
           !supportedVersion(
@@ -523,18 +570,27 @@ export class SyncService {
               "SYNC_FORMAT",
               "Operation envelope exceeds count budget",
             );
+          const cover =
+            state && !Number.isFinite(this.maxRunBytes)
+              ? []
+              : await this.store.readPending();
+          // Use the received bytes: serializing untrusted input here would
+          // repeat reducer work and bypass protocolValidation's error mapping.
+          this.chargeBytes(envelopeBytes.byteLength);
           const reduced = await this.reduceCanonical(
             envelope.operations,
             { ...this.identity, protocol: envelope.protocol },
             {
               parent,
-              cover: state ? [] : await this.store.readPending(),
+              cover: state ? [] : cover,
               received: true,
               whole: state,
               needHash: !envelope.resultSum,
             },
           );
           ({ previousState, state, slice } = reduced);
+          if (pendingNeedsProjection(previousState, state, cover))
+            onPendingProjection(cover);
           operations = envelope.operations.map((op) => op.opId);
           // A peer with the state sum sends it (and the whole-state hash
           // when it holds C in memory); an older peer sends only the hash.
@@ -561,11 +617,21 @@ export class SyncService {
           "Unsupported protocol version; canonical cursor is unchanged",
         );
       const stateSize = this.assertCapacity(state, previousState);
+      if (this.runBytes !== null && Number.isFinite(this.maxRunBytes)) {
+        if (!parent || transition) this.runBytes += stateSize.bytes;
+        // Checkpoints still project P while advancing C's head.
+        if (parent && !operations.length) {
+          const pending = await this.store.readPending();
+          if (pendingNeedsProjection(previousState, state, pending))
+            onPendingProjection(pending);
+        }
+      }
       if (!this.deferImages)
         await this.images?.receive?.(state, commit.oid, this.transport, {
           added,
           verifiedImages,
           previousState: parent ? previousState : null,
+          onPendingProjection,
         });
       this.mark("receiveImages");
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
@@ -576,6 +642,8 @@ export class SyncService {
         stateSize,
         slice,
         mark: this.mark,
+        onPendingProjection,
+        incrementalPending: !!parent && link.mode === "active" && !transition,
       });
       this.mark("commitCanonical", { commit: commit.oid });
       if (this.budget !== null) this.budget--;
@@ -690,6 +758,7 @@ export class SyncService {
     if (!(await this.store.acquire(owner))) return { busy: true };
     this.mark = phaseTimer(this.trace, this.identity.teamId);
     this.budget = this.maxRunCommits;
+    this.runBytes = 0;
     let traced = false;
     try {
       let link = await this.store.readLink();
@@ -707,6 +776,10 @@ export class SyncService {
       }
       if (!receiveOnly && link.mode !== "recovery")
         for (let attempt = 0; attempt < 4; attempt++) {
+          if (this.workExhausted()) {
+            this.mark("yield", { bytes: this.runBytes });
+            break;
+          }
           // With its budget spent short of the head it saw, the cycle leaves
           // the rest to the next one: a candidate on this parent cannot be
           // published, and receiving again would exceed the budget.
@@ -717,8 +790,13 @@ export class SyncService {
           const pending = operationBatch(
             await this.store.readPending(),
             this.maxOperations,
+            SYNC_FILE_MAX_BYTES,
+            this.maxRunBytes - this.runBytes,
           );
           if (!pending.length) break;
+          // As in receive(), finish the first atomic command even if it
+          // crosses the remaining allowance after small independent work.
+          this.chargeOperations(pending);
           traced = true;
           // Details cost a pass over the batch and C, so only a trace pays it.
           this.mark(
@@ -797,6 +875,7 @@ export class SyncService {
     } finally {
       this.mark = () => {};
       this.budget = null;
+      this.runBytes = null;
       await this.store.release(owner);
     }
   }

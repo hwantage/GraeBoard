@@ -402,6 +402,55 @@ test("350 missed commits advance in bounded REST cycles and old peer ancestry co
 // parent fails and receives maxCommits again, so one run applied 20 commits
 // with maxCommits 4. maxRunCommits bounds the whole run; it publishes only
 // once a later run reaches the head. The default keeps the old behavior.
+test("a byte-bounded receive still quarantines invalid untrusted JSON through protocol validation", async () => {
+  const { repo, genesis } = await fixture(0),
+    local = store(markedState(), genesis);
+  const op = {
+    protocol: 3,
+    reducer: 3,
+    ...identity,
+    opId: "invalid-number",
+    writerEpoch: "epoch",
+    actorRef: "person",
+    createdAt: "2026-11-08T00:00:00.000Z",
+    dependsOn: [],
+    objects: [],
+    changes: [
+      {
+        entity: "person",
+        key: ["bad"],
+        generation: "g",
+        baseVersion: null,
+        action: "create",
+        base: null,
+        desired: { name: 1e100 },
+        fields: ["name"],
+      },
+    ],
+  };
+  repo.head = await repo.createCandidate(genesis, {
+    "events/invalid.json": JSON.stringify({
+      protocol: 3,
+      kind: "operations",
+      parent: genesis,
+      operations: [op],
+      resultSum: "0".repeat(64),
+    }),
+  });
+  const service = new SyncService({
+    transport: repo,
+    store: local,
+    identity,
+    maxRunBytes: 1024,
+  });
+  await assert.rejects(service.run({ updateStatus: false }), {
+    code: "SYNC_FORMAT",
+  });
+  assert.equal(local.link.canonical_head, genesis);
+  assert.equal(local.commits.length, 0);
+  assert.equal(local.error.code, "SYNC_FORMAT");
+});
+
 test("a run with pending commands behind the remote applies at most its commit budget and publishes from the head", async () => {
   const { repo, state, genesis } = await fixture(20),
     local = {
