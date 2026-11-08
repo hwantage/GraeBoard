@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  preparedSyncOperation,
+  syncCanonicalCache,
+  rememberSyncCanonical,
+} from "./sync-operation-cache.mjs";
 import { SYNC_OPERATION_MAX_BYTES } from "../../shared/sync-limits.js";
 import { documentImageUrls } from "../../shared/document-image-references.js";
 import {
@@ -59,6 +64,9 @@ export const protocolMarker = (version, token) => ({
 });
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
 export function canonical(value) {
+  return canonicalValue(value, syncCanonicalCache());
+}
+function canonicalValue(value, cache) {
   if (value === null || typeof value === "boolean" || typeof value === "string")
     return JSON.stringify(value);
   if (
@@ -67,15 +75,24 @@ export function canonical(value) {
     Math.abs(value) <= Number.MAX_SAFE_INTEGER
   )
     return JSON.stringify(value);
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  const cached = cache?.texts.get(value);
+  if (cached !== undefined) return cached;
+  if (Array.isArray(value))
+    return rememberSyncCanonical(
+      cache,
+      value,
+      "[" + value.map((item) => canonicalValue(item, cache)).join(",") + "]",
+    );
   if (value && Object.getPrototypeOf(value) === Object.prototype)
-    return (
+    return rememberSyncCanonical(
+      cache,
+      value,
       "{" +
-      Object.keys(value)
-        .sort()
-        .map((k) => JSON.stringify(k) + ":" + canonical(value[k]))
-        .join(",") +
-      "}"
+        Object.keys(value)
+          .sort()
+          .map((k) => JSON.stringify(k) + ":" + canonicalValue(value[k], cache))
+          .join(",") +
+        "}",
     );
   throw new Error("Unsupported canonical JSON value");
 }
@@ -574,6 +591,14 @@ export function validateOperation(
     op.teamId !== identity.teamId
   )
     throw new Error("Unsupported protocol or foreign team operation");
+  const prepared = preparedSyncOperation(op);
+  if (prepared?.validated) {
+    validateResolutionState(op, state);
+    const serialized = known ?? canonical(op);
+    validateOperationSize(serialized);
+    onSerialized?.(serialized);
+    return op;
+  }
   for (const name of ["opId", "writerEpoch", "actorRef", "createdAt"])
     if (typeof op[name] !== "string" || !op[name] || op[name].length > 200)
       throw new Error("Invalid operation identity");
@@ -600,19 +625,7 @@ export function validateOperation(
       )
     )
       throw new Error("Invalid conflict resolution references");
-    if (state)
-      for (const id of op.resolves) {
-        const conflict =
-          Object.hasOwn(state.conflicts, id) && state.conflicts[id];
-        if (
-          !conflict ||
-          conflict.operation?.teamId !== op.teamId ||
-          conflict.operation?.repoId !== op.repoId
-        )
-          throw new Error(
-            "Conflict resolution references a missing or foreign conflict",
-          );
-      }
+    validateResolutionState(op, state);
   }
   const seen = new Set();
   for (const c of op.changes) {
@@ -673,6 +686,12 @@ export function validateOperation(
       throw new Error("Private team setting in shared payload");
   }
   const serialized = known ?? canonical(op);
+  validateOperationSize(serialized);
+  onSerialized?.(serialized);
+  if (prepared) prepared.validated = true;
+  return op;
+}
+function validateOperationSize(serialized) {
   if (Buffer.byteLength(serialized) > SYNC_OPERATION_MAX_BYTES)
     throw Object.assign(
       new Error(
@@ -680,6 +699,19 @@ export function validateOperation(
       ),
       { status: 400, code: "SYNC_OPERATION_CAPACITY" },
     );
-  onSerialized?.(serialized);
-  return op;
+}
+function validateResolutionState(op, state) {
+  if (state)
+    for (const id of op.resolves || []) {
+      const conflict =
+        Object.hasOwn(state.conflicts, id) && state.conflicts[id];
+      if (
+        !conflict ||
+        conflict.operation?.teamId !== op.teamId ||
+        conflict.operation?.repoId !== op.repoId
+      )
+        throw new Error(
+          "Conflict resolution references a missing or foreign conflict",
+        );
+    }
 }

@@ -531,6 +531,8 @@ GitHub REST 한도(시간당 5,000건)는 토큰 주인 계정 단위입니다. 
 
 외부 저장 뒤의 자동 게시는 팀별 첫 미전송 변경이 저장된 시각부터 2초 동안 변경을 모으고, 이후 자동 게시 시도 사이에는 최소 5초 간격을 둡니다. 연속 저장이 첫 대기 시간을 계속 연장하지 않으며, 게시 시도 시각은 DB에 남아 다른 Edge 실행에서도 간격을 지킵니다. 네트워크 오류나 실행 소유권 충돌이 생겨도 미전송 변경은 유지합니다. Edge 실행 종료로 대기 작업이 사라지면 다음 Cron이 처리합니다. 이미 진행 중인 게시가 미전송 목록을 읽은 뒤 저장된 마지막 변경도 그 주기에 포함되지 않고 후속 저장 또는 다음 1분 Cron 주기까지 남을 수 있습니다. 변경은 미전송 상태로 보존됩니다. Cron과 사용자가 직접 실행하는 동기화는 이 자동 게시 대기 시간을 적용하지 않습니다. 이 간격은 요청을 줄이기 위한 것으로 GitHub 계정의 요청 한도나 운영 환경의 지연을 보장하지 않습니다.
 
+다음 발행 묶음(최대 50명령)이 1MiB를 넘으면 편집 요청의 `waitUntil`에서 자동 발행을 시작하지 않습니다. 사본을 만들며 쓴 CPU와 발행 CPU가 같은 요청에 누적되므로, 기존 outbox를 다음 1분 Cron 또는 **지금 동기화**가 새 실행에서 처리합니다. 원격 이력이 남아 있으면 여러 Cron에 걸칠 수 있고, 큰 명령 뒤에 저장한 문서 편집도 뒤따르는 실행에서 게시됩니다. 연결·리스·outbox를 수동 초기화할 필요가 없습니다.
+
 ### 외부 최초 가져오기의 실행 자원 한도 초과 (546)
 
 외부 **팀 가져오기**가 `HTTP 546 · WORKER_RESOURCE_LIMIT`로 실패하면 Supabase Edge 함수의 호출당 상한(CPU 2초, 메모리 256 MB)에 걸린 것입니다. 가져오기는 한 번의 호출에서 genesis 스냅샷의 내려받기·압축 해제·해시 검증·PostgreSQL 기록을 모두 수행하므로 수십 MiB 규모의 팀은 이 상한을 넘을 수 있습니다. 어느 상한인지는 Supabase 함수 로그에만 남습니다. 설정이 잘못된 것이 아니므로 아래처럼 운영자 PC에서 같은 가져오기 경로를 Node로 실행합니다. 결과는 Edge의 팀 가져오기와 같고, 빈 팀 DB에만 가져오며 실패 시 DB 변경은 롤백됩니다.
@@ -563,14 +565,18 @@ rm /private/external-import.env
 
 이 방식 이전에는 업무 430여 개 팀(공유 기록 31,541개, 정규 JSON 19MB)의 게시 한 번이 전체 상태 읽기 1.3초·해시 0.4초를 쓰고 `CPU Time exceeded`(546)로 중단되었습니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 7분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
 
+큰 미전송 사본은 관계없는 원격 커밋을 받을 때도 검증·투영 대상입니다. 외부 기본 실행은 수신 명령과 미전송 명령의 바이트 합을 누적하여 1MiB에 이르면 완료된 커밋 경계에서 종료하고 리스를 해제합니다. 큰 원자 명령 하나는 나누지 않으며, 수신 뒤 발행이나 CAS 경합 뒤 재수신이 같은 실행에 계속 쌓이지 않게 합니다. 같은 실행의 outbox 파싱·검증·직렬화도 불변 입력에 한해 재사용합니다. 이 제한은 작업량 분배이며, 단일 명령이 실제 Supabase CPU·메모리 상한 안에 드는지는 배포 뒤 별도로 확인합니다.
+
 어느 단계에서 상한을 넘는지는 단계별 로그로 확인합니다.
 
 1. Supabase 대시보드 **Edge Functions → Secrets**에서 `SYNC_PHASE_LOG` 값을 `1`로 추가합니다.
 2. 리스가 끝난 뒤 Cron이 게시를 다시 시도하거나 팀 설정의 **지금 동기화**를 누릅니다.
-3. **Edge Functions → graeboard → Logs**에서 `GraeBoard sync phase`를 검색합니다. 게시·수신 단계가 끝날 때마다 한 줄씩 남습니다. `CPU Time exceeded` 직전의 마지막 줄 다음 단계가 상한을 넘은 단계입니다.
+3. **Edge Functions → graeboard → Logs**에서 `GraeBoard sync phase`를 검색합니다. 게시·수신 단계가 끝날 때마다 한 줄씩 남습니다. `CPU Time exceeded` 직전의 마지막 줄로 중단된 구간을 찾되, 호출 전체에서 누적된 CPU가 상한에 도달한 것이므로 그 구간만이 비용 원인이라고 단정하지 않습니다.
 4. 확인을 마치면 Secret을 삭제합니다.
 
 게시는 `readPending → readSlice → reduce → (computeTotals) → stateSum → (canonicalHash) → capacity → event → createCandidate → publishRef → preparePatch → writeState → materialize → commitPublished → done` 순서로 기록합니다. 원격 커밋 수신은 `readChain → readSlice → reduce → (computeTotals) → stateSum → (canonicalHash) → receiveImages → preparePatch → writeState → materialize → commitCanonical` 순서입니다. `computeTotals`는 저장된 C 합계(`syncTotals`)가 현재 head의 것이 아닐 때만, `canonicalHash`는 상대가 상태 합(`sum-1`)을 알리지 않았거나 받은 이벤트에 `resultSum`이 없을 때만 나옵니다. `canonicalHash`의 `verified`가 `false`이면 전체 상태 경로로 넘어가며 이어서 `readState → reduce → stateHash`가 기록됩니다. 변경이 없는 주기는 기록하지 않습니다.
+
+`yield`는 바이트 예산에 따라 다음 실행으로 넘겼다는 뜻이며 오류가 아닙니다. `writeState`는 canonical 트랜잭션의 COMMIT 전 로그입니다. 실제 완료는 뒤의 `commitCanonical` 또는 `commitPublished`와 저장된 head로 확인합니다.
 
 각 줄의 `ms`는 그 단계의 경과 시간, `totalMs`는 리스를 잡은 뒤의 누적 시간입니다. `reduce`·`capacity`·`stateHash`·`event`·`preparePatch`는 네트워크 대기가 없어 `ms`가 곧 CPU 시간입니다. 첫 `readPending`에는 원격 head 확인이, `readSlice`·`canonicalHash`·`measureCapacity`·`readState`·`writeState`·`materialize`에는 PostgreSQL 대기가, `createCandidate`·`publishRef`에는 GitHub 대기가 함께 들어갑니다. Supabase Edge는 `process.cpuUsage()`를 제공하지 않아 CPU 시간을 따로 기록하지 않습니다.
 

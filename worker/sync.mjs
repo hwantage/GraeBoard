@@ -39,6 +39,7 @@ import { imageSync } from "./sync-images.mjs";
 
 const PUBLISH_DELAY_MS = 2000;
 const PUBLISH_INTERVAL_MS = 5000;
+const HOSTED_SYNC_MAX_RUN_BYTES = 1024 * 1024;
 async function schedulingState(tx, teamId) {
   const row = (
     await tx.query(
@@ -79,14 +80,15 @@ async function publishWindow(tx, env, profile) {
     return { mode: link?.mode || "unlinked" };
   const pending = (
     await tx.query(
-      "SELECT created_at FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq LIMIT 1",
+      "SELECT created_at,sum(octet_length(payload)) OVER () AS bytes FROM (SELECT local_seq,created_at,payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq LIMIT 50) pending ORDER BY local_seq LIMIT 1",
       [profile.teamId],
     )
   ).rows[0];
-  if (!pending) return { pending: false };
+  if (!pending?.created_at) return { pending: false };
   const state = await schedulingState(tx, profile.teamId);
   return {
     state,
+    bytes: Number(pending.bytes),
     // The first durable outbox row starts a fixed window. Later writes cannot
     // postpone it indefinitely. The claimed cooldown survives isolate loss.
     deadline: Math.max(
@@ -113,6 +115,10 @@ export function createPublisher({
         { readOnly: true },
       );
       if (window.deadline === undefined) return window;
+      // waitUntil shares the editing request's CPU allowance. A large copy
+      // already spent it building/capturing the sheet; Cron (or an explicit
+      // run) publishes from a fresh invocation, using the same durable outbox.
+      if (window.bytes > HOSTED_SYNC_MAX_RUN_BYTES) return { deferred: true };
       if (window.deadline > now())
         await wait(Math.min(window.deadline - now(), PUBLISH_INTERVAL_MS));
       const claim = await database.withTeamTransaction(
@@ -120,6 +126,8 @@ export function createPublisher({
         async (tx) => {
           const current = await publishWindow(tx, env, profile);
           if (current.deadline === undefined) return current;
+          if (current.bytes > HOSTED_SYNC_MAX_RUN_BYTES)
+            return { deferred: true };
           if (current.deadline > now()) return { throttled: true };
           // Advance before network I/O, including errors or a busy sync lease.
           // The team transaction serializes competing isolate timer callbacks.
@@ -173,6 +181,10 @@ export function serviceFor(env, profile, link, options = {}) {
     // One hosted invocation applies at most these commits, also when a
     // publication finds the branch moved and receives again.
     maxRunCommits: options.maxCommits || 4,
+    // A large copy must not be replayed for several receives and then published
+    // in the same invocation. Yield only between complete canonical commits or
+    // publication attempts; operator imports explicitly size their own runs.
+    maxRunBytes: options.maxCommits ? Infinity : HOSTED_SYNC_MAX_RUN_BYTES,
     maxOperations: 50,
     deferImages: !!options.deferImages,
     // SYNC_PHASE_LOG=1 logs each phase of a publishing or receiving cycle,
