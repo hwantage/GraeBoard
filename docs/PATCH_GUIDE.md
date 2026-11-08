@@ -252,8 +252,9 @@ DOCUMENT_IMAGES_DIR="$PATCH_REHEARSAL/document-images" \
   npm run restore -- "$PATCH_BACKUP/rehearsal.sqlite" "$PATCH_REHEARSAL/check.sqlite"
 
 # 동기화 공유 이력이 없는 설치의 v29~v33 복구본에만 사용합니다.
-npm run cutover:sheet-clone -- --database "$PATCH_REHEARSAL/check.sqlite" --dry-run
-npm run cutover:sheet-clone -- --database "$PATCH_REHEARSAL/check.sqlite"
+# 운영 안내에서 검증한 고정 전체 커밋과 격리 리허설 환경 파일입니다.
+node --env-file=/approved/runtime/rehearsal.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database "$PATCH_REHEARSAL/check.sqlite" --dry-run
+node --env-file=/approved/runtime/rehearsal.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database "$PATCH_REHEARSAL/check.sqlite"
 ```
 
 복구 명령에는 dry-run이 없습니다. 전환 도구의 `--dry-run`은 임시 사본에 실제 변환을 실행하고 원본을 바꾸지 않습니다. 실제 사본 전환까지 통과해 v34인지 확인합니다. 이미 v34인 복구본에는 `npm run migrate -- --engine sqlite --database "$PATCH_REHEARSAL/check.sqlite" --dry-run`으로 현재 이력·checksum을 확인합니다. 전환 도구는 백업을 자동 생성하지 않습니다.
@@ -444,4 +445,4 @@ GRAEBOARD_INSTALLATION_ID="$PATCH_RECOVERY_ID" GRAEBOARD_SYNC_DIR="$PATCH_SYNC" 
 - [ ] 동기화 사용 시 기존 설치 설정과 연결 상태를 확인했다.
 - [ ] 접속·예약 작업을 재개하고 커밋·버전·검증 결과·백업·복구 경로를 기록했다.
 
-이 가이드 작성 시 개발 환경의 임시 DB로 `tests/sync-migrations.test.mjs`와 `tests/backup.test.mjs`를 실행하여 **8건 통과, 실패·건너뜀 0건**을 확인했습니다. 이는 접속 토큰 도입 전의 v32 migration·백업 코드에 대한 당시 검사 기록이며, 실제 운영 DB의 버전 확인·사본 리허설이나 최종 배포본 전체 검증을 대신하지 않습니다.
+이 가이드 작성 시 개발 환경의 임시 DB로 `tests/sync/recovery/sync-migrations.test.mjs`와 `tests/transfer/backup.test.mjs`를 실행하여 **8건 통과, 실패·건너뜀 0건**을 확인했습니다. 이는 접속 토큰 도입 전의 v32 migration·백업 코드에 대한 당시 검사 기록이며, 실제 운영 DB의 버전 확인·사본 리허설이나 최종 배포본 전체 검증을 대신하지 않습니다.

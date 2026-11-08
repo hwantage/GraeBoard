@@ -1234,7 +1234,7 @@ export async function runSyncPerformance({
             "scripts/performance/sync-fault-performance.mjs",
             "scripts/performance/sync-peer-performance.mjs",
             "scripts/performance/sync-import-performance.mjs",
-            "tests/sync-performance.test.mjs",
+            "tests/sync/integration/sync-performance.test.mjs",
           ].map((path) => [
             path,
             createHash("sha256").update(readFileSync(path)).digest("hex"),

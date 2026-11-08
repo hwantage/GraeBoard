@@ -13,7 +13,11 @@ import {
 } from "../db.mjs";
 import { canEdit, canManageTeam } from "../../shared/domain.js";
 import { STYLE_KEYS, sameStyle } from "../../shared/formatting/compact.js";
-import { scopeKey, scopeMatches, scopesOverlap } from "../../shared/formatting/formatting.js";
+import {
+  scopeKey,
+  scopeMatches,
+  scopesOverlap,
+} from "../../shared/formatting/formatting.js";
 import { storeCellOperation } from "./cell-operations.mjs";
 import { requireThat, validCellKey } from "../../shared/validation.js";
 

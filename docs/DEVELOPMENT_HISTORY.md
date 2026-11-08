@@ -18,6 +18,12 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #100 P8 검사·fixture/helper 배치와 수집 보존
+
+- 기존 Node/Playwright/helper 168개와 현재 앱 호환성 suite 1개를 기능별로 이동했습니다. 수집기·소스 직접 읽기/변환 로더·재시작 서버·CI와 현재 문서를 갱신하고 legacy schema helper·수동 Deno probe를 support에 보존했습니다.
+- baseline 116개 Node suite에서 전용 전환 2개를 고정 소스로 분리하고 현재 앱 호환성 1개를 추가해 115개를 수집합니다. 일반 3개 suite는 유지했습니다. 이동 전후 브라우저 43개 spec·각 엔진 626건(총 1,878건)의 파일 대응·제목·프로젝트 차이와 Node 누락/중복은 0입니다.
+- 검증: P8 구조 600개/오류 0, 수집/경계/소스 로더 선택 검사 60건 pass/fail 0/skip 0. 고정 소스의 exact Git HEAD/clean tree·원본 hash 변조 실패·누락 history 명시 실패 회귀도 추가했습니다. 전체 Node·빌드·브라우저 결과는 최종 검증 기록에 별도로 남깁니다.
+
 ## 2026-11-09 — #100 P7 개발·배포·운영 도구
 
 - 기존 scripts 33개를 admin/deploy/performance/sync/testing/transfer로 이동했습니다. npm·CI·Playwright webServer·운영 문서·설치 안내의 실행 명령과 소스 기준 상대 경로를 갱신했습니다. CLI의 직접 실행 분기와 환경/데이터 경로 의미는 유지합니다.

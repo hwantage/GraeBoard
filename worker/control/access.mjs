@@ -2,7 +2,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { timingSafeEqual } from "node:crypto";
 
 const keySets = new Map();
-import { HttpError, requireThat as assert } from "../../shared/http/http-error.js";
+import {
+  HttpError,
+  requireThat as assert,
+} from "../../shared/http/http-error.js";
 export { HttpError, assert };
 export function assertOrigin(request, env) {
   let origin;

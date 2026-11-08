@@ -7,7 +7,12 @@ import {
   verifyTransfer,
   portableHash,
 } from "../../../shared/transfer/logical-format.mjs";
-import { canonical, digest, entityId, ENTITIES } from "../../sync/core/protocol.mjs";
+import {
+  canonical,
+  digest,
+  entityId,
+  ENTITIES,
+} from "../../sync/core/protocol.mjs";
 import { SqliteDatabase } from "../sqlite.mjs";
 import { allEntities, materialize } from "../../sync/node/entities.mjs";
 import { applicationEntities } from "../../sync/core/versions.mjs";

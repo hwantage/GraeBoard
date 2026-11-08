@@ -1,7 +1,13 @@
 // Test infrastructure only: never load the frozen runtime into the application.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -83,6 +89,7 @@ export function frozenCutoverSource() {
     )
       throw new Error("Frozen cutover checkout is not clean");
     verifyFrozenCutoverSource(root);
+    appendFileSync(join(root, ".git/info/exclude"), "\n/node_modules\n");
     symlinkSync(
       join(repository, "node_modules"),
       join(root, "node_modules"),

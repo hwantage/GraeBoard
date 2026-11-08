@@ -11,7 +11,10 @@ import {
 import { requireThat, validateCellValue } from "../../../shared/validation.js";
 import { canEdit, canManageTeam, periodYears } from "../../../shared/domain.js";
 import { styleNormalizer, unpack } from "../../../shared/formatting/compact.js";
-import { applyFormatting, replayFormatOperation } from "../../sheet/formatting.mjs";
+import {
+  applyFormatting,
+  replayFormatOperation,
+} from "../../sheet/formatting.mjs";
 import {
   storeCellOperation,
   replayCellOperation,

@@ -23,7 +23,12 @@ import {
 import { digestShared, equal } from "../../../server/sync/core/protocol.mjs";
 import { requireFreeSheetCloneName } from "../../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../../control/access.mjs";
-import { settingsFor, taskList, taskView, stamp } from "../../sheet/task-view.mjs";
+import {
+  settingsFor,
+  taskList,
+  taskView,
+  stamp,
+} from "../../sheet/task-view.mjs";
 import { documentListsUnder } from "../documents/postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../../control/control.mjs";

@@ -53,7 +53,7 @@ test("recursive collection includes each root and deep suite once in sorted POSI
     ...included,
     "tests/ignored.spec.ts",
     "tests/helper.mjs",
-    "tests/worker-sheet-clone-sync-deno.mjs",
+    "tests/support/worker-sheet-clone-sync-deno.mjs",
     "tests/fixtures/fake.test.mjs",
     "tests/calendar/fixtures/nested.test.mjs",
     "tests/browser/fake.test.mjs",

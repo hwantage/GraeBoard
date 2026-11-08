@@ -3,7 +3,7 @@ import { diffArrays, diffChars } from "diff";
 // Both servers list a conflict as `base`/`desired` arrays (one payload per
 // change of the operation) and `current` records keyed by
 // entityId(entity, key). `target` labels the changes "entity k1/k2" joined by
-// ", " (server/sync/node-routes.mjs, worker/admin.mjs). Pair them per change.
+// ", " (server/sync/node/node-routes.mjs, worker/control/admin.mjs). Pair them per change.
 
 const ENTITY_NAMES = {
   task: "업무",
@@ -138,7 +138,7 @@ export function conflictChanges(conflict) {
 
 const SITE_NAMES = { internal: "사내", external: "외부" };
 
-/** "사내" or "외부" for an origin from shared/conflict-origin.js, else "". */
+/** "사내" or "외부" for an origin from shared/sync/conflict-origin.js, else "". */
 export const siteName = (origin) => SITE_NAMES[origin?.site] || "";
 
 /** "김정환 (외부)", "(외부)" when the name is unknown, or "처음 게시본". */

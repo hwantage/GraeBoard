@@ -15,7 +15,10 @@ import {
   verifyTransfer,
 } from "../../../shared/transfer/logical-format.mjs";
 import { canonical, digest, entityId } from "../../sync/core/protocol.mjs";
-import { imageReferences, activeImageReferences } from "../../sync/core/retention.mjs";
+import {
+  imageReferences,
+  activeImageReferences,
+} from "../../sync/core/retention.mjs";
 import { project } from "../../sync/core/reducer.mjs";
 import { postgresHistoryVersion } from "../../../shared/storage/postgres-schema-version.js";
 import { unfinishedJobError } from "../../../shared/transfer/backup-recovery.mjs";

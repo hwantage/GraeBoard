@@ -1,7 +1,13 @@
-import { FILTER_ROUTES, callBusinessRoute } from "../../shared/http/business-routes.js";
+import {
+  FILTER_ROUTES,
+  callBusinessRoute,
+} from "../../shared/http/business-routes.js";
 import { FilterBusinessService } from "../storage/settings/filter-service.mjs";
 import { SqliteFilterRepository } from "../storage/settings/sqlite-filters.mjs";
-export { filtersFor, currentFiltersFor } from "../storage/settings/sqlite-filters.mjs";
+export {
+  filtersFor,
+  currentFiltersFor,
+} from "../storage/settings/sqlite-filters.mjs";
 export function installFilterRoutes(app, options) {
   const repository = new SqliteFilterRepository(options);
   app.locals.filterRepository = repository;

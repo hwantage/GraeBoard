@@ -3009,7 +3009,7 @@
       "reason": "Run original conversion suites against immutable full source"
     },
     {
-      "path": "tests/sheet-clone-frozen-compatibility.test.mjs",
+      "path": "tests/sync/recovery/sheet-clone-frozen-compatibility.test.mjs",
       "phase": "P3",
       "reason": "Existing cutover runtime assertions retained against current app using frozen conversion output"
     }

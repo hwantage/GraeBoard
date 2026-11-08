@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { sheetCloneSyncFixture } from "../../tests/worker-sheet-clone-sync-fixture.mjs";
+import { sheetCloneSyncFixture } from "../../tests/support/worker-sheet-clone-sync-fixture.mjs";
 import { requirePostgresBinaries } from "../testing/test-postgres.mjs";
 import { serviceFor } from "../../worker/sync/sync.mjs";
 import { stateHash } from "../../server/sync/core/protocol.mjs";

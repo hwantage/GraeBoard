@@ -8,7 +8,10 @@ import { performance } from "node:perf_hooks";
 import { openDatabase, json, transaction } from "../../server/db.mjs";
 import { createApp } from "../../server/app.mjs";
 import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
-import { stateHash, protocolVersion } from "../../server/sync/core/protocol.mjs";
+import {
+  stateHash,
+  protocolVersion,
+} from "../../server/sync/core/protocol.mjs";
 import {
   DEFAULT_SETTINGS,
   defaultView,

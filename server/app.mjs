@@ -1,5 +1,8 @@
 import { installLinkTitleRoute } from "./http/link-title.mjs";
-import { installHttpBoundary, installHttpFallback } from "./http/http-boundary.mjs";
+import {
+  installHttpBoundary,
+  installHttpFallback,
+} from "./http/http-boundary.mjs";
 import { installAccessTokenRoutes } from "./auth/access-tokens.mjs";
 import { installLocalAuth } from "./auth/local-auth.mjs";
 import { createSqliteAccess } from "./auth/sqlite-access.mjs";

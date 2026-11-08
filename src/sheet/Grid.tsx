@@ -3,7 +3,10 @@ import { useMobileLayout } from "../ui/useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
-import { explicitStyle, rowFontSize } from "../../shared/formatting/formatting.js";
+import {
+  explicitStyle,
+  rowFontSize,
+} from "../../shared/formatting/formatting.js";
 import {
   Fragment,
   memo,

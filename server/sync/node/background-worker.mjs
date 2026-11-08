@@ -1,6 +1,9 @@
 import { applicationEntities } from "../core/versions.mjs";
 import { syncImageReferences } from "../../../shared/sync/sync-image-references.js";
-import { encodeStoredSnapshot, decodeStoredSnapshot } from "../core/snapshot.mjs";
+import {
+  encodeStoredSnapshot,
+  decodeStoredSnapshot,
+} from "../core/snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { allEntities, readEntity, localPayloadEqual } from "./entities.mjs";

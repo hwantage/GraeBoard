@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { savedFilter, propertiesFor, teamRole } from "../../../shared/domain.js";
+import {
+  savedFilter,
+  propertiesFor,
+  teamRole,
+} from "../../../shared/domain.js";
 import { requireThat, savedFilterSchema } from "../../../shared/validation.js";
 const uuid = z.string().uuid(),
   name = z.string().trim().min(1).max(60);

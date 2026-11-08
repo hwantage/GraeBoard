@@ -9,10 +9,16 @@ import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { GitCliTransport, repositoryUrl } from "../../server/sync/node/git-cli.mjs";
+import {
+  GitCliTransport,
+  repositoryUrl,
+} from "../../server/sync/node/git-cli.mjs";
 import { decodeSnapshot } from "../../server/sync/core/snapshot.mjs";
 import { digest, stateHash } from "../../server/sync/core/protocol.mjs";
-import { reduceMany, validateSnapshot } from "../../server/sync/core/reducer.mjs";
+import {
+  reduceMany,
+  validateSnapshot,
+} from "../../server/sync/core/reducer.mjs";
 import { materialize } from "../../server/sync/node/entities.mjs";
 import {
   openDatabase,

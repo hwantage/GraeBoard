@@ -16,7 +16,11 @@ import {
 } from "../../server/sync/core/protocol.mjs";
 import { project } from "../../server/sync/core/reducer.mjs";
 import { GitHubApiTransport } from "./git.mjs";
-import { R2ImageStore, imageReferences, stillImage } from "../documents/images.mjs";
+import {
+  R2ImageStore,
+  imageReferences,
+  stillImage,
+} from "../documents/images.mjs";
 import {
   DataSession,
   databaseFor,

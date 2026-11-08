@@ -23,7 +23,11 @@ import {
   PROTOCOL,
 } from "../../server/sync/core/protocol.mjs";
 import { assert } from "./access.mjs";
-import { profiles, profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
+import {
+  profiles,
+  profileFor,
+  siteTeamId,
+} from "../../shared/sync/sync-profiles.js";
 import {
   controlTransaction,
   databaseFor,

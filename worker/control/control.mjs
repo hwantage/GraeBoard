@@ -5,7 +5,10 @@ import {
 import { ControlBusinessService } from "../../server/storage/control/control-service.mjs";
 import { deploymentSite } from "../../shared/site/site-mode.js";
 import { PostgresControlRepository } from "../storage/control/postgres-control.mjs";
-import { assertDatabaseCapacity, capacityLimits } from "../storage/capacity.mjs";
+import {
+  assertDatabaseCapacity,
+  capacityLimits,
+} from "../storage/capacity.mjs";
 import {
   DEFAULT_SETTINGS,
   canContribute,
@@ -13,7 +16,11 @@ import {
 } from "../../shared/domain.js";
 import { assert, verifySetupToken, HttpError } from "./access.mjs";
 import { controlTransaction, databaseFor, withData } from "../storage/data.mjs";
-import { profiles, profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
+import {
+  profiles,
+  profileFor,
+  siteTeamId,
+} from "../../shared/sync/sync-profiles.js";
 import { authenticateSite } from "./site-auth.mjs";
 import { R2ImageStore } from "../documents/images.mjs";
 import { profileFields } from "../../shared/identity/profiles.js";
@@ -21,7 +28,10 @@ import { z } from "zod";
 import { withDocumentImageReferences } from "../../shared/documents/document-image-references.js";
 import { imageReferences } from "../documents/images.mjs";
 
-import { PostgresControlStore, userRecord } from "../storage/control/control-store.mjs";
+import {
+  PostgresControlStore,
+  userRecord,
+} from "../storage/control/control-store.mjs";
 export { userRecord } from "../storage/control/control-store.mjs";
 export async function authenticate(env, identity, request) {
   if (siteTeamId(env)) return authenticateSite(env, identity, request);

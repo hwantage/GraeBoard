@@ -288,10 +288,10 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     "worker/entry.mjs",
     'import "../server/storage/tasks/task-service.mjs";\n',
   );
-  const suite = "tests/storage-import-boundaries.test.mjs";
-  mkdirSync(join(f.root, "tests"));
+  const suite = "tests/tooling/storage-import-boundaries.test.mjs";
+  mkdirSync(join(f.root, "tests/tooling"), { recursive: true });
   copyFileSync(
-    new URL("../storage-import-boundaries.test.mjs", import.meta.url),
+    new URL("./storage-import-boundaries.test.mjs", import.meta.url),
     join(f.root, suite),
   );
   symlinkSync(
@@ -380,4 +380,70 @@ test("migration removals reject restored files and overlapping registrations", (
   assert.ok(
     has(f.check({ manifest, migrationPhase: "P3" }), "manifest-removal"),
   );
+});
+
+test("frozen cutover source is a clean exact Git checkout and rejects changed protected bytes", async (t) => {
+  const {
+    frozenCutoverSource,
+    frozenCutoverDefinition,
+    verifyFrozenCutoverSource,
+  } = await import("../support/frozen-cutover-source.mjs");
+  const source = frozenCutoverSource();
+  assert.equal(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: source.root,
+      encoding: "utf8",
+    }).trim(),
+    frozenCutoverDefinition.commit,
+  );
+  assert.equal(
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: source.root,
+      encoding: "utf8",
+    }).trim(),
+    "",
+  );
+  const f = fixture(t);
+  for (const file of [
+    "package-lock.json",
+    ...Object.keys(frozenCutoverDefinition.protectedFiles),
+  ]) {
+    mkdirSync(dirname(join(f.root, file)), { recursive: true });
+    copyFileSync(join(source.root, file), join(f.root, file));
+  }
+  verifyFrozenCutoverSource(f.root);
+  const file = Object.keys(frozenCutoverDefinition.protectedFiles)[0];
+  writeFileSync(join(f.root, file), "changed immutable fixture");
+  assert.throws(
+    () => verifyFrozenCutoverSource(f.root),
+    /Frozen cutover source hash mismatch/,
+  );
+});
+
+test("missing frozen Git history fails with explicit preparation instructions and never skips", (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.root, "tests/support"), { recursive: true });
+  for (const name of [
+    "frozen-cutover-source.mjs",
+    "frozen-cutover-source.json",
+  ])
+    copyFileSync(
+      new URL(`../support/${name}`, import.meta.url),
+      join(f.root, "tests/support", name),
+    );
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      'import { frozenCutoverSource } from "./tests/support/frozen-cutover-source.mjs"; frozenCutoverSource();',
+    ],
+    { cwd: f.root, env, encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Missing frozen cutover commit 7fec065/);
+  assert.match(result.stderr, /git fetch origin/);
+  assert.match(result.stderr, /fetch-depth: 0/);
 });

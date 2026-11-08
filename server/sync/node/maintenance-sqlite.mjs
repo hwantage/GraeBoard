@@ -12,7 +12,10 @@ import { materialize } from "./entities.mjs";
 import { canonical, entityId } from "../core/protocol.mjs";
 import { project } from "../core/reducer.mjs";
 import { applicationEntities } from "../core/versions.mjs";
-import { MaintenanceService, maintenanceRevision } from "../core/maintenance.mjs";
+import {
+  MaintenanceService,
+  maintenanceRevision,
+} from "../core/maintenance.mjs";
 import { requireThat } from "../../../shared/validation.js";
 import { auditImageReferences } from "../core/retention.mjs";
 

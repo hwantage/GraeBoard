@@ -108,19 +108,19 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 1. 기존 릴리스로 DB와 문서 이미지 백업을 만들고 별도 경로에 복구해 확인합니다.
 2. 서버와 다른 DB 쓰기 작업을 중지합니다.
-3. 새 릴리스에서 정확한 대상 경로로 dry-run을 실행합니다. dry-run은 DB 복사본을 변환하고 원본은 바꾸지 않습니다.
+3. 운영 안내에서 준비·검증한 **고정 전체 커밋 checkout**의 도구로 정확한 대상 경로에 dry-run을 실행합니다. 최신 앱의 npm 명령으로 실행하지 않습니다. 환경 파일도 실제 절대 경로를 지정합니다. dry-run은 DB 복사본을 변환하고 원본은 바꾸지 않습니다.
 
 ```sh
-npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
+DB_PATH=/srv/graeboard/data/weekly-plan.sqlite DOCUMENT_IMAGES_DIR=/srv/graeboard/data/document-images node --env-file=/approved/runtime/production.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
 ```
 
 4. 출력의 `from`, `to`, `checksum`, `conversion`을 확인한 뒤 같은 대상에 적용합니다. 사이트 주소로 저장된 절대 `/links/` 링크가 있으면 두 명령 모두 `--site-origin https://주소`를 반복해 지정합니다.
 
 ```sh
-npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite
+DB_PATH=/srv/graeboard/data/weekly-plan.sqlite DOCUMENT_IMAGES_DIR=/srv/graeboard/data/document-images node --env-file=/approved/runtime/production.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database /srv/graeboard/data/weekly-plan.sqlite
 ```
 
-5. 같은 명령을 다시 실행하면 v34임을 확인하고 아무것도 바꾸지 않습니다. 서버를 시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
+5. 같은 고정 도구 명령을 다시 실행하면 v34임을 확인하고 아무것도 바꾸지 않습니다. 그 뒤 새 앱을 배포·시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
 
 새 설치의 빈 경로에는 명시적으로 `--initialize`를 사용합니다. 상위 디렉터리는 실행 계정만 접근할 수 있게 먼저 준비합니다.
 
@@ -648,7 +648,7 @@ NODE
 
 용량 초과 후에는 DB·문서·사본·이미지·outbox와 연결 신원을 보존합니다. 업무 행을 삭제하거나 연결을 해제·재생성해 우회하지 않습니다. 외부 이용자 접근 제한과 Cron 중지를 유지하고, 양쪽 코드·설정을 갱신한 뒤 내부에서 연결 검사를 다시 하고 **같은 연결의 초기 게시를 재시도**합니다. 외부 가져오기가 완료되어 양쪽 head·hash, 미전송 건수, 업무·문서·이미지를 확인한 뒤 이용자 접근과 Cron을 재개합니다. 이전 한도의 실행 코드로 되돌리면 커진 스냅샷을 거절할 수 있으므로 단순 코드 롤백으로 동기화를 재개하지 않습니다.
 
-회귀 검사 `tests/sync-state-capacity.test.mjs`는 **27.88 MiB·30,714개**의 합성 자료(2026-11-02 이전 28.76 MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)로 실제 SQLite 최초 게시 → 로컬 Git/GitHub API 대역 → 외부 `serviceFor` → 임시 PostgreSQL 반영을 확인합니다. 9 MiB 사본과 문서 본문, 게시 전 미전송 2건의 receipt, 전체 상태 해시, 외부 HTTP 셀 저장과 내부 재수신을 검사합니다. 낮은 기존 설정의 거절 시 빈 cursor·DB 보존도 확인합니다. 이는 Node에서 외부 코드를 실행한 검증이며 실제 Supabase/Deno의 CPU·메모리 한도 내 완료를 보장하지 않습니다. 상향한 숫자는 검증 경계이지 메모리 사용량이 아닙니다. 압축 해제·JSON 파싱·해시·PG 저장 중 복사본과 동시 요청이 추가 메모리를 사용하므로 실제 환경의 초기 가져오기·후속 저장·재시도를 확인합니다.
+회귀 검사 `tests/sync/protocol/sync-state-capacity.test.mjs`는 **27.88 MiB·30,714개**의 합성 자료(2026-11-02 이전 28.76 MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)로 실제 SQLite 최초 게시 → 로컬 Git/GitHub API 대역 → 외부 `serviceFor` → 임시 PostgreSQL 반영을 확인합니다. 9 MiB 사본과 문서 본문, 게시 전 미전송 2건의 receipt, 전체 상태 해시, 외부 HTTP 셀 저장과 내부 재수신을 검사합니다. 낮은 기존 설정의 거절 시 빈 cursor·DB 보존도 확인합니다. 이는 Node에서 외부 코드를 실행한 검증이며 실제 Supabase/Deno의 CPU·메모리 한도 내 완료를 보장하지 않습니다. 상향한 숫자는 검증 경계이지 메모리 사용량이 아닙니다. 압축 해제·JSON 파싱·해시·PG 저장 중 복사본과 동시 요청이 추가 메모리를 사용하므로 실제 환경의 초기 가져오기·후속 저장·재시도를 확인합니다.
 
 ## 11. 정리·중단·복구
 
@@ -836,11 +836,11 @@ Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마�
 
 ### 자동 검사와 과거 workerd 측정의 범위
 
-`tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PostgreSQL 경로와 내부 SQLite/Git을 연결합니다. 문서 GET·저장·SSE의 버전 일관성도 검사합니다. Node에서 호출한 Edge handler 검사는 Deno 런타임의 성능 검사가 아니므로 실제 Supabase 함수 배포와 구분합니다.
+`tests/site/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PostgreSQL 경로와 내부 SQLite/Git을 연결합니다. 문서 GET·저장·SSE의 버전 일관성도 검사합니다. Node에서 호출한 Edge handler 검사는 Deno 런타임의 성능 검사가 아니므로 실제 Supabase 함수 배포와 구분합니다.
 
 **이전 전체 Worker 및 workerd 호환 경로**의 전용 검사는 제거했습니다. 아래 수치는 현재 운영 경로의 측정이 아닌 과거 기록입니다. 2026-10-27 소스 `ca4a85d`의 기록에서는 1,000개 업무·총 7,023개 엔티티의 약 3.44 MiB snapshot과 후속 변경을 처리했고, 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아닙니다.
 
-당시 5,000행 거절 단계의 V8 allocated heap+backing 표본은 137,299,355바이트로 128 MiB를 넘었습니다. 이 결과를 production 메모리 안전성의 증거로 사용하지 않습니다. SQL 행 메모리 모델과 대역 GitHub/R2를 사용한 과거 측정이며, 실제 PG 연결·동시 요청·현재 Supabase/Deno 실행의 메모리와 지연은 포함하지 않습니다. 과거 재현 코드는 해당 측정 커밋에 남아 있습니다. 현재 Cloudflare 경계는 `tests/edge-gateway.test.mjs`와 `tests/pages-gateway.test.mjs`로, 외부 업무 흐름은 `tests/team-site.test.mjs`와 `tests/worker-sync-integration.test.mjs`로 검사합니다.
+당시 5,000행 거절 단계의 V8 allocated heap+backing 표본은 137,299,355바이트로 128 MiB를 넘었습니다. 이 결과를 production 메모리 안전성의 증거로 사용하지 않습니다. SQL 행 메모리 모델과 대역 GitHub/R2를 사용한 과거 측정이며, 실제 PG 연결·동시 요청·현재 Supabase/Deno 실행의 메모리와 지연은 포함하지 않습니다. 과거 재현 코드는 해당 측정 커밋에 남아 있습니다. 현재 Cloudflare 경계는 `tests/site/edge-gateway.test.mjs`와 `tests/site/pages-gateway.test.mjs`로, 외부 업무 흐름은 `tests/site/team-site.test.mjs`와 `tests/sync/integration/worker-sync-integration.test.mjs`로 검사합니다.
 
 내부 SQLite 10,000행 시험과 PG 저장 어댑터 직접 호출 시험도 별도 범위입니다. 그 결과를 외부 API가 같은 행 수를 지원한다는 근거로 사용하지 않습니다. 검증 커밋·환경·실행 명령·실패와 제외 범위를 [개발 안내](DEVELOPMENT.md#검증)의 운영 기록과 함께 남깁니다.
 

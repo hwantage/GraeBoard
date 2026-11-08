@@ -8,7 +8,7 @@ const dir = mkdtempSync("/tmp/gb-worker-fault-perf-"),
 try {
   const child = spawn(
     process.execPath,
-    ["--test", "tests/worker-sync-integration.test.mjs"],
+    ["--test", "tests/sync/integration/worker-sync-integration.test.mjs"],
     {
       cwd: process.cwd(),
       env: { ...process.env, WORKER_FAULT_REPORT: report },

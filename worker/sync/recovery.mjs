@@ -8,7 +8,11 @@ import {
 import { project } from "../../server/sync/core/reducer.mjs";
 import { isExcluded } from "../../server/sync/core/retention.mjs";
 import { assert } from "../control/access.mjs";
-import { databaseFor, controlTransaction, DataSession } from "../storage/data.mjs";
+import {
+  databaseFor,
+  controlTransaction,
+  DataSession,
+} from "../storage/data.mjs";
 import { profileFor } from "../../shared/sync/sync-profiles.js";
 import { serviceFor } from "./sync.mjs";
 import { GitHubApiTransport } from "./git.mjs";

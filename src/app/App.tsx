@@ -28,7 +28,11 @@ import {
 } from "../documents/document-links";
 import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
 import useCalendarTheme from "../calendar/useCalendarTheme";
-import { THEMES, getTheme, themeVariables } from "../../shared/formatting/themes.js";
+import {
+  THEMES,
+  getTheme,
+  themeVariables,
+} from "../../shared/formatting/themes.js";
 import { applyBorderPreset } from "../../shared/formatting/borders.js";
 import { formatScopes } from "../sheet/format-selection.js";
 import {
@@ -39,7 +43,10 @@ import {
   sheetChanges,
   type ChangeTargets,
 } from "../sheet/selection-areas.js";
-import { copyRowFormatting, resetCellStyle } from "../../shared/formatting/formatting.js";
+import {
+  copyRowFormatting,
+  resetCellStyle,
+} from "../../shared/formatting/formatting.js";
 import {
   useCallback,
   useEffect,

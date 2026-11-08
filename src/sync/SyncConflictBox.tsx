@@ -8,7 +8,10 @@ import SyncConflictDiff, { type ConflictOrigin } from "./SyncConflictDiff";
 import { busyProps } from "../ui/busyProps";
 import { syncTime } from "./sync-types";
 import type { User } from "../types";
-import { conflictEditors, conflictKinds } from "../../shared/sync/conflict-diff.js";
+import {
+  conflictEditors,
+  conflictKinds,
+} from "../../shared/sync/conflict-diff.js";
 import { syncErrorMessage } from "../../shared/sync/sync-error-message.js";
 import "./team-sync-settings.css";
 
