@@ -289,14 +289,25 @@ export function boundStore(
             await materializeSlice(tx, teamId, {
               ...projection,
               base: options.previousState,
+              onPendingProjection: options.onPendingProjection,
+              incrementalPending: options.incrementalPending,
             });
           else
             await materialize(
               tx,
               teamId,
               incrementalMaterialize && options.previousState
-                ? { ...projection, previousState: options.previousState }
-                : projection,
+                ? {
+                    ...projection,
+                    previousState: options.previousState,
+                    onPendingProjection: options.onPendingProjection,
+                    incrementalPending: options.incrementalPending,
+                  }
+                : {
+                    ...projection,
+                    onPendingProjection: options.onPendingProjection,
+                    incrementalPending: options.incrementalPending,
+                  },
             );
           // C's totals follow every change to C, or are dropped so the next
           // reader measures C again.

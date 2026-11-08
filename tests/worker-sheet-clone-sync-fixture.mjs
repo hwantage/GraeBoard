@@ -19,6 +19,7 @@ import {
 } from "../shared/domain.js";
 import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
 import { serviceFor } from "../worker/sync.mjs";
+import { preparedSyncOperation } from "../server/sync/sync-operation-cache.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { unpack } from "../shared/compact.js";
 import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
@@ -216,18 +217,38 @@ export async function sheetCloneSyncFixture(t, { rows = 480 } = {}) {
     token: "fixture-secret",
     fetch: github.fetch,
   });
-  async function run({ serviceFactory = serviceFor, ...options } = {}) {
+  async function run({
+    serviceFactory = serviceFor,
+    receiveOnly = false,
+    ...options
+  } = {}) {
     const log = console.log,
       parse = JSON.parse;
     const cloneText = canonical(pending[0]);
-    let cloneParses = 0;
+    const clonePayloadText = canonical(
+      pending[0].changes.find((c) => c.entity === "sheetClone").desired,
+    );
+    let cloneParses = 0,
+      siteCloneParses = 0,
+      parsedClone;
     JSON.parse = (text, ...args) => {
       if (text === cloneText) cloneParses++;
-      return parse(text, ...args);
+      if (text === clonePayloadText) siteCloneParses++;
+      const value = parse(text, ...args);
+      if (text === cloneText) parsedClone = value;
+      return value;
     };
     console.log = (...args) =>
       args[0] === "GraeBoard sync phase"
-        ? phases.push(JSON.parse(args[1]))
+        ? phases.push({
+            ...JSON.parse(args[1]),
+            ...(parsedClone
+              ? {
+                  cloneValidated:
+                    !!preparedSyncOperation(parsedClone)?.validated,
+                }
+              : {}),
+          })
         : log(...args);
     const started = performance.now(),
       cpu = process.cpuUsage(),
@@ -238,7 +259,7 @@ export async function sheetCloneSyncFixture(t, { rows = 480 } = {}) {
         profile,
         await pg.adapter.readLink(f.teamId),
         { transport, incrementalMaterialize: true, ...options },
-      ).run({ updateStatus: false });
+      ).run({ updateStatus: false, receiveOnly });
     } finally {
       console.log = log;
       JSON.parse = parse;
@@ -248,6 +269,7 @@ export async function sheetCloneSyncFixture(t, { rows = 480 } = {}) {
       wallMs: performance.now() - started,
       cpuMs: (used.user + used.system) / 1000,
       cloneParses,
+      siteCloneParses,
       phases: phases.slice(firstPhase),
       pending: (await pg.adapter.readPending(f.teamId)).length,
     };
@@ -271,7 +293,7 @@ export async function sheetCloneSyncFixture(t, { rows = 480 } = {}) {
     });
     await f.app.locals.sync.get(f.teamId).run();
   }
-  async function verify() {
+  async function verify({ conflicts = 0 } = {}) {
     await f.app.locals.sync.get(f.teamId).run();
     const external = await pg.adapter.readState(f.teamId),
       internal = inside.readState();
@@ -304,7 +326,7 @@ export async function sheetCloneSyncFixture(t, { rows = 480 } = {}) {
     }
     for (const op of pending)
       assert.equal(internal.receipts[op.opId].result, "applied");
-    assert.equal(Object.keys(external.conflicts).length, 0);
+    assert.equal(Object.keys(external.conflicts).length, conflicts);
     assert.equal((await pg.adapter.readPending(f.teamId)).length, 0);
     const site = await call(`/sheet-clones/${clone.id}`);
     assert.equal(site.tasks.length, rows);

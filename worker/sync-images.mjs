@@ -1,5 +1,6 @@
 import { digest, entityId } from "../server/sync/protocol.mjs";
 import { project } from "../server/sync/reducer.mjs";
+import { pendingNeedsProjection } from "../server/sync/projection.mjs";
 import { installImageReferences } from "../server/sync/retention.mjs";
 import { imageReferences, stillImage } from "./images.mjs";
 const skippedImage = (key, reason) =>
@@ -35,7 +36,11 @@ export function imageSync(database, profile, r2) {
       state,
       head,
       transport,
-      { verifiedImages = new Map(), previousState = null } = {},
+      {
+        verifiedImages = new Map(),
+        previousState = null,
+        onPendingProjection = () => {},
+      } = {},
     ) {
       const snapshot = await database.withTeamTransaction(
         profile.teamId,
@@ -55,8 +60,16 @@ export function imageSync(database, profile, r2) {
       // after it was read may name a receipt it lacks. Such a command's images
       // are still listed from the pending commands below.
       let projection;
+      const replay = pendingNeedsProjection(
+        previousState,
+        state,
+        snapshot.pending,
+      )
+        ? snapshot.pending
+        : [];
+      if (replay.length) onPendingProjection(replay);
       try {
-        projection = project(state, snapshot.pending);
+        projection = project(state, replay);
       } catch {
         projection = { entities: state.entities };
       }
@@ -70,7 +83,7 @@ export function imageSync(database, profile, r2) {
         };
         for (const [id, record] of Object.entries(state.entities))
           if (record !== previousState.entities[id]) changed(id);
-        for (const operation of snapshot.pending)
+        for (const operation of replay)
           for (const change of operation.changes)
             changed(entityId(change.entity, change.key));
       }

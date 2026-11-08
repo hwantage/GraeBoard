@@ -10,6 +10,7 @@ import { isExcluded as excluded } from "../server/sync/retention.mjs";
 import {
   pendingEntityKeys,
   canRetireProjection,
+  pendingNeedsProjection,
 } from "../server/sync/projection.mjs";
 import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
 
@@ -140,16 +141,28 @@ async function siteExclusions(tx, exclusions) {
 export async function materialize(
   tx,
   teamId,
-  { state, pending, exclusions, previousState = null },
+  {
+    state,
+    pending,
+    exclusions,
+    previousState = null,
+    onPendingProjection = () => {},
+    incrementalPending = false,
+  },
 ) {
   exclusions = await siteExclusions(tx, exclusions);
-  const visible = applicationEntities(project(state, pending).entities),
+  const replay =
+    !incrementalPending || pendingNeedsProjection(previousState, state, pending)
+      ? pending
+      : [];
+  if (replay.length) onPendingProjection(replay);
+  const visible = applicationEntities(project(state, replay).entities),
     protectedKeys = pendingEntityKeys(pending),
     site = siteWriter(tx, teamId, visible, exclusions);
   // With the previous canonical state known, only entities whose projection
   // changed need a row comparison; rows that vanished are retired below.
   const previousVisible = previousState
-    ? applicationEntities(project(previousState, pending).entities)
+    ? applicationEntities(project(previousState, replay).entities)
     : null;
   let batch = [];
   for (const id in visible) {
@@ -191,26 +204,41 @@ export async function materialize(
 export async function materializeSlice(
   tx,
   teamId,
-  { base, state, pending, exclusions },
+  {
+    base,
+    state,
+    pending,
+    exclusions,
+    onPendingProjection = () => {},
+    incrementalPending = false,
+  },
 ) {
   exclusions = await siteExclusions(tx, exclusions);
   const keys = new Set();
   for (const [id, record] of Object.entries(state.entities))
     if (record !== base.entities[id]) keys.add(id);
-  const slice = new CanonicalSlice(tx, teamId);
-  await slice.include(pending).load(state);
-  const { state: projected } = reduceSlice(
-    state,
-    pending,
-    null,
-    await slice.context(state),
-  );
+  const replay =
+    !incrementalPending || pendingNeedsProjection(base, state, pending)
+      ? pending
+      : [];
+  let projected = state;
+  if (replay.length) {
+    onPendingProjection(replay);
+    const slice = new CanonicalSlice(tx, teamId);
+    await slice.include(replay).load(state);
+    ({ state: projected } = reduceSlice(
+      state,
+      replay,
+      null,
+      await slice.context(state),
+    ));
+  }
   const visible = applicationEntities(projected.entities),
     protectedKeys = pendingEntityKeys(pending),
     site = siteWriter(tx, teamId, visible, exclusions);
   for (const [id, record] of Object.entries(projected.entities))
     if (record !== state.entities[id]) keys.add(id);
-  for (const op of pending)
+  for (const op of replay)
     for (const change of op.changes)
       keys.add(entityId(change.entity, change.key));
   const records = [],

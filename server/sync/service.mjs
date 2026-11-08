@@ -28,6 +28,7 @@ import {
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
 import { withSyncOperationCache } from "./sync-operation-cache.mjs";
+import { pendingNeedsProjection } from "./projection.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../shared/document-image-references.js";
 import {
@@ -289,6 +290,22 @@ export class SyncService {
     };
     for (const commit of chain.slice(0, limit)) {
       if (this.workExhausted()) break;
+      let projectionBytes = 0;
+      const onPendingProjection = (pending) => {
+        if (this.runBytes === null || !Number.isFinite(this.maxRunBytes))
+          return;
+        const bytes = pending.reduce(
+          (n, op) => n + Buffer.byteLength(canonical(op)),
+          0,
+        );
+        // Image and transactional projection each read fresh P. Count the
+        // largest replayed P once for this commit, including concurrent saves.
+        if (bytes > projectionBytes) {
+          this.chargeBytes(bytes - projectionBytes);
+          projectionBytes = bytes;
+          this.mark("pendingProjection", { operations: pending.length, bytes });
+        }
+      };
       let previousState = state,
         slice = false;
       const parent = link.canonical_head || null;
@@ -560,7 +577,6 @@ export class SyncService {
           // Use the received bytes: serializing untrusted input here would
           // repeat reducer work and bypass protocolValidation's error mapping.
           this.chargeBytes(envelopeBytes.byteLength);
-          this.chargeOperations(cover);
           const reduced = await this.reduceCanonical(
             envelope.operations,
             { ...this.identity, protocol: envelope.protocol },
@@ -573,6 +589,8 @@ export class SyncService {
             },
           );
           ({ previousState, state, slice } = reduced);
+          if (pendingNeedsProjection(previousState, state, cover))
+            onPendingProjection(cover);
           operations = envelope.operations.map((op) => op.opId);
           // A peer with the state sum sends it (and the whole-state hash
           // when it holds C in memory); an older peer sends only the hash.
@@ -602,14 +620,18 @@ export class SyncService {
       if (this.runBytes !== null && Number.isFinite(this.maxRunBytes)) {
         if (!parent || transition) this.runBytes += stateSize.bytes;
         // Checkpoints still project P while advancing C's head.
-        if (parent && !operations.length)
-          this.chargeOperations(await this.store.readPending());
+        if (parent && !operations.length) {
+          const pending = await this.store.readPending();
+          if (pendingNeedsProjection(previousState, state, pending))
+            onPendingProjection(pending);
+        }
       }
       if (!this.deferImages)
         await this.images?.receive?.(state, commit.oid, this.transport, {
           added,
           verifiedImages,
           previousState: parent ? previousState : null,
+          onPendingProjection,
         });
       this.mark("receiveImages");
       await this.store.commitCanonical(parent, commit.oid, state, operations, {
@@ -620,6 +642,8 @@ export class SyncService {
         stateSize,
         slice,
         mark: this.mark,
+        onPendingProjection,
+        incrementalPending: !!parent && link.mode === "active" && !transition,
       });
       this.mark("commitCanonical", { commit: commit.oid });
       if (this.budget !== null) this.budget--;
@@ -770,14 +794,8 @@ export class SyncService {
             this.maxRunBytes - this.runBytes,
           );
           if (!pending.length) break;
-          if (
-            this.runBytes > 0 &&
-            Buffer.byteLength(canonical(pending[0])) >
-              this.maxRunBytes - this.runBytes
-          ) {
-            this.mark("yield", { bytes: this.runBytes });
-            break;
-          }
+          // As in receive(), finish the first atomic command even if it
+          // crosses the remaining allowance after small independent work.
           this.chargeOperations(pending);
           traced = true;
           // Details cost a pass over the batch and C, so only a trace pays it.

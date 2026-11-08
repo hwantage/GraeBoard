@@ -1,11 +1,132 @@
 import test from "node:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { sheetCloneSyncFixture } from "./worker-sheet-clone-sync-fixture.mjs";
 import { createPublisher } from "../worker/sync.mjs";
+import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
 import { defaultView } from "../shared/domain.js";
+
+test(
+  "continuous small remote commits cannot starve the large external clone or its document edits",
+  {
+    skip: !existsSync(join(process.env.TEST_PG_BIN || "", "postgres")),
+    timeout: 180000,
+  },
+  async (t) => {
+    const f = await sheetCloneSyncFixture(t);
+    for (let i = 0; i < 3; i++) await f.remoteEdit(`backlog-${i}`);
+    const cycles = [];
+    for (let i = 0; i < 6; i++) {
+      await f.remoteEdit(`continuous-${i}`);
+      const result = await f.run();
+      cycles.push(result);
+      assert.equal((await f.pg.adapter.readLink(f.teamId)).lease_owner, null);
+      if (!result.pending) break;
+    }
+    console.log(
+      "continuous clone sync measurement",
+      JSON.stringify({ ...f.metrics, cycles }),
+    );
+    assert.equal(
+      cycles.at(-1).pending,
+      0,
+      "large P must drain while a new remote commit arrives before every hosted cycle",
+    );
+    assert.deepEqual(
+      cycles.map((r) => r.pending),
+      [3, 0],
+    );
+    for (const result of cycles) {
+      assert.ok(result.cloneParses <= 1);
+      const receivePhases = result.phases.filter(
+        (p) => p.phase === "receiveImages",
+      );
+      assert.ok(
+        receivePhases.every(
+          (p) => p.cloneValidated === false || p.cloneValidated === undefined,
+        ),
+        "unrelated receives must not replay the large pending clone",
+      );
+    }
+    assert.equal(
+      cycles[0].siteCloneParses,
+      1,
+      "the large site row is compared only for its own publication, never for unrelated receives",
+    );
+    await f.verify();
+  },
+);
+
+test(
+  "a save after image receive is replayed transactionally and charged before any large publication",
+  {
+    skip: !existsSync(join(process.env.TEST_PG_BIN || "", "postgres")),
+    timeout: 180000,
+  },
+  async (t) => {
+    const f = await sheetCloneSyncFixture(t);
+    const current = (
+      await f.call(`/tasks?teamId=${f.teamId}&year=2026`)
+    ).tasks.find((task) => task.id === f.taskIds[0]);
+    await f.remoteEdit("concurrent-input");
+    const commit = PostgresDatabase.prototype.commitCanonical;
+    let saved;
+    PostgresDatabase.prototype.commitCanonical = async function (...args) {
+      if (args[0] === f.teamId && !saved) {
+        await f.call("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            {
+              taskId: current.id,
+              key: "title",
+              value: "Concurrent external title",
+              expectedVersion: current.cells.title.version,
+            },
+          ],
+        });
+        saved = (await f.pg.adapter.readPending(f.teamId)).at(-1);
+      }
+      return commit.apply(this, args);
+    };
+    let first;
+    try {
+      first = await f.run();
+    } finally {
+      PostgresDatabase.prototype.commitCanonical = commit;
+    }
+    assert.ok(saved);
+    assert.equal(first.pending, 5);
+    assert.equal(
+      first.phases.filter((p) => p.phase === "createCandidate").length,
+      0,
+    );
+    assert.ok(
+      first.phases.some(
+        (p) =>
+          p.phase === "pendingProjection" &&
+          p.operations === 5 &&
+          p.bytes > f.metrics.operationBytes[0],
+      ),
+    );
+    for (
+      let i = 0;
+      i < 5 && (await f.pg.adapter.readPending(f.teamId)).length;
+      i++
+    )
+      await f.run();
+    await f.verify({ conflicts: 1 });
+    const state = await f.pg.adapter.readState(f.teamId);
+    assert.equal(state.receipts[saved.opId].result, "conflict");
+    assert.equal(
+      canonical(state.conflicts[saved.opId].operation),
+      canonical(saved),
+    );
+  },
+);
 
 for (const backlog of [0, 3])
   test(
@@ -34,19 +155,13 @@ for (const backlog of [0, 3])
           "the same immutable large outbox JSON must parse once per run",
         );
         assert.ok(
-          result.phases.filter((p) => p.phase === "commitCanonical").length <=
-            1,
-          "large P is projected for at most one received commit per hosted run",
-        );
-        assert.ok(
-          !(
-            result.phases.some((p) => p.phase === "commitCanonical") &&
-            result.phases.some((p) => p.phase === "createCandidate")
-          ),
-          "a large receive must finish before publishing in another invocation",
+          result.phases
+            .filter((p) => p.phase === "receiveImages")
+            .every((p) => !p.cloneValidated),
+          "unrelated receives leave the large projection in its site rows",
         );
       }
-      assert.equal(cycles.length, backlog + 2);
+      assert.equal(cycles.length, 2);
     },
   );
 
