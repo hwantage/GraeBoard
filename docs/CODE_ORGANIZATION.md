@@ -47,7 +47,9 @@
 
 새 예외가 필요하면 해당 PR에 정확한 경로, 필요한 이유, 사용처·실행 환경, 적용 범위를 기록하고 이 문서의 예외 기준도 함께 갱신합니다. 단지 기존에 비슷한 이름이 있다는 이유로 예외를 늘리지 않습니다.
 
-SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, `tools/sheet-clone-cutover/cutover.mjs`, `tools/sheet-clone-cutover/convert.mjs`, `tools/sheet-clone-cutover/names.mjs`, `tools/sheet-clone-cutover/markdown-links.mjs`의 정확한 경로와 이름을 유지합니다. 이 가이드 확정과 병행해 검증한 오프라인 Node CLI이며, `cutover:sheet-clone` 명령과 전환 검사만 사용하고 앱·Edge 런타임은 의존하지 않습니다. 실행 기록의 `toolDigest`와 전환 재개에 같은 도구가 필요하므로 배치 리팩토링에서 이동·개명하지 않습니다. 개발·운영 전환을 모두 마친 뒤 [정리 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)에 따라 도구와 이 예외를 함께 제거합니다. 다른 도구나 새 범용 파일명까지 허용하는 예외는 아닙니다.
+SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, `tools/sheet-clone-cutover/cutover.mjs`, `tools/sheet-clone-cutover/convert.mjs`, `tools/sheet-clone-cutover/names.mjs`, `tools/sheet-clone-cutover/markdown-links.mjs`의 정확한 경로·이름·바이트를 유지합니다. 오프라인 Node CLI이며, `cutover:sheet-clone` 명령과 변환·migration 회귀 검사가 사용하고 앱·Edge 런타임은 의존하지 않습니다. `toolDigest()`는 `convert.mjs`·`cutover.mjs`·`markdown-links.mjs`·`names.mjs`의 이름과 바이트를 해시합니다. **import 경로만 수정해도 실행 기록과 해시가 달라져 전환을 재개할 수 없습니다.** 도구가 참조하는 공통·서버·동기화 모듈을 옮기기 전에 개발·운영 전환 완료 기록과 [정리 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)에 따른 별도 정리 커밋을 확인합니다. 이슈 #100의 P0~P3은 먼저 진행할 수 있고 P4 전에 이 조건을 확인합니다. 정리 변경은 일반 검사에 남은 도구 의존성까지 해소하고 도구와 이 예외를 함께 제거합니다. 다른 도구나 새 범용 파일명까지 허용하는 예외는 아닙니다.
+
+`tests/fixtures/sheet-clone-legacy/`의 11개 파일도 정리 전까지 경로·바이트를 보존합니다. 생성기 `generate-f744ead.mjs`는 과거 `f744ead` 코드 전용이므로 내부의 옛 경로·명칭을 현재 코드에 맞추거나 fixture를 재생성하지 않습니다. 전환 검사 `tests/sheet-clone-conversion.test.mjs`·`tests/sheet-clone-cutover.test.mjs`는 원래 경로와 수집을 유지하되 일반 모듈의 import는 갱신할 수 있습니다. `tests/postgres-legacy-schema.mjs`·`tests/sqlite-legacy-schema.mjs`의 옛 명칭은 migration 검사에 필요하므로 유지하며, 별도 호출자 확인 없이 이 helper들을 일회성 도구와 함께 삭제하지 않습니다.
 
 ## 3. 새 파일의 위치를 정하는 순서
 
@@ -122,7 +124,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 
 가이드 문서와 진입 링크를 먼저 반영하고, 리팩토링 이슈에서 그 버전·검토 결과를 기록합니다. 파일명 유지, 폴더 책임, 공유·런타임 경계가 정리되기 전에 소스를 이동하지 않습니다. 이 가이드의 추가는 운영 배포나 데이터 변경 지시를 대신하지 않습니다.
 
-진행 중인 명칭 교정과 충돌하는 영역은 해당 변경이 반영된 최신 기준에서 경로를 다시 조사합니다. [#97의 `Report → SheetClone`](https://github.com/hwantage/GraeBoard/issues/97)은 별도 도메인 명칭 교정입니다. 폴더 이동 때문에 접두어를 없애는 것과 구분하며, 이 리팩토링에서 그 API·DB·동기화 전환을 반복하지 않습니다. [#98의 인사이트](https://github.com/hwantage/GraeBoard/issues/98)처럼 새 기능도 이 가이드에 따라 배치하고 이미 있는 구현을 재사용합니다.
+[#97의 `Report → SheetClone`](https://github.com/hwantage/GraeBoard/issues/97)은 [PR #99](https://github.com/hwantage/GraeBoard/pull/99)로 `main`에 병합됐습니다. 이슈 #100은 이를 반영한 `cda2212` 기준의 현재 파일 목록을 사용하며 `sheet-clone-*`·`useSheetCloneDraft.ts` 등 병합된 이름과 공개 계약을 그대로 유지합니다. 이 리팩토링에서 API·DB·동기화 전환을 반복하지 않으며, 코드 병합과 개발·운영 데이터 전환 완료는 구분합니다. 이후 병행 변경이 반영되면 최신 기준의 차이만 대응표에 적용합니다. [#98의 인사이트](https://github.com/hwantage/GraeBoard/issues/98)처럼 새 기능도 이 가이드에 따라 배치하고 이미 있는 구현을 재사용합니다.
 
 ### 이동 전 대응표를 작성합니다
 
@@ -156,7 +158,7 @@ npm run build:edge
 
 변경 파일의 포맷과 `git diff --check`를 확인하고, `git diff --find-renames`로 이동과 의도하지 않은 내용 변경을 검토합니다. API URL, 영속 저장 키·형식, DB·migration, 이미지 경로, 권한, 자동 저장·실행취소·동기화 동작을 바꾸지 않았는지 확인합니다. DB·저장 형식 변경이 실제로 필요하면 [DB 변경 지침](DATABASE_CHANGES.md)을 별도로 따릅니다.
 
-각 묶음이 반영될 때 [개발 안내의 실제 구조](DEVELOPMENT.md#구조)와 관련 문서의 현재 경로를 갱신하고 변경·검증 이력을 남깁니다. 예전 경로의 재노출 파일을 상시 남겨 두거나, 같은 역할의 구·신 구현이 병존한 상태를 완료로 처리하지 않습니다.
+각 묶음이 반영될 때 [개발 안내의 실제 구조](DEVELOPMENT.md#구조)와 관련 문서의 현재 경로를 갱신하고, 날짜별 기록은 [변경·검증 이력](DEVELOPMENT_HISTORY.md)에 남깁니다. 과거 기록의 경로·검증 결과를 현재 구현처럼 고쳐 쓰지 않습니다. 예전 경로의 재노출 파일을 상시 남겨 두거나, 같은 역할의 구·신 구현이 병존한 상태를 완료로 처리하지 않습니다.
 
 ## 8. 이후 유지보수와 완료 기준
 
@@ -174,7 +176,7 @@ npm run build:edge
 
 후속 리팩토링에는 신규·이동 파일의 범용 이름과 중복 이름 검사, 기존 import 경계 검사 연계를 포함합니다. 기존 예외는 정확한 경로로 한정하고, 새 위반을 넣었을 때 검사가 실제 실패하는지도 확인합니다. **이 문서만으로 자동 검사가 설치된 것은 아닙니다.** 검사 구현·실행 경로 연결·실패 사례 검증을 이슈에서 추적합니다.
 
-명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
+명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`, `tools/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 한시적 전환 도구·원본 fixture는 정확한 경로와 기준 커밋의 SHA-256으로 보존 여부를 검사하며, `tools/` 전체를 제외하지 않습니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
 
 검사기는 위반 시 규칙·경로·원인을 출력하고 실패해야 하며, 예외나 소스를 자동 수정하지 않습니다. 범용 이름의 기본 목록은 `types`, `utils`, `helpers`, `constants`, `styles`, `components`, `service`, `storage`, `index`입니다. 정확한 경로로 등록한 기존 예외만 허용하고, 새 중복 파일·미등록 폴더·지워진 파일의 예외 등록을 검출합니다. 이름에서 확장자만 다른 경우는 역할 검토 대상으로 구분합니다.
 
