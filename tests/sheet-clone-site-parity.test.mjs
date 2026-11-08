@@ -217,3 +217,37 @@ test("an external import into a copy keeps the 20,000-task bound before it write
     before,
   );
 });
+
+test("an external copy renamed to the normalized form of its own stored name keeps it, and another copy cannot take it", async (t) => {
+  const site = await external(t);
+  if (!site) return;
+  const { api, create, stored, copies } = site;
+  const name = "자기 사본";
+  const own = await create(name),
+    other = await create("다른 사본");
+  assert.ok(own.status < 300, JSON.stringify(own));
+  assert.ok(other.status < 300, JSON.stringify(other));
+  // An earlier save kept the decomposed form of the name.
+  await stored(own.data.id, (payload) => ({
+    ...payload,
+    name: name.normalize("NFD"),
+  }));
+  const row = async (id) =>
+    (await copies()).find((r) => r.entity_key === JSON.stringify([id]));
+  const otherBefore = await row(other.data.id);
+  const renamed = await api(
+    `/sheet-clones/${own.data.id}/name`,
+    { name, expectedName: name.normalize("NFD") },
+    "PATCH",
+  );
+  assert.equal(renamed.status, 200, JSON.stringify(renamed));
+  assert.equal(JSON.parse((await row(own.data.id)).payload).name, name);
+  duplicate(
+    await api(
+      `/sheet-clones/${other.data.id}/name`,
+      { name: ` ${name.normalize("NFD")} `, expectedName: "다른 사본" },
+      "PATCH",
+    ),
+  );
+  assert.deepEqual(await row(other.data.id), otherBefore);
+});

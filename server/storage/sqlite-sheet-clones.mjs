@@ -242,7 +242,7 @@ export class SqliteSheetCloneRepository {
         "사본 이름이 변경되었습니다. 목록을 다시 불러오세요.",
       );
       if (row.name !== data.name)
-        requireUniqueSheetCloneName(db, row.team_id, data.name);
+        requireUniqueSheetCloneName(db, row.team_id, data.name, row.id);
       db.prepare("UPDATE sheet_clones SET name=? WHERE id=?").run(
         data.name,
         row.id,

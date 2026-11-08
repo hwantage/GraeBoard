@@ -333,7 +333,7 @@ test("credential API enforces admin/team scope, encrypts and invalidates only an
   );
 });
 
-test("connection check names a missing internal token and setup sheetClones an environment token", async (t) => {
+test("connection check names a missing internal token and setup reports an environment token", async (t) => {
   const f = await fixture(t),
     tokenEnv = "GRAEBOARD_SETUP_TEST_TOKEN";
   t.after(() => delete process.env[tokenEnv]);
@@ -968,7 +968,7 @@ test("profiles saved after an env-file restart apply immediately and keep saving
   assert.equal((await f.api(routeB)).data.installed, true);
 });
 
-test("setup refuses a profile list that would not boot and sheetClones an unwritable file", async (t) => {
+test("setup refuses a profile list that would not boot and reports an unwritable file", async (t) => {
   const f = await fixture(t);
   // An operator-edited profile that the service would reject at startup must
   // not be written back, and must not be applied to the running service.

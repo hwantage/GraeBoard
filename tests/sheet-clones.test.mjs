@@ -487,6 +487,40 @@ test("사본 제목은 생성·이름 변경에서 50자까지 저장하고 초�
   assert.equal(renamed.data.name, "나".repeat(50));
 });
 
+test("사본 이름을 저장된 자기 이름의 정규화 형태로 바꾸면 저장하고, 다른 사본과 같은 이름은 거절한다", async (t) => {
+  const f = await fixture(t);
+  const name = "자기 사본";
+  const own = await f.save(name),
+    other = await f.save("다른 사본");
+  assert.equal(own.status, 201);
+  assert.equal(other.status, 201);
+  // An earlier save kept the decomposed form of the name.
+  f.db
+    .prepare("UPDATE sheet_clones SET name=? WHERE id=?")
+    .run(name.normalize("NFD"), own.data.id);
+  const otherBefore = storedSheetClone(f.db, other.data.id);
+  const renamed = await f.request(`/sheet-clones/${own.data.id}/name`, {
+    method: "PATCH",
+    body: { name, expectedName: name.normalize("NFD") },
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.data));
+  assert.equal(
+    f.db.prepare("SELECT name FROM sheet_clones WHERE id=?").get(own.data.id)
+      .name,
+    name,
+  );
+  const duplicate = await f.request(`/sheet-clones/${other.data.id}/name`, {
+    method: "PATCH",
+    body: { name: ` ${name.normalize("NFD")} `, expectedName: "다른 사본" },
+  });
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.data.error, /같은 이름의 사본/);
+  assert.deepEqual(duplicate.data.details, {
+    code: "DUPLICATE_SHEET_CLONE_NAME",
+  });
+  assert.deepEqual(storedSheetClone(f.db, other.data.id), otherBefore);
+});
+
 test("스냅샷 이름은 팀 안에서 연도·기준일과 무관하게 유일하고 동시 저장도 중복을 만들지 않는다", async (t) => {
   const f = await fixture(t);
   const name = "한글 보고서";

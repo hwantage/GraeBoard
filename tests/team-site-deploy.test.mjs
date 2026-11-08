@@ -259,7 +259,7 @@ test("the workers.dev address belongs to the deployed Worker name", () => {
   assert.equal(workerOrigin("no address", "graeboard-team"), "");
 });
 
-test("--check masks every token and key in GitHub Actions and sheetClones missing values", () => {
+test("--check masks every token and key in GitHub Actions and reports missing values", () => {
   const { secrets, env } = siteEnv();
   const check = (extra) =>
     spawnSync(process.execPath, ["scripts/team-site-deploy.mjs", "--check"], {

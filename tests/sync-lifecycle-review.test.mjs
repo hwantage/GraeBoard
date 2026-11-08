@@ -169,7 +169,7 @@ if (existsSync(${JSON.stringify(acquired)})) {
 }
 
 for (const worker of ["timeout", "exit"])
-  test(`H5 actual background ${worker} sheetClones failure, releases its lease, preserves pending and restarts successfully`, async (t) => {
+  test(`H5 actual background ${worker} reports failure, releases its lease, preserves pending and restarts successfully`, async (t) => {
     const f = await fixture(t, { worker });
     const pending = f.db
       .prepare("SELECT op_id,payload FROM sync_outbox ORDER BY local_seq")

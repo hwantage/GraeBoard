@@ -9,12 +9,18 @@ import { sheetCloneNameSchema } from "../shared/validation.js";
 
 // Call inside the insertion's BEGIN IMMEDIATE transaction so two writers cannot
 // both claim a name. Compare stored names too, including decomposed Korean text.
-export function requireUniqueSheetCloneName(db, teamId, name) {
+// A copy being renamed (renamedId) is not its own duplicate.
+export function requireUniqueSheetCloneName(
+  db,
+  teamId,
+  name,
+  renamedId = null,
+) {
   const normalized = sheetCloneNameSchema.parse(name);
   requireFreeSheetCloneName(
     db
-      .prepare("SELECT name FROM sheet_clones WHERE team_id=?")
-      .all(teamId)
+      .prepare("SELECT name FROM sheet_clones WHERE team_id=? AND id IS NOT ?")
+      .all(teamId, renamedId)
       .map((sheetClone) => sheetClone.name),
     normalized,
   );

@@ -566,7 +566,7 @@ for (const copy of [false, true]) {
       const path = new URL(req.url()).pathname;
       if (
         ["POST", "PUT", "PATCH", "DELETE"].includes(req.method()) &&
-        /\/api\/(cells|tasks|sheetClones|teams\/[^/]+\/years\/\d+\/memos)(\/|$)/.test(
+        /\/api\/(cells|tasks|sheet-clones|teams\/[^/]+\/years\/\d+\/memos)(\/|$)/.test(
           path,
         )
       )

@@ -406,29 +406,37 @@ for (const [label, from, to, port] of [
       assert.ok(traced.some((sql) => /\bsync_conversions\b/.test(sql || "")));
       assert.deepEqual(snapshotReads(), []);
       // Nor does a disconnected site reconnect ahead of the transition: its
-      // differences from C would be enqueued and published before it.
-      const local = () =>
-        JSON.stringify([
-          db.prepare("SELECT * FROM sync_outbox ORDER BY local_seq").all(),
+      // differences from C would be enqueued and published before it. The
+      // existing pause takes it back to paused with its data as it was, and
+      // the transition below then completes on it.
+      const business = () =>
+          JSON.stringify(
+            [
+              "SELECT * FROM cells ORDER BY task_id,key",
+              "SELECT id,name,data FROM sheet_clones ORDER BY id",
+              "SELECT * FROM sync_outbox ORDER BY local_seq",
+              "SELECT base_head,result_hash,completed_head FROM sync_conversions",
+            ].map((sql) => db.prepare(sql).all()),
+          ),
+        link = () =>
           db
             .prepare(
-              "SELECT mode,generation,canonical_head FROM team_sync_links WHERE team_id=?",
+              "SELECT mode,canonical_head FROM team_sync_links WHERE team_id=?",
             )
-            .get(teamId),
-        ]);
-      db.prepare(
-        "UPDATE team_sync_links SET mode='disconnected' WHERE team_id=?",
-      ).run(teamId);
-      app.locals.sync.capture.refresh();
-      const disconnected = local(),
-        reconnect = await inside(`/teams/${teamId}/sync/reconnect`, {});
+            .get(teamId);
+      const kept = business();
+      ok(await inside(`/teams/${teamId}/sync/disconnect`, {}));
+      assert.equal(link().mode, "disconnected");
+      const reconnect = await inside(`/teams/${teamId}/sync/reconnect`, {});
       assert.equal(reconnect.status, 409, JSON.stringify(reconnect));
       assert.equal(reconnect.data.error, CONVERSION_PENDING_MESSAGE);
-      assert.equal(local(), disconnected);
-      db.prepare(
-        "UPDATE team_sync_links SET mode='paused' WHERE team_id=?",
-      ).run(teamId);
-      app.locals.sync.capture.refresh();
+      assert.equal(link().mode, "disconnected");
+      ok(await inside(`/teams/${teamId}/sync/pause`, {}));
+      assert.deepEqual(
+        { ...link() },
+        { mode: "paused", canonical_head: base.head },
+      );
+      assert.equal(business(), kept);
       // A wrong expectation changes nothing.
       const confirmation = {
         expectedHead: base.head,

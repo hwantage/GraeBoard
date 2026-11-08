@@ -56,7 +56,7 @@ for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
         password: "local-peer-password",
       });
       let sheetCloneId = "";
-      if (kind.startsWith("sheetClone"))
+      if (kind.startsWith("sheet-clone"))
         sheetCloneId = (
           await request(page, "/sheet-clones", "POST", {
             teamId: team.id,
@@ -67,6 +67,8 @@ for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
             taskIds: [task.id],
           })
         ).id;
+      // Only "task" and "memo" are the original's documents.
+      expect(!!sheetCloneId).toBe(!["task", "memo"].includes(kind));
       const memo = kind.endsWith("memo");
       const id = memo ? randomUUID() : "main";
       const collection = memo
@@ -117,6 +119,14 @@ for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
           .click();
         await expect(source(p)).toHaveValue("첫 문단\n\n둘째 문단\n");
       }
+      // Every body save of both editors, to show which API this variant uses.
+      const saves: string[] = [];
+      for (const p of [page, peer])
+        p.on("request", (r) => {
+          const { pathname } = new URL(r.url());
+          if (r.method() === "PUT" && /\/(documents|memos)\//.test(pathname))
+            saves.push(pathname);
+        });
       await open(page);
       await open(peer);
       // Hold local autosave during IME; the remote change must wait, then merge.
@@ -226,6 +236,14 @@ for (const kind of ["task", "sheet-clone-task", "memo", "sheet-clone-memo"]) {
       await expect(
         peer.getByRole("textbox", { name: `${label} 리치 편집`, exact: true }),
       ).toContainText("추가 문단");
+      expect(saves.length).toBeGreaterThan(0);
+      expect(
+        saves.filter((path) =>
+          sheetCloneId
+            ? !path.startsWith(`/api/sheet-clones/${sheetCloneId}/`)
+            : path.startsWith("/api/sheet-clones/"),
+        ),
+      ).toEqual([]);
     } finally {
       await context.close();
     }

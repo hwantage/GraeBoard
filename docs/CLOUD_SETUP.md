@@ -95,7 +95,7 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 전용 DB 접속 URL과 GitHub 토큰은 Supabase Edge Secrets에 보관합니다. Supabase 기본 `SUPABASE_DB_URL`을 사용할 때는 별도 DB Secret을 만들지 않습니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
 
-## 3. SQLite v29·v30·v31을 v32로 올리기
+## 3. SQLite v29~v33을 v34로 올리기
 
 실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32 → v33 → v34**입니다. 일반 서버 시작은 기존 v29~v33 DB를 자동 변환하지 않습니다. v34는 사본 명칭 전환을 포함하므로 `--site-origin`과 실행 조건은 [운영 안내: 사본 명칭 일괄 전환](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)을 따릅니다.
 
@@ -130,7 +130,7 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 
 팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. Edge Function은 PostgreSQL에 직접 연결하므로 Hyperdrive·Supabase Data API·Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
 
-**신규 외부 DB는 Supabase 웹 화면만으로 초기화할 수 있습니다.** 설정 안내의 Supabase 단계(시스템 관리자)가 이 팀 UUID·이름을 넣은 **외부 DB 초기화 SQL**을 보여 줍니다. 내부 서버의 `GET /api/admin/teams/:id/external-db-sql`이 아래 명령의 빈 DB 초기화와 같은 migration SQL·순서·checksum을 한 트랜잭션 스크립트로 만들며, 새 프로젝트의 **SQL Editor**에 전체를 붙여 넣고 **Run**합니다(RLS 확인 창은 **Run without RLS**). `graeboard`·`graeboard_site`에 테이블이 하나라도 있으면 아무것도 바꾸지 않고 멈추고, 중간 실패는 전체 롤백합니다. 마지막 결과 표에서 `team_uuid`·`site_version` 3·`team_version` 2를 확인합니다. 스크립트는 두 스키마에서 `PUBLIC`·`anon`·`authenticated` 권한을 회수하고 `graeboard_app` 역할이 있으면 아래와 같은 권한을 줍니다. 기존 외부 DB 업그레이드는 이 스크립트가 아니라 아래 명령이나 업그레이드 절차를 따릅니다.
+**신규 외부 DB는 Supabase 웹 화면만으로 초기화할 수 있습니다.** 설정 안내의 Supabase 단계(시스템 관리자)가 이 팀 UUID·이름을 넣은 **외부 DB 초기화 SQL**을 보여 줍니다. 내부 서버의 `GET /api/admin/teams/:id/external-db-sql`이 아래 명령의 빈 DB 초기화와 같은 migration SQL·순서·checksum을 한 트랜잭션 스크립트로 만들며, 새 프로젝트의 **SQL Editor**에 전체를 붙여 넣고 **Run**합니다(RLS 확인 창은 **Run without RLS**). `graeboard`·`graeboard_site`에 테이블이 하나라도 있으면 아무것도 바꾸지 않고 멈추고, 중간 실패는 전체 롤백합니다. 마지막 결과 표에서 `team_uuid`·`site_version` 3·`team_version` 3을 확인합니다. 스크립트는 두 스키마에서 `PUBLIC`·`anon`·`authenticated` 권한을 회수하고 `graeboard_app` 역할이 있으면 아래와 같은 권한을 줍니다. 기존 외부 DB 업그레이드는 이 스크립트가 아니라 아래 명령이나 업그레이드 절차를 따릅니다.
 
 명령으로 초기화할 때는 앱 소스가 있고 인터넷에 연결된 운영자 PC에서 `npm ci` 후 실행합니다. 아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
 

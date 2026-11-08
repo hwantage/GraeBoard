@@ -281,7 +281,9 @@ async function execute(ctx, command, body, sheetCloneId) {
           );
           if (row.payload.name !== name)
             requireFreeSheetCloneName(
-              (await sheetCloneSummaries(s)).map((r) => r.payload.name),
+              (await sheetCloneSummaries(s))
+                .filter((r) => r.key[0] !== sheetCloneId)
+                .map((r) => r.payload.name),
               name,
             );
           await s.put("sheetClone", row.key, { ...row.payload, name });
