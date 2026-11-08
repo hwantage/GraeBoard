@@ -18,6 +18,16 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #100 P4~P8 최종 검증과 인계
+
+- P4 shared 45개, P5 업무 API/저장소 109개, P6 sync 48개, P7 scripts 33개, P8 기존 검사/helper 168개와 새 현재 앱 호환성 suite 1개를 파일명·공개 계약을 보존해 모두 분류했습니다. P1~P3의 138개 배치는 유지했습니다. 기준608개 중 고정 소스로 분리한18개를 removals에 기록했고 원래16개 보호 hash·package-lock·배포 SQL/checksum은 그대로입니다. 최종 구조 대상600개, basename/대소문자 목적지 충돌/누락0입니다.
+- 실제 Node v22.23.1·PostgreSQL18.6(`/tmp/graeboard-pg18/bin`)에서 `TEST_PG_BIN=/tmp/graeboard-pg18/bin npm test`를 전체 실행했고 마지막 PG 준비 오류 안내 보완 후 최신 코드에서 다시 실행했습니다. 두 번 모두708 pass / fail0 / skip0입니다(각630초). 기준717건에서 전환 unit12건을 고정 소스로 분리하고 구조/고정 소스 회귀3건을 추가한 수이며 일반 권한/migration suite3개는 유지했습니다. Node 파일 수는116−2+1=115개입니다.
+- `TEST_PG_BIN=/tmp/graeboard-pg18/bin npm run test:cutover:frozen`은 exact HEAD/clean tree와 lockfile/원본16 hash를 검증한 전체 고정 Git source에서 원래 전환16건 pass / fail0 / skip0입니다. 현재 앱의 별도 호환성 suite는 같은 고정 도구로 전환한 f744ead 합성 자료를 최신 SQLite/외부 PG API에서 읽고 수정·동기화 재개·protocol4 전환·checkpoint 신규 합류/복구하는 원래 단언을 유지하며 전체708건에 포함됩니다.
+- Playwright는43 spec·각 엔진626건/총1,878건을 이동 전후 파일·제목·프로젝트까지 일대일 대응하고 Chromium→Firefox→WebKit 순서로 전체 실행했습니다. 최초 결과는 Chromium600 pass/25 fail/1 skip, Firefox588/24/14, WebKit588/26/12로 총1,776 pass/75 fail/27 기존 skip입니다.
+- 최초 실패75건을 정확한 기준`7fec065`의 별도 source/build/DB에서 같은 엔진으로 비교했습니다. 엔진별16건, 총48건은 오류 문구·실제 소스 줄·테스트 내 위치가 모두 같게 재현됐습니다. 기준에서 통과한27건(9/8/10)은 현재 소스 재실행에서도 모두 통과했습니다. 신규로 지속 재현되는 차이는 관찰하지 않았으며 이27건의 타이밍·실행 순서·상태 원인은 확정하지 않았습니다. 최초 실패는 로그/trace/스크린샷으로 그대로 보존했습니다. 43 spec의 skip/fixme/slow/setTimeout26개 호출 변경0도 확인했습니다. assertion·timeout·skip 변경으로 결과를 맞추지 않았습니다.
+- `npm run build`, `npm run build:edge`, 기본 구조 검사와 `--migration-phase P8`, `git diff --check`를 통과했습니다. runtime401개를 같은 방식으로 정규화한 코드·해석된 import/동적 import·Worker URL·비존재 출력 경로 비교에서 앱 차이/새 graph·SCC 변화0입니다. 차이는 구조 검사기의 명시적 제거 manifest 지원과 필요한 CLI 경로 문구입니다. 오래된 참조는 과거 BASE archive/수동 source-root probe의 명시적11개뿐이고 불필요한 참조0, 새 local 문서 broken link0입니다.
+- 원시 증거와 전체 명령/이동 목록/비교/최초 실패 보완 기록은 `/tmp/graeboard-code-organization-rest-100-evidence/worker-c8ca19c5734d/`의 Markdown/JSON handoff와 각 로그에 보존했습니다. 원본/고정 워크트리와 사용자 개발 서버는 수정·중지하지 않았습니다. 실제 운영 전환·배포·main/release 병합은 하지 않았으며 운영은 리팩토링 후 별도 작업입니다. 수동 Deno probe/전체 수동 부하 도구와 실제 cloud/운영 데이터 검증도 이 결과와 구분합니다.
+
 ## 2026-11-09 — #100 최종 상대 경로 점검
 
 - 성능 도구의 아직 존재하지 않을 수 있는 `docs/validation/` 출력 폴더도 scripts/performance 위치에서 기존 저장소 루트로 해석하도록 보완했습니다. 상대 경로 비교에 비존재 출력 디렉터리를 포함했습니다. 실제 대규모 부하 실행은 하지 않았고 URL 해석과 기준 실행 코드/경로 정규화 비교로 확인했습니다.
