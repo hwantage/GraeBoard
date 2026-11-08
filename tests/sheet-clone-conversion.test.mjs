@@ -35,6 +35,7 @@ import {
 import { convertMarkdownLinks } from "../tools/sheet-clone-cutover/markdown-links.mjs";
 import { runCutover } from "../tools/sheet-clone-cutover/cutover.mjs";
 import { stableId } from "../shared/workbook.mjs";
+import { storeDocumentVersion } from "../server/document-storage.mjs";
 
 const FIXTURE = new URL("./fixtures/sheet-clone-legacy/", import.meta.url),
   read = (name) => readFileSync(new URL(name, FIXTURE), "utf8"),
@@ -396,6 +397,147 @@ for (const label of ["v1", "v2"])
     assert.equal(sha(path), before);
     db = openDatabase(path);
   });
+
+test("received bodies keep their versions under the new document scope, linked or not, and a later receive of the same body reuses them", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-identity-")),
+    path = join(dir, "legacy.sqlite");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  loadLegacySqlite(path, "v1");
+  // Receive names a body by its document key (JSON); the issue's name table
+  // moves the two copy scopes. Every other name (taskId:id, memo:…,
+  // calendar:…) is the application's own and stays.
+  const SCOPES = { report: "sheetClone", reportMemo: "sheetCloneMemo" };
+  const renamed = (documentId) => {
+    if (!documentId.startsWith("[")) return documentId;
+    const [scope, ...rest] = JSON.parse(documentId);
+    return Object.hasOwn(SCOPES, scope)
+      ? JSON.stringify([SCOPES[scope], ...rest])
+      : documentId;
+  };
+  let db = new DatabaseSync(path);
+  db.exec("PRAGMA foreign_keys=ON");
+  const versions = (database) =>
+    new Map(
+      database
+        .prepare(
+          "SELECT id,team_id,document_id,content_hash,markdown,has_content,created_at,created_by FROM document_versions",
+        )
+        .all()
+        .map((row) => [row.id, { ...row }]),
+    );
+  // Every reference to a body, by the table row that holds it (the copy
+  // tables carry their earlier names before the conversion).
+  const references = (database, legacy) => {
+    const clone = legacy ? "report_id" : "sheet_clone_id";
+    return [
+      ["task_documents", "task_id||':'||id"],
+      ["annual_memos", "team_id||':'||year||':'||id"],
+      [
+        legacy ? "report_memos" : "sheet_clone_memos",
+        `${clone}||':'||id`,
+        "memos",
+      ],
+      [
+        legacy ? "report_documents" : "sheet_clone_documents",
+        `${clone}||':'||task_id||':'||document_id`,
+        "documents",
+      ],
+      ["calendar_entries", "id"],
+    ].flatMap(([table, key, name = table]) =>
+      database
+        .prepare(`SELECT ${key} AS k,version_id FROM ${table}`)
+        .all()
+        .map((row) => ({ t: name, k: row.k, version_id: row.version_id })),
+    );
+  };
+  const before = versions(db),
+    referencedBefore = references(db, true),
+    received = [...before.values()].filter(
+      (row) => renamed(row.document_id) !== row.document_id,
+    );
+  // The fixture holds both copy scopes, and a received body with no link.
+  assert.deepEqual(
+    [...new Set(received.map((row) => JSON.parse(row.document_id)[0]))].sort(),
+    ["report", "reportMemo"],
+  );
+  const unlinked = received.filter(
+    (row) => !row.markdown.includes("/links/report-"),
+  );
+  assert.equal(unlinked.length, 1);
+  migrateSqlite(db, {
+    convert: sqliteSheetCloneConversion({ origins: ORIGINS, now: NOW }),
+  });
+  const after = versions(db),
+    referencedAfter = references(db, false);
+  assert.equal(
+    db
+      .prepare(
+        "SELECT COUNT(*) n FROM document_versions WHERE document_id LIKE '[\"report%'",
+      )
+      .get().n,
+    0,
+  );
+  // A version whose body did not change is the same version: id, body, hash,
+  // author and time; only a received one changes its name.
+  for (const [id, row] of before)
+    if (after.has(id))
+      assert.deepEqual(
+        after.get(id),
+        { ...row, document_id: renamed(row.document_id) },
+        id,
+      );
+  // The body with no link keeps its version and its reference.
+  const [plain] = unlinked;
+  assert.ok(after.has(plain.id));
+  assert.deepEqual(
+    referencedAfter.filter((ref) => ref.version_id === plain.id),
+    referencedBefore.filter((ref) => ref.version_id === plain.id),
+  );
+  // Every reference keeps its row and names a body of the same identity:
+  // the same version, or the one its converted body moved to.
+  assert.equal(referencedAfter.length, referencedBefore.length);
+  for (const ref of referencedBefore) {
+    const next = referencedAfter.find(
+        (other) => other.t === ref.t && other.k === ref.k,
+      ),
+      old = before.get(ref.version_id),
+      current = after.get(next.version_id);
+    assert.equal(current.document_id, renamed(old.document_id), ref.k);
+    assert.equal(current.markdown, convertedText(old.markdown), ref.k);
+    assert.equal(current.team_id, old.team_id);
+  }
+  // Receiving the same bodies again under their keys stores nothing new.
+  const count = () =>
+    db.prepare("SELECT COUNT(*) n FROM document_versions").get().n;
+  const total = count();
+  for (const ref of referencedAfter) {
+    const current = after.get(ref.version_id);
+    if (!current.document_id.startsWith("[")) continue;
+    assert.equal(
+      storeDocumentVersion(db, {
+        teamId,
+        documentId: current.document_id,
+        markdown: current.markdown,
+        actorId: current.created_by,
+      }),
+      ref.version_id,
+      current.document_id,
+    );
+  }
+  assert.equal(count(), total);
+  // Rerunning changes nothing.
+  db.close();
+  const converted = sha(path);
+  db = new DatabaseSync(path);
+  assert.equal(
+    migrateSqlite(db, {
+      convert: sqliteSheetCloneConversion({ origins: ORIGINS, now: NOW }),
+    }).applied,
+    false,
+  );
+  db.close();
+  assert.equal(sha(path), converted);
+});
 
 test("SQLite conversion refuses pending, held, unresolved, active and unreproducible state and changes nothing", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-sheet-clone-preflight-"));
