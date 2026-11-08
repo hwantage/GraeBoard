@@ -316,6 +316,8 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 
 안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.
 
+충돌 보관함은 내부·외부 모두 `SyncConflictBox` → `SyncConflictDiff` → `shared/conflict-diff.js`로 비교 내용을 표시합니다. 사본 전체처럼 큰 payload의 줄 배열은 함수 인자로 펼치지 않고 순서대로 옮겨 브라우저 인자 수 한도를 피합니다. 표시할 줄이 200개를 넘으면 업무표에서 사용하는 `@tanstack/react-virtual`로 화면에 들어오는 줄만 그리며, 접힌 같은 줄을 펼친 경우도 동일하게 처리합니다. 비교 내용과 줄 번호는 유지하고 긴 줄의 실제 높이를 측정합니다. `tests/conflict-diff.test.mjs`는 16만 줄의 생성·삭제·접힘을, `tests/browser/data-sync.spec.ts`는 외부 모드에서 문서 11개와 큰 사본을 포함한 12개 항목 펼치기·끝까지 스크롤·긴 같은 줄 펼치기·비교 전환·닫기를 확인합니다.
+
 ## 업무 저장소 계약
 
 Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.

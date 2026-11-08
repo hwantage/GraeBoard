@@ -232,8 +232,9 @@ const SIDE_NOTES = {
  * @returns {string[]}
  */
 export function sideLines(value) {
-  const lines = value.state === "present" ? [] : [SIDE_NOTES[value.state]];
-  if (value.state !== "absent") lines.push(...payloadLines(value.payload));
+  if (value.state === "absent") return [SIDE_NOTES.absent];
+  const lines = payloadLines(value.payload);
+  if (value.state !== "present") lines.unshift(SIDE_NOTES[value.state]);
   return lines;
 }
 
@@ -341,7 +342,7 @@ export function diffSides(from, to, context = 3) {
         text,
         from: fromLine++,
       }));
-      rows.push(...removed);
+      for (const row of removed) rows.push(row);
       continue;
     }
     if (part.added) {
@@ -352,7 +353,7 @@ export function diffSides(from, to, context = 3) {
       }));
       for (let i = 0; i < Math.min(removed.length, added.length); i++)
         markChars(removed[i], added[i]);
-      rows.push(...added);
+      for (const row of added) rows.push(row);
       removed = [];
       continue;
     }
@@ -382,6 +383,7 @@ function markChars(removed, added) {
     .map((part) => ({ text: part.value, changed: !!part.added }));
 }
 
+/** Fold long unchanged runs, retaining context beside edited lines. */
 function fold(rows, context) {
   const result = [];
   let index = 0;
@@ -395,11 +397,13 @@ function fold(rows, context) {
     const head = index === 0 ? 0 : context,
       tail = end === rows.length ? 0 : context;
     if (end - index > head + tail + 1) {
-      result.push(...rows.slice(index, index + head));
+      for (let i = index; i < index + head; i++) result.push(rows[i]);
       const hidden = rows.slice(index + head, end - tail);
       result.push({ type: "fold", count: hidden.length, rows: hidden });
-      result.push(...rows.slice(end - tail, end));
-    } else result.push(...rows.slice(index, end));
+      for (let i = end - tail; i < end; i++) result.push(rows[i]);
+    } else {
+      for (let i = index; i < end; i++) result.push(rows[i]);
+    }
     index = end;
   }
   return result;

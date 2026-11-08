@@ -8,6 +8,7 @@ import {
   diffSides,
   fieldLabel,
   payloadLines,
+  sideLines,
   splitContested,
 } from "../shared/conflict-diff.js";
 
@@ -26,6 +27,47 @@ const lines = (rows) =>
       ? `…${row.count}`
       : { same: " ", removed: "-", added: "+" }[row.type] + row.text,
   );
+
+test("large created and deleted payloads keep every comparison line without argument spreading", () => {
+  const text = Array.from({ length: 160000 }, (_, i) => `line-${i}`).join("\n");
+  const present = { state: "present", payload: { markdown: text } };
+  const absent = { state: "absent", payload: null };
+  const expected = [
+    "markdown: |",
+    ...text.split("\n").map((line) => "  " + line),
+  ];
+  assert.deepEqual(sideLines(present), expected);
+  for (const [from, to, type] of [
+    [absent, present, "added"],
+    [present, absent, "removed"],
+  ]) {
+    const result = diffSides(from, to);
+    assert.equal(result.equal, false);
+    const changed = result.rows.filter((row) => row.type === type);
+    assert.deepEqual(
+      changed.map((row) => row.text),
+      expected,
+    );
+    assert.equal(
+      changed.at(-1)[type === "added" ? "to" : "from"],
+      expected.length,
+    );
+  }
+});
+
+test("a large unchanged payload can be unfolded without losing its lines", () => {
+  const payload = { markdown: "unchanged\n".repeat(160000) };
+  const side = { state: "present", payload };
+  const result = diffSides(side, side);
+  assert.equal(result.equal, true);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].type, "fold");
+  assert.equal(result.rows[0].count, 160002);
+  assert.deepEqual(
+    result.rows[0].rows.map((row) => row.text),
+    payloadLines(payload),
+  );
+});
 
 test("pairs each change with its current record by entity key, not by order", () => {
   const changes = conflictChanges({
