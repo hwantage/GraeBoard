@@ -326,7 +326,7 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 - 전환 전에 일반 문서를 모두 저장하고 브라우저 탭과 기존 세션을 닫습니다. 저장하지 않은 초안은 저장한 뒤 닫으며 localStorage·sessionStorage를 지우지 않습니다. 전환 후에는 새 빌드를 다시 엽니다. 시크릿 문서는 변환 대상이 아닙니다.
 - 전환 전 세션의 생성 요청 재시도는 새 키(`sheet-clone-create:<id>`)에서 기록한 요청 해시와 맞지 않아 409로 거절되며 사본을 다시 만들지 않습니다. XLSX 가져오기 재시도 키는 기록에서 재현해 새 mode 이름의 키로 옮기며, 재현하지 못하면 거절합니다.
 - 절대 주소 링크(`https://…/links/report-task/…`)는 `--site-origin`으로 지정한 운영 사이트 주소만 바꿉니다. 상대 주소는 항상 바꾸고 다른 사이트 주소·문장·코드는 그대로 둡니다. 한 번의 실행이 두 DB를 같은 목록으로 변환합니다.
-- 도구는 사내 서버 호스트의 새 릴리스 디렉터리에서 실행합니다. Git은 사내 사이트의 프로필(`GRAEBOARD_SYNC_PROFILES`, 저장된 인증 정보, `.env`)로, 외부 DB는 `--pg-url-env`가 가리키는 환경 변수의 접속 주소로 접근합니다.
+- 도구는 사내 서버 호스트의 새 릴리스 디렉터리에서 실행합니다. Git은 사내 사이트의 프로필(`GRAEBOARD_SYNC_PROFILES`, 저장된 인증 정보, `.env`)로, 외부 DB는 `--pg-url-env`가 가리키는 환경 변수의 접속 주소로 접근합니다. 사내 호스트가 폐쇄망이라 외부 PostgreSQL에 접속할 수 없으면 아래 순서 대신 [사내 폐쇄망의 분리 전환](#사내-폐쇄망의-분리-전환)을 사용합니다.
 
 점검 시간: 운영 규모 자료의 전환 시간(두 DB의 미리보기와 변환, 문서 링크 재작성, 경계·checkpoint 게시)은 이 릴리스에서 측정하지 않았습니다. 도구는 실제 변경 전에 두 DB를 사본과 ROLLBACK 트랜잭션으로 한 번씩 미리 변환하므로 변환 시간은 두 번 듭니다. 실제 실행 전에 운영과 같은 규모의 격리된 사본(사내 SQLite 사본, 외부 PostgreSQL 복제 DB, 별도 Git 저장소)에서 아래 순서를 그대로 실행해 단계별 시간을 재고, 그 측정값으로 점검 시간을 정합니다. 측정 없이 추정한 시간을 공지하지 않습니다.
 
@@ -360,7 +360,89 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 - 게시 후에는 Git 이력에서 경계를 지우지 않습니다(이력은 바꾸지 않습니다). 이전 런타임은 경계 커밋을 읽지 못하므로 코드만 이전 릴리스로 되돌리지 않고, 같은 명령을 다시 실행해 전환을 끝냅니다. 쓰기 재개 후 문제가 발견되면 먼저 쓰기를 멈추고 그 사이 변경을 보존한 상태에서 복구 계획을 정합니다.
 - 전환을 끝낸 뒤에는 전환 전 백업을 그대로 복구 대상으로 쓰지 않습니다. 전환 후의 복구는 이 릴리스의 백업과 `sync:recover`를 씁니다. 새 사이트와 복구는 checkpoint부터 읽습니다.
 
-정리 시점: 운영과 개발 환경의 전환을 모두 마친 뒤 후속 변경에서 `tools/sheet-clone-cutover`, 그 검사(`tests/sheet-clone-conversion.test.mjs`, `tests/sheet-clone-cutover.test.mjs`)와 fixture(`tests/fixtures/sheet-clone-legacy`), `cutover:sheet-clone` 스크립트를 지웁니다. 그 뒤에도 전환이 필요하면 이 도구가 들어 있는 릴리스 태그의 코드로 실행하고, 실행 기록의 `toolDigest`로 같은 코드인지 확인합니다. SQLite v34·PostgreSQL team v3 migration과 checksum, 동기화 프로토콜 3/4 표시, 논리 이관 v2의 v1 거절은 계속 남습니다.
+### 사내 폐쇄망의 분리 전환
+
+> **미배포 안내**: 아래 두 명령(`cutover:sheet-clone:internal`·`cutover:sheet-clone:external`)은 이 문서를 고친 브랜치에서 추가했으며 아직 `release`와 릴리스 태그에 들어 있지 않습니다. 병합·release 반영·태그 게시 전에는 운영의 현재 릴리스로 실행할 수 없습니다. 실행할 때는 이 명령이 들어 있는 승인된 릴리스 커밋을 양쪽에 똑같이 준비합니다.
+
+사내 서버 호스트가 폐쇄망이어서 외부 PostgreSQL에 접속할 수 없을 때, 위의 한 호스트 명령 대신 **두 호스트가 각자 자기 DB만 다루는** 명령으로 같은 전환을 합니다. 사내 호스트는 SQLite와 Git(기존 동기화 경로)을, 외부 작업 호스트는 PostgreSQL과 Git을 다룹니다. 변환(SQLite v34, PostgreSQL team v3, 프로토콜 1 → 3·2 → 4)은 한 호스트 도구의 변환 코드 그대로이고, 경계 커밋의 이벤트는 바이트까지 같으며 checkpoint는 같은 표준 형식(`checkpointFiles`)입니다. **새 DB·동기화 버전, 옛 형식을 읽는 런타임 호환 코드, 초기화·가져오기 경로는 없습니다.** 지원 범위와 전제는 위와 같습니다(한 팀, 양쪽 일시정지, 미전송·held·미해결 충돌 0, 같은 canonical head = Git head).
+
+분리 명령은 `mode:paused`만 허용합니다. `disconnected`·`recovery` 상태나 옛 백업의 복구를 이 절차로 대신하지 않습니다.
+
+네 단계를 이 순서로 한 번씩 실행하고, 단계 사이에는 운영자가 허용된 파일 전달 방법으로 작은 JSON 파일 하나를 옮깁니다. 파일에는 팀·저장소 ID, head·hash, 프로토콜, origin, 도구 digest와 앞 파일의 digest만 들어 있고 문서 내용·인증 정보·로컬 경로는 없습니다. 사내 SQLite는 사내에 그대로 둡니다.
+
+| 단계 | 호스트 | 명령 | 하는 일 | 넘기는 파일 |
+| --- | --- | --- | --- | --- |
+| 1 | 사내 | `internal prepare` | 공유 이력 팀 하나·일시정지·미전송/충돌 0 확인, SQLite 임시 사본 변환(원본은 읽기만), Git head·저장소 ID·기록된 결과 확인. 원본 DB·공유 Git 변경 없음 | `plan.json` → 외부 |
+| 2 | 외부 | `external apply` | 계획의 팀·저장소·head·결과 hash·origin·도구 digest를 PostgreSQL 미리 변환(ROLLBACK)과 Git으로 먼저 확인한 뒤 team v3로 변환(한 트랜잭션, 계획한 결과만 커밋). 커서는 기존 head 그대로 | `external-ready.json` → 사내 |
+| 3 | 사내 | `internal apply` | 같은 계획의 준비 파일인지, DB·Git이 그대로인지 다시 확인한 뒤 SQLite v34 변환(한 트랜잭션), 경계 커밋·표준 checkpoint 게시(CAS), 사내 커서 이동 | `internal-complete.json` → 외부 |
+| 4 | 외부 | `external finalize` | 완료 파일의 직계 경계·checkpoint를 Git에서 직접 확인(경계 이벤트 바이트, snapshot hash·상태 hash·프로토콜·수량·sum, 현재 head = checkpoint)하고 외부 커서를 한 트랜잭션으로 이동 | 없음 |
+
+각 호스트의 실행 기록(journal)은 그 호스트의 비공개 디렉터리(0700, 파일 0600)에 남고 옮기지 않습니다. 실행 기록은 역할·대상(DB 경로 또는 PostgreSQL DB·접속 대상의 digest, 저장소, 옵션)과 계획·도구 코드에 묶이며, 다른 대상·옵션·도구로 다시 실행하면 거절합니다. 관리형 PostgreSQL에서 cluster 식별자 조회가 금지돼도 접속 대상 digest로 다른 호스트를 구분합니다(URL·비밀번호는 기록하지 않음). 각 단계는 실행 기록의 완료 표시를 믿지 않고 DB와 Git을 다시 확인합니다. DB 내용도 로컬 해시로 비교하므로 canonical 상태가 같아도 업무·문서·이력 등이 바뀌었으면 중단합니다. 변환 후 예상 해시는 DB 커밋 전에 실행 기록에 보관하며, 트랜잭션이 롤백되면 원본을 다시 검사해 재시도합니다. 명령은 서버를 시작·재개하지 않고, 백업·삭제·초기화도 하지 않습니다.
+
+Git 게시는 기대 head를 명시한 lease 검사로 수행합니다. 게시 후보가 그 head의 직계 자식인지 먼저 확인하므로 이력을 되쓰지 않으며, 점검 도중 원격 head가 다른 자식이나 조상 커밋으로 이동한 경우도 거절합니다.
+
+준비(점검 시간 전):
+
+1. **양쪽에 같은 승인 릴리스 커밋을 준비합니다.** 운영 중인 디렉터리·`.env`·`data/`·이미지를 덮어쓰지 않고 새 디렉터리에 둡니다.
+   - 사내(폐쇄망): 사내 호스트와 **같은 OS·CPU 아키텍처·Node.js 버전**의 연결된 장비에서 그 커밋으로 `npm ci --include=dev`와 `npm run build`를 실행하고, `node_modules`와 `dist`를 포함한 디렉터리 전체를 허용된 방법으로 옮겨 새 디렉터리에 풉니다. 사내 호스트에서는 npm 네트워크 설치를 하지 않습니다(`sharp` 등 네이티브 의존성이 있어 다른 OS·아키텍처의 `node_modules`는 쓰지 않습니다).
+   - 외부 작업 호스트: Node.js 22.13 이상, `git`, PostgreSQL·GitHub 접속이 되는 장비에서 같은 커밋으로 `npm ci --include=dev`, `npm run build`, `npm run build:edge`를 실행해 의존성과 배포 산출물을 준비합니다. 실행 중인 서비스 디렉터리는 바꾸지 않습니다.
+   - 양쪽에서 `npm run cutover:sheet-clone:internal -- --help`·`npm run cutover:sheet-clone:external -- --help`가 실행되는지 확인합니다. 두 호스트의 코드가 다르면 2단계가 `another version of this tool`로 거절합니다.
+2. 사내 새 디렉터리에는 운영 `.env`를 복사합니다(같은 `GRAEBOARD_SYNC_PROFILES`·`GRAEBOARD_SYNC_DIR`·`GRAEBOARD_SYNC_KEY`·`DB_PATH`·`DOCUMENT_IMAGES_DIR`, 상대 경로는 운영 디렉터리 기준 절대 경로로). 사내 명령은 이 값으로 기존 동기화 저장소에 접근하며 PostgreSQL 주소를 쓰지 않습니다.
+3. 외부 작업 호스트의 새 디렉터리 `.env`(권한 0600)에 운영 외부 DB 접속 주소와 저장소를 읽을 수 있는 GitHub 토큰을 넣습니다. 명령줄·셸 이력·로그에 값을 쓰지 않습니다. 주소에는 운영에서 쓰는 TLS 옵션을 포함합니다. 외부 명령은 Git에 쓰지 않으므로 읽기 권한 토큰이면 됩니다. 사내 DB·동기화 키는 필요 없습니다.
+
+   ```sh
+   # 외부 작업 호스트의 새 릴리스 디렉터리 .env (예시 이름, 값은 승인된 운영 값)
+   PG_SITE_URL=운영외부DB접속주소
+   SHEET_CLONE_GIT_TOKEN=저장소읽기토큰
+   ```
+
+4. 실제 값을 정해 기록합니다: 운영 팀 UUID, 사내·외부 운영 origin(`https://호스트[:포트]`, 경로·끝 `/` 없음), 운영 동기화 저장소 `소유자/저장소`, 사내 운영 DB 절대 경로, 각 호스트의 새 실행 기록 디렉터리와 Git 캐시 디렉터리, 전달 파일 디렉터리(실행 기록 밖). **개발 환경의 팀 UUID·저장소·주소를 다시 쓰지 않습니다.** `--pg-scope`는 기존 사이트·팀 스키마가 한 DB에 있는 설치에서 기본값 `site`, 팀 DB가 따로 있는 분리형 설치에서 `team`입니다. `site`로 지정한 DB에 사이트 스키마가 없으면 새로 만들지 않고 거절합니다.
+5. 운영 외부 사이트의 release 자동 배포([release 자동 배포](CLOUD_SETUP.md#release-자동-배포-팀-fork))가 전환 전에 새 코드를 배포하지 않도록 그 워크플로를 멈추거나 release 반영을 점검 시간 안으로 미룹니다. 형식 전환을 마칠 때까지 어느 쪽에도 새 코드를 배포·시작하지 않습니다.
+6. 운영과 같은 규모의 격리된 사본(사내 SQLite 사본, 외부 PostgreSQL 복제 DB, 별도 Git 저장소)에서 아래 단계를 그대로 실행해 시간을 잽니다. 개발·운영 DB와 저장소로 리허설하지 않습니다.
+
+점검 시간의 순서(명령의 `팀UUID`·경로·주소는 4번에서 정한 값으로 바꿉니다):
+
+1. 양쪽 UI에서 미전송 명령이 모두 전송될 때까지 기다린 뒤(`pending:0`) **일시정지**하고, 두 사이트의 상태(`mode:paused`, `pending:0`, `conflicts:0`, 같은 canonical head)를 기록합니다.
+2. 사용자 접근을 막고 **프로세스를 멈춥니다.** UI의 일시정지만으로는 부족합니다. 사내 서버는 실제 서비스 관리 방식으로 정상 종료하고, 외부는 Edge 함수(또는 그 앞의 gateway)와 동기화 예약 실행(Cron), 사용자 쓰기를 멈춥니다.
+3. **기존 릴리스의 도구**로 최종 백업을 만듭니다(사내 `npm run backup`, 외부 `backup:external`). Git 기준 head와 함께 대응시켜 보관합니다.
+4. **사내 1단계** — 사내 호스트의 새 디렉터리에서 계획을 만듭니다. 아무것도 바꾸지 않습니다.
+
+   ```sh
+   npm run cutover:sheet-clone:internal -- prepare --database /절대경로/자료.sqlite --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --journal /안전경로/sheet-clone-internal-팀UUID --out /전달경로/plan.json
+   ```
+
+   출력의 `baseHead`가 1번에 기록한 head인지, `fromProtocol`·`toProtocol`·`resultHash`와 `internal` 요약(바뀐 행·링크 수, 남긴 주소 `links.keptSamples`)을 확인하고 `plan.json`을 외부 운영자에게 넘깁니다.
+5. **외부 2단계** — 외부 작업 호스트의 새 디렉터리에서 먼저 쓰지 않는 확인을 하고, 그다음 변환합니다.
+
+   ```sh
+   npm run cutover:sheet-clone:external -- apply --plan /전달경로/plan.json --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --pg-url-env PG_SITE_URL --repository 소유자/저장소 --git-token-env SHEET_CLONE_GIT_TOKEN --git-dir /안전경로/sheet-clone-git-팀UUID --dry-run
+   npm run cutover:sheet-clone:external -- apply --plan /전달경로/plan.json --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --pg-url-env PG_SITE_URL --repository 소유자/저장소 --git-token-env SHEET_CLONE_GIT_TOKEN --git-dir /안전경로/sheet-clone-git-팀UUID --journal /안전경로/sheet-clone-external-팀UUID --out /전달경로/external-ready.json
+   ```
+
+   `--dry-run`은 실행 기록도 쓰지 않습니다. 두 번째 명령의 `resultHash`가 계획과 같고 `canonicalHead`가 기록한 head인지 확인한 뒤 `external-ready.json`을 사내에 넘깁니다. 외부 DB는 team v3가 됐지만 커서는 그대로이고 사이트는 계속 멈춰 둡니다(이전·새 코드 모두 시작하지 않음).
+6. **사내 3단계** — 사내 DB를 변환하고 경계·checkpoint를 게시합니다.
+
+   ```sh
+   npm run cutover:sheet-clone:internal -- apply --database /절대경로/자료.sqlite --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --journal /안전경로/sheet-clone-internal-팀UUID --ready /전달경로/external-ready.json --out /전달경로/internal-complete.json
+   ```
+
+   출력의 `boundary`·`checkpoint`·`resultHash`를 기록하고 `internal-complete.json`을 외부 운영자에게 넘깁니다.
+7. **외부 4단계** — 외부 커서를 같은 checkpoint로 옮깁니다.
+
+   ```sh
+   npm run cutover:sheet-clone:external -- finalize --completion /전달경로/internal-complete.json --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --pg-url-env PG_SITE_URL --repository 소유자/저장소 --git-token-env SHEET_CLONE_GIT_TOKEN --git-dir /안전경로/sheet-clone-git-팀UUID --journal /안전경로/sheet-clone-external-팀UUID
+   ```
+
+   3단계와 4단계 출력의 `checkpoint`·`resultHash`가 같아야 합니다. 이제 두 DB의 canonical head가 그 checkpoint, hash가 `resultHash`입니다.
+8. **사내 서버를 먼저** 새 릴리스로 시작합니다. 서비스 설정의 작업 디렉터리를 새 디렉터리로 바꾸고 같은 `.env`·DB·이미지 경로로 **서버 프로세스를 다시 시작**합니다(브라우저 새로고침만으로는 이전 프로세스가 그대로 실행됩니다). 동기화 상태가 `mode:paused`, head = checkpoint, `protocol` 3 또는 4, 미전송·충돌 0인지 확인합니다.
+9. 외부에 같은 릴리스를 배포하고 Edge 함수·gateway·Cron을 다시 켭니다(멈춘 자동 배포도 다시 켭니다). 같은 상태를 확인합니다.
+10. 사내 → 외부 순서로 UI에서 **재개**합니다. 사내에서 사본 셀을 고쳐 외부에 반영되는지, 외부에서 캘린더 일정을 추가해 사내에 반영되는지 확인하고, 양쪽이 `pending:0`·`conflicts:0`이며 같은 head인지 확인합니다. 그 뒤 사용자 접근을 엽니다.
+
+중간에 멈춘 경우: 원인을 해결한 뒤 **그 단계의 같은 명령을 같은 실행 기록으로 다시 실행**합니다. 단계는 DB와 Git을 다시 확인해 멈춘 곳부터 잇습니다. 트랜잭션 안에서 실패한 변환은 롤백되어 그대로 다시 실행하면 되고, DB 커밋·Git 게시 뒤 단계 완료 기록이나 전달 파일을 쓰기 전에 멈췄어도 Git·DB에서 확인해 이어 갑니다. 끝난 단계를 다시 실행하면 사이트가 계속 멈춰 있고 자료가 바뀌지 않은 동안 같은 파일·checkpoint·resultHash를 냅니다(전달 파일을 잃었을 때도 같은 명령으로 다시 만듭니다). 다음은 거절하고 아무것도 지우지 않습니다: 다른 팀·저장소·대상 DB·옵션·도구 코드, 전달 파일의 변조나 다른 계획, 단계 사이에 바뀐 DB 내용, 미전송·held 명령·미해결 충돌·미완료 유지보수·최초 snapshot, 일시정지가 아닌 사이트, 이 전환이 게시하지 않은 Git head(그 head를 보여 줍니다). 유효한 checkpoint 뒤에 다른 커밋이 붙어도 거절합니다. 사내 1단계 실행 기록을 3단계 전에 잃으면 새 디렉터리로 1단계를 다시 실행할 수 있습니다(같은 DB·Git이면 같은 계획이 나와 받은 준비 파일을 그대로 씁니다). 이미 3단계를 시작한 실행 기록으로는 1단계를 다시 하지 않습니다. 외부 변환을 시작한 뒤에는 원래 실행 기록이 필요하며, 잃은 기록이나 옛 백업을 새 기록으로 대신하는 복구는 지원하지 않습니다.
+
+실패와 되돌림: 되돌림의 경계는 위와 같이 **3단계의 경계 커밋 게시**입니다. 그 전(2단계 뒤 포함)에 그만두려면 Git은 바뀌지 않았으므로 사내 DB·이미지와 외부 DB·R2를 3번의 같은 시점 최종 백업으로 함께 복원하고 기존 릴리스를 유지합니다. 한쪽만 되돌리지 않습니다. 게시 뒤에는 경계를 지우지 않고 남은 단계를 같은 명령으로 끝냅니다.
+
+정리 시점: 운영과 개발 환경의 전환을 모두 마친 뒤 후속 변경에서 `tools/sheet-clone-cutover`, 그 검사(`tests/sheet-clone-conversion.test.mjs`, `tests/sheet-clone-cutover.test.mjs`, `tests/sheet-clone-split-cutover.test.mjs`와 그 Git 보조 `tests/sheet-clone-split-git-fixture.mjs`)와 fixture(`tests/fixtures/sheet-clone-legacy`), `cutover:sheet-clone`·`cutover:sheet-clone:internal`·`cutover:sheet-clone:external` 스크립트를 지웁니다. 그 뒤에도 전환이 필요하면 이 도구가 들어 있는 릴리스 태그의 코드로 실행하고, 실행 기록의 `toolDigest`로 같은 코드인지 확인합니다. SQLite v34·PostgreSQL team v3 migration과 checksum, 동기화 프로토콜 3/4 표시, 논리 이관 v2의 v1 거절은 계속 남습니다.
 
 ## 동기화 프로토콜 4 명시 전환
 
