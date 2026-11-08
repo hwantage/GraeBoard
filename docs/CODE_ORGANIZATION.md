@@ -47,6 +47,8 @@
 
 새 예외가 필요하면 해당 PR에 정확한 경로, 필요한 이유, 사용처·실행 환경, 적용 범위를 기록하고 이 문서의 예외 기준도 함께 갱신합니다. 단지 기존에 비슷한 이름이 있다는 이유로 예외를 늘리지 않습니다.
 
+SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, `tools/sheet-clone-cutover/cutover.mjs`, `tools/sheet-clone-cutover/convert.mjs`, `tools/sheet-clone-cutover/names.mjs`, `tools/sheet-clone-cutover/markdown-links.mjs`의 정확한 경로와 이름을 유지합니다. 이 가이드 확정과 병행해 검증한 오프라인 Node CLI이며, `cutover:sheet-clone` 명령과 전환 검사만 사용하고 앱·Edge 런타임은 의존하지 않습니다. 실행 기록의 `toolDigest`와 전환 재개에 같은 도구가 필요하므로 배치 리팩토링에서 이동·개명하지 않습니다. 개발·운영 전환을 모두 마친 뒤 [정리 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)에 따라 도구와 이 예외를 함께 제거합니다. 다른 도구나 새 범용 파일명까지 허용하는 예외는 아닙니다.
+
 ## 3. 새 파일의 위치를 정하는 순서
 
 1. `codebase-memory-mcp`로 유사 기능, 호출자, 공통 구현을 확인합니다. 미인덱싱 저장소는 인덱싱하고, 도구를 사용할 수 없으면 [개발 안내의 탐색 규칙](DEVELOPMENT.md#작업-원칙)에 따라 보완합니다.
@@ -69,6 +71,7 @@
 | `edge/`      | Supabase/Deno 진입점, 실행 환경·DB 연결·자원 어댑터. 기존 업무 API를 재사용합니다.                                                                 |
 | `functions/` | Cloudflare Pages 진입과 gateway 전달. 업무 로직을 추가하지 않습니다.                                                                               |
 | `scripts/`   | 빌드, 개발·검증, 운영·백업·복구 도구. CLI 전용 실행과 앱이 재사용하는 로직의 경계를 유지합니다.                                                    |
+| `tools/sheet-clone-cutover/` | 위의 정확한 경로 예외에 해당하는 일회성 오프라인 전환 도구. 개발·운영 전환 후 제거하며, 일반 운영 도구는 `scripts/`에 둡니다. |
 | `tests/`     | 자동 검사와 가상 fixture. 브라우저 검사는 `tests/browser/`에 두며 소스의 기능명을 유지합니다.                                                      |
 | `public/`    | 앱에서 제공하는 정적 자산과 정적 배포 설정. 기능 소스나 운영 데이터를 두지 않습니다.                                                               |
 | `supabase/`  | Supabase 설정과 Edge 배포 산출물. `supabase/functions/graeboard/index.mjs`는 `build:edge`가 생성하므로 직접 리팩토링하지 않습니다.                 |
