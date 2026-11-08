@@ -1,8 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
@@ -10,7 +18,7 @@ import {
   hasSecret,
   readDeployConfig,
   workerOrigin,
-} from "../../scripts/deploy/team-site-deploy.mjs";
+} from "../../scripts/team-site-deploy.mjs";
 import { setupExamples } from "../../shared/sync/sync-setup.js";
 
 const key = () => randomBytes(32).toString("base64");
@@ -262,14 +270,10 @@ test("the workers.dev address belongs to the deployed Worker name", () => {
 test("--check masks every token and key in GitHub Actions and reports missing values", () => {
   const { secrets, env } = siteEnv();
   const check = (extra) =>
-    spawnSync(
-      process.execPath,
-      ["scripts/deploy/team-site-deploy.mjs", "--check"],
-      {
-        encoding: "utf8",
-        env: { PATH: process.env.PATH, ...extra },
-      },
-    );
+    spawnSync(process.execPath, ["scripts/team-site-deploy.mjs", "--check"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, ...extra },
+    });
   const ok = check({ ...env, GITHUB_ACTIONS: "true" });
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   for (const value of Object.values(secrets))
@@ -277,6 +281,140 @@ test("--check masks every token and key in GitHub Actions and reports missing va
   const missing = check({});
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /::error::.*TEAM_SITE_CONFIG/);
+});
+
+// schedule/workflow_dispatch use the default branch's workflow, but checkout
+// uses the SHA returned after fork sync. Both version directions must work.
+test("old and current workflows execute configuration checks and deployment against either checkout version", async (t) => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const commit = "7fec065d1adc241da29d54474af06b390d12d72b";
+  const historical = (path) => {
+    const result = spawnSync("git", ["show", `${commit}:${path}`], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(
+      result.status,
+      0,
+      `Missing deployment contract source ${commit}:${path}. Run git fetch origin ${commit}; CI checkout must use fetch-depth: 0.\n${result.stderr}`,
+    );
+    return result.stdout;
+  };
+  const workflowPath = ".github/workflows/team-site-release.yml";
+  const workflows = {
+    old: historical(workflowPath),
+    current: readFileSync(join(root, workflowPath), "utf8"),
+  };
+  const manifest = JSON.parse(
+    readFileSync(join(root, "docs/code-organization-moves.json"), "utf8"),
+  );
+  const originalPath = "scripts/team-site-deploy.mjs";
+  const currentPath = manifest.entries.find(
+    (entry) => entry.from === originalPath,
+  ).to;
+  const checkouts = {
+    old: { path: originalPath, source: historical(originalPath) },
+    current: {
+      path: currentPath,
+      source: readFileSync(join(root, currentPath), "utf8"),
+    },
+  };
+  for (const [workflowVersion, workflow] of Object.entries(workflows)) {
+    // Extract the real run commands rather than constructing an expected path.
+    const commands = [...workflow.matchAll(/^\s*run: node ([^\r\n]+)$/gm)].map(
+      (match) => match[1].trim().split(/\s+/),
+    );
+    assert.equal(
+      commands.length,
+      2,
+      `${workflowVersion}: two deploy CLI steps`,
+    );
+    const check = commands.find((args) => args.includes("--check"));
+    const deploy = commands.find((args) => !args.includes("--check"));
+    assert.ok(check && deploy, `${workflowVersion}: check and deploy commands`);
+    assert.equal(deploy[0], check[0], "both steps use the same entrypoint");
+    for (const [checkoutVersion, checkout] of Object.entries(checkouts)) {
+      await t.test(
+        `${workflowVersion} workflow + ${checkoutVersion} checkout`,
+        () => {
+          const dir = mkdtempSync(join(tmpdir(), "graeboard-deploy-version-"));
+          t.after(() => rmSync(dir, { recursive: true, force: true }));
+          // The actual CLI's complete closure consists only of Node builtins.
+          // Copy its bytes into a checkout model at its actual tracked location.
+          const entry = join(dir, checkout.path);
+          mkdirSync(dirname(entry), { recursive: true });
+          writeFileSync(entry, checkout.source);
+          const bin = join(dir, "stub-bin");
+          mkdirSync(bin);
+          const callsFile = join(dir, "subprocess-calls.jsonl");
+          const stub = `#!${process.execPath}
+import { appendFileSync } from "node:fs";
+import { basename } from "node:path";
+const command = basename(process.argv[1]);
+const args = process.argv.slice(2);
+appendFileSync(process.env.DEPLOY_TEST_CALLS, JSON.stringify({ command, args }) + "\\n");
+if (command === "npx" && args[0] === "wrangler" && args[1] === "deploy")
+  console.log("https://graeboard-team.fixture.workers.dev");
+if (command === "supabase" && args[0] === "secrets" && args[1] === "list")
+  console.log("GRAEBOARD_ACCESS_TOKEN_KEY | fixture");
+`;
+          for (const command of ["supabase", "npx"])
+            writeFileSync(join(bin, command), stub, { mode: 0o755 });
+          const { env } = siteEnv();
+          // No inherited credentials or real deployment executables are visible.
+          const environment = {
+            PATH: bin,
+            RUNNER_TEMP: dir,
+            DEPLOY_TEST_CALLS: callsFile,
+          };
+          const invoke = (args, extra = {}) =>
+            spawnSync(process.execPath, args, {
+              cwd: dir,
+              encoding: "utf8",
+              env: { ...environment, ...extra },
+            });
+          const valid = invoke(check, env);
+          const missing = invoke(check);
+          const noCheckSideEffects = !existsSync(callsFile);
+          const deployed = invoke(deploy, env);
+          t.diagnostic(
+            JSON.stringify({
+              workflowVersion,
+              checkoutVersion,
+              check,
+              deploy,
+              validExit: valid.status,
+              missingExit: missing.status,
+              deployExit: deployed.status,
+              validError: valid.stderr,
+              deployError: deployed.stderr,
+            }),
+          );
+          assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+          assert.match(valid.stdout, /TEAM_SITE_CONFIG로 배포/);
+          assert.equal(missing.status, 1, missing.stdout + missing.stderr);
+          assert.match(missing.stdout, /::error::.*TEAM_SITE_CONFIG/);
+          assert.ok(noCheckSideEffects, "--check never invokes a deploy tool");
+          assert.equal(deployed.status, 0, deployed.stdout + deployed.stderr);
+          const calls = readFileSync(callsFile, "utf8")
+            .trim()
+            .split("\n")
+            .map(JSON.parse);
+          assert.deepEqual(
+            calls.map(({ command, args }) => [command, ...args.slice(0, 2)]),
+            [
+              ["supabase", "functions", "deploy"],
+              ["npx", "wrangler", "deploy"],
+              ["npx", "wrangler", "secret"],
+              ["supabase", "secrets", "list"],
+              ["supabase", "secrets", "set"],
+            ],
+          );
+          assert.match(deployed.stdout, /배포와 설정 반영을 마쳤습니다/);
+        },
+      );
+    }
+  }
 });
 
 // Configs written by earlier setup guides carry an empty Cron list, which left

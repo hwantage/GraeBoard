@@ -624,6 +624,10 @@
       "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
     },
     {
+      "path": "scripts/team-site-deploy.mjs",
+      "reason": "External team-site-release workflow definitions and synced main/release checkouts can differ in version; keep the existing CLI implementation at this exact path, without a wrapper or duplicate"
+    },
+    {
       "path": "server/app.mjs",
       "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
     },

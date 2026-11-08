@@ -23,7 +23,9 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 동기화는 `server/sync/core/` 17개(간접 전용 cache 포함)·`server/sync/node/` 20개·`worker/sync/` 11개로 배치합니다. 외부 direct import는 portable 16개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
 
-`scripts/`는 `admin/`·`deploy/`·`performance/`·`sync/`·`testing/`·`transfer/`로 실행 목적을 구분하고 루트 `licenses.mjs`를 유지합니다. npm 명령은 같은 저장소 루트의 환경·데이터 경로를 사용합니다.
+`scripts/`는 `admin/`·`deploy/`·`performance/`·`sync/`·`testing/`·`transfer/`로 실행 목적을 구분하고 루트 `licenses.mjs`와 `team-site-deploy.mjs`를 유지합니다. 후자는 팀 Fork의 workflow 정의와 동기화 후 checkout SHA가 다른 버전이어도 호출할 수 있는 고정 CLI입니다. P7은 32개 이동과 이 정확한 경로 보존으로 완료했습니다. npm 명령은 같은 저장소 루트의 환경·데이터 경로를 사용합니다.
+
+배포 suite는 고정 `7fec065d1adc241da29d54474af06b390d12d72b`의 workflow·CLI를 Git에서 읽어 구·신 버전 4개 조합을 실행합니다. shallow clone에 해당 커밋이 없으면 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`로 준비하며 구조 CI는 `fetch-depth: 0`을 사용하고 이 배포 회귀도 함께 실행합니다.
 
 `tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 115개, Playwright는 43개 spec·각 엔진 626건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
 

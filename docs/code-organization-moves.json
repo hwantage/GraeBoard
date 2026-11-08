@@ -188,8 +188,9 @@
     },
     {
       "from": "scripts/team-site-deploy.mjs",
-      "to": "scripts/deploy/team-site-deploy.mjs",
-      "phase": "P7"
+      "to": "scripts/team-site-deploy.mjs",
+      "phase": "keep",
+      "reason": "Fixed CLI path used by independently versioned team-site-release workflows before checkout of the synced main/release SHA; P7 retains the implementation without a wrapper"
     },
     {
       "from": "scripts/test-postgres.mjs",

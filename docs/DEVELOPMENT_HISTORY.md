@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #105 감독 리뷰: 배포 CLI의 버전 간 호출 계약 복원
+
+- 정기·수동 workflow 정의와 fork sync 결과 checkout SHA가 다른 버전일 때 P7에서 이동한 배포 CLI를 찾지 못하는 회귀를 수정했습니다. 구현 바이트를 바꾸지 않고 `scripts/team-site-deploy.mjs` 자체를 원위치로 고정했으며 두 workflow 호출·설치 안내 명령·문서·manifest의 keep entry와 정확한 경로 예외를 맞췄습니다. wrapper·복제는 없습니다. 최종 P7은 32개 이동과 외부 호출 계약 1개 고정으로 완료했으며 P4~P8 기존 이동은 402개입니다. 아래 33개/403개 기록은 수정 전 단계의 실제 이력입니다.
+- `7fec065`의 실제 workflow·CLI와 현재 파일로 구·신 workflow × 구·신 checkout 4개 조합을 실행하는 회귀를 기존 배포 suite에 추가했습니다. 수정 전 양방향 교차 조합의 실제 `--check`와 마지막 배포 명령은 MODULE_NOT_FOUND/exit1, 같은 버전 조합은 exit0을 재현했습니다. 수정 후 네 조합 모두 설정 확인 exit0·누락 설정 거절 exit1·마지막 배포 명령 exit0입니다. 외부 실행 파일과 상속 자격 증명 없이 fake 설정·로컬 subprocess stub으로 검증했고 실제 배포는 하지 않았습니다. 실제 옛 release `0a313fe8944c159987a6dea7c0d2b62fac1f04b3`의 동일 CLI도 별도 모형에 포함해 수정 전6조합 중 교차3조합 실패 → 수정 후6조합 모두 통과를 확인했습니다. 구조 CI에도 배포 suite를 포함했습니다.
+- 실제 Node v22.23.1에서 배포 suite 12 pass와 설치 안내/도구/수집/저장소 import 경계를 포함한 관련 6개 suite 46 pass / fail0 / cancelled0 / skip0, CI와 같은 선택 명령도30 pass, 기본/P8 구조 600개·오류0, diff 검사를 통과했습니다. 기존 배포7건은 CLI 경로·서식 외 AST 차이0도 확인했습니다. 새 회귀는 상위1건·조합 하위4건이며 기존 배포7건을 유지했습니다. Node 수집 파일115개·브라우저43 spec과 assertion/timeout/skip·DB/lockfile/migration은 유지합니다.
+- 전체 Node708 pass·고정 전환16 pass·브라우저 최초75 fail(기준 동일48 + 기준/현재 재실행 통과27)은 아래 기존 소스(`acc878e22d7a7e7e7100c04ff9dc5e2580a668ba`, 문서 최종 `201513d60e08ac89903d7ca27ce2233f582e87cd`와 검사 관련 tree 동일) 검증입니다. 이번 경로 복원 뒤의 전체 재실행 결과로 바꾸지 않습니다. 앱 실행 변경은 설치 안내의 CLI 문자열·주석뿐이며 기존 소스와의 정확한 차이·원시 로그는 `/tmp/graeboard-code-organization-rest-100-evidence/worker-review-fix-23d2f7c8d473/`에 별도 보존했습니다. 운영 전환·배포·main/release 병합은 후속 작업입니다.
+
 ## 2026-11-09 — #100 P4~P8 최종 검증과 인계
 
 - P4 shared 45개, P5 업무 API/저장소 109개, P6 sync 48개, P7 scripts 33개, P8 기존 검사/helper 168개와 새 현재 앱 호환성 suite 1개를 파일명·공개 계약을 보존해 모두 분류했습니다. P1~P3의 138개 배치는 유지했습니다. 기준608개 중 고정 소스로 분리한18개를 removals에 기록했고 원래16개 보호 hash·package-lock·배포 SQL/checksum은 그대로입니다. 최종 구조 대상600개, basename/대소문자 목적지 충돌/누락0입니다.

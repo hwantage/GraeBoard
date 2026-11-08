@@ -113,7 +113,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           GATEWAY_CONFIG: ${{ vars.GATEWAY_CONFIG }}
-        run: node scripts/deploy/team-site-deploy.mjs --check
+        # The workflow definition and the synced checkout SHA can differ in
+        # version. Both CLI steps retain the existing root entrypoint.
+        run: node scripts/team-site-deploy.mjs --check
       - run: npm ci --include=dev
       - name: 빌드
         run: |
@@ -130,7 +132,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           GATEWAY_CONFIG: ${{ vars.GATEWAY_CONFIG }}
-        run: node scripts/deploy/team-site-deploy.mjs
+        run: node scripts/team-site-deploy.mjs
       - name: 배포 기록
         env:
           GH_TOKEN: ${{ github.token }}
