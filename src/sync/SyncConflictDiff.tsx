@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Avatar, Button } from "../components";
 import { syncTime } from "./sync-types";
 import type { User } from "../types";
@@ -284,29 +285,100 @@ const site = (name: string) => (name ? `(${name})` : "");
 const fieldList = (fields: string[]) =>
   fields.length ? fields.map(fieldLabel).join(", ") : "없음";
 
+/**
+ * Source/destination line numbers stay fixed when a fold expands. Keep its
+ * key distinct from the first hidden line so measured heights cannot cross.
+ */
+const diffRowKey = (row: Rows[number]) => {
+  const line = row.type === "fold" ? row.rows[0] : row;
+  return `${row.type}:${line.from ?? ""}:${line.to ?? ""}`;
+};
+
+/** Expand selected unchanged blocks and virtualize long comparisons. */
 function DiffRows({ rows }: { rows: Rows }) {
-  const [opened, setOpened] = useState<Set<number>>(() => new Set());
+  const [opened, setOpened] = useState<Set<Rows[number]>>(() => new Set());
+  const visible = useMemo(() => {
+    const result: Rows = [];
+    for (const row of rows) {
+      if (row.type === "fold" && opened.has(row)) {
+        for (const line of row.rows) result.push(line);
+      } else result.push(row);
+    }
+    return result;
+  }, [rows, opened]);
+  const renderRow = (row: Rows[number]) =>
+    row.type !== "fold" ? (
+      <Line key={diffRowKey(row)} row={row} />
+    ) : (
+      <div key={diffRowKey(row)} className="sync-diff-fold" role="row">
+        <div role="cell">
+          <button
+            type="button"
+            onClick={() => setOpened((set) => new Set(set).add(row))}
+          >
+            … {row.count}줄 같음 (펼치기)
+          </button>
+        </div>
+      </div>
+    );
+  // A whole-sheet creation or expanded unchanged block can contain hundreds
+  // of thousands of lines. Reuse the grid's virtualizer; keep every line
+  // reachable without creating its DOM until it enters the viewport.
+  if (visible.length > 200)
+    return <VirtualDiffRows rows={visible} renderRow={renderRow} />;
   return (
     <div className="sync-diff-lines" role="table" aria-label="줄 비교">
-      {rows.flatMap((row, index) => {
-        if (row.type !== "fold") return [<Line key={index} row={row} />];
-        if (opened.has(index))
-          return row.rows.map((line, offset) => (
-            <Line key={`${index}:${offset}`} row={line} />
-          ));
-        return [
-          <div key={index} className="sync-diff-fold" role="row">
-            <div role="cell">
-              <button
-                type="button"
-                onClick={() => setOpened((set) => new Set(set).add(index))}
-              >
-                … {row.count}줄 같음 (펼치기)
-              </button>
-            </div>
-          </div>,
-        ];
-      })}
+      {visible.map(renderRow)}
+    </div>
+  );
+}
+
+function VirtualDiffRows({
+  rows,
+  renderRow,
+}: {
+  rows: Rows;
+  renderRow: (row: Rows[number]) => ReactNode;
+}) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const getItemKey = useCallback(
+    (index: number) => diffRowKey(rows[index]),
+    [rows],
+  );
+  const virtual = useVirtualizer({
+    count: rows.length,
+    getItemKey,
+    getScrollElement: () => scroll.current,
+    estimateSize: () => 19.2,
+    overscan: 8,
+  });
+  return (
+    <div
+      ref={scroll}
+      className="sync-diff-lines sync-diff-virtual"
+      role="table"
+      aria-label="줄 비교"
+      aria-rowcount={rows.length}
+      tabIndex={0}
+    >
+      <div style={{ height: virtual.getTotalSize(), position: "relative" }}>
+        {virtual.getVirtualItems().map((item) => (
+          <div
+            key={item.key}
+            data-index={item.index}
+            ref={virtual.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${item.start}px)`,
+            }}
+          >
+            {renderRow(rows[item.index])}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

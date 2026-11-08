@@ -184,4 +184,4 @@ npm run build:edge
 
 리팩토링의 완료는 파일 이동뿐 아니라 가이드·실제 구조 문서·검사 결과의 일치까지 포함합니다. 최초 정리 후에도 같은 규칙을 신규 기능과 유지보수에 적용합니다.
 
-#100 manifest 기준은 `cb8742620558d77cfc3e060cf8e6ae860e592183`의 608개입니다. 기존 설계 601개에 PR #101의 신규 7개를 각 P6~P8 목적지로 추가했고, P0 추가 8개는 `additions`로 분리했습니다. `sync-pending-projection.test.mjs`는 실제 `project`·투영 독립성 회귀와 메모리 대역 이미지 수신 검사를 포함하며 PG·Git 왕복 없이 `tests/sync/protocol/`에 배치할 예정입니다. 새 성능 비교·Deno 도구가 전달받은 과거 source root에서 읽는 경로는 후속 이동 때 현재 실행 경로와 구분합니다.
+#100 manifest 기준은 PR #103을 통합한 `ad1e57dcd802d089618026f979546cca970d42bd`의 608개입니다. 기존 설계 601개에 PR #101의 신규 7개를 각 P6~P8 목적지로 추가했고, P0 추가 8개는 `additions`로 분리했습니다. PR #103은 기존 파일의 내용만 바꾸므로 파일 소속·이동 수·보호 hash는 유지합니다. `sync-pending-projection.test.mjs`는 실제 `project`·투영 독립성 회귀와 메모리 대역 이미지 수신 검사를 포함하며 PG·Git 왕복 없이 `tests/sync/protocol/`에 배치할 예정입니다. 새 성능 비교·Deno 도구가 전달받은 과거 source root에서 읽는 경로는 후속 이동 때 현재 실행 경로와 구분합니다.

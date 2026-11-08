@@ -266,7 +266,7 @@ npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
 
-`npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 시작 기준 `cb87426`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개입니다. `tests/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
+`npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 통합 기준 `ad1e57d`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개이며 PR #103의 대형 충돌 회귀가 같은 `data-sync.spec.ts`에 추가됐습니다. `tests/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
 
 `check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P3`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. PR의 경량 CI는 구조·도구·import 경계를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
 
@@ -326,6 +326,8 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 `performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
 
 안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.
+
+충돌 보관함은 내부·외부 모두 `SyncConflictBox` → `SyncConflictDiff` → `shared/conflict-diff.js`로 비교 내용을 표시합니다. 사본 전체처럼 큰 payload의 줄 배열은 함수 인자로 펼치지 않고 순서대로 옮겨 브라우저 인자 수 한도를 피합니다. 표시할 줄이 200개를 넘으면 업무표에서 사용하는 `@tanstack/react-virtual`로 화면에 들어오는 줄만 그리며, 접힌 같은 줄을 펼친 경우도 동일하게 처리합니다. 비교 내용과 줄 번호는 유지하고 긴 줄의 실제 높이를 측정합니다. `tests/conflict-diff.test.mjs`는 16만 줄의 생성·삭제·접힘을, `tests/browser/data-sync.spec.ts`는 외부 모드에서 문서 11개와 큰 사본을 포함한 12개 항목 펼치기·끝까지 스크롤·긴 같은 줄 펼치기·비교 전환·닫기를 확인합니다.
 
 ## 업무 저장소 계약
 
