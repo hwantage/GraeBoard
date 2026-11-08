@@ -9,10 +9,13 @@
 - 코드 탐색은 `codebase-memory-mcp`를 우선 사용하며, 미인덱싱 저장소는 `index_repository`부터 실행합니다. `search_graph` → `trace_path` → `get_code_snippet` 순서로 심벌·실제 호출 관계·구현을 확인하고, 복잡한 관계는 `query_graph`, 전체 구조는 `get_architecture`로 살펴봅니다.
 - 문자열·오류 메시지·설정값·비코드 파일은 `search_code` 또는 `rg`로 찾습니다. 그래프 도구를 사용할 수 없거나 결과가 부족할 때도 `rg`와 파일 읽기로 보완합니다.
 - 기능 변경 전에 유사한 기존 기능의 호출 경로와 공통 컴포넌트·스타일·저장 로직·이벤트 처리를 확인합니다. 기존 명명·구조를 따르고 구현을 재사용하거나 확장·공통화합니다.
+- 파일 추가·이동·폴더 분리·통합은 [코드 배치와 파일 명명 가이드](CODE_ORGANIZATION.md)를 따릅니다. 기능 접두어는 이동 후에도 유지하고, 가이드에 따른 책임·사용처 확인을 파일 재배치보다 먼저 수행합니다.
 - 같은 사용자 동작은 버튼·폼·포커스·문구·알림·삭제·실행취소·저장 흐름까지 일관되게 제공합니다. 요청이나 실제 요구사항에 근거하지 않은 안내 메시지·아이콘·확인 단계를 추가하지 않습니다.
 - 완료 전에 기준으로 삼은 기존 기능과 비교하여 불필요하게 달라진 부분이 없는지 확인합니다.
 
 ## 구조
+
+아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
 외부 런타임은 `edge/main.mjs`(Supabase/Deno) → `edge/handler.mjs` → 기존 `worker/entry.mjs`의 API·repository를 재사용합니다. `worker/gateway.mjs`는 Cloudflare에서 HTTP 전달·정적 파일·R2/Images binding을 담당합니다. `scripts/build-edge.mjs`가 공통 모듈과 고정 버전 npm import를 묶습니다. `tests/edge-gateway.test.mjs`는 실제 workerd 전달/자원 경계를, `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → PostgreSQL 및 내부 SQLite/Git 흐름을 확인합니다. Deno 호환성은 생성 함수의 실행과 실제 Supabase 배포로 별도 확인합니다.
 
