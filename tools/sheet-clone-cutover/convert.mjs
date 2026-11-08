@@ -522,6 +522,27 @@ function* convertSqliteApplication(options, report, problems) {
 // document save prunes it. Revisions advance so a stale editor cannot write
 // the old body back silently.
 function* convertSqliteDocuments(options, report) {
+  // A received body is named by its document key, as receive stores it
+  // (JSON.stringify of ["report", …] or ["reportMemo", …]). Only that name
+  // changes: the version, its body and every reference stay. It changes
+  // first, so the bodies rewritten below look up and write versions under
+  // the new names. Other names (taskId:id, memo:…, calendar:…) are kept.
+  for (const row of (yield query(
+    `SELECT id,document_id FROM document_versions WHERE document_id LIKE '["report%' ORDER BY id`,
+  )).rows) {
+    let key;
+    try {
+      key = JSON.parse(row.document_id);
+    } catch {
+      continue;
+    }
+    if (!isLegacyDocumentKey(key)) continue;
+    yield query("UPDATE document_versions SET document_id=$2 WHERE id=$1", [
+      row.id,
+      JSON.stringify(documentKey(key)),
+    ]);
+    report.documents.identities++;
+  }
   const moved = new Map(),
     bodies = new Map();
   for (const row of (yield query(
@@ -755,7 +776,7 @@ const newReport = (options, engine) => ({
   audit: 0,
   imports: 0,
   retries: { importKeys: 0, operations: 0 },
-  documents: { versions: 0, references: 0, pruned: 0 },
+  documents: { identities: 0, versions: 0, references: 0, pruned: 0 },
   sheetClones: { decoded: 0, reencoded: 0 },
   site: { entities: 0, retention: 0, revisions: 0, jobs: 0, events: 0 },
   links: { documents: 0, history: 0, kept: [] },
@@ -844,6 +865,7 @@ function* verifySqlite(options) {
       (SELECT COUNT(*) FROM sync_entities WHERE entity IN ('report','reportTask','reportCell') OR (entity='document' AND entity_key LIKE '["report%')) AS entities,
       (SELECT COUNT(*) FROM site_retention WHERE entity_key LIKE '["report%') AS retention,
       (SELECT COUNT(*) FROM site_entity_revisions WHERE entity IN ('report','reportTask','reportCell') OR entity_key LIKE '["report%') AS revisions,
+      (SELECT COUNT(*) FROM document_versions WHERE document_id LIKE '["report"%' OR document_id LIKE '["reportMemo"%') AS versions,
       (SELECT COUNT(*) FROM operations WHERE json_extract(response,'$.mode') IN ('report','copy')) AS operations`,
   )).rows[0];
   const problems = Object.entries(left)
