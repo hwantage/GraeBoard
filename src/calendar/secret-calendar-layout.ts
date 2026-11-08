@@ -1,4 +1,4 @@
-import { placeCalendarEntry } from "../../shared/calendar-layout.js";
+import { placeCalendarEntry } from "../../shared/calendar/calendar-layout.js";
 import type { CalendarPlacement } from "./calendar-types";
 import type { SecretCalendarEntry } from "./secret-calendar";
 

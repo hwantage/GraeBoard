@@ -120,9 +120,9 @@ Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의
 
 ## 리뷰 반영 구조
 
-내부 `createApp`은 SQLite 구성만 담당하고 HTTP 경계·로컬 인증·권한 조회를 `http-boundary.mjs`, `local-auth.mjs`, `sqlite-access.mjs`로 나눕니다. 공통 HTTP 라우트 표는 `shared/business-routes.js`, 외부 PostgreSQL 구현은 `worker/storage/`에 둡니다. 외부가 내부 Node 호스트를 역참조하지 않도록 import 방향을 검사합니다. 워크북 parser는 `shared/workbook.mjs`에서 직접 공유하며 빌드 중 소스 문자열을 잘라 생성하지 않습니다.
+내부 `createApp`은 SQLite 구성만 담당하고 HTTP 경계·로컬 인증·권한 조회를 `http-boundary.mjs`, `local-auth.mjs`, `sqlite-access.mjs`로 나눕니다. 공통 HTTP 라우트 표는 `shared/http/business-routes.js`, 외부 PostgreSQL 구현은 `worker/storage/`에 둡니다. 외부가 내부 Node 호스트를 역참조하지 않도록 import 방향을 검사합니다. 워크북 parser는 `shared/transfer/workbook.mjs`에서 직접 공유하며 빌드 중 소스 문자열을 잘라 생성하지 않습니다.
 
-내부·외부는 동기화 로직을 제외한 저장 방식과 코드 흐름을 같게 유지합니다. 예를 들어 사본 `data`는 사내 BLOB·HTTP 응답·동기화 명령·외부 `site_entities`에서 모두 `shared/compact.js`의 공유 사전 형태이며, `shared/sheet-clone-sync-data.js`가 동기화·외부 저장 경계에서만 직렬화·해제합니다. 한쪽에만 다른 형식을 두면 한 사이트에서는 되고 다른 사이트에서는 실패하는 차이가 생기므로, 새 기능도 공통 모듈을 재사용합니다. [사본 저장 형태](DATA_FORMAT.md#보기사본계정)
+내부·외부는 동기화 로직을 제외한 저장 방식과 코드 흐름을 같게 유지합니다. 예를 들어 사본 `data`는 사내 BLOB·HTTP 응답·동기화 명령·외부 `site_entities`에서 모두 `shared/formatting/compact.js`의 공유 사전 형태이며, `shared/sheet-clones/sheet-clone-sync-data.js`가 동기화·외부 저장 경계에서만 직렬화·해제합니다. 한쪽에만 다른 형식을 두면 한 사이트에서는 되고 다른 사이트에서는 실패하는 차이가 생기므로, 새 기능도 공통 모듈을 재사용합니다. [사본 저장 형태](DATA_FORMAT.md#보기사본계정)
 
 Node 동기화는 팀별 큐를 두 실행 슬롯에 배치합니다. 진행 단계마다 5분 무진행 제한을 갱신하고 실제 진행에 맞춰 소유 lease를 연장합니다. 시간 초과 요청의 I/O를 취소한 뒤 해당 worker만 종료하며 다른 슬롯·대기 요청은 유지합니다. C 캐시는 팀·저장소·설치·발신 세대·head·hash·복구 세대에 묶고 commit 성공 뒤 공개합니다. C/P 원자 commit과 snapshot guard는 `node-mutations.mjs`에서 유지합니다. 상태·연결 라우트, SSE 알림, 오류 기록은 각각 독립 모듈입니다.
 

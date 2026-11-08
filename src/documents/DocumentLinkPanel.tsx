@@ -9,7 +9,7 @@ import DocumentEditor, { type DocumentHandle } from "./DocumentEditor";
 import { DocumentPage } from "./DocumentPanel";
 import DocumentLoading from "./DocumentLoading";
 import { canContribute, canManageTeam } from "../../shared/domain.js";
-import { documentLinkPath } from "../../shared/document-links.js";
+import { documentLinkPath } from "../../shared/documents/document-links.js";
 import {
   UNAVAILABLE_LINK_MESSAGE,
   useOpenDocumentLink,

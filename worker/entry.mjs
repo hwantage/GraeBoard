@@ -1,40 +1,40 @@
-import { createLinkTitleService } from "../shared/link-title.mjs";
-import { accessTokenRoutes } from "./access-tokens.mjs";
+import { createLinkTitleService } from "../shared/http/link-title.mjs";
+import { accessTokenRoutes } from "./control/access-tokens.mjs";
 import {
   isSyncRequest,
   syncErrorMessage,
-} from "../shared/sync-error-message.js";
-import { syncSetupKeyStatus } from "./setup-keys.mjs";
-import { deploymentSite } from "../shared/site-mode.js";
-import { pack, unpack } from "../shared/compact.js";
-import { assertOrigin, verifyAccess, assert } from "./access.mjs";
+} from "../shared/sync/sync-error-message.js";
+import { syncSetupKeyStatus } from "./control/setup-keys.mjs";
+import { deploymentSite } from "../shared/site/site-mode.js";
+import { pack, unpack } from "../shared/formatting/compact.js";
+import { assertOrigin, verifyAccess, assert } from "./control/access.mjs";
 import {
   authenticate,
   setupStatus,
   setup,
   RequestContext,
   controlRoutes,
-} from "./control.mjs";
-import { adminRoutes } from "./admin.mjs";
-import { taskRoutes } from "./tasks.mjs";
-import { documentRoutes } from "./documents.mjs";
+} from "./control/control.mjs";
+import { adminRoutes } from "./control/admin.mjs";
+import { taskRoutes } from "./sheet/tasks.mjs";
+import { documentRoutes } from "./documents/documents.mjs";
 import {
   sheetCloneRoutes,
   filterRoutes,
   browserRoutes,
-} from "./sheet-clones.mjs";
-import { calendarRoutes } from "./calendar.mjs";
-import { transferRoutes } from "./transfer.mjs";
-import { recoveryRoutes } from "./recovery.mjs";
-import { profileSwitchRoutes } from "./profile-switch.mjs";
-import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
-import { maintenanceRoutes } from "./maintenance.mjs";
-import { eventResponse } from "./events.mjs";
-import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
-import { profileFor, siteTeamId } from "../shared/sync-profiles.js";
-import { siteAuthRoute, accessRequestRoutes } from "./site-auth.mjs";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";
+} from "./sheet-clones/sheet-clones.mjs";
+import { calendarRoutes } from "./calendar/calendar.mjs";
+import { transferRoutes } from "./transfer/transfer.mjs";
+import { recoveryRoutes } from "./sync/recovery.mjs";
+import { profileSwitchRoutes } from "./sync/profile-switch.mjs";
+import { auditRoutes, historyCleanupRoutes } from "./history/history.mjs";
+import { maintenanceRoutes } from "./sync/maintenance.mjs";
+import { eventResponse } from "./events/events.mjs";
+import { schedulePublish, refreshTeam, scheduled } from "./sync/sync.mjs";
+import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
+import { siteAuthRoute, accessRequestRoutes } from "./control/site-auth.mjs";
+import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
+import { PostgresDocumentRepository } from "./storage/documents/postgres-documents.mjs";
 const security = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "same-origin",

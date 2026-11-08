@@ -18,6 +18,79 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #105 감독 리뷰: 배포 CLI의 버전 간 호출 계약 복원
+
+- 정기·수동 workflow 정의와 fork sync 결과 checkout SHA가 다른 버전일 때 P7에서 이동한 배포 CLI를 찾지 못하는 회귀를 수정했습니다. 구현 바이트를 바꾸지 않고 `scripts/team-site-deploy.mjs` 자체를 원위치로 고정했으며 두 workflow 호출·설치 안내 명령·문서·manifest의 keep entry와 정확한 경로 예외를 맞췄습니다. wrapper·복제는 없습니다. 최종 P7은 32개 이동과 외부 호출 계약 1개 고정으로 완료했으며 P4~P8 기존 이동은 402개입니다. 아래 33개/403개 기록은 수정 전 단계의 실제 이력입니다.
+- `7fec065`의 실제 workflow·CLI와 현재 파일로 구·신 workflow × 구·신 checkout 4개 조합을 실행하는 회귀를 기존 배포 suite에 추가했습니다. 수정 전 양방향 교차 조합의 실제 `--check`와 마지막 배포 명령은 MODULE_NOT_FOUND/exit1, 같은 버전 조합은 exit0을 재현했습니다. 수정 후 네 조합 모두 설정 확인 exit0·누락 설정 거절 exit1·마지막 배포 명령 exit0입니다. 외부 실행 파일과 상속 자격 증명 없이 fake 설정·로컬 subprocess stub으로 검증했고 실제 배포는 하지 않았습니다. 실제 옛 release `0a313fe8944c159987a6dea7c0d2b62fac1f04b3`의 동일 CLI도 별도 모형에 포함해 수정 전6조합 중 교차3조합 실패 → 수정 후6조합 모두 통과를 확인했습니다. 구조 CI에도 배포 suite를 포함했습니다.
+- 실제 Node v22.23.1에서 배포 suite 12 pass와 설치 안내/도구/수집/저장소 import 경계를 포함한 관련 6개 suite 46 pass / fail0 / cancelled0 / skip0, CI와 같은 선택 명령도30 pass, 기본/P8 구조 600개·오류0, diff 검사를 통과했습니다. 기존 배포7건은 CLI 경로·서식 외 AST 차이0도 확인했습니다. 새 회귀는 상위1건·조합 하위4건이며 기존 배포7건을 유지했습니다. Node 수집 파일115개·브라우저43 spec과 assertion/timeout/skip·DB/lockfile/migration은 유지합니다.
+- 전체 Node708 pass·고정 전환16 pass·브라우저 최초75 fail(기준 동일48 + 기준/현재 재실행 통과27)은 아래 기존 소스(`acc878e22d7a7e7e7100c04ff9dc5e2580a668ba`, 문서 최종 `201513d60e08ac89903d7ca27ce2233f582e87cd`와 검사 관련 tree 동일) 검증입니다. 이번 경로 복원 뒤의 전체 재실행 결과로 바꾸지 않습니다. 앱 실행 변경은 설치 안내의 CLI 문자열·주석뿐이며 기존 소스와의 정확한 차이·원시 로그는 `/tmp/graeboard-code-organization-rest-100-evidence/worker-review-fix-23d2f7c8d473/`에 별도 보존했습니다. 운영 전환·배포·main/release 병합은 후속 작업입니다.
+
+## 2026-11-09 — #100 P4~P8 최종 검증과 인계
+
+- P4 shared 45개, P5 업무 API/저장소 109개, P6 sync 48개, P7 scripts 33개, P8 기존 검사/helper 168개와 새 현재 앱 호환성 suite 1개를 파일명·공개 계약을 보존해 모두 분류했습니다. P1~P3의 138개 배치는 유지했습니다. 기준608개 중 고정 소스로 분리한18개를 removals에 기록했고 원래16개 보호 hash·package-lock·배포 SQL/checksum은 그대로입니다. 최종 구조 대상600개, basename/대소문자 목적지 충돌/누락0입니다.
+- 실제 Node v22.23.1·PostgreSQL18.6(`/tmp/graeboard-pg18/bin`)에서 `TEST_PG_BIN=/tmp/graeboard-pg18/bin npm test`를 전체 실행했고 마지막 PG 준비 오류 안내 보완 후 최신 코드에서 다시 실행했습니다. 두 번 모두708 pass / fail0 / skip0입니다(각630초). 기준717건에서 전환 unit12건을 고정 소스로 분리하고 구조/고정 소스 회귀3건을 추가한 수이며 일반 권한/migration suite3개는 유지했습니다. Node 파일 수는116−2+1=115개입니다.
+- `TEST_PG_BIN=/tmp/graeboard-pg18/bin npm run test:cutover:frozen`은 exact HEAD/clean tree와 lockfile/원본16 hash를 검증한 전체 고정 Git source에서 원래 전환16건 pass / fail0 / skip0입니다. 현재 앱의 별도 호환성 suite는 같은 고정 도구로 전환한 f744ead 합성 자료를 최신 SQLite/외부 PG API에서 읽고 수정·동기화 재개·protocol4 전환·checkpoint 신규 합류/복구하는 원래 단언을 유지하며 전체708건에 포함됩니다.
+- Playwright는43 spec·각 엔진626건/총1,878건을 이동 전후 파일·제목·프로젝트까지 일대일 대응하고 Chromium→Firefox→WebKit 순서로 전체 실행했습니다. 최초 결과는 Chromium600 pass/25 fail/1 skip, Firefox588/24/14, WebKit588/26/12로 총1,776 pass/75 fail/27 기존 skip입니다.
+- 최초 실패75건을 정확한 기준`7fec065`의 별도 source/build/DB에서 같은 엔진으로 비교했습니다. 엔진별16건, 총48건은 오류 문구·실제 소스 줄·테스트 내 위치가 모두 같게 재현됐습니다. 기준에서 통과한27건(9/8/10)은 현재 소스 재실행에서도 모두 통과했습니다. 신규로 지속 재현되는 차이는 관찰하지 않았으며 이27건의 타이밍·실행 순서·상태 원인은 확정하지 않았습니다. 최초 실패는 로그/trace/스크린샷으로 그대로 보존했습니다. 43 spec의 skip/fixme/slow/setTimeout26개 호출 변경0도 확인했습니다. assertion·timeout·skip 변경으로 결과를 맞추지 않았습니다.
+- `npm run build`, `npm run build:edge`, 기본 구조 검사와 `--migration-phase P8`, `git diff --check`를 통과했습니다. runtime401개를 같은 방식으로 정규화한 코드·해석된 import/동적 import·Worker URL·비존재 출력 경로 비교에서 앱 차이/새 graph·SCC 변화0입니다. 차이는 구조 검사기의 명시적 제거 manifest 지원과 필요한 CLI 경로 문구입니다. 오래된 참조는 과거 BASE archive/수동 source-root probe의 명시적11개뿐이고 불필요한 참조0, 새 local 문서 broken link0입니다.
+- 원시 증거와 전체 명령/이동 목록/비교/최초 실패 보완 기록은 `/tmp/graeboard-code-organization-rest-100-evidence/worker-c8ca19c5734d/`의 Markdown/JSON handoff와 각 로그에 보존했습니다. 원본/고정 워크트리와 사용자 개발 서버는 수정·중지하지 않았습니다. 실제 운영 전환·배포·main/release 병합은 하지 않았으며 운영은 리팩토링 후 별도 작업입니다. 수동 Deno probe/전체 수동 부하 도구와 실제 cloud/운영 데이터 검증도 이 결과와 구분합니다.
+
+## 2026-11-09 — #100 최종 상대 경로 점검
+
+- 성능 도구의 아직 존재하지 않을 수 있는 `docs/validation/` 출력 폴더도 scripts/performance 위치에서 기존 저장소 루트로 해석하도록 보완했습니다. 상대 경로 비교에 비존재 출력 디렉터리를 포함했습니다. 실제 대규모 부하 실행은 하지 않았고 URL 해석과 기준 실행 코드/경로 정규화 비교로 확인했습니다.
+
+## 2026-11-09 — #100 P8 검사·fixture/helper 배치와 수집 보존
+
+- 기존 Node/Playwright/helper 168개와 현재 앱 호환성 suite 1개를 기능별로 이동했습니다. 수집기·소스 직접 읽기/변환 로더·재시작 서버·CI와 현재 문서를 갱신하고 legacy schema helper·수동 Deno probe를 support에 보존했습니다.
+- baseline 116개 Node suite에서 전용 전환 2개를 고정 소스로 분리하고 현재 앱 호환성 1개를 추가해 115개를 수집합니다. 일반 3개 suite는 유지했습니다. 이동 전후 브라우저 43개 spec·각 엔진 626건(총 1,878건)의 파일 대응·제목·프로젝트 차이와 Node 누락/중복은 0입니다.
+- 검증: P8 구조 600개/오류 0, 수집/경계/소스 로더 선택 검사 60건 pass/fail 0/skip 0. 고정 소스의 exact Git HEAD/clean tree·원본 hash 변조 실패·누락 history 명시 실패 회귀도 추가했습니다. 전체 Node·빌드·브라우저 결과는 최종 검증 기록에 별도로 남깁니다.
+
+## 2026-11-09 — #100 P7 개발·배포·운영 도구
+
+- 기존 scripts 33개를 admin/deploy/performance/sync/testing/transfer로 이동했습니다. npm·CI·Playwright webServer·운영 문서·설치 안내의 실행 명령과 소스 기준 상대 경로를 갱신했습니다. CLI의 직접 실행 분기와 환경/데이터 경로 의미는 유지합니다.
+- 검증: P7 구조 600개/오류 0, strict PG 실행기·재귀 수집·배포·SQL 초기화·외부 가져오기·프로토콜 전환·백업 선택 검사 21건 pass/fail 0/skip 0. 기준 import/Worker URL graph 차이 0이며 AST 차이는 구조 검사기와 필요한 배포 명령 문구 갱신으로 한정됩니다.
+
+## 2026-11-09 — #100 P6 이식 가능한 동기화와 Node/외부 호스트
+
+- sync 48개를 core 17개·Node 20개·외부 11개로 이동했습니다. 직접 허용 portable 16개·공통 서비스/규칙 14개의 정확한 경로와 간접 의존 제한, background Worker·동적 import·설치 안내 읽기 경로를 유지했습니다.
+- 과거 성능 BASE archive의 경로는 보존하고 수동 Deno probe는 입력 source root의 현재/과거 배치를 명시적으로 구분했습니다. 자동 수집에는 probe를 포함하지 않습니다. 경계 검사 모형의 문자열 import도 새 실제 경로로 갱신했습니다.
+- 검증: P6 구조 600개/오류 0, 프로토콜 3/4·checkpoint·백업·사람 참조·내부/외부 Git/PG 왕복과 import 경계 선택 검사 66건 pass/fail 0/skip 0, tooling 결함 탐지 10건 pass. 기준 런타임 AST와 import/Worker URL의 앱 차이 0입니다.
+
+## 2026-11-09 — #100 P5 인증·제어·이력·이관과 이벤트 경계
+
+- P5 나머지 인증·계정/제어·감사/정리·이관·HTTP/SSE 라우트와 저장소를 분류해 총 109개 이동을 완료했습니다. 진입점과 공통 database adapter, 배포 SQL·checksum은 유지했습니다.
+- 검증: P5 구조 600개/오류 0, 실제 SQLite/PG 권한·제어·이력·이관 및 import 경계 선택 검사 15건 pass/fail 0/skip 0. 기준 런타임 AST와 import/Worker URL 비교의 앱 차이 0입니다.
+
+## 2026-11-09 — #100 P5 업무·사본·설정 저장 경계
+
+- 업무·셀·필터·설정·사본의 Node/외부 라우트와 공통 서비스, SQLite/PG repository를 분류했습니다. API·권한·CAS·서식/사본 저장 및 공통 서비스 경계는 유지합니다.
+- 검증: 구조 오류 0, 실제 SQLite/PG 업무 명령·저장·설정/필터·사본 계약 및 사이트 일치·import 경계 선택 검사 17건 pass/fail 0/skip 0. 기준 런타임 AST와 import/Worker URL 비교의 앱 차이 0입니다.
+
+## 2026-11-09 — #100 P5 문서·일정 라우트와 저장소
+
+- 문서·메모·이미지 준비 Worker와 일정의 Node/외부 라우트, 공통 서비스, SQLite/PG repository를 대응표대로 이동했습니다. 공통 서비스는 server/storage, PG 구현은 worker/storage 경계를 유지했습니다.
+- 검증: 구조 오류 0, 실제 SQLite/PG 문서·일정 저장 계약과 task-documents·import 경계 선택 검사 57건 pass/fail 0/skip 0. 기준 런타임 AST와 정적/동적 import·Worker URL 비교에서 앱 차이 0입니다.
+
+## 2026-11-09 — #100 P4 shared 도메인 배치
+
+- 대응표의 shared 45개를 파일명·공개 심벌 그대로 기능별 폴더로 이동하고 브라우저/Node/Edge import와 현재 문서 참조를 갱신했습니다. 루트 통합 계약 5개와 실행 환경 경계는 유지합니다.
+- 검증: P4 구조 600개/오류 0, 프런트엔드 빌드 성공, 사본 저장·동기화·사이트 일치 및 import 경계 선택 검사 30건 pass/fail 0/skip 0. 고정 소스 원본 전환 suite는 Git metadata를 갖춘 전체 detached checkout으로 보완한 뒤 16건 pass/fail 0/skip 0입니다.
+- 기준 `7fec065`의 런타임 401개 AST와 정적/동적 import·Worker URL을 대응 경로로 정규화해 비교했습니다. 의미 변경은 구조 검사기의 명시적 제거 manifest 지원뿐이며 앱 모듈·실행 import graph 차이는 0입니다.
+
+## 2026-11-09 — #100 후속: 한시적 전환 소스 분리
+
+- 최신 앱의 도구 5개·원본 fixture 11개·전환 전용 suite 2개와 npm 실행 명령을 분리했습니다. 원본 16개 hash를 변경하지 않고 고정 커밋/lockfile 검증 설정으로 보관합니다.
+- 일반 권한·SQLite/PG migration suite 3개는 그대로 유지하고 변환 생성/CLI 실행만 전체 고정 소스에 연결했습니다. 기존 cutover suite의 현재 앱 API·동기화·checkpoint 복구 단언을 호환성 suite로 유지했습니다.
+- Git 전체 소스 재현과 고정 suite 실행 명령, 누락/의존성 불일치 시 실패, CI 전체 history 준비 및 manifest의 명시적 제거 기록을 추가했습니다.
+- 검증: 일반 3개·현재 앱 교차 검증·기존 tooling 선택 실행은 33건 pass/fail 0/skip 0, P3 구조 검사는 소스 600개·오류 0입니다. 이후 추가 tooling 검사는 다음 단계에서 재검증합니다.
+
+## 2026-11-09 — #100 후속: 운영 전환 소스 고정 정책
+
+- 사용자 지시에 따라 개발 SheetClone 전환 완료와 운영 전환 예정 상태를 구분하고, 운영 전환을 P4~P8의 선행 조건에서 해제했습니다.
+- 전체 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`와 lockfile·원본 보호 hash를 미래 전환 기준으로 고정했습니다. 도구 일부 복사·import 수정·digest 변경 없이 별도 checkout에서 실행·재개합니다.
+- 고정 소스와 최신 앱의 분리, 일반 회귀 유지, 최신 앱과 전환 결과의 교차 검증, 실제 환경 파일·절대 DB/Git/이미지/journal 경로와 전환 후 앱 배포 순서를 문서화했습니다. 이 변경은 운영 DB/Git 전환이나 배포를 실행하지 않습니다.
+- 검증: 문서의 종전 P4 차단 조건과 소스 실행 위치를 대조했고 `git diff --check`를 수행했습니다. 고정 소스의 합성 전환 회귀 16건 통과는 감독이 준비한 별도 증거이며 후속 앱 호환성 검사를 대신하지 않습니다.
+
 ## 초기 검증 기록
 
 초기 저장소 등록 시점의 검증(2026-10-09): 빌드 성공, API·도메인·백업 검사 **43건**, Chromium·Firefox·WebKit의 **45개 흐름 × 3종 = 135건** 통과. 임시 DB를 이용한 로그인 화면·브라우저 제목·메뉴·하단의 그래보드 표기와 XLSX·CSV·JSON 파일명, 엑셀 작성자 정보도 확인했습니다.

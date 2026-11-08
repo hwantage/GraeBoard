@@ -12,7 +12,7 @@ import {
   BORDER_SIDES,
   BORDER_STYLES,
   borderCSS,
-} from "../../shared/borders.js";
+} from "../../shared/formatting/borders.js";
 
 export type ClipboardCell = { text: string; style?: Style };
 export type ClipboardMatrix = ClipboardCell[][];

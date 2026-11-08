@@ -1,5 +1,7 @@
 # 그래보드 데이터 형식과 접근 규칙
 
+
+SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 별도 checkout**에서 실행합니다. 개발 전환은 완료했으며 운영 전환은 전체 리팩토링 뒤에 수행합니다. 소스·lockfile·환경 파일·절대 데이터/Git 경로의 준비와 실행·재개는 [운영 안내](OPERATIONS.md#고정-전환-소스-준비)를 따릅니다.
 [처음으로](../README.md) · [개발 안내](DEVELOPMENT.md) · [운영 안내](OPERATIONS.md) · [DB 변경 지침](DATABASE_CHANGES.md)
 
 ## 기준
@@ -14,11 +16,11 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까�
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
 | JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
-| DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
+| DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
 | 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
 | 동기화 프로토콜    | 3(사본 한 레코드)·4(사본 행·셀 분할)         | C의 `protocol`/`[]` 표식. 1·2는 사본 명칭 전환 전 형식이며 이 런타임은 읽지 않음                                 |
-| 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 전환 도구로 변환                      |
+| 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/transfer/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 전환 도구로 변환                      |
 
 실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v34 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32·v33은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
@@ -64,9 +66,9 @@ XLSX 가져오기 작업은 작은 결과 응답을 직접 저장합니다. 팀 
 
 ## 서식 저장과 전송
 
-`shared/compact.js`가 화면의 긴 속성명과 저장·전송 형식을 연결합니다. 서식을 포함하는 JSON은 `{ "$styles": [서식 사전], "$data": 본문 }`입니다. 본문의 `style`·`defaultStyle`·`rowStyle`은 `{ "$s": 0 }`처럼 사전의 0부터 시작하는 인덱스를 참조합니다. 참조 객체를 사용하므로 이름이 `style`인 사용자 속성의 숫자 값·열 너비와 혼동하지 않습니다. 빈 서식 `{}`는 참조보다 짧으므로 그대로 둡니다. 공통 행·열 규칙이 있으면 `$formats` 배열도 포함하고 업무의 `formatting`은 `{$f: 인덱스}`로 참조합니다. 여러 업무에 같은 규칙 집합을 반복하지 않습니다. 서식과 공통 규칙이 모두 없는 메시지는 사전 없이 그대로 보냅니다. 사전은 요청·응답·SSE 이벤트·이력 JSON·사본마다 독립적이며 DB의 서식 ID를 외부로 노출하지 않습니다. 클라이언트는 `pack`/`unpack`, 문자열은 `stringify`/`parseCompact`를 사용합니다. 서버는 참조를 풀어 기존 권한·값·서식 검증을 수행합니다.
+`shared/formatting/compact.js`가 화면의 긴 속성명과 저장·전송 형식을 연결합니다. 서식을 포함하는 JSON은 `{ "$styles": [서식 사전], "$data": 본문 }`입니다. 본문의 `style`·`defaultStyle`·`rowStyle`은 `{ "$s": 0 }`처럼 사전의 0부터 시작하는 인덱스를 참조합니다. 참조 객체를 사용하므로 이름이 `style`인 사용자 속성의 숫자 값·열 너비와 혼동하지 않습니다. 빈 서식 `{}`는 참조보다 짧으므로 그대로 둡니다. 공통 행·열 규칙이 있으면 `$formats` 배열도 포함하고 업무의 `formatting`은 `{$f: 인덱스}`로 참조합니다. 여러 업무에 같은 규칙 집합을 반복하지 않습니다. 서식과 공통 규칙이 모두 없는 메시지는 사전 없이 그대로 보냅니다. 사전은 요청·응답·SSE 이벤트·이력 JSON·사본마다 독립적이며 DB의 서식 ID를 외부로 노출하지 않습니다. 클라이언트는 `pack`/`unpack`, 문자열은 `stringify`/`parseCompact`를 사용합니다. 서버는 참조를 풀어 기존 권한·값·서식 검증을 수행합니다.
 
-내부·외부 동기화의 `sheetClone` 엔티티 `payload.data`와 외부 `site_entities`의 사본 행도 같은 사전 형태를 사용합니다(`shared/sheet-clone-sync-data.js`). 평문으로 풀면 업무 438건에 규칙 8개(약 87KB)가 업무마다 반복되어 37MiB가 되지만, 사전 형태는 같은 내용을 1MiB 안팎으로 싣습니다. 동기화용 직렬화는 키를 정렬한 뒤 번호를 매겨 두 사이트에서 같은 바이트를 만들고, 읽는 쪽은 평문과 사전 형태를 모두 받아들입니다. 사내 SQLite BLOB 코덱과 HTTP 응답 형식은 바뀌지 않습니다.
+내부·외부 동기화의 `sheetClone` 엔티티 `payload.data`와 외부 `site_entities`의 사본 행도 같은 사전 형태를 사용합니다(`shared/sheet-clones/sheet-clone-sync-data.js`). 평문으로 풀면 업무 438건에 규칙 8개(약 87KB)가 업무마다 반복되어 37MiB가 되지만, 사전 형태는 같은 내용을 1MiB 안팎으로 싣습니다. 동기화용 직렬화는 키를 정렬한 뒤 번호를 매겨 두 사이트에서 같은 바이트를 만들고, 읽는 쪽은 평문과 사전 형태를 모두 받아들입니다. 사내 SQLite BLOB 코덱과 HTTP 응답 형식은 바뀌지 않습니다.
 
 ### 저장 형식과 내부 모델
 
@@ -227,7 +229,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 ### 문서 링크
 
-다른 업무 상세·캘린더 일정·꼬리 메모와 사본의 업무 상세·메모를 가리키는 링크는 본문 안의 일반 Markdown 링크로 저장합니다. 주소는 출처(origin) 없는 앱 경로이므로(`shared/document-links.js`) 동기화로 ID를 보존하는 내부·외부 사이트 모두에서 열립니다. 링크 글자는 붙여넣을 때의 제목입니다. 별도 컬럼·저장 형식·변환은 없으며 서버는 본문의 링크를 해석하지 않습니다. 업무 상세는 여러 문서 중 하나가 아니라 업무 상세 전체를 가리킵니다.
+다른 업무 상세·캘린더 일정·꼬리 메모와 사본의 업무 상세·메모를 가리키는 링크는 본문 안의 일반 Markdown 링크로 저장합니다. 주소는 출처(origin) 없는 앱 경로이므로(`shared/documents/document-links.js`) 동기화로 ID를 보존하는 내부·외부 사이트 모두에서 열립니다. 링크 글자는 붙여넣을 때의 제목입니다. 별도 컬럼·저장 형식·변환은 없으며 서버는 본문의 링크를 해석하지 않습니다. 업무 상세는 여러 문서 중 하나가 아니라 업무 상세 전체를 가리킵니다.
 
 | 대상             | 경로                                              |
 | ---------------- | ------------------------------------------------- |
@@ -295,7 +297,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | ------------------------------------- | ----------------------------------------------------------- |
 | 사내 `sheet_clones.data` BLOB         | 공유 사전 JSON을 gzip                                       |
 | HTTP 응답·JSON 반출                   | 공유 사전 JSON                                              |
-| 동기화 명령 P·기준본 C의 `sheetClone` | 공유 사전 형태의 `data` (`shared/sheet-clone-sync-data.js`) |
+| 동기화 명령 P·기준본 C의 `sheetClone` | 공유 사전 형태의 `data` (`shared/sheet-clones/sheet-clone-sync-data.js`) |
 | 외부 `site_entities`의 `sheetClone`   | 공유 사전 형태의 `data`, `DataSession`이 읽을 때 풂         |
 | 외부 `site_audit`의 사본 수정         | 공유 사전 형태의 전후 `data`, 이력 조회가 읽을 때 풂        |
 | 외부 `site_operations.response`       | 응답 전체를 `pack`한 JSON, 재시도 응답 때 풂                |
@@ -346,7 +348,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 ## 팀 스페이스 테마
 
-팀 설정의 `theme`는 `mint`·`sky`·`lavender`·`rose`·`sand` 중 하나이며 기본값은 민트입니다. 팔레트는 `shared/themes.js`에서 관리하고, 현재 팀의 테마를 메뉴·버튼·선택 강조·팝업에 적용합니다. 셀의 저장된 색상과 속성 옵션·사용자 아바타 색상은 변경하지 않습니다.
+팀 설정의 `theme`는 `mint`·`sky`·`lavender`·`rose`·`sand` 중 하나이며 기본값은 민트입니다. 팔레트는 `shared/formatting/themes.js`에서 관리하고, 현재 팀의 테마를 메뉴·버튼·선택 강조·팝업에 적용합니다. 셀의 저장된 색상과 속성 옵션·사용자 아바타 색상은 변경하지 않습니다.
 
 시스템 관리자는 팀 생성 API에서, 시스템 관리자와 팀장은 `PATCH /api/teams/:id`에서 `theme`를 보낼 수 있습니다. 수정 요청의 `settingsRevision`은 동시 설정 변경을 검사하며, 테마를 바꾸면 설정 `revision`도 증가합니다. 속성·기본 서식 저장은 테마를 보존하고, `theme`를 생략한 설정 저장은 현재 테마를 유지합니다. 지원하지 않는 테마 ID는 서버에서 거절합니다.
 
@@ -392,9 +394,9 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `DELETE /api/admin/teams/:id`                 | 확인한 팀의 전 연도 데이터 영구 삭제                                                       |
 | `PATCH /api/teams/:id/settings`               | 속성 이름·값·순서·표시 모양 저장                                                           |
 
-정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
+정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/site/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
 
-업무 생성은 `year`에만 등록하며 선택적인 `startMonth`는 삽입 대상의 조회 범위를 지정합니다. 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·표시 기간의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`, 행 공통 서식과 활성 속성·주차 셀의 예외를 함께 복사합니다. 삽입 행의 팀원을 포함한 셀 값은 비우고, 작업명 기본값과 요청한 묶음 기준 `fields`만 유지합니다. 빈 복수 팀원 값은 빈 배열로 만듭니다. 팀원은 `createdBy`가 본인이며 담당자가 비어 있는 행을 편집할 수 있습니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle, rowStyle?, documents?: [{id, title, markdown}]}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/row-menu.test.mjs`에서도 검증합니다.
+업무 생성은 `year`에만 등록하며 선택적인 `startMonth`는 삽입 대상의 조회 범위를 지정합니다. 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·표시 기간의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`, 행 공통 서식과 활성 속성·주차 셀의 예외를 함께 복사합니다. 삽입 행의 팀원을 포함한 셀 값은 비우고, 작업명 기본값과 요청한 묶음 기준 `fields`만 유지합니다. 빈 복수 팀원 값은 빈 배열로 만듭니다. 팀원은 `createdBy`가 본인이며 담당자가 비어 있는 행을 편집할 수 있습니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle, rowStyle?, documents?: [{id, title, markdown}]}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/sheet/row-menu.test.mjs`에서도 검증합니다.
 
 행 이동은 `tasks: [{id, updatedAt}]`(최대 20,000행), `targetId`, `targetUpdatedAt`, `year`, 선택적인 `startMonth`(기본 1), `placement`(`before`·`after`), 선택적인 `groupBy`를 받습니다. 기존 단일 행 요청의 `taskId`·`updatedAt`도 지원합니다. 이동할 행은 현재 수동 순서를 유지하며 한 트랜잭션으로 저장하고, 하나라도 권한·버전·팀·연도·묶음 검사를 통과하지 못하면 모두 취소합니다. 기준 행은 이동 대상에 포함할 수 없습니다. 응답의 `tasks`는 이동한 모든 업무이며, 단일 행 클라이언트를 위한 `task`도 유지합니다.
 
@@ -430,7 +432,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 일정 삭제는 `deleted_at`·`deletion_id`를 기록하는 복구 가능한 삭제입니다. 목록·상세·수정·이미지 업로드에서는 삭제된 일정을 제외하고, 본문 참조와 태그·체크 상태는 백업 및 실행취소를 위해 보존합니다. 삭제 요청은 고유 `deletionId`와 조회 시점의 `expectedUpdatedAt`도 전달합니다. `POST /api/calendar/entries/:id/restore`는 `{deletionId,previousRange?: {date,endDate}}`로 해당 삭제만 취소하며 기존 수정 권한을 검사합니다. 삭제·복구 재시도는 중복 실행하지 않고, 복구 응답에는 현재 일정과 `placements`를 반환합니다. 복구된 카드가 이전 행에서 우선 배치되며 겹친 일정은 순서를 유지해 아래로 배치됩니다. 응답 유실 후 다른 기간으로 이동한 상태에서 복구를 재시도하면 `previousRange`와 현재 기간의 위치를 함께 반환합니다. 복구 뒤 다시 삭제한 경우 이전 삭제의 실행취소는 거절합니다. 태그 사용 수에는 활성 일정만 포함합니다. 팀 영구 삭제 시 보존된 일정도 함께 제거합니다.
 
-`calendar_tags`는 태그의 ID·팀·소유자(`user_id`, API의 `userId`)·이름(1~40자)·고정 색상 ID·유형(`kind`: `label` 또는 `check`, 기본 `label`)·수정 번호를 저장합니다. 사용자 ID가 있으면 해당 팀·개인의 태그이며 `NULL`이면 팀 공용 태그입니다. 같은 팀·소유자 목록 안에서만 이름 중복을 금지하고 목록별 최대 200개입니다. 서로 다른 개인과 공용 목록은 같은 이름을 사용할 수 있습니다. 개인·공용 이름 중복은 각각의 부분 고유 인덱스로도 검증합니다. `calendar_entry_tags`는 일정·태그 ID와 순서·체크 상태(`checked`: 0 또는 1)를 저장하며 이름·색상을 일정마다 복제하지 않습니다. API의 `tagIds`는 중복 없는 최대 20개 ID 배열이며 첫 태그가 카드 배경색을 결정합니다. 태그가 없으면 기존 테마 배경을 유지합니다. 색상은 `shared/calendar-tags.js`의 기본·회색·갈색·주황색·노란색·초록색·파란색·보라색·분홍색·빨간색 10종입니다.
+`calendar_tags`는 태그의 ID·팀·소유자(`user_id`, API의 `userId`)·이름(1~40자)·고정 색상 ID·유형(`kind`: `label` 또는 `check`, 기본 `label`)·수정 번호를 저장합니다. 사용자 ID가 있으면 해당 팀·개인의 태그이며 `NULL`이면 팀 공용 태그입니다. 같은 팀·소유자 목록 안에서만 이름 중복을 금지하고 목록별 최대 200개입니다. 서로 다른 개인과 공용 목록은 같은 이름을 사용할 수 있습니다. 개인·공용 이름 중복은 각각의 부분 고유 인덱스로도 검증합니다. `calendar_entry_tags`는 일정·태그 ID와 순서·체크 상태(`checked`: 0 또는 1)를 저장하며 이름·색상을 일정마다 복제하지 않습니다. API의 `tagIds`는 중복 없는 최대 20개 ID 배열이며 첫 태그가 카드 배경색을 결정합니다. 태그가 없으면 기존 테마 배경을 유지합니다. 색상은 `shared/calendar/calendar-tags.js`의 기본·회색·갈색·주황색·노란색·초록색·파란색·보라색·분홍색·빨간색 10종입니다.
 
 태그 목록 조회·생성은 `/api/calendar/teams/:teamId/tags`, 수정·삭제는 `/api/calendar/tags/:id`에서 처리하며 수정·삭제에는 `expectedRevision`이 필요합니다. 목록 조회의 기본값은 본인의 개인 태그이며 `userId`로 다른 팀원의 목록을 조회하거나 `scope=team`으로 공용 목록을 조회합니다. 생성 시 `userId`를 생략하면 본인, 사용자 ID면 해당 개인, `null`이면 공용 목록입니다. 개인 태그 관리는 해당 개인 일정의 편집 권한을 따릅니다. 공용 태그는 열람자를 포함한 모든 팀원이 추가·수정·삭제할 수 있습니다. 일정에 태그를 지정할 권한은 기존 일정 편집 권한을 따릅니다. 일정과 팀·소유자가 모두 같은 태그만 연결할 수 있으므로 다른 개인·공용 목록 사이의 태그 연결은 거절합니다. 태그 삭제는 연결만 제거하고 일정·본문은 유지합니다. 팀 삭제와 SQLite 백업·복구에는 태그와 연결도 포함합니다. 연간 업무 속성·JSON/XLSX 반출과는 별개입니다.
 
@@ -438,7 +440,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 `GET /api/calendar/tasks?teamId=…&userId=…&weekStart=…&q=…&offset=…&filters=…`는 주간 목록에 추가할 같은 팀의 활성 업무를 연도·상태·담당자 제한 없이 검색합니다. 제목·연도·팀원(`owner`)·상태(`status`)·`documentCount`·`hasDocument`·해당 주 추가 여부를 50개씩 반환하며 `nextOffset`이 `null`이면 마지막 페이지입니다. 선택 값 `filters`는 `[{propertyId, values, mode}]` JSON(최대 8,000자, 50개 조건, 조건마다 값 1~101개)이며 모든 조건을 AND로 적용합니다. 각 조건은 주간 할 일 기준·연간 업무 열 필터와 같은 `matchesPropertyFilter` 규칙으로 판정하고 페이지를 나누기 전에 적용합니다. `POST /api/calendar/weekly`는 `{teamId,userId,weekStart,taskIds}`로 최대 100개 업무를 과거·현재·미래의 주에 연결합니다. 대상 개인 일정의 수정 권한과 모든 업무 ID를 한 번에 검증하며 중복 연결·재시도는 기존 기록을 유지합니다. `POST /api/calendar/import`는 서울 날짜 기준 이번 주에만 허용하고, 팀원(`owner`) 값이 대상 `userId`인 업무 중 설정한 기준에 맞는 업무를 추가합니다. 지원자·검토자로만 참여한 업무는 제외합니다. 두 저장 경로는 `{added,existing,weekly}`를 반환하므로 해당 소유자·주의 목록만 병합하며 전체 캘린더를 재조회하지 않습니다. 두 경로 모두 원본 업무를 복제하거나 수정하지 않습니다. `DELETE /api/calendar/weekly`는 `{teamId,userId,weekStart,taskId}`로 그 주의 연결 하나를 지우고 `{removed,weekly}`를 반환합니다. 추가와 같은 권한을 검사하며 이미 없는 항목은 `removed: 0`입니다. `POST /api/calendar/weekly/restore`는 실행취소용으로 같은 값에 지운 항목의 `importedAt`을 더해 같은 업무를 다시 연결하고 `{restored,weekly}`를 반환합니다. 같은 팀의 업무 행이 있으면 원본이 삭제된 상태여도 되돌리며(조회 불가 항목), `importedAt`으로 이전 순서에 돌아갑니다. 외부 PostgreSQL은 지운 항목을 동기화를 위해 tombstone으로 남깁니다. 두 경로 모두 원본 업무를 바꾸지 않습니다.
 
-주간 항목의 순서는 사내·외부 모두 `importedAt`(UTC ISO, 밀리초 포함)이며 같은 시각이면 업무 ID 순입니다. 사내 SQLite는 `calendar_weekly_items.imported_at`, 외부 PostgreSQL은 `site_entities`의 `weekly` payload `{title, importedAt}`에 두고, 동기화 payload도 같은 `importedAt`을 담습니다(2026-11-04, 테이블·버전 변경 없음). `POST /api/calendar/weekly/reorder`는 `{teamId,userId,weekStart,taskIds}`로 그 주의 모든 항목을 새 순서로 받아 `{weekly}`를 반환합니다. 추가와 같은 권한을 검사하고, 목록이 그 주의 현재 항목과 다르면 409로 거절합니다. 공통 `weeklyOrderStamps`(`shared/calendar.js`)가 기존 시각들을 새 순서대로 다시 나눠 주며(같은 시각은 1ms씩 벌림), 시각이 바뀐 항목만 저장합니다. 그래서 나중에 추가한 항목은 계속 맨 뒤에 놓입니다. 2026-11-04 이전에 공유된 항목에는 공유 payload에 `importedAt`이 없으므로, 업데이트 때 사내에서 `npm run sync:weekly-order -- --apply`로 사내의 시각을 정상 동기화 명령 하나로 채웁니다([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)). 그 전까지 외부는 저장한 시각(revision)으로, 사내는 받은 시각을 유지한 채 정렬합니다.
+주간 항목의 순서는 사내·외부 모두 `importedAt`(UTC ISO, 밀리초 포함)이며 같은 시각이면 업무 ID 순입니다. 사내 SQLite는 `calendar_weekly_items.imported_at`, 외부 PostgreSQL은 `site_entities`의 `weekly` payload `{title, importedAt}`에 두고, 동기화 payload도 같은 `importedAt`을 담습니다(2026-11-04, 테이블·버전 변경 없음). `POST /api/calendar/weekly/reorder`는 `{teamId,userId,weekStart,taskIds}`로 그 주의 모든 항목을 새 순서로 받아 `{weekly}`를 반환합니다. 추가와 같은 권한을 검사하고, 목록이 그 주의 현재 항목과 다르면 409로 거절합니다. 공통 `weeklyOrderStamps`(`shared/calendar/calendar.js`)가 기존 시각들을 새 순서대로 다시 나눠 주며(같은 시각은 1ms씩 벌림), 시각이 바뀐 항목만 저장합니다. 그래서 나중에 추가한 항목은 계속 맨 뒤에 놓입니다. 2026-11-04 이전에 공유된 항목에는 공유 payload에 `importedAt`이 없으므로, 업데이트 때 사내에서 `npm run sync:weekly-order -- --apply`로 사내의 시각을 정상 동기화 명령 하나로 채웁니다([운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)). 그 전까지 외부는 저장한 시각(revision)으로, 사내는 받은 시각을 유지한 채 정렬합니다.
 
 `POST /api/calendar/entries/:id/copy`는 `{id: 새 UUID}`로 일정의 기간·태그 순서·체크를 복제하고 본문은 비워 둡니다. 제목은 같은 팀·소유자의 활성 일정과 겹치지 않는 `(1)`, `(2)` 번호를 서버 트랜잭션에서 결정하며 120자 안에서 보존합니다. 동일 UUID 재시도는 기존 생성 결과를 반환합니다. 기존 개인·공용 일정의 수정 권한을 그대로 사용합니다.
 
@@ -455,7 +457,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | 내부 Node      | 프로세스 세대 `session`과 메모리의 문서 전송 순서 `sequence`       | `session:sequence`        |
 | 외부 Edge / PG | `session: "postgres"`, 해당 문서의 PG revision을 `sequence`로 사용 | `pg:<site_events cursor>` |
 
-외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.
+외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.
 
 Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니다. 클라이언트는 커서를 보존해 다시 연결하며, 인증·권한은 재검사합니다. 이 재연결은 문서를 닫았다 열거나 페이지를 새로고침해야 한다는 뜻이 아닙니다.
 
@@ -502,7 +504,7 @@ Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 
 operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 같습니다.
 
 - C의 기록마다 `sha256(구분 "\n" ID "\n" canonical(값))`을 구합니다. 구분은 엔티티 `e`(ID는 `entityId`), 영수증 `r`(opId), 충돌 `c`(conflictId)입니다.
-- 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/protocol.mjs`의 `stateSum`).
+- 이 다이제스트를 64비트 네 칸으로 나눠 칸마다 mod 2⁶⁴로 더하고, 16진수 64자로 표시합니다(`server/sync/core/protocol.mjs`의 `stateSum`).
 - 순서와 무관한 합이라 커밋은 바뀐 기록의 이전값과 새값만 빼고 더해 갱신합니다(`stateSumFrom`). PostgreSQL에서도 정렬 없는 집계 한 번으로 계산합니다.
 - 목적은 사이트 사이의 우발적 불일치를 감지하는 것이며, 의도적으로 만든 충돌에 대한 내성은 목표가 아닙니다.
 

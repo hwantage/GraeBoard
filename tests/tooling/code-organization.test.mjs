@@ -251,11 +251,11 @@ test("migration phases enforce full lists, preserved basenames, unique destinati
   assert.ok(has(f.check({ manifest, migrationPhase: "P9" }), "config"));
 });
 
-test("migration lists retain root cutover suites and reject copies even when ordinary rules permit them", (t) => {
+test("migration lists retain registered suites and reject copies even when ordinary rules permit them", (t) => {
   const f = fixture(t);
   for (const path of [
-    "tests/sheet-clone-conversion.test.mjs",
-    "tests/sheet-clone-cutover.test.mjs",
+    "tests/registered-conversion.test.mjs",
+    "tests/registered-compatibility.test.mjs",
   ]) {
     f.put(path);
     f.rules.fixedFiles.push(record(path));
@@ -271,7 +271,7 @@ test("migration lists retain root cutover suites and reject copies even when ord
     additions: [],
   };
   assert.deepEqual(f.check({ manifest, migrationPhase: "P0" }).errors, []);
-  rmSync(join(f.root, "tests/sheet-clone-cutover.test.mjs"));
+  rmSync(join(f.root, "tests/registered-compatibility.test.mjs"));
   assert.ok(
     has(f.check({ manifest, migrationPhase: "P0" }), "manifest-missing"),
   );
@@ -281,14 +281,17 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
   const f = fixture(t);
   mkdirSync(join(f.root, "shared"));
   mkdirSync(join(f.root, "worker"));
-  f.put("server/storage/task-service.mjs");
+  f.put("server/storage/tasks/task-service.mjs");
   f.put("server/db.mjs", 'import "node:sqlite";\n');
   f.put("server/sync/node/git-cli.mjs", 'import "node:child_process";\n');
-  f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
-  const suite = "tests/storage-import-boundaries.test.mjs";
-  mkdirSync(join(f.root, "tests"));
+  f.put(
+    "worker/entry.mjs",
+    'import "../server/storage/tasks/task-service.mjs";\n',
+  );
+  const suite = "tests/tooling/storage-import-boundaries.test.mjs";
+  mkdirSync(join(f.root, "tests/tooling"), { recursive: true });
   copyFileSync(
-    new URL("../storage-import-boundaries.test.mjs", import.meta.url),
+    new URL("./storage-import-boundaries.test.mjs", import.meta.url),
     join(f.root, suite),
   );
   symlinkSync(
@@ -316,30 +319,131 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     1,
     "a new service is not automatically an external import exception",
   );
-  f.put("server/sync/sync-operation-cache.mjs");
+  f.put("server/sync/core/sync-operation-cache.mjs");
   for (const target of [
     "db",
     "sync/node/git-cli",
-    "sync/sync-operation-cache",
+    "sync/core/sync-operation-cache",
   ]) {
     f.put("worker/entry.mjs", `import "../server/${target}.mjs";\n`);
     assert.equal(run().status, 1, target);
   }
-  f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
-  f.put("server/storage/task-service.mjs", 'import "../db.mjs";\n');
+  f.put(
+    "worker/entry.mjs",
+    'import "../server/storage/tasks/task-service.mjs";\n',
+  );
+  f.put("server/storage/tasks/task-service.mjs", 'import "../../db.mjs";\n');
   assert.equal(run().status, 1);
-  f.put("server/sync/service.mjs", 'import "./sync-operation-cache.mjs";\n');
-  f.put("worker/entry.mjs", 'import "../server/sync/service.mjs";\n');
+  f.put(
+    "server/sync/core/service.mjs",
+    'import "./sync-operation-cache.mjs";\n',
+  );
+  f.put("worker/entry.mjs", 'import "../server/sync/core/service.mjs";\n');
   assert.equal(
     run().status,
     0,
     "the existing portable service may depend indirectly on the cache",
   );
-  f.put("server/sync/service.mjs", 'import "./node/git-cli.mjs";\n');
-  f.put("worker/entry.mjs", 'import "../server/sync/service.mjs";\n');
+  f.put("server/sync/core/service.mjs", 'import "../node/git-cli.mjs";\n');
+  f.put("worker/entry.mjs", 'import "../server/sync/core/service.mjs";\n');
   assert.equal(
     run().status,
     1,
     "portable sync cannot conceal a native Node dependency",
   );
+});
+
+// Removed artifacts are tracked by their immutable source commit, not exceptions.
+test("migration removals reject restored files and overlapping registrations", (t) => {
+  const f = fixture(t);
+  f.rules.allowedDirectories.push(record("tools/frozen"));
+  const path = "tools/frozen/cutover.mjs";
+  const manifest = {
+    baseline: "test",
+    entries: [],
+    additions: [],
+    removals: [
+      {
+        path,
+        phase: "P3",
+        sourceCommit: "7fec065d1adc241da29d54474af06b390d12d72b",
+        reason: "full frozen source",
+      },
+    ],
+  };
+  assert.deepEqual(f.check({ manifest, migrationPhase: "P3" }).errors, []);
+  f.put(path);
+  assert.ok(
+    has(f.check({ manifest, migrationPhase: "P3" }), "manifest-removal"),
+  );
+  manifest.entries.push({ from: path, to: path, phase: "keep" });
+  assert.ok(
+    has(f.check({ manifest, migrationPhase: "P3" }), "manifest-removal"),
+  );
+});
+
+test("frozen cutover source is a clean exact Git checkout and rejects changed protected bytes", async (t) => {
+  const {
+    frozenCutoverSource,
+    frozenCutoverDefinition,
+    verifyFrozenCutoverSource,
+  } = await import("../support/frozen-cutover-source.mjs");
+  const source = frozenCutoverSource();
+  assert.equal(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: source.root,
+      encoding: "utf8",
+    }).trim(),
+    frozenCutoverDefinition.commit,
+  );
+  assert.equal(
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: source.root,
+      encoding: "utf8",
+    }).trim(),
+    "",
+  );
+  const f = fixture(t);
+  for (const file of [
+    "package-lock.json",
+    ...Object.keys(frozenCutoverDefinition.protectedFiles),
+  ]) {
+    mkdirSync(dirname(join(f.root, file)), { recursive: true });
+    copyFileSync(join(source.root, file), join(f.root, file));
+  }
+  verifyFrozenCutoverSource(f.root);
+  const file = Object.keys(frozenCutoverDefinition.protectedFiles)[0];
+  writeFileSync(join(f.root, file), "changed immutable fixture");
+  assert.throws(
+    () => verifyFrozenCutoverSource(f.root),
+    /Frozen cutover source hash mismatch/,
+  );
+});
+
+test("missing frozen Git history fails with explicit preparation instructions and never skips", (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.root, "tests/support"), { recursive: true });
+  for (const name of [
+    "frozen-cutover-source.mjs",
+    "frozen-cutover-source.json",
+  ])
+    copyFileSync(
+      new URL(`../support/${name}`, import.meta.url),
+      join(f.root, "tests/support", name),
+    );
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      'import { frozenCutoverSource } from "./tests/support/frozen-cutover-source.mjs"; frozenCutoverSource();',
+    ],
+    { cwd: f.root, env, encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Missing frozen cutover commit 7fec065/);
+  assert.match(result.stderr, /git fetch origin/);
+  assert.match(result.stderr, /fetch-depth: 0/);
 });

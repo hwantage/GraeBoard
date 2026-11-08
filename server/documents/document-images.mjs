@@ -1,0 +1,225 @@
+import { documentRouteScope } from "../../shared/documents/document-routes.js";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  linkSync,
+  unlinkSync,
+  rmSync,
+} from "node:fs";
+import { resolve, join, dirname } from "node:path";
+import multer from "multer";
+import sharp from "sharp";
+import { documentImageUrls } from "../../shared/documents/document-image-references.js";
+export { documentImageUrls } from "../../shared/documents/document-image-references.js";
+import {
+  DOCUMENT_IMAGE_PATTERN,
+  MAX_IMAGE_BYTES,
+  isDocumentImage,
+} from "../../shared/documents/document-images.js";
+import { requireThat } from "../../shared/validation.js";
+
+export const documentImagesDirectory = () =>
+  resolve(process.env.DOCUMENT_IMAGES_DIR || "data/document-images");
+export function documentImagePath(directory, url) {
+  const parts = DOCUMENT_IMAGE_PATTERN.exec(url);
+  requireThat(
+    parts && isDocumentImage(url),
+    400,
+    "문서 이미지 주소를 확인하세요.",
+  );
+  return join(resolve(directory), parts[1], `${parts[2]}.webp`);
+}
+// Only this team's images. One whose file is missing is shown as missing in
+// the document and pasted again later; it never stops a save or a copy.
+export function validateDocumentImages(markdown, teamId) {
+  for (const url of documentImageUrls(markdown)) {
+    const parts = DOCUMENT_IMAGE_PATTERN.exec(url);
+    requireThat(
+      parts && isDocumentImage(url) && parts[1] === teamId,
+      400,
+      "같은 팀에 업로드한 문서 이미지만 사용할 수 있습니다.",
+    );
+  }
+}
+export function readDocumentImage(directory, url) {
+  const bytes = readFileSync(documentImagePath(directory, url));
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  if (DOCUMENT_IMAGE_PATTERN.exec(url)[2] !== hash)
+    throw new Error("문서 이미지 무결성 검사에 실패했습니다.");
+  return bytes;
+}
+export function removeTeamDocumentImages(directory, teamId) {
+  const path = documentImagePath(
+    directory,
+    `/api/document-images/${teamId}/${"0".repeat(64)}.webp`,
+  );
+  rmSync(dirname(path), { recursive: true, force: true });
+}
+// Publish complete immutable files atomically; concurrent identical uploads share
+// one file. Unused uploads are retained, so cancellation never removes an image
+// referenced by another document, snapshot, exported row or ongoing upload.
+export function writeDocumentImage(directory, url, bytes) {
+  const path = documentImagePath(directory, url);
+  if (existsSync(path)) {
+    readDocumentImage(directory, url);
+    return;
+  }
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.partial`;
+  try {
+    writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
+    try {
+      linkSync(temporary, path);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      readDocumentImage(directory, url);
+    }
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+export function exportDocumentImages(directory, markdowns) {
+  const urls = new Set(markdowns.flatMap(documentImageUrls));
+  return [...urls].sort().map((url) => ({
+    url,
+    mimeType: "image/webp",
+    base64: readDocumentImage(directory, url).toString("base64"),
+  }));
+}
+export function databaseImageUrls(db) {
+  // Older compatible backups without the document feature have no assets.
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='document_versions'",
+      )
+      .get()
+  )
+    return [];
+  const synchronization = [];
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "markdown" && typeof child === "string")
+        synchronization.push(...documentImageUrls(child));
+      else visit(child);
+    }
+  };
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_outbox'",
+      )
+      .get()
+  ) {
+    for (const table of ["sync_entities", "sync_outbox", "sync_conflicts"])
+      for (const row of db.prepare(`SELECT payload FROM ${table}`).all())
+        if (row.payload) visit(JSON.parse(row.payload));
+  }
+  return [
+    ...new Set([
+      ...synchronization,
+      ...db
+        .prepare("SELECT markdown FROM document_versions")
+        .all()
+        .flatMap((row) => documentImageUrls(row.markdown)),
+    ]),
+  ];
+}
+
+export function installDocumentImageRoutes(app, { refreshUser }) {
+  const access = (req) =>
+    app.locals
+      .documentService(req)
+      .imageAccess(documentRouteScope(req.path.slice(4, -7)));
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0 },
+  }).single("image");
+  for (const route of [
+    "/api/teams/:teamId/years/:year/memos/:documentId/images",
+    "/api/sheet-clones/:sheetCloneId/memos/:documentId/images",
+    "/api/calendar/entries/:id/document/images",
+    "/api/tasks/:id/document/images",
+    "/api/tasks/:id/documents/:documentId/images",
+    "/api/sheet-clones/:id/tasks/:taskId/document/images",
+    "/api/sheet-clones/:id/tasks/:taskId/documents/:documentId/images",
+  ]) {
+    app.post(
+      route,
+      (req, _res, next) => {
+        const value = access(req);
+        return value?.then ? value.then(() => next(), next) : next();
+      },
+      (req, res, next) =>
+        upload(req, res, (error) => {
+          if (error)
+            return res
+              .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400)
+              .json({
+                error:
+                  error.code === "LIMIT_FILE_SIZE"
+                    ? "이미지는 파일당 10MiB까지 붙여넣을 수 있습니다."
+                    : "이미지 파일 하나를 선택해 주세요.",
+              });
+          next();
+        }),
+      async (req, res) => {
+        requireThat(
+          req.file?.buffer?.length,
+          400,
+          "붙여넣을 이미지가 없습니다.",
+        );
+        let bytes;
+        try {
+          const image = sharp(req.file.buffer, {
+            limitInputPixels: 40_000_000,
+            failOn: "warning",
+          });
+          const metadata = await image.metadata();
+          requireThat(
+            ["png", "jpeg", "webp"].includes(metadata.format) &&
+              (metadata.pages || 1) === 1,
+            400,
+            "PNG·JPEG·WebP 정지 이미지만 지원합니다.",
+          );
+          bytes = await image
+            .rotate()
+            .resize({
+              width: 4096,
+              height: 4096,
+              fit: "inside",
+              withoutEnlargement: true,
+            })
+            .webp({ quality: 90 })
+            .toBuffer();
+        } catch (error) {
+          requireThat(
+            false,
+            400,
+            error.status === 400
+              ? error.message
+              : "이미지를 읽을 수 없습니다. 정상적인 PNG·JPEG·WebP 파일(최대 4천만 화소)을 붙여넣어 주세요.",
+          );
+        }
+        // Decoding is asynchronous: recheck the session, membership and task
+        // ownership after it finishes, before publishing a file.
+        const refreshed = refreshUser(req);
+        req.user = refreshed?.then ? await refreshed : refreshed;
+        const stored = app.locals
+          .documentService(req)
+          .putImage(documentRouteScope(req.path.slice(4, -7)), bytes);
+        res.status(201).json(stored?.then ? await stored : stored);
+      },
+    );
+  }
+  app.get("/api/document-images/:teamId/:file", (req, res, next) => {
+    const url = `/api/document-images/${req.params.teamId}/${req.params.file}`;
+    const bytes = app.locals.documentService(req).readImage(url);
+    const send = (value) => res.type("image/webp").send(Buffer.from(value));
+    return bytes?.then ? bytes.then(send, next) : send(bytes);
+  });
+}

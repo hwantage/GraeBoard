@@ -19,7 +19,7 @@ import { resumeSession } from "./platform/event-stream";
 import { BrandLockup, Grae } from "./ui/Brand";
 import { inkFor } from "./ui/color";
 import type { Bootstrap, User } from "./types";
-import type { SetupStatus } from "../shared/session-contract";
+import type { SetupStatus } from "../shared/identity/session-contract";
 import ExternalLogin from "./auth/ExternalLogin";
 import { siteFor } from "./platform/site";
 

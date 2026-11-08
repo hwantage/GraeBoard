@@ -3,8 +3,8 @@ import {
   assertSqliteHistory,
   migrateSqlite,
 } from "./migrations/sqlite.mjs";
-import { storeDocumentVersion } from "./document-storage.mjs";
-import { hasDocumentContent } from "../shared/task-documents.js";
+import { storeDocumentVersion } from "./documents/document-storage.mjs";
+import { hasDocumentContent } from "../shared/documents/task-documents.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -28,9 +28,9 @@ import {
   styleNormalizer,
   stringify,
   parseCompact,
-} from "../shared/compact.js";
+} from "../shared/formatting/compact.js";
 
-import { normalizeCellStyle } from "../shared/formatting.js";
+import { normalizeCellStyle } from "../shared/formatting/formatting.js";
 
 // Reuse compiled programs on this connection, including its capture triggers.
 // Do not reuse query results or style-to-ID mappings across business commands.

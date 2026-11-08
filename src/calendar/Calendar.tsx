@@ -75,7 +75,7 @@ import { useCalendarData } from "./useCalendarData";
 import {
   mergeCalendarLayout,
   placeCalendarEntry,
-} from "../../shared/calendar-layout.js";
+} from "../../shared/calendar/calendar-layout.js";
 import { CalendarRuleSettings, CalendarWeekdays } from "./CalendarSettings";
 import {
   addDays,
@@ -85,7 +85,7 @@ import {
   weekLabel,
   CALENDAR_DAYS,
   DAY_LABELS,
-} from "../../shared/calendar.js";
+} from "../../shared/calendar/calendar.js";
 import {
   canContribute,
   canManageTeam,

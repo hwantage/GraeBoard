@@ -35,7 +35,7 @@ import { Modal, Button, ErrorNote } from "./components";
 import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./sheet/history";
-import { pack, compactStyle } from "../shared/compact.js";
+import { pack, compactStyle } from "../shared/formatting/compact.js";
 import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
 import DocumentFullPageButton from "./documents/DocumentFullPageButton";

@@ -5,7 +5,7 @@ import {
   type PointerEvent,
   type RefObject,
 } from "react";
-import { moveCalendarRange } from "../../shared/calendar.js";
+import { moveCalendarRange } from "../../shared/calendar/calendar.js";
 import type { CalendarEntry } from "./calendar-types";
 import { isSecretEntry } from "./secret-calendar";
 import { calendarDisplayLane } from "./secret-calendar-layout";

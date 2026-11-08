@@ -14,8 +14,8 @@ import {
 import {
   isDocumentImage,
   withDocumentImageWidth,
-} from "../../../shared/document-images.js";
-import { parseDocumentLinkPath } from "../../../shared/document-links.js";
+} from "../../../shared/documents/document-images.js";
+import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import {
   DocumentLinkTitles,
   documentLinkTarget,

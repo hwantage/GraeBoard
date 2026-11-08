@@ -20,7 +20,7 @@ import {
   setupExamples,
   validateSetupStep,
   syncVerification,
-} from "../../shared/sync-setup.js";
+} from "../../shared/sync/sync-setup.js";
 import "./sync-setup.css";
 
 type Setup = {

@@ -14,7 +14,7 @@ import {
   personLabel,
   siteName,
   splitContested,
-} from "../../shared/conflict-diff.js";
+} from "../../shared/sync/conflict-diff.js";
 
 export type ConflictOrigin = {
   site: "internal" | "external" | null;

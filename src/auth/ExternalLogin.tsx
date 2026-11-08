@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
-import type { SetupStatus } from "../../shared/session-contract";
+import type { SetupStatus } from "../../shared/identity/session-contract";
 import { api, send } from "../platform/api";
 import { ErrorNote } from "../components";
 import { resumeSession } from "../platform/event-stream";

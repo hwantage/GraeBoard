@@ -272,6 +272,35 @@ export function checkCodeOrganization({
           fail("manifest-collision", path, "Phase has overlapping file paths");
         expected.add(path);
       }
+      const removals = new Set();
+      for (const entry of manifest.removals ?? []) {
+        if (
+          !entry ||
+          !validPath(entry.path) ||
+          phaseNumber(entry.phase) < 0 ||
+          !/^[a-f0-9]{40}$/.test(entry.sourceCommit) ||
+          !entry.reason?.trim()
+        )
+          throw new Error("Invalid migration removal");
+        if (
+          removals.has(entry.path) ||
+          origins.has(entry.path.toLowerCase()) ||
+          destinations.has(entry.path.toLowerCase())
+        )
+          fail(
+            "manifest-removal",
+            entry.path,
+            "Duplicate or overlapping removal",
+          );
+        removals.add(entry.path);
+        if (phaseNumber(entry.phase) > phase) expected.add(entry.path);
+        else if (current.has(entry.path))
+          fail(
+            "manifest-removal",
+            entry.path,
+            "Separated frozen source must not remain in app checkout",
+          );
+      }
       const additions = new Set();
       for (const entry of manifest.additions) {
         if (

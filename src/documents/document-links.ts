@@ -4,11 +4,11 @@ import {
   DOCUMENT_LINK_BATCH,
   documentLinkPath,
   parseDocumentLinkPath,
-} from "../../shared/document-links.js";
+} from "../../shared/documents/document-links.js";
 
 // Links between documents point at a task detail, a calendar entry, a tail
 // memo or a copy's task detail or memo. The Markdown stores the app path
-// (shared/document-links.js); the clipboard carries this site's absolute
+// (shared/documents/document-links.js); the clipboard carries this site's absolute
 // address of the same path.
 export type DocumentLinkTarget =
   | { kind: "task"; id: string }

@@ -2,13 +2,13 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_TASK_DOCUMENTS,
   documentBytes,
-} from "./task-documents.js";
+} from "./documents/task-documents.js";
 import {
   normalizeSheetCloneName,
   MAX_SHEET_CLONE_NAME_LENGTH,
-} from "./sheet-clone-names.js";
+} from "./sheet-clones/sheet-clone-names.js";
 import { z } from "zod";
-import { BORDER_STYLES } from "./borders.js";
+import { BORDER_STYLES } from "./formatting/borders.js";
 import {
   FONTS,
   MIN_FONT_SIZE,
@@ -20,7 +20,7 @@ import {
   PROPERTY_KINDS,
   CORE_PROPERTY_KEYS,
 } from "./domain.js";
-import { HttpError, requireThat } from "./http-error.js";
+import { HttpError, requireThat } from "./http/http-error.js";
 export { HttpError, requireThat };
 export const sheetCloneNameSchema = z
   .string()

@@ -23,15 +23,15 @@ import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
 import DocumentTocToggle from "./DocumentTocToggle";
 import DocumentToolMenu from "./DocumentToolMenu";
 import type { DocumentExportFormat } from "./document-export";
-import { MAX_IMAGE_BYTES } from "../../shared/document-images.js";
+import { MAX_IMAGE_BYTES } from "../../shared/documents/document-images.js";
 import {
   MAX_DOCUMENT_BYTES,
   documentBytes,
-} from "../../shared/task-documents.js";
+} from "../../shared/documents/task-documents.js";
 import {
   mergeDocument,
   mapDocumentPosition,
-} from "../../shared/document-merge.js";
+} from "../../shared/documents/document-merge.js";
 import {
   DocumentStorageConflict,
   type DocumentStorage,

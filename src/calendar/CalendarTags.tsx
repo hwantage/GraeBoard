@@ -23,7 +23,7 @@ import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
   calendarTagColor,
-} from "../../shared/calendar-tags.js";
+} from "../../shared/calendar/calendar-tags.js";
 import { api, send } from "../platform/api";
 import { busyProps } from "../ui/busyProps";
 import { Button, ErrorNote, Modal } from "../components";

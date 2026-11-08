@@ -15,7 +15,7 @@ import { todayKey } from "../../shared/domain.js";
 import {
   MAX_SHEET_CLONE_NAME_LENGTH,
   normalizeSheetCloneName,
-} from "../../shared/sheet-clone-names.js";
+} from "../../shared/sheet-clones/sheet-clone-names.js";
 
 type SheetCloneInfo = { id: string; name: string; year: number };
 type RenameDraft = { sheetClone: SheetCloneInfo; name: string };

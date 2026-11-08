@@ -1,5 +1,5 @@
-import { applyBorderPreset } from "../../shared/borders.js";
-import { sameStyle } from "../../shared/compact.js";
+import { applyBorderPreset } from "../../shared/formatting/borders.js";
+import { sameStyle } from "../../shared/formatting/compact.js";
 /** @typedef {import("../types").FormatScope} FormatScope */
 /** @typedef {import("../types").Style} Style */
 /**

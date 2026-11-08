@@ -4,7 +4,7 @@
 
 신규 코드 작성, 기존 기능 수정, 파일 이동, 디렉토리 분리·통합에 적용하는 기준입니다. 파일명으로 역할을 식별하고, 디렉토리로 관련 파일을 찾으며, 실행 환경과 공통 코드의 경계를 유지하는 것이 목적입니다.
 
-가이드를 먼저 검토·확정한 뒤 이에 맞춰 리팩토링합니다. 현재 P0 검사 도구·재귀 수집기·경량 CI와 P1의 `src/platform/` 11개·`src/ui/` 17개 이동을 완료했습니다. P2의 문서·편집기·캘린더 51개 이동도 완료했습니다. P3의 앱·인증·시트·설정·동기화 UI 59개 이동까지 구현했습니다. P4~P8은 미구현이며 전환 완료 기록과 별도 정리 커밋을 확인한 후 착수합니다. 아래의 **목표 배치**와 **이동 예시**는 후속 작업의 기준이며, 현재 구현 경로는 [개발 안내의 구조](DEVELOPMENT.md#구조)를 참고합니다. 모든 기존 파일이 이미 이 규칙을 만족한다는 뜻은 아닙니다.
+가이드 선행 변경 후 P0~P8 파일 배치를 구현했습니다. #104의 P1~P3 frontend 138개에 이어 P4 shared 45개, P5 업무 API/저장소 109개, P6 동기화 48개, P7 scripts 32개, P8 기존 검사/helper 168개와 새 호환성 suite 1개를 파일명 그대로 이동했습니다. P7의 `scripts/team-site-deploy.mjs` 1개는 독립된 workflow 버전과 checkout 버전 사이의 외부 호출 계약으로 고정했습니다. 이 예외를 포함해 P7 배치를 완료했습니다. 전체 검증의 실제 결과·한계는 변경 PR과 [변경·검증 이력](DEVELOPMENT_HISTORY.md)에 기록합니다. 개발 SheetClone 전환은 완료했으며 운영 전환·배포는 전체 리팩토링 뒤 별도 작업입니다.
 
 현재 리팩토링의 전체 파일 대응표, 유지 대상, 단계별 작업·검증, 검사 도구와 CI 명세는 [이슈 #100의 실행 설계](https://github.com/hwantage/GraeBoard/issues/100)에 있습니다. 이 가이드는 이후에도 적용할 규칙이며, 이슈의 대응표는 명시한 기준 커밋의 실행 계획입니다. 아래 예시 몇 개만으로 전체 이동을 결정하지 않습니다.
 
@@ -41,15 +41,18 @@
 | 대상                                                                                   | 취급                                                                                                                                                                                                                      |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 기존 `src/types.ts`, `src/components.tsx`, `src/styles.css` 등                         | 이동을 핑계로 일괄 개명하지 않습니다. 기존 책임을 유지하며, 새 기능의 무관한 타입·로직을 계속 모으거나 같은 이름을 다른 폴더에 추가하지 않습니다. 책임 분리는 사용처를 조사한 별도 변경으로 다룹니다.                     |
-| 현재 여러 실행 환경에 존재하는 `calendar.mjs`, `settings.mjs`, `link-title.mjs` 등     | 기존 이름을 보존합니다. 후속 자동 검사에는 그 시점의 정확한 경로만 기존 예외로 기록하며, 같은 이름의 새 파일을 계속 허용하는 규칙으로 확대하지 않습니다.                                                                  |
+| 현재 여러 실행 환경에 존재하는 `calendar.mjs`, `settings.mjs`, `link-title.mjs` 등     | 기존 이름을 보존합니다. 자동 검사에는 현재의 정확한 경로만 기존 예외로 기록하며, 같은 이름의 새 파일을 계속 허용하는 규칙으로 확대하지 않습니다.                                                                  |
 | 기존 `src/main.tsx`, `server/index.mjs`, `edge/main.mjs`와 프레임워크·도구가 정한 파일 | 진입점·라우팅·설정 계약을 우선합니다. `functions/[[path]].js`, `package.json`, `tsconfig.json`, `supabase/config.toml`, `README.md`, `AGENTS.md` 같은 고정 관례를 유지합니다. 임의의 새 barrel 파일은 이 예외가 아닙니다. |
+| `scripts/team-site-deploy.mjs` | 팀 Fork의 workflow 정의와 동기화 뒤 checkout한 main/release SHA가 다를 수 있어 기존 외부 CLI 경로를 고정합니다. 구현 자체를 이 위치에 유지하며 wrapper·복제는 두지 않습니다. 이 정확한 기존 경로 1개에만 적용하며 일상적인 신규 루트 파일 추가를 허용하지 않습니다. |
 | 배포된 migration, 생성물, 외부 자산, 선언 파일                                         | migration의 번호·이름·체크섬과 생성·외부 파일 규약을 유지합니다. 구현과 짝을 이루는 `.d.ts`는 같은 기본 이름을 사용할 수 있습니다. 생성물은 원본 소스와 생성 절차를 통해 갱신합니다.                                      |
 
 새 예외가 필요하면 해당 PR에 정확한 경로, 필요한 이유, 사용처·실행 환경, 적용 범위를 기록하고 이 문서의 예외 기준도 함께 갱신합니다. 단지 기존에 비슷한 이름이 있다는 이유로 예외를 늘리지 않습니다.
 
-SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, `tools/sheet-clone-cutover/cutover.mjs`, `tools/sheet-clone-cutover/convert.mjs`, `tools/sheet-clone-cutover/names.mjs`, `tools/sheet-clone-cutover/markdown-links.mjs`의 정확한 경로·이름·바이트를 유지합니다. 오프라인 Node CLI이며, `cutover:sheet-clone` 명령과 변환·migration 회귀 검사가 사용하고 앱·Edge 런타임은 의존하지 않습니다. `toolDigest()`는 `convert.mjs`·`cutover.mjs`·`markdown-links.mjs`·`names.mjs`의 이름과 바이트를 해시합니다. **import 경로만 수정해도 실행 기록과 해시가 달라져 전환을 재개할 수 없습니다.** 도구가 참조하는 공통·서버·동기화 모듈을 옮기기 전에 개발·운영 전환 완료 기록과 [정리 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)에 따른 별도 정리 커밋을 확인합니다. 이슈 #100의 P0~P3은 먼저 진행할 수 있고 P4 전에 이 조건을 확인합니다. 정리 변경은 일반 검사에 남은 도구 의존성까지 해소하고 도구와 이 예외를 함께 제거합니다. 다른 도구나 새 범용 파일명까지 허용하는 예외는 아닙니다.
+SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`**에 고정합니다. 운영 전환은 전체 리팩토링 뒤에 진행하며, 운영 전환 완료를 P4~P8의 선행 조건으로 삼지 않습니다. 고정 소스는 도구 5개뿐 아니라 `server/`·`shared/`·동기화 모듈·`package-lock.json`·검사와 fixture를 같은 커밋으로 재현합니다. `toolDigest()`를 구성하는 이름·바이트와 원본 fixture 11개의 SHA-256은 변경하지 않습니다. 현재 앱의 import만 고친 도구, 옛 경로 wrapper, 도구 digest 완화는 허용하지 않습니다.
 
-`tests/fixtures/sheet-clone-legacy/`의 11개 파일도 정리 전까지 경로·바이트를 보존합니다. 생성기 `generate-f744ead.mjs`는 과거 `f744ead` 코드 전용이므로 내부의 옛 경로·명칭을 현재 코드에 맞추거나 fixture를 재생성하지 않습니다. 전환 검사 `tests/sheet-clone-conversion.test.mjs`·`tests/sheet-clone-cutover.test.mjs`는 원래 경로와 수집을 유지하되 일반 모듈의 import는 갱신할 수 있습니다. `tests/postgres-legacy-schema.mjs`·`tests/sqlite-legacy-schema.mjs`의 옛 명칭은 migration 검사에 필요하므로 유지하며, 별도 호출자 확인 없이 이 helper들을 일회성 도구와 함께 삭제하지 않습니다.
+먼저 [운영 안내의 고정 소스 준비·실행 절차](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)를 확정하고, 별도 분리 커밋에서 최신 앱의 도구·원본 fixture·전환 전용 suite·npm 명령과 한시적 예외를 제거합니다. 보호 hash는 고정 소스 검증 목록에 원본 값 그대로 보관하며 최신 앱의 이동 예외로 남기지 않습니다. 개발자와 CI는 정확한 커밋을 Git에서 재현해 원래 전환 검사를 실행합니다. shallow clone에 커밋이 없으면 명시적으로 fetch해야 하며 누락을 skip 성공으로 처리하지 않습니다.
+
+일반 `access-tokens`·`sync-migrations`·`sync-postgres-maintenance-migration` 검사는 삭제하거나 약화하지 않습니다. 변환 결과 생성에만 고정 전체 소스를 사용하고 현재 앱의 권한·기동 거절·migration·무결성 회귀를 유지합니다. `postgres-legacy-schema.mjs`·`sqlite-legacy-schema.mjs`는 일반 회귀에서도 사용하므로 유지합니다. 최종 앱이 고정 도구로 전환한 fixture를 내부 SQLite·외부 PostgreSQL API, 동기화·checkpoint 복구에서 읽고 수정·재개하는 교차 검증도 수행합니다. 배포된 SQL migration과 checksum은 최신 앱에도 그대로 남습니다.
 
 ## 3. 새 파일의 위치를 정하는 순서
 
@@ -73,7 +76,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 | `edge/`                      | Supabase/Deno 진입점, 실행 환경·DB 연결·자원 어댑터. 기존 업무 API를 재사용합니다.                                                                 |
 | `functions/`                 | Cloudflare Pages 진입과 gateway 전달. 업무 로직을 추가하지 않습니다.                                                                               |
 | `scripts/`                   | 빌드, 개발·검증, 운영·백업·복구 도구. CLI 전용 실행과 앱이 재사용하는 로직의 경계를 유지합니다.                                                    |
-| `tools/sheet-clone-cutover/` | 위의 정확한 경로 예외에 해당하는 일회성 오프라인 전환 도구. 개발·운영 전환 후 제거하며, 일반 운영 도구는 `scripts/`에 둡니다.                      |
+| 고정 커밋의 `tools/sheet-clone-cutover/` | 미래 운영 전환용 오프라인 도구. 전체 고정 소스에서만 실행하며 최신 앱과 분리합니다. 일반 운영 도구는 `scripts/`에 둡니다. |
 | `tests/`                     | 자동 검사와 가상 fixture. 브라우저 검사는 `tests/browser/`에 두며 소스의 기능명을 유지합니다.                                                      |
 | `public/`                    | 앱에서 제공하는 정적 자산과 정적 배포 설정. 기능 소스나 운영 데이터를 두지 않습니다.                                                               |
 | `supabase/`                  | Supabase 설정과 Edge 배포 산출물. `supabase/functions/graeboard/index.mjs`는 `build:edge`가 생성하므로 직접 리팩토링하지 않습니다.                 |
@@ -82,7 +85,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 
 `node_modules/`, `dist/` 등의 의존성·산출물과 실제 DB·이미지·백업·환경 파일은 소스 재배치 대상에서 제외합니다. 기존 Git 제외 및 운영 데이터 보존 규칙을 따릅니다.
 
-`shared/link-title.mjs`는 Node 네트워크 모듈을, `shared/workbook.mjs`는 `node:crypto`를 사용합니다. `shared/` 안에 있다는 사실만으로 브라우저에서 import하면 안 됩니다. 신규 공유 모듈도 직접·간접 의존성과 실제 소비 환경을 확인합니다.
+`shared/http/link-title.mjs`는 Node 네트워크 모듈을, `shared/transfer/workbook.mjs`는 `node:crypto`를 사용합니다. `shared/` 안에 있다는 사실만으로 브라우저에서 import하면 안 됩니다. 신규 공유 모듈도 직접·간접 의존성과 실제 소비 환경을 확인합니다.
 
 ## 5. 기능별 목표 배치
 
@@ -106,7 +109,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 
 현재 실행 설계에서는 `src/components.tsx`·`Panels.tsx`·`types.ts`·`styles.css`·`main.tsx`·`app-version.d.ts`의 경로를 유지합니다. 이동한 대상을 참조하는 import만 함께 갱신합니다. `GridHeaderMenu`는 기존 사용처를 따라 `ui/`, 업무 속성 편집은 `sheet/`, 리치 편집기 내부 모듈은 `documents/editor/`에 둡니다. 기능 사이의 재사용은 파일 단위 의존성을 기준으로 확인하며, 폴더 사이 양방향 참조를 없애기 위해 새 추상화나 복제 구현을 만들지 않습니다.
 
-`server/`, `worker/`, `shared/` 내부도 문서·캘린더·업무·동기화 등의 책임으로 묶되, 실행 환경과 기존 저장소 경계를 먼저 유지합니다. 현재의 `server/storage/`, `server/sync/`, `worker/storage/`를 출발점으로 파일 대응표를 작성합니다. 서버 공통 서비스의 새 위치나 최상위 디렉토리 변경은 소비 환경을 확인한 설계에 명시한 뒤 진행합니다. 작은 `edge/` 같은 디렉토리를 반드시 더 나눌 필요는 없습니다.
+`server/`, `worker/`, `shared/` 내부도 문서·캘린더·업무·동기화 등의 책임으로 묶되, 실행 환경과 기존 저장소 경계를 먼저 유지합니다. `server/storage/`·`worker/storage/`의 기능 폴더와 `server/sync/core/`·`server/sync/node/`·`worker/sync/`가 현재 배치이며, 전체 대응표로 소속을 확인합니다. 서버 공통 서비스의 새 위치나 최상위 디렉토리 변경은 소비 환경을 확인한 설계에 명시한 뒤 진행합니다. 작은 `edge/` 같은 디렉토리를 반드시 더 나눌 필요는 없습니다.
 
 ## 6. 공유와 import 경계
 
@@ -114,7 +117,7 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 - 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoPanel`은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
 - 기능 간 직접 사용은 공유 역할과 의존 방향을 설명할 수 있어야 합니다. 폴더 안의 모든 파일을 공개 API로 간주하지 않습니다. import 경로를 짧게 만들려고 전역 barrel이나 별칭 체계를 새로 도입하지 않습니다.
 - 내부 Node와 공통 모듈이 외부 호스트 구현을 역참조하지 않도록 유지합니다. PostgreSQL repository는 `worker/storage/` 경계를 유지하고 SQLite·Node 전용 구현을 외부에서 재사용하지 않습니다.
-- 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
+- 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
 - 경로가 바뀌면 경계 검사의 경로 인식도 같은 변경에서 갱신합니다. 검사 대상을 제외하거나 허용 범위를 넓혀 통과시키지 않습니다. 간접 import까지 포함한 런타임 제한을 보존합니다.
 - CSS는 이동 후에도 전역에 영향을 줄 수 있습니다. 기존 클래스·적재 순서·이미지 URL을 유지하고, 지연 import와 Web Worker의 로딩 방식도 유지합니다.
 
@@ -130,13 +133,13 @@ SheetClone 일회성 전환 도구(#99)는 `tools/sheet-clone-cutover/cli.mjs`, 
 
 최신 `origin/main`을 기준으로 대상 파일을 조사하고, 각 작업 묶음의 이슈 또는 PR에 다음 항목을 기록합니다. 이동하지 않는 파일도 경계에 걸리면 이유를 적습니다.
 
-| 현재 경로                    | 목표 경로                             | 책임·소비 환경                           | 파일명 변경 | 함께 확인할 참조·검사                                |
+| 이동 전 경로(예시)             | 현재 배치                             | 책임·소비 환경                           | 파일명 변경 | 함께 확인할 참조·검사                                |
 | ---------------------------- | ------------------------------------- | ---------------------------------------- | ----------- | ---------------------------------------------------- |
 | `src/DocumentPanel.tsx`      | `src/documents/DocumentPanel.tsx`     | 업무 문서·메모 공용, 브라우저            | 없음        | 문서 래퍼·문서 링크·앱, 문서 브라우저 검사           |
 | `src/calendar-types.ts`      | `src/calendar/calendar-types.ts`      | 일정 타입, 브라우저                      | 없음        | 캘린더 컴포넌트·훅, TypeScript 빌드                  |
 | `src/event-stream.worker.ts` | `src/platform/event-stream.worker.ts` | 여러 탭의 공통 SSE 연결, 브라우저 worker | 없음        | `new URL(..., import.meta.url)`, 여러 탭 실시간 검사 |
 
-위 표는 작성 예시이며 전체 이동 목록이 아닙니다. 각 파일의 import·export, 동적 import, Worker·자산 URL, CSS 참조, 테스트의 소스 직접 읽기, 빌드·실행 스크립트, CI·배포 설정, 문서 링크를 확인합니다. `import.meta.url` 기준 상대경로와 문자열로 지정한 경로도 포함합니다.
+위 표는 완료한 이동을 사용한 작성 예시이며 전체 이동 목록이 아닙니다. 각 파일의 import·export, 동적 import, Worker·자산 URL, CSS 참조, 테스트의 소스 직접 읽기, 빌드·실행 스크립트, CI·배포 설정, 문서 링크를 확인합니다. `import.meta.url` 기준 상대경로와 문자열로 지정한 경로도 포함합니다.
 
 현재 작업에서는 이슈 #100에 작성된 전체 대응표를 사용합니다. 실행 기준이 달라지면 Git의 이름 변경·추가·삭제 목록으로 차이를 반영하고, 변경되지 않은 파일의 소속을 임의로 다시 정하지 않습니다. 신규 검사 파일은 이동 대상과 구분하여 기록합니다. 기존 예외 파일과 이미 존재하던 re-export도 유지 대상과 구별해 추적하며, 이 작업에서 이전 이동 경로를 살리는 새 래퍼를 추가하지 않습니다.
 
@@ -174,9 +177,9 @@ npm run build:edge
 
 새 기능이나 공유 경계로 기존 분류가 맞지 않으면 이 문서를 수정해 판단 기준을 남깁니다. 폴더를 분리하거나 합칠 때는 책임과 import 경계를 다시 검토하되, 내용의 의미가 같으면 파일명을 유지합니다. 디렉토리별 안내를 복제해 서로 다른 규칙을 만들지 않고 이 문서를 기준으로 연결합니다.
 
-후속 리팩토링에는 신규·이동 파일의 범용 이름과 중복 이름 검사, 기존 import 경계 검사 연계를 포함합니다. 기존 예외는 정확한 경로로 한정하고, 새 위반을 넣었을 때 검사가 실제 실패하는지도 확인합니다. **P0의 자동 검사는 구현되어 있습니다.** `npm run check:structure`와 `--migration-phase P3`로 현재 규칙·전체 대응표를 확인하고, 임시 Git 트리의 두 도구 suite에서 실패 사례를 검증합니다. P1~P3의 138개 이동을 구현했고 P4~P8은 단계별로 별도 추적합니다.
+후속 리팩토링에는 신규·이동 파일의 범용 이름과 중복 이름 검사, 기존 import 경계 검사 연계를 포함합니다. 기존 예외는 정확한 경로로 한정하고, 새 위반을 넣었을 때 검사가 실제 실패하는지도 확인합니다. **P0의 자동 검사는 구현되어 있습니다.** `npm run check:structure`와 `--migration-phase P8`로 현재 규칙·전체 대응표를 확인하고, 임시 Git 트리의 두 도구 suite에서 실패 사례를 검증합니다. P1~P3의 138개와 P4~P8의 기존 402개 및 새 호환성 suite 1개를 이동했습니다. 단계별 Git 커밋으로 범위를 추적합니다.
 
-명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`, `tools/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 한시적 전환 도구·원본 fixture는 정확한 경로와 기준 커밋의 SHA-256으로 보존 여부를 검사하며, `tools/` 전체를 제외하지 않습니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
+명명 검사는 사람이 관리하는 `src/`, `server/`, `shared/`, `worker/`, `edge/`, `functions/`, `scripts/`, `tests/`, `tools/`의 JS·TS·JSX·TSX·CSS 소스를 대상으로 합니다. 비교 대상 전체를 살펴 신규·이동 파일의 중복을 찾고, 2절의 고정 경로·기존 예외·선언 파일 규칙을 구분합니다. 생성물·외부 자산·데이터 fixture·배포된 migration은 해당 규약을 따릅니다. 한시적 전환 도구·원본 fixture의 원본 hash는 고정 소스에서 검사하며, `tools/` 전체를 제외하지 않습니다. 기존 예외 파일을 이동하면 대응표에 따라 예외 경로도 옮기고 이전 등록은 제거합니다. 파일 복제를 새 예외로 자동 등록하지 않습니다.
 
 검사기는 위반 시 규칙·경로·원인을 출력하고 실패해야 하며, 예외나 소스를 자동 수정하지 않습니다. 범용 이름의 기본 목록은 `types`, `utils`, `helpers`, `constants`, `styles`, `components`, `service`, `storage`, `index`입니다. 정확한 경로로 등록한 기존 예외만 허용하고, 새 중복 파일·미등록 폴더·지워진 파일의 예외 등록을 검출합니다. 이름에서 확장자만 다른 경우는 역할 검토 대상으로 구분합니다.
 
@@ -184,4 +187,6 @@ npm run build:edge
 
 리팩토링의 완료는 파일 이동뿐 아니라 가이드·실제 구조 문서·검사 결과의 일치까지 포함합니다. 최초 정리 후에도 같은 규칙을 신규 기능과 유지보수에 적용합니다.
 
-#100 manifest 기준은 PR #103을 통합한 `ad1e57dcd802d089618026f979546cca970d42bd`의 608개입니다. 기존 설계 601개에 PR #101의 신규 7개를 각 P6~P8 목적지로 추가했고, P0 추가 8개는 `additions`로 분리했습니다. PR #103은 기존 파일의 내용만 바꾸므로 파일 소속·이동 수·보호 hash는 유지합니다. `sync-pending-projection.test.mjs`는 실제 `project`·투영 독립성 회귀와 메모리 대역 이미지 수신 검사를 포함하며 PG·Git 왕복 없이 `tests/sync/protocol/`에 배치할 예정입니다. 새 성능 비교·Deno 도구가 전달받은 과거 source root에서 읽는 경로는 후속 이동 때 현재 실행 경로와 구분합니다.
+#100 manifest 기준은 PR #103을 통합한 `ad1e57dcd802d089618026f979546cca970d42bd`의 608개입니다. 기존 설계 601개에 PR #101의 신규 7개를 각 P6~P8 목적지로 추가했고, P0 추가 8개는 `additions`로 분리했습니다. PR #103은 기존 파일의 내용만 바꾸므로 파일 소속·이동 수·보호 hash는 유지합니다. `sync-pending-projection.test.mjs`는 실제 `project`·투영 독립성 회귀와 메모리 대역 이미지 수신 검사를 포함하며 PG·Git 왕복 없이 `tests/sync/protocol/`에 배치했습니다. 새 성능 비교·Deno 도구가 전달받은 과거 source root에서 읽는 경로는 현재 실행 경로와 구분합니다.
+
+최종 manifest는 기존 기준 608개를 유지하면서 최신 앱에서 분리한 18개를 `removals`에 정확한 고정 커밋과 사유로 기록합니다. 기존 파일 590개와 신규 12개 중 소스 루트 내 10개를 합쳐 구조 검사 대상은 600개입니다. 원본 전환 2개 suite는 고정 전체 소스에서 실행하고, 최신 앱은 기존 단언을 유지한 호환성 suite를 실행합니다. Node 수집은 기준 116개에서 전용 2개를 분리하고 호환성 1개를 더해 115개이며, 일반 suite 3개를 삭제/skip하지 않습니다. Playwright 43개 spec·3개 엔진 1,878건은 제목·프로젝트까지 일대일 대응합니다.

@@ -1,5 +1,7 @@
 # 외부 서비스와 팀 동기화 설치
 
+
+SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 별도 checkout**에서 실행합니다. 개발 전환은 완료했으며 운영 전환은 전체 리팩토링 뒤에 수행합니다. 소스·lockfile·환경 파일·절대 데이터/Git 경로의 준비와 실행·재개는 [운영 안내](OPERATIONS.md#고정-전환-소스-준비)를 따릅니다.
 [구성도](ARCHITECTURE.md) · [운영 안내](OPERATIONS.md) · [데이터 형식](DATA_FORMAT.md) · [동기화 규약](SYNC_PROTOCOL.md)
 
 이 안내는 내부 Node/SQLite 서버와 외부 Supabase Edge Functions 서버를 연결하는 관리자를 위한 절차입니다. Cloudflare Pages 주소·Access Google 로그인·R2 이미지는 유지합니다. 운영 자원 생성·배포·운영 DB 변환은 대상과 점검 시간이 승인된 뒤 수행합니다. 개발 환경의 검증과 실제 클라우드 계정의 연결 검사는 서로 다른 단계입니다.
@@ -106,19 +108,19 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 1. 기존 릴리스로 DB와 문서 이미지 백업을 만들고 별도 경로에 복구해 확인합니다.
 2. 서버와 다른 DB 쓰기 작업을 중지합니다.
-3. 새 릴리스에서 정확한 대상 경로로 dry-run을 실행합니다. dry-run은 DB 복사본을 변환하고 원본은 바꾸지 않습니다.
+3. 운영 안내에서 준비·검증한 **고정 전체 커밋 checkout**의 도구로 정확한 대상 경로에 dry-run을 실행합니다. 최신 앱의 npm 명령으로 실행하지 않습니다. 환경 파일도 실제 절대 경로를 지정합니다. dry-run은 DB 복사본을 변환하고 원본은 바꾸지 않습니다.
 
 ```sh
-npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
+DB_PATH=/srv/graeboard/data/weekly-plan.sqlite DOCUMENT_IMAGES_DIR=/srv/graeboard/data/document-images node --env-file=/approved/runtime/production.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
 ```
 
 4. 출력의 `from`, `to`, `checksum`, `conversion`을 확인한 뒤 같은 대상에 적용합니다. 사이트 주소로 저장된 절대 `/links/` 링크가 있으면 두 명령 모두 `--site-origin https://주소`를 반복해 지정합니다.
 
 ```sh
-npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite
+DB_PATH=/srv/graeboard/data/weekly-plan.sqlite DOCUMENT_IMAGES_DIR=/srv/graeboard/data/document-images node --env-file=/approved/runtime/production.env /approved/sheet-clone-cutover-source/tools/sheet-clone-cutover/cli.mjs --database /srv/graeboard/data/weekly-plan.sqlite
 ```
 
-5. 같은 명령을 다시 실행하면 v34임을 확인하고 아무것도 바꾸지 않습니다. 서버를 시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
+5. 같은 고정 도구 명령을 다시 실행하면 v34임을 확인하고 아무것도 바꾸지 않습니다. 그 뒤 새 앱을 배포·시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
 
 새 설치의 빈 경로에는 명시적으로 `--initialize`를 사용합니다. 상위 디렉터리는 실행 계정만 접근할 수 있게 먼저 준비합니다.
 
@@ -277,6 +279,8 @@ npm run build:pages
 1. `release` push·30분마다·수동 실행 때 원본 `release`를 Fork에 합칩니다(Fork에 없으면 원본에서 만듭니다). `main`도 합치되 실패하면 경고만 남깁니다. 단, `main`을 배포하는 개발용 Fork(아래)는 `main` 합치기가 실패하면 오류로 멈춥니다.
 2. Fork의 배포 브랜치(`release`, 개발용 Fork는 `main`)가 마지막 배포 기록(`team-site-deployed` 태그)과 다르면 `npm ci` → `npm run build` → `npm run build:edge` 후 `scripts/team-site-deploy.mjs`가 **API(Supabase Edge 함수) → 화면(gateway Worker)** 순서로 배포합니다. `TEAM_SITE_CONFIG`가 있으면 이어서 wrangler 출력에서 Worker의 workers.dev 주소를 찾아 `RESOURCE_ORIGIN`으로 쓰고, `wrangler secret bulk`로 gateway 키 두 개를, `supabase secrets set`으로 Edge 설정·키·`GIT_TEAM`·`RESOURCE_ORIGIN`을 넣습니다(이미 있는 접속 토큰 암호화 키는 유지). 배포가 실패하면 기록을 바꾸지 않아 다음 실행에서 다시 시도합니다.
 3. Pages는 Cloudflare Git 연결로 `release`를 따라 다시 빌드합니다. 개발용 Fork는 Pages의 Production branch도 `main`으로 둡니다.
+
+`scripts/team-site-deploy.mjs`는 고정 CLI 경로입니다. 정기·수동 실행의 workflow 정의는 기본 브랜치에서 읽지만 배포 job은 동기화 결과 SHA를 checkout하므로 서로 다른 버전일 수 있습니다. 설정 확인(`--check`)과 마지막 배포 실행은 모두 이 경로를 사용하며, 구현을 다른 디렉터리로 옮기거나 wrapper로 대체하지 않습니다.
 
 이 경로는 GitHub·Supabase·Cloudflare 웹 화면만으로 진행하며 사내망·운영자 PC 작업이 없습니다. 설정 안내의 **배포** 단계에서 토큰 세 개(Cloudflare API, Supabase 액세스, 외부용 GitHub)와 Cloudflare Account ID를 입력하고 **배포 설정 만들기**를 누르면 Fork에 넣을 값 두 개가 만들어집니다. Worker 이름과 주소, Edge 설정, 비밀 키를 Cloudflare·Supabase 화면에 옮겨 적지 않습니다. 토큰은 브라우저 메모리에서 값을 만드는 데만 쓰고 사내 서버로 보내거나 저장하지 않습니다. 앞 단계의 외부 접속 주소·Access 값·bucket·Reference ID·Account ID처럼 비밀이 아닌 값만 팀별로 브라우저(`localStorage`)에 기억해 새로고침 뒤에도 같은 설정을 만듭니다. `TEAM_SITE_SECRETS`의 `GRAEBOARD_GATEWAY_SECRET`·`GRAEBOARD_RESOURCE_SECRET`·`GRAEBOARD_ACCESS_TOKEN_KEY`는 만들 때마다 `crypto.getRandomValues`로 새로 정하며, 배포 스크립트는 Supabase에 `GRAEBOARD_ACCESS_TOKEN_KEY`가 이미 있으면 그 값을 유지해 발급한 접속 토큰을 보존합니다. gateway 두 키는 같은 실행에서 양쪽에 함께 바뀝니다. 워크플로는 Secret 안의 각 값을 로그에서 가립니다.
 
@@ -448,7 +452,7 @@ if (!token) {
   console.error('지정한 프로필과 토큰 등록 여부를 확인하세요.');
   process.exit(1);
 }
-const { repositoryUrl } = await import('./server/sync/git-cli.mjs');
+const { repositoryUrl } = await import('./server/sync/node/git-cli.mjs');
 const repository = repositoryUrl(profile.repository).replace('https://github.com/', '');
 try {
   const response = await fetch(`https://api.github.com/repos/${repository}`, {
@@ -557,11 +561,11 @@ npm run sync:external-import -- --settings /private/external-import.env --images
 rm /private/external-import.env
 ```
 
-`--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
+`--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
 
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
-외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
+외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
 
 이 방식 이전에는 업무 430여 개 팀(공유 기록 31,541개, 정규 JSON 19MB)의 게시 한 번이 전체 상태 읽기 1.3초·해시 0.4초를 쓰고 `CPU Time exceeded`(546)로 중단되었습니다. 중단된 실행은 동기화 리스를 해제하지 못하므로 `team_sync_links.lease_until`까지 최대 7분 동안 다른 실행이 시작되지 않고, 그 뒤 Cron이 다시 시도합니다. 미전송 변경은 `sync_outbox`에 `pending`으로 보존됩니다. 리스를 SQL로 지워도 같은 게시가 같은 상한에 다시 걸리므로 지우지 않습니다.
 
@@ -582,7 +586,7 @@ rm /private/external-import.env
 
 ### 최초 게시 스냅샷의 용량 초과
 
-`Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
+`Snapshot exceeds uncompressed byte budget`은 `server/sync/core/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
 
 게시 측과 수신 측의 상한을 함께 확인해야 합니다.
 
@@ -606,8 +610,8 @@ GRAEBOARD_DIAG_DB=/srv/graeboard/data/weekly-plan.sqlite \
 GRAEBOARD_DIAG_TEAM=11111111-1111-4111-8111-111111111111 \
 node --input-type=module <<'NODE'
 import { DatabaseSync } from 'node:sqlite';
-import { allEntities } from './server/sync/entities.mjs';
-import { canonical } from './server/sync/protocol.mjs';
+import { allEntities } from './server/sync/node/entities.mjs';
+import { canonical } from './server/sync/core/protocol.mjs';
 const db = new DatabaseSync(process.env.GRAEBOARD_DIAG_DB, { readOnly: true });
 try {
   db.exec('PRAGMA query_only=ON; BEGIN');
@@ -646,7 +650,7 @@ NODE
 
 용량 초과 후에는 DB·문서·사본·이미지·outbox와 연결 신원을 보존합니다. 업무 행을 삭제하거나 연결을 해제·재생성해 우회하지 않습니다. 외부 이용자 접근 제한과 Cron 중지를 유지하고, 양쪽 코드·설정을 갱신한 뒤 내부에서 연결 검사를 다시 하고 **같은 연결의 초기 게시를 재시도**합니다. 외부 가져오기가 완료되어 양쪽 head·hash, 미전송 건수, 업무·문서·이미지를 확인한 뒤 이용자 접근과 Cron을 재개합니다. 이전 한도의 실행 코드로 되돌리면 커진 스냅샷을 거절할 수 있으므로 단순 코드 롤백으로 동기화를 재개하지 않습니다.
 
-회귀 검사 `tests/sync-state-capacity.test.mjs`는 **27.88 MiB·30,714개**의 합성 자료(2026-11-02 이전 28.76 MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)로 실제 SQLite 최초 게시 → 로컬 Git/GitHub API 대역 → 외부 `serviceFor` → 임시 PostgreSQL 반영을 확인합니다. 9 MiB 사본과 문서 본문, 게시 전 미전송 2건의 receipt, 전체 상태 해시, 외부 HTTP 셀 저장과 내부 재수신을 검사합니다. 낮은 기존 설정의 거절 시 빈 cursor·DB 보존도 확인합니다. 이는 Node에서 외부 코드를 실행한 검증이며 실제 Supabase/Deno의 CPU·메모리 한도 내 완료를 보장하지 않습니다. 상향한 숫자는 검증 경계이지 메모리 사용량이 아닙니다. 압축 해제·JSON 파싱·해시·PG 저장 중 복사본과 동시 요청이 추가 메모리를 사용하므로 실제 환경의 초기 가져오기·후속 저장·재시도를 확인합니다.
+회귀 검사 `tests/sync/protocol/sync-state-capacity.test.mjs`는 **27.88 MiB·30,714개**의 합성 자료(2026-11-02 이전 28.76 MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)로 실제 SQLite 최초 게시 → 로컬 Git/GitHub API 대역 → 외부 `serviceFor` → 임시 PostgreSQL 반영을 확인합니다. 9 MiB 사본과 문서 본문, 게시 전 미전송 2건의 receipt, 전체 상태 해시, 외부 HTTP 셀 저장과 내부 재수신을 검사합니다. 낮은 기존 설정의 거절 시 빈 cursor·DB 보존도 확인합니다. 이는 Node에서 외부 코드를 실행한 검증이며 실제 Supabase/Deno의 CPU·메모리 한도 내 완료를 보장하지 않습니다. 상향한 숫자는 검증 경계이지 메모리 사용량이 아닙니다. 압축 해제·JSON 파싱·해시·PG 저장 중 복사본과 동시 요청이 추가 메모리를 사용하므로 실제 환경의 초기 가져오기·후속 저장·재시도를 확인합니다.
 
 ## 11. 정리·중단·복구
 
@@ -834,11 +838,11 @@ Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마�
 
 ### 자동 검사와 과거 workerd 측정의 범위
 
-`tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PostgreSQL 경로와 내부 SQLite/Git을 연결합니다. 문서 GET·저장·SSE의 버전 일관성도 검사합니다. Node에서 호출한 Edge handler 검사는 Deno 런타임의 성능 검사가 아니므로 실제 Supabase 함수 배포와 구분합니다.
+`tests/site/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PostgreSQL 경로와 내부 SQLite/Git을 연결합니다. 문서 GET·저장·SSE의 버전 일관성도 검사합니다. Node에서 호출한 Edge handler 검사는 Deno 런타임의 성능 검사가 아니므로 실제 Supabase 함수 배포와 구분합니다.
 
 **이전 전체 Worker 및 workerd 호환 경로**의 전용 검사는 제거했습니다. 아래 수치는 현재 운영 경로의 측정이 아닌 과거 기록입니다. 2026-10-27 소스 `ca4a85d`의 기록에서는 1,000개 업무·총 7,023개 엔티티의 약 3.44 MiB snapshot과 후속 변경을 처리했고, 같은 구성의 2,000행 약 6.87 MiB와 5,000행 약 17.17 MiB는 cursor를 이동하지 않고 거절했습니다. 이는 고정 행 수 보장이 아닙니다.
 
-당시 5,000행 거절 단계의 V8 allocated heap+backing 표본은 137,299,355바이트로 128 MiB를 넘었습니다. 이 결과를 production 메모리 안전성의 증거로 사용하지 않습니다. SQL 행 메모리 모델과 대역 GitHub/R2를 사용한 과거 측정이며, 실제 PG 연결·동시 요청·현재 Supabase/Deno 실행의 메모리와 지연은 포함하지 않습니다. 과거 재현 코드는 해당 측정 커밋에 남아 있습니다. 현재 Cloudflare 경계는 `tests/edge-gateway.test.mjs`와 `tests/pages-gateway.test.mjs`로, 외부 업무 흐름은 `tests/team-site.test.mjs`와 `tests/worker-sync-integration.test.mjs`로 검사합니다.
+당시 5,000행 거절 단계의 V8 allocated heap+backing 표본은 137,299,355바이트로 128 MiB를 넘었습니다. 이 결과를 production 메모리 안전성의 증거로 사용하지 않습니다. SQL 행 메모리 모델과 대역 GitHub/R2를 사용한 과거 측정이며, 실제 PG 연결·동시 요청·현재 Supabase/Deno 실행의 메모리와 지연은 포함하지 않습니다. 과거 재현 코드는 해당 측정 커밋에 남아 있습니다. 현재 Cloudflare 경계는 `tests/site/edge-gateway.test.mjs`와 `tests/site/pages-gateway.test.mjs`로, 외부 업무 흐름은 `tests/site/team-site.test.mjs`와 `tests/sync/integration/worker-sync-integration.test.mjs`로 검사합니다.
 
 내부 SQLite 10,000행 시험과 PG 저장 어댑터 직접 호출 시험도 별도 범위입니다. 그 결과를 외부 API가 같은 행 수를 지원한다는 근거로 사용하지 않습니다. 검증 커밋·환경·실행 명령·실패와 제외 범위를 [개발 안내](DEVELOPMENT.md#검증)의 운영 기록과 함께 남깁니다.
 

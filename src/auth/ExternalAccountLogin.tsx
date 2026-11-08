@@ -1,4 +1,4 @@
-import type { SetupStatus } from "../../shared/session-contract";
+import type { SetupStatus } from "../../shared/identity/session-contract";
 import { useEffect, useId, useState } from "react";
 import { api, send } from "../platform/api";
 import { resumeSession } from "../platform/event-stream";

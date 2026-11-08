@@ -1,5 +1,5 @@
 import type { HistoryEntry, SavedCell, Style, Border, Task } from "../types";
-import { rowFormatSignature } from "../../shared/formatting.js";
+import { rowFormatSignature } from "../../shared/formatting/formatting.js";
 
 export const HISTORY_LIMIT = 50;
 

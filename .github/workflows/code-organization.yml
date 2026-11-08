@@ -13,10 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci --include=dev
       - run: npm run check:structure
-      - run: node --test --test-concurrency=1 tests/tooling/code-organization.test.mjs tests/tooling/node-test-files.test.mjs tests/storage-import-boundaries.test.mjs
+      - run: node --test --test-concurrency=1 tests/tooling/code-organization.test.mjs tests/tooling/node-test-files.test.mjs tests/tooling/storage-import-boundaries.test.mjs tests/site/team-site-deploy.test.mjs

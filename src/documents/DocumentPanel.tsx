@@ -31,7 +31,7 @@ import {
   DEFAULT_DOCUMENT_TITLE,
   MAX_TASK_DOCUMENTS,
   MAX_DOCUMENT_TITLE_LENGTH,
-} from "../../shared/task-documents.js";
+} from "../../shared/documents/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./DocumentFullWidthButton";
 import DocumentFullPageButton from "./DocumentFullPageButton";

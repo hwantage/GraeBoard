@@ -33,8 +33,8 @@ function fixture(t) {
         join(root, `scripts/testing/${name}.mjs`),
       );
     copyFileSync(
-      new URL("../../scripts/test-postgres.mjs", import.meta.url),
-      join(root, "scripts/test-postgres.mjs"),
+      new URL("../../scripts/testing/test-postgres.mjs", import.meta.url),
+      join(root, "scripts/testing/test-postgres.mjs"),
     );
   };
   return { root, put, copyRunner };
@@ -46,14 +46,14 @@ test("recursive collection includes each root and deep suite once in sorted POSI
     "tests/z.test.mjs",
     "tests/calendar/deep/example.test.mjs",
     "tests/a.test.mjs",
-    "tests/sheet-clone-cutover.test.mjs",
-    "tests/sheet-clone-conversion.test.mjs",
+    "tests/sync/recovery/sheet-clone-frozen-compatibility.test.mjs",
+    "tests/tooling/frozen-cutover-source.test.mjs",
   ];
   for (const path of [
     ...included,
     "tests/ignored.spec.ts",
     "tests/helper.mjs",
-    "tests/worker-sheet-clone-sync-deno.mjs",
+    "tests/support/worker-sheet-clone-sync-deno.mjs",
     "tests/fixtures/fake.test.mjs",
     "tests/calendar/fixtures/nested.test.mjs",
     "tests/browser/fake.test.mjs",
@@ -111,7 +111,7 @@ test("strict command fails before testing absent/unusable PG and uses the same d
     'import test from "node:test"; test("strict child marker", () => { throw new Error("strict deep failure"); });\n',
   );
   const run = (bin) =>
-    spawnSync(process.execPath, ["scripts/test-postgres.mjs"], {
+    spawnSync(process.execPath, ["scripts/testing/test-postgres.mjs"], {
       cwd: f.root,
       env: { ...cliEnv, TEST_PG_BIN: bin },
       encoding: "utf8",

@@ -1,9 +1,9 @@
-import { MAX_IMAGE_BYTES } from "../../shared/document-images.js";
+import { MAX_IMAGE_BYTES } from "../../shared/documents/document-images.js";
 import {
   MAX_DOCUMENT_BYTES,
   documentBytes,
   hasDocumentContent,
-} from "../../shared/task-documents.js";
+} from "../../shared/documents/task-documents.js";
 import {
   DocumentStorageConflict,
   type DocumentStorage,
