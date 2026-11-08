@@ -680,3 +680,128 @@ test("tampered checkpoint metadata/state, incompatible history, pending hash and
     assert.equal(local.commits.length, 0);
   }
 });
+test("after a protocol transition new and recovering sites still start at the newest checkpoint and replay the transition", async () => {
+  // genesis → 6 protocol 3 operations → checkpoint → 3→4 transition → a
+  // protocol 4 operation → another.
+  const { repo, state, genesis, states } = await fixture(6),
+    publisher = store(state, repo.head),
+    svc = new SyncService({ transport: repo, store: publisher, identity });
+  await svc.checkpoint();
+  const checkpoint = repo.head;
+  publisher.link.mode = "paused";
+  await svc.upgrade({
+    expectedHead: checkpoint,
+    expectedHash: stateHash(publisher.state),
+    peersStopped: true,
+  });
+  const transition = repo.head;
+  assert.equal(repo.commits.get(transition).parents[0], checkpoint);
+  const operation = (opId, parent, before) => {
+    const op = {
+      protocol: 4,
+      reducer: 4,
+      ...identity,
+      opId,
+      writerEpoch: "epoch",
+      actorRef: "person",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      dependsOn: [],
+      objects: [],
+      changes: [
+        {
+          entity: "person",
+          key: [opId],
+          generation: "g-" + opId,
+          baseVersion: null,
+          base: null,
+          desired: { name: opId },
+          action: "create",
+          fields: ["name"],
+        },
+      ],
+    };
+    const after = reduceMany(before, [op], identity);
+    return { op, after, parent };
+  };
+  const publishOperation = async (opId, before) => {
+    const { op, after } = operation(opId, repo.head, before),
+      parent = repo.head;
+    repo.head = await repo.createCandidate(parent, {
+      [`events/${opId}.json`]: canonical({
+        protocol: 4,
+        reducer: 4,
+        kind: "operations",
+        parent,
+        operations: [op],
+        resultHash: stateHash(after),
+      }),
+    });
+    states.set(repo.head, after);
+    return after;
+  };
+  const afterFirst = await publishOperation("first", publisher.state),
+    first = repo.head,
+    finalState = await publishOperation("second", afterFirst);
+  // The newest snapshot below the head is the transition, not a checkpoint.
+  assert.equal(await repo.latestSnapshot(repo.head), transition);
+  // The checkpoint binds its state to its parent's recorded result, which
+  // reads the parent and the tree below it; no commit before those is read.
+  const below = repo.commits.get(repo.commits.get(checkpoint).parents[0])
+      .parents[0],
+    prefix = repo.lineage(below).slice(0, -1);
+  for (const [label, head, mode, explicit, restored, expected] of [
+    [
+      "new site",
+      null,
+      "importing",
+      false,
+      markedState(),
+      [checkpoint, transition, first, repo.head],
+    ],
+    [
+      "recovery",
+      genesis,
+      "recovery",
+      true,
+      markedState(),
+      [checkpoint, transition, first, repo.head],
+    ],
+    [
+      "sync:recover",
+      genesis,
+      "importing",
+      true,
+      markedState(),
+      [checkpoint, transition, first, repo.head],
+    ],
+    // A restored head beyond the newest checkpoint replays from itself.
+    ["restored after it", first, "importing", true, afterFirst, [repo.head]],
+  ])
+    for (const viaApi of [false, true]) {
+      repo.calls.length = 0;
+      const local = store(restored, head, mode),
+        transport = viaApi
+          ? new GitHubApiTransport({
+              repository: "fixture/team",
+              token: "test",
+              fetch: repo.fetch,
+              maxRequests: 60,
+            })
+          : repo;
+      await new SyncService({ transport, store: local, identity }).run({
+        receiveOnly: true,
+        updateStatus: false,
+        loadCheckpoint: explicit,
+      });
+      assert.deepEqual(local.commits, expected, label);
+      assert.equal(stateHash(local.state), stateHash(finalState), label);
+      // No commit before the checkpoint is read (only compared), but for the
+      // restored head itself, whose files the checkpoint is diffed against.
+      if (viaApi)
+        for (const oid of prefix.filter((oid) => oid !== head))
+          assert.ok(
+            !repo.calls.includes("/git/commits/" + oid),
+            `${label} read ${oid}`,
+          );
+    }
+});

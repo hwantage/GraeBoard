@@ -64,26 +64,43 @@ export async function loadCheckpoint(service, link, pinnedHead) {
   if (!transport.latestSnapshot) return link;
   if (!["importing", "recovery"].includes(link.mode))
     throw new Error("Checkpoint load requires a drained import/recovery");
-  const oid = await transport.latestSnapshot(pinnedHead);
-  if (!oid || oid === link.canonical_head) return link;
-  const commit = await transport.readCommit(oid);
-  if (!commit.parents.length) return link; // Genesis remains the compatible fallback.
-  const parent = commit.parents[0];
-  await service.checkCommit(oid, parent);
-  if (
-    !(await transport.verifyReachable(oid, pinnedHead)) ||
-    (link.canonical_head &&
-      !(await transport.verifyReachable(link.canonical_head, parent)))
-  )
-    throw new ProtocolError(
-      "SYNC_HISTORY",
-      "Checkpoint is not compatible with the pinned canonical history",
-    );
-  const added = await service.verifyFiles(commit, parent);
-  const events = added.filter((file) => file.path.startsWith("events/"));
-  if (events.length !== 1) invalid("Invalid checkpoint event count");
-  const envelope = json(await transport.readFile(oid, events[0].path));
-  if (envelope.kind !== "checkpoint") return link;
+  // The newest checkpoint at or before the pinned head. A protocol transition
+  // also writes snapshots: it is passed over here and replayed after the
+  // checkpoint like any other commit.
+  let oid = await transport.latestSnapshot(pinnedHead),
+    commit,
+    parent,
+    added,
+    envelope;
+  for (;;) {
+    if (!oid || oid === link.canonical_head) return link;
+    // A restored head already past it replays from there.
+    if (
+      link.canonical_head &&
+      (await transport.verifyReachable(oid, link.canonical_head))
+    )
+      return link;
+    commit = await transport.readCommit(oid);
+    if (!commit.parents.length) return link; // Genesis remains the compatible fallback.
+    parent = commit.parents[0];
+    await service.checkCommit(oid, parent);
+    if (
+      !(await transport.verifyReachable(oid, pinnedHead)) ||
+      (link.canonical_head &&
+        !(await transport.verifyReachable(link.canonical_head, parent)))
+    )
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Checkpoint is not compatible with the pinned canonical history",
+      );
+    added = await service.verifyFiles(commit, parent);
+    const events = added.filter((file) => file.path.startsWith("events/"));
+    if (events.length !== 1) invalid("Invalid checkpoint event count");
+    envelope = json(await transport.readFile(oid, events[0].path));
+    if (envelope.kind === "checkpoint") break;
+    if (envelope.kind !== "transition") return link;
+    oid = await transport.latestSnapshot(parent);
+  }
   if (envelope.protocol > service.maxProtocol)
     throw new ProtocolError(
       "SYNC_VERSION",

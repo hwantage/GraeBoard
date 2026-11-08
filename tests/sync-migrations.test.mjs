@@ -24,6 +24,7 @@ import {
   sheetCloneChecksum,
 } from "../server/migrations/sqlite.mjs";
 import { sqliteSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
+import { runCutover } from "../tools/sheet-clone-cutover/cutover.mjs";
 
 // v34 converts what the rows store; these legacy rows hold no earlier name
 // besides the copy tables themselves, so every row survives as it was.
@@ -487,6 +488,129 @@ test("v31 startup preserves the database and directs operators to the cutover to
     preserved(contents(db), before, ["schema_migrations"]);
   } finally {
     db?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an installation that never shared history converts its SQLite database alone from each of v29-v33 through the cutover tool", async () => {
+  const cli = (...args) =>
+    spawnSync(
+      process.execPath,
+      ["tools/sheet-clone-cutover/cli.mjs", "--database", ...args],
+      { encoding: "utf8" },
+    );
+  const released = [
+    [30, syncSql, syncChecksum],
+    [31, keySql, keyChecksum],
+    [32, maintenanceSql, maintenanceChecksum],
+    [33, accessTokenSql, accessTokenChecksum],
+  ];
+  // The legacy rows at a released version, as that release left them.
+  const at = (path, version, { history = true } = {}) => {
+    const db = legacy(path);
+    for (const [v, sql, checksum] of released.filter(([v]) => v <= version)) {
+      db.exec(sql);
+      if (history)
+        db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(
+          v,
+          checksum,
+          "released" + v,
+        );
+    }
+    if (!history && version >= 30) db.exec("DROP TABLE schema_migrations");
+    db.exec(`PRAGMA user_version=${version}`);
+    return db;
+  };
+  const dir = mkdtempSync(join(tmpdir(), "graeboard-cutover-internal-"));
+  try {
+    for (const version of [29, 30, 31, 32, 33]) {
+      const path = join(dir, `v${version}.sqlite`);
+      let db = at(path, version);
+      const before = contents(db);
+      db.close();
+      const bytes = readFileSync(path);
+      // The preview converts a copy and writes nothing.
+      const preview = cli(path, "--dry-run");
+      assert.equal(preview.status, 0, preview.stderr);
+      const planned = JSON.parse(preview.stdout);
+      assert.deepEqual(
+        [planned.from, planned.to, planned.applied, planned.dryRun],
+        [version, SQLITE_VERSION, false, true],
+        `v${version}`,
+      );
+      assert.deepEqual(readFileSync(path), bytes, `v${version}`);
+      const applied = cli(path);
+      assert.equal(applied.status, 0, applied.stderr);
+      const result = JSON.parse(applied.stdout);
+      assert.deepEqual(
+        [result.from, result.to, result.applied, result.checksum],
+        [version, SQLITE_VERSION, true, sheetCloneChecksum],
+        `v${version}`,
+      );
+      db = new DatabaseSync(path, { readOnly: true });
+      assertSqliteHistory(db);
+      assertSqliteIntegrity(db);
+      preserved(contents(db), before, ["schema_migrations"]);
+      db.close();
+      // A rerun validates the converted database and changes nothing.
+      const converted = readFileSync(path),
+        rerun = cli(path);
+      assert.equal(rerun.status, 0, rerun.stderr);
+      const again = JSON.parse(rerun.stdout);
+      assert.deepEqual(
+        [again.from, again.to, again.applied],
+        [SQLITE_VERSION, SQLITE_VERSION, false],
+      );
+      assert.deepEqual(readFileSync(path), converted);
+    }
+
+    // Refused before anything is read or written.
+    const refused = (path, pattern) => {
+      const bytes = readFileSync(path);
+      for (const args of [[path, "--dry-run"], [path]]) {
+        const run = cli(...args);
+        assert.equal(run.status, 1, run.stdout);
+        assert.match(run.stderr, pattern);
+      }
+      assert.deepEqual(readFileSync(path), bytes);
+    };
+    // An already converted database whose recorded history differs is
+    // reported by its checks, not by its version number.
+    const tampered = join(dir, "v31.sqlite");
+    let db = new DatabaseSync(tampered);
+    db.prepare(
+      "UPDATE schema_migrations SET checksum='x' WHERE version=34",
+    ).run();
+    db.close();
+    refused(tampered, /SQLite migration checksum mismatch/);
+    const future = join(dir, "future.sqlite");
+    db = at(future, 33);
+    db.exec("PRAGMA user_version=35");
+    db.close();
+    refused(future, /Unsupported SQLite version 35; data preserved/);
+    // Labelled v31 without the history a released v31 has.
+    const unlabelled = join(dir, "unlabelled.sqlite");
+    at(unlabelled, 31, { history: false }).close();
+    refused(unlabelled, /SQLite migration history missing/);
+    // A team with shared history needs the whole cutover.
+    const shared = join(dir, "shared.sqlite");
+    db = at(shared, 33);
+    db.prepare(
+      "INSERT INTO team_sync_links(team_id,repo_id,bootstrap_id,installation_id,writer_epoch,profile_id,mode,canonical_head,updated_at) VALUES('team','repo','boot','site','epoch','profile','paused',?,'2026-01-01')",
+    ).run("a".repeat(40));
+    db.close();
+    refused(
+      shared,
+      /teams with shared history \(team\) need the whole cutover/,
+    );
+    // And a v29 database has no team to cut over with Git.
+    const v29 = join(dir, "v29-whole.sqlite");
+    at(v29, 29).close();
+    await assert.rejects(
+      runCutover({ teamId: "team", sqlitePath: v29, dryRun: true }),
+      /a v29 database has no synchronization history; convert it with --database alone/,
+    );
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

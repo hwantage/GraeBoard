@@ -12,7 +12,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { migrateSqlite } from "../../server/migrations/sqlite.mjs";
+import {
+  assertSqliteBaseline,
+  assertSqliteHistory,
+  assertSqliteIntegrity,
+  migrateSqlite,
+  sqliteVersion,
+} from "../../server/migrations/sqlite.mjs";
 import { migratePostgres } from "../../server/migrations/postgres.mjs";
 import { sqliteTeamStore } from "../../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
@@ -78,8 +84,20 @@ const openSqlite = (path) => {
   db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
   return db;
 };
-const sqliteVersion = (db) =>
-  db.prepare("PRAGMA user_version").get().user_version;
+// The source database as the migration accepts it, checked before anything
+// is read from it: the released v29 schema or the v30-v33 history with its
+// checksums (the migration checks integrity itself), or a v34 one already
+// converted, reported only under its full history and integrity checks.
+// Anything else is refused.
+function sqliteSource(db) {
+  const version = sqliteVersion(db);
+  if (version === 29) assertSqliteBaseline(db);
+  else if ([30, 31, 32, 33, 34].includes(version))
+    assertSqliteHistory(db, { version });
+  else throw new Error(`Unsupported SQLite version ${version}; data preserved`);
+  if (version === 34) assertSqliteIntegrity(db);
+  return version;
+}
 
 // The conversion of a consistent copy: the source file is only read.
 function previewSqlite(path, options) {
@@ -121,7 +139,14 @@ async function plan({ sqlitePath, pool, pgScope, teamId, transport }, options) {
   const db = new DatabaseSync(sqlitePath, { readOnly: true });
   let version, others, oldState, link;
   try {
-    version = sqliteVersion(db);
+    version = sqliteSource(db);
+    if (version === 34)
+      fail("internal: the database is already converted; nothing to plan");
+    // Synchronization arrived in v30: a v29 team never shared history.
+    if (version === 29)
+      fail(
+        "internal: a v29 database has no synchronization history; convert it with --database alone",
+      );
     // Every team with shared history needs its own boundary; this tool cuts
     // over one team, so no other team may have one.
     others = db
@@ -136,8 +161,6 @@ async function plan({ sqlitePath, pool, pgScope, teamId, transport }, options) {
   } finally {
     db.close();
   }
-  if (version === 34)
-    fail("internal: the database is already converted; nothing to plan");
   if (others.length)
     fail(
       `internal: other teams have shared history (${others.join(", ")}); cut over or reset them first`,
@@ -304,15 +327,18 @@ export function convertInternalOnly({
   dryRun = false,
 }) {
   const db = new DatabaseSync(sqlitePath, { readOnly: true });
-  let version, shared;
+  let version,
+    shared = [];
   try {
-    version = sqliteVersion(db);
-    shared = db
-      .prepare(
-        "SELECT team_id FROM team_sync_links WHERE canonical_head IS NOT NULL OR bootstrap_bundle IS NOT NULL",
-      )
-      .all()
-      .map((row) => row.team_id);
+    version = sqliteSource(db);
+    // Synchronization arrived in v30: a v29 team never shared history.
+    if (version >= 30)
+      shared = db
+        .prepare(
+          "SELECT team_id FROM team_sync_links WHERE canonical_head IS NOT NULL OR bootstrap_bundle IS NOT NULL",
+        )
+        .all()
+        .map((row) => row.team_id);
   } finally {
     db.close();
   }

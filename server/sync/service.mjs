@@ -407,7 +407,9 @@ export class SyncService {
         } else if (["transition", "checkpoint"].includes(envelope.kind))
           previousState = await whole();
         if (envelope.kind === "transition") {
-          if (!["paused", "importing"].includes(link.mode))
+          // Only a writer that publishes nothing meanwhile: paused, or a
+          // receive-only import or recovery.
+          if (!["paused", "importing", "recovery"].includes(link.mode))
             throw new ProtocolError(
               "SYNC_TRANSITION_PENDING",
               "Pause this writer before accepting a protocol transition",

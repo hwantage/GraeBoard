@@ -740,6 +740,75 @@ for (const [label, from, to, port] of [
         ok(await inside(documentPath)).markdown,
         new RegExp(`\\[새 링크\\]\\(${path}\\)`),
       );
+      // The ordinary protocol 3 → 4 upgrade after the cutover: the newest
+      // snapshot is then that transition, and new and recovering sites still
+      // start at the cutover checkpoint and replay the transition after it.
+      let transition, afterTransition;
+      if (from === 1) {
+        for (const send of [inside, outside])
+          ok(await send(`/teams/${teamId}/sync/pause`, {}));
+        const expectedHead = app.locals.sync
+            .store(teamId)
+            .readLink().canonical_head,
+          expectedHash = stateHash(app.locals.sync.store(teamId).readState());
+        for (const send of [inside, outside])
+          ok(
+            await send(`/teams/${teamId}/sync/upgrade`, {
+              expectedHead,
+              expectedHash,
+              peersStopped: true,
+            }),
+          );
+        for (const send of [inside, outside])
+          ok(await send(`/teams/${teamId}/sync/resume`, {}));
+        await converge();
+        transition = git("rev-parse", "refs/heads/sync-v1");
+        assert.equal(git("rev-parse", transition + "^"), expectedHead);
+        assert.equal(
+          git("log", "-1", "--format=%H", transition, "--", "snapshots"),
+          transition,
+        );
+        for (const send of [inside, outside])
+          assert.equal(ok(await send(`/teams/${teamId}/sync`)).protocol, 4);
+        // Edits after it, with a copy of the internal database between them
+        // for the recovery below.
+        const editCell = async (send, value) => {
+          const current = ok(await send(`/sheet-clones/${R2}`)),
+            cell = current.tasks.find((task) => task.id === T1).cells[
+              "2026-11-02"
+            ];
+          ok(
+            await send(
+              `/sheet-clones/${R2}`,
+              editBody(current, value, cell.version),
+              "PATCH",
+            ),
+          );
+          await converge();
+        };
+        await editCell(inside, "프로토콜 4 사내");
+        afterTransition = join(dir, "after-transition.sqlite");
+        {
+          const copy = new DatabaseSync(dbPath, { readOnly: true });
+          copy.exec(`VACUUM INTO '${afterTransition.replaceAll("'", "''")}'`);
+          copy.close();
+          // Taken from the running site: marked as npm run restore marks it.
+          const restoredCopy = new DatabaseSync(afterTransition);
+          restoredCopy
+            .prepare(
+              "UPDATE team_sync_links SET mode='recovery',lease_owner=NULL,lease_until=NULL WHERE team_id=?",
+            )
+            .run(teamId);
+          restoredCopy.close();
+        }
+        await editCell(outside, "프로토콜 4 외부");
+        assert.equal(
+          ok(await inside(`/sheet-clones/${R2}`)).tasks.find(
+            (task) => task.id === T1,
+          ).cells["2026-11-02"].value,
+          "프로토콜 4 외부",
+        );
+      }
       const internalHead = app.locals.sync
         .store(teamId)
         .readLink().canonical_head;
@@ -788,13 +857,18 @@ for (const [label, from, to, port] of [
       });
       const newcomer = external("control2", "fresh"),
         calls = github.calls.length;
-      const imported = ok(
-        await newcomer.send("/admin/sync/import", {
-          teamId,
-          profileId: manifest.profiles.external,
-        }),
-      );
-      await flush();
+      // One call applies a bounded number of commits; the same import
+      // continues from where the last one stopped.
+      let imported;
+      for (let call = 0; call < 5 && imported?.phase !== "complete"; call++) {
+        imported = ok(
+          await newcomer.send("/admin/sync/import", {
+            teamId,
+            profileId: manifest.profiles.external,
+          }),
+        );
+        await flush();
+      }
       assert.equal(imported.phase, "complete");
       const freshStore = new PostgresDatabase(fresh, { teamId });
       assert.equal(
@@ -818,41 +892,83 @@ for (const [label, from, to, port] of [
         ok(await newcomer.send(`/sheet-clones/${R2}`)).tasks.find(
           (task) => task.id === T1,
         ).cells["2026-11-02"].value,
-        "외부 전환 후",
+        from === 1 ? "프로토콜 4 외부" : "외부 전환 후",
       );
 
-      // That converted copy, restored for recovery, reconciles from the
-      // checkpoint on to the current head.
-      const recoveryDb = openDatabase(restored);
-      t.after(() => recoveryDb.close());
-      assert.equal(
-        recoveryDb
-          .prepare("SELECT canonical_head FROM team_sync_links WHERE team_id=?")
-          .get(teamId).canonical_head,
-        checkpoint,
-      );
-      const recovered = await recoverSync({
-        db: recoveryDb,
-        teamId,
-        installationId: randomUUID(),
-        profiles: [
-          {
-            profileId: manifest.profiles.internal,
-            teamId,
-            repository: manifest.repository,
-          },
-        ],
-        imagesDir: join(dir, "recovered-images"),
-        confirmDrained: true,
-        transports: {
-          [manifest.profiles.internal]: new GitCliTransport({
-            directory: join(dir, "recovered.git"),
-            repository: remote,
-            allowLocal: true,
-          }),
-        },
-      });
-      assert.equal(recovered.canonicalHead ?? recovered.head, internalHead);
+      // A copy restored for recovery reconciles from its own head on to the
+      // current head, whichever snapshot is the newest.
+      const recoverCopy = async (path, name, options = {}) => {
+        const db = openDatabase(path);
+        t.after(() => db.close());
+        const head = db
+            .prepare(
+              "SELECT canonical_head FROM team_sync_links WHERE team_id=?",
+            )
+            .get(teamId).canonical_head,
+          run = (extra) =>
+            recoverSync({
+              db,
+              teamId,
+              installationId: randomUUID(),
+              profiles: [
+                {
+                  profileId: manifest.profiles.internal,
+                  teamId,
+                  repository: manifest.repository,
+                },
+              ],
+              imagesDir: join(dir, name + "-images"),
+              confirmDrained: true,
+              transports: {
+                [manifest.profiles.internal]: new GitCliTransport({
+                  directory: join(dir, name + ".git"),
+                  repository: remote,
+                  allowLocal: true,
+                }),
+              },
+              ...options,
+              ...extra,
+            });
+        return { db, head, run };
+      };
+      const converted = await recoverCopy(restored, "recovered");
+      assert.equal(converted.head, checkpoint);
+      if (from === 1) {
+        // Restored after the transition and behind the head: it replays the
+        // later edit from its own head.
+        const later = await recoverCopy(afterTransition, "recovered-later");
+        assert.notEqual(later.head, internalHead);
+        assert.equal(
+          git("merge-base", "--is-ancestor", transition, later.head),
+          "",
+        );
+        assert.equal((await later.run()).canonicalHead, internalHead);
+        // The copy from before the transition: its rows hold local changes C
+        // never recorded (f744ead left R1 and R5 so), which recovery keeps as
+        // a command, and no command crosses a protocol transition. It stops
+        // there and keeps that command and its rows.
+        const { uncapturedChanges } = await converted.run({ dryRun: true });
+        assert.ok(uncapturedChanges > 0);
+        await assert.rejects(converted.run(), (error) => {
+          assert.equal(error.code, "SYNC_TRANSITION_PENDING");
+          return true;
+        });
+        const link = converted.db
+          .prepare(
+            "SELECT mode,canonical_head FROM team_sync_links WHERE team_id=?",
+          )
+          .get(teamId);
+        assert.equal(link.mode, "recovery");
+        assert.notEqual(link.canonical_head, internalHead);
+        assert.equal(
+          converted.db
+            .prepare(
+              "SELECT COUNT(*) n FROM sync_outbox WHERE team_id=? AND status<>'acknowledged'",
+            )
+            .get(teamId).n,
+          1,
+        );
+      } else assert.equal((await converted.run()).canonicalHead, internalHead);
 
       // A command of an earlier protocol appended by an unconverted writer is
       // never applied: the cursor stays and nothing changes.
