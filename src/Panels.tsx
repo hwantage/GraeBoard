@@ -3,7 +3,7 @@ import type { BatchResult, DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
-} from "./TaskPropertyEditor";
+} from "./sheet/TaskPropertyEditor";
 import Select from "./ui/Select";
 import DocumentLoading from "./documents/DocumentLoading";
 import LoadingState from "./ui/LoadingState";
@@ -34,7 +34,7 @@ import { api, send, download, taskQuery } from "./platform/api";
 import { Modal, Button, ErrorNote } from "./components";
 import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
-import { describeStyle } from "./history";
+import { describeStyle } from "./sheet/history";
 import { pack, compactStyle } from "../shared/compact.js";
 import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";

@@ -21,7 +21,7 @@ import { api, send } from "../platform/api";
 import { Avatar, Button, ErrorNote } from "../components";
 import Select from "../ui/Select";
 import { TaskDetailContent, type TaskDetailHandle } from "../Panels";
-import type { PropertySaveRequest } from "../TaskPropertyEditor";
+import type { PropertySaveRequest } from "../sheet/TaskPropertyEditor";
 import type {
   Bootstrap,
   Task,

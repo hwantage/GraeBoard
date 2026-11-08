@@ -20,7 +20,7 @@ import { BrandLockup, Grae } from "./ui/Brand";
 import { inkFor } from "./ui/color";
 import type { Bootstrap, User } from "./types";
 import type { SetupStatus } from "../shared/session-contract";
-import ExternalLogin from "./ExternalLogin";
+import ExternalLogin from "./auth/ExternalLogin";
 import { siteFor } from "./platform/site";
 
 export function Button({

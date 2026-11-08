@@ -937,242 +937,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "src/AccessTokens.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/AccountLinkRequests.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/AccountMenu.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ActiveFilterConditions.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/App.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/AvatarEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/BorderControls.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/BorderMenu.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CellDatePicker.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/CellOptionPicker.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/DefaultStyleManager.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ExternalAccountLogin.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ExternalLogin.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/FindBar.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/FormatSelect.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/Grid.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/HistoryCleanup.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/InlineCellEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/MemberValue.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PeriodPicker.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PresentationTools.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ProfilePanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PropertiesManager.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PropertyBadge.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PropertyColumnOrder.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/PropertyFilter.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SaveStatus.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ServiceConnections.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SettingsPanel.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SheetHorizontalScroll.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SheetTabs.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SiteMaintenance.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SyncConflictBox.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SyncConflictDiff.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SyncConnectionDetails.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SyncSetupWizard.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/SystemAuditLog.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TaskPropertyEditor.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TeamSettings.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TeamSetupKey.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TeamSyncIndicator.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/TeamSyncSettings.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ThemePicker.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/Toolbar.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/UserAccounts.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/ZoomControls.tsx",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/cell-sync.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/cell-updates.js",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/clipboard.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/format-selection.js",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/history.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/selection-areas.js",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/service-connections.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/sync-setup.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/sync-types.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/team-sync-settings.css",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useSheetCloneDraft.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useTodayKey.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "src/useWorkspaceRoute.ts",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "tests/access-tokens.test.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1809,10 +1573,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "scripts/admin.mjs",
-        "worker/admin.mjs"
-      ],
+      "paths": ["scripts/admin.mjs", "worker/admin.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -1824,17 +1585,11 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/access-tokens.mjs",
-        "worker/access-tokens.mjs"
-      ],
+      "paths": ["server/access-tokens.mjs", "worker/access-tokens.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/calendar.mjs",
-        "worker/calendar.mjs"
-      ],
+      "paths": ["server/calendar.mjs", "worker/calendar.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -1845,31 +1600,19 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/migrations/sqlite.mjs",
-        "server/storage/sqlite.mjs"
-      ],
+      "paths": ["server/migrations/sqlite.mjs", "server/storage/sqlite.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/profiles.mjs",
-        "server/sync/profiles.mjs"
-      ],
+      "paths": ["server/profiles.mjs", "server/sync/profiles.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/settings.mjs",
-        "worker/settings.mjs"
-      ],
+      "paths": ["server/settings.mjs", "worker/settings.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sheet-clones.mjs",
-        "worker/sheet-clones.mjs"
-      ],
+      "paths": ["server/sheet-clones.mjs", "worker/sheet-clones.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -1894,24 +1637,15 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sync/directory.mjs",
-        "worker/directory.mjs"
-      ],
+      "paths": ["server/sync/directory.mjs", "worker/directory.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sync/maintenance.mjs",
-        "worker/maintenance.mjs"
-      ],
+      "paths": ["server/sync/maintenance.mjs", "worker/maintenance.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sync/setup-keys.mjs",
-        "worker/setup-keys.mjs"
-      ],
+      "paths": ["server/sync/setup-keys.mjs", "worker/setup-keys.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     }
   ],

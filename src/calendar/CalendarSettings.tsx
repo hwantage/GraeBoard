@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, ErrorNote, Modal } from "../components";
 import Select from "../ui/Select";
-import PropertyFilter from "../PropertyFilter";
+import PropertyFilter from "../sheet/PropertyFilter";
 import { api, send, taskQuery } from "../platform/api";
 import { propertiesFor, todayKey } from "../../shared/domain.js";
 import {

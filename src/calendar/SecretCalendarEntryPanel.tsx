@@ -14,7 +14,9 @@ import {
   type SecretCalendarEntry,
 } from "./secret-calendar";
 
-import DocumentEditor, { type DocumentHandle } from "../documents/DocumentEditor";
+import DocumentEditor, {
+  type DocumentHandle,
+} from "../documents/DocumentEditor";
 import DocumentLoading from "../documents/DocumentLoading";
 import DocumentFullWidthButton from "../documents/DocumentFullWidthButton";
 import { useDocumentFullPage } from "../documents/useDocumentFullPage";

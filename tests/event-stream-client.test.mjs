@@ -9,7 +9,7 @@ const moduleURL = (code) =>
 const sourcePaths = {
   "event-stream": "../src/platform/event-stream.ts",
   "event-stream-broker": "../src/platform/event-stream-broker.ts",
-  "cell-sync": "../src/cell-sync.ts",
+  "cell-sync": "../src/sheet/cell-sync.ts",
 };
 const source = (name) =>
   stripTypeScriptTypes(
@@ -221,7 +221,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
   });
   const code = source("cell-sync")
     .replace(
-      '"./platform/event-stream"',
+      '"../platform/event-stream"',
       JSON.stringify(
         moduleURL(
           `export const EventStream=globalThis.__cellTest.Stream; export { retryableRejection } from ${JSON.stringify(moduleURL(source("event-stream-broker")))};`,
@@ -229,7 +229,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
       ),
     )
     .replace(
-      '"./platform/api"',
+      '"../platform/api"',
       JSON.stringify(
         moduleURL(
           'export const api=globalThis.__cellTest.get; export class ApiError extends Error {} export const taskQuery=()=>"/tasks";',
@@ -237,7 +237,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
       ),
     )
     .replace(
-      '"../shared/compact.js"',
+      '"../../shared/compact.js"',
       JSON.stringify(new URL("../shared/compact.js", import.meta.url).href),
     );
   const { subscribeCellChanges } = await import(moduleURL(code));

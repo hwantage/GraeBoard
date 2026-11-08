@@ -6,7 +6,9 @@ import {
   deleteCalendarEntry,
   saveCalendarEntryTags,
 } from "./calendar-entry-actions";
-import DocumentEditor, { type DocumentHandle } from "../documents/DocumentEditor";
+import DocumentEditor, {
+  type DocumentHandle,
+} from "../documents/DocumentEditor";
 import DocumentLoading from "../documents/DocumentLoading";
 import CalendarRangeEditor, {
   type CalendarRangeHandle,
@@ -27,7 +29,10 @@ import CopyDocumentLinkButton from "../documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "../documents/DocumentFullWidthButton";
 import DocumentFullPageButton from "../documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "../documents/useDocumentFullPage";
-import { updateDocumentLinkTitle, useOpenDocumentLink } from "../documents/document-links";
+import {
+  updateDocumentLinkTitle,
+  useOpenDocumentLink,
+} from "../documents/document-links";
 
 export default function CalendarEntryPanel({
   entry,

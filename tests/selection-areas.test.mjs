@@ -9,7 +9,7 @@ import {
   sheetChanges,
   subtractRange,
   toSelectionArea,
-} from "../src/selection-areas.js";
+} from "../src/sheet/selection-areas.js";
 
 const tasks = ["a", "b", "c", "d", "e"].map((id, i) => ({
   id,

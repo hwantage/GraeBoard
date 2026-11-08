@@ -15,7 +15,10 @@ import {
   useOpenDocumentLink,
   type DocumentLinkTarget,
 } from "./document-links";
-import type { CalendarContext, CalendarEntry } from "../calendar/calendar-types";
+import type {
+  CalendarContext,
+  CalendarEntry,
+} from "../calendar/calendar-types";
 import type { SheetClone, Settings, Task, TaskDocument, User } from "../types";
 
 type MemoLink = Extract<

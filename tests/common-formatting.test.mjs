@@ -21,7 +21,7 @@ import {
 } from "../shared/formatting.js";
 import { pack, unpack, stringify } from "../shared/compact.js";
 import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
-import { formatScopes } from "../src/format-selection.js";
+import { formatScopes } from "../src/sheet/format-selection.js";
 import { applyBorderPreset } from "../shared/borders.js";
 
 async function fixture(t) {

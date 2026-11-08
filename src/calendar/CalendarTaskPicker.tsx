@@ -7,9 +7,9 @@ import { api, send } from "../platform/api";
 import { busyProps } from "../ui/busyProps";
 import { Button, ErrorNote, Modal } from "../components";
 import LoadingState from "../ui/LoadingState";
-import MemberValue from "../MemberValue";
-import PropertyBadge from "../PropertyBadge";
-import PropertyFilter from "../PropertyFilter";
+import MemberValue from "../sheet/MemberValue";
+import PropertyBadge from "../sheet/PropertyBadge";
+import PropertyFilter from "../sheet/PropertyFilter";
 import Select from "../ui/Select";
 import { usePropertyFilterTasks } from "./CalendarSettings";
 import type {
