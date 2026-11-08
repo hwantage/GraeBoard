@@ -27,12 +27,12 @@ export function runMergePerformance({ rounds = 10 } = {}) {
         ? "x".repeat(count) + base.slice(count, -count) + "y".repeat(count)
         : null;
     for (let i = 0; i < 3; i++)
-      assert.equal(mergeMarkdown(base, current, desired, 2), expected);
+      assert.equal(mergeMarkdown(base, current, desired, 4), expected);
     const samples = [];
     for (let i = 0; i < rounds; i++) {
       const cpu = process.cpuUsage(),
         started = performance.now();
-      const result = mergeMarkdown(base, current, desired, 2);
+      const result = mergeMarkdown(base, current, desired, 4);
       const elapsedMs = performance.now() - started,
         used = process.cpuUsage(cpu);
       assert.equal(result, expected);
@@ -55,8 +55,8 @@ export function runMergePerformance({ rounds = 10 } = {}) {
     };
   });
   return {
-    protocol: 2,
-    reducer: 2,
+    protocol: 4,
+    reducer: 4,
     maxEditLength: 2000,
     documentBytes: Buffer.byteLength(base),
     runtime: process.version,

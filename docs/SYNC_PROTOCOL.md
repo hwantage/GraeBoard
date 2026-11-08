@@ -1,8 +1,8 @@
-# 팀 Git 동기화 규약 v1·v2
+# 팀 Git 동기화 규약 (프로토콜 3·4)
 
 [설치 안내](CLOUD_SETUP.md) · [데이터 형식](DATA_FORMAT.md) · [개발 안내](DEVELOPMENT.md)
 
-동기화는 팀별 private GitHub 저장소의 `sync-v1` 브랜치에 확정된 변경을 같은 순서로 재생합니다. 내부 저장 응답과 같은 서버의 SSE는 로컬 DB 커밋을 기준으로 하며 Git 게시를 기다리지 않습니다.
+동기화는 팀별 private GitHub 저장소의 `sync-v1` 브랜치에 확정된 변경을 같은 순서로 재생합니다. 브랜치 이름과 저장소 `manifest.json`의 `protocol:1, reducer:1`은 저장소 형식 표시이며, 공유 상태 C의 프로토콜은 C의 `protocol`/`[]` 표식이 정합니다. 현재 런타임은 프로토콜 3(사본 한 레코드)과 4(사본 행·셀 분할)만 읽습니다. 3·4는 사본 명칭 전환 전의 1·2와 구조·병합 규칙이 같고 사본 엔티티·문서 키·링크 이름만 다릅니다([사본 명칭 전환](#사본-명칭sheetclone-전환)). 내부 저장 응답과 같은 서버의 SSE는 로컬 DB 커밋을 기준으로 하며 Git 게시를 기다리지 않습니다.
 
 ## 상태와 원자성
 
@@ -22,7 +22,7 @@
 
 `repoId`와 `teamId`는 저장소 신원입니다. `bootstrapId`는 초기 엔티티 토큰을 고정하고, DB 밖 `installationId`는 설치를 구분합니다. `writerEpoch`는 새 발신 세대이며 복구된 이전 명령의 ID나 payload를 다시 작성하지 않습니다. `localSeq`는 로컬 outbox 순서이며 전역 식별자가 아닙니다.
 
-v1 명령은 `protocol:1`, `reducer:1`, `repoId`, `teamId`, `opId`, `writerEpoch`, `actorRef`, `createdAt`, `dependsOn`, `changes`, `objects`를 포함합니다. 변경의 key는 문자열 배열입니다. `generation`, `baseVersion`, `action`, `base`, `desired`, `fields`로 어떤 세대·필드에 대한 변경인지 명시합니다. 생성·편집·삭제·복원을 구분합니다.
+명령은 `protocol`·`reducer`(C의 프로토콜 3 또는 4), `repoId`, `teamId`, `opId`, `writerEpoch`, `actorRef`, `createdAt`, `dependsOn`, `changes`, `objects`를 포함합니다. 변경의 key는 문자열 배열입니다. `generation`, `baseVersion`, `action`, `base`, `desired`, `fields`로 어떤 세대·필드에 대한 변경인지 명시합니다. 생성·편집·삭제·복원을 구분합니다.
 
 `opId` 하나는 영구히 하나의 payload를 가리킵니다. 같은 ID·같은 해시는 최초 receipt를 반환하며 같은 ID·다른 payload는 오류입니다. 제출 시각은 표시용이며 충돌 승패를 결정하지 않습니다. JSON은 객체 키를 정렬하고 배열 순서를 유지하며 유한·안전 범위 숫자와 UTF-8을 사용합니다. null·필드 없음·빈 문자열·빈 배열을 구분합니다.
 
@@ -50,7 +50,7 @@ receipt에는 `opId`, `payloadHash`, `result`, `conflictId`, `outputTokens`를 �
 
 ## 결정적 병합과 충돌
 
-현재 공유값이 base와 같으면 desired를 적용합니다. desired가 base 또는 current와 같으면 이미 있는 내용을 유지합니다. 독립 필드는 병합하고, 같은 필드 그룹이 서로 다르게 바뀌면 먼저 확정된 공유값을 유지합니다. 일정 기간·배치, 순서 있는 태그 목록, 팀 속성 정의, v1 사본 표처럼 함께 유효해야 하는 묶음을 임의 leaf로 나누지 않습니다.
+현재 공유값이 base와 같으면 desired를 적용합니다. desired가 base 또는 current와 같으면 이미 있는 내용을 유지합니다. 독립 필드는 병합하고, 같은 필드 그룹이 서로 다르게 바뀌면 먼저 확정된 공유값을 유지합니다. 일정 기간·배치, 순서 있는 태그 목록, 팀 속성 정의, 프로토콜 3 사본 표처럼 함께 유효해야 하는 묶음을 임의 leaf로 나누지 않습니다.
 
 일정 본문 문서(`document` `["calendar", 일정 ID, "main"]`)는 본문을 처음 저장할 때 공유 엔티티로 생깁니다(2026-11-02). 일정을 만들거나 복사·삭제·복원해도 문서를 만들지 않으며 빈 문서를 미리 만들지 않습니다. 외부는 원래 이렇게 동작했고, 내부 SQLite는 본문이 없는 일정도 빈 본문으로 읽으므로 내부 캡처는 그 읽기가 아니라 공유 상태로 문서가 있는지 정합니다. P나 C에 문서가 있으면 그 세대·버전으로 `edit`하고, 없으면 첫 본문 저장을 `create`로 보냅니다. 첫 공유 head 전에는 genesis가 본문을 저장한 일정의 문서(그리고 그 전에 캡처한 명령이 쓴 문서)만 담으므로 같은 기준으로 판단합니다. 이전 genesis가 모든 일정에 만든 빈 문서와 내부가 일정과 함께 만든 빈 문서는 C에 있으므로 계속 `edit`입니다. 일정 문서의 제목·순서는 어느 사이트도 바꾸지 않고 본문만 동기화합니다. 내부는 일정 제목을 문서 제목으로 보여 주므로, 공유본의 문서 제목이 달라도 본문을 다시 쓰거나 제목 변경을 보내지 않습니다. 이미 기록된 명령의 reducer 해석은 바꾸지 않았으므로, 이전 내부 명령이 외부에서 만든 일정의 없는 문서를 `edit`해 생긴 충돌과 그 후속 자동 저장은 충돌 보관함에 그대로 남습니다.
 
@@ -76,7 +76,7 @@ Git 수신으로 상대 DB가 바뀌면 그 사이트의 기존 SSE 경로가 �
 
 checkpoint는 정확한 canonical head의 C와 receipts·충돌·객체를 보관합니다. 이후 커밋을 재생하며 실행 중인 사이트의 P나 L을 지우지 않습니다. checkpoint를 만들었다는 이유로 원격 이력·receipts를 자동 폐기하지 않습니다.
 
-새 사이트 합류와 관리자가 이전 실행 종료를 확인한 명시 복구는 검증된 checkpoint에서 시작할 수 있습니다. 이 경로의 신뢰 기준은 설정된 비공개 저장소에 인증된 작성자입니다. 압축/해제 바이트 해시, snapshot 형식·개수·팀/저장소/엔티티 식별자, 기준 head와 원격 ancestry를 검사한 뒤 원자적으로 투영하지만 checkpoint 이전 reducer 이력 전체를 독립 재생해 재계산하지는 않습니다. 저장소 쓰기 권한을 가진 작성자의 악의적·잘못된 snapshot까지 재생으로 증명하는 경로는 아닙니다. 정상 실행 중인 사이트의 증분 수신은 각 커밋을 검증·재생하며 checkpoint로 건너뛰지 않습니다.
+새 사이트 합류와 관리자가 이전 실행 종료를 확인한 명시 복구는 검증된 checkpoint에서 시작할 수 있습니다. 이 경로의 신뢰 기준은 설정된 비공개 저장소에 인증된 작성자입니다. 압축/해제 바이트 해시, snapshot 형식·개수·팀/저장소/엔티티 식별자, 기준 head와 원격 ancestry를 검사한 뒤 원자적으로 투영하지만 checkpoint 이전 reducer 이력 전체를 독립 재생해 재계산하지는 않습니다. 저장소 쓰기 권한을 가진 작성자의 악의적·잘못된 snapshot까지 재생으로 증명하는 경로는 아닙니다. 시작점은 고정한 head 이하의 가장 최근 표준 checkpoint입니다. 프로토콜 전환 커밋도 snapshot을 담지만 시작점이 아니며, 그 앞의 checkpoint부터 일반 커밋처럼 검증·재생합니다. 복구하는 DB의 head가 이미 그 checkpoint 뒤에 있으면 그 head부터 재생합니다. 정상 실행 중인 사이트의 증분 수신은 각 커밋을 검증·재생하며 checkpoint로 건너뛰지 않습니다.
 
 관리자는 활성 연결에서 `POST /api/teams/:id/sync/checkpoint`로 현재 공유본의 checkpoint를 만들 수 있습니다. 작업 소유권을 획득한 뒤 고정 head를 기준으로 작성하며 일시정지·복구·정리 중 게시하지 않습니다. snapshot은 `snapshots/*.json.gz`의 gzip JSON이며 압축 바이트 해시와 해제한 C의 결정적 해시를 각각 검증합니다. 기존 비압축 JSON도 읽을 수 있습니다.
 
@@ -170,7 +170,7 @@ C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 
 
 프로토콜의 논리 형식과 별도로 PostgreSQL 팀 업무 저장소는 외부 Edge의 `RequestContext.data`·`capacityLimits(env)`를 통해 업무·충돌·pending 용량과 공유 엔티티 수를 셉니다. 이 둘에는 기본 상한이 없고, 운영자가 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(2026-11-01 이전 32MiB·50,000개). receipt는 16MiB 별도 예산(12MiB 경고)이며 과거 초과 상태의 조회·반출은 막지 않고 새 저장·게시는 사전에 거절합니다. 내부도 같은 receipt 예산과 명령 상한을 적용하지만 외부 업무 용량 한도는 적용하지 않습니다. 외부 Edge 동기화는 원격 바이트·압축 해제 snapshot·reducer 결과도 검사하며 초과 시 `EXTERNAL_SYNC_CAPACITY`로 마지막 정상 cursor와 불변 outbox를 보존합니다. 거절은 완료·부분 성공으로 처리하지 않습니다. 기본 SQLite 업무 경로의 대용량 성능 결과는 외부 Edge의 지원 규모를 뜻하지 않습니다.
 
-외부 P는 한 가지 경우에만 기존 행을 바꿉니다. v1에서 사본 수정 명령은 사본 전체를, 문서 저장 명령은 본문 전체를 base·desired로 담으므로, 편집 중 자동 저장마다 명령이 쌓이면 저장할 때의 P 재생과 Cron 게시가 쌓인 수만큼 무거워집니다(2026-11-03 운영 외부는 이미지가 든 연간 메모 자동 저장 33건으로 멈췄습니다). 그래서 새 저장이 사본 하나 또는 문서 하나만 수정하고, P의 마지막 행이 같은 사본·문서만 수정한 `pending` v1 명령이며, 같은 writer epoch이고, **동기화 lease를 아무도 갖지 않을 때** 그 행을 지우고 그 명령의 base에서 새 결과까지의 명령 하나를 새 opId로 넣습니다(`DataSession.replaceableOperation`). 결과가 그 base와 같으면 명령을 남기지 않습니다. lease 획득과 저장은 같은 팀 advisory lock 안에서 실행되므로, 게시 중인 실행이 읽은 행은 바뀌지 않습니다. CPU 한도로 멈춘 실행이 남긴 만료된 lease도 lease로 보므로, 그 실행이 이미 Git에 올렸을 수 있는 마지막 행은 다음 실행이 받아 확인하기 전까지 바뀌지 않습니다. 다음 실행이 수신 오류로 끝나 lease만 풀린 드문 경우에는 교체한 명령이 기존 동시 수정 규칙(사본은 충돌로 보존, 문서는 Markdown 병합 또는 충돌로 보존)을 따릅니다. 교체한 행이 P의 유일한 행이면 게시 대기 2초도 그 저장부터 다시 세므로, 쉬지 않고 입력하는 동안의 게시는 2초 이상 멈춘 뒤 또는 다음 Cron에 이뤄집니다. 이력(`site_audit`)과 재시도 기록은 요청마다 남습니다.
+외부 P는 한 가지 경우에만 기존 행을 바꿉니다. 프로토콜 3(전환 전 1)에서 사본 수정 명령은 사본 전체를, 문서 저장 명령은 본문 전체를 base·desired로 담으므로, 편집 중 자동 저장마다 명령이 쌓이면 저장할 때의 P 재생과 Cron 게시가 쌓인 수만큼 무거워집니다(2026-11-03 운영 외부는 이미지가 든 연간 메모 자동 저장 33건으로 멈췄습니다). 그래서 새 저장이 사본 하나 또는 문서 하나만 수정하고, P의 마지막 행이 같은 사본·문서만 수정한 `pending` 프로토콜 3 명령이며, 같은 writer epoch이고, **동기화 lease를 아무도 갖지 않을 때** 그 행을 지우고 그 명령의 base에서 새 결과까지의 명령 하나를 새 opId로 넣습니다(`DataSession.replaceableOperation`). 결과가 그 base와 같으면 명령을 남기지 않습니다. lease 획득과 저장은 같은 팀 advisory lock 안에서 실행되므로, 게시 중인 실행이 읽은 행은 바뀌지 않습니다. CPU 한도로 멈춘 실행이 남긴 만료된 lease도 lease로 보므로, 그 실행이 이미 Git에 올렸을 수 있는 마지막 행은 다음 실행이 받아 확인하기 전까지 바뀌지 않습니다. 다음 실행이 수신 오류로 끝나 lease만 풀린 드문 경우에는 교체한 명령이 기존 동시 수정 규칙(사본은 충돌로 보존, 문서는 Markdown 병합 또는 충돌로 보존)을 따릅니다. 교체한 행이 P의 유일한 행이면 게시 대기 2초도 그 저장부터 다시 세므로, 쉬지 않고 입력하는 동안의 게시는 2초 이상 멈춘 뒤 또는 다음 Cron에 이뤄집니다. 이력(`site_audit`)과 재시도 기록은 요청마다 남습니다.
 
 `tests/worker-sync-integration.test.mjs`는 실제 SQLite 앱과 PostgreSQL 외부 API가 같은 bare Git에 CLI와 GitHub Data API로 참여하여 엔진 간 자료·이미지·경합·복구를 검증합니다. 이전 전체 Worker의 workerd 전용 용량 검사는 제거했으며 Cloudflare 전달·자원 경계는 `tests/edge-gateway.test.mjs`로 검사합니다. 이 검사들은 현재 운영 경로인 Supabase/Deno의 성능 측정과는 다릅니다. `tests/team-site.test.mjs`는 Pages → gateway → Edge handler → 실제 PG 경로도 검사하며, Deno 실행은 실제 함수 배포에서 별도로 확인합니다. GitHub/DB/R2/Images의 클라우드 운영 지연을 측정한 것으로 설명하지 않습니다. 제한과 요금제 근거는 [설치 안내의 용량 범위](CLOUD_SETUP.md#15-실행-한도와-검증-범위)에 기록합니다.
 
@@ -180,17 +180,25 @@ C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 
 
 ## 버전 전환과 저장 경계
 
-기존 `sync-v1` 브랜치·v1 manifest·명령의 canonical 필드와 해시는 유지합니다. 양쪽에 v2 reader를 설치한 뒤 정확한 v1 head/hash·양쪽 일시정지·미전송과 미해결 충돌이 0인 조건에서만 명시 전환합니다. 전환 이벤트는 검증된 v1 백업 snapshot과 결정적으로 분해한 v2 snapshot을 함께 보존합니다. v2에는 `protocol`/`[]` 표식 `{version:2,reducer:2}`와 `reportTask`·`reportCell`이 추가됩니다. 기존 사본의 모든 행·셀·서식·순서·문서 참조를 보존하고 앱 응답에서는 다시 기존 사본으로 조합합니다. 같은 원본 task ID를 사용해도 사본 ID를 키에 포함하므로 원본 셀과 섞이지 않습니다.
+기존 `sync-v1` 브랜치·manifest·과거 명령의 canonical 필드와 해시는 유지합니다. 프로토콜 3에서 4로의 전환은 양쪽의 정확한 head/hash·일시정지·미전송과 미해결 충돌이 0인 조건에서만 명시 전환합니다. 전환 이벤트는 검증된 프로토콜 3 백업 snapshot과 결정적으로 분해한 프로토콜 4 snapshot을 함께 보존합니다. 프로토콜 4에는 `protocol`/`[]` 표식 `{version:4,reducer:4}`와 `sheetCloneTask`·`sheetCloneCell`이 추가됩니다. 기존 사본의 모든 행·셀·서식·순서·문서 참조를 보존하고 앱 응답에서는 다시 기존 사본으로 조합합니다. 같은 원본 task ID를 사용해도 사본 ID를 키에 포함하므로 원본 셀과 섞이지 않습니다.
 
-v2 사본의 부모 `report`에는 행 배열을 넣지 않습니다. `reportTask` 키는 `[reportId, taskId]`이고 `{data, index}`에 셀을 제외한 행 정보와 순서를 보관합니다. `reportCell` 키는 `[reportId, taskId, cellKey]`이고 `{data}`에 값·서식·로컬 셀 버전을 보관합니다. 서로 다른 셀 변경은 독립적으로 병합합니다. 행의 `data`는 필드별 3-way 병합을 하고, 두 셀 편집이 함께 바꾸는 `updatedAt`만 두 문자열 중 코드포인트 비교로 큰 값을 선택합니다. 실제 실행 시각이나 locale에 따른 정렬은 사용하지 않습니다. 같은 셀의 다른 변경과 같은 행 메타데이터 필드의 다른 변경은 기존 제출 원문을 충돌로 보관합니다.
+프로토콜 4 사본의 부모 `sheetClone`에는 행 배열을 넣지 않습니다. `sheetCloneTask` 키는 `[sheetCloneId, taskId]`이고 `{data, index}`에 셀을 제외한 행 정보와 순서를 보관합니다. `sheetCloneCell` 키는 `[sheetCloneId, taskId, cellKey]`이고 `{data}`에 값·서식·로컬 셀 버전을 보관합니다. 서로 다른 셀 변경은 독립적으로 병합합니다. 행의 `data`는 필드별 3-way 병합을 하고, 두 셀 편집이 함께 바꾸는 `updatedAt`만 두 문자열 중 코드포인트 비교로 큰 값을 선택합니다. 실제 실행 시각이나 locale에 따른 정렬은 사용하지 않습니다. 같은 셀의 다른 변경과 같은 행 메타데이터 필드의 다른 변경은 기존 제출 원문을 충돌로 보관합니다.
 
-삭제된 사본·행의 내용을 조합할 때는 부모와 같은 삭제 명령에서 생긴 자식 tombstone만 포함합니다. 따라서 먼저 삭제한 행·셀은 나중에 사본 전체를 삭제하고 복원해도 다시 나타나지 않습니다. v1에서 이미 삭제된 사본을 전환할 때는 해당 사본에 보존된 본문만 같은 삭제 그룹으로 옮깁니다. 명시 복원은 새 세대를 사용하며 과거 삭제 세대의 지연 편집을 적용하지 않습니다.
+삭제된 사본·행의 내용을 조합할 때는 부모와 같은 삭제 명령에서 생긴 자식 tombstone만 포함합니다. 따라서 먼저 삭제한 행·셀은 나중에 사본 전체를 삭제하고 복원해도 다시 나타나지 않습니다. 프로토콜 3에서 이미 삭제된 사본을 전환할 때는 해당 사본에 보존된 본문만 같은 삭제 그룹으로 옮깁니다. 명시 복원은 새 세대를 사용하며 과거 삭제 세대의 지연 편집을 적용하지 않습니다.
 
-v2 부모 `report`의 `data`는 행 배열이 없으므로 평문 그대로이고, `reportTask`·`reportCell`도 행·셀 단위 평문입니다. 행 메타데이터의 `formatting`은 v1과 같이 행마다 들어가므로, v2 전환 전에 행별 서식 중복을 줄이는 방안을 별도로 정해야 합니다. 앱 응답과 논리 이동의 `site_entities`는 기존 `report.data.tasks` 형식을 v1과 같은 공유 사전 형태로 조합합니다. 공유 기준본의 `sync_entities`·receipt·충돌·P는 v2 형식을 그대로 보존합니다. 논리 이동과 백업 v3 복원은 프로토콜을 다시 v1으로 바꾸지 않으며, 복구·재연결·충돌 해결이 만드는 새 명령도 현재 marker의 버전을 사용합니다.
+프로토콜 4 부모 `sheetClone`의 `data`는 행 배열이 없으므로 평문 그대로이고, `sheetCloneTask`·`sheetCloneCell`도 행·셀 단위 평문입니다. 행 메타데이터의 `formatting`은 프로토콜 3과 같이 행마다 들어가므로, 프로토콜 4 전환 전에 행별 서식 중복을 줄이는 방안을 별도로 정해야 합니다. 앱 응답과 논리 이동의 `site_entities`는 프로토콜 3의 `sheetClone.data.tasks` 형식을 같은 공유 사전 형태로 조합합니다. 공유 기준본의 `sync_entities`·receipt·충돌·P는 프로토콜 4 형식을 그대로 보존합니다. 논리 이동과 백업 복원은 프로토콜을 다시 3으로 바꾸지 않으며, 복구·재연결·충돌 해결이 만드는 새 명령도 현재 marker의 버전을 사용합니다.
 
 전환 실행권은 기존 lease의 `upgrade:` 소유자로 구분합니다. 이 lease가 유효한 동안 해당 팀의 새 업무 저장은 HTTP 409로 거절하고 입력을 보존합니다. 일반 활성 동기화의 lease는 이 제한을 적용하지 않습니다. 게시 직전과 최종 DB 커밋에서도 기준 head/hash·P/held·미해결 충돌·작업 경계를 확인하며, 전환 수신 후에도 양쪽은 일시정지 상태를 유지합니다.
 
-v1 이력은 기존 차이 탐색 상한 20,000을, v2는 상한 2,000을 사용합니다. 기기 시간으로 병합 여부를 결정하지 않으며 상한을 넘은 base/current/desired를 모두 충돌에 보존합니다. 이전 reader는 v2 전환 이벤트와 v2 checkpoint 모두에서 cursor를 전진시키지 않습니다. 전환 명령과 양쪽이 일시정지한 상태의 수신 절차는 [운영 안내](OPERATIONS.md#동기화-v2-명시-전환)에 있습니다.
+프로토콜 3은 프로토콜 1의 차이 탐색 상한 20,000을, 4는 프로토콜 2의 상한 2,000을 사용합니다. 기기 시간으로 병합 여부를 결정하지 않으며 상한을 넘은 base/current/desired를 모두 충돌에 보존합니다. 프로토콜 3만 읽는 reader는 프로토콜 4 전환 이벤트와 checkpoint에서 cursor를 전진시키지 않습니다. 전환 명령과 양쪽이 일시정지한 상태의 수신 절차는 [운영 안내](OPERATIONS.md#동기화-프로토콜-4-명시-전환)에 있습니다.
+
+## 사본 명칭(SheetClone) 전환
+
+사본은 프로토콜 1·2에서 엔티티 `report`·`reportTask`·`reportCell`, 문서 키 `["report", 사본, 업무, 문서]`·`["reportMemo", 사본, 메모]`, 링크 `/links/report-task/…`·`/links/report-memo/…`였습니다. 프로토콜 3·4는 각각 `sheetClone`·`sheetCloneTask`·`sheetCloneCell`, `["sheetClone", …]`·`["sheetCloneMemo", …]`, `/links/sheet-clone-task/…`·`/links/sheet-clone-memo/…`입니다. 1 → 3, 2 → 4로 구조는 그대로입니다.
+
+전환은 모든 사이트를 멈춘 통제된 한 번의 점검 시간에 일회성 도구 `npm run cutover:sheet-clone`(`tools/sheet-clone-cutover`, [운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))로만 합니다. 양쪽이 같은 head에서 일시정지하고 미전송·held·미해결 충돌이 0이며, 그 head가 Git의 현재 head이고 그 커밋에 기록된 결과가 두 C와 같아야 합니다. 도구는 사내 SQLite(v34)와 외부 PostgreSQL(team v3)을 각자 트랜잭션 하나로 변환합니다. 변환은 C의 엔티티 이름·문서 키·문서 본문의 링크 목적지만 바꾸고 ID·generation·version은 유지합니다. receipt, 해결한 충돌, 게시한 outbox 명령은 과거 불변 기록으로 원문 그대로 두며, 현재 런타임은 해결된 이전 프로토콜 충돌의 내용을 해석하지 않고 기록으로만 검사합니다. 사이트별 보관 제외(L)·revision·정리 작업·변경 이벤트는 각 사이트의 것을 이름만 바꿔 보존하며 두 사이트를 같게 맞추지 않습니다. 두 DB는 같은 C를 같은 규칙으로 바꾸므로 새 해시가 같아야 하며, 도구는 실제 변환 전에 두 DB를 미리 변환해 이를 확인합니다.
+
+그다음 도구는 기록된 head 위에 커밋 두 개를 CAS로 게시합니다. 경계 커밋은 이벤트 하나 `{kind:"sheet-clone-cutover", conversion:"sheet-clone-1", fromProtocol, protocol, reducer, teamId, repoId, bootstrapId, parent, previousHash, resultHash, origins}`만 담고, 변환한 C의 해시를 기록합니다. 그 위의 커밋은 변환한 C의 **표준 checkpoint**(`checkpointVersion:1`)입니다. checkpoint의 `resultHash`가 부모 커밋 이벤트에 기록된 결과와 같아야 한다는 기존 규칙을 경계 커밋이 만족시킵니다. 마지막으로 두 DB의 canonical cursor를 CAS로 그 checkpoint로 옮깁니다. 런타임에는 경계 커밋을 위한 코드가 없습니다. 옛 head에 머문 사이트가 이 커밋을 받으면 거절하고 cursor를 그대로 둡니다. 이전 런타임은 프로토콜 3·4 이벤트를, 이 런타임은 이 이벤트 종류를 지원하지 않습니다(이 런타임은 변환 전 DB를 열지 않습니다). 새로 가져오는 사이트와 복구는 기존대로 최신 표준 checkpoint부터 읽으므로 그 앞의 이벤트·snapshot을 읽지 않으며, 그 뒤 프로토콜 3 → 4 전환이 있어도 이 checkpoint에서 시작해 전환을 재생합니다. genesis부터 재생하는 경로는 옛 이름의 기록에 닿아 거절됩니다. 전환 뒤 과거 프로토콜(1·2)의 명령이나 checkpoint가 이어 붙으면 현재 런타임은 cursor를 그대로 두고 적용하지 않으며, 이전 런타임은 경계 커밋을 적용하지 않습니다. 과거 커밋·이벤트·receipt의 원문은 Git과 DB에 그대로 남습니다.
 
 이벤트 파일은 32MiB 이내입니다(2026-10-30 이전 4MiB). 사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 정한 값입니다. 명령 하나는 봉투 여유 1KiB와 구분자 1바이트를 제외한 크기 이내인지 저장 시점에 검증합니다. 사본 명령의 크기는 [공유 범위](#공유-범위)의 공유 사전 형태로 계산하므로 공통 서식 규칙이 업무마다 반복되어 커지지 않습니다. 큰 묶음은 여러 이벤트로 나눠 게시하고, 단일 명령이 상한을 넘으면 업무·감사·outbox를 모두 롤백하고 400으로 거절합니다. snapshot은 압축·해제 각각 64MiB 상한과 해제 후 receipt 예산(업무 상한은 지정한 경우)을 검사합니다. receipt 원문은 checkpoint 후에도 보존하고 stateHash에 계속 포함하므로 전체 해시 계산은 누적 이력에 비례합니다. 외부 Edge는 상대가 `sum-1`을 알리면 전체 해시 대신 바뀐 기록만 갱신하는 상태 합([데이터 형식](DATA_FORMAT.md#상태-합-sum-1))을 씁니다.
 

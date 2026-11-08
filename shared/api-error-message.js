@@ -13,7 +13,7 @@ function operation(path, method) {
   if (route.includes("/document")) return `문서 ${action}`;
   if (route.startsWith("/tasks")) return `업무 목록 ${action}`;
   if (route.startsWith("/cells")) return "업무 셀 저장";
-  if (route.startsWith("/reports")) return `사본 ${action}`;
+  if (route.startsWith("/sheet-clones")) return `사본 ${action}`;
   if (route.startsWith("/calendar")) return `캘린더 ${action}`;
   if (route.startsWith("/bootstrap")) return "화면 정보 조회";
   if (route.startsWith("/auth")) return "계정 인증";

@@ -13,10 +13,10 @@ import { adminRoutes } from "../worker/admin.mjs";
 import { taskRoutes } from "../worker/tasks.mjs";
 import { documentRoutes } from "../worker/documents.mjs";
 import {
-  reportRoutes,
+  sheetCloneRoutes,
   filterRoutes,
   browserRoutes,
-} from "../worker/reports.mjs";
+} from "../worker/sheet-clones.mjs";
 import { calendarRoutes } from "../worker/calendar.mjs";
 import { transferRoutes } from "../worker/transfer.mjs";
 import { auditRoutes, historyCleanupRoutes } from "../worker/history.mjs";
@@ -103,7 +103,7 @@ export function createExternalRouteApp({ env, defaultUserId, contextFor }) {
         adminRoutes,
         taskRoutes,
         documentRoutes,
-        reportRoutes,
+        sheetCloneRoutes,
         filterRoutes,
         browserRoutes,
         calendarRoutes,

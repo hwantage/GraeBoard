@@ -7,35 +7,56 @@ import {
 } from "../../shared/document-images.js";
 import {
   normalizeEntityPayload,
-  unpackReportData,
-} from "../../shared/report-sync-data.js";
-export const PROTOCOL = 1;
-export const ENTITIES_V1 = new Set([
+  unpackSheetCloneData,
+} from "../../shared/sheet-clone-sync-data.js";
+// Protocol 3 keeps a sheet clone as one record, as protocol 1 did; protocol 4
+// splits it into rows and cells, as protocol 2 did. Protocols 1 and 2 named the
+// same records `report`. A team's shared history reaches 3 or 4 only through
+// the one-time SheetClone cutover (tools/sheet-clone-cutover, SYNC_PROTOCOL.md),
+// which leaves a standard checkpoint for new readers; this runtime reads
+// neither 1 nor 2.
+export const PROTOCOL = 3;
+export const SPLIT_PROTOCOL = 4;
+
+export const ENTITIES_WHOLE = new Set([
   "team",
   "person",
   "task",
   "cell",
   "document",
-  "report",
+  "sheetClone",
   "calendar",
   "tag",
   "rule",
   "weekly",
   "filter",
   "formats",
+  "protocol",
 ]);
 export const ENTITIES = new Set([
-  ...ENTITIES_V1,
-  "protocol",
-  "reportTask",
-  "reportCell",
+  ...ENTITIES_WHOLE,
+  "sheetCloneTask",
+  "sheetCloneCell",
 ]);
-export const protocolVersion = (state) =>
-  state?.entities?.[JSON.stringify(["protocol", []])]?.payload?.version === 2
-    ? 2
-    : 1;
+// The version C's protocol marker names. Before anything is shared C is
+// empty and its first publication starts at protocol 3; records without a
+// supported marker (0) belong to a protocol this runtime does not read.
+export const protocolVersion = (state) => {
+  const entities = state?.entities,
+    version = entities?.[JSON.stringify(["protocol", []])]?.payload?.version;
+  if (version === PROTOCOL || version === SPLIT_PROTOCOL) return version;
+  return entities && !Object.keys(entities).length ? PROTOCOL : 0;
+};
 export const supportedVersion = (protocol, reducer = protocol) =>
-  [1, 2].includes(protocol) && reducer === protocol;
+  [PROTOCOL, SPLIT_PROTOCOL].includes(protocol) && reducer === protocol;
+export const protocolMarker = (version, token) => ({
+  entity: "protocol",
+  key: [],
+  generation: token,
+  version: token,
+  payload: { version, reducer: version },
+  deleted: false,
+});
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
 export function canonical(value) {
   if (value === null || typeof value === "boolean" || typeof value === "string")
@@ -317,7 +338,14 @@ const payloadFields = {
   ],
   cell: ["value", "style"],
   document: ["title", "position", "markdown"],
-  report: ["year", "name", "referenceDate", "createdBy", "createdAt", "data"],
+  sheetClone: [
+    "year",
+    "name",
+    "referenceDate",
+    "createdBy",
+    "createdAt",
+    "data",
+  ],
   calendar: ["userId", "date", "endDate", "lane", "title", "deletedAt", "tags"],
   tag: ["userId", "name", "color", "kind"],
   rule: ["propertyId", "values", "mode"],
@@ -327,15 +355,15 @@ const payloadFields = {
   filter: ["name", "data"],
   formats: ["rules"],
   protocol: ["version", "reducer"],
-  reportTask: ["data", "index"],
-  reportCell: ["data"],
+  sheetCloneTask: ["data", "index"],
+  sheetCloneCell: ["data"],
 };
 const keyLengths = {
   team: 0,
   person: 1,
   task: 1,
   cell: 2,
-  report: 1,
+  sheetClone: 1,
   calendar: 1,
   tag: 1,
   rule: 0,
@@ -343,8 +371,8 @@ const keyLengths = {
   filter: 1,
   formats: 0,
   protocol: 0,
-  reportTask: 2,
-  reportCell: 3,
+  sheetCloneTask: 2,
+  sheetCloneCell: 3,
 };
 const plain = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
@@ -353,10 +381,10 @@ export function validateEntityPayload(
   key,
   payload,
   teamId,
-  version = 1,
+  version = PROTOCOL,
 ) {
   if (
-    !(version === 2 ? ENTITIES : ENTITIES_V1).has(entity) ||
+    !(version === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(entity) ||
     !Array.isArray(key) ||
     key.some(
       (part) =>
@@ -369,10 +397,10 @@ export function validateEntityPayload(
     throw new Error("Invalid entity key");
   if (entity === "document") {
     if (
-      !["task", "annual", "report", "reportMemo", "calendar"].includes(
+      !["task", "annual", "sheetClone", "sheetCloneMemo", "calendar"].includes(
         key[0],
       ) ||
-      key.length !== (key[0] === "report" ? 4 : 3)
+      key.length !== (key[0] === "sheetClone" ? 4 : 3)
     )
       throw new Error("Invalid document owner");
   } else if (key.length !== keyLengths[entity])
@@ -391,7 +419,7 @@ export function validateEntityPayload(
     if (typeof payload[field] !== "string" || payload[field].length > max)
       throw new Error("Invalid " + entity + " " + field);
   };
-  if (["team", "person", "report", "tag", "filter"].includes(entity))
+  if (["team", "person", "sheetClone", "tag", "filter"].includes(entity))
     string("name", 200);
   if (["document", "weekly", "calendar"].includes(entity))
     string("title", 1000);
@@ -466,10 +494,13 @@ export function validateEntityPayload(
     throw new Error("Invalid " + entity + " userId");
   if (entity === "formats" && !Array.isArray(payload.rules))
     throw new Error("Invalid formats payload");
-  if (entity === "protocol" && (payload.version !== 2 || payload.reducer !== 2))
+  if (
+    entity === "protocol" &&
+    (payload.version !== version || payload.reducer !== version)
+  )
     throw new Error("Invalid protocol marker");
   if (
-    entity === "reportTask" &&
+    entity === "sheetCloneTask" &&
     (!plain(payload.data) ||
       payload.data.id !== key[1] ||
       payload.data.teamId !== teamId ||
@@ -477,34 +508,34 @@ export function validateEntityPayload(
       !Number.isSafeInteger(payload.index) ||
       payload.index < 0)
   )
-    throw new Error("Invalid report task");
+    throw new Error("Invalid sheetClone task");
   if (
-    entity === "reportCell" &&
+    entity === "sheetCloneCell" &&
     (!plain(payload.data) ||
       !Object.hasOwn(payload.data, "value") ||
       !plain(payload.data.style))
   )
-    throw new Error("Invalid report cell");
-  if (entity === "report") {
+    throw new Error("Invalid sheetClone cell");
+  if (entity === "sheetClone") {
     // data는 저장과 같은 공유 사전 형태 또는 기존 평문이다. 내용 검사는 푼 뒤 수행한다.
     let data = payload.data;
     if (plain(data))
       try {
-        data = unpackReportData(data);
+        data = unpackSheetCloneData(data);
       } catch {
-        throw new Error("Invalid report payload");
+        throw new Error("Invalid sheetClone payload");
       }
     if (
       !Number.isInteger(payload.year) ||
       !plain(data) ||
-      (version === 1
+      (version === PROTOCOL
         ? !Array.isArray(data.tasks)
         : Object.hasOwn(data, "tasks")) ||
       !Array.isArray(data.users) ||
       !plain(data.settings) ||
       !plain(data.view)
     )
-      throw new Error("Invalid report payload");
+      throw new Error("Invalid sheetClone payload");
     if (
       Object.keys(data).some(
         (field) => !["tasks", "users", "view", "settings"].includes(field),
@@ -515,9 +546,9 @@ export function validateEntityPayload(
           Object.keys(person).some((field) => !["id", "name"].includes(field)),
       )
     )
-      throw new Error("Private account data in report");
+      throw new Error("Private account data in sheetClone");
     if (data.tasks?.some((task) => task.teamId !== teamId))
-      throw new Error("Foreign team report row");
+      throw new Error("Foreign team sheetClone row");
   }
   if (entity === "document")
     for (const url of documentImageUrls(payload.markdown))
@@ -586,7 +617,9 @@ export function validateOperation(
   const seen = new Set();
   for (const c of op.changes) {
     if (
-      !(op.protocol === 2 ? ENTITIES : ENTITIES_V1).has(c.entity) ||
+      !(op.protocol === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(
+        c.entity,
+      ) ||
       c.entity === "protocol" ||
       !Array.isArray(c.key) ||
       c.key.some((v) => typeof v !== "string" || v.length > 200) ||

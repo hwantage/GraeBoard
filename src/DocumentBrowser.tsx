@@ -28,7 +28,7 @@ import type {
   Settings,
   User,
   SavedCell,
-  Report,
+  SheetClone,
 } from "./types";
 import {
   cell,
@@ -467,8 +467,8 @@ export default function DocumentBrowser({
           operationId: payload.operationId,
           revision: detail.revision,
         };
-      const result = await send<Report>(
-        `/reports/${selected.source}`,
+      const result = await send<SheetClone>(
+        `/sheet-clones/${selected.source}`,
         {
           operationId: payload.operationId,
           revision: saveRevision.current.revision,
@@ -1107,7 +1107,7 @@ export default function DocumentBrowser({
                   }
                   user={boot.user}
                   users={detail.users}
-                  documentReport={
+                  documentSheetClone={
                     selected.source === "live"
                       ? undefined
                       : { id: selected.source, isNew: false }

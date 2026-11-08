@@ -1,14 +1,24 @@
-import { canonical, digest, entityId, protocolVersion } from "./protocol.mjs";
 import {
-  packReportData,
-  unpackReportData,
-} from "../../shared/report-sync-data.js";
+  canonical,
+  digest,
+  entityId,
+  protocolVersion,
+  protocolMarker,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
+} from "./protocol.mjs";
+import {
+  packSheetCloneData,
+  unpackSheetCloneData,
+} from "../../shared/sheet-clone-sync-data.js";
 
-export const splitReportRecord = (record) => {
+export const splitSheetCloneRecord = (record) => {
   if (!record) return [];
-  // v1 사본 data는 공유 사전 형태일 수 있다. 행·셀로 나누기 전에 푼다.
+  // 프로토콜 3 사본 data는 공유 사전 형태일 수 있다. 행·셀로 나누기 전에 푼다.
   const source =
-    record.entity === "report" ? unpackReportData(record.payload?.data) : null;
+    record.entity === "sheetClone"
+      ? unpackSheetCloneData(record.payload?.data)
+      : null;
   if (!Array.isArray(source?.tasks)) return [record];
   const { tasks, ...data } = source;
   const records = [{ ...record, payload: { ...record.payload, data } }],
@@ -16,13 +26,13 @@ export const splitReportRecord = (record) => {
   tasks.forEach((task, index) => {
     if (ids.has(task.id))
       throw new Error(
-        "Duplicate report task identity prevents lossless protocol upgrade",
+        "Duplicate sheet clone task identity prevents lossless protocol upgrade",
       );
     ids.add(task.id);
     const { cells = {}, ...metadata } = task;
     const parent = {
       ...record,
-      entity: "reportTask",
+      entity: "sheetCloneTask",
       key: [record.key[0], task.id],
       payload: { data: metadata, index },
     };
@@ -30,7 +40,7 @@ export const splitReportRecord = (record) => {
     for (const [key, cell] of Object.entries(cells))
       records.push({
         ...record,
-        entity: "reportCell",
+        entity: "sheetCloneCell",
         key: [record.key[0], task.id, key],
         payload: { data: cell },
       });
@@ -55,27 +65,33 @@ const compareKeys = (a, b) => {
   return left < right ? -1 : left > right ? 1 : 0;
 };
 
-// Application repositories continue to read their established report shape.
-// Canonical v2 rows retain independent identities and are never rewritten into
-// the report parent simply to serve a legacy-shaped HTTP response.
+const MARKER = entityId("protocol", []);
+// Application repositories continue to read their established sheet clone
+// shape. Canonical protocol 4 rows retain independent identities and are never
+// rewritten into the parent simply to serve a whole-sheet HTTP response. The
+// protocol marker is not application data.
 export function applicationEntities(entities) {
-  if (protocolVersion({ entities }) === 1) return entities;
+  if (protocolVersion({ entities }) !== SPLIT_PROTOCOL) {
+    if (!Object.hasOwn(entities, MARKER)) return entities;
+    const { [MARKER]: marker, ...rest } = entities;
+    return rest;
+  }
   const output = {},
     tasks = new Map(),
     cells = new Map();
   for (const [id, record] of Object.entries(entities)) {
     if (record.entity === "protocol") continue;
-    if (record.entity === "reportTask") {
+    if (record.entity === "sheetCloneTask") {
       if (!tasks.has(record.key[0])) tasks.set(record.key[0], []);
       tasks.get(record.key[0]).push(record);
-    } else if (record.entity === "reportCell") {
+    } else if (record.entity === "sheetCloneCell") {
       const key = canonical(record.key.slice(0, 2));
       if (!cells.has(key)) cells.set(key, []);
       cells.get(key).push(record);
     } else output[id] = record;
   }
   for (const [id, record] of Object.entries(output)) {
-    if (record.entity !== "report") continue;
+    if (record.entity !== "sheetClone") continue;
     const rows = (tasks.get(record.key[0]) || [])
       .filter((row) => visibleChild(record, row))
       .sort((a, b) => a.payload.index - b.payload.index || compareKeys(a, b))
@@ -87,13 +103,13 @@ export function applicationEntities(entities) {
             .map((cell) => [cell.key[2], cell.payload.data]),
         ),
       }));
-    // 조합한 사본도 v1과 같은 저장 형태(공유 사전)로 돌려준다.
+    // 조합한 사본도 프로토콜 3과 같은 저장 형태(공유 사전)로 돌려준다.
     output[id] = {
       ...record,
       payload: {
         ...record.payload,
-        data: packReportData({
-          ...unpackReportData(record.payload.data),
+        data: packSheetCloneData({
+          ...unpackSheetCloneData(record.payload.data),
           tasks: rows,
         }),
       },
@@ -102,20 +118,22 @@ export function applicationEntities(entities) {
   return output;
 }
 
+// The explicit protocol 3 -> 4 transition (formerly 1 -> 2): each sheet clone
+// is split into deterministic row and cell records.
 export function upgradeState(state) {
-  if (protocolVersion(state) !== 1)
-    throw new Error("Protocol upgrade requires version 1");
+  if (protocolVersion(state) !== PROTOCOL)
+    throw new Error("Protocol upgrade requires version 3");
   if (Object.values(state.conflicts).some((conflict) => !conflict.resolution))
     throw new Error("Protocol upgrade requires resolved conflicts");
   const entities = {};
   for (const record of Object.values(state.entities)) {
-    for (const next of splitReportRecord(record)) {
+    for (const next of splitSheetCloneRecord(record)) {
       const changed = next !== record;
       entities[entityId(next.entity, next.key)] = changed
         ? {
             ...next,
             generation:
-              next.entity === "report"
+              next.entity === "sheetClone"
                 ? record.generation
                 : digest([
                     "protocol-2-generation",
@@ -124,11 +142,11 @@ export function upgradeState(state) {
                     next.key,
                   ]),
             version:
-              record.deleted && next.entity !== "report"
+              record.deleted && next.entity !== "sheetClone"
                 ? digest([
                     "protocol-2-version",
                     record.version,
-                    "report",
+                    "sheetClone",
                     record.key,
                   ]) + ":0"
                 : digest([
@@ -141,15 +159,10 @@ export function upgradeState(state) {
         : record;
     }
   }
-  const token = digest(["protocol-2", digest(state)]);
-  entities[entityId("protocol", [])] = {
-    entity: "protocol",
-    key: [],
-    generation: token,
-    version: token,
-    payload: { version: 2, reducer: 2 },
-    deleted: false,
-  };
+  entities[MARKER] = protocolMarker(
+    SPLIT_PROTOCOL,
+    digest(["protocol-4", digest(state)]),
+  );
   return {
     entities,
     receipts: { ...state.receipts },

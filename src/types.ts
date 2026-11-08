@@ -217,7 +217,7 @@ export type TaskCreation = Omit<TaskDeletion, "kind"> & {
   task: Task;
 };
 export type HistoryEntry = BatchResult | TaskDeletion | TaskCreation;
-export type Report = {
+export type SheetClone = {
   id: string;
   revision: string;
   name: string;

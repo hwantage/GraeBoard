@@ -57,18 +57,27 @@ export const databaseRow = (row) =>
     ]),
   );
 export const portableHash = (value) => digest(canonical(value));
+// Version 2 carries sheet clones under their SheetClone names (sync protocol
+// 3/4, SQLite v34, PostgreSQL team v3). A version 1 bundle keeps the earlier
+// names: it is restored with the release that wrote it into an isolated
+// database, which the one-time SheetClone cutover tool then converts.
+export const TRANSFER_VERSION = 2;
 export function sealTransfer(payload) {
   return {
     format: "graeboard-team-transfer",
-    version: 1,
+    version: TRANSFER_VERSION,
     payload,
     hash: portableHash(payload),
   };
 }
 export function verifyTransfer(bundle) {
+  if (bundle?.format === "graeboard-team-transfer" && bundle.version === 1)
+    throw new Error(
+      "Logical transfer version 1 predates SheetClone: restore it with the release that wrote it into an isolated database, then convert that database with the SheetClone cutover tool (npm run cutover:sheet-clone)",
+    );
   if (
     bundle?.format !== "graeboard-team-transfer" ||
-    bundle.version !== 1 ||
+    bundle.version !== TRANSFER_VERSION ||
     portableHash(bundle.payload) !== bundle.hash
   )
     throw new Error("Logical transfer checksum or version mismatch");

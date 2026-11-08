@@ -10,9 +10,11 @@ const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/pat
        npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id <existing-uuid> [--initialize] [--dry-run]
        npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id <existing-uuid> [--initialize] [--dry-run]
 
-SQLite upgrades v29/v30/v31/v32 to v33, or initializes a new empty database with --initialize.
-PostgreSQL upgrades control/team v1 to v2, or initializes the dedicated graeboard schema with --initialize.
-The site scope upgrades site v1/v2 to v3 and team v1 to v2, or atomically initializes graeboard_site and graeboard in one database for one external team.
+SQLite initializes a new empty v34 database with --initialize. An existing v29-v33 database holds sheet clones
+under their earlier names; only the one-time SheetClone cutover tool converts it (npm run cutover:sheet-clone).
+PostgreSQL upgrades control v1 to v2, or initializes the dedicated graeboard schema (team v3) with --initialize.
+The site scope upgrades site v1/v2 to v3, or atomically initializes graeboard_site and graeboard in one database for one external team.
+An existing team v1/v2 database is converted to team v3 only by the SheetClone cutover tool.
 For an existing team database without graeboard_site, omit --initialize to add the site schema, apply required team migrations, and preserve business data.
 --dry-run never commits; SQLite missing-file initialization is validated in memory.
 The PostgreSQL URL is read from the named environment variable, never a command argument.

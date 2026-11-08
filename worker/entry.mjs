@@ -18,7 +18,11 @@ import {
 import { adminRoutes } from "./admin.mjs";
 import { taskRoutes } from "./tasks.mjs";
 import { documentRoutes } from "./documents.mjs";
-import { reportRoutes, filterRoutes, browserRoutes } from "./reports.mjs";
+import {
+  sheetCloneRoutes,
+  filterRoutes,
+  browserRoutes,
+} from "./sheet-clones.mjs";
 import { calendarRoutes } from "./calendar.mjs";
 import { transferRoutes } from "./transfer.mjs";
 import { recoveryRoutes } from "./recovery.mjs";
@@ -123,8 +127,8 @@ async function mutationTeam(ctx, path, body) {
     !["delete", "restore", "reorder"].includes(m[1])
   )
     return (await ctx.locate("task", m[1])).teamId;
-  if ((m = /^\/reports\/([^/]+)/.exec(path)))
-    return ctx.locateTeam("report", m[1]);
+  if ((m = /^\/sheet-clones\/([^/]+)/.exec(path)))
+    return ctx.locateTeam("sheetClone", m[1]);
   if ((m = /^\/calendar\/(entries|tags)\/([^/]+)/.exec(path)))
     return (await ctx.locate(m[1] === "entries" ? "calendar" : "tag", m[2]))
       .teamId;
@@ -283,7 +287,7 @@ export function createWorker({
           maintenanceRoutes,
           taskRoutes,
           documentRoutes,
-          reportRoutes,
+          sheetCloneRoutes,
           filterRoutes,
           browserRoutes,
           calendarRoutes,

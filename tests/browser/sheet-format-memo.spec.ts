@@ -244,7 +244,7 @@ test("연속 서식 적용은 저장 중 추가 요청을 안내하고 저장 �
 test("서식 범위의 패턴을 사본에 적용하고 사본 실행취소는 원본을 바꾸지 않는다", async ({
   page,
 }) => {
-  await request(page, "/reports", "POST", {
+  await request(page, "/sheet-clones", "POST", {
     teamId,
     year: 2026,
     name: "서식 사본",
@@ -307,7 +307,7 @@ test("열린 꼬리 메모 복원은 표 위치를 유지하고 발표에서는 
     memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
   ).toContainText("발표에서 읽을 메모");
   await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBe(0);
-  const copy = await request(page, "/reports", "POST", {
+  const copy = await request(page, "/sheet-clones", "POST", {
     teamId,
     year: 2026,
     name: "메모 사본",
@@ -550,7 +550,7 @@ for (const copy of [false, true]) {
     await request(page, path, "POST", { id: memoId, title: "그림 메모" });
     await imageDocument(page, `${path}/${memoId}`, "발표할 꼬리 메모");
     if (copy)
-      await request(page, "/reports", "POST", {
+      await request(page, "/sheet-clones", "POST", {
         teamId,
         year: 2026,
         name: "발표 사본",
@@ -566,7 +566,7 @@ for (const copy of [false, true]) {
       const path = new URL(req.url()).pathname;
       if (
         ["POST", "PUT", "PATCH", "DELETE"].includes(req.method()) &&
-        /\/api\/(cells|tasks|reports|teams\/[^/]+\/years\/\d+\/memos)(\/|$)/.test(
+        /\/api\/(cells|tasks|sheet-clones|teams\/[^/]+\/years\/\d+\/memos)(\/|$)/.test(
           path,
         )
       )

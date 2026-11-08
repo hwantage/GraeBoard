@@ -2,21 +2,34 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { openDatabase, json, passwordHash } from "../server/db.mjs";
-import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import {
+  openDatabase,
+  json,
+  passwordHash,
+  insertTask,
+  getTask,
+} from "../server/db.mjs";
+import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
+import { encodeSheetClone } from "../server/sheet-clones.mjs";
+import {
+  allEntities,
   materialize,
   syncActorId,
   SYNC_ACTOR_NAME,
 } from "../server/sync/entities.mjs";
-import { entityId, validateEntityPayload } from "../server/sync/protocol.mjs";
+import { upgradeState } from "../server/sync/versions.mjs";
+import {
+  entityId,
+  validateEntityPayload,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
+} from "../server/sync/protocol.mjs";
 
 // 받는 쪽은 보내는 쪽이 사람마다 person 엔티티를 실어 준다는 전제로 users 행을
 // 참조한다(created_by, user_id, actor_id FK). 그 전제가 깨져도 수신이 멈추지 않고
 // 자리표시 행으로 이어져야 한다(2026-11-03 운영 수신 정지와 같은 부류).
-function fixture() {
-  const db = openDatabase(":memory:"),
-    teamId = randomUUID();
+function fixture(teamId = randomUUID()) {
+  const db = openDatabase(":memory:");
   db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
     teamId,
     "Sync",
@@ -256,19 +269,158 @@ test("calendar and tag owners must be null or a usable ID", () => {
     color: "green",
     kind: "label",
   });
-  for (const userId of [null, randomUUID()]) {
-    validateEntityPayload("calendar", ["entry"], entry(userId), teamId, 2);
-    validateEntityPayload("tag", ["tag"], tag(userId), teamId, 2);
+  // Both the whole-record and the split protocol check them.
+  for (const version of [PROTOCOL, SPLIT_PROTOCOL]) {
+    for (const userId of [null, randomUUID()]) {
+      validateEntityPayload(
+        "calendar",
+        ["entry"],
+        entry(userId),
+        teamId,
+        version,
+      );
+      validateEntityPayload("tag", ["tag"], tag(userId), teamId, version);
+    }
+    for (const userId of ["", 5, "x".repeat(201)]) {
+      assert.throws(
+        () =>
+          validateEntityPayload(
+            "calendar",
+            ["entry"],
+            entry(userId),
+            teamId,
+            version,
+          ),
+        /Invalid calendar userId/,
+      );
+      assert.throws(
+        () =>
+          validateEntityPayload("tag", ["tag"], tag(userId), teamId, version),
+        /Invalid tag userId/,
+      );
+    }
   }
-  for (const userId of ["", 5, "x".repeat(201)]) {
-    assert.throws(
-      () =>
-        validateEntityPayload("calendar", ["entry"], entry(userId), teamId, 2),
-      /Invalid calendar userId/,
+});
+
+test("a sheet clone received without its creator's person keeps placeholders in protocol 3 and 4", (t) => {
+  // The sending site's state, as its application stores it: a task and a
+  // sheet clone of it made by a member the receiving site has never seen.
+  const { db: source, teamId } = fixture();
+  t.after(() => source.close());
+  const creator = randomUUID(),
+    cloneId = randomUUID(),
+    memoId = randomUUID(),
+    stamp = "2026-11-07T00:00:00.000Z";
+  source
+    .prepare(
+      "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,'!','user',?)",
+    )
+    .run(creator, "creator@example.test", "작성자", stamp);
+  const task = insertTask(source, {
+    teamId,
+    year: 2026,
+    actorId: creator,
+    fields: { title: "사본 업무" },
+  });
+  source.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
+    cloneId,
+    teamId,
+    2026,
+    "받은 사본",
+    "2026-11-01",
+    creator,
+    stamp,
+    encodeSheetClone({
+      settings: DEFAULT_SETTINGS,
+      view: defaultView(2026),
+      users: [{ id: creator, name: "작성자" }],
+      tasks: [getTask(source, task.id)],
+    }),
+  );
+  const whole = Object.fromEntries(
+    Object.entries({
+      ...allEntities(source, { team_id: teamId, bootstrap_id: "boot" }),
+      ...Object.fromEntries([
+        record("document", ["sheetClone", cloneId, task.id, "main"], {
+          title: "문서 1",
+          position: 0,
+          markdown: "# 사본 문서",
+        }),
+        record("document", ["sheetCloneMemo", cloneId, memoId], {
+          title: "사본 메모",
+          position: 0,
+          markdown: "메모 본문",
+        }),
+      ]),
+      // The sender left its person entities out.
+    }).filter(([, e]) => e.entity !== "person"),
+  );
+  const split = upgradeState({
+    entities: whole,
+    receipts: {},
+    conflicts: {},
+  }).entities;
+  assert.ok(
+    Object.values(split).some((e) => e.entity === "sheetCloneTask"),
+    "protocol 4 carries the clone as row records",
+  );
+  for (const [version, entities] of [
+    [PROTOCOL, whole],
+    [SPLIT_PROTOCOL, split],
+  ]) {
+    const { db } = fixture(teamId);
+    materialize(db, teamId, entities, {});
+    const actor = syncActorId(teamId);
+    assert.deepEqual(
+      user(db, creator),
+      { name: creator, password: "!", active: 0 },
+      `protocol ${version}`,
     );
-    assert.throws(
-      () => validateEntityPayload("tag", ["tag"], tag(userId), teamId, 2),
-      /Invalid tag userId/,
+    assert.equal(
+      db.prepare("SELECT created_by FROM sheet_clones WHERE id=?").get(cloneId)
+        .created_by,
+      creator,
     );
+    assert.equal(
+      db.prepare("SELECT created_by FROM tasks WHERE id=?").get(task.id)
+        .created_by,
+      creator,
+    );
+    // Documents arrive without an author: the team's sync actor.
+    assert.equal(
+      db
+        .prepare(
+          "SELECT v.created_by FROM sheet_clone_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.sheet_clone_id=? AND d.task_id=?",
+        )
+        .get(cloneId, task.id).created_by,
+      actor,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT actor_id FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
+        )
+        .get(cloneId, memoId).actor_id,
+      actor,
+    );
+    assert.deepEqual(user(db, actor), {
+      name: SYNC_ACTOR_NAME,
+      password: "!",
+      active: 0,
+    });
+    const placeholders = () =>
+      db.prepare("SELECT COUNT(*) AS n FROM users WHERE password='!'").get().n;
+    const count = placeholders();
+    materialize(db, teamId, entities, entities);
+    assert.equal(placeholders(), count);
+    // The creator's person arriving later names the placeholder.
+    materialize(
+      db,
+      teamId,
+      Object.fromEntries([record("person", [creator], { name: "작성자" })]),
+      {},
+    );
+    assert.equal(user(db, creator).name, "작성자");
+    db.close();
   }
 });

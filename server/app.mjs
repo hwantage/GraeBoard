@@ -9,8 +9,8 @@ import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
 import { installTaskBusinessRoutes } from "./task-business-routes.mjs";
 import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
 import { SqliteHistoryRepository } from "./storage/sqlite-history.mjs";
-import { installReportServiceRoutes } from "./report-service-routes.mjs";
-import { SqliteReportRepository } from "./storage/sqlite-reports.mjs";
+import { installSheetCloneServiceRoutes } from "./sheet-clone-service-routes.mjs";
+import { SqliteSheetCloneRepository } from "./storage/sqlite-sheet-clones.mjs";
 import { DocumentBusinessService } from "./storage/document-service.mjs";
 import { SqliteDocumentRepository } from "./storage/sqlite-documents.mjs";
 import { createDocumentImagePreparation } from "./document-image-preparation.mjs";
@@ -169,16 +169,16 @@ export function createApp({
     documentEvents,
   });
   installDocumentImageRoutes(app, { refreshUser });
-  const reportsRepository = new SqliteReportRepository({
+  const sheetClonesRepository = new SqliteSheetCloneRepository({
     db,
     teamAccess,
     referencedUsers,
     documentImagesDir,
     documentEvents,
   });
-  app.locals.reportRepository = reportsRepository;
-  installReportServiceRoutes(app, {
-    repository: reportsRepository,
+  app.locals.sheetCloneRepository = sheetClonesRepository;
+  installSheetCloneServiceRoutes(app, {
+    repository: sheetClonesRepository,
     documentEvents,
     refreshUser,
     cellEvents,

@@ -20,8 +20,8 @@ function atomic(f, generator) {
 }
 function operation(f, opId, extra = {}) {
   return {
-    protocol: 1,
-    reducer: 1,
+    protocol: 3,
+    reducer: 3,
     teamId: f.teamId,
     repoId: f.link.repo_id,
     opId,

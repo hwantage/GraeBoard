@@ -3,8 +3,8 @@
 //   [업무 제목](/links/task/<업무 UUID>)
 //   [일정 제목](/links/calendar/<일정 UUID>)
 //   [메모 제목](/links/memo/<팀 UUID>/<연도>/<메모 ID>)
-//   [업무 제목](/links/report-task/<사본 UUID>/<업무 UUID>)
-//   [메모 제목](/links/report-memo/<사본 UUID>/<메모 ID>)
+//   [업무 제목](/links/sheet-clone-task/<사본 UUID>/<업무 UUID>)
+//   [메모 제목](/links/sheet-clone-memo/<사본 UUID>/<메모 ID>)
 //
 // The path has no origin, so the same body opens on the internal and the
 // external site after synchronization. A copy's task keeps the original's ID,
@@ -14,7 +14,7 @@
 /**
  * @typedef {{ kind: "task" | "calendar", id: string }
  *   | { kind: "memo", teamId: string, year: number, id: string }
- *   | { kind: "report-task" | "report-memo", reportId: string, id: string }} DocumentLink
+ *   | { kind: "sheet-clone-task" | "sheet-clone-memo", sheetCloneId: string, id: string }} DocumentLink
  */
 
 // Links in one title lookup.
@@ -23,15 +23,15 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 // Memo IDs follow the document IDs: the default `main` or a UUID.
 const DOCUMENT = `main|${UUID}`;
 const LINK_PATH = new RegExp(
-  `^/links/(?:(task|calendar)/(${UUID})|memo/(${UUID})/(\\d{4})/(${DOCUMENT})|(report-task)/(${UUID})/(${UUID})|(report-memo)/(${UUID})/(${DOCUMENT}))$`,
+  `^/links/(?:(task|calendar)/(${UUID})|memo/(${UUID})/(\\d{4})/(${DOCUMENT})|(sheet-clone-task)/(${UUID})/(${UUID})|(sheet-clone-memo)/(${UUID})/(${DOCUMENT}))$`,
 );
 
 /** @param {DocumentLink} link */
 export function documentLinkPath(link) {
   if (link.kind === "memo")
     return `/links/memo/${link.teamId}/${link.year}/${link.id}`;
-  if (link.kind === "report-task" || link.kind === "report-memo")
-    return `/links/${link.kind}/${link.reportId}/${link.id}`;
+  if (link.kind === "sheet-clone-task" || link.kind === "sheet-clone-memo")
+    return `/links/${link.kind}/${link.sheetCloneId}/${link.id}`;
   return `/links/${link.kind}/${link.id}`;
 }
 
@@ -48,6 +48,6 @@ export function parseDocumentLinkPath(path) {
       ? { kind: "memo", teamId: m[3], year, id: m[5] }
       : null;
   }
-  if (m[6]) return { kind: "report-task", reportId: m[7], id: m[8] };
-  return { kind: "report-memo", reportId: m[10], id: m[11] };
+  if (m[6]) return { kind: "sheet-clone-task", sheetCloneId: m[7], id: m[8] };
+  return { kind: "sheet-clone-memo", sheetCloneId: m[10], id: m[11] };
 }

@@ -272,7 +272,7 @@ test("remote task metadata publishes a delta and empty commits emit no invalidat
   );
 });
 
-test("paused v2 transition rejects late disjoint pending input at the final SQLite writer and preserves C, P and local rows", async (t) => {
+test("paused protocol 4 transition rejects late disjoint pending input at the final SQLite writer and preserves C, P and local rows", async (t) => {
   const { sqliteFixture } = await import("./business-storage-fixture.mjs");
   const { createNodeMutationBridge } =
     await import("../server/sync/node-mutations.mjs");
@@ -285,12 +285,12 @@ test("paused v2 transition rejects late disjoint pending input at the final SQLi
   assert.equal(raw.acquire("transition-review"), true);
   const state = upgradeState(f.state),
     guard = snapshotGuard(f.db, f.teamId);
-  // The worker prepared only report changes while P was empty. The late original
+  // The worker prepared only sheetClone changes while P was empty. The late original
   // cell input does not overlap that touched set, so ordinary projection guards
   // intentionally allow it; a protocol transition must enforce a strict drain.
   const prepared = {
     guard,
-    touched: ["unique:report"],
+    touched: ["unique:sheetClone"],
     patch: prepareStatePatch(f.state, state),
     outboxHashes: [],
     changedEntities: {},
@@ -352,7 +352,7 @@ test("paused v2 transition rejects late disjoint pending input at the final SQLi
       ),
     (error) => error.status === 409 && error.code === "SYNC_INTERRUPTED",
   );
-  assert.equal(protocolVersion(raw.readState()), 1);
+  assert.equal(protocolVersion(raw.readState()), 3);
   assert.equal(canonical(raw.readState()), before.state);
   assert.equal(canonical(raw.readPending()), before.pending);
   assert.equal(raw.readLink().canonical_head, before.head);

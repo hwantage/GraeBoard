@@ -135,7 +135,7 @@ test("actual PostgreSQL: SQL Editor initialization equals the migrate command, r
   await editor.query("ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO anon");
   const results = await editor.query(script);
   assert.deepEqual(results.at(-1).rows, [
-    { team_uuid: teamId, site_version: 3, team_version: 2 },
+    { team_uuid: teamId, site_version: 3, team_version: 3 },
   ]);
   assert.deepEqual(await snapshot(editor), await snapshot(cli));
   for (const { applied_at } of (
@@ -154,8 +154,8 @@ test("actual PostgreSQL: SQL Editor initialization equals the migrate command, r
       to: 3,
       applied: false,
       dryRun: true,
-      teamFrom: 2,
-      teamTo: 2,
+      teamFrom: 3,
+      teamTo: 3,
     },
   );
   const privilege = async (role) =>

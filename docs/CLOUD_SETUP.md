@@ -14,7 +14,7 @@ Edge의 실시간 이벤트 연결은 2초마다 확인하고 15초 후 종료�
 
 Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화면 파일·API·실시간 재연결 요청은 모두 Workers 무료 플랜의 하루 요청 수(Pages Functions와 합산 10만 건)로 셉니다. Pages Functions에서 gateway로의 Service binding 호출은 따로 세지 않습니다. 열어 둔 브라우저 하나가 업무 시간 내내 보이는 상태라면 실시간 재연결만 하루 약 1,900건입니다. gateway는 내용 해시가 붙은 `/assets/` 빌드 파일에 `Cache-Control: private, max-age=31536000, immutable`을 붙여 재방문 때 다시 요청하지 않게 하고, `index.html`과 없는 파일의 앱 화면 대체 응답에는 붙이지 않습니다. 하루 요청 수는 **Workers & Pages → 프로젝트 → Metrics**에서 확인합니다. 한도를 넘으면 다음 날 0시(UTC)까지 Pages 설정(Fail open/closed)에 따라 API가 실패합니다. [Workers 요금·한도](https://developers.cloudflare.com/workers/platform/pricing/)
 
-기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 옮기는 변경 자체에는 DB migration이 없습니다. **현재 릴리스는 SQLite v33·PostgreSQL site v3(분리형 control v2)·team v2 migration이 필요합니다.** 기존 site 계정과 team 업무 데이터, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 전체 업무 API를 Cloudflare에서 실행하는 호환성 설정과 빌드는 제거했습니다. 배포에는 gateway·forwarder 설정과 Supabase Edge 빌드를 사용합니다.
+기존 전체 Cloudflare Worker에서 Edge로 실행 위치만 옮기는 변경 자체에는 DB migration이 없습니다. **현재 릴리스는 SQLite v34·PostgreSQL site v3(분리형 control v2)·team v3 migration이 필요합니다.** 기존 DB의 v34·team v3는 사본 명칭 전환을 포함하므로 모든 서버를 멈춘 뒤 일회성 도구로 [운영 안내: 사본 명칭 일괄 전환](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)의 조건과 순서에 따라 변환합니다. 기존 site 계정과 team 업무 데이터, 계정 연결·세션·팀 UUID·설치 UUID·프로필 ID·Git 저장소·bucket을 유지합니다. 새 경로를 검증한 뒤 기존 전체 Worker도 `worker/forwarder.mjs`로 교체합니다. `wrangler.forwarder.jsonc`에 기존 Worker 이름과 새 gateway 서비스 이름을 지정하면 이전 Pages 배포의 Service binding도 새 경로로 연결됩니다. 이 전달 Worker에는 DB·R2·Git binding과 Secret을 등록하지 않고 Cron도 비웁니다. 모든 Worker와 Pages의 Hyperdrive 참조가 제거됐는지 확인한 뒤 해당 팀의 미사용 Hyperdrive 설정을 정리합니다. 다른 서비스가 쓰는 설정은 유지합니다. 전체 업무 API를 Cloudflare에서 실행하는 호환성 설정과 빌드는 제거했습니다. 배포에는 gateway·forwarder 설정과 Supabase Edge 빌드를 사용합니다.
 
 인터넷에 연결된 운영자 환경에서 다음 순서로 배포합니다. 내부 Node 서버는 이 환경 파일을 읽지 않으며 GitHub만 접속합니다.
 
@@ -95,25 +95,28 @@ Pages의 `functions/[[path]].js`가 모든 경로를 gateway로 넘기므로 화
 
 전용 DB 접속 URL과 GitHub 토큰은 Supabase Edge Secrets에 보관합니다. Supabase 기본 `SUPABASE_DB_URL`을 사용할 때는 별도 DB Secret을 만들지 않습니다. `teams.settings`, 일반 변수, 감사 로그, 브라우저 폼, 앱 소스, Git 데이터 저장소에 비밀을 넣지 않습니다. 조직 전체 Cloudflare 관리 토큰을 앱의 팀 연결 화면에 입력하는 기능은 없습니다.
 
-## 3. SQLite v29·v30·v31을 v32로 올리기
+## 3. SQLite v29~v33을 v34로 올리기
 
-실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32 → v33**입니다. 일반 서버 시작은 기존 v29·v30·v31·v32 DB를 자동 변환하지 않습니다.
+실제 운영 DB 버전은 저장소 버전으로 추정하지 않습니다. 먼저 승인된 DB 경로와 현재 배포 커밋을 기록하고 읽기 전용으로 `PRAGMA user_version`을 확인합니다. 이 릴리스의 SQLite 업그레이드 지원 경로는 **v29 → v30 → v31 → v32 → v33 → v34**입니다. 일반 서버 시작과 `npm run migrate`는 기존 v29~v33 DB를 변환하지 않고 거절합니다. v34는 사본 명칭 전환을 포함하므로 모든 서버를 멈춘 뒤 일회성 도구 `npm run cutover:sheet-clone`으로만 변환합니다.
+
+- 동기화를 연결해 외부 사이트와 이력을 공유한 팀이 있으면 사내 SQLite·외부 PostgreSQL·동기화 Git을 한 번에 전환합니다. 조건·명령·재개·되돌림은 [운영 안내: 사본 명칭 일괄 전환](OPERATIONS.md#사본-명칭sheetclone-일괄-전환)을 따릅니다.
+- 어떤 팀도 동기화 이력을 공유하지 않은 사내 단독 설치는 SQLite만 변환합니다. 공유 이력이 있는 팀이 하나라도 있으면 이 명령은 아무것도 쓰지 않고 거절합니다.
 
 1. 기존 릴리스로 DB와 문서 이미지 백업을 만들고 별도 경로에 복구해 확인합니다.
-2. 운영 적용 때는 서버와 다른 DB 쓰기 작업을 중지합니다.
-3. 새 릴리스에서 정확한 대상 경로로 dry-run을 실행합니다.
+2. 서버와 다른 DB 쓰기 작업을 중지합니다.
+3. 새 릴리스에서 정확한 대상 경로로 dry-run을 실행합니다. dry-run은 DB 복사본을 변환하고 원본은 바꾸지 않습니다.
 
 ```sh
-npm run migrate -- --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
+npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite --dry-run
 ```
 
-4. 출력의 `from`, `to`, `checksum`을 확인한 뒤 같은 대상에 적용합니다.
+4. 출력의 `from`, `to`, `checksum`, `conversion`을 확인한 뒤 같은 대상에 적용합니다. 사이트 주소로 저장된 절대 `/links/` 링크가 있으면 두 명령 모두 `--site-origin https://주소`를 반복해 지정합니다.
 
 ```sh
-npm run migrate -- --engine sqlite --database /srv/graeboard/data/weekly-plan.sqlite
+npm run cutover:sheet-clone -- --database /srv/graeboard/data/weekly-plan.sqlite
 ```
 
-5. 같은 명령을 다시 실행하면 이력과 무결성을 검사하고 중복 변환하지 않습니다. 서버를 시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
+5. 같은 명령을 다시 실행하면 v34임을 확인하고 아무것도 바꾸지 않습니다. 서버를 시작해 기존 계정·팀·업무·문서·이미지를 확인한 뒤 접속을 재개합니다. 동기화는 팀별로 연결하기 전까지 미연결입니다.
 
 새 설치의 빈 경로에는 명시적으로 `--initialize`를 사용합니다. 상위 디렉터리는 실행 계정만 접근할 수 있게 먼저 준비합니다.
 
@@ -122,7 +125,7 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sqlite --initialize
 ```
 
-변환 중 실패하면 해당 단계의 스키마·버전·이력이 함께 롤백됩니다. 원인을 해결한 뒤 같은 명령으로 재시도합니다. checksum 불일치, 지원하지 않는 구버전·미래 버전, 사용자 테이블이 있는 버전 0 DB는 보존한 채 거절합니다. checksum 값을 직접 고치거나 버전 검사만 제거하지 않습니다. 이 명령은 백업이나 다운그레이드를 자동으로 수행하지 않습니다.
+변환이나 초기화 중 실패하면 스키마·버전·이력이 함께 롤백됩니다. 원인을 해결한 뒤 같은 명령으로 재시도합니다. checksum 불일치, 지원하지 않는 구버전·미래 버전, 사용자 테이블이 있는 버전 0 DB는 보존한 채 거절합니다. checksum 값을 직접 고치거나 버전 검사만 제거하지 않습니다. 이 명령은 백업이나 다운그레이드를 자동으로 수행하지 않습니다.
 
 접속 재개 전 되돌릴 때는 이전 릴리스와 검증된 DB·이미지 백업을 **새 경로**에 복구합니다. 접속 재개 후에는 새 저장과 outbox가 생길 수 있으므로 현재 DB·원격 head부터 보존하고 복구 계획을 다시 정합니다. 상세 백업 명령은 [운영 안내](OPERATIONS.md#백업과-복구)를 따릅니다.
 
@@ -130,7 +133,7 @@ npm run migrate -- --engine sqlite --database /srv/graeboard/new/weekly-plan.sql
 
 팀마다 프로젝트 하나를 만들고 **Connect → Direct connection**의 PostgreSQL 주소를 사용합니다. Project URL이나 publishable/anon/service_role API key는 사용하지 않습니다. Edge Function은 PostgreSQL에 직접 연결하므로 Hyperdrive·Supabase Data API·Supabase Auth는 필요하지 않습니다. Data API를 켜더라도 `graeboard`와 `graeboard_site`를 exposed schemas에 추가하지 않습니다. [Supabase Data API 보안](https://supabase.com/docs/guides/api/securing-your-api)
 
-**신규 외부 DB는 Supabase 웹 화면만으로 초기화할 수 있습니다.** 설정 안내의 Supabase 단계(시스템 관리자)가 이 팀 UUID·이름을 넣은 **외부 DB 초기화 SQL**을 보여 줍니다. 내부 서버의 `GET /api/admin/teams/:id/external-db-sql`이 아래 명령의 빈 DB 초기화와 같은 migration SQL·순서·checksum을 한 트랜잭션 스크립트로 만들며, 새 프로젝트의 **SQL Editor**에 전체를 붙여 넣고 **Run**합니다(RLS 확인 창은 **Run without RLS**). `graeboard`·`graeboard_site`에 테이블이 하나라도 있으면 아무것도 바꾸지 않고 멈추고, 중간 실패는 전체 롤백합니다. 마지막 결과 표에서 `team_uuid`·`site_version` 3·`team_version` 2를 확인합니다. 스크립트는 두 스키마에서 `PUBLIC`·`anon`·`authenticated` 권한을 회수하고 `graeboard_app` 역할이 있으면 아래와 같은 권한을 줍니다. 기존 외부 DB 업그레이드는 이 스크립트가 아니라 아래 명령이나 업그레이드 절차를 따릅니다.
+**신규 외부 DB는 Supabase 웹 화면만으로 초기화할 수 있습니다.** 설정 안내의 Supabase 단계(시스템 관리자)가 이 팀 UUID·이름을 넣은 **외부 DB 초기화 SQL**을 보여 줍니다. 내부 서버의 `GET /api/admin/teams/:id/external-db-sql`이 아래 명령의 빈 DB 초기화와 같은 migration SQL·순서·checksum을 한 트랜잭션 스크립트로 만들며, 새 프로젝트의 **SQL Editor**에 전체를 붙여 넣고 **Run**합니다(RLS 확인 창은 **Run without RLS**). `graeboard`·`graeboard_site`에 테이블이 하나라도 있으면 아무것도 바꾸지 않고 멈추고, 중간 실패는 전체 롤백합니다. 마지막 결과 표에서 `team_uuid`·`site_version` 3·`team_version` 3을 확인합니다. 스크립트는 두 스키마에서 `PUBLIC`·`anon`·`authenticated` 권한을 회수하고 `graeboard_app` 역할이 있으면 아래와 같은 권한을 줍니다. 기존 외부 DB 업그레이드는 이 스크립트가 아니라 아래 명령이나 업그레이드 절차를 따릅니다.
 
 명령으로 초기화할 때는 앱 소스가 있고 인터넷에 연결된 운영자 PC에서 `npm ci` 후 실행합니다. 아래 UUID는 기존 사내 팀의 실제 UUID로 바꿉니다. 연결 URL은 터미널에서 숨김 입력으로 읽고 환경 변수로 전달합니다.
 
@@ -142,9 +145,9 @@ npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-i
 unset PG_SITE_URL
 ```
 
-이 명령은 `graeboard`의 team v2와 `graeboard_site`의 site v3를 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite는 v33으로 별도 변환합니다.
+이 명령은 `graeboard`의 team v3와 `graeboard_site`의 site v3를 **같은 트랜잭션**으로 만듭니다. dry-run·실패는 전체 롤백하며 재실행은 중복 적용하지 않습니다. 다른 팀 UUID·체크섬 불일치·미지원 스키마는 기존 자료를 보존하고 거절합니다. 사내 SQLite는 v34로 별도 변환합니다.
 
-기존 분리형 설치의 **team v1 DB**를 전환할 때는 백업과 쓰기 중단 후 같은 명령에서 `--initialize`를 빼고 실행합니다. 기존 업무 스키마·ID·C/P/L을 그대로 두고 site 스키마와 team v2 인덱스를 추가합니다. 기존 공통 control DB는 건드리지 않습니다. 그 DB의 계정·Google 연결을 가져오지 않으며, 내부 구성원 동기화 후 팀장 최초 연결과 팀원 승인을 다시 합니다. 이전 외부 계정 ID로 작성한 업무의 표시 참조는 이력으로 보존합니다. 기존 control DB 자체에 site migration을 적용하는 것은 거절합니다.
+기존 분리형 설치의 **team v1 DB**는 사본 명칭 전환을 포함하므로 위 명령에서 `--initialize`만 빼면 거절됩니다. 모든 서버를 멈춘 뒤 [사본 명칭 일괄 전환](OPERATIONS.md#사본-명칭sheetclone-일괄-전환) 도구가 기존 업무 스키마·ID·C/P/L을 그대로 두고 site 스키마와 team v2 인덱스를 추가하며 team v3에서 사본 명칭을 같은 트랜잭션으로 변환합니다(`--pg-scope site`가 기본값). 기존 공통 control DB는 건드리지 않습니다. 그 DB의 계정·Google 연결을 가져오지 않으며, 내부 구성원 동기화 후 팀장 최초 연결과 팀원 승인을 다시 합니다. 이전 외부 계정 ID로 작성한 업무의 표시 참조는 이력으로 보존합니다. 기존 control DB 자체에 site migration을 적용하는 것은 거절합니다.
 
 DB 관리자가 별도 `graeboard_app` LOGIN 역할과 비밀번호를 준비하고 migration 역할로 다음 권한을 부여합니다. 향후 migration도 동일 역할로 실행합니다.
 
@@ -351,7 +354,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 
 1. 실제 사내 `DB_PATH`·`DOCUMENT_IMAGES_DIR`, 팀 UUID, `team_sync_links`의 기존 연결 유무를 읽기 전용으로 확인합니다. 같은 팀 이름이어도 개발 팀과 사내 팀의 UUID는 다를 수 있습니다. 외부 Supabase 프로젝트·R2 bucket·Git 데이터 저장소와 삭제할 개발 팀/설치 UUID를 따로 식별합니다. 외부 백업 생략은 대상 개발 자료에 대한 명시적 승인 범위만 적용하고 사내 백업·복구 절차를 바꾸지 않습니다.
 2. 이전 개발 Node 서버와 자동 동기화를 정상 종료하고 프로세스·포트 종료를 확인합니다. 외부의 사용자 요청도 쓰기와 동기화를 시작하므로 **Cron 중지만으로는 충분하지 않습니다.** 외부 Edge API를 503 점검 응답으로 전환하고 gateway Cron을 제거합니다. 재배포에도 Cron이 꺼져 있도록 `TEAM_SITE_CONFIG`에 `"cron": false`를 둡니다. Cron 제거 전파는 최대 15분이 걸릴 수 있으며 이전 요청·백그라운드 실행의 종료를 로그에서 확인한 뒤 삭제합니다. [Cron 안내](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
-3. 검토된 대상 전용 SQL로 Supabase의 `graeboard`·`graeboard_site`를 초기화합니다. SQL은 **삭제할 개발 팀 UUID를 검사**하고, 최신 릴리스의 migration SQL·checksum으로 두 스키마를 같은 트랜잭션 안에서 재생성해야 합니다. 새 `site_meta`·`team_meta`에는 **사내 팀 UUID**를 넣습니다. 다른 Supabase 스키마와 프로젝트·접속 Secret은 유지합니다. 현재 릴리스의 완료 기준은 site v3, team v2, 사내 팀 UUID 일치, 앱 사용자·동기화 연결 0건입니다. 성공 후 재실행은 이전 개발 팀 UUID 검사에서 거절돼야 합니다. 기존 팀 업그레이드용 `site-key-migration-sql.mjs`는 빈 DB 재생성 도구가 아닙니다.
+3. 검토된 대상 전용 SQL로 Supabase의 `graeboard`·`graeboard_site`를 초기화합니다. SQL은 **삭제할 개발 팀 UUID를 검사**하고, 최신 릴리스의 migration SQL·checksum으로 두 스키마를 같은 트랜잭션 안에서 재생성해야 합니다. 새 `site_meta`·`team_meta`에는 **사내 팀 UUID**를 넣습니다. 다른 Supabase 스키마와 프로젝트·접속 Secret은 유지합니다. 현재 릴리스의 완료 기준은 site v3, team v3, 사내 팀 UUID 일치, 앱 사용자·동기화 연결 0건입니다. 성공 후 재실행은 이전 개발 팀 UUID 검사에서 거절돼야 합니다. 기존 팀 업그레이드용 `site-key-migration-sql.mjs`는 빈 DB 재생성 도구가 아닙니다.
 4. 새 테이블에 서버용 `graeboard_app`의 스키마·테이블·sequence 권한을 복원하고 `PUBLIC`·`anon`·`authenticated`의 앱 스키마 접근을 차단합니다. 이 권한 처리를 포함한 검토된 초기화 SQL에 대해 Supabase가 RLS 선택을 표시하면 **Run without RLS**를 사용합니다. 현재 앱은 서버에서 인증·팀 권한을 검사하고 PG 전용 역할로 접근하며, RLS 정책을 만들지 않습니다. 정책 없이 RLS만 켜면 서버 역할의 조회·저장이 차단됩니다. 다른 SQL이나 공개 Data API 테이블에 이 선택을 일반화하지 않습니다. [PostgreSQL RLS](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
 5. R2의 대상 bucket에서 **Settings → Empty Bucket → Empty**를 실행하고 객체가 비었는지 확인합니다. bucket과 binding은 유지합니다. 이는 외부 이미지 삭제이며 사내 이미지 폴더에는 적용하지 않습니다. [R2 비우기](https://developers.cloudflare.com/r2/buckets/delete-buckets/)
 6. 팀 **데이터 저장소**의 `sync-v1`, 이전 내부 설치의 `sync-directory/<ID>`·`sync-setup/<ID>`·`sync-status/<ID>`, 이전 외부 설치의 `sync-setup-status/<ID>`·`sync-status/<ID>`를 삭제합니다. 기본 `main`과 앱 **소스 저장소**는 유지합니다. GitHub **All** 탭에서 대상 브랜치가 사라지고 재생성되지 않는지 확인합니다. 이 절차는 동기화 브랜치를 비우는 것이며 GitHub의 모든 과거 객체를 영구 소거하는 절차가 아닙니다.

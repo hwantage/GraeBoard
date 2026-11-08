@@ -465,15 +465,17 @@ function projectionPatch(
           ? []
           : [
               entityId(
-                ["reportTask", "reportCell"].includes(entity)
-                  ? "report"
+                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
+                  ? "sheetClone"
                   : entity,
-                ["reportTask", "reportCell"].includes(entity) ? [key[0]] : key,
+                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
+                  ? [key[0]]
+                  : key,
               ),
             ];
       }),
     );
-  const reports = new Map(),
+  const sheetClones = new Map(),
     styles = new Map();
   const changedEntities = {},
     previous = {},
@@ -562,7 +564,7 @@ function projectionPatch(
       : JSON.parse(key);
     readEntityCount++;
     const current = readEntity(reader, teamId, entity, entityKey, {
-      reports,
+      sheetClones,
       styles,
     });
     if (!record) {

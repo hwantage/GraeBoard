@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import {
   canonical,
   digest,
   stateHash,
+  stateSum,
   protocolVersion,
   supportedVersion,
 } from "./protocol.mjs";
 import { validateSnapshot } from "./reducer.mjs";
+import { encodeSnapshot } from "./snapshot.mjs";
 import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
 import { ProtocolError, protocolValidation } from "./errors.mjs";
 
@@ -14,6 +17,35 @@ export const snapshotCounts = (state) => ({
   receipts: Object.keys(state.receipts).length,
   conflicts: Object.keys(state.conflicts).length,
 });
+// The two files of a standard checkpoint of C at head: its snapshot and its
+// event, as loadCheckpoint and receive verify them.
+export function checkpointFiles({ head, bootstrapId, identity, state }) {
+  const path = "snapshots/" + randomUUID() + ".json.gz",
+    bytes = encodeSnapshot({ atCommit: head, state });
+  const envelope = {
+    protocol: protocolVersion(state),
+    reducer: protocolVersion(state),
+    checkpointVersion: 1,
+    teamId: identity.teamId,
+    repoId: identity.repoId,
+    bootstrapId,
+    snapshotHash: digest(bytes),
+    counts: snapshotCounts(state),
+    kind: "checkpoint",
+    parent: head,
+    atCommit: head,
+    path,
+    resultHash: stateHash(state),
+    resultSum: stateSum(state),
+  };
+  return {
+    envelope,
+    files: {
+      [path]: bytes,
+      ["events/" + randomUUID() + ".json"]: canonical(envelope),
+    },
+  };
+}
 const invalid = (message) => {
   throw new ProtocolError("SYNC_INTEGRITY", message);
 };
@@ -32,26 +64,43 @@ export async function loadCheckpoint(service, link, pinnedHead) {
   if (!transport.latestSnapshot) return link;
   if (!["importing", "recovery"].includes(link.mode))
     throw new Error("Checkpoint load requires a drained import/recovery");
-  const oid = await transport.latestSnapshot(pinnedHead);
-  if (!oid || oid === link.canonical_head) return link;
-  const commit = await transport.readCommit(oid);
-  if (!commit.parents.length) return link; // Genesis remains the compatible fallback.
-  const parent = commit.parents[0];
-  await service.checkCommit(oid, parent);
-  if (
-    !(await transport.verifyReachable(oid, pinnedHead)) ||
-    (link.canonical_head &&
-      !(await transport.verifyReachable(link.canonical_head, parent)))
-  )
-    throw new ProtocolError(
-      "SYNC_HISTORY",
-      "Checkpoint is not compatible with the pinned canonical history",
-    );
-  const added = await service.verifyFiles(commit, parent);
-  const events = added.filter((file) => file.path.startsWith("events/"));
-  if (events.length !== 1) invalid("Invalid checkpoint event count");
-  const envelope = json(await transport.readFile(oid, events[0].path));
-  if (envelope.kind !== "checkpoint") return link;
+  // The newest checkpoint at or before the pinned head. A protocol transition
+  // also writes snapshots: it is passed over here and replayed after the
+  // checkpoint like any other commit.
+  let oid = await transport.latestSnapshot(pinnedHead),
+    commit,
+    parent,
+    added,
+    envelope;
+  for (;;) {
+    if (!oid || oid === link.canonical_head) return link;
+    // A restored head already past it replays from there.
+    if (
+      link.canonical_head &&
+      (await transport.verifyReachable(oid, link.canonical_head))
+    )
+      return link;
+    commit = await transport.readCommit(oid);
+    if (!commit.parents.length) return link; // Genesis remains the compatible fallback.
+    parent = commit.parents[0];
+    await service.checkCommit(oid, parent);
+    if (
+      !(await transport.verifyReachable(oid, pinnedHead)) ||
+      (link.canonical_head &&
+        !(await transport.verifyReachable(link.canonical_head, parent)))
+    )
+      throw new ProtocolError(
+        "SYNC_HISTORY",
+        "Checkpoint is not compatible with the pinned canonical history",
+      );
+    added = await service.verifyFiles(commit, parent);
+    const events = added.filter((file) => file.path.startsWith("events/"));
+    if (events.length !== 1) invalid("Invalid checkpoint event count");
+    envelope = json(await transport.readFile(oid, events[0].path));
+    if (envelope.kind === "checkpoint") break;
+    if (envelope.kind !== "transition") return link;
+    oid = await transport.latestSnapshot(parent);
+  }
   if (envelope.protocol > service.maxProtocol)
     throw new ProtocolError(
       "SYNC_VERSION",

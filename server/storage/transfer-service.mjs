@@ -15,7 +15,7 @@ import {
 const uuid = z.string().uuid();
 const exportSchema = z.object({
   teamId: uuid,
-  reportId: uuid.optional(),
+  sheetCloneId: uuid.optional(),
   revision: z.string().optional(),
   year: yearSchema,
   startMonth: z.number().int().min(1).max(12).default(1),
@@ -28,8 +28,8 @@ const applyImportSchema = z.object({
   sheet: z.string().min(1).max(120),
   year: yearSchema,
   personMap: z.record(z.string(), uuid),
-  mode: z.enum(["tasks", "report", "copy"]),
-  reportId: uuid.optional(),
+  mode: z.enum(["tasks", "create-sheet-clone", "append-to-sheet-clone"]),
+  sheetCloneId: uuid.optional(),
   revision: z.string().optional(),
   referenceDate: dateSchema,
   acceptWarnings: z.literal(true),
@@ -37,7 +37,7 @@ const applyImportSchema = z.object({
 const previewSchema = z.object({
   teamId: uuid,
   year: yearSchema,
-  reportId: uuid.optional(),
+  sheetCloneId: uuid.optional(),
   sheetOptions: z.record(z.string(), z.unknown()).default({}),
   file: z.object({ name: z.string().min(1), bytes: z.instanceof(Uint8Array) }),
 });

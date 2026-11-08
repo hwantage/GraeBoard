@@ -246,8 +246,8 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
           records = {};
         for (const encoded of keys) {
           const [entity, key] = JSON.parse(encoded);
-          const target = ["reportTask", "reportCell"].includes(entity)
-            ? entityId("report", [key[0]])
+          const target = ["sheetCloneTask", "sheetCloneCell"].includes(entity)
+            ? entityId("sheetClone", [key[0]])
             : encoded;
           revisions.add(target);
           if (presentation[target]) records[target] = presentation[target];

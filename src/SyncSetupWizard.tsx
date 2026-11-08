@@ -274,7 +274,7 @@ export default function SyncSetupWizard({
     live.current = true;
     const controller = new AbortController();
     if (!external && team.sync?.configured)
-      // Only unlocks direct navigation; the embedded settings report status
+      // Only unlocks direct navigation; the embedded settings sheetClone status
       // errors themselves.
       void api<SyncStatus>(prefix, { signal: controller.signal })
         .then((current) => {
@@ -1295,7 +1295,7 @@ export default function SyncSetupWizard({
             <li>
               결과 표의 <code>team_uuid</code>가 이 팀 UUID(
               <code>{team.id}</code>)이고 <code>site_version</code> 3,{" "}
-              <code>team_version</code> 2이면 완료입니다. “이미 테이블이 있어
+              <code>team_version</code> 3이면 완료입니다. “이미 테이블이 있어
               초기화하지 않았습니다” 오류는 이미 초기화한 DB라는 뜻이며 아무것도
               바뀌지 않았습니다. 기존 외부 DB의 업그레이드는 설치 안내의
               업그레이드 절차를 따릅니다.
@@ -1312,7 +1312,7 @@ export default function SyncSetupWizard({
             단계에서 배포합니다.
           </p>
           {acknowledge(
-            "SQL Editor 결과 표에서 팀 UUID와 site 3·team 2를 확인했습니다.",
+            "SQL Editor 결과 표에서 팀 UUID와 site 3·team 3을 확인했습니다.",
           )}
         </>
       )}

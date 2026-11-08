@@ -14,13 +14,13 @@ const OWN_STREAMS = new Set([
   "tag",
   "weekly",
   "person",
-  "report",
+  "sheetClone",
 ]);
 // Document kinds that only their own panels show, never a team-wide view.
-const PANEL_DOCUMENTS = new Set(["annual", "reportMemo", "report"]);
+const PANEL_DOCUMENTS = new Set(["annual", "sheetCloneMemo", "sheetClone"]);
 // Records the task sheet's cell stream does not show. Task documents are
 // among them: their indicator follows the team stream, as on the internal site.
-const SHEET_QUIET = new Set(["document", "calendar", "tag", "report"]);
+const SHEET_QUIET = new Set(["document", "calendar", "tag", "sheetClone"]);
 
 const startsWith = (key, prefix) =>
   Array.isArray(key) && prefix.every((part, i) => key[i] === part);
@@ -30,14 +30,14 @@ const startsWith = (key, prefix) =>
 export function streamScope(path, documentScope = null) {
   let m;
   if ((m = /^\/teams\/([^/]+)$/.exec(path))) return { kind: "team" };
-  if ((m = /^\/reports\/([^/]+)$/.exec(path)))
-    return { kind: "report", id: m[1] };
+  if ((m = /^\/sheet-clones\/([^/]+)$/.exec(path)))
+    return { kind: "sheetClone", id: m[1] };
   if (!documentScope) return { kind: "all" };
   const { kind, prefix, documentId } = documentScope,
     parent =
       kind === "annual"
         ? null
-        : [kind === "reportMemo" ? "report" : kind, prefix[1]];
+        : [kind === "sheetCloneMemo" ? "sheetClone" : kind, prefix[1]];
   return documentId
     ? { kind: "document", key: [...prefix, documentId], parent }
     : { kind: "documents", prefix, parent };
@@ -53,10 +53,12 @@ function touches(scope, { entity, key }) {
         entity === "cell" ||
         (entity === "document" && PANEL_DOCUMENTS.has(key[0]))
       );
-    case "report":
+    case "sheetClone":
       return (
-        (entity === "report" && key[0] === scope.id) ||
-        (entity === "document" && key[0] === "report" && key[1] === scope.id)
+        (entity === "sheetClone" && key[0] === scope.id) ||
+        (entity === "document" &&
+          key[0] === "sheetClone" &&
+          key[1] === scope.id)
       );
     case "document":
       return (

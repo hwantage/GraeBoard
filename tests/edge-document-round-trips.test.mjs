@@ -3,25 +3,25 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import { DocumentBrowserBusinessService } from "../server/storage/document-browser-service.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
-import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { PostgresDocumentBrowserRepository } from "../worker/storage/postgres-document-browser.mjs";
 import { DataSession } from "../worker/data.mjs";
-import { reportRoutes } from "../worker/reports.mjs";
+import { sheetCloneRoutes } from "../worker/sheet-clones.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
-import { packReportPayload } from "../shared/report-sync-data.js";
+import { packSheetClonePayload } from "../shared/sheet-clone-sync-data.js";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round
-// trip, so a document list, a report and the document browser must cost a fixed
+// trip, so a document list, a sheetClone and the document browser must cost a fixed
 // number of statements, not one read of every team document per task. Each read
 // must also answer exactly as reading the team's whole document list does.
-test("document, report and browser reads cost the same statements for few or many documents", async (t) => {
+test("document, sheetClone and browser reads cost the same statements for few or many documents", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const statements = { count: 0, rows: 0 },
-    // `whole` reads every document and report first, as these reads did
+    // `whole` reads every document and sheetClone first, as these reads did
     // before, so the prefix reads answer from that list instead of SQL.
     services = (whole = false) => {
       const context = f.makeContext(),
@@ -32,7 +32,7 @@ test("document, report and browser reads cost the same statements for few or man
           async (s) => {
             if (whole) {
               await s.list("document");
-              await s.list("report");
+              await s.list("sheetClone");
             }
             const query = s.tx.query.bind(s.tx);
             s.tx.query = async (...args) => {
@@ -51,8 +51,8 @@ test("document, report and browser reads cost the same statements for few or man
           new PostgresDocumentRepository({ context }),
           f.user,
         ),
-        reports: new ReportBusinessService(
-          new PostgresReportRepository({ context }),
+        sheetClones: new SheetCloneBusinessService(
+          new PostgresSheetCloneRepository({ context }),
           f.user,
         ),
         browser: new DocumentBrowserBusinessService(
@@ -72,24 +72,26 @@ test("document, report and browser reads cost the same statements for few or man
           f.teamId,
           entity,
           JSON.stringify(key),
-          canonical(entity === "report" ? packReportPayload(payload) : payload),
+          canonical(
+            entity === "sheetClone" ? packSheetClonePayload(payload) : payload,
+          ),
           Date.parse("2026-10-01T00:00:00Z") + Number(deleted),
           deleted,
         ],
       ),
     template = f.state.entities[entityId("task", [f.taskId])].payload,
-    report = await session((s) => s.get("report", [f.reportId])),
-    reportTasks = [...report.payload.data.tasks],
-    saveReport = () =>
+    sheetClone = await session((s) => s.get("sheetClone", [f.sheetCloneId])),
+    sheetCloneTasks = [...sheetClone.payload.data.tasks],
+    saveSheetClone = () =>
       f.pool.query(
-        "UPDATE graeboard.site_entities SET payload=$3 WHERE team_id=$1 AND entity='report' AND entity_key=$2",
+        "UPDATE graeboard.site_entities SET payload=$3 WHERE team_id=$1 AND entity='sheetClone' AND entity_key=$2",
         [
           f.teamId,
-          JSON.stringify([f.reportId]),
+          JSON.stringify([f.sheetCloneId]),
           canonical(
-            packReportPayload({
-              ...report.payload,
-              data: { ...report.payload.data, tasks: reportTasks },
+            packSheetClonePayload({
+              ...sheetClone.payload,
+              data: { ...sheetClone.payload.data, tasks: sheetCloneTasks },
             }),
           ),
         ],
@@ -101,7 +103,7 @@ test("document, report and browser reads cost the same statements for few or man
   for (const id of [empty, cleared]) {
     await insert("task", [id], { ...template, position: 50 });
     await insert("cell", [id, "title"], { value: "빈 업무" });
-    reportTasks.push({ ...reportTasks[0], id });
+    sheetCloneTasks.push({ ...sheetCloneTasks[0], id });
   }
   await insert(
     "document",
@@ -111,14 +113,14 @@ test("document, report and browser reads cost the same statements for few or man
   );
   await insert(
     "document",
-    ["report", f.reportId, cleared, randomUUID()],
+    ["sheetClone", f.sheetCloneId, cleared, randomUUID()],
     { title: "삭제", position: 0, markdown: "지운 문서" },
     1,
   );
   const seededIds = [];
   let seeded = 0;
   // Each record: a task with two documents (one blank, out of key order by
-  // position), the same task copied into the report with its own document.
+  // position), the same task copied into the sheetClone with its own document.
   const seed = async (count) => {
     for (; seeded < count; seeded++) {
       const task = randomUUID();
@@ -135,14 +137,18 @@ test("document, report and browser reads cost the same statements for few or man
         position: 0,
         markdown: "본문 " + seeded,
       });
-      reportTasks.push({ ...reportTasks[0], id: task });
-      await insert("document", ["report", f.reportId, task, randomUUID()], {
-        title: "사본 문서",
-        position: 0,
-        markdown: seeded % 2 ? "사본 " + seeded : "",
-      });
+      sheetCloneTasks.push({ ...sheetCloneTasks[0], id: task });
+      await insert(
+        "document",
+        ["sheetClone", f.sheetCloneId, task, randomUUID()],
+        {
+          title: "사본 문서",
+          position: 0,
+          markdown: seeded % 2 ? "사본 " + seeded : "",
+        },
+      );
     }
-    await saveReport();
+    await saveSheetClone();
   };
   const browse = { teamId: f.teamId, year: 2026 },
     reads = {
@@ -152,38 +158,42 @@ test("document, report and browser reads cost the same statements for few or man
         s.documents.list({ kind: "task", taskId: seededIds[1] }),
       emptyTask: (s) => s.documents.list({ kind: "task", taskId: empty }),
       clearedTask: (s) => s.documents.list({ kind: "task", taskId: cleared }),
-      reportDocuments: (s) =>
+      sheetCloneDocuments: (s) =>
         s.documents.list(
-          { kind: "report", reportId: f.reportId, taskId: f.taskId },
+          {
+            kind: "sheetClone",
+            sheetCloneId: f.sheetCloneId,
+            taskId: f.taskId,
+          },
           { content: true },
         ),
-      emptyReportTask: (s) =>
+      emptySheetCloneTask: (s) =>
         s.documents.list(
-          { kind: "report", reportId: f.reportId, taskId: empty },
+          { kind: "sheetClone", sheetCloneId: f.sheetCloneId, taskId: empty },
           { content: true },
         ),
-      report: (s) => s.reports.read(f.reportId),
-      // Every seeded task's report documents in one request.
-      reportBatch: (s) =>
-        reportRoutes(
+      sheetClone: (s) => s.sheetClones.read(f.sheetCloneId),
+      // Every seeded task's sheetClone documents in one request.
+      sheetCloneBatch: (s) =>
+        sheetCloneRoutes(
           s.context,
-          `/reports/${f.reportId}/documents/batch`,
+          `/sheet-clones/${f.sheetCloneId}/documents/batch`,
           "POST",
           { taskIds: seededIds },
         ),
-      reports: (s) => s.reports.list({ teamId: f.teamId }),
+      sheetClones: (s) => s.sheetClones.list({ teamId: f.teamId }),
       sources: (s) => s.browser.query("sources", browse),
       liveTasks: (s) => s.browser.query("tasks", { ...browse, limit: 100 }),
-      reportTasks: (s) =>
+      sheetCloneTasks: (s) =>
         s.browser.query("tasks", {
           ...browse,
-          source: f.reportId,
+          source: f.sheetCloneId,
           limit: 100,
         }),
-      reportTask: (s) =>
+      sheetCloneTask: (s) =>
         s.browser.query("task", {
           ...browse,
-          source: f.reportId,
+          source: f.sheetCloneId,
           taskId: f.taskId,
         }),
     },
@@ -202,17 +212,17 @@ test("document, report and browser reads cost the same statements for few or man
   const many = await measure();
   for (const name of Object.keys(reads))
     assert.equal(many[name].count, few[name].count, name);
-  // One owner's list, the report list and one browser task read only their
+  // One owner's list, the sheetClone list and one browser task read only their
   // own rows, however many documents the team has.
   for (const name of [
     "taskDocuments",
     "seededTask",
     "emptyTask",
     "clearedTask",
-    "reportDocuments",
-    "emptyReportTask",
-    "reports",
-    "reportTask",
+    "sheetCloneDocuments",
+    "emptySheetCloneTask",
+    "sheetClones",
+    "sheetCloneTask",
   ])
     assert.equal(many[name].rows, few[name].rows, name);
 
@@ -244,12 +254,14 @@ test("document, report and browser reads cost the same statements for few or man
     ],
   );
   // With content, only stored documents, as the internal site answers.
-  assert.deepEqual(many.emptyReportTask.value.documents, []);
-  const tasks = new Map(many.report.value.tasks.map((task) => [task.id, task]));
+  assert.deepEqual(many.emptySheetCloneTask.value.documents, []);
+  const tasks = new Map(
+    many.sheetClone.value.tasks.map((task) => [task.id, task]),
+  );
   assert.equal(tasks.size, 33);
   assert.equal(tasks.get(empty).documentCount, 1);
   assert.equal(tasks.get(cleared).documentCount, 0);
-  const copied = many.report.value.tasks.filter(
+  const copied = many.sheetClone.value.tasks.filter(
     (task) => ![f.taskId, empty, cleared].includes(task.id),
   );
   assert.ok(
@@ -271,30 +283,33 @@ test("document, report and browser reads cost the same statements for few or man
     ),
   );
   const [, copy] = many.sources.value.sources;
-  assert.equal(copy.id, f.reportId);
+  assert.equal(copy.id, f.sheetCloneId);
   assert.equal(copy.taskCount, copied.length);
   assert.equal(copy.documentCount, copied.length);
-  assert.equal(many.reportTask.value.revision, many.report.value.revision);
+  assert.equal(
+    many.sheetCloneTask.value.revision,
+    many.sheetClone.value.revision,
+  );
 });
 
-// The report list reads names and dates in SQL without the report data. A
-// report whose data jsonb cannot read still lists, from its whole payload.
-test("report list reads metadata without data and keeps unreadable payloads", async (t) => {
+// The sheetClone list reads names and dates in SQL without the sheetClone data. A
+// sheetClone whose data jsonb cannot read still lists, from its whole payload.
+test("sheetClone list reads metadata without data and keeps unreadable payloads", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   const context = f.makeContext(),
-    service = new ReportBusinessService(
-      new PostgresReportRepository({ context }),
+    service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context }),
       f.user,
     ),
     insert = (key, payload, deleted = 0) =>
       f.pool.query(
-        "INSERT INTO graeboard.site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'report',$2,$3,1,$4)",
+        "INSERT INTO graeboard.site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'sheetClone',$2,$3,1,$4)",
         [f.teamId, JSON.stringify(key), canonical(payload), deleted],
       ),
     { data } = (
       await f.adapter.withTeamTransaction(f.teamId, (tx) =>
-        new DataSession(tx, f.teamId).get("report", [f.reportId]),
+        new DataSession(tx, f.teamId).get("sheetClone", [f.sheetCloneId]),
       )
     ).payload,
     left = randomUUID(),
@@ -323,9 +338,14 @@ test("report list reads metadata without data and keeps unreadable payloads", as
     },
     1,
   );
-  const { reports } = await service.list({ teamId: f.teamId });
+  const { sheetClones } = await service.list({ teamId: f.teamId });
   assert.deepEqual(
-    reports.map(({ id, name, year, author }) => ({ id, name, year, author })),
+    sheetClones.map(({ id, name, year, author }) => ({
+      id,
+      name,
+      year,
+      author,
+    })),
     [
       {
         id: unreadable,
@@ -334,14 +354,14 @@ test("report list reads metadata without data and keeps unreadable payloads", as
         author: "떠난 사람",
       },
       {
-        id: f.reportId,
-        name: "Contract report",
+        id: f.sheetCloneId,
+        name: "Contract sheetClone",
         year: 2026,
         author: "Contract",
       },
     ],
   );
-  assert.deepEqual(Object.keys(reports[0]), [
+  assert.deepEqual(Object.keys(sheetClones[0]), [
     "id",
     "name",
     "year",

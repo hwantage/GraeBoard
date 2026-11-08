@@ -1,4 +1,5 @@
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { channel } from "node:diagnostics_channel";
 import { createHash, randomUUID } from "node:crypto";
@@ -542,7 +543,10 @@ test("cached extraction cannot bypass untrusted operation base, desired or snaps
         () =>
           validateSnapshot(
             {
-              entities: { [id]: { ...record, deleted } },
+              entities: {
+                ...markedState().entities,
+                [id]: { ...record, deleted },
+              },
               receipts: {},
               conflicts: {},
             },
@@ -584,7 +588,7 @@ test("one sync cycle parses each pending document body once across its replays",
       payload: { title: "Memo", position: 0, markdown: markdownFor(url) },
     };
     const state = {
-        entities: { [id]: record },
+        entities: { ...markedState().entities, [id]: record },
         receipts: {},
         conflicts: {},
       },

@@ -304,7 +304,7 @@ test("시작 월은 개인 보기에 저장되고 두 해의 보고본과 현재
     0,
   );
   const taskIds = [f.current.id, f.carried.id, f.future.id];
-  const report = await f.request("/reports", {
+  const sheetClone = await f.request("/sheet-clones", {
     teamId: f.teamId,
     year: 2026,
     referenceDate: "2027-01-08",
@@ -312,8 +312,8 @@ test("시작 월은 개인 보기에 저장되고 두 해의 보고본과 현재
     view,
     taskIds,
   });
-  assert.equal(report.status, 201);
-  const saved = await f.request(`/reports/${report.data.id}`);
+  assert.equal(sheetClone.status, 201);
+  const saved = await f.request(`/sheet-clones/${sheetClone.data.id}`);
   assert.equal(saved.data.view.startMonth, 2);
   assert.deepEqual(
     new Set(saved.data.tasks.map((t) => t.id)),

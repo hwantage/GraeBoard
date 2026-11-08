@@ -4,6 +4,7 @@ import {
   postgresMigrations,
   siteKeyMigration,
   teamMaintenanceMigration,
+  teamSheetCloneMigration,
   accessTokenMigrations,
 } from "../server/migrations/postgres.mjs";
 
@@ -16,6 +17,7 @@ export function siteKeyMigrationSql(teamId) {
     throw new Error("Provide the existing team UUID");
   return `-- Run in the team's Supabase SQL Editor during the approved maintenance window.
 -- Additive site v1/v2 -> v3 and team v1 -> v2; existing data is preserved.
+-- Team v3 converts stored sheet clone data and runs only through the SheetClone cutover tool (npm run cutover:sheet-clone).
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
@@ -28,9 +30,11 @@ BEGIN
     OR NOT EXISTS(SELECT 1 FROM graeboard.team_meta WHERE singleton=1 AND team_id='${teamId}') THEN
     RAISE EXCEPTION 'Site/team identity mismatch';
   END IF;
-  IF (SELECT COUNT(*) FROM graeboard.schema_migrations) NOT IN (1,2) OR NOT EXISTS(
+  IF (SELECT COUNT(*) FROM graeboard.schema_migrations) NOT IN (1,2,3) OR NOT EXISTS(
     SELECT 1 FROM graeboard.schema_migrations WHERE scope='team' AND version=1 AND checksum='${postgresMigrations.team.checksum}') OR EXISTS(
-    SELECT 1 FROM graeboard.schema_migrations WHERE version<>1 AND NOT (scope='team' AND version=2 AND checksum='${teamMaintenanceMigration.checksum}')) THEN
+    SELECT 1 FROM graeboard.schema_migrations WHERE version<>1 AND NOT (scope='team' AND version=2 AND checksum='${teamMaintenanceMigration.checksum}')
+      AND NOT (scope='team' AND version=3 AND checksum='${teamSheetCloneMigration.checksum}')) OR (
+    EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=3) AND NOT EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=2)) THEN
     RAISE EXCEPTION 'Team migration history mismatch';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=2) THEN

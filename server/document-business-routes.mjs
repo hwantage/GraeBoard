@@ -19,9 +19,9 @@ export function installDocumentBusinessRoutes(
   };
   const routes = [
     "/api/tasks/:id/documents",
-    "/api/reports/:id/tasks/:taskId/documents",
+    "/api/sheet-clones/:id/tasks/:taskId/documents",
     "/api/teams/:teamId/years/:year/memos",
-    "/api/reports/:reportId/memos",
+    "/api/sheet-clones/:sheetCloneId/memos",
   ];
   const target = (req) => documentRouteScope(req.path.slice(4));
   const send = (
@@ -83,7 +83,7 @@ export function installDocumentBusinessRoutes(
   const bodies = [
     ...routes.map((base) => `${base}/:documentId`),
     "/api/tasks/:id/document",
-    "/api/reports/:id/tasks/:taskId/document",
+    "/api/sheet-clones/:id/tasks/:taskId/document",
     "/api/calendar/entries/:id/document",
   ];
   for (const path of bodies) {
@@ -106,7 +106,7 @@ export function installDocumentBusinessRoutes(
       );
     });
   }
-  app.post("/api/reports/:id/documents/batch", (req, res, next) =>
+  app.post("/api/sheet-clones/:id/documents/batch", (req, res, next) =>
     send(business(req).readBatch(req.params.id, req.body.taskIds), res, next),
   );
 }

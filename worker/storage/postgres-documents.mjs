@@ -30,8 +30,8 @@ async function annualHidden(s, scope) {
 // The live record a document belongs to, or null. A copy memo's parent is the
 // copy, whose payload (megabytes) is not needed: copies have no deletedAt.
 async function liveParent(s, scope) {
-  if (scope.kind === "reportMemo")
-    return (await s.alive("report", [scope.prefix[1]])) || null;
+  if (scope.kind === "sheetCloneMemo")
+    return (await s.alive("sheetClone", [scope.prefix[1]])) || null;
   const parent = await s.get(scope.kind, [scope.prefix[1]]);
   return parent && !parent.deleted && !parent.payload.deletedAt ? parent : null;
 }
@@ -39,7 +39,7 @@ export async function requireUploadDocument(s, scope) {
   if (scope.kind !== "annual") {
     const parent = await liveParent(s, scope);
     assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
-    if (scope.kind === "report")
+    if (scope.kind === "sheetClone")
       assert(
         parent.payload.data.tasks.some((task) => task.id === scope.prefix[2]),
         404,
@@ -59,7 +59,7 @@ export async function requireUploadDocument(s, scope) {
     !row?.deleted &&
       (row ||
         (scope.documentId === "main" &&
-          ["task", "report", "calendar"].includes(scope.kind))),
+          ["task", "sheetClone", "calendar"].includes(scope.kind))),
     404,
     "문서를 찾을 수 없습니다. 먼저 복원하세요.",
   );
@@ -93,7 +93,7 @@ export async function documentKeysUnder(s, parent, { deleted = false } = {}) {
     )
   ).rows.map((row) => JSON.parse(row.entity_key));
 }
-// One owner's list from its live rows. A task or report task that never had a
+// One owner's list from its live rows. A task or sheetClone task that never had a
 // document shows the empty main document; `used` says whether a deleted one
 // exists and is asked only when no live row does.
 // content "stored": the stored documents alone, as {id, title, markdown}. That
@@ -111,7 +111,7 @@ async function listView(rows, kind, used, content) {
       title: r.payload.title,
       markdown: r.payload.markdown,
     }));
-  if (!rows.length && ["task", "report"].includes(kind) && !(await used()))
+  if (!rows.length && ["task", "sheetClone"].includes(kind) && !(await used()))
     return [
       {
         id: "main",
@@ -147,9 +147,9 @@ export async function documentList(s, scope, { content = false } = {}) {
     content,
   );
 }
-// documentList for every owner directly under `parent` (each task of a report),
+// documentList for every owner directly under `parent` (each task of a sheetClone),
 // read with one query and grouped once instead of one read per owner. Owners
-// are tasks or report tasks, never annual memos. `rows` are the live rows read.
+// are tasks or sheetClone tasks, never annual memos. `rows` are the live rows read.
 export async function documentListsUnder(s, parent, kind) {
   const rows = await s.listChildren("document", parent),
     owners = new Map(),
@@ -205,12 +205,14 @@ export class PostgresDocumentRepository {
       assert(!row.payload.deletedAt, 404, "업무를 찾을 수 없습니다.");
       return { teamId, prefix: ["task", target.taskId], documentId, kind };
     }
-    if (["report", "reportMemo"].includes(kind)) {
+    if (["sheetClone", "sheetCloneMemo"].includes(kind)) {
       // A copy memo needs only the copy's team; only a copy row's documents
       // read the copy to find the row.
       let teamId;
-      if (kind === "report") {
-        const located = await ctx.locate("report", target.reportId, { write });
+      if (kind === "sheetClone") {
+        const located = await ctx.locate("sheetClone", target.sheetCloneId, {
+          write,
+        });
         teamId = located.teamId;
         assert(
           located.row.payload.data.tasks.some((t) => t.id === target.taskId),
@@ -218,13 +220,15 @@ export class PostgresDocumentRepository {
           "사본 업무를 찾을 수 없습니다.",
         );
       } else
-        teamId = await ctx.locateTeam("report", target.reportId, { write });
+        teamId = await ctx.locateTeam("sheetClone", target.sheetCloneId, {
+          write,
+        });
       return {
         teamId,
         prefix:
-          kind === "report"
-            ? ["report", target.reportId, target.taskId]
-            : ["reportMemo", target.reportId],
+          kind === "sheetClone"
+            ? ["sheetClone", target.sheetCloneId, target.taskId]
+            : ["sheetCloneMemo", target.sheetCloneId],
         documentId,
         kind,
       };
@@ -338,13 +342,13 @@ export class PostgresDocumentRepository {
       body,
     );
   }
-  async readBatch(user, reportId, taskIds) {
+  async readBatch(user, sheetCloneId, taskIds) {
     const tasks = [];
     let bytes = 0;
     for (const taskId of taskIds) {
       const { documents } = await this.list(
         user,
-        { kind: "report", reportId, taskId },
+        { kind: "sheetClone", sheetCloneId, taskId },
         { content: true },
       );
       const size = documents.reduce(
@@ -370,7 +374,7 @@ export class PostgresDocumentRepository {
         if (kind !== "annual") {
           const parent = await liveParent(s, scope);
           assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
-          if (kind === "report")
+          if (kind === "sheetClone")
             assert(
               parent.payload.data.tasks.some((t) => t.id === prefix[2]),
               404,
@@ -398,13 +402,13 @@ export class PostgresDocumentRepository {
         const virtual =
           key &&
           documentId === "main" &&
-          ["task", "report", "calendar"].includes(kind);
+          ["task", "sheetClone", "calendar"].includes(kind);
         if (method === "GET")
           return !key
             ? {
                 documents: await documentList(s, scope, {
                   content:
-                    content && ["task", "report"].includes(kind)
+                    content && ["task", "sheetClone"].includes(kind)
                       ? "stored"
                       : content,
                 }),
@@ -428,7 +432,7 @@ export class PostgresDocumentRepository {
             400,
             `문서는 ${MAX_TASK_DOCUMENTS}개까지 추가할 수 있습니다.`,
           );
-          if (["task", "report"].includes(kind) && !allDocs.length)
+          if (["task", "sheetClone"].includes(kind) && !allDocs.length)
             await s.put("document", [...prefix, "main"], {
               title: DEFAULT_DOCUMENT_TITLE,
               position: 0,
@@ -439,7 +443,9 @@ export class PostgresDocumentRepository {
             docs.some(
               (d) =>
                 d.title ===
-                (["annual", "reportMemo"].includes(kind) ? "메모 " : "문서 ") +
+                (["annual", "sheetCloneMemo"].includes(kind)
+                  ? "메모 "
+                  : "문서 ") +
                   number,
             )
           )
@@ -458,7 +464,7 @@ export class PostgresDocumentRepository {
               Math.max(
                 -1,
                 ...allDocs.map((d) => d.payload.position),
-                ...(["task", "report"].includes(kind) ? [0] : []),
+                ...(["task", "sheetClone"].includes(kind) ? [0] : []),
               ) + 1,
             markdown: "",
           });

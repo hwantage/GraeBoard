@@ -22,10 +22,11 @@ export function isExcluded(record, state, retentions = []) {
       record.payload.years.length > 0 &&
       record.payload.years.every((year) => years.has(String(year)))
     );
-  if (record.entity === "report") return years.has(String(record.payload.year));
-  if (["reportTask", "reportCell"].includes(record.entity))
+  if (record.entity === "sheetClone")
+    return years.has(String(record.payload.year));
+  if (["sheetCloneTask", "sheetCloneCell"].includes(record.entity))
     return isExcluded(
-      entities[entityId("report", [record.key[0]])],
+      entities[entityId("sheetClone", [record.key[0]])],
       entities,
       retentions,
     );
@@ -50,8 +51,8 @@ export function isExcluded(record, state, retentions = []) {
   const parent =
     owner === "task"
       ? "task"
-      : owner.startsWith("report")
-        ? "report"
+      : owner.startsWith("sheetClone")
+        ? "sheetClone"
         : "calendar";
   return isExcluded(entities[entityId(parent, [id])], entities, retentions);
 }

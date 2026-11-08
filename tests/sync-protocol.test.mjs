@@ -1,11 +1,11 @@
 import test from "node:test";
+import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   canonical,
   digest,
   equal,
-  emptyState,
   entityId,
   stateHash,
   validateOperation,
@@ -22,8 +22,8 @@ import {
 import { operationBatch } from "../server/sync/service.mjs";
 const identity = { repoId: "repo", teamId: "team" };
 const operation = (id, changes, dependsOn = []) => ({
-  protocol: 1,
-  reducer: 1,
+  protocol: 3,
+  reducer: 3,
   ...identity,
   opId: id,
   writerEpoch: "writer",
@@ -97,7 +97,7 @@ test("immutable state and operations survive replay, conflict rollback and empty
   };
   const state = freeze(
       reduce(
-        emptyState(),
+        markedState(),
         operation("frozen-create", [change({ name: "original" })]),
       ).state,
     ),
@@ -130,7 +130,7 @@ test("large user commands remain atomic and batch envelopes stay within receiver
   assert.ok(
     Buffer.byteLength(
       JSON.stringify({
-        protocol: 1,
+        protocol: 3,
         kind: "operations",
         parent: "a".repeat(40),
         operations: batch,
@@ -225,7 +225,7 @@ test("resolution references and version tokens reject invalid types, lengths and
       baseVersion,
     );
   const first = reduce(
-    emptyState(),
+    markedState(),
     operation("original", [change({ name: "original" })]),
   ).state;
   const state = reduce(
@@ -266,7 +266,7 @@ test("resolution references and version tokens reject invalid types, lengths and
 });
 test("T2/T3/T5 immutable receipts preserve conflicts and dependent final drafts", () => {
   let state = reduce(
-    emptyState(),
+    markedState(),
     operation("create", [change({ name: "original" })]),
   ).state;
   state = reduce(
@@ -313,7 +313,7 @@ test("T4 deterministic markdown merges only independent ranges", () => {
 });
 test("T6 generation prevents late edits after explicit restore", () => {
   let state = reduce(
-    emptyState(),
+    markedState(),
     operation("create", [change({ name: "a" })]),
   ).state;
   state = reduce(
@@ -339,7 +339,7 @@ test("T6 generation prevents late edits after explicit restore", () => {
 });
 test("T7 operation atomicity and T14 unsupported tenant/privilege payload rejection", () => {
   let state = reduce(
-    emptyState(),
+    markedState(),
     operation("create", [change({ name: "a" })]),
   ).state;
   const bulk = operation("bulk", [
@@ -423,9 +423,9 @@ test("batch replay matches isolated command reduction including dependent failur
       { ...change({ name: "must roll back" }), key: ["extra"] },
     ]),
   );
-  let isolated = emptyState();
+  let isolated = markedState();
   for (const op of ops) isolated = reduce(isolated, op).state;
-  const batch = reduceMany(emptyState(), ops);
+  const batch = reduceMany(markedState(), ops);
   assert.deepEqual(batch, isolated);
   assert.equal(batch.entities[entityId("person", ["extra"])], undefined);
   assert.equal(
@@ -434,10 +434,10 @@ test("batch replay matches isolated command reduction including dependent failur
   );
 });
 
-test("T14 snapshots reject authority metadata and foreign image/report rows before installation", async () => {
+test("T14 snapshots reject authority metadata and foreign image/sheetClone rows before installation", async () => {
   const { validateSnapshot } = await import("../server/sync/reducer.mjs");
   const state = reduce(
-    emptyState(),
+    markedState(),
     operation("create", [change({ name: "allowed" })]),
   ).state;
   state.entities[entityId("person", ["p"])].payload.email =
@@ -459,7 +459,7 @@ test("T14 snapshots reject authority metadata and foreign image/report rows befo
     fields: ["title", "position", "markdown"],
   };
   assert.throws(
-    () => reduce(emptyState(), operation("image", [document])),
+    () => reduce(markedState(), operation("image", [document])),
     /Foreign/,
   );
 });

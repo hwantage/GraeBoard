@@ -9,12 +9,16 @@ import {
   validateOperation,
   validateEntityPayload,
   protocolVersion,
+  supportedVersion,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
 } from "./protocol.mjs";
-import { normalizeEntityPayload } from "../../shared/report-sync-data.js";
+import { normalizeEntityPayload } from "../../shared/sheet-clone-sync-data.js";
 
-function edits(base, value, reducer = 1) {
+// Reducer 3 keeps protocol 1's difference budget and reducer 4 protocol 2's.
+function edits(base, value, reducer = PROTOCOL) {
   const chunks = diffChars(base, value, {
-    maxEditLength: reducer === 2 ? 2000 : 20000,
+    maxEditLength: reducer === SPLIT_PROTOCOL ? 2000 : 20000,
   }); // deterministic work budget, never wall-clock timeout
   if (!chunks) return null;
   let offset = 0,
@@ -36,8 +40,9 @@ function edits(base, value, reducer = 1) {
   if (pending) changes.push(pending);
   return changes;
 }
-export function mergeMarkdown(base, current, desired, reducer = 1) {
-  if (![1, 2].includes(reducer)) throw new Error("Unsupported reducer version");
+export function mergeMarkdown(base, current, desired, reducer = PROTOCOL) {
+  if (!supportedVersion(reducer))
+    throw new Error("Unsupported reducer version");
   if (current === desired || desired === base) return current;
   if (current === base) return desired;
   const a = edits(base, current, reducer),
@@ -70,7 +75,7 @@ export function mergeMarkdown(base, current, desired, reducer = 1) {
   }
   return text + base.slice(offset);
 }
-function mergeReportTask(base, current, desired) {
+function mergeSheetCloneTask(base, current, desired) {
   const result = { ...current };
   for (const key of new Set([
     ...Object.keys(base || {}),
@@ -107,6 +112,8 @@ export function validateSnapshot(state, identity) {
     )
   )
     throw new Error("Invalid canonical snapshot");
+  if (!supportedVersion(protocolVersion(state)))
+    throw new Error("Unsupported canonical protocol");
   for (const [key, record] of Object.entries(state.entities)) {
     if (
       key !== entityId(record.entity, record.key) ||
@@ -124,6 +131,30 @@ export function validateSnapshot(state, identity) {
     );
   }
   for (const [id, conflict] of Object.entries(state.conflicts)) {
+    // A conflict settled under protocol 1 or 2 stays in C as it was recorded,
+    // like its receipt: immutable history whose operation hash the receipt
+    // binds. Its content is not read again, so it is checked as a record only.
+    const archived =
+      plain(conflict?.operation) &&
+      !supportedVersion(
+        conflict.operation.protocol,
+        conflict.operation.reducer,
+      );
+    if (archived) {
+      if (
+        conflict.operation.teamId !== identity.teamId ||
+        conflict.operation.repoId !== identity.repoId ||
+        id !== conflict.operation.opId ||
+        conflict.conflictId !== id ||
+        conflict.opId !== id ||
+        !plain(conflict.current) ||
+        typeof conflict.reason !== "string" ||
+        !token(conflict.resolution) ||
+        !state.receipts[conflict.resolution]
+      )
+        throw new Error("Invalid archived conflict");
+      continue;
+    }
     validateOperation(conflict.operation, identity);
     if (
       id !== conflict.operation.opId ||
@@ -185,13 +216,16 @@ function validateState(entities) {
     const p = e.payload;
     if (e.entity === "cell" && !alive("task", [e.key[0]]))
       return "Missing parent task";
-    if (e.entity === "reportTask" && !entities[entityId("report", [e.key[0]])])
-      return "Missing parent report";
     if (
-      e.entity === "reportCell" &&
-      !entities[entityId("reportTask", e.key.slice(0, 2))]
+      e.entity === "sheetCloneTask" &&
+      !entities[entityId("sheetClone", [e.key[0]])]
     )
-      return "Missing parent report task";
+      return "Missing parent sheetClone";
+    if (
+      e.entity === "sheetCloneCell" &&
+      !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]
+    )
+      return "Missing parent sheetClone task";
     if (e.entity === "protocol" && e.deleted) return "Deleted protocol marker";
     if (e.entity === "document") {
       const parent =
@@ -199,8 +233,8 @@ function validateState(entities) {
           ? "task"
           : e.key[0] === "calendar"
             ? "calendar"
-            : e.key[0].startsWith("report")
-              ? "report"
+            : e.key[0].startsWith("sheetClone")
+              ? "sheetClone"
               : null;
       if (parent && !alive(parent, [e.key[1]])) return "Missing document owner";
       if (
@@ -218,7 +252,7 @@ function validateState(entities) {
           return "Missing or foreign calendar tag";
       }
     }
-    if (["tag", "filter", "report"].includes(e.entity)) {
+    if (["tag", "filter", "sheetClone"].includes(e.entity)) {
       const name =
         e.entity === "tag"
           ? p.name.replace(/[A-Z]/g, (x) => x.toLowerCase())
@@ -274,16 +308,16 @@ export function reduce(
           ? entities[entityId("task", [c.key[0]])]
           : c.entity === "document" && ["task", "calendar"].includes(c.key[0])
             ? entities[entityId(c.key[0], [c.key[1]])]
-            : op.protocol === 2 && c.entity === "reportTask"
-              ? entities[entityId("report", [c.key[0]])]
-              : op.protocol === 2 && c.entity === "reportCell"
-                ? entities[entityId("reportTask", c.key.slice(0, 2))]
+            : op.protocol === SPLIT_PROTOCOL && c.entity === "sheetCloneTask"
+              ? entities[entityId("sheetClone", [c.key[0]])]
+              : op.protocol === SPLIT_PROTOCOL && c.entity === "sheetCloneCell"
+                ? entities[entityId("sheetCloneTask", c.key.slice(0, 2))]
                 : null;
       if (
         (parent?.deleted ||
-          (op.protocol === 2 &&
-            c.entity === "reportCell" &&
-            entities[entityId("report", [c.key[0]])]?.deleted)) &&
+          (op.protocol === SPLIT_PROTOCOL &&
+            c.entity === "sheetCloneCell" &&
+            entities[entityId("sheetClone", [c.key[0]])]?.deleted)) &&
         c.action !== "delete"
       ) {
         reason = "Parent task deleted";
@@ -363,11 +397,11 @@ export function reduce(
               }
             }
             if (
-              op.reducer === 2 &&
-              c.entity === "reportTask" &&
+              op.reducer === SPLIT_PROTOCOL &&
+              c.entity === "sheetCloneTask" &&
               field === "data"
             ) {
-              const merged = mergeReportTask(base, value, desired);
+              const merged = mergeSheetCloneTask(base, value, desired);
               if (merged !== null) {
                 payload[field] = merged;
                 continue;
@@ -468,7 +502,7 @@ export const uniqueName = (record) => {
   if (
     !record ||
     record.deleted ||
-    !["tag", "filter", "report"].includes(record.entity)
+    !["tag", "filter", "sheetClone"].includes(record.entity)
   )
     return null;
   const p = record.payload,
@@ -506,13 +540,16 @@ function validateIncrement(entities, undo, context) {
     const p = e.payload;
     if (e.entity === "cell" && !entities[entityId("task", [e.key[0]])])
       return "Missing parent task";
-    if (e.entity === "reportTask" && !entities[entityId("report", [e.key[0]])])
-      return "Missing parent report";
     if (
-      e.entity === "reportCell" &&
-      !entities[entityId("reportTask", e.key.slice(0, 2))]
+      e.entity === "sheetCloneTask" &&
+      !entities[entityId("sheetClone", [e.key[0]])]
     )
-      return "Missing parent report task";
+      return "Missing parent sheetClone";
+    if (
+      e.entity === "sheetCloneCell" &&
+      !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]
+    )
+      return "Missing parent sheetClone task";
     if (e.entity === "protocol" && e.deleted) return "Deleted protocol marker";
     if (e.entity === "document") {
       const parent =
@@ -520,8 +557,8 @@ function validateIncrement(entities, undo, context) {
           ? "task"
           : e.key[0] === "calendar"
             ? "calendar"
-            : e.key[0].startsWith("report")
-              ? "report"
+            : e.key[0].startsWith("sheetClone")
+              ? "sheetClone"
               : null;
       if (parent && !entities[entityId(parent, [e.key[1]])])
         return "Missing document owner";

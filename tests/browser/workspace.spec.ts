@@ -3512,7 +3512,7 @@ test("팀별 파스텔 테마를 선택·저장하고 기존 스냅샷·전환·
       },
     ],
   });
-  const snapshot = await post(page, "/reports", {
+  const snapshot = await post(page, "/sheet-clones", {
     teamId,
     year: 2026,
     name: "테마 변경 전 스냅샷",
@@ -3603,7 +3603,7 @@ test("팀별 파스텔 테마를 선택·저장하고 기존 스냅샷·전환·
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
   }
   const saved = await (
-    await page.request.get(`/api/reports/${snapshot.id}`)
+    await page.request.get(`/api/sheet-clones/${snapshot.id}`)
   )
     .json()
     .then(unpack);
@@ -5276,7 +5276,7 @@ for (const connectedExpiry of [false, true]) {
         year: 2026,
         fields: { title: "재인증 뒤 새 업무" },
       });
-      await post(page, "/reports", {
+      await post(page, "/sheet-clones", {
         teamId,
         year: 2026,
         name: "재인증 뒤 사본",
@@ -5339,7 +5339,7 @@ for (const connectedExpiry of [false, true]) {
               "document-body",
               "memo-list",
               "memo-body",
-              "report-tabs",
+              "sheet-clone-tabs",
               "editor-autosave",
             ],
           },
@@ -9905,7 +9905,7 @@ for (const copy of [false, true]) {
       expect(saved.ok(), await saved.text()).toBeTruthy();
     }
     if (copy)
-      await post(page, "/reports", {
+      await post(page, "/sheet-clones", {
         teamId,
         year: 2026,
         name: "필터 스크롤 사본",

@@ -42,17 +42,18 @@ export function interferenceKeys(entity, key, payload) {
   const keys = new Set([JSON.stringify([entity, key])]);
   const add = (type, parts) => keys.add(JSON.stringify([type, parts]));
   if (entity === "cell") add("task", [key[0]]);
-  if (["reportTask", "reportCell"].includes(entity)) add("report", [key[0]]);
-  if (entity === "reportCell") add("reportTask", key.slice(0, 2));
+  if (["sheetCloneTask", "sheetCloneCell"].includes(entity))
+    add("sheetClone", [key[0]]);
+  if (entity === "sheetCloneCell") add("sheetCloneTask", key.slice(0, 2));
   if (entity === "document") {
     if (key[0] === "task") add("task", [key[1]]);
     if (key[0] === "calendar") add("calendar", [key[1]]);
-    if (key[0].startsWith("report")) add("report", [key[1]]);
+    if (key[0].startsWith("sheetClone")) add("sheetClone", [key[1]]);
   }
   if (entity === "calendar")
     for (const tag of payload?.tags || []) add("tag", [tag.id]);
   if (entity === "weekly") add("task", [key[2]]);
-  if (["tag", "filter", "report"].includes(entity))
+  if (["tag", "filter", "sheetClone"].includes(entity))
     keys.add("unique:" + entity);
   return [...keys];
 }

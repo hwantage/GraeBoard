@@ -147,14 +147,14 @@ async function memo(page: Page, title: string, year = 2026, markdown = "") {
   return id;
 }
 const copySheet = (page: Page, name = "링크 사본") =>
-  request(page, "/reports", "POST", {
+  request(page, "/sheet-clones", "POST", {
     teamId,
     year: 2026,
     name,
     referenceDate: "2026-10-26",
     view: defaultView(2026),
     taskIds,
-  }).then((report) => report.id as string);
+  }).then((sheetClone) => sheetClone.id as string);
 const memoCard = (page: Page, id: string) =>
   page.locator(`.memo-document-card[data-document-id="${id}"]`);
 async function openMemos(page: Page) {
@@ -702,7 +702,7 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
   browserName,
 }, info) => {
   const id = await memo(page, "링크할 메모");
-  const report = await copySheet(page);
+  const sheetClone = await copySheet(page);
   await page.reload();
   await openMemos(page);
   const card = memoCard(page, id);
@@ -725,7 +725,7 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
     await besideExpand(memoCard(page, id)),
   );
   expect(clip.text).toBe(
-    new URL(`/links/report-memo/${report}/${id}`, page.url()).href,
+    new URL(`/links/sheet-clone-memo/${sheetClone}/${id}`, page.url()).href,
   );
   await page
     .locator(`[data-cell="${taskIds[1]}:title"]`)
@@ -734,7 +734,8 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
   await expect(detail).toBeVisible();
   clip = await copied(page, browserName, await besideExpand(detail));
   expect(clip.text).toBe(
-    new URL(`/links/report-task/${report}/${taskIds[1]}`, page.url()).href,
+    new URL(`/links/sheet-clone-task/${sheetClone}/${taskIds[1]}`, page.url())
+      .href,
   );
   expect(clip.html).toContain(">링크 대상 업무</a>");
 });
@@ -849,14 +850,14 @@ test("사본 업무와 사본 메모 링크는 지금 시트 위에 열고 사�
   page,
 }, info) => {
   const id = await memo(page, "원본 메모", 2026, "원본 메모 본문");
-  const report = await copySheet(page);
-  await request(page, `/reports/${report}/memos/${id}`, "PATCH", {
+  const sheetClone = await copySheet(page);
+  await request(page, `/sheet-clones/${sheetClone}/memos/${id}`, "PATCH", {
     title: "사본 메모 이름",
     expectedTitle: "원본 메모",
   });
   await request(
     page,
-    `/reports/${report}/tasks/${taskIds[1]}/documents/main`,
+    `/sheet-clones/${sheetClone}/tasks/${taskIds[1]}/documents/main`,
     "PUT",
     {
       markdown: "사본 업무 문서",
@@ -869,7 +870,7 @@ test("사본 업무와 사본 메모 링크는 지금 시트 위에 열고 사�
   await saveTask(
     page,
     taskIds[0],
-    `[사본 업무](/links/report-task/${report}/${taskIds[1]}) [사본 메모](/links/report-memo/${report}/${id})\n`,
+    `[사본 업무](/links/sheet-clone-task/${sheetClone}/${taskIds[1]}) [사본 메모](/links/sheet-clone-memo/${sheetClone}/${id})\n`,
   );
   await page.reload();
   const original = page.getByRole("tab", { name: "원본", exact: true });

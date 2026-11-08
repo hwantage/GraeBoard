@@ -85,7 +85,7 @@ async function scrollTo(page: Page, top: 0 | "bottom", visible: Locator) {
 const saved = (page: Page) =>
   page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok());
 
-let teamId: string, taskIds: string[], reportId: string;
+let teamId: string, taskIds: string[], sheetCloneId: string;
 test.beforeEach(async ({ page }) => {
   await page.route("**/*", (route) =>
     new URL(route.request().url()).hostname === "127.0.0.1"
@@ -128,8 +128,8 @@ test.beforeEach(async ({ page }) => {
   const settings = (await get(page, "/bootstrap")).teams.find(
     (t: any) => t.id === teamId,
   ).settings;
-  reportId = (
-    await post(page, "/reports", {
+  sheetCloneId = (
+    await post(page, "/sheet-clones", {
       teamId,
       year: 2026,
       name: "선택 사본",

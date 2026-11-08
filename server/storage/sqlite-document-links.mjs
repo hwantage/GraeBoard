@@ -1,6 +1,6 @@
 import { retentionView } from "../sync/visibility.mjs";
 import { parse } from "../db.mjs";
-import { reportBrowseIndex } from "../reports.mjs";
+import { sheetCloneBrowseIndex } from "../sheet-clones.mjs";
 import { parseDocumentLinkPath } from "../../shared/document-links.js";
 
 // Current titles of linked documents with the reads that open them: a task
@@ -20,22 +20,22 @@ export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
       }
     return readable.get(teamId);
   };
-  const reports = new Map();
-  const report = (id) => {
-    if (!reports.has(id)) {
+  const sheetClones = new Map();
+  const sheetClone = (id) => {
+    if (!sheetClones.has(id)) {
       const row = db
-        .prepare("SELECT id,team_id,data FROM reports WHERE id=?")
+        .prepare("SELECT id,team_id,data FROM sheet_clones WHERE id=?")
         .get(id);
-      reports.set(
+      sheetClones.set(
         id,
         row &&
           canRead(row.team_id) &&
-          !retentionView(db, row.team_id).hidden("report", [row.id])
+          !retentionView(db, row.team_id).hidden("sheetClone", [row.id])
           ? row
           : null,
       );
     }
-    return reports.get(id);
+    return sheetClones.get(id);
   };
   const taskRow = db.prepare(
     `SELECT t.id,t.team_id AS teamId,c.value AS title FROM tasks t LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
@@ -49,8 +49,8 @@ export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
   const memoRow = db.prepare(
     "SELECT title FROM annual_memos WHERE team_id=? AND year=? AND id=?",
   );
-  const reportMemoRow = db.prepare(
-    "SELECT title FROM report_memos WHERE report_id=? AND id=?",
+  const sheetCloneMemoRow = db.prepare(
+    "SELECT title FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
   );
   const links = [];
   for (const path of paths) {
@@ -79,9 +79,9 @@ export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
           : null;
       if (row) found = { teamId: link.teamId, title: row.title };
     } else {
-      const sheet = report(link.reportId);
-      if (sheet && link.kind === "report-task") {
-        const task = reportBrowseIndex(sheet.data).tasks.get(link.id);
+      const sheet = sheetClone(link.sheetCloneId);
+      if (sheet && link.kind === "sheet-clone-task") {
+        const task = sheetCloneBrowseIndex(sheet.data).tasks.get(link.id);
         if (task)
           found = {
             teamId: sheet.team_id,
@@ -90,12 +90,12 @@ export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
       } else if (
         sheet &&
         !retentionView(db, sheet.team_id).hidden("document", [
-          "reportMemo",
+          "sheetCloneMemo",
           sheet.id,
           link.id,
         ])
       ) {
-        const row = reportMemoRow.get(sheet.id, link.id);
+        const row = sheetCloneMemoRow.get(sheet.id, link.id);
         if (row) found = { teamId: sheet.team_id, title: row.title };
       }
     }

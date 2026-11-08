@@ -13,14 +13,19 @@ export function installResourceEvents(
       teamAccess(request.user, request.params.id),
     ),
   );
-  registerEventRoute(app, "/api/reports/:id/events", (req, res) =>
-    documentEvents.watch(req, res, `report:${req.params.id}`, (request) => {
-      const row = db
-        .prepare("SELECT team_id FROM reports WHERE id=?")
-        .get(request.params.id);
-      requireThat(row, 404, "사본을 찾을 수 없습니다.");
-      teamAccess(request.user, row.team_id);
-    }),
+  registerEventRoute(app, "/api/sheet-clones/:id/events", (req, res) =>
+    documentEvents.watch(
+      req,
+      res,
+      `sheet-clone:${req.params.id}`,
+      (request) => {
+        const row = db
+          .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
+          .get(request.params.id);
+        requireThat(row, 404, "사본을 찾을 수 없습니다.");
+        teamAccess(request.user, row.team_id);
+      },
+    ),
   );
   app.use((req, res, next) => {
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
@@ -40,19 +45,20 @@ export function installResourceEvents(
           db.prepare("SELECT team_id FROM tasks WHERE id=?").get(id)?.team_id,
         );
     };
-    const report = path.match(/^\/api\/reports\/([^/]+)/)?.[1];
-    if (report) {
-      keys.add(`report:${report}`);
+    const sheetClone = path.match(/^\/api\/sheet-clones\/([^/]+)/)?.[1];
+    if (sheetClone) {
+      keys.add(`sheet-clone:${sheetClone}`);
       if (path.endsWith("/name"))
         team(
-          db.prepare("SELECT team_id FROM reports WHERE id=?").get(report)
-            ?.team_id,
+          db
+            .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
+            .get(sheetClone)?.team_id,
         );
-    } else if (path === "/api/reports") {
+    } else if (path === "/api/sheet-clones") {
       team(req.body?.teamId);
       if (req.method === "DELETE")
         for (const id of Array.isArray(req.body?.ids) ? req.body.ids : [])
-          if (typeof id === "string") keys.add(`report:${id}`);
+          if (typeof id === "string") keys.add(`sheet-clone:${id}`);
     } else if (path.startsWith("/api/tasks")) {
       team(req.body?.teamId);
       task(path.split("/")[3]);
@@ -87,7 +93,8 @@ export function installResourceEvents(
           db.prepare("SELECT team_id FROM audit WHERE id=?").get(id)?.team_id,
         );
       else {
-        if (req.body?.reportId) keys.add(`report:${req.body.reportId}`);
+        if (req.body?.sheetCloneId)
+          keys.add(`sheet-clone:${req.body.sheetCloneId}`);
         else
           team(
             db.prepare("SELECT team_id FROM imports WHERE id=?").get(id)
@@ -98,7 +105,7 @@ export function installResourceEvents(
     // The collection stream covers page add/rename/reorder/delete independently
     // of the document body stream and its revision type.
     const collection = path.match(
-      /^(\/api\/(?:tasks\/[^/]+\/documents|reports\/[^/]+\/tasks\/[^/]+\/documents|reports\/[^/]+\/memos|teams\/[^/]+\/years\/[^/]+\/memos))(?:\/.*)?$/,
+      /^(\/api\/(?:tasks\/[^/]+\/documents|sheet-clones\/[^/]+\/tasks\/[^/]+\/documents|sheet-clones\/[^/]+\/memos|teams\/[^/]+\/years\/[^/]+\/memos))(?:\/.*)?$/,
     )?.[1];
     if (collection && req.method !== "PUT") keys.add(`list:${collection}`);
     // Body streams already deliver ordinary typing. Only presence changes need
@@ -120,24 +127,28 @@ export function installResourceEvents(
         keys.clear();
       else keys.add(`list:/api/tasks/${taskDocument[1]}/documents`);
     }
-    const reportDocument = path.match(
-      /^\/api\/reports\/([^/]+)\/tasks\/([^/]+)\/(?:document|documents\/([^/]+))$/,
+    const sheetCloneDocument = path.match(
+      /^\/api\/sheet-clones\/([^/]+)\/tasks\/([^/]+)\/(?:document|documents\/([^/]+))$/,
     );
     if (
       req.method === "PUT" &&
-      reportDocument &&
+      sheetCloneDocument &&
       typeof req.body?.markdown === "string"
     ) {
       const previous = db
         .prepare(
-          "SELECT v.has_content FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=? AND d.task_id=? AND d.document_id=?",
+          "SELECT v.has_content FROM sheet_clone_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.sheet_clone_id=? AND d.task_id=? AND d.document_id=?",
         )
-        .get(reportDocument[1], reportDocument[2], reportDocument[3] || "main");
+        .get(
+          sheetCloneDocument[1],
+          sheetCloneDocument[2],
+          sheetCloneDocument[3] || "main",
+        );
       if (!!previous?.has_content === hasDocumentContent(req.body.markdown))
         keys.clear();
       else
         keys.add(
-          `list:/api/reports/${reportDocument[1]}/tasks/${reportDocument[2]}/documents`,
+          `list:/api/sheet-clones/${sheetCloneDocument[1]}/tasks/${sheetCloneDocument[2]}/documents`,
         );
     }
     if (req.method === "PUT" && /\/memos\/[^/]+$/.test(path)) keys.clear();

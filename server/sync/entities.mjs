@@ -1,11 +1,11 @@
 import { channel } from "node:diagnostics_channel";
 import { createHash } from "node:crypto";
-import { splitReportRecord, applicationEntities } from "./versions.mjs";
+import { splitSheetCloneRecord, applicationEntities } from "./versions.mjs";
 import { expandStyle } from "../../shared/compact.js";
 import {
-  packReportData,
-  unpackReportData,
-} from "../../shared/report-sync-data.js";
+  packSheetCloneData,
+  unpackSheetCloneData,
+} from "../../shared/sheet-clone-sync-data.js";
 import {
   parse,
   teamSettings,
@@ -16,18 +16,25 @@ import {
   json,
 } from "../db.mjs";
 import {
-  readReport,
-  withReportDocumentReferences,
-  reportDocumentContents,
+  readSheetClone,
+  withSheetCloneDocumentReferences,
+  sheetCloneDocumentContents,
   storeDocumentVersion,
-  syncReportDocuments,
-  storeReportDocuments,
+  syncSheetCloneDocuments,
+  storeSheetCloneDocuments,
 } from "../document-storage.mjs";
-import { encodeReport, decodeReport } from "../reports.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../sheet-clones.mjs";
 import { hasDocumentContent } from "../../shared/task-documents.js";
-import { entityId, initialToken, payloadEqual } from "./protocol.mjs";
+import {
+  entityId,
+  initialToken,
+  payloadEqual,
+  protocolMarker,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
+} from "./protocol.mjs";
 
-const reportDecoded = channel("graeboard.sync.report.decode");
+const sheetCloneDecoded = channel("graeboard.sync.sheetClone.decode");
 const one = (db, sql, ...args) => db.prepare(sql).get(...args);
 const rows = (db, sql, ...args) => db.prepare(sql).all(...args);
 // 동기화로 받은 사람 참조(tasks.created_by, calendar_entries.user_id, *.actor_id 등)는
@@ -106,25 +113,25 @@ const style = (db, id, cache) => {
   cache?.set(id, value);
   return value;
 };
-// One immutable report snapshot per capture phase. Before and after phases
+// One immutable sheetClone snapshot per capture phase. Before and after phases
 // own separate maps, so a changed BLOB can never reuse an earlier decoded body.
-function reportSnapshot(db, teamId, reportId, cache) {
-  const key = teamId + ":" + reportId;
+function sheetCloneSnapshot(db, teamId, sheetCloneId, cache) {
+  const key = teamId + ":" + sheetCloneId;
   if (cache?.has(key)) return cache.get(key);
   const row = one(
     db,
-    "SELECT * FROM reports WHERE team_id=? AND id=?",
+    "SELECT * FROM sheet_clones WHERE team_id=? AND id=?",
     teamId,
-    reportId,
+    sheetCloneId,
   );
   if (!row) {
     cache?.set(key, null);
     return null;
   }
-  const data = decodeReport(row.data),
+  const data = decodeSheetClone(row.data),
     tasks = new Map(),
     documents = new Map();
-  reportDecoded.publish({ teamId, reportId });
+  sheetCloneDecoded.publish({ teamId, sheetCloneId });
   for (const task of data.tasks) {
     tasks.set(task.id, task);
     for (const [position, document] of (task.documents || []).entries())
@@ -136,8 +143,8 @@ function reportSnapshot(db, teamId, reportId, cache) {
   const bodies = new Map(
     rows(
       db,
-      "SELECT d.task_id,d.document_id,v.markdown FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=?",
-      reportId,
+      "SELECT d.task_id,d.document_id,v.markdown FROM sheet_clone_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.sheet_clone_id=?",
+      sheetCloneId,
     ).map((entry) => [
       JSON.stringify([entry.task_id, entry.document_id]),
       entry.markdown,
@@ -147,7 +154,13 @@ function reportSnapshot(db, teamId, reportId, cache) {
   cache?.set(key, result);
   return result;
 }
-export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
+export function readEntity(
+  db,
+  teamId,
+  entity,
+  key,
+  { styles, sheetClones } = {},
+) {
   let r, p;
   const [a, b, c, d] = key;
   switch (entity) {
@@ -207,10 +220,10 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
           Number(b),
           c,
         );
-      if (a === "reportMemo")
+      if (a === "sheetCloneMemo")
         r = one(
           db,
-          "SELECT d.*,v.markdown FROM report_memos d JOIN reports t ON t.id=d.report_id JOIN document_versions v ON v.id=d.version_id WHERE t.team_id=? AND d.report_id=? AND d.id=?",
+          "SELECT d.*,v.markdown FROM sheet_clone_memos d JOIN sheet_clones t ON t.id=d.sheet_clone_id JOIN document_versions v ON v.id=d.version_id WHERE t.team_id=? AND d.sheet_clone_id=? AND d.id=?",
           teamId,
           b,
           c,
@@ -222,8 +235,8 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
           teamId,
           b,
         );
-      if (a === "report") {
-        const snapshot = reportSnapshot(db, teamId, b, reports),
+      if (a === "sheetClone") {
+        const snapshot = sheetCloneSnapshot(db, teamId, b, sheetClones),
           id = JSON.stringify([c, d]),
           document = snapshot?.documents.get(id);
         if (document && snapshot.bodies.has(id))
@@ -236,13 +249,13 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
       if (r) p = { title: r.title, position: r.position, markdown: r.markdown };
       break;
     }
-    case "report": {
-      const snapshot = reportSnapshot(db, teamId, a, reports);
+    case "sheetClone": {
+      const snapshot = sheetCloneSnapshot(db, teamId, a, sheetClones);
       if (snapshot) {
         const r = snapshot.row,
           data = {
             ...snapshot.data,
-            tasks: withReportDocumentReferences(
+            tasks: withSheetCloneDocumentReferences(
               db,
               r.id,
               snapshot.data.tasks,
@@ -263,7 +276,7 @@ export function readEntity(db, teamId, entity, key, { styles, reports } = {}) {
           referenceDate: r.reference_date,
           createdBy: r.created_by,
           createdAt: r.created_at,
-          data: packReportData(data),
+          data: packSheetCloneData(data),
         };
       }
       break;
@@ -359,7 +372,7 @@ export function localPayloadEqual(entity, key, a, b) {
     return a.markdown === b.markdown;
   return payloadEqual(entity, a, b);
 }
-function allEntityKeys(db, teamId, reports, calendarDocuments) {
+function allEntityKeys(db, teamId, sheetClones, calendarDocuments) {
   const keys = [
     ["team", []],
     ["formats", []],
@@ -382,17 +395,22 @@ function allEntityKeys(db, teamId, reports, calendarDocuments) {
     teamId,
   ))
     add("document", ["annual", String(r.year), r.id]);
-  for (const r of rows(db, "SELECT * FROM reports WHERE team_id=?", teamId)) {
-    add("report", [r.id]);
-    for (const t of reportSnapshot(db, teamId, r.id, reports).data.tasks)
+  for (const r of rows(
+    db,
+    "SELECT * FROM sheet_clones WHERE team_id=?",
+    teamId,
+  )) {
+    add("sheetClone", [r.id]);
+    for (const t of sheetCloneSnapshot(db, teamId, r.id, sheetClones).data
+      .tasks)
       for (const d of t.documents || [])
-        add("document", ["report", r.id, t.id, d.id]);
+        add("document", ["sheetClone", r.id, t.id, d.id]);
     for (const m of rows(
       db,
-      "SELECT id FROM report_memos WHERE report_id=?",
+      "SELECT id FROM sheet_clone_memos WHERE sheet_clone_id=?",
       r.id,
     ))
-      add("document", ["reportMemo", r.id, m.id]);
+      add("document", ["sheetCloneMemo", r.id, m.id]);
   }
   for (const r of rows(
     db,
@@ -443,7 +461,7 @@ export function allEntities(
   { calendarDocuments = (key, saved) => saved } = {},
 ) {
   const result = {},
-    reports = new Map(),
+    sheetClones = new Map(),
     styles = new Map(),
     people = new Set(),
     known = new Set(rows(db, "SELECT id FROM users").map((row) => row.id));
@@ -456,7 +474,7 @@ export function allEntities(
   };
   const add = (entity, key) => {
     const record = readEntity(db, link.team_id, entity, key, {
-      reports,
+      sheetClones,
       styles,
     });
     if (!record) return;
@@ -472,21 +490,36 @@ export function allEntities(
   for (const [entity, key] of allEntityKeys(
     db,
     link.team_id,
-    reports,
+    sheetClones,
     calendarDocuments,
   ))
     add(entity, key);
   for (const id of people)
     if (!result[entityId("person", [id])]) add("person", [id]);
-  const marker = one(
-    db,
-    "SELECT generation,version,payload,deleted FROM sync_entities WHERE team_id=? AND entity='protocol' AND entity_key='[]'",
-    link.team_id,
-  );
-  if (marker && JSON.parse(marker.payload).version === 2) {
+  // Shared state names its protocol; before the first publication the
+  // genesis starts at protocol 3 with a deterministic marker.
+  const row = one(
+      db,
+      "SELECT generation,version,payload,deleted FROM sync_entities WHERE team_id=? AND entity='protocol' AND entity_key='[]'",
+      link.team_id,
+    ),
+    marker = row
+      ? {
+          entity: "protocol",
+          key: [],
+          generation: row.generation,
+          version: row.version,
+          payload: JSON.parse(row.payload),
+          deleted: !!row.deleted,
+        }
+      : protocolMarker(
+          PROTOCOL,
+          initialToken(link.bootstrap_id, "protocol", []),
+        );
+  if (marker.payload.version === SPLIT_PROTOCOL) {
     const expanded = {};
     for (const record of Object.values(result))
-      for (const child of splitReportRecord(record)) {
+      for (const child of splitSheetCloneRecord(record)) {
         const token = initialToken(link.bootstrap_id, child.entity, child.key);
         expanded[entityId(child.entity, child.key)] = {
           ...child,
@@ -494,16 +527,10 @@ export function allEntities(
           version: token,
         };
       }
-    expanded[entityId("protocol", [])] = {
-      entity: "protocol",
-      key: [],
-      generation: marker.generation,
-      version: marker.version,
-      payload: JSON.parse(marker.payload),
-      deleted: !!marker.deleted,
-    };
+    expanded[entityId("protocol", [])] = marker;
     return expanded;
   }
+  result[entityId("protocol", [])] = marker;
   return result;
 }
 function documentTarget(key) {
@@ -522,12 +549,12 @@ function documentTarget(key) {
       args: [null, Number(a), b],
       columns: ["team_id", "year", "id"],
     };
-  if (type === "reportMemo")
+  if (type === "sheetCloneMemo")
     return {
-      table: "report_memos",
-      where: "report_id=? AND id=?",
+      table: "sheet_clone_memos",
+      where: "sheet_clone_id=? AND id=?",
       args: [a, b],
-      columns: ["report_id", "id"],
+      columns: ["sheet_clone_id", "id"],
     };
   return null;
 }
@@ -543,7 +570,7 @@ export function materializeEntity(
   let sql, args, r;
   const ownedTables = {
     task: "tasks",
-    report: "reports",
+    sheetClone: "sheet_clones",
     calendar: "calendar_entries",
     tag: "calendar_tags",
     filter: "saved_filters",
@@ -628,15 +655,18 @@ export function materializeEntity(
     });
     return;
   }
-  if (e.entity === "report") {
+  if (e.entity === "sheetClone") {
     if (dead) {
-      db.prepare("DELETE FROM reports WHERE team_id=? AND id=?").run(teamId, a);
+      db.prepare("DELETE FROM sheet_clones WHERE team_id=? AND id=?").run(
+        teamId,
+        a,
+      );
       return;
     }
     const bodies = new Map(
       rows(
         db,
-        "SELECT d.task_id,d.document_id,v.markdown FROM report_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.report_id=?",
+        "SELECT d.task_id,d.document_id,v.markdown FROM sheet_clone_documents d JOIN document_versions v ON v.id=d.version_id WHERE d.sheet_clone_id=?",
         a,
       ).map((row) => [
         JSON.stringify([row.task_id, row.document_id]),
@@ -644,7 +674,7 @@ export function materializeEntity(
       ]),
     );
     // 수신한 data는 공유 사전 형태 또는 기존 평문이다. 앱 저장 경로는 푼 객체를 받는다.
-    const source = unpackReportData(p.data);
+    const source = unpackSheetCloneData(p.data);
     const data = {
       ...source,
       tasks: source.tasks.map((t) => ({
@@ -655,9 +685,9 @@ export function materializeEntity(
         })),
       })),
     };
-    data.tasks = storeReportDocuments(db, data.tasks, teamId, author());
+    data.tasks = storeSheetCloneDocuments(db, data.tasks, teamId, author());
     db.prepare(
-      "INSERT INTO reports VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET year=excluded.year,name=excluded.name,reference_date=excluded.reference_date,data=excluded.data",
+      "INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET year=excluded.year,name=excluded.name,reference_date=excluded.reference_date,data=excluded.data",
     ).run(
       a,
       teamId,
@@ -666,9 +696,9 @@ export function materializeEntity(
       p.referenceDate,
       creator ?? author(),
       p.createdAt,
-      encodeReport(data),
+      encodeSheetClone(data),
     );
-    syncReportDocuments(db, a, data.tasks);
+    syncSheetCloneDocuments(db, a, data.tasks);
     return;
   }
   if (e.entity === "document") {
@@ -737,10 +767,10 @@ export function materializeEntity(
       ).run(v, p.markdown.slice(0, 200), stamp, author(), teamId, b);
       return;
     }
-    if (a === "report") {
+    if (a === "sheetClone") {
       if (dead) {
         db.prepare(
-          "DELETE FROM report_documents WHERE report_id=? AND task_id=? AND document_id=?",
+          "DELETE FROM sheet_clone_documents WHERE sheet_clone_id=? AND task_id=? AND document_id=?",
         ).run(b, c, d);
         return;
       }
@@ -751,7 +781,7 @@ export function materializeEntity(
         actorId: author(),
       });
       db.prepare(
-        "INSERT INTO report_documents VALUES(?,?,?,?) ON CONFLICT(report_id,task_id,document_id) DO UPDATE SET version_id=excluded.version_id",
+        "INSERT INTO sheet_clone_documents VALUES(?,?,?,?) ON CONFLICT(sheet_clone_id,task_id,document_id) DO UPDATE SET version_id=excluded.version_id",
       ).run(b, c, d, v);
       return;
     }
@@ -856,7 +886,7 @@ export function materialize(db, teamId, entities, previous = {}, options = {}) {
     "task",
     "tag",
     "formats",
-    "report",
+    "sheetClone",
     "calendar",
     "cell",
     "document",
