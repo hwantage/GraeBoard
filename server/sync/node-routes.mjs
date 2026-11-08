@@ -10,7 +10,6 @@ import { GitCliTransport } from "./git-cli.mjs";
 import { transaction } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";
 import { canContribute } from "../../shared/domain.js";
-import { CONVERSION_PENDING_MESSAGE } from "./protocol.mjs";
 import {
   conflictOpIds,
   conflictOrigin,
@@ -352,12 +351,6 @@ function installTeamSyncRoutes(
             link.mode !== "recovery",
             409,
             "복구 점검을 먼저 완료하세요.",
-          );
-          const conversion = sync.store(teamId).readConversion();
-          requireThat(
-            !conversion || conversion.completed_head,
-            409,
-            CONVERSION_PENDING_MESSAGE,
           );
           db.prepare(
             "UPDATE team_sync_links SET mode=?,generation=generation+1 WHERE team_id=?",

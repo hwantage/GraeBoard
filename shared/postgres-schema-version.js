@@ -18,7 +18,7 @@ export const SITE_KEY_CHECKSUM =
 export const TEAM_MAINTENANCE_CHECKSUM =
   "ceb14347ad6c7a237694b61202f4384bc07aaf08e7c6998f0c325adc10228acc";
 export const TEAM_SHEET_CLONE_CHECKSUM =
-  "945d523ee4f58ff6e705529f307fc0eb16f2e01693588a50830f4d4a635050ad";
+  "a1402e8af7795797b8e6ddfce63a3ee859b25bfd4f3ec9d31ae6daacb7bafd7a";
 export const ACCESS_TOKEN_CHECKSUM =
   "93267cbac2c6ec29df185703716f1a557241b9a9309790ecd0a17e3436478bb1";
 export function postgresHistoryVersion(

@@ -20,9 +20,7 @@ import {
   entityId,
   digest,
   protocolVersion,
-  CONVERSION_PENDING_MESSAGE,
   PROTOCOL,
-  conversionStatus,
 } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
@@ -126,7 +124,6 @@ async function syncStatus(ctx, teamId) {
       teamId,
       async (tx) => ({
         connection: await tx.sync.readLink(),
-        conversion: await tx.sync.readConversion(),
         counts: (
           await tx.query(
             "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged') pending,(SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1 AND resolution IS NULL) conflicts,(SELECT payload FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND deleted=0) protocol_marker,(SELECT created_at FROM sync_outbox WHERE team_id=$1 ORDER BY local_seq DESC LIMIT 1) last_saved,2+(SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0) FROM sync_receipts WHERE team_id=$1) receipt_bytes",
@@ -154,7 +151,6 @@ async function syncStatus(ctx, teamId) {
     protocol:
       JSON.parse(snapshot.counts.protocol_marker || "null")?.version ??
       PROTOCOL,
-    conversion: conversionStatus(snapshot.conversion),
     lastReceivedAt: link?.last_received_at,
     lastPublishedAt: link?.last_published_at,
     lastError: link?.last_error,
@@ -662,13 +658,6 @@ export async function adminRoutes(
           sync[2] !== "resume" || link.mode === "paused",
           409,
           "복구 또는 연결 해제 상태는 자동 재개할 수 없습니다.",
-        );
-        const conversion =
-          sync[2] === "resume" ? await tx.sync.readConversion() : null;
-        assert(
-          !conversion || conversion.completed_head,
-          409,
-          CONVERSION_PENDING_MESSAGE,
         );
         await tx.query(
           "UPDATE team_sync_links SET mode=$2,updated_at=$3,lease_owner=NULL,lease_until=NULL WHERE team_id=$1",

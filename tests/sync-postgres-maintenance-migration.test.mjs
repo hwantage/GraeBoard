@@ -8,7 +8,7 @@ import {
 } from "../server/migrations/postgres.mjs";
 import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
-import { postgresSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
+import { postgresSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
 import { revertTeamToV2, withoutMarker } from "./postgres-legacy-schema.mjs";
 
 const convert = postgresSheetCloneConversion({});
@@ -74,7 +74,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 wit
   assert.equal(await teamVersion(), 1);
   await assert.rejects(
     () => migratePostgres(f.pool, { scope: "team", teamId: f.teamId }),
-    /converts stored sheet clone data/,
+    /renames stored sheet clone data; convert an existing team with the SheetClone cutover tool/,
   );
   assert.equal(await teamVersion(), 1);
   await migratePostgres(f.pool, { scope: "team", teamId: f.teamId, convert });

@@ -1,5 +1,5 @@
 import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
-import { PROTOCOL, conversionStatus } from "./protocol.mjs";
+import { PROTOCOL } from "./protocol.mjs";
 export function createSyncStatusReader({ db, sync }) {
   const capacity = createReceiptCapacityGuard(db);
   return (teamId) => {
@@ -24,7 +24,6 @@ export function createSyncStatusReader({ db, sync }) {
             )
             .get(teamId)?.payload || "null",
         )?.version ?? PROTOCOL,
-      conversion: conversionStatus(store.readConversion()),
       pending: db
         .prepare(
           "SELECT COUNT(*) n FROM sync_outbox INDEXED BY sync_outbox_pending_idx WHERE team_id=? AND status<>'acknowledged'",

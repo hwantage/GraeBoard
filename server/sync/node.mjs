@@ -19,7 +19,6 @@ import {
 import { GitCliTransport, repositoryUrl } from "./git-cli.mjs";
 
 import { requireThat } from "../../shared/validation.js";
-import { CONVERSION_PENDING_MESSAGE } from "./protocol.mjs";
 import { validateSyncProfiles } from "./profiles.mjs";
 
 export function createNodeSync({
@@ -137,14 +136,6 @@ export function createNodeSync({
           .get(teamId),
         409,
         "정리·백업 작업이 진행 중입니다. 완료 후 다시 연결하세요.",
-      );
-      // A converted C is published only by its transition commit; reconnecting
-      // first would publish this site's disconnected changes ahead of it.
-      const conversion = raw.readConversion();
-      requireThat(
-        !conversion || conversion.completed_head,
-        409,
-        CONVERSION_PENDING_MESSAGE,
       );
       return link;
     };
@@ -532,7 +523,6 @@ export function createNodeSync({
           "sync_conflicts",
           "sync_objects",
           "sync_person_refs",
-          "sync_conversions",
           "site_retention",
           "site_maintenance_jobs",
           "site_entity_revisions",

@@ -699,7 +699,6 @@ function serviceFor(config) {
             newHead,
             ackOpIds,
             transition: options.transition === true,
-            conversion: options.conversion === true,
             prepared,
           });
           const link = raw.readLink();

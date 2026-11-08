@@ -39,9 +39,10 @@ export const sheetCloneSql = readFileSync(
 export const sheetCloneChecksum = createHash("sha256")
   .update(sheetCloneSql)
   .digest("hex");
-// v34 renames the copy tables and converts what the rows store (convert, the
-// offline SheetClone conversion of server/migrations/sheet-clone). A new empty
-// database has nothing to convert.
+// v34 renames the copy tables. An existing database also needs what its rows
+// store converted, in the same transaction: the caller supplies that step
+// (convert), which only the one-time SheetClone cutover tool does
+// (tools/sheet-clone-cutover). A new empty database has nothing to convert.
 const migrations = [
   { version: 30, sql: syncSql, checksum: syncChecksum },
   { version: 31, sql: keySql, checksum: keyChecksum },
@@ -157,10 +158,10 @@ export function migrateSqlite(
   if (from === 29) assertSqliteBaseline(db);
   if (from >= 30) assertSqliteHistory(db, { version: from });
   assertSqliteIntegrity(db);
-  // Converting stored data needs the conversion; checks no row before writing.
+  // Existing rows need the one-time conversion; checks no row before writing.
   if (from !== 0 && !convert)
     throw new Error(
-      "SQLite v34 converts stored sheet clone data; run npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
+      "SQLite v34 renames stored sheet clone data; convert an existing database with the SheetClone cutover tool (npm run cutover:sheet-clone, docs/OPERATIONS.md)",
     );
   if (dryRun) {
     assertSqliteIntegrity(db);

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import {
   canonical,
   digest,
   stateHash,
+  stateSum,
   protocolVersion,
   supportedVersion,
 } from "./protocol.mjs";
 import { validateSnapshot } from "./reducer.mjs";
+import { encodeSnapshot } from "./snapshot.mjs";
 import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
 import { ProtocolError, protocolValidation } from "./errors.mjs";
 
@@ -14,6 +17,35 @@ export const snapshotCounts = (state) => ({
   receipts: Object.keys(state.receipts).length,
   conflicts: Object.keys(state.conflicts).length,
 });
+// The two files of a standard checkpoint of C at head: its snapshot and its
+// event, as loadCheckpoint and receive verify them.
+export function checkpointFiles({ head, bootstrapId, identity, state }) {
+  const path = "snapshots/" + randomUUID() + ".json.gz",
+    bytes = encodeSnapshot({ atCommit: head, state });
+  const envelope = {
+    protocol: protocolVersion(state),
+    reducer: protocolVersion(state),
+    checkpointVersion: 1,
+    teamId: identity.teamId,
+    repoId: identity.repoId,
+    bootstrapId,
+    snapshotHash: digest(bytes),
+    counts: snapshotCounts(state),
+    kind: "checkpoint",
+    parent: head,
+    atCommit: head,
+    path,
+    resultHash: stateHash(state),
+    resultSum: stateSum(state),
+  };
+  return {
+    envelope,
+    files: {
+      [path]: bytes,
+      ["events/" + randomUUID() + ".json"]: canonical(envelope),
+    },
+  };
+}
 const invalid = (message) => {
   throw new ProtocolError("SYNC_INTEGRITY", message);
 };

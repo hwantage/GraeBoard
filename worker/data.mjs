@@ -786,7 +786,7 @@ export async function withData(
           await tx.query(
             `SELECT
               EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
-              $2::boolean AND (EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) OR EXISTS(SELECT 1 FROM sync_conversions WHERE team_id=$1 AND completed_head IS NULL)) AS upgrading,
+              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
               $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
               (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
             [teamId, write, Date.now(), year, operationId],

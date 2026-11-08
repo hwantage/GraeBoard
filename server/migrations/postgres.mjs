@@ -43,9 +43,9 @@ export const teamMaintenanceMigration = (() => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 })();
-// team v3 renames nothing in the schema: the copy domain lives in the shared
-// entity tables, whose stored names and keys the offline SheetClone
-// conversion (convert) rewrites in the same transaction.
+// team v3 changes nothing in the schema: the copy domain lives in the shared
+// entity tables, whose stored names and keys an existing team has converted in
+// the same transaction by the one-time SheetClone cutover tool (convert).
 export const teamSheetCloneMigration = (() => {
   const sql = readFileSync(
     new URL("./postgres/003-team-sheet-clones.sql", import.meta.url),
@@ -106,7 +106,7 @@ async function applyTeamSheetClones(client, from, { existing, convert }) {
   if (from >= 3) return null;
   if (existing && !convert)
     throw new Error(
-      "PostgreSQL team v3 converts stored sheet clone data; run npm run migrate",
+      "PostgreSQL team v3 renames stored sheet clone data; convert an existing team with the SheetClone cutover tool (npm run cutover:sheet-clone, docs/OPERATIONS.md)",
     );
   await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
   await client.query(teamSheetCloneMigration.sql);

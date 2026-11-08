@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { canonical, digest, stateHash } from "../../sync/protocol.mjs";
-import { validateSnapshot } from "../../sync/reducer.mjs";
-import { encodeSnapshot } from "../../sync/snapshot.mjs";
-import { executeAsync, executeSync } from "../../../shared/sync-team-store.mjs";
-import { stableId } from "../../../shared/workbook.mjs";
-import { calendarPreview } from "../../storage/calendar-service.mjs";
-import { decodeSheetClone, encodeSheetClone } from "../../sheet-clones.mjs";
+import { canonical, digest, stateHash } from "../../server/sync/protocol.mjs";
+import { validateSnapshot } from "../../server/sync/reducer.mjs";
+import { executeAsync, executeSync } from "../../shared/sync-team-store.mjs";
+import { stableId } from "../../shared/workbook.mjs";
+import { calendarPreview } from "../../server/storage/calendar-service.mjs";
+import {
+  decodeSheetClone,
+  encodeSheetClone,
+} from "../../server/sheet-clones.mjs";
 import { convertMarkdownLinks } from "./markdown-links.mjs";
 import {
   CONVERSION,
@@ -314,26 +316,6 @@ function* convertSync(teamId, options, report, problems) {
       "UPDATE team_sync_links SET canonical_hash=$2 WHERE team_id=$1",
       [teamId, resultHash],
     );
-  const previous = encodeSnapshot({
-    atCommit: link.canonical_head,
-    state: legacy,
-  });
-  yield query(
-    "INSERT INTO sync_conversions(team_id,conversion,from_protocol,to_protocol,base_head,base_hash,result_hash,previous_snapshot,previous_snapshot_hash,options,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-    [
-      teamId,
-      CONVERSION,
-      converted.from,
-      converted.to,
-      link.canonical_head,
-      baseHash,
-      resultHash,
-      previous,
-      digest(previous),
-      canonical({ origins: options.origins }),
-      options.now,
-    ],
-  );
   const history = (yield query(
     `SELECT (SELECT COUNT(*) FROM sync_receipts WHERE team_id=$1) AS receipts,
       (SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1) AS conflicts,
@@ -819,17 +801,7 @@ function* sqliteConversion(options) {
       );
   }
   yield* verifySqlite(options);
-  const summary = finish(report);
-  yield query(
-    "INSERT INTO data_conversions(name,schema_version,options,summary,applied_at) VALUES($1,34,$2,$3,$4)",
-    [
-      CONVERSION,
-      canonical({ origins: options.origins }),
-      canonical(summary),
-      options.now,
-    ],
-  );
-  return summary;
+  return finish(report);
 }
 
 function* postgresConversion(options) {
@@ -861,17 +833,7 @@ function* postgresConversion(options) {
     [teamId],
   );
   yield* verifyPostgres(teamId, options);
-  const summary = finish(report);
-  yield query(
-    "INSERT INTO data_conversions(name,schema_version,options,summary,applied_at) VALUES($1,3,$2,$3,$4)",
-    [
-      CONVERSION,
-      canonical({ origins: options.origins }),
-      canonical(summary),
-      options.now,
-    ],
-  );
-  return summary;
+  return finish(report);
 }
 
 // What the application reads after the conversion carries no earlier name.

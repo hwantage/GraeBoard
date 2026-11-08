@@ -11,7 +11,6 @@ export const TEAM_TRANSFER_TABLES = [
   ["sync_conflicts", "conflict_id"],
   ["sync_objects", "hash"],
   ["sync_person_refs", "person_id"],
-  ["sync_conversions", "team_id"],
   ["site_retention", "site_id,kind,entity_key,generation"],
   ["site_maintenance_jobs", "job_id"],
   ["site_entity_revisions", "entity,entity_key"],
@@ -59,9 +58,9 @@ export const databaseRow = (row) =>
   );
 export const portableHash = (value) => digest(canonical(value));
 // Version 2 carries sheet clones under their SheetClone names (sync protocol
-// 3/4, SQLite v34, PostgreSQL team v3). A version 1 bundle is restored with the
-// release that wrote it into an isolated database, which `npm run migrate`
-// then converts.
+// 3/4, SQLite v34, PostgreSQL team v3). A version 1 bundle keeps the earlier
+// names: it is restored with the release that wrote it into an isolated
+// database, which the one-time SheetClone cutover tool then converts.
 export const TRANSFER_VERSION = 2;
 export function sealTransfer(payload) {
   return {
@@ -74,7 +73,7 @@ export function sealTransfer(payload) {
 export function verifyTransfer(bundle) {
   if (bundle?.format === "graeboard-team-transfer" && bundle.version === 1)
     throw new Error(
-      "Logical transfer version 1 predates SheetClone: restore it with the release that wrote it into an isolated database, then run npm run migrate",
+      "Logical transfer version 1 predates SheetClone: restore it with the release that wrote it into an isolated database, then convert that database with the SheetClone cutover tool (npm run cutover:sheet-clone)",
     );
   if (
     bundle?.format !== "graeboard-team-transfer" ||

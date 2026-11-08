@@ -30,14 +30,13 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     const insert = db.prepare(
       "INSERT INTO sync_capture_teams(team_id) VALUES(?)",
     );
-    for (const teamId of new Set([...links.keys(), ...converting]))
-      insert.run(teamId);
+    for (const teamId of links.keys()) insert.run(teamId);
   };
   const triggerDefinitions = new Map();
   let triggersEnabled = false,
     failure = null;
   function reconcileTriggers() {
-    const enabled = links.size > 0 || converting.size > 0;
+    const enabled = links.size > 0;
     if (enabled === triggersEnabled || !triggerDefinitions.size) return;
     for (const [name, sql] of triggerDefinitions)
       db.exec(enabled ? sql : `DROP TRIGGER IF EXISTS temp.${name}`);
@@ -48,9 +47,6 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     before = new Map(),
     actors = new Map(),
     links = new Map(),
-    // Teams converted offline whose transition commit is not applied yet:
-    // their writes are refused even while disconnected (not captured).
-    converting = new Set(),
     prior = new Map(),
     created = [],
     restores = new Map(),
@@ -147,31 +143,21 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         order,
       );
     }
-    converting = new Set(
-      prepare(
-        "SELECT team_id FROM sync_conversions WHERE completed_head IS NULL",
-      )
-        .all()
-        .map((row) => row.team_id),
-    );
     syncTeams();
     reconcileTriggers();
   };
   refresh();
   const record = (teamId, entity, key, beforeImage = undefined) => {
-    if (!active || suppressed || !(links.has(teamId) || converting.has(teamId)))
-      return;
+    if (!active || suppressed || !links.has(teamId)) return;
     const mapKey = teamId + entityId(entity, key);
     if (before.has(mapKey)) return;
     if (!checkedTeams.has(teamId)) {
       const boundary = prepare(`SELECT
         EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=? AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
-        (EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=? AND lease_owner LIKE 'upgrade:%' AND lease_until>?)
-          OR EXISTS(SELECT 1 FROM sync_conversions WHERE team_id=? AND completed_head IS NULL)) AS upgrading`).get(
+        EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=? AND lease_owner LIKE 'upgrade:%' AND lease_until>?) AS upgrading`).get(
         teamId,
         teamId,
         Date.now(),
-        teamId,
       );
       if (boundary.maintenance || boundary.upgrading)
         throw (failure = new HttpError(
@@ -182,7 +168,6 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         ));
       checkedTeams.add(teamId);
     }
-    if (!links.has(teamId)) return;
     let value =
         beforeImage !== undefined
           ? beforeImage
@@ -235,7 +220,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     return version !== null && version !== item.body;
   };
   db.function("graeboard_sync_before", (table, data) => {
-    if (!active || suppressed || !(links.size || converting.size)) return 0;
+    if (!active || suppressed || !links.size) return 0;
     const row = JSON.parse(data);
     if (
       table === "cells" &&
@@ -294,7 +279,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     },
     begin() {
       failure = null;
-      active = links.size > 0 || converting.size > 0;
+      active = links.size > 0;
       if (!active) return;
       before = new Map();
       styles = new Map();

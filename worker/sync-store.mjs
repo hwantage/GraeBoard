@@ -198,16 +198,6 @@ export function boundStore(
         { readOnly: true },
       ),
     readPending: () => database.readPending(teamId),
-    readConversion: () =>
-      database.withTeamTransaction(teamId, (tx) => tx.sync.readConversion(), {
-        readOnly: true,
-      }),
-    readConversionSnapshot: () =>
-      database.withTeamTransaction(
-        teamId,
-        (tx) => tx.sync.readConversionSnapshot(),
-        { readOnly: true },
-      ),
     async acquire(id) {
       return call(async (tx) => {
         if (
@@ -308,8 +298,6 @@ export function boundStore(
                 ? { ...projection, previousState: options.previousState }
                 : projection,
             );
-          if (options.conversion === true)
-            await tx.sync.completeConversion(head);
           // C's totals follow every change to C, or are dropped so the next
           // reader measures C again.
           if (options.stateSum && options.stateSize)

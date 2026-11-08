@@ -13,7 +13,7 @@ import { unpack } from "../shared/compact.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
 import { revertToV33 } from "./sqlite-legacy-schema.mjs";
-import { sqliteSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
+import { sqliteSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
 import {
   SQLITE_VERSION,
   migrateSqlite,

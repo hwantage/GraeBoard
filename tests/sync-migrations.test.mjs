@@ -23,7 +23,7 @@ import {
   maintenanceSql,
   sheetCloneChecksum,
 } from "../server/migrations/sqlite.mjs";
-import { sqliteSheetCloneConversion } from "../server/migrations/sheet-clone/convert.mjs";
+import { sqliteSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
 
 // v34 converts what the rows store; these legacy rows hold no earlier name
 // besides the copy tables themselves, so every row survives as it was.
@@ -123,7 +123,7 @@ test("v29 → v34 preserves all legacy rows, identities, revisions and reference
     assert.deepEqual(contents(upgraded), before);
     assert.throws(
       () => migrateSqlite(upgraded),
-      /converts stored sheet clone data/,
+      /renames stored sheet clone data; convert an existing database with the SheetClone cutover tool/,
     );
     assert.deepEqual(contents(upgraded), before);
     assert.equal(migrateSqlite(upgraded, { convert }).applied, true);
@@ -131,11 +131,6 @@ test("v29 → v34 preserves all legacy rows, identities, revisions and reference
     preserved(after, before);
     for (const table of Object.keys(RENAMED))
       assert.equal(after[table], undefined);
-    assert.deepEqual(
-      after.data_conversions.map((row) => [row.name, row.schema_version]),
-      [["sheet-clone-1", 34]],
-    );
-    assert.deepEqual(after.sync_conversions, []);
     assertSqliteHistory(upgraded);
     assertSqliteIntegrity(upgraded);
     assert.equal(migrateSqlite(upgraded, { convert }).applied, false);
@@ -253,7 +248,7 @@ test("integrity failures are refused before conversion and empty initialization 
   }
 });
 
-test("CLI dry-run preserves original bytes and never creates a missing target; explicit target conversion is executable", () => {
+test("CLI dry-run preserves original bytes and never creates a missing target; an existing earlier database is left to the cutover tool", () => {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-migration-"));
   const path = join(dir, "legacy.sqlite"),
     missing = join(dir, "new.sqlite");
@@ -266,27 +261,21 @@ test("CLI dry-run preserves original bytes and never creates a missing target; e
   try {
     legacy(path).close();
     const bytes = readFileSync(path);
-    let result = run("--database", path, "--dry-run");
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(readFileSync(path), bytes);
-    result = run("--database", missing, "--initialize", "--dry-run");
+    for (const args of [["--dry-run"], []]) {
+      const result = run("--database", path, ...args);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /SheetClone cutover tool/);
+      assert.deepEqual(readFileSync(path), bytes);
+    }
+    let result = run("--database", missing, "--initialize", "--dry-run");
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(missing), false);
-    result = run("--db", path);
+    result = run("--db", missing, "--initialize");
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).to, SQLITE_VERSION);
-    result = run("--database", path);
+    result = run("--database", missing);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).applied, false);
-    const db = new DatabaseSync(path, { readOnly: true });
-    try {
-      assert.equal(
-        db.prepare("SELECT value FROM cells").get().value,
-        '"보존할 업무 🙂"',
-      );
-    } finally {
-      db.close();
-    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -452,7 +441,7 @@ test("released v31 index upgrade preserves old checksums, rolls back DDL and use
   }
 });
 
-test("v31 startup preserves the database and directs operators to the explicit migration before booting v34", () => {
+test("v31 startup preserves the database and directs operators to the cutover tool before booting v34", () => {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-v31-startup-")),
     path = join(dir, "existing.sqlite");
   let db = legacy(path);
@@ -474,10 +463,7 @@ test("v31 startup preserves the database and directs operators to the explicit m
       () => openDatabase(path),
       (error) => {
         assert.match(error.message, /v31/);
-        assert.match(
-          error.message,
-          /npm run migrate -- --engine sqlite --database/,
-        );
+        assert.match(error.message, /npm run cutover:sheet-clone/);
         assert.doesNotMatch(error.message, /지원하는 변환 경로가 없/);
         return true;
       },
@@ -485,7 +471,7 @@ test("v31 startup preserves the database and directs operators to the explicit m
     assert.deepEqual(readFileSync(path), bytes);
     const migrated = spawnSync(
       process.execPath,
-      ["scripts/migrate.mjs", "--engine", "sqlite", "--database", path],
+      ["tools/sheet-clone-cutover/cli.mjs", "--database", path],
       { encoding: "utf8" },
     );
     assert.equal(migrated.status, 0, migrated.stderr);

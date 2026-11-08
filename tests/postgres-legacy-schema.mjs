@@ -1,7 +1,7 @@
 import { entityId, stateHash } from "../server/sync/protocol.mjs";
 
 // A fresh team v3 schema put back into the released team v2 shape: the v3
-// tables and history are removed and the stored rows return to the earlier
+// history is removed and the stored rows return to the earlier
 // sheet clone names (sync protocol 1/2). Tests of migrations up to team v2
 // start from this shape; the team v3 conversion then runs on it.
 const LEGACY = {
@@ -15,9 +15,7 @@ const legacyKey = (entity, key) =>
     ? [LEGACY_SCOPE[key[0]], ...key.slice(1)]
     : key;
 export async function revertTeamToV2(pool) {
-  await pool.query(
-    "DROP TABLE graeboard.sync_conversions, graeboard.data_conversions; DELETE FROM graeboard.schema_migrations WHERE version>=3",
-  );
+  await pool.query("DELETE FROM graeboard.schema_migrations WHERE version>=3");
   for (const table of ["sync_entities", "site_entities"])
     for (const row of (
       await pool.query(

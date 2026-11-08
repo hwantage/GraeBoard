@@ -17,7 +17,7 @@ export function siteKeyMigrationSql(teamId) {
     throw new Error("Provide the existing team UUID");
   return `-- Run in the team's Supabase SQL Editor during the approved maintenance window.
 -- Additive site v1/v2 -> v3 and team v1 -> v2; existing data is preserved.
--- Team v3 converts stored sheet clone data and runs only through npm run migrate.
+-- Team v3 converts stored sheet clone data and runs only through the SheetClone cutover tool (npm run cutover:sheet-clone).
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';

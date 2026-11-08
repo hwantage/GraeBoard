@@ -11,29 +11,12 @@ import {
 } from "../../shared/sheet-clone-sync-data.js";
 // Protocol 3 keeps a sheet clone as one record, as protocol 1 did; protocol 4
 // splits it into rows and cells, as protocol 2 did. Protocols 1 and 2 named the
-// same records `report`; a team reaches 3 or 4 only through the offline
-// SheetClone conversion and its transition commit (SYNC_PROTOCOL.md), and this
-// runtime reads neither 1 nor 2.
+// same records `report`. A team's shared history reaches 3 or 4 only through
+// the one-time SheetClone cutover (tools/sheet-clone-cutover, SYNC_PROTOCOL.md),
+// which leaves a standard checkpoint for new readers; this runtime reads
+// neither 1 nor 2.
 export const PROTOCOL = 3;
 export const SPLIT_PROTOCOL = 4;
-// The transition commit of the offline SheetClone conversion (1 -> 3, 2 -> 4).
-export const SHEET_CLONE_CONVERSION = "sheet-clone-1";
-export const CONVERSION_PENDING_MESSAGE =
-  "사본 명칭 전환 커밋을 아직 받지 않았습니다. 양쪽을 일시정지한 채 sync:upgrade로 전환을 완료한 뒤 재개하세요.";
-// The recorded SheetClone conversion, without its stored earlier snapshot.
-export const conversionStatus = (row) =>
-  row
-    ? {
-        conversion: row.conversion,
-        fromProtocol: row.from_protocol,
-        toProtocol: row.to_protocol,
-        baseHead: row.base_head,
-        baseHash: row.base_hash,
-        resultHash: row.result_hash,
-        completedHead: row.completed_head || null,
-        completedAt: row.completed_at || null,
-      }
-    : null;
 
 export const ENTITIES_WHOLE = new Set([
   "team",

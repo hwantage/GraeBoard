@@ -13,12 +13,12 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까�
 | 구분               | 현재 저장소 기준                             | 확인 위치와 의미                                                                                                 |
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
-| JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run migrate -- --engine export`로 변환               |
+| JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
 | DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
-| 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 migration         | `npm run migrate -- --engine sqlite --database /경로/자료.sqlite [--site-origin …]`                              |
-| 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 명시 변환 |
+| 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
+| 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
 | 동기화 프로토콜    | 3(사본 한 레코드)·4(사본 행·셀 분할)         | C의 `protocol`/`[]` 표식. 1·2는 사본 명칭 전환 전 형식이며 이 런타임은 읽지 않음                                 |
-| 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 migrate로 변환                        |
+| 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 전환 도구로 변환                      |
 
 실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v34 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32·v33은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
@@ -491,7 +491,7 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 내부에서 발급한 팀장 연결 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
 
-신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1에는 `--scope site`로 업무를 보존하면서 site 스키마, team v2 인덱스, team v3 사본 명칭 변환을 순차 적용할 수 있습니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션·접속 토큰을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
+신규 `--scope site --initialize`는 두 스키마를 원자적으로 생성합니다. 기존 team v1·v2의 업무를 보존하는 site 스키마·team v2 인덱스·team v3 사본 명칭 변환은 모든 서버를 멈춘 뒤 일회성 전환 도구(`npm run cutover:sheet-clone`)가 한 트랜잭션에 적용하며, 일반 `npm run migrate`는 기존 team v1·v2 스키마를 거절합니다. 기존 control v1과 다른 팀 DB는 덮어쓰지 않습니다. 외부 백업 v3는 승인·Google 연결을 보존하되 세션·접속 토큰을 제외합니다. v1 백업은 기존 분리형으로 계속 복구하며 형식 혼용은 거절합니다. 실행·점검·복구는 [설치 안내](CLOUD_SETUP.md)를 따릅니다.
 
 팀장 연결 키는 SQLite v31에 추가된 `external_setup_keys`와 site v2의 `setup_link_keys`/`setup_key_state`에 저장합니다. 256비트 난수 원문은 발급 응답에만 포함하고 SHA-256 해시·팀/사용자 UUID·발급/만료/폐기 시각만 `sync-setup/<내부 설치 UUID>/keys.json`으로 게시합니다. 키는 24시간 유효하며 발급한 현재 활성 팀장에게만 사용됩니다. 계정 연결 전에 구성원과 키의 최신 Git head를 강제로 확인하고, 검증·소비·Google 연결·세션 생성은 같은 트랜잭션에서 완료합니다. 기존 `SETUP_TOKEN`은 팀 사이트 인증에 사용하지 않습니다.
 
@@ -529,6 +529,6 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 
 ### 동기화 프로토콜 4와 용량
 
-프로토콜 3의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 프로토콜 3 백업과 프로토콜 4 snapshot을 포함하며, 프로토콜 4 C에는 `protocol`/`[]`의 `{version:4,reducer:4}` 표식이 있습니다. 프로토콜 4 사본은 `sheetClone` 메타데이터, `sheetCloneTask(sheetCloneId,taskId)`의 행 데이터, `sheetCloneCell(sheetCloneId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 프로토콜 3 형태의 `sheetClone.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. 프로토콜 4 부모 `sheetClone`과 `sheetCloneTask`·`sheetCloneCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, 프로토콜 4 전환 전에 이 중복을 줄이는 방안을 정합니다. 프로토콜 3·4는 사본 명칭 전환 전의 프로토콜 1·2와 구조·병합 규칙이 같고 이름만 다릅니다([사본 명칭](#사본-명칭sheetclone과-일회성-전환)).
+프로토콜 3의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 프로토콜 3 백업과 프로토콜 4 snapshot을 포함하며, 프로토콜 4 C에는 `protocol`/`[]`의 `{version:4,reducer:4}` 표식이 있습니다. 프로토콜 4 사본은 `sheetClone` 메타데이터, `sheetCloneTask(sheetCloneId,taskId)`의 행 데이터, `sheetCloneCell(sheetCloneId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 프로토콜 3 형태의 `sheetClone.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. 프로토콜 4 부모 `sheetClone`과 `sheetCloneTask`·`sheetCloneCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, 프로토콜 4 전환 전에 이 중복을 줄이는 방안을 정합니다. 프로토콜 3·4는 사본 명칭 전환 전의 프로토콜 1·2와 구조·병합 규칙이 같고 이름만 다릅니다([사본 명칭](SYNC_PROTOCOL.md#사본-명칭sheetclone-전환)).
 
 receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending과 공유 엔티티 수에는 기본 상한이 없으며, 외부 환경에 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.

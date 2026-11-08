@@ -70,7 +70,6 @@ test("released site v1 backup sources remain supported, a team is backed up only
   assert.equal(backup.manifest.version, 2);
   assert.equal(backup.control.tables.setup_link_keys, undefined);
   assert.equal(backup.teams[0].bundle.version, 2);
-  assert.deepEqual(backup.teams[0].bundle.payload.tables.sync_conversions, []);
   assert.equal(
     stateHash(stateFrom(backup.teams[0].bundle).state),
     stateHash(f.state),
@@ -89,7 +88,7 @@ test("released site v1 backup sources remain supported, a team is backed up only
   // A team before v3 still names sheet clones as before; the release that
   // wrote it makes its backup, and this one refuses before reading a row.
   await f.pool.query(
-    "DROP TABLE graeboard.sync_conversions,graeboard.data_conversions; DELETE FROM graeboard.schema_migrations WHERE version>=3",
+    "DELETE FROM graeboard.schema_migrations WHERE version>=3",
   );
   process.env[name] = f.env.PG_TEAM.connectionString;
   try {
@@ -169,30 +168,6 @@ test("backup v3 round trip preserves protocol 4 sheetClone cells, pending operat
       exclusions: [],
     });
   });
-  // The record of this team's SheetClone conversion, kept after its
-  // transition was applied, belongs to every later backup.
-  const earlier = Buffer.from([31, 139, 8, 0, 1, 2, 3]);
-  await f.pool.query(
-    `INSERT INTO graeboard.sync_conversions(team_id,conversion,from_protocol,to_protocol,base_head,base_hash,result_hash,previous_snapshot,previous_snapshot_hash,options,created_at,completed_head,completed_at)
-     VALUES($1,'sheet-clone-1',2,4,$2,$3,$4,$5,$6,'{"origins":[]}','2026-11-08T00:00:00.000Z',$7,'2026-11-08T00:01:00.000Z')`,
-    [
-      f.teamId,
-      "a".repeat(40),
-      "c".repeat(64),
-      stateHash(state),
-      earlier,
-      "d".repeat(64),
-      "b".repeat(40),
-    ],
-  );
-  const conversions = async (pool) =>
-    (
-      await pool.query(
-        "SELECT *,encode(previous_snapshot,'hex') AS previous_snapshot FROM graeboard.sync_conversions",
-      )
-    ).rows;
-  const recorded = await conversions(f.pool);
-  assert.equal(recorded[0].previous_snapshot, earlier.toString("hex"));
   const control = new PostgresDatabase(f.pool, {
       scope: "control",
       site: true,
@@ -251,7 +226,6 @@ test("backup v3 round trip preserves protocol 4 sheetClone cells, pending operat
     assert.deepEqual(restored.receipts, state.receipts);
     assert.deepEqual(restored.conflicts, state.conflicts);
     assert.deepEqual(await adapter.readPending(f.teamId), [pending]);
-    assert.deepEqual(await conversions(pool), recorded);
     assert.notEqual(restoredLink.writer_epoch, f.link.writer_epoch);
     assert.equal(restoredLink.mode, "recovery");
     assert.equal(
