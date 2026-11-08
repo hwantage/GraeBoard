@@ -589,86 +589,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "server/access-token-key.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/access-tokens.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/archive.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/cell-events.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/control-business-routes.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-events.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/event-streams.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/history-cleanup.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/history-service-routes.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/http-boundary.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/link-title.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/local-auth.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/profiles.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/resource-events.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/settings.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/sheet-history.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/sqlite-access.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/system-audit.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/team-deletion.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/transfer.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "tests/access-tokens.test.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1157,31 +1077,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/access-tokens.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/access.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/admin.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/capacity.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/config.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/control.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/data.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1189,19 +1085,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/event-scope.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/events.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/git.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/history.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1221,14 +1105,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/setup-keys.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/site-auth.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/sync-images.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1242,10 +1118,6 @@
     },
     {
       "path": "worker/sync.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/transfer.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1275,7 +1147,7 @@
     {
       "paths": [
         "edge/link-title.mjs",
-        "server/link-title.mjs",
+        "server/http/link-title.mjs",
         "shared/http/link-title.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
@@ -1283,22 +1155,22 @@
     {
       "paths": [
         "scripts/admin.mjs",
-        "worker/admin.mjs"
+        "worker/control/admin.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
         "scripts/transfer.mjs",
-        "server/transfer.mjs",
-        "worker/transfer.mjs"
+        "server/transfer/transfer.mjs",
+        "worker/transfer/transfer.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/access-tokens.mjs",
-        "worker/access-tokens.mjs"
+        "server/auth/access-tokens.mjs",
+        "worker/control/access-tokens.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
@@ -1325,14 +1197,14 @@
     },
     {
       "paths": [
-        "server/profiles.mjs",
+        "server/control/profiles.mjs",
         "server/sync/profiles.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/settings.mjs",
+        "server/control/settings.mjs",
         "worker/sheet/settings.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
@@ -1346,21 +1218,21 @@
     },
     {
       "paths": [
-        "server/storage/backup-recovery.mjs",
+        "server/storage/transfer/backup-recovery.mjs",
         "shared/transfer/backup-recovery.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/storage/control-store.mjs",
-        "worker/storage/control-store.mjs"
+        "server/storage/control/control-store.mjs",
+        "worker/storage/control/control-store.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/storage/logical-format.mjs",
+        "server/storage/transfer/logical-format.mjs",
         "shared/transfer/logical-format.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
@@ -1382,7 +1254,7 @@
     {
       "paths": [
         "server/sync/setup-keys.mjs",
-        "worker/setup-keys.mjs"
+        "worker/control/setup-keys.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     }

@@ -25,7 +25,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { materialize } from "../worker/materialize.mjs";
-import { adminRoutes } from "../worker/admin.mjs";
+import { adminRoutes } from "../worker/control/admin.mjs";
 import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { getTask, transaction, openDatabase } from "../server/db.mjs";
 import { channel } from "node:diagnostics_channel";
@@ -47,7 +47,7 @@ import {
   exportTeam,
   importTeam,
   freezeTeam,
-} from "../server/storage/logical-transfer.mjs";
+} from "../server/storage/transfer/logical-transfer.mjs";
 import { join } from "node:path";
 
 const editRequest = (f, sheetClone, value) => ({

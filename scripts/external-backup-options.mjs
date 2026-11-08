@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { openTransferDatabase } from "./transfer.mjs";
-import { S3ImageStore } from "../server/storage/external-backup.mjs";
+import { S3ImageStore } from "../server/storage/transfer/external-backup.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 
 export async function externalResources(file, { restore = false } = {}) {

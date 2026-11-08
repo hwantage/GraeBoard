@@ -8,12 +8,12 @@ import {
   auditImageReferences,
   retentionKey,
 } from "../server/sync/retention.mjs";
-import { databaseFor } from "./data.mjs";
+import { databaseFor } from "./storage/data.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 import { materialize } from "./sync.mjs";
 import { R2ImageStore } from "./documents/images.mjs";
 import { GitHubApiTransport } from "./git.mjs";
-import { assert } from "./access.mjs";
+import { assert } from "./control/access.mjs";
 const decode = (row) =>
   row
     ? {

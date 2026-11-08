@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { S3ImageStore } from "../server/storage/external-backup.mjs";
+import { S3ImageStore } from "../server/storage/transfer/external-backup.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 
 export function assetResources(file, teamId) {

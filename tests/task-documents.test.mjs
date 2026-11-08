@@ -3189,7 +3189,7 @@ test("공유 SSE 재구독은 변경 없는 시트·목록·본문을 생략하�
 
 test("공유 SSE의 잘못된 조회 조건과 핸들러 오류는 해당 채널만 거부한다", async (t) => {
   const { documentStream } = await import("./document-events-helper.mjs");
-  const { registerEventRoute } = await import("../server/event-streams.mjs");
+  const { registerEventRoute } = await import("../server/events/event-streams.mjs");
   const f = await fixture(t);
   registerEventRoute(f.app, "/api/failure/events", async () => {
     throw new Error("fixture failure");
@@ -3241,7 +3241,7 @@ test("공유 SSE의 잘못된 조회 조건과 핸들러 오류는 해당 채널
 
 test("공유 SSE의 400 응답은 거부된 구독 ID를 식별하며 요청 프로토타입을 유지한다", async (t) => {
   const { documentStream } = await import("./document-events-helper.mjs");
-  const { registerEventRoute } = await import("../server/event-streams.mjs");
+  const { registerEventRoute } = await import("../server/events/event-streams.mjs");
   const f = await fixture(t);
   registerEventRoute(f.app, "/api/request-check/:id/events", (req, res) => {
     assert.equal(req.app, f.app);

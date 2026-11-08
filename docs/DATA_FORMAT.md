@@ -457,7 +457,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | 내부 Node      | 프로세스 세대 `session`과 메모리의 문서 전송 순서 `sequence`       | `session:sequence`        |
 | 외부 Edge / PG | `session: "postgres"`, 해당 문서의 PG revision을 `sequence`로 사용 | `pg:<site_events cursor>` |
 
-외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.
+외부의 `site_events.cursor`는 여러 자원의 이벤트 순서이므로 문서 revision과 비교하지 않습니다. `worker/events/events.mjs`는 조회 결과의 `payload.sync`를 그대로 전달하며, `sync`가 없는 알림에만 전역 커서 기반 값을 보충합니다. 문서의 `sync.sequence`를 전역 커서로 덮어쓰면 클라이언트가 새 본문을 오래된 것으로 오인할 수 있습니다. 이 규칙은 업무 문서·원본/사본 메모 등 같은 문서 저장 계약을 사용하는 경로에 적용합니다.
 
 Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니다. 클라이언트는 커서를 보존해 다시 연결하며, 인증·권한은 재검사합니다. 이 재연결은 문서를 닫았다 열거나 페이지를 새로고침해야 한다는 뜻이 아닙니다.
 

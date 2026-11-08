@@ -20,7 +20,7 @@ import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
-import { RequestContext } from "../worker/control.mjs";
+import { RequestContext } from "../worker/control/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import { canonical, emptyState } from "../server/sync/protocol.mjs";

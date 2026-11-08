@@ -1,4 +1,4 @@
-import { accessTokenRoutes } from "../worker/access-tokens.mjs";
+import { accessTokenRoutes } from "../worker/control/access-tokens.mjs";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -8,8 +8,8 @@ import {
   authenticate,
   controlRoutes,
   RequestContext,
-} from "../worker/control.mjs";
-import { adminRoutes } from "../worker/admin.mjs";
+} from "../worker/control/control.mjs";
+import { adminRoutes } from "../worker/control/admin.mjs";
 import { taskRoutes } from "../worker/sheet/tasks.mjs";
 import { documentRoutes } from "../worker/documents/documents.mjs";
 import {
@@ -18,9 +18,9 @@ import {
   browserRoutes,
 } from "../worker/sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "../worker/calendar/calendar.mjs";
-import { transferRoutes } from "../worker/transfer.mjs";
-import { auditRoutes, historyCleanupRoutes } from "../worker/history.mjs";
-import { eventResponse } from "../worker/events.mjs";
+import { transferRoutes } from "../worker/transfer/transfer.mjs";
+import { auditRoutes, historyCleanupRoutes } from "../worker/history/history.mjs";
+import { eventResponse } from "../worker/events/events.mjs";
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";
 import { unpack } from "../shared/formatting/compact.js";

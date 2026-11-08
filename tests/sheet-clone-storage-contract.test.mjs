@@ -11,7 +11,7 @@ import { payloadEqual } from "../server/sync/protocol.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { bucket } from "./worker-github-fixture.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
-import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
+import { PostgresHistoryRepository } from "../worker/storage/history/postgres-history.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { parseCompact, unpack } from "../shared/formatting/compact.js";
-import { ControlBusinessService } from "../server/storage/control-service.mjs";
-import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
+import { ControlBusinessService } from "../server/storage/control/control-service.mjs";
+import { PostgresControlRepository } from "../worker/storage/control/postgres-control.mjs";
 import {
   sqliteBusinessFixture,
   postgresBusinessFixture,

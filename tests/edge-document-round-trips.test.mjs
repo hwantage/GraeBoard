@@ -8,7 +8,7 @@ import { DocumentBrowserBusinessService } from "../server/storage/documents/docu
 import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { PostgresDocumentBrowserRepository } from "../worker/storage/documents/postgres-document-browser.mjs";
-import { DataSession } from "../worker/data.mjs";
+import { DataSession } from "../worker/storage/data.mjs";
 import { sheetCloneRoutes } from "../worker/sheet-clones/sheet-clones.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 import { packSheetClonePayload } from "../shared/sheet-clones/sheet-clone-sync-data.js";

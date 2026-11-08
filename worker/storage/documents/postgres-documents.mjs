@@ -5,10 +5,10 @@ import {
   MAX_DOCUMENT_TITLE_LENGTH,
   hasDocumentContent,
 } from "../../../shared/documents/task-documents.js";
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import { imageReferences } from "../../documents/images.mjs";
 import { stamp, excludedYears } from "../../sheet/tasks.mjs";
-import { databaseFor } from "../../data.mjs";
+import { databaseFor } from "../data.mjs";
 import {
   nextDocumentTitle,
   requireDocumentRevision,

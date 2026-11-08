@@ -4,7 +4,7 @@ import { scopeKey, scopeMatches } from "../../../shared/formatting/formatting.js
 import { styleNormalizer, stringify } from "../../../shared/formatting/compact.js";
 import { validateCellValue } from "../../../shared/validation.js";
 import { equal, digest } from "../../../server/sync/protocol.mjs";
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import {
   stamp,
   taskList,
@@ -15,8 +15,8 @@ import {
   excludedYears,
 } from "../../sheet/task-view.mjs";
 import { prepareCellChange } from "../../../server/storage/tasks/task-service.mjs";
-import { subscribePostgresEvents } from "../postgres-events.mjs";
-import { sheetQuiet } from "../../event-scope.mjs";
+import { subscribePostgresEvents } from "../events/postgres-events.mjs";
+import { sheetQuiet } from "../../events/event-scope.mjs";
 
 export class PostgresTaskRepository extends PostgresTaskCommands {
   constructor({ context }) {

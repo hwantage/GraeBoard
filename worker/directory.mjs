@@ -5,9 +5,9 @@ import {
 } from "../server/sync/directory.mjs";
 import { digest } from "../server/sync/protocol.mjs";
 import { GitHubApiTransport } from "./git.mjs";
-import { controlTransaction } from "./data.mjs";
+import { controlTransaction } from "./storage/data.mjs";
 import { profiles, siteTeamId } from "../shared/sync/sync-profiles.js";
-import { assert } from "./access.mjs";
+import { assert } from "./control/access.mjs";
 
 export async function refreshDirectory(env, { force = false, transport } = {}) {
   const teamId = siteTeamId(env);

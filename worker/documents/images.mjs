@@ -3,7 +3,7 @@ import {
   MAX_IMAGE_BYTES,
   DOCUMENT_IMAGE_PATTERN,
 } from "../../shared/documents/document-images.js";
-import { assert } from "../access.mjs";
+import { assert } from "../control/access.mjs";
 
 import {
   stillImage,

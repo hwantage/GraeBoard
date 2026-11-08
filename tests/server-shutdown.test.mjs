@@ -9,12 +9,12 @@ import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import { openDatabase } from "../server/db.mjs";
-import { createCellEvents } from "../server/cell-events.mjs";
-import { createDocumentEvents } from "../server/document-events.mjs";
+import { createCellEvents } from "../server/events/cell-events.mjs";
+import { createDocumentEvents } from "../server/events/document-events.mjs";
 import {
   installEventStreams,
   registerEventRoute,
-} from "../server/event-streams.mjs";
+} from "../server/events/event-streams.mjs";
 
 test(
   "actual server entry bounds SIGTERM with an unfinished HTTP body and preserves durable pending bytes",

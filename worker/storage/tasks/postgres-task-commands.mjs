@@ -24,7 +24,7 @@ import {
   viewSchema,
 } from "../../../shared/validation.js";
 import { digest } from "../../../server/sync/protocol.mjs";
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import {
   stamp,
   excludedYears,

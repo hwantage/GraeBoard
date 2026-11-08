@@ -1,4 +1,4 @@
-import { registerEventRoute } from "../event-streams.mjs";
+import { registerEventRoute } from "../events/event-streams.mjs";
 import {
   documentEventKey,
   documentCollectionKey,

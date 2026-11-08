@@ -15,7 +15,7 @@ import {
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
-import { checkWorkbookArchive } from "../server/archive.mjs";
+import { checkWorkbookArchive } from "../server/transfer/archive.mjs";
 import ExcelJS from "exceljs";
 
 test("실행 중 WAL 데이터베이스의 백업을 복구하고 기존 파일은 덮어쓰지 않는다", () => {

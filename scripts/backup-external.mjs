@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { externalResources } from "./external-backup-options.mjs";
-import { backupExternal } from "../server/storage/external-backup.mjs";
+import { backupExternal } from "../server/storage/transfer/external-backup.mjs";
 
 export async function main(args = process.argv.slice(2)) {
   const { values } = parseArgs({

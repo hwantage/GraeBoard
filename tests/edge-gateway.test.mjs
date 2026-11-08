@@ -4,7 +4,7 @@ import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from "jose";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { build } from "esbuild";
 import { createEdgeHandler } from "../edge/handler.mjs";
-import { verifyAccess } from "../worker/access.mjs";
+import { verifyAccess } from "../worker/control/access.mjs";
 import { resourceBindings } from "../edge/resources.mjs";
 import { createGateway } from "../worker/gateway.mjs";
 

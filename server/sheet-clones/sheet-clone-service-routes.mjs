@@ -2,7 +2,7 @@ import {
   SHEET_CLONE_ROUTES,
   callBusinessRoute,
 } from "../../shared/http/business-routes.js";
-import { registerEventRoute } from "../event-streams.mjs";
+import { registerEventRoute } from "../events/event-streams.mjs";
 import { SheetCloneBusinessService } from "../storage/sheet-clones/sheet-clone-service.mjs";
 export function installSheetCloneServiceRoutes(
   app,

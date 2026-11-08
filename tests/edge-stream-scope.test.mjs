@@ -7,12 +7,12 @@ import { DocumentBusinessService } from "../server/storage/documents/document-se
 import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
-import { DataSession } from "../worker/data.mjs";
+import { DataSession } from "../worker/storage/data.mjs";
 import {
   streamScope,
   eventTouches,
   sheetQuiet,
-} from "../worker/event-scope.mjs";
+} from "../worker/events/event-scope.mjs";
 
 const changed = (...entities) => ({
   kind: "changed",

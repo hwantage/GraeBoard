@@ -3,7 +3,7 @@ import {
   normalizeSettings,
   periodYears,
 } from "../../shared/domain.js";
-import { assert } from "../access.mjs";
+import { assert } from "../control/access.mjs";
 export const stamp = (row) =>
   new Date(Number(row?.revision) || 0).toISOString();
 const retentionYears = new WeakMap();

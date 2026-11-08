@@ -31,7 +31,7 @@ import {
   databaseCapacity,
   assertStateCapacity,
   assertDatabaseCapacity,
-} from "../worker/capacity.mjs";
+} from "../worker/storage/capacity.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 test(
   "Worker real PostgreSQL API: setup, invitation, all shared domains, atomic retries, tenant isolation and events",

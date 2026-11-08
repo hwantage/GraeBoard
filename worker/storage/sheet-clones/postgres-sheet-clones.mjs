@@ -1,5 +1,5 @@
 import { prepareSheetCloneEdits } from "../../../server/storage/sheet-clones/sheet-clone-command-rules.mjs";
-import { subscribePostgresEvents } from "../postgres-events.mjs";
+import { subscribePostgresEvents } from "../events/postgres-events.mjs";
 import { z } from "zod";
 import { applySheetCloneOperation } from "../../../shared/sheet-clones/sheet-clone-editing.js";
 import {
@@ -22,11 +22,11 @@ import {
 } from "../../../shared/validation.js";
 import { digestShared, equal } from "../../../server/sync/protocol.mjs";
 import { requireFreeSheetCloneName } from "../../../shared/sheet-clones/sheet-clone-names.js";
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../../sheet/task-view.mjs";
 import { documentListsUnder } from "../documents/postgres-documents.mjs";
-import { controlTransaction } from "../../data.mjs";
-import { userRecord } from "../../control.mjs";
+import { controlTransaction } from "../data.mjs";
+import { userRecord } from "../../control/control.mjs";
 export const sheetCloneRevision = (data) =>
   digestShared({
     ...data,

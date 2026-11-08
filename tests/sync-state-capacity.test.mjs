@@ -17,7 +17,7 @@ import {
   assertStateCapacity,
   assertFileCapacity,
   databaseCapacity,
-} from "../worker/capacity.mjs";
+} from "../worker/storage/capacity.mjs";
 import { serviceFor } from "../worker/sync.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";

@@ -5,16 +5,16 @@ import {
   sqliteBusinessFixture,
   postgresBusinessFixture,
 } from "./business-storage-fixture.mjs";
-import { SqliteControlStore } from "../server/storage/control-store.mjs";
-import { RequestContext } from "../worker/control.mjs";
+import { SqliteControlStore } from "../server/storage/control/control-store.mjs";
+import { RequestContext } from "../worker/control/control.mjs";
 import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
 import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar/calendar-service.mjs";
 import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
 import { SettingsBusinessService } from "../server/storage/settings/settings-service.mjs";
 import { PostgresSettingsRepository } from "../worker/storage/settings/postgres-settings.mjs";
-import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
-import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
+import { PostgresHistoryRepository } from "../worker/storage/history/postgres-history.mjs";
+import { PostgresControlRepository } from "../worker/storage/control/postgres-control.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 
 test("SQLite control read port keeps credentials private, uses local memberships and trusted team profiles", (t) => {

@@ -72,20 +72,20 @@ const graph = new Map(
 const isPortableSync = (path) =>
   path.startsWith("server/sync/") && portableSync.has(path.slice(12, -4));
 const businessServices = new Set([
-  "server/storage/access-token-service.mjs",
-  "server/storage/control-service.mjs",
+  "server/storage/control/access-token-service.mjs",
+  "server/storage/control/control-service.mjs",
   "server/storage/calendar/calendar-service.mjs",
   "server/storage/documents/document-browser-service.mjs",
   "server/storage/documents/document-service.mjs",
-  "server/storage/admin-history-service.mjs",
-  "server/storage/history-service.mjs",
+  "server/storage/history/admin-history-service.mjs",
+  "server/storage/history/history-service.mjs",
   "server/storage/settings/filter-service.mjs",
   "server/storage/settings/settings-service.mjs",
   "server/storage/tasks/task-command-rules.mjs",
   "server/storage/tasks/task-service.mjs",
   "server/storage/sheet-clones/sheet-clone-command-rules.mjs",
   "server/storage/sheet-clones/sheet-clone-service.mjs",
-  "server/storage/transfer-service.mjs",
+  "server/storage/transfer/transfer-service.mjs",
 ]);
 const isService = (path) => businessServices.has(path);
 

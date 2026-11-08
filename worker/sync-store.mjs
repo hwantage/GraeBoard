@@ -12,13 +12,13 @@ import {
   PROTOCOL,
   stateSumFrom,
 } from "../server/sync/protocol.mjs";
-import { assert } from "./access.mjs";
+import { assert } from "./control/access.mjs";
 import {
   capacityLimits,
   assertStateCapacity,
   measureDatabaseCapacity,
   CapacityError,
-} from "./capacity.mjs";
+} from "./storage/capacity.mjs";
 import { materialize, materializeSlice } from "./materialize.mjs";
 import {
   CanonicalSlice,

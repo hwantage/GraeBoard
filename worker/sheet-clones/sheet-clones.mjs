@@ -6,7 +6,7 @@ import {
   callBusinessRoute,
 } from "../../shared/http/business-routes.js";
 
-import { assert } from "../access.mjs";
+import { assert } from "../control/access.mjs";
 
 import { documentListsUnder } from "../documents/documents.mjs";
 

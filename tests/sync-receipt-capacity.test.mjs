@@ -8,7 +8,7 @@ import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
   decodeBoundedSnapshot,
   assertFileCapacity,
-} from "../worker/capacity.mjs";
+} from "../worker/storage/capacity.mjs";
 import {
   assertStateCapacity,
   assertReceiptCapacity,
@@ -166,7 +166,7 @@ test("actual PostgreSQL receipt preflight rejects an external API save atomicall
   const { postgresFixture } = await import("./business-storage-fixture.mjs");
   const { createExternalRouteApp } =
     await import("./external-route-fixture.mjs");
-  const { databaseCapacity } = await import("../worker/capacity.mjs");
+  const { databaseCapacity } = await import("../worker/storage/capacity.mjs");
   const f = await postgresFixture(t);
   if (!f) return;
   await f.pool.query(

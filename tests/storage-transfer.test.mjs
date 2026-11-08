@@ -21,7 +21,7 @@ import {
 import {
   verifyTransferAssets,
   exportTransferAssets,
-} from "../server/storage/logical-assets.mjs";
+} from "../server/storage/transfer/logical-assets.mjs";
 import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { SqliteDatabase, sqliteTeamStore } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
@@ -31,14 +31,14 @@ import {
   importTeam,
   freezeTeam,
   releaseTransfer,
-} from "../server/storage/logical-transfer.mjs";
+} from "../server/storage/transfer/logical-transfer.mjs";
 import { verifyTransfer } from "../shared/transfer/logical-format.mjs";
 import {
   S3ImageStore,
   backupExternal,
   restoreExternal,
   readExternalBackup,
-} from "../server/storage/external-backup.mjs";
+} from "../server/storage/transfer/external-backup.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import {
   canonical,

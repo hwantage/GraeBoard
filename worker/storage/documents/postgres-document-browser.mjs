@@ -1,4 +1,4 @@
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import { taskList, settingsFor, excludedYears } from "../../sheet/task-view.mjs";
 import { z } from "zod";
 import { yearSchema } from "../../../shared/validation.js";

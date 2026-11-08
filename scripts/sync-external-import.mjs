@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs, parseEnv } from "node:util";
 import pg from "pg";
 import { resourceBindings } from "../edge/resources.mjs";
-import { databaseFor, controlTransaction } from "../worker/data.mjs";
+import { databaseFor, controlTransaction } from "../worker/storage/data.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { importTeam, imageSync } from "../worker/sync.mjs";
 import { materialize } from "../worker/materialize.mjs";

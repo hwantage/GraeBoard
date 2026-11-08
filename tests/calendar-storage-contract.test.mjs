@@ -24,7 +24,7 @@ import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar/calendar-service.mjs";
 import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
-import { RequestContext } from "../worker/control.mjs";
+import { RequestContext } from "../worker/control/control.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import {

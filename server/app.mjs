@@ -1,14 +1,14 @@
-import { installLinkTitleRoute } from "./link-title.mjs";
-import { installHttpBoundary, installHttpFallback } from "./http-boundary.mjs";
-import { installAccessTokenRoutes } from "./access-tokens.mjs";
-import { installLocalAuth } from "./local-auth.mjs";
-import { createSqliteAccess } from "./sqlite-access.mjs";
-import { installControlBusinessRoutes } from "./control-business-routes.mjs";
+import { installLinkTitleRoute } from "./http/link-title.mjs";
+import { installHttpBoundary, installHttpFallback } from "./http/http-boundary.mjs";
+import { installAccessTokenRoutes } from "./auth/access-tokens.mjs";
+import { installLocalAuth } from "./auth/local-auth.mjs";
+import { createSqliteAccess } from "./auth/sqlite-access.mjs";
+import { installControlBusinessRoutes } from "./control/control-business-routes.mjs";
 import { deploymentSite } from "../shared/site/site-mode.js";
-import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
+import { SqliteControlRepository } from "./storage/control/sqlite-control.mjs";
 import { installTaskBusinessRoutes } from "./sheet/task-business-routes.mjs";
-import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
-import { SqliteHistoryRepository } from "./storage/sqlite-history.mjs";
+import { installHistoryServiceRoutes } from "./history/history-service-routes.mjs";
+import { SqliteHistoryRepository } from "./storage/history/sqlite-history.mjs";
 import { installSheetCloneServiceRoutes } from "./sheet-clones/sheet-clone-service-routes.mjs";
 import { SqliteSheetCloneRepository } from "./storage/sheet-clones/sqlite-sheet-clones.mjs";
 import { DocumentBusinessService } from "./storage/documents/document-service.mjs";
@@ -20,7 +20,7 @@ import { SqliteTaskRepository } from "./storage/tasks/sqlite-tasks.mjs";
 import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
 import { installMaintenanceRoutes } from "./sync/maintenance-sqlite.mjs";
 import { installRetentionContext } from "./sync/visibility.mjs";
-import { installEventStreams } from "./event-streams.mjs";
+import { installEventStreams } from "./events/event-streams.mjs";
 import {
   documentImagesDirectory,
   installDocumentImageRoutes,
@@ -37,14 +37,14 @@ import { resolve } from "node:path";
 
 import { openDatabase, id, json } from "./db.mjs";
 
-import { installTransferRoutes } from "./transfer.mjs";
-import { installSettingsRoutes } from "./settings.mjs";
+import { installTransferRoutes } from "./transfer/transfer.mjs";
+import { installSettingsRoutes } from "./control/settings.mjs";
 import { createTaskCache } from "./sheet/task-cache.mjs";
-import { installResourceEvents } from "./resource-events.mjs";
-import { createDocumentEvents } from "./document-events.mjs";
-import { createCellEvents } from "./cell-events.mjs";
-import { installHistoryCleanupRoutes } from "./history-cleanup.mjs";
-import { installSystemAuditRoutes } from "./system-audit.mjs";
+import { installResourceEvents } from "./events/resource-events.mjs";
+import { createDocumentEvents } from "./events/document-events.mjs";
+import { createCellEvents } from "./events/cell-events.mjs";
+import { installHistoryCleanupRoutes } from "./history/history-cleanup.mjs";
+import { installSystemAuditRoutes } from "./history/system-audit.mjs";
 
 export function createApp({
   db,

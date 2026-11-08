@@ -30,7 +30,7 @@ import { firstCalendarLane } from "../../../shared/calendar/calendar-layout.js";
 import { CALENDAR_TAG_COLORS } from "../../../shared/calendar/calendar-tags.js";
 import { equal } from "../../../server/sync/protocol.mjs";
 import { siteTeamId } from "../../../shared/sync/sync-profiles.js";
-import { assert } from "../../access.mjs";
+import { assert } from "../../control/access.mjs";
 import {
   documentSummaries,
   taskCells,

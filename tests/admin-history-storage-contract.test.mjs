@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
-import { SqliteAdminHistoryRepository } from "../server/storage/sqlite-admin-history.mjs";
-import { PostgresAdminHistoryRepository } from "../worker/storage/postgres-admin-history.mjs";
+import { AdminHistoryBusinessService } from "../server/storage/history/admin-history-service.mjs";
+import { SqliteAdminHistoryRepository } from "../server/storage/history/sqlite-admin-history.mjs";
+import { PostgresAdminHistoryRepository } from "../worker/storage/history/postgres-admin-history.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";

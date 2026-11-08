@@ -9,7 +9,7 @@ import { canonical, digest, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import { ProtocolError } from "../server/sync/errors.mjs";
-import { boundedTransport, assertStateCapacity } from "../worker/capacity.mjs";
+import { boundedTransport, assertStateCapacity } from "../worker/storage/capacity.mjs";
 import { SYNC_FILE_MAX_BYTES } from "../shared/sync/sync-limits.js";
 const identity = { teamId: "team", repoId: "repo" };
 const sha = (value) => createHash("sha1").update(value).digest("hex");

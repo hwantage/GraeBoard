@@ -31,7 +31,7 @@ import {
   ACCESS_TOKEN_CHECKSUM,
   postgresHistoryVersion,
 } from "../shared/storage/postgres-schema-version.js";
-import { accessTokenRoutes } from "../worker/access-tokens.mjs";
+import { accessTokenRoutes } from "../worker/control/access-tokens.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
 const convert = sqliteSheetCloneConversion({});
 
@@ -352,9 +352,9 @@ test("actual PostgreSQL token migrations preserve control/site data and roll bac
 });
 
 test("token encryption survives reopening the DB and rejects moved ciphertext, tampering and missing keys", async (t) => {
-  const { accessTokenKey } = await import("../server/access-token-key.mjs");
+  const { accessTokenKey } = await import("../server/auth/access-token-key.mjs");
   const { prepareAccessToken, revealAccessToken } =
-    await import("../server/storage/access-token-service.mjs");
+    await import("../server/storage/control/access-token-service.mjs");
   const { statSync, unlinkSync, existsSync } = await import("node:fs");
   const f = sqliteBusinessFixture(t);
   const key = accessTokenKey(f.db);

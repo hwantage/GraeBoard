@@ -9,7 +9,7 @@ import {
   exportTransferAssets,
   verifyTransferAssets,
   installTransferAssets,
-} from "../server/storage/logical-assets.mjs";
+} from "../server/storage/transfer/logical-assets.mjs";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Pool } from "pg";
@@ -20,7 +20,7 @@ import {
   importTeam,
   freezeTeam,
   releaseTransfer,
-} from "../server/storage/logical-transfer.mjs";
+} from "../server/storage/transfer/logical-transfer.mjs";
 import { verifyTransfer } from "../shared/transfer/logical-format.mjs";
 
 export async function openTransferDatabase({

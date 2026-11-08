@@ -11,7 +11,7 @@ import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { SyncService } from "../server/sync/service.mjs";
 import { boundStore } from "../worker/sync.mjs";
-import { boundedTransport } from "../worker/capacity.mjs";
+import { boundedTransport } from "../worker/storage/capacity.mjs";
 
 const config = JSON.parse(process.env.SYNC_IMPORT_PERF_CONFIG || "{}"),
   bin = process.env.TEST_PG_BIN;

@@ -28,7 +28,7 @@ import { createEdgeHandler } from "../edge/handler.mjs";
 import { createGateway } from "../worker/gateway.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
-import { refreshSetupKeys, syncSetupKeyStatus } from "../worker/setup-keys.mjs";
+import { refreshSetupKeys, syncSetupKeyStatus } from "../worker/control/setup-keys.mjs";
 import { portableHash } from "../shared/transfer/logical-format.mjs";
 import { profiles } from "../shared/sync/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
@@ -36,7 +36,7 @@ import {
   backupExternal,
   readExternalBackup,
   restoreExternal,
-} from "../server/storage/external-backup.mjs";
+} from "../server/storage/transfer/external-backup.mjs";
 
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 const skip = !existsSync(join(pgBin, "initdb"));

@@ -6,7 +6,7 @@ import {
   sliceChanges,
   computeTotals,
 } from "../worker/sync-partial.mjs";
-import { capacityTotals } from "../worker/capacity.mjs";
+import { capacityTotals } from "../worker/storage/capacity.mjs";
 import { assertStateCapacity } from "../shared/sync/sync-capacity.mjs";
 import {
   digest,

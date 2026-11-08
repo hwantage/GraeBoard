@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import express from "express";
-import { installHttpFallback } from "../server/http-boundary.mjs";
+import { installHttpFallback } from "../server/http/http-boundary.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { syncErrorMessage } from "../shared/sync/sync-error-message.js";
 import { apiErrorMessage } from "../shared/http/api-error-message.js";

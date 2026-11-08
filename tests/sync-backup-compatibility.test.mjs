@@ -11,7 +11,7 @@ import {
   readExternalBackup,
   restoreExternal,
   stateFrom,
-} from "../server/storage/external-backup.mjs";
+} from "../server/storage/transfer/external-backup.mjs";
 import {
   canonical,
   entityId,
