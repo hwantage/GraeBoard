@@ -32,7 +32,7 @@ const scenarios = process.argv.slice(2).length
       { rows: 10000, fill: 30 },
       { rows: 20000, fill: 100 },
     ];
-const outputDirectory = new URL("../docs/validation/", import.meta.url);
+const outputDirectory = new URL("../../docs/validation/", import.meta.url);
 mkdirSync(outputDirectory, { recursive: true });
 const out = new URL("load-test-results.json", outputDirectory);
 const report = {
