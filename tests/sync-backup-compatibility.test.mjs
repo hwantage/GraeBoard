@@ -30,13 +30,10 @@ const images = {
   },
 };
 
-test("released team v1/site v1 backup sources remain supported while normal health and restore targets require current migrations", async (t) => {
+test("released site v1 backup sources remain supported, a team is backed up only in its current format, and normal health and restore targets require current migrations", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   await migratePostgres(f.pool, { scope: "site", teamId: f.teamId });
-  await f.pool.query(
-    "DROP INDEX graeboard.sync_outbox_team_sequence; DELETE FROM graeboard.schema_migrations WHERE version=2",
-  );
   await f.pool.query(
     "DROP TABLE graeboard_site.access_tokens,graeboard_site.setup_link_keys,graeboard_site.setup_key_state; DELETE FROM graeboard_site.schema_migrations WHERE version>=2",
   );
@@ -44,30 +41,22 @@ test("released team v1/site v1 backup sources remain supported while normal heal
     scope: "control",
     site: true,
   });
-  await assert.rejects(() => f.adapter.health(), /version\/checksum/);
   await assert.rejects(() => control.health(), /version\/checksum/);
-  assert.equal(
-    (await f.adapter.health({ allowPreviousTeam: true })).version,
-    1,
-  );
   assert.equal((await control.health({ allowPreviousSite: true })).version, 1);
   const name = "SYNC_REVIEW_BACKUP_SOURCE_URL";
+  const open = (scope, backupSource) =>
+    openTransferDatabase({
+      engine: "postgres",
+      urlEnv: name,
+      scope,
+      site: scope === "control",
+      backupSource,
+    });
   process.env[name] = f.env.PG_TEAM.connectionString;
   try {
-    await assert.rejects(
-      () => openTransferDatabase({ engine: "postgres", urlEnv: name }),
-      /version\/checksum/,
-    );
-    for (const scope of ["team", "control"]) {
-      const opened = await openTransferDatabase({
-        engine: "postgres",
-        urlEnv: name,
-        scope,
-        site: scope === "control",
-        backupSource: true,
-      });
-      await opened.close();
-    }
+    await assert.rejects(() => open("control", false), /version\/checksum/);
+    for (const scope of ["team", "control"])
+      await (await open(scope, true)).close();
   } finally {
     delete process.env[name];
   }
@@ -80,20 +69,10 @@ test("released team v1/site v1 backup sources remain supported while normal heal
   const backup = await readExternalBackup(destination);
   assert.equal(backup.manifest.version, 2);
   assert.equal(backup.control.tables.setup_link_keys, undefined);
+  assert.equal(backup.teams[0].bundle.version, 2);
   assert.equal(
     stateHash(stateFrom(backup.teams[0].bundle).state),
     stateHash(f.state),
-  );
-  assert.equal(
-    Number(
-      (
-        await f.pool.query(
-          "SELECT MAX(version) v FROM graeboard.schema_migrations",
-        )
-      ).rows[0].v,
-    ),
-    1,
-    "backup never migrates its source",
   );
   assert.equal(
     Number(
@@ -104,25 +83,47 @@ test("released team v1/site v1 backup sources remain supported while normal heal
       ).rows[0].v,
     ),
     1,
+    "backup never migrates its source",
+  );
+  // A team before v3 still names sheet clones as before; the release that
+  // wrote it makes its backup, and this one refuses before reading a row.
+  await f.pool.query(
+    "DELETE FROM graeboard.schema_migrations WHERE version>=3",
+  );
+  process.env[name] = f.env.PG_TEAM.connectionString;
+  try {
+    await assert.rejects(() => open("team", true), /version\/checksum/);
+  } finally {
+    delete process.env[name];
+  }
+  assert.equal(
+    Number(
+      (
+        await f.pool.query(
+          "SELECT MAX(version) v FROM graeboard.schema_migrations",
+        )
+      ).rows[0].v,
+    ),
+    2,
   );
   await f.pool.query(
-    "UPDATE graeboard.schema_migrations SET checksum='tampered'",
+    "UPDATE graeboard_site.schema_migrations SET checksum='tampered'",
   );
   await assert.rejects(
-    () => f.adapter.health({ allowPreviousTeam: true }),
+    () => control.health({ allowPreviousSite: true }),
     /version\/checksum/,
   );
 });
 
-test("backup v3 round trip preserves v2 report cells, pending operations, immutable receipts and conflicts while rotating only local recovery identity", async (t) => {
+test("backup v3 round trip preserves protocol 4 sheetClone cells, pending operations, immutable receipts and conflicts while rotating only local recovery identity", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   await migratePostgres(f.pool, { scope: "site", teamId: f.teamId });
   const initial = upgradeState(f.state),
     identity = { teamId: f.teamId, repoId: f.link.repo_id },
-    link = { ...f.link, protocol: 2 };
+    link = { ...f.link, protocol: 4 };
   const cell = Object.values(initial.entities).find(
-    (x) => x.entity === "reportCell" && x.key[2] === "title",
+    (x) => x.entity === "sheetCloneCell" && x.key[2] === "title",
   );
   assert.ok(cell);
   const id = entityId(cell.entity, cell.key),
@@ -180,7 +181,7 @@ test("backup v3 round trip preserves v2 report cells, pending operations, immuta
   const backup = await readExternalBackup(destination),
     original = stateFrom(backup.teams[0].bundle);
   assert.equal(backup.manifest.version, 3);
-  assert.equal(protocolVersion(original.state), 2);
+  assert.equal(protocolVersion(original.state), 4);
   assert.equal(stateHash(original.state), stateHash(state));
   assert.deepEqual(original.pending, [pending]);
   await f.pool.query("CREATE DATABASE v2_restore");
@@ -220,7 +221,7 @@ test("backup v3 round trip preserves v2 report cells, pending operations, immuta
       restoredLink = await adapter.withTeamTransaction(f.teamId, (tx) =>
         tx.sync.readLink(),
       );
-    assert.equal(protocolVersion(restored), 2);
+    assert.equal(protocolVersion(restored), 4);
     assert.equal(stateHash(restored), stateHash(state));
     assert.deepEqual(restored.receipts, state.receipts);
     assert.deepEqual(restored.conflicts, state.conflicts);

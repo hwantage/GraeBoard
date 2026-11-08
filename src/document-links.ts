@@ -14,8 +14,8 @@ export type DocumentLinkTarget =
   | { kind: "task"; id: string }
   | { kind: "calendar"; id: string }
   | { kind: "memo"; teamId: string; year: number; id: string }
-  | { kind: "report-task"; reportId: string; id: string }
-  | { kind: "report-memo"; reportId: string; id: string };
+  | { kind: "sheet-clone-task"; sheetCloneId: string; id: string }
+  | { kind: "sheet-clone-memo"; sheetCloneId: string; id: string };
 export type DocumentLinkTitle =
   | { status: "loading" }
   | { status: "ready"; title: string }

@@ -6,11 +6,11 @@ import { randomUUID } from "node:crypto";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { transaction, upsertCellStatement, getTask } from "../server/db.mjs";
 import { storeDocumentVersion } from "../server/document-storage.mjs";
-import { encodeReport } from "../server/reports.mjs";
+import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { allEntities } from "../server/sync/entities.mjs";
 import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
-import { unpackReportData } from "../shared/report-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
   capacityLimits,
@@ -100,7 +100,7 @@ test(
     });
     t.after(() => f.close());
     const user = f.db.prepare("SELECT * FROM users LIMIT 1").get(),
-      reportId = randomUUID(),
+      sheetCloneId = randomUUID(),
       stamp = new Date().toISOString();
     transaction(f.db, () => {
       const cell = upsertCellStatement(f.db),
@@ -140,21 +140,21 @@ test(
           stamp,
           user.id,
         );
-      const reportTask = getTask(f.db, f.taskIds[0]);
-      reportTask.cells.description.value = "r".repeat(9 * MiB);
-      f.db.prepare("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)").run(
-        reportId,
+      const sheetCloneTask = getTask(f.db, f.taskIds[0]);
+      sheetCloneTask.cells.description.value = "r".repeat(9 * MiB);
+      f.db.prepare("INSERT INTO sheet_clones VALUES(?,?,?,?,?,?,?,?)").run(
+        sheetCloneId,
         f.teamId,
         2026,
-        "Large retained report",
+        "Large retained sheetClone",
         "2026-10-29",
         user.id,
         stamp,
-        encodeReport({
+        encodeSheetClone({
           settings: DEFAULT_SETTINGS,
           view: defaultView(2026),
           users: [{ id: user.id, name: user.name }],
-          tasks: [reportTask],
+          tasks: [sheetCloneTask],
         }),
       );
     });
@@ -264,16 +264,16 @@ test(
     // these entries never had one.
     assert.equal(counts.document, 2315);
     assert.equal(counts.calendar, 2307);
-    assert.equal(counts.report, 1);
-    const report = (
+    assert.equal(counts.sheetClone, 1);
+    const sheetClone = (
       await pg.pool.query(
-        "SELECT payload FROM graeboard.site_entities WHERE entity='report' AND entity_key=$1",
-        [canonical([reportId])],
+        "SELECT payload FROM graeboard.site_entities WHERE entity='sheetClone' AND entity_key=$1",
+        [canonical([sheetCloneId])],
       )
     ).rows[0];
-    // site_entities keeps the shared-dictionary storage form of the report data.
+    // site_entities keeps the shared-dictionary storage form of the sheetClone data.
     assert.equal(
-      unpackReportData(JSON.parse(report.payload).data).tasks[0].cells
+      unpackSheetCloneData(JSON.parse(sheetClone.payload).data).tasks[0].cells
         .description.value.length,
       9 * MiB,
     );

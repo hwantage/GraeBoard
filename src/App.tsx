@@ -122,7 +122,7 @@ import type {
   HistoryEntry,
   TaskDeletion,
   TaskCreation,
-  Report,
+  SheetClone,
   SavedCell,
   Property,
   FormatChange,
@@ -139,7 +139,7 @@ import {
 import SettingsPanel from "./SettingsPanel";
 import Toast, { UndoToast, useToast } from "./Toast";
 import useResourceSync from "./useResourceSync";
-import useReportDraft from "./useReportDraft";
+import useSheetCloneDraft from "./useSheetCloneDraft";
 import { BrandMark, BrandWordmark } from "./Brand";
 import Grid, {
   type Column,
@@ -366,7 +366,7 @@ function Workspace({
     [failed, setFailed] = useState<Failed | null>(null),
     [undoStack, setUndoStack] = useState<HistoryEntry[]>([]),
     [redoStack, setRedoStack] = useState<HistoryEntry[]>([]),
-    [report, setReport] = useState<Report | null>(null),
+    [sheetClone, setSheetClone] = useState<SheetClone | null>(null),
     [jump, setJump] = useState<{
       key: string | null;
       taskId?: string;
@@ -394,7 +394,7 @@ function Workspace({
       running = true;
       try {
         // Membership and connection settings may change in another tab, even
-        // while this tab is showing a calendar, document or report.
+        // while this tab is showing a calendar, document or sheetClone.
         const before = bootJsonRef.current;
         const latest = await api<Bootstrap>("/bootstrap", {
           signal: controller.signal,
@@ -429,7 +429,7 @@ function Workspace({
   const [linkReload, setLinkReload] = useState(0);
   // "사본에서 열기" on a copy's task moves to that copy (linkNavigation).
   const [linkNavigation, setLinkNavigation] = useState<{
-    target: Extract<DocumentLinkTarget, { kind: "report-task" }>;
+    target: Extract<DocumentLinkTarget, { kind: "sheet-clone-task" }>;
     teamId: string;
   } | null>(null);
   // Detail windows open now, oldest first, with their own close paths.
@@ -477,8 +477,8 @@ function Workspace({
   };
   // Leaves the open windows through their own save paths, topmost first,
   // then moves to the copy and opens the task there.
-  async function openInCopy(
-    target: Extract<DocumentLinkTarget, { kind: "report-task" }>,
+  async function openInSheetClone(
+    target: Extract<DocumentLinkTarget, { kind: "sheet-clone-task" }>,
     teamId: string,
   ) {
     for (const entry of [...openDetails.current].reverse())
@@ -534,10 +534,10 @@ function Workspace({
   const filterTeam = useRef(teamId);
   filterTeam.current = teamId;
   const filterLoad = useRef(Promise.resolve());
-  const reportRef = useRef(report);
-  reportRef.current = report;
-  const savedReportDocuments = useRef({
-    reportId: "",
+  const sheetCloneRef = useRef(sheetClone);
+  sheetCloneRef.current = sheetClone;
+  const savedSheetCloneDocuments = useRef({
+    sheetCloneId: "",
     sequence: 0,
     tasks: new Map<
       string,
@@ -553,7 +553,7 @@ function Workspace({
     (id: string) => {
       setFilterUpdateNotice(null);
       setSelectedSavedFilterId(id);
-      if (!reportRef.current)
+      if (!sheetCloneRef.current)
         saveCurrentFilters(currentFilters.current.data, id);
     },
     [user.id, teamId],
@@ -575,7 +575,7 @@ function Workspace({
   }, [filterUpdateNotice, teamId, selectedSavedFilterId, setToast]);
   const scopeMonth = view.startMonth > 1 ? 2 : 1;
   const taskScope = `${teamId}:${year}:${scopeMonth}`;
-  const ready = loaded && (!!report || loadedScope === taskScope);
+  const ready = loaded && (!!sheetClone || loadedScope === taskScope);
   const taskScopeRef = useRef(taskScope);
   taskScopeRef.current = taskScope;
   const calendarNavigation = useRef<{
@@ -588,10 +588,11 @@ function Workspace({
     site.external &&
     !!team?.status &&
     ["unconnected", "importing", "maintenance"].includes(team.status);
-  const reportDraft = useReportDraft(teamId, user.id);
-  const editingReport = !!report && reportDraft.draft?.report.id === report.id;
-  const addTaskLabel = report ? "사본에 업무 추가" : "업무 추가";
-  const viewYear = report ? view.year : year;
+  const sheetCloneDraft = useSheetCloneDraft(teamId, user.id);
+  const editingSheetClone =
+    !!sheetClone && sheetCloneDraft.draft?.sheetClone.id === sheetClone.id;
+  const addTaskLabel = sheetClone ? "사본에 업무 추가" : "업무 추가";
+  const viewYear = sheetClone ? view.year : year;
   // 화면 테마는 사본을 포함한 모든 보기에서 현재 팀 설정을 따른다.
   const themeId = getTheme(team?.settings.theme).id;
   useLayoutEffect(() => {
@@ -606,20 +607,20 @@ function Workspace({
     };
   }, [themeId]);
   const users = useMemo(() => {
-    if (!report) return boot.users;
-    if (!editingReport) return report.users;
+    if (!sheetClone) return boot.users;
+    if (!editingSheetClone) return sheetClone.users;
     return [
       ...new Map([
         ...boot.users
           .filter((u) => isAssignable(u, teamId))
           .map((u) => [u.id, u] as const),
-        ...report.users.map((u) => [u.id, u] as const),
+        ...sheetClone.users.map((u) => [u.id, u] as const),
       ]).values(),
     ];
-  }, [report, editingReport, boot.users, teamId]);
+  }, [sheetClone, editingSheetClone, boot.users, teamId]);
   const assignableUsers = useMemo(
-    () => (report ? users : users.filter((u) => isAssignable(u, teamId))),
-    [report, users, teamId],
+    () => (sheetClone ? users : users.filter((u) => isAssignable(u, teamId))),
+    [sheetClone, users, teamId],
   );
   const canManage = canManageTeam(user, teamId);
   const canManageFilters = teamRole(user, teamId) === "lead";
@@ -628,7 +629,7 @@ function Workspace({
   const canOpenSettings =
     user.systemRole === "admin" ||
     Object.values(user.teamRoles).includes("lead");
-  const settings = report?.settings || team?.settings || DEFAULT_SETTINGS;
+  const settings = sheetClone?.settings || team?.settings || DEFAULT_SETTINGS;
   const fields = useMemo(() => fieldsFor(settings), [settings]);
   const properties = useMemo(
     () => propertiesFor(settings) as Property[],
@@ -639,7 +640,7 @@ function Workspace({
     workspaceRef = useRef<HTMLDivElement>(null),
     viewMenuRef = useRef<HTMLDivElement>(null),
     presentationScroll = useRef<{ top: number; left: number } | null>(null),
-    reportScroll = useRef<{ top: number; left: number } | null>(null),
+    sheetCloneScroll = useRef<{ top: number; left: number } | null>(null),
     viewRef = useRef(view),
     pendingRef = useRef(0),
     failedRef = useRef(failed),
@@ -689,8 +690,8 @@ function Workspace({
     setQueryError(failure.message);
   }
   function editTasks() {
-    return reportRef.current
-      ? reportDraft.ref.current?.tasks || reportRef.current.tasks
+    return sheetCloneRef.current
+      ? sheetCloneDraft.ref.current?.tasks || sheetCloneRef.current.tasks
       : tasksRef.current;
   }
   async function prepareCopySwitch() {
@@ -698,23 +699,26 @@ function Workspace({
       throw new Error("메모 저장을 마친 뒤 전환해 주세요.");
     if (editorRef.current || pendingRef.current || failedRef.current)
       throw new Error("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
-    if (reportDraft.ref.current) await reportDraft.save();
+    if (sheetCloneDraft.ref.current) await sheetCloneDraft.save();
   }
-  async function openCopy(id: string | null) {
-    if (filterTeam.current !== teamId || id === (reportRef.current?.id || null))
+  async function openSheetClone(id: string | null) {
+    if (
+      filterTeam.current !== teamId ||
+      id === (sheetCloneRef.current?.id || null)
+    )
       return;
     const scope = boardKey.current;
     await prepareCopySwitch();
     if (!id) {
-      closeReportNow();
+      closeSheetCloneNow();
       return;
     }
-    const r = await api<Report>(`/reports/${id}`);
+    const r = await api<SheetClone>(`/sheet-clones/${id}`);
     if (filterTeam.current !== teamId || boardKey.current !== scope) return;
-    if (!reportRef.current) {
+    if (!sheetCloneRef.current) {
       lastView.current = viewRef.current;
       const grid = workspaceRef.current?.querySelector(".sheet-scroll");
-      reportScroll.current = {
+      sheetCloneScroll.current = {
         left: grid?.scrollLeft || 0,
         top: grid?.scrollTop || 0,
       };
@@ -728,30 +732,33 @@ function Workspace({
     setJump(null);
     setSelectedSavedFilterId("");
     const next = normalizeView(r.view, r.settings || team.settings) as View;
-    reportRef.current = r;
-    setReport(r);
-    reportDraft.begin(r);
+    sheetCloneRef.current = r;
+    setSheetClone(r);
+    sheetCloneDraft.begin(r);
     viewRef.current = next;
     setView(next);
     setSelection(null);
   }
   useEffect(() => {
-    const saved = reportDraft.draft?.report;
-    if (saved && saved.id === reportRef.current?.id) {
-      reportRef.current = saved;
-      setReport(saved);
+    const saved = sheetCloneDraft.draft?.sheetClone;
+    if (saved && saved.id === sheetCloneRef.current?.id) {
+      sheetCloneRef.current = saved;
+      setSheetClone(saved);
     }
-  }, [reportDraft.draft?.report]);
+  }, [sheetCloneDraft.draft?.sheetClone]);
   useLayoutEffect(() => {
     const grid =
       workspaceRef.current?.querySelector<HTMLElement>(".sheet-scroll");
     if (!grid || !ready) return;
-    if (report) grid.scrollTo(0, 0);
-    else if (reportScroll.current) {
-      grid.scrollTo(reportScroll.current.left, reportScroll.current.top);
-      reportScroll.current = null;
+    if (sheetClone) grid.scrollTo(0, 0);
+    else if (sheetCloneScroll.current) {
+      grid.scrollTo(
+        sheetCloneScroll.current.left,
+        sheetCloneScroll.current.top,
+      );
+      sheetCloneScroll.current = null;
     }
-  }, [report?.id, ready]);
+  }, [sheetClone?.id, ready]);
   // "사본에서 열기" moves to the copy's team and sheet one step per render,
   // then opens the copy's task detail.
   const linkStep = useRef({ navigation: linkNavigation, step: "" });
@@ -782,14 +789,16 @@ function Workspace({
     }
     // The board of this team, not the one being replaced.
     if (!loaded || loadedScope !== taskScope) return;
-    if (report?.id !== target.reportId) {
+    if (sheetClone?.id !== target.sheetCloneId) {
       if (linkStep.current.step === "sheet") return;
       linkStep.current.step = "sheet";
-      openCopy(target.reportId).catch((e) => stop((e as Error).message));
+      openSheetClone(target.sheetCloneId).catch((e) =>
+        stop((e as Error).message),
+      );
       return;
     }
     setLinkNavigation(null);
-    const task = report.tasks.find((item) => item.id === target.id);
+    const task = sheetClone.tasks.find((item) => item.id === target.id);
     if (task) setRowTask(task);
     else setError(UNAVAILABLE_LINK_MESSAGE);
   }, [
@@ -800,13 +809,13 @@ function Workspace({
     loaded,
     loadedScope,
     taskScope,
-    report?.id,
+    sheetClone?.id,
   ]);
-  function closeReportNow() {
-    if (!reportRef.current) return;
-    reportDraft.cancel();
-    reportRef.current = null;
-    setReport(null);
+  function closeSheetCloneNow() {
+    if (!sheetCloneRef.current) return;
+    sheetCloneDraft.cancel();
+    sheetCloneRef.current = null;
+    setSheetClone(null);
     viewRef.current = lastView.current;
     setView(lastView.current);
     setSelectedSavedFilterId(currentFilters.current.selectedId);
@@ -814,20 +823,20 @@ function Workspace({
     setSelection(null);
     setJump(null);
   }
-  function closeReport() {
-    void openCopy(null).catch((e) => setError(e.message));
+  function closeSheetClone() {
+    void openSheetClone(null).catch((e) => setError(e.message));
   }
   async function refreshSheet() {
-    const current = reportRef.current;
+    const current = sheetCloneRef.current;
     if (!current) {
       await refresh();
       return;
     }
-    const latest = await api<Report>(`/reports/${current.id}`);
-    if (reportRef.current?.id !== current.id) return;
-    reportRef.current = latest;
-    setReport(latest);
-    reportDraft.begin(latest);
+    const latest = await api<SheetClone>(`/sheet-clones/${current.id}`);
+    if (sheetCloneRef.current?.id !== current.id) return;
+    sheetCloneRef.current = latest;
+    setSheetClone(latest);
+    sheetCloneDraft.begin(latest);
     const next = normalizeView(
       latest.view,
       latest.settings || team.settings,
@@ -836,14 +845,14 @@ function Workspace({
     setView(next);
     setSelection(null);
   }
-  async function deleteReports(ids: string[]) {
+  async function deleteSheetClones(ids: string[]) {
     await prepareCopySwitch();
-    await api("/reports", {
+    await api("/sheet-clones", {
       method: "DELETE",
       body: JSON.stringify({ teamId, ids }),
     });
-    if (reportRef.current && ids.includes(reportRef.current.id))
-      closeReportNow();
+    if (sheetCloneRef.current && ids.includes(sheetCloneRef.current.id))
+      closeSheetCloneNow();
   }
   useLayoutEffect(() => {
     const grid =
@@ -862,7 +871,7 @@ function Workspace({
   }, [presentation]);
   useEffect(() => {
     setFormatBrush(null);
-  }, [teamId, year, report?.id, presentation, screen]);
+  }, [teamId, year, sheetClone?.id, presentation, screen]);
   useEffect(() => {
     if (!formatBrush) return;
     const cancel = (event: KeyboardEvent) => {
@@ -929,10 +938,10 @@ function Workspace({
   editorRef.current = editor;
   const undoToastCurrent =
     undoToast?.kind !== "rows" ||
-    (undoToast.sheet === `${teamId}:${year}:${report?.id || "original"}` &&
+    (undoToast.sheet === `${teamId}:${year}:${sheetClone?.id || "original"}` &&
       undoToast.target ===
-        (report
-          ? reportDraft.draft?.history[reportDraft.draft.cursor]
+        (sheetClone
+          ? sheetCloneDraft.draft?.history[sheetCloneDraft.draft.cursor]
           : undoStack.at(-1)));
   useEffect(() => {
     if (!undoToastCurrent) setUndoToast(null);
@@ -1077,27 +1086,30 @@ function Workspace({
   );
   useResourceSync(
     screen === "annual" && ready && !teamUnavailable
-      ? report
-        ? `/reports/${report.id}`
+      ? sheetClone
+        ? `/sheet-clones/${sheetClone.id}`
         : `/teams/${teamId}`
       : null,
     async (signal) => {
-      const current = reportRef.current;
+      const current = sheetCloneRef.current;
       if (!current) return (await refresh(signal)) !== false;
       if (
         pendingRef.current ||
         failedRef.current ||
         editorRef.current ||
-        reportDraft.saving ||
-        !!reportDraft.error
+        sheetCloneDraft.saving ||
+        !!sheetCloneDraft.error
       )
         return false;
       try {
-        const before = reportDraft.ref.current?.report;
-        const remote = await api<Report>(`/reports/${current.id}`, { signal });
-        if (signal.aborted || reportRef.current?.id !== current.id) return true;
-        if (reportDraft.ref.current?.report !== before) return false;
-        return reportDraft.receive(remote);
+        const before = sheetCloneDraft.ref.current?.sheetClone;
+        const remote = await api<SheetClone>(`/sheet-clones/${current.id}`, {
+          signal,
+        });
+        if (signal.aborted || sheetCloneRef.current?.id !== current.id)
+          return true;
+        if (sheetCloneDraft.ref.current?.sheetClone !== before) return false;
+        return sheetCloneDraft.receive(remote);
       } catch (error) {
         if (
           error instanceof ApiError &&
@@ -1128,7 +1140,7 @@ function Workspace({
           propertyFilterKey(currentFilters.current.data)
       ) {
         saveCurrentFilters(selected.data, selected.id);
-        if (reportRef.current)
+        if (sheetCloneRef.current)
           lastView.current = { ...lastView.current, ...selected.data };
         else {
           viewRef.current = { ...viewRef.current, ...selected.data };
@@ -1174,9 +1186,9 @@ function Workspace({
     querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
     setViewError("");
     setSelection(null);
-    setReport(null);
-    reportDraft.cancel();
-    reportScroll.current = null;
+    setSheetClone(null);
+    sheetCloneDraft.cancel();
+    sheetCloneScroll.current = null;
     setUndoStack([]);
     setRedoStack([]);
     setTasks([]);
@@ -1239,7 +1251,7 @@ function Workspace({
   useEffect(() => {
     if (
       !loaded ||
-      report ||
+      sheetClone ||
       view.year !== year ||
       !loadedScope.startsWith(`${teamId}:${year}:`) ||
       loadedScope === taskScope
@@ -1269,9 +1281,9 @@ function Workspace({
     return () => {
       cancelled = true;
     };
-  }, [teamId, year, scopeMonth, loaded, !!report]);
+  }, [teamId, year, scopeMonth, loaded, !!sheetClone]);
   useEffect(() => {
-    if (screen !== "annual" || !ready || report || !cellEventCursor.current)
+    if (screen !== "annual" || !ready || sheetClone || !cellEventCursor.current)
       return;
     const key = `${teamId}:${year}`;
     return subscribeCellChanges({
@@ -1307,13 +1319,13 @@ function Workspace({
         if (boardKey.current === key) void refreshBoot();
       },
     });
-  }, [teamId, year, scopeMonth, ready, !!report, screen]);
+  }, [teamId, year, scopeMonth, ready, !!sheetClone, screen]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (
         screen === "annual" &&
         loaded &&
-        !report &&
+        !sheetClone &&
         !pendingRef.current &&
         !failedRef.current &&
         !editorRef.current &&
@@ -1324,7 +1336,7 @@ function Workspace({
         refresh();
     }, 1000);
     return () => clearInterval(timer);
-  }, [refresh, report, screen, loaded]);
+  }, [refresh, sheetClone, screen, loaded]);
   function flushView() {
     if (viewTimer.current) clearTimeout(viewTimer.current);
     const save = viewSaver.current;
@@ -1338,7 +1350,7 @@ function Workspace({
         pendingRef.current ||
         failedRef.current ||
         editorRef.current ||
-        reportDraft.ref.current?.cursor ||
+        sheetCloneDraft.ref.current?.cursor ||
         filterSavePending.current ||
         viewTimer.current
       ) {
@@ -1440,15 +1452,17 @@ function Workspace({
       const selected = savedFilters.find((v) => v.id === selectedSavedFilterId);
       const selectedId =
         updateSelectedFilter && selected?.canEdit ? selected.id : "";
-      if (!report && selectedId && selected) updateSavedFilter(selected, next);
+      if (!sheetClone && selectedId && selected)
+        updateSavedFilter(selected, next);
       setSelectedSavedFilterId(selectedId);
-      if (!report) saveCurrentFilters(savedFilter(next, settings), selectedId);
+      if (!sheetClone)
+        saveCurrentFilters(savedFilter(next, settings), selectedId);
     }
     viewRef.current = next;
     setView(next);
-    if (report && canAdd) reportDraft.changeView(next);
+    if (sheetClone && canAdd) sheetCloneDraft.changeView(next);
     if (
-      !report &&
+      !sheetClone &&
       Object.keys(part).some(
         (key) => !["propertyFilters", "propertyFilterModes"].includes(key),
       )
@@ -1488,7 +1502,7 @@ function Workspace({
         : viewYear + direction;
     if (nextYear < 2000 || nextYear > 2100) return;
     const next = fullCalendarView(current, nextYear);
-    if (report || nextYear === year) changeView(next);
+    if (sheetClone || nextYear === year) changeView(next);
     else {
       flushView();
       // Restore this year's personal layout, but always show January–December.
@@ -1513,7 +1527,7 @@ function Workspace({
     )
       return;
     const next = movePeriodView(current, nextYear, startMonth);
-    if (!report && nextYear !== year) {
+    if (!sheetClone && nextYear !== year) {
       flushView();
       calendarNavigation.current = { teamId, year: nextYear, view: next };
       setView(next);
@@ -1522,7 +1536,7 @@ function Workspace({
     setJump({ key: null, id: Date.now() });
   }
   useEffect(() => {
-    if (!ready || report) return;
+    if (!ready || sheetClone) return;
     const next = normalizeView(viewRef.current, settings) as View;
     const memberIds = new Set(assignableUsers.map((u) => u.id));
     for (const property of properties.filter((p) => p.kind === "member")) {
@@ -1535,7 +1549,7 @@ function Workspace({
     if (JSON.stringify(next) !== JSON.stringify(viewRef.current))
       changeView(next);
     // 저장된 보기를 불러온 뒤에도 돌아야 하므로 view도 의존성에 둔다.
-  }, [settings, ready, report, boot.users, teamId, view]);
+  }, [settings, ready, sheetClone, boot.users, teamId, view]);
   // 보기 모드는 저장하거나 직접 선택한 필터에 연결한다. 조건 일치만으로 진입하지 않는다.
   const activeSavedFilter = useMemo(
     () => savedFilters.find((v) => v.id === selectedSavedFilterId),
@@ -1546,7 +1560,7 @@ function Workspace({
       rememberSelectedFilter("");
   }, [
     ready,
-    report,
+    sheetClone,
     selectedSavedFilterId,
     activeSavedFilter,
     rememberSelectedFilter,
@@ -1617,7 +1631,7 @@ function Workspace({
     }
   }
   const allTasks = useMemo(() => {
-    if (report) return reportDraft.draft?.tasks || report.tasks;
+    if (sheetClone) return sheetCloneDraft.draft?.tasks || sheetClone.tasks;
     if (!pendingEdit) return tasks;
     const { point, value } = pendingEdit;
     // 편집창을 닫는 렌더에서 확정한 값을 바로 표시한다. 서버 버전과
@@ -1633,7 +1647,7 @@ function Workspace({
           }
         : task,
     );
-  }, [tasks, report, reportDraft.draft, pendingEdit]);
+  }, [tasks, sheetClone, sheetCloneDraft.draft, pendingEdit]);
   // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
   const filterView = useMemo(
     () => view,
@@ -1736,7 +1750,7 @@ function Workspace({
       })),
     [weeks, fields, view.visibleFields, view.widths, view.frozenColumns],
   );
-  function retainReportSelection(source: Task[]) {
+  function retainSheetCloneSelection(source: Task[]) {
     const currentView = viewRef.current;
     const hidden = new Set(currentView.hiddenRows);
     const visible = (
@@ -1765,7 +1779,7 @@ function Workspace({
         id: Math.max(Date.now(), (previous?.id || 0) + 1),
       }));
   }
-  const sheetKey = `${teamId}:${year}:${report?.id || "original"}`;
+  const sheetKey = `${teamId}:${year}:${sheetClone?.id || "original"}`;
   function revealChange(
     targets: ChangeTargets,
     selected: number,
@@ -1800,7 +1814,7 @@ function Workspace({
       return;
     const next = changeSelection(changeReveal.targets, visibleTasks, columns);
     if (!next) {
-      if (changeReveal.retain) retainReportSelection(allTasks);
+      if (changeReveal.retain) retainSheetCloneSelection(allTasks);
       return;
     }
     const grid =
@@ -1855,8 +1869,8 @@ function Workspace({
             : "";
   const editable =
     !!selectedTask &&
-    (report ? canAdd : canEdit(user, selectedTask)) &&
-    (!report || editingReport) &&
+    (sheetClone ? canAdd : canEdit(user, selectedTask)) &&
+    (!sheetClone || editingSheetClone) &&
     !failed;
   function getPoints() {
     return selectedPoints(selection, visibleTasks, columns);
@@ -1947,14 +1961,14 @@ function Workspace({
     mode: Failed["mode"] = "normal",
     buildFormat?: () => FormatChange,
   ) {
-    if (report) {
-      if (!editingReport || !canAdd || presentation) return false;
+    if (sheetClone) {
+      if (!editingSheetClone || !canAdd || presentation) return false;
       try {
         const changes = build();
         const format = buildFormat?.();
-        if (changes.length) reportDraft.apply({ kind: "cells", changes });
+        if (changes.length) sheetCloneDraft.apply({ kind: "cells", changes });
         if (format?.scopes)
-          reportDraft.apply({
+          sheetCloneDraft.apply({
             kind: "format",
             id: crypto.randomUUID(),
             scopes: format.scopes,
@@ -1974,7 +1988,7 @@ function Workspace({
         return false;
       }
     }
-    if (report || presentation || failedRef.current) return false;
+    if (sheetClone || presentation || failedRef.current) return false;
     if (rejectPendingChanges()) return false;
     const submittedBoard = boardKey.current,
       selected = selectionEpoch.current;
@@ -2026,7 +2040,7 @@ function Workspace({
       return points.map((p) => {
         const task = tasksById.get(p.taskId);
         if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
-        if (!(report ? canAdd : canEdit(user, task)))
+        if (!(sheetClone ? canAdd : canEdit(user, task)))
           throw new Error(
             "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
           );
@@ -2091,7 +2105,7 @@ function Workspace({
   }
   function paintFormat(target: Selection | null) {
     if (!formatBrush || !target || editor || presentation || failed) return;
-    if (!report && rejectPendingChanges()) return;
+    if (!sheetClone && rejectPendingChanges()) return;
     try {
       const { styles, repeat } = formatBrush;
       const ranges = rangesOf(target, matchingTasks, columnOrder);
@@ -2174,7 +2188,7 @@ function Workspace({
         const selected = tasks.filter((t) => ids.has(t.id));
         if (
           selected.length !== ids.size ||
-          selected.some((t) => !(report ? canAdd : canEdit(user, t)))
+          selected.some((t) => !(sheetClone ? canAdd : canEdit(user, t)))
         )
           throw new Error(
             "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
@@ -2227,7 +2241,7 @@ function Workspace({
     const task = allTasks.find((t) => t.id === p.taskId);
     if (
       !task ||
-      (report && (!editingReport || !canAdd)) ||
+      (sheetClone && (!editingSheetClone || !canAdd)) ||
       presentation ||
       failed
     )
@@ -2236,7 +2250,7 @@ function Workspace({
       setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
       return false;
     }
-    if (!(report ? canAdd : canEdit(user, task))) {
+    if (!(sheetClone ? canAdd : canEdit(user, task))) {
       setError("이 업무를 편집할 권한이 없습니다.");
       return false;
     }
@@ -2254,7 +2268,7 @@ function Workspace({
   }
   // 업무 삭제·복구는 셀 저장과 겹치지 않게 저장 중 표시를 함께 쓴다.
   async function taskOperation(run: () => Promise<void>) {
-    if (pendingRef.current || failedRef.current || report || presentation)
+    if (pendingRef.current || failedRef.current || sheetClone || presentation)
       return;
     mutationEpoch.current++;
     pendingRef.current++;
@@ -2297,22 +2311,23 @@ function Workspace({
     entry: TaskDeletion | TaskCreation,
     mode: Failed["mode"] = "normal",
   ) {
-    if (report) {
-      if (!editingReport || !canAdd || presentation) return;
+    if (sheetClone) {
+      if (!editingSheetClone || !canAdd || presentation) return;
       try {
         const ids = new Set(entry.ids);
-        const documents = await documentsForReportRows(
+        const documents = await documentsForSheetCloneRows(
           editTasks().filter((task) => ids.has(task.id)),
         );
-        if (reportDraft.ref.current?.report.id !== report.id) return;
-        reportDraft.preserveDocuments(documents);
-        reportDraft.apply({ kind: "delete", taskIds: entry.ids });
+        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
+          return;
+        sheetCloneDraft.preserveDocuments(documents);
+        sheetCloneDraft.apply({ kind: "delete", taskIds: entry.ids });
         setSelection(null);
-        const deleted = reportDraft.ref.current!;
+        const deleted = sheetCloneDraft.ref.current!;
         setToast("");
         setUndoToast({
           kind: "rows",
-          sheet: `${teamId}:${year}:${report.id}`,
+          sheet: `${teamId}:${year}:${sheetClone.id}`,
           target: deleted.history[deleted.cursor],
           message:
             entry.ids.length > 1
@@ -2405,9 +2420,9 @@ function Workspace({
       revealChange({ rows: entry.ids }, selected);
   }
   async function undo(redo = false) {
-    if (report) {
-      if (editingReport && canAdd && !presentation && !editorRef.current) {
-        const draft = reportDraft.ref.current;
+    if (sheetClone) {
+      if (editingSheetClone && canAdd && !presentation && !editorRef.current) {
+        const draft = sheetCloneDraft.ref.current;
         if (!draft) return;
         const next = draft.history[draft.cursor + (redo ? 1 : -1)];
         if (!next) return;
@@ -2415,17 +2430,18 @@ function Workspace({
         let before: Task[];
         try {
           const ids = new Set(next.map((task) => task.id));
-          const documents = await documentsForReportRows(
+          const documents = await documentsForSheetCloneRows(
             draft.tasks.filter((task) => !ids.has(task.id)),
           );
           if (
-            reportDraft.ref.current?.report.id !== draft.report.id ||
-            reportDraft.ref.current?.cursor !== draft.cursor
+            sheetCloneDraft.ref.current?.sheetClone.id !==
+              draft.sheetClone.id ||
+            sheetCloneDraft.ref.current?.cursor !== draft.cursor
           )
             return;
-          reportDraft.preserveDocuments(documents);
-          before = reportDraft.ref.current.tasks;
-          reportDraft.undo(redo);
+          sheetCloneDraft.preserveDocuments(documents);
+          before = sheetCloneDraft.ref.current.tasks;
+          sheetCloneDraft.undo(redo);
         } catch (e) {
           setError((e as Error).message);
           return;
@@ -2433,7 +2449,7 @@ function Workspace({
         revealChange(
           sheetChanges(
             before,
-            reportDraft.ref.current?.tasks || report.tasks,
+            sheetCloneDraft.ref.current?.tasks || sheetClone.tasks,
             visibleTasks,
             selection?.focus.key,
           ),
@@ -2451,7 +2467,7 @@ function Workspace({
       !entry ||
       pendingRef.current ||
       failedRef.current ||
-      report ||
+      sheetClone ||
       presentation
     )
       return;
@@ -2612,19 +2628,21 @@ function Workspace({
       setError((e as Error).message);
     }
   }
-  async function addReportTask(
+  async function addSheetCloneTask(
     sourceId?: string,
     target?: Task,
     placement: "before" | "after" = "after",
     copied?: ReturnType<typeof copyRowFormatting>,
   ) {
-    if (!editingReport || !canAdd || presentation || editorRef.current) return;
+    if (!editingSheetClone || !canAdd || presentation || editorRef.current)
+      return;
     try {
       if (sourceId) {
         const source = editTasks().find((task) => task.id === sourceId);
         if (!source) return;
         const documents = await documentsForCopy(source);
-        if (reportDraft.ref.current?.report.id !== report?.id) return;
+        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone?.id)
+          return;
         copied = { ...copyRowFormatting(source), documents };
       }
       const taskId = crypto.randomUUID();
@@ -2632,7 +2650,7 @@ function Workspace({
         !sourceId && !copied && target && view.groupBy
           ? { [view.groupBy]: value(target, view.groupBy) }
           : {};
-      reportDraft.apply({
+      sheetCloneDraft.apply({
         kind: "create",
         taskId,
         sourceId,
@@ -2659,14 +2677,14 @@ function Workspace({
     }
   }
   async function addTask() {
-    if (report) {
-      addReportTask();
+    if (sheetClone) {
+      addSheetCloneTask();
       return;
     }
     if (
       !ready ||
       !canAdd ||
-      report ||
+      sheetClone ||
       presentation ||
       pendingRef.current ||
       failedRef.current
@@ -2728,8 +2746,8 @@ function Workspace({
     targetId: string,
     placement: "before" | "after",
   ) {
-    if (report) {
-      if (!editingReport || !canAdd || presentation) return;
+    if (sheetClone) {
+      if (!editingSheetClone || !canAdd || presentation) return;
       try {
         const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
         const target = editTasks().find((task) => task.id === targetId);
@@ -2746,7 +2764,7 @@ function Workspace({
           })
         )
           throw new Error("같은 묶음 안에서 순서를 변경하세요.");
-        reportDraft.apply({
+        sheetCloneDraft.apply({
           kind: "reorder",
           taskIds: ids,
           targetId,
@@ -2767,7 +2785,7 @@ function Workspace({
       !target ||
       pendingRef.current ||
       failedRef.current ||
-      report ||
+      sheetClone ||
       presentation
     )
       return;
@@ -2801,9 +2819,9 @@ function Workspace({
     }
     if (boardKey.current === submittedBoard) await refresh();
   }
-  async function documentsForReportRows(tasks: Task[]) {
+  async function documentsForSheetCloneRows(tasks: Task[]) {
     const documents = new Map<string, NonNullable<Task["documents"]>>();
-    const stored = new Set(report?.tasks.map((task) => task.id));
+    const stored = new Set(sheetClone?.tasks.map((task) => task.id));
     const pending: string[] = [];
     for (const task of tasks) {
       if (task.documents)
@@ -2817,10 +2835,10 @@ function Workspace({
     for (let offset = 0; offset < pending.length;) {
       const result = await send<{
         tasks: { id: string; documents: NonNullable<Task["documents"]> }[];
-      }>(`/reports/${report!.id}/documents/batch`, {
+      }>(`/sheet-clones/${sheetClone!.id}/documents/batch`, {
         taskIds: pending.slice(offset, offset + 100),
       });
-      if (reportDraft.ref.current?.report.id !== report!.id)
+      if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone!.id)
         throw new Error("시트가 변경되었습니다.");
       for (const task of result.tasks) documents.set(task.id, task.documents);
       offset += result.tasks.length;
@@ -2831,17 +2849,17 @@ function Workspace({
   // (copiedRowSchema); a listing's revision or hasContent stays behind.
   async function documentsForCopy(task: Task) {
     if (
-      report &&
+      sheetClone &&
       !task.documents &&
-      !report.tasks.some((t) => t.id === task.id)
+      !sheetClone.tasks.some((t) => t.id === task.id)
     )
       return [];
     const documents =
       task.documents ||
       (
         await api<{ documents: NonNullable<Task["documents"]> }>(
-          report
-            ? `/reports/${report.id}/tasks/${task.id}/documents?content=1`
+          sheetClone
+            ? `/sheet-clones/${sheetClone.id}/tasks/${task.id}/documents?content=1`
             : `/tasks/${task.id}/documents?content=1`,
         )
       ).documents;
@@ -2873,7 +2891,8 @@ function Workspace({
         !targets.length ||
         targets.some(
           (task) =>
-            !task || !(report ? editingReport && canAdd : canEdit(user, task)),
+            !task ||
+            !(sheetClone ? editingSheetClone && canAdd : canEdit(user, task)),
         )
       )
         return;
@@ -2885,15 +2904,16 @@ function Workspace({
       });
       return;
     }
-    if (report) {
-      if (!editingReport || !canAdd || presentation || editorRef.current)
+    if (sheetClone) {
+      if (!editingSheetClone || !canAdd || presentation || editorRef.current)
         return;
       const target = editTasks().find((task) => task.id === selected.id);
       if (!target) return;
       if (command === "copy") {
         try {
           const documents = await documentsForCopy(target);
-          if (reportDraft.ref.current?.report.id !== report.id) return;
+          if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
+            return;
           setCopiedRow({
             task: { ...structuredClone(target), documents },
             height: view.rowHeights[target.id],
@@ -2904,14 +2924,14 @@ function Workspace({
         }
       } else if (command === "paste") {
         if (copiedRow)
-          addReportTask(
+          addSheetCloneTask(
             undefined,
             target,
             "after",
             copyRowFormatting(copiedRow.task),
           );
       } else
-        addReportTask(
+        addSheetCloneTask(
           undefined,
           target,
           command === "insertBefore" ? "before" : "after",
@@ -2921,7 +2941,7 @@ function Workspace({
     if (
       pendingRef.current ||
       failedRef.current ||
-      report ||
+      sheetClone ||
       presentation ||
       editorRef.current
     )
@@ -3039,8 +3059,8 @@ function Workspace({
         return;
       }
       if (action === "duplicate") {
-        if (report) {
-          addReportTask(t.id, t);
+        if (sheetClone) {
+          addSheetCloneTask(t.id, t);
           return;
         }
         const submittedBoard = boardKey.current;
@@ -3065,7 +3085,7 @@ function Workspace({
         return;
       }
       if (action === "carry") {
-        if (report) return;
+        if (sheetClone) return;
         await send(
           `/tasks/${t.id}`,
           {
@@ -3192,7 +3212,7 @@ function Workspace({
       </main>
     );
   async function closeDocumentBrowser() {
-    closeReportNow();
+    closeSheetCloneNow();
     await refresh();
     workspaceRoute.commit("annual");
   }
@@ -3202,7 +3222,7 @@ function Workspace({
     else await action();
   }
   function openAnnualWorkspace() {
-    if (workspaceRoute.route === "annual") closeReport();
+    if (workspaceRoute.route === "annual") closeSheetClone();
     else void workspaceRoute.navigate("annual");
   }
   async function prepareWorkspaceRoute(
@@ -3214,8 +3234,8 @@ function Workspace({
       pendingRef.current ||
       failedRef.current ||
       editorRef.current ||
-      reportDraft.dirty ||
-      reportDraft.saving
+      sheetCloneDraft.dirty ||
+      sheetCloneDraft.saving
     )
       return false;
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
@@ -3224,9 +3244,9 @@ function Workspace({
       flushView();
       if (next === "annual") {
         if (documentBrowser) {
-          closeReportNow();
+          closeSheetCloneNow();
           await refresh();
-        } else await openCopy(null);
+        } else await openSheetClone(null);
       }
       setViewMenu(false);
       if (next === "calendar") setRowTask(null);
@@ -3311,8 +3331,8 @@ function Workspace({
                 !!pending ||
                 !!failed ||
                 !!editor ||
-                reportDraft.dirty ||
-                reportDraft.saving,
+                sheetCloneDraft.dirty ||
+                sheetCloneDraft.saving,
             )}
           >
             <BrandMark className="brand-symbol" />
@@ -3327,8 +3347,8 @@ function Workspace({
               workspaceNavigating ||
                 !!pending ||
                 !!failed ||
-                reportDraft.dirty ||
-                reportDraft.saving,
+                sheetCloneDraft.dirty ||
+                sheetCloneDraft.saving,
             )}
             onChange={(e) => {
               const id = e.target.value;
@@ -3348,16 +3368,16 @@ function Workspace({
             >
               <Button
                 title={documentBrowser ? "연간 업무로 돌아가기" : "연간 업무"}
-                active={screen === "annual" && !documentBrowser && !report}
+                active={screen === "annual" && !documentBrowser && !sheetClone}
                 aria-pressed={
-                  screen === "annual" && !documentBrowser && !report
+                  screen === "annual" && !documentBrowser && !sheetClone
                 }
                 onClick={openAnnualWorkspace}
                 {...busyProps(
                   calendarBusy,
                   workspaceNavigating ||
-                    reportDraft.dirty ||
-                    reportDraft.saving,
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving,
                 )}
               >
                 <CalendarDays size={15} />
@@ -3373,8 +3393,8 @@ function Workspace({
                     !!pending ||
                     !!failed ||
                     !!editor ||
-                    reportDraft.dirty ||
-                    reportDraft.saving,
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving,
                 )}
                 onClick={() => void workspaceRoute.navigate("documents")}
               >
@@ -3390,8 +3410,8 @@ function Workspace({
                     !!pending ||
                     !!failed ||
                     !!editor ||
-                    reportDraft.dirty ||
-                    reportDraft.saving,
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving,
                 )}
                 onClick={() => void workspaceRoute.navigate("calendar")}
               >
@@ -3444,11 +3464,11 @@ function Workspace({
               </Button>
             </nav>
           )}
-          {documentBrowser ? null : editingReport ? (
+          {documentBrowser ? null : editingSheetClone ? (
             <span className="tag" role="status">
-              {reportDraft.saving
+              {sheetCloneDraft.saving
                 ? "사본 저장 중…"
-                : reportDraft.dirty
+                : sheetCloneDraft.dirty
                   ? "사본 저장 대기 중…"
                   : "저장됨"}
             </span>
@@ -3505,8 +3525,8 @@ function Workspace({
                 {...busyProps(
                   calendarBusy,
                   workspaceNavigating ||
-                    reportDraft.dirty ||
-                    reportDraft.saving,
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving,
                 )}
               >
                 <X size={18} />
@@ -3523,8 +3543,8 @@ function Workspace({
                   {...busyProps(
                     calendarBusy,
                     workspaceNavigating ||
-                      reportDraft.dirty ||
-                      reportDraft.saving,
+                      sheetCloneDraft.dirty ||
+                      sheetCloneDraft.saving,
                   )}
                 >
                   <History size={15} />
@@ -3539,8 +3559,8 @@ function Workspace({
                     {...busyProps(
                       calendarBusy,
                       workspaceNavigating ||
-                        reportDraft.dirty ||
-                        reportDraft.saving,
+                        sheetCloneDraft.dirty ||
+                        sheetCloneDraft.saving,
                     )}
                   >
                     <Settings size={15} />
@@ -3566,14 +3586,14 @@ function Workspace({
                   workspaceNavigating ||
                   !!pending ||
                   !!failed ||
-                  reportDraft.dirty ||
-                  reportDraft.saving
+                  sheetCloneDraft.dirty ||
+                  sheetCloneDraft.saving
                 }
                 onLogout={async () => {
                   if (
                     pendingRef.current ||
                     failedRef.current ||
-                    reportDraft.dirty
+                    sheetCloneDraft.dirty
                   )
                     return;
                   await navigateWorkspace(async () => {
@@ -3611,10 +3631,10 @@ function Workspace({
           <>
             <section className="page-heading">
               <div className="heading-line">
-                <h1>{report ? report.name : "연간 업무"}</h1>
+                <h1>{sheetClone ? sheetClone.name : "연간 업무"}</h1>
                 <span className="year-badge">{viewYear}</span>
               </div>
-              {!report && (
+              {!sheetClone && (
                 <div
                   className="board-summary"
                   aria-label="선택한 팀·표시 기간 전체 업무 통계"
@@ -3672,8 +3692,8 @@ function Workspace({
                       !!pending ||
                       !!failed ||
                       !!editor ||
-                      reportDraft.dirty ||
-                      reportDraft.saving
+                      sheetCloneDraft.dirty ||
+                      sheetCloneDraft.saving
                     }
                     onClick={() => setPanel("import")}
                   >
@@ -3687,8 +3707,8 @@ function Workspace({
                     !!pending ||
                     !!failed ||
                     !!editor ||
-                    reportDraft.dirty ||
-                    reportDraft.saving
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving
                   }
                   onClick={() => setPanel("export")}
                 >
@@ -3703,8 +3723,8 @@ function Workspace({
                 ready
                   ? activeSavedFilter
                     ? "filter"
-                    : report
-                      ? "copy"
+                    : sheetClone
+                      ? "sheet-clone"
                       : undefined
                   : undefined
               }
@@ -3780,7 +3800,7 @@ function Workspace({
                     />
                   </div>
                   <FindBar
-                    key={`${teamId}:${year}:${report?.id || "live"}`}
+                    key={`${teamId}:${year}:${sheetClone?.id || "live"}`}
                     tasks={matchingTasks}
                     properties={properties}
                     visibleFields={view.visibleFields}
@@ -3863,10 +3883,10 @@ function Workspace({
                   </div>
                 </div>
               </fieldset>
-              {(!report || editingReport) && (
+              {(!sheetClone || editingSheetClone) && (
                 <Toolbar
                   leadingAction={
-                    (!report ? canAdd : editingReport && canAdd) ? (
+                    (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (
                       <Button
                         className="primary toolbar-add-task"
                         onClick={addTask}
@@ -3907,18 +3927,18 @@ function Workspace({
                   onUndo={() => undo()}
                   onRedo={() => undo(true)}
                   canUndo={
-                    report
-                      ? editingReport &&
+                    sheetClone
+                      ? editingSheetClone &&
                         canAdd &&
-                        reportDraft.canUndo &&
+                        sheetCloneDraft.canUndo &&
                         !editor
                       : !!undoStack.length && !pending && !failed
                   }
                   canRedo={
-                    report
-                      ? editingReport &&
+                    sheetClone
+                      ? editingSheetClone &&
                         canAdd &&
-                        reportDraft.canRedo &&
+                        sheetCloneDraft.canRedo &&
                         !editor
                       : !!redoStack.length && !pending && !failed
                   }
@@ -3952,7 +3972,7 @@ function Workspace({
                     </span>
                   </span>
                   <ActiveFilterConditions
-                    key={`${teamId}:${report?.id || "live"}:${activeSavedFilter.id}`}
+                    key={`${teamId}:${sheetClone?.id || "live"}:${activeSavedFilter.id}`}
                     properties={properties}
                     tasks={allTasks}
                     users={assignableUsers}
@@ -4007,30 +4027,30 @@ function Workspace({
                   </div>
                 </section>
               )}
-              {reportDraft.error && (
+              {sheetCloneDraft.error && (
                 <div className="board-error" role="alert">
-                  <span>{reportDraft.error}</span>
+                  <span>{sheetCloneDraft.error}</span>
                   <Button
-                    onClick={() => void reportDraft.save().catch(() => {})}
+                    onClick={() => void sheetCloneDraft.save().catch(() => {})}
                   >
                     저장 재시도
                   </Button>
                   <Button
                     onClick={async () => {
                       if (
-                        !report ||
+                        !sheetClone ||
                         !confirm(
                           "저장하지 못한 표 변경을 폐기하고 최신 사본을 불러올까요?",
                         )
                       )
                         return;
                       try {
-                        const latest = await api<Report>(
-                          `/reports/${report.id}`,
+                        const latest = await api<SheetClone>(
+                          `/sheet-clones/${sheetClone.id}`,
                         );
-                        reportDraft.begin(latest);
-                        reportRef.current = latest;
-                        setReport(latest);
+                        sheetCloneDraft.begin(latest);
+                        sheetCloneRef.current = latest;
+                        setSheetClone(latest);
                         viewRef.current = latest.view;
                         setView(latest.view);
                       } catch (e) {
@@ -4123,15 +4143,17 @@ function Workspace({
                   addTaskLabel={addTaskLabel}
                   footer={
                     <AnnualMemoPanel
-                      key={`${user.id}:${teamId}:${report?.id || year}`}
+                      key={`${user.id}:${teamId}:${sheetClone?.id || year}`}
                       ref={annualMemoRef}
                       teamId={teamId}
                       year={year}
                       userId={user.id}
                       readOnly={
-                        presentation || !canAdd || (!!report && !editingReport)
+                        presentation ||
+                        !canAdd ||
+                        (!!sheetClone && !editingSheetClone)
                       }
-                      reportId={report?.id}
+                      sheetCloneId={sheetClone?.id}
                     />
                   }
                   canEditPeople={canAdd}
@@ -4164,7 +4186,7 @@ function Workspace({
                       );
                       return false;
                     }
-                    if (!task || !(report ? canAdd : canEdit(user, task))) {
+                    if (!task || !(sheetClone ? canAdd : canEdit(user, task))) {
                       setError(
                         "업무 편집 권한이 변경되어 저장할 수 없습니다. 입력은 셀에 남아 있습니다.",
                       );
@@ -4179,7 +4201,7 @@ function Workspace({
                       }))
                     )
                       return false;
-                    if (!report) setPendingEdit({ point, value: v });
+                    if (!sheetClone) setPendingEdit({ point, value: v });
                     editorRef.current = null;
                     setEditor(null);
                     return true;
@@ -4209,9 +4231,9 @@ function Workspace({
                     }
                     copyError.current = message;
                   }}
-                  copyEditable={!!report && canAdd}
+                  copyEditable={!!sheetClone && canAdd}
                   readOnly={
-                    (!!report && (!editingReport || !canAdd)) ||
+                    (!!sheetClone && (!editingSheetClone || !canAdd)) ||
                     !!failed ||
                     presentation
                   }
@@ -4227,30 +4249,30 @@ function Workspace({
                 year={year}
                 view={view}
                 taskIds={allTasks.map((task) => task.id)}
-                active={report}
+                active={sheetClone}
                 canEdit={canAdd}
                 available={!teamUnavailable}
                 disabled={
                   teamUnavailable || !ready || !!pending || !!failed || !!editor
                 }
                 status={
-                  report
-                    ? reportDraft.error
+                  sheetClone
+                    ? sheetCloneDraft.error
                       ? "저장 실패"
-                      : reportDraft.saving || reportDraft.dirty
+                      : sheetCloneDraft.saving || sheetCloneDraft.dirty
                         ? "저장 중…"
                         : "저장됨"
                     : ""
                 }
                 onPrepare={prepareCopySwitch}
-                onSelect={openCopy}
-                onDelete={deleteReports}
+                onSelect={openSheetClone}
+                onDelete={deleteSheetClones}
                 onRename={(id, name) => {
-                  if (reportRef.current?.id === id) {
-                    const next = { ...reportRef.current, name };
-                    reportRef.current = next;
-                    setReport(next);
-                    reportDraft.rename(name);
+                  if (sheetCloneRef.current?.id === id) {
+                    const next = { ...sheetCloneRef.current, name };
+                    sheetCloneRef.current = next;
+                    setSheetClone(next);
+                    sheetCloneDraft.rename(name);
                   }
                 }}
               />
@@ -4267,7 +4289,7 @@ function Workspace({
           message={undoToast.message}
           disabled={
             undoToast.kind === "rows" &&
-            (!!pending || !!failed || !!editor || (!!report && !canAdd))
+            (!!pending || !!failed || !!editor || (!!sheetClone && !canAdd))
           }
           onUndo={() => {
             if (undoToast.kind === "rows") {
@@ -4285,29 +4307,31 @@ function Workspace({
       )}
       {rowTask && !editor && (
         <RowPanel
-          key={`${report?.id || "live"}:${rowTask.id}`}
+          key={`${sheetClone?.id || "live"}:${rowTask.id}`}
           task={allTasks.find((t) => t.id === rowTask.id) || rowTask}
           settings={settings}
           user={user}
-          readOnly={presentation || (!!report && (!editingReport || !canAdd))}
-          reportMode={!!report}
-          copySaveError={report ? reportDraft.error : undefined}
-          onRetryCopySave={() => void reportDraft.save().catch(() => {})}
-          documentReport={
-            report
+          readOnly={
+            presentation || (!!sheetClone && (!editingSheetClone || !canAdd))
+          }
+          sheetCloneMode={!!sheetClone}
+          copySaveError={sheetClone ? sheetCloneDraft.error : undefined}
+          onRetryCopySave={() => void sheetCloneDraft.save().catch(() => {})}
+          documentSheetClone={
+            sheetClone
               ? {
-                  id: report.id,
-                  isNew: !report.tasks.some((t) => t.id === rowTask.id),
+                  id: sheetClone.id,
+                  isNew: !sheetClone.tasks.some((t) => t.id === rowTask.id),
                 }
               : undefined
           }
           onDocumentSaved={(result) => {
-            if (report) {
-              const current = reportRef.current;
-              if (current?.id !== report.id) return;
-              const documents = savedReportDocuments.current;
-              if (documents.reportId !== report.id) {
-                documents.reportId = report.id;
+            if (sheetClone) {
+              const current = sheetCloneRef.current;
+              if (current?.id !== sheetClone.id) return;
+              const documents = savedSheetCloneDocuments.current;
+              if (documents.sheetCloneId !== sheetClone.id) {
+                documents.sheetCloneId = sheetClone.id;
                 documents.tasks.clear();
               }
               documents.tasks.set(rowTask.id, {
@@ -4327,9 +4351,9 @@ function Workspace({
                     : task,
                 ),
               };
-              reportRef.current = next;
-              setReport(next);
-              reportDraft.updateDocument(
+              sheetCloneRef.current = next;
+              setSheetClone(next);
+              sheetCloneDraft.updateDocument(
                 rowTask.id,
                 result.hasDocument,
                 result.documentCount,
@@ -4363,15 +4387,18 @@ function Workspace({
             const task = editTasks().find((t) => t.id === rowTask.id);
             if (
               !task ||
-              !(report ? canAdd : canEdit(user, task)) ||
+              !(sheetClone ? canAdd : canEdit(user, task)) ||
               presentation
             )
               throw new Error("업무를 수정할 권한이 없습니다.");
-            if (report) {
+            if (sheetClone) {
               if (
-                !editingReport ||
+                !editingSheetClone ||
                 !canAdd ||
-                !reportDraft.apply({ kind: "cells", changes: payload.changes })
+                !sheetCloneDraft.apply({
+                  kind: "cells",
+                  changes: payload.changes,
+                })
               )
                 throw new Error(
                   "사본을 수정할 수 없습니다. 수정 상태를 확인하세요.",
@@ -4418,10 +4445,10 @@ function Workspace({
           calendarTheme={calendarTheme}
           onClose={() => closeLinkPanel(key)}
           onDeleted={() => closeLinkPanel(key)}
-          onOpenCopy={(target) =>
-            void openInCopy(
+          onOpenSheetClone={(target) =>
+            void openInSheetClone(
               target,
-              link.kind === "report-task" ? link.task.teamId : teamId,
+              link.kind === "sheet-clone-task" ? link.task.teamId : teamId,
             )
           }
         />
@@ -4429,7 +4456,7 @@ function Workspace({
       {panel === "export" && (
         <ExportPanel
           teamId={teamId}
-          report={report}
+          sheetClone={sheetClone}
           year={viewYear}
           startMonth={view.startMonth}
           taskIds={visibleTasks.map((t) => t.id)}
@@ -4440,11 +4467,11 @@ function Workspace({
       {panel === "import" && (
         <ImportPanel
           teamId={teamId}
-          report={report}
+          sheetClone={sheetClone}
           year={viewYear}
           onClose={() => setPanel("")}
           onDone={async () => {
-            if (report) {
+            if (sheetClone) {
               await refreshSheet();
               setToast("사본에 자료 가져오기를 완료했습니다.");
               return;
@@ -4470,14 +4497,14 @@ function Workspace({
       )}
       {panel === "history" && (
         <HistoryPanel
-          key={report?.id || "original"}
-          report={report}
+          key={sheetClone?.id || "original"}
+          sheetClone={sheetClone}
           settings={settings}
           users={users}
           teamId={teamId}
           year={viewYear}
           startMonth={view.startMonth}
-          tasks={report ? editTasks() : tasks}
+          tasks={sheetClone ? editTasks() : tasks}
           user={user}
           onClose={() => setPanel("")}
           onRefresh={refreshSheet}

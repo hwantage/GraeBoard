@@ -13,13 +13,13 @@ export function documentRouteScope(path) {
     };
   if (
     (m =
-      /^\/reports\/([^/]+)\/tasks\/([^/]+)\/(document|documents)(?:\/([^/]+))?$/.exec(
+      /^\/sheet-clones\/([^/]+)\/tasks\/([^/]+)\/(document|documents)(?:\/([^/]+))?$/.exec(
         path,
       ))
   )
     return {
-      kind: "report",
-      reportId: m[1],
+      kind: "sheetClone",
+      sheetCloneId: m[1],
       taskId: m[2],
       ...(m[3] === "document"
         ? { documentId: "main" }
@@ -36,10 +36,10 @@ export function documentRouteScope(path) {
       year: Number(m[2]),
       ...(m[3] ? { documentId: m[3] } : {}),
     };
-  if ((m = /^\/reports\/([^/]+)\/memos(?:\/([^/]+))?$/.exec(path)))
+  if ((m = /^\/sheet-clones\/([^/]+)\/memos(?:\/([^/]+))?$/.exec(path)))
     return {
-      kind: "reportMemo",
-      reportId: m[1],
+      kind: "sheetCloneMemo",
+      sheetCloneId: m[1],
       ...(m[2] ? { documentId: m[2] } : {}),
     };
   if ((m = /^\/calendar\/entries\/([^/]+)\/document$/.exec(path)))

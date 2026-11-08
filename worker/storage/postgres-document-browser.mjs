@@ -8,7 +8,7 @@ import {
   documentBrowserPage,
   documentPreview,
 } from "../../server/storage/document-browser-service.mjs";
-import { reportRevision } from "./postgres-reports.mjs";
+import { sheetCloneRevision } from "./postgres-sheet-clones.mjs";
 import { documentKeysUnder } from "./postgres-documents.mjs";
 export class PostgresDocumentBrowserRepository {
   constructor({ context }) {
@@ -43,12 +43,12 @@ export class PostgresDocumentBrowserRepository {
       }
       if (kind === "sources") {
         const live = await taskList(s, { year }),
-          reports = (await s.list("report")).filter(
+          sheetClones = (await s.list("sheetClone")).filter(
             (r) => r.payload.year === year,
           ),
-          // Counted from keys, once for every report: no markdown is read.
+          // Counted from keys, once for every sheetClone: no markdown is read.
           counts = new Map();
-        for (const key of await documentKeysUnder(s, ["report"])) {
+        for (const key of await documentKeysUnder(s, ["sheetClone"])) {
           if (!counts.has(key[1]))
             counts.set(key[1], { tasks: new Set(), documents: 0 });
           const count = counts.get(key[1]);
@@ -63,7 +63,7 @@ export class PostgresDocumentBrowserRepository {
               taskCount: live.filter((t) => t.documentCount).length,
               documentCount: live.reduce((sum, t) => sum + t.documentCount, 0),
             },
-            ...reports.map((r) => ({
+            ...sheetClones.map((r) => ({
               id: r.key[0],
               name: r.payload.name,
               taskCount: r.payload.data.tasks.filter((t) =>
@@ -74,14 +74,16 @@ export class PostgresDocumentBrowserRepository {
           ],
         };
       }
-      const row = source === "live" ? null : await s.get("report", [source]),
-        report = row && !row.deleted && row.payload.year === year ? row : null;
-      assert(source === "live" || report, 404, "사본을 찾을 수 없습니다.");
+      const row =
+          source === "live" ? null : await s.get("sheetClone", [source]),
+        sheetClone =
+          row && !row.deleted && row.payload.year === year ? row : null;
+      assert(source === "live" || sheetClone, 404, "사본을 찾을 수 없습니다.");
       const tasks =
           source === "live"
             ? await taskList(s, { year })
-            : report.payload.data.tasks,
-        settings = report?.payload.data.settings || (await settingsFor(s));
+            : sheetClone.payload.data.tasks,
+        settings = sheetClone?.payload.data.settings || (await settingsFor(s));
       if (kind === "task") {
         const task = tasks.find((t) => t.id === query.taskId);
         assert(task, 404, "업무를 찾을 수 없습니다.");
@@ -89,16 +91,18 @@ export class PostgresDocumentBrowserRepository {
           task,
           settings,
           users,
-          ...(report ? { revision: reportRevision(report.payload.data) } : {}),
+          ...(sheetClone
+            ? { revision: sheetCloneRevision(sheetClone.payload.data) }
+            : {}),
         };
       }
-      const sourceUsers = report?.payload.data.users || users;
+      const sourceUsers = sheetClone?.payload.data.users || users;
       // The source's documents grouped by task once, not filtered per task.
       const owner = source === "live" ? 1 : 2,
         byTask = new Map();
       for (const d of await s.listChildren(
         "document",
-        source === "live" ? ["task"] : ["report", source],
+        source === "live" ? ["task"] : ["sheetClone", source],
       )) {
         if (!byTask.has(d.key[owner])) byTask.set(d.key[owner], []);
         byTask.get(d.key[owner]).push(d);

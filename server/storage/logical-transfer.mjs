@@ -68,10 +68,10 @@ function sqliteRevision(db, teamId, entity, key) {
           Number(b),
           c,
         )?.revision || 0;
-    if (a === "reportMemo")
+    if (a === "sheetCloneMemo")
       revision =
         one(
-          "SELECT revision FROM report_memos WHERE report_id=? AND id=?",
+          "SELECT revision FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
           b,
           c,
         )?.revision || 0;
@@ -480,9 +480,9 @@ function restoreSqlitePresentation(db, teamId, rows) {
         db.prepare(
           "UPDATE annual_memos SET revision=? WHERE team_id=? AND year=? AND id=?",
         ).run(r, teamId, Number(b), c);
-      if (a === "reportMemo")
+      if (a === "sheetCloneMemo")
         db.prepare(
-          "UPDATE report_memos SET revision=? WHERE report_id=? AND id=?",
+          "UPDATE sheet_clone_memos SET revision=? WHERE sheet_clone_id=? AND id=?",
         ).run(r, b, c);
     }
     for (const [entity, table] of [
@@ -576,7 +576,7 @@ export async function importTeam(adapter, bundle, options = {}) {
           if (adapter.engine === "sqlite")
             for (const table of [
               "tasks",
-              "reports",
+              "sheet_clones",
               "annual_memos",
               "document_versions",
               "calendar_entries",

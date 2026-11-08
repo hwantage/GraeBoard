@@ -35,7 +35,8 @@
     "backup:external": "node --env-file-if-exists=.env scripts/backup-external.mjs",
     "restore:external": "node --env-file-if-exists=.env scripts/restore-external.mjs",
     "performance:sync": "node scripts/sync-performance.mjs",
-    "sync:upgrade": "node scripts/sync-upgrade.mjs"
+    "sync:upgrade": "node scripts/sync-upgrade.mjs",
+    "cutover:sheet-clone": "node --env-file-if-exists=.env tools/sheet-clone-cutover/cli.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

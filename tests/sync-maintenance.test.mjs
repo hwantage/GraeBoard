@@ -15,6 +15,8 @@ import {
   digest,
   entityId,
   stateHash,
+  protocolMarker,
+  PROTOCOL,
 } from "../server/sync/protocol.mjs";
 import {
   activeImageReferences,
@@ -49,6 +51,8 @@ function fixture(t, options = {}) {
     canonical_head: "canonical",
     updated_at: new Date().toISOString(),
   });
+  // Every C names its protocol.
+  store.putEntity(protocolMarker(PROTOCOL, "protocol-marker"));
   const files = new Map(),
     archive = new Map(),
     created = new Map();
@@ -142,7 +146,7 @@ test("audit-only image references are protected until explicit history cleanup",
     id = randomUUID();
   f.db
     .prepare(
-      "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'report-edit',?,?,?)",
+      "INSERT INTO audit(id,team_id,actor_id,action,target,before_json,created_at) VALUES(?,?,?,'sheet-clone-edit',?,?,?)",
     )
     .run(
       id,

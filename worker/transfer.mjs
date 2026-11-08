@@ -28,7 +28,9 @@ export async function transferRoutes(ctx, path, method, body) {
     return service.preview({
       teamId: form.get("teamId"),
       year: form.get("year"),
-      ...(form.get("reportId") ? { reportId: form.get("reportId") } : {}),
+      ...(form.get("sheetCloneId")
+        ? { sheetCloneId: form.get("sheetCloneId") }
+        : {}),
       sheetOptions: form.get("sheetOptions") || {},
       file:
         file && typeof file.arrayBuffer === "function"

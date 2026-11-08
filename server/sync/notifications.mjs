@@ -24,35 +24,36 @@ export function createSyncNotifier({
       documentEvents.invalidate("team:" + teamId);
     for (const key of keys) {
       const [entity, parts] = JSON.parse(key);
-      if (entity === "report") documentEvents.invalidate("report:" + parts[0]);
+      if (entity === "sheetClone")
+        documentEvents.invalidate("sheet-clone:" + parts[0]);
       if (entity === "document") {
         const [kind, a, b, c] = parts;
         const body =
           kind === "task"
             ? `task:${a}:${b}`
-            : kind === "report"
-              ? `report-task:${a}:${b}:${c}`
+            : kind === "sheetClone"
+              ? `sheet-clone-task:${a}:${b}:${c}`
               : kind === "annual"
                 ? `annual_memos:${teamId}:${a}:${b}`
-                : kind === "reportMemo"
-                  ? `report_memos:${a}:${b}`
+                : kind === "sheetCloneMemo"
+                  ? `sheet_clone_memos:${a}:${b}`
                   : `calendar:${a}`;
         documentEvents.notify(body);
         if (kind === "task")
           documentEvents.invalidate(`list:/api/tasks/${a}/documents`);
-        if (kind === "report") {
-          documentEvents.invalidate("report:" + a);
+        if (kind === "sheetClone") {
+          documentEvents.invalidate("sheet-clone:" + a);
           documentEvents.invalidate(
-            `list:/api/reports/${a}/tasks/${b}/documents`,
+            `list:/api/sheet-clones/${a}/tasks/${b}/documents`,
           );
         }
         if (kind === "annual")
           documentEvents.invalidate(
             `list:/api/teams/${teamId}/years/${a}/memos`,
           );
-        if (kind === "reportMemo") {
-          documentEvents.invalidate("report:" + a);
-          documentEvents.invalidate(`list:/api/reports/${a}/memos`);
+        if (kind === "sheetCloneMemo") {
+          documentEvents.invalidate("sheet-clone:" + a);
+          documentEvents.invalidate(`list:/api/sheet-clones/${a}/memos`);
         }
       }
     }

@@ -510,7 +510,7 @@ test("a peer task created and deleted before this site received it keeps its tra
     stateHash(b.app.locals.sync.store(teamId).readState()),
   );
 });
-test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inactive references and local-only preferences", async (t) => {
+test("T9/T16/T17 domain capture preserves sheetClone bodies, tag replacement, inactive references and local-only preferences", async (t) => {
   const { a, b, teamId, userId } = await fixture(t);
   const task = ok(
     await a.api("/tasks", {
@@ -592,8 +592,8 @@ test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inacti
       "PUT",
     ),
   );
-  const report = ok(
-    await a.api("/reports", {
+  const sheetClone = ok(
+    await a.api("/sheet-clones", {
       teamId,
       year: 2026,
       name: "snapshot",
@@ -602,11 +602,11 @@ test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inacti
       view: defaultView(2026),
     }),
   );
-  const reportPath = `/reports/${report.id}/tasks/${task.id}/document`;
-  const before = ok(await a.api(reportPath));
+  const sheetClonePath = `/sheet-clones/${sheetClone.id}/tasks/${task.id}/document`;
+  const before = ok(await a.api(sheetClonePath));
   ok(
     await a.api(
-      reportPath,
+      sheetClonePath,
       {
         markdown: "independent copy body",
         expectedRevision: before.revision,
@@ -658,7 +658,10 @@ test("T9/T16/T17 domain capture preserves report bodies, tag replacement, inacti
     ok(await b.api(`/tasks/${task.id}/document`)).markdown,
     "first body",
   );
-  assert.equal(ok(await b.api(reportPath)).markdown, "independent copy body");
+  assert.equal(
+    ok(await b.api(sheetClonePath)).markdown,
+    "independent copy body",
+  );
   assert.equal(
     ok(await b.api(`/teams/${teamId}/years/2026/memos/${memoId}`)).markdown,
     "memo body",
@@ -1287,7 +1290,7 @@ test(
   },
 );
 
-test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent v2 copy cells", async (t) => {
+test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent protocol 4 copy cells", async (t) => {
   const { a, b, teamId } = await fixture(t);
   const task = ok(
     await a.api("/tasks", {
@@ -1296,8 +1299,8 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
       fields: { title: "original", "2026-10-26": "original detail" },
     }),
   ).task;
-  const report = ok(
-    await a.api("/reports", {
+  const sheetClone = ok(
+    await a.api("/sheet-clones", {
       teamId,
       year: 2026,
       name: "v2 copy",
@@ -1327,7 +1330,7 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   );
   assert.equal(storeA.readLink().canonical_head, options.expectedHead);
   const upgraded = ok(await a.api(`/teams/${teamId}/sync/upgrade`, options));
-  assert.equal(upgraded.protocol, 2);
+  assert.equal(upgraded.protocol, 4);
   assert.equal(storeA.readLink().mode, "paused");
   const received = ok(await b.api(`/teams/${teamId}/sync/upgrade`, options));
   assert.equal(received.received, true);
@@ -1340,10 +1343,10 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   for (const site of [a, b])
     ok(await site.api(`/teams/${teamId}/sync/resume`, {}));
   const save = async (site, key, value) => {
-    const before = ok(await site.api(`/reports/${report.id}`));
+    const before = ok(await site.api(`/sheet-clones/${sheetClone.id}`));
     return ok(
       await site.api(
-        `/reports/${report.id}`,
+        `/sheet-clones/${sheetClone.id}`,
         {
           operationId: randomUUID(),
           revision: before.revision,
@@ -1371,19 +1374,21 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   for (const store of [storeA, storeB]) {
     const pending = store.readPending();
     assert.equal(pending.length, 1);
-    assert.equal(pending[0].protocol, 2);
+    assert.equal(pending[0].protocol, 4);
     assert.equal(
-      pending[0].changes.filter((change) => change.entity === "reportCell")
+      pending[0].changes.filter((change) => change.entity === "sheetCloneCell")
         .length,
       1,
     );
-    assert.ok(!pending[0].changes.some((change) => change.entity === "report"));
+    assert.ok(
+      !pending[0].changes.some((change) => change.entity === "sheetClone"),
+    );
   }
   await a.app.locals.sync.get(teamId).run();
   await b.app.locals.sync.get(teamId).run();
   await a.app.locals.sync.get(teamId).run();
   for (const site of [a, b]) {
-    const copy = ok(await site.api(`/reports/${report.id}`));
+    const copy = ok(await site.api(`/sheet-clones/${sheetClone.id}`));
     assert.equal(copy.tasks[0].cells.title.value, "inside copy");
     assert.equal(copy.tasks[0].cells["2026-10-26"].value, "outside copy");
     assert.equal(getTask(site.db, task.id).cells.title.value, "original");
@@ -1413,23 +1418,25 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
       },
     ),
   );
-  assert.equal(storeB.readPending()[0].protocol, 2);
+  assert.equal(storeB.readPending()[0].protocol, 4);
   await b.app.locals.sync.get(teamId).run();
   await a.app.locals.sync.get(teamId).run();
   assert.equal(
-    ok(await a.api(`/reports/${report.id}`)).tasks[0].cells.title.value,
+    ok(await a.api(`/sheet-clones/${sheetClone.id}`)).tasks[0].cells.title
+      .value,
     "submitted copy",
   );
   ok(await a.api(`/teams/${teamId}/sync/disconnect`, {}));
   await save(a, "title", "offline v2 copy");
   ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
   assert.ok(
-    storeA.readPending().every((operation) => operation.protocol === 2),
+    storeA.readPending().every((operation) => operation.protocol === 4),
   );
   await a.app.locals.sync.get(teamId).run();
   await b.app.locals.sync.get(teamId).run();
   assert.equal(
-    ok(await b.api(`/reports/${report.id}`)).tasks[0].cells.title.value,
+    ok(await b.api(`/sheet-clones/${sheetClone.id}`)).tasks[0].cells.title
+      .value,
     "offline v2 copy",
   );
   assert.equal(stateHash(storeA.readState()), stateHash(storeB.readState()));

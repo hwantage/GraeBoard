@@ -43,6 +43,20 @@ export const teamMaintenanceMigration = (() => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 })();
+// team v3 changes nothing in the schema: the copy domain lives in the shared
+// entity tables, whose stored names and keys an existing team has converted in
+// the same transaction by the one-time SheetClone cutover tool (convert).
+export const teamSheetCloneMigration = (() => {
+  const sql = readFileSync(
+    new URL("./postgres/003-team-sheet-clones.sql", import.meta.url),
+    "utf8",
+  );
+  return {
+    version: 3,
+    sql,
+    checksum: createHash("sha256").update(sql).digest("hex"),
+  };
+})();
 export const accessTokenMigrations = Object.fromEntries(
   [
     ["control", 2],
@@ -87,6 +101,23 @@ async function applyTeamMaintenance(client, from) {
     new Date().toISOString(),
   ]);
 }
+// existing: the team schema held data before this command, so it is converted.
+async function applyTeamSheetClones(client, from, { existing, convert }) {
+  if (from >= 3) return null;
+  if (existing && !convert)
+    throw new Error(
+      "PostgreSQL team v3 renames stored sheet clone data; convert an existing team with the SheetClone cutover tool (npm run cutover:sheet-clone, docs/OPERATIONS.md)",
+    );
+  await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+  await client.query(teamSheetCloneMigration.sql);
+  const conversion = existing ? await convert(client) : null;
+  await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+  await client.query("INSERT INTO schema_migrations VALUES('team',3,$1,$2)", [
+    teamSheetCloneMigration.checksum,
+    new Date().toISOString(),
+  ]);
+  return conversion;
+}
 
 export async function inspectPostgres(client, scope) {
   if (!postgresMigrations[scope])
@@ -129,6 +160,7 @@ export async function migratePostgres(
     teamId,
     teamName = "GraeBoard",
     afterDdl,
+    convert,
   } = {},
 ) {
   if (scope === "site")
@@ -138,6 +170,7 @@ export async function migratePostgres(
       teamId,
       teamName,
       afterDdl,
+      convert,
     });
   if (!postgresMigrations[scope])
     throw new Error("PostgreSQL scope must be control or team");
@@ -159,9 +192,28 @@ export async function migratePostgres(
         if (identity?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
       }
-      if (from < 2) {
-        if (scope === "team") await applyTeamMaintenance(client, from);
-        else await applyAccessTokens(client, "control");
+      if (scope === "team" && from < 3) {
+        await applyTeamMaintenance(client, from);
+        const conversion = await applyTeamSheetClones(client, from, {
+          existing: true,
+          convert,
+        });
+        await afterDdl?.(client);
+        await client.query(dryRun ? "ROLLBACK" : "COMMIT");
+        begun = false;
+        return {
+          engine: "postgres",
+          scope,
+          from,
+          to: 3,
+          applied: !dryRun,
+          dryRun,
+          checksum: teamSheetCloneMigration.checksum,
+          ...(conversion ? { conversion } : {}),
+        };
+      }
+      if (scope === "control" && from < 2) {
+        await applyAccessTokens(client, "control");
         await afterDdl?.(client);
         await client.query(dryRun ? "ROLLBACK" : "COMMIT");
         begun = false;
@@ -172,10 +224,7 @@ export async function migratePostgres(
           to: 2,
           applied: !dryRun,
           dryRun,
-          checksum: (scope === "team"
-            ? teamMaintenanceMigration
-            : accessTokenMigrations.control
-          ).checksum,
+          checksum: accessTokenMigrations.control.checksum,
         };
       }
       await client.query("ROLLBACK");
@@ -223,8 +272,10 @@ export async function migratePostgres(
       "INSERT INTO schema_migrations(scope,version,checksum,applied_at) VALUES($1,$2,$3,$4)",
       [scope, migration.version, migration.checksum, new Date().toISOString()],
     );
-    if (scope === "team") await applyTeamMaintenance(client, 1);
-    else await applyAccessTokens(client, "control");
+    if (scope === "team") {
+      await applyTeamMaintenance(client, 1);
+      await applyTeamSheetClones(client, 2, { existing: false });
+    } else await applyAccessTokens(client, "control");
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     begun = false;
@@ -232,12 +283,12 @@ export async function migratePostgres(
       engine: "postgres",
       scope,
       from: 0,
-      to: 2,
+      to: scope === "team" ? 3 : 2,
       applied: !dryRun,
       dryRun,
       checksum:
         scope === "team"
-          ? teamMaintenanceMigration.checksum
+          ? teamSheetCloneMigration.checksum
           : accessTokenMigrations.control.checksum,
     };
   } catch (error) {
@@ -252,7 +303,7 @@ export async function migratePostgres(
 // the released control/team migrations unchanged for existing installations.
 async function migrateSite(
   pool,
-  { initialize, dryRun, teamId, teamName, afterDdl },
+  { initialize, dryRun, teamId, teamName, afterDdl, convert },
 ) {
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -302,16 +353,22 @@ async function migrateSite(
         await applyTeamMaintenance(client, teamVersion);
         await afterDdl?.(client);
       }
+      const conversion = await applyTeamSheetClones(client, teamVersion, {
+        existing: true,
+        convert,
+      });
+      if (teamVersion < 3) await afterDdl?.(client);
       await client.query(dryRun ? "ROLLBACK" : "COMMIT");
       return {
         engine: "postgres",
         scope: "site",
         from,
         to: 3,
-        applied: (from < 3 || teamVersion < 2) && !dryRun,
+        applied: (from < 3 || teamVersion < 3) && !dryRun,
         dryRun,
         teamFrom: teamVersion,
-        teamTo: 2,
+        teamTo: 3,
+        ...(conversion ? { conversion } : {}),
       };
     }
     if (teamVersion) {
@@ -363,6 +420,10 @@ async function migrateSite(
     ]);
     await applyAccessTokens(client, "site");
     await applyTeamMaintenance(client, teamVersion || 1);
+    const conversion = await applyTeamSheetClones(client, teamVersion || 2, {
+      existing: !!teamVersion,
+      convert,
+    });
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     return {
@@ -373,7 +434,8 @@ async function migrateSite(
       applied: !dryRun,
       dryRun,
       teamFrom: teamVersion,
-      teamTo: 2,
+      teamTo: 3,
+      ...(conversion ? { conversion } : {}),
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

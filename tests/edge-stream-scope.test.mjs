@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { ReportBusinessService } from "../server/storage/report-service.mjs";
-import { PostgresReportRepository } from "../worker/storage/postgres-reports.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
 import { DataSession } from "../worker/data.mjs";
 import {
@@ -26,25 +26,25 @@ const save = (markdown, expectedRevision) => ({
 
 test("stream scopes skip events that name none of their records", () => {
   const team = streamScope("/teams/t"),
-    copy = streamScope("/reports/r"),
-    memo = streamScope("/reports/r/memos/m", {
-      kind: "reportMemo",
-      prefix: ["reportMemo", "r"],
+    copy = streamScope("/sheet-clones/r"),
+    memo = streamScope("/sheet-clones/r/memos/m", {
+      kind: "sheetCloneMemo",
+      prefix: ["sheetCloneMemo", "r"],
       documentId: "m",
     }),
-    memos = streamScope("/reports/r/memos", {
-      kind: "reportMemo",
-      prefix: ["reportMemo", "r"],
+    memos = streamScope("/sheet-clones/r/memos", {
+      kind: "sheetCloneMemo",
+      prefix: ["sheetCloneMemo", "r"],
     }),
     taskDoc = streamScope("/tasks/a/documents/main", {
       kind: "task",
       prefix: ["task", "a"],
       documentId: "main",
     });
-  const memoSave = changed(["document", ["reportMemo", "r", "m"]]),
-    otherMemo = changed(["document", ["reportMemo", "r", "n"]]),
-    copyEdit = changed(["report", ["r"]]),
-    copyRowDoc = changed(["document", ["report", "r", "a", "main"]]),
+  const memoSave = changed(["document", ["sheetCloneMemo", "r", "m"]]),
+    otherMemo = changed(["document", ["sheetCloneMemo", "r", "n"]]),
+    copyEdit = changed(["sheetClone", ["r"]]),
+    copyRowDoc = changed(["document", ["sheetClone", "r", "a", "main"]]),
     calendarDoc = changed(["document", ["calendar", "e", "main"]]),
     taskEdit = changed(["task", ["a"]]),
     cell = changed(["cell", ["a", "title"]]),
@@ -101,10 +101,14 @@ test("external streams send a copy, its memo and the team only the events naming
       f.user,
     ),
     memoId = randomUUID(),
-    memo = { kind: "reportMemo", reportId: f.reportId, documentId: memoId },
+    memo = {
+      kind: "sheetCloneMemo",
+      sheetCloneId: f.sheetCloneId,
+      documentId: memoId,
+    },
     taskDoc = { kind: "task", taskId: f.taskId, documentId: "main" };
   await documents.create(
-    { kind: "reportMemo", reportId: f.reportId },
+    { kind: "sheetCloneMemo", sheetCloneId: f.sheetCloneId },
     {
       id: memoId,
     },
@@ -142,7 +146,7 @@ test("external streams send a copy, its memo and the team only the events naming
   } finally {
     DataSession.prototype.get = get;
   }
-  assert.equal(reads.includes("report"), false, reads.join(","));
+  assert.equal(reads.includes("sheetClone"), false, reads.join(","));
 
   const app = createExternalRouteApp({ env: f.env, defaultUserId: f.user.id });
   const server = app.listen(0, "127.0.0.1");
@@ -165,10 +169,14 @@ test("external streams send a copy, its memo and the team only the events naming
     },
     body: JSON.stringify({
       streams: [
-        { id: 1, path: `/api/reports/${f.reportId}/events`, lastEventId: at },
+        {
+          id: 1,
+          path: `/api/sheet-clones/${f.sheetCloneId}/events`,
+          lastEventId: at,
+        },
         {
           id: 2,
-          path: `/api/reports/${f.reportId}/memos/${memoId}/events`,
+          path: `/api/sheet-clones/${f.sheetCloneId}/memos/${memoId}/events`,
           lastEventId: at,
         },
         { id: 3, path: `/api/teams/${f.teamId}/events`, lastEventId: at },
@@ -229,12 +237,12 @@ test("external streams send a copy, its memo and the team only the events naming
   assert.deepEqual(ids(memoFrames), [2]);
   assert.equal(memoFrames[0].data.markdown, "메모 셋째");
   // Renaming the copy reaches the copy and the team; the memo is unchanged.
-  const reports = new ReportBusinessService(
-    new PostgresReportRepository({ context: f.makeContext(f.user) }),
+  const sheetClones = new SheetCloneBusinessService(
+    new PostgresSheetCloneRepository({ context: f.makeContext(f.user) }),
     f.user,
   );
-  const { name } = await reports.read(f.reportId);
-  await reports.rename(f.reportId, {
+  const { name } = await sheetClones.read(f.sheetCloneId);
+  await sheetClones.rename(f.sheetCloneId, {
     name: name + " 2",
     expectedName: name,
   });

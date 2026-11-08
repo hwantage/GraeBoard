@@ -10,15 +10,15 @@ import {
 } from "lucide-react";
 import { api, send } from "./api";
 import { Button, Modal } from "./components";
-import type { Report, View } from "./types";
+import type { SheetClone, View } from "./types";
 import { todayKey } from "../shared/domain.js";
 import {
-  MAX_REPORT_NAME_LENGTH,
-  normalizeReportName,
-} from "../shared/report-names.js";
+  MAX_SHEET_CLONE_NAME_LENGTH,
+  normalizeSheetCloneName,
+} from "../shared/sheet-clone-names.js";
 
-type CopyInfo = { id: string; name: string; year: number };
-type RenameDraft = { copy: CopyInfo; name: string };
+type SheetCloneInfo = { id: string; name: string; year: number };
+type RenameDraft = { sheetClone: SheetCloneInfo; name: string };
 export default function SheetTabs({
   teamId,
   year,
@@ -38,7 +38,7 @@ export default function SheetTabs({
   year: number;
   view: View;
   taskIds: string[];
-  active: Report | null;
+  active: SheetClone | null;
   canEdit: boolean;
   available: boolean;
   disabled: boolean;
@@ -48,15 +48,15 @@ export default function SheetTabs({
   onRename: (id: string, name: string) => void;
   onDelete: (ids: string[]) => Promise<void>;
 }) {
-  const [copies, setCopies] = useState<CopyInfo[]>([]);
+  const [sheetClones, setSheetClones] = useState<SheetCloneInfo[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [menu, setMenu] = useState<CopyInfo | null>(null);
+  const [menu, setMenu] = useState<SheetCloneInfo | null>(null);
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const menuElement = useRef<HTMLDivElement>(null);
   const [dialog, setDialog] = useState<{
     kind: "create" | "delete";
-    copy?: CopyInfo;
+    sheetClone?: SheetCloneInfo;
   } | null>(null);
   const [name, setName] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -72,28 +72,28 @@ export default function SheetTabs({
   const root = useRef<HTMLDivElement>(null);
   useResourceSync(available ? `/teams/${teamId}` : null, async (signal) => {
     if (busy || renaming || dialog) return false;
-    const result = await api<{ reports: CopyInfo[] }>(
-      `/reports?teamId=${teamId}`,
+    const result = await api<{ sheetClones: SheetCloneInfo[] }>(
+      `/sheet-clones?teamId=${teamId}`,
       { signal },
     );
-    if (!signal.aborted) setCopies(result.reports);
+    if (!signal.aborted) setSheetClones(result.sheetClones);
     return true;
   });
   async function refresh() {
-    const result = await api<{ reports: CopyInfo[] }>(
-      `/reports?teamId=${teamId}`,
+    const result = await api<{ sheetClones: SheetCloneInfo[] }>(
+      `/sheet-clones?teamId=${teamId}`,
     );
-    setCopies(result.reports);
-    return result.reports;
+    setSheetClones(result.sheetClones);
+    return result.sheetClones;
   }
   useEffect(() => {
     let cancelled = false;
-    setCopies([]);
+    setSheetClones([]);
     setError("");
     if (!available) return;
-    api<{ reports: CopyInfo[] }>(`/reports?teamId=${teamId}`)
+    api<{ sheetClones: SheetCloneInfo[] }>(`/sheet-clones?teamId=${teamId}`)
       .then((r) => {
-        if (!cancelled) setCopies(r.reports);
+        if (!cancelled) setSheetClones(r.sheetClones);
       })
       .catch((e) => {
         if (!cancelled) setError(e.message);
@@ -133,7 +133,7 @@ export default function SheetTabs({
       block: "nearest",
       inline: "nearest",
     });
-  }, [renaming?.copy.id]);
+  }, [renaming?.sheetClone.id]);
   function scrollTabs(direction: number) {
     const el = tabScroll.current;
     if (!el) return;
@@ -161,15 +161,17 @@ export default function SheetTabs({
       try {
         const nextName = draft.name.trim().normalize("NFC");
         if (!nextName) throw new Error("사본 이름을 입력해 주세요.");
-        if (nextName !== draft.copy.name) {
-          const result = await send<CopyInfo>(
-            `/reports/${draft.copy.id}/name`,
-            { name: nextName, expectedName: draft.copy.name },
+        if (nextName !== draft.sheetClone.name) {
+          const result = await send<SheetCloneInfo>(
+            `/sheet-clones/${draft.sheetClone.id}/name`,
+            { name: nextName, expectedName: draft.sheetClone.name },
             "PATCH",
           );
-          setCopies((current) =>
-            current.map((copy) =>
-              copy.id === result.id ? { ...copy, name: result.name } : copy,
+          setSheetClones((current) =>
+            current.map((sheetClone) =>
+              sheetClone.id === result.id
+                ? { ...sheetClone, name: result.name }
+                : sheetClone,
             ),
           );
           onRename(result.id, result.name);
@@ -192,11 +194,11 @@ export default function SheetTabs({
     renameSave.current = promise;
     return promise;
   }
-  async function startRename(copy: CopyInfo) {
+  async function startRename(sheetClone: SheetCloneInfo) {
     if (busy || disabled || !canEdit || !(await finishRename())) return;
     setMenu(null);
     setError("");
-    changeRename({ copy, name: copy.name });
+    changeRename({ sheetClone, name: sheetClone.name });
   }
   useLayoutEffect(() => {
     if (!menu) return;
@@ -261,7 +263,9 @@ export default function SheetTabs({
     setError("");
     try {
       const existing = new Set(
-        (await refresh()).map((copy) => normalizeReportName(copy.name)),
+        (await refresh()).map((sheetClone) =>
+          normalizeSheetCloneName(sheetClone.name),
+        ),
       );
       createId.current = crypto.randomUUID();
       const base = `${todayKey()}의 사본`;
@@ -282,7 +286,7 @@ export default function SheetTabs({
     try {
       if (dialog?.kind === "create") {
         await onPrepare();
-        const created = await send<{ id: string }>("/reports", {
+        const created = await send<{ id: string }>("/sheet-clones", {
           id: createId.current,
           teamId,
           year: active?.year || year,
@@ -295,8 +299,8 @@ export default function SheetTabs({
         setDialog(null);
         await onSelect(created.id);
         await refresh();
-      } else if (dialog?.kind === "delete" && dialog.copy) {
-        await onDelete([dialog.copy.id]);
+      } else if (dialog?.kind === "delete" && dialog.sheetClone) {
+        await onDelete([dialog.sheetClone.id]);
         await refresh();
         setDialog(null);
       }
@@ -307,13 +311,15 @@ export default function SheetTabs({
     }
   }
   const listed =
-    active && !copies.some((copy) => copy.id === active.id)
-      ? [active, ...copies]
-      : copies;
+    active && !sheetClones.some((sheetClone) => sheetClone.id === active.id)
+      ? [active, ...sheetClones]
+      : sheetClones;
   const items = [
     { id: null, name: "원본" },
-    ...listed.map((copy) =>
-      copy.id === active?.id ? { ...copy, name: active.name } : copy,
+    ...listed.map((sheetClone) =>
+      sheetClone.id === active?.id
+        ? { ...sheetClone, name: active.name }
+        : sheetClone,
     ),
   ];
   return (
@@ -365,7 +371,7 @@ export default function SheetTabs({
                 <div
                   className={`sheet-tab-wrap${item.id === (active?.id || null) ? " selected" : ""}`}
                 >
-                  {renaming?.copy.id === item.id ? (
+                  {renaming?.sheetClone.id === item.id ? (
                     <span className="sheet-tab-name-editor">
                       <span
                         className="sheet-tab-name-measure"
@@ -382,7 +388,7 @@ export default function SheetTabs({
                           error ? "sheet-tabs-error" : undefined
                         }
                         readOnly={busy}
-                        maxLength={MAX_REPORT_NAME_LENGTH}
+                        maxLength={MAX_SHEET_CLONE_NAME_LENGTH}
                         value={renaming.name}
                         onChange={(e) =>
                           changeRename({ ...renaming, name: e.target.value })
@@ -445,36 +451,40 @@ export default function SheetTabs({
                       disabled={disabled || busy}
                       onClick={() => void select(item.id)}
                       onDoubleClick={() => {
-                        if (item.id) void startRename(item as CopyInfo);
+                        if (item.id) void startRename(item as SheetCloneInfo);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "F2" && item.id && canEdit) {
                           e.preventDefault();
-                          void startRename(item as CopyInfo);
+                          void startRename(item as SheetCloneInfo);
                         }
                       }}
                     >
                       {item.name}
                     </button>
                   )}
-                  {item.id && canEdit && renaming?.copy.id !== item.id && (
-                    <button
-                      type="button"
-                      className="sheet-tab-menu-trigger"
-                      aria-label={`${item.name} 메뉴`}
-                      aria-haspopup="menu"
-                      aria-expanded={menu?.id === item.id}
-                      disabled={disabled || busy}
-                      onClick={(e) => {
-                        menuAnchor.current = e.currentTarget;
-                        setMenu(
-                          menu?.id === item.id ? null : (item as CopyInfo),
-                        );
-                      }}
-                    >
-                      <ChevronDown size={13} />
-                    </button>
-                  )}
+                  {item.id &&
+                    canEdit &&
+                    renaming?.sheetClone.id !== item.id && (
+                      <button
+                        type="button"
+                        className="sheet-tab-menu-trigger"
+                        aria-label={`${item.name} 메뉴`}
+                        aria-haspopup="menu"
+                        aria-expanded={menu?.id === item.id}
+                        disabled={disabled || busy}
+                        onClick={(e) => {
+                          menuAnchor.current = e.currentTarget;
+                          setMenu(
+                            menu?.id === item.id
+                              ? null
+                              : (item as SheetCloneInfo),
+                          );
+                        }}
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                    )}
                 </div>
                 {item.id === null && canEdit && (
                   <Button
@@ -525,7 +535,7 @@ export default function SheetTabs({
               className="danger"
               onClick={() => {
                 setError("");
-                setDialog({ kind: "delete", copy: menu });
+                setDialog({ kind: "delete", sheetClone: menu });
                 setMenu(null);
               }}
             >
@@ -566,7 +576,7 @@ export default function SheetTabs({
             }}
           >
             {dialog.kind === "delete" ? (
-              <p>‘{dialog.copy?.name}’ 사본을 삭제할까요?</p>
+              <p>‘{dialog.sheetClone?.name}’ 사본을 삭제할까요?</p>
             ) : (
               <label>
                 사본 이름
@@ -574,7 +584,7 @@ export default function SheetTabs({
                   ref={input}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  maxLength={MAX_REPORT_NAME_LENGTH}
+                  maxLength={MAX_SHEET_CLONE_NAME_LENGTH}
                   required
                   readOnly={busy}
                 />

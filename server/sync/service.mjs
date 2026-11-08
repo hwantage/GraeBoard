@@ -5,7 +5,11 @@ import {
 } from "../../shared/sync-capacity.mjs";
 import { combineFileEntries } from "./file-entries.mjs";
 import { publishBranchJson } from "./branch-publication.mjs";
-import { loadCheckpoint, snapshotCounts } from "./checkpoint.mjs";
+import {
+  checkpointFiles,
+  loadCheckpoint,
+  snapshotCounts,
+} from "./checkpoint.mjs";
 import {
   ProtocolError,
   protocolValidation,
@@ -20,6 +24,8 @@ import {
   stateSum,
   protocolVersion,
   supportedVersion,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
 } from "./protocol.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../shared/document-image-references.js";
@@ -112,7 +118,7 @@ export class SyncService {
     // failed publication, five times the per-invocation work it was sized for.
     maxRunCommits = Infinity,
     maxOperations = 50,
-    maxProtocol = 2,
+    maxProtocol = SPLIT_PROTOCOL,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
     snapshotDecoder = decodeSnapshot,
     // An operator-side first import may commit the state first and install the
@@ -401,16 +407,18 @@ export class SyncService {
         } else if (["transition", "checkpoint"].includes(envelope.kind))
           previousState = await whole();
         if (envelope.kind === "transition") {
-          if (!["paused", "importing"].includes(link.mode))
+          // Only a writer that publishes nothing meanwhile: paused, or a
+          // receive-only import or recovery.
+          if (!["paused", "importing", "recovery"].includes(link.mode))
             throw new ProtocolError(
               "SYNC_TRANSITION_PENDING",
               "Pause this writer before accepting a protocol transition",
             );
           if (
-            protocolVersion(state) !== 1 ||
-            envelope.protocol !== 2 ||
-            envelope.reducer !== 2 ||
-            envelope.fromProtocol !== 1 ||
+            protocolVersion(state) !== PROTOCOL ||
+            envelope.protocol !== SPLIT_PROTOCOL ||
+            envelope.reducer !== SPLIT_PROTOCOL ||
+            envelope.fromProtocol !== PROTOCOL ||
             envelope.previousHash !== stateHash(state) ||
             !snapshotPath(envelope.path) ||
             !snapshotPath(envelope.previousPath)
@@ -930,18 +938,18 @@ export class SyncService {
         return {
           head: received.canonical_head,
           stateHash: stateHash(await this.store.readState()),
-          protocol: 2,
-          reducer: 2,
+          protocol: SPLIT_PROTOCOL,
+          reducer: SPLIT_PROTOCOL,
           upgraded: true,
           received: true,
         };
       }
-      if (protocolVersion(state) === 2)
+      if (protocolVersion(state) === SPLIT_PROTOCOL)
         return {
           head: expectedHead,
           stateHash: expectedHash,
-          protocol: 2,
-          reducer: 2,
+          protocol: SPLIT_PROTOCOL,
+          reducer: SPLIT_PROTOCOL,
           upgraded: false,
         };
       protocolValidation(() => validateSnapshot(state, this.identity));
@@ -954,10 +962,10 @@ export class SyncService {
         bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
         previousBytes = encodeSnapshot({ atCommit: expectedHead, state }),
         envelope = {
-          protocol: 2,
-          reducer: 2,
+          protocol: SPLIT_PROTOCOL,
+          reducer: SPLIT_PROTOCOL,
           kind: "transition",
-          fromProtocol: 1,
+          fromProtocol: PROTOCOL,
           parent: expectedHead,
           previousHash: expectedHash,
           resultHash: stateHash(next),
@@ -982,8 +990,8 @@ export class SyncService {
       return {
         head: received.canonical_head,
         stateHash: envelope.resultHash,
-        protocol: 2,
-        reducer: 2,
+        protocol: SPLIT_PROTOCOL,
+        reducer: SPLIT_PROTOCOL,
         upgraded: true,
       };
     } finally {
@@ -994,33 +1002,21 @@ export class SyncService {
     const owner = randomUUID();
     if (!(await this.store.acquire(owner))) return { busy: true };
     try {
-      const link = await this.store.readLink(),
-        path = "snapshots/" + randomUUID() + ".json.gz";
+      const link = await this.store.readLink();
       if (link?.mode !== "active" || !link.canonical_head)
         throw new Error("Checkpoint requires an active reconciled connection");
       const state = await this.store.readState();
       this.assertCapacity(state);
-      const bytes = encodeSnapshot({ atCommit: link.canonical_head, state });
-      const envelope = {
-        protocol: protocolVersion(state),
-        reducer: protocolVersion(state),
-        checkpointVersion: 1,
-        teamId: this.identity.teamId,
-        repoId: this.identity.repoId,
+      const { files } = checkpointFiles({
+        head: link.canonical_head,
         bootstrapId: link.bootstrap_id,
-        snapshotHash: digest(bytes),
-        counts: snapshotCounts(state),
-        kind: "checkpoint",
-        parent: link.canonical_head,
-        atCommit: link.canonical_head,
-        path,
-        resultHash: stateHash(state),
-        resultSum: stateSum(state),
-      };
-      const oid = await this.transport.createCandidate(link.canonical_head, {
-        [path]: bytes,
-        ["events/" + randomUUID() + ".json"]: canonical(envelope),
+        identity: this.identity,
+        state,
       });
+      const oid = await this.transport.createCandidate(
+        link.canonical_head,
+        files,
+      );
       if (!(await this.transport.publish(oid, link.canonical_head)))
         throw Object.assign(
           new Error(

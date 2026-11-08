@@ -29,13 +29,13 @@ export const TASK_ROUTES = routes([
   ["GET", "/views", "readViews", ["query"]],
   ["PUT", "/views", "saveView", ["body"]],
 ]);
-export const REPORT_ROUTES = routes([
-  ["GET", "/reports", "list", ["query"]],
-  ["POST", "/reports", "create", ["body"], 201],
-  ["DELETE", "/reports", "remove", ["body"]],
-  ["GET", "/reports/:id", "read", ["id"]],
-  ["PATCH", "/reports/:id/name", "rename", ["id", "body"]],
-  ["PATCH", "/reports/:id", "edit", ["id", "body"]],
+export const SHEET_CLONE_ROUTES = routes([
+  ["GET", "/sheet-clones", "list", ["query"]],
+  ["POST", "/sheet-clones", "create", ["body"], 201],
+  ["DELETE", "/sheet-clones", "remove", ["body"]],
+  ["GET", "/sheet-clones/:id", "read", ["id"]],
+  ["PATCH", "/sheet-clones/:id/name", "rename", ["id", "body"]],
+  ["PATCH", "/sheet-clones/:id", "edit", ["id", "body"]],
 ]);
 export const FILTER_ROUTES = routes([
   ["GET", "/filters", "list", ["query"]],

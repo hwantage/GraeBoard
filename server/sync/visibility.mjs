@@ -42,8 +42,8 @@ function createRetentionView(db, teamId) {
       .filter((row) => row.kind === "document")
       .map((row) => canonical([JSON.parse(row.entity_key), row.generation])),
   );
-  let taskYears, reportYears, generations, taskDocuments;
-  const reportDocuments = new Map();
+  let taskYears, sheetCloneYears, generations, taskDocuments;
+  const sheetCloneDocuments = new Map();
   function ownerYears(entity, id) {
     if (entity === "task") {
       taskYears ||= new Map(
@@ -54,13 +54,13 @@ function createRetentionView(db, teamId) {
       );
       return taskYears.get(id);
     }
-    reportYears ||= new Map(
+    sheetCloneYears ||= new Map(
       db
-        .prepare("SELECT id,year FROM reports WHERE team_id=?")
+        .prepare("SELECT id,year FROM sheet_clones WHERE team_id=?")
         .all(teamId)
         .map((row) => [row.id, row.year]),
     );
-    return reportYears.get(id);
+    return sheetCloneYears.get(id);
   }
   function hidden(entity, key) {
     if (!exclusions.length) return false;
@@ -70,7 +70,7 @@ function createRetentionView(db, teamId) {
         !!values?.length && values.every((year) => years.has(String(year)))
       );
     }
-    if (entity === "report")
+    if (entity === "sheetClone")
       return years.has(String(ownerYears(entity, key[0])));
     if (entity === "cell") return hidden("task", [key[0]]);
     if (entity !== "document") return false;
@@ -93,7 +93,7 @@ function createRetentionView(db, teamId) {
     const [owner, id] = key;
     if (owner === "annual") return years.has(String(id));
     if (owner === "task") return hidden("task", [id]);
-    if (owner.startsWith("report")) return hidden("report", [id]);
+    if (owner.startsWith("sheetClone")) return hidden("sheetClone", [id]);
     return false;
   }
   const documents = (docs, owner) =>
@@ -106,20 +106,20 @@ function createRetentionView(db, teamId) {
     }
     return byTask;
   };
-  function summaries(taskId, reportId) {
-    if (reportId) {
-      if (!reportDocuments.has(reportId))
-        reportDocuments.set(
-          reportId,
+  function summaries(taskId, sheetCloneId) {
+    if (sheetCloneId) {
+      if (!sheetCloneDocuments.has(sheetCloneId))
+        sheetCloneDocuments.set(
+          sheetCloneId,
           groupDocuments(
             db
               .prepare(
-                "SELECT d.task_id AS taskId,d.document_id AS id,v.has_content AS hasContent FROM report_documents d JOIN reports r ON r.id=d.report_id JOIN document_versions v ON v.id=d.version_id WHERE r.team_id=? AND d.report_id=?",
+                "SELECT d.task_id AS taskId,d.document_id AS id,v.has_content AS hasContent FROM sheet_clone_documents d JOIN sheet_clones r ON r.id=d.sheet_clone_id JOIN document_versions v ON v.id=d.version_id WHERE r.team_id=? AND d.sheet_clone_id=?",
               )
-              .all(teamId, reportId),
+              .all(teamId, sheetCloneId),
           ),
         );
-      return reportDocuments.get(reportId).get(taskId) || [];
+      return sheetCloneDocuments.get(sheetCloneId).get(taskId) || [];
     }
     taskDocuments ||= groupDocuments(
       db
@@ -130,17 +130,17 @@ function createRetentionView(db, teamId) {
     );
     return taskDocuments.get(taskId) || [];
   }
-  function task(value, reportId) {
+  function task(value, sheetCloneId) {
     if (!value || !exclusions.length) return value;
-    if (!reportId && hidden("task", [value.id])) return null;
+    if (!sheetCloneId && hidden("task", [value.id])) return null;
     const result = { ...value };
-    if (!reportId && result.years)
+    if (!sheetCloneId && result.years)
       result.years = result.years.filter((year) => !years.has(String(year)));
-    const owner = reportId
-      ? ["report", reportId, value.id]
+    const owner = sheetCloneId
+      ? ["sheetClone", sheetCloneId, value.id]
       : ["task", value.id];
     if (result.documents) result.documents = documents(result.documents, owner);
-    const rows = summaries(value.id, reportId);
+    const rows = summaries(value.id, sheetCloneId);
     if (rows.length) {
       const visible = documents(rows, owner);
       result.documentCount = visible.length;
@@ -169,8 +169,8 @@ function createRetentionView(db, teamId) {
     hidden,
     documents,
     task,
-    tasks: (values, reportId) =>
-      values.map((value) => task(value, reportId)).filter(Boolean),
+    tasks: (values, sheetCloneId) =>
+      values.map((value) => task(value, sheetCloneId)).filter(Boolean),
     requireVisible(entity, key) {
       requireThat(
         !hidden(entity, key),

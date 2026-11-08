@@ -20,6 +20,7 @@ import {
   entityId,
   digest,
   protocolVersion,
+  PROTOCOL,
 } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
 import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
@@ -125,7 +126,7 @@ async function syncStatus(ctx, teamId) {
         connection: await tx.sync.readLink(),
         counts: (
           await tx.query(
-            "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged') pending,(SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1 AND resolution IS NULL) conflicts,(SELECT COUNT(*) FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND deleted=0) protocol_markers,(SELECT created_at FROM sync_outbox WHERE team_id=$1 ORDER BY local_seq DESC LIMIT 1) last_saved,2+(SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0) FROM sync_receipts WHERE team_id=$1) receipt_bytes",
+            "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged') pending,(SELECT COUNT(*) FROM sync_conflicts WHERE team_id=$1 AND resolution IS NULL) conflicts,(SELECT payload FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND deleted=0) protocol_marker,(SELECT created_at FROM sync_outbox WHERE team_id=$1 ORDER BY local_seq DESC LIMIT 1) last_saved,2+(SELECT COALESCE(SUM(octet_length(to_json(op_id)::text)+octet_length(receipt)+2),0) FROM sync_receipts WHERE team_id=$1) receipt_bytes",
             [teamId],
           )
         ).rows[0],
@@ -147,7 +148,9 @@ async function syncStatus(ctx, teamId) {
     receiptCapacity: receiptCapacity(Number(snapshot.counts.receipt_bytes)),
     canonicalHead: link?.canonical_head,
     canonicalHash: link?.canonical_hash,
-    protocol: Number(snapshot.counts.protocol_markers) ? 2 : 1,
+    protocol:
+      JSON.parse(snapshot.counts.protocol_marker || "null")?.version ??
+      PROTOCOL,
     lastReceivedAt: link?.last_received_at,
     lastPublishedAt: link?.last_published_at,
     lastError: link?.last_error,

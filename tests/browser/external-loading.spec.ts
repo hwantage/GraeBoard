@@ -53,10 +53,11 @@ for (const status of ["unconnected", "importing"] as const) {
       return route.fulfill({ json: { ok: true } });
     });
     let taskReads = 0;
-    let reportReads = 0;
+    let sheetCloneReads = 0;
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/tasks") taskReads++;
-      if (new URL(request.url()).pathname === "/api/reports") reportReads++;
+      if (new URL(request.url()).pathname === "/api/sheet-clones")
+        sheetCloneReads++;
     });
     await page.goto("/");
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
@@ -64,7 +65,7 @@ for (const status of ["unconnected", "importing"] as const) {
       page.getByText("업무를 불러오는 중", { exact: true }),
     ).toHaveCount(0);
     expect(taskReads).toBe(0);
-    expect(reportReads).toBe(0);
+    expect(sheetCloneReads).toBe(0);
     await page.getByRole("button", { name: "설정 열기" }).click();
     const settings = page.getByRole("dialog", { name: "설정", exact: true });
     await settings
@@ -77,7 +78,7 @@ for (const status of ["unconnected", "importing"] as const) {
       .getByRole("button", { name: "팀 가져오기", exact: true })
       .click();
     await expect.poll(() => taskReads).toBeGreaterThan(0);
-    await expect.poll(() => reportReads).toBeGreaterThan(0);
+    await expect.poll(() => sheetCloneReads).toBeGreaterThan(0);
     await expect
       .poll(
         async () =>

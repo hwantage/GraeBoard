@@ -1,4 +1,8 @@
-import { SQLITE_VERSION, assertSqliteHistory, migrateSqlite } from './migrations/sqlite.mjs';
+import {
+  SQLITE_VERSION,
+  assertSqliteHistory,
+  migrateSqlite,
+} from "./migrations/sqlite.mjs";
 import { storeDocumentVersion } from "./document-storage.mjs";
 import { hasDocumentContent } from "../shared/task-documents.js";
 import { DatabaseSync } from "node:sqlite";
@@ -82,8 +86,8 @@ export function openDatabase(
   if (version !== 0 && version !== SCHEMA_VERSION) {
     db.close();
     throw new Error(
-      [29, 30, 31, 32].includes(version)
-        ? `DB 형식 v${version}의 자동 변환은 지원하지 않습니다. npm run migrate -- --engine sqlite --database <DB 경로> 로 명시적 변환을 수행하세요.`
+      [29, 30, 31, 32, 33].includes(version)
+        ? `DB 형식 v${version}의 자동 변환은 지원하지 않습니다. 모든 서버를 멈춘 뒤 사본 명칭 전환 도구(npm run cutover:sheet-clone, docs/OPERATIONS.md)로 변환하세요.`
         : `DB 형식 v${version}은 지원하지 않습니다. 지원하는 변환 경로가 없으므로 원본과 호환 릴리스를 보존하세요.`,
     );
   }
@@ -93,25 +97,29 @@ export function openDatabase(
   try {
     if (version === 0) migrateSqlite(db, { initialize: true });
     else assertSqliteHistory(db);
-  } catch (error) { db.close(); throw error; }
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   pruneStyles(db);
   return db;
 }
 export function transaction(db, work) {
   db.exec("BEGIN IMMEDIATE");
-  let committed=false;
+  let committed = false;
   try {
     db.syncCapture?.begin();
     const r = work();
-    if (r && typeof r.then === "function") throw new Error("SQLite transaction callback must be synchronous");
+    if (r && typeof r.then === "function")
+      throw new Error("SQLite transaction callback must be synchronous");
     db.syncCapture?.flush();
     db.exec("COMMIT");
-    committed=true;
+    committed = true;
     db.syncCapture?.committed();
     return r;
   } catch (e) {
     const failure = db.syncCapture?.failure || e;
-    if(!committed)db.exec("ROLLBACK");
+    if (!committed) db.exec("ROLLBACK");
     db.syncCapture?.rollback();
     throw failure;
   }

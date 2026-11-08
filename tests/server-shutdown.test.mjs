@@ -28,8 +28,8 @@ test(
     db.prepare("INSERT INTO teams VALUES(?,?,?)").run(teamId, "shutdown", "{}");
     const payload = JSON.stringify({
       opId,
-      protocol: 1,
-      reducer: 1,
+      protocol: 3,
+      reducer: 3,
       repoId: randomUUID(),
       teamId,
       writerEpoch: randomUUID(),

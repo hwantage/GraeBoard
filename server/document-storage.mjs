@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { hasDocumentContent } from "../shared/task-documents.js";
-import { decodeReport, reportDocumentIndex } from "./reports.mjs";
+import { decodeSheetClone, sheetCloneDocumentIndex } from "./sheet-clones.mjs";
 
 // Bodies are immutable. Each sheet owns its document references and titles.
 export function storeDocumentVersion(
@@ -60,17 +60,22 @@ export function withTaskDocumentReferences(db, tasks) {
 
 // The relational references own the current body versions. The BLOB retains
 // tab titles/order; a body autosave does not rewrite the sheet's cells.
-export function withReportDocumentReferences(db, reportId, tasks, all = false) {
+export function withSheetCloneDocumentReferences(
+  db,
+  sheetCloneId,
+  tasks,
+  all = false,
+) {
   if (!tasks.length) return [];
   const refs = new Map();
   const rows = db
     .prepare(
       `SELECT r.task_id,r.document_id,r.version_id AS versionId,v.has_content AS hasContent
-     FROM report_documents r JOIN document_versions v ON v.id=r.version_id
-     WHERE r.report_id=?${all ? "" : " AND r.task_id IN (SELECT value FROM json_each(?))"}`,
+     FROM sheet_clone_documents r JOIN document_versions v ON v.id=r.version_id
+     WHERE r.sheet_clone_id=?${all ? "" : " AND r.task_id IN (SELECT value FROM json_each(?))"}`,
     )
     .all(
-      reportId,
+      sheetCloneId,
       ...(all ? [] : [JSON.stringify(tasks.map((task) => task.id))]),
     );
   for (const row of rows) {
@@ -94,23 +99,23 @@ export function withReportDocumentReferences(db, reportId, tasks, all = false) {
   });
 }
 
-export function readReport(db, row) {
-  const report = decodeReport(row.data);
-  reportDocumentIndex(row.data, report);
+export function readSheetClone(db, row) {
+  const sheetClone = decodeSheetClone(row.data);
+  sheetCloneDocumentIndex(row.data, sheetClone);
   return {
-    ...report,
-    tasks: withReportDocumentReferences(db, row.id, report.tasks, true),
+    ...sheetClone,
+    tasks: withSheetCloneDocumentReferences(db, row.id, sheetClone.tasks, true),
   };
 }
 
-export function reportDocumentTasks(db, row, taskIds) {
-  const index = reportDocumentIndex(row.data);
+export function sheetCloneDocumentTasks(db, row, taskIds) {
+  const index = sheetCloneDocumentIndex(row.data);
   const tasks = taskIds.map((id) => index.get(id));
   if (tasks.some((task) => !task)) return null;
-  return withReportDocumentReferences(db, row.id, tasks);
+  return withSheetCloneDocumentReferences(db, row.id, tasks);
 }
 
-export function storeReportDocuments(db, tasks, teamId, actorId) {
+export function storeSheetCloneDocuments(db, tasks, teamId, actorId) {
   return tasks.map((task) => {
     const documents = (task.documents || []).map((doc) => {
       if (typeof doc.markdown !== "string") return doc;
@@ -138,20 +143,22 @@ export function storeReportDocuments(db, tasks, teamId, actorId) {
 }
 
 // Reference cleanup is independent from the sheet's optimistic lock.
-export function syncReportDocuments(db, reportId, tasks) {
-  db.prepare("DELETE FROM report_documents WHERE report_id=?").run(reportId);
+export function syncSheetCloneDocuments(db, sheetCloneId, tasks) {
+  db.prepare("DELETE FROM sheet_clone_documents WHERE sheet_clone_id=?").run(
+    sheetCloneId,
+  );
   const put = db.prepare(
-    "INSERT INTO report_documents(report_id,task_id,document_id,version_id) VALUES(?,?,?,?)",
+    "INSERT INTO sheet_clone_documents(sheet_clone_id,task_id,document_id,version_id) VALUES(?,?,?,?)",
   );
   for (const task of tasks)
     for (const doc of task.documents || [])
-      if (doc.versionId) put.run(reportId, task.id, doc.id, doc.versionId);
+      if (doc.versionId) put.run(sheetCloneId, task.id, doc.id, doc.versionId);
 }
 
-export function reportDocumentContents(db, report) {
+export function sheetCloneDocumentContents(db, sheetClone) {
   return {
-    ...report,
-    tasks: report.tasks.map((task) => ({
+    ...sheetClone,
+    tasks: sheetClone.tasks.map((task) => ({
       ...task,
       documents: (task.documents || []).map((doc) => ({
         id: doc.id,
@@ -170,7 +177,7 @@ export function pruneDocumentVersions(db, teamId, versionIds) {
     AND NOT EXISTS(SELECT 1 FROM task_documents WHERE version_id=document_versions.id)
     AND NOT EXISTS(SELECT 1 FROM calendar_entries WHERE version_id=document_versions.id)
     AND NOT EXISTS(SELECT 1 FROM annual_memos WHERE version_id=document_versions.id)
-    AND NOT EXISTS(SELECT 1 FROM report_memos WHERE version_id=document_versions.id)
-    AND NOT EXISTS(SELECT 1 FROM report_documents WHERE version_id=document_versions.id)`,
+    AND NOT EXISTS(SELECT 1 FROM sheet_clone_memos WHERE version_id=document_versions.id)
+    AND NOT EXISTS(SELECT 1 FROM sheet_clone_documents WHERE version_id=document_versions.id)`,
   ).run(teamId, ...(versionIds ? [JSON.stringify(versionIds)] : []));
 }

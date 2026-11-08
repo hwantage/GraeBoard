@@ -27,9 +27,9 @@ const rejected = (work, status) =>
 function scopes(f) {
   return [
     { kind: "task", taskId: f.taskId },
-    { kind: "report", reportId: f.reportId, taskId: f.taskId },
+    { kind: "sheetClone", sheetCloneId: f.sheetCloneId, taskId: f.taskId },
     { kind: "annual", teamId: f.teamId, year: 2026 },
-    { kind: "reportMemo", reportId: f.reportId },
+    { kind: "sheetCloneMemo", sheetCloneId: f.sheetCloneId },
     { kind: "calendar", entryId: f.entryId, documentId: "main" },
   ];
 }
@@ -102,7 +102,7 @@ async function documentContract({ f, service, counts, failOnce }) {
       );
       // A copied row sends these back when pasted or restored, so both sites
       // answer a task's or copy row's contents with what copiedRowSchema takes.
-      if (["task", "report"].includes(owner.kind)) {
+      if (["task", "sheetClone"].includes(owner.kind)) {
         const listed = (await service.list(owner, { content: true })).documents;
         assert.deepEqual(
           listed.map((doc) => Object.keys(doc).sort()),
@@ -111,7 +111,7 @@ async function documentContract({ f, service, counts, failOnce }) {
         );
         copiedRowSchema.shape.documents.parse(listed);
       }
-      if (["annual", "reportMemo"].includes(owner.kind)) {
+      if (["annual", "sheetCloneMemo"].includes(owner.kind)) {
         const otherId = randomUUID();
         await service.create(owner, { id: otherId });
         const list = (await service.list(owner)).documents.map((doc) => doc.id);
@@ -156,22 +156,22 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     { id: memo, title: "Linked memo" },
   );
   await service.create(
-    { kind: "reportMemo", reportId: f.reportId },
+    { kind: "sheetCloneMemo", sheetCloneId: f.sheetCloneId },
     { id: copyMemo, title: "Linked copy memo" },
   );
   const paths = {
     task: `/links/task/${f.taskId}`,
     calendar: `/links/calendar/${f.entryId}`,
     memo: `/links/memo/${f.teamId}/2026/${memo}`,
-    reportTask: `/links/report-task/${f.reportId}/${f.taskId}`,
-    reportMemo: `/links/report-memo/${f.reportId}/${copyMemo}`,
+    sheetCloneTask: `/links/sheet-clone-task/${f.sheetCloneId}/${f.taskId}`,
+    sheetCloneMemo: `/links/sheet-clone-memo/${f.sheetCloneId}/${copyMemo}`,
   };
   const absent = [
     `/links/memo/${f.teamId}/2025/${memo}`,
     `/links/memo/${f.teamId}/2026/${missing}`,
-    `/links/report-task/${f.reportId}/${missing}`,
-    `/links/report-task/${missing}/${f.taskId}`,
-    `/links/report-memo/${f.reportId}/${missing}`,
+    `/links/sheet-clone-task/${f.sheetCloneId}/${missing}`,
+    `/links/sheet-clone-task/${missing}/${f.taskId}`,
+    `/links/sheet-clone-memo/${f.sheetCloneId}/${missing}`,
   ];
   const titles = async (read, list) =>
     Object.fromEntries(
@@ -184,8 +184,8 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     [paths.task]: "initial",
     [paths.calendar]: "Contract calendar",
     [paths.memo]: "Linked memo",
-    [paths.reportTask]: "initial",
-    [paths.reportMemo]: "Linked copy memo",
+    [paths.sheetCloneTask]: "initial",
+    [paths.sheetCloneMemo]: "Linked copy memo",
   });
   assert.deepEqual(await titles(outsiderLinks, Object.values(paths)), {});
   await service.rename(
@@ -193,15 +193,19 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     { title: "Renamed memo", expectedTitle: "Linked memo" },
   );
   const read = await service.read({
-    kind: "reportMemo",
-    reportId: f.reportId,
+    kind: "sheetCloneMemo",
+    sheetCloneId: f.sheetCloneId,
     documentId: copyMemo,
   });
   await service.remove(
-    { kind: "reportMemo", reportId: f.reportId, documentId: copyMemo },
+    {
+      kind: "sheetCloneMemo",
+      sheetCloneId: f.sheetCloneId,
+      documentId: copyMemo,
+    },
     { expectedRevision: read.revision },
   );
-  assert.deepEqual(await titles(links, [paths.memo, paths.reportMemo]), {
+  assert.deepEqual(await titles(links, [paths.memo, paths.sheetCloneMemo]), {
     [paths.memo]: "Renamed memo",
   });
 }
@@ -224,8 +228,8 @@ async function retentionContract({ f, service, counts, exclude }) {
     () => service.read({ kind: "task", taskId: f.taskId, documentId: "main" }),
     () =>
       service.read({
-        kind: "report",
-        reportId: f.reportId,
+        kind: "sheetClone",
+        sheetCloneId: f.sheetCloneId,
         taskId: f.taskId,
         documentId: "main",
       }),

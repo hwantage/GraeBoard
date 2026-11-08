@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { equal, entityId, initialToken } from "./protocol.mjs";
+import { equal, entityId, initialToken, PROTOCOL } from "./protocol.mjs";
 export function entityReferences(entity, key, payload) {
   const refs = [];
-  if (entity === "reportTask") refs.push(["report", [key[0]]]);
-  if (entity === "reportCell")
-    refs.push(["report", [key[0]]], ["reportTask", key.slice(0, 2)]);
+  if (entity === "sheetCloneTask") refs.push(["sheetClone", [key[0]]]);
+  if (entity === "sheetCloneCell")
+    refs.push(["sheetClone", [key[0]]], ["sheetCloneTask", key.slice(0, 2)]);
   if (entity === "cell") refs.push(["task", [key[0]]]);
   if (entity === "document") {
     const parent =
@@ -12,8 +12,8 @@ export function entityReferences(entity, key, payload) {
         ? "task"
         : key[0] === "calendar"
           ? "calendar"
-          : key[0].startsWith("report")
-            ? "report"
+          : key[0].startsWith("sheetClone")
+            ? "sheetClone"
             : null;
     if (parent) refs.push([parent, [key[1]]]);
   }
@@ -46,7 +46,9 @@ export function makeOperation({
     )
       continue;
     const sample = next || previous;
-    if (!sample) continue;
+    // The protocol marker belongs to the genesis and transitions, never to a
+    // user command.
+    if (!sample || sample.entity === "protocol") continue;
     const dependencies = [
       key,
       ...entityReferences(sample.entity, sample.key, next?.payload).map(
@@ -89,8 +91,8 @@ export function makeOperation({
   }
   if (!changes.length && !resolves?.length) return null;
   return {
-    protocol: link.protocol || 1,
-    reducer: link.protocol || 1,
+    protocol: link.protocol || PROTOCOL,
+    reducer: link.protocol || PROTOCOL,
     repoId: link.repo_id || link.repoId,
     teamId: link.team_id || link.teamId,
     opId,

@@ -6,7 +6,7 @@ import { DocumentBusinessService } from "../server/storage/document-service.mjs"
 import { unpack } from "../shared/compact.js";
 import { defaultView } from "../shared/domain.js";
 import { MAX_TASK_DOCUMENTS } from "../shared/task-documents.js";
-import { encodeReport, decodeReport } from "../server/reports.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
 import { userWithTeams } from "../server/db.mjs";
 
 async function fixture(t) {
@@ -128,7 +128,7 @@ test("B4/B6 calendar restores membership order, scope wording, missing-ID status
 test("B5 document and memo error contracts preserve scope-specific revisions, titles, permissions and limits", async (t) => {
   const f = await fixture(t),
     taskBase = `/api/tasks/${f.taskId}/documents`,
-    reportBase = `/api/reports/${f.reportId}/tasks/${f.taskId}/documents`,
+    sheetCloneBase = `/api/sheet-clones/${f.sheetCloneId}/tasks/${f.taskId}/documents`,
     memoBase = `/api/teams/${f.teamId}/years/2026/memos`;
   await f.expect(
     `${taskBase}/main`,
@@ -141,7 +141,11 @@ test("B5 document and memo error contracts preserve scope-specific revisions, ti
     { method: "PUT", body: save(randomUUID()) },
     400,
   );
-  await f.expect(`${reportBase}/main`, { method: "PUT", body: save(10) }, 400);
+  await f.expect(
+    `${sheetCloneBase}/main`,
+    { method: "PUT", body: save(10) },
+    400,
+  );
   const title = await f.expect(
     taskBase,
     { method: "POST", body: { id: randomUUID(), title: "가".repeat(51) } },
@@ -160,7 +164,7 @@ test("B5 document and memo error contracts preserve scope-specific revisions, ti
     JSON.stringify(repeated).includes("같은 메모를 중복 지정할 수 없습니다."),
   );
   await f.expect(
-    `/api/reports/${f.reportId}/memos`,
+    `/api/sheet-clones/${f.sheetCloneId}/memos`,
     { method: "POST", body: { id }, user: f.viewer },
     403,
     "메모 편집 권한이 없습니다.",
@@ -192,16 +196,20 @@ test("B5 document and memo error contracts preserve scope-specific revisions, ti
       new DocumentBusinessService(
         f.app.locals.documentRepository,
         f.viewer,
-      ).imageAccess({ kind: "report", reportId: f.reportId, taskId: f.taskId }),
+      ).imageAccess({
+        kind: "sheetClone",
+        sheetCloneId: f.sheetCloneId,
+        taskId: f.taskId,
+      }),
     (error) =>
       error.status === 403 &&
       error.message === "사본에 이미지를 추가할 권한이 없습니다.",
   );
 });
 
-test("B7 reports, import and history preserve the established authorization and validation order", async (t) => {
+test("B7 sheetClones, import and history preserve the established authorization and validation order", async (t) => {
   const f = await fixture(t);
-  const report = {
+  const sheetClone = {
     teamId: f.teamId,
     year: 2026,
     name: "Mismatch",
@@ -210,16 +218,16 @@ test("B7 reports, import and history preserve the established authorization and 
     taskIds: [],
   };
   await f.expect(
-    "/api/reports",
-    { method: "POST", body: report, user: f.viewer },
+    "/api/sheet-clones",
+    { method: "POST", body: sheetClone, user: f.viewer },
     403,
     "사본을 만들 권한이 없습니다.",
   );
-  const preview = (reportId) => {
+  const preview = (sheetCloneId) => {
     const form = new FormData();
     form.set("teamId", f.teamId);
     form.set("year", "2026");
-    if (reportId) form.set("reportId", reportId);
+    if (sheetCloneId) form.set("sheetCloneId", sheetCloneId);
     return form;
   };
   await f.expect(
@@ -248,7 +256,7 @@ test("B7 reports, import and history preserve the established authorization and 
         sheet: "test",
         year: 2026,
         personMap: {},
-        mode: "copy",
+        mode: "append-to-sheet-clone",
         referenceDate: "2026-10-01",
         acceptWarnings: true,
       },
@@ -364,7 +372,7 @@ test("B8/B9 settings, filters and tasks retain audit, ordering, missing-ID and d
   assert.deepEqual(updated.task.years, [2026, 2026]);
 });
 
-test("B2 resource invalidations carry the editing client ID through HTTP report and membership commands", async (t) => {
+test("B2 resource invalidations carry the editing client ID through HTTP sheetClone and membership commands", async (t) => {
   const f = await fixture(t),
     calls = [],
     events = f.app.locals.documentEvents,
@@ -375,7 +383,7 @@ test("B2 resource invalidations carry the editing client ID through HTTP report 
   };
   const clientId = randomUUID();
   await f.expect(
-    "/api/reports",
+    "/api/sheet-clones",
     {
       method: "POST",
       clientId,
@@ -391,7 +399,7 @@ test("B2 resource invalidations carry the editing client ID through HTTP report 
     201,
   );
   assert.ok(calls.some(([key]) => key === `team:${f.teamId}`));
-  assert.ok(calls.some(([key]) => key.startsWith("report:")));
+  assert.ok(calls.some(([key]) => key.startsWith("sheet-clone:")));
   assert.ok(
     calls.every(([, source]) => source === clientId),
     JSON.stringify(calls),
@@ -418,27 +426,29 @@ test("B2 resource invalidations carry the editing client ID through HTTP report 
   );
 });
 
-test("B10 batch report documents read their task references once, including all requested tasks", (t) => {
+test("B10 batch sheetClone documents read their task references once, including all requested tasks", (t) => {
   const f = sqliteFixture(t),
-    report = decodeReport(
-      f.db.prepare("SELECT data FROM reports WHERE id=?").get(f.reportId).data,
+    sheetClone = decodeSheetClone(
+      f.db
+        .prepare("SELECT data FROM sheet_clones WHERE id=?")
+        .get(f.sheetCloneId).data,
     ),
     other = randomUUID();
-  report.tasks.push({ ...report.tasks[0], id: other });
+  sheetClone.tasks.push({ ...sheetClone.tasks[0], id: other });
   f.db
-    .prepare("UPDATE reports SET data=? WHERE id=?")
-    .run(encodeReport(report), f.reportId);
+    .prepare("UPDATE sheet_clones SET data=? WHERE id=?")
+    .run(encodeSheetClone(sheetClone), f.sheetCloneId);
   const prepare = f.db.prepare,
     reads = [];
   f.db.prepare = function (sql) {
-    if (/FROM report_documents r JOIN/.test(sql)) reads.push(sql);
+    if (/FROM sheet_clone_documents r JOIN/.test(sql)) reads.push(sql);
     return prepare.call(this, sql);
   };
   try {
     const result = new DocumentBusinessService(
       f.app.locals.documentRepository,
       f.user,
-    ).readBatch(f.reportId, [f.taskId, other]);
+    ).readBatch(f.sheetCloneId, [f.taskId, other]);
     assert.deepEqual(
       result.tasks.map((task) => task.id),
       [f.taskId, other],

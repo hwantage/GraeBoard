@@ -1012,7 +1012,7 @@ small {
 .active-saved-filter-banner {
   --view-accent: var(--filter-accent);
 }
-.board[data-view-mode="copy"],
+.board[data-view-mode="sheet-clone"],
 .active-report-banner {
   --view-accent: var(--snapshot-accent);
 }

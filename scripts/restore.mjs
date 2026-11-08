@@ -37,7 +37,7 @@ export function restoreDatabase(
   try {
     if (
       source.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      ![29, 30, 31, 32, SCHEMA_VERSION].includes(
+      ![29, 30, 31, 32, 33, SCHEMA_VERSION].includes(
         source.prepare("PRAGMA user_version").get().user_version,
       )
     )

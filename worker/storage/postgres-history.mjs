@@ -3,12 +3,12 @@ import {
   historyRestoreSchema,
 } from "../../server/storage/history-service.mjs";
 import { assert } from "../access.mjs";
-import { unpackReportPayload } from "../../shared/report-sync-data.js";
+import { unpackSheetClonePayload } from "../../shared/sheet-clone-sync-data.js";
 import { taskView } from "../task-view.mjs";
-import { reportView } from "../reports.mjs";
+import { sheetCloneView } from "../sheet-clones.mjs";
 import { TaskBusinessService } from "../../server/storage/task-service.mjs";
 import { PostgresTaskRepository } from "./postgres-tasks.mjs";
-// Report changes are recorded in their stored (packed) form; older rows hold
+// SheetClone changes are recorded in their stored (packed) form; older rows hold
 // the plain form, which unpacking leaves as it is.
 const decoded = (row) => {
   const changes = JSON.parse(row.payload);
@@ -16,11 +16,11 @@ const decoded = (row) => {
     ...row,
     changes: Array.isArray(changes)
       ? changes.map((c) =>
-          c?.entity === "report"
+          c?.entity === "sheetClone"
             ? {
                 ...c,
-                before: unpackReportPayload(c.before),
-                after: unpackReportPayload(c.after),
+                before: unpackSheetClonePayload(c.before),
+                after: unpackSheetClonePayload(c.after),
               }
             : c,
         )
@@ -31,7 +31,7 @@ async function historyEntry(s, row, names) {
   const changes = Array.isArray(row.changes) ? row.changes : [],
     cellChanges = changes.filter((c) => c.entity === "cell"),
     format = changes.find((c) => c.entity === "formats"),
-    report = changes.find((c) => c.entity === "report"),
+    sheetClone = changes.find((c) => c.entity === "sheetClone"),
     taskChanges = changes.filter((c) => c.entity === "task"),
     deleted = taskChanges.filter(
       (c) => !c.before?.deletedAt && c.after?.deletedAt,
@@ -86,13 +86,13 @@ async function historyEntry(s, row, names) {
       after = {};
     }
   }
-  if (action === "report-edit" && report) {
-    const removed = (report.before?.data.tasks || []).filter(
-      (t) => !report.after.data.tasks.some((n) => n.id === t.id),
+  if (action === "sheet-clone-edit" && sheetClone) {
+    const removed = (sheetClone.before?.data.tasks || []).filter(
+      (t) => !sheetClone.after.data.tasks.some((n) => n.id === t.id),
     );
-    const current = await s.get("report", report.key);
+    const current = await s.get("sheetClone", sheetClone.key);
     before = { deletedTasks: removed };
-    after = { name: report.after.name };
+    after = { name: sheetClone.after.name };
     restorableTaskIds = removed
       .filter(
         (t) =>
@@ -107,12 +107,12 @@ async function historyEntry(s, row, names) {
     actor: names.get(row.actor_id) || row.actor_id,
     actorId: row.actor_id,
     action,
-    target: report?.key[0] || taskChanges[0]?.key[0] || row.target,
+    target: sheetClone?.key[0] || taskChanges[0]?.key[0] || row.target,
     before,
     after,
     sheet: {
-      id: report?.key[0] || "original",
-      name: report?.after?.name || report?.before?.name || "원본",
+      id: sheetClone?.key[0] || "original",
+      name: sheetClone?.after?.name || sheetClone?.before?.name || "원본",
     },
     restorableTaskIds,
     createdAt: row.created_at,
@@ -166,8 +166,8 @@ export class PostgresHistoryRepository {
         entries = [];
       for (const row of rows) {
         if (!Array.isArray(row.changes)) continue;
-        const report = row.changes.find((c) => c.entity === "report");
-        if (sheet && (report?.key[0] || "original") !== sheet) continue;
+        const sheetClone = row.changes.find((c) => c.entity === "sheetClone");
+        if (sheet && (sheetClone?.key[0] || "original") !== sheet) continue;
         if (taskId && !row.changes.some((c) => c.key.includes(taskId)))
           continue;
         entries.push(await historyEntry(s, row, names));
@@ -181,7 +181,7 @@ export class PostgresHistoryRepository {
     const ctx = this.check(user);
     const { teamId, row } = await locateAudit(ctx, entryId);
     await ctx.team(teamId, {
-      manage: row.action !== "report-edit",
+      manage: row.action !== "sheet-clone-edit",
       write: true,
     });
     if (row.action === "format")
@@ -229,13 +229,13 @@ export class PostgresHistoryRepository {
           }
           return { cells: result };
         }
-        if (row.action === "report-edit") {
-          const change = row.changes.find((c) => c.entity === "report"),
-            report = await s.get("report", change.key);
+        if (row.action === "sheet-clone-edit") {
+          const change = row.changes.find((c) => c.entity === "sheetClone"),
+            sheetClone = await s.get("sheetClone", change.key);
           assert(
-            report &&
-              !report.deleted &&
-              (await reportView(s, report)).revision === body.revision,
+            sheetClone &&
+              !sheetClone.deleted &&
+              (await sheetCloneView(s, sheetClone)).revision === body.revision,
             409,
             "사본이 변경되었습니다.",
           );
@@ -243,14 +243,14 @@ export class PostgresHistoryRepository {
               (t) => !change.after.data.tasks.some((n) => n.id === t.id),
             ),
             restore = removed.filter(
-              (t) => !report.payload.data.tasks.some((n) => n.id === t.id),
+              (t) => !sheetClone.payload.data.tasks.some((n) => n.id === t.id),
             );
           assert(restore.length, 409, "복원할 업무가 없습니다.");
-          const saved = await s.put("report", report.key, {
-            ...report.payload,
+          const saved = await s.put("sheetClone", sheetClone.key, {
+            ...sheetClone.payload,
             data: {
-              ...report.payload.data,
-              tasks: [...report.payload.data.tasks, ...restore].sort(
+              ...sheetClone.payload.data,
+              tasks: [...sheetClone.payload.data.tasks, ...restore].sort(
                 (a, b) => a.position - b.position,
               ),
             },
@@ -261,7 +261,7 @@ export class PostgresHistoryRepository {
             const current = await s.get("document", c.key);
             if (current?.deleted) await s.put("document", c.key, c.before);
           }
-          return reportView(s, saved);
+          return sheetCloneView(s, saved);
         }
         const deleted = row.changes.filter(
           (c) =>

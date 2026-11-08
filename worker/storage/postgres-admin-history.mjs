@@ -89,18 +89,18 @@ export class PostgresAdminHistoryRepository {
                 ? {}
                 : (
                     await tx.query(
-                      "SELECT COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity<>'report' AND entity<>'import'),0) current,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='report'),0) report,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='import'),0) import FROM site_entities",
+                      "SELECT COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity<>'sheetClone' AND entity<>'import'),0) current,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='sheetClone'),0) sheet_clone,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='import'),0) import FROM site_entities",
                     )
                   ).rows[0];
             return {
               id: scope.id,
               name: scope.name,
               currentBytes: Number(sizes.current || 0),
-              reportBytes: Number(sizes.report || 0),
+              sheetCloneBytes: Number(sizes.sheet_clone || 0),
               importBytes: Number(sizes.import || 0),
               totalBytes:
                 Number(sizes.current || 0) +
-                Number(sizes.report || 0) +
+                Number(sizes.sheet_clone || 0) +
                 Number(sizes.import || 0) +
                 audit.bytes +
                 operations.bytes,

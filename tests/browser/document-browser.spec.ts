@@ -141,7 +141,7 @@ test.beforeEach(async ({ page }) => {
   });
   const createCopy = async (name: string) =>
     (
-      await send(page, "/reports", {
+      await send(page, "/sheet-clones", {
         teamId,
         year: 2026,
         name,
@@ -154,11 +154,11 @@ test.beforeEach(async ({ page }) => {
   copyB = await createCopy("공유 사본");
   const doc = await get(
     page,
-    `/reports/${copyA}/tasks/${taskId}/documents/main`,
+    `/sheet-clones/${copyA}/tasks/${taskId}/documents/main`,
   );
   await send(
     page,
-    `/reports/${copyA}/tasks/${taskId}/documents/main`,
+    `/sheet-clones/${copyA}/tasks/${taskId}/documents/main`,
     {
       markdown: "# 검토 사본\n\n접힌 사본의 바다별 검색어입니다.",
       expectedRevision: doc.revision,
@@ -186,7 +186,7 @@ test("접힌 사본 집계, 작업 이름 검색, 정확한 문서 선택과 원
   ).toHaveAttribute("aria-expanded", "false");
   expect(
     requests.filter((url) =>
-      /\/api\/reports\/[^/?]+$|\/documents\/main/.test(url),
+      /\/api\/sheet-clones\/[^/?]+$|\/documents\/main/.test(url),
     ),
   ).toEqual([]);
   const search = page.getByRole("searchbox", { name: "작업 이름 검색" });
@@ -258,11 +258,11 @@ test("접힌 사본 집계, 작업 이름 검색, 정확한 문서 선택과 원
     (await get(page, `/tasks/${taskId}/documents/${documentId}`)).markdown,
   ).toBe("원본의 두 번째 문서만 수정");
   expect(
-    (await get(page, `/reports/${copyA}/tasks/${taskId}/documents/main`))
+    (await get(page, `/sheet-clones/${copyA}/tasks/${taskId}/documents/main`))
       .markdown,
   ).toBe("사본에서 수정한 새 본문");
   expect(
-    (await get(page, `/reports/${copyB}/tasks/${taskId}/documents/main`))
+    (await get(page, `/sheet-clones/${copyB}/tasks/${taskId}/documents/main`))
       .markdown,
   ).toContain("원본에서 읽는");
 });
@@ -299,7 +299,7 @@ test("작업 제목은 첫 문서를 열고 검색·기존 선택·삭제 뒤에
     await expect(
       detail(page).getByRole("tab", { name: "문서 1", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
-    const path = `${source === "live" ? "" : `/reports/${source}`}/tasks/${taskId}/documents/${documentId}`;
+    const path = `${source === "live" ? "" : `/sheet-clones/${source}`}/tasks/${taskId}/documents/${documentId}`;
     expect((await get(page, path)).markdown).toBe(text);
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -752,7 +752,7 @@ test("문서 연도 이동은 이어지는 달력과 무관하게 한 해만 조
     "PUT",
   );
   const nextCopy = (
-    await send(page, "/reports", {
+    await send(page, "/sheet-clones", {
       teamId,
       year: 2027,
       name: "다음 연도 사본",
@@ -885,10 +885,10 @@ test("문서 제목 변경·추가·삭제와 사본 속성 변경은 탐색과 
   await expect(
     sheet(page, copyA).locator(".document-browser-source-toggle"),
   ).toContainText("문서 4개");
-  const report = await get(page, `/reports/${copyA}`);
+  const sheetClone = await get(page, `/sheet-clones/${copyA}`);
   expect(
-    report.tasks.find((task: { id: string }) => task.id === taskId).cells.title
-      .value,
+    sheetClone.tasks.find((task: { id: string }) => task.id === taskId).cells
+      .title.value,
   ).toBe("사본에서 바꾼 작업 이름");
   expect(
     (
@@ -1038,7 +1038,7 @@ test("사본 속성 저장 실패와 응답 유실은 입력을 보존하고 같
   await openBrowser(page);
   await openDocument(page, copyA);
   let fail = true;
-  await page.route(`**/api/reports/${copyA}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${copyA}`, async (route) => {
     if (route.request().method() !== "PATCH") return route.continue();
     if (fail) {
       fail = false;
@@ -1063,7 +1063,7 @@ test("사본 속성 저장 실패와 응답 유실은 입력을 보존하고 같
   ).toBeVisible();
   await page.getByRole("button", { name: "연간 업무로 돌아가기" }).click();
   expect(
-    (await get(page, `/reports/${copyA}`)).tasks.find(
+    (await get(page, `/sheet-clones/${copyA}`)).tasks.find(
       (t: { id: string }) => t.id === taskId,
     ).cells.title.value,
   ).toBe("응답 유실 뒤 복구한 제목");

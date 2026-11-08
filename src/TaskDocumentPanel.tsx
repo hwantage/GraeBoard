@@ -12,8 +12,8 @@ type Props = Omit<DocumentEditorProps, "documentId" | "controlsTarget"> & {
 };
 export default forwardRef<DocumentPanelHandle, Props>(
   function TaskDocumentPanel(props, ref) {
-    const path = props.report
-      ? `/reports/${props.report.id}/tasks/${props.task.id}/documents`
+    const path = props.sheetClone
+      ? `/sheet-clones/${props.sheetClone.id}/tasks/${props.task.id}/documents`
       : `/tasks/${props.task.id}/documents`;
     return (
       <DocumentPanel
@@ -21,7 +21,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
         ref={ref}
         path={path}
         draftKey={(documentId) => documentDraftKey({ ...props, documentId })}
-        emptyUntilSaved={props.report?.isNew}
+        emptyUntilSaved={props.sheetClone?.isNew}
         onSaved={(result) => props.onSaved(result as DocumentSaveResult)}
         onListChanged={(result) =>
           props.onSaved({

@@ -1,6 +1,10 @@
-import { splitReportRecord } from "../server/sync/versions.mjs";
+import { splitSheetCloneRecord } from "../server/sync/versions.mjs";
 import { pack, unpack } from "../shared/compact.js";
-import { protocolVersion } from "../server/sync/protocol.mjs";
+import {
+  protocolVersion,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
+} from "../server/sync/protocol.mjs";
 import pg from "pg";
 import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
 import {
@@ -26,9 +30,9 @@ import { reduceMany, reduce } from "../server/sync/reducer.mjs";
 import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
 import { assert } from "./access.mjs";
 import {
-  packReportPayload,
-  unpackReportPayload,
-} from "../shared/report-sync-data.js";
+  packSheetClonePayload,
+  unpackSheetClonePayload,
+} from "../shared/sheet-clone-sync-data.js";
 
 function poolFor(binding, scope = "control", { site = false } = {}) {
   assert(binding?.connectionString, 503, "PostgreSQL binding을 확인하세요.");
@@ -133,16 +137,16 @@ export async function controlTransaction(env, work, { write = false } = {}) {
 // site_entities는 동기화 기준본과 같은 저장 형태(사본 data의 공유 사전)를 보관한다.
 // 앱 코드는 SQLite와 마찬가지로 푼 객체를 읽는다.
 const storedPayload = (entity, payload) =>
-  entity === "report" ? packReportPayload(payload) : payload;
-// The stored form a report was read or written in, and that form's text, so
+  entity === "sheetClone" ? packSheetClonePayload(payload) : payload;
+// The stored form a sheetClone was read or written in, and that form's text, so
 // recording the same payload again (an audit's before and after) neither packs
 // nor serializes it again.
 const packedForms = new WeakMap(),
   storedTexts = new WeakMap();
 const readPayload = (entity, text) => {
   const stored = JSON.parse(text);
-  if (entity !== "report") return stored;
-  const payload = unpackReportPayload(stored);
+  if (entity !== "sheetClone") return stored;
+  const payload = unpackSheetClonePayload(stored);
   if (payload !== stored) packedForms.set(payload, stored);
   storedTexts.set(stored, text);
   return payload;
@@ -165,19 +169,19 @@ export class DataSession {
     this.listIndex = new Map();
     this.changes = new Map();
     this.eventKinds = new Set();
-    // Stored form of each payload put in this session: a report packs once,
+    // Stored form of each payload put in this session: a sheetClone packs once,
     // not again when the capture writes the same payload into its operation.
     this.storedForms = new WeakMap();
   }
   storedText(entity, payload) {
     const stored = this.stored(entity, payload);
-    if (entity !== "report" || !stored || typeof stored !== "object")
+    if (entity !== "sheetClone" || !stored || typeof stored !== "object")
       return canonical(stored);
     if (!storedTexts.has(stored)) storedTexts.set(stored, canonical(stored));
     return storedTexts.get(stored);
   }
   stored(entity, payload) {
-    if (entity !== "report" || !payload || typeof payload !== "object")
+    if (entity !== "sheetClone" || !payload || typeof payload !== "object")
       return storedPayload(entity, payload);
     if (packedForms.has(payload)) return packedForms.get(payload);
     if (!this.storedForms.has(payload))
@@ -467,7 +471,7 @@ export class DataSession {
     if (
       link.lease_owner ||
       others.length ||
-      !["report", "document"].includes(change.entity) ||
+      !["sheetClone", "document"].includes(change.entity) ||
       !change.before ||
       change.before.deleted ||
       change.after.deleted
@@ -476,7 +480,7 @@ export class DataSession {
     return (row, operation) => {
       const [previous, ...rest] = operation.changes;
       return row.status === "pending" &&
-        operation.protocol === 1 &&
+        operation.protocol === PROTOCOL &&
         operation.writerEpoch === link.writer_epoch &&
         !operation.objects.length &&
         !rest.length &&
@@ -562,19 +566,19 @@ export class DataSession {
     const changes = [],
       version = protocolVersion(projectedState);
     const captured = new Map(this.changes);
-    if (version === 2)
+    if (version === SPLIT_PROTOCOL)
       for (const [id, change] of this.changes) {
-        if (change.entity !== "report") continue;
+        if (change.entity !== "sheetClone") continue;
         captured.delete(id);
         const after = new Map(
-          splitReportRecord(change.after).map((record) => [
+          splitSheetCloneRecord(change.after).map((record) => [
             entityId(record.entity, record.key),
             record,
           ]),
         );
         for (const record of Object.values(entities))
           if (
-            ["reportTask", "reportCell"].includes(record.entity) &&
+            ["sheetCloneTask", "sheetCloneCell"].includes(record.entity) &&
             record.key[0] === change.key[0] &&
             !after.has(entityId(record.entity, record.key))
           )
@@ -595,16 +599,21 @@ export class DataSession {
       // 동기화 명령은 저장 형태(사본 data의 공유 사전)를 그대로 싣는다.
       const desired = this.stored(entity, after.payload);
       if (
-        version === 2 &&
+        version === SPLIT_PROTOCOL &&
         current &&
         equal(current.payload, desired) &&
         !!current.deleted === !!after.deleted
       )
         continue;
-      if (version === 2 && ["reportTask", "reportCell"].includes(entity)) {
+      if (
+        version === SPLIT_PROTOCOL &&
+        ["sheetCloneTask", "sheetCloneCell"].includes(entity)
+      ) {
         for (const parent of [
-          ["report", [key[0]]],
-          ...(entity === "reportCell" ? [["reportTask", key.slice(0, 2)]] : []),
+          ["sheetClone", [key[0]]],
+          ...(entity === "sheetCloneCell"
+            ? [["sheetCloneTask", key.slice(0, 2)]]
+            : []),
         ]) {
           const token = entities[entityId(...parent)]?.version?.split(":")[0];
           if (pendingIds.has(token)) dependsOn.add(token);
@@ -622,8 +631,8 @@ export class DataSession {
               ? "task"
               : key[0] === "calendar"
                 ? "calendar"
-                : key[0].startsWith("report")
-                  ? "report"
+                : key[0].startsWith("sheetClone")
+                  ? "sheetClone"
                   : null;
         const target =
           parent &&
@@ -728,13 +737,13 @@ export class DataSession {
 // A new copy is recorded by its name and task count, as the internal site
 // does. Its sheet and copied documents are the copy itself, not edits to
 // restore, and writing them out again would cost as much as the copy. Other
-// report changes keep their stored (packed) form: unpacked, each task repeats
+// sheetClone changes keep their stored (packed) form: unpacked, each task repeats
 // the team's formatting rules and the text runs to tens of megabytes. History
 // unpacks them when it reads them.
 const auditChanges = (action, changes, stored) =>
-  action === "report"
+  action === "sheet-clone"
     ? changes
-        .filter((c) => c.entity === "report")
+        .filter((c) => c.entity === "sheetClone")
         .map((c) => ({
           entity: c.entity,
           key: c.key,

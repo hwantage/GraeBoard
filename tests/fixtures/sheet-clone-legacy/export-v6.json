@@ -1,0 +1,915 @@
+{
+  "format": "weekly-plan",
+  "schemaVersion": 6,
+  "exportedAt": "2026-11-07T16:37:45.720Z",
+  "team": {
+    "id": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+    "name": "사본 전환 fixture",
+    "settings": {
+      "properties": [
+        {
+          "id": "title",
+          "name": "작업",
+          "kind": "text",
+          "display": "text",
+          "width": 330,
+          "visible": true,
+          "values": [],
+          "placement": "beforeWeeks"
+        },
+        {
+          "id": "owner",
+          "name": "팀원",
+          "kind": "member",
+          "display": "avatar",
+          "multiple": false,
+          "width": 112,
+          "visible": true,
+          "values": [],
+          "placement": "beforeWeeks"
+        },
+        {
+          "id": "status",
+          "name": "상태",
+          "kind": "option",
+          "display": "dot",
+          "width": 105,
+          "visible": true,
+          "values": [
+            {
+              "id": "status-planned",
+              "label": "예정",
+              "backgroundColor": "#eef2f7",
+              "dotColor": "#718096",
+              "emoji": "📅"
+            },
+            {
+              "id": "status-review",
+              "label": "검토 중",
+              "backgroundColor": "#eee8f7",
+              "dotColor": "#8a6baa",
+              "emoji": "🔎"
+            },
+            {
+              "id": "status-progress",
+              "label": "진행 중",
+              "backgroundColor": "#e7effb",
+              "dotColor": "#467fc1",
+              "emoji": "🔵"
+            },
+            {
+              "id": "status-completed",
+              "label": "완료",
+              "backgroundColor": "#e4f2eb",
+              "dotColor": "#2f8a67",
+              "emoji": "✅"
+            },
+            {
+              "id": "status-paused",
+              "label": "보류",
+              "backgroundColor": "#fff1db",
+              "dotColor": "#bb8732",
+              "emoji": "⏸️"
+            }
+          ],
+          "placement": "beforeWeeks"
+        }
+      ],
+      "theme": "mint",
+      "defaultDensity": "compact",
+      "defaultStyle": {
+        "fontFamily": "Noto Sans KR",
+        "fontSize": 9,
+        "verticalAlign": "middle"
+      }
+    }
+  },
+  "year": 2026,
+  "startMonth": 1,
+  "documentImages": [
+    {
+      "url": "/api/document-images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
+      "mimeType": "image/webp",
+      "base64": "UklGRjgAAABXRUJQVlA4ICwAAADQAQCdASoGAAQAAMASJYgCdLoB+AADsAD++ajv/zNExzH7V//lK0GIPhkAAA=="
+    }
+  ],
+  "memos": [
+    {
+      "id": "5f1a5c88-64ee-4e1f-902e-f06435569452",
+      "title": "연간 메모",
+      "markdown": "연간 메모 본문 [사본 업무](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/9fceed84-e299-420a-9dcf-1978217c9a55)"
+    },
+    {
+      "id": "e1a9322c-b1b7-4b76-92e1-1d3daf9e3137",
+      "title": "두 번째 메모",
+      "markdown": "두 번째 메모 [다시 복사한 사본 메모](/links/report-memo/4629aad6-5a63-4cff-8c9f-da950189868b/5f1a5c88-64ee-4e1f-902e-f06435569452)"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf",
+      "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+      "years": [2026],
+      "position": 100,
+      "deletedAt": null,
+      "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+      "createdAt": "2026-11-07T16:37:15.221Z",
+      "updatedAt": "2026-11-07T16:37:15.310Z",
+      "documentCount": 1,
+      "cells": {
+        "2026-10-05": {
+          "value": "일정",
+          "style": {},
+          "version": 1
+        },
+        "title": {
+          "value": "원본 업무 하나",
+          "style": {},
+          "version": 1
+        }
+      },
+      "defaultStyle": {
+        "fontFamily": "Noto Sans KR",
+        "fontSize": 9,
+        "verticalAlign": "middle"
+      },
+      "hasDocument": true,
+      "documents": [
+        {
+          "id": "main",
+          "title": "문서 1",
+          "markdown": "# 링크 모음\n\n사본 업무: [사본 업무](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)\n사본 메모: [사본 메모](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452)\n전체 화면: [전체](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf?view=full)\n조각: [조각](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452#section)\n사내 절대 주소: [절대](https://graeboard-internal.example.com/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)\n외부 자동 링크: <https://graeboard-external.example.com/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452>\n리터럴 자동 링크: https://graeboard-internal.example.com/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/9fceed84-e299-420a-9dcf-1978217c9a55\n무관한 사이트: [무관](https://unrelated.example.org/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)\n참조형: [참조 링크][ref-copy]\n삭제된 사본: [삭제](/links/report-task/99fd95d2-3e1b-487e-95d3-928042c542ec/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)\n원본 업무: [업무](/links/task/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf) 메모: [메모](/links/memo/377e8e56-aea7-46ea-a51e-0715b9b79ca3/2026/5f1a5c88-64ee-4e1f-902e-f06435569452)\n문장 속 report-task 와 /links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf 는 링크가 아니다.\n인라인 코드 `/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452`\n\n```text\n[코드 안](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)\n```\n\n<details open>\n<summary><h2>[토글 제목](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)</h2></summary>\n\n토글 안 [메모](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452)\n\n</details>\n\n<a href=\"/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452\">HTML 링크</a>\n\n| 표 | 링크 |\n| --- | --- |\n| 셀 | [표 안](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/c6af78c3-1be5-4633-b6ea-f835c44b90e9) |\n\n![그림](/api/document-images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp)\n\n[ref-copy]: /links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/9fceed84-e299-420a-9dcf-1978217c9a55 \"참조 제목\"\n"
+        }
+      ]
+    },
+    {
+      "id": "9fceed84-e299-420a-9dcf-1978217c9a55",
+      "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+      "years": [2026],
+      "position": 200,
+      "deletedAt": null,
+      "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+      "createdAt": "2026-11-07T16:37:15.229Z",
+      "updatedAt": "2026-11-07T16:37:15.320Z",
+      "documentCount": 1,
+      "cells": {
+        "2026-10-12": {
+          "value": "주간 계획",
+          "style": {
+            "backgroundColor": "#ddeeff",
+            "bold": true
+          },
+          "version": 1
+        },
+        "title": {
+          "value": "원본 업무 둘",
+          "style": {},
+          "version": 1
+        }
+      },
+      "defaultStyle": {
+        "fontFamily": "Noto Sans KR",
+        "fontSize": 9,
+        "verticalAlign": "middle"
+      },
+      "hasDocument": true,
+      "documents": [
+        {
+          "id": "main",
+          "title": "문서 1",
+          "markdown": "원본 둘의 공유 문서: [사본 셋째 행](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/c6af78c3-1be5-4633-b6ea-f835c44b90e9)"
+        }
+      ]
+    },
+    {
+      "id": "c6af78c3-1be5-4633-b6ea-f835c44b90e9",
+      "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+      "years": [2026],
+      "position": 300,
+      "deletedAt": null,
+      "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+      "createdAt": "2026-11-07T16:37:15.233Z",
+      "updatedAt": "2026-11-07T16:37:15.327Z",
+      "documentCount": 1,
+      "cells": {
+        "title": {
+          "value": "원본 업무 셋",
+          "style": {},
+          "version": 1
+        }
+      },
+      "defaultStyle": {
+        "fontFamily": "Noto Sans KR",
+        "fontSize": 9,
+        "verticalAlign": "middle"
+      },
+      "hasDocument": true,
+      "documents": [
+        {
+          "id": "main",
+          "title": "문서 1",
+          "markdown": "셋째 업무 문서 [사본 메모](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452)"
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "5649b75e-6ec5-483e-8fbf-e2a2751a4eb5",
+      "name": "팀원",
+      "color": "#177b70",
+      "avatarInitials": "",
+      "avatarImage": ""
+    },
+    {
+      "id": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+      "name": "팀장",
+      "color": "#177b70",
+      "avatarInitials": "",
+      "avatarImage": ""
+    }
+  ],
+  "views": [],
+  "filters": [],
+  "currentFilters": {
+    "selectedId": "",
+    "data": {
+      "propertyFilters": {},
+      "propertyFilterModes": {}
+    }
+  },
+  "reports": [
+    {
+      "name": "첫 사본 이름 변경",
+      "year": 2026,
+      "referenceDate": "2026-10-10",
+      "createdAt": "2026-11-07T16:37:15.351Z",
+      "data": {
+        "tasks": [
+          {
+            "cells": {
+              "2026-10-05": {
+                "style": {},
+                "value": "일정",
+                "version": 1
+              },
+              "2026-10-26": {
+                "style": {},
+                "value": "v2 사내 셀",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "사본에서 바꾼 제목",
+                "version": 2
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.221Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "deletedAt": null,
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": "사본에서 고친 문서 [다음 사본 메모](/links/report-memo/4629aad6-5a63-4cff-8c9f-da950189868b/5f1a5c88-64ee-4e1f-902e-f06435569452) [자기](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/1d5bcebe-8862-446c-ab07-22c96230f2ea)"
+              }
+            ],
+            "hasDocument": true,
+            "id": "0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf",
+            "position": 100,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:32.324Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "2026-10-19": {
+                "style": {},
+                "value": "외부 사본 셀",
+                "version": 1
+              },
+              "owner": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "status": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "사본에서 추가한 행",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.361Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": ""
+              }
+            ],
+            "hasDocument": false,
+            "id": "1d5bcebe-8862-446c-ab07-22c96230f2ea",
+            "position": 400,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:19.141Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "title": {
+                "style": {},
+                "value": "원본 업무 셋",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.233Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "deletedAt": null,
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": "셋째 업무 문서 [사본 메모](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452)"
+              }
+            ],
+            "hasDocument": true,
+            "id": "c6af78c3-1be5-4633-b6ea-f835c44b90e9",
+            "position": 300,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:15.398Z",
+            "years": [2026]
+          }
+        ],
+        "users": [],
+        "view": {
+          "collapsedMonths": [],
+          "columnVisibility": {},
+          "fromMonth": 1,
+          "fromWeek": "",
+          "frozenColumns": 0,
+          "groupBy": "",
+          "hiddenRows": [],
+          "hiddenWeeks": [],
+          "knownProperties": [],
+          "propertyFilterModes": {},
+          "propertyFilters": {},
+          "rowHeights": {},
+          "sortDirection": "default",
+          "sortKey": "",
+          "startMonth": 1,
+          "toMonth": 12,
+          "toWeek": "",
+          "visibleFields": ["title", "owner", "status"],
+          "widths": {},
+          "year": 2026
+        },
+        "settings": {
+          "defaultDensity": "compact",
+          "defaultStyle": {
+            "fontFamily": "Noto Sans KR",
+            "fontSize": 9,
+            "verticalAlign": "middle"
+          },
+          "properties": [
+            {
+              "display": "text",
+              "id": "title",
+              "kind": "text",
+              "name": "작업",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 330
+            },
+            {
+              "display": "avatar",
+              "id": "owner",
+              "kind": "member",
+              "multiple": false,
+              "name": "팀원",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 112
+            },
+            {
+              "display": "dot",
+              "id": "status",
+              "kind": "option",
+              "name": "상태",
+              "placement": "beforeWeeks",
+              "values": [
+                {
+                  "backgroundColor": "#eef2f7",
+                  "dotColor": "#718096",
+                  "emoji": "📅",
+                  "id": "status-planned",
+                  "label": "예정"
+                },
+                {
+                  "backgroundColor": "#eee8f7",
+                  "dotColor": "#8a6baa",
+                  "emoji": "🔎",
+                  "id": "status-review",
+                  "label": "검토 중"
+                },
+                {
+                  "backgroundColor": "#e7effb",
+                  "dotColor": "#467fc1",
+                  "emoji": "🔵",
+                  "id": "status-progress",
+                  "label": "진행 중"
+                },
+                {
+                  "backgroundColor": "#e4f2eb",
+                  "dotColor": "#2f8a67",
+                  "emoji": "✅",
+                  "id": "status-completed",
+                  "label": "완료"
+                },
+                {
+                  "backgroundColor": "#fff1db",
+                  "dotColor": "#bb8732",
+                  "emoji": "⏸️",
+                  "id": "status-paused",
+                  "label": "보류"
+                }
+              ],
+              "visible": true,
+              "width": 105
+            }
+          ],
+          "theme": "mint"
+        },
+        "memos": [
+          {
+            "id": "5f1a5c88-64ee-4e1f-902e-f06435569452",
+            "title": "연간 메모",
+            "markdown": "사본 메모 본문 [원본 메모](/links/memo/377e8e56-aea7-46ea-a51e-0715b9b79ca3/2026/5f1a5c88-64ee-4e1f-902e-f06435569452) [사본 업무](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/1d5bcebe-8862-446c-ab07-22c96230f2ea)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "다시 복사한 사본",
+      "year": 2026,
+      "referenceDate": "2026-10-10",
+      "createdAt": "2026-11-07T16:37:15.412Z",
+      "data": {
+        "tasks": [
+          {
+            "cells": {
+              "2026-10-05": {
+                "style": {},
+                "value": "일정",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "사내에서 먼저",
+                "version": 3
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.221Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "deletedAt": null,
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": "사본에서 고친 문서 [다음 사본 메모](/links/report-memo/4629aad6-5a63-4cff-8c9f-da950189868b/5f1a5c88-64ee-4e1f-902e-f06435569452) [자기](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/1d5bcebe-8862-446c-ab07-22c96230f2ea)"
+              }
+            ],
+            "hasDocument": true,
+            "id": "0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf",
+            "position": 100,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:22.858Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "owner": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "status": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "사본에서 추가한 행",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.361Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "documentCount": 0,
+            "documents": [],
+            "hasDocument": false,
+            "id": "1d5bcebe-8862-446c-ab07-22c96230f2ea",
+            "position": 400,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:15.361Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "title": {
+                "style": {},
+                "value": "원본 업무 셋",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.233Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "deletedAt": null,
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": "셋째 업무 문서 [사본 메모](/links/report-memo/75aea1f4-dc09-4cff-adb0-fea228d788e7/5f1a5c88-64ee-4e1f-902e-f06435569452)"
+              }
+            ],
+            "hasDocument": true,
+            "id": "c6af78c3-1be5-4633-b6ea-f835c44b90e9",
+            "position": 300,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:15.398Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "2026-10-05": {
+                "style": {},
+                "value": "엑셀 일정",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "엑셀 업무",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.514Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {},
+            "documentCount": 0,
+            "documents": [],
+            "hasDocument": false,
+            "id": "07437e22-95ab-5788-aacd-9909cc724ca3",
+            "position": 401,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:15.514Z",
+            "years": [2026]
+          },
+          {
+            "cells": {
+              "owner": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "status": {
+                "style": {},
+                "value": "",
+                "version": 1
+              },
+              "title": {
+                "style": {},
+                "value": "v2 외부 행",
+                "version": 1
+              }
+            },
+            "createdAt": "2026-11-07T16:37:32.331Z",
+            "createdBy": "897806d1-39e9-4732-a768-e5f8ac7f7631",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "documents": [],
+            "id": "d521232b-884e-4694-964a-04a2fea18d47",
+            "position": 501,
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:32.331Z",
+            "years": [2026],
+            "hasDocument": false,
+            "documentCount": 0
+          }
+        ],
+        "users": [],
+        "view": {
+          "collapsedMonths": [],
+          "columnVisibility": {},
+          "fromMonth": 1,
+          "fromWeek": "",
+          "frozenColumns": 0,
+          "groupBy": "",
+          "hiddenRows": [],
+          "hiddenWeeks": [],
+          "knownProperties": [],
+          "propertyFilterModes": {},
+          "propertyFilters": {},
+          "rowHeights": {},
+          "sortDirection": "default",
+          "sortKey": "",
+          "startMonth": 1,
+          "toMonth": 12,
+          "toWeek": "",
+          "visibleFields": ["title", "owner", "status"],
+          "widths": {},
+          "year": 2026
+        },
+        "settings": {
+          "defaultDensity": "compact",
+          "defaultStyle": {
+            "fontFamily": "Noto Sans KR",
+            "fontSize": 9,
+            "verticalAlign": "middle"
+          },
+          "properties": [
+            {
+              "display": "text",
+              "id": "title",
+              "kind": "text",
+              "name": "작업",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 330
+            },
+            {
+              "display": "avatar",
+              "id": "owner",
+              "kind": "member",
+              "multiple": false,
+              "name": "팀원",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 112
+            },
+            {
+              "display": "dot",
+              "id": "status",
+              "kind": "option",
+              "name": "상태",
+              "placement": "beforeWeeks",
+              "values": [
+                {
+                  "backgroundColor": "#eef2f7",
+                  "dotColor": "#718096",
+                  "emoji": "📅",
+                  "id": "status-planned",
+                  "label": "예정"
+                },
+                {
+                  "backgroundColor": "#eee8f7",
+                  "dotColor": "#8a6baa",
+                  "emoji": "🔎",
+                  "id": "status-review",
+                  "label": "검토 중"
+                },
+                {
+                  "backgroundColor": "#e7effb",
+                  "dotColor": "#467fc1",
+                  "emoji": "🔵",
+                  "id": "status-progress",
+                  "label": "진행 중"
+                },
+                {
+                  "backgroundColor": "#e4f2eb",
+                  "dotColor": "#2f8a67",
+                  "emoji": "✅",
+                  "id": "status-completed",
+                  "label": "완료"
+                },
+                {
+                  "backgroundColor": "#fff1db",
+                  "dotColor": "#bb8732",
+                  "emoji": "⏸️",
+                  "id": "status-paused",
+                  "label": "보류"
+                }
+              ],
+              "visible": true,
+              "width": 105
+            }
+          ],
+          "theme": "mint"
+        },
+        "memos": []
+      }
+    },
+    {
+      "name": "외부에서 만든 사본",
+      "year": 2026,
+      "referenceDate": "2026-10-10",
+      "createdAt": "2026-11-07T16:37:19.133Z",
+      "data": {
+        "tasks": [
+          {
+            "cells": {
+              "2026-10-05": {
+                "style": {},
+                "value": "일정",
+                "version": 1794069437560
+              },
+              "title": {
+                "style": {},
+                "value": "v2 외부 제목",
+                "version": 1794069437561
+              }
+            },
+            "createdAt": "2026-11-07T16:37:15.221Z",
+            "createdBy": "7ba14b00-2d4f-4b4a-8397-4d17aa3df01e",
+            "defaultStyle": {
+              "fontFamily": "Noto Sans KR",
+              "fontSize": 9,
+              "verticalAlign": "middle"
+            },
+            "deletedAt": null,
+            "documentCount": 1,
+            "documents": [
+              {
+                "id": "main",
+                "title": "문서 1",
+                "markdown": "외부 사본 문서 [첫 사본](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf)"
+              }
+            ],
+            "formatting": {
+              "revision": 1794069437560,
+              "rules": []
+            },
+            "hasDocument": true,
+            "id": "0c32f14b-c8fa-4e6d-b6cb-b18c4396efaf",
+            "position": 100,
+            "rowStyle": {},
+            "teamId": "377e8e56-aea7-46ea-a51e-0715b9b79ca3",
+            "updatedAt": "2026-11-07T16:37:37.368Z",
+            "years": [2026]
+          }
+        ],
+        "users": [],
+        "view": {
+          "collapsedMonths": [],
+          "columnVisibility": {},
+          "fromMonth": 1,
+          "fromWeek": "",
+          "frozenColumns": 0,
+          "groupBy": "",
+          "hiddenRows": [],
+          "hiddenWeeks": [],
+          "knownProperties": [],
+          "propertyFilterModes": {},
+          "propertyFilters": {},
+          "rowHeights": {},
+          "sortDirection": "default",
+          "sortKey": "",
+          "startMonth": 1,
+          "toMonth": 12,
+          "toWeek": "",
+          "visibleFields": ["title", "owner", "status"],
+          "widths": {},
+          "year": 2026
+        },
+        "settings": {
+          "defaultDensity": "compact",
+          "defaultStyle": {
+            "fontFamily": "Noto Sans KR",
+            "fontSize": 9,
+            "verticalAlign": "middle"
+          },
+          "properties": [
+            {
+              "display": "text",
+              "id": "title",
+              "kind": "text",
+              "name": "작업",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 330
+            },
+            {
+              "display": "avatar",
+              "id": "owner",
+              "kind": "member",
+              "multiple": false,
+              "name": "팀원",
+              "placement": "beforeWeeks",
+              "values": [],
+              "visible": true,
+              "width": 112
+            },
+            {
+              "display": "dot",
+              "id": "status",
+              "kind": "option",
+              "name": "상태",
+              "placement": "beforeWeeks",
+              "values": [
+                {
+                  "backgroundColor": "#eef2f7",
+                  "dotColor": "#718096",
+                  "emoji": "📅",
+                  "id": "status-planned",
+                  "label": "예정"
+                },
+                {
+                  "backgroundColor": "#eee8f7",
+                  "dotColor": "#8a6baa",
+                  "emoji": "🔎",
+                  "id": "status-review",
+                  "label": "검토 중"
+                },
+                {
+                  "backgroundColor": "#e7effb",
+                  "dotColor": "#467fc1",
+                  "emoji": "🔵",
+                  "id": "status-progress",
+                  "label": "진행 중"
+                },
+                {
+                  "backgroundColor": "#e4f2eb",
+                  "dotColor": "#2f8a67",
+                  "emoji": "✅",
+                  "id": "status-completed",
+                  "label": "완료"
+                },
+                {
+                  "backgroundColor": "#fff1db",
+                  "dotColor": "#bb8732",
+                  "emoji": "⏸️",
+                  "id": "status-paused",
+                  "label": "보류"
+                }
+              ],
+              "visible": true,
+              "width": 105
+            }
+          ],
+          "revision": 1794069437560,
+          "theme": "mint"
+        },
+        "memos": [
+          {
+            "id": "5f1a5c88-64ee-4e1f-902e-f06435569452",
+            "title": "연간 메모",
+            "markdown": "연간 메모 본문 [사본 업무](/links/report-task/75aea1f4-dc09-4cff-adb0-fea228d788e7/9fceed84-e299-420a-9dcf-1978217c9a55)"
+          },
+          {
+            "id": "e1a9322c-b1b7-4b76-92e1-1d3daf9e3137",
+            "title": "두 번째 메모",
+            "markdown": "두 번째 메모 [다시 복사한 사본 메모](/links/report-memo/4629aad6-5a63-4cff-8c9f-da950189868b/5f1a5c88-64ee-4e1f-902e-f06435569452)"
+          }
+        ]
+      }
+    }
+  ]
+}

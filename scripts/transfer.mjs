@@ -54,13 +54,12 @@ export async function openTransferDatabase({
   const pool = new Pool({ connectionString: process.env[urlEnv], max: 2 }),
     adapter = new PostgresDatabase(pool, { scope, site });
   try {
+    // A backup may read the account schema of an earlier release; a team is
+    // read only in the current format (team v3), and an earlier one is backed
+    // up by the release that wrote it.
     await adapter.health(
       backupSource
-        ? {
-            allowPreviousTeam: true,
-            allowPreviousSite: true,
-            allowPreviousControl: true,
-          }
+        ? { allowPreviousSite: true, allowPreviousControl: true }
         : undefined,
     );
   } catch (error) {

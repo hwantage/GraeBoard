@@ -2,7 +2,7 @@ import {
   captureDetectors,
   defineCaptureTriggers,
 } from "./capture-triggers.mjs";
-import { splitReportRecord } from "./versions.mjs";
+import { splitSheetCloneRecord } from "./versions.mjs";
 import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
 import { HttpError } from "../../shared/validation.js";
 import { LINK_METADATA_COLUMNS } from "../../shared/sync-team-store.mjs";
@@ -15,6 +15,8 @@ import {
   initialToken,
   canonical,
   validateOperation,
+  PROTOCOL,
+  SPLIT_PROTOCOL,
 } from "./protocol.mjs";
 
 export function installCapture(db, { onPending = () => {} } = {}) {
@@ -52,8 +54,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     checkedTeams = new Set(),
     people = null,
     styles = new Map(),
-    beforeReports = new Map(),
-    afterReports = new Map(),
+    beforeSheetClones = new Map(),
+    afterSheetClones = new Map(),
     hintedCells = new Set(),
     afterImages = new Map();
   // Keep prepared reads local to capture. The shared entity reader still defines
@@ -106,7 +108,10 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           ).get(l.team_id);
           return [
             l.team_id,
-            { ...l, protocol: marker ? JSON.parse(marker.payload).version : 1 },
+            {
+              ...l,
+              protocol: marker ? JSON.parse(marker.payload).version : PROTOCOL,
+            },
           ];
         }),
     );
@@ -168,7 +173,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           ? beforeImage
           : readEntity(reader, teamId, entity, key, {
               styles,
-              reports: beforeReports,
+              sheetClones: beforeSheetClones,
             }),
       body = null;
     // SQLite reads every calendar entry's document, saved or not. Shared state
@@ -235,15 +240,15 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           ?.team_id;
     if (teamId) {
       record(teamId, entity, key);
-      // Report edits replace the parent JSON before rebuilding document rows.
+      // SheetClone edits replace the parent JSON before rebuilding document rows.
       // Capture child titles/order/body while their original parent still exists;
       // a later document DELETE trigger can no longer read that before-image.
-      if (table === "reports")
+      if (table === "sheet_clones")
         for (const child of prepare(
-          "SELECT task_id,document_id FROM report_documents WHERE report_id=?",
+          "SELECT task_id,document_id FROM sheet_clone_documents WHERE sheet_clone_id=?",
         ).all(row.id))
           record(teamId, "document", [
-            "report",
+            "sheetClone",
             row.id,
             child.task_id,
             child.document_id,
@@ -278,8 +283,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       if (!active) return;
       before = new Map();
       styles = new Map();
-      beforeReports = new Map();
-      afterReports = new Map();
+      beforeSheetClones = new Map();
+      afterSheetClones = new Map();
       hintedCells = new Set();
       afterImages = new Map();
       actors = new Map();
@@ -331,7 +336,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           afterImages.get(item.teamId + key) ??
           readEntity(reader, item.teamId, item.entity, item.key, {
             styles,
-            reports: afterReports,
+            sheetClones: afterSheetClones,
           });
         // A calendar document is created only by saving its body, and only its
         // body changes: renaming the entry leaves the document's title alone,
@@ -353,7 +358,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       for (const [teamId, group] of teams) {
         const link = links.get(teamId);
         let referenceRecords = Object.values(group.after);
-        if (link.protocol === 2) {
+        if (link.protocol === SPLIT_PROTOCOL) {
           referenceRecords = [];
           const beforeExpanded = {},
             afterExpanded = {};
@@ -363,20 +368,20 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           ])) {
             const previous = group.before[key],
               next = group.after[key];
-            if ((previous || next)?.entity !== "report") {
+            if ((previous || next)?.entity !== "sheetClone") {
               beforeExpanded[key] = previous;
               afterExpanded[key] = next;
               referenceRecords.push(next);
               continue;
             }
             const old = new Map(
-                splitReportRecord(previous).map((record) => [
+                splitSheetCloneRecord(previous).map((record) => [
                   entityId(record.entity, record.key),
                   record,
                 ]),
               ),
               current = new Map(
-                splitReportRecord(next).map((record) => [
+                splitSheetCloneRecord(next).map((record) => [
                   entityId(record.entity, record.key),
                   record,
                 ]),
@@ -497,10 +502,10 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           // Member cells and snapshot/filter data can contain historical display IDs.
           // Markdown and style payloads cannot contain person references.
           if (record.entity === "cell") collect(record.payload.value);
-          if (record.entity === "reportCell")
+          if (record.entity === "sheetCloneCell")
             collect(record.payload.data.value);
-          if (record.entity === "reportTask") collect(record.payload.data);
-          if (["report", "filter"].includes(record.entity))
+          if (record.entity === "sheetCloneTask") collect(record.payload.data);
+          if (["sheetClone", "filter"].includes(record.entity))
             collect(record.payload.data);
           if (record.entity === "rule") collect(record.payload.values);
         }
@@ -596,7 +601,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         ).get(teamId);
         links.set(teamId, {
           ...link,
-          protocol: marker ? JSON.parse(marker.payload).version : 1,
+          protocol: marker ? JSON.parse(marker.payload).version : PROTOCOL,
         });
       } else links.delete(teamId);
       syncTeams();

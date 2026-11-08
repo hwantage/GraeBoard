@@ -172,7 +172,7 @@ async function contract({
     ),
   );
   assert.deepEqual(hiddenExport.tasks, []);
-  assert.deepEqual(hiddenExport.reports, []);
+  assert.deepEqual(hiddenExport.sheetClones, []);
   await rejected(() => transfer.apply(preview.id, apply), 409);
   await rejected(
     () =>
