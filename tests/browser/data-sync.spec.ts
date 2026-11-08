@@ -898,7 +898,14 @@ test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항
   };
   documents[0] = {
     ...originalDocument,
-    markdown: originalDocument.markdown + "\n추가 메모",
+    markdown:
+      originalDocument.markdown +
+      "\n" +
+      Array.from(
+        { length: 300 },
+        (_, i) =>
+          `추가 메모 ${i + 1} ` + "여러 줄에 걸쳐 표시되는 내용 ".repeat(30),
+      ).join("\n"),
   };
   const clone = {
     name: "대형 사본",
@@ -979,20 +986,58 @@ test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항
   await box.getByText("겹치지 않은 항목 12개", { exact: true }).click();
   await expect(box.locator(".sync-diff-change")).toHaveCount(12);
   expect(errors).toEqual([]);
-  // Expanding a long unchanged block also switches to a scrollable window.
+  // Measure wrapped rows at both ends before unfolding. Their cached heights
+  // must stay with those rows when the unchanged lines shift their indices.
   const documentTable = box
     .locator(".sync-diff-change")
     .first()
     .getByRole("table", { name: "줄 비교" });
-  await documentTable.getByRole("button", { name: /줄 같음/ }).click();
   await expect(documentTable).toHaveClass(/sync-diff-virtual/);
+  await documentTable.scrollIntoViewIfNeeded();
+  await expect
+    .poll(async () => {
+      await documentTable.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+      return documentTable.locator(".is-added").last().textContent();
+    })
+    .toContain("추가 메모 300");
+  await documentTable.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const fold = documentTable.getByRole("button", { name: /줄 같음/ });
+  await expect(fold).toBeVisible();
+  const hiddenCount = Number((await fold.innerText()).match(/(\d+)줄/)![1]);
+  const foldHeight = (await fold.boundingBox())!.height;
+  const beforeHeight = await documentTable.evaluate(
+    (element) => element.scrollHeight,
+  );
+  await fold.click();
+  await expect(documentTable.locator(".sync-diff-line").first()).toContainText(
+    "markdown: |",
+  );
+  await expect
+    .poll(() => documentTable.locator(".sync-diff-line").count())
+    .toBeGreaterThan(30);
+  // Only the unfolded lines should add height; measured wrapped rows retain
+  // their height even while outside the rendered window (rounding tolerance).
+  await expect
+    .poll(async () => {
+      const height = await documentTable.evaluate(
+        (element) => element.scrollHeight,
+      );
+      return Math.abs(height - beforeHeight - hiddenCount * 19.2 + foldHeight);
+    })
+    .toBeLessThan(30);
   expect(await documentTable.locator(".sync-diff-line").count()).toBeLessThan(
     100,
   );
   await documentTable.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
-  await expect(documentTable.locator(".is-added")).toContainText("추가 메모");
+  await expect(documentTable.locator(".is-added").last()).toContainText(
+    "추가 메모",
+  );
   const table = box
     .locator(".sync-diff-change")
     .last()

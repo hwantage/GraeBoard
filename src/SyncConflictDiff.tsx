@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Avatar, Button } from "./components";
 import { syncTime } from "./sync-types";
@@ -285,6 +285,16 @@ const site = (name: string) => (name ? `(${name})` : "");
 const fieldList = (fields: string[]) =>
   fields.length ? fields.map(fieldLabel).join(", ") : "없음";
 
+/**
+ * Source/destination line numbers stay fixed when a fold expands. Keep its
+ * key distinct from the first hidden line so measured heights cannot cross.
+ */
+const diffRowKey = (row: Rows[number]) => {
+  const line = row.type === "fold" ? row.rows[0] : row;
+  return `${row.type}:${line.from ?? ""}:${line.to ?? ""}`;
+};
+
+/** Expand selected unchanged blocks and virtualize long comparisons. */
 function DiffRows({ rows }: { rows: Rows }) {
   const [opened, setOpened] = useState<Set<Rows[number]>>(() => new Set());
   const visible = useMemo(() => {
@@ -296,11 +306,11 @@ function DiffRows({ rows }: { rows: Rows }) {
     }
     return result;
   }, [rows, opened]);
-  const renderRow = (row: Rows[number], index: number) =>
+  const renderRow = (row: Rows[number]) =>
     row.type !== "fold" ? (
-      <Line key={index} row={row} />
+      <Line key={diffRowKey(row)} row={row} />
     ) : (
-      <div key={index} className="sync-diff-fold" role="row">
+      <div key={diffRowKey(row)} className="sync-diff-fold" role="row">
         <div role="cell">
           <button
             type="button"
@@ -328,11 +338,16 @@ function VirtualDiffRows({
   renderRow,
 }: {
   rows: Rows;
-  renderRow: (row: Rows[number], index: number) => ReactNode;
+  renderRow: (row: Rows[number]) => ReactNode;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
+  const getItemKey = useCallback(
+    (index: number) => diffRowKey(rows[index]),
+    [rows],
+  );
   const virtual = useVirtualizer({
     count: rows.length,
+    getItemKey,
     getScrollElement: () => scroll.current,
     estimateSize: () => 19.2,
     overscan: 8,
@@ -360,7 +375,7 @@ function VirtualDiffRows({
               transform: `translateY(${item.start}px)`,
             }}
           >
-            {renderRow(rows[item.index], item.index)}
+            {renderRow(rows[item.index])}
           </div>
         ))}
       </div>

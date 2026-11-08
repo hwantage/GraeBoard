@@ -383,6 +383,7 @@ function markChars(removed, added) {
     .map((part) => ({ text: part.value, changed: !!part.added }));
 }
 
+/** Fold long unchanged runs, retaining context beside edited lines. */
 function fold(rows, context) {
   const result = [];
   let index = 0;
