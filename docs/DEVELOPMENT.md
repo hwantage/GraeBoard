@@ -362,7 +362,7 @@ Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에
 
 이미지 변환은 내부 Node의 sharp·`FileImageStore`, 외부 Edge의 Cloudflare Images·`R2ImageStore`를 사용합니다. PG 이미지 업로드는 작업 lease를 기록해 정리·연결 교체와 겹치지 않게 합니다. Git 실행기 설정과 인증은 논리 팀 자료 이관과 별도로 관리합니다.
 
-`tests/*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 두 실제 엔진의 permission/CAS/replay/L/late rollback을 비교합니다. 외부 HTTP 계약은 `tests/support/external-route-fixture.mjs`에서 실제 worker route 함수·PG control 인증·SSE를 실행하며, Node의 SQLite 업무 행에 의존하지 않는지 확인합니다. 이미지 업로드→본문 저장→R2 조회→JSON 반출, 관리 이력 정리와 멤버십 철회도 포함합니다. SQLite 검사는 반환값의 동기성, 커밋 후 다른 연결에서의 P·본문 가시성, 커밋 실패 시 이벤트 부재를 확인합니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
+기능별 `*-storage-contract.test.mjs`, `task-command-contract.test.mjs`, `task-storage-events.test.mjs`, `ordinary-data-contract.test.mjs`는 두 실제 엔진의 permission/CAS/replay/L/late rollback을 비교합니다. 외부 HTTP 계약은 `tests/support/external-route-fixture.mjs`에서 실제 worker route 함수·PG control 인증·SSE를 실행하며, Node의 SQLite 업무 행에 의존하지 않는지 확인합니다. 이미지 업로드→본문 저장→R2 조회→JSON 반출, 관리 이력 정리와 멤버십 철회도 포함합니다. SQLite 검사는 반환값의 동기성, 커밋 후 다른 연결에서의 P·본문 가시성, 커밋 실패 시 이벤트 부재를 확인합니다. release 검사에서는 `TEST_PG_BIN`을 지정해 PG skip을 허용하지 않습니다.
 
 ## 팀별 외부 설치와 계정 연결
 
@@ -396,4 +396,4 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 
 최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 현재 lockfile이 고정 소스와 같을 때 `npm ci --include=dev`로 준비한 의존성만 공유하며, 달라지면 실패하고 별도 고정 checkout 설치가 필요하다고 안내합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
 
-일반 `npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.
+`TEST_PG_BIN=/절대/PG/bin npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 현재 앱 교차 검증도 `TEST_PG_BIN`을 명시해야 하며 누락은 명시적 오류입니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.

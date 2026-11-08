@@ -46,6 +46,10 @@ import {
 } from "../../support/worker-github-fixture.mjs";
 
 const { Pool, Client } = pg;
+if (!process.env.TEST_PG_BIN)
+  throw new Error(
+    "Frozen/current app compatibility requires TEST_PG_BIN=/absolute/PostgreSQL/bin; no conversion was skipped.",
+  );
 const pgBin = process.env.TEST_PG_BIN,
   FIXTURE = new URL(
     "tests/fixtures/sheet-clone-legacy/",

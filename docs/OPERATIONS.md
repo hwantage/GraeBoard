@@ -348,7 +348,7 @@ node --input-type=module -e 'import {createHash} from "node:crypto"; import {rea
 npm ci --include=dev
 ```
 
-Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 버전·실행 파일 경로를 기록합니다. 준비 검증은 Node 22.17.1에서 수행했으며, 다른 런타임에서는 먼저 격리 사본으로 검증합니다. 원본 `tools/sheet-clone-cutover/` 5개와 fixture 11개의 hash 목록은 최신 앱의 고정 소스 검증 설정으로 대조합니다. 원본 커밋에서 `git diff --exit-code`·clean tree를 다시 확인하고, 기존 전환 회귀는 `TEST_PG_BIN=/approved/postgresql/bin node --test --test-concurrency=1 tests/sheet-clone-conversion.test.mjs tests/sheet-clone-cutover.test.mjs`로 실행합니다. 합성 fixture 검사 통과가 운영 사본 검증을 대신하지 않습니다. 실행 기록이 이미 있다면 동일 커밋·의존성·Node와 기존 `toolDigest`를 유지해 재개합니다.
+Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 버전·실행 파일 경로를 기록합니다. 준비 검증은 Node 22.17.1에서 수행했으며, 다른 런타임에서는 먼저 격리 사본으로 검증합니다. 원본 `tools/sheet-clone-cutover/` 5개와 fixture 11개의 hash 목록은 최신 앱의 [고정 소스 검증 설정](../tests/support/frozen-cutover-source.json)으로 대조합니다. 원본 커밋에서 `git diff --exit-code`·clean tree를 다시 확인하고, 기존 전환 회귀는 `TEST_PG_BIN=/approved/postgresql/bin node --test --test-concurrency=1 tests/sheet-clone-conversion.test.mjs tests/sheet-clone-cutover.test.mjs`로 실행합니다. 합성 fixture 검사 통과가 운영 사본 검증을 대신하지 않습니다. 실행 기록이 이미 있다면 동일 커밋·의존성·Node와 기존 `toolDigest`를 유지해 재개합니다.
 
 고정 소스에 운영 `.env`를 복사하거나 상대 경로를 그대로 적용하지 않습니다. `--env-file=/approved/runtime/production.env`로 **실제 파일을 절대 경로로** 읽고, 아래 환경 변수와 인자는 기존 운영 경로를 절대 경로로 지정합니다. `GRAEBOARD_SYNC_DIR`은 기존 clone들의 부모이며 프로필 ID가 뒤에 붙습니다. 프로필·설치 UUID·저장된 인증 키와 PostgreSQL URL 환경 변수는 기존 서비스와 같아야 합니다. DB·이미지·Git clone·journal은 소스 checkout과 별도로 유지합니다. 실행 전에 파일 존재·clone remote·현재 head·DB 버전을 읽기 전용으로 대조하며 빈 DB나 새 Git을 만들어 오류를 우회하지 않습니다. PostgreSQL 비밀번호와 토큰은 인자·로그에 출력하지 않습니다.
 
