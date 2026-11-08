@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import ColorMenu from "./ColorMenu";
+import ColorMenu from "./ui/ColorMenu";
 import type { User } from "./types";
 import { Avatar, ErrorNote } from "./components";
 

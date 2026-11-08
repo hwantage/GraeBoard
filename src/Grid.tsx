@@ -1,5 +1,5 @@
-import { useTouchPress } from "./useTouchPress";
-import { useMobileLayout } from "./useMobileLayout";
+import { useTouchPress } from "./ui/useTouchPress";
+import { useMobileLayout } from "./ui/useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
@@ -19,7 +19,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { trackPointerDrag } from "./trackPointerDrag";
+import { trackPointerDrag } from "./ui/trackPointerDrag";
 import {
   useVirtualizer,
   defaultRangeExtractor,
@@ -74,7 +74,7 @@ import InlineCellEditor, {
 } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
-import GridHeaderMenu, { type HeaderMenuAction } from "./GridHeaderMenu";
+import GridHeaderMenu, { type HeaderMenuAction } from "./ui/GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
 import {
   gridBordersCSS,

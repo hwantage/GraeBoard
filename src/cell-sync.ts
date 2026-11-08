@@ -1,5 +1,5 @@
-import { EventStream, retryableRejection } from "./event-stream";
-import { api, ApiError, taskQuery } from "./api";
+import { EventStream, retryableRejection } from "./platform/event-stream";
+import { api, ApiError, taskQuery } from "./platform/api";
 import { parseCompact } from "../shared/compact.js";
 import type { Task } from "./types";
 import type { CellUpdates, TaskSnapshot } from "./cell-updates.js";

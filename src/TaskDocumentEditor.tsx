@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import { send } from "./api";
+import { send } from "./platform/api";
 import DocumentEditor, { type DocumentHandle } from "./DocumentEditor";
 import type { Task, DocumentSaveResult } from "./types";
 export { readDocumentDraft } from "./DocumentEditor";

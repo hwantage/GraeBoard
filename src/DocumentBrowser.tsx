@@ -17,9 +17,9 @@ import {
   FolderOpen,
   Search,
 } from "lucide-react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Avatar, Button, ErrorNote } from "./components";
-import Select from "./Select";
+import Select from "./ui/Select";
 import { TaskDetailContent, type TaskDetailHandle } from "./Panels";
 import type { PropertySaveRequest } from "./TaskPropertyEditor";
 import type {

@@ -1,4 +1,4 @@
-import type { SiteIdentity } from "../shared/session-contract";
+import type { SiteIdentity } from "../../shared/session-contract";
 
 export type Site = Readonly<{
   name: "internal" | "external";

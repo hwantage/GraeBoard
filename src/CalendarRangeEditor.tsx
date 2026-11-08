@@ -5,7 +5,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
 import type { CalendarEntry, CalendarEntryUpdate } from "./calendar-types";
 import type { CalendarRange } from "./useCalendarDrag";

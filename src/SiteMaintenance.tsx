@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import Select from "./Select";
-import Toast, { useToast } from "./Toast";
-import LoadingState from "./LoadingState";
-import { busyProps } from "./busyProps";
+import Select from "./ui/Select";
+import Toast, { useToast } from "./ui/Toast";
+import LoadingState from "./ui/LoadingState";
+import { busyProps } from "./ui/busyProps";
 import type { Team } from "./types";
 
 type Kind = "year" | "document" | "images";

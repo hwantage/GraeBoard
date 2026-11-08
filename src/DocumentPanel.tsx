@@ -1,4 +1,4 @@
-import useResourceSync from "./useResourceSync";
+import useResourceSync from "./platform/useResourceSync";
 import {
   forwardRef,
   useEffect,
@@ -11,10 +11,10 @@ import {
   type CSSProperties,
 } from "react";
 import { Plus, ChevronDown, Pencil, Trash2, FileText, X } from "lucide-react";
-import { api, send, ApiError } from "./api";
-import { reorderItems, useListReorder, type Placement } from "./useListReorder";
+import { api, send, ApiError } from "./platform/api";
+import { reorderItems, useListReorder, type Placement } from "./ui/useListReorder";
 import { Button, ErrorNote } from "./components";
-import { Grae } from "./Brand";
+import { Grae } from "./ui/Brand";
 import DocumentLoading from "./DocumentLoading";
 import DocumentEditor, {
   readDocumentDraft,

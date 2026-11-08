@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { applySheetCloneOperation } from "../shared/sheet-clone-editing.js";
 import { rebaseSheetCloneCells } from "../shared/sheet-clone-sync.js";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import type {
   Cell,
   CellChange,

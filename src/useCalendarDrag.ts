@@ -9,7 +9,7 @@ import { moveCalendarRange } from "../shared/calendar.js";
 import type { CalendarEntry } from "./calendar-types";
 import { isSecretEntry } from "./secret-calendar";
 import { calendarDisplayLane } from "./secret-calendar-layout";
-import { trackPointerDrag } from "./trackPointerDrag";
+import { trackPointerDrag } from "./ui/trackPointerDrag";
 
 export type CalendarRange = Pick<CalendarEntry, "date" | "endDate">;
 export type CalendarDragMode = "move" | "start" | "end" | "order";

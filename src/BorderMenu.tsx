@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Eraser, Grid2X2 } from "lucide-react";
 import BorderControls from "./BorderControls";
-import { usePopover } from "./usePopover";
+import { usePopover } from "./ui/usePopover";
 import { BORDER_PRESETS } from "../shared/borders.js";
 import type { Border, BorderPreset } from "./types";
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button, ErrorNote, Modal } from "./components";
-import Select from "./Select";
+import Select from "./ui/Select";
 import PropertyFilter from "./PropertyFilter";
-import { api, send, taskQuery } from "./api";
+import { api, send, taskQuery } from "./platform/api";
 import { propertiesFor, todayKey } from "../shared/domain.js";
 import {
   addDays,

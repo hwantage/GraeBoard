@@ -1,4 +1,4 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import {
   useEffect,
   useId,
@@ -14,14 +14,14 @@ import {
   LockKeyhole,
   CircleHelp,
 } from "lucide-react";
-import { api, send } from "./api";
-import { resumeSession } from "./event-stream";
-import { BrandLockup, Grae } from "./Brand";
-import { inkFor } from "./color";
+import { api, send } from "./platform/api";
+import { resumeSession } from "./platform/event-stream";
+import { BrandLockup, Grae } from "./ui/Brand";
+import { inkFor } from "./ui/color";
 import type { Bootstrap, User } from "./types";
 import type { SetupStatus } from "../shared/session-contract";
 import ExternalLogin from "./ExternalLogin";
-import { siteFor } from "./site";
+import { siteFor } from "./platform/site";
 
 export function Button({
   children,

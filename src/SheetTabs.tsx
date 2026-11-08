@@ -1,4 +1,4 @@
-import useResourceSync from "./useResourceSync";
+import useResourceSync from "./platform/useResourceSync";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Plus,
@@ -8,7 +8,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, Modal } from "./components";
 import type { SheetClone, View } from "./types";
 import { todayKey } from "../shared/domain.js";

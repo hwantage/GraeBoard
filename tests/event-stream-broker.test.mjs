@@ -6,11 +6,11 @@ import { setImmediate } from "node:timers/promises";
 
 const code = stripTypeScriptTypes(
   readFileSync(
-    new URL("../src/event-stream-broker.ts", import.meta.url),
+    new URL("../src/platform/event-stream-broker.ts", import.meta.url),
     "utf8",
   ),
 ).replace(
-  '"../shared/api-error-message.js"',
+  '"../../shared/api-error-message.js"',
   JSON.stringify(
     new URL("../shared/api-error-message.js", import.meta.url).href,
   ),
@@ -624,7 +624,7 @@ test("워커의 4MiB 대기열 초과는 포트 종료 전에 즉시 재구독�
   );
   const workerCode = stripTypeScriptTypes(
     readFileSync(
-      new URL("../src/event-stream.worker.ts", import.meta.url),
+      new URL("../src/platform/event-stream.worker.ts", import.meta.url),
       "utf8",
     ),
   ).replace(

@@ -1,4 +1,4 @@
-import Select from "./Select";
+import Select from "./ui/Select";
 import Toolbar from "./Toolbar";
 import { applyBorderPreset, gridBordersCSS } from "../shared/borders.js";
 import { useState } from "react";
@@ -9,9 +9,9 @@ import {
   normalizeSettings,
   textMode,
 } from "../shared/domain.js";
-import { send } from "./api";
+import { send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
+import Toast, { useToast } from "./ui/Toast";
 import { appendHistory } from "./history";
 
 const INITIAL_STYLE: Style = {

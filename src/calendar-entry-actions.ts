@@ -1,4 +1,4 @@
-import { send } from "./api";
+import { send } from "./platform/api";
 import type { CalendarEntry, CalendarEntryDeletion } from "./calendar-types";
 
 export function deleteCalendarEntry(entry: CalendarEntry, deletionId: string) {

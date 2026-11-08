@@ -1,12 +1,12 @@
-import { RecentColorsProvider } from "./recent-colors";
-import { queryPolicyFor } from "./query-policy";
-import { joinQuery } from "./shared-query";
+import { RecentColorsProvider } from "./ui/recent-colors";
+import { queryPolicyFor } from "./platform/query-policy";
+import { joinQuery } from "./platform/shared-query";
 import AnnualMemoPanel from "./AnnualMemoPanel";
 import type { DocumentPanelHandle } from "./DocumentPanel";
 import Calendar from "./Calendar";
-import { busyProps } from "./busyProps";
-import Select from "./Select";
-import LoadingState from "./LoadingState";
+import { busyProps } from "./ui/busyProps";
+import Select from "./ui/Select";
+import LoadingState from "./ui/LoadingState";
 import SheetTabs from "./SheetTabs";
 import DocumentBrowser, { type DocumentBrowserHandle } from "./DocumentBrowser";
 import useWorkspaceRoute from "./useWorkspaceRoute";
@@ -77,9 +77,9 @@ import {
   taskQuery,
   logout,
   refreshExternalTeam,
-} from "./api";
-import { siteFor } from "./site";
-import { SiteContext, useSite } from "./site-context";
+} from "./platform/api";
+import { siteFor } from "./platform/site";
+import { SiteContext, useSite } from "./platform/site-context";
 import TeamSyncIndicator from "./TeamSyncIndicator";
 import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
 import { subscribeCellChanges } from "./cell-sync";
@@ -137,10 +137,10 @@ import {
   SessionLogin,
 } from "./components";
 import SettingsPanel from "./SettingsPanel";
-import Toast, { UndoToast, useToast } from "./Toast";
-import useResourceSync from "./useResourceSync";
+import Toast, { UndoToast, useToast } from "./ui/Toast";
+import useResourceSync from "./platform/useResourceSync";
 import useSheetCloneDraft from "./useSheetCloneDraft";
-import { BrandMark, BrandWordmark } from "./Brand";
+import { BrandMark, BrandWordmark } from "./ui/Brand";
 import Grid, {
   type Column,
   type RowCommand,

@@ -1,8 +1,8 @@
-import Select from "./Select";
-import ColorMenu from "./ColorMenu";
+import Select from "./ui/Select";
+import ColorMenu from "./ui/ColorMenu";
 import { useEffect, useRef, useState } from "react";
 import { Plus, GripVertical, Trash2 } from "lucide-react";
-import { reorderItems, useListReorder, type Placement } from "./useListReorder";
+import { reorderItems, useListReorder, type Placement } from "./ui/useListReorder";
 import type { Team, Settings, Property, PropertyOption } from "./types";
 import {
   normalizeSettings,
@@ -12,9 +12,9 @@ import {
   CORE_PROPERTY_KEYS,
   shortId,
 } from "../shared/domain.js";
-import { send } from "./api";
+import { send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
+import Toast, { useToast } from "./ui/Toast";
 import PropertyBadge from "./PropertyBadge";
 import PropertyColumnOrder from "./PropertyColumnOrder";
 import BorderControls from "./BorderControls";

@@ -1,11 +1,11 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
-import Select from "./Select";
+import Select from "./ui/Select";
 import AvatarEditor from "./AvatarEditor";
-import { send } from "./api";
+import { send } from "./platform/api";
 import { Avatar, Button, ErrorNote } from "./components";
-import { systemRoleNames, teamRoleNames } from "./roles";
+import { systemRoleNames, teamRoleNames } from "./platform/roles";
 import type { Team, User } from "./types";
 
 export default function UserAccounts({

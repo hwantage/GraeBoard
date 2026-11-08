@@ -4,9 +4,9 @@ import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
 } from "./TaskPropertyEditor";
-import Select from "./Select";
+import Select from "./ui/Select";
 import DocumentLoading from "./DocumentLoading";
-import LoadingState from "./LoadingState";
+import LoadingState from "./ui/LoadingState";
 import {
   Component,
   forwardRef,
@@ -30,10 +30,10 @@ import {
   EyeOff,
   CalendarPlus,
 } from "lucide-react";
-import { api, send, download, taskQuery } from "./api";
+import { api, send, download, taskQuery } from "./platform/api";
 import { Modal, Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
-import HistoryTime, { HistoryTimeline } from "./HistoryTime";
+import Toast, { useToast } from "./ui/Toast";
+import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./history";
 import { pack, compactStyle } from "../shared/compact.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";

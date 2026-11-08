@@ -6,12 +6,17 @@ import { setImmediate } from "node:timers/promises";
 
 const moduleURL = (code) =>
   `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+const sourcePaths = {
+  "event-stream": "../src/platform/event-stream.ts",
+  "event-stream-broker": "../src/platform/event-stream-broker.ts",
+  "cell-sync": "../src/cell-sync.ts",
+};
 const source = (name) =>
   stripTypeScriptTypes(
-    readFileSync(new URL(`../src/${name}.ts`, import.meta.url), "utf8"),
+    readFileSync(new URL(sourcePaths[name], import.meta.url), "utf8"),
     { mode: "transform" },
   ).replace(
-    '"../shared/api-error-message.js"',
+    '"../../shared/api-error-message.js"',
     JSON.stringify(
       new URL("../shared/api-error-message.js", import.meta.url).href,
     ),
@@ -216,7 +221,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
   });
   const code = source("cell-sync")
     .replace(
-      '"./event-stream"',
+      '"./platform/event-stream"',
       JSON.stringify(
         moduleURL(
           `export const EventStream=globalThis.__cellTest.Stream; export { retryableRejection } from ${JSON.stringify(moduleURL(source("event-stream-broker")))};`,
@@ -224,7 +229,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
       ),
     )
     .replace(
-      '"./api"',
+      '"./platform/api"',
       JSON.stringify(
         moduleURL(
           'export const api=globalThis.__cellTest.get; export class ApiError extends Error {} export const taskQuery=()=>"/tasks";',

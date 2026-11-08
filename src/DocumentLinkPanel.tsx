@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type CSSProperties } from "react";
 import { ExternalLink } from "lucide-react";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import { Button } from "./components";
 import { RowPanel, StandaloneRowPanel } from "./Panels";
 import CalendarEntryPanel from "./CalendarEntryPanel";

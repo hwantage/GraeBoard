@@ -8,7 +8,7 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./components";
 import type { View } from "./types";
-import { trackPointerDrag } from "./trackPointerDrag";
+import { trackPointerDrag } from "./ui/trackPointerDrag";
 import { useTodayKey } from "./useTodayKey";
 
 type Unit = "month" | "week";

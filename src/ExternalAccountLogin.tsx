@@ -1,9 +1,9 @@
 import type { SetupStatus } from "../shared/session-contract";
 import { useEffect, useId, useState } from "react";
-import { api, send } from "./api";
-import { resumeSession } from "./event-stream";
+import { api, send } from "./platform/api";
+import { resumeSession } from "./platform/event-stream";
 import { Button, ErrorNote } from "./components";
-import Select from "./Select";
+import Select from "./ui/Select";
 import type { Bootstrap } from "./types";
 
 export default function ExternalAccountLogin({

@@ -1,8 +1,8 @@
 import { syncTime } from "./sync-types";
 import { useEffect, useState } from "react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import { busyProps } from "./busyProps";
+import { busyProps } from "./ui/busyProps";
 
 type KeyStatus = {
   id: string;

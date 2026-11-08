@@ -1,8 +1,8 @@
 import { useMemo, type KeyboardEvent, type PointerEvent } from "react";
-import { useTouchPress } from "./useTouchPress";
+import { useTouchPress } from "./ui/useTouchPress";
 import { isSecretEntry } from "./secret-calendar";
 import { calendarDisplayLane } from "./secret-calendar-layout";
-import { busyProps } from "./busyProps";
+import { busyProps } from "./ui/busyProps";
 import { FileText, LockKeyhole } from "lucide-react";
 import { normalizeSearchQuery } from "../shared/search.js";
 import { addDays, moveCalendarRange } from "../shared/calendar.js";

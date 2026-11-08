@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import LoadingState from "./LoadingState";
-import { useSite } from "./site-context";
+import LoadingState from "./ui/LoadingState";
+import { useSite } from "./platform/site-context";
 import TeamSetupKey from "./TeamSetupKey";
 import {
   ConnectionChecks,

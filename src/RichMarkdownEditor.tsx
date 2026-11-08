@@ -41,8 +41,8 @@ import {
   documentCodeBlockView,
 } from "./DocumentCodeBlockView";
 import { Button, Modal } from "./components";
-import Toast, { useToast } from "./Toast";
-import Select from "./Select";
+import Toast, { useToast } from "./ui/Toast";
+import Select from "./ui/Select";
 import DocumentLoading from "./DocumentLoading";
 import DocumentToolMenu from "./DocumentToolMenu";
 import DocumentBlockHandle, {

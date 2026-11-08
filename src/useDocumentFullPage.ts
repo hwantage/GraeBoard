@@ -1,4 +1,4 @@
-import { useMobileLayout } from "./useMobileLayout";
+import { useMobileLayout } from "./ui/useMobileLayout";
 import { useDocumentFullWidth } from "./DocumentFullWidthButton";
 
 // Derive the mobile presentation without overwriting either desktop choice.

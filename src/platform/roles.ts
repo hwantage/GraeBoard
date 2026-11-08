@@ -1,4 +1,4 @@
-import type { TeamRole } from "./types";
+import type { TeamRole } from "../types";
 
 // 시스템 권한과 팀 내 권한의 표시 이름. 설정 화면 여러 곳에서 함께 쓴다.
 export const systemRoleNames = {

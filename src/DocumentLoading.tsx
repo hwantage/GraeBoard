@@ -1,4 +1,4 @@
-import LoadingState from "./LoadingState";
+import LoadingState from "./ui/LoadingState";
 
 export default function DocumentLoading({
   className = "",

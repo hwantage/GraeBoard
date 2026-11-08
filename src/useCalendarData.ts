@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api } from "./platform/api";
 import type { CalendarData } from "./calendar-types";
 import { CALENDAR_MEMBER_BATCH } from "../shared/calendar.js";
 

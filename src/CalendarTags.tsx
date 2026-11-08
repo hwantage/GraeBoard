@@ -24,11 +24,11 @@ import {
   CALENDAR_TAG_LIMIT,
   calendarTagColor,
 } from "../shared/calendar-tags.js";
-import { api, send } from "./api";
-import { busyProps } from "./busyProps";
+import { api, send } from "./platform/api";
+import { busyProps } from "./ui/busyProps";
 import { Button, ErrorNote, Modal } from "./components";
 import type { CalendarTag } from "./calendar-types";
-import Select from "./Select";
+import Select from "./ui/Select";
 import "./calendar-tags.css";
 
 export function calendarTagManagerLabel(userId: string | null) {

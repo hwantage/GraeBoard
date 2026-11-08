@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from "react";
-import { api } from "./api";
+import { api } from "./platform/api";
 import {
   DOCUMENT_LINK_BATCH,
   documentLinkPath,

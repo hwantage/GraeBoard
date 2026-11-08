@@ -21,6 +21,8 @@
 
 | 경로                                                                                                                                                   | 역할                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `src/platform/` | API·오류·사이트 환경·공통 조회 정책·SharedWorker SSE·리소스 구독 기반 |
+| `src/ui/` | Select·색 선택·알림·도움말·공통 메뉴·포인터/모바일/목록 훅 |
 | `src/App.tsx`                                                                                                                                          | 팀·연도·개인 보기, 조회·저장, 편집과 실행취소 상태                                                                             |
 | `src/cell-sync.ts`, `cell-updates.js`                                                                                                                  | SSE 연결·복구, 셀 버전 비교와 변경 병합                                                                                        |
 | `src/PeriodPicker.tsx`                                                                                                                                 | 2행 월·주차 표, 연속 드래그·키보드 범위 선택                                                                                   |
@@ -52,9 +54,9 @@
 | `server/transfer.mjs`, `archive.mjs`                                                                                                                   | XLSX 분석·이관·반출과 압축 파일 제한 검사                                                                                      |
 | `server/task-cache.mjs`                                                                                                                                | 팀 조회 캐시와 변경 무효화                                                                                                     |
 | `server/system-audit.mjs`, `src/SystemAuditLog.tsx`                                                                                                    | 관리자 전용 공통 감사 로그 검색·페이지 이동·상세 조회                                                                          |
-| `server/document-events.mjs`, `resource-events.mjs`, `src/useResourceSync.ts`                                                                          | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유                                                                  |
+| `server/document-events.mjs`, `resource-events.mjs`, `src/platform/useResourceSync.ts`                                                                          | 문서 스냅샷과 시트·문서 목록 변경 알림, 권한 재검사·연결 공유                                                                  |
 | `server/cell-events.mjs`                                                                                                                               | 팀·연도별 SSE 전송, 제한된 재전송 버퍼와 연결 권한 검사                                                                        |
-| `server/event-streams.mjs`, `src/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`                                                  | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구                                                                |
+| `server/event-streams.mjs`, `src/platform/event-stream.ts`, `event-stream.worker.ts`, `event-stream-broker.ts`                                                  | 여러 탭의 SSE 연결 공유·중복 구독 병합·탭별 알림 전달·커서 복구                                                                |
 | `server/cell-operations.mjs`                                                                                                                           | 셀 이력과 재시도 참조 저장, 기본키 조회로 최초 응답 재구성                                                                     |
 | `edge/main.mjs`, `edge/handler.mjs`, `edge/resources.mjs`                                                                                              | Deno 진입점·PG pool·gateway 인증·R2/Images 어댑터                                                                              |
 | `worker/entry.mjs`, `worker/events.mjs`, `worker/site-auth.mjs`, `worker/sync.mjs`                                                                     | Edge에서 재사용하는 업무 API·SSE·계정 연결·Git 동기화                                                                          |
@@ -111,9 +113,9 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 ### 셀 저장과 동시 수정
 
-작업 완료 안내는 `src/Toast.tsx`의 `Toast`·`useToast`를 사용합니다. 설정·비밀번호·이력 정리·사본 이름 모달 안에서 렌더링하여 열린 dialog 위에 표시하며, 같은 문구를 다시 알려도 4초 표시 시간을 갱신합니다. 사본 표의 자동 저장 상태는 보조기기에 알리고, 저장 오류는 표 위에서 확인·재시도할 수 있습니다. 오류·입력 검증과 현재 진행 상태는 해당 화면에서 유지합니다.
+작업 완료 안내는 `src/ui/Toast.tsx`의 `Toast`·`useToast`를 사용합니다. 설정·비밀번호·이력 정리·사본 이름 모달 안에서 렌더링하여 열린 dialog 위에 표시하며, 같은 문구를 다시 알려도 4초 표시 시간을 갱신합니다. 사본 표의 자동 저장 상태는 보조기기에 알리고, 저장 오류는 표 위에서 확인·재시도할 수 있습니다. 오류·입력 검증과 현재 진행 상태는 해당 화면에서 유지합니다.
 
-`src/api.ts`는 `shared/api-error-message.js`로 플랫폼 오류의 작업명·원인별 조치·HTTP 상태·제공된 요청 ID를 표시합니다. Supabase의 `sb-error-code`/JSON `code`, `Retry-After`를 읽으며 provider의 임의 `message`·HTML·SQL 원문은 표시하지 않습니다. 기존 앱 검증·권한·충돌 메시지와 `ApiError.details`는 보존합니다. 네트워크 실패와 잘못된 성공 응답 형식도 분류하며 호출자가 취소한 요청은 그대로 전달합니다. `tests/api-error-message.test.mjs`와 `tests/browser/api-errors.spec.ts`는 429·실행 한도·인증·시간 초과·비정상 본문을 검사합니다.
+`src/platform/api.ts`는 `shared/api-error-message.js`로 플랫폼 오류의 작업명·원인별 조치·HTTP 상태·제공된 요청 ID를 표시합니다. Supabase의 `sb-error-code`/JSON `code`, `Retry-After`를 읽으며 provider의 임의 `message`·HTML·SQL 원문은 표시하지 않습니다. 기존 앱 검증·권한·충돌 메시지와 `ApiError.details`는 보존합니다. 네트워크 실패와 잘못된 성공 응답 형식도 분류하며 호출자가 취소한 요청은 그대로 전달합니다. `tests/api-error-message.test.mjs`와 `tests/browser/api-errors.spec.ts`는 429·실행 한도·인증·시간 초과·비정상 본문을 검사합니다.
 
 기본 셀 툴바와 발표 도구는 `ZoomControls`의 50~200% 입력·증감·복원을 공유합니다. 확대는 `.grid-area`에만 적용하며 `Grid`의 행·열 크기 드래그는 포인터 이동량을 배율로 나눠 원래 치수에 반영합니다. 확대율은 화면 상태이며 업무 데이터와 View에 저장하지 않습니다. 발표 모드는 기본 배율을 초기값으로 받아 별도로 조절하고 종료 시 기본 배율을 복원합니다.
 
@@ -207,8 +209,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/workbook
 
 ## 확장과 변경
 
-- 짧은 저장·드래그로 입력을 잠글 때는 `src/busyProps.ts`로 실제 `disabled`와 임시 잠금 표시를 함께 전달합니다. 권한·필수값 부족으로 비활성화한 컨트롤의 흐린 표시는 유지하고, 임시 잠금 때문에 화면 전체를 흐리게 만들지 않습니다. 저장 상태는 변경 중인 항목에 표시합니다. 캘린더 저장은 해당 팀원의 데이터만 교체하고, 변경 없는 주간 배치는 다시 정렬하지 않습니다.
-- 포인터 드래그의 이동·종료·취소는 `src/trackPointerDrag.ts`를 공유합니다. 캘린더 이동·기간 조정, 기간 선택, 행 이동, 속성 값 순서 변경에 적용되어 있습니다. 새 드래그도 이 모듈을 사용하고 각 화면은 시작 임계값·대상 계산·스크롤·저장만 담당합니다. 캡처 해제는 취소가 아니며, 버튼이 풀린 이동 이벤트가 먼저 오면 마지막으로 누른 위치를 한 번만 확정합니다. 실제 `pointercancel`·창 포커스 이탈·Escape와 화면 해제는 취소하고, 일반 `pointerup`에서는 최종 좌표를 반영합니다. 브레이브 트랙패드의 캡처 해제 → 버튼 해제 이동 → 늦은 `pointerup` 순서는 `tests/browser/monthly-calendar.spec.ts`에서 재검증합니다.
+- 짧은 저장·드래그로 입력을 잠글 때는 `src/ui/busyProps.ts`로 실제 `disabled`와 임시 잠금 표시를 함께 전달합니다. 권한·필수값 부족으로 비활성화한 컨트롤의 흐린 표시는 유지하고, 임시 잠금 때문에 화면 전체를 흐리게 만들지 않습니다. 저장 상태는 변경 중인 항목에 표시합니다. 캘린더 저장은 해당 팀원의 데이터만 교체하고, 변경 없는 주간 배치는 다시 정렬하지 않습니다.
+- 포인터 드래그의 이동·종료·취소는 `src/ui/trackPointerDrag.ts`를 공유합니다. 캘린더 이동·기간 조정, 기간 선택, 행 이동, 속성 값 순서 변경에 적용되어 있습니다. 새 드래그도 이 모듈을 사용하고 각 화면은 시작 임계값·대상 계산·스크롤·저장만 담당합니다. 캡처 해제는 취소가 아니며, 버튼이 풀린 이동 이벤트가 먼저 오면 마지막으로 누른 위치를 한 번만 확정합니다. 실제 `pointercancel`·창 포커스 이탈·Escape와 화면 해제는 취소하고, 일반 `pointerup`에서는 최종 좌표를 반영합니다. 브레이브 트랙패드의 캡처 해제 → 버튼 해제 이동 → 늦은 `pointerup` 순서는 `tests/browser/monthly-calendar.spec.ts`에서 재검증합니다.
 - 일반 폼의 `input`·`select`·`textarea` 테두리와 포커스는 `src/styles.css`의 공통 규칙을 사용합니다. 화면별 CSS는 필요한 크기·배치만 조정하고, 입력칸 바깥으로 떨어지는 `outline`이나 별도 테두리·모서리 규칙을 중복 지정하지 않습니다. 공통 버튼도 같은 스타일 파일에서 포커스 선을 기존 테두리 안쪽에 겹쳐 그려 이중 테두리가 생기지 않게 합니다. 셀 편집기와 테두리 없는 도구 모음은 기존 전용 표시를 유지합니다.
 - 일반 폼 선택은 `Select.tsx`, 같은 값을 재선택하여 적용해야 하는 서식 선택은 `FormatSelect.tsx`를 사용합니다.
 - 입력 팝업의 초기 포커스는 `Modal.initialFocus`로 지정해 `showModal()` 뒤에 적용합니다. 생성은 폼 제출로 버튼과 Enter를 연결하고, 한글 조합 확정 Enter와 저장 중 중복 제출을 구분합니다.
@@ -262,7 +264,7 @@ npm run test:e2e
 
 `npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 시작 기준 `cb87426`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개입니다. `tests/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
 
-`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P0`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. PR의 경량 CI는 구조·도구·import 경계를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다.
+`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P1`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. PR의 경량 CI는 구조·도구·import 경계를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다.
 
 `TEST_PG_BIN`은 실행 가능한 PostgreSQL 서버 바이너리 경로로 바꿉니다([외부 동기화 개발·검증](#외부-동기화-개발검증)). `npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `DEBUG_HTTP=1`로 실행하면 서버가 거절한 요청(4xx)의 경로와 사유를 콘솔에 남겨 테스트 실패 원인을 바로 볼 수 있습니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
 

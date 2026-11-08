@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { displayValueFor, orderColumns } from "../shared/domain.js";
 import type { Property, Task, User, View } from "./types";
-import GridHeaderMenu from "./GridHeaderMenu";
+import GridHeaderMenu from "./ui/GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
 
 type Filters = Pick<View, "propertyFilters" | "propertyFilterModes">;

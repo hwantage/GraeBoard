@@ -18,7 +18,7 @@ import CellDatePicker, { normalizeDateInput } from "./CellDatePicker";
 import CellOptionPicker from "./CellOptionPicker";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
-import { ApiError, serverNow } from "./api";
+import { ApiError, serverNow } from "./platform/api";
 import type {
   Cell,
   CellChange,

@@ -15,7 +15,7 @@ import {
   horizontalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
-import type { Placement } from "./useListReorder";
+import type { Placement } from "./ui/useListReorder";
 
 type Column = { id: string; name: string; description: string; week: boolean };
 type Props = {

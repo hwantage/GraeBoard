@@ -1,8 +1,8 @@
 import { useState } from "react";
-import lockupUrl from "../assets/logo/graeboard-lockup-horizontal.svg";
-import wordmarkUrl from "../assets/logo/graeboard-wordmark-ko.svg";
-import grae2dUrl from "../assets/character/grae-hello-2d-256.png";
-import grae3dUrl from "../assets/character/grae-hello-3d-512.png";
+import lockupUrl from "../../assets/logo/graeboard-lockup-horizontal.svg";
+import wordmarkUrl from "../../assets/logo/graeboard-wordmark-ko.svg";
+import grae2dUrl from "../../assets/character/grae-hello-2d-256.png";
+import grae3dUrl from "../../assets/character/grae-hello-3d-512.png";
 
 // 픽셀 G — 브랜드 가이드(docs/GraeBoard_Brand_Guidebook.pdf)의 5×5 셀 배열
 const G_PATTERN = [".XXX.", "X....", "X.XXX", "X...X", ".XXX."];

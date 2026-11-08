@@ -7,7 +7,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
-import { usePopover } from "./usePopover";
+import { usePopover } from "./ui/usePopover";
 
 export type DocumentToolMenuItem = {
   label: string;

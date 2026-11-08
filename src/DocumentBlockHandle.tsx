@@ -38,7 +38,7 @@ import { keydownHandler } from "@milkdown/kit/prose/keymap";
 import { $prose } from "@milkdown/kit/utils";
 import DocumentSlashMenu, { type SlashItem } from "./DocumentSlashMenu";
 import { TOGGLE_LEVELS } from "./DocumentToggle";
-import { trackPointerDrag } from "./trackPointerDrag";
+import { trackPointerDrag } from "./ui/trackPointerDrag";
 
 // The handle in the left gutter moves a block by dragging and opens a menu to
 // add a block above or below it, convert, duplicate, move or delete it. A block is a top-level block, a list

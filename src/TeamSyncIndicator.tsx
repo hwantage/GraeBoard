@@ -1,6 +1,6 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api } from "./platform/api";
 import { syncTime, type SyncStatus } from "./sync-types";
 import SyncConflictBox from "./SyncConflictBox";
 import type { User } from "./types";

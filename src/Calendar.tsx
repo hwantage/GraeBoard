@@ -1,4 +1,4 @@
-import useResourceSync from "./useResourceSync";
+import useResourceSync from "./platform/useResourceSync";
 import {
   useEffect,
   useLayoutEffect,
@@ -24,18 +24,18 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import { normalizeSearchQuery } from "../shared/search.js";
-import { busyProps } from "./busyProps";
+import { busyProps } from "./ui/busyProps";
 import { Avatar, Button, ErrorNote, Modal } from "./components";
-import LoadingState from "./LoadingState";
-import GridHeaderMenu from "./GridHeaderMenu";
+import LoadingState from "./ui/LoadingState";
+import GridHeaderMenu from "./ui/GridHeaderMenu";
 import {
   deleteCalendarEntry,
   saveCalendarEntryTags,
 } from "./calendar-entry-actions";
 import { StandaloneRowPanel } from "./Panels";
-import { UndoToast } from "./Toast";
+import { UndoToast } from "./ui/Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
 import SecretCalendarEntryPanel from "./SecretCalendarEntryPanel";
 import useSecretCalendar from "./useSecretCalendar";
@@ -70,7 +70,7 @@ import {
   saveCalendarTagCheck,
 } from "./calendar-tag-checks";
 import { useCalendarDrag, type CalendarRange } from "./useCalendarDrag";
-import { reorderItems, useListReorder } from "./useListReorder";
+import { reorderItems, useListReorder } from "./ui/useListReorder";
 import { useCalendarData } from "./useCalendarData";
 import {
   mergeCalendarLayout,

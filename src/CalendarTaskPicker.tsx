@@ -3,14 +3,14 @@ import { FileText, ListFilter, Search } from "lucide-react";
 import { addDays } from "../shared/calendar.js";
 import { propertiesFor } from "../shared/domain.js";
 import { normalizeSearchQuery } from "../shared/search.js";
-import { api, send } from "./api";
-import { busyProps } from "./busyProps";
+import { api, send } from "./platform/api";
+import { busyProps } from "./ui/busyProps";
 import { Button, ErrorNote, Modal } from "./components";
-import LoadingState from "./LoadingState";
+import LoadingState from "./ui/LoadingState";
 import MemberValue from "./MemberValue";
 import PropertyBadge from "./PropertyBadge";
 import PropertyFilter from "./PropertyFilter";
-import Select from "./Select";
+import Select from "./ui/Select";
 import { usePropertyFilterTasks } from "./CalendarSettings";
 import type {
   CalendarTaskFilter,

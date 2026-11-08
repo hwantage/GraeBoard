@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { HardDrive, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { todayKey } from "../shared/domain.js";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
-import LoadingState from "./LoadingState";
+import Toast, { useToast } from "./ui/Toast";
+import LoadingState from "./ui/LoadingState";
 
 type Count = { count: number; bytes: number };
 type Summary = Count & { oldest: string | null; newest: string | null };

@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote, Modal } from "./components";
-import LoadingState from "./LoadingState";
+import LoadingState from "./ui/LoadingState";
 import SyncConflictDiff, { type ConflictOrigin } from "./SyncConflictDiff";
-import { busyProps } from "./busyProps";
+import { busyProps } from "./ui/busyProps";
 import { syncTime } from "./sync-types";
 import type { User } from "./types";
 import { conflictEditors, conflictKinds } from "../shared/conflict-diff.js";

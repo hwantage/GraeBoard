@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
 
 type LinkRequest = {

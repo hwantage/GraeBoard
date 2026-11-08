@@ -2,7 +2,7 @@ import {
   EventStream,
   retryableRejection,
   streamErrorStatus,
-} from "./event-stream";
+} from "./platform/event-stream";
 import {
   Component,
   forwardRef,
@@ -17,8 +17,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Download, FileCode, FileText, Printer } from "lucide-react";
-import { api, ApiError } from "./api";
-import { useMobileLayout } from "./useMobileLayout";
+import { api, ApiError } from "./platform/api";
+import { useMobileLayout } from "./ui/useMobileLayout";
 import DocumentModeToggle, { type DocumentMode } from "./DocumentModeToggle";
 import DocumentTocToggle from "./DocumentTocToggle";
 import DocumentToolMenu from "./DocumentToolMenu";

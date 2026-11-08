@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import LoadingState from "./LoadingState";
-import { useSite } from "./site-context";
+import LoadingState from "./ui/LoadingState";
+import { useSite } from "./platform/site-context";
 import "./sync-setup.css";
 
 type Identity = {

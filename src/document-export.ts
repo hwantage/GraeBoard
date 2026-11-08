@@ -19,7 +19,7 @@ import {
   isDocumentImage,
 } from "../shared/document-images.js";
 import { parseDocumentLinkPath } from "../shared/document-links.js";
-import { saveFile } from "./api";
+import { saveFile } from "./platform/api";
 import type { DocumentImages } from "./document-storage";
 
 // A document downloads as one file that opens away from this site: the

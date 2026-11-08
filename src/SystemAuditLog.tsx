@@ -1,12 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ChevronRight, Search } from "lucide-react";
-import LoadingState from "./LoadingState";
+import LoadingState from "./ui/LoadingState";
 import { todayKey } from "../shared/domain.js";
-import { api } from "./api";
+import { api } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import Select from "./Select";
-import HistoryTime, { HistoryTimeline } from "./HistoryTime";
-import { systemRoleNames, teamRoleNames } from "./roles";
+import Select from "./ui/Select";
+import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
+import { systemRoleNames, teamRoleNames } from "./platform/roles";
 import type { Team, User } from "./types";
 
 const actions: Record<string, string> = {

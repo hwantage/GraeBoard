@@ -1,6 +1,6 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import { useRef, useState } from "react";
-import { api } from "./api";
+import { api } from "./platform/api";
 import AvatarEditor from "./AvatarEditor";
 import { Button, ErrorNote, Modal } from "./components";
 import type { User } from "./types";

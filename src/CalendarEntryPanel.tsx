@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button, ErrorNote, Modal } from "./components";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import {
   deleteCalendarEntry,
   saveCalendarEntryTags,

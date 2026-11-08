@@ -1,15 +1,15 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, UserMinus } from "lucide-react";
-import Select from "./Select";
+import Select from "./ui/Select";
 import ThemePicker from "./ThemePicker";
-import { api, send, type ApiError } from "./api";
+import { api, send, type ApiError } from "./platform/api";
 import AccountLinkRequests from "./AccountLinkRequests";
 import { Avatar, Button, ErrorNote } from "./components";
 import { getTheme } from "../shared/themes.js";
 import type { Team, TeamRole, ThemeId, User } from "./types";
 
-import { teamRoleNames, teamRoleOrder, teamRoleHelp } from "./roles";
+import { teamRoleNames, teamRoleOrder, teamRoleHelp } from "./platform/roles";
 
 type Notify = (message: string) => void;
 type Member = { userId: string; role: TeamRole };

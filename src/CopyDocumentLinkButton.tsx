@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "lucide-react";
 import { Button } from "./components";
-import Toast, { useToast } from "./Toast";
+import Toast, { useToast } from "./ui/Toast";
 import { copyDocumentLink, type DocumentLinkTarget } from "./document-links";
 
 // Copies a link to this detail or memo for other documents

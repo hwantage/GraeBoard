@@ -1,4 +1,4 @@
-import { send } from "./api";
+import { send } from "./platform/api";
 import type { CalendarEntry, CalendarTagCheck } from "./calendar-types";
 
 export function saveCalendarTagCheck(

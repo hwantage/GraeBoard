@@ -1,4 +1,4 @@
-import { useSite } from "./site-context";
+import { useSite } from "./platform/site-context";
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
@@ -10,13 +10,13 @@ import {
   Server,
   ShieldCheck,
 } from "lucide-react";
-import { api, send } from "./api";
+import { api, send } from "./platform/api";
 import { Button, ErrorNote } from "./components";
-import LoadingState from "./LoadingState";
-import Toast, { useToast } from "./Toast";
-import { busyProps } from "./busyProps";
+import LoadingState from "./ui/LoadingState";
+import Toast, { useToast } from "./ui/Toast";
+import { busyProps } from "./ui/busyProps";
 import type { Team, User } from "./types";
-import Select from "./Select";
+import Select from "./ui/Select";
 import SyncSetupWizard from "./SyncSetupWizard";
 import TeamSyncSettings from "./TeamSyncSettings";
 import SyncConnectionDetails from "./SyncConnectionDetails";

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, send } from "./api";
+import { api, ApiError, send } from "./platform/api";
 import { Button, ErrorNote, Modal } from "./components";
 import { Eye, EyeOff, Copy } from "lucide-react";
 import { syncTime } from "./sync-types";

@@ -1,5 +1,5 @@
-import Select from "./Select";
-import ColorMenu from "./ColorMenu";
+import Select from "./ui/Select";
+import ColorMenu from "./ui/ColorMenu";
 import type { Border } from "./types";
 import { BORDER_OPTIONS, borderCSS } from "../shared/borders.js";
 

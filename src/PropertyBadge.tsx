@@ -1,6 +1,6 @@
 import type { Property } from "./types";
 import { propertyOption } from "../shared/domain.js";
-import { inkFor } from "./color";
+import { inkFor } from "./ui/color";
 export default function PropertyBadge({
   property,
   value,

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Pipette } from "lucide-react";
-import { PALETTE } from "../shared/domain.js";
+import { PALETTE } from "../../shared/domain.js";
 import { normalizeHex } from "./color";
 import { useRecentColors } from "./recent-colors";
 

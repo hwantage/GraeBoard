@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "./types";
 import BorderMenu from "./BorderMenu";
-import ColorMenu from "./ColorMenu";
+import ColorMenu from "./ui/ColorMenu";
 import ZoomControls from "./ZoomControls";
 import { FONTS, FONT_SIZES, textMode } from "../shared/domain.js";
 import { Button } from "./components";
