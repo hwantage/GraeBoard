@@ -61,6 +61,7 @@ npm start
 | [사용 안내](docs/USER_GUIDE.md)                     | 셀 편집, 서식, 필터, 팀·속성 관리, 이관·보고본              |
 | [운영 안내](docs/OPERATIONS.md)                     | 환경 변수, 최초 설정, 서버 운영, 백업·복구, 업데이트        |
 | [개발 안내](docs/DEVELOPMENT.md)                    | 소스 구조, 저장 흐름, 개발 규칙, 검증 명령과 범위           |
+| [코드 배치와 파일 명명 가이드](docs/CODE_ORGANIZATION.md) | 기능별 폴더, 접두어 유지, 공유 경계, 리팩토링·유지보수 기준 |
 | [데이터 형식과 API](docs/DATA_FORMAT.md)            | 빈 셀 생략·축약 저장, 수정 번호, 행·열 서식 상속, 접근 규칙 |
 | [클라우드 설치 안내](docs/CLOUD_SETUP.md)           | 내부 SQLite·외부 Edge, Pages·Access·Git·R2 설정과 복구 |
 | [동기화 프로토콜](docs/SYNC_PROTOCOL.md)            | 확정 이력·미전송·사이트별 정리·충돌 규칙                    |
