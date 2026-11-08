@@ -127,9 +127,9 @@ HTTPS 역방향 프록시가 앱으로 요청을 전달하도록 구성하고 �
 
 ### 접속 토큰 도입 업데이트
 
-접속 토큰을 처음 도입한 버전은 내부 SQLite v33, 외부 PostgreSQL site v3(기존 분리형 control v2), 업무 team v2입니다. **현재 릴리스로 업데이트할 때는 아래의 옛 SQLite migration 명령 대신 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)을 사용해 v34·team v3까지 전환합니다.** 운영 DB 버전은 별도로 읽기 전용 확인하며 저장소 버전으로 추정하지 않습니다. 이번 변경은 무기한 토큰의 해시·암호문을 저장하는 전용 테이블·인덱스를 한 번에 추가하며 기존 업무 데이터는 보존합니다. 일반 서버 시작은 이전 SQLite를 자동 변환하지 않습니다.
+접속 토큰을 처음 도입한 버전은 내부 SQLite v33, 외부 PostgreSQL site v3(기존 분리형 control v2), 업무 team v2입니다. **현재 릴리스로 업데이트할 때는 접속 토큰 도입 당시의 SQLite migration 명령 대신 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)을 사용해 v34·team v3까지 전환합니다.** 운영 DB 버전은 별도로 읽기 전용 확인하며 저장소 버전으로 추정하지 않습니다. 이번 변경은 무기한 토큰의 해시·암호문을 저장하는 전용 테이블·인덱스를 한 번에 추가하며 기존 업무 데이터는 보존합니다. 일반 서버 시작은 이전 SQLite를 자동 변환하지 않습니다.
 
-승인된 유지보수 시간에 쓰기를 중지하고 DB·이미지·동기화 저장소를 백업한 다음, SQLite는 기존 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`를 실행합니다. 외부는 `npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id 기존팀UUID`를 실행합니다. 기존 분리형 control은 `--scope control --url-env PG_CONTROL_URL`을 사용합니다. 운영 DB에는 `--initialize`를 사용하지 않습니다. 각 명령에 `--dry-run`을 붙여 먼저 점검할 수 있습니다. SQL Editor용 `node scripts/site-key-migration-sql.mjs 기존팀UUID`도 site v1/v2→v3와 team v1→v2를 같은 트랜잭션으로 처리합니다.
+현재 릴리스의 SQLite 전환 도구는 필요한 v33 접속 토큰 단계를 거쳐 v34를 적용합니다. 외부 site v1/v2 설치의 접속 토큰·연결 키 단계는 [기존 site 업그레이드](#내부외부-git-동기화-운영) 절차를 먼저 확인하고, team v3 전환은 사본 명칭 일괄 전환으로 진행합니다. 기존 DB에는 `--initialize`를 사용하지 않습니다.
 
 검증 시간은 별도 복제본에서 측정하고, 토큰 목록·발급·삭제와 기존 업무·문서 조회를 확인한 뒤 쓰기를 재개합니다. DDL·이력·버전은 실패 시 함께 롤백합니다. 배포 실패 시 접속 재개 전에는 DB·이미지 백업과 이전 릴리스로 복구하며, 재개 후에는 백업 이후 입력을 별도로 보존해야 합니다. 내부 복구 시 토큰은 폐기하고 외부 백업은 토큰을 포함하지 않습니다. 외부 운영 migration이나 배포는 별도 승인 범위입니다.
 
