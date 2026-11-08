@@ -2257,61 +2257,6 @@
       "phase": "P8"
     },
     {
-      "from": "tests/fixtures/sheet-clone-legacy/expected-f744ead.json",
-      "to": "tests/fixtures/sheet-clone-legacy/expected-f744ead.json",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/export-v6.json",
-      "to": "tests/fixtures/sheet-clone-legacy/export-v6.json",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/external-control.sql",
-      "to": "tests/fixtures/sheet-clone-legacy/external-control.sql",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/external-team-v1.sql",
-      "to": "tests/fixtures/sheet-clone-legacy/external-team-v1.sql",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/external-team-v2.sql",
-      "to": "tests/fixtures/sheet-clone-legacy/external-team-v2.sql",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs",
-      "to": "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
-      "to": "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/internal-v1.sql",
-      "to": "tests/fixtures/sheet-clone-legacy/internal-v1.sql",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/internal-v2.sql",
-      "to": "tests/fixtures/sheet-clone-legacy/internal-v2.sql",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/manifest.json",
-      "to": "tests/fixtures/sheet-clone-legacy/manifest.json",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/fixtures/sheet-clone-legacy/sync.bundle",
-      "to": "tests/fixtures/sheet-clone-legacy/sync.bundle",
-      "phase": "keep"
-    },
-    {
       "from": "tests/format-scope-contract.test.mjs",
       "to": "tests/formatting/format-scope-contract.test.mjs",
       "phase": "P8"
@@ -2405,16 +2350,6 @@
       "from": "tests/settings-filter-storage-contract.test.mjs",
       "to": "tests/sheet/settings-filter-storage-contract.test.mjs",
       "phase": "P8"
-    },
-    {
-      "from": "tests/sheet-clone-conversion.test.mjs",
-      "to": "tests/sheet-clone-conversion.test.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tests/sheet-clone-cutover.test.mjs",
-      "to": "tests/sheet-clone-cutover.test.mjs",
-      "phase": "keep"
     },
     {
       "from": "tests/sheet-clone-decode-cache.test.mjs",
@@ -2772,31 +2707,6 @@
       "phase": "P8"
     },
     {
-      "from": "tools/sheet-clone-cutover/cli.mjs",
-      "to": "tools/sheet-clone-cutover/cli.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tools/sheet-clone-cutover/convert.mjs",
-      "to": "tools/sheet-clone-cutover/convert.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tools/sheet-clone-cutover/cutover.mjs",
-      "to": "tools/sheet-clone-cutover/cutover.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tools/sheet-clone-cutover/markdown-links.mjs",
-      "to": "tools/sheet-clone-cutover/markdown-links.mjs",
-      "phase": "keep"
-    },
-    {
-      "from": "tools/sheet-clone-cutover/names.mjs",
-      "to": "tools/sheet-clone-cutover/names.mjs",
-      "phase": "keep"
-    },
-    {
       "from": "worker/access-tokens.mjs",
       "to": "worker/control/access-tokens.mjs",
       "phase": "P5"
@@ -3082,6 +2992,136 @@
       "path": ".github/workflows/code-organization.yml",
       "phase": "P0",
       "reason": "Lightweight PR structure and tooling checks"
+    },
+    {
+      "path": "tests/support/frozen-cutover-source.json",
+      "phase": "P3",
+      "reason": "Original commit, lockfile and 16 protected hashes; values unchanged"
+    },
+    {
+      "path": "tests/support/frozen-cutover-source.mjs",
+      "phase": "P3",
+      "reason": "Test-only full Git source reproduction with strict hash validation"
+    },
+    {
+      "path": "scripts/testing/run-frozen-cutover-tests.mjs",
+      "phase": "P3",
+      "reason": "Run original conversion suites against immutable full source"
+    },
+    {
+      "path": "tests/sheet-clone-frozen-compatibility.test.mjs",
+      "phase": "P3",
+      "reason": "Existing cutover runtime assertions retained against current app using frozen conversion output"
+    }
+  ],
+  "removals": [
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/expected-f744ead.json",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/export-v6.json",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/external-control.sql",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/external-team-v1.sql",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/external-team-v2.sql",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/internal-v1.sql",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/internal-v2.sql",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/manifest.json",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/fixtures/sheet-clone-legacy/sync.bundle",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tools/sheet-clone-cutover/cli.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tools/sheet-clone-cutover/convert.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tools/sheet-clone-cutover/cutover.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tools/sheet-clone-cutover/markdown-links.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tools/sheet-clone-cutover/names.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/sheet-clone-conversion.test.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
+    },
+    {
+      "path": "tests/sheet-clone-cutover.test.mjs",
+      "phase": "P3",
+      "sourceCommit": "7fec065d1adc241da29d54474af06b390d12d72b",
+      "reason": "Separated immutable full cutover source before P4; original frozen suites run separately and current app compatibility remains."
     }
   ]
 }

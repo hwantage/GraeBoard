@@ -23,8 +23,16 @@ import {
   maintenanceSql,
   sheetCloneChecksum,
 } from "../server/migrations/sqlite.mjs";
-import { sqliteSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
-import { runCutover } from "../tools/sheet-clone-cutover/cutover.mjs";
+import {
+  frozenCutoverModule,
+  frozenCutoverSource,
+} from "./support/frozen-cutover-source.mjs";
+const { sqliteSheetCloneConversion } = await frozenCutoverModule(
+  "tools/sheet-clone-cutover/convert.mjs",
+);
+const { runCutover } = await frozenCutoverModule(
+  "tools/sheet-clone-cutover/cutover.mjs",
+);
 
 // v34 converts what the rows store; these legacy rows hold no earlier name
 // besides the copy tables themselves, so every row survives as it was.
@@ -473,7 +481,7 @@ test("v31 startup preserves the database and directs operators to the cutover to
     const migrated = spawnSync(
       process.execPath,
       ["tools/sheet-clone-cutover/cli.mjs", "--database", path],
-      { encoding: "utf8" },
+      { encoding: "utf8", cwd: frozenCutoverSource().root },
     );
     assert.equal(migrated.status, 0, migrated.stderr);
     const { from, to, applied } = JSON.parse(migrated.stdout);
@@ -497,7 +505,7 @@ test("an installation that never shared history converts its SQLite database alo
     spawnSync(
       process.execPath,
       ["tools/sheet-clone-cutover/cli.mjs", "--database", ...args],
-      { encoding: "utf8" },
+      { encoding: "utf8", cwd: frozenCutoverSource().root },
     );
   const released = [
     [30, syncSql, syncChecksum],

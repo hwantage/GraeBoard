@@ -46,8 +46,8 @@ test("recursive collection includes each root and deep suite once in sorted POSI
     "tests/z.test.mjs",
     "tests/calendar/deep/example.test.mjs",
     "tests/a.test.mjs",
-    "tests/sheet-clone-cutover.test.mjs",
-    "tests/sheet-clone-conversion.test.mjs",
+    "tests/sync/recovery/sheet-clone-frozen-compatibility.test.mjs",
+    "tests/tooling/frozen-cutover-source.test.mjs",
   ];
   for (const path of [
     ...included,

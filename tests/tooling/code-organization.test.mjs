@@ -251,11 +251,11 @@ test("migration phases enforce full lists, preserved basenames, unique destinati
   assert.ok(has(f.check({ manifest, migrationPhase: "P9" }), "config"));
 });
 
-test("migration lists retain root cutover suites and reject copies even when ordinary rules permit them", (t) => {
+test("migration lists retain registered suites and reject copies even when ordinary rules permit them", (t) => {
   const f = fixture(t);
   for (const path of [
-    "tests/sheet-clone-conversion.test.mjs",
-    "tests/sheet-clone-cutover.test.mjs",
+    "tests/registered-conversion.test.mjs",
+    "tests/registered-compatibility.test.mjs",
   ]) {
     f.put(path);
     f.rules.fixedFiles.push(record(path));
@@ -271,7 +271,7 @@ test("migration lists retain root cutover suites and reject copies even when ord
     additions: [],
   };
   assert.deepEqual(f.check({ manifest, migrationPhase: "P0" }).errors, []);
-  rmSync(join(f.root, "tests/sheet-clone-cutover.test.mjs"));
+  rmSync(join(f.root, "tests/registered-compatibility.test.mjs"));
   assert.ok(
     has(f.check({ manifest, migrationPhase: "P0" }), "manifest-missing"),
   );
@@ -341,5 +341,34 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     run().status,
     1,
     "portable sync cannot conceal a native Node dependency",
+  );
+});
+
+// Removed artifacts are tracked by their immutable source commit, not exceptions.
+test("migration removals reject restored files and overlapping registrations", (t) => {
+  const f = fixture(t);
+  f.rules.allowedDirectories.push(record("tools/frozen"));
+  const path = "tools/frozen/cutover.mjs";
+  const manifest = {
+    baseline: "test",
+    entries: [],
+    additions: [],
+    removals: [
+      {
+        path,
+        phase: "P3",
+        sourceCommit: "7fec065d1adc241da29d54474af06b390d12d72b",
+        reason: "full frozen source",
+      },
+    ],
+  };
+  assert.deepEqual(f.check({ manifest, migrationPhase: "P3" }).errors, []);
+  f.put(path);
+  assert.ok(
+    has(f.check({ manifest, migrationPhase: "P3" }), "manifest-removal"),
+  );
+  manifest.entries.push({ from: path, to: path, phase: "keep" });
+  assert.ok(
+    has(f.check({ manifest, migrationPhase: "P3" }), "manifest-removal"),
   );
 });

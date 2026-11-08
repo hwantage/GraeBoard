@@ -381,3 +381,9 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
 
 프로토콜 3·4의 기준 이력 재생과 명시 전환 수신, `sheetCloneTask`·`sheetCloneCell` 독립성, receipt 별도 용량, SQLite·PostgreSQL migration 및 정리 경계는 합성 DB에서 검증합니다. 옛 프로토콜 1·2와 SQLite v33·PostgreSQL team v2 fixture는 일회성 SheetClone 전환 도구의 입력으로 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 운영 백업은 별도 새 DB·이미지 경로에 실제 복구하고, `cutover:sheet-clone --dry-run` 사전 검사와 실제 사본 전환·행/이미지 보존 결과를 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 내부 SQLite의 `npm run restore -- 백업.sqlite 새경로.sqlite`에는 dry-run 옵션이 없습니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.
+
+### 고정 전환 소스의 개발·CI 검증
+
+최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 현재 lockfile이 고정 소스와 같을 때 `npm ci --include=dev`로 준비한 의존성만 공유하며, 달라지면 실패하고 별도 고정 checkout 설치가 필요하다고 안내합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
+
+일반 `npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.

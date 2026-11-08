@@ -1,3 +1,5 @@
+// Compatibility: the immutable full cutover source generates the result, while
+// all runtime imports below exercise the current SQLite/PG APIs and recovery.
 // The one-time SheetClone cutover of one team synchronized between the internal
 // SQLite site and the external PostgreSQL site through one Git repository,
 // from the databases and history the released f744ead code wrote, with every
@@ -32,14 +34,20 @@ import { runTeam } from "../worker/sync.mjs";
 import { profileFor } from "../shared/sync-profiles.js";
 import { recoverSync } from "../scripts/sync-recover.mjs";
 import {
-  BOUNDARY_KIND,
-  runCutover,
-} from "../tools/sheet-clone-cutover/cutover.mjs";
+  frozenCutoverModule,
+  frozenCutoverSource,
+} from "./support/frozen-cutover-source.mjs";
+const { BOUNDARY_KIND, runCutover } = await frozenCutoverModule(
+  "tools/sheet-clone-cutover/cutover.mjs",
+);
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 
 const { Pool, Client } = pg;
-const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin",
-  FIXTURE = new URL("./fixtures/sheet-clone-legacy/", import.meta.url),
+const pgBin = process.env.TEST_PG_BIN,
+  FIXTURE = new URL(
+    "tests/fixtures/sheet-clone-legacy/",
+    frozenCutoverSource().url,
+  ),
   read = (name) => readFileSync(new URL(name, FIXTURE), "utf8"),
   manifest = JSON.parse(read("manifest.json")),
   ORIGINS = [manifest.origins.internal, manifest.origins.external],

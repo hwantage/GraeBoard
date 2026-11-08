@@ -8,7 +8,10 @@ import {
 } from "../server/migrations/postgres.mjs";
 import { siteKeyMigrationSql } from "../scripts/site-key-migration-sql.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
-import { postgresSheetCloneConversion } from "../tools/sheet-clone-cutover/convert.mjs";
+import { frozenCutoverModule } from "./support/frozen-cutover-source.mjs";
+const { postgresSheetCloneConversion } = await frozenCutoverModule(
+  "tools/sheet-clone-cutover/convert.mjs",
+);
 import { revertTeamToV2, withoutMarker } from "./postgres-legacy-schema.mjs";
 
 const convert = postgresSheetCloneConversion({});
