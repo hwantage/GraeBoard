@@ -6,7 +6,7 @@ import { DocumentBusinessService } from "../server/storage/documents/document-se
 import { unpack } from "../shared/formatting/compact.js";
 import { defaultView } from "../shared/domain.js";
 import { MAX_TASK_DOCUMENTS } from "../shared/documents/task-documents.js";
-import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { userWithTeams } from "../server/db.mjs";
 
 async function fixture(t) {

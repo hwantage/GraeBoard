@@ -20,7 +20,7 @@ import {
   rowFontSize,
 } from "../shared/formatting/formatting.js";
 import { pack, unpack, stringify } from "../shared/formatting/compact.js";
-import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { formatScopes } from "../src/sheet/format-selection.js";
 import { applyBorderPreset } from "../shared/formatting/borders.js";
 

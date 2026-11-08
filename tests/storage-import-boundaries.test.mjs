@@ -79,12 +79,12 @@ const businessServices = new Set([
   "server/storage/documents/document-service.mjs",
   "server/storage/admin-history-service.mjs",
   "server/storage/history-service.mjs",
-  "server/storage/filter-service.mjs",
-  "server/storage/settings-service.mjs",
-  "server/storage/task-command-rules.mjs",
-  "server/storage/task-service.mjs",
-  "server/storage/sheet-clone-command-rules.mjs",
-  "server/storage/sheet-clone-service.mjs",
+  "server/storage/settings/filter-service.mjs",
+  "server/storage/settings/settings-service.mjs",
+  "server/storage/tasks/task-command-rules.mjs",
+  "server/storage/tasks/task-service.mjs",
+  "server/storage/sheet-clones/sheet-clone-command-rules.mjs",
+  "server/storage/sheet-clones/sheet-clone-service.mjs",
   "server/storage/transfer-service.mjs",
 ]);
 const isService = (path) => businessServices.has(path);

@@ -36,7 +36,7 @@ import {
   encodeSheetClone,
   sheetCloneBrowseIndex,
   sheetCloneDocumentIndex,
-} from "../server/sheet-clones.mjs";
+} from "../server/sheet-clones/sheet-clones.mjs";
 
 // Transport ordering changes on each read; saved content must remain identical.
 function withoutSync({ sync: _sync, ...document }) {

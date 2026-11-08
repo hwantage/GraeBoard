@@ -5,7 +5,7 @@ import { localHistoryMaintenance } from "../shared/sync/local-history-maintenanc
 import { executeSync, executeAsync } from "../shared/sync/sync-team-store.mjs";
 import { canonical, digest, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
-import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
+import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 
 const asOf = "2026-10-29T00:00:00.000Z",
   now = Date.parse(asOf),

@@ -2,9 +2,9 @@ import {
   SETTINGS_ROUTES,
   callBusinessRoute,
 } from "../shared/http/business-routes.js";
-import { SettingsBusinessService } from "./storage/settings-service.mjs";
-import { SqliteSettingsRepository } from "./storage/sqlite-settings.mjs";
-export { saveSettings } from "./storage/sqlite-settings.mjs";
+import { SettingsBusinessService } from "./storage/settings/settings-service.mjs";
+import { SqliteSettingsRepository } from "./storage/settings/sqlite-settings.mjs";
+export { saveSettings } from "./storage/settings/sqlite-settings.mjs";
 export function installSettingsRoutes(app, options) {
   const repository = new SqliteSettingsRepository(options);
   app.locals.settingsRepository = repository;

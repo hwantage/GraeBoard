@@ -18,7 +18,7 @@ import {
   sampleProperties,
   defaultView,
 } from "../shared/domain.js";
-import { encodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";

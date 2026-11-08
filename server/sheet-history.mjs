@@ -1,9 +1,9 @@
 import { audit, now, parse, transaction } from "./db.mjs";
-import { encodeSheetClone } from "./sheet-clones.mjs";
+import { encodeSheetClone } from "./sheet-clones/sheet-clones.mjs";
 import {
   sheetCloneResponse,
   sheetCloneRevision,
-} from "./sheet-clone-editing.mjs";
+} from "./sheet-clones/sheet-clone-editing.mjs";
 import {
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,

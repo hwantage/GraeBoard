@@ -605,10 +605,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "server/cell-operations.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "server/control-business-routes.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -618,14 +614,6 @@
     },
     {
       "path": "server/event-streams.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/filters.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/formatting.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -661,22 +649,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "server/sheet-clone-documents.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/sheet-clone-editing.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/sheet-clone-service-routes.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/sheet-clones.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "server/sheet-history.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -686,18 +658,6 @@
     },
     {
       "path": "server/system-audit.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/task-business-routes.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/task-cache.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/task-position.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1261,15 +1221,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/settings.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/setup-keys.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/sheet-clones.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1290,14 +1242,6 @@
     },
     {
       "path": "worker/sync.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/task-view.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/tasks.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1389,14 +1333,14 @@
     {
       "paths": [
         "server/settings.mjs",
-        "worker/settings.mjs"
+        "worker/sheet/settings.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
       "paths": [
-        "server/sheet-clones.mjs",
-        "worker/sheet-clones.mjs"
+        "server/sheet-clones/sheet-clones.mjs",
+        "worker/sheet-clones/sheet-clones.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },

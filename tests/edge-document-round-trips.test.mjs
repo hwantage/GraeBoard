@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
-import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
 import { DocumentBrowserBusinessService } from "../server/storage/documents/document-browser-service.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";
-import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { PostgresDocumentBrowserRepository } from "../worker/storage/documents/postgres-document-browser.mjs";
 import { DataSession } from "../worker/data.mjs";
-import { sheetCloneRoutes } from "../worker/sheet-clones.mjs";
+import { sheetCloneRoutes } from "../worker/sheet-clones/sheet-clones.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 import { packSheetClonePayload } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 

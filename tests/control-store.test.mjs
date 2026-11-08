@@ -7,12 +7,12 @@ import {
 } from "./business-storage-fixture.mjs";
 import { SqliteControlStore } from "../server/storage/control-store.mjs";
 import { RequestContext } from "../worker/control.mjs";
-import { TaskBusinessService } from "../server/storage/task-service.mjs";
-import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
+import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
+import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar/calendar-service.mjs";
 import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
-import { SettingsBusinessService } from "../server/storage/settings-service.mjs";
-import { PostgresSettingsRepository } from "../worker/storage/postgres-settings.mjs";
+import { SettingsBusinessService } from "../server/storage/settings/settings-service.mjs";
+import { PostgresSettingsRepository } from "../worker/storage/settings/postgres-settings.mjs";
 import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";

@@ -6,10 +6,10 @@ import {
   sqliteBusinessFixture,
   postgresBusinessFixture,
 } from "./business-storage-fixture.mjs";
-import { SettingsBusinessService } from "../server/storage/settings-service.mjs";
-import { FilterBusinessService } from "../server/storage/filter-service.mjs";
-import { PostgresSettingsRepository } from "../worker/storage/postgres-settings.mjs";
-import { PostgresFilterRepository } from "../worker/storage/postgres-filters.mjs";
+import { SettingsBusinessService } from "../server/storage/settings/settings-service.mjs";
+import { FilterBusinessService } from "../server/storage/settings/filter-service.mjs";
+import { PostgresSettingsRepository } from "../worker/storage/settings/postgres-settings.mjs";
+import { PostgresFilterRepository } from "../worker/storage/settings/postgres-filters.mjs";
 import {
   userWithTeams,
   transaction,

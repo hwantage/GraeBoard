@@ -7,7 +7,7 @@ import {
 } from "../../../shared/documents/task-documents.js";
 import { assert } from "../../access.mjs";
 import { imageReferences } from "../../documents/images.mjs";
-import { stamp, excludedYears } from "../../tasks.mjs";
+import { stamp, excludedYears } from "../../sheet/tasks.mjs";
 import { databaseFor } from "../../data.mjs";
 import {
   nextDocumentTitle,

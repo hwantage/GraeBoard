@@ -15,8 +15,8 @@ import {
   deletedSheetCloneTasks,
   restoreSheetCloneTasks,
 } from "../sheet-history.mjs";
-import { decodeSheetClone } from "../sheet-clones.mjs";
-import { applyFormatting } from "../formatting.mjs";
+import { decodeSheetClone } from "../sheet-clones/sheet-clones.mjs";
+import { applyFormatting } from "../sheet/formatting.mjs";
 import { retentionView } from "../sync/visibility.mjs";
 export class SqliteHistoryRepository {
   constructor({ db, control, documentEvents }) {

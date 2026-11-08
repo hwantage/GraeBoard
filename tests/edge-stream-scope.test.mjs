@@ -4,9 +4,9 @@ import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
-import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
-import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
-import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
+import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { DataSession } from "../worker/data.mjs";
 import {
   streamScope,

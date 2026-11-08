@@ -1,4 +1,4 @@
-import { PostgresTaskRepository } from "./storage/postgres-tasks.mjs";
+import { PostgresTaskRepository } from "./storage/tasks/postgres-tasks.mjs";
 import { periodScopeSchema } from "../shared/validation.js";
 import { stringify } from "../shared/formatting/compact.js";
 import { assert } from "./access.mjs";

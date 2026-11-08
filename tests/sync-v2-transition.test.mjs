@@ -19,8 +19,8 @@ import {
 import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { boundStore } from "../worker/sync-store.mjs";
-import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
-import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { applicationEntities } from "../server/sync/versions.mjs";
 
 function store(f, head, state = f.state) {

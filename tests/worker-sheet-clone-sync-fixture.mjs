@@ -10,7 +10,7 @@ import {
   writeFormatting,
   getTask,
 } from "../server/db.mjs";
-import { encodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import {
   defaultView,

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
-import { TaskBusinessService } from "../server/storage/task-service.mjs";
-import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
+import { TaskBusinessService } from "../server/storage/tasks/task-service.mjs";
+import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 
 const command = (taskId, expectedVersion, value) => ({

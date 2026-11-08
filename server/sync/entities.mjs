@@ -23,7 +23,7 @@ import {
   syncSheetCloneDocuments,
   storeSheetCloneDocuments,
 } from "../documents/document-storage.mjs";
-import { encodeSheetClone, decodeSheetClone } from "../sheet-clones.mjs";
+import { encodeSheetClone, decodeSheetClone } from "../sheet-clones/sheet-clones.mjs";
 import { hasDocumentContent } from "../../shared/documents/task-documents.js";
 import {
   entityId,

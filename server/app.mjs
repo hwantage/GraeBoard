@@ -6,17 +6,17 @@ import { createSqliteAccess } from "./sqlite-access.mjs";
 import { installControlBusinessRoutes } from "./control-business-routes.mjs";
 import { deploymentSite } from "../shared/site/site-mode.js";
 import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
-import { installTaskBusinessRoutes } from "./task-business-routes.mjs";
+import { installTaskBusinessRoutes } from "./sheet/task-business-routes.mjs";
 import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
 import { SqliteHistoryRepository } from "./storage/sqlite-history.mjs";
-import { installSheetCloneServiceRoutes } from "./sheet-clone-service-routes.mjs";
-import { SqliteSheetCloneRepository } from "./storage/sqlite-sheet-clones.mjs";
+import { installSheetCloneServiceRoutes } from "./sheet-clones/sheet-clone-service-routes.mjs";
+import { SqliteSheetCloneRepository } from "./storage/sheet-clones/sqlite-sheet-clones.mjs";
 import { DocumentBusinessService } from "./storage/documents/document-service.mjs";
 import { SqliteDocumentRepository } from "./storage/documents/sqlite-documents.mjs";
 import { createDocumentImagePreparation } from "./documents/document-image-preparation.mjs";
 import { installDocumentBusinessRoutes } from "./documents/document-business-routes.mjs";
-import { TaskBusinessService } from "./storage/task-service.mjs";
-import { SqliteTaskRepository } from "./storage/sqlite-tasks.mjs";
+import { TaskBusinessService } from "./storage/tasks/task-service.mjs";
+import { SqliteTaskRepository } from "./storage/tasks/sqlite-tasks.mjs";
 import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
 import { installMaintenanceRoutes } from "./sync/maintenance-sqlite.mjs";
 import { installRetentionContext } from "./sync/visibility.mjs";
@@ -29,7 +29,7 @@ import {
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
 import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
-import { installFilterRoutes } from "./filters.mjs";
+import { installFilterRoutes } from "./sheet/filters.mjs";
 
 import express from "express";
 
@@ -39,7 +39,7 @@ import { openDatabase, id, json } from "./db.mjs";
 
 import { installTransferRoutes } from "./transfer.mjs";
 import { installSettingsRoutes } from "./settings.mjs";
-import { createTaskCache } from "./task-cache.mjs";
+import { createTaskCache } from "./sheet/task-cache.mjs";
 import { installResourceEvents } from "./resource-events.mjs";
 import { createDocumentEvents } from "./document-events.mjs";
 import { createCellEvents } from "./cell-events.mjs";

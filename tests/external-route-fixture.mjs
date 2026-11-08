@@ -10,13 +10,13 @@ import {
   RequestContext,
 } from "../worker/control.mjs";
 import { adminRoutes } from "../worker/admin.mjs";
-import { taskRoutes } from "../worker/tasks.mjs";
+import { taskRoutes } from "../worker/sheet/tasks.mjs";
 import { documentRoutes } from "../worker/documents/documents.mjs";
 import {
   sheetCloneRoutes,
   filterRoutes,
   browserRoutes,
-} from "../worker/sheet-clones.mjs";
+} from "../worker/sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "../worker/calendar/calendar.mjs";
 import { transferRoutes } from "../worker/transfer.mjs";
 import { auditRoutes, historyCleanupRoutes } from "../worker/history.mjs";

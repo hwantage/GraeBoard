@@ -1,5 +1,5 @@
 import { assert } from "../../access.mjs";
-import { taskList, settingsFor, excludedYears } from "../../task-view.mjs";
+import { taskList, settingsFor, excludedYears } from "../../sheet/task-view.mjs";
 import { z } from "zod";
 import { yearSchema } from "../../../shared/validation.js";
 import { hasDocumentContent } from "../../../shared/documents/task-documents.js";
@@ -8,7 +8,7 @@ import {
   documentBrowserPage,
   documentPreview,
 } from "../../../server/storage/documents/document-browser-service.mjs";
-import { sheetCloneRevision } from "../postgres-sheet-clones.mjs";
+import { sheetCloneRevision } from "../sheet-clones/postgres-sheet-clones.mjs";
 import { documentKeysUnder } from "./postgres-documents.mjs";
 export class PostgresDocumentBrowserRepository {
   constructor({ context }) {

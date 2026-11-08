@@ -37,7 +37,7 @@ import {
   taskView,
   settingsFor,
   stamp,
-} from "../../tasks.mjs";
+} from "../../sheet/tasks.mjs";
 import { resolvePostgresDocumentLinks } from "../documents/postgres-document-links.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });

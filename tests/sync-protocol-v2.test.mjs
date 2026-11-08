@@ -22,14 +22,14 @@ import {
   validateSnapshot,
 } from "../server/sync/reducer.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
-import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
-import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
+import { SheetCloneBusinessService } from "../server/storage/sheet-clones/sheet-clone-service.mjs";
+import { PostgresSheetCloneRepository } from "../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { materialize } from "../worker/materialize.mjs";
 import { adminRoutes } from "../worker/admin.mjs";
 import { encodeSnapshot, decodeSnapshot } from "../server/sync/snapshot.mjs";
 import { getTask, transaction, openDatabase } from "../server/db.mjs";
 import { channel } from "node:diagnostics_channel";
-import { encodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import {
   packSheetCloneData,
   unpackSheetCloneData,

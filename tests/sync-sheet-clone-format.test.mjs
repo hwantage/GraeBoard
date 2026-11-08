@@ -5,7 +5,7 @@ import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { writeFormatting, readFormatting } from "../server/db.mjs";
-import { decodeSheetClone } from "../server/sheet-clones.mjs";
+import { decodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import { allEntities, readEntity } from "../server/sync/entities.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";

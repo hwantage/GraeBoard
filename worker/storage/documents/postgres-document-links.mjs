@@ -1,6 +1,6 @@
 import { DEFAULT_DOCUMENT_TITLE } from "../../../shared/documents/task-documents.js";
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
-import { excludedYears } from "../../task-view.mjs";
+import { excludedYears } from "../../sheet/task-view.mjs";
 
 // Titles of stored documents by key, read in SQL so their bodies are not
 // loaded.

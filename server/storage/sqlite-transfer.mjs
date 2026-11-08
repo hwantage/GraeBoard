@@ -5,9 +5,9 @@ import {
   sheetCloneDocumentContents,
   readSheetClone,
 } from "../documents/document-storage.mjs";
-import { sheetCloneRevision } from "../sheet-clone-editing.mjs";
+import { sheetCloneRevision } from "../sheet-clones/sheet-clone-editing.mjs";
 import { withTaskDocuments } from "../documents/task-documents.mjs";
-import { filtersFor, currentFiltersFor } from "../filters.mjs";
+import { filtersFor, currentFiltersFor } from "../sheet/filters.mjs";
 import ExcelJS from "exceljs";
 import { explicitStyle } from "../../shared/formatting/formatting.js";
 import {
@@ -21,7 +21,7 @@ import {
   encodeSheetClone,
   decodeSheetClone,
   requireUniqueSheetCloneName,
-} from "../sheet-clones.mjs";
+} from "../sheet-clones/sheet-clones.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {

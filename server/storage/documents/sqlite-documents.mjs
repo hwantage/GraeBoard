@@ -24,7 +24,7 @@ import {
   listTaskDocuments,
   withTaskDocuments,
 } from "../../documents/task-documents.mjs";
-import { sheetCloneTaskDocument } from "../../sheet-clone-documents.mjs";
+import { sheetCloneTaskDocument } from "../../sheet-clones/sheet-clone-documents.mjs";
 import {
   readDocumentVersion,
   storeDocumentVersion,
@@ -34,7 +34,7 @@ import {
   readSheetClone,
   sheetCloneDocumentTasks,
 } from "../../documents/document-storage.mjs";
-import { encodeSheetClone } from "../../sheet-clones.mjs";
+import { encodeSheetClone } from "../../sheet-clones/sheet-clones.mjs";
 import {
   validateDocumentImages,
   writeDocumentImage,

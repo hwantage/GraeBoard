@@ -28,9 +28,9 @@ import {
 } from "../../shared/validation.js";
 import { requireFreeSheetCloneName } from "../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../access.mjs";
-import { taskList, settingsFor, excludedYears } from "../tasks.mjs";
-import { sheetCloneView } from "../sheet-clones.mjs";
-import { sheetCloneSummaries } from "./postgres-sheet-clones.mjs";
+import { taskList, settingsFor, excludedYears } from "../sheet/tasks.mjs";
+import { sheetCloneView } from "../sheet-clones/sheet-clones.mjs";
+import { sheetCloneSummaries } from "./sheet-clones/postgres-sheet-clones.mjs";
 import { imageReferences } from "../documents/images.mjs";
 import {
   transferDownload as download,

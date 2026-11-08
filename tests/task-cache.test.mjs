@@ -5,7 +5,7 @@ import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { openDatabase, id, now, json } from "../server/db.mjs";
-import { createTaskCache } from "../server/task-cache.mjs";
+import { createTaskCache } from "../server/sheet/task-cache.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 

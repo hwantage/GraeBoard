@@ -12,9 +12,9 @@ import {
 import {
   sheetCloneBrowseIndex,
   sheetCloneUsersWithAvatars,
-} from "../../sheet-clones.mjs";
+} from "../../sheet-clones/sheet-clones.mjs";
 import { readSheetClone } from "../../documents/document-storage.mjs";
-import { sheetCloneRevision } from "../../sheet-clone-editing.mjs";
+import { sheetCloneRevision } from "../../sheet-clones/sheet-clone-editing.mjs";
 
 import {
   sourceSchema,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { postgresFixture } from "./business-storage-fixture.mjs";
-import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
+import { PostgresTaskRepository } from "../worker/storage/tasks/postgres-tasks.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 
 // The external site pays a remote round trip for every SQL statement, so a

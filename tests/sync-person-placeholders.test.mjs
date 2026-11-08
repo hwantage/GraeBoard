@@ -10,7 +10,7 @@ import {
   getTask,
 } from "../server/db.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
-import { encodeSheetClone } from "../server/sheet-clones.mjs";
+import { encodeSheetClone } from "../server/sheet-clones/sheet-clones.mjs";
 import {
   allEntities,
   materialize,

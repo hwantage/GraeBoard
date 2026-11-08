@@ -4,10 +4,10 @@ import {
 } from "../../server/storage/history-service.mjs";
 import { assert } from "../access.mjs";
 import { unpackSheetClonePayload } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
-import { taskView } from "../task-view.mjs";
-import { sheetCloneView } from "../sheet-clones.mjs";
-import { TaskBusinessService } from "../../server/storage/task-service.mjs";
-import { PostgresTaskRepository } from "./postgres-tasks.mjs";
+import { taskView } from "../sheet/task-view.mjs";
+import { sheetCloneView } from "../sheet-clones/sheet-clones.mjs";
+import { TaskBusinessService } from "../../server/storage/tasks/task-service.mjs";
+import { PostgresTaskRepository } from "./tasks/postgres-tasks.mjs";
 // SheetClone changes are recorded in their stored (packed) form; older rows hold
 // the plain form, which unpacking leaves as it is.
 const decoded = (row) => {

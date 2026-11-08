@@ -16,13 +16,13 @@ import {
   controlRoutes,
 } from "./control.mjs";
 import { adminRoutes } from "./admin.mjs";
-import { taskRoutes } from "./tasks.mjs";
+import { taskRoutes } from "./sheet/tasks.mjs";
 import { documentRoutes } from "./documents/documents.mjs";
 import {
   sheetCloneRoutes,
   filterRoutes,
   browserRoutes,
-} from "./sheet-clones.mjs";
+} from "./sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "./calendar/calendar.mjs";
 import { transferRoutes } from "./transfer.mjs";
 import { recoveryRoutes } from "./recovery.mjs";

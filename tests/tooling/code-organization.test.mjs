@@ -281,7 +281,7 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
   const f = fixture(t);
   mkdirSync(join(f.root, "shared"));
   mkdirSync(join(f.root, "worker"));
-  f.put("server/storage/task-service.mjs");
+  f.put("server/storage/tasks/task-service.mjs");
   f.put("server/db.mjs", 'import "node:sqlite";\n');
   f.put("server/sync/node/git-cli.mjs", 'import "node:child_process";\n');
   f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
@@ -326,7 +326,7 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     assert.equal(run().status, 1, target);
   }
   f.put("worker/entry.mjs", 'import "../server/storage/task-service.mjs";\n');
-  f.put("server/storage/task-service.mjs", 'import "../db.mjs";\n');
+  f.put("server/storage/tasks/task-service.mjs", 'import "../db.mjs";\n');
   assert.equal(run().status, 1);
   f.put("server/sync/service.mjs", 'import "./sync-operation-cache.mjs";\n');
   f.put("worker/entry.mjs", 'import "../server/sync/service.mjs";\n');
