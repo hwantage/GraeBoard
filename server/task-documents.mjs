@@ -6,7 +6,7 @@ import { requireThat } from "../shared/validation.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,
-} from "../shared/task-documents.js";
+} from "../shared/documents/task-documents.js";
 import { blankDocument } from "./storage/document-service.mjs";
 export {
   documentIdSchema,

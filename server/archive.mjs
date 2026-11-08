@@ -1,1 +1,1 @@
-export { checkWorkbookArchive } from "../shared/workbook-archive.js";
+export { checkWorkbookArchive } from "../shared/transfer/workbook-archive.js";

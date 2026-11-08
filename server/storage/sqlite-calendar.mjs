@@ -13,7 +13,7 @@ import { normalizeSearchQuery } from "../../shared/search.js";
 import {
   firstCalendarLane,
   mergeCalendarLayout,
-} from "../../shared/calendar-layout.js";
+} from "../../shared/calendar/calendar-layout.js";
 import {
   addDays,
   calendarWeek,
@@ -22,7 +22,7 @@ import {
   weeklyOrderStamps,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
-} from "../../shared/calendar.js";
+} from "../../shared/calendar/calendar.js";
 import { readDocumentVersion } from "../document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "./sqlite-document-links.mjs";
 

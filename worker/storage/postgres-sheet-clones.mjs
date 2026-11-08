@@ -1,7 +1,7 @@
 import { prepareSheetCloneEdits } from "../../server/storage/sheet-clone-command-rules.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
 import { z } from "zod";
-import { applySheetCloneOperation } from "../../shared/sheet-clone-editing.js";
+import { applySheetCloneOperation } from "../../shared/sheet-clones/sheet-clone-editing.js";
 import {
   propertiesFor,
   normalizeView,
@@ -21,7 +21,7 @@ import {
   savedFilterSchema,
 } from "../../shared/validation.js";
 import { digestShared, equal } from "../../server/sync/protocol.mjs";
-import { requireFreeSheetCloneName } from "../../shared/sheet-clone-names.js";
+import { requireFreeSheetCloneName } from "../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
 import { documentListsUnder } from "./postgres-documents.mjs";

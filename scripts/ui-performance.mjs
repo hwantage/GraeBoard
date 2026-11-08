@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { chromium } from "@playwright/test";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { createApp } from "../server/app.mjs";
 import {
   openDatabase,

@@ -15,7 +15,7 @@ import {
 import {
   documentImageUrls,
   documentPayloadImageUrls,
-} from "../shared/document-image-references.js";
+} from "../shared/documents/document-image-references.js";
 import { imageReferences as workerImageReferences } from "../worker/images.mjs";
 import {
   activeImageReferences,
@@ -29,7 +29,7 @@ import {
   validateEntityPayload,
 } from "../server/sync/protocol.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 async function fixture(t, options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "graeboard-image-review-"));

@@ -1,10 +1,10 @@
 import { canonical, entityId } from "./protocol.mjs";
-import { documentPayloadImageUrls } from "../../shared/document-image-references.js";
+import { documentPayloadImageUrls } from "../../shared/documents/document-image-references.js";
 import {
   DOCUMENT_IMAGE_PATTERN,
   documentImageSource,
   isDocumentImage,
-} from "../../shared/document-images.js";
+} from "../../shared/documents/document-images.js";
 
 export const retentionKey = (row) => row.key || JSON.parse(row.entity_key);
 export const retentionId = (row) =>

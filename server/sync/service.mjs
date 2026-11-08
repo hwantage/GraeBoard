@@ -2,7 +2,7 @@ import { upgradeState } from "./versions.mjs";
 import {
   assertStateCapacity,
   assertStateCapacityFrom,
-} from "../../shared/sync-capacity.mjs";
+} from "../../shared/sync/sync-capacity.mjs";
 import { combineFileEntries } from "./file-entries.mjs";
 import { publishBranchJson } from "./branch-publication.mjs";
 import {
@@ -30,11 +30,11 @@ import {
 import { withSyncOperationCache } from "./sync-operation-cache.mjs";
 import { pendingNeedsProjection } from "./projection.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
-import { withDocumentImageReferences } from "../../shared/document-image-references.js";
+import { withDocumentImageReferences } from "../../shared/documents/document-image-references.js";
 import {
   SYNC_FILE_MAX_BYTES,
   SYNC_ENVELOPE_RESERVE_BYTES,
-} from "../../shared/sync-limits.js";
+} from "../../shared/sync/sync-limits.js";
 const decode = (bytes, limit = 128 * 1024 * 1024) => {
   if (!bytes || bytes.byteLength > limit)
     throw new ProtocolError(

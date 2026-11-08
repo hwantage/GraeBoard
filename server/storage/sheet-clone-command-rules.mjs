@@ -1,7 +1,7 @@
 import {
   applySheetCloneOperation,
   SheetCloneEditError,
-} from "../../shared/sheet-clone-editing.js";
+} from "../../shared/sheet-clones/sheet-clone-editing.js";
 import { propertiesFor } from "../../shared/domain.js";
 import {
   validateCellValue,

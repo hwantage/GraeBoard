@@ -1,4 +1,4 @@
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import ExcelJS from "exceljs";
 import { statusSummary } from "../shared/domain.js";
-import { applyBorderPreset } from "../shared/borders.js";
+import { applyBorderPreset } from "../shared/formatting/borders.js";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, getTask, passwordHash } from "../server/db.mjs";
 import {
@@ -3248,7 +3248,7 @@ test("팀 기본 서식은 새 업무에 고정되고 빈 일정·복제·반출
     ).status,
     403,
   );
-  const { makeWorkbook } = await import("../shared/workbook.mjs");
+  const { makeWorkbook } = await import("../shared/transfer/workbook.mjs");
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(
     await makeWorkbook([created], ["title", "2026-10-05"], [], 2026, settings),

@@ -1,8 +1,8 @@
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { readPreferences, writePreferences } from "./preferences";
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { THEMES } from "../../shared/themes.js";
+import { THEMES } from "../../shared/formatting/themes.js";
 import {
   defaultView,
   todayKey,

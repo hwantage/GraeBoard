@@ -8,7 +8,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 import { materialize, readEntity } from "../server/sync/entities.mjs";
 import { transaction } from "../server/db.mjs";
-import { prepareStatePatch } from "../shared/sync-team-store.mjs";
+import { prepareStatePatch } from "../shared/sync/sync-team-store.mjs";
 import { isRecoveryError } from "../server/sync/errors.mjs";
 import {
   pendingEntityKeys,

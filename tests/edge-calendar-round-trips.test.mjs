@@ -6,9 +6,9 @@ import { CalendarBusinessService } from "../server/storage/calendar-service.mjs"
 import { TaskBusinessService } from "../server/storage/task-service.mjs";
 import { PostgresCalendarRepository } from "../worker/storage/postgres-calendar.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
-import { calendarWeek } from "../shared/calendar.js";
+import { calendarWeek } from "../shared/calendar/calendar.js";
 import { entityId } from "../server/sync/protocol.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round
 // trip, so loading the calendar or the task list must cost a fixed number of

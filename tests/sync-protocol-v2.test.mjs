@@ -33,7 +33,7 @@ import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import {
   packSheetCloneData,
   unpackSheetCloneData,
-} from "../shared/sheet-clone-sync-data.js";
+} from "../shared/sheet-clones/sheet-clone-sync-data.js";
 // SheetClone data travels and is stored in the shared-dictionary form; tests read it expanded.
 const sheetCloneTasks = (record) =>
   unpackSheetCloneData(record.payload.data).tasks;

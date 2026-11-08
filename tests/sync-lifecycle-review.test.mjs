@@ -17,7 +17,7 @@ import {
   touchTasks,
 } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 
 const ok = (result) => {

@@ -1,4 +1,4 @@
-import { BROWSER_ROUTES } from "../shared/business-routes.js";
+import { BROWSER_ROUTES } from "../shared/http/business-routes.js";
 import { DocumentBrowserBusinessService } from "./storage/document-browser-service.mjs";
 import { SqliteDocumentBrowserRepository } from "./storage/sqlite-document-browser.mjs";
 export function installDocumentBrowserRoutes(app, options) {

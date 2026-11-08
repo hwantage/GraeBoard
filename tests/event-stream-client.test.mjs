@@ -18,7 +18,7 @@ const source = (name) =>
   ).replace(
     '"../../shared/api-error-message.js"',
     JSON.stringify(
-      new URL("../shared/api-error-message.js", import.meta.url).href,
+      new URL("../shared/http/api-error-message.js", import.meta.url).href,
     ),
   );
 function globals(t, values) {
@@ -238,7 +238,7 @@ test("셀 스트림은 GET 복구 성공 후에도 SSE·5xx 실패가 반복되�
     )
     .replace(
       '"../../shared/compact.js"',
-      JSON.stringify(new URL("../shared/compact.js", import.meta.url).href),
+      JSON.stringify(new URL("../shared/formatting/compact.js", import.meta.url).href),
     );
   const { subscribeCellChanges } = await import(moduleURL(code));
   const stop = subscribeCellChanges({

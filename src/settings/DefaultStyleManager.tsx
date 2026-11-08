@@ -1,6 +1,6 @@
 import Select from "../ui/Select";
 import Toolbar from "../sheet/Toolbar";
-import { applyBorderPreset, gridBordersCSS } from "../../shared/borders.js";
+import { applyBorderPreset, gridBordersCSS } from "../../shared/formatting/borders.js";
 import { useState } from "react";
 import type { Team, Style, Settings } from "../types";
 import {

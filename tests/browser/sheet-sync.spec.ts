@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { defaultView } from "../../shared/domain.js";
 const headers = { "X-Requested-With": "WeeklyPlan" };
 async function api(p: Page, path: string, method = "GET", data?: unknown) {

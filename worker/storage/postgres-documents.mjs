@@ -4,7 +4,7 @@ import {
   DEFAULT_DOCUMENT_TITLE,
   MAX_DOCUMENT_TITLE_LENGTH,
   hasDocumentContent,
-} from "../../shared/task-documents.js";
+} from "../../shared/documents/task-documents.js";
 import { assert } from "../access.mjs";
 import { imageReferences } from "../images.mjs";
 import { stamp, excludedYears } from "../tasks.mjs";

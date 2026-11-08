@@ -1,8 +1,8 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { todayKey } from "../../shared/domain.js";
-import { calendarWeek } from "../../shared/calendar.js";
+import { calendarWeek } from "../../shared/calendar/calendar.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 const password = "local-test-only-password";

@@ -9,14 +9,14 @@ import { sheetCloneRevision } from "../sheet-clone-editing.mjs";
 import { withTaskDocuments } from "../task-documents.mjs";
 import { filtersFor, currentFiltersFor } from "../filters.mjs";
 import ExcelJS from "exceljs";
-import { explicitStyle } from "../../shared/formatting.js";
+import { explicitStyle } from "../../shared/formatting/formatting.js";
 import {
   BORDER_SIDES,
   weekBoundaryStyles,
   withWeekBoundaries,
-} from "../../shared/borders.js";
+} from "../../shared/formatting/borders.js";
 import { checkWorkbookArchive } from "../archive.mjs";
-import { profileSnapshot } from "../../shared/profiles.js";
+import { profileSnapshot } from "../../shared/identity/profiles.js";
 import {
   encodeSheetClone,
   decodeSheetClone,
@@ -77,7 +77,7 @@ import {
   makeWorkbook,
   stableId,
   importSheetOptionsSchema,
-} from "../../shared/workbook.mjs";
+} from "../../shared/transfer/workbook.mjs";
 import {
   transferDownload,
   extendImportProperties,

@@ -1,6 +1,6 @@
 import { requireThat, validateCellValue } from "../../shared/validation.js";
 import { audit, json, parse, touchTasks, transaction } from "../db.mjs";
-import { expandStyle } from "../../shared/compact.js";
+import { expandStyle } from "../../shared/formatting/compact.js";
 
 import {
   prepareSettings,

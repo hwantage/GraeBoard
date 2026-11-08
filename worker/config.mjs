@@ -1,1 +1,1 @@
-export * from "../shared/sync-profiles.js";
+export * from "../shared/sync/sync-profiles.js";

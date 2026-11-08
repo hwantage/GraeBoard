@@ -1,4 +1,4 @@
-import { requireThat as assert } from "./http-error.js";
+import { requireThat as assert } from "../http/http-error.js";
 export function siteTeamId(env) {
   if (!env.PG_SITE) return null;
   assert(

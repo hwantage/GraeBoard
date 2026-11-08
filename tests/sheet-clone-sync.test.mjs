@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rebaseSheetCloneCells } from "../shared/sheet-clone-sync.js";
+import { rebaseSheetCloneCells } from "../shared/sheet-clones/sheet-clone-sync.js";
 const row = {
   id: "a",
   cells: {

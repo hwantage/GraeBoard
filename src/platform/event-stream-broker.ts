@@ -1,4 +1,4 @@
-import { retryAfterMs } from "../../shared/api-error-message.js";
+import { retryAfterMs } from "../../shared/http/api-error-message.js";
 
 export type StreamSubscription = {
   id: number;

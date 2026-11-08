@@ -5,7 +5,7 @@ import { openDatabase, transaction } from "../server/db.mjs";
 import { sqliteTeamStore } from "../server/storage/sqlite.mjs";
 import { createSyncStatusReader } from "../server/sync/node-status.mjs";
 import { createReceiptCapacityGuard } from "../server/sync/receipt-capacity.mjs";
-import { reservedReceiptBytes } from "../shared/sync-capacity.mjs";
+import { reservedReceiptBytes } from "../shared/sync/sync-capacity.mjs";
 
 test("status and receipt reservations use only pending/held rows beside 50,000 acknowledged operations", (t) => {
   const db = openDatabase(":memory:"),

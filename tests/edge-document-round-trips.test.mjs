@@ -11,7 +11,7 @@ import { PostgresDocumentBrowserRepository } from "../worker/storage/postgres-do
 import { DataSession } from "../worker/data.mjs";
 import { sheetCloneRoutes } from "../worker/sheet-clones.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
-import { packSheetClonePayload } from "../shared/sheet-clone-sync-data.js";
+import { packSheetClonePayload } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round
 // trip, so a document list, a sheetClone and the document browser must cost a fixed

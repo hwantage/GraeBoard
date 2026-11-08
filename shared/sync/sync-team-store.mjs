@@ -3,9 +3,9 @@ import {
   digest,
   entityId,
   equal,
-} from "../server/sync/protocol.mjs";
-import { ProtocolError } from "../server/sync/errors.mjs";
-import { parseSyncOperation } from "../server/sync/sync-operation-cache.mjs";
+} from "../../server/sync/protocol.mjs";
+import { ProtocolError } from "../../server/sync/errors.mjs";
+import { parseSyncOperation } from "../../server/sync/sync-operation-cache.mjs";
 
 const parse = (text) => (text === null ? null : JSON.parse(text));
 const query = (sql, values = []) => ({ sql, values });

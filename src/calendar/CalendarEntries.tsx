@@ -5,7 +5,7 @@ import { calendarDisplayLane } from "./secret-calendar-layout";
 import { busyProps } from "../ui/busyProps";
 import { FileText, LockKeyhole } from "lucide-react";
 import { normalizeSearchQuery } from "../../shared/search.js";
-import { addDays, moveCalendarRange } from "../../shared/calendar.js";
+import { addDays, moveCalendarRange } from "../../shared/calendar/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
 import {
   CalendarCheckTag,

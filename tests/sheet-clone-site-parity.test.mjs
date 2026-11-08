@@ -8,12 +8,12 @@ import {
   postgresBusinessFixture,
 } from "./business-storage-fixture.mjs";
 import { defaultView } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
-import { DUPLICATE_SHEET_CLONE_NAME } from "../shared/sheet-clone-names.js";
+import { unpack } from "../shared/formatting/compact.js";
+import { DUPLICATE_SHEET_CLONE_NAME } from "../shared/sheet-clones/sheet-clone-names.js";
 import {
   packSheetClonePayload,
   unpackSheetClonePayload,
-} from "../shared/sheet-clone-sync-data.js";
+} from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // The external site answers copy names and imports into copies as the
 // internal one does (server/sheet-clones.mjs, server/storage/sqlite-transfer.mjs).

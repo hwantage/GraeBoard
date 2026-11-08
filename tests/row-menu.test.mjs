@@ -1,5 +1,5 @@
-import { parseCompact, compactStyle } from "../shared/compact.js";
-import { unpack } from "../shared/compact.js";
+import { parseCompact, compactStyle } from "../shared/formatting/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";

@@ -4,7 +4,7 @@ import {
   BROWSER_ROUTES,
   matchBusinessRoute,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 
 import { assert } from "./access.mjs";
 

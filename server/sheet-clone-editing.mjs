@@ -12,9 +12,9 @@ import { z } from "zod";
 import {
   applySheetCloneOperation,
   SheetCloneEditError,
-} from "../shared/sheet-clone-editing.js";
+} from "../shared/sheet-clones/sheet-clone-editing.js";
 import { transaction, audit, parse } from "./db.mjs";
-import { taskAuditSnapshot } from "../shared/formatting.js";
+import { taskAuditSnapshot } from "../shared/formatting/formatting.js";
 import { propertiesFor, canContribute } from "../shared/domain.js";
 import {
   changeSchema,

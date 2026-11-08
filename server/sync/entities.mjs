@@ -1,11 +1,11 @@
 import { channel } from "node:diagnostics_channel";
 import { createHash } from "node:crypto";
 import { splitSheetCloneRecord, applicationEntities } from "./versions.mjs";
-import { expandStyle } from "../../shared/compact.js";
+import { expandStyle } from "../../shared/formatting/compact.js";
 import {
   packSheetCloneData,
   unpackSheetCloneData,
-} from "../../shared/sheet-clone-sync-data.js";
+} from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 import {
   parse,
   teamSettings,
@@ -24,7 +24,7 @@ import {
   storeSheetCloneDocuments,
 } from "../document-storage.mjs";
 import { encodeSheetClone, decodeSheetClone } from "../sheet-clones.mjs";
-import { hasDocumentContent } from "../../shared/task-documents.js";
+import { hasDocumentContent } from "../../shared/documents/task-documents.js";
 import {
   entityId,
   initialToken,

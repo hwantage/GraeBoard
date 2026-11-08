@@ -1,4 +1,4 @@
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";

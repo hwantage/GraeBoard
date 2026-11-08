@@ -1,6 +1,6 @@
 import { controlTransaction } from "./data.mjs";
 import { assert } from "./access.mjs";
-import { siteTeamId } from "../shared/sync-profiles.js";
+import { siteTeamId } from "../shared/sync/sync-profiles.js";
 import {
   accessTokenId,
   MAX_ACCESS_TOKENS,

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { TaskBusinessService } from "../server/storage/task-service.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 const data = (result) =>
   result.data ||

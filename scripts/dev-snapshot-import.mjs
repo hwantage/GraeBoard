@@ -24,7 +24,7 @@ import {
   addMembership,
 } from "../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { syncImageReferences } from "../shared/sync-image-references.js";
+import { syncImageReferences } from "../shared/sync/sync-image-references.js";
 import {
   documentImagesDirectory,
   writeDocumentImage,

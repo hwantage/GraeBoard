@@ -1,6 +1,6 @@
 import { DOCUMENT_IMAGE_PATTERN, isDocumentImage } from "./document-images.js";
 import { documentPayloadImageUrls } from "./document-image-references.js";
-import { requireThat as assert } from "./http-error.js";
+import { requireThat as assert } from "../http/http-error.js";
 
 export function stillImage(bytes) {
   const b = Buffer.from(bytes);

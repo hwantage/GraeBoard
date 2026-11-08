@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { apiErrorMessage } from "../shared/api-error-message.js";
+import { apiErrorMessage } from "../shared/http/api-error-message.js";
 
 test("provider rate limits explain the failed task, retry window and trace reference", () => {
   const message = apiErrorMessage({

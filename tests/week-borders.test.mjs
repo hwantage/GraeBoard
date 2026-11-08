@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { weekBoundaryStyles, withWeekBoundaries } from "../shared/borders.js";
+import { weekBoundaryStyles, withWeekBoundaries } from "../shared/formatting/borders.js";
 import { cell } from "../shared/domain.js";
-import { explicitStyle } from "../shared/formatting.js";
+import { explicitStyle } from "../shared/formatting/formatting.js";
 
 test("이번 주는 좌우를 독립적으로 지정하고 없는 쪽은 표시 구간 경계선을 유지한다", () => {
   const left = { style: "solid", color: "#112233" };

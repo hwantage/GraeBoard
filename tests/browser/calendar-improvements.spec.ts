@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { todayKey } from "../../shared/domain.js";
-import { addDays } from "../../shared/calendar.js";
+import { addDays } from "../../shared/calendar/calendar.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string;

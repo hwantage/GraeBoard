@@ -3,9 +3,9 @@ import {
   makeWorkbook,
   stableId,
   importSheetOptionsSchema,
-} from "../../shared/workbook.mjs";
+} from "../../shared/transfer/workbook.mjs";
 import { canonical, digest } from "../../server/sync/protocol.mjs";
-import { pack } from "../../shared/compact.js";
+import { pack } from "../../shared/formatting/compact.js";
 import {
   fieldsFor,
   weeksForPeriod,
@@ -26,7 +26,7 @@ import {
   dateSchema,
   sheetCloneNameSchema,
 } from "../../shared/validation.js";
-import { requireFreeSheetCloneName } from "../../shared/sheet-clone-names.js";
+import { requireFreeSheetCloneName } from "../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../access.mjs";
 import { taskList, settingsFor, excludedYears } from "../tasks.mjs";
 import { sheetCloneView } from "../sheet-clones.mjs";

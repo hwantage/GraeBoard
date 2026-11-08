@@ -1,4 +1,4 @@
-import { CONTROL_ROUTES } from "../shared/business-routes.js";
+import { CONTROL_ROUTES } from "../shared/http/business-routes.js";
 import { ControlBusinessService } from "./storage/control-service.mjs";
 import { registerEventRoute } from "./event-streams.mjs";
 

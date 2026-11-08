@@ -23,9 +23,9 @@ import {
   DEFAULT_SETTINGS,
   defaultView,
 } from "../shared/domain.js";
-import { THEME_IDS } from "../shared/themes.js";
-import { unpack } from "../shared/compact.js";
-import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
+import { THEME_IDS } from "../shared/formatting/themes.js";
+import { unpack } from "../shared/formatting/compact.js";
+import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 import { ProtocolError } from "../server/sync/errors.mjs";
 import {
   databaseCapacity,

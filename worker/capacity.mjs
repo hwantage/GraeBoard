@@ -3,13 +3,13 @@ import { canonical } from "../server/sync/protocol.mjs";
 import {
   SYNC_FILE_MAX_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,
-} from "../shared/sync-limits.js";
+} from "../shared/sync/sync-limits.js";
 import {
   CapacityError,
   capacityLimits,
   assertStateCapacity,
   receiptCapacity,
-} from "../shared/sync-capacity.mjs";
+} from "../shared/sync/sync-capacity.mjs";
 export { CapacityError, capacityLimits, assertStateCapacity };
 export function assertFileCapacity(path, bytes, limits = capacityLimits()) {
   if (!bytes) return bytes;

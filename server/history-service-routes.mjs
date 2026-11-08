@@ -1,7 +1,7 @@
 import {
   HISTORY_ROUTES,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { HistoryBusinessService } from "./storage/history-service.mjs";
 export function installHistoryServiceRoutes(app, { repository }) {
   const service = (req) =>

@@ -14,12 +14,12 @@ import {
   assertReceiptCapacity,
   capacityLimits,
   receiptCapacity,
-} from "../shared/sync-capacity.mjs";
+} from "../shared/sync/sync-capacity.mjs";
 import {
   SYNC_RECEIPT_MAX_BYTES,
   SYNC_SNAPSHOT_MAX_BYTES,
   SYNC_FILE_MAX_BYTES,
-} from "../shared/sync-limits.js";
+} from "../shared/sync/sync-limits.js";
 import { createReceiptCapacityGuard } from "../server/sync/receipt-capacity.mjs";
 import { transaction } from "../server/db.mjs";
 

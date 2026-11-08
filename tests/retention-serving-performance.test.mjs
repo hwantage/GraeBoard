@@ -6,7 +6,7 @@ import {
   retentionView,
   withRetentionViews,
 } from "../server/sync/visibility.mjs";
-import { parseCompact } from "../shared/compact.js";
+import { parseCompact } from "../shared/formatting/compact.js";
 import { getTasks } from "../server/db.mjs";
 
 function exclusion(f, year, revision = 1) {

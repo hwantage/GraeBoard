@@ -27,7 +27,7 @@ import {
   sampleProperties,
   weeksForYear,
 } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 
 export const percentile = (samples, fraction = 0.95) =>

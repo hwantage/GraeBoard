@@ -1,7 +1,7 @@
 import {
   SETTINGS_ROUTES,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { SettingsBusinessService } from "./storage/settings-service.mjs";
 import { SqliteSettingsRepository } from "./storage/sqlite-settings.mjs";
 export { saveSettings } from "./storage/sqlite-settings.mjs";

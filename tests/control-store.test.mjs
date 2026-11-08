@@ -15,7 +15,7 @@ import { SettingsBusinessService } from "../server/storage/settings-service.mjs"
 import { PostgresSettingsRepository } from "../worker/storage/postgres-settings.mjs";
 import { PostgresHistoryRepository } from "../worker/storage/postgres-history.mjs";
 import { PostgresControlRepository } from "../worker/storage/postgres-control.mjs";
-import { profileFor } from "../shared/sync-profiles.js";
+import { profileFor } from "../shared/sync/sync-profiles.js";
 
 test("SQLite control read port keeps credentials private, uses local memberships and trusted team profiles", (t) => {
   const f = sqliteBusinessFixture(t),

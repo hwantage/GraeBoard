@@ -13,7 +13,7 @@ import Select from "../ui/Select";
 import { busyProps } from "../ui/busyProps";
 import type { Team, User } from "../types";
 import { canContribute, canManageTeam } from "../../shared/domain.js";
-import { syncErrorMessage } from "../../shared/sync-error-message.js";
+import { syncErrorMessage } from "../../shared/sync/sync-error-message.js";
 import "./team-sync-settings.css";
 
 export type ResourceProfile = {

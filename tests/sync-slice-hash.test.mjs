@@ -7,7 +7,7 @@ import {
   computeTotals,
 } from "../worker/sync-partial.mjs";
 import { capacityTotals } from "../worker/capacity.mjs";
-import { assertStateCapacity } from "../shared/sync-capacity.mjs";
+import { assertStateCapacity } from "../shared/sync/sync-capacity.mjs";
 import {
   digest,
   entityId,

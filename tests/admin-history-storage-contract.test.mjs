@@ -7,7 +7,7 @@ import { PostgresAdminHistoryRepository } from "../worker/storage/postgres-admin
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
 const beforeDate = ago(30).slice(0, 10);
 async function contract({

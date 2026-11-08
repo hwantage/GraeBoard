@@ -1,7 +1,7 @@
 import test from "node:test";
 import { markedState } from "./sync-state-fixture.mjs";
 import assert from "node:assert/strict";
-import { forkRecordMap } from "../shared/record-map.mjs";
+import { forkRecordMap } from "../shared/sync/record-map.mjs";
 import { canonical, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 

@@ -1,12 +1,12 @@
-import { createLinkTitleService } from "../shared/link-title.mjs";
+import { createLinkTitleService } from "../shared/http/link-title.mjs";
 import { accessTokenRoutes } from "./access-tokens.mjs";
 import {
   isSyncRequest,
   syncErrorMessage,
-} from "../shared/sync-error-message.js";
+} from "../shared/sync/sync-error-message.js";
 import { syncSetupKeyStatus } from "./setup-keys.mjs";
-import { deploymentSite } from "../shared/site-mode.js";
-import { pack, unpack } from "../shared/compact.js";
+import { deploymentSite } from "../shared/site/site-mode.js";
+import { pack, unpack } from "../shared/formatting/compact.js";
 import { assertOrigin, verifyAccess, assert } from "./access.mjs";
 import {
   authenticate,
@@ -31,7 +31,7 @@ import { auditRoutes, historyCleanupRoutes } from "./history.mjs";
 import { maintenanceRoutes } from "./maintenance.mjs";
 import { eventResponse } from "./events.mjs";
 import { schedulePublish, refreshTeam, scheduled } from "./sync.mjs";
-import { profileFor, siteTeamId } from "../shared/sync-profiles.js";
+import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { siteAuthRoute, accessRequestRoutes } from "./site-auth.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";

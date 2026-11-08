@@ -6,7 +6,7 @@ import ThemePicker from "./ThemePicker";
 import { api, send, type ApiError } from "../platform/api";
 import AccountLinkRequests from "../auth/AccountLinkRequests";
 import { Avatar, Button, ErrorNote } from "../components";
-import { getTheme } from "../../shared/themes.js";
+import { getTheme } from "../../shared/formatting/themes.js";
 import type { Team, TeamRole, ThemeId, User } from "../types";
 
 import { teamRoleNames, teamRoleOrder, teamRoleHelp } from "../platform/roles";

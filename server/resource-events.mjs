@@ -1,5 +1,5 @@
 import { registerEventRoute } from "./event-streams.mjs";
-import { hasDocumentContent } from "../shared/task-documents.js";
+import { hasDocumentContent } from "../shared/documents/task-documents.js";
 import { requireThat } from "../shared/validation.js";
 
 // Publish invalidations only after successful mutations. Bodies stay on their

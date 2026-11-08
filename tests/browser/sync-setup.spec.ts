@@ -7,7 +7,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { parseEnv } from "node:util";
 import { createApp } from "../../server/app.mjs";
 import { openDatabase } from "../../server/db.mjs";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 let app: ReturnType<typeof createApp>, db: ReturnType<typeof openDatabase>;
 let server: ReturnType<ReturnType<typeof createApp>["listen"]> | undefined;

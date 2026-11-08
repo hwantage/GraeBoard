@@ -1,4 +1,4 @@
-import { postgresHistoryVersion } from "../../shared/postgres-schema-version.js";
+import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 

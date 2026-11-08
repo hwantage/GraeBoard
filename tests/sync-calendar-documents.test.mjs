@@ -9,7 +9,7 @@ import { Pool } from "pg";
 import { openDatabase, json } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { stateHash, entityId, initialToken } from "../server/sync/protocol.mjs";
 import { storeDocumentVersion } from "../server/document-storage.mjs";
@@ -17,7 +17,7 @@ import { migratePostgres } from "../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { runTeam } from "../worker/sync.mjs";
-import { profileFor } from "../shared/sync-profiles.js";
+import { profileFor } from "../shared/sync/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import { recoverSync } from "../scripts/sync-recover.mjs";
 

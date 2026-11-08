@@ -1,5 +1,5 @@
 import { diffChars } from "diff";
-import { forkRecordMap } from "../../shared/record-map.mjs";
+import { forkRecordMap } from "../../shared/sync/record-map.mjs";
 import {
   canonical,
   digest,
@@ -13,7 +13,7 @@ import {
   PROTOCOL,
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
-import { normalizeEntityPayload } from "../../shared/sheet-clone-sync-data.js";
+import { normalizeEntityPayload } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Reducer 3 keeps protocol 1's difference budget and reducer 4 protocol 2's.
 function edits(base, value, reducer = PROTOCOL) {

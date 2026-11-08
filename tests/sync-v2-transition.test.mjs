@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { SyncService } from "../server/sync/service.mjs";
-import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 import {
   canonical,
   digest,

@@ -2,7 +2,7 @@ import { assert } from "../access.mjs";
 import { taskList, settingsFor, excludedYears } from "../task-view.mjs";
 import { z } from "zod";
 import { yearSchema } from "../../shared/validation.js";
-import { hasDocumentContent } from "../../shared/task-documents.js";
+import { hasDocumentContent } from "../../shared/documents/task-documents.js";
 import { propertiesFor } from "../../shared/domain.js";
 import {
   documentBrowserPage,

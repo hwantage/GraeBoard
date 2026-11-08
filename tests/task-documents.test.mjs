@@ -27,8 +27,8 @@ import { createApp } from "../server/app.mjs";
 import { openDatabase, insertTask, getTask, json, now } from "../server/db.mjs";
 import { getTaskDocument } from "../server/task-documents.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
-import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
+import { unpack } from "../shared/formatting/compact.js";
+import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
 import {

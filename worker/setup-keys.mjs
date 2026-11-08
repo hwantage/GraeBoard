@@ -1,5 +1,5 @@
 import { controlTransaction } from "./data.mjs";
-import { profiles, siteTeamId } from "../shared/sync-profiles.js";
+import { profiles, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { GitHubApiTransport } from "./git.mjs";
 import { assert } from "./access.mjs";
 import { canonical } from "../server/sync/protocol.mjs";

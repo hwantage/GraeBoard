@@ -1,4 +1,4 @@
-export type ThemeId = import("../shared/themes.js").ThemeId;
+export type ThemeId = import("../shared/formatting/themes.js").ThemeId;
 export type Border = {
   style: "none" | "solid" | "medium" | "thick" | "dashed" | "double";
   color: string;
@@ -174,7 +174,7 @@ export type View = {
   knownProperties?: string[];
   columnVisibility?: Record<string, boolean>;
 };
-export type Bootstrap = import("../shared/session-contract").Bootstrap<
+export type Bootstrap = import("../shared/identity/session-contract").Bootstrap<
   User,
   Team
 >;

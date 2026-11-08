@@ -1,4 +1,4 @@
-import { nextCalendarCopyTitle } from "../../shared/calendar.js";
+import { nextCalendarCopyTitle } from "../../shared/calendar/calendar.js";
 import type { CalendarEntry, CalendarPlacement } from "./calendar-types";
 import {
   mergeSecretCalendarLayout,

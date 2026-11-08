@@ -16,7 +16,7 @@ import {
 import { prepareSheetCloneEdits } from "../server/storage/sheet-clone-command-rules.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import { canonical } from "../server/sync/protocol.mjs";
-import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 const freeze = (value) => {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {

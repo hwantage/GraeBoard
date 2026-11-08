@@ -9,7 +9,7 @@ import {
 } from "./protocol.mjs";
 import { validateSnapshot } from "./reducer.mjs";
 import { encodeSnapshot } from "./snapshot.mjs";
-import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
+import { prepareStatePatch } from "../../shared/sync/sync-team-store.mjs";
 import { ProtocolError, protocolValidation } from "./errors.mjs";
 
 export const snapshotCounts = (state) => ({

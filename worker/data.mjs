@@ -1,5 +1,5 @@
 import { splitSheetCloneRecord } from "../server/sync/versions.mjs";
-import { pack, unpack } from "../shared/compact.js";
+import { pack, unpack } from "../shared/formatting/compact.js";
 import {
   protocolVersion,
   PROTOCOL,
@@ -10,12 +10,12 @@ import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
 import {
   assertReceiptCapacity,
   recordBytes,
-} from "../shared/sync-capacity.mjs";
+} from "../shared/sync/sync-capacity.mjs";
 import {
   postgresHistoryVersion,
   postgresLayout,
-} from "../shared/postgres-schema-version.js";
-import { siteTeamId } from "../shared/sync-profiles.js";
+} from "../shared/storage/postgres-schema-version.js";
+import { siteTeamId } from "../shared/sync/sync-profiles.js";
 import { PostgresDatabase } from "./storage/postgres.mjs";
 import {
   canonical,
@@ -32,7 +32,7 @@ import { assert } from "./access.mjs";
 import {
   packSheetClonePayload,
   unpackSheetClonePayload,
-} from "../shared/sheet-clone-sync-data.js";
+} from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 function poolFor(binding, scope = "control", { site = false } = {}) {
   assert(binding?.connectionString, 503, "PostgreSQL binding을 확인하세요.");

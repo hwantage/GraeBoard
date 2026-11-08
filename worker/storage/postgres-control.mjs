@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from "../../shared/domain.js";
-import { deploymentSite } from "../../shared/site-mode.js";
+import { deploymentSite } from "../../shared/site/site-mode.js";
 import { assert } from "../access.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../control.mjs";
@@ -8,7 +8,7 @@ import {
   memberPickerUser,
 } from "../../server/storage/control-service.mjs";
 import { subscribePostgresEvents } from "./postgres-events.mjs";
-import { profiles, siteTeamId } from "../../shared/sync-profiles.js";
+import { profiles, siteTeamId } from "../../shared/sync/sync-profiles.js";
 import { authenticateSite } from "../site-auth.mjs";
 export class PostgresControlRepository {
   constructor({ context }) {

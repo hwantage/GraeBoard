@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { RequestContext } from "../worker/control.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";

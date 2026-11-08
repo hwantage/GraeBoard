@@ -1,6 +1,6 @@
-import { profiles as configuredProfiles } from "../../shared/sync-profiles.js";
-import { CALENDAR_DAYS } from "../../shared/calendar.js";
-import { directory } from "../../shared/control-records.js";
+import { profiles as configuredProfiles } from "../../shared/sync/sync-profiles.js";
+import { CALENDAR_DAYS } from "../../shared/calendar/calendar.js";
+import { directory } from "../../shared/identity/control-records.js";
 
 // The injected SQLite handle is a host port. This module never imports the
 // native SQLite runtime, keeping PostgreSQL Worker bundles independent of it.

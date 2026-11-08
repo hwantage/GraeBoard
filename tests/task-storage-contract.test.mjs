@@ -15,7 +15,7 @@ import {
 } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, sampleProperties } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";

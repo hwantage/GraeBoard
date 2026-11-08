@@ -10,7 +10,7 @@ import {
 } from "../db.mjs";
 import { requireThat, validateCellValue } from "../../shared/validation.js";
 import { canEdit, canManageTeam, periodYears } from "../../shared/domain.js";
-import { styleNormalizer, unpack } from "../../shared/compact.js";
+import { styleNormalizer, unpack } from "../../shared/formatting/compact.js";
 import { applyFormatting, replayFormatOperation } from "../formatting.mjs";
 import {
   storeCellOperation,

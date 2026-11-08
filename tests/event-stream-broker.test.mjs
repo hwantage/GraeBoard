@@ -12,7 +12,7 @@ const code = stripTypeScriptTypes(
 ).replace(
   '"../../shared/api-error-message.js"',
   JSON.stringify(
-    new URL("../shared/api-error-message.js", import.meta.url).href,
+    new URL("../shared/http/api-error-message.js", import.meta.url).href,
   ),
 );
 const { StreamBroker } = await import(

@@ -32,7 +32,7 @@ import {
   freezeTeam,
   releaseTransfer,
 } from "../server/storage/logical-transfer.mjs";
-import { verifyTransfer } from "../shared/logical-format.mjs";
+import { verifyTransfer } from "../shared/transfer/logical-format.mjs";
 import {
   S3ImageStore,
   backupExternal,
@@ -50,7 +50,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { recoverMaintenanceJob } from "../scripts/sync-maintenance-recover.mjs";
-import { recoverBackupJob } from "../shared/backup-recovery.mjs";
+import { recoverBackupJob } from "../shared/transfer/backup-recovery.mjs";
 
 function sourceFixture(dir) {
   const db = openDatabase(join(dir, "source.sqlite")),

@@ -21,8 +21,8 @@ import { canonical, entityId, stateHash } from "../server/sync/protocol.mjs";
 import { serviceFor } from "../worker/sync.mjs";
 import { preparedSyncOperation } from "../server/sync/sync-operation-cache.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
-import { unpack } from "../shared/compact.js";
-import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
+import { unpack } from "../shared/formatting/compact.js";
+import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Entirely synthetic, including the retained copies that make C exceed 20 MiB.
 // Reuses the SQLite/Git performance fixture and the real external API/PG store.

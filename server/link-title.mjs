@@ -1,5 +1,5 @@
-import { createLinkTitleService } from "../shared/link-title.mjs";
-import { requireThat } from "../shared/http-error.js";
+import { createLinkTitleService } from "../shared/http/link-title.mjs";
+import { requireThat } from "../shared/http/http-error.js";
 
 export function installLinkTitleRoute(app, options) {
   const title = createLinkTitleService(options);

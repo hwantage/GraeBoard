@@ -18,13 +18,13 @@ import {
   validateEntityPayload,
 } from "../server/sync/protocol.mjs";
 import { defaultView } from "../shared/domain.js";
-import { stringify } from "../shared/compact.js";
+import { stringify } from "../shared/formatting/compact.js";
 import {
   isPackedSheetCloneData,
   packSheetCloneData,
   unpackSheetCloneData,
   unpackSheetClonePayload,
-} from "../shared/sheet-clone-sync-data.js";
+} from "../shared/sheet-clones/sheet-clone-sync-data.js";
 
 const MiB = 1024 * 1024;
 // 운영 팀과 같은 모양: 규칙 5개는 약 430개 행 ID, 3개는 19개 행 ID를 가진 열 규칙.

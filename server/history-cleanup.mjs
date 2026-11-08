@@ -1,7 +1,7 @@
 import {
   HISTORY_CLEANUP_ROUTES,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { AdminHistoryBusinessService } from "./storage/admin-history-service.mjs";
 import { SqliteAdminHistoryRepository } from "./storage/sqlite-admin-history.mjs";
 import { validateCellCommandTime } from "./storage/task-service.mjs";

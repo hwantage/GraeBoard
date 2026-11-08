@@ -6,7 +6,7 @@ import {
   decodeBoundedSnapshot,
 } from "./capacity.mjs";
 import { SyncService } from "../server/sync/service.mjs";
-import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync-limits.js";
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync/sync-limits.js";
 import {
   canonical,
   digest,
@@ -25,7 +25,7 @@ import {
 } from "./data.mjs";
 const syncDatabase = (env, profile) =>
   databaseFor(env, profile, { statementTimeout: SYNC_STATEMENT_TIMEOUT_MS });
-import { profiles, profileFor } from "../shared/sync-profiles.js";
+import { profiles, profileFor } from "../shared/sync/sync-profiles.js";
 import { assert } from "./access.mjs";
 import { refreshDirectory } from "./directory.mjs";
 import { isExcluded } from "../server/sync/retention.mjs";

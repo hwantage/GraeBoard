@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { sqliteFixture } from "./business-storage-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { defaultView } from "../shared/domain.js";
-import { MAX_TASK_DOCUMENTS } from "../shared/task-documents.js";
+import { MAX_TASK_DOCUMENTS } from "../shared/documents/task-documents.js";
 import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
 import { userWithTeams } from "../server/db.mjs";
 

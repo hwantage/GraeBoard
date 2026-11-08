@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel } from "node:diagnostics_channel";
 import { propertiesFor } from "../shared/domain.js";
-import { stringify, parseCompact } from "../shared/compact.js";
-import { requireFreeSheetCloneName } from "../shared/sheet-clone-names.js";
+import { stringify, parseCompact } from "../shared/formatting/compact.js";
+import { requireFreeSheetCloneName } from "../shared/sheet-clones/sheet-clone-names.js";
 import { sheetCloneNameSchema } from "../shared/validation.js";
 
 // Call inside the insertion's BEGIN IMMEDIATE transaction so two writers cannot

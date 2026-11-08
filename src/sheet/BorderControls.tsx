@@ -1,7 +1,7 @@
 import Select from "../ui/Select";
 import ColorMenu from "../ui/ColorMenu";
 import type { Border } from "../types";
-import { BORDER_OPTIONS, borderCSS } from "../../shared/borders.js";
+import { BORDER_OPTIONS, borderCSS } from "../../shared/formatting/borders.js";
 
 export default function BorderControls({
   label,

@@ -10,7 +10,7 @@ import {
   payloadLines,
   sideLines,
   splitContested,
-} from "../shared/conflict-diff.js";
+} from "../shared/sync/conflict-diff.js";
 
 const record = (entity, key, payload, deleted = false) => ({
   entity,

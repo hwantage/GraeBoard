@@ -15,7 +15,7 @@ import {
   borderSchema,
   requireThat,
 } from "../../shared/validation.js";
-import { THEME_IDS } from "../../shared/themes.js";
+import { THEME_IDS } from "../../shared/formatting/themes.js";
 const weekBordersSchema = z
   .object({ left: borderSchema.optional(), right: borderSchema.optional() })
   .strict();

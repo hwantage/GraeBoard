@@ -106,12 +106,12 @@ test("only successful business mutations dispatch the local-save signal", async 
     .replace('"./site"', JSON.stringify(moduleURL(source("site"))))
     .replace(
       '"../../shared/compact.js"',
-      JSON.stringify(new URL("../shared/compact.js", import.meta.url).href),
+      JSON.stringify(new URL("../shared/formatting/compact.js", import.meta.url).href),
     )
     .replace(
       '"../../shared/api-error-message.js"',
       JSON.stringify(
-        new URL("../shared/api-error-message.js", import.meta.url).href,
+        new URL("../shared/http/api-error-message.js", import.meta.url).href,
       ),
     );
   const { api } = await import(moduleURL(code));
@@ -192,7 +192,7 @@ async function calendarHarness(t) {
     )
     .replace(
       '"../../shared/calendar.js"',
-      JSON.stringify(new URL("../shared/calendar.js", import.meta.url).href),
+      JSON.stringify(new URL("../shared/calendar/calendar.js", import.meta.url).href),
     );
   const { useCalendarData } = await import(moduleURL(code));
   return {

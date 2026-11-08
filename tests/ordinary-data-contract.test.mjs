@@ -15,7 +15,7 @@ import { PostgresDocumentBrowserRepository } from "../worker/storage/postgres-do
 import { TransferBusinessService } from "../server/storage/transfer-service.mjs";
 import { PostgresTransferRepository } from "../worker/storage/postgres-transfer.mjs";
 import { getTask } from "../server/db.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { materialize } from "../worker/materialize.mjs";
 const decoded = (value) => value.data || unpack(JSON.parse(value.encoded.body));
 const taskCommand = (taskId, value, expectedVersion) => ({

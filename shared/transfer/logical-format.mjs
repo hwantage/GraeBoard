@@ -1,4 +1,4 @@
-import { canonical, digest } from "../server/sync/protocol.mjs";
+import { canonical, digest } from "../../server/sync/protocol.mjs";
 
 // Stable ordering and a closed table allowlist are shared by offline transfer,
 // complete backups and the Worker profile-switch workflow.

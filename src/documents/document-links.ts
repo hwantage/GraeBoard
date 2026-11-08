@@ -4,7 +4,7 @@ import {
   DOCUMENT_LINK_BATCH,
   documentLinkPath,
   parseDocumentLinkPath,
-} from "../../shared/document-links.js";
+} from "../../shared/documents/document-links.js";
 
 // Links between documents point at a task detail, a calendar entry, a tail
 // memo or a copy's task detail or memo. The Markdown stores the app path

@@ -3,7 +3,7 @@ import pg from "pg";
 import { createEdgeHandler } from "./handler.mjs";
 import { resourceBindings } from "./resources.mjs";
 import setupGuide from "../docs/CLOUD_SETUP.md";
-import { setupGuideHtml } from "../shared/setup-guide.js";
+import { setupGuideHtml } from "../shared/site/setup-guide.js";
 
 const settings = Deno.env.toObject();
 const pool = new pg.Pool({

@@ -2,7 +2,7 @@ import {
   assertReceiptCapacity,
   receiptCapacity,
   reservedReceiptBytes,
-} from "../../shared/sync-capacity.mjs";
+} from "../../shared/sync/sync-capacity.mjs";
 
 // Canonical receipt rows are immutable. Reuse their byte total only for the same
 // database/team/installation/head/hash/generation. Pending reservations advance

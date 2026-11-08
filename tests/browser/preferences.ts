@@ -1,4 +1,4 @@
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { expect, type Page } from "@playwright/test";
 
 // 화면은 별도로 저장한 배치와 필터 조건을 합쳐 표시한다.

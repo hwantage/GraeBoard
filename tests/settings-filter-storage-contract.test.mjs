@@ -17,7 +17,7 @@ import {
   teamSettings,
 } from "../server/db.mjs";
 import { defaultView, normalizeSettings } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { materialize } from "../worker/materialize.mjs";
 import { canonical, entityId } from "../server/sync/protocol.mjs";
 const reject = (work, status) =>

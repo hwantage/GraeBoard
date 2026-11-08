@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { THEME_IDS } from "../../shared/themes.js";
+import { THEME_IDS } from "../../shared/formatting/themes.js";
 import {
   TEAM_ROLES,
   isSystemAdmin,
   canManageTeam,
 } from "../../shared/domain.js";
 import { requireThat } from "../../shared/validation.js";
-import { profileFields } from "../../shared/profiles.js";
+import { profileFields } from "../../shared/identity/profiles.js";
 
 export const loginId = z
   .string()

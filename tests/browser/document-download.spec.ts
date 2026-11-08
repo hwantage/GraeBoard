@@ -7,7 +7,7 @@ import {
 } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, taskIds: string[];

@@ -10,7 +10,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { openDatabase, json, getTask } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { canonical, stateHash } from "../server/sync/protocol.mjs";
 import { SyncService } from "../server/sync/service.mjs";
@@ -18,7 +18,7 @@ import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { materialize, readEntity } from "../server/sync/entities.mjs";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
-import { conflictChanges, diffSides } from "../shared/conflict-diff.js";
+import { conflictChanges, diffSides } from "../shared/sync/conflict-diff.js";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-")),

@@ -18,8 +18,8 @@ import {
   sampleProperties,
   todayKey,
 } from "../shared/domain.js";
-import { addDays, calendarWeek } from "../shared/calendar.js";
-import { unpack } from "../shared/compact.js";
+import { addDays, calendarWeek } from "../shared/calendar/calendar.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { CalendarBusinessService } from "../server/storage/calendar-service.mjs";

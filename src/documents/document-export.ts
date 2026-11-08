@@ -17,8 +17,8 @@ import {
   documentImageSource,
   documentImageWidth,
   isDocumentImage,
-} from "../../shared/document-images.js";
-import { parseDocumentLinkPath } from "../../shared/document-links.js";
+} from "../../shared/documents/document-images.js";
+import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
 import { saveFile } from "../platform/api";
 import type { DocumentImages } from "./document-storage";
 

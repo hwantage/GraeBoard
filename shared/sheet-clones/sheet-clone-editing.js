@@ -1,12 +1,12 @@
-import { hasDocumentContent } from "./task-documents.js";
-import { emptyPropertyValue, propertiesFor } from "./domain.js";
-import { STYLE_KEYS } from "./compact.js";
+import { hasDocumentContent } from "../documents/task-documents.js";
+import { emptyPropertyValue, propertiesFor } from "../domain.js";
+import { STYLE_KEYS } from "../formatting/compact.js";
 import {
   copyRowFormatting,
   normalizeCellStyle,
   scopeKey,
   scopeMatches,
-} from "./formatting.js";
+} from "../formatting/formatting.js";
 
 export class SheetCloneEditError extends Error {}
 

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import {
   DOCUMENT_IMAGE_PATTERN,
   MAX_IMAGE_BYTES,
-} from "../../shared/document-images.js";
+} from "../../shared/documents/document-images.js";
 import {
   documentImagePath,
   readDocumentImage,
@@ -13,7 +13,7 @@ import {
 import {
   imageReferences,
   stillImage,
-} from "../../shared/document-image-validation.js";
+} from "../../shared/documents/document-image-validation.js";
 import { requireThat } from "../../shared/validation.js";
 
 // Host byte storage is independent of the team DB engine. Node retains the same

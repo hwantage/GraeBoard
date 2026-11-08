@@ -11,7 +11,7 @@ import {
   allowedLinkTitleAddress,
   extractLinkTitle,
   requestLinkTitle,
-} from "../shared/link-title.mjs";
+} from "../shared/http/link-title.mjs";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, now } from "../server/db.mjs";
 

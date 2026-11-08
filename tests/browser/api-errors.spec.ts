@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 test.beforeEach(async ({ page }) => {
   await page.request.post("/api/auth/login", {

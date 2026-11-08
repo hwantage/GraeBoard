@@ -12,7 +12,7 @@ import {
   documentImageUrls,
   withDocumentImageReferences,
   withPreparedDocumentImageReferences,
-} from "../shared/document-image-references.js";
+} from "../shared/documents/document-image-references.js";
 import { createApp } from "../server/app.mjs";
 import { createDocumentImagePreparation } from "../server/document-image-preparation.mjs";
 import { openDatabase, insertTask, json, transaction } from "../server/db.mjs";
@@ -33,7 +33,7 @@ import { project, validateSnapshot } from "../server/sync/reducer.mjs";
 import { SyncService } from "../server/sync/service.mjs";
 import { imageReferences } from "../worker/images.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 const parseChannel = channel("graeboard.document-images.parse");
 function parses(t, writer = () => false) {

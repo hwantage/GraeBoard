@@ -3,7 +3,7 @@ import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { closeHistory } from "@milkdown/kit/prose/history";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { api } from "../../platform/api";
-import { parseDocumentLinkPath } from "../../../shared/document-links.js";
+import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 
 type Pending = { from: number; to: number; href: string };
 const pendingTitles = new PluginKey<Map<object, Pending>>("documentLinkTitles");

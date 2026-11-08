@@ -1,7 +1,7 @@
 import { $nodeSchema } from "@milkdown/kit/utils";
 import type { Node } from "@milkdown/kit/prose/model";
 import type { EditorView, NodeView } from "@milkdown/kit/prose/view";
-import { parseDocumentLinkPath } from "../../../shared/document-links.js";
+import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import {
   UNAVAILABLE_LINK_MESSAGE,
   documentLinkHref,

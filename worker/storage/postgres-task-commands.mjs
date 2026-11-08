@@ -7,8 +7,8 @@ import {
   planTaskReorder,
   taskInsertionPlan,
 } from "../../server/storage/task-command-rules.mjs";
-import { normalizeCellStyle } from "../../shared/formatting.js";
-import { styleNormalizer } from "../../shared/compact.js";
+import { normalizeCellStyle } from "../../shared/formatting/formatting.js";
+import { styleNormalizer } from "../../shared/formatting/compact.js";
 import { z } from "zod";
 import {
   normalizeView,

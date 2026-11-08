@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, taskId: string;
 async function get(page: Page, path: string) {

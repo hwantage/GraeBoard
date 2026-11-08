@@ -6,7 +6,7 @@ import {
   sealTransfer,
   verifyTransfer,
   portableHash,
-} from "../../shared/logical-format.mjs";
+} from "../../shared/transfer/logical-format.mjs";
 import { canonical, digest, entityId, ENTITIES } from "../sync/protocol.mjs";
 import { SqliteDatabase } from "./sqlite.mjs";
 import { allEntities, materialize } from "../sync/entities.mjs";

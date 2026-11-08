@@ -1,9 +1,9 @@
 import {
   CONTROL_ROUTES,
   matchBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { ControlBusinessService } from "../server/storage/control-service.mjs";
-import { deploymentSite } from "../shared/site-mode.js";
+import { deploymentSite } from "../shared/site/site-mode.js";
 import { PostgresControlRepository } from "./storage/postgres-control.mjs";
 import { assertDatabaseCapacity, capacityLimits } from "./capacity.mjs";
 import {
@@ -13,12 +13,12 @@ import {
 } from "../shared/domain.js";
 import { assert, verifySetupToken, HttpError } from "./access.mjs";
 import { controlTransaction, databaseFor, withData } from "./data.mjs";
-import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
+import { profiles, profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { authenticateSite } from "./site-auth.mjs";
 import { R2ImageStore } from "./images.mjs";
-import { profileFields } from "../shared/profiles.js";
+import { profileFields } from "../shared/identity/profiles.js";
 import { z } from "zod";
-import { withDocumentImageReferences } from "../shared/document-image-references.js";
+import { withDocumentImageReferences } from "../shared/documents/document-image-references.js";
 import { imageReferences } from "./images.mjs";
 
 import { PostgresControlStore, userRecord } from "./storage/control-store.mjs";

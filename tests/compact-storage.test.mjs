@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, insertTask, getTask, json, now } from "../server/db.mjs";
 import { DEFAULT_SETTINGS, weeksForYear, cell } from "../shared/domain.js";
-import { pack, unpack, stringify, parseCompact } from "../shared/compact.js";
+import { pack, unpack, stringify, parseCompact } from "../shared/formatting/compact.js";
 
 async function fixture(t) {
   const db = openDatabase(":memory:"),

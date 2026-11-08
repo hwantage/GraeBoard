@@ -15,7 +15,7 @@ import {
   conflictOrigin,
   conflictPeople,
   pendingResolutions,
-} from "../../shared/conflict-origin.js";
+} from "../../shared/sync/conflict-origin.js";
 
 import { createSyncStatusReader } from "./node-status.mjs";
 const id = (req) => req.params.id;

@@ -1,5 +1,5 @@
-import { DatabaseAdapter } from "../../shared/database-adapter.js";
-import { createTeamStore, executeSync } from "../../shared/sync-team-store.mjs";
+import { DatabaseAdapter } from "../../shared/storage/database-adapter.js";
+import { createTeamStore, executeSync } from "../../shared/sync/sync-team-store.mjs";
 import { assertSqliteHistory, sqliteVersion } from "../migrations/sqlite.mjs";
 
 const statements = new WeakMap();

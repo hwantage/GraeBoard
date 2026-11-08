@@ -1,4 +1,4 @@
-import { scopeKey } from "../../shared/formatting.js";
+import { scopeKey } from "../../shared/formatting/formatting.js";
 /** @typedef {import("../types").Task} Task */
 /** @typedef {import("../types").Point} Point */
 /** @typedef {import("../types").Selection} Selection */

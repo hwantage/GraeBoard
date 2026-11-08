@@ -584,7 +584,7 @@ rm /private/external-import.env
 
 ### 최초 게시 스냅샷의 용량 초과
 
-`Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
+`Snapshot exceeds uncompressed byte budget`은 `server/sync/snapshot.mjs`의 `encodeSnapshot`에서 발생합니다. 압축 전 canonical UTF-8 JSON이 `shared/sync/sync-limits.js`의 snapshot 상한(현재 **64 MiB**, 상향 전 **24 MiB**)을 넘었다는 뜻입니다. 최초 게시용 고정 bundle을 저장할 때와 Git snapshot을 만들 때 같은 검사를 사용합니다. SQLite 파일 크기나 이미지 폴더 전체 크기를 검사한 결과가 아닙니다. 이미지 바이트는 별도 Git 객체로 전송합니다.
 
 게시 측과 수신 측의 상한을 함께 확인해야 합니다.
 

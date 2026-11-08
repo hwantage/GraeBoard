@@ -1,7 +1,7 @@
 import { PostgresTaskCommands } from "./postgres-task-commands.mjs";
 import { canManageTeam, periodYears } from "../../shared/domain.js";
-import { scopeKey, scopeMatches } from "../../shared/formatting.js";
-import { styleNormalizer, stringify } from "../../shared/compact.js";
+import { scopeKey, scopeMatches } from "../../shared/formatting/formatting.js";
+import { styleNormalizer, stringify } from "../../shared/formatting/compact.js";
 import { validateCellValue } from "../../shared/validation.js";
 import { equal, digest } from "../../server/sync/protocol.mjs";
 import { assert } from "../access.mjs";

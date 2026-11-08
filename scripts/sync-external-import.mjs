@@ -9,8 +9,8 @@ import { GitHubApiTransport } from "../worker/git.mjs";
 import { importTeam, imageSync } from "../worker/sync.mjs";
 import { materialize } from "../worker/materialize.mjs";
 import { R2ImageStore } from "../worker/images.mjs";
-import { profileFor, siteTeamId } from "../shared/sync-profiles.js";
-import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync-limits.js";
+import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync/sync-limits.js";
 
 // A first import reads every object of the genesis commit (one GitHub request
 // per image), which exceeds the per-invocation budget of a hosted runtime. The

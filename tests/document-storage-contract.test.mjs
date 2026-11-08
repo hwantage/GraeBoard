@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import sharp from "sharp";
 import { materialize } from "../worker/materialize.mjs";
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { stringify, parseCompact } from "../shared/compact.js";
+import { stringify, parseCompact } from "../shared/formatting/compact.js";
 
 // A bounded replay buffer for the single-server deployment. A new process or
 // an expired cursor requests a DB snapshot instead of silently losing edits.

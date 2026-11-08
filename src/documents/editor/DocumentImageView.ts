@@ -17,7 +17,7 @@ import {
   documentImageSource,
   documentImageWidth,
   withDocumentImageWidth,
-} from "../../../shared/document-images.js";
+} from "../../../shared/documents/document-images.js";
 
 import type { DocumentImages } from "../document-storage";
 

@@ -1,7 +1,7 @@
 import {
   SYSTEM_AUDIT_ROUTES,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { AdminHistoryBusinessService } from "./storage/admin-history-service.mjs";
 import { SqliteAdminHistoryRepository } from "./storage/sqlite-admin-history.mjs";
 export function installSystemAuditRoutes(app, { db }) {

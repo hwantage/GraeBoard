@@ -9,7 +9,7 @@ import {
   postgresBusinessFixture,
 } from "./business-storage-fixture.mjs";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
 import { revertToV33 } from "./sqlite-legacy-schema.mjs";
@@ -30,7 +30,7 @@ import {
 import {
   ACCESS_TOKEN_CHECKSUM,
   postgresHistoryVersion,
-} from "../shared/postgres-schema-version.js";
+} from "../shared/storage/postgres-schema-version.js";
 import { accessTokenRoutes } from "../worker/access-tokens.mjs";
 import { stateHash } from "../server/sync/protocol.mjs";
 const convert = sqliteSheetCloneConversion({});

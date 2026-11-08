@@ -23,7 +23,7 @@ import { auditRoutes, historyCleanupRoutes } from "../worker/history.mjs";
 import { eventResponse } from "../worker/events.mjs";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 // The contract suites exercise the actual external route dispatcher. The only
 // authentication stub is a synthetic identity selected by the fixture's user ID;

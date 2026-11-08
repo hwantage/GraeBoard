@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText, ListFilter, Search } from "lucide-react";
-import { addDays } from "../../shared/calendar.js";
+import { addDays } from "../../shared/calendar/calendar.js";
 import { propertiesFor } from "../../shared/domain.js";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import { api, send } from "../platform/api";

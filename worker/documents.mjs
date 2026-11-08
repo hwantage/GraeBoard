@@ -1,9 +1,9 @@
 import { assert } from "./access.mjs";
 import { R2ImageStore, convertImage } from "./images.mjs";
 import { databaseFor } from "./data.mjs";
-import { profileFor } from "../shared/sync-profiles.js";
+import { profileFor } from "../shared/sync/sync-profiles.js";
 import { authenticate } from "./control.mjs";
-import { documentRouteScope } from "../shared/document-routes.js";
+import { documentRouteScope } from "../shared/documents/document-routes.js";
 import { DocumentBusinessService } from "../server/storage/document-service.mjs";
 import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";
 export {

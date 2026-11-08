@@ -4,7 +4,7 @@ import { installAccessTokenRoutes } from "./access-tokens.mjs";
 import { installLocalAuth } from "./local-auth.mjs";
 import { createSqliteAccess } from "./sqlite-access.mjs";
 import { installControlBusinessRoutes } from "./control-business-routes.mjs";
-import { deploymentSite } from "../shared/site-mode.js";
+import { deploymentSite } from "../shared/site/site-mode.js";
 import { SqliteControlRepository } from "./storage/sqlite-control.mjs";
 import { installTaskBusinessRoutes } from "./task-business-routes.mjs";
 import { installHistoryServiceRoutes } from "./history-service-routes.mjs";

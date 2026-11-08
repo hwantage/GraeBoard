@@ -6,8 +6,8 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
-import { addDays, calendarWeek } from "../../shared/calendar.js";
+import { unpack } from "../../shared/formatting/compact.js";
+import { addDays, calendarWeek } from "../../shared/calendar/calendar.js";
 import { todayKey } from "../../shared/domain.js";
 
 const mobile = { width: 390, height: 844 };

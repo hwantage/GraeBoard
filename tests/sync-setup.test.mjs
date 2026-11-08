@@ -16,7 +16,7 @@ import { parseEnv } from "node:util";
 import { once } from "node:events";
 import { openDatabase } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import {
   createSyncSetupConfig,
   patchSyncEnv,
@@ -27,7 +27,7 @@ import {
   setupStep,
   validateSetupStep,
   syncVerification,
-} from "../shared/sync-setup.js";
+} from "../shared/sync/sync-setup.js";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-setup-"));

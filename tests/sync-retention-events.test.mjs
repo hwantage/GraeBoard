@@ -16,7 +16,7 @@ import { openDatabase, getTask, json } from "../server/db.mjs";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { entityId, canonical, stateHash } from "../server/sync/protocol.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { documentStream } from "./document-events-helper.mjs";
 
 async function fixture(t) {

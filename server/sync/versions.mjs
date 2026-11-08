@@ -10,7 +10,7 @@ import {
 import {
   packSheetCloneData,
   unpackSheetCloneData,
-} from "../../shared/sheet-clone-sync-data.js";
+} from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 export const splitSheetCloneRecord = (record) => {
   if (!record) return [];

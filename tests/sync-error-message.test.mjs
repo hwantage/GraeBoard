@@ -4,9 +4,9 @@ import { once } from "node:events";
 import express from "express";
 import { installHttpFallback } from "../server/http-boundary.mjs";
 import { createWorker } from "../worker/entry.mjs";
-import { syncErrorMessage } from "../shared/sync-error-message.js";
-import { apiErrorMessage } from "../shared/api-error-message.js";
-import { unpack } from "../shared/compact.js";
+import { syncErrorMessage } from "../shared/sync/sync-error-message.js";
+import { apiErrorMessage } from "../shared/http/api-error-message.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 test("sync diagnostics distinguish capacity, trust, authorization and rate limits without reflecting private details", () => {
   for (const [error, expected] of [

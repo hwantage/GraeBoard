@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 for (const status of ["unconnected", "importing"] as const) {
   const heading =

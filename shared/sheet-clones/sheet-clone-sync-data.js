@@ -1,4 +1,4 @@
-import { pack, unpack } from "./compact.js";
+import { pack, unpack } from "../formatting/compact.js";
 
 // 사본(sheetClone) 엔티티의 payload.data는 SQLite BLOB·HTTP 응답과 같은 공유 사전 형태
 // `{ $styles, $formats, $data }`로 동기화한다. 업무마다 반복되는 공통 서식 규칙과

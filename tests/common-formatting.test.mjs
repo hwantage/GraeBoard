@@ -18,11 +18,11 @@ import {
   copyRowFormatting,
   resetCellStyle,
   rowFontSize,
-} from "../shared/formatting.js";
-import { pack, unpack, stringify } from "../shared/compact.js";
+} from "../shared/formatting/formatting.js";
+import { pack, unpack, stringify } from "../shared/formatting/compact.js";
 import { encodeSheetClone, decodeSheetClone } from "../server/sheet-clones.mjs";
 import { formatScopes } from "../src/sheet/format-selection.js";
-import { applyBorderPreset } from "../shared/borders.js";
+import { applyBorderPreset } from "../shared/formatting/borders.js";
 
 async function fixture(t) {
   const db = openDatabase(":memory:"),

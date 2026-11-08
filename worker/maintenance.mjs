@@ -1,4 +1,4 @@
-import { recoverBackupJob } from "../shared/backup-recovery.mjs";
+import { recoverBackupJob } from "../shared/transfer/backup-recovery.mjs";
 import {
   MaintenanceService,
   maintenanceRevision,
@@ -9,7 +9,7 @@ import {
   retentionKey,
 } from "../server/sync/retention.mjs";
 import { databaseFor } from "./data.mjs";
-import { profileFor } from "../shared/sync-profiles.js";
+import { profileFor } from "../shared/sync/sync-profiles.js";
 import { materialize } from "./sync.mjs";
 import { R2ImageStore } from "./images.mjs";
 import { GitHubApiTransport } from "./git.mjs";

@@ -1,4 +1,4 @@
-import { receiptCapacity } from "../shared/sync-capacity.mjs";
+import { receiptCapacity } from "../shared/sync/sync-capacity.mjs";
 import {
   RESOLUTION_PENDING,
   conflictOpIds,
@@ -6,12 +6,12 @@ import {
   conflictPeople,
   pendingResolutions,
   resolvesAny,
-} from "../shared/conflict-origin.js";
+} from "../shared/sync/conflict-origin.js";
 import {
   SYSTEM_AUDIT_ROUTES,
   matchBusinessRoute,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
 import { PostgresAdminHistoryRepository } from "./storage/postgres-admin-history.mjs";
 import { PostgresDatabase } from "./storage/postgres.mjs";
@@ -23,7 +23,7 @@ import {
   PROTOCOL,
 } from "../server/sync/protocol.mjs";
 import { assert } from "./access.mjs";
-import { profiles, profileFor, siteTeamId } from "../shared/sync-profiles.js";
+import { profiles, profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import {
   controlTransaction,
   databaseFor,

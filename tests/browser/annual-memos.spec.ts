@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 test("메모 아코디언은 저장 실패 시 열린 상태를 보존하고 로컬 저장소 없이도 조작할 수 있다", async ({

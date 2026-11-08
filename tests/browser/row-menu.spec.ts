@@ -1,4 +1,4 @@
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { defaultView, weeksForYear } from "../../shared/domain.js";

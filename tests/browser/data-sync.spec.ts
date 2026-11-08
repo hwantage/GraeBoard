@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { GitCliTransport } from "../../server/sync/git-cli.mjs";
 import { createApp } from "../../server/app.mjs";
 import { openDatabase } from "../../server/db.mjs";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 
 let db: ReturnType<typeof openDatabase>;
 let app: ReturnType<typeof createApp>;

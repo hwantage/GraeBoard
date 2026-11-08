@@ -11,7 +11,7 @@ import {
   readDeployConfig,
   workerOrigin,
 } from "../scripts/team-site-deploy.mjs";
-import { setupExamples } from "../shared/sync-setup.js";
+import { setupExamples } from "../shared/sync/sync-setup.js";
 
 const key = () => randomBytes(32).toString("base64");
 function siteEnv() {

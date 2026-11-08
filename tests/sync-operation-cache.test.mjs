@@ -15,7 +15,7 @@ import {
 } from "../server/sync/protocol.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import { reduce } from "../server/sync/reducer.mjs";
-import { SYNC_OPERATION_MAX_BYTES } from "../shared/sync-limits.js";
+import { SYNC_OPERATION_MAX_BYTES } from "../shared/sync/sync-limits.js";
 
 const identity = { teamId: "cache-team", repoId: "cache-repo" };
 const state = () => ({

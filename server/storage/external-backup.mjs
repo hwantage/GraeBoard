@@ -13,12 +13,12 @@ import {
   databaseRow,
   portableHash,
   verifyTransfer,
-} from "../../shared/logical-format.mjs";
+} from "../../shared/transfer/logical-format.mjs";
 import { canonical, digest, entityId } from "../sync/protocol.mjs";
 import { imageReferences, activeImageReferences } from "../sync/retention.mjs";
 import { project } from "../sync/reducer.mjs";
-import { postgresHistoryVersion } from "../../shared/postgres-schema-version.js";
-import { unfinishedJobError } from "../../shared/backup-recovery.mjs";
+import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
+import { unfinishedJobError } from "../../shared/transfer/backup-recovery.mjs";
 
 const CONTROL_TABLES = [
   "control_meta",

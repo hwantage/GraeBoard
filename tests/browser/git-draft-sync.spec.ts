@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { GitCliTransport } from "../../server/sync/git-cli.mjs";
 import { createApp } from "../../server/app.mjs";
 import { openDatabase, getTask } from "../../server/db.mjs";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { todayKey } from "../../shared/domain.js";
 
 test("실제 Git 수신은 미저장 입력을 보존하고 열린 꼬리 메모를 양방향 갱신한다", async ({

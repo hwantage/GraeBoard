@@ -1,4 +1,4 @@
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { readPreferences, writePreferences } from "./preferences";
 import {
   test,

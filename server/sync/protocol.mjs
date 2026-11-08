@@ -4,16 +4,16 @@ import {
   syncCanonicalCache,
   rememberSyncCanonical,
 } from "./sync-operation-cache.mjs";
-import { SYNC_OPERATION_MAX_BYTES } from "../../shared/sync-limits.js";
-import { documentImageUrls } from "../../shared/document-image-references.js";
+import { SYNC_OPERATION_MAX_BYTES } from "../../shared/sync/sync-limits.js";
+import { documentImageUrls } from "../../shared/documents/document-image-references.js";
 import {
   DOCUMENT_IMAGE_PATTERN,
   isDocumentImage,
-} from "../../shared/document-images.js";
+} from "../../shared/documents/document-images.js";
 import {
   normalizeEntityPayload,
   unpackSheetCloneData,
-} from "../../shared/sheet-clone-sync-data.js";
+} from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 // Protocol 3 keeps a sheet clone as one record, as protocol 1 did; protocol 4
 // splits it into rows and cells, as protocol 2 did. Protocols 1 and 2 named the
 // same records `report`. A team's shared history reaches 3 or 4 only through

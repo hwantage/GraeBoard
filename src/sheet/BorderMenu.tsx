@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Eraser, Grid2X2 } from "lucide-react";
 import BorderControls from "./BorderControls";
 import { usePopover } from "../ui/usePopover";
-import { BORDER_PRESETS } from "../../shared/borders.js";
+import { BORDER_PRESETS } from "../../shared/formatting/borders.js";
 import type { Border, BorderPreset } from "../types";
 
 // 아이콘에서 강조할 선. 바깥 네 변과 가운데 가로·세로선.

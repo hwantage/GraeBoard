@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { defaultView, normalizeView, cell } from "../../shared/domain.js";
 import { pickColor } from "./colors";
 

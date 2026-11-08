@@ -1,14 +1,14 @@
-import { DatabaseAdapter } from "../../shared/database-adapter.js";
+import { DatabaseAdapter } from "../../shared/storage/database-adapter.js";
 import {
   createTeamStore,
   executeAsync,
   prepareStatePatch,
-} from "../../shared/sync-team-store.mjs";
+} from "../../shared/sync/sync-team-store.mjs";
 import { digest } from "../../server/sync/protocol.mjs";
 import {
   postgresHistoryVersion,
   postgresLayout,
-} from "../../shared/postgres-schema-version.js";
+} from "../../shared/storage/postgres-schema-version.js";
 
 export class PostgresDatabase extends DatabaseAdapter {
   constructor(

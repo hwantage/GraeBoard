@@ -5,7 +5,7 @@ import {
 import { splitSheetCloneRecord } from "./versions.mjs";
 import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
 import { HttpError } from "../../shared/validation.js";
-import { LINK_METADATA_COLUMNS } from "../../shared/sync-team-store.mjs";
+import { LINK_METADATA_COLUMNS } from "../../shared/sync/sync-team-store.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { readEntity, isCalendarDocument } from "./entities.mjs";

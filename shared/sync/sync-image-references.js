@@ -1,4 +1,4 @@
-import { documentImageUrls } from "./document-image-references.js";
+import { documentImageUrls } from "../documents/document-image-references.js";
 export function syncImageReferences(state) {
   const markdowns = [];
   for (const e of Object.values(state.entities))

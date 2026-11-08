@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
-import { localHistoryMaintenance } from "../shared/local-history-maintenance.mjs";
-import { executeSync, executeAsync } from "../shared/sync-team-store.mjs";
+import { localHistoryMaintenance } from "../shared/sync/local-history-maintenance.mjs";
+import { executeSync, executeAsync } from "../shared/sync/sync-team-store.mjs";
 import { canonical, digest, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany } from "../server/sync/reducer.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";

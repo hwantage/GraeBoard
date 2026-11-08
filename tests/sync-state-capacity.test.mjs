@@ -10,7 +10,7 @@ import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { allEntities } from "../server/sync/entities.mjs";
 import { canonical, emptyState, stateHash } from "../server/sync/protocol.mjs";
-import { unpackSheetCloneData } from "../shared/sheet-clone-sync-data.js";
+import { unpackSheetCloneData } from "../shared/sheet-clones/sheet-clone-sync-data.js";
 import { decodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
   capacityLimits,

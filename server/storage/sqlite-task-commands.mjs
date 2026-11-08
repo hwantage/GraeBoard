@@ -31,7 +31,7 @@ import {
   normalizeView,
   viewLayout,
 } from "../../shared/domain.js";
-import { taskAuditSnapshot } from "../../shared/formatting.js";
+import { taskAuditSnapshot } from "../../shared/formatting/formatting.js";
 import { retentionView } from "../sync/visibility.mjs";
 import { withTaskDocuments } from "../task-documents.mjs";
 import { validateDocumentImages } from "../document-images.mjs";

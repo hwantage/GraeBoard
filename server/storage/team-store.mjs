@@ -1,1 +1,1 @@
-export * from "../../shared/sync-team-store.mjs";
+export * from "../../shared/sync/sync-team-store.mjs";

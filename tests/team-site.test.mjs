@@ -21,7 +21,7 @@ import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { openDatabase, json } from "../server/db.mjs";
 import { createApp } from "../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { GitCliTransport } from "../server/sync/git-cli.mjs";
 import { createWorker } from "../worker/entry.mjs";
 import { createEdgeHandler } from "../edge/handler.mjs";
@@ -29,8 +29,8 @@ import { createGateway } from "../worker/gateway.mjs";
 import { onRequest as pagesRequest } from "../functions/[[path]].js";
 import { refreshDirectory } from "../worker/directory.mjs";
 import { refreshSetupKeys, syncSetupKeyStatus } from "../worker/setup-keys.mjs";
-import { portableHash } from "../shared/logical-format.mjs";
-import { profiles } from "../shared/sync-profiles.js";
+import { portableHash } from "../shared/transfer/logical-format.mjs";
+import { profiles } from "../shared/sync/sync-profiles.js";
 import { githubEmulator, bucket } from "./worker-github-fixture.mjs";
 import {
   backupExternal,

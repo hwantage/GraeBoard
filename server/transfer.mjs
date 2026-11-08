@@ -1,4 +1,4 @@
-import { TRANSFER_ROUTES } from "../shared/business-routes.js";
+import { TRANSFER_ROUTES } from "../shared/http/business-routes.js";
 import { TransferBusinessService } from "./storage/transfer-service.mjs";
 import { SqliteTransferRepository } from "./storage/sqlite-transfer.mjs";
 import multer from "multer";

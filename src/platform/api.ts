@@ -1,8 +1,8 @@
-import { stringify, unpack } from "../../shared/compact.js";
+import { stringify, unpack } from "../../shared/formatting/compact.js";
 import {
   apiErrorMessage,
   retryAfterMs,
-} from "../../shared/api-error-message.js";
+} from "../../shared/http/api-error-message.js";
 import { siteFor } from "./site";
 
 // Distinguish this page from other tabs, including tabs signed in as the same user.

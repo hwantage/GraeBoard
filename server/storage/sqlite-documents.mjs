@@ -1,4 +1,4 @@
-import { withPreparedDocumentImageReferences } from "../../shared/document-image-references.js";
+import { withPreparedDocumentImageReferences } from "../../shared/documents/document-image-references.js";
 import { z } from "zod";
 import { calendarPreview } from "./calendar-service.mjs";
 import { createHash } from "node:crypto";
@@ -17,7 +17,7 @@ import {
   DEFAULT_DOCUMENT_TITLE,
   MAX_TASK_DOCUMENTS,
   hasDocumentContent,
-} from "../../shared/task-documents.js";
+} from "../../shared/documents/task-documents.js";
 import { retentionView } from "../sync/visibility.mjs";
 import {
   getTaskDocument,

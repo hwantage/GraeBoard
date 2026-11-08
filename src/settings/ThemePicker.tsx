@@ -1,6 +1,6 @@
 import { useId, type CSSProperties } from "react";
 import { Check } from "lucide-react";
-import { THEMES, themeVariables } from "../../shared/themes.js";
+import { THEMES, themeVariables } from "../../shared/formatting/themes.js";
 import type { ThemeId } from "../types";
 
 export default function ThemePicker({

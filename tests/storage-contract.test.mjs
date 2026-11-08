@@ -21,7 +21,7 @@ import {
 } from "../server/migrations/postgres.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
-import { POSTGRES_CHECKSUMS } from "../shared/postgres-schema-version.js";
+import { POSTGRES_CHECKSUMS } from "../shared/storage/postgres-schema-version.js";
 import { canonical, digest, entityId } from "../server/sync/protocol.mjs";
 
 const link = (teamId) => ({

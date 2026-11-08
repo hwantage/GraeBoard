@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { THEME_IDS } from "../../shared/themes.js";
+import { THEME_IDS } from "../../shared/formatting/themes.js";
 import {
   DEFAULT_SETTINGS,
   isSystemAdmin,
@@ -21,7 +21,7 @@ import {
   audit,
 } from "../db.mjs";
 import { requireThat } from "../../shared/validation.js";
-import { profileFields } from "../../shared/profiles.js";
+import { profileFields } from "../../shared/identity/profiles.js";
 import { deleteTeam } from "../team-deletion.mjs";
 import { removeTeamDocumentImages } from "../document-images.mjs";
 import {

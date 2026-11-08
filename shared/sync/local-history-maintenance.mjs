@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { canonical, digest } from "../server/sync/protocol.mjs";
+import { canonical, digest } from "../../server/sync/protocol.mjs";
 import { executeSync, executeAsync } from "./sync-team-store.mjs";
-import { requireThat } from "./http-error.js";
+import { requireThat } from "../http/http-error.js";
 
 const MAX_ROWS = 500,
   MAX_BYTES = 10 * 1024 * 1024;

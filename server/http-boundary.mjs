@@ -7,13 +7,13 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-import { pack, unpack } from "../shared/compact.js";
+import { pack, unpack } from "../shared/formatting/compact.js";
 import { now } from "./db.mjs";
 import { HttpError } from "../shared/validation.js";
 import {
   isSyncRequest,
   syncErrorMessage,
-} from "../shared/sync-error-message.js";
+} from "../shared/sync/sync-error-message.js";
 
 export function installHttpBoundary(app) {
   app.disable("x-powered-by");

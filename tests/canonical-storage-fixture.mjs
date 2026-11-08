@@ -1,6 +1,6 @@
 // Adapter contract fixture only. Production SQLite commits use the snapshot/lease
 // guarded Node mutation bridge, never this generic transaction helper.
-import { prepareStatePatch } from "../shared/sync-team-store.mjs";
+import { prepareStatePatch } from "../shared/sync/sync-team-store.mjs";
 import { digest } from "../server/sync/protocol.mjs";
 export function commitCanonicalForTest(
   adapter,

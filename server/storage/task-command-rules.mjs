@@ -1,4 +1,4 @@
-import { copyRowFormatting } from "../../shared/formatting.js";
+import { copyRowFormatting } from "../../shared/formatting/formatting.js";
 import {
   requireThat,
   HttpError,

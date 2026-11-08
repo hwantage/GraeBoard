@@ -7,14 +7,14 @@ import {
   pendingResolutions,
   resolvesAny,
   writerOpId,
-} from "../shared/conflict-origin.js";
+} from "../shared/sync/conflict-origin.js";
 import {
   conflictChanges,
   conflictEditors,
   describeOrigin,
   describeWriters,
   originLabel,
-} from "../shared/conflict-diff.js";
+} from "../shared/sync/conflict-diff.js";
 
 const id = (entity, key) => JSON.stringify([entity, key]);
 const record = (key, version) => ({

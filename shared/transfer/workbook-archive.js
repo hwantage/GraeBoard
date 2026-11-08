@@ -1,4 +1,4 @@
-import { requireThat } from "./http-error.js";
+import { requireThat } from "../http/http-error.js";
 
 // Read ZIP central-directory sizes before ExcelJS allocates the XML contents.
 export function checkWorkbookArchive(buffer) {

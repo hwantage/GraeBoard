@@ -1,1 +1,1 @@
-export * from "../../shared/database-adapter.js";
+export * from "../../shared/storage/database-adapter.js";

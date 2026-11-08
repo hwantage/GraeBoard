@@ -1,7 +1,7 @@
 import { Worker } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
-import { documentImageUrls } from "../shared/document-image-references.js";
-import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
+import { documentImageUrls } from "../shared/documents/document-image-references.js";
+import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
 import { HttpError } from "../shared/validation.js";
 
 const prefix = "/api/document-images/";

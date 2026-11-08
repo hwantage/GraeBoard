@@ -1,5 +1,5 @@
 import { applicationEntities } from "./versions.mjs";
-import { syncImageReferences } from "../../shared/sync-image-references.js";
+import { syncImageReferences } from "../../shared/sync/sync-image-references.js";
 import { encodeStoredSnapshot, decodeStoredSnapshot } from "./snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
@@ -17,7 +17,7 @@ import { makeOperation } from "./operations.mjs";
 import { HttpError, requireThat } from "../../shared/validation.js";
 import { reduceMany, project, validateSnapshot } from "./reducer.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
-import { prepareStatePatch } from "../../shared/sync-team-store.mjs";
+import { prepareStatePatch } from "../../shared/sync/sync-team-store.mjs";
 import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
 import {
@@ -38,7 +38,7 @@ import {
 import {
   RESOLUTION_PENDING,
   resolvesAny,
-} from "../../shared/conflict-origin.js";
+} from "../../shared/sync/conflict-origin.js";
 import {
   activeImageReferences,
   installImageReferences,

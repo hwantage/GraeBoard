@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createDocumentImagePreparation } from "../server/document-image-preparation.mjs";
-import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
+import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
 
 const marker = "/api/document-images/";
 const unavailable = (error) => error.status === 503;

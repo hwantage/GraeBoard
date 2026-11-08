@@ -1,4 +1,4 @@
-import { unpack } from "../../shared/compact.js";
+import { unpack } from "../../shared/formatting/compact.js";
 import { test, expect, type Page } from "@playwright/test";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";

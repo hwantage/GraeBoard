@@ -1,7 +1,7 @@
 import {
   placeCalendarEntry,
   compactCalendarEntries,
-} from "../../shared/calendar-layout.js";
+} from "../../shared/calendar/calendar-layout.js";
 import { z } from "zod";
 import {
   dateSchema,
@@ -20,15 +20,15 @@ import {
   CALENDAR_MEMBER_BATCH,
   addDays,
   daysBetween,
-} from "../../shared/calendar.js";
+} from "../../shared/calendar/calendar.js";
 import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
-} from "../../shared/calendar-tags.js";
+} from "../../shared/calendar/calendar-tags.js";
 import {
   DOCUMENT_LINK_BATCH,
   parseDocumentLinkPath,
-} from "../../shared/document-links.js";
+} from "../../shared/documents/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();

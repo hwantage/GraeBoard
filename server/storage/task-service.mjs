@@ -12,8 +12,8 @@ import {
   periodScopeSchema,
   requireThat,
 } from "../../shared/validation.js";
-import { normalizeCellStyle } from "../../shared/formatting.js";
-import { sameStyle } from "../../shared/compact.js";
+import { normalizeCellStyle } from "../../shared/formatting/formatting.js";
+import { sameStyle } from "../../shared/formatting/compact.js";
 
 export function validateCellCommandTime(createdAt, time = Date.now()) {
   const stamp = Date.parse(createdAt);

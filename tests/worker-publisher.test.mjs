@@ -15,7 +15,7 @@ import {
   scheduled,
   refreshTeam,
 } from "../worker/sync.mjs";
-import { profileFor } from "../shared/sync-profiles.js";
+import { profileFor } from "../shared/sync/sync-profiles.js";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { encodeSnapshot } from "../server/sync/snapshot.mjs";
 import {
@@ -24,7 +24,7 @@ import {
   stateHash,
   entityId,
 } from "../server/sync/protocol.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 function controlledClock(t) {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });

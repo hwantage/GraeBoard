@@ -21,7 +21,7 @@ import {
   freezeTeam,
   releaseTransfer,
 } from "../server/storage/logical-transfer.mjs";
-import { verifyTransfer } from "../shared/logical-format.mjs";
+import { verifyTransfer } from "../shared/transfer/logical-format.mjs";
 
 export async function openTransferDatabase({
   engine,

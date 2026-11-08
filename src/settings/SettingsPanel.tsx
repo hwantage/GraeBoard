@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Plus, Users, History, ScrollText, Plug } from "lucide-react";
 import type { Bootstrap, Team, TeamRole, User } from "../types";
 import { canManageTeam, teamRole } from "../../shared/domain.js";
-import { themeVariables } from "../../shared/themes.js";
+import { themeVariables } from "../../shared/formatting/themes.js";
 import { api } from "../platform/api";
 import { Modal, ErrorNote } from "../components";
 import Toast, { useToast } from "../ui/Toast";

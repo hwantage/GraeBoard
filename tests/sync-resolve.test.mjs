@@ -7,7 +7,7 @@ import { makeOperation } from "../server/sync/operations.mjs";
 import { entityId, stateHash } from "../server/sync/protocol.mjs";
 import { reduceMany, project } from "../server/sync/reducer.mjs";
 import { getTask } from "../server/db.mjs";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 async function fixture(t, rows = 3) {
   const f = await performanceFixture({ rows, users: 1, clients: 1 });

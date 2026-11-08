@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { THEMES, themeVariables } from "../../shared/themes.js";
+import { THEMES, themeVariables } from "../../shared/formatting/themes.js";
 import type { ThemeId } from "../types";
 
 type Theme = "light" | "dark";

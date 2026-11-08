@@ -1,6 +1,6 @@
 import { controlTransaction } from "../data.mjs";
-import { CALENDAR_DAYS } from "../../shared/calendar.js";
-import { userDto, directory } from "../../shared/control-records.js";
+import { CALENDAR_DAYS } from "../../shared/calendar/calendar.js";
+import { userDto, directory } from "../../shared/identity/control-records.js";
 
 export async function userRecord(tx, row) {
   const memberships = (

@@ -1,6 +1,6 @@
 import { audit, parse, transaction, pruneStyles } from "./db.mjs";
 import { requireThat } from "../shared/validation.js";
-import { stableId } from "../shared/workbook.mjs";
+import { stableId } from "../shared/transfer/workbook.mjs";
 
 export function deleteTeam(db, teamId, actorId) {
   return transaction(db, () => {

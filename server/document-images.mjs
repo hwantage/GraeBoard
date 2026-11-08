@@ -1,4 +1,4 @@
-import { documentRouteScope } from "../shared/document-routes.js";
+import { documentRouteScope } from "../shared/documents/document-routes.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -12,13 +12,13 @@ import {
 import { resolve, join, dirname } from "node:path";
 import multer from "multer";
 import sharp from "sharp";
-import { documentImageUrls } from "../shared/document-image-references.js";
-export { documentImageUrls } from "../shared/document-image-references.js";
+import { documentImageUrls } from "../shared/documents/document-image-references.js";
+export { documentImageUrls } from "../shared/documents/document-image-references.js";
 import {
   DOCUMENT_IMAGE_PATTERN,
   MAX_IMAGE_BYTES,
   isDocumentImage,
-} from "../shared/document-images.js";
+} from "../shared/documents/document-images.js";
 import { requireThat } from "../shared/validation.js";
 
 export const documentImagesDirectory = () =>

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { postgresFixture } from "./business-storage-fixture.mjs";
-import { parseCompact, unpack } from "../shared/compact.js";
+import { parseCompact, unpack } from "../shared/formatting/compact.js";
 
 async function openStream(
   t,

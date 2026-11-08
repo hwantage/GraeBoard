@@ -14,7 +14,7 @@ import {
   defaultView,
   weeksForYear,
 } from "../shared/domain.js";
-import { unpack } from "../shared/compact.js";
+import { unpack } from "../shared/formatting/compact.js";
 
 async function drainCommands(site, teamId) {
   const store = site.app.locals.sync.store(teamId);

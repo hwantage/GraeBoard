@@ -1,1 +1,1 @@
-export * from "../shared/profiles.js";
+export * from "../shared/identity/profiles.js";

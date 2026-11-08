@@ -26,10 +26,10 @@ import {
   type DocumentLinkOpener,
   type DocumentLinkTarget,
 } from "../documents/document-links";
-import { parseDocumentLinkPath } from "../../shared/document-links.js";
+import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
 import useCalendarTheme from "../calendar/useCalendarTheme";
-import { THEMES, getTheme, themeVariables } from "../../shared/themes.js";
-import { applyBorderPreset } from "../../shared/borders.js";
+import { THEMES, getTheme, themeVariables } from "../../shared/formatting/themes.js";
+import { applyBorderPreset } from "../../shared/formatting/borders.js";
 import { formatScopes } from "../sheet/format-selection.js";
 import {
   changeSelection,
@@ -39,7 +39,7 @@ import {
   sheetChanges,
   type ChangeTargets,
 } from "../sheet/selection-areas.js";
-import { copyRowFormatting, resetCellStyle } from "../../shared/formatting.js";
+import { copyRowFormatting, resetCellStyle } from "../../shared/formatting/formatting.js";
 import {
   useCallback,
   useEffect,
@@ -160,7 +160,7 @@ import ProfilePanel from "../auth/ProfilePanel";
 import AccessTokens from "../auth/AccessTokens";
 import FindBar from "../sheet/FindBar";
 import type { ClipboardMatrix } from "../sheet/clipboard";
-import { STYLE_KEYS } from "../../shared/compact.js";
+import { STYLE_KEYS } from "../../shared/formatting/compact.js";
 import {
   appendHistory,
   rebaseHistory,

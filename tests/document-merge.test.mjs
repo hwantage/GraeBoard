@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   mergeDocument,
   mapDocumentPosition,
-} from "../shared/document-merge.js";
+} from "../shared/documents/document-merge.js";
 
 test("문서 병합은 같은 줄의 독립 수정·여러 구간·한글과 이모지를 보존한다", () => {
   assert.equal(

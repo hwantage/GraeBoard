@@ -3,7 +3,7 @@ import {
   HISTORY_CLEANUP_ROUTES,
   matchBusinessRoute,
   callBusinessRoute,
-} from "../shared/business-routes.js";
+} from "../shared/http/business-routes.js";
 import { AdminHistoryBusinessService } from "../server/storage/admin-history-service.mjs";
 import { PostgresAdminHistoryRepository } from "./storage/postgres-admin-history.mjs";
 import { HistoryBusinessService } from "../server/storage/history-service.mjs";

@@ -3,7 +3,7 @@ import {
   historyRestoreSchema,
 } from "../../server/storage/history-service.mjs";
 import { assert } from "../access.mjs";
-import { unpackSheetClonePayload } from "../../shared/sheet-clone-sync-data.js";
+import { unpackSheetClonePayload } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 import { taskView } from "../task-view.mjs";
 import { sheetCloneView } from "../sheet-clones.mjs";
 import { TaskBusinessService } from "../../server/storage/task-service.mjs";

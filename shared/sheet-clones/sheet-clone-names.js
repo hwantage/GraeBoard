@@ -1,4 +1,4 @@
-import { requireThat } from "./http-error.js";
+import { requireThat } from "../http/http-error.js";
 
 // Share copy name limits and comparison between the browser and server.
 export const MAX_SHEET_CLONE_NAME_LENGTH = 50;

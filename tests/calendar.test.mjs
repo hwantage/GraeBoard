@@ -28,11 +28,11 @@ import {
   monthWeeks,
   moveMonth,
   moveCalendarRange,
-} from "../shared/calendar.js";
-import { placeCalendarEntry } from "../shared/calendar-layout.js";
-import { MAX_DOCUMENT_BYTES } from "../shared/task-documents.js";
-import { CALENDAR_TAG_COLORS } from "../shared/calendar-tags.js";
-import { unpack } from "../shared/compact.js";
+} from "../shared/calendar/calendar.js";
+import { placeCalendarEntry } from "../shared/calendar/calendar-layout.js";
+import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
+import { CALENDAR_TAG_COLORS } from "../shared/calendar/calendar-tags.js";
+import { unpack } from "../shared/formatting/compact.js";
 import { backupDatabase } from "../scripts/backup.mjs";
 import { restoreDatabase } from "../scripts/restore.mjs";
 

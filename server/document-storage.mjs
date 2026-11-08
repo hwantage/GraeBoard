@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { hasDocumentContent } from "../shared/task-documents.js";
+import { hasDocumentContent } from "../shared/documents/task-documents.js";
 import { decodeSheetClone, sheetCloneDocumentIndex } from "./sheet-clones.mjs";
 
 // Bodies are immutable. Each sheet owns its document references and titles.

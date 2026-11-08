@@ -1,5 +1,5 @@
 import { normalizeSearchQuery } from "../../shared/search.js";
-import { hasDocumentContent } from "../../shared/task-documents.js";
+import { hasDocumentContent } from "../../shared/documents/task-documents.js";
 import {
   CALENDAR_ROUTES,
   requireCalendarWrite,
@@ -25,11 +25,11 @@ import {
   nextCalendarCopyTitle,
   weeklyOrderStamps,
   CALENDAR_DAYS,
-} from "../../shared/calendar.js";
-import { firstCalendarLane } from "../../shared/calendar-layout.js";
-import { CALENDAR_TAG_COLORS } from "../../shared/calendar-tags.js";
+} from "../../shared/calendar/calendar.js";
+import { firstCalendarLane } from "../../shared/calendar/calendar-layout.js";
+import { CALENDAR_TAG_COLORS } from "../../shared/calendar/calendar-tags.js";
 import { equal } from "../../server/sync/protocol.mjs";
-import { siteTeamId } from "../../shared/sync-profiles.js";
+import { siteTeamId } from "../../shared/sync/sync-profiles.js";
 import { assert } from "../access.mjs";
 import {
   documentSummaries,

@@ -1,5 +1,5 @@
 import { HttpError } from "../../shared/validation.js";
-import { stringify } from "../../shared/compact.js";
+import { stringify } from "../../shared/formatting/compact.js";
 
 // The response port is shared by a dedicated HTTP response and EventChannel.
 // PostgreSQL admission/cursor/deltas come from the repository, while the host

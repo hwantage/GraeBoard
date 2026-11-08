@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../platform/api";
 import type { CalendarData } from "./calendar-types";
-import { CALENDAR_MEMBER_BATCH } from "../../shared/calendar.js";
+import { CALENDAR_MEMBER_BATCH } from "../../shared/calendar/calendar.js";
 
 export type CalendarQuery = { userId: string | null; from: string; to: string };
 type LoadedCalendar = {

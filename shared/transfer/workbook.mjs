@@ -1,15 +1,15 @@
 import ExcelJS from "exceljs/dist/exceljs.min.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { requireThat } from "./http-error.js";
-import { dateSchema } from "./date-validation.js";
+import { requireThat } from "../http/http-error.js";
+import { dateSchema } from "../date-validation.js";
 import { checkWorkbookArchive } from "./workbook-archive.js";
-import { explicitStyle } from "./formatting.js";
+import { explicitStyle } from "../formatting/formatting.js";
 import {
   BORDER_SIDES,
   weekBoundaryStyles,
   withWeekBoundaries,
-} from "./borders.js";
+} from "../formatting/borders.js";
 import {
   FONTS,
   MIN_FONT_SIZE,
@@ -26,7 +26,7 @@ import {
   sampleProperties,
   textMode,
   splitNames,
-} from "./domain.js";
+} from "../domain.js";
 
 const aliases = {
   category: ["분류", "category"],

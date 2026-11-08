@@ -1,4 +1,4 @@
-import { isSyncRequest, syncErrorMessage } from "./sync-error-message.js";
+import { isSyncRequest, syncErrorMessage } from "../sync/sync-error-message.js";
 
 const identifier = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value)

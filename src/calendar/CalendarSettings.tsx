@@ -11,7 +11,7 @@ import {
   canUseCalendarRuleProperty,
   CALENDAR_DAYS,
   DAY_LABELS,
-} from "../../shared/calendar.js";
+} from "../../shared/calendar/calendar.js";
 import type { CalendarContext, CalendarRule } from "./calendar-types";
 import type { FilterMode, Property, Task } from "../types";
 
