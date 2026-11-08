@@ -2,7 +2,7 @@ import { digest, entityId } from "../server/sync/protocol.mjs";
 import { project } from "../server/sync/reducer.mjs";
 import { pendingNeedsProjection } from "../server/sync/projection.mjs";
 import { installImageReferences } from "../server/sync/retention.mjs";
-import { imageReferences, stillImage } from "./images.mjs";
+import { imageReferences, stillImage } from "./documents/images.mjs";
 const skippedImage = (key, reason) =>
   console.warn("GraeBoard image skipped", JSON.stringify({ key, reason }));
 export function imageSync(database, profile, r2) {

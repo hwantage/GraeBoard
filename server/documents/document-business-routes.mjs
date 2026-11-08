@@ -1,9 +1,9 @@
-import { registerEventRoute } from "./event-streams.mjs";
+import { registerEventRoute } from "../event-streams.mjs";
 import {
   documentEventKey,
   documentCollectionKey,
-} from "./storage/document-service.mjs";
-import { documentRouteScope } from "../shared/documents/document-routes.js";
+} from "../storage/documents/document-service.mjs";
+import { documentRouteScope } from "../../shared/documents/document-routes.js";
 
 // Node document routes use SQLite permissions and retention. Body saves await
 // image preparation before entering the synchronous write transaction.

@@ -40,7 +40,7 @@ const sheetCloneTasks = (record) =>
 import {
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,
-} from "../server/document-storage.mjs";
+} from "../server/documents/document-storage.mjs";
 import { allEntities, readEntity } from "../server/sync/entities.mjs";
 import { SqliteDatabase } from "../server/storage/sqlite.mjs";
 import {

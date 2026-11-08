@@ -15,7 +15,7 @@ import {
   now,
   SCHEMA_VERSION,
 } from "../server/db.mjs";
-import { pruneDocumentVersions } from "../server/document-storage.mjs";
+import { pruneDocumentVersions } from "../server/documents/document-storage.mjs";
 import {
   DEFAULT_SETTINGS,
   defaultView,

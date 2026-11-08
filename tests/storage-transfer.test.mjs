@@ -17,12 +17,12 @@ import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import {
   writeDocumentImage,
   documentImagePath,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 import {
   verifyTransferAssets,
   exportTransferAssets,
 } from "../server/storage/logical-assets.mjs";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { SqliteDatabase, sqliteTeamStore } from "../server/storage/sqlite.mjs";
 import { PostgresDatabase } from "../worker/storage/postgres.mjs";
 import { migratePostgres } from "../server/migrations/postgres.mjs";

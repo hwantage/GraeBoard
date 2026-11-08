@@ -1,5 +1,5 @@
-import { normalizeSearchQuery } from "../../shared/search.js";
-import { hasDocumentContent } from "../../shared/documents/task-documents.js";
+import { normalizeSearchQuery } from "../../../shared/search.js";
+import { hasDocumentContent } from "../../../shared/documents/task-documents.js";
 import {
   CALENDAR_ROUTES,
   requireCalendarWrite,
@@ -14,10 +14,10 @@ import {
   matchesCalendarTaskFilters,
   uuid as idSchema,
   titleSchema,
-} from "../../server/storage/calendar-service.mjs";
+} from "../../../server/storage/calendar/calendar-service.mjs";
 import { z } from "zod";
-import { dateSchema } from "../../shared/validation.js";
-import { canManageTeam, todayKey } from "../../shared/domain.js";
+import { dateSchema } from "../../../shared/validation.js";
+import { canManageTeam, todayKey } from "../../../shared/domain.js";
 import {
   addDays,
   calendarWeek,
@@ -25,20 +25,20 @@ import {
   nextCalendarCopyTitle,
   weeklyOrderStamps,
   CALENDAR_DAYS,
-} from "../../shared/calendar/calendar.js";
-import { firstCalendarLane } from "../../shared/calendar/calendar-layout.js";
-import { CALENDAR_TAG_COLORS } from "../../shared/calendar/calendar-tags.js";
-import { equal } from "../../server/sync/protocol.mjs";
-import { siteTeamId } from "../../shared/sync/sync-profiles.js";
-import { assert } from "../access.mjs";
+} from "../../../shared/calendar/calendar.js";
+import { firstCalendarLane } from "../../../shared/calendar/calendar-layout.js";
+import { CALENDAR_TAG_COLORS } from "../../../shared/calendar/calendar-tags.js";
+import { equal } from "../../../server/sync/protocol.mjs";
+import { siteTeamId } from "../../../shared/sync/sync-profiles.js";
+import { assert } from "../../access.mjs";
 import {
   documentSummaries,
   taskCells,
   taskView,
   settingsFor,
   stamp,
-} from "../tasks.mjs";
-import { resolvePostgresDocumentLinks } from "./postgres-document-links.mjs";
+} from "../../tasks.mjs";
+import { resolvePostgresDocumentLinks } from "../documents/postgres-document-links.mjs";
 function validRange(date, endDate, query = false) {
   requireCalendarRange(date, endDate, { query });
 }

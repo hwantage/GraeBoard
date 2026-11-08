@@ -22,7 +22,7 @@ import {
   storeDocumentVersion,
   syncSheetCloneDocuments,
   storeSheetCloneDocuments,
-} from "../document-storage.mjs";
+} from "../documents/document-storage.mjs";
 import { encodeSheetClone, decodeSheetClone } from "../sheet-clones.mjs";
 import { hasDocumentContent } from "../../shared/documents/task-documents.js";
 import {

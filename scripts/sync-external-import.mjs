@@ -8,7 +8,7 @@ import { databaseFor, controlTransaction } from "../worker/data.mjs";
 import { GitHubApiTransport } from "../worker/git.mjs";
 import { importTeam, imageSync } from "../worker/sync.mjs";
 import { materialize } from "../worker/materialize.mjs";
-import { R2ImageStore } from "../worker/images.mjs";
+import { R2ImageStore } from "../worker/documents/images.mjs";
 import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { SYNC_SNAPSHOT_MAX_BYTES } from "../shared/sync/sync-limits.js";
 

@@ -1,34 +1,34 @@
 import {
   placeCalendarEntry,
   compactCalendarEntries,
-} from "../../shared/calendar/calendar-layout.js";
+} from "../../../shared/calendar/calendar-layout.js";
 import { z } from "zod";
 import {
   dateSchema,
   propertyFilterValuesSchema,
   propertyFilterModeSchema,
   requireThat,
-} from "../../shared/validation.js";
+} from "../../../shared/validation.js";
 import {
   canContribute,
   canManageTeam,
   matchesPropertyFilter,
-} from "../../shared/domain.js";
+} from "../../../shared/domain.js";
 import {
   calendarWeek,
   CALENDAR_MAX_RANGE_DAYS,
   CALENDAR_MEMBER_BATCH,
   addDays,
   daysBetween,
-} from "../../shared/calendar/calendar.js";
+} from "../../../shared/calendar/calendar.js";
 import {
   CALENDAR_TAG_COLORS,
   CALENDAR_TAG_LIMIT,
-} from "../../shared/calendar/calendar-tags.js";
+} from "../../../shared/calendar/calendar-tags.js";
 import {
   DOCUMENT_LINK_BATCH,
   parseDocumentLinkPath,
-} from "../../shared/documents/document-links.js";
+} from "../../../shared/documents/document-links.js";
 export const uuid = z.string().uuid();
 export const titleSchema = z.string().trim().min(1).max(120);
 const revisionSchema = z.number().int().nonnegative();

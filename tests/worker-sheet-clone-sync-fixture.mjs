@@ -11,7 +11,7 @@ import {
   getTask,
 } from "../server/db.mjs";
 import { encodeSheetClone } from "../server/sheet-clones.mjs";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import {
   defaultView,
   DEFAULT_SETTINGS,

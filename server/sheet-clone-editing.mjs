@@ -1,12 +1,12 @@
 import { prepareSheetCloneEdits } from "./storage/sheet-clone-command-rules.mjs";
-import { validateDocumentImages } from "./document-images.mjs";
+import { validateDocumentImages } from "./documents/document-images.mjs";
 import {
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,
   pruneDocumentVersions,
   sheetCloneDocumentContents,
   readSheetClone,
-} from "./document-storage.mjs";
+} from "./documents/document-storage.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {

@@ -7,16 +7,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, getTask, json, transaction } from "../server/db.mjs";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import {
   documentImagePath,
   writeDocumentImage,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 import {
   documentImageUrls,
   documentPayloadImageUrls,
 } from "../shared/documents/document-image-references.js";
-import { imageReferences as workerImageReferences } from "../worker/images.mjs";
+import { imageReferences as workerImageReferences } from "../worker/documents/images.mjs";
 import {
   activeImageReferences,
   installImageReferences,

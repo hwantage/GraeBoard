@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { performanceFixture } from "../scripts/sync-performance.mjs";
 import { transaction, upsertCellStatement, getTask } from "../server/db.mjs";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { encodeSheetClone } from "../server/sheet-clones.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { allEntities } from "../server/sync/entities.mjs";

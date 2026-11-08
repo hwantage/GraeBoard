@@ -3,7 +3,7 @@ import sharp from "sharp";
 import {
   installDocumentImageRoutes,
   documentImagePath,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";

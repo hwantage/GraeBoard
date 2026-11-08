@@ -14,8 +14,8 @@ import {
   syncSheetCloneDocuments,
   pruneDocumentVersions,
   readSheetClone,
-} from "../document-storage.mjs";
-import { copySheetCloneMemos } from "../memo-storage.mjs";
+} from "../documents/document-storage.mjs";
+import { copySheetCloneMemos } from "../documents/memo-storage.mjs";
 import {
   encodeSheetClone,
   requireUniqueSheetCloneName,

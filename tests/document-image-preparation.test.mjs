@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createDocumentImagePreparation } from "../server/document-image-preparation.mjs";
+import { createDocumentImagePreparation } from "../server/documents/document-image-preparation.mjs";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
 
 const marker = "/api/document-images/";

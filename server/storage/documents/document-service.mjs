@@ -1,22 +1,22 @@
-import { withDocumentImageReferences } from "../../shared/documents/document-image-references.js";
+import { withDocumentImageReferences } from "../../../shared/documents/document-image-references.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import {
   DOCUMENT_IMAGE_PATTERN,
   MAX_IMAGE_BYTES,
   isDocumentImage,
-} from "../../shared/documents/document-images.js";
+} from "../../../shared/documents/document-images.js";
 import {
   documentSchema,
   yearSchema,
   requireThat,
-} from "../../shared/validation.js";
+} from "../../../shared/validation.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,
   MAX_DOCUMENT_TITLE_LENGTH,
   MAX_TASK_DOCUMENTS,
-} from "../../shared/documents/task-documents.js";
+} from "../../../shared/documents/task-documents.js";
 
 const uuid = z.string().uuid();
 export const documentIdSchema = z.union([z.literal(DEFAULT_DOCUMENT_ID), uuid]);

@@ -8,7 +8,7 @@ import {
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,
   readSheetClone,
-} from "./document-storage.mjs";
+} from "./documents/document-storage.mjs";
 import { canContribute } from "../shared/domain.js";
 import { requireThat } from "../shared/validation.js";
 

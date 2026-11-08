@@ -1,7 +1,7 @@
-import { retentionView } from "../sync/visibility.mjs";
-import { parse } from "../db.mjs";
-import { sheetCloneBrowseIndex } from "../sheet-clones.mjs";
-import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
+import { retentionView } from "../../sync/visibility.mjs";
+import { parse } from "../../db.mjs";
+import { sheetCloneBrowseIndex } from "../../sheet-clones.mjs";
+import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 
 // Current titles of linked documents with the reads that open them: a task
 // as /calendar/tasks/:id, an entry as /calendar/entries/:id, memos and copy

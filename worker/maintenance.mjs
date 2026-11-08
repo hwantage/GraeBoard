@@ -11,7 +11,7 @@ import {
 import { databaseFor } from "./data.mjs";
 import { profileFor } from "../shared/sync/sync-profiles.js";
 import { materialize } from "./sync.mjs";
-import { R2ImageStore } from "./images.mjs";
+import { R2ImageStore } from "./documents/images.mjs";
 import { GitHubApiTransport } from "./git.mjs";
 import { assert } from "./access.mjs";
 const decode = (row) =>

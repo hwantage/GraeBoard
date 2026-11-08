@@ -18,6 +18,11 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #100 P5 문서·일정 라우트와 저장소
+
+- 문서·메모·이미지 준비 Worker와 일정의 Node/외부 라우트, 공통 서비스, SQLite/PG repository를 대응표대로 이동했습니다. 공통 서비스는 server/storage, PG 구현은 worker/storage 경계를 유지했습니다.
+- 검증: 구조 오류 0, 실제 SQLite/PG 문서·일정 저장 계약과 task-documents·import 경계 선택 검사 57건 pass/fail 0/skip 0. 기준 런타임 AST와 정적/동적 import·Worker URL 비교에서 앱 차이 0입니다.
+
 ## 2026-11-09 — #100 P4 shared 도메인 배치
 
 - 대응표의 shared 45개를 파일명·공개 심벌 그대로 기능별 폴더로 이동하고 브라우저/Node/Edge import와 현재 문서 참조를 갱신했습니다. 루트 통합 계약 5개와 실행 환경 경계는 유지합니다.

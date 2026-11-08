@@ -11,10 +11,10 @@ import { installHistoryServiceRoutes } from "./history-service-routes.mjs";
 import { SqliteHistoryRepository } from "./storage/sqlite-history.mjs";
 import { installSheetCloneServiceRoutes } from "./sheet-clone-service-routes.mjs";
 import { SqliteSheetCloneRepository } from "./storage/sqlite-sheet-clones.mjs";
-import { DocumentBusinessService } from "./storage/document-service.mjs";
-import { SqliteDocumentRepository } from "./storage/sqlite-documents.mjs";
-import { createDocumentImagePreparation } from "./document-image-preparation.mjs";
-import { installDocumentBusinessRoutes } from "./document-business-routes.mjs";
+import { DocumentBusinessService } from "./storage/documents/document-service.mjs";
+import { SqliteDocumentRepository } from "./storage/documents/sqlite-documents.mjs";
+import { createDocumentImagePreparation } from "./documents/document-image-preparation.mjs";
+import { installDocumentBusinessRoutes } from "./documents/document-business-routes.mjs";
 import { TaskBusinessService } from "./storage/task-service.mjs";
 import { SqliteTaskRepository } from "./storage/sqlite-tasks.mjs";
 import { createNodeSync, installSyncRoutes } from "./sync/node.mjs";
@@ -24,10 +24,10 @@ import { installEventStreams } from "./event-streams.mjs";
 import {
   documentImagesDirectory,
   installDocumentImageRoutes,
-} from "./document-images.mjs";
+} from "./documents/document-images.mjs";
 
-import { installCalendarRoutes } from "./calendar.mjs";
-import { installDocumentBrowserRoutes } from "./document-browser.mjs";
+import { installCalendarRoutes } from "./calendar/calendar.mjs";
+import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
 import { installFilterRoutes } from "./filters.mjs";
 

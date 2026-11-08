@@ -3,7 +3,7 @@ import {
   assertSqliteHistory,
   migrateSqlite,
 } from "./migrations/sqlite.mjs";
-import { storeDocumentVersion } from "./document-storage.mjs";
+import { storeDocumentVersion } from "./documents/document-storage.mjs";
 import { hasDocumentContent } from "../shared/documents/task-documents.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";

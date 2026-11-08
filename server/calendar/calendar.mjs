@@ -1,8 +1,8 @@
 import {
   CalendarBusinessService,
   CALENDAR_ROUTES,
-} from "./storage/calendar-service.mjs";
-import { SqliteCalendarRepository } from "./storage/sqlite-calendar.mjs";
+} from "../storage/calendar/calendar-service.mjs";
+import { SqliteCalendarRepository } from "../storage/calendar/sqlite-calendar.mjs";
 export function installCalendarRoutes(app, options) {
   const repository = new SqliteCalendarRepository(options);
   app.locals.calendarRepository = repository;

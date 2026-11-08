@@ -3,7 +3,7 @@ import { periodScopeSchema } from "../shared/validation.js";
 import { stringify } from "../shared/formatting/compact.js";
 import { assert } from "./access.mjs";
 import { authenticate } from "./control.mjs";
-import { documentScope, documentRoutes } from "./documents.mjs";
+import { documentScope, documentRoutes } from "./documents/documents.mjs";
 import { streamScope, eventTouches } from "./event-scope.mjs";
 const encoder = new TextEncoder();
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

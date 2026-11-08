@@ -8,7 +8,7 @@ import {
 
 import { assert } from "./access.mjs";
 
-import { documentListsUnder } from "./documents.mjs";
+import { documentListsUnder } from "./documents/documents.mjs";
 
 import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import {
@@ -79,8 +79,8 @@ export function filterRoutes(ctx, path, method, body, query) {
     });
   return undefined;
 }
-import { DocumentBrowserBusinessService } from "../server/storage/document-browser-service.mjs";
-import { PostgresDocumentBrowserRepository } from "./storage/postgres-document-browser.mjs";
+import { DocumentBrowserBusinessService } from "../server/storage/documents/document-browser-service.mjs";
+import { PostgresDocumentBrowserRepository } from "./storage/documents/postgres-document-browser.mjs";
 export function browserRoutes(ctx, path, method, _body, query) {
   const match = matchBusinessRoute(BROWSER_ROUTES, path, method);
   if (!match) return undefined;

@@ -11,7 +11,7 @@ import {
   convertImage,
   R2ImageStore,
   imageReferences,
-} from "../worker/images.mjs";
+} from "../worker/documents/images.mjs";
 import { digest } from "../server/sync/protocol.mjs";
 import sharp from "sharp";
 

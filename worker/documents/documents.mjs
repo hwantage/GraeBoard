@@ -1,16 +1,16 @@
-import { assert } from "./access.mjs";
+import { assert } from "../access.mjs";
 import { R2ImageStore, convertImage } from "./images.mjs";
-import { databaseFor } from "./data.mjs";
-import { profileFor } from "../shared/sync/sync-profiles.js";
-import { authenticate } from "./control.mjs";
-import { documentRouteScope } from "../shared/documents/document-routes.js";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "./storage/postgres-documents.mjs";
+import { databaseFor } from "../data.mjs";
+import { profileFor } from "../../shared/sync/sync-profiles.js";
+import { authenticate } from "../control.mjs";
+import { documentRouteScope } from "../../shared/documents/document-routes.js";
+import { DocumentBusinessService } from "../../server/storage/documents/document-service.mjs";
+import { PostgresDocumentRepository } from "../storage/documents/postgres-documents.mjs";
 export {
   documentView,
   documentList,
   documentListsUnder,
-} from "./storage/postgres-documents.mjs";
+} from "../storage/documents/postgres-documents.mjs";
 
 export async function documentScope(ctx, path, options) {
   const target = documentRouteScope(path);

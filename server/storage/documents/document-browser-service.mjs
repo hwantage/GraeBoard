@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { yearSchema } from "../../shared/validation.js";
+import { yearSchema } from "../../../shared/validation.js";
 import {
   defaultView,
   displayValue,
   filteredTasks,
   groupValue,
   propertiesFor,
-} from "../../shared/domain.js";
+} from "../../../shared/domain.js";
 export const sourceSchema = z.union([z.literal("live"), z.string().uuid()]);
 const browserQuerySchema = z.object({
   teamId: z.string().uuid(),

@@ -601,10 +601,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "server/calendar.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "server/cell-events.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -617,31 +613,7 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "server/document-browser.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-business-routes.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "server/document-events.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-image-preparation.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-image-worker.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-images.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/document-storage.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -674,10 +646,6 @@
     },
     {
       "path": "server/local-auth.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/memo-storage.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -726,10 +694,6 @@
     },
     {
       "path": "server/task-cache.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "server/task-documents.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1245,10 +1209,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/calendar.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/capacity.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1269,10 +1229,6 @@
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
-      "path": "worker/documents.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
       "path": "worker/event-scope.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
@@ -1286,10 +1242,6 @@
     },
     {
       "path": "worker/history.mjs",
-      "reason": "Existing root file pending its manifest phase; no new root file exemption"
-    },
-    {
-      "path": "worker/images.mjs",
       "reason": "Existing root file pending its manifest phase; no new root file exemption"
     },
     {
@@ -1408,8 +1360,8 @@
     },
     {
       "paths": [
-        "server/calendar.mjs",
-        "worker/calendar.mjs"
+        "server/calendar/calendar.mjs",
+        "worker/calendar/calendar.mjs"
       ],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },

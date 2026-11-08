@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { canonical, digest } from "../server/sync/protocol.mjs";
 import { controlTransaction, databaseFor } from "./data.mjs";
 import { profiles, profileFor } from "../shared/sync/sync-profiles.js";
-import { R2ImageStore } from "./images.mjs";
+import { R2ImageStore } from "./documents/images.mjs";
 import { assert } from "./access.mjs";
 const tables = TEAM_TRANSFER_TABLES;
 const parsed = (row) =>

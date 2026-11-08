@@ -4,18 +4,18 @@ import {
   DEFAULT_DOCUMENT_TITLE,
   MAX_DOCUMENT_TITLE_LENGTH,
   hasDocumentContent,
-} from "../../shared/documents/task-documents.js";
-import { assert } from "../access.mjs";
-import { imageReferences } from "../images.mjs";
-import { stamp, excludedYears } from "../tasks.mjs";
-import { databaseFor } from "../data.mjs";
+} from "../../../shared/documents/task-documents.js";
+import { assert } from "../../access.mjs";
+import { imageReferences } from "../../documents/images.mjs";
+import { stamp, excludedYears } from "../../tasks.mjs";
+import { databaseFor } from "../../data.mjs";
 import {
   nextDocumentTitle,
   requireDocumentRevision,
   requireDocumentTitle,
   requireDocumentOrder,
   documentImageUrl,
-} from "../../server/storage/document-service.mjs";
+} from "../../../server/storage/documents/document-service.mjs";
 const docId = (value) =>
   value === "main" ? value : z.string().uuid().parse(value);
 const matching = (row, prefix) =>
@@ -519,7 +519,7 @@ export class PostgresDocumentRepository {
             ...(kind === "calendar"
               ? {
                   entry: await (
-                    await import("../calendar.mjs")
+                    await import("../../calendar/calendar.mjs")
                   ).entryView(s, await s.get("calendar", [prefix[1]])),
                 }
               : {}),

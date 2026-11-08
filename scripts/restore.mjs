@@ -21,7 +21,7 @@ import {
   documentImagesDirectory,
   readDocumentImage,
   writeDocumentImage,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 
 // Restore into a NEW destination. Switching DB_PATH is a separate operator action.
 export function restoreDatabase(

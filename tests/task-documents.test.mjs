@@ -3,7 +3,7 @@ import {
   readSheetClone,
   storeSheetCloneDocuments,
   syncSheetCloneDocuments,
-} from "../server/document-storage.mjs";
+} from "../server/documents/document-storage.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -20,12 +20,12 @@ import sharp from "sharp";
 import {
   documentImagePath,
   documentImageUrls,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../server/app.mjs";
 import { openDatabase, insertTask, getTask, json, now } from "../server/db.mjs";
-import { getTaskDocument } from "../server/task-documents.mjs";
+import { getTaskDocument } from "../server/documents/task-documents.mjs";
 import { DEFAULT_SETTINGS, defaultView } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";

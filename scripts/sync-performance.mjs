@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { Worker } from "node:worker_threads";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
 import { performance, monitorEventLoopDelay } from "node:perf_hooks";
 import {
   openDatabase,

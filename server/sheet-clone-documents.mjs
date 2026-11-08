@@ -1,7 +1,7 @@
 import { requireThat } from "../shared/validation.js";
 import { DEFAULT_DOCUMENT_ID } from "../shared/documents/task-documents.js";
-import { blankDocument } from "./storage/document-service.mjs";
-import { readDocumentVersion } from "./document-storage.mjs";
+import { blankDocument } from "./storage/documents/document-service.mjs";
+import { readDocumentVersion } from "./documents/document-storage.mjs";
 
 export function sheetCloneTaskDocument(
   db,

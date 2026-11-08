@@ -6,7 +6,7 @@ import {
   documentImagePath,
   readDocumentImage,
   writeDocumentImage,
-} from "../document-images.mjs";
+} from "../documents/document-images.mjs";
 import { sqliteTeamStore } from "../storage/sqlite.mjs";
 import { materialize } from "./entities.mjs";
 import { canonical, entityId } from "./protocol.mjs";

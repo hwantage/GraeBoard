@@ -4,17 +4,17 @@ import { createHash } from "node:crypto";
 import {
   DOCUMENT_IMAGE_PATTERN,
   MAX_IMAGE_BYTES,
-} from "../../shared/documents/document-images.js";
+} from "../../../shared/documents/document-images.js";
 import {
   documentImagePath,
   readDocumentImage,
   writeDocumentImage,
-} from "../document-images.mjs";
+} from "../../documents/document-images.mjs";
 import {
   imageReferences,
   stillImage,
-} from "../../shared/documents/document-image-validation.js";
-import { requireThat } from "../../shared/validation.js";
+} from "../../../shared/documents/document-image-validation.js";
+import { requireThat } from "../../../shared/validation.js";
 
 // Host byte storage is independent of the team DB engine. Node retains the same
 // immutable WebP files and URLs whether ordinary team rows use SQLite or PG.

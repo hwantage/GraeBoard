@@ -15,11 +15,11 @@ import { assert, verifySetupToken, HttpError } from "./access.mjs";
 import { controlTransaction, databaseFor, withData } from "./data.mjs";
 import { profiles, profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { authenticateSite } from "./site-auth.mjs";
-import { R2ImageStore } from "./images.mjs";
+import { R2ImageStore } from "./documents/images.mjs";
 import { profileFields } from "../shared/identity/profiles.js";
 import { z } from "zod";
 import { withDocumentImageReferences } from "../shared/documents/document-image-references.js";
-import { imageReferences } from "./images.mjs";
+import { imageReferences } from "./documents/images.mjs";
 
 import { PostgresControlStore, userRecord } from "./storage/control-store.mjs";
 export { userRecord } from "./storage/control-store.mjs";

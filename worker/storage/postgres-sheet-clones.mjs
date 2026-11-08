@@ -24,7 +24,7 @@ import { digestShared, equal } from "../../server/sync/protocol.mjs";
 import { requireFreeSheetCloneName } from "../../shared/sheet-clones/sheet-clone-names.js";
 import { assert } from "../access.mjs";
 import { settingsFor, taskList, taskView, stamp } from "../task-view.mjs";
-import { documentListsUnder } from "./postgres-documents.mjs";
+import { documentListsUnder } from "./documents/postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../control.mjs";
 export const sheetCloneRevision = (data) =>

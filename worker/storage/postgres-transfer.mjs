@@ -31,7 +31,7 @@ import { assert } from "../access.mjs";
 import { taskList, settingsFor, excludedYears } from "../tasks.mjs";
 import { sheetCloneView } from "../sheet-clones.mjs";
 import { sheetCloneSummaries } from "./postgres-sheet-clones.mjs";
-import { imageReferences } from "../images.mjs";
+import { imageReferences } from "../documents/images.mjs";
 import {
   transferDownload as download,
   extendImportProperties,

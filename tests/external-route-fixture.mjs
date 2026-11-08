@@ -11,18 +11,18 @@ import {
 } from "../worker/control.mjs";
 import { adminRoutes } from "../worker/admin.mjs";
 import { taskRoutes } from "../worker/tasks.mjs";
-import { documentRoutes } from "../worker/documents.mjs";
+import { documentRoutes } from "../worker/documents/documents.mjs";
 import {
   sheetCloneRoutes,
   filterRoutes,
   browserRoutes,
 } from "../worker/sheet-clones.mjs";
-import { calendarRoutes } from "../worker/calendar.mjs";
+import { calendarRoutes } from "../worker/calendar/calendar.mjs";
 import { transferRoutes } from "../worker/transfer.mjs";
 import { auditRoutes, historyCleanupRoutes } from "../worker/history.mjs";
 import { eventResponse } from "../worker/events.mjs";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
+import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
+import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 
 // The contract suites exercise the actual external route dispatcher. The only

@@ -14,14 +14,14 @@ import {
   withPreparedDocumentImageReferences,
 } from "../shared/documents/document-image-references.js";
 import { createApp } from "../server/app.mjs";
-import { createDocumentImagePreparation } from "../server/document-image-preparation.mjs";
+import { createDocumentImagePreparation } from "../server/documents/document-image-preparation.mjs";
 import { openDatabase, insertTask, json, transaction } from "../server/db.mjs";
-import { storeDocumentVersion } from "../server/document-storage.mjs";
-import { getTaskDocument } from "../server/task-documents.mjs";
+import { storeDocumentVersion } from "../server/documents/document-storage.mjs";
+import { getTaskDocument } from "../server/documents/task-documents.mjs";
 import {
   documentImagePath,
   writeDocumentImage,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 import { allEntities } from "../server/sync/entities.mjs";
 import { makeOperation } from "../server/sync/operations.mjs";
 import {
@@ -31,7 +31,7 @@ import {
 } from "../server/sync/protocol.mjs";
 import { project, validateSnapshot } from "../server/sync/reducer.mjs";
 import { SyncService } from "../server/sync/service.mjs";
-import { imageReferences } from "../worker/images.mjs";
+import { imageReferences } from "../worker/documents/images.mjs";
 import { DEFAULT_SETTINGS } from "../shared/domain.js";
 import { unpack } from "../shared/formatting/compact.js";
 

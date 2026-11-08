@@ -17,7 +17,7 @@ import {
   documentImagesDirectory,
   readDocumentImage,
   writeDocumentImage,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 
 export function backupDatabase(
   source,

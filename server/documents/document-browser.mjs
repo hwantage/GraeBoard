@@ -1,6 +1,6 @@
-import { BROWSER_ROUTES } from "../shared/http/business-routes.js";
-import { DocumentBrowserBusinessService } from "./storage/document-browser-service.mjs";
-import { SqliteDocumentBrowserRepository } from "./storage/sqlite-document-browser.mjs";
+import { BROWSER_ROUTES } from "../../shared/http/business-routes.js";
+import { DocumentBrowserBusinessService } from "../storage/documents/document-browser-service.mjs";
+import { SqliteDocumentBrowserRepository } from "../storage/documents/sqlite-document-browser.mjs";
 export function installDocumentBrowserRoutes(app, options) {
   const repository = new SqliteDocumentBrowserRepository(options);
   app.locals.documentBrowserRepository = repository;

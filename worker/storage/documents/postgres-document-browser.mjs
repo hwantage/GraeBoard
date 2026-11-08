@@ -1,14 +1,14 @@
-import { assert } from "../access.mjs";
-import { taskList, settingsFor, excludedYears } from "../task-view.mjs";
+import { assert } from "../../access.mjs";
+import { taskList, settingsFor, excludedYears } from "../../task-view.mjs";
 import { z } from "zod";
-import { yearSchema } from "../../shared/validation.js";
-import { hasDocumentContent } from "../../shared/documents/task-documents.js";
-import { propertiesFor } from "../../shared/domain.js";
+import { yearSchema } from "../../../shared/validation.js";
+import { hasDocumentContent } from "../../../shared/documents/task-documents.js";
+import { propertiesFor } from "../../../shared/domain.js";
 import {
   documentBrowserPage,
   documentPreview,
-} from "../../server/storage/document-browser-service.mjs";
-import { sheetCloneRevision } from "./postgres-sheet-clones.mjs";
+} from "../../../server/storage/documents/document-browser-service.mjs";
+import { sheetCloneRevision } from "../postgres-sheet-clones.mjs";
 import { documentKeysUnder } from "./postgres-documents.mjs";
 export class PostgresDocumentBrowserRepository {
   constructor({ context }) {

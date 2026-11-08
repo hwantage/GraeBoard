@@ -28,7 +28,7 @@ import { syncImageReferences } from "../shared/sync/sync-image-references.js";
 import {
   documentImagesDirectory,
   writeDocumentImage,
-} from "../server/document-images.mjs";
+} from "../server/documents/document-images.mjs";
 
 const decodeJson = (bytes, limit = 64 * 1024 * 1024) => {
   if (!bytes || bytes.byteLength > limit)

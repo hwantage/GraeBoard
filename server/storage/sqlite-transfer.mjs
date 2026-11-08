@@ -1,12 +1,12 @@
 import { retentionView } from "../sync/visibility.mjs";
-import { exportDocumentImages } from "../document-images.mjs";
-import { memoContents } from "../memo-storage.mjs";
+import { exportDocumentImages } from "../documents/document-images.mjs";
+import { memoContents } from "../documents/memo-storage.mjs";
 import {
   sheetCloneDocumentContents,
   readSheetClone,
-} from "../document-storage.mjs";
+} from "../documents/document-storage.mjs";
 import { sheetCloneRevision } from "../sheet-clone-editing.mjs";
-import { withTaskDocuments } from "../task-documents.mjs";
+import { withTaskDocuments } from "../documents/task-documents.mjs";
 import { filtersFor, currentFiltersFor } from "../filters.mjs";
 import ExcelJS from "exceljs";
 import { explicitStyle } from "../../shared/formatting/formatting.js";

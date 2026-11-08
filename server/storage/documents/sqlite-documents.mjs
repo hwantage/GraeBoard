@@ -1,6 +1,6 @@
-import { withPreparedDocumentImageReferences } from "../../shared/documents/document-image-references.js";
+import { withPreparedDocumentImageReferences } from "../../../shared/documents/document-image-references.js";
 import { z } from "zod";
-import { calendarPreview } from "./calendar-service.mjs";
+import { calendarPreview } from "../calendar/calendar-service.mjs";
 import { createHash } from "node:crypto";
 import {
   audit,
@@ -9,22 +9,22 @@ import {
   transaction,
   touchTasks,
   userWithTeams,
-} from "../db.mjs";
-import { requireThat } from "../../shared/validation.js";
-import { canContribute } from "../../shared/domain.js";
+} from "../../db.mjs";
+import { requireThat } from "../../../shared/validation.js";
+import { canContribute } from "../../../shared/domain.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,
   MAX_TASK_DOCUMENTS,
   hasDocumentContent,
-} from "../../shared/documents/task-documents.js";
-import { retentionView } from "../sync/visibility.mjs";
+} from "../../../shared/documents/task-documents.js";
+import { retentionView } from "../../sync/visibility.mjs";
 import {
   getTaskDocument,
   listTaskDocuments,
   withTaskDocuments,
-} from "../task-documents.mjs";
-import { sheetCloneTaskDocument } from "../sheet-clone-documents.mjs";
+} from "../../documents/task-documents.mjs";
+import { sheetCloneTaskDocument } from "../../sheet-clone-documents.mjs";
 import {
   readDocumentVersion,
   storeDocumentVersion,
@@ -33,13 +33,13 @@ import {
   pruneDocumentVersions,
   readSheetClone,
   sheetCloneDocumentTasks,
-} from "../document-storage.mjs";
-import { encodeSheetClone } from "../sheet-clones.mjs";
+} from "../../documents/document-storage.mjs";
+import { encodeSheetClone } from "../../sheet-clones.mjs";
 import {
   validateDocumentImages,
   writeDocumentImage,
   readDocumentImage,
-} from "../document-images.mjs";
+} from "../../documents/document-images.mjs";
 import {
   nextDocumentTitle,
   requireDocumentRevision,

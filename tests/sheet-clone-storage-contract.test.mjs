@@ -1,6 +1,6 @@
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
-import { PostgresDocumentRepository } from "../worker/storage/postgres-documents.mjs";
+import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
+import { PostgresDocumentRepository } from "../worker/storage/documents/postgres-documents.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";

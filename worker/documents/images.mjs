@@ -1,14 +1,14 @@
-import { digest } from "../server/sync/protocol.mjs";
+import { digest } from "../../server/sync/protocol.mjs";
 import {
   MAX_IMAGE_BYTES,
   DOCUMENT_IMAGE_PATTERN,
-} from "../shared/documents/document-images.js";
-import { assert } from "./access.mjs";
+} from "../../shared/documents/document-images.js";
+import { assert } from "../access.mjs";
 
 import {
   stillImage,
   imageReferences,
-} from "../shared/documents/document-image-validation.js";
+} from "../../shared/documents/document-image-validation.js";
 export { stillImage, imageReferences };
 export async function convertImage(file, images) {
   assert(

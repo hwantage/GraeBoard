@@ -23,7 +23,7 @@ import {
 import { requireThat } from "../../shared/validation.js";
 import { profileFields } from "../../shared/identity/profiles.js";
 import { deleteTeam } from "../team-deletion.mjs";
-import { removeTeamDocumentImages } from "../document-images.mjs";
+import { removeTeamDocumentImages } from "../documents/document-images.mjs";
 import {
   loginId,
   credentials,

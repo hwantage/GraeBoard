@@ -31,7 +31,7 @@ import {
   DataSession,
 } from "./data.mjs";
 import { GitHubApiTransport } from "./git.mjs";
-import { R2ImageStore } from "./images.mjs";
+import { R2ImageStore } from "./documents/images.mjs";
 import { beginProfileSwitch } from "./profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "./sync.mjs";
 import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";

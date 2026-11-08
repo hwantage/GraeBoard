@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
 import { postgresFixture } from "./business-storage-fixture.mjs";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
+import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import { PostgresSheetCloneRepository } from "../worker/storage/postgres-sheet-clones.mjs";
 import { PostgresTaskRepository } from "../worker/storage/postgres-tasks.mjs";

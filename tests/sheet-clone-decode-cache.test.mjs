@@ -12,7 +12,7 @@ import {
   readSheetClone,
   sheetCloneDocumentContents,
   storeDocumentVersion,
-} from "../server/document-storage.mjs";
+} from "../server/documents/document-storage.mjs";
 import { prepareSheetCloneEdits } from "../server/storage/sheet-clone-command-rules.mjs";
 import { SheetCloneBusinessService } from "../server/storage/sheet-clone-service.mjs";
 import { canonical } from "../server/sync/protocol.mjs";

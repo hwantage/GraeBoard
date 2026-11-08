@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import { createHash } from "node:crypto";
-import { documentImageUrls } from "../shared/documents/document-image-references.js";
-import { MAX_DOCUMENT_BYTES } from "../shared/documents/task-documents.js";
+import { documentImageUrls } from "../../shared/documents/document-image-references.js";
+import { MAX_DOCUMENT_BYTES } from "../../shared/documents/task-documents.js";
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 parentPort.on("message", ({ id, items }) => {

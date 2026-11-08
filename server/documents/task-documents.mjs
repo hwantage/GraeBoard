@@ -2,12 +2,12 @@ import {
   readDocumentVersion,
   withTaskDocumentReferences,
 } from "./document-storage.mjs";
-import { requireThat } from "../shared/validation.js";
+import { requireThat } from "../../shared/validation.js";
 import {
   DEFAULT_DOCUMENT_ID,
   DEFAULT_DOCUMENT_TITLE,
-} from "../shared/documents/task-documents.js";
-import { blankDocument } from "./storage/document-service.mjs";
+} from "../../shared/documents/task-documents.js";
+import { blankDocument } from "../storage/documents/document-service.mjs";
 export {
   documentIdSchema,
   documentTitleSchema,
@@ -15,7 +15,7 @@ export {
   renameDocumentSchema,
   blankDocument,
   nextDocumentTitle,
-} from "./storage/document-service.mjs";
+} from "../storage/documents/document-service.mjs";
 
 export function getTaskDocument(db, taskId, documentId = DEFAULT_DOCUMENT_ID) {
   const row = db

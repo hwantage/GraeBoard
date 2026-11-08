@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { imageSync } from "../worker/sync-images.mjs";
-import { R2ImageStore } from "../worker/images.mjs";
+import { R2ImageStore } from "../worker/documents/images.mjs";
 import { digest, emptyState, entityId } from "../server/sync/protocol.mjs";
 
 test("Worker image adapter transfers only missing content across 30 inherited image references", async () => {

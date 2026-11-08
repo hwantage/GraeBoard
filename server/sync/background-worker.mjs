@@ -34,7 +34,7 @@ import {
   documentImagePath,
   readDocumentImage,
   writeDocumentImage,
-} from "../document-images.mjs";
+} from "../documents/document-images.mjs";
 import {
   RESOLUTION_PENDING,
   resolvesAny,

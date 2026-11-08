@@ -1,4 +1,4 @@
-import { retentionView } from "../sync/visibility.mjs";
+import { retentionView } from "../../sync/visibility.mjs";
 import {
   audit,
   json,
@@ -6,14 +6,14 @@ import {
   parse,
   transaction,
   usersWithTeams,
-} from "../db.mjs";
-import { requireThat } from "../../shared/validation.js";
-import { todayKey } from "../../shared/domain.js";
-import { normalizeSearchQuery } from "../../shared/search.js";
+} from "../../db.mjs";
+import { requireThat } from "../../../shared/validation.js";
+import { todayKey } from "../../../shared/domain.js";
+import { normalizeSearchQuery } from "../../../shared/search.js";
 import {
   firstCalendarLane,
   mergeCalendarLayout,
-} from "../../shared/calendar/calendar-layout.js";
+} from "../../../shared/calendar/calendar-layout.js";
 import {
   addDays,
   calendarWeek,
@@ -22,9 +22,9 @@ import {
   weeklyOrderStamps,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
-} from "../../shared/calendar/calendar.js";
-import { readDocumentVersion } from "../document-storage.mjs";
-import { resolveSqliteDocumentLinks } from "./sqlite-document-links.mjs";
+} from "../../../shared/calendar/calendar.js";
+import { readDocumentVersion } from "../../documents/document-storage.mjs";
+import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,

@@ -33,8 +33,8 @@ import {
 } from "../../shared/domain.js";
 import { taskAuditSnapshot } from "../../shared/formatting/formatting.js";
 import { retentionView } from "../sync/visibility.mjs";
-import { withTaskDocuments } from "../task-documents.mjs";
-import { validateDocumentImages } from "../document-images.mjs";
+import { withTaskDocuments } from "../documents/task-documents.mjs";
+import { validateDocumentImages } from "../documents/document-images.mjs";
 import { insertionPosition } from "../task-position.mjs";
 
 export class SqliteTaskCommands {

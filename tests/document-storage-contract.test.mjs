@@ -5,14 +5,14 @@ import { copiedRowSchema } from "../shared/validation.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createExternalRouteApp } from "./external-route-fixture.mjs";
-import { DocumentBusinessService } from "../server/storage/document-service.mjs";
+import { DocumentBusinessService } from "../server/storage/documents/document-service.mjs";
 import { unpack } from "../shared/formatting/compact.js";
 import sharp from "sharp";
 import { materialize } from "../worker/materialize.mjs";
 
 import { sqliteFixture, postgresFixture } from "./business-storage-fixture.mjs";
-import { CalendarBusinessService } from "../server/storage/calendar-service.mjs";
-import { PostgresCalendarRepository } from "../worker/storage/postgres-calendar.mjs";
+import { CalendarBusinessService } from "../server/storage/calendar/calendar-service.mjs";
+import { PostgresCalendarRepository } from "../worker/storage/calendar/postgres-calendar.mjs";
 
 const saveRequest = (markdown, expectedRevision) => ({
   markdown,
