@@ -878,6 +878,149 @@ test("충돌 보관함은 먼저 수정과 나중에 수정을 줄 단위로 비
   await expect(actions).toHaveCount(0);
 });
 
+test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항목 12개를 펼쳐도 화면이 유지된다", async ({
+  page,
+}, testInfo) => {
+  const bootstrap = await configuredBootstrap(page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const documents = Array.from({ length: 11 }, (_, i) => ({
+    markdown: `문서 ${i + 1}`,
+    title: `문서 ${i + 1}`,
+    position: i,
+  }));
+  const documentKey = ["sheetClone", "clone-1", "task-0", "doc-0"];
+  const originalDocument = {
+    ...documents[0],
+    markdown: Array.from({ length: 1000 }, (_, i) => `기존 메모 ${i + 1}`).join(
+      "\n",
+    ),
+  };
+  documents[0] = {
+    ...originalDocument,
+    markdown: originalDocument.markdown + "\n추가 메모",
+  };
+  const clone = {
+    name: "대형 사본",
+    year: 2026,
+    data: {
+      tasks: Array.from({ length: 900 }, (_, i) => ({
+        id: `task-${i}`,
+        cells: Object.fromEntries(
+          Array.from({ length: 30 }, (_, j) => [
+            `week-${j}`,
+            {
+              value: `task-${i}-week-${j}`,
+              style: { backgroundColor: "#abcdef", bold: false },
+            },
+          ]),
+        ),
+      })),
+    },
+  };
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      json: { ...bootstrap, authMode: "access", site: "external" },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        profileId: "local",
+        pending: 0,
+        conflicts: 1,
+        canonicalHead: "head-1",
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({
+      json: {
+        conflicts: [
+          {
+            conflictId: "large-clone",
+            opId: "large-clone",
+            createdAt: "2026-11-08T00:00:00.000Z",
+            target: [
+              ...documents.map(
+                (_, i) => `document sheetClone/clone-1/task-${i}/doc-${i}`,
+              ),
+              "sheetClone clone-1",
+            ].join(", "),
+            result: "Failed dependency",
+            base: [originalDocument, ...Array(11).fill(null)],
+            current: {
+              [JSON.stringify(["document", documentKey])]: {
+                entity: "document",
+                key: documentKey,
+                generation: "g".repeat(64),
+                version: "v".repeat(64),
+                deleted: false,
+                payload: originalDocument,
+              },
+            },
+            desired: [...documents, clone],
+            expectedHead: "head-1",
+            frontier: ["large-clone"],
+            resolved: false,
+          },
+        ],
+      },
+    }),
+  );
+  await page.reload();
+  await page
+    .locator(".topbar")
+    .getByRole("button", { name: "충돌 보관함" })
+    .click();
+  const box = page.getByRole("dialog", { name: "충돌 보관함" });
+  await box.locator(".team-sync-conflict > summary").click();
+  await box.getByText("겹치지 않은 항목 12개", { exact: true }).click();
+  await expect(box.locator(".sync-diff-change")).toHaveCount(12);
+  expect(errors).toEqual([]);
+  // Expanding a long unchanged block also switches to a scrollable window.
+  const documentTable = box
+    .locator(".sync-diff-change")
+    .first()
+    .getByRole("table", { name: "줄 비교" });
+  await documentTable.getByRole("button", { name: /줄 같음/ }).click();
+  await expect(documentTable).toHaveClass(/sync-diff-virtual/);
+  expect(await documentTable.locator(".sync-diff-line").count()).toBeLessThan(
+    100,
+  );
+  await documentTable.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(documentTable.locator(".is-added")).toContainText("추가 메모");
+  const table = box
+    .locator(".sync-diff-change")
+    .last()
+    .getByRole("table", { name: "줄 비교" });
+  await expect(table).toBeVisible();
+  // All lines remain reachable, while only the visible window becomes DOM.
+  expect(await table.locator(".sync-diff-line").count()).toBeLessThan(100);
+  await table.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(table.locator(".sync-diff-line").last()).toContainText(
+    "year: 2026",
+  );
+  await table.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("large-conflict.png") });
+  await box.getByRole("button", { name: "먼저 수정", exact: true }).click();
+  await expect(box.locator(".sync-diff-change .sync-diff-equal")).toHaveCount(
+    12,
+  );
+  await box.getByRole("button", { name: "나중에 수정", exact: true }).click();
+  await expect(table).toBeVisible();
+  await box.getByText("겹치지 않은 항목 12개", { exact: true }).click();
+  await expect(box.locator(".sync-diff-change")).toHaveCount(0);
+  await box.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(page.locator(".topbar")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결하고 실패한 항목은 따로 알린다", async ({
   page,
 }) => {
