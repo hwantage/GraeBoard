@@ -1,3 +1,9 @@
+import { config } from "zod";
+
+// main.tsx runs this module before App and its shared schemas. Zod's caught
+// eval capability probe still violates strict CSP; use its interpreter instead.
+config({ jitless: true });
+
 // crypto.randomUUID는 보안 컨텍스트(HTTPS·localhost)에서만 제공되므로 http://IP 접속에서도 쓸 수 있게 보완한다.
 if (typeof crypto.randomUUID !== "function")
   crypto.randomUUID = () => {

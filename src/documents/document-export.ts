@@ -9,7 +9,7 @@ import {
   codeBlockMetaSchema,
   remarkTableShape,
   safeDocumentLink,
-} from "./editor/RichMarkdownEditor";
+} from "./editor/document-markdown";
 import { documentLinkSchema } from "./editor/DocumentLinkNode";
 import { remarkToggle, toggle } from "./editor/DocumentToggle";
 import { renderMermaid } from "./editor/DocumentCodeBlockView";

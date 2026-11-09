@@ -30,7 +30,11 @@ async function rowAction(page: Page, taskId: string, name: string) {
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 async function openSheetClone(page: Page) {
-  await page.getByRole("tab", { name: "편집 사본", exact: true }).click();
+  const tab = page.getByRole("tab", { name: "편집 사본", exact: true });
+  await tab.click();
+  // The original grid is editable while the asynchronous copy read completes.
+  // Wait for the copy itself, rather than accepting the original grid's state.
+  await expect(tab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("grid")).toHaveAttribute(
     "aria-readonly",
     "false",

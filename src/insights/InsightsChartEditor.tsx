@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { Modal, Button, ErrorNote } from "../components";
+import { Modal } from "../ui/Modal";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Select from "../ui/Select";
 import InsightsChart from "./InsightsChart";
 import InsightsFilters from "./InsightsFilters";

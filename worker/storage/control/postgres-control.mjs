@@ -2,7 +2,7 @@ import { DEFAULT_SETTINGS } from "../../../shared/domain.js";
 import { deploymentSite } from "../../../shared/site/site-mode.js";
 import { assert } from "../../control/access.mjs";
 import { controlTransaction } from "../data.mjs";
-import { userRecord } from "../../control/control.mjs";
+import { userRecord } from "./control-store.mjs";
 import {
   profileSchema,
   memberPickerUser,

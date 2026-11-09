@@ -852,6 +852,11 @@ test("충돌 보관함은 먼저 수정과 나중에 수정을 줄 단위로 비
   await expect(raw.getByText("원래 내용")).toBeHidden();
   await raw.getByText("원본 JSON 보기").click();
   await expect(raw.getByText("지금 내용(먼저 수정 반영)")).toBeVisible();
+  await expect(raw.locator("pre")).toHaveText(
+    [conflict.base, conflict.current, conflict.desired].map((value) =>
+      JSON.stringify(value, null, 2),
+    ),
+  );
 
   // Editing can be cancelled; meanwhile only cancel and apply are offered.
   const actions = first.locator(".form-actions button");
@@ -1065,6 +1070,150 @@ test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항
   await expect(page.locator(".topbar")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+for (const site of ["internal", "external"] as const)
+  test(`${site} 충돌 보관함에서 대형 원본 JSON을 펼치고 스크롤한 뒤 다시 접을 수 있다`, async ({
+    page,
+  }, testInfo) => {
+    const bootstrap = await configuredBootstrap(page);
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const clone = {
+      name: "원본 JSON 대형 사본",
+      year: 2026,
+      data: {
+        tasks: Array.from({ length: 900 }, (_, i) => ({
+          id: `task-${i}`,
+          cells: Object.fromEntries(
+            Array.from({ length: 30 }, (_, j) => [
+              `week-${j}`,
+              {
+                value: `task-${i}-week-${j}`,
+                style: { backgroundColor: "#abcdef", bold: false },
+              },
+            ]),
+          ),
+        })),
+      },
+      // JSON escapes newlines inside strings, so even a single JSON line
+      // needs bounded layout work, including when it contains surrogate pairs.
+      markdown: "긴 문자열 시작 " + "한글😀\n".repeat(40000) + " 긴 문자열 끝",
+      endMarker: "원본 JSON 마지막 값",
+    };
+    const key = ["clone-raw"];
+    await page.route("**/api/bootstrap", (route) =>
+      route.fulfill({
+        json: {
+          ...bootstrap,
+          ...(site === "external" ? { authMode: "access", site } : {}),
+        },
+      }),
+    );
+    await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+      route.fulfill({
+        json: {
+          mode: "active",
+          profileId: "local",
+          pending: 0,
+          conflicts: 1,
+          canonicalHead: "head-raw",
+        },
+      }),
+    );
+    await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+      route.fulfill({
+        json: {
+          conflicts: [
+            {
+              conflictId: "raw-clone",
+              opId: "raw-clone",
+              createdAt: "2026-11-09T00:00:00.000Z",
+              target: "sheetClone clone-raw",
+              result: "Failed dependency",
+              base: [clone],
+              current: {
+                [JSON.stringify(["sheetClone", key])]: {
+                  entity: "sheetClone",
+                  key,
+                  generation: "g".repeat(64),
+                  version: "v".repeat(64),
+                  deleted: false,
+                  payload: clone,
+                },
+              },
+              desired: [clone],
+              expectedHead: "head-raw",
+            },
+          ],
+        },
+      }),
+    );
+    await page.reload();
+    await page
+      .locator(".topbar")
+      .getByRole("button", { name: "충돌 보관함" })
+      .click();
+    const box = page.getByRole("dialog", { name: "충돌 보관함" });
+    const raw = box.locator(".sync-conflict-raw");
+    // A closed raw view must not retain a whole serialized copy in the DOM.
+    await expect(raw.locator("dl")).toHaveCount(0);
+    await box.locator(".team-sync-conflict > summary").click();
+    await raw.getByText("원본 JSON 보기").click();
+    for (const label of [
+      "원래 내용",
+      "지금 내용(먼저 수정 반영)",
+      "나중에 수정",
+    ]) {
+      const value = raw.getByRole("region", { name: label, exact: true });
+      await value.scrollIntoViewIfNeeded();
+      await expect(value).toContainText("원본 JSON 대형 사본");
+      expect(
+        await value.evaluate((element) => element.clientHeight),
+      ).toBeLessThanOrEqual(480);
+      expect((await value.textContent())!.length).toBeLessThan(50000);
+      await expect
+        .poll(async () => {
+          await value.evaluate((element) => {
+            element.scrollTop = element.scrollHeight;
+          });
+          return value.textContent();
+        })
+        .toContain("원본 JSON 마지막 값");
+      await expect(value).toContainText("긴 문자열 끝");
+      expect((await value.textContent())!.length).toBeLessThan(50000);
+      expect(
+        await value.locator("pre").evaluateAll((elements) =>
+          elements.every((element) => {
+            const text = element.textContent || "";
+            // A displayed fragment must never begin/end with half an emoji.
+            return !/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(text);
+          }),
+        ),
+      ).toBe(true);
+      const bottom = await value.evaluate((element) => element.scrollTop);
+      await value.focus();
+      await page.keyboard.press("PageUp");
+      await expect
+        .poll(() => value.evaluate((element) => element.scrollTop))
+        .toBeLessThan(bottom);
+      await value.evaluate((element) => {
+        element.scrollTop = 0;
+      });
+      await expect(value).toContainText("원본 JSON 대형 사본");
+    }
+    await page.screenshot({
+      path: testInfo.outputPath("large-conflict-raw.png"),
+    });
+    await raw.getByText("원본 JSON 보기").click();
+    await expect(raw.locator("dl")).toHaveCount(0);
+    await raw.getByText("원본 JSON 보기").click();
+    await expect(
+      raw.getByRole("region", { name: "나중에 수정", exact: true }),
+    ).toContainText("원본 JSON 대형 사본");
+    await box.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(page.locator(".topbar")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
 
 test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결하고 실패한 항목은 따로 알린다", async ({
   page,

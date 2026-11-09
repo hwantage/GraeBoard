@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, send } from "../platform/api";
-import { Button, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import { Eye, EyeOff, Copy } from "lucide-react";
 import { syncTime } from "../sync/sync-types";
 

@@ -13,6 +13,7 @@
     "test": "node scripts/testing/run-node-tests.mjs",
     "test:postgres": "node scripts/testing/test-postgres.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:core": "playwright test tests/browser/sheet/workspace-navigation.spec.ts tests/browser/sheet/row-menu.spec.ts tests/browser/sheet/selection-copy-undo.spec.ts tests/browser/sheet-clones/sheet-clone-editing.spec.ts tests/browser/calendar/calendar-improvements.spec.ts tests/browser/documents/document-input.spec.ts tests/browser/documents/document-download.spec.ts tests/browser/documents/document-sync.spec.ts",
     "backup": "node --env-file-if-exists=.env scripts/transfer/backup.mjs",
     "admin": "node --env-file-if-exists=.env scripts/admin/admin.mjs",
     "restore": "node --env-file-if-exists=.env scripts/transfer/restore.mjs",
@@ -37,7 +38,8 @@
     "performance:sync": "node scripts/performance/sync-performance.mjs",
     "sync:upgrade": "node scripts/sync/sync-upgrade.mjs",
     "check:structure": "node scripts/testing/check-code-organization.mjs",
-    "test:cutover:frozen": "node scripts/testing/run-frozen-cutover-tests.mjs"
+    "test:cutover:frozen": "node scripts/testing/run-frozen-cutover-tests.mjs",
+    "check:architecture": "node scripts/testing/check-import-architecture.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

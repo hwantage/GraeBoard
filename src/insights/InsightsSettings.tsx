@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Modal, Button, ErrorNote } from "../components";
+import { Modal } from "../ui/Modal";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Select from "../ui/Select";
 import Toast, { useToast } from "../ui/Toast";
 import { insightsSettingsSchema } from "../../shared/insights/insights-schema.js";

@@ -2,7 +2,10 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "../ui/usePopover";
 import { GripVertical } from "lucide-react";
-import { Button, Empty, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { Empty } from "../ui/Empty";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import LoadingState from "../ui/LoadingState";
 import Select from "../ui/Select";
 import Toast, { useToast } from "../ui/Toast";
@@ -35,7 +38,6 @@ import InsightsAnalysis from "./InsightsAnalysis";
 import { comparisonProperty } from "./insights-chart-templates";
 import InsightsSettings from "./InsightsSettings";
 import InsightsFilters, { type InsightsFilter } from "./InsightsFilters";
-import useInsightsData from "./useInsightsData";
 import type { Bootstrap, Settings, Task, Team, User } from "../types";
 import type {
   ChartCell,
@@ -73,24 +75,31 @@ export default function Insights({
   team,
   user,
   users,
-  initial,
+  year,
+  startMonth,
+  source,
   weeks,
   controlsHost,
   onBootstrap,
   onTask,
-  onSourceTasks,
   onBusyChange,
   onGeneralSettings,
 }: {
   team: Team;
   user: User;
   users: User[];
-  initial: { tasks: Task[]; year: number; startMonth: number; cursor: string };
+  year: number;
+  startMonth: number;
+  source: {
+    tasks: Task[];
+    ready: boolean;
+    queryError: string;
+    retry: () => void;
+  };
   weeks: NonNullable<InsightsPeriod["weeks"]>;
   controlsHost: HTMLElement | null;
   onBootstrap: (boot: Bootstrap) => void;
   onTask: (metric: TaskMetrics) => Promise<void>;
-  onSourceTasks: (tasks: Task[]) => void;
   onBusyChange: (busy: boolean) => void;
   onGeneralSettings: () => void;
 }) {
@@ -103,8 +112,8 @@ export default function Insights({
   const viewKey = `graeboard:insights:${user.id}:${team.id}`;
   // Annual View owns dates. Legacy session periods are deliberately ignored.
   const period = useMemo(
-    () => periodForWeeks(weeks, initial.year, initial.startMonth),
-    [weeks, initial.year, initial.startMonth],
+    () => periodForWeeks(weeks, year, startMonth),
+    [weeks, year, startMonth],
   );
   const [filter, setFilter] = useState<InsightsFilter>(() =>
     readInsightsFilter(viewKey),
@@ -149,8 +158,6 @@ export default function Insights({
     if (optionId !== effectiveOptionId) setOptionId(effectiveOptionId);
   }, [optionId, effectiveOptionId]);
   const mounted = useRef(true);
-  const settingsEpoch = useRef(0),
-    saving = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -161,25 +168,15 @@ export default function Insights({
   useEffect(() => {
     onBusyChange(busy);
   }, [busy, onBusyChange]);
-  const data = useInsightsData(team.id, period, initial, async (signal) => {
-    if (saving.current) return;
-    const epoch = settingsEpoch.current;
-    const boot = await api<Bootstrap>("/bootstrap", { signal });
-    if (
-      !signal.aborted &&
-      mounted.current &&
-      epoch === settingsEpoch.current &&
-      !saving.current
-    )
-      onBootstrap(boot);
-  });
-  // The shared annual heading summarizes the whole source calendar, before
-  // report filters or selected-week clipping. Keep it live with the same data.
-  useEffect(() => onSourceTasks(data.tasks), [data.tasks, onSourceTasks]);
   const tasks = useMemo<Task[]>(
     () =>
-      filteredTasks(data.tasks, savedFilter(filter, settings), settings, users),
-    [data.tasks, filter, settings, users],
+      filteredTasks(
+        source.tasks,
+        savedFilter(filter, settings),
+        settings,
+        users,
+      ),
+    [source.tasks, filter, settings, users],
   );
   const ctx = useMemo<InsightsContext>(
     () => ({
@@ -256,8 +253,6 @@ export default function Insights({
     [tasks, charts, fixed, ctx],
   );
   async function save(draft: InsightsSettingsData, revision: number) {
-    settingsEpoch.current++;
-    saving.current = true;
     setBusy(true);
     try {
       const result = await send<{ settings: Settings }>(
@@ -269,7 +264,6 @@ export default function Insights({
       if (mounted.current) onBootstrap(boot);
       return result.settings;
     } finally {
-      saving.current = false;
       if (mounted.current) setBusy(false);
     }
   }
@@ -357,7 +351,7 @@ export default function Insights({
                   <InsightsFilters
                     teamId={team.id}
                     settings={settings}
-                    tasks={data.tasks}
+                    tasks={source.tasks}
                     users={users}
                     filter={filter}
                     onChange={setFilter}
@@ -373,8 +367,8 @@ export default function Insights({
           </div>,
           controlsHost,
         )}
-      <ErrorNote error={periodError(period) || error || data.error} />
-      {data.error && <Button onClick={data.retry}>다시 연결</Button>}
+      <ErrorNote error={periodError(period) || error || source.queryError} />
+      {source.queryError && <Button onClick={source.retry}>다시 연결</Button>}
       {!configured ? (
         <Empty
           title="업무 색상을 설정해 주세요"
@@ -389,7 +383,7 @@ export default function Insights({
             ) : undefined
           }
         />
-      ) : !periodError(period) && !data.loading && !data.error ? (
+      ) : !periodError(period) && source.ready && !source.queryError ? (
         <>
           {!!deadlineId &&
             (!deadline || deadline.archived || deadline.kind !== "date") && (
@@ -610,7 +604,7 @@ export default function Insights({
           </section>
         </>
       ) : (
-        data.loading && <LoadingState label="업무를 불러오고 있습니다" />
+        !source.ready && <LoadingState label="업무를 불러오고 있습니다" />
       )}
       {showSettings && allowed && (
         <InsightsSettings

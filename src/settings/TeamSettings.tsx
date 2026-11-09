@@ -7,7 +7,9 @@ import WorkColorsEditor from "./WorkColorsEditor";
 import { insightsSettingsSchema } from "../../shared/insights/insights-schema.js";
 import { api, send, type ApiError } from "../platform/api";
 import AccountLinkRequests from "../auth/AccountLinkRequests";
-import { Avatar, Button, ErrorNote } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import { getTheme } from "../../shared/formatting/themes.js";
 import type { Settings, Team, TeamRole, ThemeId, User } from "../types";
 

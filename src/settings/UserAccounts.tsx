@@ -4,7 +4,9 @@ import { Plus, Search } from "lucide-react";
 import Select from "../ui/Select";
 import AvatarEditor from "../auth/AvatarEditor";
 import { send } from "../platform/api";
-import { Avatar, Button, ErrorNote } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import { systemRoleNames, teamRoleNames } from "../platform/roles";
 import type { Team, User } from "../types";
 

@@ -156,6 +156,25 @@ test("서식 복사 중 Esc는 업무 팝업을 먼저 닫고 복사 상태를 �
 });
 
 test("Esc로 서식 복사를 취소해도 선택 범위는 유지한다", async ({ page }) => {
+  const memoId = randomUUID(),
+    path = `/teams/${teamId}/years/2026/memos`;
+  await request(page, path, "POST", { id: memoId, title: "열린 메모" });
+  await request(page, `${path}/${memoId}`, "PUT", {
+    markdown: "표와 함께 읽는 메모",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.evaluate(
+    ({ userId, teamId }) =>
+      localStorage.setItem(
+        `weekly-plan:memo-open:${userId}:${teamId}:2026`,
+        "true",
+      ),
+    { userId, teamId },
+  );
+  await page.reload();
+  await expect(page.locator(".memo-document-card[open]")).toBeVisible();
+  await expect(page.locator("dialog:modal")).toHaveCount(0);
   await drag(page, target(page, 0), target(page, 2));
   const selected = page.locator('.sheet-cell[aria-selected="true"]');
   const cells = await selected.evaluateAll((els) =>
@@ -254,6 +273,9 @@ test("서식 범위의 패턴을 사본에 적용하고 사본 실행취소는 �
   });
   await page.reload();
   await page.getByRole("tab", { name: "서식 사본", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "서식 사본", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await drag(page, target(page, 0), target(page, 1));
   await page.getByRole("button", { name: "서식 복사", exact: true }).click();
   await target(page, 2).click();

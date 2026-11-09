@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import LoadingState from "../ui/LoadingState";
 import { useSite } from "../platform/site-context";
 import TeamSetupKey from "./TeamSetupKey";
-import {
-  ConnectionChecks,
-  type ConnectionCheck,
-  type ResourceProfile,
-} from "./TeamSyncSettings";
+import { ConnectionChecks } from "./SyncConnectionChecks";
+import type { ConnectionCheck, ResourceProfile } from "./sync-connection-types";
 import { syncTime, type SyncStatus } from "./sync-types";
 import type { Team } from "../types";
 import {

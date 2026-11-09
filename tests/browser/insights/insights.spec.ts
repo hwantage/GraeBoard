@@ -165,6 +165,50 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+test("strict CSP에서 초기 진입·차트 검증·저장·새로고침은 eval 시도 없이 동작한다", async ({
+  page,
+}) => {
+  await configure(page);
+  await paint(page, 0, ["2026-01-05"]);
+  await page.goto("/api/health");
+  await page.addInitScript(() => {
+    (window as any).insightsCspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      (window as any).insightsCspViolations.push({
+        directive: event.violatedDirective,
+        blocked: event.blockedURI,
+        source: event.sourceFile,
+      });
+    });
+  });
+  const response = await page.goto("/insights");
+  const policy = response!.headers()["content-security-policy"];
+  expect(policy).toContain("script-src 'self'");
+  expect(policy).not.toContain("'unsafe-eval'");
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+  await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "차트 편집", exact: true });
+  await editor
+    .getByRole("textbox", { name: "차트 제목", exact: true })
+    .fill("");
+  await expect(
+    editor.getByRole("button", { name: "저장", exact: true }),
+  ).toBeDisabled();
+  await editor
+    .getByRole("textbox", { name: "차트 제목", exact: true })
+    .fill("CSP 검증 차트");
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(card(page, "CSP 검증 차트")).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as any).insightsCspViolations),
+  ).toEqual([]);
+  await page.reload();
+  await expect(card(page, "CSP 검증 차트")).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as any).insightsCspViolations),
+  ).toEqual([]);
+});
+
 test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설정 팀장과 팀원 안내를 구분한다", async ({
   page,
   browser,
@@ -749,6 +793,9 @@ for (const site of ["internal", "external"] as const) {
   }) => {
     await configure(page);
     await paint(page, 0, ["2026-01-05"]);
+    // Leave the previous Workspace before installing counters: its paint SSE
+    // may still trigger a legitimate read before the new app's initial read.
+    await page.goto("/api/health");
     const bootstrap = await request(page, "/bootstrap");
     await page.route("**/api/bootstrap", (route) =>
       route.fulfill({ json: { ...bootstrap, site, authMode: "access" } }),

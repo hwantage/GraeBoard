@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 
-import ZoomControls from "./ZoomControls";
+import ZoomControls from "../ui/ZoomControls";
 import { appendHistory } from "../sheet/history";
 
 type Tool = "cursor" | "pen" | "rectangle" | "ellipse" | "arrow" | "eraser";

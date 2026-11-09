@@ -2,7 +2,7 @@ import { propertiesFor, isAssignable } from "../../shared/domain.js";
 import PropertyFilter from "../sheet/PropertyFilter";
 import type { Settings, Task, User, FilterMode } from "../types";
 import type { InsightChart } from "./insights-types";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 
 export type InsightsFilter = NonNullable<InsightChart["filter"]>;
 export default function InsightsFilters({

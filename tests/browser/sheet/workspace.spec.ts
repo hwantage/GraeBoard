@@ -2057,6 +2057,96 @@ test("행 높이 손잡이는 경계선 양쪽으로 넓게 잡히고 아래쪽�
     .toBeCloseTo(box.height + 40, 0);
 });
 
+for (const axis of ["column", "row"] as const) {
+  test(`${axis} 크기 조절은 취소하면 저장하지 않고 놓을 때 한 번 저장한다`, async ({
+    page,
+  }) => {
+    const target =
+      axis === "column"
+        ? page.locator('[data-header-key="title"]')
+        : page.locator(`[data-row-id="${taskIds[0]}"] .row-number`);
+    const handle = page.locator(
+      axis === "column" ? '[data-resize-key="title"]' : '[data-resize-row="0"]',
+    );
+    const size = async () => {
+      const box = (await target.boundingBox())!;
+      return axis === "column" ? box.width : box.height;
+    };
+    const original = await size();
+    // Let the initial team layout save finish before observing gesture writes.
+    await expect
+      .poll(async () =>
+        (await readPreferences(page, teamId)).views.some(
+          (v: any) => v.name === "__current",
+        ),
+      )
+      .toBe(true);
+    const writes: unknown[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/views") && request.method() === "PUT")
+        writes.push(request.postDataJSON());
+    });
+    async function drag() {
+      const box = (await handle.boundingBox())!;
+      const x = box.x + box.width / 2,
+        y = box.y + box.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(
+        x + (axis === "column" ? 60 : 0),
+        y + (axis === "row" ? 60 : 0),
+        { steps: 4 },
+      );
+      await expect.poll(size).toBeCloseTo(original + 60, 0);
+    }
+    for (const cancel of ["escape", "blur", "pointercancel"]) {
+      // Record the browser's actual pointer id instead of assuming an engine-specific id.
+      await page.evaluate(() =>
+        window.addEventListener(
+          "pointerdown",
+          (event) => {
+            (window as any).__resizePointer = event.pointerId;
+          },
+          { once: true, capture: true },
+        ),
+      );
+      await drag();
+      if (cancel === "escape") await page.keyboard.press("Escape");
+      else if (cancel === "blur")
+        await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      else
+        await page.evaluate(() =>
+          window.dispatchEvent(
+            new PointerEvent("pointercancel", {
+              pointerId: (window as any).__resizePointer,
+            }),
+          ),
+        );
+      await expect.poll(size).toBeCloseTo(original, 0);
+      await page.mouse.up();
+    }
+    // Include the 450ms layout debounce: cancelled gestures must not queue a write.
+    await page.waitForTimeout(600);
+    expect(writes).toHaveLength(0);
+    await drag();
+    await page.mouse.up();
+    await expect.poll(() => writes.length).toBe(1);
+    await expect
+      .poll(async () => {
+        const current = (await readPreferences(page, teamId)).views.find(
+          (v: any) => v.name === "__current",
+        )?.data;
+        return axis === "column"
+          ? current?.widths.title
+          : current?.rowHeights[taskIds[0]];
+      })
+      .toBeCloseTo(original + 60, 0);
+    await page.reload();
+    await expect.poll(size).toBeCloseTo(original + 60, 0);
+    expect(writes).toHaveLength(1);
+  });
+}
+
 test("떨어진 영역의 바깥 테두리·전체 테두리는 중복 없이 저장하고 복사·실행취소한다", async ({
   page,
 }, info) => {
@@ -2631,6 +2721,7 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "프로필",
+    "접속 토큰",
     "비밀번호 변경",
     "로그아웃",
   ]);
@@ -2642,6 +2733,10 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   await expect(menu).toHaveCount(0);
   await expect(account).toBeFocused();
   await account.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "접속 토큰", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(
     menu.getByRole("menuitem", { name: "비밀번호 변경", exact: true }),
@@ -4469,6 +4564,11 @@ test("셀 편집 확정은 저장 응답 전에 새 값을 표시하고 실행�
 test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한다", async ({
   page,
 }) => {
+  const requests: any[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/cells/batch")
+      requests.push(request.postDataJSON());
+  });
   const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   await page.route("**/api/cells/batch", (r) => r.abort("failed"));
   await cell.dblclick();
@@ -4487,12 +4587,19 @@ test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한�
   );
   await page.unroute("**/api/cells/batch");
   await page.getByRole("button", { name: "다시 시도", exact: true }).click();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(cell).toHaveText("실패 뒤 복구할 입력");
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
 });
 test("동시 수정 충돌을 보여주고 사용자 선택 후 최신 버전에 적용한다", async ({
   page,
 }) => {
+  const requests: any[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/cells/batch")
+      requests.push(request.postDataJSON());
+  });
   const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   await cell.dblclick();
   await page.locator(".inline-editor textarea").fill("나의 입력");
@@ -4510,11 +4617,16 @@ test("동시 수정 충돌을 보여주고 사용자 선택 후 최신 버전에
   });
   await page.locator(".inline-editor textarea").press("Enter");
   await page.getByRole("button", { name: "입력 확인" }).click();
-  await expect(page.locator("dialog")).toContainText("다른 사람의 입력");
+  await expect(page.getByRole("dialog")).toContainText("다른 사람의 입력");
   await expect(page.locator(".failed-input")).toContainText("나의 입력");
   await page.getByRole("button", { name: "내 변경 다시 적용" }).click();
   await expect(cell).toHaveText("나의 입력");
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[1].operationId).not.toBe(requests[0].operationId);
+  expect(requests[1].changes[0].expectedVersion).toBeGreaterThan(
+    requests[0].changes[0].expectedVersion,
+  );
 });
 test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여넣고 한글 조합 중 저장하지 않는다", async ({
   page,
@@ -4560,7 +4672,7 @@ test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여�
     ),
   );
   await expect(page.locator(".inline-editor textarea")).toBeVisible();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.locator(".inline-editor textarea").press("Enter");
   await expect(first).toHaveText("한글 조합 검증");
 });
@@ -4959,7 +5071,7 @@ test("검색·필터 저장과 편집 가능한 사본의 원본 분리를 확�
     .locator("dialog")
     .getByRole("button", { name: "저장", exact: true })
     .click();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "사본 추가", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "사본 만들기", exact: true });
   await dialog.getByLabel("사본 이름").fill("검증 사본");
@@ -5118,8 +5230,19 @@ for (const connectedExpiry of [false, true]) {
     // expiration. No safety polling may mask broken SSE recovery.
     await page.context().addInitScript(() => {
       const interval = window.setInterval.bind(window);
+      (window as any).__pauseTaskPolling = false;
       window.setInterval = (handler, timeout, ...args) =>
-        interval(timeout === 7000 ? () => {} : handler, timeout, ...args);
+        interval(
+          timeout === 7000
+            ? () => {}
+            : timeout === 1000 && typeof handler === "function"
+              ? () => {
+                  if (!(window as any).__pauseTaskPolling) handler(...args);
+                }
+              : handler,
+          timeout,
+          ...args,
+        );
       (window as any).__closedStreams = [];
       (window as any).__sessionLosses = [];
       (window as any).__streamPaths = {};
@@ -5254,10 +5377,18 @@ for (const connectedExpiry of [false, true]) {
       await expect(page.locator(".failed-input")).toContainText(
         "로그인 만료 중 입력",
       );
+      // Keep the preceding expired-session reads, then require SSE recovery
+      // without the current one-second safety scheduler helping after login.
+      for (const target of [page, peer])
+        await target.evaluate(() => {
+          (window as any).__pauseTaskPolling = true;
+        });
       await page.getByLabel("계정 비밀번호").fill("1234");
       await page.getByRole("button", { name: "로그인 후 재시도" }).click();
       await expect(cell).toHaveText("로그인 만료 중 입력");
-      await expect(page.locator("dialog")).toHaveCount(0);
+      await expect(
+        page.getByRole("dialog", { name: "저장하지 못한 입력", exact: true }),
+      ).toHaveCount(0);
       await expect(
         peer.locator(`[data-cell="${taskIds[0]}:title"]`),
       ).toHaveText("로그인 만료 중 입력", { timeout: 15000 });
@@ -5842,7 +5973,7 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
   const rowHeight = (await first.boundingBox())!.height;
   await first.dblclick();
   expect((await first.boundingBox())!.height).toBe(rowHeight);
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(first.getByRole("textbox")).toBeFocused();
   await first.getByRole("textbox").fill("직접 입력\n두 번째 줄");
   expect((await first.boundingBox())!.height).toBe(rowHeight);
@@ -8156,7 +8287,9 @@ test("상단은 한 줄이고 발표 모드에서 전용 도구와 표를 표시
   await page.keyboard.press("ControlOrMeta+z");
   await pasteContents(page, { "text/plain": "발표 중 변경 금지" });
   await first.click({ button: "right" });
-  await expect(page.locator(".inline-editor,dialog")).toHaveCount(0);
+  await expect(
+    page.locator(".inline-editor").or(page.getByRole("dialog")),
+  ).toHaveCount(0);
   await expect(first).toHaveText("첫 업무");
   await expect(first).toHaveCSS("font-weight", "700");
   expect(writes).toBe(0);
@@ -11508,3 +11641,106 @@ test("캘린더만 열린 두 탭은 새 시트 구독 없이 로그인 성공 �
     await peer.close();
   }
 });
+
+for (const staleResponse of ["success", "error"] as const) {
+  test(`팀을 나갔다 돌아온 뒤 이전 필터 조회 응답이 도착해도 최신 목록을 보존한다 (${staleResponse})`, async ({
+    page,
+  }) => {
+    expect(
+      (
+        await writePreferences(page, {
+          data: { teamId, name: "이전 이름", data: {} },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const filter = (await readPreferences(page, teamId)).views.find(
+      (item: any) => item.name === "이전 이름",
+    );
+    await page.reload();
+    await expect(page.getByRole("grid")).toBeVisible();
+    const boot = await (
+      await page.request.get("/api/bootstrap")
+    )
+      .json()
+      .then(unpack);
+    const otherTeam = boot.teams.find((team: any) => team.id !== teamId).id;
+    let release!: () => void;
+    let captured!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const capturedResponse = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    let intercepted = false;
+    let previousRequest: any;
+    await page.route(`**/api/filters?teamId=${teamId}`, async (route) => {
+      if (intercepted) return route.continue();
+      intercepted = true;
+      previousRequest = route.request();
+      const response = await route.fetch();
+      captured();
+      await gate;
+      if (staleResponse === "error")
+        await route.fulfill({
+          status: 503,
+          json: { error: "이전 화면의 조회 오류" },
+        });
+      else await route.fulfill({ response });
+    });
+    try {
+      await page
+        .getByRole("button", { name: "저장된 필터", exact: true })
+        .click();
+      await capturedResponse;
+      await page.keyboard.press("Escape");
+      await page.getByLabel("팀 선택").selectOption(otherTeam);
+      await expect(
+        page.locator(`[data-cell="${taskIds[0]}:title"]`),
+      ).toHaveCount(0);
+      await expect(page.getByRole("grid")).toBeVisible();
+      expect(
+        (
+          await page.request.patch(`/api/filters/${filter.id}`, {
+            headers: { "X-Requested-With": "WeeklyPlan" },
+            data: { name: "최신 이름" },
+          })
+        ).ok(),
+      ).toBeTruthy();
+      await page.getByLabel("팀 선택").selectOption(teamId);
+      await expect(
+        page.getByRole("gridcell", { name: "첫 업무", exact: true }),
+      ).toBeVisible();
+      await Promise.all([
+        page.waitForResponse((response) =>
+          response.url().endsWith(`/api/filters?teamId=${teamId}`),
+        ),
+        page.getByRole("button", { name: "저장된 필터", exact: true }).click(),
+      ]);
+      await expect(
+        page.getByRole("button", { name: "최신 이름", exact: true }),
+      ).toBeVisible();
+      const delivered = page.waitForResponse(
+        (response) => response.request() === previousRequest,
+      );
+      release();
+      await (await delivered).finished();
+      // Let the delivered response and the following React render settle.
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(
+        page.getByRole("button", { name: "최신 이름", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "이전 이름", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator(".board-error")).toHaveCount(0);
+    } finally {
+      release();
+    }
+  });
+}

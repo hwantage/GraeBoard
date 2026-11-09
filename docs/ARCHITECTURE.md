@@ -6,6 +6,54 @@
 
 이 문서는 저장소 구현 기준의 구성도입니다. 실제 배포 커밋·프로젝트·설치 UUID·Secret 등록 상태는 별도 운영 기록으로 관리합니다.
 
+## 브라우저의 책임 경계
+
+`App`은 화면 전환과 사용자 명령을 연결하고, 상태·저장 수명은 아래 모듈이 소유합니다. 공용 UI는 인증·업무 화면을 다시 참조하지 않습니다. 내부/외부 HTTP 계약과 저장 형식은 동일하게 유지하며, 실제 확장 순서는 [개발 안내](DEVELOPMENT.md#신규-기능을-추가하는-순서)를 따릅니다.
+
+```mermaid
+flowchart TD
+    App["App: 화면·선택·명령 연결"] --> Read["useTaskData: 원본 조회·재시도·SSE"]
+    App --> Write["useSheetOperations: 저장 전달·실패 입력·재시도"]
+    App --> History["useSheetHistory: 원본 undo/redo"]
+    App --> Layout["useSheetLayout: 개인 배치 저장"]
+    App --> Filters["useSavedFilters: 팀별 필터·순차 저장"]
+    App --> Copy["useSheetCloneDraft: 사본 초안·저장·이력"]
+    App --> Rows["useSheetRowCommands: 행 명령·문서 보존"]
+    App --> Cells["useSheetCellCommands: 셀·서식·붙여넣기"]
+    App --> Undo["useSheetUndo: 실행취소 전달"]
+    App --> Navigation["useWorkspaceNavigation: 연간·인사이트·캘린더·문서 이동 전 저장 조정"]
+    App --> Insights["Insights: 필터·파생 캐시·차트·설정"]
+    Read -->|"같은 공개 원본 목록"| Insights
+    Insights --> Metrics["shared/insights: 순수 집계·설정 계약"]
+    Rows --> Write
+    Rows --> History
+    Rows --> Copy
+    Cells --> Write
+    Cells --> Copy
+    Auth["Auth / SessionLogin"] --> UI["ui: 버튼·모달·표시·조작"]
+    App --> UI
+    Read --> Platform["platform: API·이벤트 스트림"]
+    Write --> Platform
+    Layout --> Platform
+    Filters --> Platform
+    Copy --> Platform
+```
+
+저장 성공은 App의 콜백을 통해 원본 목록과 이력에 반영합니다. 원본의 팀·연도·순환 달력 범위는 `useTaskData`가 한 번만 읽고 연간 통계와 인사이트에 함께 제공합니다. 보고서 설정 저장도 공개 invalidate와 읽기 보류를 통해 늦은 원본/설정 응답을 차단하며 기존 snapshot 반환형은 Task[]입니다. 조회 실패와 저장 실패는 서로 지우지 않습니다. 필터·배치의 팀 전환과 셀 저장의 팀·연도 전환에는 비동기 요청의 소유 범위를 검사합니다. `check:architecture`가 런타임 순환·프런트엔드 역방향 import·브라우저의 서버/Node 의존을, 기존 저장소 경계 검사가 외부 공통 서비스 목록과 간접 Node 의존을 검사합니다.
+
+공유 strict 스키마를 사용하는 브라우저는 App보다 먼저 `platform/polyfills.ts`에서 Zod의 eval/JIT 확인을 끕니다. 같은 검증 계약을 인터프리터로 실행하며 서버 CSP와 Node/Edge의 스키마 정책은 유지합니다.
+
+화면 내부의 입력과 편집 수명도 독립적으로 관리합니다.
+
+| 조합 화면 | 상태·행동의 소유자 | 저장 경계 |
+| --- | --- | --- |
+| `Insights` | 원본은 같은 `useTaskData`, 로컬 필터·파생값·차트/설정은 `src/insights/` | 날짜는 공유 View/PeriodPicker, 설정은 기존 PATCH/CAS. 자체 원본 조회·poll·SSE 없이 공개 원본 목록과 retry를 사용 |
+| `Grid` | `useGridSelection`, `useGridRowDrag`, `useGridResize`, `useGridViewport` | 선택/크기 미리보기는 로컬 상태, 확정만 기존 시트 명령/개인 배치로 전달 |
+| `Calendar` | `useCalendarMutation`, `useCalendarCreation`, `useCalendarCommands`; 기존 조회·드래그 훅 재사용 | 서버 일정과 시크릿 저장소의 기존 API·초안·복원 계약 유지 |
+| `RichMarkdownEditor` | `useRichEditorLifecycle`, 입력·업로드·링크·슬래시·편집 명령 모듈 | 본문 변경을 `DocumentEditor`에 전달; 자동 저장·충돌·SSE는 문서 경계가 소유 |
+
+팀·연도·사본 전환은 시트 제스처를 취소하고, 편집기 해제는 이벤트·업로드를 정리합니다. Markdown 내보내기는 화면 컴포넌트를 import하지 않고 편집기와 같은 스키마/변환 모듈을 사용합니다.
+
 ## 배포 구성
 
 ```mermaid
@@ -41,16 +89,16 @@ flowchart TB
 
 브라우저 응답과 SSE는 같은 진입 경로를 거쳐 돌아옵니다. 내부 Node는 Supabase·R2·Cloudflare 관리 API에 직접 연결하지 않습니다. 외부 자원 초기화·배포·백업은 인터넷에 연결된 운영자 환경에서 수행합니다.
 
-| 구성요소          | 역할                                                           | 구현·설정                                                                            |
-| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 내부 Node         | 내부 계정·세션, 모든 팀의 업무 API, 파일 이미지, Git 발신·수신 | `server/`, `.env`, `GRAEBOARD_SITE=internal`                                         |
-| 팀 데이터 GitHub  | 업무 확정 이력, 이미지, 구성원·연결 키 해시·적용 상태 전달     | `server/sync/`, [브랜치 규약](SYNC_PROTOCOL.md#git-브랜치별-역할)                    |
-| Cloudflare Access | 외부 주소의 Google 로그인                                      | 팀 전용 Access 앱, `ACCESS_ISSUER`, `ACCESS_AUDIENCE`                                |
-| Pages Functions   | 모든 경로를 gateway로 전달                                     | `functions/[[path]].js`, `public/_routes.json`, `GRAEBOARD_BACKEND`                  |
-| gateway Worker    | Edge 호출, Access JWT 검증 후 정적 파일 제공, R2/Images 접근, Cron 전달   | `worker/gateway.mjs`, `wrangler.gateway.jsonc`                                       |
-| Supabase Edge     | Access JWT 검증, 앱 계정·팀 권한, 업무 API, Git 동기화, SSE    | `edge/main.mjs` → `edge/handler.mjs` → `worker/entry.mjs`, `GRAEBOARD_SITE=external` |
-| PostgreSQL        | 팀 업무와 외부 계정·승인·세션                                  | 팀별 프로젝트의 `graeboard`와 `graeboard_site` 스키마                                |
-| R2 / Images       | 외부 문서 이미지 저장·변환                                     | gateway의 `R2_TEAM`, `IMAGES` binding                                                |
+| 구성요소          | 역할                                                                    | 구현·설정                                                                            |
+| ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 내부 Node         | 내부 계정·세션, 모든 팀의 업무 API, 파일 이미지, Git 발신·수신          | `server/`, `.env`, `GRAEBOARD_SITE=internal`                                         |
+| 팀 데이터 GitHub  | 업무 확정 이력, 이미지, 구성원·연결 키 해시·적용 상태 전달              | `server/sync/`, [브랜치 규약](SYNC_PROTOCOL.md#git-브랜치별-역할)                    |
+| Cloudflare Access | 외부 주소의 Google 로그인                                               | 팀 전용 Access 앱, `ACCESS_ISSUER`, `ACCESS_AUDIENCE`                                |
+| Pages Functions   | 모든 경로를 gateway로 전달                                              | `functions/[[path]].js`, `public/_routes.json`, `GRAEBOARD_BACKEND`                  |
+| gateway Worker    | Edge 호출, Access JWT 검증 후 정적 파일 제공, R2/Images 접근, Cron 전달 | `worker/gateway.mjs`, `wrangler.gateway.jsonc`                                       |
+| Supabase Edge     | Access JWT 검증, 앱 계정·팀 권한, 업무 API, Git 동기화, SSE             | `edge/main.mjs` → `edge/handler.mjs` → `worker/entry.mjs`, `GRAEBOARD_SITE=external` |
+| PostgreSQL        | 팀 업무와 외부 계정·승인·세션                                           | 팀별 프로젝트의 `graeboard`와 `graeboard_site` 스키마                                |
+| R2 / Images       | 외부 문서 이미지 저장·변환                                              | gateway의 `R2_TEAM`, `IMAGES` binding                                                |
 
 `worker/`에는 이전 배포에서 이어받은 공통 API 구현도 있습니다. 디렉터리 이름과 실제 실행 위치를 구분합니다. 현재 업무 코드는 Edge의 Deno 런타임에서 실행하고, Cloudflare Worker에서는 전달·정적 파일·이미지 자원 처리를 실행합니다.
 

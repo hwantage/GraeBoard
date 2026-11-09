@@ -1,19 +1,24 @@
+import useSheetRowCommands from "../sheet/useSheetRowCommands";
+import useSheetCellCommands from "../sheet/useSheetCellCommands";
+import useSheetUndo from "../sheet/useSheetUndo";
+import useSheetHistory from "../sheet/useSheetHistory";
+import useSheetLayout from "../sheet/useSheetLayout";
+import useSheetOperations from "../sheet/useSheetOperations";
+import useTaskData from "../sheet/useTaskData";
+import useSavedFilters, { type SavedFilter } from "../sheet/useSavedFilters";
+import SavedFilterDialog from "../sheet/SavedFilterDialog";
 import { RecentColorsProvider } from "../ui/recent-colors";
-import { queryPolicyFor } from "../platform/query-policy";
-import { joinQuery } from "../platform/shared-query";
 import AnnualMemoPanel from "../documents/AnnualMemoPanel";
-import type { DocumentPanelHandle } from "../documents/DocumentPanel";
+
 import Calendar from "../calendar/Calendar";
-import Insights from "../insights/Insights";
-import type { TaskMetrics } from "../insights/insights-types";
 import { busyProps } from "../ui/busyProps";
 import Select from "../ui/Select";
 import LoadingState from "../ui/LoadingState";
 import SheetTabs from "../sheet/SheetTabs";
-import DocumentBrowser, {
-  type DocumentBrowserHandle,
-} from "../documents/DocumentBrowser";
-import useWorkspaceRoute from "./useWorkspaceRoute";
+import DocumentBrowser from "../documents/DocumentBrowser";
+import useWorkspaceNavigation from "./useWorkspaceNavigation";
+import Insights from "../insights/Insights";
+import type { TaskMetrics } from "../insights/insights-types";
 import DocumentLinkPanel, {
   loadDocumentLink,
   type OpenedDocumentLink,
@@ -24,7 +29,6 @@ import {
   documentLinkFullPage,
   documentLinkKey,
   refreshDocumentLinkTitles,
-  updateDocumentLinkTitle,
   type DocumentLinkOpener,
   type DocumentLinkTarget,
 } from "../documents/document-links";
@@ -35,20 +39,14 @@ import {
   getTheme,
   themeVariables,
 } from "../../shared/formatting/themes.js";
-import { applyBorderPreset } from "../../shared/formatting/borders.js";
-import { formatScopes } from "../sheet/format-selection.js";
+
 import {
   changeSelection,
   changedRules,
   coversAll,
-  nearbyRows,
-  sheetChanges,
   type ChangeTargets,
 } from "../sheet/selection-areas.js";
-import {
-  copyRowFormatting,
-  resetCellStyle,
-} from "../../shared/formatting/formatting.js";
+
 import {
   useCallback,
   useEffect,
@@ -84,28 +82,22 @@ import {
 import {
   api,
   send,
-  serverNow,
   ApiError,
-  taskQuery,
   logout,
   refreshExternalTeam,
 } from "../platform/api";
 import { siteFor } from "../platform/site";
 import { SiteContext, useSite } from "../platform/site-context";
 import TeamSyncIndicator from "../sync/TeamSyncIndicator";
-import { mergeCellUpdates, mergeSnapshotCells } from "../sheet/cell-updates.js";
-import { subscribeCellChanges } from "../sheet/cell-sync";
+import { mergeCellUpdates } from "../sheet/cell-updates.js";
 import {
   fieldsFor,
   orderColumns,
   propertiesFor,
-  emptyPropertyValue,
   normalizeView,
   savedFilter,
-  viewLayout,
   teamRole,
   DEFAULT_SETTINGS,
-  MAX_STYLE_CELLS,
   defaultView,
   visibleWeeks,
   weeksForPeriod,
@@ -124,42 +116,29 @@ import type {
   Bootstrap,
   Task,
   View,
-  Style,
-  Border,
-  BorderPreset,
   Selection,
   Point,
-  CellChange,
   BatchResult,
   HistoryEntry,
-  TaskDeletion,
-  TaskCreation,
   SheetClone,
   SavedCell,
   Property,
-  FormatChange,
   FormatRule,
 } from "../types";
-import {
-  Auth,
-  Button,
-  Modal,
-  Empty,
-  ErrorNote,
-  SessionLogin,
-} from "../components";
+import { Auth } from "../auth/Auth";
+import { Button } from "../ui/Button";
+import { Modal } from "../ui/Modal";
+import { Empty } from "../ui/Empty";
+import { ErrorNote } from "../ui/ErrorNote";
+import { SessionLogin } from "../auth/SessionLogin";
 import SettingsPanel from "../settings/SettingsPanel";
 import Toast, { UndoToast, useToast } from "../ui/Toast";
 import useResourceSync from "../platform/useResourceSync";
 import useSheetCloneDraft from "../sheet/useSheetCloneDraft";
 import { BrandMark, BrandWordmark } from "../ui/Brand";
-import Grid, {
-  type Column,
-  type RowCommand,
-  rangeOf,
-  rangesOf,
-  selectedPoints,
-} from "../sheet/Grid";
+import Grid from "../sheet/Grid";
+import type { Column } from "../sheet/grid-types";
+import { rangeOf, rangesOf } from "../sheet/grid-selection";
 import Toolbar from "../sheet/Toolbar";
 import SaveStatus from "./SaveStatus";
 import ActiveFilterConditions from "../sheet/ActiveFilterConditions";
@@ -169,15 +148,8 @@ import AccountMenu from "../auth/AccountMenu";
 import ProfilePanel from "../auth/ProfilePanel";
 import AccessTokens from "../auth/AccessTokens";
 import FindBar from "../sheet/FindBar";
-import type { ClipboardMatrix } from "../sheet/clipboard";
-import { STYLE_KEYS } from "../../shared/formatting/compact.js";
-import {
-  appendHistory,
-  rebaseHistory,
-  cellsBefore,
-  describeStyle,
-  canUndoCreation,
-} from "../sheet/history";
+
+import { describeStyle } from "../sheet/history";
 import {
   RowPanel,
   ExportPanel,
@@ -186,34 +158,17 @@ import {
   PasswordPanel,
 } from "../Panels";
 
-type Failed = {
-  payload: {
-    operationId: string;
-    createdAt: string;
-    changes: CellChange[];
-    format?: FormatChange;
-  };
-  error: ApiError | Error;
-  mode: "normal" | "undo" | "redo";
-};
-type SavedFilter = {
-  id: string;
-  name: string;
-  data: Pick<View, "propertyFilters" | "propertyFilterModes">;
-  scope: "team" | "personal";
-  canEdit: boolean;
-};
-function propertyFilterKey(
-  view: Pick<View, "propertyFilters" | "propertyFilterModes">,
+function teamUnavailableFor(
+  boot: Bootstrap,
+  teamId: string,
+  external: boolean,
 ) {
-  return JSON.stringify([
-    Object.entries(view.propertyFilters || {})
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, values]) => [key, [...new Set(values)].sort()]),
-    Object.entries(view.propertyFilterModes || {}).sort(([a], [b]) =>
-      a.localeCompare(b),
-    ),
-  ]);
+  const team = boot.teams.find((team) => team.id === teamId) || boot.teams[0];
+  return (
+    external &&
+    !!team?.status &&
+    ["unconnected", "importing", "maintenance"].includes(team.status)
+  );
 }
 function rememberedBoard(boot: Bootstrap) {
   try {
@@ -310,16 +265,46 @@ function Workspace({
     history.replaceState(history.state, "", "/");
     return { target, fullPage };
   });
-  const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
+  const navigation = useWorkspaceNavigation({
+    canLeaveSheet: () =>
+      !(
+        operations.isPending() ||
+        operations.failure() ||
+        editorRef.current ||
+        sheetCloneDraft.dirty ||
+        sheetCloneDraft.saving
+      ),
+    async prepareAnnual(fromDocuments) {
+      if (fromDocuments) {
+        closeSheetCloneNow();
+        await refresh();
+      } else await openSheetClone(null);
+    },
+    onAnnualReselect: () => closeSheetClone(),
+    flushLayout: () => layout.flush(),
+    onPrepared(next) {
+      setViewMenu(false);
+      if (next === "calendar" || next === "insights") setRowTask(null);
+    },
+    onError: (message) => setError(message),
+  });
+  const {
+    workspaceRoute,
+    screen,
+    documentBrowser,
+    annualMemoRef,
+    documentBrowserRef,
+    calendarBusy,
+    setCalendarBusy,
+    insightsBusy,
+    setInsightsBusy,
+    workspaceNavigating,
+    setWorkspaceNavigating,
+    navigateWorkspace,
+    openAnnualWorkspace,
+    closeDocumentBrowser,
+  } = navigation;
   const calendarTheme = useCalendarTheme();
-  const screen =
-    workspaceRoute.route === "calendar"
-      ? "calendar"
-      : workspaceRoute.route === "insights"
-        ? "insights"
-        : "annual";
-  const [calendarBusy, setCalendarBusy] = useState(false);
-  const [insightsBusy, setInsightsBusy] = useState(false);
   const [insightsControlsHost, setInsightsControlsHost] =
     useState<HTMLDivElement | null>(null);
   const [insightTaskTarget, setInsightTaskTarget] = useState<{
@@ -327,22 +312,12 @@ function Workspace({
     year: number;
     teamId: string;
   } | null>(null);
-  const documentBrowser = workspaceRoute.route === "documents";
-  const annualMemoRef = useRef<DocumentPanelHandle>(null);
-  const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
-  const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const [initialBoard] = useState(() => rememberedBoard(boot));
   const [teamId, setTeamId] = useState(initialBoard.teamId),
     [year, setYear] = useState(initialBoard.year),
-    [tasks, setTasks] = useState<Task[]>([]),
     [view, setView] = useState<View>(defaultView(initialBoard.year) as View),
-    [loaded, setLoaded] = useState(false),
     [panel, setPanel] = useState(""),
     [rowTask, setRowTask] = useState<Task | null>(null),
-    [copiedRow, setCopiedRow] = useState<{
-      task: Task;
-      height?: number;
-    } | null>(null),
     [editor, setEditor] = useState<{
       point: Point;
       initial?: string;
@@ -353,12 +328,7 @@ function Workspace({
       value: SavedCell["value"];
     } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
-    [formatBrush, setFormatBrush] = useState<{
-      styles: Style[][];
-      repeat: boolean;
-    } | null>(null),
     [error, setError] = useState(""),
-    [queryError, setQueryError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
     [undoToast, setUndoToast] = useState<
       | ({ message: string } & (
@@ -370,27 +340,9 @@ function Workspace({
     [presentation, setPresentation] = useState(false),
     [gridZoom, setGridZoom] = useState(100),
     [viewMenu, setViewMenu] = useState(false),
-    [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]),
-    [selectedSavedFilterId, setSelectedSavedFilterId] = useState(""),
-    [filterUpdateNotice, setFilterUpdateNotice] = useState<{
-      teamId: string;
-      filterId: string;
-      revision: number;
-      state: "saving" | "saved" | "error";
-      cleared: boolean;
-    } | null>(null),
-    [viewName, setViewName] = useState(""),
-    [filterScope, setFilterScope] = useState<"team" | "personal">("personal"),
     [filterNameDialog, setFilterNameDialog] = useState<{
-      filterId?: string;
+      filter?: SavedFilter;
     } | null>(null),
-    [filterNameError, setFilterNameError] = useState(""),
-    [savingFilterName, setSavingFilterName] = useState(false),
-    [deletingFilterId, setDeletingFilterId] = useState(""),
-    [pending, setPending] = useState(0),
-    [failed, setFailed] = useState<Failed | null>(null),
-    [undoStack, setUndoStack] = useState<HistoryEntry[]>([]),
-    [redoStack, setRedoStack] = useState<HistoryEntry[]>([]),
     [sheetClone, setSheetClone] = useState<SheetClone | null>(null),
     [jump, setJump] = useState<{
       key: string | null;
@@ -408,7 +360,64 @@ function Workspace({
       retain: boolean;
     } | null>(null),
     [viewError, setViewError] = useState("");
-  const [loadedScope, setLoadedScope] = useState("");
+  const sheetHistory = useSheetHistory();
+  const {
+    undoStack,
+    redoStack,
+    recordCells: recordResult,
+    recordTask: recordTaskResult,
+  } = sheetHistory;
+  const layout = useSheetLayout(teamId, year, setViewError);
+  const operations = useSheetOperations({
+    teamId,
+    year,
+    startMonth: view.startMonth,
+    onStart: () => taskData.invalidate(),
+    onSnapshot: (tasks) => taskData.replace(tasks),
+    onResult(result, mode, selected) {
+      const rules = taskData.snapshot()[0]?.formatting?.rules;
+      applyResult(result);
+      recordResult(result, mode);
+      if (mode !== "normal") revealResult(result, rules, selected);
+    },
+    onSettled: () => setPendingEdit(null),
+    onError: setError,
+  });
+  const { pending, failed } = operations;
+  const taskData = useTaskData({
+    teamId,
+    year,
+    startMonth: view.startMonth,
+    viewYear: view.year,
+    copy: !!sheetClone,
+    active: screen !== "calendar",
+    available: !teamUnavailableFor(boot, teamId, site.external),
+    boot,
+    onBootstrap,
+    blocked: () =>
+      !!(
+        operations.isPending() ||
+        operations.failure() ||
+        editorRef.current ||
+        insightsBusy
+      ),
+    onScopeChange() {
+      setSelection(null);
+      setError("");
+    },
+    onAccessLost: () => {
+      void refreshBoot();
+    },
+  });
+  const { tasks, loaded, loadedScope, ready, taskScope, queryError, refresh } =
+    taskData;
+  const handleInsightsBusy = useCallback(
+    (busy: boolean) => {
+      if (busy) taskData.invalidate();
+      setInsightsBusy(busy);
+    },
+    [taskData.invalidate, setInsightsBusy],
+  );
   const syncConfigured = !!boot.teams.find((t) => t.id === teamId)?.sync
     ?.configured;
   useEffect(() => {
@@ -552,13 +561,8 @@ function Workspace({
     setLinkReload((value) => value + 1);
     if (screen === "annual" && !documentBrowser) void refresh();
   }
-  const filterNameInput = useRef<HTMLInputElement>(null);
-  const filterSaveQueue = useRef(Promise.resolve());
-  const filterSaveRevision = useRef(0);
-  const filterSavePending = useRef(0);
-  const filterTeam = useRef(teamId);
-  filterTeam.current = teamId;
-  const filterLoad = useRef(Promise.resolve());
+  const currentTeam = useRef(teamId);
+  currentTeam.current = teamId;
   const sheetCloneRef = useRef(sheetClone);
   sheetCloneRef.current = sheetClone;
   const savedSheetCloneDocuments = useRef({
@@ -569,40 +573,6 @@ function Workspace({
       { sequence: number; hasDocument: boolean; documentCount: number }
     >(),
   });
-  const currentFilters = useRef<{
-    teamId: string;
-    data: SavedFilter["data"];
-    selectedId: string;
-  }>({ teamId: "", data: {}, selectedId: "" });
-  const rememberSelectedFilter = useCallback(
-    (id: string) => {
-      setFilterUpdateNotice(null);
-      setSelectedSavedFilterId(id);
-      if (!sheetCloneRef.current)
-        saveCurrentFilters(currentFilters.current.data, id);
-    },
-    [user.id, teamId],
-  );
-  useEffect(() => {
-    setFilterUpdateNotice(null);
-  }, [teamId, selectedSavedFilterId]);
-  useEffect(() => {
-    if (
-      filterUpdateNotice?.state === "saved" &&
-      filterUpdateNotice.teamId === teamId &&
-      filterUpdateNotice.filterId === selectedSavedFilterId
-    )
-      setToast(
-        filterUpdateNotice.cleared
-          ? "해제한 필터는 저장된 필터에서 제외됩니다."
-          : "필터 변경사항이 업데이트되었습니다.",
-      );
-  }, [filterUpdateNotice, teamId, selectedSavedFilterId, setToast]);
-  const scopeMonth = view.startMonth > 1 ? 2 : 1;
-  const taskScope = `${teamId}:${year}:${scopeMonth}`;
-  const ready = loaded && (!!sheetClone || loadedScope === taskScope);
-  const taskScopeRef = useRef(taskScope);
-  taskScopeRef.current = taskScope;
   const calendarNavigation = useRef<{
     teamId: string;
     year: number;
@@ -623,10 +593,7 @@ function Workspace({
     if (task) setRowTask(task);
     else setError("업무를 찾을 수 없습니다.");
   }, [insightTaskTarget, workspaceRoute.route, ready, tasks, year, teamId]);
-  const teamUnavailable =
-    site.external &&
-    !!team?.status &&
-    ["unconnected", "importing", "maintenance"].includes(team.status);
+  const teamUnavailable = teamUnavailableFor(boot, teamId, site.external);
   const sheetCloneDraft = useSheetCloneDraft(teamId, user.id);
   const editingSheetClone =
     !!sheetClone && sheetCloneDraft.draft?.sheetClone.id === sheetClone.id;
@@ -674,75 +641,58 @@ function Workspace({
     () => propertiesFor(settings) as Property[],
     [settings],
   );
-  const tasksRef = useRef(tasks),
-    bootJsonRef = useRef(""),
+  const bootJsonRef = useRef(""),
     workspaceRef = useRef<HTMLDivElement>(null),
     viewMenuRef = useRef<HTMLDivElement>(null),
     presentationScroll = useRef<{ top: number; left: number } | null>(null),
     sheetCloneScroll = useRef<{ top: number; left: number } | null>(null),
     viewRef = useRef(view),
-    pendingRef = useRef(0),
-    failedRef = useRef(failed),
     editorRef = useRef(editor),
-    queue = useRef(Promise.resolve()),
-    viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     lastView = useRef(view),
     boardKey = useRef(""),
-    mutationEpoch = useRef(0),
-    remoteEpoch = useRef(0),
     // 복사를 거절한 안내. 다음 복사가 성공하면 이 안내만 지운다.
     copyError = useRef(""),
     // 표나 찾기로 선택을 바꾸면 늘어난다. 그 뒤 끝난 실행취소는 선택을 옮기지 않는다.
-    selectionEpoch = useRef(0),
-    cellEventCursor = useRef<string | null>(null),
-    viewSaver = useRef<null | (() => void)>(null);
-  const queryPolicy = queryPolicyFor(site);
-  const querySchedule = useRef({ nextPollAt: 0, retryAt: 0, failures: 0 });
-  const queryGeneration = useRef(0);
-  const refreshWork = useRef<{
-    scope: string;
-    epoch: number;
-    remote: number;
-    generation: number;
-    controller: AbortController;
-    consumers: Set<object>;
-    promise: Promise<boolean | undefined>;
-  } | null>(null);
-  function querySucceeded() {
-    querySchedule.current = {
-      nextPollAt: Date.now() + queryPolicy.pollMs,
-      retryAt: 0,
-      failures: 0,
-    };
-    // Read recovery must never dismiss a failed save or another action's error.
-    setQueryError("");
-  }
-  function queryFailed(failure: Error) {
-    const schedule = querySchedule.current;
-    schedule.failures++;
-    const delay = queryPolicy.retryDelay(
-      schedule.failures,
-      failure instanceof ApiError ? failure : {},
-    );
-    schedule.retryAt = Date.now() + delay;
-    schedule.nextPollAt = schedule.retryAt;
-    setQueryError(failure.message);
-  }
+    selectionEpoch = useRef(0);
+  const filters = useSavedFilters({
+    teamId,
+    userId: user.id,
+    enabled: !teamUnavailable,
+    ready,
+    copy: !!sheetClone,
+    settings,
+    onError: setViewError,
+    onNotify: setToast,
+    onDefinitionChange(data) {
+      if (sheetCloneRef.current)
+        lastView.current = { ...lastView.current, ...data };
+      else {
+        viewRef.current = { ...viewRef.current, ...data };
+        setView(viewRef.current);
+      }
+    },
+  });
+  const {
+    filters: savedFilters,
+    active: activeSavedFilter,
+    notice: filterUpdateNotice,
+    deletingId: deletingFilterId,
+  } = filters;
   function editTasks() {
     return sheetCloneRef.current
       ? sheetCloneDraft.ref.current?.tasks || sheetCloneRef.current.tasks
-      : tasksRef.current;
+      : taskData.snapshot();
   }
   async function prepareCopySwitch() {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
       throw new Error("메모 저장을 마친 뒤 전환해 주세요.");
-    if (editorRef.current || pendingRef.current || failedRef.current)
+    if (editorRef.current || operations.isPending() || operations.failure())
       throw new Error("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
     if (sheetCloneDraft.ref.current) await sheetCloneDraft.save();
   }
   async function openSheetClone(id: string | null) {
     if (
-      filterTeam.current !== teamId ||
+      currentTeam.current !== teamId ||
       id === (sheetCloneRef.current?.id || null)
     )
       return;
@@ -753,7 +703,7 @@ function Workspace({
       return;
     }
     const r = await api<SheetClone>(`/sheet-clones/${id}`);
-    if (filterTeam.current !== teamId || boardKey.current !== scope) return;
+    if (currentTeam.current !== teamId || boardKey.current !== scope) return;
     if (!sheetCloneRef.current) {
       lastView.current = viewRef.current;
       const grid = workspaceRef.current?.querySelector(".sheet-scroll");
@@ -762,14 +712,13 @@ function Workspace({
         top: grid?.scrollTop || 0,
       };
     }
-    flushView();
-    setCopiedRow(null);
+    layout.flush();
+    rowCommands.clearCopiedRow();
     setRowTask(null);
     setViewMenu(false);
     setError("");
-    setFilterUpdateNotice(null);
     setJump(null);
-    setSelectedSavedFilterId("");
+    filters.enterCopy();
     const next = normalizeView(r.view, r.settings || team.settings) as View;
     sheetCloneRef.current = r;
     setSheetClone(r);
@@ -813,7 +762,8 @@ function Workspace({
     };
     // The calendar stays busy until its closed window has rendered away.
     if (workspaceRoute.route !== "annual") {
-      if (calendarBusy || linkStep.current.step === "route") return;
+      if (calendarBusy || insightsBusy || linkStep.current.step === "route")
+        return;
       linkStep.current.step = "route";
       void workspaceRoute.navigate("annual").then((moved) => {
         if (!moved) stop();
@@ -844,6 +794,7 @@ function Workspace({
     linkNavigation,
     workspaceRoute.route,
     calendarBusy,
+    insightsBusy,
     teamId,
     loaded,
     loadedScope,
@@ -857,8 +808,7 @@ function Workspace({
     setSheetClone(null);
     viewRef.current = lastView.current;
     setView(lastView.current);
-    setSelectedSavedFilterId(currentFilters.current.selectedId);
-    setFilterUpdateNotice(null);
+    filters.leaveCopy();
     setSelection(null);
     setJump(null);
   }
@@ -908,26 +858,12 @@ function Workspace({
         ?.focus({ preventScroll: true });
     }
   }, [presentation]);
-  useEffect(() => {
-    setFormatBrush(null);
-  }, [teamId, year, sheetClone?.id, presentation, screen]);
-  useEffect(() => {
-    if (!formatBrush) return;
-    const cancel = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (workspaceRef.current?.querySelector("dialog[open]")) return;
-      event.preventDefault();
-      setFormatBrush(null);
-    };
-    // The drag tracker consumes Escape at window capture, before React events.
-    window.addEventListener("keydown", cancel, true);
-    return () => window.removeEventListener("keydown", cancel, true);
-  }, [formatBrush]);
+
   useEffect(() => {
     if (!presentation) return;
     const exit = (e: KeyboardEvent) => {
       // Let the topmost dialog handle Escape before leaving presentation mode.
-      if (workspaceRef.current?.querySelector("dialog[open]")) return;
+      if (workspaceRef.current?.querySelector("dialog:modal")) return;
       if (
         e.target instanceof Element &&
         e.target.closest(".presentation-toolbar input")
@@ -956,24 +892,19 @@ function Workspace({
       (teamId && !boot.teams.some((t) => t.id === teamId))
     ) {
       boardKey.current = "";
-      if (viewTimer.current) clearTimeout(viewTimer.current);
-      viewTimer.current = null;
-      viewSaver.current = null;
+      layout.cancel();
       setEditor(null);
       editorRef.current = null;
-      setFailed(null);
-      failedRef.current = null;
+      operations.clearFailure();
       setError("");
       setViewError("");
       setTeamId(boot.teams[0]?.id || "");
     }
   }, [boot.teams, teamId]);
-  tasksRef.current = tasks;
   useEffect(() => {
     bootJsonRef.current = JSON.stringify(boot);
   }, [boot]);
   viewRef.current = view;
-  failedRef.current = failed;
   editorRef.current = editor;
   const undoToastCurrent =
     undoToast?.kind !== "rows" ||
@@ -1017,114 +948,8 @@ function Workspace({
         return next;
       })
       .catch((e) => setError(e.message));
-  const refresh = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!teamId || signal?.aborted) return true;
-      if (Date.now() < querySchedule.current.retryAt) return false;
-      if (pendingRef.current || failedRef.current || editorRef.current)
-        return false;
-      const key = `${teamId}:${year}`,
-        scope = taskScopeRef.current,
-        epoch = mutationEpoch.current,
-        remote = remoteEpoch.current,
-        generation = queryGeneration.current;
-      const existing = refreshWork.current;
-      if (
-        existing?.scope === scope &&
-        existing.epoch === epoch &&
-        existing.remote === remote &&
-        existing.generation === generation &&
-        !existing.controller.signal.aborted
-      )
-        return joinQuery(existing, signal);
-      const work = {
-        scope,
-        epoch,
-        remote,
-        generation,
-        controller: new AbortController(),
-        consumers: new Set<object>(),
-        promise: null! as Promise<boolean | undefined>,
-      };
-      work.promise = (async () => {
-        try {
-          // Consumers share one read until all subscriptions have left. Scope
-          // and mutation guards below prevent late responses replacing new data.
-          const [r, latestBoot] = await Promise.all([
-            api(taskQuery(teamId, year, viewRef.current.startMonth), {
-              signal: work.controller.signal,
-            }),
-            api<Bootstrap>("/bootstrap", { signal: work.controller.signal }),
-          ]);
-          if (
-            !work.controller.signal.aborted &&
-            boardKey.current === key &&
-            taskScopeRef.current === scope &&
-            generation === queryGeneration.current &&
-            epoch === mutationEpoch.current &&
-            remote === remoteEpoch.current &&
-            !pendingRef.current &&
-            !failedRef.current &&
-            !editorRef.current
-          ) {
-            tasksRef.current = r.tasks;
-            setTasks(r.tasks);
-            if (!cellEventCursor.current)
-              cellEventCursor.current = r.cellEventId;
-            setLoadedScope(scope);
-            querySucceeded();
-            // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
-            if (JSON.stringify(latestBoot) !== bootJsonRef.current)
-              onBootstrap(latestBoot);
-            return true;
-          }
-          return false;
-        } catch (e) {
-          if (
-            work.controller.signal.aborted ||
-            generation !== queryGeneration.current ||
-            boardKey.current !== key ||
-            taskScopeRef.current !== scope ||
-            epoch !== mutationEpoch.current ||
-            remote !== remoteEpoch.current
-          )
-            return;
-          if (e instanceof ApiError && [403, 404].includes(e.status)) {
-            try {
-              const latest = await api<Bootstrap>("/bootstrap", {
-                signal: work.controller.signal,
-              });
-              if (
-                !work.controller.signal.aborted &&
-                boardKey.current === key &&
-                generation === queryGeneration.current &&
-                !latest.teams.some((t) => t.id === teamId)
-              ) {
-                onBootstrap(latest);
-                return;
-              }
-            } catch {}
-          }
-          if (
-            work.controller.signal.aborted ||
-            boardKey.current !== key ||
-            taskScopeRef.current !== scope ||
-            generation !== queryGeneration.current
-          )
-            return;
-          queryFailed(e as Error);
-          return false;
-        }
-      })().finally(() => {
-        if (refreshWork.current === work) refreshWork.current = null;
-      });
-      refreshWork.current = work;
-      return joinQuery(work, signal);
-    },
-    [teamId, year, queryPolicy],
-  );
   useResourceSync(
-    screen === "annual" && ready && !teamUnavailable
+    screen !== "calendar" && ready && !teamUnavailable
       ? sheetClone
         ? `/sheet-clones/${sheetClone.id}`
         : `/teams/${teamId}`
@@ -1133,8 +958,8 @@ function Workspace({
       const current = sheetCloneRef.current;
       if (!current) return (await refresh(signal)) !== false;
       if (
-        pendingRef.current ||
-        failedRef.current ||
+        operations.isPending() ||
+        operations.failure() ||
         editorRef.current ||
         sheetCloneDraft.saving ||
         !!sheetCloneDraft.error
@@ -1161,84 +986,33 @@ function Workspace({
       }
     },
   );
-  const refreshFilters = useCallback(async () => {
-    const revision = filterSaveRevision.current;
-    await filterSaveQueue.current;
-    const r = await api(`/filters?teamId=${teamId}`);
-    if (
-      filterTeam.current === teamId &&
-      filterSaveRevision.current === revision
-    ) {
-      setSavedFilters(r.filters);
-      const selected = r.filters.find(
-        (f: SavedFilter) => f.id === currentFilters.current.selectedId,
-      );
-      if (
-        selected &&
-        propertyFilterKey(selected.data) !==
-          propertyFilterKey(currentFilters.current.data)
-      ) {
-        saveCurrentFilters(selected.data, selected.id);
-        if (sheetCloneRef.current)
-          lastView.current = { ...lastView.current, ...selected.data };
-        else {
-          viewRef.current = { ...viewRef.current, ...selected.data };
-          setView(viewRef.current);
-        }
-      }
-    }
-    return r.filters;
-  }, [teamId]);
   useEffect(() => {
-    let cancelled = false;
-    setSavedFilters([]);
-    setSelectedSavedFilterId("");
     setFilterNameDialog(null);
-    currentFilters.current = { teamId, data: {}, selectedId: "" };
-    if (!teamId || teamUnavailable) return;
-    filterLoad.current = filterSaveQueue.current
-      .then(() => api(`/filters?teamId=${teamId}`))
-      .then((r) => {
-        if (cancelled || filterTeam.current !== teamId) return;
-        setSavedFilters(r.filters);
-        currentFilters.current = { teamId, ...r.current };
-        setSelectedSavedFilterId(r.current.selectedId);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [teamId, user.id, teamUnavailable]);
   useEffect(() => {
     if (!teamId || teamUnavailable) return;
     const key = `${teamId}:${year}`;
     let cancelled = false;
     let loadingTasks = false;
-    queryGeneration.current++;
-    refreshWork.current?.controller.abort();
-    refreshWork.current = null;
+    const controller = new AbortController();
     boardKey.current = key;
-    cellEventCursor.current = null;
-    setLoadedScope("");
-    setLoaded(false);
     setError("");
-    setQueryError("");
-    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
     setViewError("");
     setSelection(null);
     setSheetClone(null);
     sheetCloneDraft.cancel();
     sheetCloneScroll.current = null;
-    setUndoStack([]);
-    setRedoStack([]);
-    setTasks([]);
+    sheetHistory.reset();
     setPendingEdit(null);
-    setCopiedRow(null);
+    rowCommands.clearCopiedRow();
     setJump(null);
     const navigation = calendarNavigation.current;
     calendarNavigation.current = null;
     Promise.all([
-      api(`/views?teamId=${teamId}&year=${year}`),
-      filterLoad.current,
+      api(`/views?teamId=${teamId}&year=${year}`, {
+        signal: controller.signal,
+      }),
+      filters.waitForLoad(),
     ])
       .then(async ([v]) => {
         if (cancelled || boardKey.current !== key) return;
@@ -1252,251 +1026,58 @@ function Workspace({
           ? target.view || fullCalendarView(restored, year)
           : restored;
         current = normalizeView(
-          { ...current, ...currentFilters.current.data },
+          { ...current, ...filters.snapshot().data },
           team?.settings || DEFAULT_SETTINGS,
         ) as View;
         setView(current);
         viewRef.current = current;
         loadingTasks = true;
-        const r = await api(taskQuery(teamId, year, current.startMonth));
-        if (cancelled || boardKey.current !== key) return;
-        setTasks(r.tasks);
-        tasksRef.current = r.tasks;
-        cellEventCursor.current = r.cellEventId;
-        setLoadedScope(`${key}:${current.startMonth > 1 ? 2 : 1}`);
-        querySucceeded();
-        setLoaded(true);
+        if (!(await taskData.initialize(current.startMonth, controller.signal)))
+          return;
         setJump({ key: null, id: Date.now() });
         if (target || !storedLayout) changeView(current);
       })
       .catch((e) => {
         if (!cancelled && boardKey.current === key) {
-          if (loadingTasks) queryFailed(e);
-          else setError(e.message);
-          setLoaded(true);
+          taskData.failInitial(loadingTasks ? e : undefined);
+          if (!loadingTasks) setError(e.message);
         }
       });
     return () => {
       cancelled = true;
-      queryGeneration.current++;
-      refreshWork.current?.controller.abort();
-      refreshWork.current = null;
+      controller.abort();
       boardKey.current = "";
-      if (viewTimer.current) clearTimeout(viewTimer.current);
-      viewSaver.current?.();
-      viewSaver.current = null;
+      layout.flush();
     };
   }, [teamId, year, teamUnavailable]);
   useEffect(() => {
-    if (
-      !loaded ||
-      sheetClone ||
-      view.year !== year ||
-      !loadedScope.startsWith(`${teamId}:${year}:`) ||
-      loadedScope === taskScope
-    )
-      return;
-    let cancelled = false;
-    queryGeneration.current++;
-    refreshWork.current?.controller.abort();
-    refreshWork.current = null;
-    cellEventCursor.current = null;
-    setSelection(null);
-    setError("");
-    setQueryError("");
-    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
-    api(taskQuery(teamId, year, scopeMonth))
-      .then((r) => {
-        if (cancelled || taskScopeRef.current !== taskScope) return;
-        tasksRef.current = r.tasks;
-        setTasks(r.tasks);
-        cellEventCursor.current = r.cellEventId;
-        setLoadedScope(taskScope);
-        querySucceeded();
-      })
-      .catch((e) => {
-        if (!cancelled && taskScopeRef.current === taskScope) queryFailed(e);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [teamId, year, scopeMonth, loaded, !!sheetClone]);
-  useEffect(() => {
-    if (screen !== "annual" || !ready || sheetClone || !cellEventCursor.current)
-      return;
-    const key = `${teamId}:${year}`;
-    return subscribeCellChanges({
-      teamId,
-      year,
-      startMonth: scopeMonth,
-      cursor: cellEventCursor.current,
-      onActivity: () => {
-        remoteEpoch.current++;
-      },
-      onChanges: (changes) => {
-        if (boardKey.current !== key || taskScopeRef.current !== taskScope)
-          return;
-        const next = mergeCellUpdates(tasksRef.current, changes);
-        tasksRef.current = next;
-        setTasks(next);
-        // Open documents linking to a renamed task show the new title.
-        for (const cell of changes.cells)
-          if (cell.key === "title")
-            updateDocumentLinkTitle(
-              { kind: "task", id: cell.taskId },
-              String(cell.value),
-            );
-      },
-      onSnapshot: (snapshot) => {
-        if (boardKey.current !== key || taskScopeRef.current !== taskScope)
-          return;
-        const next = mergeSnapshotCells(tasksRef.current, snapshot);
-        tasksRef.current = next;
-        setTasks(next);
-      },
-      onAccessLost: () => {
-        if (boardKey.current === key) void refreshBoot();
-      },
-    });
-  }, [teamId, year, scopeMonth, ready, !!sheetClone, screen]);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (
-        screen === "annual" &&
-        loaded &&
-        !sheetClone &&
-        !pendingRef.current &&
-        !failedRef.current &&
-        !editorRef.current &&
-        !refreshWork.current &&
-        Date.now() >= querySchedule.current.nextPollAt &&
-        document.visibilityState === "visible"
-      )
-        refresh();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [refresh, sheetClone, screen, loaded]);
-  function flushView() {
-    if (viewTimer.current) clearTimeout(viewTimer.current);
-    const save = viewSaver.current;
-    viewSaver.current = null;
-    save?.();
-  }
-  useEffect(() => {
     const guard = (e: BeforeUnloadEvent) => {
-      flushView();
+      layout.flush();
       if (
-        pendingRef.current ||
-        failedRef.current ||
+        operations.isPending() ||
+        operations.failure() ||
         editorRef.current ||
         sheetCloneDraft.ref.current?.cursor ||
-        filterSavePending.current ||
-        viewTimer.current
+        filters.hasPending() ||
+        layout.hasPending()
       ) {
         e.preventDefault();
         e.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", guard);
-    window.addEventListener("pagehide", flushView);
+    window.addEventListener("pagehide", layout.flush);
     return () => {
       window.removeEventListener("beforeunload", guard);
-      window.removeEventListener("pagehide", flushView);
+      window.removeEventListener("pagehide", layout.flush);
     };
   }, []);
-  function updateSavedFilter(filter: SavedFilter, next: View) {
-    const sameTeam = () => filterTeam.current === teamId;
-    setToast("");
-    const data = savedFilter(next, settings) as SavedFilter["data"];
-    const revision = ++filterSaveRevision.current;
-    const cleared = Object.entries(viewRef.current.propertyFilters || {}).some(
-      ([key, values]) => values.length && !next.propertyFilters?.[key]?.length,
-    );
-    setFilterUpdateNotice({
-      teamId,
-      filterId: filter.id,
-      revision,
-      state: "saving",
-      cleared,
-    });
-    const finishNotice = (state: "saved" | "error") => {
-      if (!sameTeam()) return;
-      setFilterUpdateNotice((notice) =>
-        notice &&
-        notice.teamId === teamId &&
-        notice.filterId === filter.id &&
-        notice.revision === revision
-          ? { ...notice, state }
-          : notice,
-      );
-    };
-    filterSavePending.current++;
-    setSavedFilters((views) =>
-      views.map((v) => (v.id === filter.id ? { ...v, data } : v)),
-    );
-    // 빠르게 조건을 연속 변경해도 마지막 조건이 최종 저장되도록 순서를 지킨다.
-    filterSaveQueue.current = filterSaveQueue.current
-      .then(async () => {
-        await api(`/filters/${filter.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ data }),
-          keepalive: true,
-        });
-        finishNotice("saved");
-        if (sameTeam() && filterSaveRevision.current === revision)
-          setViewError((message) =>
-            message.startsWith(`‘${filter.name}’ 필터 저장 실패:`)
-              ? ""
-              : message,
-          );
-      })
-      .catch((e) => {
-        finishNotice("error");
-        if (sameTeam())
-          setViewError(`‘${filter.name}’ 필터 저장 실패: ${e.message}`);
-      })
-      .finally(() => {
-        filterSavePending.current--;
-      });
-  }
-  function saveCurrentFilters(data: SavedFilter["data"], selectedId: string) {
-    if (currentFilters.current.teamId !== teamId) return;
-    currentFilters.current = { teamId, data, selectedId };
-    ++filterSaveRevision.current;
-    filterSavePending.current++;
-    filterSaveQueue.current = filterSaveQueue.current
-      .then(() =>
-        api("/filters/current", {
-          method: "PUT",
-          body: JSON.stringify({ teamId, data, selectedId }),
-          keepalive: true,
-        }),
-      )
-      .catch((e) => {
-        if (filterTeam.current === teamId)
-          setViewError("필터 설정 저장 실패: " + e.message);
-      })
-      .finally(() => {
-        filterSavePending.current--;
-      });
-  }
   function changeView(part: Partial<View>, updateSelectedFilter = false) {
     setSelection(null);
     setViewError("");
     const next = { ...viewRef.current, ...part };
-    if (
-      ("propertyFilters" in part || "propertyFilterModes" in part) &&
-      propertyFilterKey(next) !== propertyFilterKey(viewRef.current)
-    ) {
-      const selected = savedFilters.find((v) => v.id === selectedSavedFilterId);
-      const selectedId =
-        updateSelectedFilter && selected?.canEdit ? selected.id : "";
-      if (!sheetClone && selectedId && selected)
-        updateSavedFilter(selected, next);
-      setSelectedSavedFilterId(selectedId);
-      if (!sheetClone)
-        saveCurrentFilters(savedFilter(next, settings), selectedId);
-    }
+    if ("propertyFilters" in part || "propertyFilterModes" in part)
+      filters.change(next, viewRef.current, updateSelectedFilter);
     viewRef.current = next;
     setView(next);
     if (sheetClone && canAdd) sheetCloneDraft.changeView(next);
@@ -1506,37 +1087,17 @@ function Workspace({
         (key) => !["propertyFilters", "propertyFilterModes"].includes(key),
       )
     ) {
-      if (viewTimer.current) clearTimeout(viewTimer.current);
-      const key = `${teamId}:${year}`;
-      const save = () => {
-        viewTimer.current = null;
-        api("/views", {
-          method: "PUT",
-          body: JSON.stringify({
-            teamId,
-            name: "__current",
-            data: viewLayout(next),
-          }),
-          keepalive: true,
-        }).catch((e) => {
-          if (boardKey.current === key)
-            setViewError("보기 설정 저장 실패: " + e.message);
-        });
-      };
-      viewSaver.current = save;
-      viewTimer.current = setTimeout(() => {
-        viewSaver.current = null;
-        save();
-      }, 450);
+      layout.save(next);
     }
   }
+
   async function moveYear(direction: -1 | 1) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     if (
-      insightsBusy ||
       !ready ||
-      pendingRef.current ||
-      failedRef.current ||
+      insightsBusy ||
+      operations.isPending() ||
+      operations.failure() ||
       editorRef.current
     )
       return;
@@ -1549,7 +1110,7 @@ function Workspace({
     const next = fullCalendarView(current, nextYear);
     if (sheetClone || nextYear === year) changeView(next);
     else {
-      flushView();
+      layout.flush();
       // Restore this year's personal layout, but always show January–December.
       calendarNavigation.current = { teamId, year: nextYear };
       setView(next);
@@ -1560,10 +1121,10 @@ function Workspace({
   async function moveCalendar(direction: -1 | 1) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     if (
-      insightsBusy ||
       !ready ||
-      pendingRef.current ||
-      failedRef.current ||
+      insightsBusy ||
+      operations.isPending() ||
+      operations.failure() ||
       editorRef.current
     )
       return;
@@ -1579,7 +1140,7 @@ function Workspace({
       return;
     const next = movePeriodView(current, nextYear, startMonth);
     if (!sheetClone && nextYear !== year) {
-      flushView();
+      layout.flush();
       calendarNavigation.current = { teamId, year: nextYear, view: next };
       setView(next);
       setYear(nextYear);
@@ -1601,28 +1162,13 @@ function Workspace({
       changeView(next);
     // 저장된 보기를 불러온 뒤에도 돌아야 하므로 view도 의존성에 둔다.
   }, [settings, ready, sheetClone, boot.users, teamId, view]);
-  // 보기 모드는 저장하거나 직접 선택한 필터에 연결한다. 조건 일치만으로 진입하지 않는다.
-  const activeSavedFilter = useMemo(
-    () => savedFilters.find((v) => v.id === selectedSavedFilterId),
-    [savedFilters, selectedSavedFilterId],
-  );
-  useEffect(() => {
-    if (ready && selectedSavedFilterId && !activeSavedFilter)
-      rememberSelectedFilter("");
-  }, [
-    ready,
-    sheetClone,
-    selectedSavedFilterId,
-    activeSavedFilter,
-    rememberSelectedFilter,
-  ]);
   function applySavedFilter(filter: SavedFilter, { scrollToTop = true } = {}) {
-    const filters = savedFilter(filter.data, settings);
+    const data = savedFilter(filter.data, settings);
     changeView({
-      propertyFilters: filters.propertyFilters,
-      propertyFilterModes: filters.propertyFilterModes,
+      propertyFilters: data.propertyFilters,
+      propertyFilterModes: data.propertyFilterModes,
     });
-    rememberSelectedFilter(filter.id);
+    filters.select(filter.id);
     setViewMenu(false);
     if (scrollToTop)
       setJump((previous) => ({
@@ -1634,7 +1180,7 @@ function Workspace({
   }
   function clearFilters() {
     changeView({ propertyFilters: {}, propertyFilterModes: {} });
-    rememberSelectedFilter("");
+    filters.select("");
     setViewMenu(false);
     viewMenuRef.current
       ?.querySelector<HTMLButtonElement>(".saved-filter-trigger")
@@ -1642,43 +1188,24 @@ function Workspace({
   }
   function renameFilter(filter: SavedFilter) {
     if (!filter.canEdit) return;
-    setViewName(filter.name);
-    setFilterNameError("");
-    setFilterNameDialog({ filterId: filter.id });
+    setFilterNameDialog({ filter });
     setViewMenu(false);
   }
   async function deleteFilter(filter: SavedFilter) {
-    if (deletingFilterId || !filter.canEdit) return;
-    setDeletingFilterId(filter.id);
     try {
-      await filterSaveQueue.current;
-      await api(`/filters/${filter.id}`, { method: "DELETE" });
-      const restore = { teamId, ...filter };
+      const deleted = await filters.remove(filter);
+      if (!deleted) return;
       setToast("");
       setUndoToast({
         kind: "filter",
-        message: `‘${filter.name}’ 필터를 삭제했습니다.`,
+        message: deleted.message,
         async undo() {
           setUndoToast(null);
-          await send(
-            "/filters",
-            {
-              teamId: restore.teamId,
-              scope: restore.scope,
-              name: restore.name,
-              data: restore.data,
-            },
-            "PUT",
-          );
-          if (filterTeam.current === restore.teamId) await refreshFilters();
-          setToast(`‘${restore.name}’ 필터를 되살렸습니다.`);
+          await deleted.undo();
         },
       });
-      await refreshFilters();
     } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setDeletingFilterId("");
+      if (currentTeam.current === teamId) setError((e as Error).message);
     }
   }
   const allTasks = useMemo(() => {
@@ -1923,13 +1450,125 @@ function Workspace({
     (sheetClone ? canAdd : canEdit(user, selectedTask)) &&
     (!sheetClone || editingSheetClone) &&
     !failed;
-  function getPoints() {
-    return selectedPoints(selection, visibleTasks, columns);
-  }
+
+  const rowCommands = useSheetRowCommands({
+    teamId,
+    year,
+    user,
+    view,
+    properties,
+    ready,
+    canAdd,
+    presentation,
+    sheetClone,
+    editingSheetClone,
+    taskData,
+    operations,
+    sheetCloneDraft,
+    recordTaskResult,
+    refresh,
+    editTasks,
+    visibleTasks,
+    selection,
+    selectionEpoch,
+    editorRef,
+    rowTask,
+    changeView,
+    setSelection,
+    setEditor,
+    setJump,
+    setRowTask,
+    setError,
+    setToast,
+    setUndoToast,
+    revealChange,
+  });
+  const {
+    copiedRow,
+    deleteTasks,
+    restoreTasks,
+    addTask,
+    reorderTask,
+    documentsForSheetCloneRows,
+    rowCommand,
+    detailAction,
+  } = rowCommands;
+  const cellCommands = useSheetCellCommands({
+    teamId,
+    year,
+    user,
+    canAdd,
+    presentation,
+    sheetClone,
+    editingSheetClone,
+    operations,
+    sheetCloneDraft,
+    editTasks,
+    selection,
+    selectionEpoch,
+    editorRef,
+    setSelection,
+    setEditor,
+    setError,
+    changeView,
+    allTasks,
+    matchingTasks,
+    visibleTasks,
+    columns,
+    columnOrder,
+    fields,
+    properties,
+    assignableUsers,
+    viewRef,
+    editor,
+    workspaceRef,
+    editable,
+    pending,
+    failed,
+    range,
+    count,
+    screen,
+  });
+  const {
+    formatBrush,
+    submitChanges,
+    mutate,
+    applyStyle,
+    copyFormat,
+    paintFormat,
+    applyBorder,
+    beginEdit,
+    clearCells,
+    paste,
+  } = cellCommands;
+  const undo = useSheetUndo({
+    sheetClone,
+    editingSheetClone,
+    canAdd,
+    presentation,
+    editorRef,
+    sheetCloneDraft,
+    selectionEpoch,
+    documentsForSheetCloneRows,
+    setError,
+    revealChange,
+    visibleTasks,
+    selection,
+    setRowTask,
+    redoStack,
+    undoStack,
+    operations,
+    deleteTasks,
+    restoreTasks,
+    submitChanges,
+    taskData,
+    teamId,
+  });
+
   function applyResult(result: BatchResult) {
-    const updatedTasks = mergeCellUpdates(tasksRef.current, result);
-    tasksRef.current = updatedTasks;
-    setTasks(updatedTasks);
+    const updatedTasks = mergeCellUpdates(taskData.snapshot(), result);
+
+    taskData.replace(updatedTasks);
     // Formatting one's own cell while typing advances its version without
     // changing the draft. Remote operations must never advance this baseline.
     let editing = editorRef.current;
@@ -1972,1280 +1611,13 @@ function Workspace({
       }
     }
   }
-  function recordResult(result: BatchResult, mode: Failed["mode"]) {
-    if (mode === "normal" && !result.cells.length && !result.formatOperation)
-      return;
-    if (mode === "normal") {
-      setUndoStack((previous) => appendHistory(previous, result));
-      setRedoStack([]);
-    } else if (mode === "undo") {
-      setUndoStack(
-        rebaseHistory(
-          undoStack.slice(0, -1),
-          cellsBefore(undoStack.at(-1)),
-          result.cells,
-          undoStack.at(-1),
-          result,
-        ),
-      );
-      setRedoStack(appendHistory(redoStack, result));
-    } else {
-      setRedoStack(
-        rebaseHistory(
-          redoStack.slice(0, -1),
-          cellsBefore(redoStack.at(-1)),
-          result.cells,
-          redoStack.at(-1),
-          result,
-        ),
-      );
-      setUndoStack(appendHistory(undoStack, result));
-    }
-  }
-  function rejectPendingChanges() {
-    if (!pendingRef.current) return false;
-    setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
-    return true;
-  }
-  function submitChanges(
-    build: () => CellChange[],
-    mode: Failed["mode"] = "normal",
-    buildFormat?: () => FormatChange,
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return false;
-      try {
-        const changes = build();
-        const format = buildFormat?.();
-        if (changes.length) sheetCloneDraft.apply({ kind: "cells", changes });
-        if (format?.scopes)
-          sheetCloneDraft.apply({
-            kind: "format",
-            id: crypto.randomUUID(),
-            scopes: format.scopes,
-          });
-        if (editorRef.current) {
-          const task = editTasks().find(
-            (t) => t.id === editorRef.current!.task.id,
-          );
-          if (task) {
-            editorRef.current = { ...editorRef.current, task };
-            setEditor(editorRef.current);
-          }
-        }
-        return true;
-      } catch (e) {
-        setError((e as Error).message);
-        return false;
-      }
-    }
-    if (sheetClone || presentation || failedRef.current) return false;
-    if (rejectPendingChanges()) return false;
-    const submittedBoard = boardKey.current,
-      selected = selectionEpoch.current;
-    mutationEpoch.current++;
-    pendingRef.current++;
-    setPending(pendingRef.current);
-    queue.current = queue.current.then(async () => {
-      let payload: Failed["payload"] | null = null;
-      try {
-        if (failedRef.current) return;
-        const changes = build();
-        const format = buildFormat?.();
-        if (!changes.length && !format) return;
-        payload = {
-          operationId: crypto.randomUUID(),
-          createdAt: serverNow(),
-          changes,
-          ...(format ? { format } : {}),
-        };
-        const result = await send<BatchResult>("/cells/batch", payload);
-        if (boardKey.current !== submittedBoard) return;
-        const rules = tasksRef.current[0]?.formatting?.rules;
-        applyResult(result);
-        recordResult(result, mode);
-        if (mode !== "normal") revealResult(result, rules, selected);
-      } catch (err) {
-        if (boardKey.current !== submittedBoard) return;
-        const e = err as ApiError;
-        if (payload) {
-          const f = { payload, error: e, mode };
-          failedRef.current = f;
-          setFailed(f);
-        } else setError(e.message);
-      } finally {
-        if (boardKey.current === submittedBoard) setPendingEdit(null);
-        pendingRef.current--;
-        setPending(pendingRef.current);
-      }
-    });
-    return true;
-  }
-  function mutate(
-    points: Point[],
-    transform: (t: Task, key: string) => Partial<CellChange>,
-  ) {
-    if (!points.length) return false;
-    return submitChanges(() => {
-      const tasksById = new Map(editTasks().map((t) => [t.id, t]));
-      return points.map((p) => {
-        const task = tasksById.get(p.taskId);
-        if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
-        if (!(sheetClone ? canAdd : canEdit(user, task)))
-          throw new Error(
-            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
-          );
-        return {
-          ...p,
-          expectedVersion: cell(task, p.key).version,
-          expectedFormatRevision: task.formatting?.revision ?? 0,
-          ...transform(task, p.key),
-        };
-      });
-    });
-  }
-  function applyStyle(part: Partial<Style>, reset = false) {
-    try {
-      if (applyCommonStyle(part, reset)) return;
-      mutate(
-        selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
-        (t, k) => ({
-          style: reset
-            ? resetCellStyle(t, k)
-            : { ...cell(t, k).style, ...part },
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function copyFormat(repeat: boolean) {
-    if (formatBrush && !repeat) {
-      setFormatBrush(null);
-      return;
-    }
-    if (!editable || pending || editor || presentation) return;
-    try {
-      if (selection?.areas?.length)
-        throw new Error("서식을 복사할 때는 하나의 연속된 영역을 선택하세요.");
-      selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS);
-      if (!range || !count) return;
-      const styles = matchingTasks.slice(range.r1, range.r2 + 1).map((task) =>
-        columnOrder.slice(range.c1, range.c2 + 1).map(({ key }) => {
-          const source = cell(task, key).style;
-          // Missing properties must also replace the destination's inherited style.
-          return structuredClone(
-            Object.fromEntries(
-              Object.keys(STYLE_KEYS).map((name) => [
-                name,
-                source[name as keyof Style] ?? null,
-              ]),
-            ),
-          ) as Style;
-        }),
-      );
-      setFormatBrush({ styles, repeat });
-      requestAnimationFrame(() =>
-        workspaceRef.current
-          ?.querySelector<HTMLElement>(".sheet-scroll")
-          ?.focus({ preventScroll: true }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function paintFormat(target: Selection | null) {
-    if (!formatBrush || !target || editor || presentation || failed) return;
-    if (!sheetClone && rejectPendingChanges()) return;
-    try {
-      const { styles, repeat } = formatBrush;
-      const ranges = rangesOf(target, matchingTasks, columnOrder);
-      if (!ranges.length) return;
-      if (
-        styles.length === 1 &&
-        styles[0].length === 1 &&
-        applyCommonStyle(styles[0][0], false, undefined, target)
-      ) {
-        if (!repeat) setFormatBrush(null);
-        return;
-      }
-      const changes = new Map<string, { point: Point; style: Style }>();
-      for (const range of ranges) {
-        const single =
-          range.r1 === range.r2 &&
-          range.c1 === range.c2 &&
-          (!range.kind || range.kind === "cells");
-        const r2 = single ? range.r1 + styles.length - 1 : range.r2;
-        const c2 = single ? range.c1 + styles[0].length - 1 : range.c2;
-        if (r2 >= matchingTasks.length || c2 >= columnOrder.length)
-          throw new Error(
-            "서식을 적용할 범위가 표를 벗어납니다. 더 작은 범위를 선택하세요.",
-          );
-        for (let r = range.r1; r <= r2; r++)
-          for (let c = range.c1; c <= c2; c++) {
-            const point = {
-              taskId: matchingTasks[r].id,
-              key: columnOrder[c].key,
-            };
-            changes.set(`${point.taskId}:${point.key}`, {
-              point,
-              style:
-                styles[(r - range.r1) % styles.length][
-                  (c - range.c1) % styles[0].length
-                ],
-            });
-            if (changes.size > MAX_STYLE_CELLS)
-              throw new Error(
-                `한 번에 ${MAX_STYLE_CELLS.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
-              );
-          }
-      }
-      if (
-        mutate(
-          [...changes.values()].map(({ point }) => point),
-          (task, key) => ({ style: changes.get(`${task.id}:${key}`)!.style }),
-        ) &&
-        !repeat
-      )
-        setFormatBrush(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function applyCommonStyle(
-    part: Partial<Style>,
-    reset = false,
-    border?: { preset: BorderPreset; border: Border | null },
-    target = selection,
-  ) {
-    const ranges = rangesOf(target, matchingTasks, columnOrder);
-    if (!ranges.length || ranges.some((r) => !r.kind || r.kind === "cells"))
-      return false;
-    const scopes = formatScopes(
-      ranges,
-      matchingTasks,
-      columnOrder,
-      part,
-      reset,
-      border,
-    );
-    if (!scopes.length) return true;
-    submitChanges(
-      () => [],
-      "normal",
-      () => {
-        const tasks = editTasks(),
-          ids = new Set(scopes.flatMap((s) => s.rows || []));
-        const selected = tasks.filter((t) => ids.has(t.id));
-        if (
-          selected.length !== ids.size ||
-          selected.some((t) => !(sheetClone ? canAdd : canEdit(user, t)))
-        )
-          throw new Error(
-            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
-          );
-        return {
-          teamId,
-          expectedRevision: tasks[0]?.formatting?.revision ?? 0,
-          scopes,
-          expectedTasks: Object.fromEntries(
-            selected.map((t) => [t.id, t.updatedAt]),
-          ),
-        };
-      },
-    );
-    return true;
-  }
-  function applyBorder(preset: BorderPreset, border: Border | null) {
-    try {
-      if (applyCommonStyle({}, false, { preset, border })) return;
-      const points = selectedPoints(
-        selection,
-        matchingTasks,
-        columnOrder,
-        MAX_STYLE_CELLS,
-      );
-      const selected = new Set(points.map((p) => `${p.taskId}:${p.key}`));
-      const rows = new Map(matchingTasks.map((t, i) => [t.id, i]));
-      const cols = new Map(columnOrder.map((c, i) => [c.key, i]));
-      const has = (r: number, c: number) =>
-        !!matchingTasks[r] &&
-        !!columnOrder[c] &&
-        selected.has(`${matchingTasks[r].id}:${columnOrder[c].key}`);
-      mutate(points, (task, key) => {
-        const r = rows.get(task.id)!,
-          c = cols.get(key)!;
-        return {
-          style: applyBorderPreset(cell(task, key).style, preset, border, {
-            Top: !has(r - 1, c),
-            Right: !has(r, c + 1),
-            Bottom: !has(r + 1, c),
-            Left: !has(r, c - 1),
-          }),
-        };
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function beginEdit(p: Point, initial?: string) {
-    const task = allTasks.find((t) => t.id === p.taskId);
-    if (
-      !task ||
-      (sheetClone && (!editingSheetClone || !canAdd)) ||
-      presentation ||
-      failed
-    )
-      return false;
-    if (pendingRef.current) {
-      setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
-      return false;
-    }
-    if (!(sheetClone ? canAdd : canEdit(user, task))) {
-      setError("이 업무를 편집할 권한이 없습니다.");
-      return false;
-    }
-    if (
-      fields.some((f) => f.key === p.key) &&
-      !viewRef.current.visibleFields.includes(p.key)
-    ) {
-      changeView({ visibleFields: [...viewRef.current.visibleFields, p.key] });
-    }
-    setSelection({ anchor: p, focus: p });
-    const next = { point: p, initial, task };
-    editorRef.current = next;
-    setEditor(next);
-    return true;
-  }
-  // 업무 삭제·복구는 셀 저장과 겹치지 않게 저장 중 표시를 함께 쓴다.
-  async function taskOperation(run: () => Promise<void>) {
-    if (pendingRef.current || failedRef.current || sheetClone || presentation)
-      return;
-    mutationEpoch.current++;
-    pendingRef.current++;
-    setPending(pendingRef.current);
-    try {
-      await run();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      pendingRef.current = 0;
-      setPending(0);
-    }
-    await refresh();
-  }
-  function recordTaskResult(
-    entry: TaskDeletion | TaskCreation,
-    mode: Failed["mode"] = "normal",
-    nextEntry: TaskDeletion | TaskCreation = entry,
-  ) {
-    if (mode === "undo") {
-      setUndoStack((stack) => stack.filter((e) => e !== entry));
-      setRedoStack((stack) => appendHistory(stack, nextEntry));
-    } else {
-      setRedoStack((stack) =>
-        mode === "redo" ? stack.filter((e) => e !== entry) : [],
-      );
-      setUndoStack((stack) => appendHistory(stack, nextEntry));
-    }
-  }
-  function recordCreation(task: Task) {
-    recordTaskResult({
-      kind: "create",
-      ids: [task.id],
-      title: String(value(task, "title")) || "제목 없는",
-      task,
-    });
-  }
-  // 삭제한 데이터는 실행취소와 변경 이력 복구를 위해 보존한다.
-  async function deleteTasks(
-    entry: TaskDeletion | TaskCreation,
-    mode: Failed["mode"] = "normal",
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return;
-      try {
-        const ids = new Set(entry.ids);
-        const documents = await documentsForSheetCloneRows(
-          editTasks().filter((task) => ids.has(task.id)),
-        );
-        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
-          return;
-        sheetCloneDraft.preserveDocuments(documents);
-        sheetCloneDraft.apply({ kind: "delete", taskIds: entry.ids });
-        setSelection(null);
-        const deleted = sheetCloneDraft.ref.current!;
-        setToast("");
-        setUndoToast({
-          kind: "rows",
-          sheet: `${teamId}:${year}:${sheetClone.id}`,
-          target: deleted.history[deleted.cursor],
-          message:
-            entry.ids.length > 1
-              ? `사본에서 ${entry.ids.length}개 업무를 삭제했습니다.`
-              : "사본에서 업무를 삭제했습니다.",
-        });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      return;
-    }
-    const submittedBoard = boardKey.current,
-      selected = selectionEpoch.current,
-      shown = visibleTasks,
-      key = selection?.focus.key;
-    return taskOperation(async () => {
-      const deleting = entry.ids.map((id) => {
-        const t = tasksRef.current.find((task) => task.id === id);
-        if (!t) throw new Error("이미 삭제되었거나 찾을 수 없는 업무입니다.");
-        if (entry.kind === "create" && !canUndoCreation(entry.task, t))
-          throw new Error(
-            "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
-          );
-        return { id, updatedAt: t.updatedAt };
-      });
-      const { updatedAt } = await send<{ updatedAt: Record<string, string> }>(
-        "/tasks/delete",
-        { tasks: deleting },
-      );
-      const nextEntry = { ...entry, deletedVersions: updatedAt };
-      if (boardKey.current !== submittedBoard) return;
-      // A subsequent edit can invalidate the list refresh. Apply the confirmed
-      // deletion now, while retaining any newer remote restoration already seen.
-      const remaining = tasksRef.current.filter(
-        (task) => !updatedAt[task.id] || task.updatedAt > updatedAt[task.id],
-      );
-      tasksRef.current = remaining;
-      setTasks(remaining);
-      recordTaskResult(entry, mode, nextEntry);
-      setSelection(null);
-      // 실행취소로 사라진 행은 그 자리를 이어받은 행으로 이동한다.
-      if (mode !== "normal")
-        revealChange(
-          { near: nearbyRows(new Set(entry.ids), shown), key },
-          selected,
-        );
-      const message =
-        entry.ids.length > 1
-          ? `${entry.ids.length}개 업무를 삭제했습니다.`
-          : `‘${entry.title}’ 업무를 삭제했습니다.`;
-      if (entry.kind === "delete") {
-        setToast("");
-        setUndoToast({
-          kind: "rows",
-          sheet: `${teamId}:${year}:original`,
-          target: nextEntry,
-          message,
-        });
-      } else {
-        setUndoToast(null);
-        setToast(message);
-      }
-    });
-  }
-  async function restoreTasks(
-    entry: TaskDeletion | TaskCreation,
-    mode: "undo" | "redo",
-  ) {
-    const submittedBoard = boardKey.current,
-      selected = selectionEpoch.current;
-    let restored = false;
-    await taskOperation(async () => {
-      await send("/tasks/restore", {
-        tasks: entry.ids.map((id) => ({
-          id,
-          updatedAt: entry.deletedVersions?.[id],
-        })),
-      });
-      if (boardKey.current !== submittedBoard) return;
-      recordTaskResult(entry, mode);
-      setToast(
-        entry.ids.length > 1
-          ? `${entry.ids.length}개 업무를 되살렸습니다.`
-          : `‘${entry.title}’ 업무를 되살렸습니다.`,
-      );
-      restored = true;
-    });
-    // 되살린 행은 목록을 다시 읽은 뒤에 보이므로 그때 선택한다.
-    if (restored && boardKey.current === submittedBoard)
-      revealChange({ rows: entry.ids }, selected);
-  }
-  async function undo(redo = false) {
-    if (sheetClone) {
-      if (editingSheetClone && canAdd && !presentation && !editorRef.current) {
-        const draft = sheetCloneDraft.ref.current;
-        if (!draft) return;
-        const next = draft.history[draft.cursor + (redo ? 1 : -1)];
-        if (!next) return;
-        const selected = selectionEpoch.current;
-        let before: Task[];
-        try {
-          const ids = new Set(next.map((task) => task.id));
-          const documents = await documentsForSheetCloneRows(
-            draft.tasks.filter((task) => !ids.has(task.id)),
-          );
-          if (
-            sheetCloneDraft.ref.current?.sheetClone.id !==
-              draft.sheetClone.id ||
-            sheetCloneDraft.ref.current?.cursor !== draft.cursor
-          )
-            return;
-          sheetCloneDraft.preserveDocuments(documents);
-          before = sheetCloneDraft.ref.current.tasks;
-          sheetCloneDraft.undo(redo);
-        } catch (e) {
-          setError((e as Error).message);
-          return;
-        }
-        revealChange(
-          sheetChanges(
-            before,
-            sheetCloneDraft.ref.current?.tasks || sheetClone.tasks,
-            visibleTasks,
-            selection?.focus.key,
-          ),
-          selected,
-          true,
-        );
-        setRowTask(null);
-        setError("");
-      }
-      return;
-    }
-    const stack = redo ? redoStack : undoStack,
-      entry = stack.at(-1);
-    if (
-      !entry ||
-      pendingRef.current ||
-      failedRef.current ||
-      sheetClone ||
-      presentation
-    )
-      return;
-    setError("");
-    if ("kind" in entry) {
-      const mode = redo ? "redo" : "undo";
-      if ((entry.kind === "create") !== redo) void deleteTasks(entry, mode);
-      else void restoreTasks(entry, mode);
-      return;
-    }
-    if (entry.formatOperation) {
-      submitChanges(
-        () => [],
-        redo ? "redo" : "undo",
-        () => {
-          const revision = tasksRef.current[0]?.formatting?.revision ?? 0;
-          if (revision !== entry.formatRevision)
-            throw new Error("이후 서식 변경이 있어 되돌릴 수 없습니다.");
-          return {
-            teamId,
-            expectedRevision: revision,
-            restore: entry.operationId,
-            expectedCells: Object.fromEntries(
-              entry.cells.map((c) => [`${c.taskId}:${c.key}`, c.version]),
-            ),
-          };
-        },
-      );
-      return;
-    }
-    submitChanges(
-      () => {
-        const tasksById = new Map(tasksRef.current.map((t) => [t.id, t]));
-        const afterById = new Map(
-          entry.cells.map((c) => [`${c.taskId}:${c.key}`, c]),
-        );
-        return entry.before.map((c) => {
-          const t = tasksById.get(c.taskId);
-          const after = afterById.get(`${c.taskId}:${c.key}`);
-          if (!t || !after || cell(t, c.key).version !== after.version)
-            throw new Error(
-              "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
-            );
-          if (
-            JSON.stringify(c.style) !== JSON.stringify(after.style) &&
-            (entry.formatRevision ?? 0) !== (t.formatting?.revision ?? 0)
-          )
-            throw new Error("이후 공통 서식 변경이 있어 되돌릴 수 없습니다.");
-          return {
-            taskId: c.taskId,
-            key: c.key,
-            ...(JSON.stringify(c.value) === JSON.stringify(after.value)
-              ? {}
-              : { value: c.value }),
-            style: c.style,
-            expectedVersion: after.version,
-            expectedFormatRevision: t.formatting?.revision ?? 0,
-            rawStyle: true,
-          };
-        });
-      },
-      redo ? "redo" : "undo",
-    );
-  }
-  function clearCells() {
-    try {
-      mutate(getPoints(), (_t, k) => ({
-        value: emptyPropertyValue(properties.find((p) => p.id === k)),
-      }));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function paste(matrix: ClipboardMatrix) {
-    if (!selection) return;
-    if (selection.areas?.length) {
-      setError("붙여넣을 때는 하나의 연속된 영역을 선택하세요.");
-      return;
-    }
-    const ri = visibleTasks.findIndex((t) => t.id === selection.focus.taskId),
-      ci = columns.findIndex((c) => c.key === selection.focus.key);
-    if (ri < 0 || ci < 0) return;
-    if (
-      ri + matrix.length > visibleTasks.length ||
-      matrix.some((r) => ci + r.length > columns.length)
-    ) {
-      setError(
-        "붙여넣을 범위가 표를 벗어납니다. 행을 추가하거나 더 작은 범위를 선택하세요.",
-      );
-      return;
-    }
-    if (matrix.reduce((s, r) => s + r.length, 0) > 2000) {
-      setError("한 번에 2,000개 셀까지 붙여넣을 수 있습니다.");
-      return;
-    }
-    const changes = new Map<string, Pick<CellChange, "value" | "style">>();
-    const points: Point[] = [];
-    try {
-      matrix.forEach((r, i) =>
-        r.forEach(({ text, style }, j) => {
-          const p = {
-            taskId: visibleTasks[ri + i].id,
-            key: columns[ci + j].key,
-          };
-          let v: any = text;
-          const field = fields.find((f) => f.key === p.key);
-          const property = properties.find((p) => p.id === field?.key);
-          if (property?.kind === "option" && text) {
-            const option = property.values.find(
-              (o) => !o.archived && (o.label === text || o.id === text),
-            );
-            if (!option)
-              throw new Error(`${property.name}에 없는 값입니다: ${text}`);
-            v = option.id;
-          }
-          if (field?.type === "number") {
-            if (text && !Number.isFinite(Number(text)))
-              throw new Error(`${field.label} 열에는 숫자를 입력하세요.`);
-            v = text === "" ? "" : Number(text);
-          }
-          if (property?.kind === "member") {
-            const ids = text
-              .split(/[,;]/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((name) => {
-                const matches = assignableUsers.filter(
-                  (u) => u.name === name || u.id === name,
-                );
-                if (matches.length !== 1)
-                  throw new Error(
-                    `담당자 “${name}”을 정확히 연결할 수 없습니다.`,
-                  );
-                return matches[0].id;
-              });
-            if (!property.multiple && ids.length > 1)
-              throw new Error(
-                `${property.name} 열에는 팀원 한 명을 선택하세요.`,
-              );
-            v = property.multiple ? [...new Set(ids)] : ids[0] || "";
-          }
-          points.push(p);
-          changes.set(`${p.taskId}:${p.key}`, {
-            value: v,
-            ...(style
-              ? {
-                  style: {
-                    ...resetCellStyle(visibleTasks[ri + i], p.key),
-                    ...style,
-                  },
-                }
-              : {}),
-          });
-        }),
-      );
-      mutate(points, (t, k) => changes.get(`${t.id}:${k}`)!);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  async function addSheetCloneTask(
-    sourceId?: string,
-    target?: Task,
-    placement: "before" | "after" = "after",
-    copied?: ReturnType<typeof copyRowFormatting>,
-  ) {
-    if (!editingSheetClone || !canAdd || presentation || editorRef.current)
-      return;
-    try {
-      if (sourceId) {
-        const source = editTasks().find((task) => task.id === sourceId);
-        if (!source) return;
-        const documents = await documentsForCopy(source);
-        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone?.id)
-          return;
-        copied = { ...copyRowFormatting(source), documents };
-      }
-      const taskId = crypto.randomUUID();
-      const fields =
-        !sourceId && !copied && target && view.groupBy
-          ? { [view.groupBy]: value(target, view.groupBy) }
-          : {};
-      sheetCloneDraft.apply({
-        kind: "create",
-        taskId,
-        sourceId,
-        ...(copied ? { copiedRow: copied } : {}),
-        fields,
-        ...(target ? { insertAt: { taskId: target.id, placement } } : {}),
-      });
-      const task = editTasks().find((t) => t.id === taskId)!;
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-      });
-      const point = { taskId, key: "title" };
-      setSelection({ anchor: point, focus: point });
-      setJump({ ...point, id: Date.now(), preserveHorizontalScroll: true });
-      if (!sourceId && !copied) {
-        editorRef.current = { point, task };
-        setEditor(editorRef.current);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  async function addTask() {
-    if (sheetClone) {
-      addSheetCloneTask();
-      return;
-    }
-    if (
-      !ready ||
-      !canAdd ||
-      sheetClone ||
-      presentation ||
-      pendingRef.current ||
-      failedRef.current
-    )
-      return;
-    const submittedBoard = boardKey.current;
-    const submittedScope = taskScopeRef.current;
-    mutationEpoch.current++;
-    pendingRef.current = 1;
-    setPending(1);
-    setError("");
-    try {
-      const { task } = await send("/tasks", {
-        teamId,
-        year,
-        fields: view.groupBy
-          ? {
-              [view.groupBy]: emptyPropertyValue(
-                properties.find((p) => p.id === view.groupBy),
-              ),
-            }
-          : {},
-      });
-      if (
-        boardKey.current !== submittedBoard ||
-        taskScopeRef.current !== submittedScope
-      )
-        return;
-      setTasks((s) => {
-        const next = [...s, task];
-        tasksRef.current = next;
-        return next;
-      });
-      recordCreation(task);
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-      });
-      setSelection({
-        anchor: { taskId: task.id, key: "title" },
-        focus: { taskId: task.id, key: "title" },
-      });
-      setEditor({ point: { taskId: task.id, key: "title" }, task });
-    } catch (e) {
-      if (
-        boardKey.current === submittedBoard &&
-        taskScopeRef.current === submittedScope
-      )
-        setError((e as Error).message);
-    } finally {
-      pendingRef.current = 0;
-      setPending(0);
-    }
-  }
-  async function reorderTask(
-    taskIds: string | string[],
-    targetId: string,
-    placement: "before" | "after",
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return;
-      try {
-        const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
-        const target = editTasks().find((task) => task.id === targetId);
-        if (
-          view.groupBy &&
-          ids.some((id) => {
-            const task = editTasks().find((t) => t.id === id);
-            return (
-              !task ||
-              !target ||
-              JSON.stringify(value(task, view.groupBy!)) !==
-                JSON.stringify(value(target, view.groupBy!))
-            );
-          })
-        )
-          throw new Error("같은 묶음 안에서 순서를 변경하세요.");
-        sheetCloneDraft.apply({
-          kind: "reorder",
-          taskIds: ids,
-          targetId,
-          placement,
-        });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      return;
-    }
-    const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
-    const byId = new Map(tasksRef.current.map((t) => [t.id, t]));
-    const moving = ids.map((id) => byId.get(id));
-    const target = byId.get(targetId);
-    if (
-      !ids.length ||
-      moving.some((t) => !t) ||
-      !target ||
-      pendingRef.current ||
-      failedRef.current ||
-      sheetClone ||
-      presentation
-    )
-      return;
-    const submittedBoard = boardKey.current;
-    setError("");
-    mutationEpoch.current++;
-    pendingRef.current = 1;
-    setPending(1);
-    try {
-      const result = await send("/tasks/reorder", {
-        tasks: moving.map((t) => ({ id: t!.id, updatedAt: t!.updatedAt })),
-        targetId,
-        placement,
-        year,
-        startMonth: view.startMonth,
-        groupBy: view.groupBy || "",
-        targetUpdatedAt: target.updatedAt,
-      });
-      if (boardKey.current !== submittedBoard) return;
-      const moved = new Map<string, Task>(
-        result.tasks.map((t: Task) => [t.id, t]),
-      );
-      const next = tasksRef.current.map((t) => moved.get(t.id) || t);
-      tasksRef.current = next;
-      setTasks(next);
-    } catch (e) {
-      if (boardKey.current === submittedBoard) setError((e as Error).message);
-    } finally {
-      pendingRef.current = 0;
-      setPending(0);
-    }
-    if (boardKey.current === submittedBoard) await refresh();
-  }
-  async function documentsForSheetCloneRows(tasks: Task[]) {
-    const documents = new Map<string, NonNullable<Task["documents"]>>();
-    const stored = new Set(sheetClone?.tasks.map((task) => task.id));
-    const pending: string[] = [];
-    for (const task of tasks) {
-      if (task.documents)
-        documents.set(task.id, structuredClone(task.documents));
-      else if (!stored.has(task.id)) documents.set(task.id, []);
-      else pending.push(task.id);
-    }
-    // Fetch fresh metadata even for apparently empty rows: another user may
-    // have added a document since this sheet was loaded. Preserve all results
-    // in one state update instead of remapping the undo history for every row.
-    for (let offset = 0; offset < pending.length;) {
-      const result = await send<{
-        tasks: { id: string; documents: NonNullable<Task["documents"]> }[];
-      }>(`/sheet-clones/${sheetClone!.id}/documents/batch`, {
-        taskIds: pending.slice(offset, offset + 100),
-      });
-      if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone!.id)
-        throw new Error("시트가 변경되었습니다.");
-      for (const task of result.tasks) documents.set(task.id, task.documents);
-      offset += result.tasks.length;
-    }
-    return documents;
-  }
-  // A pasted row's documents carry only what the server accepts for them
-  // (copiedRowSchema); a listing's revision or hasContent stays behind.
-  async function documentsForCopy(task: Task) {
-    if (
-      sheetClone &&
-      !task.documents &&
-      !sheetClone.tasks.some((t) => t.id === task.id)
-    )
-      return [];
-    const documents =
-      task.documents ||
-      (
-        await api<{ documents: NonNullable<Task["documents"]> }>(
-          sheetClone
-            ? `/sheet-clones/${sheetClone.id}/tasks/${task.id}/documents?content=1`
-            : `/tasks/${task.id}/documents?content=1`,
-        )
-      ).documents;
-    return documents.map(({ id, title, markdown }) => ({
-      id,
-      title,
-      markdown,
-    }));
-  }
 
-  async function rowCommand(
-    command: RowCommand,
-    selected: Task,
-    selectedRows = [selected],
-  ) {
-    if (command === "delete") {
-      if (
-        pendingRef.current ||
-        failedRef.current ||
-        presentation ||
-        editorRef.current
-      )
-        return;
-      const byId = new Map(editTasks().map((task) => [task.id, task]));
-      const targets = [...new Set(selectedRows.map((task) => task.id))].map(
-        (id) => byId.get(id),
-      );
-      if (
-        !targets.length ||
-        targets.some(
-          (task) =>
-            !task ||
-            !(sheetClone ? editingSheetClone && canAdd : canEdit(user, task)),
-        )
-      )
-        return;
-      setError("");
-      await deleteTasks({
-        kind: "delete",
-        ids: targets.map((task) => task!.id),
-        title: String(value(targets[0]!, "title")) || "제목 없는",
-      });
-      return;
-    }
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation || editorRef.current)
-        return;
-      const target = editTasks().find((task) => task.id === selected.id);
-      if (!target) return;
-      if (command === "copy") {
-        try {
-          const documents = await documentsForCopy(target);
-          if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
-            return;
-          setCopiedRow({
-            task: { ...structuredClone(target), documents },
-            height: view.rowHeights[target.id],
-          });
-          setToast("사본의 행과 문서를 복사했습니다.");
-        } catch (e) {
-          setError((e as Error).message);
-        }
-      } else if (command === "paste") {
-        if (copiedRow)
-          addSheetCloneTask(
-            undefined,
-            target,
-            "after",
-            copyRowFormatting(copiedRow.task),
-          );
-      } else
-        addSheetCloneTask(
-          undefined,
-          target,
-          command === "insertBefore" ? "before" : "after",
-        );
-      return;
-    }
-    if (
-      pendingRef.current ||
-      failedRef.current ||
-      sheetClone ||
-      presentation ||
-      editorRef.current
-    )
-      return;
-    const target = tasksRef.current.find((task) => task.id === selected.id);
-    if (!target) return;
-    setError("");
-    if (command === "copy") {
-      const board = boardKey.current;
-      try {
-        const documents = await documentsForCopy(target);
-        if (boardKey.current !== board) return;
-        setCopiedRow({
-          task: { ...structuredClone(target), documents },
-          height: view.rowHeights[target.id],
-        });
-        setToast(
-          "행의 내용과 서식, 문서를 복사했습니다. 붙여넣을 행을 선택하세요.",
-        );
-      } catch (e) {
-        if (boardKey.current === board) setError((e as Error).message);
-      }
-      return;
-    }
-    if (
-      !canAdd ||
-      (command === "paste" && (!copiedRow || copiedRow.task.teamId !== teamId))
-    )
-      return;
-    const copy = command === "paste" ? copiedRow : null;
-    const height = copy ? copy.height : view.rowHeights[target.id];
-    const groupKey = view.groupBy;
-    const inheritGroup = !!groupKey;
-    const fields =
-      !copy && inheritGroup ? { [groupKey]: value(target, groupKey) } : {};
-    const keepGroup = copy
-      ? inheritGroup &&
-        JSON.stringify(value(copy.task, groupKey)) ===
-          JSON.stringify(value(target, groupKey))
-      : inheritGroup;
-    const submittedBoard = boardKey.current;
-    mutationEpoch.current++;
-    pendingRef.current = 1;
-    setPending(1);
-    try {
-      const { task } = await send("/tasks", {
-        teamId,
-        year,
-        fields,
-        startMonth: view.startMonth,
-        insertAt: {
-          taskId: target.id,
-          updatedAt: target.updatedAt,
-          placement: command === "insertBefore" ? "before" : "after",
-        },
-        ...(copy
-          ? {
-              copiedRow: copyRowFormatting(copy.task),
-            }
-          : {}),
-      });
-      if (boardKey.current !== submittedBoard) return;
-      const next = [...tasksRef.current, task];
-      tasksRef.current = next;
-      setTasks(next);
-      recordCreation(task);
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-        groupBy: keepGroup ? groupKey : "",
-        ...(height !== undefined
-          ? { rowHeights: { ...view.rowHeights, [task.id]: height } }
-          : {}),
-      });
-      // Spacing may have been normalized by the server; refresh every row's position.
-      const current = await api<{ tasks: Task[] }>(
-        taskQuery(teamId, year, view.startMonth),
-      );
-      if (boardKey.current !== submittedBoard) return;
-      tasksRef.current = current.tasks;
-      setTasks(current.tasks);
-      const point = { taskId: task.id, key: "title" };
-      setSelection({ anchor: point, focus: point });
-      if (copy) {
-        setJump((previous) => ({
-          ...point,
-          id: (previous?.id || 0) + 1,
-          preserveHorizontalScroll: true,
-        }));
-        setToast("복사한 행을 아래에 붙여넣었습니다.");
-      } else {
-        setEditor({
-          point,
-          task: current.tasks.find((t) => t.id === task.id) || task,
-        });
-      }
-    } catch (e) {
-      if (boardKey.current === submittedBoard) setError((e as Error).message);
-    } finally {
-      pendingRef.current = 0;
-      setPending(0);
-    }
-  }
-  // 업무 상세 창의 동작. 행 머리글 메뉴(rowCommand)와 달리 서버에 바로 반영한다.
-  async function detailAction(action: string) {
-    if (!rowTask) return;
-    const t = editTasks().find((task) => task.id === rowTask.id) || rowTask;
-    setRowTask(null);
-    setError("");
-    try {
-      if (action === "hide") {
-        changeView({ hiddenRows: [...new Set([...view.hiddenRows, t.id])] });
-        return;
-      }
-      if (action === "duplicate") {
-        if (sheetClone) {
-          addSheetCloneTask(t.id, t);
-          return;
-        }
-        const submittedBoard = boardKey.current;
-        await taskOperation(async () => {
-          const { task } = await send<{ task: Task }>("/tasks", {
-            teamId,
-            year,
-            sourceId: t.id,
-            fields: { title: String(value(t, "title")) + " 사본" },
-          });
-          if (boardKey.current === submittedBoard) recordCreation(task);
-        });
-        return;
-      }
-      if (action === "delete") {
-        // 확인 없이 지우고 실행취소로 되살린다.
-        await deleteTasks({
-          kind: "delete",
-          ids: [t.id],
-          title: String(value(t, "title")) || "제목 없는",
-        });
-        return;
-      }
-      if (action === "carry") {
-        if (sheetClone) return;
-        await send(
-          `/tasks/${t.id}`,
-          {
-            updatedAt: t.updatedAt,
-            years: [...new Set([...t.years, year + 1])],
-          },
-          "PATCH",
-        );
-        setToast(`${year + 1}년에서도 같은 업무를 조회할 수 있습니다.`);
-      }
-      if (action === "up" || action === "down") {
-        if (view.sortKey && view.sortDirection !== "default")
-          throw new Error(
-            "컬럼 머리글을 우클릭하여 정렬 해제를 선택한 뒤 순서를 변경하세요.",
-          );
-        const order = visibleTasks.filter(
-          (x) =>
-            !view.groupBy || value(x, view.groupBy) === value(t, view.groupBy),
-        );
-        const idx = order.findIndex((x) => x.id === t.id),
-          direction = action === "up" ? -1 : 1,
-          neighbor = order[idx + direction];
-        if (neighbor) {
-          await reorderTask(
-            t.id,
-            neighbor.id,
-            direction < 0 ? "before" : "after",
-          );
-        }
-        return;
-      }
-      await refresh();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
   async function retryFailed(overwrite = false) {
-    if (!failed || pendingRef.current) return;
-    mutationEpoch.current++;
-    pendingRef.current = 1;
-    setPending(1);
-    let payload = failed.payload;
-    try {
-      if (overwrite) {
-        const latest = await api<{ tasks: Task[] }>(
-          taskQuery(teamId, year, view.startMonth),
-        );
-        const tasks = new Map(latest.tasks.map((t) => [t.id, t]));
-        tasksRef.current = latest.tasks;
-        setTasks(latest.tasks);
-        payload = {
-          ...payload,
-          operationId: crypto.randomUUID(),
-          createdAt: serverNow(),
-          changes: payload.changes.map((c) => ({
-            ...c,
-            expectedVersion: tasks.get(c.taskId)?.cells[c.key]?.version ?? 0,
-            expectedFormatRevision:
-              tasks.get(c.taskId)?.formatting?.revision ?? 0,
-          })),
-          ...(payload.format
-            ? {
-                format: {
-                  ...payload.format,
-                  expectedRevision: latest.tasks[0]?.formatting?.revision ?? 0,
-                  expectedTasks: Object.fromEntries(
-                    latest.tasks.map((t) => [t.id, t.updatedAt]),
-                  ),
-                },
-              }
-            : {}),
-        };
-      }
-      const result = await send<BatchResult>("/cells/batch", payload);
-      const rules = tasksRef.current[0]?.formatting?.rules;
-      applyResult(result);
-      recordResult(result, failed.mode);
-      if (failed.mode !== "normal")
-        revealResult(result, rules, selectionEpoch.current);
-      setFailed(null);
-      failedRef.current = null;
-      setPanel("");
-    } catch (e) {
-      const next = { ...failed, payload, error: e as Error };
-      setFailed(next);
-      failedRef.current = next;
-    } finally {
-      pendingRef.current = 0;
-      setPending(0);
-    }
+    if (await operations.retry(overwrite, selectionEpoch.current)) setPanel("");
   }
   const summary = useMemo(
     () => statusSummary(tasks, settings),
     [tasks, settings],
-  );
-  // Membership refreshes reuse this Workspace even when no team is available.
-  const updateInsightsTasks = useCallback(
-    (source: Task[]) => {
-      if (screen !== "insights" || !ready || taskScopeRef.current !== taskScope)
-        return;
-      tasksRef.current = source;
-      setTasks((current) =>
-        current.length === source.length &&
-        current.every((task, i) => task === source[i])
-          ? current
-          : source,
-      );
-    },
-    [screen, ready, taskScope],
   );
   if (!team)
     return (
@@ -3277,62 +1649,12 @@ function Workspace({
         )}
       </main>
     );
-  async function closeDocumentBrowser() {
-    closeSheetCloneNow();
-    await refresh();
-    workspaceRoute.commit("annual");
-  }
-  async function navigateWorkspace(action: () => void | Promise<void>) {
-    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
-    if (documentBrowser) await documentBrowserRef.current?.navigate(action);
-    else await action();
-  }
-  function openAnnualWorkspace() {
-    if (workspaceRoute.route === "annual") closeSheetClone();
-    else void workspaceRoute.navigate("annual");
-  }
-  async function prepareWorkspaceRoute(
-    next: "annual" | "documents" | "calendar" | "insights",
-  ) {
-    if (
-      calendarBusy ||
-      insightsBusy ||
-      workspaceNavigating ||
-      pendingRef.current ||
-      failedRef.current ||
-      editorRef.current ||
-      sheetCloneDraft.dirty ||
-      sheetCloneDraft.saving
-    )
-      return false;
-    if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
-      return false;
-    const prepare = async () => {
-      flushView();
-      if (next === "annual" || next === "insights") {
-        if (documentBrowser) {
-          closeSheetCloneNow();
-          await refresh();
-        } else await openSheetClone(null);
-      }
-      setViewMenu(false);
-      if (next === "calendar" || next === "insights") setRowTask(null);
-    };
-    try {
-      if (documentBrowser)
-        return (await documentBrowserRef.current?.navigate(prepare)) ?? false;
-      await prepare();
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      return false;
-    }
-  }
+
   async function openInsightTask(metric: TaskMetrics) {
     // Rolling calendars already contain next-year tasks. Opening their detail
     // must keep the shared calendar and week selection instead of resetting it.
     const targetYear =
-      tasksRef.current.some((task) => task.id === metric.task.id) ||
+      taskData.snapshot().some((task) => task.id === metric.task.id) ||
       metric.task.years.includes(year)
         ? year
         : metric.task.years[0];
@@ -3406,8 +1728,8 @@ function Workspace({
                 )
                   return;
                 if (
-                  pendingRef.current ||
-                  failedRef.current ||
+                  operations.isPending() ||
+                  operations.failure() ||
                   editorRef.current
                 )
                   return;
@@ -3861,13 +2183,13 @@ function Workspace({
                 }
                 onLogout={async () => {
                   if (
-                    pendingRef.current ||
-                    failedRef.current ||
+                    operations.isPending() ||
+                    operations.failure() ||
                     sheetCloneDraft.dirty
                   )
                     return;
                   await navigateWorkspace(async () => {
-                    flushView();
+                    layout.flush();
                     if (await logout()) onLogout();
                   });
                 }}
@@ -3905,24 +2227,28 @@ function Workspace({
               </fieldset>
               {teamUnavailable ? (
                 <Empty title="팀 자료를 가져와 주세요" />
+              ) : !ready && loaded && (error || queryError) ? (
+                <Empty
+                  title="업무를 불러오지 못했습니다"
+                  description={error || queryError}
+                  action={
+                    <Button onClick={() => location.reload()}>다시 연결</Button>
+                  }
+                />
               ) : ready ? (
                 <Insights
                   key={teamId}
                   team={team}
                   user={user}
                   users={boot.users}
+                  year={year}
+                  startMonth={view.startMonth}
                   weeks={weeks}
+                  source={taskData}
                   controlsHost={insightsControlsHost}
-                  initial={{
-                    tasks,
-                    year,
-                    startMonth: view.startMonth,
-                    cursor: cellEventCursor.current || "",
-                  }}
                   onBootstrap={onBootstrap}
                   onTask={openInsightTask}
-                  onSourceTasks={updateInsightsTasks}
-                  onBusyChange={setInsightsBusy}
+                  onBusyChange={handleInsightsBusy}
                   onGeneralSettings={() => setPanel("settings")}
                 />
               ) : (
@@ -3979,7 +2305,7 @@ function Workspace({
                           aria-expanded={viewMenu}
                           onClick={() => {
                             setViewMenu(!viewMenu);
-                            refreshFilters().catch((e) => setError(e.message));
+                            filters.refresh().catch((e) => setError(e.message));
                           }}
                         >
                           <Bookmark size={14} aria-hidden="true" />
@@ -4026,9 +2352,6 @@ function Workspace({
                           <Button
                             className="saved-filter-save"
                             onClick={() => {
-                              setViewName("");
-                              setFilterScope("personal");
-                              setFilterNameError("");
                               setFilterNameDialog({});
                               setViewMenu(false);
                             }}
@@ -4230,7 +2553,6 @@ function Workspace({
                     onClick={() => {
                       setError("");
                       setViewError("");
-                      setQueryError("");
                     }}
                   >
                     <X size={15} />
@@ -4289,6 +2611,7 @@ function Workspace({
                 />
               ) : (
                 <Grid
+                  scopeKey={sheetKey}
                   zoom={gridZoom / 100}
                   tasks={visibleTasks}
                   matchingTasks={matchingTasks}
@@ -4340,7 +2663,7 @@ function Workspace({
                       setEditor(null);
                       return true;
                     }
-                    if (pendingRef.current || failedRef.current) {
+                    if (operations.isPending() || operations.failure()) {
                       setError(
                         "앞선 변경을 처리한 뒤 저장하세요. 입력은 셀에 남아 있습니다.",
                       );
@@ -4453,7 +2776,11 @@ function Workspace({
           }
           onUndo={() => {
             if (undoToast.kind === "rows") {
-              if (pendingRef.current || failedRef.current || editorRef.current)
+              if (
+                operations.isPending() ||
+                operations.failure() ||
+                editorRef.current
+              )
                 return;
               setUndoToast(null);
               void undo();
@@ -4520,9 +2847,9 @@ function Workspace({
               );
               return;
             }
-            mutationEpoch.current++;
+            taskData.invalidate();
             let recheck = false;
-            const next = tasksRef.current.map((task) => {
+            const next = taskData.snapshot().map((task) => {
               if (task.id !== rowTask.id) return task;
               if (task.updatedAt > result.taskUpdatedAt) {
                 // A newer cell event carries no document metadata. Re-read the
@@ -4537,8 +2864,8 @@ function Workspace({
                 updatedAt: result.taskUpdatedAt,
               };
             });
-            tasksRef.current = next;
-            setTasks(next);
+
+            taskData.replace(next);
             if (recheck) void refresh();
           }}
           users={users}
@@ -4570,14 +2897,12 @@ function Workspace({
                 ...cell(updated, key),
               }));
             }
-            if (failedRef.current || pendingRef.current)
+            if (operations.failure() || operations.isPending())
               throw new Error(
                 "앞선 셀 변경을 처리 중입니다. 잠시 후 다시 저장하세요.",
               );
             const submittedBoard = boardKey.current;
-            mutationEpoch.current++;
-            pendingRef.current++;
-            setPending(pendingRef.current);
+            const finishOperation = operations.begin();
             try {
               const result = await send<BatchResult>("/cells/batch", payload);
               if (boardKey.current !== submittedBoard)
@@ -4588,8 +2913,7 @@ function Workspace({
               recordResult(result, "normal");
               return result.cells;
             } finally {
-              pendingRef.current--;
-              setPending(pendingRef.current);
+              finishOperation();
             }
           }}
           onAction={presentation ? undefined : detailAction}
@@ -4645,7 +2969,7 @@ function Workspace({
             const imported = views.find((v: any) => v.name === "__current");
             if (imported) {
               const next = normalizeView(
-                { ...imported.data, ...currentFilters.current.data },
+                { ...imported.data, ...filters.snapshot().data },
                 latest?.teams.find((t) => t.id === teamId)?.settings ||
                   settings,
               ) as View;
@@ -4706,134 +3030,21 @@ function Workspace({
         <PasswordPanel user={user} onClose={() => setPanel("")} />
       )}
       {filterNameDialog && (
-        <Modal
-          title={filterNameDialog.filterId ? "필터 이름 변경" : "필터 저장"}
-          onClose={() => {
-            if (!savingFilterName) setFilterNameDialog(null);
+        <SavedFilterDialog
+          key={teamId}
+          filter={filterNameDialog.filter}
+          canManageFilters={canManageFilters}
+          onClose={() => setFilterNameDialog(null)}
+          onSave={async (name, scope) => {
+            const filter = await filters.save({
+              id: filterNameDialog.filter?.id,
+              name,
+              scope,
+              data: view,
+            });
+            if (filter) applySavedFilter(filter, { scrollToTop: false });
           }}
-          initialFocus={filterNameInput}
-        >
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (savingFilterName) return;
-              setSavingFilterName(true);
-              setFilterNameError("");
-              try {
-                if (filterNameDialog.filterId)
-                  await send(
-                    `/filters/${filterNameDialog.filterId}`,
-                    { name: viewName },
-                    "PATCH",
-                  );
-                else
-                  await send(
-                    "/filters",
-                    {
-                      teamId,
-                      scope: filterScope,
-                      name: viewName,
-                      data: savedFilter(view, settings),
-                    },
-                    "PUT",
-                  );
-                const filters: SavedFilter[] = await refreshFilters();
-                if (
-                  !filterNameDialog.filterId &&
-                  filterTeam.current === teamId
-                ) {
-                  const filter = filters.find(
-                    (v) =>
-                      v.name === viewName.trim() && v.scope === filterScope,
-                  );
-                  if (filter) applySavedFilter(filter, { scrollToTop: false });
-                }
-                setFilterNameDialog(null);
-                setViewName("");
-                setToast(
-                  filterNameDialog.filterId
-                    ? "필터 이름을 변경했습니다."
-                    : "필터를 저장했습니다.",
-                );
-              } catch (e) {
-                setFilterNameError((e as Error).message);
-                filterNameInput.current?.focus({ preventScroll: true });
-              } finally {
-                setSavingFilterName(false);
-              }
-            }}
-          >
-            <label>
-              필터 이름
-              <input
-                ref={filterNameInput}
-                value={viewName}
-                onFocus={(e) => {
-                  if (filterNameDialog.filterId) e.currentTarget.select();
-                }}
-                onChange={(e) => {
-                  setViewName(e.target.value);
-                  setFilterNameError("");
-                }}
-                readOnly={savingFilterName}
-                required
-                maxLength={60}
-                placeholder="예: 완료 제외 보기"
-              />
-            </label>
-            {!filterNameDialog.filterId && canManageFilters && (
-              <fieldset
-                className="filter-scope-options"
-                disabled={savingFilterName}
-              >
-                <legend>공개 범위</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="filter-scope"
-                    value="personal"
-                    checked={filterScope === "personal"}
-                    onChange={() => setFilterScope("personal")}
-                  />
-                  <UserRound size={15} aria-hidden="true" />
-                  개인용
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="filter-scope"
-                    value="team"
-                    checked={filterScope === "team"}
-                    onChange={() => setFilterScope("team")}
-                  />
-                  <Users size={15} aria-hidden="true" />팀 공용
-                </label>
-              </fieldset>
-            )}
-            <ErrorNote error={filterNameError} />
-            <p className="field-help">
-              {filterNameDialog.filterId
-                ? "필터 조건과 적용 상태는 그대로 유지됩니다."
-                : filterScope === "team"
-                  ? "팀 전체에 표시되며 팀장만 수정·삭제할 수 있습니다."
-                  : "나에게만 표시되는 개인용 필터로 저장합니다."}
-            </p>
-            <footer className="form-actions">
-              <Button
-                type="submit"
-                className="primary"
-                disabled={savingFilterName || !viewName.trim()}
-              >
-                {filterNameDialog.filterId ? (
-                  <Pencil size={15} />
-                ) : (
-                  <Bookmark size={15} />
-                )}
-                {filterNameDialog.filterId ? "이름 변경" : "저장"}
-              </Button>
-            </footer>
-          </form>
-        </Modal>
+        />
       )}
       {panel === "failed" && failed && (
         <Modal title="저장하지 못한 입력" wide onClose={() => setPanel("")}>
@@ -4897,8 +3108,7 @@ function Workspace({
                   )
                 )
                   return;
-                setFailed(null);
-                failedRef.current = null;
+                operations.clearFailure();
                 setPanel("");
                 await refresh();
               }}

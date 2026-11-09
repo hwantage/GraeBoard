@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { reconcileTaskSnapshot } from "../../src/sheet/cell-updates.js";
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -52,6 +53,42 @@ const selection = (keys, year = 2026, startMonth = 1) =>
   visibleWeeks(year, defaultView(year, startMonth))
     .filter((w) => keys.includes(w.key))
     .map(({ key, year, month }) => ({ key, year, month }));
+
+test("shared annual read snapshots keep unchanged task projections cached and preserve authoritative additions/order/deletions", () => {
+  const previous = [
+    task("changed", ["2026-01-05"]),
+    task("quiet", ["2026-01-05"]),
+  ];
+  const ctx = context(
+    selection(["2026-01-05", "2026-01-12"]),
+    "2026-01",
+    "2026-01",
+    { cache: createTaskMetricsCache() },
+  );
+  const baseline = previous.map((item) => taskMetrics(item, ctx));
+  const response = JSON.parse(JSON.stringify(previous));
+  response[0].cells["2026-01-12"] = {
+    value: "",
+    style: { backgroundColor: "#0066cc", work: true },
+  };
+  const next = reconcileTaskSnapshot(previous, response);
+  assert.equal(taskMetrics(next[0], ctx).rangeWeeks.length, 2);
+  assert.notStrictEqual(taskMetrics(next[0], ctx), baseline[0]);
+  assert.strictEqual(taskMetrics(next[1], ctx), baseline[1]);
+  assert.equal(baseline[0].rangeWeeks.length, 1);
+  assert.strictEqual(reconcileTaskSnapshot(next, structuredClone(next)), next);
+  const added = task("new", ["2026-01-12"]);
+  const reordered = reconcileTaskSnapshot(next, [
+    structuredClone(next[1]),
+    added,
+  ]);
+  assert.deepEqual(
+    reordered.map((item) => item.id),
+    ["quiet", "new"],
+  );
+  assert.strictEqual(reordered[0], previous[1]);
+  assert.equal(taskMetrics(reordered[1], ctx).rangeWeeks.length, 1);
+});
 
 test("exact week membership clips work totals and drilldowns while duration/status use the whole task; cache sees week changes", () => {
   const a = task("a", ["2026-01-05", "2026-01-12", "2026-01-19"]);

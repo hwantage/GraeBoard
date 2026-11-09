@@ -2,14 +2,20 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listNodeTestFiles } from "./node-test-files.mjs";
+import { frozenCutoverSource } from "../../tests/support/frozen-cutover-source.mjs";
 
 export async function runNodeTests({ root, env = process.env }) {
   const files = listNodeTestFiles(root);
   if (!files.length) throw new Error("No Node test suites found in tests/");
+  const frozen = frozenCutoverSource();
   const child = spawn(
     process.execPath,
     ["--test", "--test-concurrency=1", ...files],
-    { cwd: root, env, stdio: "inherit" },
+    {
+      cwd: root,
+      env: { ...env, GRAEBOARD_FROZEN_DEPENDENCIES: frozen.dependenciesRoot },
+      stdio: "inherit",
+    },
   );
   let forwardedSignal;
   const forward = (signal) => {

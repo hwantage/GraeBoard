@@ -3668,9 +3668,7 @@ test("카드 이동과 양 끝 드래그가 주를 넘어 연결되고 상세 �
     path: info.outputPath("calendar-range-month.png"),
     fullPage: true,
   });
-  await calendar(page)
-    .getByRole("button", { name: "팀 주간 일정 보기" })
-    .click();
+  await teamWeek(page, calendarWeek("2026-10-12"));
   await expect(segment(page, entry.id)).toHaveCount(1);
   expect(
     (await request(page, `/tasks?teamId=${teamId}&year=2026`)).tasks,
@@ -3790,7 +3788,7 @@ test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변�
     password,
   });
   await page.reload();
-  await enter(page);
+  await october(page);
   await calendar(page)
     .getByRole("group", { name: "캘린더 팀원" })
     .locator(`[data-member-id="${userId}"]`)

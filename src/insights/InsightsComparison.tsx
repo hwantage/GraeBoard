@@ -4,7 +4,7 @@ import {
   aggregate,
   numericProperties,
 } from "../../shared/insights/insights.js";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import Select from "../ui/Select";
 import InsightsChart from "./InsightsChart";
 import { comparisonProperty } from "./insights-chart-templates";

@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, KeyRound, LogOut, UserRound } from "lucide-react";
-import { Avatar, ErrorNote } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { ErrorNote } from "../ui/ErrorNote";
 import type { User } from "../types";
 
 export default function AccountMenu({

@@ -478,10 +478,6 @@
       "reason": "Exact existing generic filename retained by issue #100"
     },
     {
-      "path": "src/components.tsx",
-      "reason": "Exact existing generic filename retained by issue #100"
-    },
-    {
       "path": "src/styles.css",
       "reason": "Exact existing generic filename retained by issue #100"
     },
@@ -751,10 +747,6 @@
     },
     {
       "path": "src/app-version.d.ts",
-      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
-    },
-    {
-      "path": "src/components.tsx",
       "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
     },
     {

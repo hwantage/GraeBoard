@@ -6,6 +6,7 @@ import { defaultView } from "../../../shared/domain.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string, taskIds: string[];
+let sourceTraffic: { requests: string[]; responses: number } | undefined;
 async function request(
   page: Page,
   path: string,
@@ -49,7 +50,29 @@ async function openInsights(page: Page) {
     page.getByRole("region", { name: "인사이트", exact: true }),
   ).toBeVisible();
 }
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, info) => {
+  sourceTraffic = undefined;
+  if (info.tags.includes("@source-owner")) {
+    const traffic = { requests: [] as string[], responses: 0 };
+    sourceTraffic = traffic;
+    page.on("request", (request) => {
+      if (
+        new URL(request.url()).pathname === "/api/tasks" &&
+        request.method() === "GET"
+      )
+        traffic.requests.push(request.url());
+    });
+    page.on("response", (response) => {
+      if (
+        new URL(response.url()).pathname === "/api/tasks" &&
+        response.request().method() === "GET"
+      )
+        traffic.responses++;
+    });
+    // Install before the fixture's first app mount; reloading an existing SSE
+    // client can legitimately include its reconnect/recovery responses.
+    await page.clock.install();
+  }
   await request(page, "/auth/login", {
     username: "test@somansa.com",
     password: "1234",
@@ -128,6 +151,17 @@ test.beforeEach(async ({ page }) => {
       })),
     });
   }
+  if (info.tags.includes("@source-owner")) {
+    // An absent personal view is saved on the first navigation, legitimately
+    // invalidating resources. Isolate route/subscription ownership from that
+    // unrelated write by starting with a real persisted annual layout.
+    await request(
+      page,
+      "/views",
+      { teamId, name: "__current", data: defaultView(2026) },
+      "PUT",
+    );
+  }
   await page.addInitScript(
     ({ userId, teamId }) => {
       if (!localStorage.getItem(`weekly-board:${userId}`))
@@ -161,6 +195,7 @@ test("연간 머리글의 통계 아이콘과 동일 PeriodPicker는 주차·월
   await expect(toggle).toBeVisible();
   await expect(toggle.locator("svg")).toHaveCount(1);
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await page.screenshot({ path: info.outputPath("annual-header-desktop.png") });
   await expect(
     page
       .getByRole("navigation", { name: "주 메뉴" })
@@ -265,11 +300,14 @@ test("연말 표시 주와 순환 12개월·연도 이동은 실제 원본 연�
   await expect(
     monthly.getByRole("button", { name: "2027-01 · 전체: 2", exact: true }),
   ).toBeVisible();
-  const reads: number[] = [];
+  const reads: { year: number; startMonth: string | null }[] = [];
   page.on("request", (r) => {
     const url = new URL(r.url());
     if (url.pathname === "/api/tasks")
-      reads.push(Number(url.searchParams.get("year")));
+      reads.push({
+        year: Number(url.searchParams.get("year")),
+        startMonth: url.searchParams.get("startMonth"),
+      });
   });
   const boot = await request(page, "/bootstrap");
   const current = boot.teams.find((t: any) => t.id === teamId).settings;
@@ -285,8 +323,13 @@ test("연말 표시 주와 순환 12개월·연도 이동은 실제 원본 연�
     "PATCH",
   );
   await expect
-    .poll(() => reads.includes(2026) && reads.includes(2027))
+    .poll(() =>
+      reads.some((read) => read.year === 2026 && read.startMonth === "2"),
+    )
     .toBeTruthy();
+  expect(
+    reads.every((read) => read.year === 2026 && read.startMonth === "2"),
+  ).toBeTruthy();
   await expect(
     page.getByLabel("통계 속성").locator("option:checked"),
   ).toHaveText("변경된 제품 성격");
@@ -1079,3 +1122,148 @@ for (const initiallyAssigned of [false, true]) {
     }
   });
 }
+
+test(
+  "연간·인사이트는 같은 원본 조회·구독을 유지하고 화면 전환·폴링·설정 변경·캘린더 정리를 중복 없이 처리한다",
+  { tag: "@source-owner" },
+  async ({ page }) => {
+    const traffic = sourceTraffic!;
+    const requests = traffic.requests;
+    const active = async () =>
+      (await (await page.request.get("/__test/streams")).json()).flatMap(
+        (connection: any) => connection.streams,
+      );
+    const cells = async () =>
+      (await active()).filter((stream: any) =>
+        stream.path.startsWith("/api/cells/events?"),
+      );
+    await expect.poll(async () => (await cells()).length).toBe(1);
+    // The shared resource stream sends its initial snapshot as subscriptions
+    // join. Drain those startup invalidations before measuring route changes.
+    await page.clock.pauseAt(
+      new Date(await page.evaluate(() => Date.now() + 1000)),
+    );
+    await page.clock.runFor(1000);
+    await expect.poll(() => traffic.responses).toBe(requests.length);
+    const baseline = requests.length;
+    expect(baseline).toBeGreaterThan(0);
+    await page.clock.resume();
+    const initialPaths = (await active())
+      .map((stream: any) => stream.path)
+      .sort();
+    const identity = randomUUID();
+    await page.evaluate((value) => {
+      (window as any).insightsOwnerDocument = value;
+    }, identity);
+    for (let i = 0; i < 3; i++) {
+      await openInsights(page);
+      await expect(card(page, "작업 주 합").locator("strong")).toHaveText("4");
+      await page
+        .locator(".page-heading")
+        .getByRole("button", { name: "인사이트", exact: true })
+        .click();
+      await expect(
+        page.locator(`[data-cell="${taskIds[0]}:title"]`),
+      ).toBeVisible();
+    }
+    expect(requests).toHaveLength(baseline);
+    expect((await active()).map((stream: any) => stream.path).sort()).toEqual(
+      initialPaths,
+    );
+    await openInsights(page);
+    const current = (await request(page, "/bootstrap")).teams.find(
+      (team: any) => team.id === teamId,
+    ).settings;
+    await request(
+      page,
+      `/teams/${teamId}/settings`,
+      { revision: current.revision, defaultDensity: "dense" },
+      "PATCH",
+    );
+    await expect.poll(() => traffic.responses).toBe(baseline + 1);
+    expect(requests).toHaveLength(baseline + 1);
+    await page.clock.pauseAt(
+      new Date(await page.evaluate(() => Date.now() + 1000)),
+    );
+    await page.clock.runFor(7000);
+    await expect.poll(() => traffic.responses).toBe(baseline + 2);
+    expect(requests).toHaveLength(baseline + 2);
+    await page
+      .getByRole("button", { name: "캘린더", exact: true })
+      .press("Enter");
+    await page.clock.runFor(100);
+    await expect(
+      page.getByRole("region", { name: "캘린더", exact: true }),
+    ).toBeVisible();
+    await expect.poll(async () => (await cells()).length).toBe(0);
+    const inactive = requests.length;
+    await page.clock.runFor(15000);
+    expect(requests).toHaveLength(inactive);
+    await page.clock.resume();
+    await page
+      .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
+      .click();
+    await expect(
+      page.locator(`[data-cell="${taskIds[0]}:title"]`),
+    ).toBeVisible();
+    await openInsights(page);
+    await expect(card(page, "작업 주 합").locator("strong")).toHaveText("4");
+    await expect.poll(async () => (await cells()).length).toBe(1);
+    expect(
+      await page.evaluate(() => (window as any).insightsOwnerDocument),
+    ).toBe(identity);
+  },
+);
+
+test("원본 조회의 늦은 bootstrap은 보고서 차트 저장 뒤 최신 팀 설정과 원본 헤더를 덮어쓰지 않는다", async ({
+  page,
+}) => {
+  await openInsights(page);
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("3");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let captured!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  let hold = true;
+  await page.route("**/api/bootstrap", async (route) => {
+    if (!hold) return route.continue();
+    hold = false;
+    const response = await route.fetch();
+    captured();
+    await gate;
+    await route.fulfill({ response });
+  });
+  try {
+    await request(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: { title: "원본 소유자 추가 업무", owner: userId },
+    });
+    await waiting;
+    await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "차트 편집", exact: true });
+    await editor
+      .getByRole("textbox", { name: "차트 제목", exact: true })
+      .fill("저장 뒤 유지되는 차트");
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(card(page, "저장 뒤 유지되는 차트")).toBeVisible();
+    release();
+    await expect(
+      page.locator(".board-summary > span").first().locator("strong"),
+    ).toHaveText("4");
+    await expect(card(page, "업무 수").locator("strong")).toHaveText("3");
+    await expect(card(page, "저장 뒤 유지되는 차트")).toBeVisible();
+    const stored = (await request(page, "/bootstrap")).teams.find(
+      (team: any) => team.id === teamId,
+    ).settings;
+    expect(stored.insights.charts.map((chart: any) => chart.title)).toEqual([
+      "저장 뒤 유지되는 차트",
+    ]);
+  } finally {
+    release();
+  }
+});

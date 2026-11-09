@@ -26,7 +26,9 @@ import {
 } from "../../shared/calendar/calendar-tags.js";
 import { api, send } from "../platform/api";
 import { busyProps } from "../ui/busyProps";
-import { Button, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import type { CalendarTag } from "./calendar-types";
 import Select from "../ui/Select";
 import "./calendar-tags.css";

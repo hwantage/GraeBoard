@@ -1,7 +1,7 @@
 import { useId, useState, useMemo } from "react";
 import type { FilterMode, Property, Task, User } from "../types";
 import { value } from "../../shared/domain.js";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import PropertyBadge from "./PropertyBadge";
 
 export default function PropertyFilter({

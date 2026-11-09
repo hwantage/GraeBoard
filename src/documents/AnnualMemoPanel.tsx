@@ -9,7 +9,7 @@ import {
 } from "react";
 import { ChevronDown, ChevronUp, FileText, X } from "lucide-react";
 import { useDocumentFullPage } from "./useDocumentFullPage";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import DocumentPanel, { type DocumentPanelHandle } from "./DocumentPanel";
 
 // The open accordion is a panel pinned under the table. A height the user

@@ -11,7 +11,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import LoadingState from "../ui/LoadingState";
 import Toast, { useToast } from "../ui/Toast";
 import { busyProps } from "../ui/busyProps";
@@ -21,11 +22,11 @@ import SyncSetupWizard from "../sync/SyncSetupWizard";
 import TeamSyncSettings from "../sync/TeamSyncSettings";
 import SyncConnectionDetails from "../sync/SyncConnectionDetails";
 import "./service-connections.css";
-import {
-  ConnectionChecks,
-  type ConnectionCheck,
-  type ResourceProfile,
-} from "../sync/TeamSyncSettings";
+import { ConnectionChecks } from "../sync/SyncConnectionChecks";
+import type {
+  ConnectionCheck,
+  ResourceProfile,
+} from "../sync/sync-connection-types";
 
 type Service = {
   site: "internal" | "external";

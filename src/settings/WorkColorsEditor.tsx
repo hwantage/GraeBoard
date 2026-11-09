@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { GripVertical } from "lucide-react";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import ColorMenu from "../ui/ColorMenu";
 import { reorderItems, useListReorder } from "../ui/useListReorder";
 import type { Settings } from "../types";

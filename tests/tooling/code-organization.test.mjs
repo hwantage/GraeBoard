@@ -294,6 +294,12 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     new URL("./storage-import-boundaries.test.mjs", import.meta.url),
     join(f.root, suite),
   );
+  const helper = "scripts/testing/source-import-graph.mjs";
+  mkdirSync(dirname(join(f.root, helper)), { recursive: true });
+  copyFileSync(
+    new URL(`../../${helper}`, import.meta.url),
+    join(f.root, helper),
+  );
   symlinkSync(
     new URL("../../node_modules", import.meta.url),
     join(f.root, "node_modules"),
@@ -308,7 +314,8 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
       encoding: "utf8",
       timeout: 15000,
     });
-  assert.equal(run().status, 0);
+  const clean = run();
+  assert.equal(clean.status, 0, clean.stdout + clean.stderr);
   f.put("server/storage/unregistered-service.mjs");
   f.put(
     "worker/entry.mjs",
@@ -350,6 +357,22 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     run().status,
     1,
     "portable sync cannot conceal a native Node dependency",
+  );
+  f.put("worker/entry.mjs");
+  f.put(
+    "edge/handler.mjs",
+    'import "../server/storage/unregistered-service.mjs";\n',
+  );
+  assert.equal(
+    run().status,
+    1,
+    "Edge entrypoints obey the same exact service allowlist",
+  );
+  f.put("edge/handler.mjs", 'import "../server/sync/core/service.mjs";\n');
+  assert.equal(
+    run().status,
+    1,
+    "Edge entrypoints cannot conceal a native Node dependency",
   );
 });
 

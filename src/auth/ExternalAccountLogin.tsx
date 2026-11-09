@@ -2,7 +2,8 @@ import type { SetupStatus } from "../../shared/identity/session-contract";
 import { useEffect, useId, useState } from "react";
 import { api, send } from "../platform/api";
 import { resumeSession } from "../platform/event-stream";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Select from "../ui/Select";
 import type { Bootstrap } from "../types";
 
