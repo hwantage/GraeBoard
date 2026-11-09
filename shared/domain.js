@@ -1,5 +1,6 @@
 import { defaultCoreProperties } from "./coreProperties.js";
 import { inheritedStyle } from "./formatting/formatting.js";
+import { backgroundWorkStyle } from "./formatting/compact.js";
 import { FONTS } from "./formatting/fonts.js";
 export {
   FONTS,
@@ -129,7 +130,10 @@ export function cell(task, key) {
   const current = task.cells[key] ?? emptyCell();
   return {
     ...current,
-    style: { ...inheritedStyle(task, key), ...current.style },
+    style: {
+      ...inheritedStyle(task, key),
+      ...backgroundWorkStyle(current.style),
+    },
   };
 }
 export function value(task, key) {

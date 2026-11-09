@@ -487,6 +487,60 @@ test(
           .settings.insights,
         insights,
       );
+      // Work semantics travel as style data through the actual Git pipeline.
+      let workTask;
+      await step("inside", async () => {
+        workTask = ok(
+          await inside("/tasks", {
+            teamId,
+            year: 2026,
+            fields: { title: "Work marker roundtrip" },
+          }),
+        ).task;
+      });
+      const workTaskAt = async (where) =>
+        ok(await site[where](`/tasks?teamId=${teamId}&year=2026`)).tasks.find(
+          (task) => task.id === workTask.id,
+        );
+      const setWorkStyle = async (where, style) => {
+        const task = await workTaskAt(where);
+        ok(
+          await site[where]("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: workTask.id,
+                key: "2026-01-05",
+                style,
+                expectedVersion: task.cells["2026-01-05"]?.version || 0,
+                expectedFormatRevision: task.formatting?.revision || 0,
+              },
+            ],
+          }),
+        );
+      };
+      await step("inside", () =>
+        setWorkStyle("inside", { backgroundColor: "#0066cc", work: true }),
+      );
+      assert.equal(
+        (await workTaskAt("outside")).cells["2026-01-05"].style.work,
+        true,
+      );
+      await step("outside", () =>
+        setWorkStyle("outside", { backgroundColor: "#0066cc" }),
+      );
+      assert.notEqual(
+        (await workTaskAt("inside")).cells["2026-01-05"].style.work,
+        true,
+      );
+      await step("outside", () =>
+        setWorkStyle("outside", { backgroundColor: "#0066cc", work: true }),
+      );
+      assert.equal(
+        (await workTaskAt("inside")).cells["2026-01-05"].style.work,
+        true,
+      );
       assert.equal(
         await read("outside", withBody.id),
         "Genesis body, edited early",

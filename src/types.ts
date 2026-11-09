@@ -22,6 +22,8 @@ export type Style = {
   borderLeft?: Border | null;
   color?: string | null;
   backgroundColor?: string | null;
+  // true marks work; false/null explicitly cancel inherited work semantics.
+  work?: boolean | null;
   fontFamily?: string | null;
   fontSize?: number | null;
   textAlign?: "left" | "center" | "right" | null;

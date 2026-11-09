@@ -79,7 +79,11 @@ const task = (id, weeks = [], fields = {}, extra = {}) => ({
   cells: Object.fromEntries([
     ...weeks.map((week) => [
       week,
-      { value: "/////", style: { backgroundColor: "#ABC" }, version: 1 },
+      {
+        value: "/////",
+        style: { backgroundColor: "#ABC", work: true },
+        version: 1,
+      },
     ]),
     ...Object.entries(fields).map(([key, value]) => [
       key,
@@ -110,7 +114,7 @@ test("work weeks use exact normalized backgrounds, multiple colors, noncontiguou
   t.cells["2026-01-12"] = { value: "work", style: {}, version: 1 };
   t.cells["2026-01-26"] = {
     value: "",
-    style: { backgroundColor: "#0066CC" },
+    style: { backgroundColor: "#0066CC", work: true },
     version: 1,
   };
   t.cells["2026-02-02"] = {
@@ -136,7 +140,7 @@ test("default, row and column inheritance count recordless weeks; explicit cell 
     [],
     {},
     {
-      defaultStyle: { backgroundColor: "#0066cc" },
+      defaultStyle: { backgroundColor: "#0066cc", work: true },
       rowStyle: { backgroundColor: "#fff" },
     },
   );
@@ -147,8 +151,8 @@ test("default, row and column inheritance count recordless weeks; explicit cell 
         id: "r",
         rows: null,
         keys: ["2026-01-05", "2026-01-12"],
-        style: { backgroundColor: "#ABC" },
-        orders: { backgroundColor: 1 },
+        style: { backgroundColor: "#ABC", work: true },
+        orders: { backgroundColor: 1, work: 1 },
       },
     ],
   };
@@ -170,7 +174,12 @@ test("default, row and column inheritance count recordless weeks; explicit cell 
     ["2026-01-05"],
     "a reset on this week falls back to default, while the white row and cell still win elsewhere",
   );
-  const row = task("row", [], {}, { rowStyle: { backgroundColor: "#ABC" } });
+  const row = task(
+    "row",
+    [],
+    {},
+    { rowStyle: { backgroundColor: "#ABC", work: true } },
+  );
   assert.equal(
     taskWorkWeeks(row, workColorSet(settings)).length,
     weeksForPeriod(2026).length,

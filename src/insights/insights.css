@@ -9,8 +9,6 @@
 .insights-controls,
 .insights-card-heading,
 .insights-card-actions,
-.insights-color-row,
-.insights-color-add,
 .insights-editor-value {
   display: flex;
   align-items: center;
@@ -19,11 +17,20 @@
 .insights-controls {
   flex-wrap: wrap;
 }
-.insights-controls label,
 .insights-settings label,
 .insights-editor-controls label {
   display: grid;
   gap: 6px;
+}
+.insights-controls .insights-month {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.insights-month input {
+  width: 145px;
+  min-width: 0;
 }
 .insights-grid,
 .insights-summary {
@@ -126,20 +133,16 @@
   display: grid;
   gap: 8px;
 }
-.insights-range-filter {
-  position: relative;
-}
-.insights-range-filter > .insights-filters {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 10;
+.insights-range-filter-popover {
+  position: fixed;
+  z-index: 100;
   background: white;
   border: 1px solid var(--line);
   padding: 12px;
   border-radius: 6px;
   width: 280px;
-  max-height: 60vh;
+  max-width: calc(100vw - 16px);
+  max-height: min(60vh, calc(100dvh - 16px));
   overflow: auto;
   box-shadow: 0 6px 20px #0001;
 }
@@ -190,17 +193,6 @@
   padding: 0;
   margin: 0;
 }
-.insights-color-row {
-  margin-bottom: 8px;
-}
-.insights-color-row input {
-  min-width: 0;
-  flex: 1;
-}
-.insights-color-row span {
-  font-size: 12px;
-  color: var(--muted);
-}
 .insights-editor.modal.wide {
   width: min(1200px, calc(100vw - 48px));
 }
@@ -226,6 +218,11 @@
   flex: 1;
 }
 @media (max-width: 700px) {
+  .insights-page .page-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
   .insights-page {
     padding-inline: 12px;
   }
@@ -234,9 +231,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .insights-controls {
-    align-items: end;
+    align-items: center;
+    gap: 6px;
+  }
+  .insights-controls .insights-month {
+    gap: 4px;
+    font-size: 12px;
   }
   .insights-controls input {
-    max-width: 155px;
+    width: 118px;
+    padding-inline: 4px;
+    font-size: 12px;
   }
 }

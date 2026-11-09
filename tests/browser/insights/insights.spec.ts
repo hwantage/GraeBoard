@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { cell as effectiveCell } from "../../../shared/domain.js";
+import { pickColor } from "../support/colors";
 import { unpack } from "../../../shared/formatting/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
@@ -48,6 +50,7 @@ async function paint(
   index: number,
   weeks: string[],
   color = "#0066cc",
+  work = true,
 ) {
   const current = (
     await request(page, `/tasks?teamId=${teamId}&year=2026`)
@@ -58,7 +61,7 @@ async function paint(
     changes: weeks.map((key) => ({
       taskId: current.id,
       key,
-      style: { backgroundColor: color },
+      style: { backgroundColor: color, ...(work ? { work: true } : {}) },
       expectedVersion: current.cells[key]?.version || 0,
       expectedFormatRevision: current.formatting?.revision || 0,
     })),
@@ -168,7 +171,9 @@ test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설�
   await expect(page).toHaveURL(/\/insights$/);
   await expect(page.getByText("업무 색상을 설정해 주세요")).toBeVisible();
   await page.reload();
-  await expect(page.getByText("팀의 작업 주를 나타내는 배경색")).toBeVisible();
+  await expect(
+    page.getByText("설정의 팀 일반에서 업무 표시 색상을 지정하세요."),
+  ).toBeVisible();
   await page.getByRole("button", { name: "연간 업무", exact: true }).click();
   await page.goBack();
   await expect(
@@ -204,18 +209,14 @@ test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설�
   }
 });
 
-test("설정 저장→배경색 프리셋→칠하기→수치 반영과 색 편집, 글자·테두리 메뉴 제외", async ({
+test("일반 설정 저장→업무 표시 한 번 클릭→수치 반영과 색 편집, 일반 색상 메뉴 유지", async ({
   page,
 }) => {
   await insights(page);
   await page
-    .getByRole("button", { name: "인사이트 설정", exact: true })
-    .first()
+    .getByRole("button", { name: "업무 색상 설정", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", {
-    name: "인사이트 설정",
-    exact: true,
-  });
+  const dialog = page.getByRole("dialog", { name: "설정", exact: true });
   await dialog
     .getByRole("button", { name: "업무 색상 추가", exact: true })
     .click();
@@ -236,7 +237,7 @@ test("설정 저장→배경색 프리셋→칠하기→수치 반영과 색 편
     .getByRole("textbox", { name: "업무 색상 1 이름" })
     .fill("개발 작업");
   await dialog.getByRole("button", { name: "저장", exact: true }).click();
-  await expect(dialog.getByText("인사이트 설정을 저장했습니다.")).toBeVisible();
+  await expect(dialog.getByText("팀 정보를 저장했습니다.")).toBeVisible();
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
   await page.getByRole("button", { name: "연간 업무", exact: true }).click();
@@ -260,10 +261,14 @@ test("설정 저장→배경색 프리셋→칠하기→수치 반영과 색 편
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "배경색", exact: true }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "배경색", exact: true })
+      .getByRole("group", { name: "업무 색상", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page
-    .getByRole("dialog", { name: "배경색", exact: true })
-    .getByRole("group", { name: "업무 색상", exact: true })
-    .getByRole("button", { name: "개발 작업 #0066cc" })
+    .getByRole("button", { name: "업무 표시: 개발 작업", exact: true })
     .click();
   await expect
     .poll(
@@ -275,9 +280,7 @@ test("설정 저장→배경색 프리셋→칠하기→수치 반영과 색 편
     .toBe("#0066cc");
   await insights(page);
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
-  await page
-    .getByRole("button", { name: "인사이트 설정", exact: true })
-    .click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
   await dialog
     .getByRole("button", { name: "업무 색상 1", exact: true })
     .click();
@@ -285,7 +288,7 @@ test("설정 저장→배경색 프리셋→칠하기→수치 반영과 색 편
   await edit.getByRole("textbox", { name: "업무 색상 1 HEX" }).fill("#ff0000");
   await edit.getByRole("textbox", { name: "업무 색상 1 HEX" }).press("Enter");
   await dialog.getByRole("button", { name: "저장", exact: true }).click();
-  await expect(dialog.getByText("인사이트 설정을 저장했습니다.")).toBeVisible();
+  await expect(dialog.getByText("팀 정보를 저장했습니다.")).toBeVisible();
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
 });
@@ -482,9 +485,9 @@ test("24개월 기간은 연도별 기존 API를 합치고 전체 업무 기간�
     "2027-12",
   );
   await expect(card(page, "작업 주 합").locator("strong")).toHaveText("2");
-  await page.locator(".insights-range-filter > summary").click();
+  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
   await page
-    .locator(".insights-range-filter")
+    .getByRole("dialog", { name: "범위 필터", exact: true })
     .getByText("분류", { exact: true })
     .click();
   await page
@@ -494,9 +497,9 @@ test("24개월 기간은 연도별 기존 API를 합치고 전체 업무 기간�
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
   await page.reload();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
-  await page.locator(".insights-range-filter > summary").click();
+  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
   await page
-    .locator(".insights-range-filter")
+    .getByRole("dialog", { name: "범위 필터", exact: true })
     .getByRole("button", { name: "모든 필터 초기화", exact: true })
     .click();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
@@ -826,4 +829,289 @@ test("숫자 레이더는 저장된 차트와 즉시 미리보기에서 비숫�
       .locator(".insights-editor-preview")
       .getByText("제외 1건", { exact: true }),
   ).toBeVisible();
+});
+
+test("사용자 검토: 같은 HEX의 일반 채우기는 업무 표시 없이 집계되지 않는다", async ({
+  page,
+}) => {
+  await configure(page);
+  await paint(page, 0, ["2026-01-05"], "#0066cc", false);
+  await insights(page);
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
+});
+
+test("사용자 검토: 기간은 한 줄이며 데스크톱·좁은 화면의 범위 필터가 보이고 수치를 바꾼다", async ({
+  page,
+}, info) => {
+  await configure(page);
+  for (let i = 0; i < 3; i++) await paint(page, i, ["2026-01-05"]);
+  await insights(page);
+  for (const width of [1366, 390, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const geometry = await page
+      .getByLabel("인사이트 시작 월", { exact: true })
+      .evaluate((input) => {
+        const label = input.parentElement!,
+          range = document.createRange();
+        range.selectNodeContents(label.firstElementChild!);
+        const text = range.getBoundingClientRect(),
+          field = input.getBoundingClientRect();
+        return {
+          textBottom: text.bottom,
+          fieldTop: field.top,
+          fieldBottom: field.bottom,
+          textTop: text.top,
+        };
+      });
+    expect(geometry.textBottom).toBeGreaterThan(geometry.fieldTop);
+    expect(geometry.textTop).toBeLessThan(geometry.fieldBottom);
+    const start = (await page
+      .getByLabel("인사이트 시작 월", { exact: true })
+      .boundingBox())!;
+    const end = (await page
+      .getByLabel("인사이트 끝 월", { exact: true })
+      .boundingBox())!;
+    expect(Math.abs(start.y - end.y)).toBeLessThan(2);
+    await page.getByRole("button", { name: "범위 필터", exact: true }).click();
+    const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+    await popup.locator("summary").filter({ hasText: "분류" }).click();
+    const option = popup.getByRole("checkbox", { name: "개발", exact: true });
+    await option.check();
+    await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+    const bounds = (await popup.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(900);
+    await page.screenshot({
+      path: info.outputPath(`insights-filter-${width}.png`),
+    });
+    await option.uncheck();
+    await expect(card(page, "업무 수").locator("strong")).toHaveText("3");
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+  }
+});
+
+async function savedAction(page: Page, action: () => Promise<unknown>) {
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/cells/batch") && response.ok(),
+    ),
+    action(),
+  ]);
+  return unpack(await response.json());
+}
+async function taskAt(page: Page, index = 0) {
+  return (await request(page, `/tasks?teamId=${teamId}&year=2026`)).tasks.find(
+    (task: any) => task.id === taskIds[index],
+  );
+}
+
+test("사용자 검토: 원클릭 업무 표시와 같은 HEX 일반 채우기는 reload·undo·redo·글자·서식 복사·클립보드에서 구분된다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  await configure(page);
+  await page.reload();
+  const first = page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`);
+  const marked = page.getByRole("button", {
+    name: "업무 표시: 개발 작업",
+    exact: true,
+  });
+  await first.click();
+  await savedAction(page, () => marked.click());
+  expect((await taskAt(page)).cells["2026-01-05"].style.work).toBe(true);
+  await expect(
+    page.getByRole("dialog", { name: "배경색", exact: true }),
+  ).toHaveCount(0);
+  await savedAction(page, () =>
+    page.getByRole("button", { name: "굵게", exact: true }).click(),
+  );
+  expect((await taskAt(page)).cells["2026-01-05"].style.work).toBe(true);
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(
+    false,
+  );
+  await savedAction(page, () =>
+    page.getByRole("button", { name: "실행취소", exact: true }).click(),
+  );
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(true);
+  await savedAction(page, () =>
+    page.getByRole("button", { name: "재실행", exact: true }).click(),
+  );
+  await page.reload();
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(
+    false,
+  );
+  await insights(page);
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await first.click();
+  await savedAction(page, () => marked.click());
+  await page.getByRole("button", { name: "서식 복사", exact: true }).click();
+  await savedAction(page, () =>
+    page.locator(`[data-cell="${taskIds[0]}:2026-01-12"]`).click(),
+  );
+  expect(effectiveCell(await taskAt(page), "2026-01-12").style.work).toBe(true);
+  await first.click();
+  const contents = await page.getByRole("grid").evaluate((grid) => {
+    const data: Record<string, string> = {},
+      event = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { setData: (type: string, value: string) => (data[type] = value) },
+    });
+    grid.dispatchEvent(event);
+    return data;
+  });
+  expect(contents["text/html"]).toContain('data-work="true"');
+  for (const [key, data] of [
+    ["2026-01-19", contents],
+    ["2026-01-26", { "text/html": contents["text/html"] }],
+    [
+      "2026-02-02",
+      {
+        "text/html":
+          '<table><tr><td style="background-color:#0066cc">ordinary</td></tr></table>',
+      },
+    ],
+  ] as const) {
+    await page.locator(`[data-cell="${taskIds[0]}:${key}"]`).click();
+    await savedAction(page, () =>
+      page.getByRole("grid").evaluate((grid, data) => {
+        const event = new Event("paste", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "clipboardData", {
+          value: {
+            types: Object.keys(data),
+            getData: (type: string) =>
+              (data as Record<string, string>)[type] || "",
+          },
+        });
+        grid.dispatchEvent(event);
+      }, data),
+    );
+  }
+  await page.reload();
+  const task = await taskAt(page);
+  for (const key of ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26"])
+    expect(effectiveCell(task, key).style.work).toBe(true);
+  expect(effectiveCell(task, "2026-02-02").style.work).toBe(false);
+  await insights(page);
+  await expect(card(page, "작업 주 합").locator("strong")).toHaveText("4");
+});
+
+test("사용자 검토: 행·열 업무 상속도 같은 HEX 일반 채우기와 실행취소로 제어한다", async ({
+  page,
+}) => {
+  await configure(page);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "1행 전체 선택", exact: true })
+    .click();
+  await savedAction(page, () =>
+    page
+      .getByRole("button", { name: "업무 표시: 개발 작업", exact: true })
+      .click(),
+  );
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(true);
+  await page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`).click();
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(
+    false,
+  );
+  expect(effectiveCell(await taskAt(page), "2026-01-12").style.work).toBe(true);
+  // The task property column uses the same column formatting path as weeks.
+  await page.getByRole("button", { name: "작업 열 선택", exact: true }).click();
+  await savedAction(page, () =>
+    page
+      .getByRole("button", { name: "업무 표시: 개발 작업", exact: true })
+      .click(),
+  );
+  expect(effectiveCell(await taskAt(page, 1), "title").style.work).toBe(true);
+  await page.locator(`[data-cell="${taskIds[1]}:title"]`).click();
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  expect(effectiveCell(await taskAt(page, 1), "title").style.work).toBe(false);
+  await savedAction(page, () =>
+    page.getByRole("button", { name: "실행취소", exact: true }).click(),
+  );
+  expect(effectiveCell(await taskAt(page, 1), "title").style.work).toBe(true);
+  await page.reload();
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(
+    false,
+  );
+});
+
+test("사용자 검토: 업무 색상은 일반 테마 바로 아래 한 곳에서 CAS로 저장하고 최신 차트·목표일을 보존한다", async ({
+  page,
+}, info) => {
+  const original = chart("c123abc", "보존할 차트");
+  await configure(page, [original]);
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+  const colors = dialog.getByRole("group", {
+    name: "업무 색상 설정",
+    exact: true,
+  });
+  await expect(colors).toHaveCount(1);
+  const theme = dialog.locator(".theme-picker");
+  expect(
+    await theme.evaluate((element) =>
+      element.parentElement!.nextElementSibling?.classList.contains(
+        "work-colors-editor",
+      ),
+    ),
+  ).toBe(true);
+  await dialog.getByLabel("업무 색상 1 이름", { exact: true }).fill("내 초안");
+  const current = await settings(page);
+  await request(
+    page,
+    `/teams/${teamId}/settings`,
+    {
+      revision: current.revision,
+      insights: {
+        ...current.insights,
+        charts: [{ ...original, title: "동시 변경 차트" }],
+        deadlinePropertyId: null,
+      },
+    },
+    "PATCH",
+  );
+  await dialog.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(
+    dialog.getByText(/다른 관리자가 설정을 변경했습니다/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByLabel("업무 색상 1 이름", { exact: true }),
+  ).toHaveValue("내 초안");
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(
+    dialog.getByLabel("업무 색상 1 이름", { exact: true }),
+  ).toHaveValue("개발 작업");
+  await dialog
+    .getByLabel("업무 색상 1 이름", { exact: true })
+    .fill("일반 설정 업무");
+  await theme.locator('input[value="sky"]').check();
+  await dialog.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(dialog.getByText("팀 정보를 저장했습니다.")).toBeVisible();
+  const stored = await settings(page);
+  expect(stored.insights.charts[0].title).toBe("동시 변경 차트");
+  expect(stored.insights.deadlinePropertyId).toBeNull();
+  expect(stored.insights.workColors[0].name).toBe("일반 설정 업무");
+  expect(stored.theme).toBe("sky");
+  await page.screenshot({
+    path: info.outputPath("work-colors-below-theme.png"),
+  });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await insights(page);
+  await page
+    .getByRole("button", { name: "인사이트 설정", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "인사이트 설정", exact: true })
+      .getByRole("button", { name: "업무 색상 추가", exact: true }),
+  ).toHaveCount(0);
 });

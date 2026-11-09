@@ -1,6 +1,6 @@
 import { hasDocumentContent } from "../documents/task-documents.js";
 import { emptyPropertyValue, propertiesFor } from "../domain.js";
-import { STYLE_KEYS } from "../formatting/compact.js";
+import { STYLE_KEYS, backgroundWorkStyle } from "../formatting/compact.js";
 import {
   copyRowFormatting,
   normalizeCellStyle,
@@ -66,6 +66,13 @@ export function applySheetCloneOperation(tasks, operation, context) {
     return tasks.map((task) => byId.get(task.id));
   }
   if (operation.kind === "format") {
+    operation = {
+      ...operation,
+      scopes: operation.scopes.map((scope) => ({
+        ...scope,
+        style: backgroundWorkStyle(scope.style),
+      })),
+    };
     for (const scope of operation.scopes)
       for (const id of scope.rows || []) get(id);
     return tasks.map((task) => {

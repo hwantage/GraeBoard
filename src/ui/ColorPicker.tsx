@@ -19,12 +19,10 @@ export default function ColorPicker({
   label,
   value,
   onApply,
-  presets,
 }: {
   label: string;
   value: string;
   onApply: (color: string) => void;
-  presets?: { color: string; name?: string }[];
 }) {
   const [hex, setHex] = useState(() => normalizeHex(value) || "");
   const errorId = useId();
@@ -51,28 +49,6 @@ export default function ColorPicker({
   }, []);
   return (
     <>
-      {!!presets?.length && (
-        <div className="color-recent" role="group" aria-label="업무 색상">
-          <span>업무 색상</span>
-          <div
-            className="color-palette"
-            onMouseDown={(event) => event.preventDefault()}
-          >
-            {presets.map(({ color, name }) => (
-              <button
-                key={color}
-                type="button"
-                className="color-option"
-                style={{ backgroundColor: color }}
-                title={name || color}
-                aria-label={name ? `${name} ${color}` : color}
-                aria-pressed={color === normalizeHex(value)}
-                onClick={() => apply(color)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
       <div
         className="color-palette"
         role="group"

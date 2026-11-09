@@ -4,6 +4,7 @@ import { expandStyle } from "../../../shared/formatting/compact.js";
 
 import {
   prepareSettings,
+  generalSettingsPatch,
   changedSettingsProperties,
   convertSettingsValue,
   normalizeSettingsAuxiliary,
@@ -132,27 +133,21 @@ export class SqliteSettingsRepository {
     this.committedResources = [];
     const team = this.managedTeam(user, teamId),
       settings = team.settings,
-      themeChanged =
-        input.theme !== undefined && input.theme !== settings.theme;
-    if (themeChanged && input.settingsRevision !== undefined)
-      requireThat(
-        input.settingsRevision === (settings.revision || 0),
-        409,
-        "팀 설정이 변경되었습니다. 관리 화면을 다시 열어 최신 설정을 확인하세요.",
-      );
+      settingsChanged =
+        input.workColors !== undefined ||
+        (input.theme !== undefined && input.theme !== settings.theme),
+      next = settingsChanged
+        ? prepareSettings(settings, generalSettingsPatch(settings, input))
+            .settings
+        : settings;
     transaction(this.db, () => {
       this.db
         .prepare("UPDATE teams SET name=? WHERE id=?")
         .run(input.name, teamId);
-      if (themeChanged)
-        this.db.prepare("UPDATE teams SET settings=? WHERE id=?").run(
-          json({
-            ...settings,
-            theme: input.theme,
-            revision: (settings.revision || 0) + 1,
-          }),
-          teamId,
-        );
+      if (settingsChanged)
+        this.db
+          .prepare("UPDATE teams SET settings=? WHERE id=?")
+          .run(json(next), teamId);
       audit(
         this.db,
         user.id,
@@ -164,6 +159,6 @@ export class SqliteSettingsRepository {
       );
     });
     this.committedResources = ["team:" + teamId];
-    return { ok: true };
+    return { ok: true, settings: next };
   }
 }

@@ -1,4 +1,6 @@
 import { useMemo, useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { usePopover } from "../ui/usePopover";
 import { GripVertical } from "lucide-react";
 import { Button, Empty, ErrorNote, Modal } from "../components";
 import LoadingState from "../ui/LoadingState";
@@ -78,6 +80,7 @@ export default function Insights({
   onBootstrap,
   onTask,
   onBusyChange,
+  onGeneralSettings,
 }: {
   team: Team;
   user: User;
@@ -86,7 +89,14 @@ export default function Insights({
   onBootstrap: (boot: Bootstrap) => void;
   onTask: (metric: TaskMetrics) => Promise<void>;
   onBusyChange: (busy: boolean) => void;
+  onGeneralSettings: () => void;
 }) {
+  const rangeFilter = usePopover(280, false);
+  useEffect(() => {
+    // Safari does not focus buttons/checkboxes on pointer clicks. Keep keyboard
+    // events inside the open panel even before a filter input receives focus.
+    if (rangeFilter.open) rangeFilter.popup.current?.focus();
+  }, [rangeFilter.open]);
   const viewKey = `graeboard:insights:${user.id}:${team.id}`;
   const [initialView] = useState(() =>
     readInsightsView(viewKey, {
@@ -312,8 +322,8 @@ export default function Insights({
           <h1>인사이트</h1>
         </div>
         <div className="insights-controls">
-          <label>
-            시작 월
+          <label className="insights-month">
+            <span>시작 월</span>
             <input
               type="month"
               aria-label="인사이트 시작 월"
@@ -326,8 +336,8 @@ export default function Insights({
             />
           </label>
           <span>~</span>
-          <label>
-            끝 월
+          <label className="insights-month">
+            <span>끝 월</span>
             <input
               type="month"
               aria-label="인사이트 끝 월"
@@ -339,17 +349,36 @@ export default function Insights({
               }
             />
           </label>
-          <details className="insights-range-filter">
-            <summary>범위 필터</summary>
-            <InsightsFilters
-              teamId={team.id}
-              settings={settings}
-              tasks={data.tasks}
-              users={users}
-              filter={filter}
-              onChange={setFilter}
-            />
-          </details>
+          <Button
+            ref={rangeFilter.trigger}
+            aria-expanded={rangeFilter.open}
+            aria-haspopup="dialog"
+            onClick={() => rangeFilter.setOpen(!rangeFilter.open)}
+          >
+            범위 필터
+          </Button>
+          {rangeFilter.open &&
+            createPortal(
+              <div
+                ref={rangeFilter.popup}
+                className="insights-range-filter-popover"
+                role="dialog"
+                aria-label="범위 필터"
+                tabIndex={-1}
+                style={rangeFilter.position}
+                onKeyDown={rangeFilter.onKeyDown}
+              >
+                <InsightsFilters
+                  teamId={team.id}
+                  settings={settings}
+                  tasks={data.tasks}
+                  users={users}
+                  filter={filter}
+                  onChange={setFilter}
+                />
+              </div>,
+              rangeFilter.container(),
+            )}
           {allowed && (
             <Button disabled={busy} onClick={() => setShowSettings(true)}>
               인사이트 설정
@@ -364,14 +393,12 @@ export default function Insights({
           title="업무 색상을 설정해 주세요"
           description={
             allowed
-              ? "팀의 작업 주를 나타내는 배경색을 인사이트 설정에서 지정하세요."
+              ? "설정의 팀 일반에서 업무 표시 색상을 지정하세요."
               : "팀장에게 업무 색상 설정을 요청하세요."
           }
           action={
             allowed ? (
-              <Button onClick={() => setShowSettings(true)}>
-                인사이트 설정
-              </Button>
+              <Button onClick={onGeneralSettings}>업무 색상 설정</Button>
             ) : undefined
           }
         />

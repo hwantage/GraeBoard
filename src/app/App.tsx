@@ -3701,6 +3701,7 @@ function Workspace({
               onBootstrap={onBootstrap}
               onTask={openInsightTask}
               onBusyChange={setInsightsBusy}
+              onGeneralSettings={() => setPanel("settings")}
             />
           ) : (
             <LoadingState label="업무를 불러오고 있습니다" />

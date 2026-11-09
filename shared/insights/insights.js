@@ -99,9 +99,13 @@ function weeksForTask(task) {
 }
 export function taskWorkWeeks(task, colors) {
   if (task.deletedAt || !colors.size) return [];
-  return weeksForTask(task).filter((key) =>
-    colors.has(normalizeWorkColor(cell(task, key).style.backgroundColor)),
-  );
+  return weeksForTask(task).filter((key) => {
+    const style = cell(task, key).style;
+    return (
+      style.work === true &&
+      colors.has(normalizeWorkColor(style.backgroundColor))
+    );
+  });
 }
 export function deadlinePropertyId(settings) {
   if (Object.hasOwn(settings.insights || {}, "deadlinePropertyId"))

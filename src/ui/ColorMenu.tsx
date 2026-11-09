@@ -10,14 +10,12 @@ export default function ColorMenu({
   disabled,
   onApply,
   compact = false,
-  presets,
 }: {
   label: string;
   icon?: ReactNode;
   value: string;
   disabled?: boolean;
   compact?: boolean;
-  presets?: { color: string; name?: string }[];
   onApply: (color: string) => void;
 }) {
   const {
@@ -74,7 +72,6 @@ export default function ColorMenu({
             }}
           >
             <ColorPicker
-              presets={presets}
               label={label}
               value={value}
               onApply={(color) => {

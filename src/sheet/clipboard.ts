@@ -25,6 +25,7 @@ const BASE_STYLE: Required<Style> = {
   borderLeft: { style: "none", color: "#607984" },
   color: "#5c7078",
   backgroundColor: "#ffffff",
+  work: false,
   fontFamily: FONTS[0],
   fontSize: 9,
   textAlign: "left",
@@ -86,8 +87,9 @@ function cleanStyle(input: unknown): Style {
     result.textAlign = s.textAlign as Style["textAlign"];
   if (["top", "middle", "bottom"].includes(String(s.verticalAlign)))
     result.verticalAlign = s.verticalAlign as Style["verticalAlign"];
-  for (const key of ["bold", "italic", "underline", "strike"] as const)
-    if (typeof s[key] === "boolean") result[key] = s[key];
+  for (const key of ["bold", "italic", "underline", "strike", "work"] as const)
+    if (typeof s[key] === "boolean" || (key === "work" && s[key] === null))
+      result[key] = s[key] as boolean | null;
   if (["overflow", "wrap", "clip"].includes(String(s.textMode)))
     result.textMode = s.textMode as Style["textMode"];
   return result;
@@ -166,7 +168,7 @@ export function createClipboard(
                   `border-${side.toLowerCase()}:${borderCSS(s[`border${side}` as keyof Style]) ?? "0px none transparent"}`,
               ),
             ].join(";");
-            return `<td data-text-mode="${s.textMode}" data-grid-borders="${gridBorders}" style="${escapeHTML(css)}">${escapeHTML(text).replace(/\r\n|\r|\n/g, "<br>")}</td>`;
+            return `<td data-work="${s.work === true}" data-text-mode="${s.textMode}" data-grid-borders="${gridBorders}" style="${escapeHTML(css)}">${escapeHTML(text).replace(/\r\n|\r|\n/g, "<br>")}</td>`;
           })
           .join("")}</tr>`,
     )
@@ -270,6 +272,8 @@ function htmlStyle(element: HTMLElement): Style {
   }
   if (color) result.color = color;
   if (background) result.backgroundColor = background;
+  if (element.dataset.work === "true" || element.dataset.work === "false")
+    result.work = element.dataset.work === "true";
   if (s.fontFamily)
     result.fontFamily =
       s.fontFamily.split(",").map(normalizeFont).find(Boolean) || FONTS[0];

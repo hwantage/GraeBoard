@@ -2,6 +2,7 @@ import { normalizeSettings } from "../../../shared/domain.js";
 import { validateCellValue, requireThat } from "../../../shared/validation.js";
 import {
   prepareSettings,
+  generalSettingsPatch,
   changedSettingsProperties,
   convertSettingsValue,
   normalizeSettingsAuxiliary,
@@ -106,20 +107,27 @@ export class PostgresSettingsRepository {
         const row = await s.get("team", []);
         requireThat(row, 409, "팀 공유 설정이 없습니다.");
         if (
-          input.theme !== undefined &&
-          input.theme !== row.payload.settings?.theme
+          input.workColors !== undefined ||
+          (input.theme !== undefined &&
+            input.theme !== row.payload.settings?.theme)
         )
           await savePostgresSettings(
             s,
             {
-              theme: input.theme,
+              ...generalSettingsPatch(row.payload.settings, input),
               revision: input.settingsRevision ?? row.revision,
             },
             people,
           );
         const current = await s.get("team", []);
-        await s.put("team", [], { ...current.payload, name: input.name });
-        return { ok: true };
+        const saved = await s.put("team", [], {
+          ...current.payload,
+          name: input.name,
+        });
+        return {
+          ok: true,
+          settings: { ...saved.payload.settings, revision: saved.revision },
+        };
       },
       {
         write: true,
