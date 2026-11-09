@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Button, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import Select from "../ui/Select";
 import PropertyFilter from "../sheet/PropertyFilter";
 import { api, send, taskQuery } from "../platform/api";

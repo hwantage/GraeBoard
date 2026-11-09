@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import LoadingState from "../ui/LoadingState";
 import { useSite } from "../platform/site-context";
 import "./sync-setup.css";

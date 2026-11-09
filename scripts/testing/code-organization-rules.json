@@ -462,10 +462,6 @@
       "reason": "Exact existing generic filename retained by issue #100"
     },
     {
-      "path": "src/components.tsx",
-      "reason": "Exact existing generic filename retained by issue #100"
-    },
-    {
       "path": "src/styles.css",
       "reason": "Exact existing generic filename retained by issue #100"
     },
@@ -484,10 +480,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "scripts/admin/admin.mjs",
-        "worker/control/admin.mjs"
-      ],
+      "paths": ["scripts/admin/admin.mjs", "worker/control/admin.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -506,10 +499,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/calendar/calendar.mjs",
-        "worker/calendar/calendar.mjs"
-      ],
+      "paths": ["server/calendar/calendar.mjs", "worker/calendar/calendar.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -520,24 +510,15 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/migrations/sqlite.mjs",
-        "server/storage/sqlite.mjs"
-      ],
+      "paths": ["server/migrations/sqlite.mjs", "server/storage/sqlite.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/control/profiles.mjs",
-        "server/sync/node/profiles.mjs"
-      ],
+      "paths": ["server/control/profiles.mjs", "server/sync/node/profiles.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/control/settings.mjs",
-        "worker/sheet/settings.mjs"
-      ],
+      "paths": ["server/control/settings.mjs", "worker/sheet/settings.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -569,10 +550,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sync/core/directory.mjs",
-        "worker/sync/directory.mjs"
-      ],
+      "paths": ["server/sync/core/directory.mjs", "worker/sync/directory.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -753,10 +731,6 @@
     },
     {
       "path": "src/app-version.d.ts",
-      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
-    },
-    {
-      "path": "src/components.tsx",
       "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
     },
     {

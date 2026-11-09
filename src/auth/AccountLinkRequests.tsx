@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 
 type LinkRequest = {
   id: string;

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import type { SetupStatus } from "../../shared/identity/session-contract";
 import { api, send } from "../platform/api";
-import { ErrorNote } from "../components";
+import { ErrorNote } from "../ui/ErrorNote";
 import { resumeSession } from "../platform/event-stream";
 import ExternalAccountLogin from "./ExternalAccountLogin";
 import type { Bootstrap } from "../types";

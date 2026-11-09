@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { HardDrive, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { todayKey } from "../../shared/domain.js";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Toast, { useToast } from "../ui/Toast";
 import LoadingState from "../ui/LoadingState";
 

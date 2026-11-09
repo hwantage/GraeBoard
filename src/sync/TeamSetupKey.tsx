@@ -1,7 +1,8 @@
 import { syncTime } from "./sync-types";
 import { useEffect, useState } from "react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import { busyProps } from "../ui/busyProps";
 
 type KeyStatus = {

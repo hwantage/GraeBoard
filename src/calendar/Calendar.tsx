@@ -27,7 +27,10 @@ import {
 import { api, ApiError, send } from "../platform/api";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import { busyProps } from "../ui/busyProps";
-import { Avatar, Button, ErrorNote, Modal } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import LoadingState from "../ui/LoadingState";
 import GridHeaderMenu from "../ui/GridHeaderMenu";
 import {

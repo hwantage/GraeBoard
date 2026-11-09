@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { FoldHorizontal, UnfoldHorizontal } from "lucide-react";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 
 // Full-page documents use the window's whole width once this is turned on.
 // The choice stays in this browser and applies to every full-page document:

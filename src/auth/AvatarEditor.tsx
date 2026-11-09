@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import ColorMenu from "../ui/ColorMenu";
 import type { User } from "../types";
-import { Avatar, ErrorNote } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { ErrorNote } from "../ui/ErrorNote";
 
 export default function AvatarEditor({
   user,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Select from "../ui/Select";
 import Toast, { useToast } from "../ui/Toast";
 import LoadingState from "../ui/LoadingState";

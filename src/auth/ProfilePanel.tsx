@@ -2,7 +2,9 @@ import { useSite } from "../platform/site-context";
 import { useRef, useState } from "react";
 import { api } from "../platform/api";
 import AvatarEditor from "./AvatarEditor";
-import { Button, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import type { User } from "../types";
 
 export default function ProfilePanel({

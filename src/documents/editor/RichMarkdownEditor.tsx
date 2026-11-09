@@ -40,7 +40,8 @@ import {
   documentCodeBlockSelection,
   documentCodeBlockView,
 } from "./DocumentCodeBlockView";
-import { Button, Modal } from "../../components";
+import { Button } from "../../ui/Button";
+import { Modal } from "../../ui/Modal";
 import Toast, { useToast } from "../../ui/Toast";
 import Select from "../../ui/Select";
 import DocumentLoading from "../DocumentLoading";

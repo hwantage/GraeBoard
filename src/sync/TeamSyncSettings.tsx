@@ -1,3 +1,5 @@
+import { ConnectionChecks } from "./SyncConnectionChecks";
+import type { ConnectionCheck, ResourceProfile } from "./sync-connection-types";
 import { useSite } from "../platform/site-context";
 import TeamSetupKey from "./TeamSetupKey";
 import SyncSetupWizard from "./SyncSetupWizard";
@@ -7,7 +9,8 @@ import { syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
 import { api, send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import LoadingState from "../ui/LoadingState";
 import Select from "../ui/Select";
 import { busyProps } from "../ui/busyProps";
@@ -15,25 +18,6 @@ import type { Team, User } from "../types";
 import { canContribute, canManageTeam } from "../../shared/domain.js";
 import { syncErrorMessage } from "../../shared/sync/sync-error-message.js";
 import "./team-sync-settings.css";
-
-export type ResourceProfile = {
-  profileId: string;
-  name?: string;
-  teamId: string;
-  repository?: string;
-  database?: string | { provider?: string; binding?: string };
-  images?: string | { provider?: string; binding?: string };
-  ready?: boolean;
-  replaces?: string;
-};
-export type ConnectionCheck = {
-  ready: boolean;
-  checks: {
-    name: string;
-    status: "ok" | "error" | "pending";
-    message: string;
-  }[];
-};
 
 type SwitchJob = {
   jobId: string;
@@ -83,43 +67,6 @@ function SyncErrorNote({
       <ErrorNote error={error} />
     </div>
   ) : null;
-}
-
-export function ConnectionChecks({
-  result,
-}: {
-  result: ConnectionCheck | null;
-}) {
-  if (!result) return null;
-  return (
-    <div className="settings-table-scroll">
-      <table className="settings-table connection-checks-table">
-        <caption>연결 검사 결과</caption>
-        <thead>
-          <tr>
-            <th scope="col">대상</th>
-            <th scope="col">결과</th>
-            <th scope="col">내용</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.checks.map((check, index) => (
-            <tr key={`${check.name}-${index}`}>
-              <th scope="row">{check.name}</th>
-              <td className={`connection-check-result is-${check.status}`}>
-                {check.status === "ok"
-                  ? "정상"
-                  : check.status === "pending"
-                    ? "대기"
-                    : "오류"}
-              </td>
-              <td>{check.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 export default function TeamSyncSettings({
