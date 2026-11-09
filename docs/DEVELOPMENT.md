@@ -459,3 +459,16 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 | Markdown 스키마·변환 보존 검사·클립보드 직렬화 | `document-markdown.ts` |
 
 문서 내보내기는 `document-markdown.ts`의 동일 스키마와 링크 규칙을 직접 참조합니다. 변환 규칙은 편집 화면에 추가하지 않습니다. 저장 형식에 영향을 주는 변경은 DB 변경 지침을 따르며, 미지원 문법은 원문 보존과 기존 Markdown 전환 경로를 유지합니다.
+
+### 내부·외부 API의 연결 책임
+
+| 계층 | 내부 Node | 외부 Edge |
+| --- | --- | --- |
+| 호스트 조합 | `server/app.mjs:createApp`의 `install…Routes` 등록 | `worker/entry.mjs:createWorker`의 dispatcher 등록, `edge/` 환경 어댑터 |
+| 신원·HTTP 경계 | `server/auth/local-auth.mjs`, `server/http/` | `worker/control/access.mjs`, `control.mjs`, `site-auth.mjs` |
+| 도메인 입력·업무 규칙 | 두 호스트가 같은 `server/storage/<기능>/*-service.mjs`와 공유 라우트/명령 규칙 사용 | 동일 |
+| 권한 조회·DB 트랜잭션·이벤트 기록 | `Sqlite…Repository`, `server/auth/sqlite-access.mjs` | `Postgres…Repository`, `RequestContext` |
+
+기존 업무 API에 동작을 추가할 때는 공유 라우트 표 → 서비스/명령 규칙 → 엔진별 repository → 실제 HTTP 등록 → SQLite/PG 계약 및 라우트 검사 순서로 연결합니다. Node의 동기 트랜잭션과 PG의 비동기 트랜잭션은 각 repository가 유지합니다. 라우트에 SQL이나 공통 업무 검증을 복제하지 않습니다. 새로운 도메인은 기존 서비스의 적합성을 먼저 확인한 뒤 필요한 항목만 추가합니다.
+
+외부 변경 요청은 `worker/entry.mjs:mutationTeam`을 거쳐 최신화하고, 커밋 후 `changedTeams`의 게시를 예약합니다. 본문에 `teamId`가 없는 새 리소스 경로는 팀 판별도 연결해야 합니다. 이것은 권한 검사 대신이 아니며, 서비스와 repository의 권한 검사를 모두 유지합니다. `/events`와 이미지 읽기는 별도 응답 경로를 사용하므로 일반 JSON 라우트에 섞지 않습니다.
