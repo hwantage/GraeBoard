@@ -346,6 +346,44 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 팀 설정의 선택 항목 `currentWeekBorders: {left?: Border, right?: Border}`는 한국 시간 기준 이번 주 열의 기본 좌우 테두리입니다. 주차 키는 `mondayOf(todayKey())`로 계산하고 실제 표시·반출 열에 그 키가 있을 때만 적용합니다. 값이 없거나 빈 객체이면 추가 선이 없으며, 방향별 `none`도 해당 방향의 이번 주 기본선을 해제합니다. 직접 지정한 셀·행·열 및 이웃 셀의 선 → 이번 주 기본선 → `weekBorders` 순으로 적용합니다. 셀의 `null`·`none`과 업무 기본 서식의 상속선은 기존 경계선과 동일하게 기본선으로 대체됩니다. 셀·버전·클립보드에는 합성한 선을 저장하지 않습니다. 설정 PATCH에서 항목 생략은 이전 값을 보존하고 빈 객체는 해제합니다. 기존 `teams.settings` JSON, 팀 양식·사본·JSON 반출에 보존하며, 기존 팀·사본에서 항목이 없으면 설정 없음으로 읽습니다. SQLite v29·JSON v6 및 백업 형식은 유지하고 기존 데이터 변환은 수행하지 않습니다.
 
+## 인사이트 팀 설정
+
+팀 설정의 선택 항목 `insights`는 원본 연간 업무 분석에만 사용합니다. SQLite v34, PostgreSQL의 기존 team 엔티티와 migration 번호, JSON 반출 v7을 유지합니다. 테이블·스키마 버전·기존 업무·셀의 일괄 변환은 없습니다. 항목이 없거나 `workColors`가 비면 미설정입니다.
+
+```json
+{
+  "insights": {
+    "workColors": [{ "color": "#0066cc", "name": "작업" }],
+    "deadlinePropertyId": "deadline",
+    "charts": [{
+      "id": "c123abc",
+      "title": "책임자별 작업 주",
+      "type": "bar",
+      "dimensions": { "axis": { "kind": "owner" } },
+      "values": [{ "kind": "workWeeks" }],
+      "display": { "percent": "value", "orientation": "vertical", "mode": "grouped" },
+      "filter": { "propertyFilters": {}, "propertyFilterModes": {} }
+    }]
+  }
+}
+```
+
+- `workColors`: 최대 20개, 중복 없는 HEX 색과 선택적 이름(40자). 3자리·대문자 HEX는 소문자 `#rrggbb`로 정규화합니다. 유사 색은 일치하지 않습니다.
+- `deadlinePropertyId`: 기존 속성 ID 규칙(영문자로 시작, 영문·숫자·`_`·`-`, 60자 이내). 생략하면 Date 속성 `deadline`이 있을 때 이를 사용하고, `null`이면 사용하지 않습니다. 보관·삭제·종류 변경된 참조도 저장을 막지 않고 화면에서 경고합니다.
+- `charts`: 최대 30개, 순서대로 표시합니다. ID는 `c` + base36 6자리이고 팀 안에서 유일하며 제목은 1~80자입니다. 종류는 `number`, `bar`, `radar`, `table`, `top`입니다. 알 수 없는 필드·종류·잘못된 칸·표시·상한은 공유 Zod 스키마가 거절합니다.
+- 기준은 `owner`, `property`(`propertyId`, Option), `time`(`unit: month|quarter`, `basis: work|start|end`), `deadlineState`, `progressState`, `durationBand`입니다. 막대는 `axis`와 선택적 `series`, 레이더는 `axis`·`series`, 표는 `row`와 선택적 `column`을 씁니다. 숫자 카드·Top N은 기준 칸이 없습니다.
+- 값은 `count`, `completed`, `inProgress`, `workWeeks`, `avgDuration`, `medianDuration`, `maxDuration`, `delayed`, `delayRate`, `avgDelay`, `numberSum|numberAvg|numberMax`(숫자·텍스트 `propertyId`)입니다. 표는 1~4개, 나머지는 1개입니다. `display.percent`는 `value|total|series`, 막대만 `orientation: vertical|horizontal`, `mode: grouped|stacked`를 사용합니다. Top N은 `sort: {kind: duration|delayWeeks}` 또는 `{kind: number, propertyId}`와 `limit: 5~50`을 씁니다.
+- 실제 집계 결과의 칸 수는 편집기에서 검증합니다. 막대 X 50개/나누기 12개, 레이더 축 3~12개/계열 8개, 표 200행을 초과하면 이유를 표시하고 저장하지 않습니다. 저장 후 데이터 증가로 상한을 넘은 차트도 같은 안내를 표시합니다.
+- 차트 필터는 기존 `propertyFilters`·`propertyFilterModes` 계약을 사용합니다. 기간(최대 24개월)·화면 필터는 사용자·팀별 sessionStorage로 유지하고, 팀 설정이나 개인 차트로 저장하지 않습니다. 일반 사용자의 차트 미리보기는 메모리에만 둡니다.
+
+저장은 기존 `PATCH /api/teams/:id/settings`의 팀장·시스템 관리자 권한과 `revision` CAS를 사용하며, 다른 관리자가 먼저 저장한 요청은 409입니다. 입력에서 `insights`를 생략하면 이전 값을 유지합니다. 속성·서식 설정 저장과 `PATCH /api/teams/:id`의 테마 변경도 보존합니다. 팀 모든 사용자와 열람자가 bootstrap에서 동일한 설정을 읽습니다. 동기화는 팀 설정 payload 전체로 전달하고 SQLite/외부 논리 백업·원본 JSON 반출에 포함합니다. 원본에서 생성·복제·가져온 SheetClone의 설정 스냅샷에는 포함하지 않습니다. JSON 직접 가져오기는 기존대로 제공하지 않습니다.
+
+기존 `GET /api/tasks?teamId&year[&startMonth]`는 선택된 업무의 다른 해 주차 셀도 반환합니다. 인사이트는 불러온 시트 기간을 재사용하고 추가 연도만 기존 API로 조회하여 업무 ID로 합칩니다. 셀·팀 SSE와 복구·포커스 조회를 재사용하며 팀·기간 전환의 취소/늦은 응답을 보호합니다. 계산은 `cell(task,key)`의 기본·행·열·셀 서식 상속을 따릅니다. 셀 레코드가 없는 주도 업무 연도의 주차와 공통 서식으로 판정하며 삭제 업무는 제외합니다.
+
+업무 전체 작업 주로 기간·진행/목표일 상태를 구하고 범위 내 작업 주만 작업 주 합과 시간 집계에 씁니다. 월 귀속은 주 금요일, 이번 주는 한국 시간의 월요일입니다. 시간의 착수·완료 기준은 해당 주가 선택 기간에 있을 때 집계합니다. 여러 월에 걸친 업무는 각 월에서 한 번 세지만 합계는 업무 ID를 중복 제거하고 작업 주를 합칩니다. 평균·중앙값·최댓값·지연율 합계도 원자료에서 다시 계산하며 셀 평균이나 비율을 더하지 않습니다. 전체/계열 비율의 분모도 같은 값 종류의 전체/계열 원자료 집계입니다. 드릴다운은 선택한 값의 기여 업무를 보여 주며 완료·진행 중·지연 수는 해당 상태, 숫자 값은 유효한 숫자, 지연율은 목표일이 있는 분모 업무를 포함합니다. 표 합계 칸도 선택한 계열과 값에 맞춰 목록을 엽니다.
+
+양쪽 서버가 이 항목을 아는 버전으로 올라간 뒤 설정을 입력합니다. 구버전의 strict 설정 저장은 항목을 지우고 동기화로 퍼뜨릴 수 있습니다. [운영 안내](OPERATIONS.md#인사이트-설정-입력과-롤백)를 따릅니다.
+
 ## 팀 스페이스 테마
 
 팀 설정의 `theme`는 `mint`·`sky`·`lavender`·`rose`·`sand` 중 하나이며 기본값은 민트입니다. 팔레트는 `shared/formatting/themes.js`에서 관리하고, 현재 팀의 테마를 메뉴·버튼·선택 강조·팝업에 적용합니다. 셀의 저장된 색상과 속성 옵션·사용자 아바타 색상은 변경하지 않습니다.

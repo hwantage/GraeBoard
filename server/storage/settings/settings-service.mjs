@@ -16,6 +16,7 @@ import {
   requireThat,
 } from "../../../shared/validation.js";
 import { THEME_IDS } from "../../../shared/formatting/themes.js";
+import { insightsSettingsSchema } from "../../../shared/insights/insights-schema.js";
 const weekBordersSchema = z
   .object({ left: borderSchema.optional(), right: borderSchema.optional() })
   .strict();
@@ -31,6 +32,7 @@ const settingsSchema = z
     weekHeader: weekHeaderSchema.optional(),
     weekBorders: weekBordersSchema.optional(),
     currentWeekBorders: weekBordersSchema.optional(),
+    insights: insightsSettingsSchema.optional(),
   })
   .strict();
 
@@ -99,6 +101,7 @@ export function prepareSettings(
     weekHeader: data.weekHeader ?? previous.weekHeader,
     weekBorders: data.weekBorders ?? previous.weekBorders,
     currentWeekBorders: data.currentWeekBorders ?? previous.currentWeekBorders,
+    insights: data.insights ?? previous.insights,
     revision: (previous.revision || 0) + 1,
   };
 

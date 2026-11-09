@@ -18,6 +18,38 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-09 — #98 최종 리뷰와 개발 자료 대조
+
+- 구현 에이전트로부터 변경을 회수해 계산·차트·설정 권한/CAS·SQLite/PG 저장·동기화·사본 제외·실시간 갱신·업무 상세 이동 경로를 독립 검토했습니다. 확인한 두 결함을 수정하도록 다시 전달했고, 수정 전 실패/수정 후 통과한 회귀 근거와 최종 소스를 재검토했습니다. 같은 Chromium 재현에서도 숫자 레이더의 `제외 1건`과 429 이후 반복 조회 중단을 확인했으며 페이지 오류는 없었습니다.
+- 메인 개발 체크아웃의 `.env`에 지정된 테스트 DB를 `DatabaseSync({readOnly:true})`와 `query_only` 읽기 트랜잭션으로 확인했습니다. 초기화·migration·정리·서버 쓰기는 실행하지 않았습니다. 이 개발 DB는 SQLite v34, 팀 설정 JSON 4,466바이트였으며 운영 DB의 버전 확인으로 간주하지 않습니다.
+- 업무 색상 `#0066cc`와 목표일 속성은 메모리에서만 적용했습니다. 이슈 기준일 2026-11-08을 재현하면 전체 439·작업 있음 405·작업 없음 34, 작업 주 750·평균 1.85185·중앙값 1·최장 14주(3건), 완료 394·진행 중 11, 지연 69/331·20.8459%·평균 지연 2.1884주가 일치합니다. 목표일 상태별 건수, 분류/업무유형별 원자료 건수와 작업 업무 평균, 익명 책임자 작업 주 합도 이슈의 대조값과 일치했습니다. 실명·업무 제목·개인별 지연율은 기록하지 않았습니다. 현재 2026-11-09는 새 주이므로 같은 자료의 완료 405·진행 중 0으로 바뀌는 것도 확인했습니다.
+- 검증용 서버에는 운영/개발 DB를 연결하지 않고 기존 e2e 스크립트의 새 임시 합성 DB와 예시 업무·차트 5종을 사용합니다. 개발 자료의 읽기 전용 대조와 별개입니다. 검토/대조 근거는 Git 제외 `docs/validation/insights-98/development-readonly-results.json`과 `review-fixes/coordinator-findings-fixed.json`에 보존합니다. 전체 Node 736건, 후속 Node 58건, 인사이트 브라우저 39건, 기존 기준에서도 재현된 브라우저 선택자 실패 3건의 범위는 아래 기록과 같습니다. 운영 배포는 수행하지 않았으며 실제 운영 DB 버전 확인은 남아 있습니다.
+
+## 2026-11-09 — #98 독립 리뷰 수정
+
+- 리소스 SSE 갱신의 실패가 `useResourceSync`의 150ms 재시도로 이어져 인사이트 GET과 bootstrap이 반복되는 결함을 수정했습니다. `useInsightsData`에서 기존 site/query-policy·ApiError의 Retry-After를 사용하고, 내부 7초/외부 30초 보완 주기와 일반 오류 대기·429 최대 대기를 적용했습니다. 같은 팀·연도 범위의 자동 갱신은 대기 기한 전에 HTTP를 보내지 않으며 업무/설정 요청을 공유합니다. 연도 추가·공유 취소·팀 전환·늦은 응답 보호와 기존 셀 실시간 병합은 유지합니다. Workspace의 탭 복귀 회원정보 bootstrap 1회는 기존대로 남깁니다.
+- 숫자 레이더에 막대와 같은 `제외 N건` 표시를 추가했습니다. 실제 저장 차트와 편집 미리보기에서 Text `1`·`완료`·`3`과 빈값을 집계해 제외 1건을 확인합니다. 빈값을 제외 2건으로 세지 않습니다.
+- 브라우저 통합 검사 5개를 추가했습니다. 실제 팀 설정 PATCH→SSE 실패, 60초 Retry-After 표시/조기 GET·bootstrap 차단/자동 복구와 보류한 복구 요청 공유, 내부/외부 보완 주기와 503 대기를 검사합니다. 최초 수정 전 Chromium은 5 fail이며 가상 58초 동안 업무 GET 360회/361회를 관찰했습니다(`review-fixes/pre-fix-chromium.log`). 최종 검사 코드로 수정 전 두 런타임 파일만 복원하고 재빌드한 실행도 5 fail입니다(`pre-fix-final-chromium.log`): 포커스 뒤 bootstrap 예상 4회/실제 7회, 내부 보완 조회 지연, 외부 일반 오류 복구 지연, 레이더 제외 표시 누락을 각각 재현했습니다. 실행 후 수정 파일을 복원하고 빌드를 통과했습니다.
+- 중간 수정 후 Chromium 검사 3회는 기존 회원정보 조회와 성공 후 별개로 시작할 수 있는 갱신까지 한 요청으로 가정한 단언 때문에 각각 2 fail / 3 pass였습니다. 실제 흐름에 맞춰 회원정보 확인 1회를 별도로 검사하고, 성공 응답을 보류한 동안 SSE·주기 소비자의 요청 공유를 단언했습니다. 원시 실패 로그를 보존했으며 기존 회귀 단언·timeout·skip은 수정하지 않았습니다.
+- `node --test --test-concurrency=1 tests/site/frontend-query.test.mjs tests/events/event-stream-client.test.mjs tests/events/event-stream-broker.test.mjs tests/insights/insights-calculation.test.mjs`는 58 pass / fail0 / skip0입니다. 이 후속 수정은 브라우저 훅·렌더링·브라우저 검사와 문서에 한정되며 Node/shared/저장 경로는 바꾸지 않았습니다. 앞선 전체 Node/실제 PG 736 pass는 최초 구현 당시 검증으로 보존하고 후속 전체 재실행으로 주장하지 않습니다.
+- `E2E_PORT=4398 npx playwright test tests/browser/insights/insights.spec.ts tests/browser/platform/api-errors.spec.ts tests/browser/platform/external-loading.spec.ts tests/browser/sheet/cell-sync.spec.ts`는 Chromium/Firefox/WebKit 합계102건에서99 pass / 3 fail입니다(2.5분). 인사이트는13개×3엔진39 pass이며 신규5개×3엔진15건을 포함합니다. 나머지 실패3건은 모두 앞서 기준 SHA에서 재현한 `cell-sync.spec.ts:259`의 동일한 `locator('dialog')` strict 오류이며 현재 trace와 기준 비교를 보존했습니다. 조회 정책·로딩 기존 회귀에는 실패가 없습니다.
+- 후속 `npm run build`, `npm run build:edge`, `npm run check:structure`(613파일·오류0·역할 검토35건), 변경 코드 Prettier와 `git diff --check`를 통과했습니다. 전체 브라우저 수집은44파일·1,917건이며 이 전체를 실행한 것은 아닙니다. 로그·수정 전/후 소스·실패 trace·명령/건수 JSON과 최종 인계는 Git 제외 경로 `docs/validation/insights-98/review-fixes/`에 남겼고 기존 코디네이터 재현 파일3개는 SHA-256 동일함을 확인했습니다. 운영/실데이터 미검증 한계는 그대로이며 커밋·게시·배포·사용자 테스트 서버 기동은 하지 않았습니다.
+
+## 2026-11-09 — #98 연간 업무 인사이트
+
+- 승인받은 팀 설정 JSON의 선택 항목 `insights`만 추가했습니다(업무 색상·목표일 기준·팀 차트). SQLite v34·JSON 반출 v7과 PostgreSQL migration 번호·기존 데이터는 유지하며 운영 반영·변환·배포는 하지 않았습니다. 작업은 `fc67629338b74c6c6d54990fb76f42c6bbbdccfe` 기준의 별도 `feat/insights` 워크트리에서 수행했습니다.
+- `/insights`와 주 메뉴, 기존 화면 전환 prepare 흐름, 고정 통계·데이터 점검·다섯 차트·즉시 미리보기·CRUD/복제/순서·원본 업무 상세 이동을 구현했습니다. 700px 이하는 한 열과 표 스크롤, 차트 편집은 넓은 화면에만 제공합니다. 팀장/시스템 관리자만 저장하고 팀원/열람자는 임시 미리보기만 사용합니다. 기간·범위 필터는 사용자·팀별 세션에만 유지합니다.
+- `cell()` 서식 상속, 정확한 정규화 HEX, 미래 주·KST 이번 주·금요일 월 귀속·전체 업무 기간/상태와 선택 범위 작업 주의 분리·숫자 제외·보관/누락 속성 경고를 적용했습니다. 연도별 실제 GET에서 다른 연도 셀의 반환을 SQLite·PG HTTP로 확인했고 기존 API와 SSE를 재사용해 중복 ID·공유 조회·변경 없는 행/파생값·취소와 늦은 응답을 처리합니다. 데이터 점검의 작업 없음은 불러온 연도의 필터 자료, 책임자 미지정은 선택 범위 기준입니다.
+- 공통 Zod·prepareSettings와 양쪽 repository의 기존 권한/revision CAS를 사용합니다. 속성·서식·테마 저장, 실제 백업·JSON 반출과 Git/SQLite/PG 왕복의 보존을 검사하고 SheetClone 생성·가져오기 스냅샷은 제외했습니다. ColorPicker 업무 프리셋은 시트 툴바의 배경색(행·열 포함)에만 넘기며 최근 색·글자/테두리/옵션 메뉴의 기존 동작을 유지합니다.
+- 마지막 화면 비교에서 완료 카드와 표 합계의 드릴다운 범위가 넓은 점을 수정했습니다. 값별 기여 업무와 선택 계열을 반영하고 단위 검사·세 브라우저 회귀를 추가했습니다. 표의 합계·평균·중앙값·비율은 원자료에서 다시 계산하며 수치 열 레이더는 음수도 공통 축 범위로 표시합니다.
+- 확인된 개발 DB·운영 접속 대상이 제공되지 않아 실제 운영 DB 버전·팀 설정 크기와 이슈의 2026-11-08 개발 DB 관찰값 대조는 실행하지 않았습니다. 당시 값과 2026-11-09 KST 상태의 일치를 주장하지 않으며 실제 사용자 이름·업무 제목·개인 통계를 자료에 남기지 않았습니다. 검증은 임시 합성 DB만 사용했습니다.
+- 실제 Node v22.23.1·PostgreSQL 17.11(`/opt/homebrew/opt/postgresql@17/bin`)에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`를 두 번 실행했고 각각 736 pass / fail0 / skip0입니다(최종 666.38초). 마지막 전체 실행은 값/계열 드릴다운 수정과 회귀 단언을 포함합니다. 별도 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/insights/*.test.mjs`는 계산15건·실제 SQLite/PG HTTP 및 백업8건, 총23 pass / fail0 / skip0입니다. 최초 fixture의 배치 필수 필드·공통 서식 revision·압축 JSON 해제·`schemaVersion` 이름과 상속 예상값을 바로잡은 중간 실패 로그도 보존했습니다.
+- `E2E_PORT=4398 npx playwright test tests/browser/insights/insights.spec.ts tests/browser/platform/color-picker.spec.ts tests/browser/sheet/common-formatting.spec.ts tests/browser/sheet/workspace-navigation.spec.ts tests/browser/sheet/cell-sync.spec.ts tests/browser/sheet-clones/sheet-clone-editing.spec.ts`는 Chromium/Firefox/WebKit 합계147건에서144 pass / 3 fail입니다. 3건 모두 기존 `cell-sync.spec.ts:259`의 `locator('dialog')`가 메모 region과 충돌 모달 두 개를 잡는 strict 선택자 실패이며 정확한 기준 `fc67629338b74c6c6d54990fb76f42c6bbbdccfe`의 별도 Git archive/build에서도 같은 세 엔진·같은 오류로 재현했습니다. 기존 단언·timeout·skip은 수정하지 않았습니다.
+- 마지막 계열 색상과 날짜 고정 회귀를 포함한 `E2E_PORT=4398 npx playwright test tests/browser/insights/insights.spec.ts`는 신규8개 흐름×3엔진,24 pass / fail0입니다. 미설정 팀장/팀원, 기간·필터 세션 복원, 색 설정/배경 프리셋/수치 반영과 글자·테두리 제외, 다섯 차트 CRUD/복제/순서·상세, 열람자 임시 미리보기, 다른 탭 SSE, CAS 초안 보존, 느린 조회/팀 전환 및 값·합계 드릴다운을 확인했습니다. 상태 검사는 고정 KST 시각으로 미래 실행 시 날짜에 따른 실패를 피합니다.
+- `npm run build`, `npm run build:edge`, 변경 코드 Prettier, `git diff --check`를 통과했습니다. 구조 검사는613파일·오류0·역할 검토35건이며 신규 Insights 화면/계산/CSS의 확장자 유사 이름은 배치 가이드에 역할을 기록했습니다. 전체 수집은 Node117파일·Playwright44 spec/1,902건이며 전체 Playwright1,902건을 실행했다는 뜻은 아닙니다. Vite의 기존 대형 청크 경고는 기준 빌드에도 있습니다.
+- 원시 로그·스크린샷·기준/현재 실패 trace·비교 JSON·인계 기록은 Git 제외 경로 `docs/validation/insights-98/`에 보존했습니다. 테스트 서버는 모두 임시 DB로 종료했고 사용자 최종 테스트 서버 기동은 독립 리뷰 후 코디네이터에게 남겼습니다. 기존 서버는 중지하지 않았습니다.
+
+
 ## 2026-11-09 — #105 감독 리뷰: 배포 CLI의 버전 간 호출 계약 복원
 
 - 정기·수동 workflow 정의와 fork sync 결과 checkout SHA가 다른 버전일 때 P7에서 이동한 배포 CLI를 찾지 못하는 회귀를 수정했습니다. 구현 바이트를 바꾸지 않고 `scripts/team-site-deploy.mjs` 자체를 원위치로 고정했으며 두 workflow 호출·설치 안내 명령·문서·manifest의 keep entry와 정확한 경로 예외를 맞췄습니다. wrapper·복제는 없습니다. 최종 P7은 32개 이동과 외부 호출 계약 1개 고정으로 완료했으며 P4~P8 기존 이동은 402개입니다. 아래 33개/403개 기록은 수정 전 단계의 실제 이력입니다.

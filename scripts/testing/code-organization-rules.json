@@ -188,6 +188,10 @@
       "reason": "Shared domain contracts with per-module runtime restrictions; shared/identity"
     },
     {
+      "path": "shared/insights",
+      "reason": "Browser and Node/Edge shared annual task calculations and strict settings contract"
+    },
+    {
       "path": "shared/sheet-clones",
       "reason": "Shared domain contracts with per-module runtime restrictions; shared/sheet-clones"
     },
@@ -230,6 +234,10 @@
     {
       "path": "src/documents/editor",
       "reason": "Browser UI and shared browser infrastructure; src/documents/editor"
+    },
+    {
+      "path": "src/insights",
+      "reason": "Annual task insights screen, editor, charts and browser data state"
     },
     {
       "path": "src/platform",
@@ -280,6 +288,10 @@
       "reason": "Automated regressions and isolated fixtures; tests/browser/fixtures"
     },
     {
+      "path": "tests/browser/insights",
+      "reason": "Cross-engine insights screen and chart flows"
+    },
+    {
       "path": "tests/browser/platform",
       "reason": "Automated regressions and isolated fixtures; tests/browser/platform"
     },
@@ -322,6 +334,10 @@
     {
       "path": "tests/history",
       "reason": "Automated regressions and isolated fixtures; tests/history"
+    },
+    {
+      "path": "tests/insights",
+      "reason": "Annual task insights computation and SQLite/PostgreSQL API storage contracts"
     },
     {
       "path": "tests/sheet",
@@ -484,10 +500,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "scripts/admin/admin.mjs",
-        "worker/control/admin.mjs"
-      ],
+      "paths": ["scripts/admin/admin.mjs", "worker/control/admin.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -506,10 +519,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/calendar/calendar.mjs",
-        "worker/calendar/calendar.mjs"
-      ],
+      "paths": ["server/calendar/calendar.mjs", "worker/calendar/calendar.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -520,24 +530,15 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/migrations/sqlite.mjs",
-        "server/storage/sqlite.mjs"
-      ],
+      "paths": ["server/migrations/sqlite.mjs", "server/storage/sqlite.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/control/profiles.mjs",
-        "server/sync/node/profiles.mjs"
-      ],
+      "paths": ["server/control/profiles.mjs", "server/sync/node/profiles.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/control/settings.mjs",
-        "worker/sheet/settings.mjs"
-      ],
+      "paths": ["server/control/settings.mjs", "worker/sheet/settings.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
@@ -569,10 +570,7 @@
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {
-      "paths": [
-        "server/sync/core/directory.mjs",
-        "worker/sync/directory.mjs"
-      ],
+      "paths": ["server/sync/core/directory.mjs", "worker/sync/directory.mjs"],
       "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
     },
     {

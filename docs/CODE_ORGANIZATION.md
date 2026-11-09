@@ -96,6 +96,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 | `src/app/`       | 앱 조합, 주 화면 전환, 라우팅                                    | `App.tsx`, `useWorkspaceRoute.ts`                                                                                   |
 | `src/sheet/`     | 업무 표, 셀 편집·선택·서식, 시트 탐색                            | `Grid.tsx`, `InlineCellEditor.tsx`, `SheetTabs.tsx`, `clipboard.ts`                                                 |
 | `src/documents/` | 공용 문서 편집·목록·탐색, 링크·이미지·내보내기, 문서 종류별 래퍼 | `DocumentPanel.tsx`, `DocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `TaskDocumentPanel.tsx`, `AnnualMemoPanel.tsx` |
+| `src/insights/` | 연간 업무 인사이트, 팀 차트·설정·미리보기와 조회 상태 | `Insights.tsx`, `InsightsChart.tsx`, `InsightsChartEditor.tsx`, `useInsightsData.ts`, `insights-types.ts`, `insights.css` |
 | `src/calendar/`  | 일정·태그·배치·주간 할 일·개인 일정                              | `Calendar.tsx`, `CalendarEntryPanel.tsx`, `useCalendarData.ts`, `calendar-types.ts`, `calendar.css`                 |
 | `src/auth/`      | 로그인, 세션 진입 UI, 계정 연결·개인 계정                        | `ExternalLogin.tsx`, `ExternalAccountLogin.tsx`, `AccountMenu.tsx`, `ProfilePanel.tsx`                              |
 | `src/settings/`  | 설정 화면 조합, 팀·사용자·속성·관리 설정                         | `SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`                                |
@@ -120,6 +121,8 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 - 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
 - 경로가 바뀌면 경계 검사의 경로 인식도 같은 변경에서 갱신합니다. 검사 대상을 제외하거나 허용 범위를 넓혀 통과시키지 않습니다. 간접 import까지 포함한 런타임 제한을 보존합니다.
 - CSS는 이동 후에도 전역에 영향을 줄 수 있습니다. 기존 클래스·적재 순서·이미지 URL을 유지하고, 지연 import와 Web Worker의 로딩 방식도 유지합니다.
+
+`shared/insights/`는 연간 업무의 순수 집계(`insights.js`: 브라우저·Node 검사)와 strict 설정 계약(`insights-schema.js`: 브라우저 편집기·내부 Node·외부 Edge)을 소유합니다. 화면·SVG·훅·타입·CSS는 `src/insights/`에, 계산/API 저장 계약은 `tests/insights/`, 실제 UI 흐름은 `tests/browser/insights/`에 둡니다. `Insights.tsx`는 화면 조합, `insights.js`는 DOM·통신 없는 계산, `insights.css`는 화면 스타일로 확장자만 같은 이름의 역할을 구분합니다. 서버의 저장 서비스·권한·동기화와 시트의 색 메뉴는 기존 소유 폴더를 유지합니다. 네 도메인 폴더만 구조 규칙에 등록하며 기존 명명·import 경계를 완화하지 않습니다.
 
 ## 7. 가이드에 따른 리팩토링 절차
 

@@ -84,8 +84,10 @@ export default function Toolbar({
   formatPainting,
   canCopyFormat = true,
   onPaintFormat,
+  workColors,
 }: {
   style: Style;
+  workColors?: { color: string; name?: string }[];
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -175,6 +177,7 @@ export default function Toolbar({
         />
         <ColorMenu
           label="배경색"
+          presets={workColors}
           icon={<PaintBucket size={16} />}
           value={style.backgroundColor || "#ffffff"}
           disabled={disabled}

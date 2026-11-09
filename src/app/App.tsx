@@ -4,6 +4,8 @@ import { joinQuery } from "../platform/shared-query";
 import AnnualMemoPanel from "../documents/AnnualMemoPanel";
 import type { DocumentPanelHandle } from "../documents/DocumentPanel";
 import Calendar from "../calendar/Calendar";
+import Insights from "../insights/Insights";
+import type { TaskMetrics } from "../insights/insights-types";
 import { busyProps } from "../ui/busyProps";
 import Select from "../ui/Select";
 import LoadingState from "../ui/LoadingState";
@@ -309,8 +311,19 @@ function Workspace({
   });
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const calendarTheme = useCalendarTheme();
-  const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
+  const screen =
+    workspaceRoute.route === "calendar"
+      ? "calendar"
+      : workspaceRoute.route === "insights"
+        ? "insights"
+        : "annual";
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const [insightsBusy, setInsightsBusy] = useState(false);
+  const [insightTaskTarget, setInsightTaskTarget] = useState<{
+    id: string;
+    year: number;
+    teamId: string;
+  } | null>(null);
   const documentBrowser = workspaceRoute.route === "documents";
   const annualMemoRef = useRef<DocumentPanelHandle>(null);
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
@@ -593,6 +606,20 @@ function Workspace({
     view?: View;
   } | null>(null);
   const team = boot.teams.find((t) => t.id === teamId) || boot.teams[0];
+  useEffect(() => {
+    if (
+      !insightTaskTarget ||
+      workspaceRoute.route !== "annual" ||
+      !ready ||
+      year !== insightTaskTarget.year ||
+      teamId !== insightTaskTarget.teamId
+    )
+      return;
+    const task = tasks.find((task) => task.id === insightTaskTarget.id);
+    setInsightTaskTarget(null);
+    if (task) setRowTask(task);
+    else setError("업무를 찾을 수 없습니다.");
+  }, [insightTaskTarget, workspaceRoute.route, ready, tasks, year, teamId]);
   const teamUnavailable =
     site.external &&
     !!team?.status &&
@@ -3235,10 +3262,11 @@ function Workspace({
     else void workspaceRoute.navigate("annual");
   }
   async function prepareWorkspaceRoute(
-    next: "annual" | "documents" | "calendar",
+    next: "annual" | "documents" | "calendar" | "insights",
   ) {
     if (
       calendarBusy ||
+      insightsBusy ||
       workspaceNavigating ||
       pendingRef.current ||
       failedRef.current ||
@@ -3251,14 +3279,14 @@ function Workspace({
       return false;
     const prepare = async () => {
       flushView();
-      if (next === "annual") {
+      if (next === "annual" || next === "insights") {
         if (documentBrowser) {
           closeSheetCloneNow();
           await refresh();
         } else await openSheetClone(null);
       }
       setViewMenu(false);
-      if (next === "calendar") setRowTask(null);
+      if (next === "calendar" || next === "insights") setRowTask(null);
     };
     try {
       if (documentBrowser)
@@ -3269,6 +3297,15 @@ function Workspace({
       setError((e as Error).message);
       return false;
     }
+  }
+  async function openInsightTask(metric: TaskMetrics) {
+    const targetYear = metric.task.years.includes(year)
+      ? year
+      : metric.task.years[0];
+    if (!(await workspaceRoute.navigate("annual"))) return;
+    if (targetYear !== year) setYear(targetYear);
+    else await refresh();
+    setInsightTaskTarget({ id: metric.task.id, year: targetYear, teamId });
   }
   const workspace = (
     <div
@@ -3288,6 +3325,7 @@ function Workspace({
         onKeyDown={(e) => {
           if (
             documentBrowser ||
+            screen === "insights" ||
             presentation ||
             e.nativeEvent.isComposing ||
             e.defaultPrevented
@@ -3335,7 +3373,7 @@ function Workspace({
             aria-label="그래보드 홈 (연간 업무)"
             onClick={openAnnualWorkspace}
             {...busyProps(
-              calendarBusy,
+              calendarBusy || insightsBusy,
               workspaceNavigating ||
                 !!pending ||
                 !!failed ||
@@ -3352,7 +3390,7 @@ function Workspace({
             aria-label="팀 선택"
             value={teamId}
             {...busyProps(
-              calendarBusy,
+              calendarBusy || insightsBusy,
               workspaceNavigating ||
                 !!pending ||
                 !!failed ||
@@ -3383,7 +3421,7 @@ function Workspace({
                 }
                 onClick={openAnnualWorkspace}
                 {...busyProps(
-                  calendarBusy,
+                  calendarBusy || insightsBusy,
                   workspaceNavigating ||
                     sheetCloneDraft.dirty ||
                     sheetCloneDraft.saving,
@@ -3393,10 +3431,28 @@ function Workspace({
                 <span>연간 업무</span>
               </Button>
               <Button
+                title="인사이트"
+                active={screen === "insights"}
+                aria-pressed={screen === "insights"}
+                disabled={
+                  insightsBusy ||
+                  !ready ||
+                  workspaceNavigating ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  sheetCloneDraft.dirty ||
+                  sheetCloneDraft.saving
+                }
+                onClick={() => void workspaceRoute.navigate("insights")}
+              >
+                <span>인사이트</span>
+              </Button>
+              <Button
                 title="문서 브라우저"
                 active={documentBrowser}
                 {...busyProps(
-                  calendarBusy,
+                  calendarBusy || insightsBusy,
                   workspaceNavigating ||
                     (!documentBrowser && !ready) ||
                     !!pending ||
@@ -3414,7 +3470,7 @@ function Workspace({
                 className="calendar-launch"
                 title="캘린더"
                 {...busyProps(
-                  calendarBusy,
+                  calendarBusy || insightsBusy,
                   workspaceNavigating ||
                     !!pending ||
                     !!failed ||
@@ -3532,7 +3588,7 @@ function Workspace({
                 title="캘린더 닫기"
                 onClick={openAnnualWorkspace}
                 {...busyProps(
-                  calendarBusy,
+                  calendarBusy || insightsBusy,
                   workspaceNavigating ||
                     sheetCloneDraft.dirty ||
                     sheetCloneDraft.saving,
@@ -3550,7 +3606,7 @@ function Workspace({
                     void navigateWorkspace(() => setPanel("history"))
                   }
                   {...busyProps(
-                    calendarBusy,
+                    calendarBusy || insightsBusy,
                     workspaceNavigating ||
                       sheetCloneDraft.dirty ||
                       sheetCloneDraft.saving,
@@ -3566,7 +3622,7 @@ function Workspace({
                       void navigateWorkspace(() => setPanel("settings"))
                     }
                     {...busyProps(
-                      calendarBusy,
+                      calendarBusy || insightsBusy,
                       workspaceNavigating ||
                         sheetCloneDraft.dirty ||
                         sheetCloneDraft.saving,
@@ -3592,6 +3648,7 @@ function Workspace({
                 }
                 logoutDisabled={
                   calendarBusy ||
+                  insightsBusy ||
                   workspaceNavigating ||
                   !!pending ||
                   !!failed ||
@@ -3626,6 +3683,28 @@ function Workspace({
               setToast(message);
             }}
           />
+        ) : screen === "insights" ? (
+          teamUnavailable ? (
+            <Empty title="팀 자료를 가져와 주세요" />
+          ) : ready ? (
+            <Insights
+              key={teamId}
+              team={team}
+              user={user}
+              users={boot.users}
+              initial={{
+                tasks,
+                year,
+                startMonth: view.startMonth,
+                cursor: cellEventCursor.current || "",
+              }}
+              onBootstrap={onBootstrap}
+              onTask={openInsightTask}
+              onBusyChange={setInsightsBusy}
+            />
+          ) : (
+            <LoadingState label="업무를 불러오고 있습니다" />
+          )
         ) : documentBrowser ? (
           <DocumentBrowser
             ref={documentBrowserRef}
@@ -3894,6 +3973,7 @@ function Workspace({
               </fieldset>
               {(!sheetClone || editingSheetClone) && (
                 <Toolbar
+                  workColors={team.settings.insights?.workColors}
                   leadingAction={
                     (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (
                       <Button

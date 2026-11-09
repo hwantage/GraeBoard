@@ -437,6 +437,56 @@ test(
       for (let i = 0; i < work.length; i++) await work[i];
       profile = profileFor(env, "outside", teamId);
       await settle();
+      // Team insights travels through the same real Git/SQLite/PG pipeline as
+      // other settings, including a reverse edit that omits the new field.
+      const insights = {
+        workColors: [{ color: "#0066cc", name: "Work" }],
+        deadlinePropertyId: "missingDate",
+        charts: [
+          {
+            id: "c123abc",
+            title: "Team total",
+            type: "number",
+            dimensions: {},
+            values: [{ kind: "count" }],
+          },
+        ],
+      };
+      const teamSettingsAt = async (where) =>
+        ok(await site[where]("/bootstrap")).teams.find((t) => t.id === teamId)
+          .settings;
+      await step("inside", async () =>
+        ok(
+          await inside(
+            `/teams/${teamId}/settings`,
+            {
+              revision: (await teamSettingsAt("inside")).revision || 0,
+              insights,
+            },
+            "PATCH",
+          ),
+        ),
+      );
+      assert.deepEqual((await teamSettingsAt("outside")).insights, insights);
+      await step("outside", async () =>
+        ok(
+          await outside(
+            `/teams/${teamId}/settings`,
+            {
+              revision: (await teamSettingsAt("outside")).revision,
+              defaultDensity: "dense",
+            },
+            "PATCH",
+          ),
+        ),
+      );
+      assert.deepEqual((await teamSettingsAt("inside")).insights, insights);
+      assert.equal((await teamSettingsAt("inside")).defaultDensity, "dense");
+      assert.deepEqual(
+        internalStore().readState().entities[entityId("team", [])].payload
+          .settings.insights,
+        insights,
+      );
       assert.equal(
         await read("outside", withBody.id),
         "Genesis body, edited early",

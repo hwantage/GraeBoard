@@ -18,7 +18,7 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 ## 구조
 
 
-`shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
+`shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`insights/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
 Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이력·이관·이벤트/HTTP로 묶습니다. 공통 서비스는 `server/storage/` 기능 폴더에, SQLite repository는 같은 기능 폴더에, PostgreSQL repository는 `worker/storage/` 기능 폴더에 둡니다.
 
 동기화는 `server/sync/core/` 17개(간접 전용 cache 포함)·`server/sync/node/` 20개·`worker/sync/` 11개로 배치합니다. 외부 direct import는 portable 16개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
@@ -27,7 +27,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 배포 suite는 고정 `7fec065d1adc241da29d54474af06b390d12d72b`의 workflow·CLI를 Git에서 읽어 구·신 버전 4개 조합을 실행합니다. shallow clone에 해당 커밋이 없으면 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`로 준비하며 구조 CI는 `fetch-depth: 0`을 사용하고 이 배포 회귀도 함께 실행합니다.
 
-`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 115개, Playwright는 43개 spec·각 엔진 626건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
+`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 117개, Playwright는 44개 spec·각 엔진 634건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
 
 아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
@@ -307,6 +307,23 @@ npm run licenses
 ## 저장소 범위
 
 소스, 잠금 파일, 테스트 코드, 실행 안내와 데이터 명세를 관리합니다. DB·백업·반출 파일·실제 환경 설정·로그·스크린샷·원본 시트가 참조된 초기 RFP는 Git에 포함하지 않습니다. `.env.example`에는 비밀값 없이 설정 항목만 제공합니다.
+
+## 연간 업무 인사이트
+
+`/insights`는 `src/app/useWorkspaceRoute.ts`의 기존 prepare/저장 흐름을 거쳐 연간 업무·문서·캘린더와 전환합니다. `src/insights/`는 고정 통계·팀 차트 5종·설정/편집기·필터·drill-down을 소유하며 `ColorMenu`/`ColorPicker`, `PropertyFilter`, `Modal`/`Button`/`Select`, `Toast`/`ErrorNote`, `useListReorder`, `useTodayKey`를 재사용합니다. 색 프리셋은 연간 시트 Toolbar의 배경색에만 전달합니다. 실제 업무 상세는 원본 시트로 이동하고 필요한 연도를 불러온 뒤 기존 RowPanel로 엽니다.
+
+`shared/insights/insights.js`는 서식 상속을 포함한 순수 계산, `insights-schema.js`는 내부 Node/외부 Edge 설정 저장과 브라우저 편집기의 strict 계약입니다. 기간·범위 필터는 사용자·팀별 sessionStorage에만 두고, 팀별 WeakMap이 변경 없는 업무의 주 목록·파생값을 재사용하고 업무/색 집합/기간/KST 이번 주/목표일 기준 변경 때 무효화합니다. `useInsightsData`는 시트 자료와 기존 연도별 GET을 합치고 중복 업무 ID를 제거합니다. 변경 없는 GET 행의 객체를 유지하며 기존 셀 SSE 병합·팀 SSE·재접속·포커스 갱신, 공유 요청/취소, 늦은 응답과 팀 전환 보호를 사용합니다. 별도 집계 API나 차트 라이브러리는 없습니다. 계산·카디널리티·백분율·합계 규칙은 [데이터 형식](DATA_FORMAT.md#인사이트-팀-설정)을 따릅니다.
+
+인사이트 보완 조회도 `useSite()`와 기존 `queryPolicyFor`를 따릅니다. 보이는 탭에서 성공 후 내부는 7초, 외부는 30초 주기로 확인합니다. 일반 오류는 내부 7초, 외부 5·10·20·40·60초(상한)의 연속 실패 대기를 사용하며, 429는 `ApiError.retryAfterMs`와 지수 대기 중 긴 값을 적용합니다. 같은 팀·연도 범위의 SSE·포커스·주기 재시도는 그 시각 전에는 업무/설정 HTTP를 보내지 않습니다. 연도별 업무와 bootstrap을 함께 공유·취소하고 병렬 오류 중 가장 긴 대기를 보존합니다. 필요한 연도가 달라지면 새 범위를 즉시 조회하며 이전 범위의 오류가 새 범위를 막지 않습니다. 기존 Workspace의 탭 복귀 시 회원정보 확인 bootstrap 1회는 별도 흐름으로 유지합니다. 숫자 레이더의 저장된 차트와 편집 미리보기에도 막대와 같은 `제외 N건` 표시를 사용하며 빈값은 제외 건수에 포함하지 않습니다.
+
+저장은 기존 공통 `prepareSettings`와 SQLite/PostgreSQL 설정 repository의 권한·revision CAS를 사용하며 생략한 insights를 보존합니다. 저장 계약은 `tests/insights/insights-storage-contract.test.mjs`에서 실제 양쪽 HTTP 경로, 팀원/열람자 403·입력 400·CAS 409, 속성/서식/테마 보존, 다른 연도 셀, SheetClone 제외·JSON v7 포함과 실제 백업을 검사합니다. 기존 `sync-calendar-documents` 통합 검사는 실제 Git/SQLite/PG 왕복 후 생략 저장의 보존을 함께 확인합니다. 계산은 `insights-calculation.test.mjs`, 화면·편집·미리보기·다른 탭과 늦은 응답은 `tests/browser/insights/insights.spec.ts`로 검증합니다. 이 브라우저 검사는 실제 팀 설정 PATCH의 SSE로 실패한 조회를 유발한 뒤 가상 시계와 보류 응답으로 내부/외부의 Retry-After·보완 주기·복구 공유를 확인하고, 숫자 Text의 비숫자/빈값이 포함된 저장 레이더와 미리보기를 검사합니다.
+
+```sh
+TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/insights/*.test.mjs tests/sync/integration/sync-calendar-documents.test.mjs
+E2E_PORT=4398 npx playwright test tests/browser/insights/insights.spec.ts
+```
+
+PostgreSQL 경로는 설치 위치에 맞게 바꾸며 생략해 성공 처리하지 않습니다. 전체 검증·실패와 재실행은 날짜별 [변경 이력](DEVELOPMENT_HISTORY.md)에 기록합니다. 운영/개발 DB의 연결 경로가 검증되지 않은 경우 실데이터 대조는 미검증으로 남깁니다. 이슈의 2026-11-08 관찰값을 오늘의 데이터·KST 상태와 같다고 가정하지 않습니다. 두 환경의 양쪽 서버 업데이트 후 설정을 입력하는 순서와 롤백 한계는 [운영 안내](OPERATIONS.md#인사이트-설정-입력과-롤백)에 있습니다.
 
 ## 과거 검증 기록
 

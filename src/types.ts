@@ -132,6 +132,7 @@ export type Property = {
   archived?: boolean;
 };
 export type Settings = {
+  insights?: import("./insights/insights-types").InsightsSettings;
   defaultDensity?: "comfortable" | "compact" | "dense";
   weekHeader?: { color?: string; backgroundColor?: string };
   weekBorders?: { left?: Border; right?: Border };
