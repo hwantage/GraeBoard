@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cell as effectiveCell } from "../../../shared/domain.js";
 import { pickColor } from "../support/colors";
 import { unpack } from "../../../shared/formatting/compact.js";
+import { THEMES } from "../../../shared/formatting/themes.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string, taskIds: string[];
@@ -1114,4 +1115,614 @@ test("사용자 검토: 업무 색상은 일반 테마 바로 아래 한 곳에�
       .getByRole("dialog", { name: "인사이트 설정", exact: true })
       .getByRole("button", { name: "업무 색상 추가", exact: true }),
   ).toHaveCount(0);
+});
+
+async function comparisonFixture(page: Page) {
+  const a = (await request(page, "/bootstrap")).user.name;
+  const b = await request(page, "/admin/users", {
+    username: `matrix-${randomUUID().slice(0, 8)}@example.test`,
+    name: "비교를 위한 긴 담당자 이름",
+    password: "test-password-123",
+    systemRole: "user",
+    memberships: [{ teamId, role: "member" }],
+  });
+  const current = await settings(page);
+  await request(
+    page,
+    `/teams/${teamId}/settings`,
+    {
+      revision: current.revision,
+      properties: current.properties.map((p: any) =>
+        p.id === "category"
+          ? {
+              ...p,
+              values: [
+                { ...p.values[0], label: "UX 개선" },
+                { ...p.values[1], label: "차별화" },
+                { ...p.values[2], label: "아주길게이어진새분류" },
+              ],
+            }
+          : p,
+      ),
+    },
+    "PATCH",
+  );
+  const tasks = (await request(page, `/tasks?teamId=${teamId}&year=2026`))
+    .tasks;
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: taskIds[1],
+        key: "owner",
+        value: b.user.id,
+        expectedVersion: tasks.find((t: any) => t.id === taskIds[1]).cells.owner
+          .version,
+      },
+      {
+        taskId: taskIds[2],
+        key: "category",
+        value: "v1",
+        expectedVersion: tasks.find((t: any) => t.id === taskIds[2]).cells
+          .category.version,
+      },
+    ],
+  });
+  await configure(page);
+  await paint(page, 0, ["2026-01-05"]);
+  await paint(page, 1, ["2026-01-05"]);
+  await paint(page, 2, ["2026-01-05", "2026-01-12"]);
+  return { a, b: "비교를 위한 긴 담당자 이름" };
+}
+
+test("비교 매트릭스: 사람×차별화·0·행열전체 합계와 실제 업무 드릴다운, 작업 주와 업무 구성 전환", async ({
+  page,
+}, info) => {
+  const { a, b } = await comparisonFixture(page);
+  await insights(page);
+  const report = page.getByRole("region", {
+    name: "책임자별 업무 비교",
+    exact: true,
+  });
+  await expect(report.getByRole("combobox", { name: "비교 속성" })).toHaveValue(
+    "category",
+  );
+  await expect(
+    report.getByRole("button", {
+      name: `${a} · 차별화 · 업무 수: 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", {
+      name: `${b} · UX 개선 · 업무 수: 0`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", {
+      name: `${a} · 행 합계 · 업무 수: 2`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", {
+      name: "차별화 · 열 합계 · 업무 수: 2",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", { name: "전체 합계 · 업무 수: 3", exact: true }),
+  ).toBeVisible();
+  const list = page.getByRole("dialog", {
+    name: "책임자별 업무 비교 · 업무 목록",
+    exact: true,
+  });
+  for (const [label, count, titles] of [
+    [`${a} · 차별화 · 업무 수: 1`, 1, ["인사이트 검증 업무 3"]],
+    [
+      `${a} · 행 합계 · 업무 수: 2`,
+      2,
+      ["인사이트 검증 업무 1", "인사이트 검증 업무 3"],
+    ],
+    [
+      "차별화 · 열 합계 · 업무 수: 2",
+      2,
+      ["인사이트 검증 업무 2", "인사이트 검증 업무 3"],
+    ],
+    [
+      "전체 합계 · 업무 수: 3",
+      3,
+      ["인사이트 검증 업무 1", "인사이트 검증 업무 2", "인사이트 검증 업무 3"],
+    ],
+    [`${b} · UX 개선 · 업무 수: 0`, 0, []],
+  ] as const) {
+    await report.getByRole("button", { name: label, exact: true }).click();
+    await expect(list.locator("tbody tr")).toHaveCount(count);
+    for (const title of titles)
+      await expect(
+        list.getByRole("button", { name: title, exact: true }),
+      ).toBeVisible();
+    await list.getByRole("button", { name: "닫기", exact: true }).click();
+  }
+  await report
+    .getByRole("combobox", { name: "비교 값" })
+    .selectOption('{"kind":"workWeeks"}');
+  const dark = report.getByRole("button", {
+    name: `${a} · 차별화 · 작업 주 합: 2`,
+    exact: true,
+  });
+  const light = report.getByRole("button", {
+    name: `${a} · UX 개선 · 작업 주 합: 1`,
+    exact: true,
+  });
+  expect(
+    await dark
+      .locator("..")
+      .evaluate((td) => getComputedStyle(td).backgroundColor),
+  ).not.toBe(
+    await light
+      .locator("..")
+      .evaluate((td) => getComputedStyle(td).backgroundColor),
+  );
+  const contrast = await dark.evaluate((button) => {
+    const rgb = (color: string) =>
+      color
+        .match(/[\d.]+/g)!
+        .slice(0, 3)
+        .map(Number);
+    const light = (color: string) =>
+      rgb(color)
+        .map((n) => n / 255)
+        .map((n) => (n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, n, i) => sum + n * [0.2126, 0.7152, 0.0722][i], 0);
+    const a = light(getComputedStyle(button).color),
+      b = light(getComputedStyle(button.parentElement!).backgroundColor);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
+  const extra = [];
+  for (let i = 0; i < 16; i++) {
+    const member = await request(page, "/admin/users", {
+      username: `compare-${randomUUID().slice(0, 8)}@example.test`,
+      name: `테스트 책임자 ${String(i + 1).padStart(2, "0")}`,
+      password: "test-password-123",
+      systemRole: "user",
+      memberships: [{ teamId, role: "member" }],
+    });
+    const { task } = await request(page, "/tasks", {
+      teamId,
+      year: 2026,
+      fields: {
+        title: `스크롤 검증 업무 ${i + 1}`,
+        owner: member.user.id,
+        category: `v${i % 2}`,
+      },
+    });
+    extra.push({
+      taskId: task.id,
+      key: "2026-01-05",
+      style: { backgroundColor: "#0066cc", work: true },
+      expectedVersion: 0,
+      expectedFormatRevision: 0,
+    });
+  }
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: extra,
+  });
+  await expect(report.locator("tbody tr")).toHaveCount(18);
+  const matrixScroll = report.locator(".insights-matrix-scroll");
+  const header = await matrixScroll.locator("thead").boundingBox();
+  await matrixScroll.evaluate((element) => (element.scrollTop = 200));
+  const pinned = await matrixScroll.locator("thead").boundingBox();
+  expect(Math.abs(header!.y - pinned!.y)).toBeLessThan(2);
+  await matrixScroll.evaluate((element) => (element.scrollTop = 0));
+  for (const width of [1404, 390, 360]) {
+    await page.setViewportSize({ width, height: 960 });
+    await report.scrollIntoViewIfNeeded();
+    await expect(dark).toBeVisible();
+    const scroll = report.locator(".insights-matrix-scroll");
+    const left = await scroll.locator("tbody th").first().boundingBox();
+    await scroll.evaluate(
+      (element) => (element.scrollLeft = element.scrollWidth),
+    );
+    const shifted = await scroll.locator("tbody th").first().boundingBox();
+    expect(Math.abs(left!.x - shifted!.x)).toBeLessThan(2);
+    await scroll.evaluate((element) => (element.scrollLeft = 0));
+    await page.screenshot({ path: info.outputPath(`matrix-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 1404, height: 960 });
+  const legendColor = await report
+    .getByRole("columnheader", { name: "차별화", exact: true })
+    .locator("i")
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+  await report.getByRole("button", { name: "업무 구성", exact: true }).click();
+  const segment = report
+    .locator("svg")
+    .getByRole("button", { name: `${a} · 차별화: 2`, exact: true });
+  await expect(segment).toBeVisible();
+  await expect
+    .poll(() =>
+      report
+        .locator(".insights-chart-scroll")
+        .evaluate(
+          (container) =>
+            container.querySelector("svg")!.width.baseVal.value -
+            container.clientWidth,
+        ),
+    )
+    .toBe(0);
+  expect(
+    await segment
+      .locator("rect")
+      .evaluate((rect) => getComputedStyle(rect).fill),
+  ).toBe(legendColor);
+  await page.screenshot({ path: info.outputPath("comparison-stacked.png") });
+  await segment.press("Enter");
+  await expect(list.locator("tbody tr")).toHaveCount(1);
+  await list
+    .getByRole("button", { name: "인사이트 검증 업무 3", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(
+    page
+      .getByRole("dialog")
+      .filter({ has: page.getByText("인사이트 검증 업무 3", { exact: true }) })
+      .first(),
+  ).toBeVisible();
+});
+
+test("비교 빠른 시작: 다중 값 매트릭스 저장·새로고침·업무 구성 템플릿 편집과 기존 설정 보존", async ({
+  page,
+}, info) => {
+  const { a } = await comparisonFixture(page);
+  await insights(page);
+  await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "차트 편집", exact: true });
+  await editor
+    .getByRole("button", { name: "책임자×속성 매트릭스", exact: true })
+    .click();
+  await expect(editor.getByRole("combobox", { name: "차트 종류" })).toHaveValue(
+    "table",
+  );
+  await editor.getByRole("button", { name: "값 추가", exact: true }).click();
+  await editor.getByRole("button", { name: "값 추가", exact: true }).click();
+  await editor.getByRole("button", { name: "값 추가", exact: true }).click();
+  await editor
+    .getByRole("combobox", { name: "값 3", exact: true })
+    .selectOption('{"kind":"avgDuration"}');
+  await editor
+    .getByRole("combobox", { name: "값 4", exact: true })
+    .selectOption('{"kind":"numberAvg","propertyId":"score"}');
+  await editor.getByRole("textbox", { name: "차트 제목" }).fill("저장 비교 표");
+  await expect(
+    editor.getByRole("table", { name: "저장 비교 표", exact: true }),
+  ).toBeVisible();
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  await page.reload();
+  const saved = card(page, "저장 비교 표");
+  await expect(saved.locator("table.insights-matrix")).toBeVisible();
+  await expect(
+    saved.getByRole("button", {
+      name: `${a} · 행 합계 · 평균 업무 기간: 1.5`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    saved.getByRole("button", {
+      name: "전체 합계 · 숫자 열 평균 · Score: 2",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    saved.getByRole("columnheader", { name: "행 합계", exact: true }),
+  ).toHaveAttribute("colspan", "4");
+  const scroll = saved.locator(".insights-matrix-scroll");
+  const origin = await scroll.locator("tbody th").first().boundingBox();
+  await scroll.evaluate(
+    (element) => (element.scrollLeft = element.scrollWidth),
+  );
+  const shifted = await scroll.locator("tbody th").first().boundingBox();
+  expect(Math.abs(origin!.x - shifted!.x)).toBeLessThan(2);
+  await saved.screenshot({ path: info.outputPath("saved-four-measures.png") });
+  let current = await settings(page);
+  const id = current.insights.charts[0].id;
+  expect(current.insights.charts[0].dimensions).toEqual({
+    row: { kind: "owner" },
+    column: { kind: "property", propertyId: "category" },
+  });
+  expect(current.insights.charts[0].values).toEqual([
+    { kind: "count" },
+    { kind: "workWeeks" },
+    { kind: "avgDuration" },
+    { kind: "numberAvg", propertyId: "score" },
+  ]);
+  await saved
+    .getByRole("button", { name: "저장 비교 표 편집", exact: true })
+    .click();
+  await editor
+    .getByRole("button", { name: "책임자별 업무 구성", exact: true })
+    .click();
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  current = await settings(page);
+  expect(current.insights.charts[0].id).toBe(id);
+  expect(current.insights.charts[0].type).toBe("bar");
+  expect(current.insights.charts[0].display).toEqual({
+    percent: "value",
+    orientation: "horizontal",
+    mode: "stacked",
+  });
+  expect(current.insights.deadlinePropertyId).toBe("deadline");
+  expect(current.insights.workColors).toEqual([
+    { color: "#0066cc", name: "개발 작업" },
+  ]);
+  await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+  await editor
+    .getByRole("button", { name: "월별 작업량", exact: true })
+    .click();
+  await expect(editor.getByRole("combobox", { name: "X 기준" })).toHaveValue(
+    '{"kind":"time","unit":"month","basis":"work"}',
+  );
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  expect((await settings(page)).insights.charts).toHaveLength(2);
+});
+
+test("시각화 수치: 0 막대는 길이 0이고 음수는 0 기준 반대쪽, 레이더 음수 눈금과 제외 수를 유지한다", async ({
+  page,
+}, info) => {
+  await configure(page, [
+    chart("czerob1", "정직한 세로 막대", "bar", {
+      dimensions: { axis: { kind: "property", propertyId: "category" } },
+      values: [{ kind: "numberSum", propertyId: "score" }],
+    }),
+    chart("czerob2", "정직한 가로 막대", "bar", {
+      dimensions: {
+        axis: { kind: "owner" },
+        series: { kind: "property", propertyId: "category" },
+      },
+      values: [{ kind: "numberSum", propertyId: "score" }],
+      display: { orientation: "horizontal", mode: "stacked" },
+    }),
+    chart("czerob3", "음수 레이더", "radar", {
+      dimensions: {
+        axis: { kind: "property", propertyId: "category" },
+        series: { kind: "owner" },
+      },
+      values: [{ kind: "numberSum", propertyId: "score" }],
+    }),
+    chart("czerob4", "평균은 묶음 비교", "bar", {
+      dimensions: {
+        axis: { kind: "owner" },
+        series: { kind: "property", propertyId: "category" },
+      },
+      values: [{ kind: "numberAvg", propertyId: "score" }],
+      display: { orientation: "horizontal", mode: "stacked" },
+    }),
+    chart("czerob5", "계열 백분율은 묶음 비교", "bar", {
+      dimensions: {
+        axis: { kind: "owner" },
+        series: { kind: "property", propertyId: "category" },
+      },
+      display: {
+        orientation: "horizontal",
+        mode: "stacked",
+        percent: "series",
+      },
+    }),
+  ]);
+  const tasks = (await request(page, `/tasks?teamId=${teamId}&year=2026`))
+    .tasks;
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: taskIds[1],
+        key: "score",
+        value: "-4",
+        expectedVersion: tasks.find((t: any) => t.id === taskIds[1]).cells.score
+          .version,
+      },
+      {
+        taskId: taskIds[2],
+        key: "score",
+        value: "0",
+        expectedVersion: tasks.find((t: any) => t.id === taskIds[2]).cells.score
+          .version,
+      },
+    ],
+  });
+  for (let i = 0; i < 3; i++) await paint(page, i, ["2026-01-05"]);
+  await insights(page);
+  for (const [title, dimension, size] of [
+    ["정직한 세로 막대", "y", "height"],
+    ["정직한 가로 막대", "x", "width"],
+  ] as const) {
+    const plot = card(page, title).locator("svg.insights-bars");
+    await expect(plot.locator('[data-value="0"] rect')).toHaveAttribute(
+      size,
+      "0",
+    );
+    const baseline = Number(
+      await plot
+        .locator(".insights-zero-axis line")
+        .getAttribute(`${dimension}1`),
+    );
+    const negative = plot.locator('[data-value="-4"] rect');
+    const start = Number(await negative.getAttribute(dimension)),
+      length = Number(await negative.getAttribute(size));
+    expect(length).toBeGreaterThan(0);
+    expect(
+      Math.abs((dimension === "x" ? start + length : start) - baseline),
+    ).toBeLessThan(0.01);
+    await plot.locator('[data-value="0"]').press("Enter");
+    const list = page.getByRole("dialog", {
+      name: `${title} · 업무 목록`,
+      exact: true,
+    });
+    await expect(
+      list.getByRole("button", { name: "인사이트 검증 업무 3", exact: true }),
+    ).toBeVisible();
+    await list.getByRole("button", { name: "닫기", exact: true }).click();
+    await card(page, title).screenshot({
+      path: info.outputPath(`${dimension}-signed-bar.png`),
+    });
+  }
+  await expect(
+    card(page, "음수 레이더").getByText(
+      "0 눈금 안쪽은 음수, 바깥쪽은 양수입니다.",
+    ),
+  ).toBeVisible();
+  await expect(
+    card(page, "음수 레이더").locator(".insights-zero-axis text"),
+  ).toHaveText("0");
+  await card(page, "음수 레이더").screenshot({
+    path: info.outputPath("signed-radar.png"),
+  });
+  for (const title of ["평균은 묶음 비교", "계열 백분율은 묶음 비교"]) {
+    const fallback = card(page, title);
+    await expect(
+      fallback.getByText(
+        "평균·비율·최댓값과 계열 안 %는 누적하지 않고 묶음 막대로 비교합니다.",
+      ),
+    ).toBeVisible();
+    const positions = await fallback
+      .locator(".insights-bar-mark rect")
+      .evaluateAll((rects) => rects.map((rect) => rect.getAttribute("y")));
+    expect(new Set(positions).size).toBe(3);
+  }
+  await expect(
+    card(page, "계열 백분율은 묶음 비교").locator(".insights-bar-value"),
+  ).toHaveText(["100%", "100%", "100%"]);
+  await page.screenshot({
+    path: info.outputPath("signed-charts.png"),
+    fullPage: true,
+  });
+});
+
+test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유하고 다섯 테마의 농도와 글자 대비를 지킨다", async ({
+  page,
+}, info) => {
+  const { a, b } = await comparisonFixture(page);
+  await paint(page, 0, ["2026-02-02"]);
+  await insights(page);
+  const report = page.getByRole("region", {
+    name: "책임자별 업무 비교",
+    exact: true,
+  });
+  await report
+    .getByRole("combobox", { name: "비교 값" })
+    .selectOption('{"kind":"workWeeks"}');
+  const dark = report.getByRole("button", {
+    name: `${a} · 차별화 · 작업 주 합: 2`,
+    exact: true,
+  });
+  const name = (await request(page, "/bootstrap")).teams.find(
+    (team: any) => team.id === teamId,
+  ).name;
+  const middle = report.getByRole("button", {
+    name: `${b} · 차별화 · 작업 주 합: 1`,
+    exact: true,
+  });
+  for (const theme of THEMES) {
+    await request(page, `/teams/${teamId}`, { name, theme: theme.id }, "PATCH");
+    const expected = theme.strong
+      .match(/\w\w/g)!
+      .map((hex: string) => parseInt(hex, 16));
+    await expect(dark.locator("..")).toHaveCSS(
+      "background-color",
+      `rgb(${expected.join(", ")})`,
+    );
+    for (const cell of [dark, middle]) {
+      const contrast = await cell.evaluate((button) => {
+        const luminance = (color: string) =>
+          color
+            .match(/[\d.]+/g)!
+            .slice(0, 3)
+            .map(Number)
+            .map((n) => n / 255)
+            .map((v) =>
+              v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4,
+            )
+            .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const a = luminance(getComputedStyle(button).color),
+          b = luminance(
+            getComputedStyle(button.parentElement!).backgroundColor,
+          );
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      });
+      expect(contrast).toBeGreaterThanOrEqual(4.5);
+    }
+    if (theme.id === "sky")
+      await page.screenshot({ path: info.outputPath("matrix-sky.png") });
+  }
+  const categoryColor = await report
+    .getByRole("columnheader", { name: "차별화", exact: true })
+    .locator("i")
+    .evaluate((dot) => getComputedStyle(dot).backgroundColor);
+  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-02");
+  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2026-02");
+  await expect(
+    report.getByRole("button", {
+      name: "전체 합계 · 작업 주 합: 1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", {
+      name: `${a} · UX 개선 · 작업 주 합: 1`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await report.getByRole("button", { name: "업무 구성", exact: true }).click();
+  await expect(
+    report
+      .locator("svg")
+      .getByRole("button", { name: `${a} · UX 개선: 1`, exact: true }),
+  ).toBeVisible();
+  await report.getByRole("button", { name: "매트릭스", exact: true }).click();
+  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+  await popup.locator("summary").filter({ hasText: "분류" }).click();
+  await popup.getByRole("checkbox", { name: "차별화", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await expect(
+    report.getByRole("button", {
+      name: "전체 합계 · 작업 주 합: 0",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-01");
+  await expect(
+    report.getByRole("button", {
+      name: "전체 합계 · 작업 주 합: 3",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("button", {
+      name: `${b} · UX 개선 · 작업 주 합: 0`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await report.getByRole("button", { name: "업무 구성", exact: true }).click();
+  const bar = report
+    .locator("svg")
+    .getByRole("button", { name: `${a} · 차별화: 2`, exact: true });
+  await expect(bar).toBeVisible();
+  expect(
+    await bar.locator("rect").evaluate((rect) => getComputedStyle(rect).fill),
+  ).toBe(categoryColor);
+  await bar.click();
+  const list = page.getByRole("dialog", {
+    name: "책임자별 업무 비교 · 업무 목록",
+    exact: true,
+  });
+  await expect(list.locator("tbody tr")).toHaveCount(1);
+  await expect(
+    list.getByRole("button", { name: "인사이트 검증 업무 3", exact: true }),
+  ).toBeVisible();
 });

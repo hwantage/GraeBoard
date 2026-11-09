@@ -29,6 +29,8 @@ import {
 } from "../../shared/insights/insights.js";
 import InsightsChart, { InsightsTaskTable } from "./InsightsChart";
 import InsightsChartEditor from "./InsightsChartEditor";
+import InsightsComparison from "./InsightsComparison";
+import { comparisonProperty } from "./insights-chart-templates";
 import InsightsSettings from "./InsightsSettings";
 import InsightsFilters, { type InsightsFilter } from "./InsightsFilters";
 import useInsightsData from "./useInsightsData";
@@ -133,8 +135,7 @@ export default function Insights({
   } | null>(null);
   const [message, setMessage] = useToast();
   const [optionId, setOptionId] = useState(
-    () =>
-      propertiesFor(team.settings).find((p) => p.kind === "option")?.id || "",
+    () => comparisonProperty(team.settings)?.id || "",
   );
   const today = useTodayKey(),
     mobile = useMobileLayout(),
@@ -429,8 +430,16 @@ export default function Insights({
               </article>
             ))}
           </div>
+          <InsightsComparison
+            tasks={tasks}
+            ctx={ctx}
+            onDrill={(chart, cell) =>
+              setDrill({ title: chart.title, chart, cell })
+            }
+            onTask={openTask}
+          />
           <div className="insights-grid">
-            {fixed.slice(6).map((chart) => (
+            {[fixed[6], fixed[8]].filter(Boolean).map((chart) => (
               <article className="insights-card" key={chart.title}>
                 <div className="insights-card-heading">
                   <h2>{chart.title}</h2>
@@ -463,21 +472,6 @@ export default function Insights({
               </article>
             ))}
           </div>
-          <section className="insights-data-check">
-            <h2>데이터 점검</h2>
-            <Button
-              onClick={() => setDrill({ title: "작업 없음", check: "noWork" })}
-            >
-              작업 없음 {noWork.length}건
-            </Button>
-            <Button
-              onClick={() =>
-                setDrill({ title: "책임자 미지정", check: "noOwner" })
-              }
-            >
-              책임자 미지정 {noOwner.length}건
-            </Button>
-          </section>
           <div className="insights-card-heading">
             <h2>팀 차트</h2>
             <Button
@@ -490,7 +484,7 @@ export default function Insights({
           <div className="insights-grid" ref={reorder.root}>
             {charts.map((chart) => (
               <article
-                className="insights-card insights-team-chart"
+                className={`insights-card insights-team-chart${(chart.type === "table" && chart.dimensions.column) || chart.type === "top" ? " insights-card-wide" : ""}`}
                 key={chart.id}
                 {...reorder.itemProps(chart.id)}
               >
@@ -566,6 +560,33 @@ export default function Insights({
               </article>
             ))}
           </div>
+          <article className="insights-card insights-supporting-tasks">
+            <h2>{fixed[7].title}</h2>
+            <InsightsChart
+              chart={fixed[7]}
+              result={results.get(fixed[7])!}
+              ctx={ctx}
+              onDrill={(cell) =>
+                setDrill({ title: fixed[7].title, chart: fixed[7], cell })
+              }
+              onTask={openTask}
+            />
+          </article>
+          <section className="insights-data-check">
+            <h2>데이터 점검</h2>
+            <Button
+              onClick={() => setDrill({ title: "작업 없음", check: "noWork" })}
+            >
+              작업 없음 {noWork.length}건
+            </Button>
+            <Button
+              onClick={() =>
+                setDrill({ title: "책임자 미지정", check: "noOwner" })
+              }
+            >
+              책임자 미지정 {noOwner.length}건
+            </Button>
+          </section>
         </>
       ) : (
         data.loading && <LoadingState label="업무를 불러오고 있습니다" />

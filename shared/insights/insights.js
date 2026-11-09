@@ -436,6 +436,7 @@ export function aggregate(tasks, chart, ctx) {
       cells: [],
       totals: [],
       seriesTotals: {},
+      rowTotals: {},
       list,
       excluded,
       warnings,
@@ -451,6 +452,7 @@ export function aggregate(tasks, chart, ctx) {
     series = new Map(),
     groups = new Map(),
     all = new Map(),
+    rowGroups = new Map(),
     seriesGroups = new Map();
   for (const metric of metrics) {
     for (const row of dimensionEntries(metric, rowDimension, ctx))
@@ -463,20 +465,27 @@ export function aggregate(tasks, chart, ctx) {
         if (!groups.has(key)) groups.set(key, new Map());
         if (!seriesGroups.has(column.key))
           seriesGroups.set(column.key, new Map());
+        if (!rowGroups.has(row.key)) rowGroups.set(row.key, new Map());
         addMetric(groups.get(key), metric, weeks);
+        addMetric(rowGroups.get(row.key), metric, weeks);
         addMetric(seriesGroups.get(column.key), metric, weeks);
         addMetric(all, metric, weeks);
       }
   }
-  // Empty option axes still describe the same radar shape for every person.
-  if (chart.type === "radar" && rowDimension?.kind === "property") {
+  // Keep declared empty categories in comparative views, so a zero remains
+  // visible instead of changing the matrix shape or legend between people.
+  const completeOptions = (groups, dimension) => {
+    if (dimension?.kind !== "property") return;
     const property = propertiesFor(ctx.settings, true).find(
-      (p) => p.id === rowDimension.propertyId,
+      (p) => p.id === dimension.propertyId,
     );
     for (const option of property?.values || [])
-      if (!option.archived && !rows.has(option.id))
-        rows.set(option.id, { key: option.id, label: option.label });
-  }
+      if (!option.archived && !groups.has(option.id))
+        groups.set(option.id, { key: option.id, label: option.label });
+  };
+  if (chart.type === "radar") completeOptions(rows, rowDimension);
+  if ((chart.type === "table" && rowDimension) || chart.type === "bar")
+    completeOptions(series, seriesDimension);
   if (!rowDimension && !rows.size)
     rows.set("all", { key: "all", label: "전체" });
   if (!seriesDimension && !series.size)
@@ -485,6 +494,18 @@ export function aggregate(tasks, chart, ctx) {
     const entries = [...groups.values()];
     if (dimension?.kind === "time" || dimension?.kind === "durationBand")
       entries.sort((a, b) => a.key.localeCompare(b.key));
+    if (dimension?.kind === "property") {
+      const property = propertiesFor(ctx.settings, true).find(
+        (p) => p.id === dimension.propertyId,
+      );
+      const ranks = new Map(
+        (property?.values || []).map((option, index) => [option.id, index]),
+      );
+      entries.sort(
+        (a, b) =>
+          (ranks.get(a.key) ?? Infinity) - (ranks.get(b.key) ?? Infinity),
+      );
+    }
     return entries;
   };
   const rowList = order(rows, rowDimension),
@@ -504,64 +525,78 @@ export function aggregate(tasks, chart, ctx) {
   if (chart.type === "table" && rowList.length > 200)
     errors.push("표는 최대 200행입니다. 필터를 좁혀 주세요.");
   const totals = chart.values.map((definition) => measure(all, definition));
+  const displayed = (result, denominator) => ({
+    ...result,
+    value:
+      chart.display?.percent && chart.display.percent !== "value"
+        ? denominator
+          ? (result.raw / denominator) * 100
+          : 0
+        : result.raw,
+  });
+  const seriesMeasures = new Map(
+    seriesList.map((column) => [
+      column.key,
+      chart.values.map((definition) =>
+        measure(seriesGroups.get(column.key) || new Map(), definition),
+      ),
+    ]),
+  );
+  const seriesTotals = Object.fromEntries(
+    seriesList.map((column) => [
+      column.key,
+      seriesMeasures
+        .get(column.key)
+        .map((result, index) =>
+          displayed(
+            result,
+            chart.display?.percent === "series"
+              ? result.raw
+              : totals[index].raw,
+          ),
+        ),
+    ]),
+  );
+  const rowTotals = Object.fromEntries(
+    rowList.map((row) => [
+      row.key,
+      chart.values.map((definition, index) => {
+        const result = measure(rowGroups.get(row.key) || new Map(), definition);
+        // Series percentages have different column denominators. A row total
+        // therefore stays in raw units; summing those percentages would mislead.
+        return chart.display?.percent === "series"
+          ? { ...result, value: result.raw }
+          : displayed(result, totals[index].raw);
+      }),
+    ]),
+  );
   const cells = [];
   if (!errors.length)
     for (const row of rowList)
       for (const column of seriesList) {
         const items =
           groups.get(JSON.stringify([row.key, column.key])) || new Map();
-        const values = chart.values.map((definition, index) => {
-          const result = measure(items, definition);
-          const denominator =
-            chart.display?.percent === "series"
-              ? measure(seriesGroups.get(column.key) || new Map(), definition)
-                  .raw
-              : totals[index].raw;
-          return {
-            ...result,
-            value:
-              chart.display?.percent && chart.display.percent !== "value"
-                ? denominator
-                  ? (result.raw / denominator) * 100
-                  : 0
-                : result.raw,
-          };
-        });
         cells.push({
           row: row.key,
           series: column.key,
-          values,
+          values: chart.values.map((definition, index) =>
+            displayed(
+              measure(items, definition),
+              chart.display?.percent === "series"
+                ? seriesMeasures.get(column.key)[index].raw
+                : totals[index].raw,
+            ),
+          ),
           taskIds: [...items.keys()],
         });
       }
-  const seriesTotals = Object.fromEntries(
-    seriesList.map((series) => [
-      series.key,
-      chart.values.map((definition, index) => {
-        const result = measure(
-          seriesGroups.get(series.key) || new Map(),
-          definition,
-        );
-        const denominator =
-          chart.display?.percent === "series" ? result.raw : totals[index].raw;
-        return {
-          ...result,
-          value:
-            chart.display?.percent && chart.display.percent !== "value"
-              ? denominator
-                ? (result.raw / denominator) * 100
-                : 0
-              : result.raw,
-        };
-      }),
-    ]),
-  );
   return {
     rows: rowList,
     series: seriesList,
     cells,
     totals,
     seriesTotals,
+    rowTotals,
     list: [],
     excluded: 0,
     warnings,
@@ -571,13 +606,18 @@ export function aggregate(tasks, chart, ctx) {
 }
 export function drillDown(tasks, chart, selectedCell, ctx) {
   const result = aggregate(tasks, chart, ctx);
-  const cells = !selectedCell
-    ? result.cells
-    : result.cells.filter(
-        (cell) =>
-          cell.series === selectedCell.series &&
-          (selectedCell.total || cell.row === selectedCell.row),
-      );
+  const cells =
+    !selectedCell || selectedCell.scope === "grand"
+      ? result.cells
+      : result.cells.filter((cell) => {
+          if (selectedCell.scope === "row")
+            return cell.row === selectedCell.row;
+          if (selectedCell.scope === "series" || selectedCell.total)
+            return cell.series === selectedCell.series;
+          return (
+            cell.series === selectedCell.series && cell.row === selectedCell.row
+          );
+        });
   const ids = new Set(cells.flatMap((cell) => cell.taskIds));
   const definition = chart.values[selectedCell?.valueIndex || 0];
   return result.metrics.filter((metric) => {

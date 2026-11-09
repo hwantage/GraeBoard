@@ -51,6 +51,7 @@ export type ChartCell = {
   taskIds: string[];
   valueIndex?: number;
   total?: boolean;
+  scope?: "row" | "series" | "grand";
 };
 export type ChartResult = {
   rows: { key: string; label: string }[];
@@ -61,6 +62,7 @@ export type ChartResult = {
     string,
     { raw: number; value: number; excluded: number }[]
   >;
+  rowTotals: Record<string, { raw: number; value: number; excluded: number }[]>;
   list: (TaskMetrics & { sortValue: number })[];
   excluded: number;
   warnings: string[];

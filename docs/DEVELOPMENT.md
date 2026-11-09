@@ -314,6 +314,10 @@ npm run licenses
 
 `shared/insights/insights.js`는 서식 상속을 포함한 순수 계산, `insights-schema.js`는 내부 Node/외부 Edge 설정 저장과 브라우저 편집기의 strict 계약입니다. 기간·범위 필터는 사용자·팀별 sessionStorage에만 두고, 팀별 WeakMap이 변경 없는 업무의 주 목록·파생값을 재사용하고 업무/색 집합/기간/KST 이번 주/목표일 기준 변경 때 무효화합니다. `useInsightsData`는 시트 자료와 기존 연도별 GET을 합치고 중복 업무 ID를 제거합니다. 변경 없는 GET 행의 객체를 유지하며 기존 셀 SSE 병합·팀 SSE·재접속·포커스 갱신, 공유 요청/취소, 늦은 응답과 팀 전환 보호를 사용합니다. 별도 집계 API나 차트 라이브러리는 없습니다. 계산·카디널리티·백분율·합계 규칙은 [데이터 형식](DATA_FORMAT.md#인사이트-팀-설정)을 따릅니다.
 
+`InsightsComparison.tsx`는 요약 아래의 책임자×선택 속성 비교를 소유합니다. 기본값은 활성 분류→category→상태 외 선택 속성→첫 선택 속성이며 업무 수·작업 주 합·숫자 합을 고를 수 있습니다. 기존 table 정의와 하나의 aggregate 결과를 매트릭스/가로 누적으로 전환하고 현재 기간·PropertyFilter·업무 표식을 그대로 따릅니다. `InsightsMatrix.tsx`는 저장된 두 기준 표에도 같은 농도·행/열/전체 합계·고정 머리글/행 이름을 적용하고 값 1~4개의 범례를 분리합니다. 단일 기준 표는 기존 통계 표로 유지합니다. `InsightsBarChart.tsx`·`InsightsRadarChart.tsx`는 0 기준 눈금·값과 실제 음수 위치를 그리며 0 막대 길이를 부풀리지 않습니다. 평균·비율·최댓값·계열 안 %는 누적하지 않습니다. 색·수치·농도/대비는 `insights-chart-presentation.tsx`, 기존 필드로 만든 빠른 시작은 `insights-chart-templates.ts`에서 재사용합니다. 선택형/책임자 계열 색은 전체 옵션/사용자 목록을 기준으로 정해 필터 변화로 바뀌지 않습니다. 유효하고 구분되는 옵션/사용자 색을 먼저 사용합니다.
+
+aggregate의 내부 `rowTotals`는 열/전체와 같이 업무 ID·주차 집합에서 다시 계산합니다. `ChartCell.scope`는 교차값·row·series·grand의 기여 업무를 기존 drillDown→목록→연간 RowPanel로 전달하며 API/저장 필드가 아닙니다. 서로 다른 열 분모의 %는 행 합계에서 원값으로 표시합니다. `insights-matrix.test.mjs`는 교차값/0·보관/누락·중복 제거·평균/비율/숫자 제외·필터/기간·행/열/전체 드릴다운을 독립 기대값으로 검사합니다. 브라우저는 실제 비교 조작부, 정확한 사람×분류 목록과 연간 상세, 양쪽 표시, 빠른 시작 저장/편집, 0/음수 도형, 다섯 테마 대비와 1404·390·360px 스크롤/고정 열을 검사합니다. 새 차트 종류·설정 필드·마이그레이션은 추가하지 않습니다.
+
 `Style.work`는 선택적인 boolean/null이며 `STYLE_KEYS.work = "wk"`로 같은 사전·저장 경로를 사용합니다. 일반 배경색은 `backgroundWorkStyle`로 업무 의미도 교체하고, 개별 셀 정규화는 상속된 true를 취소하는 false를 남깁니다. 공통 서식의 색·work 적용 순서와 초기화 tombstone을 함께 처리하며 PG도 SQLite와 같은 초기화/재적용 우선순위를 사용합니다. 글자·테두리는 값을 보존하고 브러시·행 복사·셀 클립보드(JSON/HTML)는 표식을 전달합니다. `insights-work-marker.test.mjs`는 해석·상속·strict/compact·복사/초기화를, 실제 양쪽 HTTP와 백업 계약은 `insights-storage-contract.test.mjs`, Git 왕복은 `sync-calendar-documents.test.mjs`에서 확인합니다. 기존 무표식 자료는 외형만 유지하고 집계하지 않으며 자동 보정하지 않습니다.
 
 인사이트 보완 조회도 `useSite()`와 기존 `queryPolicyFor`를 따릅니다. 보이는 탭에서 성공 후 내부는 7초, 외부는 30초 주기로 확인합니다. 일반 오류는 내부 7초, 외부 5·10·20·40·60초(상한)의 연속 실패 대기를 사용하며, 429는 `ApiError.retryAfterMs`와 지수 대기 중 긴 값을 적용합니다. 같은 팀·연도 범위의 SSE·포커스·주기 재시도는 그 시각 전에는 업무/설정 HTTP를 보내지 않습니다. 연도별 업무와 bootstrap을 함께 공유·취소하고 병렬 오류 중 가장 긴 대기를 보존합니다. 필요한 연도가 달라지면 새 범위를 즉시 조회하며 이전 범위의 오류가 새 범위를 막지 않습니다. 기존 Workspace의 탭 복귀 시 회원정보 확인 bootstrap 1회는 별도 흐름으로 유지합니다. 숫자 레이더의 저장된 차트와 편집 미리보기에도 막대와 같은 `제외 N건` 표시를 사용하며 빈값은 제외 건수에 포함하지 않습니다.
@@ -322,7 +326,7 @@ npm run licenses
 
 ```sh
 TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/insights/*.test.mjs tests/sync/integration/sync-calendar-documents.test.mjs
-E2E_PORT=4398 npx playwright test tests/browser/insights/insights.spec.ts
+E2E_PORT=4399 npx playwright test tests/browser/insights/insights.spec.ts
 ```
 
 PostgreSQL 경로는 설치 위치에 맞게 바꾸며 생략해 성공 처리하지 않습니다. 전체 검증·실패와 재실행은 날짜별 [변경 이력](DEVELOPMENT_HISTORY.md)에 기록합니다. 운영/개발 DB의 연결 경로가 검증되지 않은 경우 실데이터 대조는 미검증으로 남깁니다. 이슈의 2026-11-08 관찰값을 오늘의 데이터·KST 상태와 같다고 가정하지 않습니다. 두 환경의 양쪽 서버 업데이트 후 설정을 입력하는 순서와 롤백 한계는 [운영 안내](OPERATIONS.md#인사이트-설정-입력과-롤백)에 있습니다.

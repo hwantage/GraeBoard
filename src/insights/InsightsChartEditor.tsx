@@ -3,6 +3,7 @@ import { Modal, Button, ErrorNote } from "../components";
 import Select from "../ui/Select";
 import InsightsChart from "./InsightsChart";
 import InsightsFilters from "./InsightsFilters";
+import { chartTemplates } from "./insights-chart-templates";
 import {
   aggregate,
   numericProperties,
@@ -167,6 +168,27 @@ export default function InsightsChartEditor({
     >
       <div className="insights-editor-layout">
         <fieldset disabled={busy} className="insights-editor-controls">
+          <div
+            className="insights-quick-start"
+            role="group"
+            aria-label="차트 빠른 시작"
+          >
+            <span>빠른 시작</span>
+            {chartTemplates(ctx.settings).map((template) => (
+              <Button
+                key={template.label}
+                onClick={() =>
+                  setDraft({
+                    ...template.chart,
+                    id: draft.id,
+                    ...(draft.filter ? { filter: draft.filter } : {}),
+                  })
+                }
+              >
+                {template.label}
+              </Button>
+            ))}
+          </div>
           <label>
             제목
             <input
