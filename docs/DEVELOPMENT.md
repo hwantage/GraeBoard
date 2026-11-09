@@ -121,6 +121,8 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 로그인 후 `/api/bootstrap`에서 소속 팀·사용자를 읽고 사용자·팀·기준 연도별 보기를 복원한 다음, `startMonth`부터 12개월에 해당하는 업무를 조회합니다. `getTasks`는 한 연도 또는 인접한 두 연도를 받아 SQL의 EXISTS 조건으로 중복 없이 업무를 읽습니다. 화면의 기준 연도는 업무 추가·삽입의 등록 연도입니다. 업무 응답은 ETag로 조건부 조회합니다. 팀·연도가 바뀌면 이전 요청 결과가 새 화면을 덮어쓰지 않도록 조회 대상을 검사합니다. 셀 값 저장은 SSE로 즉시 전달합니다. 행 추가·삭제·순서·공통 서식·설정과 사본 시트 변경은 리소스 SSE 알림으로 재조회합니다. 원본의 보완 조회는 내부망 7초·외부망 30초로 구분하며, 편집·저장 중에는 전체 목록 교체를 보류합니다. SSE 셀 갱신은 편집 중에도 처리합니다. 같은 범위·변경 버전의 동시 목록 갱신은 하나로 합치고, 429는 Retry-After와 증가하는 재시도 간격을 지킵니다. 업무·화면 정보 재조회가 성공하면 해당 조회 오류만 해제하며 저장·보기 저장·다른 작업의 오류는 보존합니다. 명시적인 내부 사이트 설정은 Access 인증 모드보다 우선합니다.
 
+원본 조회가 세션 만료(401)로 재시도 대기에 들어간 경우, 같은 조회 범위의 셀 복구 스냅샷을 인증된 요청으로 받으면 `useTaskData`가 그 대기와 조회 오류를 해제합니다. 재인증 뒤 새 행의 리소스 알림이 이전 세션의 대기에 막히지 않도록 하기 위한 처리이며, 429의 Retry-After와 다른 오류의 재시도 정책은 유지합니다.
+
 변경되지 않은 ETag 요청은 업무를 조회·직렬화하기 전에 304로 응답합니다. 조회 캐시의 전체 예산은 64MiB입니다. 원문과 gzip의 합이 예산보다 크면 gzip만 보관하고, 압축을 받지 않는 클라이언트의 응답 시에만 원문을 복원합니다. 압축본도 예산을 넘으면 캐시하지 않습니다. 이전 팀의 보기 저장이 뒤늦게 실패해도 현재 팀 화면에 오류를 표시하지 않습니다.
 
 팀·연도 전환과 월 이동·월·주차 기간 선택은 왼쪽 업무 열에서 시작합니다. 달력은 항상 12개월이며 화살표는 한 달씩 이동합니다. `movePeriodView`는 월 선택을 실제 연월로, 주차 선택을 날짜로 유지하고 구간 경계에서만 선택 길이를 보존해 이동합니다. 연도 화살표의 전체 연도 초기화와 구분하며 원본·사본에 같은 규칙을 적용합니다. `taskQuery`는 같은 두 연도에 걸친 월들을 같은 요청 경로로 정규화하므로 월 이동마다 데이터를 재조회하지 않습니다. 보기의 저장 키와 업무 조회 범위를 분리하고, 늦은 조회 응답과 SSE가 다른 범위를 덮어쓰지 않도록 검사합니다. 기간 표는 포인터 캡처로 월/주 단위의 연속 범위를 선택하고 드래그를 마칠 때 보기를 저장합니다. 기존 보기 설정 모달은 제거했으며 열 고정은 머리글 메뉴, 팀 기본 셀 높이는 기본 서식 관리에 있습니다. 연도·기간 바, 서식 툴바와 팝업 제목 옆 `?` 도움말은 즉시 툴팁을 공유합니다. 팝업 소개 문구는 `Modal`의 `help`로 전달하며, 마우스 호버나 키보드 포커스로 확인합니다. 기본 서식과 표는 `Toolbar`를 공유하고, 서식 선택·테두리 팝업은 모달 안에서 열리면 해당 dialog를 portal 대상으로 사용합니다. 발표 모드는 현재 보기와 위치를 유지하며 종료하면 화면 위치를 복원합니다.
@@ -364,9 +366,11 @@ npm run test:e2e
 
 작은 기능 수정의 반복 확인에는 빌드 후 `npm run test:e2e:core`로 행/셀·사본·화면 전환·캘린더·문서 입력/동기화/내보내기의 핵심 spec을 3개 엔진에서 실행합니다. `-- --project=chromium`으로 개발 중 범위를 줄일 수 있습니다. 큰 구조 변경의 완료 전에는 `npm run test:e2e` 전체와 수정 기능의 실패·권한·취소 경로를 확인합니다.
 
+전체 Node/PG 검사와 전체 브라우저 검사는 같은 머신에서 순차 실행합니다. 무거운 Git·DB 작업과 여러 브라우저가 겹치면 장애 주입이나 동기화 검사의 제한시간에 영향을 줄 수 있습니다. 실패를 부하 탓으로 단정하거나 제한시간을 늘리지 말고, 동일 소스를 단독 재실행해 결과를 비교합니다. 브라우저를 `--project`·`--shard`로 나누는 경우에는 실행별 `E2E_PORT`·결과 경로를 구분하고 모든 조합의 누락·중복을 확인합니다. 검증 중 구현을 계속해야 한다면 소스·테스트·빌드를 고정한 독립 사본을 사용합니다. 수집 수·실행 수·통과·실패·취소·skip과 재실행 결과를 구분해 기록합니다.
+
 `npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 통합 기준 `ad1e57d`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개이며 PR #103의 대형 충돌 회귀가 같은 `data-sync.spec.ts`에 추가됐습니다. `tests/support/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
 
-`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P3`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. `check:architecture`는 `src/shared/server/worker/edge/functions`의 정적 런타임 import·re-export·문자열 dynamic import를 수집해 순환, UI/통신 기반의 화면 역참조, 기능의 App 역참조, 브라우저의 간접 Node/호스트 의존을 검사합니다. 타입 전용 import는 런타임 순환에 포함하지 않으며 npm 패키지 내부·실행 시 계산한 import 경로는 이 검사의 범위 밖입니다. 외부 저장소 검사도 `edge/` 진입과 간접 의존을 포함합니다. PR의 경량 CI는 구조·도구·import 경계·고정 전환 의존성 격리를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
+`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. `--migration-phase P3` 같은 옵션은 #100의 해당 시점 checkout에서 이동 기록을 재현할 때만 사용합니다. 후속 책임 분리·신규 기능이 포함된 현재 HEAD는 기본 `check:structure`로 검사하며, 과거 manifest 목록으로 새 기능을 제한하지 않습니다. `check:architecture`는 `src/shared/server/worker/edge/functions`의 정적 런타임 import·re-export·문자열 dynamic import를 수집해 순환, UI/통신 기반의 화면 역참조, 기능의 App 역참조, 브라우저의 간접 Node/호스트 의존을 검사합니다. 타입 전용 import는 런타임 순환에 포함하지 않으며 npm 패키지 내부·실행 시 계산한 import 경로는 이 검사의 범위 밖입니다. 외부 저장소 검사도 `edge/` 진입과 간접 의존을 포함합니다. PR의 경량 CI는 구조·도구·import 경계·고정 전환 의존성 격리를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
 
 `TEST_PG_BIN`은 실행 가능한 PostgreSQL 서버 바이너리 경로로 바꿉니다([외부 동기화 개발·검증](#외부-동기화-개발검증)). `npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `DEBUG_HTTP=1`로 실행하면 서버가 거절한 요청(4xx)의 경로와 사유를 콘솔에 남겨 테스트 실패 원인을 바로 볼 수 있습니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
 
@@ -387,6 +391,12 @@ npm run licenses
 특정 규모만 실행하려면 `npm run performance:stress -- 10000:30`처럼 `업무수:일정점유율`을 전달합니다. 결과는 `docs/validation/load-test-results.json`, 화면은 같은 폴더에 저장합니다. Node.js 22.13.0 이상과 설치된 Chromium이 필요하며, 2만 업무 시나리오는 수 GB의 메모리를 사용하므로 운영 서버와 분리해 실행합니다. 30개 HTTP 세션과 한 브라우저의 검증이며, 30개 브라우저 동시 사용이나 사내 네트워크의 지연시간을 측정하는 검사는 아닙니다.
 
 검증 한계: 클립보드 자동 검사는 합성 이벤트와 브라우저 API 대역을 포함하므로 외부 Excel·OS 클립보드의 모든 조합을 보장하지 않습니다. 운영 서버의 HTTPS·프록시·재시작 설정, 백업 복구 시간과 실제 사용 데이터 규모에서의 동작은 배포 환경에서 별도로 점검합니다. 내부 인증은 로컬 계정·세션 방식이며 외부는 전용 Cloudflare Access JWT와 앱 사용자·팀 권한을 검증합니다. 실제 Cloudflare Access/Images/Supabase 계정 배포와 모바일 실기기의 OS 키보드·터치 동작은 로컬 브라우저 검증과 구분합니다. 릴리스마다 실행한 검사와 결과를 기록하고 과거 통과 건수를 현재 결과로 재사용하지 않습니다.
+
+### 고정 전환 소스의 개발·CI 검증
+
+최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 고정 checkout 자체의 lockfile로 `npm ci --include=dev`를 실행하며 현재 앱의 `node_modules`를 공유하지 않습니다. `npm test`·`test:postgres`는 실행 시작 시 한 번 준비한 고정 의존성 트리를 자식 검사에 전달합니다. 전달된 경로의 고정 lockfile hash·설치 표식(Node 버전/OS/아키텍처)과 실제 디렉터리를 확인합니다. 현재 앱 lockfile이 달라도 고정 도구는 원래 의존성을 사용하며, 설치나 검증 실패는 즉시 실패로 처리합니다. npm 캐시가 없으면 최초 준비에 네트워크가 필요합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
+
+`TEST_PG_BIN=/절대/PG/bin npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 현재 앱 교차 검증도 `TEST_PG_BIN`을 명시해야 하며 누락은 명시적 오류입니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.
 
 ## 저장소 범위
 
@@ -479,9 +489,3 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
 
 프로토콜 3·4의 기준 이력 재생과 명시 전환 수신, `sheetCloneTask`·`sheetCloneCell` 독립성, receipt 별도 용량, SQLite·PostgreSQL migration 및 정리 경계는 합성 DB에서 검증합니다. 옛 프로토콜 1·2와 SQLite v33·PostgreSQL team v2 fixture는 일회성 SheetClone 전환 도구의 입력으로 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 운영 백업은 별도 새 DB·이미지 경로에 실제 복구하고, `cutover:sheet-clone --dry-run` 사전 검사와 실제 사본 전환·행/이미지 보존 결과를 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 내부 SQLite의 `npm run restore -- 백업.sqlite 새경로.sqlite`에는 dry-run 옵션이 없습니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.
-
-### 고정 전환 소스의 개발·CI 검증
-
-최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 고정 checkout 자체의 lockfile로 `npm ci --include=dev`를 실행하며 현재 앱의 `node_modules`를 공유하지 않습니다. `npm test`·`test:postgres`는 실행 시작 시 한 번 준비한 고정 의존성 트리를 자식 검사에 전달합니다. 전달된 경로의 고정 lockfile hash·설치 표식(Node 버전/OS/아키텍처)과 실제 디렉터리를 확인합니다. 현재 앱 lockfile이 달라도 고정 도구는 원래 의존성을 사용하며, 설치나 검증 실패는 즉시 실패로 처리합니다. npm 캐시가 없으면 최초 준비에 네트워크가 필요합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
-
-`TEST_PG_BIN=/절대/PG/bin npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 현재 앱 교차 검증도 `TEST_PG_BIN`을 명시해야 하며 누락은 명시적 오류입니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.

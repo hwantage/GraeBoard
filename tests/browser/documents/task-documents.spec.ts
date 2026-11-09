@@ -1597,6 +1597,7 @@ for (const cellType of ["th", "td"])
         .allTextContents();
       await target.locator("p").click({ position: { x: 1, y: 8 } });
       await page.keyboard.press("ArrowRight");
+      await settleRichSelection(page);
       await expectTableAction(page, "오른쪽에 열 추가", true);
       expect(
         await target.evaluate((el) => {

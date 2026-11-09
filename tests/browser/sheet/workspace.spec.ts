@@ -5230,8 +5230,19 @@ for (const connectedExpiry of [false, true]) {
     // expiration. No safety polling may mask broken SSE recovery.
     await page.context().addInitScript(() => {
       const interval = window.setInterval.bind(window);
+      (window as any).__pauseTaskPolling = false;
       window.setInterval = (handler, timeout, ...args) =>
-        interval(timeout === 7000 ? () => {} : handler, timeout, ...args);
+        interval(
+          timeout === 7000
+            ? () => {}
+            : timeout === 1000 && typeof handler === "function"
+              ? () => {
+                  if (!(window as any).__pauseTaskPolling) handler(...args);
+                }
+              : handler,
+          timeout,
+          ...args,
+        );
       (window as any).__closedStreams = [];
       (window as any).__sessionLosses = [];
       (window as any).__streamPaths = {};
@@ -5366,6 +5377,12 @@ for (const connectedExpiry of [false, true]) {
       await expect(page.locator(".failed-input")).toContainText(
         "로그인 만료 중 입력",
       );
+      // Keep the preceding expired-session reads, then require SSE recovery
+      // without the current one-second safety scheduler helping after login.
+      for (const target of [page, peer])
+        await target.evaluate(() => {
+          (window as any).__pauseTaskPolling = true;
+        });
       await page.getByLabel("계정 비밀번호").fill("1234");
       await page.getByRole("button", { name: "로그인 후 재시도" }).click();
       await expect(cell).toHaveText("로그인 만료 중 입력");

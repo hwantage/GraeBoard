@@ -69,7 +69,12 @@ export default function useTaskData(options: {
     updateTasks(tasksRef.current);
   }
   const queryPolicy = queryPolicyFor(site);
-  const querySchedule = useRef({ nextPollAt: 0, retryAt: 0, failures: 0 });
+  const querySchedule = useRef<{
+    nextPollAt: number;
+    retryAt: number;
+    failures: number;
+    status?: number;
+  }>({ nextPollAt: 0, retryAt: 0, failures: 0 });
   const queryGeneration = useRef(0);
   const refreshWork = useRef<{
     scope: string;
@@ -92,6 +97,7 @@ export default function useTaskData(options: {
   function queryFailed(failure: Error) {
     const schedule = querySchedule.current;
     schedule.failures++;
+    schedule.status = failure instanceof ApiError ? failure.status : undefined;
     const delay = queryPolicy.retryDelay(
       schedule.failures,
       failure instanceof ApiError ? failure : {},
@@ -282,6 +288,9 @@ export default function useTaskData(options: {
       onSnapshot: (snapshot) => {
         if (boardKey.current !== key || taskScopeRef.current !== taskScope)
           return;
+        // A successful authenticated recovery ends the expired session's read
+        // backoff. Other failures, including 429 Retry-After, keep their policy.
+        if (querySchedule.current.status === 401) querySucceeded();
         const next = mergeSnapshotCells(tasksRef.current, snapshot);
 
         setTasks(next);
