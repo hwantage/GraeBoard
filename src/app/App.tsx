@@ -59,6 +59,7 @@ import {
 } from "react";
 import {
   CalendarDays,
+  ChartColumn,
   Plus,
   ChevronDown,
   ChevronLeft,
@@ -319,6 +320,8 @@ function Workspace({
         : "annual";
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [insightsBusy, setInsightsBusy] = useState(false);
+  const [insightsControlsHost, setInsightsControlsHost] =
+    useState<HTMLDivElement | null>(null);
   const [insightTaskTarget, setInsightTaskTarget] = useState<{
     id: string;
     year: number;
@@ -1192,7 +1195,7 @@ function Workspace({
     setSelectedSavedFilterId("");
     setFilterNameDialog(null);
     currentFilters.current = { teamId, data: {}, selectedId: "" };
-    if (teamUnavailable) return;
+    if (!teamId || teamUnavailable) return;
     filterLoad.current = filterSaveQueue.current
       .then(() => api(`/filters?teamId=${teamId}`))
       .then((r) => {
@@ -1529,7 +1532,13 @@ function Workspace({
   }
   async function moveYear(direction: -1 | 1) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
-    if (!ready || pendingRef.current || failedRef.current || editorRef.current)
+    if (
+      insightsBusy ||
+      !ready ||
+      pendingRef.current ||
+      failedRef.current ||
+      editorRef.current
+    )
       return;
     const current = viewRef.current;
     const nextYear =
@@ -1550,7 +1559,13 @@ function Workspace({
   }
   async function moveCalendar(direction: -1 | 1) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
-    if (!ready || pendingRef.current || failedRef.current || editorRef.current)
+    if (
+      insightsBusy ||
+      !ready ||
+      pendingRef.current ||
+      failedRef.current ||
+      editorRef.current
+    )
       return;
     const current = viewRef.current;
     const offset = current.startMonth - 1 + direction;
@@ -3217,6 +3232,21 @@ function Workspace({
     () => statusSummary(tasks, settings),
     [tasks, settings],
   );
+  // Membership refreshes reuse this Workspace even when no team is available.
+  const updateInsightsTasks = useCallback(
+    (source: Task[]) => {
+      if (screen !== "insights" || !ready || taskScopeRef.current !== taskScope)
+        return;
+      tasksRef.current = source;
+      setTasks((current) =>
+        current.length === source.length &&
+        current.every((task, i) => task === source[i])
+          ? current
+          : source,
+      );
+    },
+    [screen, ready, taskScope],
+  );
   if (!team)
     return (
       <main>
@@ -3299,14 +3329,206 @@ function Workspace({
     }
   }
   async function openInsightTask(metric: TaskMetrics) {
-    const targetYear = metric.task.years.includes(year)
-      ? year
-      : metric.task.years[0];
+    // Rolling calendars already contain next-year tasks. Opening their detail
+    // must keep the shared calendar and week selection instead of resetting it.
+    const targetYear =
+      tasksRef.current.some((task) => task.id === metric.task.id) ||
+      metric.task.years.includes(year)
+        ? year
+        : metric.task.years[0];
     if (!(await workspaceRoute.navigate("annual"))) return;
     if (targetYear !== year) setYear(targetYear);
     else await refresh();
     setInsightTaskTarget({ id: metric.task.id, year: targetYear, teamId });
   }
+  // Both original-board views use these exact elements and View handlers.
+  const annualHeading = (
+    <section className="page-heading">
+      <div className="heading-line">
+        <h1>{sheetClone ? sheetClone.name : "연간 업무"}</h1>
+        <span className="year-badge">{viewYear}</span>
+      </div>
+      {!sheetClone && (
+        <div
+          className="board-summary"
+          aria-label="선택한 팀·표시 기간 전체 업무 통계"
+          title="달력의 12개월에 해당하는 연도의 전체 업무 기준입니다. 필터와 숨김 설정에 영향을 받지 않습니다."
+        >
+          <span>
+            <i className="summary-dot" />
+            전체 업무 <strong>{tasks.length}</strong>
+          </span>
+          {summary.map((group) => (
+            <span key={group.id}>
+              <i
+                className="summary-dot"
+                style={{ backgroundColor: group.color }}
+              />
+              {group.label} <strong>{group.count}</strong>
+            </span>
+          ))}
+        </div>
+      )}
+      <Button
+        className="insights-toggle"
+        tooltip="인사이트"
+        active={screen === "insights"}
+        aria-pressed={screen === "insights"}
+        disabled={
+          insightsBusy ||
+          !ready ||
+          workspaceNavigating ||
+          !!pending ||
+          !!failed ||
+          !!editor ||
+          sheetCloneDraft.dirty ||
+          sheetCloneDraft.saving
+        }
+        onClick={() =>
+          screen === "insights"
+            ? openAnnualWorkspace()
+            : void workspaceRoute.navigate("insights")
+        }
+      >
+        <ChartColumn size={15} aria-hidden="true" />
+      </Button>
+      <div className="heading-actions">
+        {screen === "annual" && (
+          <>
+            <Button
+              className="presentation-start"
+              title="발표 모드"
+              disabled={!ready || !!pending || !!failed || !!editor}
+              onClick={async () => {
+                if (
+                  annualMemoRef.current &&
+                  !(await annualMemoRef.current.flush())
+                )
+                  return;
+                if (
+                  pendingRef.current ||
+                  failedRef.current ||
+                  editorRef.current
+                )
+                  return;
+                const grid =
+                  workspaceRef.current?.querySelector(".sheet-scroll");
+                presentationScroll.current = {
+                  top: grid?.scrollTop || 0,
+                  left: grid?.scrollLeft || 0,
+                };
+                setViewMenu(false);
+                setPresentation(true);
+              }}
+            >
+              <Presentation size={15} />
+              발표 모드
+            </Button>
+            {canManage && (
+              <Button
+                disabled={
+                  !ready ||
+                  !!pending ||
+                  !!failed ||
+                  !!editor ||
+                  sheetCloneDraft.dirty ||
+                  sheetCloneDraft.saving
+                }
+                onClick={() => setPanel("import")}
+              >
+                <Upload size={15} />
+                가져오기
+              </Button>
+            )}
+            <Button
+              disabled={
+                !ready ||
+                !!pending ||
+                !!failed ||
+                !!editor ||
+                sheetCloneDraft.dirty ||
+                sheetCloneDraft.saving
+              }
+              onClick={() => setPanel("export")}
+            >
+              <Download size={15} />
+              내보내기
+            </Button>
+          </>
+        )}
+      </div>
+    </section>
+  );
+  const dateControls = (
+    <div className="date-controls" aria-label="기간 설정">
+      <div className="year-control" role="group" aria-label="연도 선택">
+        <Button
+          tooltip="이전 연도"
+          disabled={
+            !ready ||
+            insightsBusy ||
+            !!pending ||
+            !!failed ||
+            !!editor ||
+            (viewYear <= 2000 && view.startMonth === 1)
+          }
+          onClick={() => moveYear(-1)}
+        >
+          <ChevronLeft size={15} />
+        </Button>
+        <Button
+          className="year-value"
+          disabled={insightsBusy}
+          tooltip={
+            view.startMonth === 1
+              ? `${viewYear}년 전체 선택`
+              : `${viewYear}~${viewYear + 1}년 표시 기간 전체 선택`
+          }
+          aria-pressed={weeks.length === yearWeekCount}
+          onClick={() => {
+            changeView({
+              fromMonth: 1,
+              toMonth: 12,
+              fromWeek: "",
+              toWeek: "",
+              hiddenWeeks: [],
+              collapsedMonths: [],
+            });
+            setJump({ key: null, id: Date.now() });
+          }}
+        >
+          {viewYear}
+          {view.startMonth > 1 && <span>~{viewYear + 1}</span>}
+        </Button>
+        <Button
+          tooltip="다음 연도"
+          disabled={
+            !ready ||
+            insightsBusy ||
+            !!pending ||
+            !!failed ||
+            !!editor ||
+            viewYear >= 2100
+          }
+          onClick={() => moveYear(1)}
+        >
+          <ChevronRight size={15} />
+        </Button>
+      </div>
+      <PeriodPicker
+        year={viewYear}
+        view={view}
+        disabled={!ready || insightsBusy}
+        navigationDisabled={insightsBusy || !!pending || !!failed || !!editor}
+        onNavigate={moveCalendar}
+        onChange={(range) => {
+          if (insightsBusy) return;
+          changeView(range);
+          setJump({ key: null, id: Date.now() });
+        }}
+      />
+    </div>
+  );
   const workspace = (
     <div
       ref={workspaceRef}
@@ -3429,24 +3651,6 @@ function Workspace({
               >
                 <CalendarDays size={15} />
                 <span>연간 업무</span>
-              </Button>
-              <Button
-                title="인사이트"
-                active={screen === "insights"}
-                aria-pressed={screen === "insights"}
-                disabled={
-                  insightsBusy ||
-                  !ready ||
-                  workspaceNavigating ||
-                  !!pending ||
-                  !!failed ||
-                  !!editor ||
-                  sheetCloneDraft.dirty ||
-                  sheetCloneDraft.saving
-                }
-                onClick={() => void workspaceRoute.navigate("insights")}
-              >
-                <span>인사이트</span>
               </Button>
               <Button
                 title="문서 브라우저"
@@ -3684,28 +3888,48 @@ function Workspace({
             }}
           />
         ) : screen === "insights" ? (
-          teamUnavailable ? (
-            <Empty title="팀 자료를 가져와 주세요" />
-          ) : ready ? (
-            <Insights
-              key={teamId}
-              team={team}
-              user={user}
-              users={boot.users}
-              initial={{
-                tasks,
-                year,
-                startMonth: view.startMonth,
-                cursor: cellEventCursor.current || "",
-              }}
-              onBootstrap={onBootstrap}
-              onTask={openInsightTask}
-              onBusyChange={setInsightsBusy}
-              onGeneralSettings={() => setPanel("settings")}
-            />
-          ) : (
-            <LoadingState label="업무를 불러오고 있습니다" />
-          )
+          <>
+            {annualHeading}
+            <section className="board insights-board">
+              <fieldset
+                className="view-controls"
+                disabled={!ready || insightsBusy}
+              >
+                <div className="date-search-controls insights-date-row">
+                  {dateControls}
+                  <div
+                    className="insights-date-actions"
+                    ref={setInsightsControlsHost}
+                  />
+                </div>
+              </fieldset>
+              {teamUnavailable ? (
+                <Empty title="팀 자료를 가져와 주세요" />
+              ) : ready ? (
+                <Insights
+                  key={teamId}
+                  team={team}
+                  user={user}
+                  users={boot.users}
+                  weeks={weeks}
+                  controlsHost={insightsControlsHost}
+                  initial={{
+                    tasks,
+                    year,
+                    startMonth: view.startMonth,
+                    cursor: cellEventCursor.current || "",
+                  }}
+                  onBootstrap={onBootstrap}
+                  onTask={openInsightTask}
+                  onSourceTasks={updateInsightsTasks}
+                  onBusyChange={setInsightsBusy}
+                  onGeneralSettings={() => setPanel("settings")}
+                />
+              ) : (
+                <LoadingState label="업무를 불러오고 있습니다" />
+              )}
+            </section>
+          </>
         ) : documentBrowser ? (
           <DocumentBrowser
             ref={documentBrowserRef}
@@ -3718,94 +3942,7 @@ function Workspace({
           />
         ) : (
           <>
-            <section className="page-heading">
-              <div className="heading-line">
-                <h1>{sheetClone ? sheetClone.name : "연간 업무"}</h1>
-                <span className="year-badge">{viewYear}</span>
-              </div>
-              {!sheetClone && (
-                <div
-                  className="board-summary"
-                  aria-label="선택한 팀·표시 기간 전체 업무 통계"
-                  title="달력의 12개월에 해당하는 연도의 전체 업무 기준입니다. 필터와 숨김 설정에 영향을 받지 않습니다."
-                >
-                  <span>
-                    <i className="summary-dot" />
-                    전체 업무 <strong>{tasks.length}</strong>
-                  </span>
-                  {summary.map((group) => (
-                    <span key={group.id}>
-                      <i
-                        className="summary-dot"
-                        style={{ backgroundColor: group.color }}
-                      />
-                      {group.label} <strong>{group.count}</strong>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="heading-actions">
-                <Button
-                  className="presentation-start"
-                  title="발표 모드"
-                  disabled={!ready || !!pending || !!failed || !!editor}
-                  onClick={async () => {
-                    if (
-                      annualMemoRef.current &&
-                      !(await annualMemoRef.current.flush())
-                    )
-                      return;
-                    if (
-                      pendingRef.current ||
-                      failedRef.current ||
-                      editorRef.current
-                    )
-                      return;
-                    const grid =
-                      workspaceRef.current?.querySelector(".sheet-scroll");
-                    presentationScroll.current = {
-                      top: grid?.scrollTop || 0,
-                      left: grid?.scrollLeft || 0,
-                    };
-                    setViewMenu(false);
-                    setPresentation(true);
-                  }}
-                >
-                  <Presentation size={15} />
-                  발표 모드
-                </Button>
-                {canManage && (
-                  <Button
-                    disabled={
-                      !ready ||
-                      !!pending ||
-                      !!failed ||
-                      !!editor ||
-                      sheetCloneDraft.dirty ||
-                      sheetCloneDraft.saving
-                    }
-                    onClick={() => setPanel("import")}
-                  >
-                    <Upload size={15} />
-                    가져오기
-                  </Button>
-                )}
-                <Button
-                  disabled={
-                    !ready ||
-                    !!pending ||
-                    !!failed ||
-                    !!editor ||
-                    sheetCloneDraft.dirty ||
-                    sheetCloneDraft.saving
-                  }
-                  onClick={() => setPanel("export")}
-                >
-                  <Download size={15} />
-                  내보내기
-                </Button>
-              </div>
-            </section>
+            {annualHeading}
             <section
               className="board"
               data-view-mode={
@@ -3820,74 +3957,7 @@ function Workspace({
             >
               <fieldset className="view-controls" disabled={!ready}>
                 <div className="date-search-controls">
-                  <div className="date-controls" aria-label="기간 설정">
-                    <div
-                      className="year-control"
-                      role="group"
-                      aria-label="연도 선택"
-                    >
-                      <Button
-                        tooltip="이전 연도"
-                        disabled={
-                          !ready ||
-                          !!pending ||
-                          !!failed ||
-                          !!editor ||
-                          (viewYear <= 2000 && view.startMonth === 1)
-                        }
-                        onClick={() => moveYear(-1)}
-                      >
-                        <ChevronLeft size={15} />
-                      </Button>
-                      <Button
-                        className="year-value"
-                        tooltip={
-                          view.startMonth === 1
-                            ? `${viewYear}년 전체 선택`
-                            : `${viewYear}~${viewYear + 1}년 표시 기간 전체 선택`
-                        }
-                        aria-pressed={weeks.length === yearWeekCount}
-                        onClick={() => {
-                          changeView({
-                            fromMonth: 1,
-                            toMonth: 12,
-                            fromWeek: "",
-                            toWeek: "",
-                            hiddenWeeks: [],
-                            collapsedMonths: [],
-                          });
-                          setJump({ key: null, id: Date.now() });
-                        }}
-                      >
-                        {viewYear}
-                        {view.startMonth > 1 && <span>~{viewYear + 1}</span>}
-                      </Button>
-                      <Button
-                        tooltip="다음 연도"
-                        disabled={
-                          !ready ||
-                          !!pending ||
-                          !!failed ||
-                          !!editor ||
-                          viewYear >= 2100
-                        }
-                        onClick={() => moveYear(1)}
-                      >
-                        <ChevronRight size={15} />
-                      </Button>
-                    </div>
-                    <PeriodPicker
-                      year={viewYear}
-                      view={view}
-                      disabled={!ready}
-                      navigationDisabled={!!pending || !!failed || !!editor}
-                      onNavigate={moveCalendar}
-                      onChange={(range) => {
-                        changeView(range);
-                        setJump({ key: null, id: Date.now() });
-                      }}
-                    />
-                  </div>
+                  {dateControls}
                   <FindBar
                     key={`${teamId}:${year}:${sheetClone?.id || "live"}`}
                     tasks={matchingTasks}

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cell as effectiveCell } from "../../../shared/domain.js";
 import { pickColor } from "../support/colors";
 import { unpack } from "../../../shared/formatting/compact.js";
+import { selectMonths, moveCalendarMonths } from "../support/annual-period";
 import { THEMES } from "../../../shared/formatting/themes.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
@@ -71,7 +72,7 @@ async function paint(
 async function insights(page: Page) {
   await page.getByRole("button", { name: "인사이트", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "인사이트", exact: true }),
+    page.getByRole("region", { name: "인사이트", exact: true }),
   ).toBeVisible();
 }
 const chart = (id: string, title: string, type = "bar", extra = {}) => ({
@@ -178,7 +179,7 @@ test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설�
   await page.getByRole("button", { name: "연간 업무", exact: true }).click();
   await page.goBack();
   await expect(
-    page.getByRole("heading", { name: "인사이트", exact: true }),
+    page.getByRole("region", { name: "인사이트", exact: true }),
   ).toBeVisible();
   const username = `member-${randomUUID().slice(0, 8)}@example.test`;
   const member = await request(page, "/admin/users", {
@@ -465,7 +466,7 @@ test("열람자는 임시 미리보기만 제공하고 다른 탭 셀 색상·�
   }
 });
 
-test("24개월 기간은 연도별 기존 API를 합치고 전체 업무 기간과 숫자 제외·보관 경고를 유지한다", async ({
+test("순환 12개월은 기존 연간 API의 두 연도 자료를 합치고 전체 기간·숫자 제외·보관 경고를 유지한다", async ({
   page,
 }) => {
   await configure(page, [
@@ -474,17 +475,25 @@ test("24개월 기간은 연도별 기존 API를 합치고 전체 업무 기간�
       values: [{ kind: "numberSum", propertyId: "score" }],
     }),
   ]);
-  await paint(page, 0, ["2026-01-05", "2027-02-01"]);
+  await paint(page, 0, ["2026-12-07", "2027-02-01"]);
   await insights(page);
   await expect(card(page, "작업 주 합").locator("strong")).toHaveText("1");
   await expect(card(page, "평균 업무 기간").locator("strong")).toHaveText("2");
   await expect(page.getByText("참조 속성이 없습니다: missing")).toBeVisible();
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2027-12");
-  await expect(card(page, "작업 주 합").locator("strong")).toHaveText("2");
-  await page.reload();
-  await expect(page.getByLabel("인사이트 끝 월", { exact: true })).toHaveValue(
-    "2027-12",
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/views") &&
+      response.request().method() === "PUT" &&
+      response.request().postDataJSON()?.data?.startMonth === 3 &&
+      response.ok(),
   );
+  await moveCalendarMonths(page, 2);
+  await expect(card(page, "작업 주 합").locator("strong")).toHaveText("2");
+  await saved;
+  await page.reload();
+  await expect(
+    page.locator('.period-month[data-year="2027"][data-month="2"]'),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(card(page, "작업 주 합").locator("strong")).toHaveText("2");
   await page.getByRole("button", { name: "범위 필터", exact: true }).click();
   await page
@@ -504,10 +513,8 @@ test("24개월 기간은 연도별 기존 API를 합치고 전체 업무 기간�
     .getByRole("button", { name: "모든 필터 초기화", exact: true })
     .click();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2028-01");
-  await expect(
-    page.getByText("기간은 시작 월부터 최대 24개월까지 선택하세요."),
-  ).toBeVisible();
+  await expect(page.locator(".period-month")).toHaveCount(12);
+  await expect(page.locator('input[type="month"]')).toHaveCount(0);
 });
 
 test("차트 편집 중 다른 팀장이 저장하면 409를 표시하고 초안을 유지한다", async ({
@@ -535,7 +542,7 @@ test("차트 편집 중 다른 팀장이 저장하면 409를 표시하고 초안
   );
 });
 
-test("느린 다른 연도 조회 중 기간·팀을 전환해도 오래된 응답이 수치를 바꾸지 않는다", async ({
+test("느린 순환 달력 조회 중 날짜 이동은 잠그고 팀 전환 뒤 오래된 응답이 수치를 바꾸지 않는다", async ({
   page,
 }) => {
   await configure(page);
@@ -554,17 +561,18 @@ test("느린 다른 연도 조회 중 기간·팀을 전환해도 오래된 응�
       started = resolve;
     });
   let reads = 0;
-  await page.route(/\/api\/tasks\?.*year=2027/, async (route) => {
+  await page.route(/\/api\/tasks\?.*year=2026.*startMonth=2/, async (route) => {
     reads++;
     const response = await route.fetch();
     started();
     await held;
     await route.fulfill({ response }).catch(() => {});
   });
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2027-12");
+  await moveCalendarMonths(page, 1);
   await loading;
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2026-12");
-  await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+  await expect(
+    page.getByRole("button", { name: "이전 달로 이동", exact: true }),
+  ).toBeDisabled();
   await page
     .getByRole("combobox", { name: "팀 선택", exact: true })
     .selectOption(other.id);
@@ -589,7 +597,7 @@ test("완료 카드와 표의 값·계열 합계는 집계에 기여한 업무�
     }),
   ]);
   await paint(page, 0, ["2026-01-05"]);
-  await paint(page, 1, ["2027-02-01"]);
+  await paint(page, 1, ["2026-12-07"]);
   await paint(page, 2, ["2026-01-12"]);
   const current = (
     await request(page, `/tasks?teamId=${teamId}&year=2026`)
@@ -607,7 +615,6 @@ test("완료 카드와 표의 값·계열 합계는 집계에 기여한 업무�
     ],
   });
   await insights(page);
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2027-12");
   await expect(card(page, "완료").locator("strong")).toHaveText("2");
   await card(page, "완료").getByRole("button").click();
   let list = page.getByRole("dialog", {
@@ -849,30 +856,14 @@ test("사용자 검토: 기간은 한 줄이며 데스크톱·좁은 화면의 �
   await insights(page);
   for (const width of [1366, 390, 360]) {
     await page.setViewportSize({ width, height: 900 });
-    const geometry = await page
-      .getByLabel("인사이트 시작 월", { exact: true })
-      .evaluate((input) => {
-        const label = input.parentElement!,
-          range = document.createRange();
-        range.selectNodeContents(label.firstElementChild!);
-        const text = range.getBoundingClientRect(),
-          field = input.getBoundingClientRect();
-        return {
-          textBottom: text.bottom,
-          fieldTop: field.top,
-          fieldBottom: field.bottom,
-          textTop: text.top,
-        };
-      });
-    expect(geometry.textBottom).toBeGreaterThan(geometry.fieldTop);
-    expect(geometry.textTop).toBeLessThan(geometry.fieldBottom);
-    const start = (await page
-      .getByLabel("인사이트 시작 월", { exact: true })
+    const year = (await page
+      .getByRole("group", { name: "연도 선택", exact: true })
       .boundingBox())!;
-    const end = (await page
-      .getByLabel("인사이트 끝 월", { exact: true })
+    const picker = (await page
+      .getByRole("group", { name: "월·주차 기간 선택", exact: true })
       .boundingBox())!;
-    expect(Math.abs(start.y - end.y)).toBeLessThan(2);
+    expect(Math.abs(year.y - picker.y)).toBeLessThan(2);
+    await expect(page.locator('input[type="month"]')).toHaveCount(0);
     await page.getByRole("button", { name: "범위 필터", exact: true }).click();
     const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
     await popup.locator("summary").filter({ hasText: "분류" }).click();
@@ -1663,8 +1654,7 @@ test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유�
     .getByRole("columnheader", { name: "차별화", exact: true })
     .locator("i")
     .evaluate((dot) => getComputedStyle(dot).backgroundColor);
-  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-02");
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2026-02");
+  await selectMonths(page, 2026, 2);
   await expect(
     report.getByRole("button", {
       name: "전체 합계 · 작업 주 합: 1",
@@ -1695,7 +1685,7 @@ test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유�
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-01");
+  await selectMonths(page, 2026, 1, 2);
   await expect(
     report.getByRole("button", {
       name: "전체 합계 · 작업 주 합: 3",

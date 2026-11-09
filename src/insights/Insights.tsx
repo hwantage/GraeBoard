@@ -24,6 +24,7 @@ import {
   deadlinePropertyId,
   drillDown,
   periodError,
+  periodForWeeks,
   taskMetrics,
   workColorSet,
 } from "../../shared/insights/insights.js";
@@ -40,14 +41,13 @@ import type {
   ChartCell,
   InsightChart,
   InsightsContext,
+  InsightsPeriod,
   InsightsSettings as InsightsSettingsData,
   TaskMetrics,
 } from "./insights-types";
 import "./insights.css";
 import { savedFilterSchema } from "../../shared/validation.js";
 
-const monthKey = (year: number, month: number) =>
-  `${year}-${String(month).padStart(2, "0")}`;
 const chartDefinition = (
   type: InsightChart["type"],
   title: string,
@@ -60,19 +60,13 @@ const chartDefinition = (
   values: [{ kind: "count" }],
   ...extra,
 });
-function readInsightsView(key: string, fallback: { from: string; to: string }) {
+function readInsightsFilter(key: string): InsightsFilter {
   try {
     const stored = JSON.parse(sessionStorage.getItem(key) || "null");
     const filter = savedFilterSchema.safeParse(stored?.filter);
-    return {
-      period:
-        stored?.period && !periodError(stored.period)
-          ? stored.period
-          : fallback,
-      filter: filter.success ? filter.data : {},
-    };
+    return filter.success ? filter.data : {};
   } catch {
-    return { period: fallback, filter: {} };
+    return {};
   }
 }
 export default function Insights({
@@ -80,8 +74,11 @@ export default function Insights({
   user,
   users,
   initial,
+  weeks,
+  controlsHost,
   onBootstrap,
   onTask,
+  onSourceTasks,
   onBusyChange,
   onGeneralSettings,
 }: {
@@ -89,8 +86,11 @@ export default function Insights({
   user: User;
   users: User[];
   initial: { tasks: Task[]; year: number; startMonth: number; cursor: string };
+  weeks: NonNullable<InsightsPeriod["weeks"]>;
+  controlsHost: HTMLElement | null;
   onBootstrap: (boot: Bootstrap) => void;
   onTask: (metric: TaskMetrics) => Promise<void>;
+  onSourceTasks: (tasks: Task[]) => void;
   onBusyChange: (busy: boolean) => void;
   onGeneralSettings: () => void;
 }) {
@@ -101,26 +101,21 @@ export default function Insights({
     if (rangeFilter.open) rangeFilter.popup.current?.focus();
   }, [rangeFilter.open]);
   const viewKey = `graeboard:insights:${user.id}:${team.id}`;
-  const [initialView] = useState(() =>
-    readInsightsView(viewKey, {
-      from: monthKey(initial.year, initial.startMonth),
-      to: monthKey(
-        initial.year + (initial.startMonth > 1 ? 1 : 0),
-        initial.startMonth > 1 ? initial.startMonth - 1 : 12,
-      ),
-    }),
+  // Annual View owns dates. Legacy session periods are deliberately ignored.
+  const period = useMemo(
+    () => periodForWeeks(weeks, initial.year, initial.startMonth),
+    [weeks, initial.year, initial.startMonth],
   );
-  const [period, setPeriod] = useState<{ from: string; to: string }>(
-    initialView.period,
+  const [filter, setFilter] = useState<InsightsFilter>(() =>
+    readInsightsFilter(viewKey),
   );
-  const [filter, setFilter] = useState<InsightsFilter>(initialView.filter);
   useEffect(() => {
     try {
-      sessionStorage.setItem(viewKey, JSON.stringify({ period, filter }));
+      sessionStorage.setItem(viewKey, JSON.stringify({ filter }));
     } catch {
       /* Session preferences are optional when storage is unavailable. */
     }
-  }, [viewKey, period, filter]);
+  }, [viewKey, filter]);
   const [showSettings, setShowSettings] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -143,6 +138,16 @@ export default function Insights({
     cache = useRef(createTaskMetricsCache());
   const allowed = canManageTeam(user, team.id);
   const settings = team.settings;
+  const optionProperties = propertiesFor(settings, true).filter(
+    (p) => p.kind === "option",
+  );
+  const optionProperty =
+    optionProperties.find((p) => p.id === optionId) ||
+    comparisonProperty(settings);
+  const effectiveOptionId = optionProperty?.id || "";
+  useEffect(() => {
+    if (optionId !== effectiveOptionId) setOptionId(effectiveOptionId);
+  }, [optionId, effectiveOptionId]);
   const mounted = useRef(true);
   const settingsEpoch = useRef(0),
     saving = useRef(false);
@@ -168,6 +173,9 @@ export default function Insights({
     )
       onBootstrap(boot);
   });
+  // The shared annual heading summarizes the whole source calendar, before
+  // report filters or selected-week clipping. Keep it live with the same data.
+  useEffect(() => onSourceTasks(data.tasks), [data.tasks, onSourceTasks]);
   const tasks = useMemo<Task[]>(
     () =>
       filteredTasks(data.tasks, savedFilter(filter, settings), settings, users),
@@ -219,10 +227,12 @@ export default function Insights({
         sort: { kind: "duration" },
         limit: 10,
       }),
-      ...(optionId
+      ...(effectiveOptionId
         ? [
             chartDefinition("table", "선택형 속성별 통계", {
-              dimensions: { row: { kind: "property", propertyId: optionId } },
+              dimensions: {
+                row: { kind: "property", propertyId: effectiveOptionId },
+              },
               values: [
                 { kind: "count" },
                 { kind: "workWeeks" },
@@ -233,7 +243,7 @@ export default function Insights({
           ]
         : []),
     ],
-    [optionId],
+    [effectiveOptionId],
   );
   const results = useMemo(
     () =>
@@ -322,75 +332,47 @@ export default function Insights({
   }
   return (
     <section className="insights-page" aria-label="인사이트">
-      <div className="page-heading">
-        <div className="heading-line">
-          <h1>인사이트</h1>
-        </div>
-        <div className="insights-controls">
-          <label className="insights-month">
-            <span>시작 월</span>
-            <input
-              type="month"
-              aria-label="인사이트 시작 월"
-              min="2000-01"
-              max="2100-12"
-              value={period.from}
-              onChange={(event) =>
-                setPeriod({ ...period, from: event.target.value })
-              }
-            />
-          </label>
-          <span>~</span>
-          <label className="insights-month">
-            <span>끝 월</span>
-            <input
-              type="month"
-              aria-label="인사이트 끝 월"
-              min="2000-01"
-              max="2100-12"
-              value={period.to}
-              onChange={(event) =>
-                setPeriod({ ...period, to: event.target.value })
-              }
-            />
-          </label>
-          <Button
-            ref={rangeFilter.trigger}
-            aria-expanded={rangeFilter.open}
-            aria-haspopup="dialog"
-            onClick={() => rangeFilter.setOpen(!rangeFilter.open)}
-          >
-            범위 필터
-          </Button>
-          {rangeFilter.open &&
-            createPortal(
-              <div
-                ref={rangeFilter.popup}
-                className="insights-range-filter-popover"
-                role="dialog"
-                aria-label="범위 필터"
-                tabIndex={-1}
-                style={rangeFilter.position}
-                onKeyDown={rangeFilter.onKeyDown}
-              >
-                <InsightsFilters
-                  teamId={team.id}
-                  settings={settings}
-                  tasks={data.tasks}
-                  users={users}
-                  filter={filter}
-                  onChange={setFilter}
-                />
-              </div>,
-              rangeFilter.container(),
-            )}
-          {allowed && (
-            <Button disabled={busy} onClick={() => setShowSettings(true)}>
-              인사이트 설정
+      {controlsHost &&
+        createPortal(
+          <div className="insights-controls">
+            <Button
+              ref={rangeFilter.trigger}
+              aria-expanded={rangeFilter.open}
+              aria-haspopup="dialog"
+              onClick={() => rangeFilter.setOpen(!rangeFilter.open)}
+            >
+              범위 필터
             </Button>
-          )}
-        </div>
-      </div>
+            {rangeFilter.open &&
+              createPortal(
+                <div
+                  ref={rangeFilter.popup}
+                  className="insights-range-filter-popover"
+                  role="dialog"
+                  aria-label="범위 필터"
+                  tabIndex={-1}
+                  style={rangeFilter.position}
+                  onKeyDown={rangeFilter.onKeyDown}
+                >
+                  <InsightsFilters
+                    teamId={team.id}
+                    settings={settings}
+                    tasks={data.tasks}
+                    users={users}
+                    filter={filter}
+                    onChange={setFilter}
+                  />
+                </div>,
+                rangeFilter.container(),
+              )}
+            {allowed && (
+              <Button disabled={busy} onClick={() => setShowSettings(true)}>
+                인사이트 설정
+              </Button>
+            )}
+          </div>,
+          controlsHost,
+        )}
       <ErrorNote error={periodError(period) || error || data.error} />
       {data.error && <Button onClick={data.retry}>다시 연결</Button>}
       {!configured ? (
@@ -460,17 +442,15 @@ export default function Insights({
                   {chart.title === "선택형 속성별 통계" && (
                     <Select
                       aria-label="통계 속성"
-                      value={optionId}
+                      value={effectiveOptionId}
                       onChange={(event) => setOptionId(event.target.value)}
                     >
-                      {propertiesFor(settings, true)
-                        .filter((p) => p.kind === "option")
-                        .map((p) => (
-                          <option value={p.id} key={p.id}>
-                            {p.name}
-                            {p.archived ? " (보관된 속성)" : ""}
-                          </option>
-                        ))}
+                      {optionProperties.map((p) => (
+                        <option value={p.id} key={p.id}>
+                          {p.name}
+                          {p.archived ? " (보관된 속성)" : ""}
+                        </option>
+                      ))}
                     </Select>
                   )}
                 </div>

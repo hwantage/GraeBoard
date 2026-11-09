@@ -1,3 +1,4 @@
+import { selectMonths } from "../support/annual-period";
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
@@ -417,6 +418,16 @@ test("차트 격자 정렬: 같은 높이의 가로 드래그도 슬롯을 보�
       (await stored(page)).insights.charts.map((c: any) => c.id),
     )
     .toEqual(order);
+  // Persistence can finish before the app's follow-up bootstrap renders.
+  await expect
+    .poll(() =>
+      page
+        .locator(".insights-team-chart-grid > [data-reorder-id]")
+        .evaluateAll((cards) =>
+          cards.map((card) => card.getAttribute("data-reorder-id")),
+        ),
+    )
+    .toEqual(order);
   await expect(slot).toHaveCount(0);
   await expect(a).toHaveCSS("opacity", "1");
   const actual = (await a.boundingBox())!;
@@ -486,8 +497,7 @@ test("레이더 선택은 실시간 갱신에도 유지하고 모든 기본 차�
       .locator("svg")
       .getByRole("button", { name: "2026-01 · 전체: 16", exact: true }),
   ).toBeVisible();
-  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-02");
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2026-02");
+  await selectMonths(page, 2026, 2);
   await expect(monthly.locator("svg [role=button]")).toHaveCount(1);
   await expect(
     monthly
@@ -775,6 +785,16 @@ async function dropAndCheck(
       (await stored(page)).insights.charts.map((chart: any) => chart.id),
     )
     .toEqual(order);
+  // Check the rendered order too: the app reads bootstrap after the PATCH.
+  await expect
+    .poll(() =>
+      page
+        .locator(".insights-team-chart-grid > [data-reorder-id]")
+        .evaluateAll((cards) =>
+          cards.map((card) => card.getAttribute("data-reorder-id")),
+        ),
+    )
+    .toEqual(order);
   await expect(slot).toHaveCount(0);
   const actual = (await moving.boundingBox())!;
   expect(Math.abs(actual.x - preview.x)).toBeLessThan(2);
@@ -943,7 +963,7 @@ test("차트 드래그 취소·밖 드롭·권한과 키보드는 저장 횟수�
     });
     await other.goto("/insights");
     await expect(
-      other.getByRole("heading", { name: "인사이트", exact: true }),
+      other.getByRole("region", { name: "인사이트", exact: true }),
     ).toBeVisible();
     await expect(
       other.locator(".insights-team-chart-grid .list-drag-handle"),
@@ -1045,8 +1065,7 @@ test("기본 보고서는 데스크톱·390·360px에서 읽을 수 있고 빈 �
       await chart.screenshot({ path: info.outputPath(`${name}-${width}.png`) });
     }
   }
-  await page.getByLabel("인사이트 시작 월", { exact: true }).fill("2026-04");
-  await page.getByLabel("인사이트 끝 월", { exact: true }).fill("2026-04");
+  await selectMonths(page, 2026, 4);
   await expect(monthly.locator("svg [role=button]")).toHaveCount(1);
   await expect(monthly.locator('[data-value="0"] rect')).toHaveAttribute(
     "height",

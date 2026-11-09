@@ -49,13 +49,23 @@ export default function useInsightsData(
   const refreshWork = useRef(new Map<string, SharedQuery<boolean>>());
   const epoch = useRef(0);
   const valid = !periodError(period);
+  // Query the annual calendar's source years, not a selected week key/year.
+  // A 2026-only task's last week may display in Jan 2027 in a rolling calendar.
+  // Keep both source caches in the union after an authoritative year refresh.
   const yearsKey = valid
-    ? Array.from(
-        {
-          length:
-            Number(period.to.slice(0, 4)) - Number(period.from.slice(0, 4)) + 1,
-        },
-        (_, i) => Number(period.from.slice(0, 4)) + i,
+    ? (period.weeks
+        ? initial.startMonth > 1
+          ? [initial.year, initial.year + 1]
+          : [initial.year]
+        : Array.from(
+            {
+              length:
+                Number(period.to.slice(0, 4)) -
+                Number(period.from.slice(0, 4)) +
+                1,
+            },
+            (_, i) => Number(period.from.slice(0, 4)) + i,
+          )
       ).join(":")
     : "";
   const years = useMemo(

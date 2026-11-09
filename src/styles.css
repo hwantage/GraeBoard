@@ -613,6 +613,7 @@ small {
   flex-shrink: 0;
 }
 .heading-actions .button,
+.page-heading > .insights-toggle,
 .toolbar-add-task.button {
   font-size: 11px;
   min-height: 26px;

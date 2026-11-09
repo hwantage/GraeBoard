@@ -67,6 +67,39 @@ export function monthOffset(month) {
   const [year, number] = month.split("-").map(Number);
   return year * 12 + number - 1;
 }
+const monthKey = (year, month) => `${year}-${String(month).padStart(2, "0")}`;
+// Internal report scope, derived from the exact same visibleWeeks as the sheet.
+// Keep the display month: edge weeks can belong to a different month than Friday.
+export function periodForWeeks(weeks, year, startMonth = 1) {
+  const selected = weeks.map(({ key, year, month }) => ({ key, year, month }));
+  const months = [
+    ...new Set(selected.map((week) => monthKey(week.year, week.month))),
+  ].sort();
+  return {
+    from: months[0] || monthKey(year, startMonth),
+    to:
+      months.at(-1) ||
+      monthKey(
+        year + (startMonth > 1 ? 1 : 0),
+        startMonth > 1 ? startMonth - 1 : 12,
+      ),
+    weeks: selected,
+  };
+}
+const selections = new WeakMap();
+function selectedWeeks(period) {
+  if (!period || !Array.isArray(period.weeks)) return null;
+  if (!selections.has(period))
+    selections.set(
+      period,
+      new Map(
+        period.weeks.map((week) => [week.key, monthKey(week.year, week.month)]),
+      ),
+    );
+  return selections.get(period);
+}
+const displayMonth = (week, period) =>
+  selectedWeeks(period)?.get(week) || weekMonth(week);
 export function periodError(period) {
   if (
     ![period.from, period.to].every((month) =>
@@ -79,8 +112,13 @@ export function periodError(period) {
     ? "기간은 시작 월부터 최대 24개월까지 선택하세요."
     : "";
 }
-const inPeriod = (week, period) =>
-  !period || (weekMonth(week) >= period.from && weekMonth(week) <= period.to);
+const inPeriod = (week, period) => {
+  const selected = selectedWeeks(period);
+  return selected
+    ? selected.has(week)
+    : !period ||
+        (weekMonth(week) >= period.from && weekMonth(week) <= period.to);
+};
 const isWeek = (key) =>
   /^\d{4}-\d{2}-\d{2}$/.test(key) &&
   dateSchema.safeParse(key).success &&
@@ -217,8 +255,8 @@ function calculateTaskMetrics(task, ctx) {
     duration: weeks.length,
     start,
     end,
-    startMonth: start && weekMonth(start),
-    endMonth: end && weekMonth(end),
+    startMonth: start && displayMonth(start, ctx.period),
+    endMonth: end && displayMonth(end, ctx.period),
     progressState,
     deadlineState,
     deadline,
@@ -297,7 +335,7 @@ function dimensionEntries(metric, dimension, ctx) {
         );
   const groups = new Map();
   for (const week of source) {
-    const month = weekMonth(week),
+    const month = displayMonth(week, ctx.period),
       key =
         dimension.unit === "quarter"
           ? `${month.slice(0, 4)}-Q${Math.ceil(Number(month.slice(5)) / 3)}`
@@ -490,17 +528,24 @@ export function aggregate(tasks, chart, ctx) {
       rowDimension.basis === "work" &&
       !periodError(ctx.period)
     ) {
-      for (
-        let offset = monthOffset(ctx.period.from);
-        offset <= monthOffset(ctx.period.to);
-        offset++
-      ) {
-        const year = Math.floor(offset / 12),
-          month = (offset % 12) + 1;
+      const selected = selectedWeeks(ctx.period);
+      const months = selected
+        ? [...new Set(selected.values())]
+        : Array.from(
+            {
+              length:
+                monthOffset(ctx.period.to) - monthOffset(ctx.period.from) + 1,
+            },
+            (_, i) => {
+              const offset = monthOffset(ctx.period.from) + i;
+              return monthKey(Math.floor(offset / 12), (offset % 12) + 1);
+            },
+          );
+      for (const month of months) {
         const key =
           rowDimension.unit === "quarter"
-            ? `${year}-Q${Math.ceil(month / 3)}`
-            : `${year}-${String(month).padStart(2, "0")}`;
+            ? `${month.slice(0, 4)}-Q${Math.ceil(Number(month.slice(5)) / 3)}`
+            : month;
         if (!rows.has(key)) rows.set(key, { key, label: key });
       }
     }

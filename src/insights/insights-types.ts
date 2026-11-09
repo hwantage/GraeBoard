@@ -11,7 +11,12 @@ export type InsightChart = z.infer<typeof insightChartSchema>;
 export type InsightDimension = z.infer<typeof insightDimensionSchema>;
 export type InsightValue = z.infer<typeof insightValueSchema>;
 export type InsightsSettings = z.infer<typeof insightsSettingsSchema>;
-export type InsightsPeriod = { from: string; to: string };
+export type InsightsPeriod = {
+  from: string;
+  to: string;
+  // Optional only for legacy pure month contexts; report UI always passes it.
+  weeks?: { key: string; year: number; month: number }[];
+};
 export type TaskMetrics = {
   task: Task;
   weeks: string[];
