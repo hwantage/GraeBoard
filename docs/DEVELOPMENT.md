@@ -439,3 +439,7 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 ### Grid 입력 책임
 
 `Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다.
+
+### 캘린더 명령 책임
+
+`Calendar.tsx`는 보기·날짜·패널과 일정 배치를 조합합니다. 조회·요청 취소는 기존 `useCalendarData`, 드래그는 기존 `useCalendarDrag`를 사용합니다. `useCalendarMutation`은 요청 직렬화와 조회 중단/재개를, `useCalendarCreation`은 새 일정의 임시 보관·저장을, `useCalendarCommands`는 일정·태그·주간 목록 변경과 단일 삭제 복원 기회를 소유합니다. 새 명령은 이 경로를 통해 조회 캐시를 갱신하고 기존 서버/시크릿 저장소를 재사용합니다. 일정의 기간 충돌과 패널 열림 상태는 화면에서 전달하며 별도 저장 경로를 만들지 않습니다.

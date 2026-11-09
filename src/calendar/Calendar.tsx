@@ -1,3 +1,6 @@
+import useCalendarMutation from "./useCalendarMutation";
+import useCalendarCreation from "./useCalendarCreation";
+import useCalendarCommands from "./useCalendarCommands";
 import useResourceSync from "../platform/useResourceSync";
 import {
   useEffect,
@@ -24,7 +27,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { api, ApiError, send } from "../platform/api";
+import { api } from "../platform/api";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import { busyProps } from "../ui/busyProps";
 import { Avatar } from "../ui/Avatar";
@@ -33,10 +36,7 @@ import { ErrorNote } from "../ui/ErrorNote";
 import { Modal } from "../ui/Modal";
 import LoadingState from "../ui/LoadingState";
 import GridHeaderMenu from "../ui/GridHeaderMenu";
-import {
-  deleteCalendarEntry,
-  saveCalendarEntryTags,
-} from "./calendar-entry-actions";
+
 import { StandaloneRowPanel } from "../Panels";
 import { UndoToast } from "../ui/Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
@@ -47,38 +47,19 @@ import {
   mergeSecretCalendarLayout,
   moveSecretEntries,
 } from "./secret-calendar-layout";
-import {
-  markSecretDocumentDeleted,
-  discardSecretDocument,
-} from "./secret-document-storage";
-import {
-  copySecretEntry,
-  deleteSecretEntry,
-  setSecretEntryTags,
-  setSecretTagChecked,
-  isSecretEntry,
-  moveSecretEntry,
-  saveSecretEntry,
-  setSecretCalendarVisible,
-  type SecretCalendarEntry,
-} from "./secret-calendar";
+
+import { isSecretEntry, setSecretCalendarVisible } from "./secret-calendar";
 import CalendarEntries from "./CalendarEntries";
 import CalendarTaskPicker from "./CalendarTaskPicker";
 import CalendarTagManager, {
   CalendarTagPicker,
   calendarTagManagerLabel,
 } from "./CalendarTags";
-import {
-  applyCalendarTagCheck,
-  saveCalendarTagCheck,
-} from "./calendar-tag-checks";
+
 import { useCalendarDrag, type CalendarRange } from "./useCalendarDrag";
 import { reorderItems, useListReorder } from "../ui/useListReorder";
 import { useCalendarData } from "./useCalendarData";
-import {
-  mergeCalendarLayout,
-  placeCalendarEntry,
-} from "../../shared/calendar/calendar-layout.js";
+import { placeCalendarEntry } from "../../shared/calendar/calendar-layout.js";
 import { CalendarRuleSettings, CalendarWeekdays } from "./CalendarSettings";
 import {
   addDays,
@@ -100,13 +81,8 @@ import type {
   CalendarContext,
   CalendarData,
   CalendarEntry,
-  CalendarEntryUpdate,
   CalendarTag,
-  CalendarEntryDeletion,
   WeeklyItem,
-  WeeklyAddResult,
-  WeeklyRemoveResult,
-  WeeklyRestoreResult,
 } from "./calendar-types";
 import "./calendar.css";
 import "./secret-calendar.css";
@@ -188,7 +164,7 @@ export default function Calendar({
   const [context, setContext] = useState<CalendarContext | null>(null);
   const [error, setError] = useState("");
   const secret = useSecretCalendar(user.id, team.id);
-  const [pending, setPending] = useState(false);
+
   const [rangeChange, setRangeChange] = useState<{
     entry: CalendarEntry;
     range: CalendarRange;
@@ -229,33 +205,11 @@ export default function Calendar({
     anchor: HTMLElement;
   } | null>(null);
   const [tagEntry, setTagEntry] = useState<CalendarEntry | null>(null);
-  const copyRequest = useRef<{ source: CalendarEntry; id: string } | null>(
-    null,
-  );
-  const deleteRequests = useRef(new Map<string, string>());
-  const [deleted, setDeleted] = useState<{
-    entry: CalendarEntry;
-    deletionId: string;
-  } | null>(null);
+
   // Only one undo is offered at a time, for a card or for a weekly item.
-  const [removedWeekly, setRemovedWeekly] = useState<{
-    item: WeeklyItem;
-    teamId: string;
-  } | null>(null);
-  const [importing, setImporting] = useState<{
-    userId: string;
-    weekStart: string;
-  } | null>(null);
+
   const [task, setTask] = useState<Task | null>(null);
-  const [creating, setCreating] = useState<{
-    secret: boolean;
-    id: string;
-    date: string;
-    userId: string | null;
-    title: string;
-    tagIds: string[];
-    checkedTagIds: string[];
-  } | null>(null);
+
   const weeks = useMemo(() => monthWeeks(month), [month]);
   const navigationWeek =
     view === "team"
@@ -280,19 +234,7 @@ export default function Calendar({
   const tagsFor = (ownerId: string | null) =>
     tagCatalogs.get(ownerId) || EMPTY_TAGS;
   const monthlyOwner = view === "shared" ? null : memberId;
-  const tagOwner = tagEntry
-    ? tagEntry.userId
-    : entry
-      ? entry.userId
-      : creating
-        ? creating.userId
-        : view === "shared"
-          ? null
-          : view === "month"
-            ? memberId
-            : members.some((m) => m.id === user.id)
-              ? user.id
-              : memberId;
+
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
     if (view !== "team")
@@ -313,10 +255,19 @@ export default function Calendar({
   const loadError =
     view !== "team" ? schedules.get(monthlyOwner)?.error || "" : "";
   const scope = `${team.id}:${view}:${JSON.stringify(queries)}`;
-  const activeScope = useRef(scope);
-  activeScope.current = scope;
-  const alive = useRef(true);
-  const busy = useRef(false);
+
+  const mutation = useCalendarMutation(
+    scope,
+    beginMutation,
+    endMutation,
+    setError,
+  );
+  const { pending, busy, action, alive, localAction } = mutation;
+  const manageable = canManageTeam(user, team.id);
+  const writable = (ownerId: string | null) =>
+    ownerId === null
+      ? manageable || user.teamIds.includes(team.id)
+      : manageable || (ownerId === user.id && canContribute(user, team.id));
   const dragging = useCalendarDrag(
     scroll,
     `${scope}:${weekdays.join(",")}`,
@@ -324,6 +275,38 @@ export default function Calendar({
     (item, range, lane) => void saveRange({ entry: item, range, lane }),
   );
   const locked = pending || !!rangeChange || !!dragging.drag;
+  const {
+    creating,
+    setCreating,
+    newEntry,
+    changeCreating,
+    saveCreating,
+    closeCreating,
+  } = useCalendarCreation({
+    user,
+    team,
+    tagMap,
+    schedules,
+    mutation,
+    writable,
+    locked,
+    composingTitle,
+    upsert: (saved) => commands.upsert(saved),
+    setError,
+  });
+  const tagOwner = tagEntry
+    ? tagEntry.userId
+    : entry
+      ? entry.userId
+      : creating
+        ? creating.userId
+        : view === "shared"
+          ? null
+          : view === "month"
+            ? memberId
+            : members.some((m) => m.id === user.id)
+              ? user.id
+              : memberId;
   const seenReloadKey = useRef(reloadKey);
   useEffect(() => {
     if (reloadKey === seenReloadKey.current) return;
@@ -349,31 +332,7 @@ export default function Calendar({
     showRule ||
     showTags ||
     !!addingWeek;
-  useEffect(() => {
-    if ((!deleted && !removedWeekly) || undoBlocked) return;
-    const timer = setTimeout(() => {
-      setDeleted(null);
-      setRemovedWeekly(null);
-    }, 8000);
-    return () => clearTimeout(timer);
-  }, [deleted, removedWeekly, undoBlocked]);
-  useEffect(() => {
-    setDeleted(null);
-    setRemovedWeekly(null);
-  }, [team.id, user.id]);
-  useEffect(
-    () => () => {
-      if (deleted && isSecretEntry(deleted.entry)) {
-        const entry = deleted.entry;
-        void discardSecretDocument(entry.userId, entry.teamId, entry.id).catch(
-          (error) => {
-            if (alive.current) setError(error.message);
-          },
-        );
-      }
-    },
-    [deleted],
-  );
+
   useEffect(() => {
     setEntryMenu(null);
     setTagEntry(null);
@@ -387,6 +346,50 @@ export default function Calendar({
     window.addEventListener("beforeunload", unload);
     return () => window.removeEventListener("beforeunload", unload);
   }, [rangeChange]);
+  const commands = useCalendarCommands({
+    scope,
+    mutation,
+    team,
+    user,
+    members,
+    tagOwner,
+    undoBlocked,
+    locked,
+    writable,
+    schedules,
+    updateData,
+    setContext,
+    setTagEntry,
+    setCreating,
+    setEntry,
+    setTask,
+    setRangeChange,
+    setRangeConflict,
+    setError,
+    onNotify,
+  });
+  const {
+    deleted,
+    removedWeekly,
+    importing,
+    upsert,
+    changeTags,
+    entryDeleted,
+    removeSecret,
+    checkEntryTag,
+    duplicateEntry,
+    removeEntry,
+    updateEntryTags,
+    restoreEntry,
+    updateWeekly,
+    importWeek,
+    removeWeekly,
+    reorderWeekly,
+    restoreWeekly,
+    saveRange,
+    openTask,
+    checkTag,
+  } = commands;
   useLayoutEffect(() => {
     if (!data || todayJump === appliedJump.current || !scroll.current) return;
     appliedJump.current = todayJump;
@@ -412,17 +415,7 @@ export default function Calendar({
       ),
     });
   }, [data, todayJump, today]);
-  const manageable = canManageTeam(user, team.id);
-  const writable = (ownerId: string | null) =>
-    ownerId === null
-      ? manageable || user.teamIds.includes(team.id)
-      : manageable || (ownerId === user.id && canContribute(user, team.id));
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+
   useEffect(() => {
     onBusyChange(
       locked ||
@@ -592,98 +585,7 @@ export default function Calendar({
     }
     return map;
   }, [data]);
-  function upsert({ placements = [], layout, ...saved }: CalendarEntryUpdate) {
-    if (isSecretEntry(saved) || activeScope.current !== scope || !alive.current)
-      return;
-    const positions = new Map(placements.map((item) => [item.id, item.lane]));
-    updateData((previous, query) =>
-      query.userId !== saved.userId
-        ? previous
-        : {
-            ...previous,
-            layout: mergeCalendarLayout(previous.layout, layout || [saved]),
-            entries: [
-              ...previous.entries
-                .filter((item) => item.id !== saved.id)
-                .map((item) => {
-                  const lane = positions.get(item.id);
-                  return lane === undefined || lane === item.lane
-                    ? item
-                    : { ...item, lane };
-                }),
-              ...(saved.date <= query.to && saved.endDate >= query.from
-                ? [saved]
-                : []),
-            ],
-          },
-    );
-  }
-  function changeTags(next: CalendarTag[]) {
-    const available = new Set(next.map((tag) => tag.id));
-    const checkable = new Set(
-      next.filter((tag) => tag.kind === "check").map((tag) => tag.id),
-    );
-    setContext(
-      (previous) =>
-        previous && {
-          ...previous,
-          tags: [
-            ...previous.tags.filter((tag) => tag.userId !== tagOwner),
-            ...next,
-          ],
-        },
-    );
-    // Names and colors are resolved through the owner's catalog. Only removal
-    // changes entry references; no calendar reload is needed for tag edits.
-    updateData((previous, query) => {
-      if (query.userId !== tagOwner) return previous;
-      if (
-        !previous.entries.some(
-          (item) =>
-            item.tagIds.some((id) => !available.has(id)) ||
-            item.checkedTagIds.some((id) => !checkable.has(id)),
-        )
-      )
-        return previous;
-      return {
-        ...previous,
-        entries: previous.entries.map((item) =>
-          item.tagIds.some((id) => !available.has(id)) ||
-          item.checkedTagIds.some((id) => !checkable.has(id))
-            ? {
-                ...item,
-                tagIds: item.tagIds.filter((id) => available.has(id)),
-                checkedTagIds: item.checkedTagIds.filter((id) =>
-                  checkable.has(id),
-                ),
-              }
-            : item,
-        ),
-      };
-    });
-    setTagEntry((previous) =>
-      previous && previous.userId === tagOwner && !isSecretEntry(previous)
-        ? {
-            ...previous,
-            tagIds: previous.tagIds.filter((id) => available.has(id)),
-            checkedTagIds: previous.checkedTagIds.filter((id) =>
-              checkable.has(id),
-            ),
-          }
-        : previous,
-    );
-    setCreating((previous) =>
-      previous && previous.userId === tagOwner
-        ? {
-            ...previous,
-            tagIds: previous.tagIds.filter((id) => available.has(id)),
-            checkedTagIds: previous.checkedTagIds.filter((id) =>
-              checkable.has(id),
-            ),
-          }
-        : previous,
-    );
-  }
+
   function changeMonth(next: string) {
     if (
       !/^\d{4}-(0[1-9]|1[0-2])$/.test(next) ||
@@ -693,482 +595,13 @@ export default function Calendar({
       return;
     setMonth(next);
   }
-  async function action(work: () => Promise<void>) {
-    if (busy.current) return;
-    busy.current = true;
-    beginMutation();
-    setPending(true);
-    setError("");
-    try {
-      await work();
-    } catch (e) {
-      if (alive.current) setError((e as Error).message);
-    } finally {
-      busy.current = false;
-      endMutation();
-      if (alive.current) setPending(false);
-    }
-  }
-  function entryDeleted(
-    removed: CalendarEntry,
-    { deletionId, placements, layout }: CalendarEntryDeletion,
-  ) {
-    const positions = new Map(placements.map((item) => [item.id, item.lane]));
-    updateData((previous, query) =>
-      query.userId !== removed.userId
-        ? previous
-        : {
-            ...previous,
-            layout: mergeCalendarLayout(previous.layout, layout, removed.id),
-            entries: previous.entries
-              .filter((item) => item.id !== removed.id)
-              .map((item) => {
-                const lane = positions.get(item.id);
-                return lane === undefined || lane === item.lane
-                  ? item
-                  : { ...item, lane };
-              }),
-          },
-    );
-    setDeleted({ entry: removed, deletionId });
-    setRemovedWeekly(null);
-    onNotify("");
-    setEntry(null);
-  }
-  function localAction(work: () => unknown) {
-    setError("");
-    try {
-      void Promise.resolve(work()).catch((error) =>
-        setError((error as Error).message),
-      );
-    } catch (error) {
-      setError((error as Error).message);
-    }
-  }
-  async function removeSecret(source: SecretCalendarEntry) {
-    await markSecretDocumentDeleted(
-      source.userId,
-      source.teamId,
-      source.id,
-      true,
-    );
-    const removed = deleteSecretEntry(source);
-    setDeleted({ entry: removed, deletionId: "" });
-    setRemovedWeekly(null);
-    onNotify("");
-    setEntry(null);
-  }
-  async function duplicateEntry(source: CalendarEntry) {
-    if (isSecretEntry(source)) {
-      localAction(() => {
-        copySecretEntry(
-          source,
-          schedules.get(source.userId)?.data?.layout || [],
-        );
-      });
-      return;
-    }
-    if (!writable(source.userId)) return;
-    if (copyRequest.current?.source.id !== source.id)
-      copyRequest.current = { source, id: crypto.randomUUID() };
-    const copy = copyRequest.current;
-    await action(async () => {
-      const saved = await send<CalendarEntry>(
-        `/calendar/entries/${copy.source.id}/copy`,
-        { id: copy.id },
-      );
-      upsert(saved);
-      copyRequest.current = null;
-    });
-  }
-  async function removeEntry(source: CalendarEntry) {
-    if (isSecretEntry(source)) {
-      localAction(() => removeSecret(source));
-      return;
-    }
-    if (!writable(source.userId)) return;
-    const deletionId =
-      deleteRequests.current.get(source.id) || crypto.randomUUID();
-    deleteRequests.current.set(source.id, deletionId);
-    await action(async () => {
-      const result = await deleteCalendarEntry(source, deletionId);
-      if (!alive.current) return;
-      entryDeleted(source, result);
-      deleteRequests.current.delete(source.id);
-    });
-  }
-  async function updateEntryTags(source: CalendarEntry, ids: string[]) {
-    if (isSecretEntry(source)) {
-      localAction(() => {
-        setTagEntry(setSecretEntryTags(source, ids));
-      });
-      return;
-    }
-    await action(async () => {
-      try {
-        const saved = await saveCalendarEntryTags(source, ids);
-        upsert(saved);
-        setTagEntry(saved);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          const latest = await api<CalendarEntry>(
-            `/calendar/entries/${source.id}`,
-          );
-          upsert(latest);
-          setTagEntry(latest);
-        }
-        throw error;
-      }
-    });
-  }
-  async function restoreEntry() {
-    if (!deleted || undoBlocked || busy.current) return;
-    const restoring = deleted;
-    if (isSecretEntry(restoring.entry)) {
-      localAction(async () => {
-        await markSecretDocumentDeleted(
-          user.id,
-          restoring.entry.teamId,
-          restoring.entry.id,
-          false,
-        );
-        saveSecretEntry(user.id, restoring.entry, true);
-        setDeleted(null);
-        onNotify(`‘${restoring.entry.title}’ 일정을 되살렸습니다.`);
-      });
-      return;
-    }
-    await action(async () => {
-      const saved = await send<CalendarEntryUpdate>(
-        `/calendar/entries/${restoring.entry.id}/restore`,
-        {
-          deletionId: restoring.deletionId,
-          previousRange: {
-            date: restoring.entry.date,
-            endDate: restoring.entry.endDate,
-          },
-        },
-      );
-      if (!alive.current || restoring.entry.teamId !== team.id) return;
-      upsert(saved);
-      setDeleted(null);
-      onNotify(`‘${saved.title}’ 일정을 되살렸습니다.`);
-    });
-  }
-  function updateWeekly(ownerId: string, start: string, weekly: WeeklyItem[]) {
-    updateData((previous, query) =>
-      query.userId !== ownerId
-        ? previous
-        : {
-            ...previous,
-            weekly: [
-              ...previous.weekly.filter((item) => item.weekStart !== start),
-              ...weekly,
-            ],
-          },
-    );
-  }
-  async function importWeek(ownerId: string, start: string) {
-    const requestScope = scope;
-    await action(async () => {
-      // The week's list shows the loader until the import settles.
-      setImporting({ userId: ownerId, weekStart: start });
-      const result = await send<WeeklyAddResult & { unassigned: number }>(
-        "/calendar/import",
-        {
-          teamId: team.id,
-          userId: ownerId,
-          weekStart: start,
-        },
-      ).finally(() => {
-        if (alive.current) setImporting(null);
-      });
-      if (!alive.current || activeScope.current !== requestScope) return;
-      updateWeekly(ownerId, start, result.weekly);
-      setDeleted(null);
-      setRemovedWeekly(null);
-      onNotify(
-        `${members?.find((m) => m.id === ownerId)?.name} · ${weekLabel(start)}: ${result.added}개 가져옴, 기존 ${result.existing}개 유지${result.unassigned ? ` · 미지정 ${result.unassigned}개 제외` : ""}`,
-      );
-    });
-  }
+
   // Removing a weekly item only unlinks the task from that week. Undo links
   // the same task again at its previous position, like a card's undo.
-  async function removeWeekly(item: WeeklyItem) {
-    if (!writable(item.userId)) return;
-    const requestScope = scope;
-    await action(async () => {
-      const result = await send<WeeklyRemoveResult>(
-        "/calendar/weekly",
-        {
-          teamId: team.id,
-          userId: item.userId,
-          weekStart: item.weekStart,
-          taskId: item.taskId,
-        },
-        "DELETE",
-      );
-      if (!alive.current || activeScope.current !== requestScope) return;
-      updateWeekly(item.userId, item.weekStart, result.weekly);
-      setDeleted(null);
-      setRemovedWeekly({ item, teamId: team.id });
-      onNotify("");
-    });
-  }
+
   // Moving a weekly item saves the week's new order. The list shows it at
   // once and returns to the saved order when saving fails.
-  async function reorderWeekly(
-    ownerId: string,
-    start: string,
-    items: WeeklyItem[],
-    taskIds: string[],
-  ) {
-    if (!writable(ownerId) || busy.current) return;
-    const requestScope = scope;
-    const byId = new Map(items.map((item) => [item.taskId, item]));
-    updateWeekly(
-      ownerId,
-      start,
-      taskIds.map((id) => byId.get(id)!),
-    );
-    await action(async () => {
-      try {
-        const result = await send<{ weekly: WeeklyItem[] }>(
-          "/calendar/weekly/reorder",
-          { teamId: team.id, userId: ownerId, weekStart: start, taskIds },
-        );
-        if (!alive.current || activeScope.current !== requestScope) return;
-        updateWeekly(ownerId, start, result.weekly);
-      } catch (error) {
-        if (alive.current && activeScope.current === requestScope)
-          updateWeekly(ownerId, start, items);
-        throw error;
-      }
-    });
-  }
-  async function restoreWeekly() {
-    if (!removedWeekly || undoBlocked || busy.current) return;
-    const restoring = removedWeekly;
-    await action(async () => {
-      const { item } = restoring;
-      const result = await send<WeeklyRestoreResult>(
-        "/calendar/weekly/restore",
-        {
-          teamId: restoring.teamId,
-          userId: item.userId,
-          weekStart: item.weekStart,
-          taskId: item.taskId,
-          importedAt: item.importedAt,
-        },
-      );
-      if (!alive.current || restoring.teamId !== team.id) return;
-      updateWeekly(item.userId, item.weekStart, result.weekly);
-      setRemovedWeekly(null);
-      onNotify(
-        `‘${item.title || "제목 없는 업무"}’ 업무를 주간 할 일에 되살렸습니다.`,
-      );
-    });
-  }
-  async function saveRange(
-    change: { entry: CalendarEntry; range: CalendarRange; lane?: number },
-    expected?: CalendarRange & { lane?: number },
-  ) {
-    if (isSecretEntry(change.entry)) {
-      if (busy.current) return;
-      localAction(() =>
-        moveSecretEntry(
-          change.entry as SecretCalendarEntry,
-          schedules.get(change.entry.userId)?.data?.layout || [],
-          change.range,
-          change.lane,
-        ),
-      );
-      return;
-    }
-    const reordering = change.lane !== undefined;
-    if (
-      busy.current ||
-      !writable(change.entry.userId) ||
-      (reordering
-        ? change.lane === change.entry.lane
-        : change.entry.date === change.range.date &&
-          change.entry.endDate === change.range.endDate)
-    )
-      return;
-    if (reordering && expected)
-      change = {
-        ...change,
-        entry: { ...change.entry, ...expected },
-        range: { date: expected.date, endDate: expected.endDate },
-      };
-    setRangeChange(change);
-    await action(async () => {
-      try {
-        const previous = expected || change.entry;
-        const saved = await send<CalendarEntryUpdate>(
-          `/calendar/entries/${change.entry.id}`,
-          {
-            ...(reordering
-              ? {
-                  lane: change.lane,
-                  expectedLane: previous.lane ?? change.entry.lane,
-                }
-              : change.range),
-            expectedDate: previous.date,
-            expectedEndDate: previous.endDate,
-          },
-          "PATCH",
-        );
-        if (!alive.current || activeScope.current !== scope) return;
-        upsert(saved);
-        setRangeChange(null);
-        setRangeConflict(null);
-      } catch (e) {
-        if (alive.current && e instanceof ApiError && e.details?.currentRange)
-          setRangeConflict(e.details.currentRange as CalendarRange);
-        throw e;
-      }
-    });
-  }
-  async function openTask(id: string) {
-    const requestScope = scope;
-    await action(async () => {
-      const result = await api<{ task: Task }>(`/calendar/tasks/${id}`);
-      if (alive.current && activeScope.current === requestScope)
-        setTask(result.task);
-    });
-  }
-  async function checkTag(
-    item: CalendarEntry,
-    tagId: string,
-    checked: boolean,
-  ) {
-    if (isSecretEntry(item)) {
-      localAction(() => {
-        setSecretTagChecked(item, tagId, checked);
-      });
-      return;
-    }
-    if (locked || !writable(item.userId)) return;
-    const requestScope = scope;
-    const apply = (change: {
-      tagId: string;
-      checked: boolean;
-      updatedAt: string;
-    }) => {
-      if (!alive.current || activeScope.current !== requestScope) return;
-      updateData((previous, query) =>
-        query.userId !== item.userId
-          ? previous
-          : {
-              ...previous,
-              entries: previous.entries.map((value) =>
-                value.id === item.id
-                  ? applyCalendarTagCheck(value, change)
-                  : value,
-              ),
-            },
-      );
-    };
-    await action(async () => {
-      apply({ tagId, checked, updatedAt: item.updatedAt });
-      try {
-        apply(await saveCalendarTagCheck(item, tagId, checked));
-      } catch (error) {
-        apply({
-          tagId,
-          checked: item.checkedTagIds.includes(tagId),
-          updatedAt: item.updatedAt,
-        });
-        throw error;
-      }
-    });
-  }
-  function newEntry(date: string, ownerId: string | null) {
-    const key = `weekly-plan:calendar-create:${user.id}:${team.id}:${ownerId}:${date}`;
-    let saved;
-    try {
-      saved = JSON.parse(sessionStorage.getItem(key) || "null");
-    } catch {
-      /* optional draft */
-    }
-    const tagIds: string[] = Array.isArray(saved?.tagIds)
-      ? saved.tagIds.filter((id: string) => tagMap.get(id)?.userId === ownerId)
-      : [];
-    setCreating({
-      secret:
-        ownerId === user.id && (saved?.secret === true || !writable(ownerId)),
-      id: typeof saved?.id === "string" ? saved.id : crypto.randomUUID(),
-      date,
-      userId: ownerId,
-      title: typeof saved?.title === "string" ? saved.title : "",
-      tagIds,
-      checkedTagIds: Array.isArray(saved?.checkedTagIds)
-        ? saved.checkedTagIds.filter(
-            (id: string) =>
-              tagIds.includes(id) && tagMap.get(id)?.kind === "check",
-          )
-        : [],
-    });
-  }
-  const draftKey = creating
-    ? `weekly-plan:calendar-create:${user.id}:${team.id}:${creating.userId}:${creating.date}`
-    : "";
-  function changeCreating(next: NonNullable<typeof creating>) {
-    setCreating(next);
-    try {
-      sessionStorage.setItem(draftKey, JSON.stringify(next));
-    } catch {
-      setError("새 일정을 임시 보관할 수 없습니다. 저장 후 닫아 주세요.");
-    }
-  }
-  function saveCreating() {
-    if (!creating || locked || !creating.title.trim() || composingTitle.current)
-      return;
-    if (creating.secret) {
-      if (creating.userId !== user.id) return;
-      localAction(() => {
-        saveSecretEntry(
-          user.id,
-          {
-            id: `secret:${creating.id}`,
-            teamId: team.id,
-            title: creating.title,
-            date: creating.date,
-            endDate: creating.date,
-            lane: 0,
-            tagIds: creating.tagIds,
-            checkedTagIds: creating.checkedTagIds,
-          },
-          true,
-          schedules.get(user.id)?.data?.layout || [],
-        );
-        try {
-          sessionStorage.removeItem(draftKey);
-        } catch {
-          /* Saved locally. */
-        }
-        setCreating(null);
-      });
-      return;
-    }
-    if (!writable(creating.userId)) return;
-    void action(async () => {
-      const { secret: _secret, ...input } = creating;
-      const saved = await send<CalendarEntry>("/calendar/entries", {
-        ...input,
-        teamId: team.id,
-      });
-      if (!alive.current) return;
-      try {
-        sessionStorage.removeItem(draftKey);
-      } catch {
-        /* The server save succeeded. */
-      }
-      upsert(saved);
-      setCreating(null);
-    });
-  }
+
   const dayCell = (date: string, ownerId: string | null, column: number) => (
     <div
       key={date}
@@ -2056,37 +1489,9 @@ export default function Calendar({
             checkedIds={tagEntry.checkedTagIds}
             disabled={locked}
             onChange={(ids) => void updateEntryTags(tagEntry, ids)}
-            onCheckChange={(tagId, checked) => {
-              if (isSecretEntry(tagEntry)) {
-                const source = tagEntry;
-                localAction(() => {
-                  setTagEntry(setSecretTagChecked(source, tagId, checked));
-                });
-                return;
-              }
-              void action(async () => {
-                setTagEntry(
-                  applyCalendarTagCheck(tagEntry, {
-                    tagId,
-                    checked,
-                    updatedAt: tagEntry.updatedAt,
-                  }),
-                );
-                try {
-                  const change = await saveCalendarTagCheck(
-                    tagEntry,
-                    tagId,
-                    checked,
-                  );
-                  const saved = applyCalendarTagCheck(tagEntry, change);
-                  upsert(saved);
-                  setTagEntry(saved);
-                } catch (error) {
-                  setTagEntry(tagEntry);
-                  throw error;
-                }
-              });
-            }}
+            onCheckChange={(tagId, checked) =>
+              checkEntryTag(tagEntry, tagId, checked)
+            }
             onManage={() => setShowTags(true)}
           />
           <ErrorNote error={error} />
@@ -2102,20 +1507,7 @@ export default function Calendar({
             else if (creating.tagIds.length) createTitle.current?.focus();
             else setCreating(null);
           }}
-          onClose={() => {
-            if (pending) return;
-            if (creating.title || creating.tagIds.length) {
-              try {
-                sessionStorage.setItem(draftKey, JSON.stringify(creating));
-              } catch {
-                setError(
-                  "제목을 임시 보관할 수 없습니다. 제목을 복사하거나 저장 후 닫아 주세요.",
-                );
-                return;
-              }
-            }
-            setCreating(null);
-          }}
+          onClose={closeCreating}
         >
           <form
             className="calendar-create-form"
