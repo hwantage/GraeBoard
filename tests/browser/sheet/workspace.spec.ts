@@ -4577,7 +4577,7 @@ test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여�
     ),
   );
   await expect(page.locator(".inline-editor textarea")).toBeVisible();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.locator(".inline-editor textarea").press("Enter");
   await expect(first).toHaveText("한글 조합 검증");
 });

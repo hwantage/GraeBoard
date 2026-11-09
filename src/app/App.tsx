@@ -1,23 +1,22 @@
+import useSheetRowCommands from "../sheet/useSheetRowCommands";
+import useSheetCellCommands from "../sheet/useSheetCellCommands";
+import useSheetUndo from "../sheet/useSheetUndo";
 import useSheetHistory from "../sheet/useSheetHistory";
 import useSheetLayout from "../sheet/useSheetLayout";
-import useSheetOperations, {
-  type CellFailure,
-} from "../sheet/useSheetOperations";
+import useSheetOperations from "../sheet/useSheetOperations";
 import useTaskData from "../sheet/useTaskData";
 import useSavedFilters, { type SavedFilter } from "../sheet/useSavedFilters";
 import SavedFilterDialog from "../sheet/SavedFilterDialog";
 import { RecentColorsProvider } from "../ui/recent-colors";
 import AnnualMemoPanel from "../documents/AnnualMemoPanel";
-import type { DocumentPanelHandle } from "../documents/DocumentPanel";
+
 import Calendar from "../calendar/Calendar";
 import { busyProps } from "../ui/busyProps";
 import Select from "../ui/Select";
 import LoadingState from "../ui/LoadingState";
 import SheetTabs from "../sheet/SheetTabs";
-import DocumentBrowser, {
-  type DocumentBrowserHandle,
-} from "../documents/DocumentBrowser";
-import useWorkspaceRoute from "./useWorkspaceRoute";
+import DocumentBrowser from "../documents/DocumentBrowser";
+import useWorkspaceNavigation from "./useWorkspaceNavigation";
 import DocumentLinkPanel, {
   loadDocumentLink,
   type OpenedDocumentLink,
@@ -38,20 +37,14 @@ import {
   getTheme,
   themeVariables,
 } from "../../shared/formatting/themes.js";
-import { applyBorderPreset } from "../../shared/formatting/borders.js";
-import { formatScopes } from "../sheet/format-selection.js";
+
 import {
   changeSelection,
   changedRules,
   coversAll,
-  nearbyRows,
-  sheetChanges,
   type ChangeTargets,
 } from "../sheet/selection-areas.js";
-import {
-  copyRowFormatting,
-  resetCellStyle,
-} from "../../shared/formatting/formatting.js";
+
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
@@ -80,7 +73,6 @@ import {
   api,
   send,
   ApiError,
-  taskQuery,
   logout,
   refreshExternalTeam,
 } from "../platform/api";
@@ -92,12 +84,10 @@ import {
   fieldsFor,
   orderColumns,
   propertiesFor,
-  emptyPropertyValue,
   normalizeView,
   savedFilter,
   teamRole,
   DEFAULT_SETTINGS,
-  MAX_STYLE_CELLS,
   defaultView,
   visibleWeeks,
   weeksForPeriod,
@@ -116,20 +106,13 @@ import type {
   Bootstrap,
   Task,
   View,
-  Style,
-  Border,
-  BorderPreset,
   Selection,
   Point,
-  CellChange,
   BatchResult,
   HistoryEntry,
-  TaskDeletion,
-  TaskCreation,
   SheetClone,
   SavedCell,
   Property,
-  FormatChange,
   FormatRule,
 } from "../types";
 import { Auth } from "../auth/Auth";
@@ -143,13 +126,7 @@ import Toast, { UndoToast, useToast } from "../ui/Toast";
 import useResourceSync from "../platform/useResourceSync";
 import useSheetCloneDraft from "../sheet/useSheetCloneDraft";
 import { BrandMark, BrandWordmark } from "../ui/Brand";
-import Grid, {
-  type Column,
-  type RowCommand,
-  rangeOf,
-  rangesOf,
-  selectedPoints,
-} from "../sheet/Grid";
+import Grid, { type Column, rangeOf, rangesOf } from "../sheet/Grid";
 import Toolbar from "../sheet/Toolbar";
 import SaveStatus from "./SaveStatus";
 import ActiveFilterConditions from "../sheet/ActiveFilterConditions";
@@ -159,9 +136,8 @@ import AccountMenu from "../auth/AccountMenu";
 import ProfilePanel from "../auth/ProfilePanel";
 import AccessTokens from "../auth/AccessTokens";
 import FindBar from "../sheet/FindBar";
-import type { ClipboardMatrix } from "../sheet/clipboard";
-import { STYLE_KEYS } from "../../shared/formatting/compact.js";
-import { describeStyle, canUndoCreation } from "../sheet/history";
+
+import { describeStyle } from "../sheet/history";
 import {
   RowPanel,
   ExportPanel,
@@ -277,24 +253,50 @@ function Workspace({
     history.replaceState(history.state, "", "/");
     return { target, fullPage };
   });
-  const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
+  const navigation = useWorkspaceNavigation({
+    canLeaveSheet: () =>
+      !(
+        operations.isPending() ||
+        operations.failure() ||
+        editorRef.current ||
+        sheetCloneDraft.dirty ||
+        sheetCloneDraft.saving
+      ),
+    async prepareAnnual(fromDocuments) {
+      if (fromDocuments) {
+        closeSheetCloneNow();
+        await refresh();
+      } else await openSheetClone(null);
+    },
+    onAnnualReselect: () => closeSheetClone(),
+    flushLayout: () => layout.flush(),
+    onPrepared(next) {
+      setViewMenu(false);
+      if (next === "calendar") setRowTask(null);
+    },
+    onError: (message) => setError(message),
+  });
+  const {
+    workspaceRoute,
+    screen,
+    documentBrowser,
+    annualMemoRef,
+    documentBrowserRef,
+    calendarBusy,
+    setCalendarBusy,
+    workspaceNavigating,
+    setWorkspaceNavigating,
+    navigateWorkspace,
+    openAnnualWorkspace,
+    closeDocumentBrowser,
+  } = navigation;
   const calendarTheme = useCalendarTheme();
-  const screen = workspaceRoute.route === "calendar" ? "calendar" : "annual";
-  const [calendarBusy, setCalendarBusy] = useState(false);
-  const documentBrowser = workspaceRoute.route === "documents";
-  const annualMemoRef = useRef<DocumentPanelHandle>(null);
-  const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
-  const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const [initialBoard] = useState(() => rememberedBoard(boot));
   const [teamId, setTeamId] = useState(initialBoard.teamId),
     [year, setYear] = useState(initialBoard.year),
     [view, setView] = useState<View>(defaultView(initialBoard.year) as View),
     [panel, setPanel] = useState(""),
     [rowTask, setRowTask] = useState<Task | null>(null),
-    [copiedRow, setCopiedRow] = useState<{
-      task: Task;
-      height?: number;
-    } | null>(null),
     [editor, setEditor] = useState<{
       point: Point;
       initial?: string;
@@ -305,10 +307,6 @@ function Workspace({
       value: SavedCell["value"];
     } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
-    [formatBrush, setFormatBrush] = useState<{
-      styles: Style[][];
-      repeat: boolean;
-    } | null>(null),
     [error, setError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
     [undoToast, setUndoToast] = useState<
@@ -668,7 +666,7 @@ function Workspace({
       };
     }
     layout.flush();
-    setCopiedRow(null);
+    rowCommands.clearCopiedRow();
     setRowTask(null);
     setViewMenu(false);
     setError("");
@@ -811,21 +809,7 @@ function Workspace({
         ?.focus({ preventScroll: true });
     }
   }, [presentation]);
-  useEffect(() => {
-    setFormatBrush(null);
-  }, [teamId, year, sheetClone?.id, presentation, screen]);
-  useEffect(() => {
-    if (!formatBrush) return;
-    const cancel = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (workspaceRef.current?.querySelector("dialog[open]")) return;
-      event.preventDefault();
-      setFormatBrush(null);
-    };
-    // The drag tracker consumes Escape at window capture, before React events.
-    window.addEventListener("keydown", cancel, true);
-    return () => window.removeEventListener("keydown", cancel, true);
-  }, [formatBrush]);
+
   useEffect(() => {
     if (!presentation) return;
     const exit = (e: KeyboardEvent) => {
@@ -971,7 +955,7 @@ function Workspace({
     sheetCloneScroll.current = null;
     sheetHistory.reset();
     setPendingEdit(null);
-    setCopiedRow(null);
+    rowCommands.clearCopiedRow();
     setJump(null);
     const navigation = calendarNavigation.current;
     calendarNavigation.current = null;
@@ -1415,9 +1399,121 @@ function Workspace({
     (sheetClone ? canAdd : canEdit(user, selectedTask)) &&
     (!sheetClone || editingSheetClone) &&
     !failed;
-  function getPoints() {
-    return selectedPoints(selection, visibleTasks, columns);
-  }
+
+  const rowCommands = useSheetRowCommands({
+    teamId,
+    year,
+    user,
+    view,
+    properties,
+    ready,
+    canAdd,
+    presentation,
+    sheetClone,
+    editingSheetClone,
+    taskData,
+    operations,
+    sheetCloneDraft,
+    recordTaskResult,
+    refresh,
+    editTasks,
+    visibleTasks,
+    selection,
+    selectionEpoch,
+    editorRef,
+    rowTask,
+    changeView,
+    setSelection,
+    setEditor,
+    setJump,
+    setRowTask,
+    setError,
+    setToast,
+    setUndoToast,
+    revealChange,
+  });
+  const {
+    copiedRow,
+    deleteTasks,
+    restoreTasks,
+    addTask,
+    reorderTask,
+    documentsForSheetCloneRows,
+    rowCommand,
+    detailAction,
+  } = rowCommands;
+  const cellCommands = useSheetCellCommands({
+    teamId,
+    year,
+    user,
+    canAdd,
+    presentation,
+    sheetClone,
+    editingSheetClone,
+    operations,
+    sheetCloneDraft,
+    editTasks,
+    selection,
+    selectionEpoch,
+    editorRef,
+    setSelection,
+    setEditor,
+    setError,
+    changeView,
+    allTasks,
+    matchingTasks,
+    visibleTasks,
+    columns,
+    columnOrder,
+    fields,
+    properties,
+    assignableUsers,
+    viewRef,
+    editor,
+    workspaceRef,
+    editable,
+    pending,
+    failed,
+    range,
+    count,
+    screen,
+  });
+  const {
+    formatBrush,
+    submitChanges,
+    mutate,
+    applyStyle,
+    copyFormat,
+    paintFormat,
+    applyBorder,
+    beginEdit,
+    clearCells,
+    paste,
+  } = cellCommands;
+  const undo = useSheetUndo({
+    sheetClone,
+    editingSheetClone,
+    canAdd,
+    presentation,
+    editorRef,
+    sheetCloneDraft,
+    selectionEpoch,
+    documentsForSheetCloneRows,
+    setError,
+    revealChange,
+    visibleTasks,
+    selection,
+    setRowTask,
+    redoStack,
+    undoStack,
+    operations,
+    deleteTasks,
+    restoreTasks,
+    submitChanges,
+    taskData,
+    teamId,
+  });
+
   function applyResult(result: BatchResult) {
     const updatedTasks = mergeCellUpdates(taskData.snapshot(), result);
 
@@ -1464,1123 +1560,7 @@ function Workspace({
       }
     }
   }
-  function rejectPendingChanges() {
-    if (!operations.isPending()) return false;
-    setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
-    return true;
-  }
-  function submitChanges(
-    build: () => CellChange[],
-    mode: CellFailure["mode"] = "normal",
-    buildFormat?: () => FormatChange,
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return false;
-      try {
-        const changes = build();
-        const format = buildFormat?.();
-        if (changes.length) sheetCloneDraft.apply({ kind: "cells", changes });
-        if (format?.scopes)
-          sheetCloneDraft.apply({
-            kind: "format",
-            id: crypto.randomUUID(),
-            scopes: format.scopes,
-          });
-        if (editorRef.current) {
-          const task = editTasks().find(
-            (t) => t.id === editorRef.current!.task.id,
-          );
-          if (task) {
-            editorRef.current = { ...editorRef.current, task };
-            setEditor(editorRef.current);
-          }
-        }
-        return true;
-      } catch (e) {
-        setError((e as Error).message);
-        return false;
-      }
-    }
-    if (sheetClone || presentation || operations.failure()) return false;
-    if (rejectPendingChanges()) return false;
-    return operations.submit(
-      () => ({ changes: build(), format: buildFormat?.() }),
-      mode,
-      selectionEpoch.current,
-    );
-  }
-  function mutate(
-    points: Point[],
-    transform: (t: Task, key: string) => Partial<CellChange>,
-  ) {
-    if (!points.length) return false;
-    return submitChanges(() => {
-      const tasksById = new Map(editTasks().map((t) => [t.id, t]));
-      return points.map((p) => {
-        const task = tasksById.get(p.taskId);
-        if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
-        if (!(sheetClone ? canAdd : canEdit(user, task)))
-          throw new Error(
-            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
-          );
-        return {
-          ...p,
-          expectedVersion: cell(task, p.key).version,
-          expectedFormatRevision: task.formatting?.revision ?? 0,
-          ...transform(task, p.key),
-        };
-      });
-    });
-  }
-  function applyStyle(part: Partial<Style>, reset = false) {
-    try {
-      if (applyCommonStyle(part, reset)) return;
-      mutate(
-        selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
-        (t, k) => ({
-          style: reset
-            ? resetCellStyle(t, k)
-            : { ...cell(t, k).style, ...part },
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function copyFormat(repeat: boolean) {
-    if (formatBrush && !repeat) {
-      setFormatBrush(null);
-      return;
-    }
-    if (!editable || pending || editor || presentation) return;
-    try {
-      if (selection?.areas?.length)
-        throw new Error("서식을 복사할 때는 하나의 연속된 영역을 선택하세요.");
-      selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS);
-      if (!range || !count) return;
-      const styles = matchingTasks.slice(range.r1, range.r2 + 1).map((task) =>
-        columnOrder.slice(range.c1, range.c2 + 1).map(({ key }) => {
-          const source = cell(task, key).style;
-          // Missing properties must also replace the destination's inherited style.
-          return structuredClone(
-            Object.fromEntries(
-              Object.keys(STYLE_KEYS).map((name) => [
-                name,
-                source[name as keyof Style] ?? null,
-              ]),
-            ),
-          ) as Style;
-        }),
-      );
-      setFormatBrush({ styles, repeat });
-      requestAnimationFrame(() =>
-        workspaceRef.current
-          ?.querySelector<HTMLElement>(".sheet-scroll")
-          ?.focus({ preventScroll: true }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function paintFormat(target: Selection | null) {
-    if (!formatBrush || !target || editor || presentation || failed) return;
-    if (!sheetClone && rejectPendingChanges()) return;
-    try {
-      const { styles, repeat } = formatBrush;
-      const ranges = rangesOf(target, matchingTasks, columnOrder);
-      if (!ranges.length) return;
-      if (
-        styles.length === 1 &&
-        styles[0].length === 1 &&
-        applyCommonStyle(styles[0][0], false, undefined, target)
-      ) {
-        if (!repeat) setFormatBrush(null);
-        return;
-      }
-      const changes = new Map<string, { point: Point; style: Style }>();
-      for (const range of ranges) {
-        const single =
-          range.r1 === range.r2 &&
-          range.c1 === range.c2 &&
-          (!range.kind || range.kind === "cells");
-        const r2 = single ? range.r1 + styles.length - 1 : range.r2;
-        const c2 = single ? range.c1 + styles[0].length - 1 : range.c2;
-        if (r2 >= matchingTasks.length || c2 >= columnOrder.length)
-          throw new Error(
-            "서식을 적용할 범위가 표를 벗어납니다. 더 작은 범위를 선택하세요.",
-          );
-        for (let r = range.r1; r <= r2; r++)
-          for (let c = range.c1; c <= c2; c++) {
-            const point = {
-              taskId: matchingTasks[r].id,
-              key: columnOrder[c].key,
-            };
-            changes.set(`${point.taskId}:${point.key}`, {
-              point,
-              style:
-                styles[(r - range.r1) % styles.length][
-                  (c - range.c1) % styles[0].length
-                ],
-            });
-            if (changes.size > MAX_STYLE_CELLS)
-              throw new Error(
-                `한 번에 ${MAX_STYLE_CELLS.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
-              );
-          }
-      }
-      if (
-        mutate(
-          [...changes.values()].map(({ point }) => point),
-          (task, key) => ({ style: changes.get(`${task.id}:${key}`)!.style }),
-        ) &&
-        !repeat
-      )
-        setFormatBrush(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function applyCommonStyle(
-    part: Partial<Style>,
-    reset = false,
-    border?: { preset: BorderPreset; border: Border | null },
-    target = selection,
-  ) {
-    const ranges = rangesOf(target, matchingTasks, columnOrder);
-    if (!ranges.length || ranges.some((r) => !r.kind || r.kind === "cells"))
-      return false;
-    const scopes = formatScopes(
-      ranges,
-      matchingTasks,
-      columnOrder,
-      part,
-      reset,
-      border,
-    );
-    if (!scopes.length) return true;
-    submitChanges(
-      () => [],
-      "normal",
-      () => {
-        const tasks = editTasks(),
-          ids = new Set(scopes.flatMap((s) => s.rows || []));
-        const selected = tasks.filter((t) => ids.has(t.id));
-        if (
-          selected.length !== ids.size ||
-          selected.some((t) => !(sheetClone ? canAdd : canEdit(user, t)))
-        )
-          throw new Error(
-            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
-          );
-        return {
-          teamId,
-          expectedRevision: tasks[0]?.formatting?.revision ?? 0,
-          scopes,
-          expectedTasks: Object.fromEntries(
-            selected.map((t) => [t.id, t.updatedAt]),
-          ),
-        };
-      },
-    );
-    return true;
-  }
-  function applyBorder(preset: BorderPreset, border: Border | null) {
-    try {
-      if (applyCommonStyle({}, false, { preset, border })) return;
-      const points = selectedPoints(
-        selection,
-        matchingTasks,
-        columnOrder,
-        MAX_STYLE_CELLS,
-      );
-      const selected = new Set(points.map((p) => `${p.taskId}:${p.key}`));
-      const rows = new Map(matchingTasks.map((t, i) => [t.id, i]));
-      const cols = new Map(columnOrder.map((c, i) => [c.key, i]));
-      const has = (r: number, c: number) =>
-        !!matchingTasks[r] &&
-        !!columnOrder[c] &&
-        selected.has(`${matchingTasks[r].id}:${columnOrder[c].key}`);
-      mutate(points, (task, key) => {
-        const r = rows.get(task.id)!,
-          c = cols.get(key)!;
-        return {
-          style: applyBorderPreset(cell(task, key).style, preset, border, {
-            Top: !has(r - 1, c),
-            Right: !has(r, c + 1),
-            Bottom: !has(r + 1, c),
-            Left: !has(r, c - 1),
-          }),
-        };
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function beginEdit(p: Point, initial?: string) {
-    const task = allTasks.find((t) => t.id === p.taskId);
-    if (
-      !task ||
-      (sheetClone && (!editingSheetClone || !canAdd)) ||
-      presentation ||
-      failed
-    )
-      return false;
-    if (operations.isPending()) {
-      setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
-      return false;
-    }
-    if (!(sheetClone ? canAdd : canEdit(user, task))) {
-      setError("이 업무를 편집할 권한이 없습니다.");
-      return false;
-    }
-    if (
-      fields.some((f) => f.key === p.key) &&
-      !viewRef.current.visibleFields.includes(p.key)
-    ) {
-      changeView({ visibleFields: [...viewRef.current.visibleFields, p.key] });
-    }
-    setSelection({ anchor: p, focus: p });
-    const next = { point: p, initial, task };
-    editorRef.current = next;
-    setEditor(next);
-    return true;
-  }
-  // 업무 삭제·복구는 셀 저장과 겹치지 않게 저장 중 표시를 함께 쓴다.
-  async function taskOperation(run: () => Promise<void>) {
-    if (
-      operations.isPending() ||
-      operations.failure() ||
-      sheetClone ||
-      presentation
-    )
-      return;
-    const finishOperation = operations.begin();
-    try {
-      await run();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      finishOperation();
-    }
-    await refresh();
-  }
-  function recordCreation(task: Task) {
-    recordTaskResult({
-      kind: "create",
-      ids: [task.id],
-      title: String(value(task, "title")) || "제목 없는",
-      task,
-    });
-  }
-  // 삭제한 데이터는 실행취소와 변경 이력 복구를 위해 보존한다.
-  async function deleteTasks(
-    entry: TaskDeletion | TaskCreation,
-    mode: CellFailure["mode"] = "normal",
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return;
-      try {
-        const ids = new Set(entry.ids);
-        const documents = await documentsForSheetCloneRows(
-          editTasks().filter((task) => ids.has(task.id)),
-        );
-        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
-          return;
-        sheetCloneDraft.preserveDocuments(documents);
-        sheetCloneDraft.apply({ kind: "delete", taskIds: entry.ids });
-        setSelection(null);
-        const deleted = sheetCloneDraft.ref.current!;
-        setToast("");
-        setUndoToast({
-          kind: "rows",
-          sheet: `${teamId}:${year}:${sheetClone.id}`,
-          target: deleted.history[deleted.cursor],
-          message:
-            entry.ids.length > 1
-              ? `사본에서 ${entry.ids.length}개 업무를 삭제했습니다.`
-              : "사본에서 업무를 삭제했습니다.",
-        });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      return;
-    }
-    const submittedBoard = boardKey.current,
-      selected = selectionEpoch.current,
-      shown = visibleTasks,
-      key = selection?.focus.key;
-    return taskOperation(async () => {
-      const deleting = entry.ids.map((id) => {
-        const t = taskData.snapshot().find((task) => task.id === id);
-        if (!t) throw new Error("이미 삭제되었거나 찾을 수 없는 업무입니다.");
-        if (entry.kind === "create" && !canUndoCreation(entry.task, t))
-          throw new Error(
-            "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
-          );
-        return { id, updatedAt: t.updatedAt };
-      });
-      const { updatedAt } = await send<{ updatedAt: Record<string, string> }>(
-        "/tasks/delete",
-        { tasks: deleting },
-      );
-      const nextEntry = { ...entry, deletedVersions: updatedAt };
-      if (boardKey.current !== submittedBoard) return;
-      // A subsequent edit can invalidate the list refresh. Apply the confirmed
-      // deletion now, while retaining any newer remote restoration already seen.
-      const remaining = taskData
-        .snapshot()
-        .filter(
-          (task) => !updatedAt[task.id] || task.updatedAt > updatedAt[task.id],
-        );
 
-      taskData.replace(remaining);
-      recordTaskResult(entry, mode, nextEntry);
-      setSelection(null);
-      // 실행취소로 사라진 행은 그 자리를 이어받은 행으로 이동한다.
-      if (mode !== "normal")
-        revealChange(
-          { near: nearbyRows(new Set(entry.ids), shown), key },
-          selected,
-        );
-      const message =
-        entry.ids.length > 1
-          ? `${entry.ids.length}개 업무를 삭제했습니다.`
-          : `‘${entry.title}’ 업무를 삭제했습니다.`;
-      if (entry.kind === "delete") {
-        setToast("");
-        setUndoToast({
-          kind: "rows",
-          sheet: `${teamId}:${year}:original`,
-          target: nextEntry,
-          message,
-        });
-      } else {
-        setUndoToast(null);
-        setToast(message);
-      }
-    });
-  }
-  async function restoreTasks(
-    entry: TaskDeletion | TaskCreation,
-    mode: "undo" | "redo",
-  ) {
-    const submittedBoard = boardKey.current,
-      selected = selectionEpoch.current;
-    let restored = false;
-    await taskOperation(async () => {
-      await send("/tasks/restore", {
-        tasks: entry.ids.map((id) => ({
-          id,
-          updatedAt: entry.deletedVersions?.[id],
-        })),
-      });
-      if (boardKey.current !== submittedBoard) return;
-      recordTaskResult(entry, mode);
-      setToast(
-        entry.ids.length > 1
-          ? `${entry.ids.length}개 업무를 되살렸습니다.`
-          : `‘${entry.title}’ 업무를 되살렸습니다.`,
-      );
-      restored = true;
-    });
-    // 되살린 행은 목록을 다시 읽은 뒤에 보이므로 그때 선택한다.
-    if (restored && boardKey.current === submittedBoard)
-      revealChange({ rows: entry.ids }, selected);
-  }
-  async function undo(redo = false) {
-    if (sheetClone) {
-      if (editingSheetClone && canAdd && !presentation && !editorRef.current) {
-        const draft = sheetCloneDraft.ref.current;
-        if (!draft) return;
-        const next = draft.history[draft.cursor + (redo ? 1 : -1)];
-        if (!next) return;
-        const selected = selectionEpoch.current;
-        let before: Task[];
-        try {
-          const ids = new Set(next.map((task) => task.id));
-          const documents = await documentsForSheetCloneRows(
-            draft.tasks.filter((task) => !ids.has(task.id)),
-          );
-          if (
-            sheetCloneDraft.ref.current?.sheetClone.id !==
-              draft.sheetClone.id ||
-            sheetCloneDraft.ref.current?.cursor !== draft.cursor
-          )
-            return;
-          sheetCloneDraft.preserveDocuments(documents);
-          before = sheetCloneDraft.ref.current.tasks;
-          sheetCloneDraft.undo(redo);
-        } catch (e) {
-          setError((e as Error).message);
-          return;
-        }
-        revealChange(
-          sheetChanges(
-            before,
-            sheetCloneDraft.ref.current?.tasks || sheetClone.tasks,
-            visibleTasks,
-            selection?.focus.key,
-          ),
-          selected,
-          true,
-        );
-        setRowTask(null);
-        setError("");
-      }
-      return;
-    }
-    const stack = redo ? redoStack : undoStack,
-      entry = stack.at(-1);
-    if (
-      !entry ||
-      operations.isPending() ||
-      operations.failure() ||
-      sheetClone ||
-      presentation
-    )
-      return;
-    setError("");
-    if ("kind" in entry) {
-      const mode = redo ? "redo" : "undo";
-      if ((entry.kind === "create") !== redo) void deleteTasks(entry, mode);
-      else void restoreTasks(entry, mode);
-      return;
-    }
-    if (entry.formatOperation) {
-      submitChanges(
-        () => [],
-        redo ? "redo" : "undo",
-        () => {
-          const revision = taskData.snapshot()[0]?.formatting?.revision ?? 0;
-          if (revision !== entry.formatRevision)
-            throw new Error("이후 서식 변경이 있어 되돌릴 수 없습니다.");
-          return {
-            teamId,
-            expectedRevision: revision,
-            restore: entry.operationId,
-            expectedCells: Object.fromEntries(
-              entry.cells.map((c) => [`${c.taskId}:${c.key}`, c.version]),
-            ),
-          };
-        },
-      );
-      return;
-    }
-    submitChanges(
-      () => {
-        const tasksById = new Map(taskData.snapshot().map((t) => [t.id, t]));
-        const afterById = new Map(
-          entry.cells.map((c) => [`${c.taskId}:${c.key}`, c]),
-        );
-        return entry.before.map((c) => {
-          const t = tasksById.get(c.taskId);
-          const after = afterById.get(`${c.taskId}:${c.key}`);
-          if (!t || !after || cell(t, c.key).version !== after.version)
-            throw new Error(
-              "이후 변경이 있어 되돌릴 수 없습니다. 변경 이력에서 확인하세요.",
-            );
-          if (
-            JSON.stringify(c.style) !== JSON.stringify(after.style) &&
-            (entry.formatRevision ?? 0) !== (t.formatting?.revision ?? 0)
-          )
-            throw new Error("이후 공통 서식 변경이 있어 되돌릴 수 없습니다.");
-          return {
-            taskId: c.taskId,
-            key: c.key,
-            ...(JSON.stringify(c.value) === JSON.stringify(after.value)
-              ? {}
-              : { value: c.value }),
-            style: c.style,
-            expectedVersion: after.version,
-            expectedFormatRevision: t.formatting?.revision ?? 0,
-            rawStyle: true,
-          };
-        });
-      },
-      redo ? "redo" : "undo",
-    );
-  }
-  function clearCells() {
-    try {
-      mutate(getPoints(), (_t, k) => ({
-        value: emptyPropertyValue(properties.find((p) => p.id === k)),
-      }));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  function paste(matrix: ClipboardMatrix) {
-    if (!selection) return;
-    if (selection.areas?.length) {
-      setError("붙여넣을 때는 하나의 연속된 영역을 선택하세요.");
-      return;
-    }
-    const ri = visibleTasks.findIndex((t) => t.id === selection.focus.taskId),
-      ci = columns.findIndex((c) => c.key === selection.focus.key);
-    if (ri < 0 || ci < 0) return;
-    if (
-      ri + matrix.length > visibleTasks.length ||
-      matrix.some((r) => ci + r.length > columns.length)
-    ) {
-      setError(
-        "붙여넣을 범위가 표를 벗어납니다. 행을 추가하거나 더 작은 범위를 선택하세요.",
-      );
-      return;
-    }
-    if (matrix.reduce((s, r) => s + r.length, 0) > 2000) {
-      setError("한 번에 2,000개 셀까지 붙여넣을 수 있습니다.");
-      return;
-    }
-    const changes = new Map<string, Pick<CellChange, "value" | "style">>();
-    const points: Point[] = [];
-    try {
-      matrix.forEach((r, i) =>
-        r.forEach(({ text, style }, j) => {
-          const p = {
-            taskId: visibleTasks[ri + i].id,
-            key: columns[ci + j].key,
-          };
-          let v: any = text;
-          const field = fields.find((f) => f.key === p.key);
-          const property = properties.find((p) => p.id === field?.key);
-          if (property?.kind === "option" && text) {
-            const option = property.values.find(
-              (o) => !o.archived && (o.label === text || o.id === text),
-            );
-            if (!option)
-              throw new Error(`${property.name}에 없는 값입니다: ${text}`);
-            v = option.id;
-          }
-          if (field?.type === "number") {
-            if (text && !Number.isFinite(Number(text)))
-              throw new Error(`${field.label} 열에는 숫자를 입력하세요.`);
-            v = text === "" ? "" : Number(text);
-          }
-          if (property?.kind === "member") {
-            const ids = text
-              .split(/[,;]/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((name) => {
-                const matches = assignableUsers.filter(
-                  (u) => u.name === name || u.id === name,
-                );
-                if (matches.length !== 1)
-                  throw new Error(
-                    `담당자 “${name}”을 정확히 연결할 수 없습니다.`,
-                  );
-                return matches[0].id;
-              });
-            if (!property.multiple && ids.length > 1)
-              throw new Error(
-                `${property.name} 열에는 팀원 한 명을 선택하세요.`,
-              );
-            v = property.multiple ? [...new Set(ids)] : ids[0] || "";
-          }
-          points.push(p);
-          changes.set(`${p.taskId}:${p.key}`, {
-            value: v,
-            ...(style
-              ? {
-                  style: {
-                    ...resetCellStyle(visibleTasks[ri + i], p.key),
-                    ...style,
-                  },
-                }
-              : {}),
-          });
-        }),
-      );
-      mutate(points, (t, k) => changes.get(`${t.id}:${k}`)!);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  async function addSheetCloneTask(
-    sourceId?: string,
-    target?: Task,
-    placement: "before" | "after" = "after",
-    copied?: ReturnType<typeof copyRowFormatting>,
-  ) {
-    if (!editingSheetClone || !canAdd || presentation || editorRef.current)
-      return;
-    try {
-      if (sourceId) {
-        const source = editTasks().find((task) => task.id === sourceId);
-        if (!source) return;
-        const documents = await documentsForCopy(source);
-        if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone?.id)
-          return;
-        copied = { ...copyRowFormatting(source), documents };
-      }
-      const taskId = crypto.randomUUID();
-      const fields =
-        !sourceId && !copied && target && view.groupBy
-          ? { [view.groupBy]: value(target, view.groupBy) }
-          : {};
-      sheetCloneDraft.apply({
-        kind: "create",
-        taskId,
-        sourceId,
-        ...(copied ? { copiedRow: copied } : {}),
-        fields,
-        ...(target ? { insertAt: { taskId: target.id, placement } } : {}),
-      });
-      const task = editTasks().find((t) => t.id === taskId)!;
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-      });
-      const point = { taskId, key: "title" };
-      setSelection({ anchor: point, focus: point });
-      setJump({ ...point, id: Date.now(), preserveHorizontalScroll: true });
-      if (!sourceId && !copied) {
-        editorRef.current = { point, task };
-        setEditor(editorRef.current);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  async function addTask() {
-    if (sheetClone) {
-      addSheetCloneTask();
-      return;
-    }
-    if (
-      !ready ||
-      !canAdd ||
-      sheetClone ||
-      presentation ||
-      operations.isPending() ||
-      operations.failure()
-    )
-      return;
-    const submittedBoard = boardKey.current;
-    const submittedScope = taskData.currentScope();
-    const finishOperation = operations.begin();
-    setError("");
-    try {
-      const { task } = await send("/tasks", {
-        teamId,
-        year,
-        fields: view.groupBy
-          ? {
-              [view.groupBy]: emptyPropertyValue(
-                properties.find((p) => p.id === view.groupBy),
-              ),
-            }
-          : {},
-      });
-      if (
-        boardKey.current !== submittedBoard ||
-        taskData.currentScope() !== submittedScope
-      )
-        return;
-      taskData.replace((s) => {
-        const next = [...s, task];
-
-        return next;
-      });
-      recordCreation(task);
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-      });
-      setSelection({
-        anchor: { taskId: task.id, key: "title" },
-        focus: { taskId: task.id, key: "title" },
-      });
-      setEditor({ point: { taskId: task.id, key: "title" }, task });
-    } catch (e) {
-      if (
-        boardKey.current === submittedBoard &&
-        taskData.currentScope() === submittedScope
-      )
-        setError((e as Error).message);
-    } finally {
-      finishOperation();
-    }
-  }
-  async function reorderTask(
-    taskIds: string | string[],
-    targetId: string,
-    placement: "before" | "after",
-  ) {
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation) return;
-      try {
-        const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
-        const target = editTasks().find((task) => task.id === targetId);
-        if (
-          view.groupBy &&
-          ids.some((id) => {
-            const task = editTasks().find((t) => t.id === id);
-            return (
-              !task ||
-              !target ||
-              JSON.stringify(value(task, view.groupBy!)) !==
-                JSON.stringify(value(target, view.groupBy!))
-            );
-          })
-        )
-          throw new Error("같은 묶음 안에서 순서를 변경하세요.");
-        sheetCloneDraft.apply({
-          kind: "reorder",
-          taskIds: ids,
-          targetId,
-          placement,
-        });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      return;
-    }
-    const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
-    const byId = new Map(taskData.snapshot().map((t) => [t.id, t]));
-    const moving = ids.map((id) => byId.get(id));
-    const target = byId.get(targetId);
-    if (
-      !ids.length ||
-      moving.some((t) => !t) ||
-      !target ||
-      operations.isPending() ||
-      operations.failure() ||
-      sheetClone ||
-      presentation
-    )
-      return;
-    const submittedBoard = boardKey.current;
-    setError("");
-    const finishOperation = operations.begin();
-    try {
-      const result = await send("/tasks/reorder", {
-        tasks: moving.map((t) => ({ id: t!.id, updatedAt: t!.updatedAt })),
-        targetId,
-        placement,
-        year,
-        startMonth: view.startMonth,
-        groupBy: view.groupBy || "",
-        targetUpdatedAt: target.updatedAt,
-      });
-      if (boardKey.current !== submittedBoard) return;
-      const moved = new Map<string, Task>(
-        result.tasks.map((t: Task) => [t.id, t]),
-      );
-      const next = taskData.snapshot().map((t) => moved.get(t.id) || t);
-
-      taskData.replace(next);
-    } catch (e) {
-      if (boardKey.current === submittedBoard) setError((e as Error).message);
-    } finally {
-      finishOperation();
-    }
-    if (boardKey.current === submittedBoard) await refresh();
-  }
-  async function documentsForSheetCloneRows(tasks: Task[]) {
-    const documents = new Map<string, NonNullable<Task["documents"]>>();
-    const stored = new Set(sheetClone?.tasks.map((task) => task.id));
-    const pending: string[] = [];
-    for (const task of tasks) {
-      if (task.documents)
-        documents.set(task.id, structuredClone(task.documents));
-      else if (!stored.has(task.id)) documents.set(task.id, []);
-      else pending.push(task.id);
-    }
-    // Fetch fresh metadata even for apparently empty rows: another user may
-    // have added a document since this sheet was loaded. Preserve all results
-    // in one state update instead of remapping the undo history for every row.
-    for (let offset = 0; offset < pending.length;) {
-      const result = await send<{
-        tasks: { id: string; documents: NonNullable<Task["documents"]> }[];
-      }>(`/sheet-clones/${sheetClone!.id}/documents/batch`, {
-        taskIds: pending.slice(offset, offset + 100),
-      });
-      if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone!.id)
-        throw new Error("시트가 변경되었습니다.");
-      for (const task of result.tasks) documents.set(task.id, task.documents);
-      offset += result.tasks.length;
-    }
-    return documents;
-  }
-  // A pasted row's documents carry only what the server accepts for them
-  // (copiedRowSchema); a listing's revision or hasContent stays behind.
-  async function documentsForCopy(task: Task) {
-    if (
-      sheetClone &&
-      !task.documents &&
-      !sheetClone.tasks.some((t) => t.id === task.id)
-    )
-      return [];
-    const documents =
-      task.documents ||
-      (
-        await api<{ documents: NonNullable<Task["documents"]> }>(
-          sheetClone
-            ? `/sheet-clones/${sheetClone.id}/tasks/${task.id}/documents?content=1`
-            : `/tasks/${task.id}/documents?content=1`,
-        )
-      ).documents;
-    return documents.map(({ id, title, markdown }) => ({
-      id,
-      title,
-      markdown,
-    }));
-  }
-
-  async function rowCommand(
-    command: RowCommand,
-    selected: Task,
-    selectedRows = [selected],
-  ) {
-    if (command === "delete") {
-      if (
-        operations.isPending() ||
-        operations.failure() ||
-        presentation ||
-        editorRef.current
-      )
-        return;
-      const byId = new Map(editTasks().map((task) => [task.id, task]));
-      const targets = [...new Set(selectedRows.map((task) => task.id))].map(
-        (id) => byId.get(id),
-      );
-      if (
-        !targets.length ||
-        targets.some(
-          (task) =>
-            !task ||
-            !(sheetClone ? editingSheetClone && canAdd : canEdit(user, task)),
-        )
-      )
-        return;
-      setError("");
-      await deleteTasks({
-        kind: "delete",
-        ids: targets.map((task) => task!.id),
-        title: String(value(targets[0]!, "title")) || "제목 없는",
-      });
-      return;
-    }
-    if (sheetClone) {
-      if (!editingSheetClone || !canAdd || presentation || editorRef.current)
-        return;
-      const target = editTasks().find((task) => task.id === selected.id);
-      if (!target) return;
-      if (command === "copy") {
-        try {
-          const documents = await documentsForCopy(target);
-          if (sheetCloneDraft.ref.current?.sheetClone.id !== sheetClone.id)
-            return;
-          setCopiedRow({
-            task: { ...structuredClone(target), documents },
-            height: view.rowHeights[target.id],
-          });
-          setToast("사본의 행과 문서를 복사했습니다.");
-        } catch (e) {
-          setError((e as Error).message);
-        }
-      } else if (command === "paste") {
-        if (copiedRow)
-          addSheetCloneTask(
-            undefined,
-            target,
-            "after",
-            copyRowFormatting(copiedRow.task),
-          );
-      } else
-        addSheetCloneTask(
-          undefined,
-          target,
-          command === "insertBefore" ? "before" : "after",
-        );
-      return;
-    }
-    if (
-      operations.isPending() ||
-      operations.failure() ||
-      sheetClone ||
-      presentation ||
-      editorRef.current
-    )
-      return;
-    const target = taskData.snapshot().find((task) => task.id === selected.id);
-    if (!target) return;
-    setError("");
-    if (command === "copy") {
-      const board = boardKey.current;
-      try {
-        const documents = await documentsForCopy(target);
-        if (boardKey.current !== board) return;
-        setCopiedRow({
-          task: { ...structuredClone(target), documents },
-          height: view.rowHeights[target.id],
-        });
-        setToast(
-          "행의 내용과 서식, 문서를 복사했습니다. 붙여넣을 행을 선택하세요.",
-        );
-      } catch (e) {
-        if (boardKey.current === board) setError((e as Error).message);
-      }
-      return;
-    }
-    if (
-      !canAdd ||
-      (command === "paste" && (!copiedRow || copiedRow.task.teamId !== teamId))
-    )
-      return;
-    const copy = command === "paste" ? copiedRow : null;
-    const height = copy ? copy.height : view.rowHeights[target.id];
-    const groupKey = view.groupBy;
-    const inheritGroup = !!groupKey;
-    const fields =
-      !copy && inheritGroup ? { [groupKey]: value(target, groupKey) } : {};
-    const keepGroup = copy
-      ? inheritGroup &&
-        JSON.stringify(value(copy.task, groupKey)) ===
-          JSON.stringify(value(target, groupKey))
-      : inheritGroup;
-    const submittedBoard = boardKey.current;
-    const finishOperation = operations.begin();
-    try {
-      const { task } = await send("/tasks", {
-        teamId,
-        year,
-        fields,
-        startMonth: view.startMonth,
-        insertAt: {
-          taskId: target.id,
-          updatedAt: target.updatedAt,
-          placement: command === "insertBefore" ? "before" : "after",
-        },
-        ...(copy
-          ? {
-              copiedRow: copyRowFormatting(copy.task),
-            }
-          : {}),
-      });
-      if (boardKey.current !== submittedBoard) return;
-      const next = [...taskData.snapshot(), task];
-
-      taskData.replace(next);
-      recordCreation(task);
-      changeView({
-        propertyFilters: {},
-        propertyFilterModes: {},
-        sortKey: "",
-        sortDirection: "default",
-        groupBy: keepGroup ? groupKey : "",
-        ...(height !== undefined
-          ? { rowHeights: { ...view.rowHeights, [task.id]: height } }
-          : {}),
-      });
-      // Spacing may have been normalized by the server; refresh every row's position.
-      const current = await api<{ tasks: Task[] }>(
-        taskQuery(teamId, year, view.startMonth),
-      );
-      if (boardKey.current !== submittedBoard) return;
-
-      taskData.replace(current.tasks);
-      const point = { taskId: task.id, key: "title" };
-      setSelection({ anchor: point, focus: point });
-      if (copy) {
-        setJump((previous) => ({
-          ...point,
-          id: (previous?.id || 0) + 1,
-          preserveHorizontalScroll: true,
-        }));
-        setToast("복사한 행을 아래에 붙여넣었습니다.");
-      } else {
-        setEditor({
-          point,
-          task: current.tasks.find((t) => t.id === task.id) || task,
-        });
-      }
-    } catch (e) {
-      if (boardKey.current === submittedBoard) setError((e as Error).message);
-    } finally {
-      finishOperation();
-    }
-  }
-  // 업무 상세 창의 동작. 행 머리글 메뉴(rowCommand)와 달리 서버에 바로 반영한다.
-  async function detailAction(action: string) {
-    if (!rowTask) return;
-    const t = editTasks().find((task) => task.id === rowTask.id) || rowTask;
-    setRowTask(null);
-    setError("");
-    try {
-      if (action === "hide") {
-        changeView({ hiddenRows: [...new Set([...view.hiddenRows, t.id])] });
-        return;
-      }
-      if (action === "duplicate") {
-        if (sheetClone) {
-          addSheetCloneTask(t.id, t);
-          return;
-        }
-        const submittedBoard = boardKey.current;
-        await taskOperation(async () => {
-          const { task } = await send<{ task: Task }>("/tasks", {
-            teamId,
-            year,
-            sourceId: t.id,
-            fields: { title: String(value(t, "title")) + " 사본" },
-          });
-          if (boardKey.current === submittedBoard) recordCreation(task);
-        });
-        return;
-      }
-      if (action === "delete") {
-        // 확인 없이 지우고 실행취소로 되살린다.
-        await deleteTasks({
-          kind: "delete",
-          ids: [t.id],
-          title: String(value(t, "title")) || "제목 없는",
-        });
-        return;
-      }
-      if (action === "carry") {
-        if (sheetClone) return;
-        await send(
-          `/tasks/${t.id}`,
-          {
-            updatedAt: t.updatedAt,
-            years: [...new Set([...t.years, year + 1])],
-          },
-          "PATCH",
-        );
-        setToast(`${year + 1}년에서도 같은 업무를 조회할 수 있습니다.`);
-      }
-      if (action === "up" || action === "down") {
-        if (view.sortKey && view.sortDirection !== "default")
-          throw new Error(
-            "컬럼 머리글을 우클릭하여 정렬 해제를 선택한 뒤 순서를 변경하세요.",
-          );
-        const order = visibleTasks.filter(
-          (x) =>
-            !view.groupBy || value(x, view.groupBy) === value(t, view.groupBy),
-        );
-        const idx = order.findIndex((x) => x.id === t.id),
-          direction = action === "up" ? -1 : 1,
-          neighbor = order[idx + direction];
-        if (neighbor) {
-          await reorderTask(
-            t.id,
-            neighbor.id,
-            direction < 0 ? "before" : "after",
-          );
-        }
-        return;
-      }
-      await refresh();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
   async function retryFailed(overwrite = false) {
     if (await operations.retry(overwrite, selectionEpoch.current)) setPanel("");
   }
@@ -2618,56 +1598,7 @@ function Workspace({
         )}
       </main>
     );
-  async function closeDocumentBrowser() {
-    closeSheetCloneNow();
-    await refresh();
-    workspaceRoute.commit("annual");
-  }
-  async function navigateWorkspace(action: () => void | Promise<void>) {
-    if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
-    if (documentBrowser) await documentBrowserRef.current?.navigate(action);
-    else await action();
-  }
-  function openAnnualWorkspace() {
-    if (workspaceRoute.route === "annual") closeSheetClone();
-    else void workspaceRoute.navigate("annual");
-  }
-  async function prepareWorkspaceRoute(
-    next: "annual" | "documents" | "calendar",
-  ) {
-    if (
-      calendarBusy ||
-      workspaceNavigating ||
-      operations.isPending() ||
-      operations.failure() ||
-      editorRef.current ||
-      sheetCloneDraft.dirty ||
-      sheetCloneDraft.saving
-    )
-      return false;
-    if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
-      return false;
-    const prepare = async () => {
-      layout.flush();
-      if (next === "annual") {
-        if (documentBrowser) {
-          closeSheetCloneNow();
-          await refresh();
-        } else await openSheetClone(null);
-      }
-      setViewMenu(false);
-      if (next === "calendar") setRowTask(null);
-    };
-    try {
-      if (documentBrowser)
-        return (await documentBrowserRef.current?.navigate(prepare)) ?? false;
-      await prepare();
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      return false;
-    }
-  }
+
   const workspace = (
     <div
       ref={workspaceRef}

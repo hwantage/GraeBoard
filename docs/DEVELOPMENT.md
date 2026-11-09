@@ -252,6 +252,10 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 | 로그인·세션 복구                   | `src/auth/Auth.tsx`, `SessionLogin.tsx`                                                          | `resumeSession`을 포함한 내부/외부 인증 흐름 유지. 공용 UI가 인증 화면을 import하지 않음                                                                                                   |
 | 공용 표시와 조작                   | `src/ui/Button.tsx`, `Modal.tsx`, `Empty.tsx`, `ErrorNote.tsx`, `Avatar.tsx`, `ZoomControls.tsx` | 기능·App·API를 알지 않고 전달된 값/콜백으로 동작                                                                                                                                           |
 
+시트의 사용자 명령은 `useSheetRowCommands`(행 추가·복제·삽입·삭제·복구·순서·문서 복사), `useSheetCellCommands`(권한/버전 확인·값/서식·붙여넣기·서식 브러시), `useSheetUndo`(원본 이력 또는 사본 초안으로 실행취소 전달)가 소유합니다. 원본 저장과 이력은 위 담당 훅을 재사용하고 사본은 `useSheetCloneDraft`의 명령을 사용합니다. 행 복사 상태와 서식 브러시의 취소 수명도 해당 명령 훅에 있습니다. 새 명령은 이 경로를 확장하며 App은 선택·편집·알림 콜백을 연결합니다.
+
+`src/app/useWorkspaceNavigation.ts`는 화면 전환 전에 메모 flush와 문서 탐색의 기존 저장 경로를 조정합니다. URL·뒤로/앞으로 기록은 기존 `useWorkspaceRoute`가 소유하고, 각 기능의 저장 구현은 그 기능에 남습니다. 기능이 전달한 이동 가능 여부와 준비 동작을 사용해 메뉴 이동과 브라우저 이동의 같은 조건을 유지합니다.
+
 `useTaskData`의 조회 오류와 `useSheetOperations`의 실패 입력은 별도 상태입니다. 조회 복구로 저장 실패를 지우지 않습니다. 비동기 응답은 반영 직전 소유 범위를 검사하며, 팀 ID 문자열이 다시 같아졌다는 이유로 이전 화면의 응답을 허용하지 않습니다. 읽기/저장 담당 훅의 내부 ref나 큐를 App에 노출해 직접 조작하지 않습니다.
 
 ## 확장과 변경

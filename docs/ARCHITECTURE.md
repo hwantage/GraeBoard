@@ -18,6 +18,15 @@ flowchart TD
     App --> Layout["useSheetLayout: 개인 배치 저장"]
     App --> Filters["useSavedFilters: 팀별 필터·순차 저장"]
     App --> Copy["useSheetCloneDraft: 사본 초안·저장·이력"]
+    App --> Rows["useSheetRowCommands: 행 명령·문서 보존"]
+    App --> Cells["useSheetCellCommands: 셀·서식·붙여넣기"]
+    App --> Undo["useSheetUndo: 실행취소 전달"]
+    App --> Navigation["useWorkspaceNavigation: 화면 이동 전 저장 조정"]
+    Rows --> Write
+    Rows --> History
+    Rows --> Copy
+    Cells --> Write
+    Cells --> Copy
     Auth["Auth / SessionLogin"] --> UI["ui: 버튼·모달·표시·조작"]
     App --> UI
     Read --> Platform["platform: API·이벤트 스트림"]
