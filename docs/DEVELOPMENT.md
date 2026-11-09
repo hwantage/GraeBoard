@@ -443,3 +443,19 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 ### 캘린더 명령 책임
 
 `Calendar.tsx`는 보기·날짜·패널과 일정 배치를 조합합니다. 조회·요청 취소는 기존 `useCalendarData`, 드래그는 기존 `useCalendarDrag`를 사용합니다. `useCalendarMutation`은 요청 직렬화와 조회 중단/재개를, `useCalendarCreation`은 새 일정의 임시 보관·저장을, `useCalendarCommands`는 일정·태그·주간 목록 변경과 단일 삭제 복원 기회를 소유합니다. 새 명령은 이 경로를 통해 조회 캐시를 갱신하고 기존 서버/시크릿 저장소를 재사용합니다. 일정의 기간 충돌과 패널 열림 상태는 화면에서 전달하며 별도 저장 경로를 만들지 않습니다.
+
+### 리치 문서 편집 책임
+
+`DocumentEditor.tsx`는 기존 문서 자동 저장·초안·충돌 병합·SSE 계약을 유지합니다. `editor/RichMarkdownEditor.tsx`는 편집 화면과 도구를 조합하며 아래 소유자를 사용합니다.
+
+| 변경 대상 | 소유자 |
+| --- | --- |
+| Milkdown 생성·해제, 원격 내용 적용, 읽기 전용 전환 | `useRichEditorLifecycle.ts` |
+| 키보드·붙여넣기·드롭 규칙 | `document-editor-input.ts` (기존 입력 규칙 모듈 재사용) |
+| 이미지 업로드·취소·진행 수·삽입 후 선택 | `document-image-uploads.ts` (`dispose()`를 수명 종료 때 호출) |
+| 링크 폼·툴팁·열기·복사 | `useDocumentLinkActions.ts` |
+| 슬래시 메뉴 상태·키보드·명령 적용 | `useDocumentSlash.ts` |
+| 목록·블록·표의 편집 명령 | `document-editor-commands.ts` |
+| Markdown 스키마·변환 보존 검사·클립보드 직렬화 | `document-markdown.ts` |
+
+문서 내보내기는 `document-markdown.ts`의 동일 스키마와 링크 규칙을 직접 참조합니다. 변환 규칙은 편집 화면에 추가하지 않습니다. 저장 형식에 영향을 주는 변경은 DB 변경 지침을 따르며, 미지원 문법은 원문 보존과 기존 Markdown 전환 경로를 유지합니다.
