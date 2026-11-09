@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "../ui/usePopover";
-import { GripVertical } from "lucide-react";
+import { Download, GripVertical } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Empty } from "../ui/Empty";
 import { ErrorNote } from "../ui/ErrorNote";
@@ -35,6 +35,8 @@ import InsightsChart, { InsightsTaskTable } from "./InsightsChart";
 import InsightsChartEditor from "./InsightsChartEditor";
 import InsightsComparison from "./InsightsComparison";
 import InsightsAnalysis from "./InsightsAnalysis";
+import { exportInsightsReport } from "./insights-export";
+import { insightFilterLabels } from "./insights-chart-presentation";
 import { comparisonProperty } from "./insights-chart-templates";
 import InsightsSettings from "./InsightsSettings";
 import InsightsFilters, { type InsightsFilter } from "./InsightsFilters";
@@ -128,6 +130,10 @@ export default function Insights({
   const [showSettings, setShowSettings] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const reportContent = useRef<HTMLDivElement>(null);
+  const printRequest = useRef<AbortController | null>(null);
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => () => printRequest.current?.abort(), []);
   const [editor, setEditor] = useState<{
     chart: InsightChart;
     revision: number;
@@ -315,6 +321,42 @@ export default function Insights({
   const deadlineId = deadlinePropertyId(settings),
     deadline = propertiesFor(settings, true).find((p) => p.id === deadlineId);
   const configured = !!settings.insights?.workColors.length;
+  const printable =
+    configured &&
+    source.ready &&
+    !source.queryError &&
+    !periodError(period) &&
+    !busy &&
+    ![...results.values()].some((result) => result.errors.length);
+  async function downloadReport() {
+    if (!printable || !reportContent.current || printRequest.current) return;
+    const controller = new AbortController();
+    printRequest.current = controller;
+    setPrinting(true);
+    setError("");
+    try {
+      const effective = savedFilter(filter, settings);
+      const labels = insightFilterLabels(effective, ctx);
+      const lastMonth = startMonth + 11;
+      await exportInsightsReport(
+        {
+          title: `${team.name} · 인사이트 보고서`,
+          teamName: team.name,
+          annualView: `${year}-${String(startMonth).padStart(2, "0")} ~ ${year + Math.floor((lastMonth - 1) / 12)}-${String(((lastMonth - 1) % 12) + 1).padStart(2, "0")}`,
+          period,
+          filters: labels,
+          content: reportContent.current,
+        },
+        controller.signal,
+      );
+    } catch (e) {
+      if (mounted.current && !controller.signal.aborted)
+        setError(`보고서를 내려받지 못했습니다. ${(e as Error).message}`);
+    } finally {
+      printRequest.current = null;
+      if (mounted.current) setPrinting(false);
+    }
+  }
   async function openTask(metric: TaskMetrics) {
     setDrill(null);
     setEditor(null);
@@ -364,6 +406,14 @@ export default function Insights({
                 인사이트 설정
               </Button>
             )}
+            <Button
+              tooltip="PDF (인쇄 창에서 저장)"
+              disabled={!printable}
+              aria-busy={printing}
+              onClick={() => void downloadReport()}
+            >
+              <Download size={16} aria-hidden="true" />
+            </Button>
           </div>,
           controlsHost,
         )}
@@ -384,7 +434,7 @@ export default function Insights({
           }
         />
       ) : !periodError(period) && source.ready && !source.queryError ? (
-        <>
+        <div ref={reportContent}>
           {!!deadlineId &&
             (!deadline || deadline.archived || deadline.kind !== "date") && (
               <p className="field-help">
@@ -463,6 +513,7 @@ export default function Insights({
           <div className="insights-card-heading">
             <h2>팀 차트</h2>
             <Button
+              data-report-omit
               disabled={mobile || busy || (allowed && charts.length >= 30)}
               onClick={() => edit()}
             >
@@ -483,6 +534,7 @@ export default function Insights({
                 <div className="insights-card-heading">
                   {allowed && (
                     <button
+                      data-report-omit
                       {...reorder.handleProps(chart.id)}
                       aria-label={`${chart.title} 순서 이동`}
                     >
@@ -535,6 +587,13 @@ export default function Insights({
                     )}
                   </div>
                 </div>
+                <p className="insights-print-only">
+                  차트 필터:{" "}
+                  {insightFilterLabels(
+                    savedFilter(chart.filter || {}, settings),
+                    ctx,
+                  ).join(" / ") || "전체"}
+                </p>
                 {results.get(chart)!.warnings.map((warning) => (
                   <p className="field-help" key={warning}>
                     {warning}
@@ -602,7 +661,7 @@ export default function Insights({
               책임자 미지정 {noOwner.length}건
             </Button>
           </section>
-        </>
+        </div>
       ) : (
         !source.ready && <LoadingState label="업무를 불러오고 있습니다" />
       )}

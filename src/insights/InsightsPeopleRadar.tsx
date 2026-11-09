@@ -192,6 +192,15 @@ export default function InsightsPeopleRadar({
         선택한 책임자 {chosen.length}명 · 범위 내 책임자 {owners.length}명<br />
         각 책임자의 범위·필터 내 업무 수 = 100% (업무 없음: 0%)
       </p>
+      <p className="insights-print-only">
+        책임자 선택 ({selected.mode === "exclude" ? "제외 후" : "일치"}):{" "}
+        {chosen
+          .map(
+            (id) =>
+              people.find((person) => person.id === id)?.name || id || "미지정",
+          )
+          .join(", ") || "없음"}
+      </p>
       {!property || !report ? (
         <p className="field-help">비교할 선택형 속성이 없습니다.</p>
       ) : !report.result.metrics.length ? (

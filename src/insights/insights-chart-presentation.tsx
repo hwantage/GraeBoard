@@ -9,6 +9,30 @@ import type {
   InsightsContext,
 } from "./insights-types";
 
+export function insightFilterLabels(
+  filter: NonNullable<InsightChart["filter"]>,
+  ctx: InsightsContext,
+) {
+  return Object.entries(filter.propertyFilters || {})
+    .filter(([, values]) => values.length)
+    .map(([id, values]) => {
+      const property = propertiesFor(ctx.settings, true).find(
+        (entry) => entry.id === id,
+      );
+      const names = values.map((value) =>
+        !value
+          ? "미지정"
+          : property?.kind === "member"
+            ? ctx.users.find((entry) => entry.id === value)?.name || value
+            : property?.kind === "option"
+              ? property.values.find((entry) => entry.id === value)?.label ||
+                value
+              : value,
+      );
+      return `${property?.name || id} ${filter.propertyFilterModes?.[id] === "exclude" ? "제외" : "일치"}: ${names.join(", ")}`;
+    });
+}
+
 const CATEGORY_COLORS = [
   "#426f9c",
   "#8a659e",

@@ -4,6 +4,10 @@
   flex: 1;
   min-height: 0;
 }
+.insights-print-data,
+.insights-print-only {
+  display: none;
+}
 .insights-controls,
 .insights-card-heading,
 .insights-card-actions,

@@ -8,6 +8,7 @@ import type {
   TaskMetrics,
 } from "./insights-types";
 
+import InsightsChartData from "./InsightsChartData";
 import InsightsMatrix from "./InsightsMatrix";
 import InsightsBarChart from "./InsightsBarChart";
 import InsightsRadarChart from "./InsightsRadarChart";
@@ -158,20 +159,26 @@ export default function InsightsChart({
     );
   if (chart.type === "radar")
     return (
-      <InsightsRadarChart
+      <>
+        <InsightsRadarChart
+          chart={chart}
+          result={result}
+          ctx={ctx}
+          onDrill={onDrill}
+        />
+        <InsightsChartData chart={chart} result={result} ctx={ctx} />
+      </>
+    );
+  return (
+    <>
+      <InsightsBarChart
         chart={chart}
         result={result}
         ctx={ctx}
         onDrill={onDrill}
+        comparison={presentation === "stacked"}
       />
-    );
-  return (
-    <InsightsBarChart
-      chart={chart}
-      result={result}
-      ctx={ctx}
-      onDrill={onDrill}
-      comparison={presentation === "stacked"}
-    />
+      <InsightsChartData chart={chart} result={result} ctx={ctx} />
+    </>
   );
 }
