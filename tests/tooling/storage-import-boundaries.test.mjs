@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build } from "esbuild";
+import { sourceImportGraph } from "../../scripts/testing/source-import-graph.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const portableSync = new Set(
@@ -38,39 +38,12 @@ function files(directory) {
     },
   );
 }
-const { metafile } = await build({
-  absWorkingDir: root,
-  entryPoints: [...files("server"), ...files("worker"), ...files("shared")],
-  bundle: true,
-  write: false,
-  treeShaking: false,
-  format: "esm",
-  outdir: "/tmp/graeboard-import-boundary-unused",
-  metafile: true,
-  logLevel: "silent",
-  plugins: [
-    {
-      name: "imports-only",
-      setup(builder) {
-        builder.onResolve({ filter: /.*/ }, (args) =>
-          args.kind === "entry-point"
-            ? undefined
-            : { path: args.path, external: true },
-        );
-      },
-    },
-  ],
-});
-const graph = new Map(
-  Object.entries(metafile.inputs).map(([path, input]) => [
-    path,
-    input.imports.map(({ path: value }) =>
-      value.startsWith(".")
-        ? relative(root, resolve(root, dirname(path), value))
-        : value,
-    ),
-  ]),
-);
+const graph = await sourceImportGraph(root, [
+  "server",
+  "worker",
+  "shared",
+  "edge",
+]);
 const isPortableSync = (path) => portableSync.has(path);
 const businessServices = new Set([
   "server/storage/control/access-token-service.mjs",
@@ -107,7 +80,7 @@ test("SQLite hosts and shared modules never import the external host; PostgreSQL
 test("external imports cross only into portable synchronization, common business services/rules and shared modules", () => {
   const violations = [];
   for (const [path, targets] of graph) {
-    if (!path.startsWith("worker/")) continue;
+    if (!/^(?:worker|edge)\//.test(path)) continue;
     for (const target of targets)
       if (
         target.startsWith("server/") &&
@@ -132,6 +105,7 @@ test("external imports cross only into portable synchronization, common business
       if (graph.has(target)) visit(target);
     }
   }
-  for (const path of graph.keys()) if (path.startsWith("worker/")) visit(path);
+  for (const path of graph.keys())
+    if (/^(?:worker|edge)\//.test(path)) visit(path);
   assert.deepEqual(violations, []);
 });

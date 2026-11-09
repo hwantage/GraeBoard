@@ -37,7 +37,8 @@
     "performance:sync": "node scripts/performance/sync-performance.mjs",
     "sync:upgrade": "node scripts/sync/sync-upgrade.mjs",
     "check:structure": "node scripts/testing/check-code-organization.mjs",
-    "test:cutover:frozen": "node scripts/testing/run-frozen-cutover-tests.mjs"
+    "test:cutover:frozen": "node scripts/testing/run-frozen-cutover-tests.mjs",
+    "check:architecture": "node scripts/testing/check-import-architecture.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

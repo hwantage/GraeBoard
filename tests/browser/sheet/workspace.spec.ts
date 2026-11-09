@@ -4469,6 +4469,11 @@ test("셀 편집 확정은 저장 응답 전에 새 값을 표시하고 실행�
 test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한다", async ({
   page,
 }) => {
+  const requests: any[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/cells/batch")
+      requests.push(request.postDataJSON());
+  });
   const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   await page.route("**/api/cells/batch", (r) => r.abort("failed"));
   await cell.dblclick();
@@ -4487,12 +4492,19 @@ test("통신 실패에서 입력을 보존하고 같은 작업을 재시도한�
   );
   await page.unroute("**/api/cells/batch");
   await page.getByRole("button", { name: "다시 시도", exact: true }).click();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(cell).toHaveText("실패 뒤 복구할 입력");
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
 });
 test("동시 수정 충돌을 보여주고 사용자 선택 후 최신 버전에 적용한다", async ({
   page,
 }) => {
+  const requests: any[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/cells/batch")
+      requests.push(request.postDataJSON());
+  });
   const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
   await cell.dblclick();
   await page.locator(".inline-editor textarea").fill("나의 입력");
@@ -4510,11 +4522,16 @@ test("동시 수정 충돌을 보여주고 사용자 선택 후 최신 버전에
   });
   await page.locator(".inline-editor textarea").press("Enter");
   await page.getByRole("button", { name: "입력 확인" }).click();
-  await expect(page.locator("dialog")).toContainText("다른 사람의 입력");
+  await expect(page.getByRole("dialog")).toContainText("다른 사람의 입력");
   await expect(page.locator(".failed-input")).toContainText("나의 입력");
   await page.getByRole("button", { name: "내 변경 다시 적용" }).click();
   await expect(cell).toHaveText("나의 입력");
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[1].operationId).not.toBe(requests[0].operationId);
+  expect(requests[1].changes[0].expectedVersion).toBeGreaterThan(
+    requests[0].changes[0].expectedVersion,
+  );
 });
 test("숨긴 행을 건너뛰어 줄바꿈·빈 값·수식 텍스트를 붙여넣고 한글 조합 중 저장하지 않는다", async ({
   page,
@@ -4959,7 +4976,7 @@ test("검색·필터 저장과 편집 가능한 사본의 원본 분리를 확�
     .locator("dialog")
     .getByRole("button", { name: "저장", exact: true })
     .click();
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "사본 추가", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "사본 만들기", exact: true });
   await dialog.getByLabel("사본 이름").fill("검증 사본");
@@ -5257,7 +5274,9 @@ for (const connectedExpiry of [false, true]) {
       await page.getByLabel("계정 비밀번호").fill("1234");
       await page.getByRole("button", { name: "로그인 후 재시도" }).click();
       await expect(cell).toHaveText("로그인 만료 중 입력");
-      await expect(page.locator("dialog")).toHaveCount(0);
+      await expect(
+        page.getByRole("dialog", { name: "저장하지 못한 입력", exact: true }),
+      ).toHaveCount(0);
       await expect(
         peer.locator(`[data-cell="${taskIds[0]}:title"]`),
       ).toHaveText("로그인 만료 중 입력", { timeout: 15000 });
@@ -8156,7 +8175,9 @@ test("상단은 한 줄이고 발표 모드에서 전용 도구와 표를 표시
   await page.keyboard.press("ControlOrMeta+z");
   await pasteContents(page, { "text/plain": "발표 중 변경 금지" });
   await first.click({ button: "right" });
-  await expect(page.locator(".inline-editor,dialog")).toHaveCount(0);
+  await expect(
+    page.locator(".inline-editor").or(page.getByRole("dialog")),
+  ).toHaveCount(0);
   await expect(first).toHaveText("첫 업무");
   await expect(first).toHaveCSS("font-weight", "700");
   expect(writes).toBe(0);
@@ -11508,3 +11529,106 @@ test("캘린더만 열린 두 탭은 새 시트 구독 없이 로그인 성공 �
     await peer.close();
   }
 });
+
+for (const staleResponse of ["success", "error"] as const) {
+  test(`팀을 나갔다 돌아온 뒤 이전 필터 조회 응답이 도착해도 최신 목록을 보존한다 (${staleResponse})`, async ({
+    page,
+  }) => {
+    expect(
+      (
+        await writePreferences(page, {
+          data: { teamId, name: "이전 이름", data: {} },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    const filter = (await readPreferences(page, teamId)).views.find(
+      (item: any) => item.name === "이전 이름",
+    );
+    await page.reload();
+    await expect(page.getByRole("grid")).toBeVisible();
+    const boot = await (
+      await page.request.get("/api/bootstrap")
+    )
+      .json()
+      .then(unpack);
+    const otherTeam = boot.teams.find((team: any) => team.id !== teamId).id;
+    let release!: () => void;
+    let captured!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const capturedResponse = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    let intercepted = false;
+    let previousRequest: any;
+    await page.route(`**/api/filters?teamId=${teamId}`, async (route) => {
+      if (intercepted) return route.continue();
+      intercepted = true;
+      previousRequest = route.request();
+      const response = await route.fetch();
+      captured();
+      await gate;
+      if (staleResponse === "error")
+        await route.fulfill({
+          status: 503,
+          json: { error: "이전 화면의 조회 오류" },
+        });
+      else await route.fulfill({ response });
+    });
+    try {
+      await page
+        .getByRole("button", { name: "저장된 필터", exact: true })
+        .click();
+      await capturedResponse;
+      await page.keyboard.press("Escape");
+      await page.getByLabel("팀 선택").selectOption(otherTeam);
+      await expect(
+        page.locator(`[data-cell="${taskIds[0]}:title"]`),
+      ).toHaveCount(0);
+      await expect(page.getByRole("grid")).toBeVisible();
+      expect(
+        (
+          await page.request.patch(`/api/filters/${filter.id}`, {
+            headers: { "X-Requested-With": "WeeklyPlan" },
+            data: { name: "최신 이름" },
+          })
+        ).ok(),
+      ).toBeTruthy();
+      await page.getByLabel("팀 선택").selectOption(teamId);
+      await expect(
+        page.getByRole("gridcell", { name: "첫 업무", exact: true }),
+      ).toBeVisible();
+      await Promise.all([
+        page.waitForResponse((response) =>
+          response.url().endsWith(`/api/filters?teamId=${teamId}`),
+        ),
+        page.getByRole("button", { name: "저장된 필터", exact: true }).click(),
+      ]);
+      await expect(
+        page.getByRole("button", { name: "최신 이름", exact: true }),
+      ).toBeVisible();
+      const delivered = page.waitForResponse(
+        (response) => response.request() === previousRequest,
+      );
+      release();
+      await (await delivered).finished();
+      // Let the delivered response and the following React render settle.
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(
+        page.getByRole("button", { name: "최신 이름", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "이전 이름", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator(".board-error")).toHaveCount(0);
+    } finally {
+      release();
+    }
+  });
+}
