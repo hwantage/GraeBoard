@@ -3,7 +3,11 @@ import { Modal, Button, ErrorNote } from "../components";
 import Select from "../ui/Select";
 import InsightsChart from "./InsightsChart";
 import InsightsFilters from "./InsightsFilters";
-import { chartTemplates } from "./insights-chart-templates";
+import {
+  chartTemplates,
+  ownerCountDefinition,
+  rankedOwners,
+} from "./insights-chart-templates";
 import {
   aggregate,
   numericProperties,
@@ -53,6 +57,15 @@ export default function InsightsChartEditor({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const parsed = insightChartSchema.safeParse(draft);
+  const radarOwners = useMemo(
+    () =>
+      rankedOwners(
+        aggregate(tasks, { id: "cowners", ...ownerCountDefinition }, ctx),
+      )
+        .slice(0, 3)
+        .map((owner) => owner.id),
+    [tasks, ctx],
+  );
   const result = useMemo(
     () => (parsed.success ? aggregate(tasks, parsed.data, ctx) : null),
     [tasks, draft, ctx],
@@ -174,14 +187,29 @@ export default function InsightsChartEditor({
             aria-label="차트 빠른 시작"
           >
             <span>빠른 시작</span>
-            {chartTemplates(ctx.settings).map((template) => (
+            {chartTemplates(ctx.settings, radarOwners).map((template) => (
               <Button
                 key={template.label}
                 onClick={() =>
                   setDraft({
                     ...template.chart,
                     id: draft.id,
-                    ...(draft.filter ? { filter: draft.filter } : {}),
+                    ...(draft.filter || template.chart.filter
+                      ? {
+                          filter: {
+                            ...draft.filter,
+                            ...template.chart.filter,
+                            propertyFilters: {
+                              ...draft.filter?.propertyFilters,
+                              ...template.chart.filter?.propertyFilters,
+                            },
+                            propertyFilterModes: {
+                              ...draft.filter?.propertyFilterModes,
+                              ...template.chart.filter?.propertyFilterModes,
+                            },
+                          },
+                        }
+                      : {}),
                   })
                 }
               >

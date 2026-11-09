@@ -29,13 +29,18 @@ export default function InsightsBarChart({
 }) {
   const root = useRef<HTMLDivElement>(null),
     [available, setAvailable] = useState(720);
+  const axis =
+    chart.type === "table" ? chart.dimensions.row : chart.dimensions.axis;
+  const monthly = axis?.kind === "time" && axis.unit === "month";
   useLayoutEffect(() => {
     const observer = new ResizeObserver(([entry]) =>
-      setAvailable(Math.max(620, Math.floor(entry.contentRect.width))),
+      setAvailable(
+        Math.max(monthly ? 320 : 620, Math.floor(entry.contentRect.width)),
+      ),
     );
     if (root.current) observer.observe(root.current);
     return () => observer.disconnect();
-  }, []);
+  }, [monthly]);
   const horizontal = comparison || chart.display?.orientation === "horizontal";
   const additive = [
     "count",
@@ -87,12 +92,6 @@ export default function InsightsBarChart({
     ),
   );
   const rowHeight = stacked ? 38 : Math.max(36, result.series.length * 14 + 10);
-  const width = horizontal
-    ? available
-    : Math.max(
-        available,
-        result.rows.length * Math.max(60, result.series.length * 14 + 18),
-      );
   const height = horizontal
     ? Math.max(100, result.rows.length * rowHeight + 56)
     : 310;
@@ -108,6 +107,14 @@ export default function InsightsBarChart({
   const top = 24,
     right = 70,
     bottom = horizontal ? 32 : 64;
+  const width = horizontal
+    ? available
+    : Math.max(
+        available,
+        monthly
+          ? result.rows.length * 32 + left + right
+          : result.rows.length * Math.max(60, result.series.length * 14 + 18),
+      );
   const plotLength = horizontal ? width - left - right : height - top - bottom;
   const unit = plotLength / (domain.max - domain.min);
   const zero = horizontal
@@ -202,9 +209,24 @@ export default function InsightsBarChart({
                     className="insights-axis-label"
                   >
                     <title>{row.label}</title>
-                    {row.label.length > (horizontal ? 15 : 10)
-                      ? row.label.slice(0, horizontal ? 14 : 9) + "…"
-                      : row.label}
+                    {monthly && !horizontal ? (
+                      <>
+                        <tspan>{Number(row.key.slice(5))}월</tspan>
+                        {(rowIndex === 0 || row.key.endsWith("-01")) && (
+                          <tspan
+                            x={left + (rowIndex + 0.5) * band}
+                            dy="14"
+                            className="insights-axis-year"
+                          >
+                            {row.key.slice(0, 4)}
+                          </tspan>
+                        )}
+                      </>
+                    ) : row.label.length > (horizontal ? 15 : 10) ? (
+                      row.label.slice(0, horizontal ? 14 : 9) + "…"
+                    ) : (
+                      row.label
+                    )}
                   </text>
                   {result.series.map((series, seriesIndex) => {
                     const cell = cellFor(row.key, series.key),

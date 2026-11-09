@@ -118,6 +118,9 @@ export default function InsightsMatrix({
                   {result.series.map((series) => (
                     <th
                       scope={multiple ? "colgroup" : "col"}
+                      className={
+                        multiple ? undefined : "insights-number-column"
+                      }
                       colSpan={chart.values.length}
                       key={series.key}
                     >
@@ -131,7 +134,7 @@ export default function InsightsMatrix({
                   ))}
                   <th
                     scope={multiple ? "colgroup" : "col"}
-                    className="insights-matrix-total"
+                    className={`insights-matrix-total${multiple ? "" : " insights-number-column"}`}
                     colSpan={chart.values.length}
                   >
                     행 합계{rawTotals ? " (원값)" : ""}
@@ -139,7 +142,11 @@ export default function InsightsMatrix({
                 </>
               ) : (
                 chart.values.map((definition, index) => (
-                  <th scope="col" key={index}>
+                  <th
+                    scope="col"
+                    key={index}
+                    className="insights-number-column"
+                  >
                     {insightValueLabel(definition, ctx)}
                   </th>
                 ))
@@ -152,9 +159,7 @@ export default function InsightsMatrix({
                     chart.values.map((definition, index) => (
                       <th
                         scope="col"
-                        className={
-                          series.key === "total" ? "insights-matrix-total" : ""
-                        }
+                        className={`insights-number-column${series.key === "total" ? " insights-matrix-total" : ""}`}
                         key={`${series.key}:${index}`}
                       >
                         {insightValueLabel(definition, ctx)}
@@ -177,7 +182,7 @@ export default function InsightsMatrix({
                     return (
                       <td
                         key={`${series.key}:${index}`}
-                        className={matrix ? "insights-heat-cell" : ""}
+                        className={`insights-number-column${matrix ? " insights-heat-cell" : ""}`}
                         style={
                           matrix
                             ? heatColors(
@@ -206,7 +211,10 @@ export default function InsightsMatrix({
                 )}
                 {matrix &&
                   chart.values.map((definition, index) => (
-                    <td className="insights-matrix-total" key={index}>
+                    <td
+                      className="insights-matrix-total insights-number-column"
+                      key={index}
+                    >
                       <button
                         className="insights-cell"
                         onClick={() => total("row", row.key, "", index)}
@@ -227,7 +235,10 @@ export default function InsightsMatrix({
               <th scope="row">합계</th>
               {result.series.flatMap((series) =>
                 chart.values.map((definition, index) => (
-                  <td key={`${series.key}:${index}`}>
+                  <td
+                    key={`${series.key}:${index}`}
+                    className="insights-number-column"
+                  >
                     <button
                       className="insights-cell"
                       onClick={() => total("series", "", series.key, index)}
@@ -243,7 +254,10 @@ export default function InsightsMatrix({
               )}
               {matrix &&
                 chart.values.map((definition, index) => (
-                  <td className="insights-matrix-total" key={index}>
+                  <td
+                    className="insights-matrix-total insights-number-column"
+                    key={index}
+                  >
                     <button
                       className="insights-cell"
                       onClick={() => total("grand", "", "", index)}

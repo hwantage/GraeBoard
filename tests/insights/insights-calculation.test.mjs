@@ -826,3 +826,78 @@ test("shared strict chart schema rejects invalid IDs, slots, values, display, fi
     false,
   );
 });
+
+test("report bars retain zero calendar months, all duration bands and explicit missing-deadline states without creating contributors", () => {
+  const items = [
+    task("a", ["2026-01-26", "2026-02-02"], {
+      owner: "one",
+      deadline: "2026-02-06",
+    }),
+    task("b", ["2026-01-05"], { owner: "two" }),
+  ];
+  const monthly = chart({
+    type: "bar",
+    dimensions: { axis: { kind: "time", unit: "month", basis: "work" } },
+    values: [{ kind: "workWeeks" }],
+  });
+  const context = ctx({ period: { from: "2025-12", to: "2026-03" } });
+  const r = aggregate(items, monthly, context);
+  assert.deepEqual(
+    r.rows.map((row) => row.key),
+    ["2025-12", "2026-01", "2026-02", "2026-03"],
+  );
+  assert.deepEqual(
+    r.cells.map((c) => c.values[0].raw),
+    [0, 2, 1, 0],
+  );
+  assert.equal(r.totals[0].raw, 3);
+  assert.deepEqual(
+    drillDown(items, monthly, { row: "2026-03", series: "all" }, context),
+    [],
+  );
+  assert.deepEqual(
+    drillDown(items, monthly, { row: "2026-02", series: "all" }, context).map(
+      (m) => m.task.id,
+    ),
+    ["a"],
+  );
+  const duration = chart({
+    type: "bar",
+    dimensions: { axis: { kind: "durationBand" } },
+  });
+  const d = aggregate(items, duration, context);
+  assert.deepEqual(
+    d.rows.map((r) => r.label),
+    ["1주", "2~4주", "5~8주", "9주 이상"],
+  );
+  assert.deepEqual(
+    d.cells.map((c) => c.values[0].raw),
+    [1, 1, 0, 0],
+  );
+  const deadlines = chart({
+    type: "bar",
+    dimensions: { axis: { kind: "deadlineState" } },
+  });
+  const dl = aggregate(items, deadlines, context);
+  assert.equal(dl.cells.find((c) => c.row === "noDeadline").values[0].raw, 1);
+  assert.equal(dl.cells.find((c) => c.row === "overdue").values[0].raw, 0);
+  assert.equal(
+    dl.rows.some((r) => r.key === "noWork"),
+    false,
+  );
+  assert.equal(dl.totals[0].raw, 2);
+  assert.deepEqual(
+    drillDown(
+      items,
+      deadlines,
+      { row: "noDeadline", series: "all" },
+      context,
+    ).map((m) => m.task.id),
+    ["b"],
+  );
+  const empty = aggregate([], monthly, context);
+  assert.equal(empty.rows.length, 4);
+  assert.ok(
+    empty.cells.every((c) => c.values[0].raw === 0 && c.taskIds.length === 0),
+  );
+});

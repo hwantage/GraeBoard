@@ -26,6 +26,12 @@ export const DEADLINE_LABELS = {
   noDeadline: "목표일 없음",
   noWork: "작업 없음",
 };
+const DURATION_BANDS = [
+  [1, "1주"],
+  [4, "2~4주"],
+  [8, "5~8주"],
+  [Infinity, "9주 이상"],
+];
 export const VALUE_LABELS = {
   count: "업무 수",
   completed: "완료 업무 수",
@@ -280,14 +286,8 @@ function dimensionEntries(metric, dimension, ctx) {
   if (dimension.kind === "deadlineState")
     return entry(metric.deadlineState, DEADLINE_LABELS[metric.deadlineState]);
   if (dimension.kind === "durationBand") {
-    const bands = [
-      [1, "1주"],
-      [4, "2~4주"],
-      [8, "5~8주"],
-      [Infinity, "9주 이상"],
-    ];
-    const index = bands.findIndex(([end]) => metric.duration <= end);
-    return entry(String(index), bands[index][1]);
+    const index = DURATION_BANDS.findIndex(([end]) => metric.duration <= end);
+    return entry(String(index), DURATION_BANDS[index][1]);
   }
   const source =
     dimension.basis === "work"
@@ -484,6 +484,34 @@ export function aggregate(tasks, chart, ctx) {
         groups.set(option.id, { key: option.id, label: option.label });
   };
   if (chart.type === "radar") completeOptions(rows, rowDimension);
+  if (chart.type === "bar") {
+    if (
+      rowDimension?.kind === "time" &&
+      rowDimension.basis === "work" &&
+      !periodError(ctx.period)
+    ) {
+      for (
+        let offset = monthOffset(ctx.period.from);
+        offset <= monthOffset(ctx.period.to);
+        offset++
+      ) {
+        const year = Math.floor(offset / 12),
+          month = (offset % 12) + 1;
+        const key =
+          rowDimension.unit === "quarter"
+            ? `${year}-Q${Math.ceil(month / 3)}`
+            : `${year}-${String(month).padStart(2, "0")}`;
+        if (!rows.has(key)) rows.set(key, { key, label: key });
+      }
+    }
+    if (rowDimension?.kind === "durationBand")
+      DURATION_BANDS.forEach(([, label], index) =>
+        rows.set(String(index), { key: String(index), label }),
+      );
+    if (rowDimension?.kind === "deadlineState")
+      for (const [key, label] of Object.entries(DEADLINE_LABELS))
+        if (key !== "noWork") rows.set(key, { key, label });
+  }
   if ((chart.type === "table" && rowDimension) || chart.type === "bar")
     completeOptions(series, seriesDimension);
   if (!rowDimension && !rows.size)
@@ -494,6 +522,10 @@ export function aggregate(tasks, chart, ctx) {
     const entries = [...groups.values()];
     if (dimension?.kind === "time" || dimension?.kind === "durationBand")
       entries.sort((a, b) => a.key.localeCompare(b.key));
+    if (dimension?.kind === "deadlineState") {
+      const states = Object.keys(DEADLINE_LABELS);
+      entries.sort((a, b) => states.indexOf(a.key) - states.indexOf(b.key));
+    }
     if (dimension?.kind === "property") {
       const property = propertiesFor(ctx.settings, true).find(
         (p) => p.id === dimension.propertyId,

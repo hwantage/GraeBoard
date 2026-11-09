@@ -30,6 +30,7 @@ import {
 import InsightsChart, { InsightsTaskTable } from "./InsightsChart";
 import InsightsChartEditor from "./InsightsChartEditor";
 import InsightsComparison from "./InsightsComparison";
+import InsightsAnalysis from "./InsightsAnalysis";
 import { comparisonProperty } from "./insights-chart-templates";
 import InsightsSettings from "./InsightsSettings";
 import InsightsFilters, { type InsightsFilter } from "./InsightsFilters";
@@ -278,11 +279,14 @@ export default function Insights({
   const reorder = useListReorder<HTMLDivElement>(
     charts.map((chart) => chart.id),
     (id, target, placement) => {
-      void saveCharts(reorderItems(charts, id, target, placement))
+      const next = reorderItems(charts, id, target, placement);
+      if (next.every((chart, index) => chart.id === charts[index].id)) return;
+      void saveCharts(next)
         .then(() => setMessage("차트 순서를 저장했습니다."))
         .catch((e) => setError((e as Error).message));
     },
     busy || !allowed || mobile,
+    "grid",
   );
   const edit = (chart?: InsightChart) =>
     setEditor({
@@ -438,6 +442,16 @@ export default function Insights({
             }
             onTask={openTask}
           />
+          <InsightsAnalysis
+            tasks={tasks}
+            ctx={ctx}
+            teamId={team.id}
+            ownerSummary={results.get(fixed[6])!}
+            onDrill={(chart, cell) =>
+              setDrill({ title: chart.title, chart, cell })
+            }
+            onTask={openTask}
+          />
           <div className="insights-grid">
             {[fixed[6], fixed[8]].filter(Boolean).map((chart) => (
               <article className="insights-card" key={chart.title}>
@@ -481,7 +495,11 @@ export default function Insights({
               {allowed ? "차트 추가" : "차트 미리보기"}
             </Button>
           </div>
-          <div className="insights-grid" ref={reorder.root}>
+          <div
+            className="insights-grid insights-team-chart-grid"
+            ref={reorder.root}
+            {...reorder.rootProps}
+          >
             {charts.map((chart) => (
               <article
                 className={`insights-card insights-team-chart${(chart.type === "table" && chart.dimensions.column) || chart.type === "top" ? " insights-card-wide" : ""}`}
@@ -559,6 +577,29 @@ export default function Insights({
                 />
               </article>
             ))}
+            {reorder.gridPreview && (
+              <div
+                className="insights-chart-drop-slot"
+                data-reorder-preview-id={reorder.gridPreview.id}
+                data-reorder-preview-index={reorder.gridPreview.index}
+                data-reorder-preview-order={reorder.gridPreview.order.join(",")}
+                aria-hidden="true"
+                style={{
+                  left: reorder.gridPreview.left,
+                  top: reorder.gridPreview.top,
+                  width: reorder.gridPreview.width,
+                  height: reorder.gridPreview.height,
+                }}
+              >
+                <span>
+                  {
+                    charts.find((chart) => chart.id === reorder.gridPreview!.id)
+                      ?.title
+                  }{" "}
+                  · {reorder.gridPreview.index + 1}번째 위치
+                </span>
+              </div>
+            )}
           </div>
           <article className="insights-card insights-supporting-tasks">
             <h2>{fixed[7].title}</h2>

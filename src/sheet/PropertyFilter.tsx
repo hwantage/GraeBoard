@@ -15,7 +15,7 @@ export default function PropertyFilter({
 }: {
   property: Property;
   tasks: Task[];
-  users: User[];
+  users: Pick<User, "id" | "name">[];
   selected: string[];
   mode: FilterMode;
   onChange: (values: string[]) => void;

@@ -40,10 +40,18 @@ export function InsightsTaskTable({
           <tr>
             <th scope="col">작업명</th>
             <th scope="col">책임자</th>
-            <th scope="col">작업 주</th>
-            <th scope="col">업무 기간</th>
+            <th scope="col" className="insights-number-column">
+              작업 주
+            </th>
+            <th scope="col" className="insights-number-column">
+              업무 기간
+            </th>
             <th scope="col">목표일 상태</th>
-            {sortLabel && <th scope="col">{sortLabel}</th>}
+            {sortLabel && (
+              <th scope="col" className="insights-number-column">
+                {sortLabel}
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -64,10 +72,16 @@ export function InsightsTaskTable({
                 {displayValue(metric.task, "owner", ctx.users, ctx.settings) ||
                   "(미지정)"}
               </td>
-              <td>{metric.rangeWeeks.length}주</td>
-              <td>{metric.duration}주</td>
+              <td className="insights-number-column">
+                {metric.rangeWeeks.length}주
+              </td>
+              <td className="insights-number-column">{metric.duration}주</td>
               <td>{DEADLINE_LABELS[metric.deadlineState]}</td>
-              {sortLabel && <td>{insightNumber(metric.sortValue || 0)}</td>}
+              {sortLabel && (
+                <td className="insights-number-column">
+                  {insightNumber(metric.sortValue || 0)}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

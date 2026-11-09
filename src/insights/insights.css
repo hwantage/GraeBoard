@@ -418,7 +418,7 @@
   border-top: 2px solid var(--line);
   border-bottom: 0;
 }
-.insights-table td {
+.insights-table .insights-number-column {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -597,4 +597,82 @@
     min-width: 64px;
     padding: 10px;
   }
+}
+
+.insights-team-chart-grid {
+  position: relative;
+}
+.insights-team-chart-grid > .insights-team-chart {
+  position: relative;
+}
+.insights-team-chart-grid[data-reorder-grid-active]
+  > .insights-team-chart:not([data-reordering])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent-border);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
+  pointer-events: none;
+}
+.insights-chart-drop-slot {
+  position: absolute;
+  z-index: 4;
+  border: 2px dashed var(--accent-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 78%, transparent);
+  padding: 12px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.insights-chart-drop-slot > span {
+  display: inline-block;
+  padding: 5px 8px;
+  background: white;
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+}
+.insights-chart-unit {
+  margin: -2px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.insights-analysis-property {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.insights-people-selection {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.insights-people-selection > summary {
+  cursor: pointer;
+  padding: 6px 0;
+  color: var(--accent-strong);
+}
+.insights-people-selection[open] {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px;
+}
+.insights-radar-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.insights-analysis .insights-radar {
+  height: 280px;
+}
+.insights-axis-year {
+  font-size: 10px;
+  font-weight: 400;
+  fill: var(--muted);
+}
+.insights-team-chart-grid {
+  overflow-anchor: none;
 }
