@@ -27,7 +27,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 배포 suite는 고정 `7fec065d1adc241da29d54474af06b390d12d72b`의 workflow·CLI를 Git에서 읽어 구·신 버전 4개 조합을 실행합니다. shallow clone에 해당 커밋이 없으면 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`로 준비하며 구조 CI는 `fetch-depth: 0`을 사용하고 이 배포 회귀도 함께 실행합니다.
 
-`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 115개, Playwright는 43개 spec·각 엔진 626건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
+`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 115개, Playwright는 43개 spec·각 엔진 628건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
 
 아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
@@ -342,6 +342,8 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 안정 상태 paired 비교는 `schedule:false`로 주기 발신을 끄고 저장·캡처 비용을 측정합니다. 실제 게시·수신과 겹치는 비용은 별도 작업 행으로 보고합니다. 초기 Git 장애 검사는 bare 저장소 경로를 바꾼 즉시 실패이며 지연·무응답 원격 검증을 대신하지 않습니다. 별도 자식 프로세스의 PG/S3 장애 probe는 내부 서버에 연결되지 않으므로 그동안의 저장 표본을 외부 장애 격리 성능으로 주장하지 않습니다. 두 팀의 동시 동기화와 동기화 작업 중 대량 붙여넣기도 별도 근거가 필요합니다.
 
 충돌 보관함은 내부·외부 모두 `SyncConflictBox` → `SyncConflictDiff` → `shared/sync/conflict-diff.js`로 비교 내용을 표시합니다. 사본 전체처럼 큰 payload의 줄 배열은 함수 인자로 펼치지 않고 순서대로 옮겨 브라우저 인자 수 한도를 피합니다. 표시할 줄이 200개를 넘으면 업무표에서 사용하는 `@tanstack/react-virtual`로 화면에 들어오는 줄만 그리며, 접힌 같은 줄을 펼친 경우도 동일하게 처리합니다. 비교 내용과 줄 번호는 유지하고 긴 줄의 실제 높이를 측정합니다. `tests/sync/protocol/conflict-diff.test.mjs`는 16만 줄의 생성·삭제·접힘을, `tests/browser/sync/data-sync.spec.ts`는 외부 모드에서 문서 11개와 큰 사본을 포함한 12개 항목 펼치기·끝까지 스크롤·긴 같은 줄 펼치기·비교 전환·닫기를 확인합니다.
+
+원본 JSON은 `SyncConflictRaw`에서 펼친 동안만 직렬화·표시하고, 접으면 표시 내용과 측정 상태를 해제합니다. 긴 JSON은 같은 가상 스크롤 라이브러리를 사용하며, JSON 문자열 안의 긴 문서도 조각별 배치 크기를 제한합니다. UTF-16 서로게이트 쌍을 나누지 않고 전체 텍스트를 순서대로 표시하며 짧은 값과 직접 편집의 문자열 변환은 기존 형식을 유지합니다. 끝에 도달한 뒤 줄 높이를 측정해도 마지막 값을 유지하고, ResizeObserver 측정은 애니메이션 프레임으로 모아 처리합니다. 같은 브라우저 suite에서 내부·외부 모드의 900업무×30셀 사본 세 버전, 긴 문자열·한글·이모지, 처음/끝 이동·키보드 스크롤·접기/다시 열기와 기존 해결 동작을 확인합니다.
 
 ## 업무 저장소 계약
 

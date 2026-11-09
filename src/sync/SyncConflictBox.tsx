@@ -5,6 +5,7 @@ import { api, send } from "../platform/api";
 import { Button, ErrorNote, Modal } from "../components";
 import LoadingState from "../ui/LoadingState";
 import SyncConflictDiff, { type ConflictOrigin } from "./SyncConflictDiff";
+import SyncConflictRaw, { conflictRawText } from "./SyncConflictRaw";
 import { busyProps } from "../ui/busyProps";
 import { syncTime } from "./sync-types";
 import type { User } from "../types";
@@ -45,13 +46,6 @@ const choices: Record<Choice, string> = {
   submitted: "나중에 수정으로 덮어쓰기",
   edited: "고친 내용 적용",
 };
-
-const display = (value: unknown) =>
-  typeof value === "string"
-    ? value
-    : (JSON.stringify(value, null, 2) ?? "없음");
-
-const raw = { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } as const;
 
 // The conflict box as one popup, opened from the header warning and from the
 // sync settings. A conflict whose resolution is saved but not yet published
@@ -269,23 +263,7 @@ export default function SyncConflictBox({
                       </p>
                     )}
                     <SyncConflictDiff conflict={conflict} people={people} />
-                    <details className="sync-conflict-raw">
-                      <summary>원본 JSON 보기</summary>
-                      <dl>
-                        <dt>원래 내용</dt>
-                        <dd>
-                          <pre style={raw}>{display(conflict.base)}</pre>
-                        </dd>
-                        <dt>지금 내용(먼저 수정 반영)</dt>
-                        <dd>
-                          <pre style={raw}>{display(conflict.current)}</pre>
-                        </dd>
-                        <dt>나중에 수정</dt>
-                        <dd>
-                          <pre style={raw}>{display(conflict.desired)}</pre>
-                        </dd>
-                      </dl>
-                    </details>
+                    <SyncConflictRaw conflict={conflict} />
                     {!saved && edit && (
                       <label className="team-sync-conflict-edit">
                         적용할 내용
@@ -336,7 +314,7 @@ export default function SyncConflictBox({
                               {...busyProps(busy)}
                               onClick={() => {
                                 setEditing(conflict.conflictId);
-                                setDraft(display(conflict.desired));
+                                setDraft(conflictRawText(conflict.desired));
                               }}
                             >
                               직접 고치기
