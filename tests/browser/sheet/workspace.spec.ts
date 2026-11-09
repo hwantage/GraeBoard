@@ -2721,6 +2721,7 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "프로필",
+    "접속 토큰",
     "비밀번호 변경",
     "로그아웃",
   ]);
@@ -2732,6 +2733,10 @@ test("내 계정 하위 메뉴에서 본인 프로필의 이니셜·배경색·�
   await expect(menu).toHaveCount(0);
   await expect(account).toBeFocused();
   await account.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "접속 토큰", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(
     menu.getByRole("menuitem", { name: "비밀번호 변경", exact: true }),
@@ -5951,7 +5956,7 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
   const rowHeight = (await first.boundingBox())!.height;
   await first.dblclick();
   expect((await first.boundingBox())!.height).toBe(rowHeight);
-  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(first.getByRole("textbox")).toBeFocused();
   await first.getByRole("textbox").fill("직접 입력\n두 번째 줄");
   expect((await first.boundingBox())!.height).toBe(rowHeight);

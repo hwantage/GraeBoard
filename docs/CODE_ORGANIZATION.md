@@ -109,6 +109,8 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 
 `App.tsx`는 화면·선택·패널과 업무 명령을 연결합니다. 원본 업무 조회는 `useTaskData`, 저장 전달·실패 입력은 `useSheetOperations`, 실행취소는 `useSheetHistory`, 개인 배치는 `useSheetLayout`, 필터 목록/저장은 `useSavedFilters`가 소유합니다. 행·셀 명령과 실행취소 전달은 `useSheetRowCommands`·`useSheetCellCommands`·`useSheetUndo`가 맡고, 화면 전환 시 저장 조정은 `app/useWorkspaceNavigation`이 맡습니다. 사본은 기존 `useSheetCloneDraft` 경로를 유지합니다. 새 기능의 연결 지점과 비동기 소유 범위는 [개발 안내의 책임 표](DEVELOPMENT.md#브라우저-상태와-저장-책임)를 따릅니다.
 
+`Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
+
 루트의 `Panels.tsx`·`types.ts`·`styles.css`·`main.tsx`·`app-version.d.ts`는 현재 남아 있는 통합 모듈·진입점입니다. `GridHeaderMenu`는 여러 기능에서 사용하는 조작 UI로 `ui/`가 소유하고, 업무 속성 편집은 `sheet/`, 리치 편집기 내부 모듈은 `documents/editor/`가 소유합니다. 폴더 사이의 양방향 사용과 실제 파일 import 순환은 구분하며, 합당한 문서/캘린더 재사용까지 금지하지 않습니다.
 
 `server/`, `worker/`, `shared/` 내부도 문서·캘린더·업무·동기화 등의 책임으로 묶되, 실행 환경과 기존 저장소 경계를 먼저 유지합니다. `server/storage/`·`worker/storage/`의 기능 폴더와 `server/sync/core/`·`server/sync/node/`·`worker/sync/`가 현재 배치이며, 전체 대응표로 소속을 확인합니다. 서버 공통 서비스의 새 위치나 최상위 디렉토리 변경은 소비 환경을 확인한 설계에 명시한 뒤 진행합니다. 작은 `edge/` 같은 디렉토리를 반드시 더 나눌 필요는 없습니다.

@@ -258,6 +258,54 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 `useTaskData`의 조회 오류와 `useSheetOperations`의 실패 입력은 별도 상태입니다. 조회 복구로 저장 실패를 지우지 않습니다. 비동기 응답은 반영 직전 소유 범위를 검사하며, 팀 ID 문자열이 다시 같아졌다는 이유로 이전 화면의 응답을 허용하지 않습니다. 읽기/저장 담당 훅의 내부 ref나 큐를 App에 노출해 직접 조작하지 않습니다.
 
+### Grid 입력 책임
+
+`Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다.
+
+### 캘린더 명령 책임
+
+`Calendar.tsx`는 보기·날짜·패널과 일정 배치를 조합합니다. 조회·요청 취소는 기존 `useCalendarData`, 드래그는 기존 `useCalendarDrag`를 사용합니다. `useCalendarMutation`은 요청 직렬화와 조회 중단/재개를, `useCalendarCreation`은 새 일정의 임시 보관·저장을, `useCalendarCommands`는 일정·태그·주간 목록 변경과 단일 삭제 복원 기회를 소유합니다. 새 명령은 이 경로를 통해 조회 캐시를 갱신하고 기존 서버/시크릿 저장소를 재사용합니다. 일정의 기간 충돌과 패널 열림 상태는 화면에서 전달하며 별도 저장 경로를 만들지 않습니다.
+
+### 리치 문서 편집 책임
+
+`DocumentEditor.tsx`는 기존 문서 자동 저장·초안·충돌 병합·SSE 계약을 유지합니다. `editor/RichMarkdownEditor.tsx`는 편집 화면과 도구를 조합하며 아래 소유자를 사용합니다.
+
+| 변경 대상 | 소유자 |
+| --- | --- |
+| Milkdown 생성·해제, 원격 내용 적용, 읽기 전용 전환 | `useRichEditorLifecycle.ts` |
+| 키보드·붙여넣기·드롭 규칙 | `document-editor-input.ts` (기존 입력 규칙 모듈 재사용) |
+| 이미지 업로드·취소·진행 수·삽입 후 선택 | `document-image-uploads.ts` (`dispose()`를 수명 종료 때 호출) |
+| 링크 폼·툴팁·열기·복사 | `useDocumentLinkActions.ts` |
+| 슬래시 메뉴 상태·키보드·명령 적용 | `useDocumentSlash.ts` |
+| 목록·블록·표의 편집 명령 | `document-editor-commands.ts` |
+| Markdown 스키마·변환 보존 검사·클립보드 직렬화 | `document-markdown.ts` |
+
+문서 내보내기는 `document-markdown.ts`의 동일 스키마와 링크 규칙을 직접 참조합니다. 변환 규칙은 편집 화면에 추가하지 않습니다. 저장 형식에 영향을 주는 변경은 DB 변경 지침을 따르며, 미지원 문법은 원문 보존과 기존 Markdown 전환 경로를 유지합니다.
+
+### 내부·외부 API의 연결 책임
+
+| 계층 | 내부 Node | 외부 Edge |
+| --- | --- | --- |
+| 호스트 조합 | `server/app.mjs:createApp`의 `install…Routes` 등록 | `worker/entry.mjs:createWorker`의 dispatcher 등록, `edge/` 환경 어댑터 |
+| 신원·HTTP 경계 | `server/auth/local-auth.mjs`, `server/http/` | `worker/control/access.mjs`, `control.mjs`, `site-auth.mjs` |
+| 도메인 입력·업무 규칙 | 두 호스트가 같은 `server/storage/<기능>/*-service.mjs`와 공유 라우트/명령 규칙 사용 | 동일 |
+| 권한 조회·DB 트랜잭션·이벤트 기록 | `Sqlite…Repository`, `server/auth/sqlite-access.mjs` | `Postgres…Repository`, `RequestContext` |
+
+기존 업무 API에 동작을 추가할 때는 공유 라우트 표 → 서비스/명령 규칙 → 엔진별 repository → 실제 HTTP 등록 → SQLite/PG 계약 및 라우트 검사 순서로 연결합니다. Node의 동기 트랜잭션과 PG의 비동기 트랜잭션은 각 repository가 유지합니다. 라우트에 SQL이나 공통 업무 검증을 복제하지 않습니다. 새로운 도메인은 기존 서비스의 적합성을 먼저 확인한 뒤 필요한 항목만 추가합니다.
+
+외부 변경 요청은 `worker/entry.mjs:mutationTeam`을 거쳐 최신화하고, 커밋 후 `changedTeams`의 게시를 예약합니다. 본문에 `teamId`가 없는 새 리소스 경로는 팀 판별도 연결해야 합니다. 이것은 권한 검사 대신이 아니며, 서비스와 repository의 권한 검사를 모두 유지합니다. `/events`와 이미지 읽기는 별도 응답 경로를 사용하므로 일반 JSON 라우트에 섞지 않습니다.
+
+### 기능 추가 예시
+
+| 요청 | 수정 순서와 확인할 동작 |
+| --- | --- |
+| 기존 셀 서식을 일괄 적용하는 버튼 | UI는 선택과 명령만 전달하고 `useSheetCellCommands`의 기존 서식 명령을 확장합니다. 원본은 `useSheetOperations`·`useSheetHistory`, 사본은 `useSheetCloneDraft`로 전달하며 권한·동시 수정·실행취소를 함께 검사합니다. |
+| 일정 메뉴에 새 조작 추가 | `Calendar`에서 메뉴와 선택을 연결하고 `useCalendarCommands`에서 명령을 수행합니다. 서버/시크릿 분기와 `useCalendarMutation`의 대기·화면 전환 보호를 재사용합니다. 새 일정 입력의 보관 방식은 `useCalendarCreation`에서 관리합니다. |
+| 문서 편집 단축키 추가 | `document-editor-input`에서 실제 키를 연결하고 `document-editor-commands`의 기존 명령을 재사용합니다. 본문 변경은 기존 Milkdown listener → `DocumentEditor` 저장 경로를 타도록 하며 읽기 전용·한글 조합·실행취소를 검사합니다. |
+| 업무 API 추가 | 공유 라우트/서비스와 양쪽 repository, 내부 라우트 등록·외부 dispatcher/`mutationTeam`을 연결합니다. SQLite·PG 서비스 검사와 실제 호스트 요청을 모두 확인합니다. 저장 계약을 바꾸면 구현 전 DB 변경 지침을 적용합니다. |
+
+메모 카드의 열린 `<dialog>`는 모달 팝업과 다릅니다. 전역 Escape 우선순위나 발표 포인터 차단에는 `dialog:modal`을 사용하고, 문서 안의 키보드 입력은 해당 편집기가 처리하도록 유지합니다.
+
 ## 확장과 변경
 
 - 짧은 저장·드래그로 입력을 잠글 때는 `src/ui/busyProps.ts`로 실제 `disabled`와 임시 잠금 표시를 함께 전달합니다. 권한·필수값 부족으로 비활성화한 컨트롤의 흐린 표시는 유지하고, 임시 잠금 때문에 화면 전체를 흐리게 만들지 않습니다. 저장 상태는 변경 중인 항목에 표시합니다. 캘린더 저장은 해당 팀원의 데이터만 교체하고, 변경 없는 주간 배치는 다시 정렬하지 않습니다.
@@ -318,7 +366,7 @@ npm run test:e2e
 
 `npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 통합 기준 `ad1e57d`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개이며 PR #103의 대형 충돌 회귀가 같은 `data-sync.spec.ts`에 추가됐습니다. `tests/support/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
 
-`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P3`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. `check:architecture`는 `src/shared/server/worker/edge/functions`의 정적 런타임 import·re-export·문자열 dynamic import를 수집해 순환, UI/통신 기반의 화면 역참조, 기능의 App 역참조, 브라우저의 간접 Node/호스트 의존을 검사합니다. 타입 전용 import는 런타임 순환에 포함하지 않으며 npm 패키지 내부·실행 시 계산한 import 경로는 이 검사의 범위 밖입니다. 외부 저장소 검사도 `edge/` 진입과 간접 의존을 포함합니다. PR의 경량 CI는 구조·도구·import 경계를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
+`check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. 단계별 전체 목록은 `npm run check:structure -- --migration-phase P3`처럼 확인합니다. 평상시 검사는 과거 manifest 목록으로 새 기능을 제한하지 않습니다. `check:architecture`는 `src/shared/server/worker/edge/functions`의 정적 런타임 import·re-export·문자열 dynamic import를 수집해 순환, UI/통신 기반의 화면 역참조, 기능의 App 역참조, 브라우저의 간접 Node/호스트 의존을 검사합니다. 타입 전용 import는 런타임 순환에 포함하지 않으며 npm 패키지 내부·실행 시 계산한 import 경로는 이 검사의 범위 밖입니다. 외부 저장소 검사도 `edge/` 진입과 간접 의존을 포함합니다. PR의 경량 CI는 구조·도구·import 경계·고정 전환 의존성 격리를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
 
 `TEST_PG_BIN`은 실행 가능한 PostgreSQL 서버 바이너리 경로로 바꿉니다([외부 동기화 개발·검증](#외부-동기화-개발검증)). `npm test`는 임시 DB에서 API·권한·동시 수정·이관·백업/복구·이슈 링크를 검증합니다. `DEBUG_HTTP=1`로 실행하면 서버가 거절한 요청(4xx)의 경로와 사유를 콘솔에 남겨 테스트 실패 원인을 바로 볼 수 있습니다. `npm run test:e2e`는 별도 임시 서버와 DB를 만들고 Chromium·Firefox·WebKit에서 실제 UI를 조작합니다. `4311` 포트를 사용하며 실행 중에는 앱·테스트 소스를 바꾸지 않습니다. Linux 환경에서 브라우저 시스템 의존성이 없다면 `npx playwright install --with-deps chromium firefox webkit`를 사용합니다.
 
@@ -437,40 +485,3 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 고정 checkout 자체의 lockfile로 `npm ci --include=dev`를 실행하며 현재 앱의 `node_modules`를 공유하지 않습니다. `npm test`·`test:postgres`는 실행 시작 시 한 번 준비한 고정 의존성 트리를 자식 검사에 전달합니다. 전달된 경로의 고정 lockfile hash·설치 표식(Node 버전/OS/아키텍처)과 실제 디렉터리를 확인합니다. 현재 앱 lockfile이 달라도 고정 도구는 원래 의존성을 사용하며, 설치나 검증 실패는 즉시 실패로 처리합니다. npm 캐시가 없으면 최초 준비에 네트워크가 필요합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
 
 `TEST_PG_BIN=/절대/PG/bin npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 현재 앱 교차 검증도 `TEST_PG_BIN`을 명시해야 하며 누락은 명시적 오류입니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.
-
-### Grid 입력 책임
-
-`Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다.
-
-### 캘린더 명령 책임
-
-`Calendar.tsx`는 보기·날짜·패널과 일정 배치를 조합합니다. 조회·요청 취소는 기존 `useCalendarData`, 드래그는 기존 `useCalendarDrag`를 사용합니다. `useCalendarMutation`은 요청 직렬화와 조회 중단/재개를, `useCalendarCreation`은 새 일정의 임시 보관·저장을, `useCalendarCommands`는 일정·태그·주간 목록 변경과 단일 삭제 복원 기회를 소유합니다. 새 명령은 이 경로를 통해 조회 캐시를 갱신하고 기존 서버/시크릿 저장소를 재사용합니다. 일정의 기간 충돌과 패널 열림 상태는 화면에서 전달하며 별도 저장 경로를 만들지 않습니다.
-
-### 리치 문서 편집 책임
-
-`DocumentEditor.tsx`는 기존 문서 자동 저장·초안·충돌 병합·SSE 계약을 유지합니다. `editor/RichMarkdownEditor.tsx`는 편집 화면과 도구를 조합하며 아래 소유자를 사용합니다.
-
-| 변경 대상 | 소유자 |
-| --- | --- |
-| Milkdown 생성·해제, 원격 내용 적용, 읽기 전용 전환 | `useRichEditorLifecycle.ts` |
-| 키보드·붙여넣기·드롭 규칙 | `document-editor-input.ts` (기존 입력 규칙 모듈 재사용) |
-| 이미지 업로드·취소·진행 수·삽입 후 선택 | `document-image-uploads.ts` (`dispose()`를 수명 종료 때 호출) |
-| 링크 폼·툴팁·열기·복사 | `useDocumentLinkActions.ts` |
-| 슬래시 메뉴 상태·키보드·명령 적용 | `useDocumentSlash.ts` |
-| 목록·블록·표의 편집 명령 | `document-editor-commands.ts` |
-| Markdown 스키마·변환 보존 검사·클립보드 직렬화 | `document-markdown.ts` |
-
-문서 내보내기는 `document-markdown.ts`의 동일 스키마와 링크 규칙을 직접 참조합니다. 변환 규칙은 편집 화면에 추가하지 않습니다. 저장 형식에 영향을 주는 변경은 DB 변경 지침을 따르며, 미지원 문법은 원문 보존과 기존 Markdown 전환 경로를 유지합니다.
-
-### 내부·외부 API의 연결 책임
-
-| 계층 | 내부 Node | 외부 Edge |
-| --- | --- | --- |
-| 호스트 조합 | `server/app.mjs:createApp`의 `install…Routes` 등록 | `worker/entry.mjs:createWorker`의 dispatcher 등록, `edge/` 환경 어댑터 |
-| 신원·HTTP 경계 | `server/auth/local-auth.mjs`, `server/http/` | `worker/control/access.mjs`, `control.mjs`, `site-auth.mjs` |
-| 도메인 입력·업무 규칙 | 두 호스트가 같은 `server/storage/<기능>/*-service.mjs`와 공유 라우트/명령 규칙 사용 | 동일 |
-| 권한 조회·DB 트랜잭션·이벤트 기록 | `Sqlite…Repository`, `server/auth/sqlite-access.mjs` | `Postgres…Repository`, `RequestContext` |
-
-기존 업무 API에 동작을 추가할 때는 공유 라우트 표 → 서비스/명령 규칙 → 엔진별 repository → 실제 HTTP 등록 → SQLite/PG 계약 및 라우트 검사 순서로 연결합니다. Node의 동기 트랜잭션과 PG의 비동기 트랜잭션은 각 repository가 유지합니다. 라우트에 SQL이나 공통 업무 검증을 복제하지 않습니다. 새로운 도메인은 기존 서비스의 적합성을 먼저 확인한 뒤 필요한 항목만 추가합니다.
-
-외부 변경 요청은 `worker/entry.mjs:mutationTeam`을 거쳐 최신화하고, 커밋 후 `changedTeams`의 게시를 예약합니다. 본문에 `teamId`가 없는 새 리소스 경로는 팀 판별도 연결해야 합니다. 이것은 권한 검사 대신이 아니며, 서비스와 repository의 권한 검사를 모두 유지합니다. `/events`와 이미지 읽기는 별도 응답 경로를 사용하므로 일반 JSON 라우트에 섞지 않습니다.

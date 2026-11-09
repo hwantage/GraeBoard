@@ -531,6 +531,10 @@ test("문서 삭제는 선택한 문서에만 적용하고 마지막 문서를 �
     modal(page).getByRole("textbox", { name: "업무 문서 Markdown 원문" }),
   ).toHaveValue("남는 본문");
   await remove("문서 2");
+  await expect(modal(page).getByRole("tab")).toHaveCount(0);
+  await modal(page)
+    .getByRole("button", { name: "문서 작성", exact: true })
+    .click();
   await expect(
     modal(page).getByRole("tab", { name: "문서 1", exact: true }),
   ).toBeVisible();

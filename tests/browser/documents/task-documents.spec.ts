@@ -1047,9 +1047,14 @@ test("문서 생성·Markdown 왕복·자동 저장·아이콘·재열기·새�
   await page.mouse.move(0, 0);
   await expect(icon(page)).toHaveCSS("opacity", "0");
   expect(
-    requests.filter((url) =>
-      /RichMarkdownEditor|TaskDocumentPanel|\/document/.test(url),
-    ),
+    requests.filter((url) => {
+      const { pathname } = new URL(url);
+      return (
+        /RichMarkdownEditor|TaskDocumentPanel/.test(pathname) ||
+        (pathname.startsWith("/api/") &&
+          /\/documents?(?:[/-]|$)/.test(pathname))
+      );
+    }),
   ).toHaveLength(0);
   await open(page);
   await expect(detail(page).locator(".detail-fields")).toBeVisible();

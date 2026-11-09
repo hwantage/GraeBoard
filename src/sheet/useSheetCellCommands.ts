@@ -119,7 +119,7 @@ export default function useSheetCellCommands({
     if (!formatBrush) return;
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (workspaceRef.current?.querySelector("dialog[open]")) return;
+      if (workspaceRef.current?.querySelector("dialog:modal")) return;
       event.preventDefault();
       setFormatBrush(null);
     };

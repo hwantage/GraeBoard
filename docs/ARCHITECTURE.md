@@ -38,6 +38,16 @@ flowchart TD
 
 저장 성공은 App의 콜백을 통해 원본 목록과 이력에 반영합니다. 조회 실패와 저장 실패는 서로 지우지 않습니다. 필터·배치의 팀 전환과 셀 저장의 팀·연도 전환에는 비동기 요청의 소유 범위를 검사합니다. `check:architecture`가 런타임 순환·프런트엔드 역방향 import·브라우저의 서버/Node 의존을, 기존 저장소 경계 검사가 외부 공통 서비스 목록과 간접 Node 의존을 검사합니다.
 
+화면 내부의 입력과 편집 수명도 독립적으로 관리합니다.
+
+| 조합 화면 | 상태·행동의 소유자 | 저장 경계 |
+| --- | --- | --- |
+| `Grid` | `useGridSelection`, `useGridRowDrag`, `useGridResize`, `useGridViewport` | 선택/크기 미리보기는 로컬 상태, 확정만 기존 시트 명령/개인 배치로 전달 |
+| `Calendar` | `useCalendarMutation`, `useCalendarCreation`, `useCalendarCommands`; 기존 조회·드래그 훅 재사용 | 서버 일정과 시크릿 저장소의 기존 API·초안·복원 계약 유지 |
+| `RichMarkdownEditor` | `useRichEditorLifecycle`, 입력·업로드·링크·슬래시·편집 명령 모듈 | 본문 변경을 `DocumentEditor`에 전달; 자동 저장·충돌·SSE는 문서 경계가 소유 |
+
+팀·연도·사본 전환은 시트 제스처를 취소하고, 편집기 해제는 이벤트·업로드를 정리합니다. Markdown 내보내기는 화면 컴포넌트를 import하지 않고 편집기와 같은 스키마/변환 모듈을 사용합니다.
+
 ## 배포 구성
 
 ```mermaid

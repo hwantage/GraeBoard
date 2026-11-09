@@ -816,7 +816,7 @@ function Workspace({
     if (!presentation) return;
     const exit = (e: KeyboardEvent) => {
       // Let the topmost dialog handle Escape before leaving presentation mode.
-      if (workspaceRef.current?.querySelector("dialog[open]")) return;
+      if (workspaceRef.current?.querySelector("dialog:modal")) return;
       if (
         e.target instanceof Element &&
         e.target.closest(".presentation-toolbar input")

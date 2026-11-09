@@ -335,8 +335,8 @@ test("기존 다섯 팔레트를 밝기와 독립적으로 선택하고 새로�
   });
   await detail.getByRole("button", { name: "닫기", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(picker).toBeHidden();
   for (const control of [
-    picker,
     page.getByRole("button", { name: "밝은 테마로 전환", exact: true }),
     page.getByRole("button", { name: "캘린더 닫기", exact: true }),
   ]) {
@@ -349,9 +349,7 @@ test("기존 다섯 팔레트를 밝기와 독립적으로 선택하고 새로�
     animations: "disabled",
     fullPage: true,
   });
-  await page
-    .getByRole("button", { name: "그래보드 홈 (연간 업무)", exact: true })
-    .click();
+  await page.getByRole("button", { name: "캘린더 닫기", exact: true }).click();
   await expect(page.locator(".workspace")).not.toHaveAttribute(
     "data-calendar-palette",
   );
@@ -359,6 +357,7 @@ test("기존 다섯 팔레트를 밝기와 독립적으로 선택하고 새로�
     "background-color",
     annualBackground,
   );
+  await page.setViewportSize({ width: 1366, height: 900 });
   await enter(page);
   await expect(picker).toHaveValue("sky");
   await picker.selectOption("cartoon");
