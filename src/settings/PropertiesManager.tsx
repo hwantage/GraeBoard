@@ -17,7 +17,8 @@ import {
   shortId,
 } from "../../shared/domain.js";
 import { send } from "../platform/api";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import Toast, { useToast } from "../ui/Toast";
 import PropertyBadge from "../sheet/PropertyBadge";
 import PropertyColumnOrder from "../sheet/PropertyColumnOrder";

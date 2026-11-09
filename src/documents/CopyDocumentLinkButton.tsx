@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "lucide-react";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import Toast, { useToast } from "../ui/Toast";
 import { copyDocumentLink, type DocumentLinkTarget } from "./document-links";
 

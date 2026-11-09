@@ -1,33 +1,30 @@
-import { useTouchPress } from "../ui/useTouchPress";
+import useGridSelection from "./useGridSelection";
+import type { GridActions } from "./grid-types";
+import useGridResize from "./useGridResize";
+import useGridViewport, { GROUP_HEADING_HEIGHT } from "./useGridViewport";
+import useGridRowDrag from "./useGridRowDrag";
+import type { Column, ColumnReference, RowCommand } from "./grid-types";
+import { rangeOf, rangesOf } from "./grid-selection";
+
 import { useMobileLayout } from "../ui/useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
-import {
-  explicitStyle,
-  rowFontSize,
-} from "../../shared/formatting/formatting.js";
+import { explicitStyle } from "../../shared/formatting/formatting.js";
 import {
   Fragment,
   memo,
-  useCallback,
   useLayoutEffect,
-  useEffect,
   useState,
   useRef,
   useMemo,
   type CSSProperties,
   type ReactNode,
-  type KeyboardEvent,
   type RefObject,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { trackPointerDrag } from "../ui/trackPointerDrag";
-import {
-  useVirtualizer,
-  defaultRangeExtractor,
-  type VirtualItem,
-} from "@tanstack/react-virtual";
+
+import { type VirtualItem } from "@tanstack/react-virtual";
 import {
   MoreHorizontal,
   Plus,
@@ -55,7 +52,6 @@ import type {
   Cell,
   Style,
   Property,
-  SelectionArea,
 } from "../types";
 import {
   canEdit,
@@ -70,11 +66,9 @@ import {
   textMode,
   fontFamilyCSS,
 } from "../../shared/domain.js";
-import { Button, Empty } from "../components";
-import InlineCellEditor, {
-  type EditorState,
-  type EditMove,
-} from "./InlineCellEditor";
+import { Button } from "../ui/Button";
+import { Empty } from "../ui/Empty";
+import InlineCellEditor, { type EditorState } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "../ui/GridHeaderMenu";
@@ -91,111 +85,12 @@ import {
   readClipboard,
   type ClipboardMatrix,
 } from "./clipboard";
-import {
-  copyLayout,
-  subtractRange,
-  toSelectionArea,
-} from "./selection-areas.js";
+import { copyLayout } from "./selection-areas.js";
 
 const ROW_HEADER_WIDTH = 48;
-const GROUP_HEADING_HEIGHT = 28;
-// 고정한 묶음 제목은 클릭을 막지만, 행을 끌어 옮기거나 선택할 때는 그 아래의
-// 행을 대상으로 찾는다.
-function elementBelowPinnedHeading(x: number, y: number) {
-  return document
-    .elementsFromPoint(x, y)
-    .find((element) => !element.closest(".group-heading-pin"));
-}
-// Returning from another screen must not refocus the prepared IME input after a touch.
-let lastPointerWasTouch = false;
 
-export type Column = {
-  key: string;
-  label: string;
-  width: number;
-  month?: number;
-  fixed?: boolean;
-  weekIndex?: number;
-  date?: string;
-  end?: string;
-};
-type ColumnReference = Pick<Column, "key" | "label" | "month">;
-export type RowCommand =
-  "insertBefore" | "insertAfter" | "copy" | "paste" | "delete";
-export function rangeOf(
-  selection: Selection | null,
-  tasks: Task[],
-  columns: Pick<Column, "key">[],
-) {
-  if (!selection) return null;
-  const allRows = selection.kind === "columns" || selection.kind === "all";
-  const allColumns = selection.kind === "rows" || selection.kind === "all";
-  const r1 = allRows
-      ? 0
-      : tasks.findIndex((t) => t.id === selection.anchor.taskId),
-    r2 = allRows
-      ? tasks.length - 1
-      : tasks.findIndex((t) => t.id === selection.focus.taskId),
-    c1 = allColumns
-      ? 0
-      : columns.findIndex((c) => c.key === selection.anchor.key),
-    c2 = allColumns
-      ? columns.length - 1
-      : columns.findIndex((c) => c.key === selection.focus.key);
-  if (c1 < 0 || c2 < 0 || (!allRows && (r1 < 0 || r2 < 0))) return null;
-  return {
-    r1: tasks.length ? Math.min(r1, r2) : 0,
-    r2: tasks.length ? Math.max(r1, r2) : -1,
-    c1: Math.min(c1, c2),
-    c2: Math.max(c1, c2),
-  };
-}
-export function selectedPoints(
-  selection: Selection | null,
-  tasks: Task[],
-  columns: Pick<Column, "key">[],
-  limit = 2000,
-) {
-  const points = new Map<string, Point>();
-  for (const r of rangesOf(selection, tasks, columns))
-    for (let i = r.r1; i <= r.r2; i++)
-      for (let j = r.c1; j <= r.c2; j++) {
-        const p = { taskId: tasks[i].id, key: columns[j].key };
-        points.set(`${p.taskId}:${p.key}`, p);
-        if (points.size > limit)
-          throw new Error(
-            `한 번에 ${limit.toLocaleString()}개 셀까지 편집할 수 있습니다. 선택 범위를 줄여주세요.`,
-          );
-      }
-  return [...points.values()];
-}
-export function rangesOf(
-  selection: Selection | null,
-  tasks: Task[],
-  columns: Pick<Column, "key">[],
-) {
-  return selection
-    ? [...(selection.areas || []), selection]
-        .map((area) => {
-          const range = rangeOf(area, tasks, columns);
-          return range ? { ...range, kind: area.kind } : null;
-        })
-        .filter((range): range is NonNullable<typeof range> => !!range)
-    : [];
-}
-function savedAreas(selection: Selection | null): SelectionArea[] {
-  return selection
-    ? [
-        ...(selection.areas || []),
-        {
-          anchor: selection.anchor,
-          focus: selection.focus,
-          kind: selection.kind,
-        },
-      ]
-    : [];
-}
 export default function Grid({
+  scopeKey,
   zoom = 1,
   tasks,
   matchingTasks,
@@ -235,6 +130,7 @@ export default function Grid({
   onPaintFormat,
   jump,
 }: {
+  scopeKey: string;
   zoom?: number;
   tasks: Task[];
   // tasks: 화면에 보이는 행, matchingTasks: 필터 통과(숨긴 행 포함), allTasks: 전체.
@@ -294,56 +190,17 @@ export default function Grid({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const mobile = useMobileLayout();
-  const [touchInput, setTouchInput] = useState(lastPointerWasTouch);
-  const touchInputRef = useRef(lastPointerWasTouch);
-  useEffect(() => {
-    const rememberPointer = (event: PointerEvent) => {
-      lastPointerWasTouch = event.pointerType === "touch";
-    };
-    window.addEventListener("pointerdown", rememberPointer, true);
-    return () =>
-      window.removeEventListener("pointerdown", rememberPointer, true);
-  }, []);
-  const touchPress = useTouchPress();
-  const focusTarget = useRef(selection?.focus);
-  const latestSelection = useRef(selection);
-  latestSelection.current = selection;
-  const paint = useRef(onPaintFormat);
-  paint.current = onPaintFormat;
-  const stopFormatDrag = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    if (!formatPainting) stopFormatDrag.current?.();
-    return () => stopFormatDrag.current?.();
-  }, [formatPainting]);
-  function startFormatDrag(event: React.PointerEvent) {
-    if (!formatPainting) return;
-    stopFormatDrag.current?.();
-    stopFormatDrag.current = trackPointerDrag(event, {
-      onMove: () => {},
-      onEnd: (_, cancelled) => {
-        stopFormatDrag.current = null;
-        if (!cancelled) paint.current?.(latestSelection.current);
-      },
-    });
-  }
-  focusTarget.current = selection?.focus;
-  function onSelect(next: Selection | null) {
-    // 포커스 이벤트는 선택 변경의 렌더보다 먼저 발생할 수 있다.
-    // 곧 제거될 이전 셀의 입력창으로 포커스가 돌아가지 않게 한다.
-    focusTarget.current = next?.focus;
-    latestSelection.current = next;
-    onSelectionChange(next);
-  }
-  const appliedJump = useRef<number | null>(null);
+
   // 크기 조절 드래그 중에는 표만 미리 바꾸고, 놓을 때 한 번 보기 설정에 저장한다.
-  const [columnResize, setColumnResize] = useState<{
-    key: string;
-    width: number;
-  } | null>(null);
-  const [rowResize, setRowResize] = useState<{
-    taskId: string;
-    height: number;
-  } | null>(null);
+
+  const resize = useGridResize({
+    scopeKey,
+    zoom,
+    view,
+    onView,
+    onStart: () => selectionControls.clearPointerOrigin(),
+  });
+  const { columnResize, rowResize, startColumnResize } = resize;
   const columns = useMemo(() => {
     const resized = columnResize
       ? baseColumns.map((column) =>
@@ -360,44 +217,7 @@ export default function Grid({
         )
       : resized;
   }, [baseColumns, columnResize, mobile]);
-  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
-  // ⌘/Ctrl로 선택한 셀에서 시작한 드래그는 시작 전 선택에서 끈 범위를 뺀다.
-  const removing = useRef<{
-    base: Selection | null;
-    start: Point;
-    last: Point;
-  } | null>(null);
-  const rowDragPointer = useRef({ x: 0, y: 0 });
-  const rowDragPreview = useRef<HTMLDivElement>(null);
-  const [rowDrag, setRowDrag] = useState<{
-    taskId: string;
-    taskIds: string[];
-    targetId: string;
-    placement: "before" | "after";
-    valid: boolean;
-  } | null>(null);
-  const draggedIds = useMemo(
-    () => new Set(rowDrag?.taskIds),
-    [rowDrag?.taskIds],
-  );
-  const stopRowDrag = useRef<(() => void) | null>(null);
-  const stopHeaderDrag = useRef<(() => void) | null>(null);
-  const [headerMenu, setHeaderMenu] = useState<{
-    kind: "columns" | "rows";
-    taskId?: string;
-    index: number;
-    x: number;
-    y: number;
-  } | null>(null);
-  useEffect(() => () => stopRowDrag.current?.(), []);
-  useEffect(() => () => stopHeaderDrag.current?.(), [tasks, columns]);
-  function positionRowDragPreview() {
-    const preview = rowDragPreview.current;
-    if (!preview) return;
-    const { x, y } = rowDragPointer.current;
-    preview.style.transform = `translate3d(${Math.max(8, Math.min(x + 18, window.innerWidth - preview.offsetWidth - 8))}px, ${Math.max(8, Math.min(y + 18, window.innerHeight - preview.offsetHeight - 8))}px, 0)`;
-  }
-  useLayoutEffect(positionRowDragPreview, [rowDrag]);
+
   const today = useTodayKey();
   const currentWeek = mondayOf(today);
   // Width previews change only the resized column, not the cell border layout.
@@ -550,594 +370,86 @@ export default function Grid({
   const group = properties.find((p) => p.id === view.groupBy);
   const groupKey = group?.id || "";
   const sorted = !!view.sortKey && view.sortDirection !== "default";
-  function rowsToMove(task: Task) {
-    if (
-      selection?.kind === "rows" &&
-      !(selection.areas || []).some((a) => a.kind !== "rows")
-    ) {
-      const index = tasks.findIndex((t) => t.id === task.id);
-      if (ranges.some((r) => index >= r.r1 && index <= r.r2))
-        return tasks.filter((_, i) =>
-          ranges.some((r) => i >= r.r1 && i <= r.r2),
-        );
-    }
-    return [task];
-  }
-  function canMoveRows(moving: Task[]) {
-    if (!copyEditable && moving.some((t) => !canEdit(user, t))) {
-      onError("선택한 행에 이동 권한이 없는 업무가 포함되어 있습니다.");
-      return false;
-    }
-    if (
-      groupKey &&
-      moving.some(
-        (t) => groupValue(t, groupKey) !== groupValue(moving[0], groupKey),
-      )
-    ) {
-      onError("묶음 보기에서는 같은 묶음의 행만 함께 이동할 수 있습니다.");
-      return false;
-    }
-    return true;
-  }
-  function moveRows(
-    moving: Task[],
-    targetId: string,
-    placement: "before" | "after",
-  ) {
-    onSelect({
-      kind: "rows",
-      anchor: { taskId: moving[0].id, key: columns[0].key },
-      focus: { taskId: moving.at(-1)!.id, key: columns[0].key },
-    });
-    onReorder(
-      moving.map((t) => t.id),
-      targetId,
-      placement,
-    );
-    ref.current?.focus({ preventScroll: true });
-  }
-  function startRowDrag(e: React.PointerEvent, task: Task) {
-    if (
-      e.button !== 0 ||
-      readOnly ||
-      sorted ||
-      editor ||
-      !(copyEditable || canEdit(user, task))
-    )
-      return;
-    e.preventDefault();
-    e.stopPropagation();
-    const moving = rowsToMove(task);
-    if (!canMoveRows(moving)) return;
-    const movingTaskIds = moving.map((t) => t.id);
-    const movingIds = new Set(movingTaskIds);
-    stopRowDrag.current?.();
-    stopHeaderDrag.current?.();
-    setHeaderMenu(null);
-    dragOrigin.current = null;
-    const startX = e.clientX,
-      startY = e.clientY;
-    let x = startX,
-      y = startY,
-      dragging = false,
-      frame = 0;
-    let drop: {
-      targetId: string;
-      placement: "before" | "after";
-      valid: boolean;
-    } | null = null;
-    const target = () => {
-      rowDragPointer.current = { x, y };
-      positionRowDragPreview();
-      const element = elementBelowPinnedHeading(x, y)?.closest<HTMLElement>(
-        ".sheet-row",
-      );
-      const item = tasks.find((t) => t.id === element?.dataset.rowId);
-      if (!item || movingIds.has(item.id) || !element) {
-        drop = null;
-      } else {
-        const box = element.getBoundingClientRect();
-        // A group heading is not part of the destination row's content.
-        const heading =
-          element.querySelector(".group-heading")?.getBoundingClientRect()
-            .height || 0;
-        drop = {
-          targetId: item.id,
-          placement:
-            y < box.top + heading + (box.height - heading) / 2
-              ? "before"
-              : "after",
-          valid:
-            !groupKey ||
-            groupValue(task, groupKey) === groupValue(item, groupKey),
-        };
-      }
-      const next = {
-        taskId: task.id,
-        taskIds: movingTaskIds,
-        ...(drop || {
-          targetId: "",
-          placement: "before" as const,
-          valid: true,
-        }),
-      };
-      setRowDrag((old) =>
-        old?.taskId === next.taskId &&
-        old.targetId === next.targetId &&
-        old.placement === next.placement &&
-        old.valid === next.valid
-          ? old
-          : next,
-      );
-    };
-    const scroll = () => {
-      const grid = ref.current;
-      if (grid && dragging) {
-        const box = grid.getBoundingClientRect();
-        const delta = y < box.top + 64 ? -10 : y > box.bottom - 30 ? 10 : 0;
-        if (delta) {
-          grid.scrollTop += delta;
-          target();
-        }
-      }
-      frame = requestAnimationFrame(scroll);
-    };
-    const move = (event: PointerEvent) => {
-      x = event.clientX;
-      y = event.clientY;
-      if (!dragging && Math.hypot(x - startX, y - startY) > 4) {
-        dragging = true;
-        document.body.classList.add("row-reordering");
-      }
-      if (dragging) target();
-    };
-    stopRowDrag.current = trackPointerDrag(e, {
-      onMove: move,
-      onEnd: (position, cancelled) => {
-        if (dragging && !cancelled) {
-          x = position.clientX;
-          y = position.clientY;
-          target();
-        }
-        document.body.classList.remove("row-reordering");
-        cancelAnimationFrame(frame);
-        stopRowDrag.current = null;
-        setRowDrag(null);
-        if (!cancelled && dragging && drop) {
-          if (drop.valid) moveRows(moving, drop.targetId, drop.placement);
-          else
-            onError("묶음 보기에서는 같은 묶음 안에서만 이동할 수 있습니다.");
-        }
-      },
-    });
-    frame = requestAnimationFrame(scroll);
-  }
-  const groupHeights = useMemo(
-    () =>
-      tasks.map((t, i) =>
-        !!group &&
-        (i === 0 ||
-          groupValue(t, groupKey) !== groupValue(tasks[i - 1], groupKey))
-          ? GROUP_HEADING_HEIGHT
-          : 0,
-      ),
-    [tasks, group, groupKey],
-  );
-  const groupHeight = (i: number) => groupHeights[i] || 0;
-  const groupCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    if (group)
-      for (const t of tasks) {
-        const key = groupValue(t, groupKey);
-        counts.set(key, (counts.get(key) || 0) + 1);
-      }
-    return counts;
-  }, [tasks, group, groupKey]);
-  // 묶음마다 첫 행의 순번. 스크롤 위치에서 고정할 묶음 제목을 이 목록으로 찾는다.
-  const groupStarts = useMemo(
-    () => groupHeights.flatMap((height, i) => (height ? [i] : [])),
-    [groupHeights],
-  );
-  // 셀 글자 크기에 맞춘 행 높이. 렌더·스크롤마다 전체 업무를 다시 계산하지 않도록
-  // 업무 목록이나 높이 설정이 바뀔 때만 구한다.
-  const density = settings.defaultDensity || "compact";
-  const contentHeights = useMemo(
-    () =>
-      tasks.map((task) => {
-        const fitted = Math.max(
-          density === "comfortable" ? 48 : 38,
-          Math.ceil(rowFontSize(task) * (4 / 3) * 1.55 + 16),
-        );
-        return (
-          view.rowHeights[task.id] ||
-          (density === "dense"
-            ? Math.max(26, Math.round((fitted * 2) / 3))
-            : fitted)
-        );
-      }),
-    [tasks, density, view.rowHeights],
-  );
-  const estimateSize = useCallback(
-    (i: number) =>
-      groupHeights[i] +
-      (rowResize?.taskId === tasks[i].id
-        ? rowResize.height
-        : contentHeights[i]),
-    [tasks, groupHeights, contentHeights, rowResize],
-  );
-  // 함수가 렌더마다 바뀌면 가상 스크롤이 모든 행의 위치를 다시 계산한다.
-  const getItemKey = useCallback((i: number) => tasks[i].id, [tasks]);
-  const taskIndexes = useMemo(
-    () => new Map(tasks.map((task, index) => [task.id, index])),
-    [tasks],
-  );
-  const inputTaskId = editor?.point.taskId || selection?.focus.taskId;
-  const inputIndex = inputTaskId ? (taskIndexes.get(inputTaskId) ?? -1) : -1;
-  const rangeExtractor = useCallback(
-    (range: Parameters<typeof defaultRangeExtractor>[0]) => {
-      const indices = defaultRangeExtractor(range);
-      // 화면 밖에서도 선택한 셀의 IME 입력창과 편집 중인 입력창을 유지한다.
-      return inputIndex >= 0
-        ? [...new Set([...indices, inputIndex])].sort((a, b) => a - b)
-        : indices;
-    },
-    [inputIndex],
-  );
-  const virtual = useVirtualizer({
-    count: tasks.length,
-    getScrollElement: () => ref.current,
-    estimateSize,
-    overscan: 12,
-    getItemKey,
-    scrollMargin: 32,
-    // Keep rows above a classic horizontal scrollbar (up to 18px), if any.
-    scrollPaddingEnd: footer ? 18 : 0,
-    rangeExtractor,
+
+  const {
+    groupHeight,
+    groupCounts,
+    groupStarts,
+    density,
+    contentHeights,
+    taskIndexes,
+    virtual,
+    scrollToRow,
+  } = useGridViewport({
+    ref,
+    tasks,
+    columns,
+    settings,
+    view,
+    group,
+    groupKey,
+    editor,
+    selection,
+    rowResize,
+    footer,
+    jump,
+    rowHeaderWidth,
+    positions,
   });
-  useLayoutEffect(() => {
-    virtual.measure();
-  }, [estimateSize]);
-  // 행의 위쪽이 가려지면 보이게 할 스크롤 위치. 열 머리글(scrollMargin)과 고정한
-  // 묶음 제목이 행을 가린다. 묶음의 첫 행은 자기 제목이 고정 위치에 오므로
-  // 열 머리글만 피한다. 1px 미만으로 걸친 행은 보이는 것으로 본다.
-  function coveredRowOffset(index: number) {
-    const item = virtual.measurementsCache[index];
-    const cover =
-      virtual.options.scrollMargin +
-      (group && !groupHeights[index] ? GROUP_HEADING_HEIGHT : 0);
-    return item && item.start - cover + 1 <= (ref.current?.scrollTop ?? 0)
-      ? item.start - cover
-      : null;
+  const selectionControls = useGridSelection({
+    scopeKey,
+    ref,
+    tasks,
+    columns,
+    taskIndexes,
+    selection,
+    ranges,
+    editor,
+    zoom,
+    rowHeaderWidth,
+    readOnly,
+    presentation,
+    formatPainting,
+    onSelectionChange,
+    onPaintFormat,
+    onEdit,
+    onCommit,
+    onCancelEdit,
+    onClear,
+    scrollToRow,
+  });
+  const { onSelect, headerMenu, touchInput } = selectionControls;
+  const { startHeaderSelection, openHeaderMenu, showHeaderMenu, selectHeader } =
+    selectionControls.handlers;
+  const { rowDrag, draggedIds, rowDragPreview, startRowDrag, keyboardMoveRow } =
+    useGridRowDrag({
+      scopeKey,
+      ref,
+      tasks,
+      columns,
+      selection,
+      groupKey,
+      sorted,
+      readOnly,
+      editor,
+      copyEditable,
+      user,
+      onSelect,
+      onReorder,
+      onError,
+      onStart: () => selectionControls.cancelPointerSelection(),
+    });
+  function startRowResize(e: React.PointerEvent, index: number) {
+    resize.startRowResize(e, tasks[index], contentHeights[index]);
   }
-  function scrollToRow(index: number) {
-    const offset = coveredRowOffset(index);
-    if (offset === null) virtual.scrollToIndex(index, { align: "auto" });
-    else virtual.scrollToOffset(offset);
-  }
-  useLayoutEffect(() => {
-    if (jump && ref.current && appliedJump.current !== jump.id) {
-      if (jump.key === null) {
-        if (!jump.preserveHorizontalScroll) ref.current.scrollLeft = 0;
-        if (jump.scrollTop !== undefined)
-          ref.current.scrollTop = jump.scrollTop;
-        appliedJump.current = jump.id;
-        return;
-      }
-      const index = columns.findIndex((c) => c.key === jump.key);
-      if (index >= 0) {
-        if (jump.taskId) {
-          const row = taskIndexes.get(jump.taskId);
-          if (row === undefined) return;
-          if (
-            !jump.nearest ||
-            coveredRowOffset(row) !== null ||
-            virtual.getOffsetForIndex(row, "auto")?.[1] !== "auto"
-          )
-            virtual.scrollToIndex(row, { align: "center" });
-        }
-        const pinned =
-          rowHeaderWidth +
-          columns.filter((c) => c.fixed).reduce((s, c) => s + c.width, 0);
-        const grid = ref.current,
-          left = positions[index];
-        if (
-          !jump.preserveHorizontalScroll &&
-          !columns[index].fixed &&
-          !(
-            jump.nearest &&
-            left >= grid.scrollLeft + pinned &&
-            left + columns[index].width <= grid.scrollLeft + grid.clientWidth
-          )
-        )
-          grid.scrollLeft = Math.max(0, left - pinned - 16);
-        appliedJump.current = jump.id;
-      }
-    }
-  }, [jump, columns, taskIndexes]);
-  useLayoutEffect(() => {
-    const grid = ref.current;
-    if (!editor || !grid) return;
-    const ri = tasks.findIndex((t) => t.id === editor.point.taskId);
-    if (ri >= 0) scrollToRow(ri);
-    const ci = columns.findIndex((c) => c.key === editor.point.key);
-    if (ci < 0 || columns[ci].fixed) return;
-    const pinned =
-      rowHeaderWidth +
-      columns.filter((c) => c.fixed).reduce((sum, c) => sum + c.width, 0);
-    const left = positions[ci];
-    const right = left + columns[ci].width;
-    // 이미 보이는 편집 셀은 가로 위치를 유지한다. 고정 열에 가리거나
-    // 화면 밖에 있을 때만 그리드 안에서 필요한 만큼 이동한다.
-    if (left < grid.scrollLeft + pinned)
-      grid.scrollLeft = Math.max(0, left - pinned);
-    else if (right > grid.scrollLeft + grid.clientWidth)
-      grid.scrollLeft = Math.max(
-        0,
-        Math.min(left - pinned, right - grid.clientWidth),
-      );
-  }, [editor?.point.taskId, editor?.point.key]);
-  function finish(value: Cell["value"], move?: EditMove) {
-    if (!editor) return;
-    const point = editor.point;
-    if (!onCommit(point, value)) return false;
-    if (move === "stay") pick(point);
-    else if (move) {
-      const r = tasks.findIndex((t) => t.id === point.taskId),
-        c = columns.findIndex((c) => c.key === point.key);
-      let nextR = r,
-        nextC = c;
-      if (move === "down") nextR = Math.min(tasks.length - 1, r + 1);
-      else {
-        nextC += move === "previous" ? -1 : 1;
-        if (nextC >= columns.length && r < tasks.length - 1) {
-          nextR++;
-          nextC = 0;
-        } else if (nextC < 0 && r > 0) {
-          nextR--;
-          nextC = columns.length - 1;
-        }
-        nextC = Math.max(0, Math.min(columns.length - 1, nextC));
-      }
-      pick({ taskId: tasks[nextR].id, key: columns[nextC].key });
-      scrollToRow(nextR);
-    }
-    return true;
-  }
+
   function sortColumn(key: string, direction: "asc" | "desc" | "default") {
     onView({
       sortKey: direction === "default" ? "" : key,
       sortDirection: direction,
     });
   }
-  function headerSelection(
-    kind: "columns" | "rows",
-    anchor: number,
-    focus: number,
-  ): Selection {
-    return kind === "columns"
-      ? {
-          kind,
-          anchor: { taskId: tasks[0]?.id || "", key: columns[anchor].key },
-          focus: { taskId: tasks[0]?.id || "", key: columns[focus].key },
-        }
-      : {
-          kind,
-          anchor: { taskId: tasks[anchor].id, key: columns[0].key },
-          focus: { taskId: tasks[focus].id, key: columns[0].key },
-        };
-  }
-  function selectHeader(
-    kind: "columns" | "rows",
-    index: number,
-    extend = false,
-    add = false,
-  ) {
-    let anchor = index;
-    if (extend && selection?.kind === kind) {
-      const previous =
-        kind === "columns"
-          ? columns.findIndex((c) => c.key === selection.anchor.key)
-          : tasks.findIndex((t) => t.id === selection.anchor.taskId);
-      if (previous >= 0) anchor = previous;
-    }
-    onSelect({
-      ...headerSelection(kind, anchor, index),
-      areas: add
-        ? savedAreas(selection)
-        : extend
-          ? selection?.areas
-          : undefined,
-    });
-    ref.current?.focus({ preventScroll: true });
-    return anchor;
-  }
-  function startHeaderSelection(
-    e: React.PointerEvent,
-    kind: "columns" | "rows",
-    index: number,
-  ) {
-    if (e.button !== 0 || presentation) return;
-    if (e.pointerType === "touch") {
-      e.preventDefault();
-      touchPress.start(e, {
-        onTap: () => selectHeader(kind, index),
-        onLongPress: () => showHeaderMenu(kind, index, e.clientX, e.clientY),
-      });
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    setHeaderMenu(null);
-    dragOrigin.current = null;
-    stopHeaderDrag.current?.();
-    const previousSelection = selection;
-    const additive = e.metaKey || e.ctrlKey;
-    const areas = additive
-      ? savedAreas(selection)
-      : e.shiftKey
-        ? selection?.areas
-        : undefined;
-    // ⌘/Ctrl로 이미 선택한 행·열 머리글을 누르거나 끌면 그 행·열을 뺀다.
-    const remove =
-      additive &&
-      !e.shiftKey &&
-      !formatPainting &&
-      (kind === "rows"
-        ? selectedAt(index, 0, kind)
-        : selectedAt(0, index, kind));
-    const band = (from: number, to: number) =>
-      kind === "rows"
-        ? {
-            r1: Math.min(from, to),
-            r2: Math.max(from, to),
-            c1: 0,
-            c2: columns.length - 1,
-          }
-        : {
-            r1: 0,
-            r2: tasks.length - 1,
-            c1: Math.min(from, to),
-            c2: Math.max(from, to),
-          };
-    let anchor = index;
-    if (remove) {
-      onSelect(without(previousSelection, band(index, index)));
-      focusGrid();
-    } else anchor = selectHeader(kind, index, e.shiftKey, additive);
-    startFormatDrag(e);
-    const origin = { x: e.clientX, y: e.clientY };
-    let x = e.clientX,
-      y = e.clientY,
-      last = index,
-      frame = 0,
-      dragging = false;
-    const update = () => {
-      const grid = ref.current;
-      if (!grid) return;
-      const box = grid.getBoundingClientRect();
-      const element = elementBelowPinnedHeading(
-        Math.max(box.left + 2, Math.min(x, box.right - 14)),
-        kind === "columns"
-          ? box.top + 16 * zoom
-          : Math.max(box.top + 34 * zoom, Math.min(y, box.bottom - 14)),
-      );
-      const next =
-        kind === "columns"
-          ? columns.findIndex(
-              (c) =>
-                c.key ===
-                element?.closest<HTMLElement>("[data-header-key]")?.dataset
-                  .headerKey,
-            )
-          : tasks.findIndex(
-              (t) =>
-                t.id ===
-                element?.closest<HTMLElement>("[data-row-id]")?.dataset.rowId,
-            );
-      if (next >= 0 && next !== last) {
-        last = next;
-        onSelect(
-          remove
-            ? without(previousSelection, band(anchor, next))
-            : { ...headerSelection(kind, anchor, next), areas },
-        );
-      }
-    };
-    const move = (event: PointerEvent) => {
-      x = event.clientX;
-      y = event.clientY;
-      dragging ||= Math.hypot(x - origin.x, y - origin.y) > 3;
-      if (dragging) update();
-    };
-    const scroll = () => {
-      const grid = ref.current;
-      if (grid && dragging) {
-        const box = grid.getBoundingClientRect();
-        if (kind === "columns") {
-          const fixedWidth =
-            (rowHeaderWidth +
-              columns.filter((c) => c.fixed).reduce((n, c) => n + c.width, 0)) *
-            zoom;
-          const delta =
-            x > box.right - 28
-              ? 12
-              : x < box.left + fixedWidth + 10 && x > box.left + fixedWidth
-                ? -12
-                : 0;
-          if (delta) {
-            grid.scrollLeft += delta;
-            update();
-          }
-        } else {
-          const delta = y > box.bottom - 28 ? 10 : y < box.top + 48 ? -10 : 0;
-          if (delta) {
-            grid.scrollTop += delta;
-            update();
-          }
-        }
-      }
-      frame = requestAnimationFrame(scroll);
-    };
-    const stop = () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("blur", cancel);
-      window.removeEventListener("keydown", escape, true);
-      stopHeaderDrag.current = null;
-    };
-    const cancel = () => {
-      stop();
-      onSelect(previousSelection);
-    };
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        cancel();
-      }
-    };
-    stopHeaderDrag.current = stop;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop, { once: true });
-    window.addEventListener("pointercancel", cancel, { once: true });
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", escape, true);
-    frame = requestAnimationFrame(scroll);
-  }
-  function openHeaderMenu(
-    e: React.MouseEvent,
-    kind: "columns" | "rows",
-    index: number,
-  ) {
-    e.preventDefault();
-    if (e.ctrlKey || touchInputRef.current) return;
-    showHeaderMenu(kind, index, e.clientX, e.clientY);
-  }
-  function showHeaderMenu(
-    kind: "columns" | "rows",
-    index: number,
-    x: number,
-    y: number,
-  ) {
-    if (presentation) return;
-    const alreadySelected = ranges.some(
-      (r) =>
-        r.kind === kind &&
-        (kind === "columns"
-          ? index >= r.c1 && index <= r.c2
-          : index >= r.r1 && index <= r.r2),
-    );
-    if (!alreadySelected) selectHeader(kind, index);
-    setHeaderMenu({
-      kind,
-      index,
-      x,
-      y,
-      taskId: kind === "rows" ? tasks[index]?.id : undefined,
-    });
-  }
+
   const menuColumn =
     headerMenu?.kind === "columns" ? columns[headerMenu.index] : undefined;
   const menuColumns = menuColumn
@@ -1292,209 +604,10 @@ export default function Grid({
             },
           },
         ];
-  function pick(point: Point, extend = false, add = false) {
-    if (!extend || !selection)
-      onSelect({
-        anchor: point,
-        focus: point,
-        areas: add ? savedAreas(selection) : undefined,
-      });
-    else
-      onSelect({
-        anchor: selection.anchor,
-        focus: point,
-        areas: selection.areas,
-      });
-    focusGrid();
-  }
+
   // Excel처럼 ⌘/Ctrl로 이미 선택한 셀·행·열을 누르거나 끌면 그 범위를 선택에서
   // 뺀다. 걸친 영역은 남은 사각형으로 나누고, 마지막 영역을 활성 영역으로 둔다.
-  function without(
-    base: Selection | null,
-    remove: { r1: number; r2: number; c1: number; c2: number },
-  ): Selection | null {
-    const kept: SelectionArea[] = [];
-    for (const area of savedAreas(base)) {
-      const range = rangeOf(area, tasks, columns);
-      const pieces =
-        range &&
-        subtractRange(
-          { ...range, kind: area.kind },
-          remove,
-          tasks.length - 1,
-          columns.length - 1,
-        );
-      if (!pieces) kept.push(area);
-      else
-        kept.push(
-          ...pieces.map((piece) => toSelectionArea(piece, tasks, columns)),
-        );
-    }
-    const active = kept.pop();
-    return active
-      ? { ...active, ...(kept.length ? { areas: kept } : {}) }
-      : null;
-  }
-  function selectedAt(r: number, c: number, kind?: "columns" | "rows") {
-    return ranges.some(
-      (range) =>
-        (!kind || range.kind === kind || range.kind === "all") &&
-        r >= range.r1 &&
-        r <= range.r2 &&
-        c >= range.c1 &&
-        c <= range.c2,
-    );
-  }
-  function removeCells(from: Point, to: Point) {
-    const r1 = taskIndexes.get(from.taskId) ?? -1,
-      r2 = taskIndexes.get(to.taskId) ?? -1,
-      c1 = columns.findIndex((c) => c.key === from.key),
-      c2 = columns.findIndex((c) => c.key === to.key);
-    if (!removing.current || r1 < 0 || r2 < 0 || c1 < 0 || c2 < 0) return;
-    removing.current.last = to;
-    onSelect(
-      without(removing.current.base, {
-        r1: Math.min(r1, r2),
-        r2: Math.max(r1, r2),
-        c1: Math.min(c1, c2),
-        c2: Math.max(c1, c2),
-      }),
-    );
-  }
-  function focusGrid() {
-    ref.current?.focus({ preventScroll: true });
-    // Firefox can clear focus when the blurred textarea unmounts. Restore the
-    // grid after that commit, unless a new editor has already taken focus.
-    requestAnimationFrame(() => {
-      if (!ref.current?.querySelector(".inline-editor"))
-        (
-          (!touchInputRef.current &&
-            ref.current?.querySelector<HTMLTextAreaElement>(
-              ".cell-input-ready textarea",
-            )) ||
-          ref.current
-        )?.focus({ preventScroll: true });
-    });
-  }
-  function keyboard(e: KeyboardEvent) {
-    if (e.target instanceof Element && e.target.closest(".annual-memos"))
-      return;
-    const prepared =
-      e.target instanceof Element && !!e.target.closest(".cell-input-ready");
-    if (
-      (e.target instanceof Element &&
-        e.target.closest("input,textarea,select,button,a") &&
-        !prepared) ||
-      editor ||
-      e.nativeEvent.isComposing ||
-      e.nativeEvent.keyCode === 229
-    )
-      return;
-    if (e.key === "Escape") {
-      // App can render brush cancellation before this handler runs. Respect
-      // its prevented Escape without blocking the menu's document listener.
-      if (e.defaultPrevented || formatPainting) return;
-      onSelect(null);
-      ref.current?.focus({ preventScroll: true });
-      return;
-    }
-    if (!selection || !tasks.length) return;
-    if (formatPainting && e.key === "Enter") {
-      e.preventDefault();
-      onPaintFormat?.(selection);
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === "a") {
-      e.preventDefault();
-      onSelect({
-        kind: "all",
-        anchor: { taskId: tasks[0].id, key: columns[0].key },
-        focus: { taskId: tasks.at(-1)!.id, key: columns.at(-1)!.key },
-      });
-      return;
-    }
-    const ri = tasks.findIndex((t) => t.id === selection.focus.taskId),
-      ci = columns.findIndex((c) => c.key === selection.focus.key);
-    if (ri < 0 || ci < 0) return;
-    const delta: Record<string, [number, number]> = {
-      ArrowUp: [-1, 0],
-      ArrowDown: [1, 0],
-      ArrowLeft: [0, -1],
-      ArrowRight: [0, 1],
-      Tab: [0, e.shiftKey ? -1 : 1],
-    };
-    if (delta[e.key]) {
-      e.preventDefault();
-      const [dr, dc] = delta[e.key],
-        r = Math.max(0, Math.min(tasks.length - 1, ri + dr)),
-        c = Math.max(0, Math.min(columns.length - 1, ci + dc));
-      if (
-        e.shiftKey &&
-        selection.kind === "columns" &&
-        ["ArrowLeft", "ArrowRight"].includes(e.key)
-      ) {
-        selectHeader("columns", c, true);
-        return;
-      }
-      if (
-        e.shiftKey &&
-        selection.kind === "rows" &&
-        ["ArrowUp", "ArrowDown"].includes(e.key)
-      ) {
-        selectHeader("rows", r, true);
-        scrollToRow(r);
-        return;
-      }
-      pick(
-        { taskId: tasks[r].id, key: columns[c].key },
-        e.shiftKey && e.key !== "Tab",
-      );
-      scrollToRow(r);
-      const el = ref.current?.querySelector(
-        `[data-cell="${tasks[r].id}:${columns[c].key}"]`,
-      );
-      el?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      return;
-    }
-    if (readOnly || formatPainting) return;
-    if (e.key === "Enter" || e.key === "F2") {
-      e.preventDefault();
-      onEdit(selection.focus);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      onClear();
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // 준비된 textarea가 첫 글자와 IME 조합을 직접 받는다.
-      if (prepared) return;
-      e.preventDefault();
-      onEdit(selection.focus, e.key);
-    }
-  }
-  function startColumnResize(e: React.PointerEvent, column: Column) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragOrigin.current = null;
-    const origin = e.clientX,
-      start = column.width,
-      min = column.month ? 40 : 45;
-    let width = start;
-    const handle = (ev: PointerEvent) => {
-      width = Math.min(
-        850,
-        Math.max(min, start + (ev.clientX - origin) / zoom),
-      );
-      setColumnResize({ key: column.key, width });
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", handle);
-      window.removeEventListener("pointerup", stop);
-      setColumnResize(null);
-      if (width !== start)
-        onView({ widths: { ...view.widths, [column.key]: width } });
-    };
-    window.addEventListener("pointermove", handle);
-    window.addEventListener("pointerup", stop, { once: true });
-  }
+
   // 경계선 양쪽에 걸친 손잡이. 뒤 머리글이 앞 머리글 위에 그려지므로
   // 손잡이는 경계 오른쪽 머리글의 왼쪽 끝에 둔다. 고정 열과 일반 열의
   // 경계나 마지막 열처럼 오른쪽 머리글이 위에 오지 않으면 자기 오른쪽 끝에 둔다.
@@ -1510,139 +623,15 @@ export default function Grid({
       />
     );
   }
-  function startRowResize(e: React.PointerEvent, index: number) {
-    const task = tasks[index];
-    e.preventDefault();
-    e.stopPropagation();
-    dragOrigin.current = null;
-    const y = e.clientY,
-      start = contentHeights[index];
-    let height = start;
-    const drag = (ev: PointerEvent) => {
-      height = Math.min(500, Math.max(26, start + (ev.clientY - y) / zoom));
-      setRowResize({ taskId: task.id, height });
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", drag);
-      window.removeEventListener("pointerup", stop);
-      setRowResize(null);
-      if (height !== start)
-        onView({ rowHeights: { ...view.rowHeights, [task.id]: height } });
-    };
-    window.addEventListener("pointermove", drag);
-    window.addEventListener("pointerup", stop, { once: true });
-  }
-  function keyboardMoveRow(e: KeyboardEvent, task: Task) {
-    if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const moving = rowsToMove(task);
-    if (!canMoveRows(moving)) return;
-    const movingIds = new Set(moving.map((t) => t.id));
-    const same = tasks.filter(
-      (t) =>
-        !groupKey || groupValue(t, groupKey) === groupValue(task, groupKey),
-    );
-    const direction = e.key === "ArrowUp" ? -1 : 1;
-    const index =
-      direction < 0
-        ? same.findIndex((t) => movingIds.has(t.id))
-        : same.findLastIndex((t) => movingIds.has(t.id));
-    const neighbor = same[index + direction];
-    if (neighbor)
-      moveRows(moving, neighbor.id, direction < 0 ? "before" : "after");
-  }
+
   // 행은 메모된 컴포넌트라 이벤트 처리기를 항상 같은 객체로 넘기고,
   // 실제 동작은 마지막 렌더의 함수를 호출한다.
   const handlers: GridActions = {
-    cellPointerDown(e, point) {
-      if (e.button !== 0) return;
-      if (e.pointerType === "touch") {
-        // Suppress compatibility mouse focus/clicks; native touch panning stays enabled.
-        e.preventDefault();
-        touchPress.start(e, {
-          onTap: () => {
-            const current = latestSelection.current;
-            const same =
-              current &&
-              !current.kind &&
-              !current.areas?.length &&
-              current.anchor.taskId === point.taskId &&
-              current.anchor.key === point.key &&
-              current.focus.taskId === point.taskId &&
-              current.focus.key === point.key;
-            // iOS requires the layout-effect focus inside this pointerup event.
-            flushSync(() => {
-              if (same) actions.edit(point);
-              else pick(point);
-            });
-          },
-          onLongPress: () => {
-            const index = taskIndexes.get(point.taskId);
-            if (index !== undefined)
-              showHeaderMenu("rows", index, e.clientX, e.clientY);
-          },
-        });
-        return;
-      }
-      dragOrigin.current = { x: e.clientX, y: e.clientY };
-      e.preventDefault();
-      const r = taskIndexes.get(point.taskId) ?? -1,
-        c = columns.findIndex((column) => column.key === point.key);
-      removing.current =
-        (e.metaKey || e.ctrlKey) &&
-        !e.shiftKey &&
-        !formatPainting &&
-        selectedAt(r, c)
-          ? { base: selection, start: point, last: point }
-          : null;
-      if (removing.current) {
-        removeCells(point, point);
-        focusGrid();
-      } else pick(point, e.shiftKey, e.metaKey || e.ctrlKey);
-      startFormatDrag(e);
-    },
-    doubleClick(point) {
-      if (!touchInputRef.current && !formatPainting) onEdit(point);
-    },
-    dragSelect(e, point) {
-      if (e.pointerType === "touch") return;
-      const start = dragOrigin.current;
-      const remove = removing.current;
-      if (
-        remove &&
-        e.buttons === 1 &&
-        (remove.last.taskId !== point.taskId || remove.last.key !== point.key)
-      ) {
-        removeCells(remove.start, point);
-        return;
-      }
-      if (
-        remove ||
-        e.buttons !== 1 ||
-        !selection ||
-        !start ||
-        Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 3 ||
-        (selection.focus.taskId === point.taskId &&
-          selection.focus.key === point.key)
-      )
-        return;
-      onSelect({ ...selection, focus: point });
-    },
-    edit: (point, initial) => !formatPainting && onEdit(point, initial),
+    ...selectionControls.handlers,
     memberOptions: () => assignableUsers,
     rowMenu: (task) => onRowMenu(task),
-    finish,
-    cancelEdit() {
-      onCancelEdit();
-      ref.current?.focus();
-    },
     startRowDrag,
     keyboardMoveRow,
-    startHeaderSelection,
-    selectHeader,
-    openHeaderMenu,
-    showHeaderMenu,
     startRowResize,
     revealRows,
   };
@@ -1684,45 +673,8 @@ export default function Grid({
         className={`sheet-scroll${footer ? " has-sheet-footer" : ""}`}
         data-density={density}
         data-format-painting={formatPainting || undefined}
-        onPointerDownCapture={(e) => {
-          const touch = e.pointerType === "touch";
-          touchInputRef.current = touch;
-          setTouchInput(touch);
-          if (touch) {
-            dragOrigin.current = null;
-            removing.current = null;
-            const active = document.activeElement;
-            if (
-              active instanceof HTMLElement &&
-              active.closest(".cell-input-ready")
-            )
-              active.blur();
-          }
-        }}
-        onClickCapture={touchPress.onClickCapture}
-        onFocus={(e) => {
-          if (touchInputRef.current || e.target !== e.currentTarget || editor)
-            return;
-          const input = e.currentTarget.querySelector<HTMLTextAreaElement>(
-            ".cell-input-ready textarea",
-          );
-          const point = focusTarget.current;
-          if (
-            point &&
-            input?.closest<HTMLElement>("[data-cell]")?.dataset.cell ===
-              `${point.taskId}:${point.key}`
-          )
-            input.focus({ preventScroll: true });
-        }}
-        onKeyDown={keyboard}
-        onPointerUp={() => {
-          dragOrigin.current = null;
-          removing.current = null;
-        }}
-        onPointerCancel={() => {
-          dragOrigin.current = null;
-          removing.current = null;
-        }}
+        {...selectionControls.gridEvents}
+
         onCopy={(e) => {
           if (editor || !ranges.length) return;
           e.preventDefault();
@@ -2046,7 +998,7 @@ export default function Grid({
           actions={menuActions}
           scrollContainer={ref.current}
           onClose={(restore) => {
-            setHeaderMenu(null);
+            selectionControls.closeHeaderMenu();
             if (restore) ref.current?.focus({ preventScroll: true });
           }}
         >
@@ -2111,42 +1063,7 @@ export default function Grid({
     </div>
   );
 }
-type GridActions = {
-  cellPointerDown(e: React.PointerEvent, point: Point): void;
-  dragSelect(e: React.PointerEvent, point: Point): void;
-  doubleClick(point: Point): void;
-  edit(point: Point, initial?: string): boolean;
-  memberOptions(): User[];
-  rowMenu(task: Task): void;
-  finish(value: Cell["value"], move?: EditMove): boolean | undefined;
-  cancelEdit(): void;
-  startRowDrag(e: React.PointerEvent, task: Task): void;
-  keyboardMoveRow(e: KeyboardEvent, task: Task): void;
-  startHeaderSelection(
-    e: React.PointerEvent,
-    kind: "columns" | "rows",
-    index: number,
-  ): void;
-  selectHeader(
-    kind: "columns" | "rows",
-    index: number,
-    extend?: boolean,
-    add?: boolean,
-  ): number;
-  openHeaderMenu(
-    e: React.MouseEvent,
-    kind: "columns" | "rows",
-    index: number,
-  ): void;
-  showHeaderMenu(
-    kind: "columns" | "rows",
-    index: number,
-    x: number,
-    y: number,
-  ): void;
-  startRowResize(e: React.PointerEvent, index: number): void;
-  revealRows(ids: string[]): void;
-};
+
 type RowGap = { ids: string[]; start: number; end: number };
 
 // 묶음의 첫 행 위에 그리는 묶음 제목. 표 위에 고정한 제목도 같은 모양을 쓴다.

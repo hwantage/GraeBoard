@@ -17,7 +17,8 @@ import {
   useListReorder,
   type Placement,
 } from "../ui/useListReorder";
-import { Button, ErrorNote } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
 import { Grae } from "../ui/Brand";
 import DocumentLoading from "./DocumentLoading";
 import DocumentEditor, {

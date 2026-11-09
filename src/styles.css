@@ -4270,44 +4270,44 @@ body.document-block-moving * {
 .presentation-mode .sheet-scroll {
   overflow-anchor: none;
 }
-.presentation-mode:not(:has(dialog[open]))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll:not([data-presentation-tool="cursor"]) {
   touch-action: none;
 }
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll:not([data-presentation-tool="cursor"]),
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll:not([data-presentation-tool="cursor"])
   * {
   cursor: crosshair;
 }
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll[data-presentation-tool="cursor"],
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll[data-presentation-tool="cursor"]
   * {
   cursor: default;
 }
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll[data-presentation-tool="eraser"],
-.presentation-mode:not(:has(dialog[open], .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
   .sheet-scroll[data-presentation-tool="eraser"]
   * {
   cursor: none;
 }
 .presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog[open], .annual-memos:hover)
+    :has(dialog:modal, .annual-memos:hover)
   ),
 .presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog[open], .annual-memos:hover)
+    :has(dialog:modal, .annual-memos:hover)
   )
   *,
 .presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog[open], .annual-memos:hover)
+    :has(dialog:modal, .annual-memos:hover)
   )
   .sheet-scroll,
 .presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog[open], .annual-memos:hover)
+    :has(dialog:modal, .annual-memos:hover)
   )
   .sheet-scroll
   * {
@@ -4318,7 +4318,7 @@ body.document-block-moving * {
   :is(a[href], .task-document-indicator) {
   cursor: pointer;
 }
-.presentation-mode:has(dialog[open], .annual-memos:hover)
+.presentation-mode:has(dialog:modal, .annual-memos:hover)
   .presentation-pointer {
   display: none;
 }

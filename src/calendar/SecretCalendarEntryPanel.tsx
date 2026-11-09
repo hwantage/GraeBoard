@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LockKeyhole, Maximize2, Minimize2, Trash2 } from "lucide-react";
-import { Button, ErrorNote, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { ErrorNote } from "../ui/ErrorNote";
+import { Modal } from "../ui/Modal";
 import CalendarRangeEditor, {
   type CalendarRangeHandle,
 } from "./CalendarRangeEditor";

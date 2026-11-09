@@ -6,7 +6,7 @@ import {
   periodMonths,
 } from "../../shared/domain.js";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 import type { View } from "../types";
 import { trackPointerDrag } from "../ui/trackPointerDrag";
 import { useTodayKey } from "./useTodayKey";

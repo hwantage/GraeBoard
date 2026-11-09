@@ -31,7 +31,9 @@ import {
   CalendarPlus,
 } from "lucide-react";
 import { api, send, download, taskQuery } from "./platform/api";
-import { Modal, Button, ErrorNote } from "./components";
+import { Modal } from "./ui/Modal";
+import { Button } from "./ui/Button";
+import { ErrorNote } from "./ui/ErrorNote";
 import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./sheet/history";

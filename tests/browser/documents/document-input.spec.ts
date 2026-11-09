@@ -145,6 +145,11 @@ test("코드 블록 Tab은 2칸이고 읽기 전용 Tab은 포커스를 옮긴�
   page,
 }) => {
   await open(page, "```mermaid\ngraph TD\n```\n");
+  // Mermaid initially shows a preview. Enter code editing through its UI so
+  // asynchronous rendering cannot hide the click target during this test.
+  await rich(page)
+    .getByRole("img", { name: "Mermaid 다이어그램", exact: true })
+    .click();
   await rich(page).locator("pre code").click();
   await rich(page)
     .locator("pre code")

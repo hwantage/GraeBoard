@@ -16,9 +16,9 @@ import {
 import type { Style, Border, BorderPreset } from "../types";
 import BorderMenu from "./BorderMenu";
 import ColorMenu from "../ui/ColorMenu";
-import ZoomControls from "../app/ZoomControls";
+import ZoomControls from "../ui/ZoomControls";
 import { FONTS, FONT_SIZES, textMode } from "../../shared/domain.js";
-import { Button } from "../components";
+import { Button } from "../ui/Button";
 
 const ICON_PATHS: Record<string, string> = {
   top: "M4 4h16M12 20V8m-4 4 4-4 4 4",

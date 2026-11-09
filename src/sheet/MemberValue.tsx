@@ -1,5 +1,5 @@
 import type { Cell, Property, User } from "../types";
-import { Avatar } from "../components";
+import { Avatar } from "../ui/Avatar";
 
 export default function MemberValue({
   property,

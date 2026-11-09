@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Avatar, Button } from "../components";
+import { Avatar } from "../ui/Avatar";
+import { Button } from "../ui/Button";
 import { syncTime } from "./sync-types";
 import type { User } from "../types";
 import {

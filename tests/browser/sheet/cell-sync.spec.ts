@@ -278,7 +278,9 @@ test("다른 셀은 편집 중에도 갱신하고 같은 셀 충돌은 내 입�
   await expect(peer.locator(".failed-input")).toContainText(
     "내가 작성하던 내용",
   );
-  await expect(peer.locator("dialog")).toContainText("다른 사람이 저장한 내용");
+  await expect(
+    peer.getByRole("dialog", { name: "저장하지 못한 입력", exact: true }),
+  ).toContainText("다른 사람이 저장한 내용");
   const stored = (
     await (
       await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)

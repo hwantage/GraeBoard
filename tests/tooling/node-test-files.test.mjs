@@ -26,6 +26,12 @@ function fixture(t) {
     writeFileSync(join(root, path), content);
   };
   const copyRunner = () => {
+    // Runner process/collection tests isolate dependency preparation. The real
+    // frozen checkout and install are exercised in frozen-cutover-dependencies.
+    put(
+      "tests/support/frozen-cutover-source.mjs",
+      'export function frozenCutoverSource() { return { dependenciesRoot: "/isolated-frozen-fixture" }; }\n',
+    );
     mkdirSync(join(root, "scripts/testing"), { recursive: true });
     for (const name of ["node-test-files", "run-node-tests"])
       copyFileSync(

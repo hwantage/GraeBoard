@@ -9,7 +9,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, send } from "../platform/api";
-import { Button, Modal } from "../components";
+import { Button } from "../ui/Button";
+import { Modal } from "../ui/Modal";
 import type { SheetClone, View } from "../types";
 import { todayKey } from "../../shared/domain.js";
 import {
