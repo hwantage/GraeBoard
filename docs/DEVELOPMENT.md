@@ -435,3 +435,7 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 최신 앱에서 `TEST_PG_BIN=/절대/PG/bin npm run test:cutover:frozen`을 실행하면 Git 커밋 `7fec065d1adc241da29d54474af06b390d12d72b`의 전체 소스를 임시 디렉터리에 재현하고 원래 전환 2개 suite를 변경 없이 실행합니다. `tests/support/frozen-cutover-source.json`은 원래 16개 보호 hash와 lockfile hash를 보존합니다. 현재 lockfile이 고정 소스와 같을 때 `npm ci --include=dev`로 준비한 의존성만 공유하며, 달라지면 실패하고 별도 고정 checkout 설치가 필요하다고 안내합니다. Node는 최소 22.13 이상이고 실제 실행 버전을 기록합니다. shallow clone은 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`으로 준비하며 CI checkout은 `fetch-depth: 0`을 사용합니다. 커밋·hash·PG 누락은 skip으로 성공 처리하지 않습니다.
 
 `TEST_PG_BIN=/절대/PG/bin npm test`는 기존 권한·migration 회귀와 `sheet-clone-frozen-compatibility.test.mjs`의 현재 앱 교차 검증을 실행합니다. 후자는 고정 도구의 실제 전환 결과를 최신 SQLite/외부 PostgreSQL API에서 읽고 수정하며, 동기화 재개·protocol 4 전환·신규 사이트 checkpoint 합류·복구까지 검사합니다. 현재 앱 교차 검증도 `TEST_PG_BIN`을 명시해야 하며 누락은 명시적 오류입니다. 원래 고정 도구 검사의 통과와 현재 앱의 호환성 결과는 따로 집계합니다. 운영 전환·배포는 실행하지 않습니다.
+
+### Grid 입력 책임
+
+`Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다.

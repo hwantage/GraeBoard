@@ -2057,6 +2057,96 @@ test("행 높이 손잡이는 경계선 양쪽으로 넓게 잡히고 아래쪽�
     .toBeCloseTo(box.height + 40, 0);
 });
 
+for (const axis of ["column", "row"] as const) {
+  test(`${axis} 크기 조절은 취소하면 저장하지 않고 놓을 때 한 번 저장한다`, async ({
+    page,
+  }) => {
+    const target =
+      axis === "column"
+        ? page.locator('[data-header-key="title"]')
+        : page.locator(`[data-row-id="${taskIds[0]}"] .row-number`);
+    const handle = page.locator(
+      axis === "column" ? '[data-resize-key="title"]' : '[data-resize-row="0"]',
+    );
+    const size = async () => {
+      const box = (await target.boundingBox())!;
+      return axis === "column" ? box.width : box.height;
+    };
+    const original = await size();
+    // Let the initial team layout save finish before observing gesture writes.
+    await expect
+      .poll(async () =>
+        (await readPreferences(page, teamId)).views.some(
+          (v: any) => v.name === "__current",
+        ),
+      )
+      .toBe(true);
+    const writes: unknown[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/views") && request.method() === "PUT")
+        writes.push(request.postDataJSON());
+    });
+    async function drag() {
+      const box = (await handle.boundingBox())!;
+      const x = box.x + box.width / 2,
+        y = box.y + box.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(
+        x + (axis === "column" ? 60 : 0),
+        y + (axis === "row" ? 60 : 0),
+        { steps: 4 },
+      );
+      await expect.poll(size).toBeCloseTo(original + 60, 0);
+    }
+    for (const cancel of ["escape", "blur", "pointercancel"]) {
+      // Record the browser's actual pointer id instead of assuming an engine-specific id.
+      await page.evaluate(() =>
+        window.addEventListener(
+          "pointerdown",
+          (event) => {
+            (window as any).__resizePointer = event.pointerId;
+          },
+          { once: true, capture: true },
+        ),
+      );
+      await drag();
+      if (cancel === "escape") await page.keyboard.press("Escape");
+      else if (cancel === "blur")
+        await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      else
+        await page.evaluate(() =>
+          window.dispatchEvent(
+            new PointerEvent("pointercancel", {
+              pointerId: (window as any).__resizePointer,
+            }),
+          ),
+        );
+      await expect.poll(size).toBeCloseTo(original, 0);
+      await page.mouse.up();
+    }
+    // Include the 450ms layout debounce: cancelled gestures must not queue a write.
+    await page.waitForTimeout(600);
+    expect(writes).toHaveLength(0);
+    await drag();
+    await page.mouse.up();
+    await expect.poll(() => writes.length).toBe(1);
+    await expect
+      .poll(async () => {
+        const current = (await readPreferences(page, teamId)).views.find(
+          (v: any) => v.name === "__current",
+        )?.data;
+        return axis === "column"
+          ? current?.widths.title
+          : current?.rowHeights[taskIds[0]];
+      })
+      .toBeCloseTo(original + 60, 0);
+    await page.reload();
+    await expect.poll(size).toBeCloseTo(original + 60, 0);
+    expect(writes).toHaveLength(1);
+  });
+}
+
 test("떨어진 영역의 바깥 테두리·전체 테두리는 중복 없이 저장하고 복사·실행취소한다", async ({
   page,
 }, info) => {

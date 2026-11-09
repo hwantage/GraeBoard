@@ -5,7 +5,7 @@ import { copyRowFormatting } from "../../shared/formatting/formatting.js";
 import { canUndoCreation } from "./history";
 import { nearbyRows, type ChangeTargets } from "./selection-areas.js";
 import type { TaskCreation, TaskDeletion } from "../types";
-import type { RowCommand } from "./Grid";
+import type { RowCommand } from "./grid-types";
 import type { CellFailure } from "./useSheetOperations";
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import type {

@@ -126,7 +126,9 @@ import Toast, { UndoToast, useToast } from "../ui/Toast";
 import useResourceSync from "../platform/useResourceSync";
 import useSheetCloneDraft from "../sheet/useSheetCloneDraft";
 import { BrandMark, BrandWordmark } from "../ui/Brand";
-import Grid, { type Column, rangeOf, rangesOf } from "../sheet/Grid";
+import Grid from "../sheet/Grid";
+import type { Column } from "../sheet/grid-types";
+import { rangeOf, rangesOf } from "../sheet/grid-selection";
 import Toolbar from "../sheet/Toolbar";
 import SaveStatus from "./SaveStatus";
 import ActiveFilterConditions from "../sheet/ActiveFilterConditions";
@@ -2463,6 +2465,7 @@ function Workspace({
                 />
               ) : (
                 <Grid
+                  scopeKey={sheetKey}
                   zoom={gridZoom / 100}
                   tasks={visibleTasks}
                   matchingTasks={matchingTasks}

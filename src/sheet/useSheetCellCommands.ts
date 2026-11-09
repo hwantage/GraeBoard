@@ -10,7 +10,8 @@ import { applyBorderPreset } from "../../shared/formatting/borders.js";
 import { resetCellStyle } from "../../shared/formatting/formatting.js";
 import { STYLE_KEYS } from "../../shared/formatting/compact.js";
 import { formatScopes } from "./format-selection.js";
-import { rangesOf, rangeOf, selectedPoints, type Column } from "./Grid";
+import type { Column } from "./grid-types";
+import { rangesOf, rangeOf, selectedPoints } from "./grid-selection";
 import type {
   CellChange,
   FormatChange,
