@@ -492,3 +492,9 @@ CodeRabbit 통합 리뷰 반영(11-08, 4505202004): 수신은 문서 본문 버�
 - 그래프와 실제 소스에서 `createApp` → SQLite repository → 공통 서비스, 외부 `taskRoutes`/`calendarRoutes` → PG repository → 동일 서비스 경로를 확인했습니다. `callBusinessRoute`의 14개 호출 지점, 외부 dispatcher의 인증·팀 판별·최신화·커밋 후 게시 순서도 확인했습니다.
 - 공통 규칙과 엔진별 트랜잭션 경계가 이미 분리되어 있으므로 추가 서비스 계층이나 통합 repository는 만들지 않았습니다. 확인된 역방향 import는 1단계에서 제거했고 현재 구조를 유지합니다.
 - 신규 API 등록 절차와 본문에 팀 ID가 없는 경로의 연결 항목을 개발 안내에 보완했습니다. 저장소 경계와 실 DB 계약 검사는 최종 Node/Edge 검증에 포함합니다. DB·API·동기화 형식 변경은 없습니다.
+
+## 2026-11-09 — 책임 리팩토링 7단계: 고정 의존성 격리
+
+- 고정 전환 checkout에 원본 lockfile로 의존성을 별도 설치합니다. 최신 앱 lockfile 일치 조건과 앱 node_modules 공유를 제거하고, 전체 Node 실행에서는 고정 의존성 설치를 한 번만 준비합니다. commit·보호 바이트·checkout 청결성은 계속 검사합니다.
+- 현재 앱 lockfile과 pg 패키지를 다르게 만든 격리 checkout에서도 고정 변환 함수를 로드하는 회귀, 잘못된 lockfile·앱 모듈 symlink·다른 Node 설치 표식 거절 검사를 추가했습니다. 도구/실행기 6개 통과, 원래 고정 전환 16개 통과(실제 PG, skip 0).
+- 반복 개발용 `test:e2e:core` 명령을 추가했습니다. 전체 회귀 완료 기준은 유지합니다.
