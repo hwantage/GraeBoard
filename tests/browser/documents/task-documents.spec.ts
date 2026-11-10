@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { defaultView } from "../../../shared/domain.js";
 
@@ -4224,12 +4225,13 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
   await page.mouse.move(box.x + 120, box.y + 90, { steps: 5 });
   await page.mouse.up();
   await editor.getByRole("button", { name: "글자", exact: true }).click();
-  await editor.getByLabel("이미지에 넣을 글자").fill("검토");
   const fontSize = editor.getByLabel("글자 크기", { exact: true });
   await fontSize.fill("");
   await fontSize.pressSequentially("12");
   await expect(fontSize).toHaveValue("12");
   await surface.click({ position: { x: 30, y: 100 } });
+  await editor.getByLabel("이미지에 넣을 글자").fill("검토");
+  await editor.getByLabel("이미지에 넣을 글자").press("ControlOrMeta+Enter");
   const annotated = await pixels();
   await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
   expect(await pixels()).not.toBe(annotated);
@@ -4347,6 +4349,272 @@ async function openImageTools(page: Page) {
     pixels: () => canvas.evaluate((el: HTMLCanvasElement) => el.toDataURL()),
   };
 }
+
+test("이미지 위 글자 입력은 줄바꿈·직접 수정·취소·한 번의 실행취소를 지원한다", async ({
+  page,
+}, info) => {
+  const { editor, canvas, pixels } = await openImageTools(page);
+  const clean = await pixels();
+  const input = editor.getByLabel("이미지에 넣을 글자");
+  const undo = editor.getByRole("button", { name: "실행취소", exact: true });
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await expect(input).toHaveCount(0);
+  await canvas.click({ position: { x: 30, y: 40 } });
+  await expect(input).toBeFocused();
+  expect(
+    await input.evaluate((el) => !!el.closest(".document-image-editor-board")),
+  ).toBe(true);
+  const box = (await canvas.boundingBox())!,
+    entry = (await input.boundingBox())!;
+  // Gecko/WebKit round pointer coordinates while the centered canvas can sit
+  // on a half pixel. The input must still begin within one CSS pixel of the tap.
+  expect(Math.abs(entry.x - box.x - 30)).toBeLessThanOrEqual(1);
+  expect(Math.abs(entry.y - box.y - 40)).toBeLessThanOrEqual(1);
+  await input.press("Escape");
+  await expect(editor).toBeVisible();
+  await expect(input).toHaveCount(0);
+  await expect(undo).toBeDisabled();
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await canvas.click({ position: { x: 30, y: 40 } });
+  await input.fill("검토");
+  await input.press("Enter");
+  await input.pressSequentially("OK!");
+  await input.press("Backspace");
+  await expect(input).toHaveValue("검토\nOK");
+  await expect(input).toBeFocused();
+  async function textPixels() {
+    const { data, info } = await sharp(
+      await canvas.screenshot({
+        style:
+          ".document-image-text-input { caret-color: transparent !important; }",
+      }),
+    )
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let left = info.width,
+      right = 0,
+      top = info.height,
+      bottom = 0;
+    for (let y = 0; y < info.height; y++)
+      for (let x = 0; x < info.width; x++) {
+        const i = (y * info.width + x) * 4;
+        if (data[i] > 150 && data[i + 1] < 100 && data[i + 2] < 100) {
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+    expect(right).toBeGreaterThan(left);
+    return { left, right, top, bottom };
+  }
+  const editingPixels = await textPixels();
+  await editor.screenshot({ path: info.outputPath("image-inline-text.png") });
+  await canvas.click({ position: { x: 270, y: 150 } });
+  await expect(input).toHaveCount(0);
+  const appliedPixels = await textPixels();
+  for (const key of ["left", "right"] as const)
+    expect(
+      Math.abs(appliedPixels[key] - editingPixels[key]),
+      `${key}: ${JSON.stringify({ editingPixels, appliedPixels })}`,
+    ).toBeLessThanOrEqual(1);
+  // Native text and canvas rasterize glyph edges differently, especially in
+  // Gecko. Compare the vertical center to catch a shifted line box, not ink edges.
+  expect(
+    Math.abs(
+      (appliedPixels.top +
+        appliedPixels.bottom -
+        editingPixels.top -
+        editingPixels.bottom) /
+        2,
+    ),
+  ).toBeLessThanOrEqual(1);
+  const written = await pixels();
+  expect(written).not.toBe(clean);
+  await undo.click();
+  await expect.poll(pixels).toBe(clean);
+  await expect(undo).toBeDisabled();
+  await editor.getByRole("button", { name: "다시실행", exact: true }).click();
+  await expect.poll(pixels).toBe(written);
+  await canvas.dblclick({ position: { x: 44, y: 52 } });
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("검토\nOK");
+  await input.fill("취소할 수정");
+  await input.press("Escape");
+  await expect.poll(pixels).toBe(written);
+  await canvas.dblclick({ position: { x: 44, y: 52 } });
+  await input.fill("수정 완료");
+  await input.press("ControlOrMeta+Enter");
+  await expect(canvas).toBeFocused();
+  await expect.poll(pixels).not.toBe(written);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(pixels).toBe(written);
+  await canvas.dblclick({ position: { x: 44, y: 52 } });
+  await input.fill("");
+  await canvas.click({ position: { x: 270, y: 150 } });
+  await expect.poll(pixels).toBe(clean);
+  await undo.click();
+  await expect.poll(pixels).toBe(written);
+  await canvas.click({ position: { x: 44, y: 52 } });
+  await canvas.press("Enter");
+  await expect(input).toBeFocused();
+  await input.press("Escape");
+  // Enter on a toolbar button must retain its native activation behavior.
+  await editor
+    .getByRole("button", { name: "적용", exact: true })
+    .press("Enter");
+  await expect(editor).toHaveCount(0);
+});
+
+test("이미지 위 글자는 한글 조합을 유지하고 입력 직후 적용해도 마지막 글자를 저장한다", async ({
+  page,
+  browserName,
+}) => {
+  const { editor, canvas } = await openImageTools(page);
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await canvas.click({ position: { x: 30, y: 40 } });
+  const input = editor.getByLabel("이미지에 넣을 글자");
+  const element = await input.elementHandle();
+  if (browserName === "chromium") {
+    const client = await page.context().newCDPSession(page);
+    for (const text of ["ㅎ", "하", "한"]) {
+      await client.send("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+      await expect(input).toHaveValue(text);
+      expect(
+        await element!.evaluate(
+          (el) => el === document.activeElement && el.isConnected,
+        ),
+      ).toBe(true);
+    }
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      isComposing: true,
+      keyCode: 229,
+    });
+    await expect(input).toBeFocused();
+    await client.send("Input.insertText", { text: "한" });
+    await client.send("Input.insertText", { text: "글" });
+    await client.detach();
+  } else {
+    // These engines have no CDP IME commands; verify the composition event contract.
+    await input.dispatchEvent("compositionstart");
+    await input.fill("한글");
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      isComposing: true,
+      keyCode: 229,
+    });
+    await expect(input).toBeFocused();
+    await input.dispatchEvent("compositionend", { data: "한글" });
+  }
+  await expect(input).toHaveValue("한글");
+  // One unbroken edit: clicking Apply must commit its final DOM value before export.
+  await input.pressSequentially("!");
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  await close(page);
+  await open(page);
+  const image = rich(page).locator(".document-image img").first();
+  await expect
+    .poll(() =>
+      image.evaluate((el: HTMLImageElement) => {
+        if (!el.complete || !el.naturalWidth) return 0;
+        const surface = document.createElement("canvas");
+        surface.width = el.naturalWidth;
+        surface.height = el.naturalHeight;
+        const ctx = surface.getContext("2d")!;
+        ctx.drawImage(el, 0, 0);
+        // The exclamation mark is to the right of the two Hangul characters.
+        ctx.font = "bold 24px sans-serif";
+        const x = Math.floor(30 + ctx.measureText("한글").width);
+        const bytes = ctx.getImageData(x, 40, 14, 30).data;
+        let red = 0;
+        for (let i = 0; i < bytes.length; i += 4)
+          if (bytes[i] > 150 && bytes[i + 1] < 100 && bytes[i + 2] < 100) red++;
+        return red;
+      }),
+    )
+    .toBeGreaterThan(5);
+});
+
+test("이미지 위 글자는 확대·회전 뒤 같은 위치에서 편집하고 모바일 작은 글자도 바로 입력한다", async ({
+  page,
+  browserName,
+}, info) => {
+  const { editor, canvas, pixels } = await openImageTools(page);
+  await editor.getByRole("button", { name: "확대", exact: true }).click();
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await canvas.click({ position: { x: 70, y: 70 } });
+  const input = editor.getByLabel("이미지에 넣을 글자");
+  await input.fill("회전 글자");
+  await input.press("ControlOrMeta+Enter");
+  const rotation = editor.locator('[data-handle="rotate"]');
+  const handle = (await rotation.boundingBox())!;
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 35, handle.y + 25, { steps: 5 });
+  await page.mouse.up();
+  const rotated = await pixels();
+  const polygon = editor.locator(".document-image-editor-selection polygon");
+  const selection = (await polygon.boundingBox())!;
+  await page.mouse.dblclick(
+    selection.x + selection.width / 2,
+    selection.y + selection.height / 2,
+  );
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("회전 글자");
+  expect(
+    await editor
+      .locator(".document-image-text-position")
+      .evaluate((el) => getComputedStyle(el).transform),
+  ).not.toBe("matrix(1, 0, 0, 1, 0, 0)");
+  await input.press("ControlOrMeta+Enter");
+  await expect.poll(pixels).toBe(rotated);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await editor
+    .getByRole("button", { name: "화면에 맞추기", exact: true })
+    .click();
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await editor.getByLabel("글자 크기", { exact: true }).fill("12");
+  if (browserName === "chromium") {
+    const client = await page.context().newCDPSession(page);
+    const box = (await canvas.boundingBox())!;
+    await client.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: box.x + 20, y: box.y + 120, id: 1 }],
+    });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await client.detach();
+  } else {
+    await canvas.click({ position: { x: 20, y: 120 } });
+  }
+  await expect(input).toBeFocused();
+  await input.fill("모바일 입력");
+  expect(
+    await input.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+  await expect(input).toBeInViewport();
+  await editor.screenshot({ path: info.outputPath("mobile-inline-text.png") });
+  await input.press("ControlOrMeta+Enter");
+  await expect.poll(pixels).not.toBe(rotated);
+});
 
 test("이미지 그리기의 실제 취소·창 이탈·Escape는 초안만 버리고 빠른 해제는 최종 좌표를 저장한다", async ({
   page,
@@ -4611,6 +4879,7 @@ test("이미지 보기 버튼 간격과 모바일 편집 도구·확대 이동�
     .getByRole("button", { name: "화면에 맞추기", exact: true })
     .click();
   await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await editor.locator("canvas").click({ position: { x: 30, y: 40 } });
   await expect(editor.getByLabel("이미지에 넣을 글자")).toBeInViewport();
   await editor.screenshot({ path: info.outputPath("mobile-image-tools.png") });
 });

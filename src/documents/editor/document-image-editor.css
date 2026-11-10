@@ -172,15 +172,35 @@
   min-height: 28px;
   font-size: 12px;
 }
-.document-image-editor-text {
-  display: flex;
-  gap: 12px;
-  padding: 0 14px 10px;
+.document-image-text-position {
+  position: absolute;
+  pointer-events: none;
 }
-.document-image-editor-text > input {
-  flex: 1;
+.document-image-editor-board .document-image-text-input {
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 0;
-  padding: 7px 9px;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 1px dashed #22a7ff;
+  outline-offset: 3px;
+  background: transparent;
+  box-shadow: none;
+  font-family: sans-serif;
+  font-weight: bold;
+  letter-spacing: 0;
+  resize: none;
+  overflow: hidden;
+  transform-origin: top left;
+  user-select: text;
+  touch-action: auto;
+  pointer-events: auto;
+  cursor: text;
 }
 .document-image-editor > .error-note {
   flex-shrink: 0;
@@ -213,11 +233,7 @@
   .document-image-editor-properties {
     margin: 3px 0 0;
   }
-  .document-image-editor label input[type="number"],
-  .document-image-editor-text > input {
+  .document-image-editor label input[type="number"] {
     font-size: 16px;
-  }
-  .document-image-editor-text {
-    padding: 0 8px 8px;
   }
 }

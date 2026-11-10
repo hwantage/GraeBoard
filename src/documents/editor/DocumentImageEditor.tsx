@@ -5,6 +5,7 @@ import {
   useState,
   type PointerEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import { Modal } from "../../ui/Modal";
 import { ErrorNote } from "../../ui/ErrorNote";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../../ui/trackPointerDrag";
 import type { ImagePreview } from "./DocumentImageView";
 import DocumentImageTools from "./DocumentImageTools";
+import DocumentImageTextInput from "./DocumentImageTextInput";
 import {
   annotationBounds,
   annotationHandles,
@@ -41,6 +43,15 @@ type History = {
   future: ImageAnnotation[][];
 };
 const emptyHistory = (): History => ({ past: [], marks: [], future: [] });
+function replaceText(marks: ImageAnnotation[], text: ImageAnnotation) {
+  const existing = marks.find((mark) => mark.id === text.id);
+  if (!text.text.trim())
+    return existing ? marks.filter((mark) => mark.id !== text.id) : marks;
+  if (existing === text) return marks;
+  return existing
+    ? marks.map((mark) => (mark.id === text.id ? text : mark))
+    : [...marks, text];
+}
 
 export default function DocumentImageEditor({
   image,
@@ -55,11 +66,14 @@ export default function DocumentImageEditor({
   const cancelDrag = useRef<(() => void) | null>(null);
   const controller = useRef<AbortController | null>(null);
   const [history, setHistory] = useState<History>(emptyHistory);
+  const historyRef = useRef(history);
+  const [textEdit, setTextEdit] = useState<ImageAnnotation | null>(null);
+  const textEditRef = useRef<ImageAnnotation | null>(null);
+  const textInput = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState<ImageAnnotation[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tool, setTool] = useState<ImageTool>("rectangle");
   const [style, setStyle] = useState(initialStyle);
-  const [text, setText] = useState("");
   const [original, setOriginal] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [area, setArea] = useState({ width: 1, height: 1 });
@@ -75,8 +89,9 @@ export default function DocumentImageEditor({
       )
     : 1;
   const scale = zoom ?? fit;
-  const marks = draft ?? history.marks;
-  const selected = marks.find((mark) => mark.id === selectedId);
+  const marks =
+    draft ?? (textEdit ? replaceText(history.marks, textEdit) : history.marks);
+  const selected = textEdit ?? marks.find((mark) => mark.id === selectedId);
   const context = ready ? canvas.current?.getContext("2d") : null;
   const bounds =
     selected && context ? annotationBounds(selected, context) : null;
@@ -88,7 +103,8 @@ export default function DocumentImageEditor({
   useEffect(() => {
     let active = true;
     setSize({ width: 0, height: 0 });
-    setHistory(emptyHistory());
+    updateHistory(emptyHistory());
+    updateTextEdit(null);
     setDraft(null);
     setSelectedId(null);
     setZoom(null);
@@ -121,23 +137,64 @@ export default function DocumentImageEditor({
   useLayoutEffect(() => {
     const ctx = canvas.current?.getContext("2d");
     if (ctx && bitmap.current && ready)
-      paintImageAnnotations(ctx, bitmap.current, original ? [] : marks);
-  }, [ready, marks, original]);
+      paintImageAnnotations(
+        ctx,
+        bitmap.current,
+        original ? [] : marks.filter((mark) => mark.id !== textEdit?.id),
+      );
+  }, [ready, marks, original, textEdit]);
 
+  function updateHistory(next: History) {
+    historyRef.current = next;
+    setHistory(next);
+  }
   function commit(next: ImageAnnotation[]) {
-    setHistory((current) => ({
+    const current = historyRef.current;
+    if (next === current.marks) return;
+    updateHistory({
       past: [...current.past.slice(-99), current.marks],
       marks: next,
       future: [],
-    }));
+    });
+  }
+  function updateTextEdit(mark: ImageAnnotation | null) {
+    textEditRef.current = mark;
+    setTextEdit(mark);
+  }
+  function beginText(mark: ImageAnnotation) {
+    updateTextEdit(mark);
+    setSelectedId(mark.id);
+    setTool("text");
+  }
+  function finishText(cancel = false) {
+    const edit = textEditRef.current;
+    if (!edit) return historyRef.current.marks;
+    // Blur and the following toolbar click may run in the same event batch.
+    // Read the final DOM value and publish history synchronously to both.
+    const value = textInput.current?.value ?? edit.text;
+    const next = cancel
+      ? historyRef.current.marks
+      : replaceText(
+          historyRef.current.marks,
+          value === edit.text ? edit : { ...edit, text: value },
+        );
+    updateTextEdit(null);
+    commit(next);
+    setSelectedId(next.some((mark) => mark.id === edit.id) ? edit.id : null);
+    setTool("select");
+    if (document.activeElement === textInput.current)
+      canvas.current?.focus({ preventScroll: true });
+    return next;
   }
   function undo(redo = false) {
     cancelDrag.current?.();
+    finishText();
     setSelectedId(null);
-    setHistory((current) => {
-      const source = redo ? current.future : current.past;
-      if (!source.length) return current;
-      return redo
+    const current = historyRef.current;
+    const source = redo ? current.future : current.past;
+    if (!source.length) return;
+    updateHistory(
+      redo
         ? {
             past: [...current.past, current.marks],
             marks: source[0],
@@ -147,37 +204,39 @@ export default function DocumentImageEditor({
             past: source.slice(0, -1),
             marks: source.at(-1)!,
             future: [current.marks, ...current.future],
-          };
-    });
+          },
+    );
   }
   function remove(all = false) {
-    if (!history.marks.length || (!all && !selectedId)) return;
-    commit(all ? [] : history.marks.filter((mark) => mark.id !== selectedId));
+    const current = finishText();
+    if (!current.length || (!all && !selectedId)) return;
+    commit(all ? [] : current.filter((mark) => mark.id !== selectedId));
     setSelectedId(null);
   }
   function chooseTool(value: ImageTool) {
     cancelDrag.current?.();
+    finishText();
     setTool(value);
     setOriginal(false);
     if (value !== "select") setSelectedId(null);
   }
   function changeStyle(change: Partial<ImageStyle>) {
     setStyle((current) => ({ ...current, ...change }));
+    if (textEditRef.current) {
+      updateTextEdit({ ...textEditRef.current, ...change });
+      return;
+    }
     if (selected)
       commit(
-        history.marks.map((mark) =>
+        historyRef.current.marks.map((mark) =>
           mark.id === selected.id ? { ...mark, ...change } : mark,
         ),
       );
   }
   function changeText(value: string) {
-    setText(value);
-    if (selected?.tool === "text")
-      commit(
-        history.marks.map((mark) =>
-          mark.id === selected.id ? { ...mark, text: value } : mark,
-        ),
-      );
+    const current = textEditRef.current;
+    if (current && current.text !== value)
+      updateTextEdit({ ...current, text: value });
   }
   function point(position: PointerPosition): ImagePoint {
     const el = canvas.current!,
@@ -198,10 +257,15 @@ export default function DocumentImageEditor({
       return;
     if (original && tool !== "pan") return;
     event.preventDefault();
+    if (textEditRef.current) {
+      finishText();
+      canvas.current?.focus({ preventScroll: true });
+      return;
+    }
     canvas.current?.focus({ preventScroll: true });
     const target = canvas.current!;
     const startPoint = point(event);
-    const base = history.marks;
+    const base = historyRef.current.marks;
     const previousSelection = selectedId;
     let mark: ImageAnnotation | undefined;
     let handle: ImageHandle | undefined;
@@ -213,6 +277,54 @@ export default function DocumentImageEditor({
       y: viewport.current!.scrollTop,
     };
     const screenStart = { x: event.clientX, y: event.clientY };
+    if (tool === "text") {
+      let moved = false;
+      target.setPointerCapture(event.pointerId);
+      cancelDrag.current = trackPointerDrag(event.nativeEvent, {
+        captureTarget: target,
+        onMove: (move) => {
+          move.preventDefault();
+          moved ||=
+            Math.hypot(
+              move.clientX - screenStart.x,
+              move.clientY - screenStart.y,
+            ) > 4;
+        },
+        onEnd: (position, cancelled) => {
+          cancelDrag.current = null;
+          if (
+            cancelled ||
+            moved ||
+            Math.hypot(
+              position.clientX - screenStart.x,
+              position.clientY - screenStart.y,
+            ) > 4
+          )
+            return;
+          const existing = [...base]
+            .reverse()
+            .find(
+              (item) =>
+                item.tool === "text" &&
+                hitImageAnnotation(item, startPoint, context!, 5 / scale),
+            );
+          // Focus during the native pointerup activation so touch opens the keyboard.
+          flushSync(() =>
+            beginText(
+              existing ?? {
+                ...style,
+                id: crypto.randomUUID(),
+                tool: "text",
+                points: [startPoint],
+                text: "",
+                rotation: 0,
+              },
+            ),
+          );
+        },
+      });
+      return;
+    }
     if (tool === "select") {
       if (handles)
         handle = (Object.keys(handles) as ImageHandle[]).find(
@@ -238,16 +350,9 @@ export default function DocumentImageEditor({
         id: crypto.randomUUID(),
         tool,
         points: [startPoint],
-        text,
+        text: "",
         rotation: 0,
       };
-      if (tool === "text") {
-        if (!text.trim()) return;
-        commit([...base, mark]);
-        setSelectedId(mark.id);
-        setTool("select");
-        return;
-      }
       creating = true;
     }
     const originalMark = mark;
@@ -321,6 +426,7 @@ export default function DocumentImageEditor({
   }
   function zoomTo(value: number | null) {
     cancelDrag.current?.();
+    finishText();
     const el = viewport.current!;
     const viewBox = el.getBoundingClientRect();
     const imageBox = canvas.current!.getBoundingClientRect();
@@ -347,6 +453,7 @@ export default function DocumentImageEditor({
   }
   async function save() {
     if (!image.apply || !bitmap.current || busy || cancelDrag.current) return;
+    const finalMarks = finishText();
     setBusy(true);
     setError("");
     const abort = new AbortController();
@@ -359,7 +466,7 @@ export default function DocumentImageEditor({
       paintImageAnnotations(
         exported.getContext("2d")!,
         bitmap.current,
-        history.marks,
+        finalMarks,
       );
       const blob = await new Promise<Blob>((resolve, reject) =>
         exported.toBlob(
@@ -411,6 +518,15 @@ export default function DocumentImageEditor({
             event.preventDefault();
             event.stopPropagation();
             undo(event.shiftKey || event.key.toLowerCase() === "y");
+          } else if (
+            event.key === "Enter" &&
+            event.target === canvas.current &&
+            selected?.tool === "text" &&
+            !original
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            flushSync(() => beginText(selected));
           } else if (event.key === "Delete" || event.key === "Backspace") {
             event.preventDefault();
             event.stopPropagation();
@@ -429,22 +545,21 @@ export default function DocumentImageEditor({
           disabled={disabled}
           style={selected ?? style}
           onStyle={changeStyle}
-          text={selected?.tool === "text" ? selected.text : text}
-          onText={changeText}
           textVisible={tool === "text" || selected?.tool === "text"}
           scale={scale}
           onZoom={zoomTo}
           undo={() => undo()}
           redo={() => undo(true)}
-          canUndo={!!history.past.length}
+          canUndo={!!history.past.length || marks !== history.marks}
           canRedo={!!history.future.length}
           remove={() => remove()}
           clear={() => remove(true)}
           hasSelection={!!selected}
-          hasMarks={!!history.marks.length}
+          hasMarks={!!marks.length}
           original={original}
           onOriginal={() => {
             cancelDrag.current?.();
+            finishText();
             setOriginal(!original);
           }}
           onSave={() => void save()}
@@ -465,8 +580,33 @@ export default function DocumentImageEditor({
                 height: ready ? size.height * scale : undefined,
               }}
               onPointerDown={start}
+              onDoubleClick={(event) => {
+                if (
+                  disabled ||
+                  original ||
+                  tool !== "select" ||
+                  textEditRef.current
+                )
+                  return;
+                const hit = [...historyRef.current.marks]
+                  .reverse()
+                  .find((mark) =>
+                    hitImageAnnotation(mark, point(event), context!, 5 / scale),
+                  );
+                if (hit?.tool === "text") flushSync(() => beginText(hit));
+              }}
             >
               <canvas ref={canvas} tabIndex={0} aria-label="이미지 강조 영역" />
+              {textEdit && bounds && !original && (
+                <DocumentImageTextInput
+                  mark={textEdit}
+                  bounds={bounds}
+                  scale={scale}
+                  input={textInput}
+                  onChange={changeText}
+                  onFinish={finishText}
+                />
+              )}
               {selected &&
                 bounds &&
                 handles &&
@@ -520,8 +660,6 @@ export default function DocumentImageEditor({
           disabled={disabled || original}
           style={selected ?? style}
           onStyle={changeStyle}
-          text={selected?.tool === "text" ? selected.text : text}
-          onText={changeText}
           textVisible={tool === "text" || selected?.tool === "text"}
         />
       </div>

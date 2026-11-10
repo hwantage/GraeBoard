@@ -32,21 +32,36 @@ export const IMAGE_HANDLES = [
 ] as const;
 export type ImageHandle = (typeof IMAGE_HANDLES)[number] | "rotate";
 
+export function imageTextMetrics(
+  mark: ImageAnnotation,
+  ctx: CanvasRenderingContext2D,
+) {
+  ctx.font = `bold ${mark.fontSize}px sans-serif`;
+  const lines = mark.text.split("\n");
+  const lineHeight = mark.fontSize * 1.2;
+  return {
+    lines,
+    lineHeight,
+    width: lines.reduce(
+      (width, line) => Math.max(width, ctx.measureText(line).width),
+      1,
+    ),
+    height: lineHeight * lines.length,
+  };
+}
+
 export function annotationBounds(
   mark: ImageAnnotation,
   ctx: CanvasRenderingContext2D,
 ): ImageBounds {
   const first = mark.points[0];
   if (mark.tool === "text") {
-    ctx.font = `bold ${mark.fontSize}px sans-serif`;
+    const { width, height } = imageTextMetrics(mark, ctx);
     return {
       x: first.x,
       y: first.y,
-      width: Math.max(
-        1,
-        ...mark.text.split("\n").map((line) => ctx.measureText(line).width),
-      ),
-      height: mark.fontSize * 1.2 * mark.text.split("\n").length,
+      width,
+      height,
     };
   }
   let left = first.x,
@@ -130,14 +145,14 @@ export function paintImageAnnotations(
     ctx.lineCap = ctx.lineJoin = "round";
     ctx.beginPath();
     if (mark.tool === "text") {
-      ctx.font = `bold ${mark.fontSize}px sans-serif`;
+      const text = imageTextMetrics(mark, ctx);
       ctx.textBaseline = "top";
       ctx.fillStyle = mark.stroke;
-      mark.text
-        .split("\n")
-        .forEach((line, i) =>
-          ctx.fillText(line, box.x, box.y + i * mark.fontSize * 1.2),
-        );
+      // Match the textarea line box: split its extra leading above and below.
+      const leading = (text.lineHeight - mark.fontSize) / 2;
+      text.lines.forEach((line, i) =>
+        ctx.fillText(line, box.x, box.y + leading + i * text.lineHeight),
+      );
     } else if (mark.tool === "pen") {
       ctx.moveTo(mark.points[0].x, mark.points[0].y);
       for (const point of mark.points.slice(1)) ctx.lineTo(point.x, point.y);

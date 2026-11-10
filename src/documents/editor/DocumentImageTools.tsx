@@ -29,8 +29,6 @@ type Props = {
   disabled: boolean;
   style: ImageStyle;
   onStyle: (change: Partial<ImageStyle>) => void;
-  text: string;
-  onText: (text: string) => void;
   textVisible: boolean;
 } & (
   | { placement: "bottom" }
@@ -250,30 +248,21 @@ export default function DocumentImageTools(props: Props) {
               onValue={(lineWidth) => onStyle({ lineWidth })}
             />
           </label>
+          {props.textVisible && (
+            <label>
+              크기
+              <ImageNumberInput
+                label="글자 크기"
+                min={6}
+                max={300}
+                value={Math.round(style.fontSize)}
+                disabled={disabled}
+                onValue={(fontSize) => onStyle({ fontSize })}
+              />
+            </label>
+          )}
         </div>
       </div>
-      {props.textVisible && (
-        <div className="document-image-editor-text">
-          <input
-            aria-label="이미지에 넣을 글자"
-            placeholder="글자를 입력한 뒤 이미지에서 위치 선택"
-            value={props.text}
-            disabled={disabled}
-            onChange={(event) => props.onText(event.target.value)}
-          />
-          <label>
-            크기
-            <ImageNumberInput
-              label="글자 크기"
-              min={6}
-              max={300}
-              value={Math.round(style.fontSize)}
-              disabled={disabled}
-              onValue={(fontSize) => onStyle({ fontSize })}
-            />
-          </label>
-        </div>
-      )}
     </div>
   );
 }
