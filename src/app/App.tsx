@@ -1,3 +1,4 @@
+import SheetSummary from "../sheet/SheetSummary";
 import useSheetRowCommands from "../sheet/useSheetRowCommands";
 import useSheetCellCommands from "../sheet/useSheetCellCommands";
 import useSheetUndo from "../sheet/useSheetUndo";
@@ -109,7 +110,6 @@ import {
   canContribute,
   canManageTeam,
   isAssignable,
-  statusSummary,
   todayKey,
 } from "../../shared/domain.js";
 import type {
@@ -1615,10 +1615,6 @@ function Workspace({
   async function retryFailed(overwrite = false) {
     if (await operations.retry(overwrite, selectionEpoch.current)) setPanel("");
   }
-  const summary = useMemo(
-    () => statusSummary(tasks, settings),
-    [tasks, settings],
-  );
   if (!team)
     return (
       <main>
@@ -1670,27 +1666,7 @@ function Workspace({
         <h1>{sheetClone ? sheetClone.name : "연간 업무"}</h1>
         <span className="year-badge">{viewYear}</span>
       </div>
-      {!sheetClone && (
-        <div
-          className="board-summary"
-          aria-label="선택한 팀·표시 기간 전체 업무 통계"
-          title="달력의 12개월에 해당하는 연도의 전체 업무 기준입니다. 필터와 숨김 설정에 영향을 받지 않습니다."
-        >
-          <span>
-            <i className="summary-dot" />
-            전체 업무 <strong>{tasks.length}</strong>
-          </span>
-          {summary.map((group) => (
-            <span key={group.id}>
-              <i
-                className="summary-dot"
-                style={{ backgroundColor: group.color }}
-              />
-              {group.label} <strong>{group.count}</strong>
-            </span>
-          ))}
-        </div>
-      )}
+      {!sheetClone && <SheetSummary tasks={tasks} settings={settings} />}
       <Button
         className="insights-toggle"
         tooltip="인사이트"

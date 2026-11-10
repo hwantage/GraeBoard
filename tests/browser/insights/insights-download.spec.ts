@@ -117,6 +117,20 @@ const charts = [
     sort: { kind: "duration" },
     limit: 50,
   },
+  {
+    id: "cpdf005",
+    title: "주별 업무 개수",
+    type: "line",
+    dimensions: { axis: { kind: "time", unit: "week", basis: "work" } },
+    values: [{ kind: "count" }],
+  },
+  {
+    id: "cpdf006",
+    title: "업무 방식 비중",
+    type: "pie",
+    dimensions: { axis: { kind: "property", propertyId: methodId } },
+    values: [{ kind: "count" }],
+  },
 ];
 async function settings(page: Page) {
   return (await api(page, "/bootstrap")).teams.find(
@@ -333,6 +347,36 @@ test("PDF 출력은 정확한 선택 주차·필터·현재 카드 선택과 저
   );
   await expect(card(preview, "업무 수").locator("strong")).toHaveText("2");
   await expect(card(preview, "작업 주 합").locator("strong")).toHaveText("2");
+  const printedTrend = card(preview, "주별 업무 개수");
+  await expect(printedTrend.locator("svg.insights-lines")).toBeVisible();
+  await expect(
+    printedTrend.locator(".insights-print-data tbody tr"),
+  ).toHaveCount(2);
+  await expect(
+    printedTrend.locator(".insights-print-data tbody tr").first(),
+  ).toContainText("2026-01-12");
+  await expect(
+    printedTrend
+      .locator(".insights-print-data tbody tr")
+      .first()
+      .locator("td")
+      .last(),
+  ).toHaveText("2");
+  await expect(
+    printedTrend
+      .locator(".insights-print-data tbody tr")
+      .last()
+      .locator("td")
+      .last(),
+  ).toHaveText("0");
+  const printedPie = card(preview, "업무 방식 비중");
+  await expect(printedPie.locator("svg.insights-pie circle")).toHaveCount(1);
+  await expect(printedPie.locator(".insights-pie-legend")).toContainText(
+    "100%",
+  );
+  await expect(printedPie.locator(".insights-print-data tbody tr")).toHaveCount(
+    3,
+  );
   await expect(card(preview, "책임자별 업무 비교")).toContainText("업무 방식");
   await expect(card(preview, "책임자별 업무 비교")).toContainText("작업 주 합");
   await expect(
@@ -813,6 +857,8 @@ test("앱에서 생성한 보고서는 긴 한글·모든 행·여러 값의 매
     const compact = (text: string) =>
       text.normalize("NFC").replace(/\s+/gu, "");
     const allText = compact(pages.join("\n"));
+    expect(allText).toContain(compact("주별 업무 개수"));
+    expect(allText).toContain(compact("업무 방식 비중"));
     const sectionStart = allText.indexOf(compact("작업 상세 Top 50"));
     const sectionEnd = allText.indexOf(
       compact("가장 오래 걸린 업무 Top 10"),

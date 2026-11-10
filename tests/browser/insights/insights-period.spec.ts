@@ -475,6 +475,20 @@ test("2000년 첫 표시 주는 1999년 API 없이 집계하고 숨김으로 비
     card(page, "월별 작업량").locator('svg [role="button"]'),
   ).toHaveCount(0);
   expect(reads).not.toContain(1999);
+  const trend = card(page, "업무 개수 추이");
+  await expect(trend).toContainText("선택한 기간이 없습니다.");
+  await selectMonths(page, 2000, 2);
+  await expect(trend.locator("svg.insights-lines")).toBeVisible();
+  await expect
+    .poll(() =>
+      trend.locator(".insights-line-scroll").evaluate((node) => {
+        const svg = node.querySelector("svg")!;
+        return Math.abs(
+          svg.viewBox.baseVal.width - Math.floor(node.clientWidth),
+        );
+      }),
+    )
+    .toBeLessThan(2);
 });
 
 test("사용자 정의 속성 ID·이름·종류의 실시간 변경과 다른 팀은 동적으로 반영하고 보관 차트 참조는 보존한다", async ({
@@ -564,7 +578,10 @@ test("사용자 정의 속성 ID·이름·종류의 실시간 변경과 다른 �
   await expect(
     historical.getByText("보관된 속성: 영향 점수", { exact: true }),
   ).toBeVisible();
-  await expect(historical.locator("tfoot")).toContainText("6");
+  await expect(historical.getByRole("alert")).toContainText(
+    "차트 설정에서 다시 선택하세요",
+  );
+  await expect(historical.locator("tfoot")).toHaveCount(0);
   current = (await request(page, "/bootstrap")).teams.find(
     (t: any) => t.id === teamId,
   ).settings;
@@ -631,9 +648,10 @@ test("사용자 정의 속성 ID·이름·종류의 실시간 변경과 다른 �
   await expect(page.getByLabel("통계 속성", { exact: true })).toHaveValue(
     "workVector",
   );
-  await expect(card(page, "제품 성격 기록").locator("tfoot")).toContainText(
-    "6",
+  await expect(card(page, "제품 성격 기록").getByRole("alert")).toContainText(
+    "차트 설정에서 다시 선택하세요",
   );
+  await expect(card(page, "제품 성격 기록").locator("tfoot")).toHaveCount(0);
 });
 
 test("통계 아이콘은 셀 편집·저장 중 이동을 막고 연간 메모 flush 실패 시 날짜와 입력을 보존한다", async ({

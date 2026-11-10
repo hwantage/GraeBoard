@@ -442,12 +442,20 @@ test(
       const insights = {
         workColors: [{ color: "#0066cc", name: "Work" }],
         deadlinePropertyId: "missingDate",
+        summaryPropertyId: "status",
         charts: [
           {
             id: "c123abc",
-            title: "Team total",
-            type: "number",
-            dimensions: {},
+            title: "Weekly trend",
+            type: "line",
+            dimensions: { axis: { kind: "time", unit: "week", basis: "work" } },
+            values: [{ kind: "count" }],
+          },
+          {
+            id: "cpie001",
+            title: "Owner share",
+            type: "pie",
+            dimensions: { axis: { kind: "owner" } },
             values: [{ kind: "count" }],
           },
         ],

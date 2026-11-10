@@ -139,7 +139,11 @@ export function seriesColors(
   keys: string[],
 ) {
   const dimension: InsightDimension | undefined =
-    chart.type === "table" ? chart.dimensions.column : chart.dimensions.series;
+    chart.type === "pie"
+      ? chart.dimensions.axis
+      : chart.type === "table"
+        ? chart.dimensions.column
+        : chart.dimensions.series;
   const property =
     dimension?.kind === "property"
       ? propertiesFor(ctx.settings, true).find(

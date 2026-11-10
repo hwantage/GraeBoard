@@ -25,11 +25,14 @@ import type {
   InsightsContext,
   TaskMetrics,
   ChartCell,
+  ChartResult,
 } from "./insights-types";
 
 const TYPES = {
   number: "숫자 카드",
   bar: "막대",
+  line: "꺾은선",
+  pie: "파이",
   radar: "레이더",
   table: "표",
   top: "업무 목록 Top N",
@@ -68,7 +71,7 @@ export default function InsightsChartEditor({
         .map((owner) => owner.id),
     [tasks, ctx],
   );
-  const result = useMemo(
+  const result = useMemo<ChartResult | null>(
     () => (parsed.success ? aggregate(tasks, parsed.data, ctx) : null),
     [tasks, draft, ctx],
   );
@@ -80,9 +83,9 @@ export default function InsightsChartEditor({
         label: p.name + (p.archived ? " (보관된 속성)" : ""),
         value: { kind: "property" as const, propertyId: p.id },
       })),
-    ...(["month", "quarter"] as const).flatMap((unit) =>
+    ...(["week", "month", "quarter"] as const).flatMap((unit) =>
       (["work", "start", "end"] as const).map((basis) => ({
-        label: `${{ work: "작업한", start: "착수", end: "완료" }[basis]} ${unit === "month" ? "월" : "분기"}`,
+        label: `${{ work: "작업한", start: "착수", end: "완료" }[basis]} ${{ week: "주", month: "월", quarter: "분기" }[unit]}`,
         value: { kind: "time" as const, unit, basis },
       })),
     ),
@@ -126,14 +129,22 @@ export default function InsightsChartEditor({
           }}
         >
           {optional && <option value="">없음</option>}
-          {dimensions.map((d) => (
-            <option
-              key={JSON.stringify(d.value)}
-              value={JSON.stringify(d.value)}
-            >
-              {d.label}
-            </option>
-          ))}
+          {dimensions
+            .filter((d) =>
+              draft.type === "line" && slot === "axis"
+                ? d.value.kind === "time"
+                : draft.type === "pie"
+                  ? d.value.kind !== "time"
+                  : true,
+            )
+            .map((d) => (
+              <option
+                key={JSON.stringify(d.value)}
+                value={JSON.stringify(d.value)}
+              >
+                {d.label}
+              </option>
+            ))}
           {current &&
             !dimensions.some((d) => JSON.stringify(d.value) === encoded) && (
               <option value={encoded}>
@@ -151,18 +162,30 @@ export default function InsightsChartEditor({
       ...base,
       type,
       dimensions:
-        type === "bar"
-          ? { axis: { kind: "owner" } }
-          : type === "radar"
+        type === "line"
+          ? { axis: { kind: "time", unit: "month", basis: "work" } }
+          : type === "pie"
             ? {
                 axis: dimensions.find((d) => d.value.kind === "property")
-                  ?.value || { kind: "durationBand" },
-                series: { kind: "owner" },
+                  ?.value || { kind: "owner" },
               }
-            : type === "table"
-              ? { row: { kind: "owner" } }
-              : {},
-      values: type === "table" ? draft.values : [draft.values[0]],
+            : type === "bar"
+              ? { axis: { kind: "owner" } }
+              : type === "radar"
+                ? {
+                    axis: dimensions.find((d) => d.value.kind === "property")
+                      ?.value || { kind: "durationBand" },
+                    series: { kind: "owner" },
+                  }
+                : type === "table"
+                  ? { row: { kind: "owner" } }
+                  : {},
+      values:
+        type === "table"
+          ? draft.values
+          : type === "pie"
+            ? [{ kind: "count" }]
+            : [draft.values[0]],
       display: { percent: "value" },
       ...(type === "top"
         ? { sort: { kind: "duration" as const }, limit: 10 }
@@ -246,12 +269,13 @@ export default function InsightsChartEditor({
               ))}
             </Select>
           </label>
-          {draft.type === "bar" && (
+          {(draft.type === "bar" || draft.type === "line") && (
             <>
               {dimensionSelect("axis", "X 기준")}
               {dimensionSelect("series", "나누기", true)}
             </>
           )}
+          {draft.type === "pie" && dimensionSelect("axis", "분류 기준")}
           {draft.type === "radar" && (
             <>
               {dimensionSelect("axis", "축 기준")}
@@ -283,14 +307,27 @@ export default function InsightsChartEditor({
                         })
                       }
                     >
-                      {values.map((entry) => (
-                        <option
-                          key={JSON.stringify(entry.value)}
-                          value={JSON.stringify(entry.value)}
-                        >
-                          {entry.label}
-                        </option>
-                      ))}
+                      {values
+                        .filter(
+                          (entry) =>
+                            draft.type !== "pie" ||
+                            [
+                              "count",
+                              "completed",
+                              "inProgress",
+                              "workWeeks",
+                              "delayed",
+                              "numberSum",
+                            ].includes(entry.value.kind),
+                        )
+                        .map((entry) => (
+                          <option
+                            key={JSON.stringify(entry.value)}
+                            value={JSON.stringify(entry.value)}
+                          >
+                            {entry.label}
+                          </option>
+                        ))}
                       {!values.some(
                         (entry) => JSON.stringify(entry.value) === encoded,
                       ) && (

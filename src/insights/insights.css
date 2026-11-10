@@ -667,3 +667,66 @@
 .insights-team-chart-grid {
   overflow-anchor: none;
 }
+
+.insights-trend-card {
+  grid-column: 1 / -1;
+}
+.insights-lines {
+  display: block;
+  width: 100%;
+  height: 290px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.insights-lines circle,
+.insights-pie [role="button"] {
+  cursor: pointer;
+}
+.insights-lines circle:focus-visible,
+.insights-pie [role="button"]:focus-visible {
+  outline: none;
+  stroke: var(--ink);
+  stroke-width: 3px;
+}
+.insights-pie-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.insights-pie {
+  flex: 1 1 220px;
+  min-width: 180px;
+  width: 100%;
+  max-width: 350px;
+  height: 290px;
+}
+.insights-pie-legend {
+  flex: 1 1 150px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.insights-pie-legend button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.insights-pie-legend button > span:nth-child(2) {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.insights-pie-legend small {
+  color: var(--muted);
+}
+.insights-pie-legend button:hover {
+  background: var(--surface);
+}

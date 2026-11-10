@@ -281,3 +281,12 @@ figcaption {
 .insights-supporting-tasks .insights-table td {
   padding-block: 2px;
 }
+
+.insights-lines {
+  min-width: 0 !important;
+  width: 100%;
+  height: auto;
+}
+.insights-pie-layout {
+  max-height: none;
+}

@@ -22,12 +22,19 @@ export default function InsightsSettings({
   const [draft, setDraft] = useState<InsightsSettingsData>(() => ({
     ...(settings.insights || { workColors: [], charts: [] }),
     deadlinePropertyId: deadlinePropertyId(settings),
+    summaryPropertyId:
+      settings.insights?.summaryPropertyId === undefined
+        ? "status"
+        : settings.insights.summaryPropertyId,
   }));
   const [revision, setRevision] = useState(settings.revision || 0);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [message, setMessage] = useToast();
   const dates = propertiesFor(settings, true).filter((p) => p.kind === "date");
+  const summaries = propertiesFor(settings, true).filter(
+    (p) => p.kind === "option",
+  );
   const deadline = draft.deadlinePropertyId;
   const deadlineProperty = dates.find((p) => p.id === deadline);
   const parsed = insightsSettingsSchema.safeParse(draft);
@@ -39,6 +46,33 @@ export default function InsightsSettings({
       }}
     >
       <fieldset disabled={busy} className="insights-settings">
+        <label>
+          상단 통계 기준 속성
+          <Select
+            aria-label="상단 통계 기준 속성"
+            value={draft.summaryPropertyId || ""}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                summaryPropertyId: event.target.value || null,
+              })
+            }
+          >
+            <option value="">전체 업무만 표시</option>
+            {summaries.map((property) => (
+              <option key={property.id} value={property.id}>
+                {property.name}
+                {property.archived ? " (보관된 속성)" : ""}
+              </option>
+            ))}
+            {!!draft.summaryPropertyId &&
+              !summaries.some((p) => p.id === draft.summaryPropertyId) && (
+                <option value={draft.summaryPropertyId}>
+                  사용할 수 없는 속성: {draft.summaryPropertyId}
+                </option>
+              )}
+          </Select>
+        </label>
         <label>
           목표일 기준 속성
           <Select

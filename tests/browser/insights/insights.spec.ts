@@ -1763,3 +1763,297 @@ test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유�
     list.getByRole("button", { name: "인사이트 검증 업무 3", exact: true }),
   ).toBeVisible();
 });
+
+test("상단 통계 속성은 설정 저장·다른 탭·보관·복원에서 참조와 값을 유지한다", async ({
+  page,
+}, info) => {
+  await configure(page, [
+    chart("cpie001", "분류 비중", "pie", {
+      dimensions: { axis: { kind: "property", propertyId: "category" } },
+    }),
+  ]);
+  await paint(page, 0, ["2026-01-05"]);
+  await page.reload();
+  await insights(page);
+  await page
+    .getByRole("button", { name: "인사이트 설정", exact: true })
+    .click();
+  const config = page.getByRole("dialog", {
+    name: "인사이트 설정",
+    exact: true,
+  });
+  await config
+    .getByLabel("상단 통계 기준 속성", { exact: true })
+    .selectOption("category");
+  await config.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(config).toContainText("인사이트 설정을 저장했습니다.");
+  await config.getByRole("button", { name: "닫기", exact: true }).click();
+  const summary = page.locator(".board-summary");
+  await expect(summary).toContainText("기획 1");
+  await expect(summary).toContainText("개발 1");
+  const other = await page.context().newPage();
+  try {
+    await other.goto("/");
+    await expect(other.locator(".board-summary")).toContainText("기획 1");
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+    await dialog.getByRole("tab", { name: "속성", exact: true }).click();
+    await dialog
+      .locator(".property-list-row")
+      .filter({ hasText: "분류" })
+      .locator(".property-select")
+      .click();
+    const confirmation = page.waitForEvent("dialog");
+    const removal = dialog
+      .getByRole("button", { name: "선택 속성 삭제", exact: true })
+      .click();
+    const prompt = await confirmation;
+    expect(prompt.message()).toContain("상단 통계");
+    expect(prompt.message()).toContain("차트: 분류 비중");
+    await prompt.accept();
+    await removal;
+    await dialog
+      .getByRole("button", { name: "속성 저장", exact: true })
+      .click();
+    await expect(dialog).toContainText("속성이 저장되었습니다.");
+    await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(summary).toContainText("보관된 통계 속성: 분류");
+    await expect(summary).toContainText("기획 1");
+    await expect(other.locator(".board-summary")).toContainText(
+      "보관된 통계 속성: 분류",
+    );
+    await expect(card(page, "분류 비중")).toContainText("보관된 속성: 분류");
+    await expect(
+      card(page, "분류 비중").locator("svg.insights-pie"),
+    ).toBeVisible();
+    const archived = await settings(page);
+    expect(archived.insights.summaryPropertyId).toBe("category");
+    expect(archived.insights.charts[0].dimensions.axis.propertyId).toBe(
+      "category",
+    );
+    await page.screenshot({ path: info.outputPath("summary-archived.png") });
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await dialog.getByRole("tab", { name: "속성", exact: true }).click();
+    await dialog.locator(".archived-properties summary").click();
+    await dialog
+      .getByRole("button", { name: "분류 복원", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", { name: "속성 저장", exact: true })
+      .click();
+    await expect(dialog).toContainText("속성이 저장되었습니다.");
+    await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(summary).not.toContainText("보관된");
+    await expect(summary).toContainText("기획 1");
+    const rows = (await request(page, `/tasks?teamId=${teamId}&year=2026`))
+      .tasks;
+    expect(
+      rows.find((row: any) => row.id === taskIds[0]).cells.category.value,
+    ).toBe("v0");
+  } finally {
+    await other.close();
+  }
+});
+
+test("업무 개수 추이는 주별·월별·팀 전체·개인별의 0과 증감을 표시하고 정확한 업무를 연다", async ({
+  page,
+}, info) => {
+  await configure(page);
+  await paint(page, 0, ["2026-01-05", "2026-01-12"]);
+  await paint(page, 1, ["2026-01-12", "2026-02-02"]);
+  const colleague = (
+    await request(page, "/admin/users", {
+      username: `trend-${randomUUID().slice(0, 8)}@example.test`,
+      name: "추이 비교 담당자",
+      password: "test-password-123",
+      systemRole: "user",
+      memberships: [{ teamId, role: "member" }],
+    })
+  ).user;
+  const secondTask = (
+    await request(page, `/tasks?teamId=${teamId}&year=2026`)
+  ).tasks.find((task: any) => task.id === taskIds[1]);
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: taskIds[1],
+        key: "owner",
+        value: colleague.id,
+        expectedVersion: secondTask.cells.owner.version,
+      },
+    ],
+  });
+  await page.reload();
+  await insights(page);
+  const trend = card(page, "업무 개수 추이");
+  await expect(
+    trend.getByRole("button", { name: "2026-01 · 전체: 2", exact: true }),
+  ).toBeVisible();
+  await expect(
+    trend.getByRole("button", {
+      name: "2026-02 · 전체: 1 · 이전 표시 구간 대비 -1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    trend.getByRole("button", {
+      name: "2026-03 · 전체: 0 · 이전 표시 구간 대비 -1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await trend.getByLabel("추이 단위", { exact: true }).selectOption("week");
+  await expect(
+    trend.getByRole("button", {
+      name: "2026-01-12 · 전체: 2 · 이전 표시 구간 대비 +1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    trend.getByRole("button", {
+      name: "2026-01-19 · 전체: 0 · 이전 표시 구간 대비 -2",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await trend
+    .getByLabel("추이 대상", { exact: true })
+    .selectOption("owner:" + userId);
+  await trend
+    .getByRole("button", {
+      name: "2026-01-12 · 전체: 1 · 이전 표시 구간 대비 0",
+      exact: true,
+    })
+    .press("Enter");
+  const drill = page.getByRole("dialog", {
+    name: "업무 개수 추이 · 업무 목록",
+    exact: true,
+  });
+  await expect(drill).toContainText("인사이트 검증 업무 1");
+  await expect(drill).not.toContainText("인사이트 검증 업무 2");
+  await expect(drill).not.toContainText("인사이트 검증 업무 3");
+  await drill.getByRole("button", { name: "닫기", exact: true }).click();
+  await trend
+    .getByLabel("추이 대상", { exact: true })
+    .selectOption("owner:" + colleague.id);
+  await trend
+    .getByRole("button", {
+      name: "2026-01-12 · 전체: 1 · 이전 표시 구간 대비 +1",
+      exact: true,
+    })
+    .click();
+  await expect(drill).toContainText("인사이트 검증 업무 2");
+  await expect(drill).not.toContainText("인사이트 검증 업무 1");
+  await drill.getByRole("button", { name: "닫기", exact: true }).click();
+  await trend.getByLabel("추이 대상", { exact: true }).selectOption("people");
+  await expect(trend.locator(".insights-legend li")).toHaveCount(2);
+  await page.screenshot({ path: info.outputPath("task-trend-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await trend.scrollIntoViewIfNeeded();
+  expect(
+    await trend.evaluate((element) => element.getBoundingClientRect().width),
+  ).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: info.outputPath("task-trend-mobile.png") });
+});
+
+test("파이·꺾은선은 속성과 값을 설정해 저장·재진입하며 100%·0·음수와 누락 참조를 구분한다", async ({
+  page,
+}, info) => {
+  await configure(page);
+  for (let i = 0; i < 3; i++) await paint(page, i, ["2026-01-05"]);
+  await page.reload();
+  await insights(page);
+  await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "차트 편집", exact: true });
+  await editor.getByLabel("차트 종류", { exact: true }).selectOption("pie");
+  await editor.getByLabel("차트 제목", { exact: true }).fill("설정한 파이");
+  await editor
+    .getByLabel("분류 기준", { exact: true })
+    .selectOption('{"kind":"property","propertyId":"category"}');
+  await editor
+    .getByLabel("값 1", { exact: true })
+    .selectOption('{"kind":"numberSum","propertyId":"score"}');
+  await expect(
+    editor
+      .locator(".insights-pie")
+      .getByRole("button", { name: "검토: 3 · 50%", exact: true }),
+  ).toBeVisible();
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await page.getByRole("button", { name: "차트 추가", exact: true }).click();
+  await editor.getByLabel("차트 종류", { exact: true }).selectOption("line");
+  await editor.getByLabel("차트 제목", { exact: true }).fill("설정한 추이");
+  await editor
+    .getByLabel("X 기준", { exact: true })
+    .selectOption('{"kind":"time","unit":"week","basis":"work"}');
+  await editor.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await page.reload();
+  await expect(
+    card(page, "설정한 파이").locator("svg.insights-pie"),
+  ).toBeVisible();
+  await expect(
+    card(page, "설정한 추이").locator("svg.insights-lines"),
+  ).toBeVisible();
+  const saved = await settings(page);
+  expect(saved.insights.charts.map((item: any) => item.type)).toEqual([
+    "pie",
+    "line",
+  ]);
+  expect(saved.insights.charts[1].dimensions.axis.unit).toBe("week");
+  await card(page, "설정한 파이").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("configured-pie.png") });
+  const pieOnly = saved.insights.charts[0];
+  const single = {
+    ...pieOnly,
+    values: [{ kind: "count" }],
+    filter: { propertyFilters: { category: ["v0"] } },
+  };
+  await configure(page, [single]);
+  await expect(
+    card(page, "설정한 파이").locator("svg.insights-pie circle"),
+  ).toHaveCount(1);
+  await expect(
+    card(page, "설정한 파이").locator("svg.insights-pie circle"),
+  ).toHaveAttribute("aria-label", "기획: 1 · 100%");
+  await configure(page, [
+    { ...single, filter: { propertyFilters: { category: ["none"] } } },
+  ]);
+  await expect(card(page, "설정한 파이")).toContainText(
+    "비중을 표시할 양수 값이 없습니다.",
+  );
+  const negativeTask = (
+    await request(page, `/tasks?teamId=${teamId}&year=2026`)
+  ).tasks.find((task: any) => task.id === taskIds[0]);
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: taskIds[0],
+        key: "score",
+        value: "-1",
+        expectedVersion: negativeTask.cells.score.version,
+      },
+    ],
+  });
+  await configure(page, [pieOnly]);
+  await expect(card(page, "설정한 파이").getByRole("alert")).toContainText(
+    "음수 값의 비중",
+  );
+  await expect(
+    card(page, "설정한 파이").locator("svg.insights-pie"),
+  ).toHaveCount(0);
+  await configure(page, [
+    {
+      ...pieOnly,
+      dimensions: { axis: { kind: "property", propertyId: "missing" } },
+    },
+  ]);
+  await expect(card(page, "설정한 파이").getByRole("alert")).toContainText(
+    "차트 설정에서 다시 선택하세요",
+  );
+  await expect(
+    card(page, "설정한 파이").locator("svg.insights-pie"),
+  ).toHaveCount(0);
+});

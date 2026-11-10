@@ -63,8 +63,28 @@ export function chartTemplates(
 ): { label: string; chart: Omit<InsightChart, "id"> }[] {
   const property = comparisonProperty(settings);
   return [
+    {
+      label: "월별 업무 개수 추이",
+      chart: {
+        title: "월별 업무 개수 추이",
+        type: "line",
+        dimensions: { axis: { kind: "time", unit: "month", basis: "work" } },
+        values: [{ kind: "count" }],
+      },
+    },
     ...(property
       ? [
+          {
+            label: "속성별 파이",
+            chart: {
+              title: property.name + "별 업무 비중",
+              type: "pie" as const,
+              dimensions: {
+                axis: { kind: "property" as const, propertyId: property.id },
+              },
+              values: [{ kind: "count" as const }],
+            },
+          },
           {
             label: "책임자×속성 매트릭스",
             chart: {

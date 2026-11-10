@@ -1,3 +1,4 @@
+import InsightsTrend from "./InsightsTrend";
 import { useMemo } from "react";
 import { aggregate } from "../../shared/insights/insights.js";
 import InsightsChart from "./InsightsChart";
@@ -82,6 +83,13 @@ export default function InsightsAnalysis({
   };
   return (
     <section className="insights-grid insights-analysis" aria-label="기본 분석">
+      <InsightsTrend
+        tasks={tasks}
+        ctx={ctx}
+        owners={owners}
+        onDrill={onDrill}
+        onTask={onTask}
+      />
       {renderChart(0)}
       <InsightsPeopleRadar
         tasks={tasks}

@@ -1,3 +1,5 @@
+import InsightsLineChart from "./InsightsLineChart";
+import InsightsPieChart from "./InsightsPieChart";
 import { value, displayValue } from "../../shared/domain.js";
 import { DEADLINE_LABELS } from "../../shared/insights/insights.js";
 import type {
@@ -157,6 +159,15 @@ export default function InsightsChart({
         onDrill={onDrill}
       />
     );
+  if (chart.type === "line" || chart.type === "pie") {
+    const Plot = chart.type === "line" ? InsightsLineChart : InsightsPieChart;
+    return (
+      <>
+        <Plot chart={chart} result={result} ctx={ctx} onDrill={onDrill} />
+        <InsightsChartData chart={chart} result={result} ctx={ctx} />
+      </>
+    );
+  }
   if (chart.type === "radar")
     return (
       <>

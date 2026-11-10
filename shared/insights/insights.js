@@ -8,6 +8,7 @@ import {
   propertiesFor,
   propertyOption,
 } from "../domain.js";
+import { chartPropertyReferences } from "./insights-references.js";
 import { dateSchema } from "../date-validation.js";
 
 const DAY = 86400000;
@@ -288,6 +289,29 @@ export function numericProperties(tasks, settings) {
   );
 }
 
+function timeKey(week, dimension, period) {
+  if (dimension.unit === "week") return week;
+  const month = displayMonth(week, period);
+  return dimension.unit === "quarter"
+    ? month.slice(0, 4) + "-Q" + Math.ceil(Number(month.slice(5)) / 3)
+    : month;
+}
+function periodWeeks(period) {
+  const selected = selectedWeeks(period);
+  if (selected) return [...selected.keys()];
+  const years = Array.from(
+    {
+      length:
+        Number(period.to.slice(0, 4)) - Number(period.from.slice(0, 4)) + 1,
+    },
+    (_, i) => Number(period.from.slice(0, 4)) + i,
+  );
+  return [
+    ...new Set(
+      years.flatMap((year) => weeksForPeriod(year, 1).map((week) => week.key)),
+    ),
+  ].filter((week) => inPeriod(week, period));
+}
 function dimensionEntries(metric, dimension, ctx) {
   if (!dimension)
     return [{ key: "all", label: "전체", weeks: metric.rangeWeeks }];
@@ -335,11 +359,7 @@ function dimensionEntries(metric, dimension, ctx) {
         );
   const groups = new Map();
   for (const week of source) {
-    const month = displayMonth(week, ctx.period),
-      key =
-        dimension.unit === "quarter"
-          ? `${month.slice(0, 4)}-Q${Math.ceil(Number(month.slice(5)) / 3)}`
-          : month;
+    const key = timeKey(week, dimension, ctx.period);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(week);
   }
@@ -403,38 +423,40 @@ function addMetric(items, metric, weeks) {
 }
 
 export function chartWarnings(chart, settings) {
-  const refs = [
-    ...Object.values(chart.dimensions),
-    ...chart.values,
-    chart.sort,
-  ].filter(Boolean);
-  const warnings = new Set();
-  for (const ref of refs)
-    if (ref.propertyId) {
-      const property = propertiesFor(settings, true).find(
-        (p) => p.id === ref.propertyId,
-      );
-      if (!property) warnings.add(`참조 속성이 없습니다: ${ref.propertyId}`);
-      else if (property.archived) warnings.add(`보관된 속성: ${property.name}`);
-      else if (ref.kind === "property" && property.kind !== "option")
-        warnings.add(`선택형 속성이 아닙니다: ${property.name}`);
-      else if (
-        ref.kind.startsWith("number") &&
-        !["text", "number"].includes(property.kind)
-      )
-        warnings.add(`숫자 열이 아닙니다: ${property.name}`);
-    }
-  for (const id of Object.keys(chart.filter?.propertyFilters || {})) {
-    const property = propertiesFor(settings, true).find((p) => p.id === id);
-    if (!property || property.archived)
-      warnings.add(
-        `${property ? "보관된 속성" : "참조 속성이 없습니다"}: ${property?.name || id}`,
-      );
-  }
-  return [...warnings];
+  const properties = propertiesFor(settings, true);
+  return [
+    ...new Set(
+      chartPropertyReferences(chart).flatMap(({ id, kinds }) => {
+        const property = properties.find((p) => p.id === id);
+        if (!property) return ["참조 속성이 없습니다: " + id];
+        if (kinds && !kinds.includes(property.kind))
+          return [
+            (kinds.includes("option")
+              ? "선택형 속성이 아닙니다: "
+              : "숫자 열이 아닙니다: ") + property.name,
+          ];
+        return property.archived ? ["보관된 속성: " + property.name] : [];
+      }),
+    ),
+  ];
+}
+function chartReferenceErrors(chart, settings) {
+  const properties = propertiesFor(settings, true);
+  return [
+    ...new Set(
+      chartPropertyReferences(chart).flatMap(({ id, kinds }) => {
+        const property = properties.find((p) => p.id === id);
+        return !property || (kinds && !kinds.includes(property.kind))
+          ? [
+              "집계할 수 없는 속성입니다. 차트 설정에서 다시 선택하세요: " +
+                (property?.name || id),
+            ]
+          : [];
+      }),
+    ),
+  ];
 }
 
-/** @returns {import("../../src/insights/insights-types").ChartResult} */
 export function aggregate(tasks, chart, ctx) {
   const selected = filteredTasks(
     tasks.filter((task) => !task.deletedAt),
@@ -446,6 +468,7 @@ export function aggregate(tasks, chart, ctx) {
     .map((task) => taskMetrics(task, ctx))
     .filter((metric) => metric.rangeWeeks.length);
   const warnings = chartWarnings(chart, ctx.settings);
+  const referenceErrors = chartReferenceErrors(chart, ctx.settings);
   if (chart.type === "top") {
     let excluded = 0;
     const list = metrics
@@ -478,7 +501,7 @@ export function aggregate(tasks, chart, ctx) {
       list,
       excluded,
       warnings,
-      errors: [],
+      errors: referenceErrors,
       metrics,
     };
   }
@@ -521,31 +544,16 @@ export function aggregate(tasks, chart, ctx) {
       if (!option.archived && !groups.has(option.id))
         groups.set(option.id, { key: option.id, label: option.label });
   };
-  if (chart.type === "radar") completeOptions(rows, rowDimension);
-  if (chart.type === "bar") {
+  if (["radar", "pie"].includes(chart.type))
+    completeOptions(rows, rowDimension);
+  if (chart.type === "bar" || chart.type === "line") {
     if (
       rowDimension?.kind === "time" &&
-      rowDimension.basis === "work" &&
+      (rowDimension.basis === "work" || chart.type === "line") &&
       !periodError(ctx.period)
     ) {
-      const selected = selectedWeeks(ctx.period);
-      const months = selected
-        ? [...new Set(selected.values())]
-        : Array.from(
-            {
-              length:
-                monthOffset(ctx.period.to) - monthOffset(ctx.period.from) + 1,
-            },
-            (_, i) => {
-              const offset = monthOffset(ctx.period.from) + i;
-              return monthKey(Math.floor(offset / 12), (offset % 12) + 1);
-            },
-          );
-      for (const month of months) {
-        const key =
-          rowDimension.unit === "quarter"
-            ? `${month.slice(0, 4)}-Q${Math.ceil(Number(month.slice(5)) / 3)}`
-            : month;
+      for (const week of periodWeeks(ctx.period)) {
+        const key = timeKey(week, rowDimension, ctx.period);
         if (!rows.has(key)) rows.set(key, { key, label: key });
       }
     }
@@ -587,7 +595,7 @@ export function aggregate(tasks, chart, ctx) {
   };
   const rowList = order(rows, rowDimension),
     seriesList = order(series, seriesDimension),
-    errors = [];
+    errors = [...referenceErrors];
   if (chart.type === "bar" && (rowList.length > 50 || seriesList.length > 12))
     errors.push(
       "막대는 X 칸 최대 50개, 나누기 최대 12개입니다. 필터를 좁혀 주세요.",
@@ -601,6 +609,12 @@ export function aggregate(tasks, chart, ctx) {
     );
   if (chart.type === "table" && rowList.length > 200)
     errors.push("표는 최대 200행입니다. 필터를 좁혀 주세요.");
+  if (chart.type === "line" && (rowList.length > 110 || seriesList.length > 12))
+    errors.push(
+      "꺾은선은 시간 칸 최대 110개, 나누기 최대 12개입니다. 필터를 좁혀 주세요.",
+    );
+  if (chart.type === "pie" && rowList.length > 50)
+    errors.push("파이는 최대 50개 분류입니다. 필터를 좁혀 주세요.");
   const totals = chart.values.map((definition) => measure(all, definition));
   const displayed = (result, denominator) => ({
     ...result,
@@ -667,6 +681,10 @@ export function aggregate(tasks, chart, ctx) {
           taskIds: [...items.keys()],
         });
       }
+  if (chart.type === "pie" && cells.some((cell) => cell.values[0].raw < 0))
+    errors.push(
+      "파이는 음수 값의 비중을 표시할 수 없습니다. 값이나 필터를 바꿔 주세요.",
+    );
   return {
     rows: rowList,
     series: seriesList,

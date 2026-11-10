@@ -18,7 +18,25 @@ import { backupExternal } from "../../server/storage/transfer/external-backup.mj
 const config = {
   workColors: [{ color: "#ABC", name: "Work" }],
   deadlinePropertyId: "removedDeadline",
+  summaryPropertyId: "removedOption",
   charts: [
+    {
+      id: "ctrend1",
+      title: "Weekly trend",
+      type: "line",
+      dimensions: {
+        axis: { kind: "time", unit: "week", basis: "work" },
+        series: { kind: "owner" },
+      },
+      values: [{ kind: "count" }],
+    },
+    {
+      id: "cpie001",
+      title: "Property share",
+      type: "pie",
+      dimensions: { axis: { kind: "property", propertyId: "removedOption" } },
+      values: [{ kind: "count" }],
+    },
     {
       id: "c123abc",
       title: "Archived reference",

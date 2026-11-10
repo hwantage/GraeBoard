@@ -8,7 +8,7 @@ export const insightDimensionSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("time"),
-      unit: z.enum(["month", "quarter"]),
+      unit: z.enum(["week", "month", "quarter"]),
       basis: z.enum(["work", "start", "end"]),
     })
     .strict(),
@@ -55,7 +55,7 @@ export const insightChartSchema = z
   .object({
     id: z.string().regex(/^c[0-9a-z]{6}$/),
     title: z.string().trim().min(1).max(80),
-    type: z.enum(["number", "bar", "radar", "table", "top"]),
+    type: z.enum(["number", "bar", "line", "pie", "radar", "table", "top"]),
     dimensions: z
       .object({
         axis: insightDimensionSchema.optional(),
@@ -80,6 +80,8 @@ export const insightChartSchema = z
     const slots = {
       number: [],
       bar: ["axis", "series"],
+      line: ["axis", "series"],
+      pie: ["axis"],
       radar: ["axis", "series"],
       table: ["row", "column"],
       top: [],
@@ -91,7 +93,7 @@ export const insightChartSchema = z
       fail("이 차트는 값 하나만 선택합니다.");
     for (const slot of chart.type === "radar"
       ? ["axis", "series"]
-      : chart.type === "bar"
+      : ["bar", "line", "pie"].includes(chart.type)
         ? ["axis"]
         : chart.type === "table"
           ? ["row"]
@@ -101,6 +103,23 @@ export const insightChartSchema = z
       fail("정렬 값과 개수를 선택하세요.");
     if (chart.type !== "top" && (chart.sort || chart.limit !== undefined))
       fail("업무 목록에서만 정렬 값과 개수를 지정합니다.");
+    if (chart.type === "line" && chart.dimensions.axis?.kind !== "time")
+      fail("꺾은선의 X 기준은 시간으로 선택하세요.");
+    if (chart.type === "pie") {
+      if (chart.dimensions.axis?.kind === "time")
+        fail("파이의 분류 기준은 시간이 아닌 속성으로 선택하세요.");
+      if (
+        ![
+          "count",
+          "completed",
+          "inProgress",
+          "workWeeks",
+          "delayed",
+          "numberSum",
+        ].includes(chart.values[0]?.kind)
+      )
+        fail("파이는 업무 수·작업 주 합·숫자 열 합계로 표시합니다.");
+    }
     if (
       chart.type !== "bar" &&
       (chart.display?.orientation || chart.display?.mode)
@@ -141,6 +160,7 @@ export const insightsSettingsSchema = z
         "업무 색상은 중복될 수 없습니다.",
       ),
     deadlinePropertyId: propertyId.nullable().optional(),
+    summaryPropertyId: propertyId.nullable().optional(),
     charts: z
       .array(insightChartSchema)
       .max(30)
