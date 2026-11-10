@@ -10,7 +10,16 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import { Plus, ChevronDown, Pencil, Trash2, FileText, X } from "lucide-react";
+import {
+  Plus,
+  ChevronDown,
+  Pencil,
+  Trash2,
+  FileText,
+  X,
+  ArrowLeft,
+  ArrowRight,
+} from "lucide-react";
 import { api, send, ApiError } from "../platform/api";
 import {
   reorderItems,
@@ -207,7 +216,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
       documents.map((doc) => doc.id),
       (documentId, targetId, placement) =>
         void moveDocument(documentId, targetId, placement),
-      !props.inline || readOnly || busy || !!renaming || documents.length < 2,
+      readOnly || busy || !!renaming || documents.length < 2,
       "horizontal",
     );
     const tabScroll = tabReorder.root;
@@ -247,7 +256,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
       scroll.addEventListener("scroll", place);
       window.addEventListener("resize", place);
       menuRoot.current
-        ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
         ?.focus();
       const outside = (event: Event) => {
         if (
@@ -537,7 +546,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
       targetId: string,
       placement: Placement,
     ) {
-      if (!props.inline || readOnly || busy || !(await finishRename())) return;
+      if (readOnly || busy || !(await finishRename())) return;
       const next = reorderItems(documents, documentId, targetId, placement);
       if (next.every((doc, index) => doc.id === documents[index].id)) return;
       setBusy(true);
@@ -798,7 +807,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
                 className="document-tab-item"
                 key={doc.id}
                 data-selected={selected === doc.id || undefined}
-                {...(props.inline ? tabReorder.itemProps(doc.id) : {})}
+                {...tabReorder.itemProps(doc.id)}
               >
                 {renaming?.document.id === doc.id &&
                 renaming.location === "tab" ? (
@@ -813,23 +822,15 @@ export default forwardRef<DocumentPanelHandle, Props>(
                     tabIndex={selected === doc.id ? 0 : -1}
                     title={doc.title}
                     aria-label={doc.title}
-                    onPointerDown={
-                      props.inline
-                        ? tabReorder.handleProps(doc.id).onPointerDown
-                        : undefined
-                    }
+                    onPointerDown={tabReorder.handleProps(doc.id).onPointerDown}
                     onClickCapture={
-                      props.inline
-                        ? tabReorder.handleProps(doc.id).onClickCapture
-                        : undefined
+                      tabReorder.handleProps(doc.id).onClickCapture
                     }
                     onClick={() => void select(doc.id)}
                     onDoubleClick={() => void startRename(doc)}
                     onKeyDown={(event) => {
-                      if (props.inline) {
-                        tabReorder.handleProps(doc.id).onKeyDown(event);
-                        if (event.defaultPrevented) return;
-                      }
+                      tabReorder.handleProps(doc.id).onKeyDown(event);
+                      if (event.defaultPrevented) return;
                       if (event.key === "F2") {
                         event.preventDefault();
                         void startRename(doc);
@@ -915,6 +916,34 @@ export default forwardRef<DocumentPanelHandle, Props>(
                   <Pencil size={14} />
                   문서 이름 변경
                 </button>
+                {([-1, 1] as const).map((step) => {
+                  const target =
+                    documents[documents.indexOf(menuDocument) + step];
+                  return (
+                    <button
+                      key={step}
+                      type="button"
+                      role="menuitem"
+                      disabled={!target || busy}
+                      onClick={() => {
+                        setMenu(null);
+                        if (target)
+                          void moveDocument(
+                            menuDocument.id,
+                            target.id,
+                            step < 0 ? "before" : "after",
+                          );
+                      }}
+                    >
+                      {step < 0 ? (
+                        <ArrowLeft size={14} />
+                      ) : (
+                        <ArrowRight size={14} />
+                      )}
+                      {step < 0 ? "왼쪽으로 이동" : "오른쪽으로 이동"}
+                    </button>
+                  );
+                })}
                 <button
                   type="button"
                   role="menuitem"

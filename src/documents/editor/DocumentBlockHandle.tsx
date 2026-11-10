@@ -38,10 +38,12 @@ import { keydownHandler } from "@milkdown/kit/prose/keymap";
 import { $prose } from "@milkdown/kit/utils";
 import DocumentSlashMenu, { type SlashItem } from "./DocumentSlashMenu";
 import { TOGGLE_LEVELS } from "./DocumentToggle";
+import Toast, { useToast } from "../../ui/Toast";
+import { copyToClipboard } from "../document-links";
 import { trackPointerDrag } from "../../ui/trackPointerDrag";
 
 // The handle in the left gutter moves a block by dragging and opens a menu to
-// add a block above or below it, convert, duplicate, move or delete it. A block is a top-level block, a list
+// add a block above or below it, convert, copy, move or delete it. A block is a top-level block, a list
 // item or a block inside a toggle's content; tables, quotes and code blocks
 // move as a whole. Blocks a selection spans move together: a text selection
 // across blocks, the blocks a drag in the margin selects, or a range extended
@@ -470,20 +472,6 @@ function stepMove(state: EditorState, range: Range, step: -1 | 1) {
   return moveRange(state, unit, pos);
 }
 
-function duplicateRange(state: EditorState, range: Range) {
-  const content = rangeContent(state.doc, range);
-  const tr = state.tr.insert(range.to, content);
-  const { selection } = state;
-  if (selection.from >= range.from && selection.to <= range.to)
-    keepSelection(tr, selection, (pos) => pos + content.size);
-  else tr.setSelection(Selection.near(tr.doc.resolve(range.to + 1)));
-  const steps = tr.steps.length;
-  joinLists(tr, range.to + content.size);
-  joinLists(tr, range.to);
-  keepSelected(tr, state, range, range.to, range.to + content.size, steps);
-  return closeHistory(tr);
-}
-
 // An empty block above or below the range, where the caret goes: an item of
 // the same list, unchecked in a checklist, or a paragraph elsewhere. Below
 // the last block the empty line kept for typing is used instead.
@@ -719,6 +707,7 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
   { view: getView, shell, formats, canFormat, onOpen },
   ref,
 ) {
+  const [copyNotice, notifyCopy] = useToast();
   const [spot, setSpot] = useState<Spot | null>(null);
   const [line, setLine] = useState<Line | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -881,11 +870,29 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         run: act((state, target) => insertBlock(state, target, 1)),
       },
       {
-        id: "duplicate",
-        label: "복제",
+        id: "copy",
+        label: "복사",
         keywords: "",
         icon: <Copy size={16} />,
-        run: act(duplicateRange),
+        run: () => {
+          const current = getView();
+          if (!current) return;
+          const doc = current.state.doc;
+          if (!blockRange(doc, range.from, range.to)) return;
+          let content = rangeContent(doc, range);
+          const parent = doc.resolve(range.from).parent;
+          // A list item needs its list wrapper to keep bullets and checkboxes
+          // in both the Markdown and HTML clipboard representations.
+          if (LISTS.has(parent.type.name))
+            content = Fragment.from(parent.copy(content));
+          const { text, dom } = current.serializeForClipboard(
+            new Slice(content, 0, 0),
+          );
+          void copyToClipboard(text, dom.innerHTML).then(
+            () => notifyCopy("복사되었습니다."),
+            () => notifyCopy("복사하지 못했습니다."),
+          );
+        },
       },
       {
         id: "up",
@@ -1310,6 +1317,7 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
 
   return (
     <>
+      <Toast message={copyNotice} />
       {spot && (
         <button
           ref={button}

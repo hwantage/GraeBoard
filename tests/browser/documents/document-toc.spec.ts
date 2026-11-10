@@ -414,10 +414,10 @@ test("일정 문서와 메모 카드·전체 페이지에도 목차가 있다", 
     .poll(() => headingGap(calendar, heading, tools))
     .toBeGreaterThanOrEqual(0);
   expect(await headingGap(calendar, heading, tools)).toBeLessThan(40);
-  // At phone width the mode row holds the contents button alone.
+  // At phone width the mode row keeps the mode and contents controls.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(calendar.locator(".document-rich-tools")).toBeHidden();
-  await expect(calendar.locator(".document-modes")).toBeHidden();
+  await expect(calendar.locator(".document-modes")).toBeVisible();
   await expect(
     calendar.locator(".document-mode-bar").getByRole("button", {
       name: "목차",

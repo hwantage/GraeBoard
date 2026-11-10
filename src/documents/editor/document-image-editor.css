@@ -1,0 +1,28 @@
+.document-image-editor-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+}
+.document-image-editor-tools [aria-pressed="true"] {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+}
+.document-image-editor-text {
+  padding: 0 12px 12px;
+}
+.document-image-editor-surface {
+  overflow: auto;
+  max-height: 65dvh;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  background: var(--accent-surface);
+}
+.document-image-editor-surface canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  touch-action: none;
+  cursor: crosshair;
+}

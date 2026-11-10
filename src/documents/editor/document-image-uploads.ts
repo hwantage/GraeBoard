@@ -41,6 +41,32 @@ export function createDocumentImageUploads(
   const uploads = new Set<AbortController>();
   const pendingImages = new Set<Node>();
   return {
+    async uploadEdited(file: File, signal: AbortSignal) {
+      if (
+        !active ||
+        latest.current.readOnly ||
+        !latest.current.onUpload ||
+        signal.aborted
+      )
+        throw new Error("이미지를 저장할 수 없습니다.");
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      uploads.add(controller);
+      latest.current.onUploading?.(uploads.size);
+      try {
+        const url = await latest.current.onUpload(file, controller.signal);
+        if (!active || controller.signal.aborted)
+          throw new Error("이미지 저장이 취소되었습니다.");
+        if (!(latest.current.images?.accepts || isDocumentImage)(url))
+          throw new Error("이미지 주소를 확인할 수 없습니다.");
+        return url;
+      } finally {
+        signal.removeEventListener("abort", abort);
+        uploads.delete(controller);
+        if (active) latest.current.onUploading?.(uploads.size);
+      }
+    },
     configure(ctx: Ctx) {
       ctx.update(uploadConfig.key, (options) => ({
         ...options,

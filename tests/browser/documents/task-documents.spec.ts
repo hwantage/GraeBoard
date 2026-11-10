@@ -913,7 +913,7 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
       await expect(detail(page).locator(".document-modes")).toBeVisible();
       await expect(detail(page).locator(".document-formatbar")).toBeVisible();
     } else {
-      await expect(detail(page).locator(".document-modes")).toBeHidden();
+      await expect(detail(page).locator(".document-modes")).toBeVisible();
       await expect(detail(page).locator(".document-formatbar")).toBeHidden();
     }
     const frames = await page.evaluate(async () => {
@@ -942,10 +942,13 @@ test("상세 창은 로딩 중 같은 중앙 캐릭터의 네 칸을 순서대�
         ),
       ).toEqual([]);
     } else {
-      expect(frames.some((frame) => frame.content)).toBe(true);
-      expect(frames.some((frame) => frame.controls || frame.toolbar)).toBe(
-        false,
+      expect(frames.some((frame) => frame.controls && frame.content)).toBe(
+        true,
       );
+      expect(frames.some((frame) => frame.toolbar)).toBe(false);
+      expect(
+        frames.filter((frame) => frame.controls !== frame.content),
+      ).toEqual([]);
     }
     await stable();
     const scrolling = await detail(page)
@@ -2780,7 +2783,7 @@ test("팀 테마 5종과 좁은 화면에서 문서·키보드 탐색·아이콘
   await detail(page).screenshot({
     path: info.outputPath("document-mobile.png"),
   });
-  await expect(detail(page).locator(".document-modes")).toBeHidden();
+  await expect(detail(page).locator(".document-modes")).toBeVisible();
   await expect(detail(page).locator(".document-rich-tools")).toBeHidden();
   // Mode switching and its keyboard navigation remain available on desktop,
   // where the switch moves into the toolbar.
@@ -3475,15 +3478,8 @@ test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫�
   await expect(detail(page)).toBeVisible();
   await trigger.click();
   await expect(rename).toBeFocused();
-  await page.keyboard.press("Tab");
-  // Safari may skip buttons in its native Tab order.
-  if (
-    await menu
-      .getByRole("menuitem", { name: "문서 삭제", exact: true })
-      .evaluateAll((items) =>
-        items.some((item) => item === document.activeElement),
-      )
-  )
+  // Tab visits the enabled ordering actions too, then closes on leaving.
+  for (let i = 0; i < 5 && (await menu.isVisible()); i++)
     await page.keyboard.press("Tab");
   await expect(menu).toHaveCount(0);
   await expect(detail(page)).toBeVisible();
@@ -3555,7 +3551,7 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     await detail(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
   ).toBe(true);
   const headerBox = (await header.boundingBox())!;
-  await expect(controls).toBeHidden();
+  await expect(controls).toBeVisible();
   expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
     true,
   );
@@ -3654,7 +3650,7 @@ test("문서 제목 제스처는 가로로 스크롤하고 양 끝 탐색을 막
     path: info.outputPath("document-inline-title-mobile.png"),
   });
   await input.press("Escape");
-  await expect(header.locator(".document-modes")).toBeHidden();
+  await expect(header.locator(".document-modes")).toBeVisible();
   await page.setViewportSize({ width: 1366, height: 900 });
   await expect(controls).toBeVisible();
   await raw(page);
@@ -4089,4 +4085,166 @@ test("파일이 없는 이미지는 이미지 없음으로 표시하고 문서 �
     "이미지 없음 · 지우고 다시 붙여넣으세요",
   );
   await expect(rich(page).locator(".document-image img")).toBeHidden();
+});
+
+test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열기를 지원한다", async ({
+  page,
+}, info) => {
+  await open(page);
+  await pasteImage(page);
+  const image = rich(page).locator(".document-image img").first();
+  await expect(image).toBeVisible();
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const original = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
+    .markdown;
+  await image.hover();
+  await rich(page)
+    .getByRole("button", { name: "이미지 편집", exact: true })
+    .click();
+  let editor = page.getByRole("dialog", { name: "이미지 편집", exact: true });
+  await editor.getByRole("button", { name: "닫기", exact: true }).click();
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+  ).toBe(original);
+  await image.hover();
+  await rich(page)
+    .getByRole("button", { name: "이미지 편집", exact: true })
+    .click();
+  editor = page.getByRole("dialog", { name: "이미지 편집", exact: true });
+  const surface = editor.locator("canvas");
+  const pixels = () =>
+    surface.evaluate((el) => (el as HTMLCanvasElement).toDataURL());
+  const clean = await image.evaluate((el: HTMLImageElement) => {
+    const copy = document.createElement("canvas");
+    copy.width = el.naturalWidth;
+    copy.height = el.naturalHeight;
+    copy.getContext("2d")!.drawImage(el, 0, 0);
+    return copy.toDataURL();
+  });
+  // Wait for the decoded image to paint, rather than sampling the canvas's
+  // initial 300×150 blank frame as the undo baseline.
+  await expect.poll(pixels).toBe(clean);
+  const box = (await surface.boundingBox())!;
+  await editor.getByRole("button", { name: "빨간 펜", exact: true }).click();
+  await page.mouse.move(box.x + 25, box.y + 25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 70, box.y + 25, { steps: 3 });
+  await page.mouse.move(box.x + 70, box.y + 70, { steps: 3 });
+  await page.mouse.move(box.x + 25, box.y + 25, { steps: 3 });
+  await page.mouse.up();
+  await expect(
+    editor.getByRole("button", { name: "적용", exact: true }),
+  ).toBeEnabled();
+  await expect.poll(pixels).not.toBe(clean);
+  await editor.getByRole("button", { name: "실행취소", exact: true }).click();
+  await expect.poll(pixels).toBe(clean);
+  await editor
+    .getByRole("button", { name: "빨간 사각형", exact: true })
+    .click();
+  await page.mouse.move(box.x + 15, box.y + 15);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 120, box.y + 90, { steps: 5 });
+  await page.mouse.up();
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await editor.getByLabel("이미지에 넣을 글자").fill("검토");
+  await surface.click({ position: { x: 30, y: 100 } });
+  const annotated = await pixels();
+  await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
+  expect(await pixels()).not.toBe(annotated);
+  await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await editor.screenshot({ path: info.outputPath("image-annotations.png") });
+  const uploadPath = `**/api/tasks/${taskIds[0]}/documents/main/images`;
+  await page.route(uploadPath, (route) =>
+    route.fulfill({ status: 503, json: { error: "편집 이미지 저장 실패" } }),
+  );
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor.getByRole("alert")).toContainText(
+    "편집 이미지 저장 실패",
+  );
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+  ).toBe(original);
+  await page.unroute(uploadPath);
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const saved = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
+    .markdown;
+  expect(saved).toContain("<summary>원본 이미지</summary>");
+  expect(saved).toContain(original.trim());
+  expect(saved.match(/!\[/g)).toHaveLength(2);
+  await close(page);
+  await open(page);
+  // Check the persisted WebP, not only the editing canvas.
+  await expect
+    .poll(() =>
+      image.evaluate((el: HTMLImageElement) => {
+        if (!el.complete || !el.naturalWidth) return 0;
+        const surface = document.createElement("canvas");
+        surface.width = el.naturalWidth;
+        surface.height = el.naturalHeight;
+        const ctx = surface.getContext("2d")!;
+        ctx.drawImage(el, 0, 0);
+        const bytes = ctx.getImageData(
+          0,
+          0,
+          surface.width,
+          surface.height,
+        ).data;
+        let red = 0;
+        for (let i = 0; i < bytes.length; i += 4)
+          if (bytes[i] > 150 && bytes[i + 1] < 100 && bytes[i + 2] < 100) red++;
+        return red;
+      }),
+    )
+    .toBeGreaterThan(50);
+  await rich(page)
+    .getByRole("button", { name: /토글 펼치기/ })
+    .click();
+  await expect(rich(page).locator(".document-image img").last()).toBeVisible();
+});
+
+test("이미지 편집 중 원격에서 이미지가 바뀌면 이전 편집본을 적용하지 않는다", async ({
+  page,
+}) => {
+  await open(page);
+  await pasteImage(page);
+  const image = rich(page).locator(".document-image img").first();
+  await expect(image).toBeVisible();
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const original = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  await image.hover();
+  await rich(page)
+    .getByRole("button", { name: "이미지 편집", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "이미지 편집", exact: true });
+  const box = (await editor.locator("canvas").boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 100, box.y + 100);
+  await page.mouse.up();
+  const changed = original.markdown.replace(
+    /!\[[^\]]*\]/,
+    "![원격 수정 이미지]",
+  );
+  await save(page, taskIds[0], changed, original.revision);
+  await expect(image).toHaveAttribute("alt", "원격 수정 이미지");
+  let uploads = 0;
+  page.on("request", (req) => {
+    if (req.method() === "POST" && req.url().endsWith("/images")) uploads++;
+  });
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor.getByRole("alert")).toContainText(
+    "이미지가 변경되었습니다",
+  );
+  expect(uploads).toBe(0);
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+  ).toBe(changed);
 });

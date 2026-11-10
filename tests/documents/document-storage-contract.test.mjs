@@ -114,12 +114,32 @@ async function documentContract({ f, service, counts, failOnce }) {
         );
         copiedRowSchema.shape.documents.parse(listed);
       }
-      if (["annual", "sheetCloneMemo"].includes(owner.kind)) {
+      if (
+        ["task", "sheetClone", "annual", "sheetCloneMemo"].includes(owner.kind)
+      ) {
         const otherId = randomUUID();
         await service.create(owner, { id: otherId });
         const list = (await service.list(owner)).documents.map((doc) => doc.id);
         const order = { ids: [...list].reverse(), expectedIds: list };
+        failOnce();
+        await assert.rejects(
+          Promise.resolve().then(() => service.reorder(owner, order)),
+          /injected document failure/,
+        );
+        assert.deepEqual(
+          (await service.list(owner)).documents.map((doc) => doc.id),
+          list,
+        );
         await service.reorder(owner, order);
+        assert.equal((await service.read(scope)).markdown, first.markdown);
+        await rejected(
+          () =>
+            service.reorder(owner, {
+              ids: list.slice(1),
+              expectedIds: order.ids,
+            }),
+          409,
+        );
         const orderedCounts = await counts();
         await service.reorder(owner, order);
         // SQLite invalidation cursors may move for a replayed structural command;
@@ -551,6 +571,27 @@ test("M6 identical document contract uses PostgreSQL and external HTTP task-id r
   });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).markdown, "PostgreSQL initial");
+  for (const base of [
+    `/api/tasks/${f.taskId}/documents`,
+    `/api/sheet-clones/${f.sheetCloneId}/tasks/${f.taskId}/documents`,
+  ]) {
+    const list = unpack(await (await fetch(origin + base, { headers })).json());
+    const expectedIds = list.documents.map((doc) => doc.id),
+      ids = [...expectedIds].reverse();
+    assert.ok(ids.length > 1);
+    for (let replay = 0; replay < 2; replay++) {
+      const reordered = await fetch(origin + base + "/reorder", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ids, expectedIds }),
+      });
+      assert.equal(reordered.status, 200, await reordered.clone().text());
+      assert.deepEqual(
+        unpack(await reordered.json()).documents.map((doc) => doc.id),
+        ids,
+      );
+    }
+  }
   const abort = new AbortController(),
     stream = await fetch(`${origin}/api/tasks/${f.taskId}/document/events`, {
       headers,
@@ -578,7 +619,10 @@ test("M6 identical document contract uses PostgreSQL and external HTTP task-id r
     method: "PUT",
     headers,
     body: JSON.stringify(
-      saveRequest("external HTTP writes PostgreSQL", after.revision),
+      saveRequest(
+        "external HTTP writes PostgreSQL",
+        (await service.read(target)).revision,
+      ),
     ),
   });
   assert.equal(saved.status, 200, await saved.text());

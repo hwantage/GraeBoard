@@ -1493,21 +1493,21 @@ body.document-block-selecting * {
   color: var(--ink);
 }
 
-.annual-memos .document-tab-item {
+.document-tab-item {
   position: relative;
 }
-.annual-memos .document-tablist [role="tab"] {
+.document-tablist [role="tab"] {
   user-select: none;
 }
-.annual-memos .document-tab-item[data-reorder-enabled] [role="tab"] {
-  touch-action: pan-y;
+.document-tab-item[data-reorder-enabled] [role="tab"] {
+  touch-action: pan-x pan-y;
   cursor: grab;
 }
-.annual-memos .document-tab-item[data-reordering] {
+.document-tab-item[data-reordering] {
   opacity: 0.5;
   cursor: grabbing;
 }
-.annual-memos .document-tab-item[data-reorder-drop]::after {
+.document-tab-item[data-reorder-drop]::after {
   content: "";
   position: absolute;
   inset-block: 4px;
@@ -1515,10 +1515,10 @@ body.document-block-selecting * {
   background: var(--accent);
   pointer-events: none;
 }
-.annual-memos .document-tab-item[data-reorder-drop="before"]::after {
+.document-tab-item[data-reorder-drop="before"]::after {
   left: 0;
 }
-.annual-memos .document-tab-item[data-reorder-drop="after"]::after {
+.document-tab-item[data-reorder-drop="after"]::after {
   right: 0;
 }
 
@@ -1700,8 +1700,7 @@ button.memo-document-title {
 
 @media (max-width: 700px) {
   .document-rich-tools,
-  .document-modes,
-  /* The row stays for the download and contents buttons alone. */
+  /* Keep the mode, download and contents controls together. */
   .document-mode-bar:not(
       :has(.document-download, .document-toc-toggle:not([data-reserved]))
     ),

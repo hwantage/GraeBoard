@@ -442,3 +442,161 @@ test("프로필 아래 접속 토큰에서 무기한 생성·재조회·복사·
   await expect(panel.getByText("생성한 접속 토큰이 없습니다.")).toBeVisible();
   expect((await request(page, "/access-tokens")).tokens).toEqual([]);
 });
+
+test("모바일 문서 모드·탭 순서와 날짜 자동 저장, 화면 제목", async ({
+  page,
+}, info) => {
+  const path = `/tasks/${taskId}/documents`;
+  for (let i = 0; i < 5; i++)
+    await request(page, path, "POST", {
+      id: randomUUID(),
+      title: `검토 문서 ${i}`,
+    });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await board(page);
+  await expect(page).toHaveTitle("연간 업무 · 그래보드");
+  await page
+    .locator(`[data-cell="${taskId}:title"]`)
+    .click({ button: "right" });
+  const dialog = detail(page);
+  await dialog.getByRole("button", { name: "문서 작성", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  await dialog
+    .getByRole("textbox", { name: "업무 문서 Markdown 원문" })
+    .fill("# 모바일 전환");
+  await dialog.getByRole("button", { name: "리치 문서", exact: true }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "모바일 전환" }),
+  ).toBeVisible();
+  const before = (await request(page, path)).documents.map(
+    (doc: any) => doc.id,
+  );
+  const firstTitle = await dialog
+    .getByRole("tab")
+    .first()
+    .getAttribute("aria-label");
+  await dialog
+    .getByRole("button", { name: `${firstTitle} 메뉴`, exact: true })
+    .click();
+  await dialog.getByRole("menuitem", { name: "오른쪽으로 이동" }).click();
+  await expect
+    .poll(async () =>
+      (await request(page, path)).documents.map((doc: any) => doc.id),
+    )
+    .toEqual([before[1], before[0], ...before.slice(2)]);
+  await dialog.screenshot({
+    path: info.outputPath("mobile-document-controls.png"),
+  });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  const event = await entry(page, "모바일 기간", todayKey());
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page).toHaveTitle("캘린더 · 그래보드");
+  await segment(page, event.id).locator(".calendar-entry-card").click();
+  const calendarDialog = page.getByRole("dialog", {
+    name: "캘린더 일정",
+    exact: true,
+  });
+  const start = calendarDialog.getByLabel("일정 시작일", { exact: true });
+  const end = calendarDialog.getByLabel("일정 종료일", { exact: true });
+  const a = (await start.boundingBox())!,
+    b = (await end.boundingBox())!;
+  expect(a.x + a.width <= b.x + 1 || a.y + a.height <= b.y + 1).toBeTruthy();
+  expect(
+    await end.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+  await expect(
+    calendarDialog.getByRole("button", { name: "기간 저장", exact: true }),
+  ).toHaveCount(0);
+  await end.fill(addDays(todayKey(), 2));
+  await calendarDialog
+    .getByRole("textbox", { name: "일정 제목", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await request(page, `/calendar/entries/${event.id}`)).endDate,
+    )
+    .toBe(addDays(todayKey(), 2));
+  await calendarDialog.screenshot({
+    path: info.outputPath("mobile-calendar-range.png"),
+  });
+});
+
+test("꼬리 메모를 펼쳐도 발표 레이저와 표 필기를 유지한다", async ({
+  page,
+}) => {
+  const memos = `/teams/${teamId}/years/2026/memos`,
+    id = randomUUID();
+  await request(page, memos, "POST", { id, title: "발표 메모" });
+  await request(page, `${memos}/${id}`, "PUT", {
+    markdown: "메모 본문",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await board(page);
+  await page.locator(".presentation-start").click();
+  await page.locator(".toggle-memos").click();
+  await page.locator(".annual-memos .document-tablist").hover();
+  await expect(page.locator(".presentation-pointer")).toBeVisible();
+  await expect(page.locator(".annual-memos [role=tab]")).toHaveCSS(
+    "cursor",
+    "none",
+  );
+  await page.getByRole("button", { name: "펜", exact: true }).click();
+  const grid = (await page.getByRole("grid").boundingBox())!;
+  await page.mouse.move(grid.x + 100, grid.y + 90);
+  await page.mouse.down();
+  await page.mouse.move(grid.x + 200, grid.y + 110, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator(".presentation-annotations polyline")).toHaveCount(
+    1,
+  );
+  await expect(page.locator(".presentation-pointer")).toBeVisible();
+});
+
+test("모바일 꼬리 메모 탭 제목 위에서도 좌우 터치 스크롤한다", async ({
+  page,
+  browserName,
+}) => {
+  const path = `/teams/${teamId}/years/2026/memos`;
+  for (let i = 0; i < 8; i++)
+    await request(page, path, "POST", {
+      id: randomUUID(),
+      title: `긴 메모 제목 ${i}`,
+    });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await board(page);
+  await page.locator(".toggle-memos").click();
+  const rail = page.locator(".annual-memos .document-tablist"),
+    tab = rail.getByRole("tab").first();
+  await expect(tab).toHaveCSS("touch-action", "pan-x pan-y");
+  if (browserName === "chromium") {
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+    const box = (await tab.boundingBox())!;
+    const x = box.x + box.width - 15,
+      y = box.y + box.height / 2;
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y }],
+    });
+    for (let offset = 10; offset <= 90; offset += 10)
+      await session.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: x - offset, y }],
+      });
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await expect
+      .poll(() => rail.evaluate((el) => el.scrollLeft))
+      .toBeGreaterThan(20);
+    await session.detach();
+  }
+  expect(
+    (await request(page, path)).documents.map((doc: any) => doc.title),
+  ).toEqual(Array.from({ length: 8 }, (_, i) => `긴 메모 제목 ${i}`));
+});

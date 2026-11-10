@@ -688,18 +688,48 @@ export class SqliteDocumentRepository {
         this.rows(context),
       );
       if (!replay) {
-        const put = this.db.prepare(
-          `UPDATE ${context.table} SET position=? WHERE ${context.where} AND id=?`,
-        );
-        ids.forEach((id, index) => put.run(index, ...context.args, id));
-        this.memoAudit(
-          user,
-          context,
-          "memo-reorder",
-          String(context.year),
-          { ids: currentIds },
-          { ids },
-        );
+        if (scope.kind === "sheetClone") {
+          const byId = new Map(
+            context.task.documents.map((doc) => [doc.id, doc]),
+          );
+          this.persistSheetClone(
+            context,
+            ids.map((id) => byId.get(id)),
+            user.id,
+          );
+        } else {
+          const task = scope.kind === "task";
+          const put = this.db.prepare(
+            task
+              ? "UPDATE task_documents SET position=? WHERE task_id=? AND id=?"
+              : `UPDATE ${context.table} SET position=? WHERE ${context.where} AND id=?`,
+          );
+          ids.forEach((id, index) =>
+            put.run(index, ...(task ? [scope.taskId] : context.args), id),
+          );
+          if (task) touchTasks(this.db, [context.task]);
+        }
+        if (["task", "sheetClone"].includes(scope.kind))
+          audit(
+            this.db,
+            user.id,
+            context.teamId,
+            "document-reorder",
+            scope.kind === "task"
+              ? scope.taskId
+              : `${scope.sheetCloneId}:${scope.taskId}`,
+            { ids: currentIds },
+            { ids },
+          );
+        else
+          this.memoAudit(
+            user,
+            context,
+            "memo-reorder",
+            String(context.year),
+            { ids: currentIds },
+            { ids },
+          );
       }
       return this.result(context);
     });

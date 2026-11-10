@@ -20,6 +20,12 @@ export default function useWorkspaceRoute(
   prepare: (route: WorkspaceRoute) => Promise<boolean>,
 ) {
   const [route, setRoute] = useState(currentRoute);
+  useEffect(() => {
+    document.title = `${{ annual: "연간 업무", documents: "문서", calendar: "캘린더" }[route]} · 그래보드`;
+    return () => {
+      document.title = "그래보드";
+    };
+  }, [route]);
   const current = useRef<Entry>({
     index: history.state?.[historyKey] ?? 0,
     route,

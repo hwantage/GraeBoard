@@ -491,6 +491,7 @@ export class PostgresDocumentRepository {
             ]);
             await s.put("document", old.key, { ...old.payload, position });
           }
+          if (kind === "task") await s.touch("task", [prefix[1]]);
           return result(s, scope);
         }
         assert(key && (row || virtual), 404, "문서를 찾을 수 없습니다.");

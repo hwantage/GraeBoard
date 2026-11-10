@@ -43,12 +43,12 @@ const removeSchema = z
   .object({ expectedRevision: documentRevisionSchema })
   .strict();
 const idsSchema = z
-  .array(uuid)
+  .array(documentIdSchema)
   .min(1)
   .max(MAX_TASK_DOCUMENTS)
   .refine(
     (ids) => new Set(ids).size === ids.length,
-    "같은 메모를 중복 지정할 수 없습니다.",
+    "같은 문서를 중복 지정할 수 없습니다.",
   );
 const reorderSchema = z
   .object({ ids: idsSchema, expectedIds: idsSchema })
@@ -163,7 +163,7 @@ export class DocumentBusinessService {
   reorder(scope, body) {
     const target = scopeSchema.parse(scope);
     requireThat(
-      ["annual", "sheetCloneMemo"].includes(target.kind),
+      ["task", "sheetClone", "annual", "sheetCloneMemo"].includes(target.kind),
       400,
       "문서 순서를 변경할 수 없는 범위입니다.",
     );
@@ -239,7 +239,7 @@ export function requireDocumentOrder(currentIds, request, documents) {
       request.ids.every((id) => currentIds.includes(id)) &&
       (replay || same(currentIds, request.expectedIds)),
     409,
-    "메모 목록이나 순서가 변경되었습니다. 최신 목록에서 다시 이동하세요.",
+    "문서 목록이나 순서가 변경되었습니다. 최신 목록에서 다시 이동하세요.",
     { documents },
   );
   return replay;

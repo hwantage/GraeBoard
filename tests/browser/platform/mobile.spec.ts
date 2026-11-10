@@ -293,7 +293,7 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   await expect(page.locator(".calendar-view-options")).toBeVisible();
 });
 
-test("업무 문서는 모바일 리치 보기로 열리고 데스크톱 원문 선택과 도구를 보존한다", async ({
+test("업무 문서는 모바일에서도 모드를 전환하고 화면 폭이 바뀌어도 선택을 보존한다", async ({
   page,
 }, info) => {
   await request(page, `/tasks/${taskId}/documents/main`, "PUT", {
@@ -309,7 +309,7 @@ test("업무 문서는 모바일 리치 보기로 열리고 데스크톱 원문 
   await expect(detail.locator(".document-rich-tools")).toBeHidden();
   await expect(
     detail.getByRole("button", { name: "Markdown 원문", exact: true }),
-  ).toBeHidden();
+  ).toBeVisible();
   await fits(page);
   await screenshot(page, info, "task-document");
   await page.setViewportSize(desktop);
@@ -322,8 +322,12 @@ test("업무 문서는 모바일 리치 보기로 열리고 데스크톱 원문 
   });
   await source.fill("# 원문에서 변경\n\n모바일에서도 같은 내용");
   await page.setViewportSize(mobile);
+  await expect(source).toHaveValue("# 원문에서 변경\n\n모바일에서도 같은 내용");
+  await detail.getByRole("button", { name: "리치 문서", exact: true }).tap();
   await expect(rich).toContainText("모바일에서도 같은 내용");
-  await expect(source).toHaveCount(0);
+  await detail
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .tap();
   await expect(detail.locator(".document-rich-tools")).toBeHidden();
   await page.setViewportSize(desktop);
   await expect(source).toBeVisible();
@@ -353,9 +357,9 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
   await expect(
     calendar.getByRole("textbox", { name: "일정 문서 리치 편집" }),
   ).toBeVisible();
-  // The row above the document holds the download and contents buttons.
+  // The row holds the two mode buttons, download and contents.
   const calendarRow = calendar.locator(".document-mode-bar");
-  await expect(calendarRow.getByRole("button")).toHaveCount(2);
+  await expect(calendarRow.getByRole("button")).toHaveCount(4);
   await expect(
     calendarRow.getByRole("button", { name: "다운로드", exact: true }),
   ).toBeVisible();
@@ -378,7 +382,7 @@ test("일정과 메모 전체 페이지에는 모드 전환 빈 줄이 남지 �
     "메모 본문",
   );
   const memoRow = memo.locator(".document-mode-bar");
-  await expect(memoRow.getByRole("button")).toHaveCount(2);
+  await expect(memoRow.getByRole("button")).toHaveCount(4);
   await expect(
     memoRow.getByRole("button", { name: "다운로드", exact: true }),
   ).toBeVisible();

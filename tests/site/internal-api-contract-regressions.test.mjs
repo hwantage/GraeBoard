@@ -164,7 +164,7 @@ test("B5 document and memo error contracts preserve scope-specific revisions, ti
     400,
   );
   assert.ok(
-    JSON.stringify(repeated).includes("같은 메모를 중복 지정할 수 없습니다."),
+    JSON.stringify(repeated).includes("같은 문서를 중복 지정할 수 없습니다."),
   );
   await f.expect(
     `/api/sheet-clones/${f.sheetCloneId}/memos`,

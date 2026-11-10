@@ -221,6 +221,7 @@ export default function useRichEditorLifecycle(
                   setPreview(image);
                 },
                 latest.current.images,
+                imageUploads.uploadEdited,
               ),
             toggle_summary: (node, view, getPos) =>
               toggleSummaryView(
