@@ -520,6 +520,18 @@ test("모바일 문서 모드·탭 순서와 날짜 자동 저장, 화면 제목
   await calendarDialog.screenshot({
     path: info.outputPath("mobile-calendar-range.png"),
   });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  const desktopStart = (await start.boundingBox())!;
+  const desktopEnd = (await end.boundingBox())!;
+  expect(desktopStart.width).toBeLessThanOrEqual(165);
+  expect(desktopEnd.width).toBeLessThanOrEqual(165);
+  expect(
+    desktopEnd.x - desktopStart.x - desktopStart.width,
+  ).toBeLessThanOrEqual(16);
+  expect(Math.abs(desktopStart.y - desktopEnd.y)).toBeLessThan(2);
+  await calendarDialog.screenshot({
+    path: info.outputPath("desktop-calendar-range.png"),
+  });
 });
 
 test("꼬리 메모를 펼쳐도 발표 레이저와 표 필기를 유지한다", async ({

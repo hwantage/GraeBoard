@@ -1789,10 +1789,15 @@
 
 .calendar-range-editor fieldset > label {
   min-width: 0;
-  flex: 1 1 150px;
+  flex: 0 1 150px;
 }
 .calendar-entry-heading .calendar-range-editor input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+@media (max-width: 600px) {
+  .calendar-range-editor fieldset > label {
+    flex: 1 1 140px;
+  }
 }

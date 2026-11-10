@@ -1,16 +1,46 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
-import { Button } from "../../ui/Button";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import { Modal } from "../../ui/Modal";
 import { ErrorNote } from "../../ui/ErrorNote";
+import {
+  trackPointerDrag,
+  type PointerPosition,
+} from "../../ui/trackPointerDrag";
 import type { ImagePreview } from "./DocumentImageView";
+import DocumentImageTools from "./DocumentImageTools";
+import {
+  annotationBounds,
+  annotationHandles,
+  hitImageAnnotation,
+  moveImageAnnotation,
+  paintImageAnnotations,
+  resizeImageAnnotation,
+  IMAGE_HANDLES,
+  type ImageAnnotation,
+  type ImageHandle,
+  type ImagePoint,
+  type ImageStyle,
+  type ImageTool,
+} from "./document-image-annotations";
 import "./document-image-editor.css";
 
-type Point = { x: number; y: number };
-type Annotation = {
-  tool: "pen" | "rectangle" | "text";
-  points: Point[];
-  text: string;
+const initialStyle: ImageStyle = {
+  stroke: "#e02020",
+  fill: "",
+  lineWidth: 3,
+  fontSize: 24,
 };
+type History = {
+  past: ImageAnnotation[][];
+  marks: ImageAnnotation[];
+  future: ImageAnnotation[][];
+};
+const emptyHistory = (): History => ({ past: [], marks: [], future: [] });
 
 export default function DocumentImageEditor({
   image,
@@ -20,26 +50,55 @@ export default function DocumentImageEditor({
   onClose: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
   const bitmap = useRef<HTMLImageElement | null>(null);
-  const gesture = useRef<{ id: number; mark: Annotation } | null>(null);
-  const [marks, setMarks] = useState<Annotation[]>([]);
-  const [draft, setDraft] = useState<Annotation | null>(null);
-  const [tool, setTool] = useState<Annotation["tool"]>("rectangle");
+  const cancelDrag = useRef<(() => void) | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const [history, setHistory] = useState<History>(emptyHistory);
+  const [draft, setDraft] = useState<ImageAnnotation[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tool, setTool] = useState<ImageTool>("rectangle");
+  const [style, setStyle] = useState(initialStyle);
   const [text, setText] = useState("");
   const [original, setOriginal] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [area, setArea] = useState({ width: 1, height: 1 });
+  const [zoom, setZoom] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const controller = useRef<AbortController | null>(null);
+  const ready = size.width > 0;
+  const fit = ready
+    ? Math.min(
+        1,
+        Math.max(1, area.width - 64) / size.width,
+        Math.max(1, area.height - 64) / size.height,
+      )
+    : 1;
+  const scale = zoom ?? fit;
+  const marks = draft ?? history.marks;
+  const selected = marks.find((mark) => mark.id === selectedId);
+  const context = ready ? canvas.current?.getContext("2d") : null;
+  const bounds =
+    selected && context ? annotationBounds(selected, context) : null;
+  const handles =
+    bounds && selected
+      ? annotationHandles(bounds, selected.rotation, scale)
+      : null;
+
   useEffect(() => {
     let active = true;
+    setSize({ width: 0, height: 0 });
+    setHistory(emptyHistory());
+    setDraft(null);
+    setSelectedId(null);
+    setZoom(null);
     const img = new Image();
     img.onload = () => {
       if (!active || !canvas.current) return;
       bitmap.current = img;
       canvas.current.width = img.naturalWidth;
       canvas.current.height = img.naturalHeight;
-      setReady(true);
+      setSize({ width: img.naturalWidth, height: img.naturalHeight });
     };
     img.onerror = () => {
       if (active) setError("이미지를 불러오지 못했습니다.");
@@ -47,94 +106,263 @@ export default function DocumentImageEditor({
     img.src = image.src;
     return () => {
       active = false;
+      cancelDrag.current?.();
       controller.current?.abort();
     };
   }, [image.src]);
-  function paint(includeMarks: boolean) {
-    const surface = canvas.current,
-      img = bitmap.current;
-    const ctx = surface?.getContext("2d");
-    if (!ctx || !surface || !img) return;
-    ctx.clearRect(0, 0, surface.width, surface.height);
-    ctx.drawImage(img, 0, 0);
-    if (!includeMarks) return;
-    const unit = Math.max(1, img.naturalWidth / 800);
-    ctx.strokeStyle = ctx.fillStyle = "#e02020";
-    ctx.lineWidth = 3 * unit;
-    ctx.lineCap = ctx.lineJoin = "round";
-    ctx.font = `bold ${24 * unit}px sans-serif`;
-    ctx.textBaseline = "top";
-    for (const mark of [...marks, ...(draft ? [draft] : [])]) {
-      const first = mark.points[0],
-        last = mark.points.at(-1)!;
-      if (mark.tool === "text") ctx.fillText(mark.text, first.x, first.y);
-      else if (mark.tool === "rectangle")
-        ctx.strokeRect(first.x, first.y, last.x - first.x, last.y - first.y);
-      else {
-        ctx.beginPath();
-        ctx.moveTo(first.x, first.y);
-        for (const p of mark.points) ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-      }
-    }
+  useLayoutEffect(() => {
+    const el = viewport.current!;
+    const observer = new ResizeObserver(() =>
+      setArea({ width: el.clientWidth, height: el.clientHeight }),
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    const ctx = canvas.current?.getContext("2d");
+    if (ctx && bitmap.current && ready)
+      paintImageAnnotations(ctx, bitmap.current, original ? [] : marks);
+  }, [ready, marks, original]);
+
+  function commit(next: ImageAnnotation[]) {
+    setHistory((current) => ({
+      past: [...current.past.slice(-99), current.marks],
+      marks: next,
+      future: [],
+    }));
   }
-  useEffect(() => {
-    paint(!original);
-  }, [ready, marks, draft, original]);
-  function point(event: PointerEvent<HTMLCanvasElement>): Point {
-    const el = event.currentTarget,
+  function undo(redo = false) {
+    cancelDrag.current?.();
+    setSelectedId(null);
+    setHistory((current) => {
+      const source = redo ? current.future : current.past;
+      if (!source.length) return current;
+      return redo
+        ? {
+            past: [...current.past, current.marks],
+            marks: source[0],
+            future: source.slice(1),
+          }
+        : {
+            past: source.slice(0, -1),
+            marks: source.at(-1)!,
+            future: [current.marks, ...current.future],
+          };
+    });
+  }
+  function remove(all = false) {
+    if (!history.marks.length || (!all && !selectedId)) return;
+    commit(all ? [] : history.marks.filter((mark) => mark.id !== selectedId));
+    setSelectedId(null);
+  }
+  function chooseTool(value: ImageTool) {
+    cancelDrag.current?.();
+    setTool(value);
+    setOriginal(false);
+    if (value !== "select") setSelectedId(null);
+  }
+  function changeStyle(change: Partial<ImageStyle>) {
+    setStyle((current) => ({ ...current, ...change }));
+    if (selected)
+      commit(
+        history.marks.map((mark) =>
+          mark.id === selected.id ? { ...mark, ...change } : mark,
+        ),
+      );
+  }
+  function changeText(value: string) {
+    setText(value);
+    if (selected?.tool === "text")
+      commit(
+        history.marks.map((mark) =>
+          mark.id === selected.id ? { ...mark, text: value } : mark,
+        ),
+      );
+  }
+  function point(position: PointerPosition): ImagePoint {
+    const el = canvas.current!,
       box = el.getBoundingClientRect();
     return {
-      x: Math.max(
-        0,
-        Math.min(el.width, ((event.clientX - box.left) * el.width) / box.width),
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          el.height,
-          ((event.clientY - box.top) * el.height) / box.height,
-        ),
-      ),
+      x: ((position.clientX - box.left) * el.width) / box.width,
+      y: ((position.clientY - box.top) * el.height) / box.height,
     };
   }
-  function move(event: PointerEvent<HTMLCanvasElement>) {
-    const current = gesture.current;
-    if (!current || current.id !== event.pointerId) return;
-    const p = point(event);
-    current.mark = {
-      ...current.mark,
-      points:
-        current.mark.tool === "pen"
-          ? [...current.mark.points, p]
-          : [current.mark.points[0], p],
+  function start(event: PointerEvent<HTMLDivElement>) {
+    if (
+      !ready ||
+      busy ||
+      event.button !== 0 ||
+      !event.isPrimary ||
+      cancelDrag.current
+    )
+      return;
+    if (original && tool !== "pan") return;
+    event.preventDefault();
+    canvas.current?.focus({ preventScroll: true });
+    const target = canvas.current!;
+    const startPoint = point(event);
+    const base = history.marks;
+    const previousSelection = selectedId;
+    let mark: ImageAnnotation | undefined;
+    let handle: ImageHandle | undefined;
+    let creating = false;
+    let changed = false;
+    let next = base;
+    const scroll = {
+      x: viewport.current!.scrollLeft,
+      y: viewport.current!.scrollTop,
     };
-    setDraft(current.mark);
-  }
-  function finish(event: PointerEvent<HTMLCanvasElement>, cancel = false) {
-    if (gesture.current?.id !== event.pointerId) return;
-    if (!cancel) {
-      move(event);
-      const mark = gesture.current.mark;
-      const first = mark.points[0];
-      if (mark.points.some((p) => Math.hypot(p.x - first.x, p.y - first.y) > 2))
-        setMarks((prev) => [...prev, mark]);
+    const screenStart = { x: event.clientX, y: event.clientY };
+    if (tool === "select") {
+      if (handles)
+        handle = (Object.keys(handles) as ImageHandle[]).find(
+          (key) =>
+            Math.hypot(
+              startPoint.x - handles[key].x,
+              startPoint.y - handles[key].y,
+            ) <=
+            9 / scale,
+        );
+      mark = handle
+        ? selected
+        : [...base]
+            .reverse()
+            .find((item) =>
+              hitImageAnnotation(item, startPoint, context!, 5 / scale),
+            );
+      setSelectedId(mark?.id ?? null);
+      if (!mark) return;
+    } else if (tool !== "pan") {
+      mark = {
+        ...style,
+        id: crypto.randomUUID(),
+        tool,
+        points: [startPoint],
+        text,
+        rotation: 0,
+      };
+      if (tool === "text") {
+        if (!text.trim()) return;
+        commit([...base, mark]);
+        setSelectedId(mark.id);
+        setTool("select");
+        return;
+      }
+      creating = true;
     }
-    gesture.current = null;
-    setDraft(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId))
-      event.currentTarget.releasePointerCapture(event.pointerId);
+    const originalMark = mark;
+    const box = mark ? annotationBounds(mark, context!) : null;
+    function update(position: PointerPosition) {
+      if (tool === "pan") {
+        viewport.current!.scrollLeft =
+          scroll.x - (position.clientX - screenStart.x);
+        viewport.current!.scrollTop =
+          scroll.y - (position.clientY - screenStart.y);
+        return;
+      }
+      const p = point(position);
+      if (creating) {
+        const last = mark!.points.at(-1)!;
+        if (Math.hypot(p.x - last.x, p.y - last.y) > 0.1)
+          mark = {
+            ...mark!,
+            points:
+              mark!.tool === "pen" ? [...mark!.points, p] : [startPoint, p],
+          };
+        // Closed pen loops remain meaningful even when the final point is the start.
+        changed = mark!.points.some(
+          (value) =>
+            Math.hypot(value.x - startPoint.x, value.y - startPoint.y) * scale >
+            2,
+        );
+        next = changed ? [...base, mark!] : base;
+      } else {
+        changed =
+          Math.hypot(p.x - startPoint.x, p.y - startPoint.y) * scale > 0.5;
+        const transformed = handle
+          ? resizeImageAnnotation(originalMark!, box!, handle, p)
+          : moveImageAnnotation(
+              originalMark!,
+              p.x - startPoint.x,
+              p.y - startPoint.y,
+            );
+        next = changed
+          ? base.map((item) =>
+              item.id === originalMark!.id ? transformed : item,
+            )
+          : base;
+      }
+      setDraft(next);
+    }
+    target.setPointerCapture(event.pointerId);
+    cancelDrag.current = trackPointerDrag(event.nativeEvent, {
+      captureTarget: target,
+      onMove: (move) => {
+        move.preventDefault();
+        update(move);
+      },
+      onEnd: (position, cancelled) => {
+        cancelDrag.current = null;
+        if (!cancelled) update(position);
+        if (cancelled) {
+          if (tool === "pan") {
+            viewport.current!.scrollLeft = scroll.x;
+            viewport.current!.scrollTop = scroll.y;
+          }
+          setSelectedId(previousSelection);
+        } else if (changed) {
+          commit(next);
+          setSelectedId(mark!.id);
+          if (creating && mark!.tool !== "pen") setTool("select");
+        }
+        setDraft(null);
+      },
+    });
+  }
+  function zoomTo(value: number | null) {
+    cancelDrag.current?.();
+    const el = viewport.current!;
+    const viewBox = el.getBoundingClientRect();
+    const imageBox = canvas.current!.getBoundingClientRect();
+    const center = {
+      x: (viewBox.left + el.clientWidth / 2 - imageBox.left) / scale,
+      y: (viewBox.top + el.clientHeight / 2 - imageBox.top) / scale,
+    };
+    const next = value === null ? null : Math.min(4, Math.max(0.05, value));
+    setZoom(next);
+    requestAnimationFrame(() => {
+      if (!viewport.current) return;
+      const resized = canvas.current!.getBoundingClientRect();
+      el.scrollLeft +=
+        resized.left +
+        center.x * (next ?? fit) -
+        viewBox.left -
+        el.clientWidth / 2;
+      el.scrollTop +=
+        resized.top +
+        center.y * (next ?? fit) -
+        viewBox.top -
+        el.clientHeight / 2;
+    });
   }
   async function save() {
-    if (!image.apply || !canvas.current || busy) return;
+    if (!image.apply || !bitmap.current || busy || cancelDrag.current) return;
     setBusy(true);
     setError("");
     const abort = new AbortController();
     controller.current = abort;
     try {
-      paint(true);
+      // Export independently: selection handles, zoom and original preview never enter the image.
+      const exported = document.createElement("canvas");
+      exported.width = size.width;
+      exported.height = size.height;
+      paintImageAnnotations(
+        exported.getContext("2d")!,
+        bitmap.current,
+        history.marks,
+      );
       const blob = await new Promise<Blob>((resolve, reject) =>
-        canvas.current!.toBlob(
+        exported.toBlob(
           (value) =>
             value
               ? resolve(value)
@@ -150,99 +378,151 @@ export default function DocumentImageEditor({
     } catch (e) {
       if (!abort.signal.aborted) setError((e as Error).message);
     } finally {
-      if (!abort.signal.aborted) {
-        setBusy(false);
-        paint(!original);
-      }
+      if (!abort.signal.aborted) setBusy(false);
     }
   }
+  const disabled = busy || !ready;
   return (
     <Modal
       title="이미지 편집"
-      className="document-image-modal"
+      className="document-image-modal document-image-edit-modal"
       onClose={() => {
-        if (!busy) onClose();
+        if (!busy) {
+          cancelDrag.current?.();
+          onClose();
+        }
       }}
     >
-      <div className="document-image-editor-tools">
-        {(
-          [
-            ["rectangle", "빨간 사각형"],
-            ["pen", "빨간 펜"],
-            ["text", "글자"],
-          ] as const
-        ).map(([value, label]) => (
-          <Button
-            key={value}
-            aria-pressed={tool === value}
-            disabled={busy}
-            onClick={() => {
-              setTool(value);
-              setOriginal(false);
-            }}
-          >
-            {label}
-          </Button>
-        ))}
-        <Button
-          disabled={busy || !marks.length}
-          onClick={() => setMarks((prev) => prev.slice(0, -1))}
-        >
-          실행취소
-        </Button>
-        <Button
-          aria-pressed={original}
-          disabled={busy}
-          onClick={() => setOriginal(!original)}
-        >
-          원본 보기
-        </Button>
-        <Button
-          disabled={!ready || !marks.length || busy}
-          onClick={() => void save()}
-        >
-          {busy ? "저장 중…" : "적용"}
-        </Button>
-      </div>
-      {tool === "text" && (
-        <div className="document-image-editor-text">
-          <input
-            aria-label="이미지에 넣을 글자"
-            placeholder="글자를 입력한 뒤 이미지에서 위치 선택"
-            value={text}
-            disabled={busy}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </div>
-      )}
-      <ErrorNote error={error} />
-      <div className="document-image-editor-surface">
-        <canvas
-          ref={canvas}
-          aria-label="이미지 강조 영역"
-          onPointerDown={(event) => {
-            if (
-              !ready ||
-              busy ||
-              original ||
-              event.button !== 0 ||
-              !event.isPrimary
+      <div
+        className="document-image-editor"
+        onKeyDown={(event) => {
+          if (
+            busy ||
+            event.defaultPrevented ||
+            (event.target as HTMLElement).closest(
+              "input, textarea, select, [contenteditable=true]",
             )
-              return;
+          )
+            return;
+          if (
+            (event.metaKey || event.ctrlKey) &&
+            (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y")
+          ) {
             event.preventDefault();
-            const mark: Annotation = { tool, points: [point(event)], text };
-            if (tool === "text") {
-              if (text.trim()) setMarks((prev) => [...prev, mark]);
-              return;
-            }
-            gesture.current = { id: event.pointerId, mark };
-            setDraft(mark);
-            event.currentTarget.setPointerCapture(event.pointerId);
+            event.stopPropagation();
+            undo(event.shiftKey || event.key.toLowerCase() === "y");
+          } else if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            event.stopPropagation();
+            remove();
+          } else if (event.key === "Escape" && selectedId) {
+            event.preventDefault();
+            event.stopPropagation();
+            setSelectedId(null);
+          }
+        }}
+      >
+        <DocumentImageTools
+          placement="top"
+          tool={tool}
+          onTool={chooseTool}
+          disabled={disabled}
+          style={selected ?? style}
+          onStyle={changeStyle}
+          text={selected?.tool === "text" ? selected.text : text}
+          onText={changeText}
+          textVisible={tool === "text" || selected?.tool === "text"}
+          scale={scale}
+          onZoom={zoomTo}
+          undo={() => undo()}
+          redo={() => undo(true)}
+          canUndo={!!history.past.length}
+          canRedo={!!history.future.length}
+          remove={() => remove()}
+          clear={() => remove(true)}
+          hasSelection={!!selected}
+          hasMarks={!!history.marks.length}
+          original={original}
+          onOriginal={() => {
+            cancelDrag.current?.();
+            setOriginal(!original);
           }}
-          onPointerMove={move}
-          onPointerUp={(event) => finish(event)}
-          onPointerCancel={(event) => finish(event, true)}
-          onLostPointerCapture={(event) => finish(event, true)}
+          onSave={() => void save()}
+          busy={busy}
+        />
+        <ErrorNote error={error} />
+        <div
+          ref={viewport}
+          className="document-image-editor-surface"
+          data-tool={tool}
+          data-original={original || undefined}
+        >
+          <div className="document-image-editor-stage">
+            <div
+              className="document-image-editor-board"
+              style={{
+                width: ready ? size.width * scale : undefined,
+                height: ready ? size.height * scale : undefined,
+              }}
+              onPointerDown={start}
+            >
+              <canvas ref={canvas} tabIndex={0} aria-label="이미지 강조 영역" />
+              {selected &&
+                bounds &&
+                handles &&
+                !original &&
+                tool === "select" && (
+                  <svg
+                    className="document-image-editor-selection"
+                    width="100%"
+                    height="100%"
+                    aria-hidden="true"
+                  >
+                    <polygon
+                      points={["nw", "ne", "se", "sw"]
+                        .map(
+                          (key) =>
+                            `${handles[key as ImageHandle].x * scale},${handles[key as ImageHandle].y * scale}`,
+                        )
+                        .join(" ")}
+                    />
+                    <line
+                      x1={handles.n.x * scale}
+                      y1={handles.n.y * scale}
+                      x2={handles.rotate.x * scale}
+                      y2={handles.rotate.y * scale}
+                    />
+                    {IMAGE_HANDLES.map((handle) => (
+                      <rect
+                        key={handle}
+                        data-handle={handle}
+                        x={handles[handle].x * scale - 4}
+                        y={handles[handle].y * scale - 4}
+                        width={8}
+                        height={8}
+                      />
+                    ))}
+                    <circle
+                      data-handle="rotate"
+                      cx={handles.rotate.x * scale}
+                      cy={handles.rotate.y * scale}
+                      r={5}
+                    />
+                  </svg>
+                )}
+            </div>
+          </div>
+        </div>
+        <DocumentImageTools
+          placement="bottom"
+          tool={tool}
+          onTool={chooseTool}
+          disabled={disabled || original}
+          style={selected ?? style}
+          onStyle={changeStyle}
+          text={selected?.tool === "text" ? selected.text : text}
+          onText={changeText}
+          textVisible={tool === "text" || selected?.tool === "text"}
         />
       </div>
     </Modal>

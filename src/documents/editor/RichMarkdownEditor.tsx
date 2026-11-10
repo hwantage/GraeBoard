@@ -538,11 +538,12 @@ export default function RichMarkdownEditor(props: Props) {
           <div className="document-image-view-controls">
             {!props.readOnly && preview.apply && (
               <Button onClick={() => setPreview({ ...preview, edit: true })}>
+                <Pencil size={14} aria-hidden="true" />
                 이미지 편집
               </Button>
             )}
             <Button onClick={() => setImageZoom((value) => !value)}>
-              {imageZoom ? <Maximize2 size={16} /> : <ZoomIn size={16} />}
+              {imageZoom ? <Maximize2 size={14} /> : <ZoomIn size={14} />}
               {imageZoom ? "화면에 맞추기" : "실제 크기"}
             </Button>
           </div>
