@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   MousePointer2,
   Hand,
@@ -60,6 +61,49 @@ const tools = [
   ["triangle", "삼각형", Triangle],
   ["text", "글자", Type],
 ] as const;
+
+// Keep partial input ("" or the first "1" of "12") while typing, without
+// applying invalid sizes to the annotation. Blur restores the last valid value.
+function ImageNumberInput({
+  label,
+  value,
+  min,
+  max,
+  disabled,
+  onValue,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  disabled: boolean;
+  onValue: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      min={min}
+      max={max}
+      value={draft}
+      disabled={disabled}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const next = event.target.valueAsNumber;
+        if (Number.isFinite(next) && next >= min && next <= max) onValue(next);
+      }}
+      onBlur={() => setDraft(String(value))}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          setDraft(String(value));
+        }
+      }}
+    />
+  );
+}
 export default function DocumentImageTools(props: Props) {
   const { disabled, style, onStyle } = props;
   if (props.placement === "top")
@@ -197,17 +241,13 @@ export default function DocumentImageTools(props: Props) {
           </Button>
           <label>
             굵기
-            <input
-              type="number"
-              aria-label="선 굵기"
+            <ImageNumberInput
+              label="선 굵기"
               min={1}
               max={40}
               value={style.lineWidth}
               disabled={disabled}
-              onChange={(event) => {
-                const lineWidth = Number(event.target.value);
-                if (lineWidth >= 1 && lineWidth <= 40) onStyle({ lineWidth });
-              }}
+              onValue={(lineWidth) => onStyle({ lineWidth })}
             />
           </label>
         </div>
@@ -223,17 +263,13 @@ export default function DocumentImageTools(props: Props) {
           />
           <label>
             크기
-            <input
-              type="number"
-              aria-label="글자 크기"
+            <ImageNumberInput
+              label="글자 크기"
               min={6}
               max={300}
               value={Math.round(style.fontSize)}
               disabled={disabled}
-              onChange={(event) => {
-                const fontSize = Number(event.target.value);
-                if (fontSize >= 6 && fontSize <= 300) onStyle({ fontSize });
-              }}
+              onValue={(fontSize) => onStyle({ fontSize })}
             />
           </label>
         </div>

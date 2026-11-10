@@ -90,11 +90,14 @@ export function annotationHandles(
   const center = boundsCenter(box);
   return Object.fromEntries(
     [...IMAGE_HANDLES, "rotate"].map((handle) => {
-      const x = handle.includes("w")
-        ? box.x
-        : handle.includes("e")
-          ? box.x + box.width
-          : center.x;
+      const x =
+        handle === "rotate"
+          ? center.x
+          : handle.includes("w")
+            ? box.x
+            : handle.includes("e")
+              ? box.x + box.width
+              : center.x;
       const y =
         handle === "rotate"
           ? box.y - 24 / scale

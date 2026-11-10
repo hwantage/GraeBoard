@@ -12,6 +12,10 @@
   min-height: 0;
   min-width: 0;
 }
+.document-image-edit-modal > .modal-body > .document-image-editor {
+  width: 100%;
+  margin: 0;
+}
 .document-image-editor-toolbar {
   display: flex;
   align-items: center;

@@ -4225,6 +4225,10 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
   await page.mouse.up();
   await editor.getByRole("button", { name: "글자", exact: true }).click();
   await editor.getByLabel("이미지에 넣을 글자").fill("검토");
+  const fontSize = editor.getByLabel("글자 크기", { exact: true });
+  await fontSize.fill("");
+  await fontSize.pressSequentially("12");
+  await expect(fontSize).toHaveValue("12");
   await surface.click({ position: { x: 30, y: 100 } });
   const annotated = await pixels();
   await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
@@ -4427,6 +4431,15 @@ test("이미지 도형은 색·굵기 변경과 이동·크기·회전·삭제�
   await page.mouse.up();
   const ellipse = await pixels();
   await expect(editor.locator('[data-handle="se"]')).toBeVisible();
+  const topHandle = (await editor.locator('[data-handle="n"]').boundingBox())!;
+  const rotateHandle = (await editor
+    .locator('[data-handle="rotate"]')
+    .boundingBox())!;
+  expect(rotateHandle.x + rotateHandle.width / 2).toBeCloseTo(
+    topHandle.x + topHandle.width / 2,
+    1,
+  );
+  expect(rotateHandle.y + rotateHandle.height).toBeLessThan(topHandle.y);
   const polygon = editor.locator(".document-image-editor-selection polygon");
   const initialPoints = await polygon.getAttribute("points");
   // Move the selected shape, without hitting a resize handle.
@@ -4662,7 +4675,7 @@ test("이미지 편집은 사본 업무·꼬리 메모·사본 메모·일정의
     [`/links/calendar/${entry.id}`, `/calendar/entries/${entry.id}/document`],
   ];
   for (const [url, stored] of paths) {
-    await page.goto(url);
+    await page.goto(`${url}?view=full`);
     const image = page.locator(".document-image:visible").first();
     await expect(image.locator("img")).toBeVisible();
     await image.hover();
@@ -4674,6 +4687,13 @@ test("이미지 편집은 사본 업무·꼬리 메모·사본 메모·일정의
       exact: true,
     });
     const canvas = editor.locator("canvas");
+    const bodyBox = (await editor
+      .locator(":scope > .modal-body")
+      .boundingBox())!;
+    const editorBox = (await editor
+      .locator(".document-image-editor")
+      .boundingBox())!;
+    expect(editorBox.width).toBeCloseTo(bodyBox.width, 1);
     await expect
       .poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width))
       .toBe(320);
