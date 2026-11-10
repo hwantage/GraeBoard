@@ -14,8 +14,8 @@ import {
   Redo2,
   Trash2,
   ListX,
-  Eye,
   Check,
+  X,
   PaintBucket,
   CircleOff,
 } from "lucide-react";
@@ -44,9 +44,8 @@ type Props = {
       clear: () => void;
       hasSelection: boolean;
       hasMarks: boolean;
-      original: boolean;
-      onOriginal: () => void;
       onSave: () => void;
+      onCancel: () => void;
       busy: boolean;
     }
 );
@@ -159,28 +158,23 @@ export default function DocumentImageTools(props: Props) {
         <div className="document-image-editor-group">
           <Button
             tooltip="선택 삭제"
-            disabled={disabled || !props.hasSelection || props.original}
+            disabled={disabled || !props.hasSelection}
             onClick={props.remove}
           >
             <Trash2 size={17} />
           </Button>
           <Button
             tooltip="전체 지우기"
-            disabled={disabled || !props.hasMarks || props.original}
+            disabled={disabled || !props.hasMarks}
             onClick={props.clear}
           >
             <ListX size={17} />
           </Button>
         </div>
         <div className="document-image-editor-group document-image-editor-actions">
-          <Button
-            tooltip="원본 보기"
-            aria-pressed={props.original}
-            disabled={disabled}
-            onClick={props.onOriginal}
-          >
-            <Eye size={17} />
-            <span>원본</span>
+          <Button disabled={props.busy} onClick={props.onCancel}>
+            <X size={16} />
+            취소
           </Button>
           <Button
             className="primary"

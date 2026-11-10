@@ -103,9 +103,6 @@
   .document-image-editor-board:active {
   cursor: grabbing;
 }
-.document-image-editor-surface[data-original] .document-image-editor-board {
-  cursor: default;
-}
 .document-image-editor-selection {
   position: absolute;
   inset: 0;

@@ -74,7 +74,6 @@ export default function DocumentImageEditor({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tool, setTool] = useState<ImageTool>("rectangle");
   const [style, setStyle] = useState(initialStyle);
-  const [original, setOriginal] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [area, setArea] = useState({ width: 1, height: 1 });
   const [zoom, setZoom] = useState<number | null>(null);
@@ -140,9 +139,9 @@ export default function DocumentImageEditor({
       paintImageAnnotations(
         ctx,
         bitmap.current,
-        original ? [] : marks.filter((mark) => mark.id !== textEdit?.id),
+        marks.filter((mark) => mark.id !== textEdit?.id),
       );
-  }, [ready, marks, original, textEdit]);
+  }, [ready, marks, textEdit]);
 
   function updateHistory(next: History) {
     historyRef.current = next;
@@ -217,7 +216,6 @@ export default function DocumentImageEditor({
     cancelDrag.current?.();
     finishText();
     setTool(value);
-    setOriginal(false);
     if (value !== "select") setSelectedId(null);
   }
   function changeStyle(change: Partial<ImageStyle>) {
@@ -255,7 +253,6 @@ export default function DocumentImageEditor({
       cancelDrag.current
     )
       return;
-    if (original && tool !== "pan") return;
     event.preventDefault();
     if (textEditRef.current) {
       finishText();
@@ -459,7 +456,7 @@ export default function DocumentImageEditor({
     const abort = new AbortController();
     controller.current = abort;
     try {
-      // Export independently: selection handles, zoom and original preview never enter the image.
+      // Export independently: selection handles and zoom never enter the image.
       const exported = document.createElement("canvas");
       exported.width = size.width;
       exported.height = size.height;
@@ -488,17 +485,17 @@ export default function DocumentImageEditor({
       if (!abort.signal.aborted) setBusy(false);
     }
   }
+  function cancel() {
+    if (busy) return;
+    cancelDrag.current?.();
+    onClose();
+  }
   const disabled = busy || !ready;
   return (
     <Modal
       title="이미지 편집"
       className="document-image-modal document-image-edit-modal"
-      onClose={() => {
-        if (!busy) {
-          cancelDrag.current?.();
-          onClose();
-        }
-      }}
+      onClose={cancel}
     >
       <div
         className="document-image-editor"
@@ -521,8 +518,7 @@ export default function DocumentImageEditor({
           } else if (
             event.key === "Enter" &&
             event.target === canvas.current &&
-            selected?.tool === "text" &&
-            !original
+            selected?.tool === "text"
           ) {
             event.preventDefault();
             event.stopPropagation();
@@ -556,13 +552,8 @@ export default function DocumentImageEditor({
           clear={() => remove(true)}
           hasSelection={!!selected}
           hasMarks={!!marks.length}
-          original={original}
-          onOriginal={() => {
-            cancelDrag.current?.();
-            finishText();
-            setOriginal(!original);
-          }}
           onSave={() => void save()}
+          onCancel={cancel}
           busy={busy}
         />
         <ErrorNote error={error} />
@@ -570,7 +561,6 @@ export default function DocumentImageEditor({
           ref={viewport}
           className="document-image-editor-surface"
           data-tool={tool}
-          data-original={original || undefined}
         >
           <div className="document-image-editor-stage">
             <div
@@ -581,12 +571,7 @@ export default function DocumentImageEditor({
               }}
               onPointerDown={start}
               onDoubleClick={(event) => {
-                if (
-                  disabled ||
-                  original ||
-                  tool !== "select" ||
-                  textEditRef.current
-                )
+                if (disabled || tool !== "select" || textEditRef.current)
                   return;
                 const hit = [...historyRef.current.marks]
                   .reverse()
@@ -597,7 +582,7 @@ export default function DocumentImageEditor({
               }}
             >
               <canvas ref={canvas} tabIndex={0} aria-label="이미지 강조 영역" />
-              {textEdit && bounds && !original && (
+              {textEdit && bounds && (
                 <DocumentImageTextInput
                   mark={textEdit}
                   bounds={bounds}
@@ -607,49 +592,45 @@ export default function DocumentImageEditor({
                   onFinish={finishText}
                 />
               )}
-              {selected &&
-                bounds &&
-                handles &&
-                !original &&
-                tool === "select" && (
-                  <svg
-                    className="document-image-editor-selection"
-                    width="100%"
-                    height="100%"
-                    aria-hidden="true"
-                  >
-                    <polygon
-                      points={["nw", "ne", "se", "sw"]
-                        .map(
-                          (key) =>
-                            `${handles[key as ImageHandle].x * scale},${handles[key as ImageHandle].y * scale}`,
-                        )
-                        .join(" ")}
+              {selected && bounds && handles && tool === "select" && (
+                <svg
+                  className="document-image-editor-selection"
+                  width="100%"
+                  height="100%"
+                  aria-hidden="true"
+                >
+                  <polygon
+                    points={["nw", "ne", "se", "sw"]
+                      .map(
+                        (key) =>
+                          `${handles[key as ImageHandle].x * scale},${handles[key as ImageHandle].y * scale}`,
+                      )
+                      .join(" ")}
+                  />
+                  <line
+                    x1={handles.n.x * scale}
+                    y1={handles.n.y * scale}
+                    x2={handles.rotate.x * scale}
+                    y2={handles.rotate.y * scale}
+                  />
+                  {IMAGE_HANDLES.map((handle) => (
+                    <rect
+                      key={handle}
+                      data-handle={handle}
+                      x={handles[handle].x * scale - 4}
+                      y={handles[handle].y * scale - 4}
+                      width={8}
+                      height={8}
                     />
-                    <line
-                      x1={handles.n.x * scale}
-                      y1={handles.n.y * scale}
-                      x2={handles.rotate.x * scale}
-                      y2={handles.rotate.y * scale}
-                    />
-                    {IMAGE_HANDLES.map((handle) => (
-                      <rect
-                        key={handle}
-                        data-handle={handle}
-                        x={handles[handle].x * scale - 4}
-                        y={handles[handle].y * scale - 4}
-                        width={8}
-                        height={8}
-                      />
-                    ))}
-                    <circle
-                      data-handle="rotate"
-                      cx={handles.rotate.x * scale}
-                      cy={handles.rotate.y * scale}
-                      r={5}
-                    />
-                  </svg>
-                )}
+                  ))}
+                  <circle
+                    data-handle="rotate"
+                    cx={handles.rotate.x * scale}
+                    cy={handles.rotate.y * scale}
+                    r={5}
+                  />
+                </svg>
+              )}
             </div>
           </div>
         </div>
@@ -657,7 +638,7 @@ export default function DocumentImageEditor({
           placement="bottom"
           tool={tool}
           onTool={chooseTool}
-          disabled={disabled || original}
+          disabled={disabled}
           style={selected ?? style}
           onStyle={changeStyle}
           textVisible={tool === "text" || selected?.tool === "text"}

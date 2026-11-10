@@ -20,12 +20,17 @@ import {
 } from "../../../shared/documents/document-images.js";
 
 import type { DocumentImages } from "../document-storage";
+import {
+  findImageOriginal,
+  imageOriginalBlock,
+} from "./document-image-original";
 
 export type ImagePreview = {
   src: string;
   alt: string;
   apply?: (file: File, signal: AbortSignal) => Promise<void>;
   edit?: boolean;
+  original?: { source: () => Promise<string>; alt: string };
 };
 
 // A screen capture holds the display's device pixels, twice its size on
@@ -288,6 +293,11 @@ export function documentImageView(
   };
   const preview = (edit = false) => {
     const original = node;
+    const pos = getPos();
+    const archive =
+      pos === undefined
+        ? null
+        : findImageOriginal(view.state.doc, node.attrs.src, pos);
     const src = images
       ? img.getAttribute("src")
       : documentImageSource(node.attrs.src);
@@ -296,6 +306,15 @@ export function documentImageView(
         src,
         alt: node.attrs.alt || "문서 이미지",
         edit,
+        original: archive
+          ? {
+              source: async () =>
+                images
+                  ? images.source(archive.image.attrs.src.split("#")[0])
+                  : documentImageSource(archive.image.attrs.src),
+              alt: archive.image.attrs.alt || "원본 이미지",
+            }
+          : undefined,
         apply:
           readOnly() || !upload
             ? undefined
@@ -314,6 +333,36 @@ export function documentImageView(
                   throw new Error("이미지가 변경되었습니다. 다시 열어 주세요.");
                 const pos = getPos()!;
                 const { schema } = view.state;
+                const archived = findImageOriginal(
+                  view.state.doc,
+                  original.attrs.src,
+                  pos,
+                );
+                const nextSrc =
+                  withWidth(url, widthOf(original.attrs.src)) || url;
+                const originalBlock = imageOriginalBlock(
+                  schema,
+                  archived?.image ?? original,
+                  nextSrc,
+                );
+                const tr = closeHistory(view.state.tr).setNodeMarkup(
+                  pos,
+                  undefined,
+                  {
+                    ...original.attrs,
+                    src: nextSrc,
+                  },
+                );
+                if (archived) {
+                  tr.replaceWith(
+                    archived.pos,
+                    archived.pos + archived.node.nodeSize,
+                    originalBlock,
+                  );
+                  view.dispatch(tr);
+                  view.dispatch(closeHistory(view.state.tr));
+                  return;
+                }
                 const $pos = view.state.doc.resolve(pos);
                 // Store the original in an ordinary existing toggle block. It remains an
                 // image reference for permissions, export, sync, backup and cleanup.
@@ -329,25 +378,7 @@ export function documentImageView(
                   throw new Error(
                     "이 위치에는 원본 이미지를 보관할 수 없습니다.",
                   );
-                const originalBlock = schema.nodes.toggle.create(
-                  { open: false },
-                  [
-                    schema.nodes.toggle_summary.create(
-                      { level: 0 },
-                      schema.text("원본 이미지"),
-                    ),
-                    schema.nodes.toggle_content.create(
-                      null,
-                      schema.nodes.paragraph.create(null, original),
-                    ),
-                  ],
-                );
-                const tr = closeHistory(view.state.tr)
-                  .setNodeMarkup(pos, undefined, {
-                    ...original.attrs,
-                    src: withWidth(url, widthOf(original.attrs.src)) || url,
-                  })
-                  .insert($pos.after(depth), originalBlock);
+                tr.insert($pos.after(depth), originalBlock);
                 view.dispatch(tr);
                 view.dispatch(closeHistory(view.state.tr));
               },

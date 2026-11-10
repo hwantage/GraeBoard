@@ -83,7 +83,9 @@ export const codeBlockMetaSchema = codeBlockSchema.extendSchema(
 );
 export function safeDocumentLink(url: string) {
   return (
-    (/^(https?:|mailto:)/i.test(url) || !!parseDocumentLinkPath(url)) &&
+    (/^(https?:|mailto:)/i.test(url) ||
+      !!parseDocumentLinkPath(url) ||
+      isDocumentImage(url)) &&
     !/[\u0000-\u0020\u007f-\u00a0\u200b-\u200d\u2028\u2029\ufeff]/u.test(url)
   );
 }

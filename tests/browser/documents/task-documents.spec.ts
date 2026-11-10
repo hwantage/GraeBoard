@@ -4178,12 +4178,17 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
   );
   const original = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
     .markdown;
+  const originalSrc = await image.getAttribute("src");
   await image.hover();
   await rich(page)
     .getByRole("button", { name: "이미지 편집", exact: true })
     .click();
   let editor = page.getByRole("dialog", { name: "이미지 편집", exact: true });
-  await editor.getByRole("button", { name: "닫기", exact: true }).click();
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await editor.locator("canvas").click({ position: { x: 25, y: 25 } });
+  await editor.getByLabel("이미지에 넣을 글자").fill("취소할 편집");
+  await editor.getByRole("button", { name: "취소", exact: true }).click();
+  await expect(editor).toHaveCount(0);
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
   ).toBe(original);
@@ -4232,16 +4237,28 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
   await surface.click({ position: { x: 30, y: 100 } });
   await editor.getByLabel("이미지에 넣을 글자").fill("검토");
   await editor.getByLabel("이미지에 넣을 글자").press("ControlOrMeta+Enter");
-  const annotated = await pixels();
-  await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
-  expect(await pixels()).not.toBe(annotated);
-  await editor.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await expect(
+    editor.getByRole("button", { name: "원본 보기", exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(pixels).not.toBe(clean);
   await editor.screenshot({ path: info.outputPath("image-annotations.png") });
   const uploadPath = `**/api/tasks/${taskIds[0]}/documents/main/images`;
-  await page.route(uploadPath, (route) =>
-    route.fulfill({ status: 503, json: { error: "편집 이미지 저장 실패" } }),
-  );
+  let releaseUpload!: () => void;
+  const uploadWait = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  await page.route(uploadPath, async (route) => {
+    await uploadWait;
+    await route.fulfill({
+      status: 503,
+      json: { error: "편집 이미지 저장 실패" },
+    });
+  });
   await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(
+    editor.getByRole("button", { name: "취소", exact: true }),
+  ).toBeDisabled();
+  releaseUpload();
   await expect(editor.getByRole("alert")).toContainText(
     "편집 이미지 저장 실패",
   );
@@ -4256,10 +4273,11 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
   );
   const saved = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
     .markdown;
-  expect(saved).toContain("<summary>원본 이미지</summary>");
+  expect(saved).toContain("원본 이미지");
   expect(saved).toContain(original.trim());
   expect(saved.match(/!\[/g)).toHaveLength(2);
   await close(page);
+  await page.reload();
   await open(page);
   // Check the persisted WebP, not only the editing canvas.
   await expect
@@ -4284,10 +4302,225 @@ test("이미지 강조·글자 적용은 원본을 보관하고 취소·재열�
       }),
     )
     .toBeGreaterThan(50);
+  await expect(rich(page).locator(".document-image:visible img")).toHaveCount(
+    1,
+  );
+  await expect(
+    rich(page).getByRole("button", { name: /토글 펼치기/ }),
+  ).toHaveCount(0);
+  await image.hover();
   await rich(page)
-    .getByRole("button", { name: /토글 펼치기/ })
+    .getByRole("button", { name: "이미지 크게 보기", exact: true })
     .click();
-  await expect(rich(page).locator(".document-image img").last()).toBeVisible();
+  const preview = page.getByRole("dialog", {
+    name: "이미지 크게 보기",
+    exact: true,
+  });
+  const editedSrc = await preview.locator("img").getAttribute("src");
+  await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
+  await preview
+    .getByRole("button", { name: "편집본 보기", exact: true })
+    .click();
+  await expect(preview.locator("img")).toHaveAttribute("src", editedSrc!);
+});
+
+test("이미지 원본은 재편집 뒤에도 확대 팝업에서만 보이고 최초 원본을 유지한다", async ({
+  page,
+}, info) => {
+  const { editor, canvas, pixels } = await openImageTools(page);
+  const originalSrc = await rich(page)
+    .locator(".document-image img")
+    .first()
+    .getAttribute("src");
+  const clean = await pixels();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 100, box.y + 90, { steps: 3 });
+  await page.mouse.up();
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  await close(page);
+  await page.reload();
+  await open(page);
+  const image = rich(page).locator(".document-image:visible").first();
+  await image.hover();
+  await image
+    .getByRole("button", { name: "이미지 크게 보기", exact: true })
+    .click();
+  const preview = page.getByRole("dialog", {
+    name: "이미지 크게 보기",
+    exact: true,
+  });
+  await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
+  await preview
+    .getByRole("button", { name: "이미지 편집", exact: true })
+    .click();
+  await expect.poll(pixels).toBe(clean);
+  await expect(
+    editor.getByRole("button", { name: "원본 보기", exact: true }),
+  ).toHaveCount(0);
+  await editor.getByRole("button", { name: "글자", exact: true }).click();
+  await canvas.click({ position: { x: 40, y: 40 } });
+  await editor.getByLabel("이미지에 넣을 글자").fill("재편집");
+  await editor.getByRole("button", { name: "적용", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const stored = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
+    .markdown;
+  expect(stored.match(/원본 이미지/g)).toHaveLength(1);
+  expect(stored.match(/!\[/g)).toHaveLength(2);
+  await close(page);
+  await page.reload();
+  await open(page);
+  await expect(rich(page).locator(".document-image:visible")).toHaveCount(1);
+  await expect(
+    rich(page).locator(".document-image-original-archive"),
+  ).toBeHidden();
+  await image.locator("img").click();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.insertText("편집본 아래 메모");
+  await expect(rich(page)).toContainText("편집본 아래 메모");
+  await expect(
+    rich(page).getByText("편집본 아래 메모", { exact: true }),
+  ).toBeVisible();
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  await image.hover();
+  await image
+    .getByRole("button", { name: "이미지 크게 보기", exact: true })
+    .click();
+  await page.setViewportSize({ width: 320, height: 844 });
+  await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
+  for (const name of ["편집본 보기", "이미지 편집", "실제 크기"])
+    await expect(
+      preview.getByRole("button", { name, exact: true }),
+    ).toBeInViewport();
+  await preview.screenshot({
+    path: info.outputPath("original-image-popup-mobile.png"),
+  });
+});
+
+test("이미지 원본 연결은 같은 문단의 여러 이미지와 기존 원본 보관 문서에서 유지한다", async ({
+  page,
+}) => {
+  await open(page);
+  await pasteImage(page);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const current = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  const originalSrc = await rich(page)
+    .locator(".document-image img")
+    .first()
+    .getAttribute("src");
+  const reference = current.markdown.trim();
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 180;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#2458b0";
+    ctx.fillRect(0, 0, 320, 180);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  const uploaded = await page.request.post(
+    `/api/tasks/${taskIds[0]}/documents/main/images`,
+    {
+      headers,
+      multipart: {
+        image: {
+          name: "blue.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(png, "base64"),
+        },
+      },
+    },
+  );
+  expect(uploaded.ok()).toBeTruthy();
+  const secondSrc = (await uploaded.json()).url;
+  const originals = [originalSrc!, secondSrc];
+  await close(page);
+  // Two images in one paragraph need explicit associations, not adjacency guesses.
+  await save(
+    page,
+    taskIds[0],
+    `${reference} ![둘째 이미지](${secondSrc})`,
+    current.revision,
+  );
+  await open(page);
+  for (const index of [0, 1]) {
+    const image = rich(page).locator(".document-image:visible").nth(index);
+    await image.hover();
+    await image
+      .getByRole("button", { name: "이미지 편집", exact: true })
+      .click();
+    const editor = page.getByRole("dialog", {
+      name: "이미지 편집",
+      exact: true,
+    });
+    await editor.getByRole("button", { name: "글자", exact: true }).click();
+    await editor.locator("canvas").click({ position: { x: 30, y: 30 } });
+    await editor.getByLabel("이미지에 넣을 글자").fill(`그림 ${index + 1}`);
+    await editor.getByRole("button", { name: "적용", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(detail(page).locator(".document-save-state")).toHaveText(
+      "저장됨",
+    );
+  }
+  await close(page);
+  await page.reload();
+  await open(page);
+  for (const index of [0, 1]) {
+    const image = rich(page).locator(".document-image:visible").nth(index);
+    await image.hover();
+    await image
+      .getByRole("button", { name: "이미지 크게 보기", exact: true })
+      .click();
+    const preview = page.getByRole("dialog", {
+      name: "이미지 크게 보기",
+      exact: true,
+    });
+    await preview
+      .getByRole("button", { name: "원본 보기", exact: true })
+      .click();
+    await expect(preview.locator("img")).toHaveAttribute(
+      "src",
+      originals[index],
+    );
+    await preview.getByRole("button", { name: "닫기", exact: true }).click();
+  }
+  // The old unlinked toggle format is readable without rewriting it on load.
+  const stored = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  await close(page);
+  const legacy = `${reference}\n\n<details>\n<summary>원본 이미지</summary>\n\n${reference}\n\n</details>`;
+  await save(page, taskIds[0], legacy, stored.revision);
+  await open(page);
+  await expect(rich(page).locator(".document-image:visible")).toHaveCount(1);
+  const image = rich(page).locator(".document-image:visible").first();
+  await image.hover();
+  await image
+    .getByRole("button", { name: "이미지 크게 보기", exact: true })
+    .click();
+  const preview = page.getByRole("dialog", {
+    name: "이미지 크게 보기",
+    exact: true,
+  });
+  await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
+  await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
+  expect(
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+  ).toBe(legacy);
 });
 
 test("이미지 편집 중 원격에서 이미지가 바뀌면 이전 편집본을 적용하지 않는다", async ({
@@ -4684,7 +4917,7 @@ test("이미지 그리기의 실제 취소·창 이탈·Escape는 초안만 버�
   await expect.poll(pixels).toBe(clean);
 });
 
-test("이미지 도형은 색·굵기 변경과 이동·크기·회전·삭제를 되돌리고 확대와 원본 비교 후에도 보존한다", async ({
+test("이미지 도형은 색·굵기 변경과 이동·크기·회전·삭제를 되돌리고 확대 후에도 보존한다", async ({
   page,
 }, info) => {
   const { editor, canvas, pixels } = await openImageTools(page);
@@ -4755,10 +4988,6 @@ test("이미지 도형은 색·굵기 변경과 이동·크기·회전·삭제�
   expect(styled).not.toBe(rotated);
   await button("확대").click();
   await expect(editor.getByLabel("이미지 배율")).toHaveText("125%");
-  await expect.poll(pixels).toBe(styled);
-  await button("원본 보기").click();
-  await expect.poll(pixels).toBe(clean);
-  await button("원본 보기").click();
   await expect.poll(pixels).toBe(styled);
   await button("선택 삭제").click();
   await expect.poll(pixels).toBe(clean);
@@ -4849,6 +5078,7 @@ test("이미지 보기 버튼 간격과 모바일 편집 도구·확대 이동�
     "원",
     "삼각형",
     "글자",
+    "취소",
     "적용",
   ]) {
     const item = editor.getByRole("button", { name, exact: true });
@@ -4985,7 +5215,22 @@ test("이미지 편집은 사본 업무·꼬리 메모·사본 메모·일정의
     await expect(editor).toHaveCount(0);
     await expect
       .poll(async () => (await get(page, stored)).markdown)
-      .toContain("<summary>원본 이미지</summary>");
+      .toContain("원본 이미지");
+    await expect(page.locator(".document-image:visible img")).toHaveCount(1);
+    await image.hover();
+    await image
+      .getByRole("button", { name: "이미지 크게 보기", exact: true })
+      .click();
+    const preview = page.getByRole("dialog", {
+      name: "이미지 크게 보기",
+      exact: true,
+    });
+    const editedSrc = await preview.locator("img").getAttribute("src");
+    await preview
+      .getByRole("button", { name: "원본 보기", exact: true })
+      .click();
+    await expect(preview.locator("img")).not.toHaveAttribute("src", editedSrc!);
+    await preview.getByRole("button", { name: "닫기", exact: true }).click();
   }
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,

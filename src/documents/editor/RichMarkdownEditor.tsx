@@ -1,4 +1,5 @@
 import DocumentImageEditor from "./DocumentImageEditor";
+import DocumentImagePreview from "./DocumentImagePreview";
 import useDocumentLinkActions from "./useDocumentLinkActions";
 import useDocumentSlash from "./useDocumentSlash";
 import useRichEditorLifecycle from "./useRichEditorLifecycle";
@@ -12,8 +13,6 @@ import {
 import type { RichEditorProps as Props } from "./rich-editor-types";
 import { useRef, useState, type ReactNode } from "react";
 import { type ImagePreview } from "./DocumentImageView";
-import { Button } from "../../ui/Button";
-import { Modal } from "../../ui/Modal";
 import Toast from "../../ui/Toast";
 import Select from "../../ui/Select";
 import DocumentLoading from "../DocumentLoading";
@@ -62,8 +61,6 @@ import {
   ListChecks,
   ListCollapse,
   Table2,
-  Maximize2,
-  ZoomIn,
   Pilcrow,
   Heading1,
   Heading2,
@@ -530,29 +527,18 @@ export default function RichMarkdownEditor(props: Props) {
         <DocumentImageEditor image={preview} onClose={() => setPreview(null)} />
       )}
       {preview && !preview.edit && (
-        <Modal
-          title="이미지 크게 보기"
+        <DocumentImagePreview
+          key={preview.src}
+          image={preview}
+          zoom={imageZoom}
+          onZoom={() => setImageZoom((value) => !value)}
           onClose={() => setPreview(null)}
-          className="document-image-modal"
-        >
-          <div className="document-image-view-controls">
-            {!props.readOnly && preview.apply && (
-              <Button onClick={() => setPreview({ ...preview, edit: true })}>
-                <Pencil size={14} aria-hidden="true" />
-                이미지 편집
-              </Button>
-            )}
-            <Button onClick={() => setImageZoom((value) => !value)}>
-              {imageZoom ? <Maximize2 size={14} /> : <ZoomIn size={14} />}
-              {imageZoom ? "화면에 맞추기" : "실제 크기"}
-            </Button>
-          </div>
-          <div
-            className={`document-image-canvas${imageZoom ? " actual-size" : ""}`}
-          >
-            <img src={preview.src} alt={preview.alt} />
-          </div>
-        </Modal>
+          onEdit={
+            !props.readOnly && preview.apply
+              ? (src) => setPreview({ ...preview, src, edit: true })
+              : undefined
+          }
+        />
       )}
     </div>
   );

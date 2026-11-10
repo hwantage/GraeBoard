@@ -18,6 +18,7 @@ import {
   withoutImageSpacer,
   type ImagePreview,
 } from "./DocumentImageView";
+import { imageOriginals } from "./document-image-original";
 import {
   documentCodeBlockSelection,
   documentCodeBlockView,
@@ -297,6 +298,7 @@ export default function useRichEditorLifecycle(
       .use(blockSelect)
       .use(imageCaret)
       .use(imageComposition)
+      .use(imageOriginals)
       .use(dropIndicator)
       .use(
         $prose(
