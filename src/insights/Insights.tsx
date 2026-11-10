@@ -279,6 +279,7 @@ export default function Insights({
   ) {
     await save(
       {
+        ...settings.insights,
         workColors: settings.insights?.workColors || [],
         deadlinePropertyId: deadlinePropertyId(settings),
         charts: next,

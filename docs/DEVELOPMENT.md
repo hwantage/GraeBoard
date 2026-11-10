@@ -454,6 +454,8 @@ PostgreSQL 경로는 설치 위치에 맞게 바꾸며 생략해 성공 처리�
 
 `SheetSummary`는 연간/인사이트 공통 머리글의 전체 업무와 속성별 수치를 담당하며 기존 `statusSummary`가 선택적인 `insights.summaryPropertyId`를 읽습니다. 생략은 `status`, null은 전체 업무만 표시합니다. 선택형 속성의 이름·옵션 순서·점 색·미지정·보관된 값 집계를 재사용합니다. `insights-references.js`는 상단 참조 경고와 차트의 명시적 참조, 속성 보관 확인창에 표시할 사용처를 공유합니다. 보관 시 값과 참조를 유지하며 누락·종류 불일치 시 해당 집계만 멈춥니다.
 
+차트 추가·편집·복제·삭제·순서 변경은 `Insights.saveCharts`가 현재 `settings.insights`를 포함한 완전한 객체에 새 `charts`를 넣어 기존 PATCH/revision CAS 경로로 저장합니다. 상단 기준 속성 ID와 명시적인 null(전체 업무만 표시), 업무 색상·목표일 설정을 보존합니다. 서버는 제공된 `insights` 객체를 교체하는 기존 계약을 유지하며 부분 병합·구버전 우회·자동 재전송을 추가하지 않습니다. 브라우저 회귀는 두 상단 설정을 실제 설정 창에서 저장한 뒤 다섯 변경 각각의 API 값·revision·기존 차트/순서와 새로고침 후 공통 머리글을 확인합니다.
+
 `InsightsTrend`는 기본 분석의 주별/월별 업무 개수와 팀/책임자 선택을 소유합니다. `InsightsLineChart`·`InsightsPieChart`는 기존 `aggregate`의 결과와 색·수치·드릴다운·인쇄 수치표를 사용합니다. 새 조회나 저장 경로, 차트 라이브러리를 추가하지 않습니다. 시간 집계는 연간 보기의 정확한 주차·표시 월에 연결하며 월별 개수는 ID로 중복 제거합니다. 꺾은선은 빈 선택 구간을 0으로 채우고 표시된 직전 구간과의 차이를 점의 설명에 표시합니다. 파이는 가산 집계만 허용하고 음수는 오류, 0 합계는 빈 상태, 양수 한 분류는 완전한 원으로 표시합니다.
 
 공유 스키마에는 선택적인 `summaryPropertyId`, 차트 `line|pie`, 시간 단위 `week`만 확장했습니다. 팀장 권한·revision CAS·생략 필드 보존·백업·Git 동기화는 기존 설정 경로를 그대로 사용합니다. 관련 검증은 `tests/insights/insights-trends.test.mjs`, 기존 저장/백업 계약·Git 통합, `tests/browser/insights/insights.spec.ts` 및 기간·보고서·인쇄 검사입니다. 운영 적용은 양쪽 서버 업데이트 후 새 설정을 저장하는 기존 절차를 따릅니다.

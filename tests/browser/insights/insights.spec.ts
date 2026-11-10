@@ -1855,6 +1855,197 @@ test("상단 통계 속성은 설정 저장·다른 탭·보관·복원에서 �
   }
 });
 
+for (const [label, summaryPropertyId] of [
+  ["분류", "category"],
+  ["전체 업무만 표시", null],
+] as const) {
+  test(`차트 변경은 상단 통계 ${label}와 기존 설정을 보존한다`, async ({
+    page,
+  }, info) => {
+    await configure(
+      page,
+      [
+        chart("ckeep01", "기존 분류 통계", "table", {
+          dimensions: { row: { kind: "property", propertyId: "category" } },
+          values: [
+            { kind: "count" },
+            { kind: "workWeeks" },
+            { kind: "avgDuration" },
+          ],
+        }),
+        chart("ckeep02", "기존 작업량", "number", {
+          values: [{ kind: "workWeeks" }],
+        }),
+      ],
+      [
+        { color: "#0066cc", name: "개발 작업" },
+        { color: "#339966", name: "검토 작업" },
+      ],
+    );
+    for (let i = 0; i < 3; i++) await paint(page, i, ["2026-01-05"]);
+    await page.reload();
+    await insights(page);
+    await page
+      .getByRole("button", { name: "인사이트 설정", exact: true })
+      .click();
+    const config = page.getByRole("dialog", {
+      name: "인사이트 설정",
+      exact: true,
+    });
+    await config
+      .getByLabel("상단 통계 기준 속성", { exact: true })
+      .selectOption(summaryPropertyId || "");
+    await config
+      .getByLabel("목표일 기준 속성", { exact: true })
+      .selectOption(summaryPropertyId === null ? "" : "deadline");
+    await config.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(config).toContainText("인사이트 설정을 저장했습니다.");
+    await config.getByRole("button", { name: "닫기", exact: true }).click();
+    const original = await settings(page);
+    expect(original.insights.summaryPropertyId).toBe(summaryPropertyId);
+    const {
+      revision: initialRevision,
+      insights: initialInsights,
+      ...rest
+    } = original;
+    let revision = initialRevision;
+    let expectedCharts = initialInsights.charts;
+    const summary = page.locator(".board-summary");
+    const expectedSummary =
+      summaryPropertyId === null
+        ? ["전체 업무 3"]
+        : ["전체 업무 3", "기획 1", "개발 1", "검토 1"];
+    await expect(summary.locator(":scope > span")).toHaveText(expectedSummary);
+    async function assertSaved() {
+      await expect(
+        page.getByRole("button", { name: "차트 추가", exact: true }),
+      ).toBeEnabled();
+      const persisted = await settings(page);
+      expect(persisted.insights).toEqual({
+        ...initialInsights,
+        charts: expectedCharts,
+      });
+      expect(persisted.insights).toHaveProperty(
+        "summaryPropertyId",
+        summaryPropertyId,
+      );
+      expect(persisted.revision).toBe(revision + 1);
+      const {
+        revision: savedRevision,
+        insights: savedInsights,
+        ...other
+      } = persisted;
+      expect(other).toEqual(rest);
+      revision = savedRevision;
+      await page.reload();
+      await expect(
+        page.getByRole("region", { name: "인사이트", exact: true }),
+      ).toBeVisible();
+      await expect(summary.locator(":scope > span")).toHaveText(
+        expectedSummary,
+      );
+      await expect(
+        page.locator(".insights-team-chart-grid > article h3"),
+      ).toHaveText(expectedCharts.map((entry: any) => entry.title));
+      expect(await settings(page)).toEqual(persisted);
+    }
+    const editor = page.getByRole("dialog", {
+      name: "차트 편집",
+      exact: true,
+    });
+    let added: any;
+    await test.step("차트 추가 후 설정·원래 차트·머리글 재확인", async () => {
+      await page
+        .getByRole("button", { name: "차트 추가", exact: true })
+        .click();
+      await editor
+        .getByRole("textbox", { name: "차트 제목" })
+        .fill("추가 점수");
+      await editor
+        .getByRole("combobox", { name: "차트 종류" })
+        .selectOption("number");
+      await editor
+        .getByRole("combobox", { name: "값 1", exact: true })
+        .selectOption('{"kind":"numberSum","propertyId":"score"}');
+      await editor.getByRole("button", { name: "저장", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      added = (await settings(page)).insights.charts.at(-1);
+      expect(added).toMatchObject({
+        title: "추가 점수",
+        type: "number",
+        values: [{ kind: "numberSum", propertyId: "score" }],
+      });
+      expectedCharts = [...expectedCharts, added];
+      await assertSaved();
+      await expect(card(page, "추가 점수").locator("strong")).toHaveText("6");
+    });
+    await test.step("차트 편집 후 값과 설정 재확인", async () => {
+      await card(page, "추가 점수")
+        .getByRole("button", { name: "추가 점수 편집", exact: true })
+        .click();
+      await editor
+        .getByRole("textbox", { name: "차트 제목" })
+        .fill("편집 작업량");
+      await editor
+        .getByRole("combobox", { name: "값 1", exact: true })
+        .selectOption('{"kind":"workWeeks"}');
+      await editor.getByRole("button", { name: "저장", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      added = {
+        ...added,
+        title: "편집 작업량",
+        values: [{ kind: "workWeeks" }],
+      };
+      expectedCharts = [...initialInsights.charts, added];
+      await assertSaved();
+      await expect(card(page, "편집 작업량").locator("strong")).toHaveText("3");
+    });
+    let copy: any;
+    await test.step("차트 복제 후 구성과 설정 재확인", async () => {
+      await card(page, "편집 작업량")
+        .getByRole("button", { name: "편집 작업량 복제", exact: true })
+        .click();
+      await expect(card(page, "편집 작업량 사본")).toBeVisible();
+      copy = (await settings(page)).insights.charts.at(-1);
+      expect(copy.id).not.toBe(added.id);
+      expect(copy).toEqual({
+        ...added,
+        id: copy.id,
+        title: "편집 작업량 사본",
+      });
+      expectedCharts = [...expectedCharts, copy];
+      await assertSaved();
+    });
+    await test.step("실제 순서 이동 후 API 순서와 설정 재확인", async () => {
+      await card(page, "편집 작업량 사본")
+        .getByRole("button", {
+          name: "편집 작업량 사본 순서 이동",
+          exact: true,
+        })
+        .focus();
+      await page.keyboard.press("Alt+ArrowUp");
+      await expect(
+        page.getByText("차트 순서를 저장했습니다.", { exact: true }),
+      ).toBeVisible();
+      expectedCharts = [...initialInsights.charts, copy, added];
+      await assertSaved();
+    });
+    await test.step("차트 삭제 후 남은 구성과 설정 재확인", async () => {
+      await card(page, "편집 작업량 사본")
+        .getByRole("button", { name: "편집 작업량 사본 삭제", exact: true })
+        .click();
+      await expect(card(page, "편집 작업량 사본")).toHaveCount(0);
+      expectedCharts = [...initialInsights.charts, added];
+      await assertSaved();
+    });
+    await page.screenshot({
+      path: info.outputPath("summary-after-chart-crud.png"),
+    });
+    await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+    await expect(summary.locator(":scope > span")).toHaveText(expectedSummary);
+  });
+}
+
 test("업무 개수 추이는 주별·월별·팀 전체·개인별의 0과 증감을 표시하고 정확한 업무를 연다", async ({
   page,
 }, info) => {
