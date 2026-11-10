@@ -1,7 +1,7 @@
 import {
   decodeLinkTitleHtml,
   extractLinkTitle,
-} from "../shared/link-title.mjs";
+} from "../shared/http/link-title.mjs";
 
 // Deno's node:https adapter uses fetch internally and cannot keep the URL's
 // certificate hostname when dialing a literal IP. Dial the inspected IP and

@@ -2,6 +2,7 @@ import {
   postgresMigrations,
   siteKeyMigration,
   teamMaintenanceMigration,
+  teamSheetCloneMigration,
   accessTokenMigrations,
 } from "./postgres.mjs";
 
@@ -25,7 +26,7 @@ export function siteInitializeSql(teamId, teamName) {
   return `-- GraeBoard 외부 DB 초기화 (팀 UUID ${teamId})
 -- 새 Supabase 프로젝트의 SQL Editor에 전체를 붙여 넣고 Run을 누릅니다.
 -- graeboard·graeboard_site에 테이블이 이미 있으면 아무것도 바꾸지 않고 멈추며,
--- 중간에 실패하면 전체를 되돌립니다. 결과 표에서 팀 UUID와 site 3·team 2를 확인합니다.
+-- 중간에 실패하면 전체를 되돌립니다. 결과 표에서 팀 UUID와 site 3·team 3을 확인합니다.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='60s';
@@ -59,6 +60,8 @@ ${record("site", accessTokenMigrations.site)}
 SET LOCAL search_path TO graeboard, pg_catalog;
 ${teamMaintenanceMigration.sql.trim()}
 ${record("team", teamMaintenanceMigration)}
+${teamSheetCloneMigration.sql.trim()}
+${record("team", teamSheetCloneMigration)}
 -- The server reaches these schemas through its own database role only.
 DO $grants$
 BEGIN

@@ -24,6 +24,7 @@ exports/
 *.db-*
 *.sql
 !server/migrations/**/*.sql
+!tests/fixtures/sheet-clone-legacy/*.sql
 *.dump
 *.bak
 *.xlsx

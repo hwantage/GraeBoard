@@ -1,0 +1,3 @@
+-- team v3: the copy domain is stored under its SheetClone names. Nothing in
+-- the schema changes; an existing team's rows are converted once by the
+-- SheetClone cutover tool in the transaction that records this version.

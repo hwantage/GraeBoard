@@ -1,0 +1,23 @@
+{
+  "commit": "7fec065d1adc241da29d54474af06b390d12d72b",
+  "packageLockSha256": "61e4874a625e9f17fc4d98a84bdac77b0933055659eab32a0da3197c1f7dc4b5",
+  "protectedFiles": {
+    "tests/fixtures/sheet-clone-legacy/expected-f744ead.json": "58902551af9001494e64a8c02a3c56fe065758cf1032b9e5e75822ec0ae3020c",
+    "tests/fixtures/sheet-clone-legacy/export-v6.json": "d4edf99ffc9302a3d2eea20ff07211db2bdd3a8cb11b9332b799721e9948037a",
+    "tests/fixtures/sheet-clone-legacy/external-control.sql": "2ce547eee7b76930132f545ca9cc2ba0fd93df2aa6e88e1b5ea9454878473176",
+    "tests/fixtures/sheet-clone-legacy/external-team-v1.sql": "10e7da1672bc653fcf88b8cd79dc125273d801f2594439696f54fd9ee7bc1693",
+    "tests/fixtures/sheet-clone-legacy/external-team-v2.sql": "8c85038ded19c4c1af91f658422ebcf09c39dc85e597af999863c9a18159cc0b",
+    "tests/fixtures/sheet-clone-legacy/generate-f744ead.mjs": "48f2e79a9967be0e65eb34152419a57b2ee58171e655aa42280425049b1395dc",
+    "tests/fixtures/sheet-clone-legacy/images/377e8e56-aea7-46ea-a51e-0715b9b79ca3/c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02.webp": "c3d892480da73b63c59bbdd1a3026d5671fb2c4f5144dc3d37d5c54ae3f84d02",
+    "tests/fixtures/sheet-clone-legacy/internal-v1.sql": "a4b1d596269f92c57fba4025e17f16c93f80a6db6bc3813cd3d0b1c58dcc2ad9",
+    "tests/fixtures/sheet-clone-legacy/internal-v2.sql": "aa9eacc56359c824f3c08ec74c60b54d3c099887a93e608c526acf6dcb3c415a",
+    "tests/fixtures/sheet-clone-legacy/manifest.json": "96ea412cda30aac06f80107498b812243a2744815ac0f153b9b5f70b4a562118",
+    "tests/fixtures/sheet-clone-legacy/sync.bundle": "4f9662a53773dcc7a79724b0c733b5aeb15de2fd778c8e9fa89290635270889f",
+    "tools/sheet-clone-cutover/cli.mjs": "aefcb759f71bd2c96b946d4e55087655a8d5627ba6c21c4a828db45d099f94cb",
+    "tools/sheet-clone-cutover/convert.mjs": "ab03f259bd14b41e3e297ede714cb7ae6cc57167d922f73e30e0a30751aa2591",
+    "tools/sheet-clone-cutover/cutover.mjs": "0c032d213f7d13ef2abbfc95b0f51efce03bcae5967b138b1e1f4ddd284a12ae",
+    "tools/sheet-clone-cutover/markdown-links.mjs": "ad7b9f222d71832525f666e08c99dc5256365578f7c41c1c4857f3014c68624f",
+    "tools/sheet-clone-cutover/names.mjs": "21ea4bc4416626743bdf9baf9f90f27542d3598182f68a13686e64454d25595c"
+  },
+  "reason": "Full immutable source for future production cutover; temporary app tools and fixtures removed before P4 by user instruction."
+}

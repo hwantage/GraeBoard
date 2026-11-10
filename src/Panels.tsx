@@ -1,12 +1,12 @@
-import type { DocumentPanelHandle } from "./TaskDocumentPanel";
+import type { DocumentPanelHandle } from "./documents/TaskDocumentPanel";
 import type { BatchResult, DocumentSaveResult, SavedCell } from "./types";
 import TaskPropertyEditor, {
   type PropertyEditorHandle,
   type PropertySaveRequest,
-} from "./TaskPropertyEditor";
-import Select from "./Select";
-import DocumentLoading from "./DocumentLoading";
-import LoadingState from "./LoadingState";
+} from "./sheet/TaskPropertyEditor";
+import Select from "./ui/Select";
+import DocumentLoading from "./documents/DocumentLoading";
+import LoadingState from "./ui/LoadingState";
 import {
   Component,
   forwardRef,
@@ -30,21 +30,23 @@ import {
   EyeOff,
   CalendarPlus,
 } from "lucide-react";
-import { api, send, download, taskQuery } from "./api";
-import { Modal, Button, ErrorNote } from "./components";
-import Toast, { useToast } from "./Toast";
-import HistoryTime, { HistoryTimeline } from "./HistoryTime";
-import { describeStyle } from "./history";
-import { pack, compactStyle } from "../shared/compact.js";
-import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton from "./DocumentFullWidthButton";
-import DocumentFullPageButton from "./DocumentFullPageButton";
-import { useDocumentFullPage } from "./useDocumentFullPage";
+import { api, send, download, taskQuery } from "./platform/api";
+import { Modal } from "./ui/Modal";
+import { Button } from "./ui/Button";
+import { ErrorNote } from "./ui/ErrorNote";
+import Toast, { useToast } from "./ui/Toast";
+import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
+import { describeStyle } from "./sheet/history";
+import { pack, compactStyle } from "../shared/formatting/compact.js";
+import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
+import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
+import DocumentFullPageButton from "./documents/DocumentFullPageButton";
+import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   useOpenDocumentLink,
   type DocumentLinkTarget,
-} from "./document-links";
+} from "./documents/document-links";
 import type { Task, User, Settings } from "./types";
 import {
   fieldsFor,
@@ -57,7 +59,7 @@ import {
   todayKey,
 } from "../shared/domain.js";
 
-const TaskDocumentPanel = lazy(() => import("./TaskDocumentPanel"));
+const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
 class DocumentLoadBoundary extends Component<
   { children: ReactNode; onError: () => void },
   { failed: boolean }
@@ -95,12 +97,12 @@ const AUDIT_LABELS: Record<string, string> = {
   create: "업무 추가",
   delete: "업무 삭제",
   restore: "업무 복구",
-  report: "사본 저장",
-  "report-edit": "사본 수정",
-  "report-rename": "사본 이름 변경",
-  "report-restore": "업무 복구",
-  "report-document": "업무 문서 편집",
-  "report-delete": "사본 삭제",
+  "sheet-clone": "사본 저장",
+  "sheet-clone-edit": "사본 수정",
+  "sheet-clone-rename": "사본 이름 변경",
+  "sheet-clone-restore": "업무 복구",
+  "sheet-clone-document": "업무 문서 편집",
+  "sheet-clone-delete": "사본 삭제",
   settings: "설정 변경",
   export: "내보내기",
   import: "자료 가져오기",
@@ -122,7 +124,7 @@ export const TaskDetailContent = forwardRef<
     readOnly?: boolean;
     // Documents stay editable; the properties are shown only.
     propertiesReadOnly?: boolean;
-    documentReport?: { id: string; isNew: boolean };
+    documentSheetClone?: { id: string; isNew: boolean };
     initialDocumentId?: string;
     onDocumentSelected?: (id: string) => void;
     onDocumentSaved: (result: DocumentSaveResult) => void;
@@ -139,7 +141,7 @@ export const TaskDetailContent = forwardRef<
     users,
     readOnly,
     propertiesReadOnly,
-    documentReport,
+    documentSheetClone,
     initialDocumentId,
     onDocumentSelected,
     onDocumentSaved,
@@ -203,7 +205,7 @@ export const TaskDetailContent = forwardRef<
                 task={task}
                 userId={user.id}
                 readOnly={!editable}
-                report={documentReport}
+                sheetClone={documentSheetClone}
                 onSaved={onDocumentSaved}
                 onCloseWithDraft={onCloseWithDraft}
                 initialDocumentId={initialDocumentId}
@@ -225,8 +227,8 @@ export function RowPanel({
   users,
   readOnly = false,
   propertiesReadOnly,
-  reportMode = false,
-  documentReport,
+  sheetCloneMode = false,
+  documentSheetClone,
   headerAction,
   initialFullPage = false,
   onDocumentSaved,
@@ -243,8 +245,8 @@ export function RowPanel({
   // 열람자·발표 화면에서는 편집 동작을 숨긴다.
   readOnly?: boolean;
   propertiesReadOnly?: boolean;
-  reportMode?: boolean;
-  documentReport?: { id: string; isNew: boolean };
+  sheetCloneMode?: boolean;
+  documentSheetClone?: { id: string; isNew: boolean };
   // A single action in place of the task actions, e.g. opening the copy.
   headerAction?: ReactNode;
   // Opened from another tab's full-page button (DocumentFullPageButton).
@@ -262,8 +264,12 @@ export function RowPanel({
   const { fullPage: documentFullPage, fullWidth } =
     useDocumentFullPage(preferredFullPage);
   // A copy's task keeps the original's ID, so its link also names the copy.
-  const linkTarget: DocumentLinkTarget = documentReport
-    ? { kind: "report-task", reportId: documentReport.id, id: task.id }
+  const linkTarget: DocumentLinkTarget = documentSheetClone
+    ? {
+        kind: "sheet-clone-task",
+        sheetCloneId: documentSheetClone.id,
+        id: task.id,
+      }
     : { kind: "task", id: task.id };
   const leaving = useRef(false);
   async function leave(
@@ -328,7 +334,7 @@ export function RowPanel({
                     <span className="task-detail-action-label">복제</span>
                   </Button>
                 )}
-                {editable && !reportMode && (
+                {editable && !sheetCloneMode && (
                   <Button
                     tooltip="다음 연도에도 표시"
                     onClick={() => act("carry")}
@@ -353,7 +359,7 @@ export function RowPanel({
         users={users}
         readOnly={readOnly}
         propertiesReadOnly={propertiesReadOnly}
-        documentReport={documentReport}
+        documentSheetClone={documentSheetClone}
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={async (request) => {
           const cells = await onSaveProperty(request);
@@ -443,7 +449,7 @@ export function StandaloneRowPanel({
 
 export function ExportPanel({
   teamId,
-  report,
+  sheetClone,
   year,
   startMonth,
   taskIds,
@@ -451,7 +457,7 @@ export function ExportPanel({
   onClose,
 }: {
   teamId: string;
-  report?: { id: string; name: string; revision: string } | null;
+  sheetClone?: { id: string; name: string; revision: string } | null;
   year: number;
   startMonth: number;
   taskIds: string[];
@@ -475,8 +481,8 @@ export function ExportPanel({
             현재 보기 · {taskIds.length}개 업무 (숨김 제외)
           </option>
           <option value="all">
-            {report ? "현재 사본 전체" : `기준 연도 ${year}년 전체`} · 필터와
-            숨김 포함
+            {sheetClone ? "현재 사본 전체" : `기준 연도 ${year}년 전체`} ·
+            필터와 숨김 포함
           </option>
         </Select>
       </label>
@@ -489,8 +495,8 @@ export function ExportPanel({
         </Select>
       </label>
       <p className="field-help">
-        {report
-          ? `‘${report.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON에 포함됩니다.`
+        {sheetClone
+          ? `‘${sheetClone.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON에 포함됩니다.`
           : "JSON 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
       </p>
       <ErrorNote error={error} />
@@ -505,8 +511,8 @@ export function ExportPanel({
             try {
               await download("/export", {
                 teamId,
-                reportId: report?.id,
-                revision: report?.revision,
+                sheetCloneId: sheetClone?.id,
+                revision: sheetClone?.revision,
                 year,
                 startMonth: scope === "view" ? startMonth : 1,
                 format,
@@ -535,13 +541,13 @@ export function ExportPanel({
 }
 export function ImportPanel({
   teamId,
-  report,
+  sheetClone,
   year,
   onClose,
   onDone,
 }: {
   teamId: string;
-  report?: { id: string; name: string; revision: string } | null;
+  sheetClone?: { id: string; name: string; revision: string } | null;
   year: number;
   onClose: () => void;
   onDone: () => Promise<void>;
@@ -549,7 +555,7 @@ export function ImportPanel({
   const [preview, setPreview] = useState<any>(null),
     [sheet, setSheet] = useState(""),
     [personMap, setPersonMap] = useState<Record<string, string>>({}),
-    [mode, setMode] = useState(report ? "copy" : "tasks"),
+    [mode, setMode] = useState(sheetClone ? "append-to-sheet-clone" : "tasks"),
     [phase, setPhase] = useState<"preview" | "apply" | null>(null),
     [error, setError] = useState(""),
     [accepted, setAccepted] = useState(false),
@@ -565,7 +571,7 @@ export function ImportPanel({
       body.set("file", file);
       body.set("teamId", teamId);
       body.set("year", String(year));
-      if (report) body.set("reportId", report.id);
+      if (sheetClone) body.set("sheetCloneId", sheetClone.id);
       const result = await api("/import/preview", { method: "POST", body });
       setPreview(result);
       setSheet(
@@ -614,9 +620,9 @@ export function ImportPanel({
         />
       </label>
       <ErrorNote error={error} />
-      {report && (
+      {sheetClone && (
         <p className="field-help">
-          가져올 위치: <strong>{report.name}</strong> · 현재 사본에 업무를
+          가져올 위치: <strong>{sheetClone.name}</strong> · 현재 사본에 업무를
           추가합니다.
         </p>
       )}
@@ -639,16 +645,16 @@ export function ImportPanel({
                 ))}
               </Select>
             </label>
-            {!report && (
+            {!sheetClone && (
               <label>
                 반영 방식
                 <Select value={mode} onChange={(e) => setMode(e.target.value)}>
                   <option value="tasks">운영 업무로 추가</option>
-                  <option value="report">과거 사본으로 보관</option>
+                  <option value="create-sheet-clone">과거 사본으로 보관</option>
                 </Select>
               </label>
             )}
-            {mode === "report" && (
+            {mode === "create-sheet-clone" && (
               <label>
                 보고 기준일
                 <input
@@ -740,7 +746,7 @@ export function ImportPanel({
                 변환 내용과 담당자 연결을 확인했습니다.
               </label>
               <p className="field-help">
-                {report
+                {sheetClone
                   ? "같은 파일의 같은 시트는 이 사본에 한 번만 추가됩니다."
                   : "같은 파일·시트·반영 방식은 반복 실행해도 중복 추가되지 않습니다. 서로 다른 주간 탭을 운영 업무로 가져오면 별개 업무로 보존됩니다."}
               </p>
@@ -763,8 +769,8 @@ export function ImportPanel({
                         year,
                         personMap,
                         mode,
-                        reportId: report?.id,
-                        revision: report?.revision,
+                        sheetCloneId: sheetClone?.id,
+                        revision: sheetClone?.revision,
                         referenceDate,
                         acceptWarnings: true,
                       });
@@ -791,7 +797,7 @@ export function ImportPanel({
 
 export function HistoryPanel({
   teamId,
-  report,
+  sheetClone,
   year,
   startMonth,
   tasks,
@@ -802,7 +808,7 @@ export function HistoryPanel({
   onRefresh,
 }: {
   teamId: string;
-  report?: { id: string; name: string } | null;
+  sheetClone?: { id: string; name: string } | null;
   year: number;
   startMonth: number;
   tasks: Task[];
@@ -826,24 +832,24 @@ export function HistoryPanel({
   );
   const refresh = () =>
     api(
-      `/audit?teamId=${teamId}&sheetId=${report?.id || "original"}${taskFilter ? `&taskId=${taskFilter}` : ""}`,
+      `/audit?teamId=${teamId}&sheetId=${sheetClone?.id || "original"}${taskFilter ? `&taskId=${taskFilter}` : ""}`,
     )
       .then((r) => setEntries(r.entries))
       .catch((e) => setError(e.message));
   useEffect(() => {
     refresh();
-  }, [teamId, report?.id, taskFilter]);
+  }, [teamId, sheetClone?.id, taskFilter]);
   return (
     <Modal
       title="변경 이력"
-      help={`${report?.name || "원본"} 시트의 변경 이력을 최신순으로 최대 100개까지 표시합니다. 삭제한 업무를 이 시트로 복구할 수 있습니다.`}
+      help={`${sheetClone?.name || "원본"} 시트의 변경 이력을 최신순으로 최대 100개까지 표시합니다. 삭제한 업무를 이 시트로 복구할 수 있습니다.`}
       className="history-modal"
       onClose={onClose}
     >
       <p className="field-help">
-        현재 시트: <strong>{report?.name || "원본"}</strong>
+        현재 시트: <strong>{sheetClone?.name || "원본"}</strong>
       </p>
-      {!report && (
+      {!sheetClone && (
         <label className="form-field">
           업무별 이력
           <Select
@@ -1002,7 +1008,7 @@ export function HistoryPanel({
                   </p>
                 ))}
                 {e.restorableTaskIds?.length > 0 &&
-                  (report
+                  (sheetClone
                     ? canContribute(user, teamId)
                     : canManageTeam(user, teamId)) && (
                     <Button
@@ -1011,8 +1017,8 @@ export function HistoryPanel({
                         setBusy(true);
                         setError("");
                         try {
-                          const current = report
-                            ? await api(`/reports/${report.id}`)
+                          const current = sheetClone
+                            ? await api(`/sheet-clones/${sheetClone.id}`)
                             : null;
                           await send(
                             `/audit/${e.id}/restore`,

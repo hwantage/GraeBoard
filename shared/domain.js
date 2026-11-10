@@ -1,6 +1,6 @@
 import { defaultCoreProperties } from "./coreProperties.js";
-import { inheritedStyle } from "./formatting.js";
-import { FONTS } from "./fonts.js";
+import { inheritedStyle } from "./formatting/formatting.js";
+import { FONTS } from "./formatting/fonts.js";
 export {
   FONTS,
   FONT_SIZES,
@@ -8,7 +8,7 @@ export {
   MAX_FONT_SIZE,
   normalizeFont,
   fontFamilyCSS,
-} from "./fonts.js";
+} from "./formatting/fonts.js";
 export {
   CORE_PROPERTY_KEYS,
   DEFAULT_STATUS_OPTIONS,

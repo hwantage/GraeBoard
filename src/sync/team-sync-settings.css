@@ -1,0 +1,505 @@
+.settings-section.team-sync-settings {
+  max-width: none;
+}
+.team-sync-settings .error-note {
+  color: #893c52;
+  background: #fff2f5;
+  border: 1px solid #edc8d3;
+  overflow-wrap: anywhere;
+}
+.team-sync-overview {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.team-sync-heading,
+.team-sync-heading h4,
+.team-sync-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.team-sync-settings h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.team-sync-heading h4 {
+  margin: 0;
+}
+.team-sync-heading svg,
+.team-sync-section-title svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.team-sync-mode {
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: #64748b;
+  background: #f0f3f5;
+  font-size: 11px;
+}
+.team-sync-mode.is-active {
+  color: #1d4ed8;
+  background: #e8f0ff;
+}
+.team-sync-mode.is-problem {
+  color: #a43e58;
+  background: #fce8ee;
+}
+.team-sync-site,
+.team-sync-secondary {
+  color: var(--muted);
+  font-size: 12px;
+}
+.team-sync-site {
+  margin: 8px 0 0;
+}
+.team-sync-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+  margin: 20px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.team-sync-facts dt {
+  color: var(--muted);
+}
+.team-sync-facts dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.team-sync-secondary {
+  display: block;
+}
+.team-sync-recovery {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 6px;
+  color: #893c52;
+  background: #fff2f5;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.team-sync-recovery p {
+  margin: 6px 0;
+}
+.team-sync-connection,
+.team-sync-actions-section,
+.team-sync-settings > .settings-table-scroll {
+  margin-top: 24px;
+}
+.team-sync-profile-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.team-sync-profile-controls > label {
+  flex: 1;
+  min-width: 0;
+}
+.team-sync-profile-controls > button {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+.team-sync-profile {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.team-sync-profile dt {
+  color: var(--muted);
+}
+.team-sync-profile dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.team-sync-replacement {
+  margin-top: 16px;
+  font-size: 13px;
+}
+.team-sync-replacement summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.team-sync-replacement .team-sync-profile-controls {
+  margin-top: 12px;
+}
+.team-sync-connection .field-help {
+  overflow-wrap: anywhere;
+}
+.team-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.team-sync-disconnect {
+  margin-left: auto;
+}
+.team-sync-settings > .settings-section,
+.team-sync-settings > section {
+  max-width: none;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.team-sync-settings .role-legend {
+  gap: 12px 24px;
+  margin-bottom: 16px;
+}
+.settings-content .connection-checks-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+.connection-checks-table caption {
+  padding-bottom: 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+}
+.connection-checks-table th:first-child {
+  width: 100px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.connection-checks-table th:nth-child(2) {
+  width: 60px;
+}
+.connection-checks-table td:last-child {
+  width: auto;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.connection-check-result.is-error {
+  color: #a43e58;
+  background: #fff2f5;
+}
+.connection-check-result.is-ok {
+  color: var(--accent-strong);
+}
+/* Revealing an error keeps its own margin in view; fractional line heights
+   otherwise leave its edge clipped after the scroll rounds down. */
+.team-sync-error {
+  scroll-margin-block: 12px;
+}
+.team-sync-result {
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .team-sync-overview {
+    padding: 14px;
+  }
+  .team-sync-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .team-sync-profile-controls {
+    flex-wrap: wrap;
+  }
+  .team-sync-profile-controls > label {
+    flex-basis: 100%;
+  }
+  .connection-checks-table th:first-child {
+    width: 70px;
+  }
+  .connection-checks-table th:nth-child(2) {
+    width: 44px;
+  }
+}
+.sync-conflict-diff {
+  margin: 12px 0;
+}
+.sync-diff-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sync-diff-summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.sync-diff-origin {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f4f6f7;
+  font-size: 12px;
+  list-style: none;
+}
+.sync-diff-origin li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sync-diff-origin-label {
+  min-width: 72px;
+  color: var(--muted);
+}
+.sync-diff-origin-name {
+  font-weight: 600;
+}
+.sync-diff-origin-time {
+  color: var(--muted);
+}
+.sync-diff-legend,
+.sync-diff-equal {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sync-diff-change {
+  margin-top: 14px;
+}
+.sync-diff-change h5 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sync-diff-change h5 code {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.sync-diff-fields {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.sync-diff-fields .is-overlap {
+  color: #893c52;
+  font-weight: 600;
+}
+.sync-diff-lines {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sync-diff-line {
+  display: grid;
+  grid-template-columns: 3.2em 3.2em 1.6em minmax(0, 1fr);
+}
+.sync-diff-virtual {
+  height: min(480px, 60vh);
+  overflow: auto;
+}
+.sync-diff-virtual .sync-diff-line {
+  grid-template-columns: 7ch 7ch 1.6em minmax(0, 1fr);
+}
+.sync-diff-number {
+  padding-right: 6px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.sync-diff-marker {
+  text-align: center;
+  user-select: none;
+}
+.sync-diff-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sync-diff-line.is-removed {
+  background: #fdecee;
+}
+.sync-diff-line.is-added {
+  background: #e7f6ec;
+}
+.sync-diff-line.is-removed mark {
+  background: #f6bcc7;
+}
+.sync-diff-line.is-added mark {
+  background: #a9e2bb;
+}
+.sync-diff-line mark {
+  color: inherit;
+  border-radius: 2px;
+}
+.sync-diff-fold button {
+  width: 100%;
+  padding: 2px 8px;
+  border: 0;
+  color: var(--muted);
+  background: #f4f6f7;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sync-diff-fold button:hover {
+  color: inherit;
+  background: #eaeef0;
+}
+.sync-diff-clean {
+  margin-top: 14px;
+}
+.sync-diff-clean > summary {
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sync-conflict-raw {
+  margin: 8px 0 12px;
+}
+.sync-conflict-raw summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sync-conflict-raw-value {
+  margin: 1em 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sync-conflict-raw-value pre {
+  margin: 0;
+  min-height: 1.6em;
+  font: inherit;
+  white-space: inherit;
+  overflow-wrap: inherit;
+}
+.team-sync-conflicts > h4 {
+  margin-bottom: 10px;
+}
+.team-sync-conflict {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.team-sync-conflict + .team-sync-conflict {
+  margin-top: 10px;
+}
+.team-sync-conflict > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  list-style: none;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.team-sync-conflict > summary::-webkit-details-marker {
+  display: none;
+}
+.team-sync-conflict > summary:hover {
+  background: #f1f5f4;
+}
+.team-sync-conflict[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: 8px 8px 0 0;
+  background: #f6f8f8;
+}
+.team-sync-conflict-chevron {
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.team-sync-conflict[open] .team-sync-conflict-chevron {
+  transform: rotate(90deg);
+}
+.team-sync-conflict-kind {
+  font-weight: 600;
+}
+.team-sync-conflict > summary time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.team-sync-conflict-body {
+  padding: 4px 14px 14px;
+}
+.team-sync-conflict-body > .form-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.team-sync-conflict-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.team-sync-conflict-people {
+  color: #34444c;
+}
+.team-sync-conflict-saved {
+  color: #1d4ed8;
+  background: #e8f0ff;
+}
+.team-sync-conflict-notice {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #c9d8f6;
+  border-radius: 6px;
+  color: #1e3a8a;
+  background: #eef4ff;
+  font-size: 12px;
+}
+.sync-conflict-box .team-sync-conflicts {
+  display: grid;
+  gap: 10px;
+}
+.sync-conflict-box .team-sync-conflict + .team-sync-conflict {
+  margin-top: 0;
+}
+.team-sync-conflict-edit {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.team-sync-conflict-batch {
+  margin-bottom: 12px;
+}
+.team-sync-conflict-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.team-sync-conflict-batch-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.team-sync-conflict-batch-count {
+  margin-right: auto;
+  color: var(--muted);
+}
+.team-sync-conflict-batch-status {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.team-sync-conflict-check {
+  margin: 0;
+  cursor: pointer;
+}

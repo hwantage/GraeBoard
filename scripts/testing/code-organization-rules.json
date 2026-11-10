@@ -1,0 +1,769 @@
+{
+  "version": 1,
+  "sourceRoots": [
+    "src",
+    "server",
+    "shared",
+    "worker",
+    "edge",
+    "functions",
+    "scripts",
+    "tests",
+    "tools"
+  ],
+  "extensions": [
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+    ".css"
+  ],
+  "allowedDirectories": [
+    {
+      "path": "edge",
+      "reason": "Deno runtime and resource adapters; edge"
+    },
+    {
+      "path": "functions",
+      "reason": "Pages gateway entrypoint; functions"
+    },
+    {
+      "path": "scripts",
+      "reason": "Development, validation, operations and deployment CLIs; scripts"
+    },
+    {
+      "path": "scripts/admin",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/admin"
+    },
+    {
+      "path": "scripts/deploy",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/deploy"
+    },
+    {
+      "path": "scripts/performance",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/performance"
+    },
+    {
+      "path": "scripts/sync",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/sync"
+    },
+    {
+      "path": "scripts/testing",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/testing"
+    },
+    {
+      "path": "scripts/transfer",
+      "reason": "Development, validation, operations and deployment CLIs; scripts/transfer"
+    },
+    {
+      "path": "server",
+      "reason": "Internal Node host, business services and synchronization; server"
+    },
+    {
+      "path": "server/auth",
+      "reason": "Internal Node host, business services and synchronization; server/auth"
+    },
+    {
+      "path": "server/calendar",
+      "reason": "Internal Node host, business services and synchronization; server/calendar"
+    },
+    {
+      "path": "server/control",
+      "reason": "Internal Node host, business services and synchronization; server/control"
+    },
+    {
+      "path": "server/documents",
+      "reason": "Internal Node host, business services and synchronization; server/documents"
+    },
+    {
+      "path": "server/events",
+      "reason": "Internal Node host, business services and synchronization; server/events"
+    },
+    {
+      "path": "server/history",
+      "reason": "Internal Node host, business services and synchronization; server/history"
+    },
+    {
+      "path": "server/http",
+      "reason": "Internal Node host, business services and synchronization; server/http"
+    },
+    {
+      "path": "server/migrations",
+      "reason": "Internal Node host, business services and synchronization; server/migrations"
+    },
+    {
+      "path": "server/migrations/postgres",
+      "reason": "Internal Node host, business services and synchronization; server/migrations/postgres"
+    },
+    {
+      "path": "server/migrations/sqlite",
+      "reason": "Internal Node host, business services and synchronization; server/migrations/sqlite"
+    },
+    {
+      "path": "server/sheet",
+      "reason": "Internal Node host, business services and synchronization; server/sheet"
+    },
+    {
+      "path": "server/sheet-clones",
+      "reason": "Internal Node host, business services and synchronization; server/sheet-clones"
+    },
+    {
+      "path": "server/storage",
+      "reason": "Internal Node host, business services and synchronization; server/storage"
+    },
+    {
+      "path": "server/storage/calendar",
+      "reason": "Internal Node host, business services and synchronization; server/storage/calendar"
+    },
+    {
+      "path": "server/storage/control",
+      "reason": "Internal Node host, business services and synchronization; server/storage/control"
+    },
+    {
+      "path": "server/storage/documents",
+      "reason": "Internal Node host, business services and synchronization; server/storage/documents"
+    },
+    {
+      "path": "server/storage/history",
+      "reason": "Internal Node host, business services and synchronization; server/storage/history"
+    },
+    {
+      "path": "server/storage/settings",
+      "reason": "Internal Node host, business services and synchronization; server/storage/settings"
+    },
+    {
+      "path": "server/storage/sheet-clones",
+      "reason": "Internal Node host, business services and synchronization; server/storage/sheet-clones"
+    },
+    {
+      "path": "server/storage/tasks",
+      "reason": "Internal Node host, business services and synchronization; server/storage/tasks"
+    },
+    {
+      "path": "server/storage/transfer",
+      "reason": "Internal Node host, business services and synchronization; server/storage/transfer"
+    },
+    {
+      "path": "server/sync",
+      "reason": "Internal Node host, business services and synchronization; server/sync"
+    },
+    {
+      "path": "server/sync/core",
+      "reason": "Internal Node host, business services and synchronization; server/sync/core"
+    },
+    {
+      "path": "server/sync/node",
+      "reason": "Internal Node host, business services and synchronization; server/sync/node"
+    },
+    {
+      "path": "server/transfer",
+      "reason": "Internal Node host, business services and synchronization; server/transfer"
+    },
+    {
+      "path": "shared",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared"
+    },
+    {
+      "path": "shared/calendar",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/calendar"
+    },
+    {
+      "path": "shared/documents",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/documents"
+    },
+    {
+      "path": "shared/formatting",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/formatting"
+    },
+    {
+      "path": "shared/http",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/http"
+    },
+    {
+      "path": "shared/identity",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/identity"
+    },
+    {
+      "path": "shared/sheet-clones",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/sheet-clones"
+    },
+    {
+      "path": "shared/site",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/site"
+    },
+    {
+      "path": "shared/storage",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/storage"
+    },
+    {
+      "path": "shared/sync",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/sync"
+    },
+    {
+      "path": "shared/transfer",
+      "reason": "Shared domain contracts with per-module runtime restrictions; shared/transfer"
+    },
+    {
+      "path": "src",
+      "reason": "Browser UI and shared browser infrastructure; src"
+    },
+    {
+      "path": "src/app",
+      "reason": "Browser UI and shared browser infrastructure; src/app"
+    },
+    {
+      "path": "src/auth",
+      "reason": "Browser UI and shared browser infrastructure; src/auth"
+    },
+    {
+      "path": "src/calendar",
+      "reason": "Browser UI and shared browser infrastructure; src/calendar"
+    },
+    {
+      "path": "src/documents",
+      "reason": "Browser UI and shared browser infrastructure; src/documents"
+    },
+    {
+      "path": "src/documents/editor",
+      "reason": "Browser UI and shared browser infrastructure; src/documents/editor"
+    },
+    {
+      "path": "src/platform",
+      "reason": "Browser UI and shared browser infrastructure; src/platform"
+    },
+    {
+      "path": "src/settings",
+      "reason": "Browser UI and shared browser infrastructure; src/settings"
+    },
+    {
+      "path": "src/sheet",
+      "reason": "Browser UI and shared browser infrastructure; src/sheet"
+    },
+    {
+      "path": "src/sync",
+      "reason": "Browser UI and shared browser infrastructure; src/sync"
+    },
+    {
+      "path": "src/ui",
+      "reason": "Browser UI and shared browser infrastructure; src/ui"
+    },
+    {
+      "path": "tests",
+      "reason": "Automated regressions and isolated fixtures; tests"
+    },
+    {
+      "path": "tests/auth",
+      "reason": "Automated regressions and isolated fixtures; tests/auth"
+    },
+    {
+      "path": "tests/browser",
+      "reason": "Automated regressions and isolated fixtures; tests/browser"
+    },
+    {
+      "path": "tests/browser/auth",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/auth"
+    },
+    {
+      "path": "tests/browser/calendar",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/calendar"
+    },
+    {
+      "path": "tests/browser/documents",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/documents"
+    },
+    {
+      "path": "tests/browser/fixtures",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/fixtures"
+    },
+    {
+      "path": "tests/browser/platform",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/platform"
+    },
+    {
+      "path": "tests/browser/settings",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/settings"
+    },
+    {
+      "path": "tests/browser/sheet",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/sheet"
+    },
+    {
+      "path": "tests/browser/sheet-clones",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/sheet-clones"
+    },
+    {
+      "path": "tests/browser/support",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/support"
+    },
+    {
+      "path": "tests/browser/sync",
+      "reason": "Automated regressions and isolated fixtures; tests/browser/sync"
+    },
+    {
+      "path": "tests/calendar",
+      "reason": "Automated regressions and isolated fixtures; tests/calendar"
+    },
+    {
+      "path": "tests/documents",
+      "reason": "Automated regressions and isolated fixtures; tests/documents"
+    },
+    {
+      "path": "tests/events",
+      "reason": "Automated regressions and isolated fixtures; tests/events"
+    },
+    {
+      "path": "tests/formatting",
+      "reason": "Automated regressions and isolated fixtures; tests/formatting"
+    },
+    {
+      "path": "tests/history",
+      "reason": "Automated regressions and isolated fixtures; tests/history"
+    },
+    {
+      "path": "tests/sheet",
+      "reason": "Automated regressions and isolated fixtures; tests/sheet"
+    },
+    {
+      "path": "tests/sheet-clones",
+      "reason": "Automated regressions and isolated fixtures; tests/sheet-clones"
+    },
+    {
+      "path": "tests/site",
+      "reason": "Automated regressions and isolated fixtures; tests/site"
+    },
+    {
+      "path": "tests/support",
+      "reason": "Automated regressions and isolated fixtures; tests/support"
+    },
+    {
+      "path": "tests/sync/integration",
+      "reason": "Automated regressions and isolated fixtures; tests/sync/integration"
+    },
+    {
+      "path": "tests/sync/protocol",
+      "reason": "Automated regressions and isolated fixtures; tests/sync/protocol"
+    },
+    {
+      "path": "tests/sync/recovery",
+      "reason": "Automated regressions and isolated fixtures; tests/sync/recovery"
+    },
+    {
+      "path": "tests/sync/transport",
+      "reason": "Automated regressions and isolated fixtures; tests/sync/transport"
+    },
+    {
+      "path": "tests/tooling",
+      "reason": "Automated regressions and isolated fixtures; tests/tooling"
+    },
+    {
+      "path": "tests/transfer",
+      "reason": "Automated regressions and isolated fixtures; tests/transfer"
+    },
+    {
+      "path": "worker",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker"
+    },
+    {
+      "path": "worker/calendar",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/calendar"
+    },
+    {
+      "path": "worker/control",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/control"
+    },
+    {
+      "path": "worker/documents",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/documents"
+    },
+    {
+      "path": "worker/events",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/events"
+    },
+    {
+      "path": "worker/history",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/history"
+    },
+    {
+      "path": "worker/sheet",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/sheet"
+    },
+    {
+      "path": "worker/sheet-clones",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/sheet-clones"
+    },
+    {
+      "path": "worker/storage",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage"
+    },
+    {
+      "path": "worker/storage/calendar",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/calendar"
+    },
+    {
+      "path": "worker/storage/control",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/control"
+    },
+    {
+      "path": "worker/storage/documents",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/documents"
+    },
+    {
+      "path": "worker/storage/events",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/events"
+    },
+    {
+      "path": "worker/storage/history",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/history"
+    },
+    {
+      "path": "worker/storage/settings",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/settings"
+    },
+    {
+      "path": "worker/storage/sheet-clones",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/sheet-clones"
+    },
+    {
+      "path": "worker/storage/tasks",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/tasks"
+    },
+    {
+      "path": "worker/storage/transfer",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/transfer"
+    },
+    {
+      "path": "worker/sync",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/sync"
+    },
+    {
+      "path": "worker/transfer",
+      "reason": "External API, PostgreSQL repositories and gateway adapters; worker/transfer"
+    }
+  ],
+  "forbiddenStems": [
+    "types",
+    "utils",
+    "helpers",
+    "constants",
+    "styles",
+    "components",
+    "service",
+    "storage",
+    "index"
+  ],
+  "legacyRootFiles": [],
+  "legacyGenericFiles": [
+    {
+      "path": "src/types.ts",
+      "reason": "Exact existing generic filename retained by issue #100"
+    },
+    {
+      "path": "src/styles.css",
+      "reason": "Exact existing generic filename retained by issue #100"
+    },
+    {
+      "path": "server/sync/core/service.mjs",
+      "reason": "Exact existing generic filename retained by issue #100"
+    }
+  ],
+  "legacyDuplicateGroups": [
+    {
+      "paths": [
+        "edge/link-title.mjs",
+        "server/http/link-title.mjs",
+        "shared/http/link-title.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["scripts/admin/admin.mjs", "worker/control/admin.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "scripts/transfer/transfer.mjs",
+        "server/transfer/transfer.mjs",
+        "worker/transfer/transfer.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/auth/access-tokens.mjs",
+        "worker/control/access-tokens.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["server/calendar/calendar.mjs", "worker/calendar/calendar.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/migrations/postgres.mjs",
+        "worker/storage/postgres.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["server/migrations/sqlite.mjs", "server/storage/sqlite.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["server/control/profiles.mjs", "server/sync/node/profiles.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["server/control/settings.mjs", "worker/sheet/settings.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/sheet-clones/sheet-clones.mjs",
+        "worker/sheet-clones/sheet-clones.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/storage/transfer/backup-recovery.mjs",
+        "shared/transfer/backup-recovery.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/storage/control/control-store.mjs",
+        "worker/storage/control/control-store.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/storage/transfer/logical-format.mjs",
+        "shared/transfer/logical-format.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": ["server/sync/core/directory.mjs", "worker/sync/directory.mjs"],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/sync/core/maintenance.mjs",
+        "worker/sync/maintenance.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    },
+    {
+      "paths": [
+        "server/sync/core/setup-keys.mjs",
+        "worker/control/setup-keys.mjs"
+      ],
+      "reason": "Exact existing basename group across runtime responsibilities; no additional paths allowed"
+    }
+  ],
+  "fixedFiles": [
+    {
+      "path": "edge/globals.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "edge/handler.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "edge/link-title.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "edge/main.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "edge/resources.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "edge/security.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "functions/[[path]].js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "scripts/licenses.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "scripts/team-site-deploy.mjs",
+      "reason": "External team-site-release workflow definitions and synced main/release checkouts can differ in version; keep the existing CLI implementation at this exact path, without a wrapper or duplicate"
+    },
+    {
+      "path": "server/app.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/db.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/index.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/001-control.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/001-site.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/001-team.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/002-control-access-tokens.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/002-site-setup-keys.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/002-team-maintenance.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/003-site-access-tokens.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/postgres/003-team-sheet-clones.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/site-initialize-sql.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/029-base.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/030-sync.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/031-setup-keys.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/032-sync-maintenance.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/033-access-tokens.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/migrations/sqlite/034-sheet-clones.sql",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/storage/database-adapter.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/storage/schema-version.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/storage/sqlite.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/storage/team-store.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "server/validation.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "shared/coreProperties.js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "shared/date-validation.js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "shared/domain.js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "shared/search.js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "shared/validation.js",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "src/Panels.tsx",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "src/app-version.d.ts",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "src/main.tsx",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "src/styles.css",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "src/types.ts",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "tests/browser/fixtures/rich-editor.tsx",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "worker/entry.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "worker/forwarder.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "worker/gateway.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    },
+    {
+      "path": "worker/storage/postgres.mjs",
+      "reason": "Existing entrypoint, integrated module or migration path retained by issue #100"
+    }
+  ]
+}

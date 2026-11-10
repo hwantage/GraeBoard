@@ -1,5 +1,5 @@
 import { secretMatches, failure, privateHeaders } from "../edge/security.mjs";
-import { assertOrigin, verifyAccess } from "./access.mjs";
+import { assertOrigin, verifyAccess } from "./control/access.mjs";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Vite names every build file by its content hash, so a changed file gets a new

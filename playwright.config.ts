@@ -17,7 +17,7 @@ export default defineConfig({
     { name: "webkit", use: { browserName: "webkit" } },
   ],
   webServer: {
-    command: "node scripts/e2e-server.mjs",
+    command: "node scripts/testing/e2e-server.mjs",
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 30000,

@@ -1,4 +1,4 @@
-import "./polyfills";
+import "./platform/polyfills";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/noto-sans-kr/400.css";
@@ -11,8 +11,8 @@ import "@fontsource/pretendard/400.css";
 import "@fontsource/pretendard/500.css";
 import "@fontsource/pretendard/600.css";
 import "@fontsource/pretendard/700.css";
-import App from "./App";
-import Tooltip from "./Tooltip";
+import App from "./app/App";
+import Tooltip from "./ui/Tooltip";
 import "./styles.css";
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

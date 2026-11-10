@@ -1,5 +1,5 @@
 import { createWorker } from "../worker/entry.mjs";
-import { assertOrigin, verifyAccess } from "../worker/access.mjs";
+import { assertOrigin, verifyAccess } from "../worker/control/access.mjs";
 import { secretMatches, failure, privateHeaders } from "./security.mjs";
 
 export function createEdgeHandler({

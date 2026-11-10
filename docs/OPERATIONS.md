@@ -117,7 +117,7 @@ HTTPS 역방향 프록시가 앱으로 요청을 전달하도록 구성하고 �
 
 ### DB 호환성
 
-현재 저장소의 DB 스키마는 **v33**, JSON 내보내기 형식은 **v6**입니다. 내부 서버는 빈 신규 DB 또는 checksum 이력이 일치하는 v33만 엽니다. 기존 v29·v30·v31·v32는 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`로 명시적으로 변환합니다. 일반 시작·복구는 기존 DB를 자동 변환하지 않으며 실제 운영 DB 버전은 배포 전에 별도로 확인합니다.
+현재 저장소의 DB 스키마는 **v34**, JSON 내보내기 형식은 **v7**입니다. 내부 서버는 빈 신규 DB 또는 checksum 이력이 일치하는 v34만 엽니다. 기존 v29·v30·v31·v32·v33은 사본 명칭 전환을 포함하므로 모든 서버를 멈춘 뒤 일회성 도구 `npm run cutover:sheet-clone`으로만 변환합니다([사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)). `npm run migrate`는 새 DB 초기화만 하고 기존 DB에는 이 도구를 안내합니다. 일반 시작·복구는 기존 DB를 자동 변환하지 않으며 실제 운영 DB 버전은 배포 전에 별도로 확인합니다.
 
 스키마·저장 형식·기존 데이터 변환이 필요한 작업은 [DB 변경 지침](DATABASE_CHANGES.md)의 승인·마이그레이션·검증 절차를 따릅니다.
 
@@ -127,9 +127,9 @@ HTTPS 역방향 프록시가 앱으로 요청을 전달하도록 구성하고 �
 
 ### 접속 토큰 도입 업데이트
 
-목표 버전은 내부 SQLite v33, 외부 PostgreSQL site v3(기존 분리형 control v2), 업무 team v2입니다. 운영 DB 버전은 별도로 읽기 전용 확인하며 저장소 버전으로 추정하지 않습니다. 이번 변경은 무기한 토큰의 해시·암호문을 저장하는 전용 테이블·인덱스를 한 번에 추가하며 기존 업무 데이터는 보존합니다. 일반 서버 시작은 이전 SQLite를 자동 변환하지 않습니다.
+접속 토큰을 처음 도입한 버전은 내부 SQLite v33, 외부 PostgreSQL site v3(기존 분리형 control v2), 업무 team v2입니다. **현재 릴리스로 업데이트할 때는 접속 토큰 도입 당시의 SQLite migration 명령 대신 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)을 사용해 v34·team v3까지 전환합니다.** 운영 DB 버전은 별도로 읽기 전용 확인하며 저장소 버전으로 추정하지 않습니다. 이번 변경은 무기한 토큰의 해시·암호문을 저장하는 전용 테이블·인덱스를 한 번에 추가하며 기존 업무 데이터는 보존합니다. 일반 서버 시작은 이전 SQLite를 자동 변환하지 않습니다.
 
-승인된 유지보수 시간에 쓰기를 중지하고 DB·이미지·동기화 저장소를 백업한 다음, SQLite는 기존 `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite`를 실행합니다. 외부는 `npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id 기존팀UUID`를 실행합니다. 기존 분리형 control은 `--scope control --url-env PG_CONTROL_URL`을 사용합니다. 운영 DB에는 `--initialize`를 사용하지 않습니다. 각 명령에 `--dry-run`을 붙여 먼저 점검할 수 있습니다. SQL Editor용 `node scripts/site-key-migration-sql.mjs 기존팀UUID`도 site v1/v2→v3와 team v1→v2를 같은 트랜잭션으로 처리합니다.
+현재 릴리스의 SQLite 전환 도구는 필요한 v33 접속 토큰 단계를 거쳐 v34를 적용합니다. 외부 site v1/v2 설치의 접속 토큰·연결 키 단계는 [기존 site 업그레이드](#내부외부-git-동기화-운영) 절차를 먼저 확인하고, team v3 전환은 사본 명칭 일괄 전환으로 진행합니다. 기존 DB에는 `--initialize`를 사용하지 않습니다.
 
 검증 시간은 별도 복제본에서 측정하고, 토큰 목록·발급·삭제와 기존 업무·문서 조회를 확인한 뒤 쓰기를 재개합니다. DDL·이력·버전은 실패 시 함께 롤백합니다. 배포 실패 시 접속 재개 전에는 DB·이미지 백업과 이전 릴리스로 복구하며, 재개 후에는 백업 이후 입력을 별도로 보존해야 합니다. 내부 복구 시 토큰은 폐기하고 외부 백업은 토큰을 포함하지 않습니다. 외부 운영 migration이나 배포는 별도 승인 범위입니다.
 
@@ -200,7 +200,7 @@ DOCUMENT_IMAGES_DIR=data/restore-check/document-images npm run restore -- backup
 
 복구 명령은 **새 DB 파일**에만 쓰며 기존 대상 파일을 덮어쓰지 않습니다. 이미지 경로를 생략하면 `.env`의 폴더를 사용하므로 훈련에서는 반드시 분리합니다. 복구된 세션과 접속 토큰은 삭제되어 사용자가 다시 로그인하고 필요한 토큰을 재발급해야 합니다. 복구한 DB로 서버를 확인할 때도 별도 작업 경로·DB·이미지 설정과 로컬 바인딩·별도 포트를 사용합니다.
 
-복구 도구는 v29·v30·v31·v32·v33 백업을 원래 버전 그대로 새 경로에 복원합니다. v29·v30·v31·v32 복구본은 원본을 보존한 뒤 명시적 migration으로 v33을 만들며, v30 이상 연결은 `recovery`로 시작합니다. `npm run sync:recover -- --database /절대경로/복구본.sqlite --team-id 팀UUID --dry-run`으로 대조하고, 원래/복구 서버의 쓰기 중단과 백업을 확인한 후 `--confirm-drained`로 읽기 전용 원격 대조를 완료합니다. 결과는 일시정지 상태이며 관리자가 재개합니다.
+복구 도구는 v29·v30·v31·v32·v33·v34 백업을 원래 버전 그대로 새 경로에 복원합니다. v29~v33 복구본은 사본 명칭 전환 전 백업이므로 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)의 전제(전환 전 Git head 그대로)에서만 그 도구로 v34를 만듭니다. v30 이상 연결은 `recovery`로 시작합니다. `npm run sync:recover -- --database /절대경로/복구본.sqlite --team-id 팀UUID --dry-run`으로 대조하고, 원래/복구 서버의 쓰기 중단과 백업을 확인한 후 `--confirm-drained`로 읽기 전용 원격 대조를 완료합니다. 결과는 일시정지 상태이며 관리자가 재개합니다.
 
 운영 복구는 서버와 쓰기 작업을 중지하고 검증된 DB·이미지 묶음을 준비한 뒤 `DB_PATH`와 `DOCUMENT_IMAGES_DIR`을 함께 전환합니다. 해당 DB와 호환되는 릴리스로 재시작하며 이전 DB와 백업은 자동 삭제하지 않습니다. 백업 시점 이후의 변경은 복구본에 없으므로 재개 이후 데이터의 보존 방법을 먼저 판단합니다.
 
@@ -242,7 +242,7 @@ git pull --ff-only origin release
 
 1. 승인된 점검 시간에 사용자 접근을 제한하고 앱과 다른 쓰기 작업을 정상 종료합니다. 시작·정지 명령은 실제 서비스 관리 방식에 맞게 사용합니다.
 2. **기존 릴리스의 도구**와 실제 운영 환경 설정으로 최종 DB·참조 이미지 백업을 생성합니다. 완료 여부와 복구 가능 여부를 확인하고 릴리스·DB 버전·백업 묶음을 대응시켜 보관합니다.
-3. DB 변경이 없다면 기존 데이터 경로를 유지합니다. 변경이 있다면 승인된 마이그레이션을 한 번만 실행하고 `integrity_check`·`foreign_key_check` 및 데이터 보존 검사를 통과한 뒤 진행합니다. `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite --dry-run` 후 승인된 대상에 같은 명령에서 `--dry-run`을 빼고 실행합니다.
+3. DB 변경이 없다면 기존 데이터 경로를 유지합니다. 변경이 있다면 승인된 마이그레이션을 한 번만 실행하고 `integrity_check`·`foreign_key_check` 및 데이터 보존 검사를 통과한 뒤 진행합니다. `npm run migrate -- --engine sqlite --database /절대경로/자료.sqlite --dry-run` 후 승인된 대상에 같은 명령에서 `--dry-run`을 빼고 실행합니다. 사본 명칭 전환 릴리스(v34)는 이 명령 대신 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)의 도구로 변환합니다.
 4. 새 릴리스의 작업 디렉터리·Node.js 경로를 서비스에 지정하고, 기존 `.env` 또는 서비스 환경의 `NODE_ENV=production`, `DB_PATH`, `DOCUMENT_IMAGES_DIR`, 접속·쿠키·프록시 설정을 유지해 시작합니다. 새 DB 생성이나 빈 경로 지정으로 버전 오류를 해결하지 않습니다.
 5. `/api/health`와 실제 첫 화면, 기존 계정 로그인·팀 접근, 업무 조회·저장, 필터, 문서·이미지·캘린더·사본의 주요 동작을 확인합니다. 여러 탭에서 셀 수정 동기화도 점검합니다. `dist/`가 없어도 health는 성공할 수 있으므로 화면 확인을 생략하지 않습니다.
 6. 검증을 마친 뒤 사용자 접속을 재개하고 배포 결과와 로그·백업 위치를 기록합니다.
@@ -290,9 +290,9 @@ git pull --ff-only origin release
 
 SIGTERM/SIGINT는 새 접속·구독을 차단하고 진행 중 HTTP 요청과 동기화를 기다립니다. 종료 상한을 넘으면 비정상 종료 코드 1을 기록하고 프로세스를 종료하며 미전송 명령을 삭제하지 않습니다. 이때 응답을 못 받은 요청은 결과를 재조회하고, 중단된 동기화·정리·백업의 소유권은 실제 이전 실행 종료를 확인한 뒤 복구 절차로 처리합니다. 초기 게시·수동 실행은 완료까지 HTTP 응답을 기다리므로 프록시 시간 초과를 작업 취소로 해석하지 말고 상태를 다시 조회합니다.
 
-팀장 연결 키는 SQLite v31과 외부 계정 관리 site v2에서 추가됐습니다. 이번 릴리스는 SQLite v33·PostgreSQL site v3(분리형 control v2)·team v2까지 명시적으로 변환합니다. SQLite v32/team v2 단계에서 일반 outbox 인덱스를, v33/site v3/control v2 단계에서 접속 토큰 테이블을 추가합니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run migrate -- --engine sqlite --database 사본경로 --dry-run`과 실제 변환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 현재 버전 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본 경로를 변환하고 서버를 재시작합니다. SQLite v33에는 v30·v31·v32·v33 네 migration checksum이 필요하며 기존 이력은 수정하지 않습니다.
+팀장 연결 키는 SQLite v31과 외부 계정 관리 site v2에서 추가됐습니다. 현재 릴리스는 SQLite v34·PostgreSQL site v3(분리형 control v2)·team v3까지 명시적으로 변환하며, v34·team v3 단계는 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)입니다. SQLite v32/team v2 단계에서 일반 outbox 인덱스를, v33/site v3/control v2 단계에서 접속 토큰 테이블을 추가합니다. 기존 계정·승인·업무·문서·이미지를 변환하거나 삭제하지 않습니다. 운영 사본에서 `npm run cutover:sheet-clone`의 `--dry-run`과 실제 전환·무결성·원본 행 보존을 검증한 뒤, 쓰기를 중단하고 기존 릴리스 도구로 DB/이미지 최종 백업을 만듭니다. 승인된 원본을 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환) 순서로 전환하고 서버를 시작합니다. SQLite v34에는 v30·v31·v32·v33·v34 다섯 migration checksum이 필요하며 기존 이력은 수정하지 않습니다.
 
-site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키·접속 토큰 테이블, site v2/v3 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
+site v1에서 키 기능을 도입하는 기존 설치에는 먼저 site v1/v2를 모두 읽을 수 있는 외부 API를 배포합니다. 현재 외부 API는 Supabase Edge에서 실행합니다. GitHub만 접속 가능한 내부 서버에서 Supabase 접속 URL을 사용하지 않습니다. 외부 관리 환경의 CLI 또는 `node scripts/admin/site-key-migration-sql.mjs 팀UUID`로 출력한 SQL을 Supabase SQL Editor에서 실행합니다. 실행 전 업무·계정 변경을 잠시 중단하고 현행 외부 백업을 보관합니다. SQL은 팀·버전·checksum을 확인하고 연결 키·접속 토큰 테이블, site v2/v3 이력과 필요한 team v2 인덱스·이력을 한 트랜잭션에 추가합니다. 실패하면 롤백하며 재실행은 중복 적용하지 않습니다. 실제 점검 시간은 백업과 검증 시간에 따라 달라집니다.
 
 기존 Google 연결은 유지됩니다. 초기 키 방식으로 되돌리기 위해 예전 API 코드만 배포하지 않습니다. 접속 재개 전 실패는 백업과 대응 릴리스로 함께 복구하고, 재개 후에는 현재 데이터를 보존한 채 수정 배포를 우선합니다. 백업 복구는 백업 이후 저장을 잃을 수 있으므로 재개 후 전체 복구 전에는 그 사이 데이터를 별도 보존해야 합니다. 복구된 미사용 연결 키는 폐기하며 내부에서 재발급합니다.
 
@@ -312,11 +312,81 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
 
 ### 이전 외부 DB의 업그레이드 전 백업
 
-`npm run backup:external -- --config /private/approved-resources.json --output /private/new-backup`의 원본 연결에만 PostgreSQL team v1, control v1 및 site v1/v2의 검증된 기존 checksum을 허용합니다. 일반 API·새 복구 대상은 여전히 현재 team v2/site v3/control v2 migration이 필요합니다. site v1 원본은 기존 backup v2 형식으로, site v2/v3 원본은 backup v3 형식으로 생성하며 원본 DB를 자동 변환하지 않습니다. 기존 분리 control/team backup v1과 site backup v2·v3의 해시·복구 규칙은 유지합니다. 형식 v2 동기화 상태도 backup v3에서 reportTask/reportCell·P·receipts·conflicts 원문을 보존하며, 복구는 새 writer epoch와 recovery 상태로 시작합니다.
+`npm run backup:external -- --config /private/approved-resources.json --output /private/new-backup`의 원본 연결에만 control v1 및 site v1/v2의 검증된 기존 checksum을 허용합니다. 팀 업무(team)는 현재 형식인 team v3만 백업하며, team v1·v2 원본은 행을 읽기 전에 checksum 불일치로 거절합니다. 사본 명칭 전환 전 팀은 그 형식을 쓴 기존 릴리스의 도구로 백업하고(아래 절차의 최종 백업), 이 릴리스의 `restore:external`·`transfer`는 그 논리 이관 형식 v1 묶음을 복원하지 않고 "기록한 릴리스로 격리 DB에 복원한 뒤 일회성 전환 도구(`npm run cutover:sheet-clone`)로 변환" 안내와 함께 거절합니다([사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)). 일반 API·새 복구 대상은 여전히 현재 team v3/site v3/control v2 migration이 필요합니다. site v1 원본은 기존 backup v2 형식으로, site v2/v3 원본은 backup v3 형식으로 생성하며 원본 DB를 자동 변환하지 않습니다. 기존 분리 control/team backup v1과 site backup v2·v3의 해시·복구 규칙은 유지합니다. 분할형 동기화 상태(전환 전 프로토콜 2의 reportTask/reportCell, 전환 후 프로토콜 4의 sheetCloneTask/sheetCloneCell)도 backup v3에서 P·receipts·conflicts와 함께 원문을 보존하며, 복구는 새 writer epoch와 recovery 상태로 시작합니다.
 
-## 동기화 v2 명시 전환
+## 사본 명칭(SheetClone) 일괄 전환
 
-앱 배포·SQLite v32/PostgreSQL team v2 migration은 v1 이력을 자동 전환하지 않습니다. v1/v2를 모두 읽는 동일 릴리스를 양쪽에 배포하고, 운영 백업·복구 리허설과 전환 대상 팀의 승인을 먼저 완료합니다. 기존 v1 report 셀과 이력은 그대로 보존합니다.
+사본 도메인의 저장 이름을 `report`에서 `SheetClone`으로 바꾸는 릴리스입니다(SQLite v34, PostgreSQL team v3, JSON 반출 v7, 동기화 프로토콜 1 → 3·2 → 4). 화면의 원본/사본 흐름과 기존 ID·내용·권한·서식·문서·메모·이미지·이력은 그대로입니다. 옛 API(`/api/reports`)·링크(`/links/report-*`)는 새 앱에서 열리지 않으며, 저장된 문서의 사본 링크는 변환 중 새 주소로 바뀝니다. **모든 사이트를 멈춘 한 번의 점검 시간**에 일회성 도구 `npm run cutover:sheet-clone`(`tools/sheet-clone-cutover`)이 사내 SQLite, 외부 PostgreSQL, 동기화 Git의 시작점을 차례로 전환하고, 그 뒤 사이트를 순서대로 시작합니다. 앱·Edge 런타임에는 전환 중 상태를 다루는 코드가 없습니다.
+
+지원 범위와 전제:
+
+- 대상은 현재 운영 DB와, 동기화를 마치고 충돌을 해결한 뒤 쓰기를 멈추고 만든 **정상 상태의 최종 백업**입니다. SQLite v29~v33, PostgreSQL team v1·v2, 동기화 프로토콜 1·2를 받습니다.
+- 한 번에 외부 사이트가 있는 **한 팀**을 전환합니다. 사내 DB에 공유 이력이 있는 다른 팀이 있으면 거절합니다. 공유 이력이 없는 설치(외부 사이트 없음)는 `--database`만 지정해 SQLite만 변환합니다.
+- 그 팀은 양쪽 모두 일시정지(또는 연결 해제·복구 점검) 상태이고, 미전송·held 명령과 미해결 충돌이 0입니다. 양쪽 canonical head가 같고 그것이 Git의 현재 head이며, 그 커밋에 기록된 결과가 두 사이트의 C와 같아야 합니다. 조건이 맞지 않으면 도구는 아무것도 쓰지 않고 거절합니다(`SHEET_CLONE_PREFLIGHT`, `SHEET_CLONE_CUTOVER`). 미전송·충돌을 지워 조건을 맞추지 않습니다. 이런 상태의 백업은 그대로 보존되지만 바로 전환할 수 없습니다.
+- 전환 전에 일반 문서를 모두 저장하고 브라우저 탭과 기존 세션을 닫습니다. 저장하지 않은 초안은 저장한 뒤 닫으며 localStorage·sessionStorage를 지우지 않습니다. 전환 후에는 새 빌드를 다시 엽니다. 시크릿 문서는 변환 대상이 아닙니다.
+- 전환 전 세션의 생성 요청 재시도는 새 키(`sheet-clone-create:<id>`)에서 기록한 요청 해시와 맞지 않아 409로 거절되며 사본을 다시 만들지 않습니다. XLSX 가져오기 재시도 키는 기록에서 재현해 새 mode 이름의 키로 옮기며, 재현하지 못하면 거절합니다.
+- 절대 주소 링크(`https://…/links/report-task/…`)는 `--site-origin`으로 지정한 운영 사이트 주소만 바꿉니다. 상대 주소는 항상 바꾸고 다른 사이트 주소·문장·코드는 그대로 둡니다. 한 번의 실행이 두 DB를 같은 목록으로 변환합니다.
+- 도구는 사내 서버 호스트에서 아래의 정확한 고정 커밋 디렉터리로 실행합니다. 최신 앱 디렉터리와 섞지 않습니다. Git은 사내 사이트의 프로필(`GRAEBOARD_SYNC_PROFILES`, 저장된 인증 정보, `.env`)로, 외부 DB는 `--pg-url-env`가 가리키는 환경 변수의 접속 주소로 접근합니다.
+
+점검 시간: 운영 규모 자료의 전환 시간(두 DB의 미리보기와 변환, 문서 링크 재작성, 경계·checkpoint 게시)은 이 릴리스에서 측정하지 않았습니다. 도구는 실제 변경 전에 두 DB를 사본과 ROLLBACK 트랜잭션으로 한 번씩 미리 변환하므로 변환 시간은 두 번 듭니다. 실제 실행 전에 운영과 같은 규모의 격리된 사본(사내 SQLite 사본, 외부 PostgreSQL 복제 DB, 별도 Git 저장소)에서 아래 순서를 그대로 실행해 단계별 시간을 재고, 그 측정값으로 점검 시간을 정합니다. 측정 없이 추정한 시간을 공지하지 않습니다.
+
+### 고정 전환 소스 준비
+
+개발 전환은 완료했으며 **운영 전환은 전체 리팩토링 뒤에 별도 승인된 점검 시간에 수행**합니다. 리팩토링한 앱에는 전환 도구나 `cutover:sheet-clone` 명령이 없습니다. 아래 명령은 고정 커밋의 전체 소스에서만 제공합니다. 기존 오류 메시지의 `npm run cutover:sheet-clone` 안내도 이 디렉터리에서 실행한다는 뜻입니다.
+
+기준 커밋은 `7fec065d1adc241da29d54474af06b390d12d72b`, 그 `package-lock.json` SHA-256은 `61e4874a625e9f17fc4d98a84bdac77b0933055659eab32a0da3197c1f7dc4b5`입니다. 임시 archive나 특정 개발 PC의 워크트리 경로를 기준으로 삼지 않습니다. 도구만 복사하지 말고 전체 커밋을 별도 디렉터리에 checkout합니다. 예시 경로는 실제 승인된 경로로 바꿉니다.
+
+```sh
+git clone --no-checkout https://github.com/hwantage/GraeBoard.git /approved/sheet-clone-cutover-source
+git -C /approved/sheet-clone-cutover-source fetch origin 7fec065d1adc241da29d54474af06b390d12d72b
+git -C /approved/sheet-clone-cutover-source checkout --detach 7fec065d1adc241da29d54474af06b390d12d72b
+cd /approved/sheet-clone-cutover-source
+test "$(git rev-parse HEAD)" = 7fec065d1adc241da29d54474af06b390d12d72b
+test -z "$(git status --porcelain --untracked-files=all)"
+node --version
+node --input-type=module -e 'import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; if(createHash("sha256").update(readFileSync("package-lock.json")).digest("hex")!=="61e4874a625e9f17fc4d98a84bdac77b0933055659eab32a0da3197c1f7dc4b5") process.exit(1)'
+npm ci --include=dev
+```
+
+Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 버전·실행 파일 경로를 기록합니다. 준비 검증은 Node 22.17.1에서 수행했으며, 다른 런타임에서는 먼저 격리 사본으로 검증합니다. 원본 `tools/sheet-clone-cutover/` 5개와 fixture 11개의 hash 목록은 최신 앱의 [고정 소스 검증 설정](../tests/support/frozen-cutover-source.json)으로 대조합니다. 원본 커밋에서 `git diff --exit-code`·clean tree를 다시 확인하고, 기존 전환 회귀는 `TEST_PG_BIN=/approved/postgresql/bin node --test --test-concurrency=1 tests/sheet-clone-conversion.test.mjs tests/sheet-clone-cutover.test.mjs`로 실행합니다. 합성 fixture 검사 통과가 운영 사본 검증을 대신하지 않습니다. 실행 기록이 이미 있다면 동일 커밋·의존성·Node와 기존 `toolDigest`를 유지해 재개합니다.
+
+고정 소스에 운영 `.env`를 복사하거나 상대 경로를 그대로 적용하지 않습니다. `--env-file=/approved/runtime/production.env`로 **실제 파일을 절대 경로로** 읽고, 아래 환경 변수와 인자는 기존 운영 경로를 절대 경로로 지정합니다. `GRAEBOARD_SYNC_DIR`은 기존 clone들의 부모이며 프로필 ID가 뒤에 붙습니다. 프로필·설치 UUID·저장된 인증 키와 PostgreSQL URL 환경 변수는 기존 서비스와 같아야 합니다. DB·이미지·Git clone·journal은 소스 checkout과 별도로 유지합니다. 실행 전에 파일 존재·clone remote·현재 head·DB 버전을 읽기 전용으로 대조하며 빈 DB나 새 Git을 만들어 오류를 우회하지 않습니다. PostgreSQL 비밀번호와 토큰은 인자·로그에 출력하지 않습니다.
+
+전환 순서(실제 경로·주소·UUID는 승인된 대상의 값으로 바꿉니다):
+
+1. 양쪽 사이트를 UI에서 **일시정지**하고 두 사이트의 상태(`mode:paused`, `pending:0`, `conflicts:0`, 같은 canonical head)를 기록합니다. 사용자 쓰기·자동 작업을 멈춥니다.
+2. **기존 릴리스의 도구**로 사내 DB·이미지(`npm run backup`)와 외부 DB·R2(`backup:external`)의 최종 백업을 만들고 Git 기준 head와 함께 대응시켜 보관합니다.
+3. 사내 서버를 멈추고, 외부 Edge 함수(또는 그 앞의 gateway)를 멈춰 어느 쪽에도 요청이 들어오지 않게 합니다.
+4. 사내 서버 호스트의 위 **고정 소스 디렉터리**에서 미리보기를 실행합니다. 아무것도 쓰지 않습니다.
+
+   ```sh
+   DB_PATH=/approved/data/weekly-plan.sqlite GRAEBOARD_SYNC_DIR=/approved/data/sync DOCUMENT_IMAGES_DIR=/approved/data/document-images node --env-file=/approved/runtime/production.env tools/sheet-clone-cutover/cli.mjs --database /approved/data/weekly-plan.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --dry-run
+   ```
+
+   `plan.baseHead`가 1단계에 기록한 head인지, `fromProtocol`·`toProtocol`·`resultHash`와 `internal`·`external` 요약(바뀐 행·링크 수, 남긴 주소 `links.keptSamples`)을 확인합니다.
+5. `--dry-run` 대신 실행 기록 디렉터리를 지정해 실행합니다. 새 디렉터리이거나 같은 전환의 기록이 있는 디렉터리여야 합니다.
+
+   ```sh
+   DB_PATH=/approved/data/weekly-plan.sqlite GRAEBOARD_SYNC_DIR=/approved/data/sync DOCUMENT_IMAGES_DIR=/approved/data/document-images node --env-file=/approved/runtime/production.env tools/sheet-clone-cutover/cli.mjs --database /approved/data/weekly-plan.sqlite --pg-url-env PG_SITE_URL --team-id 팀UUID --site-origin https://사내주소 --site-origin https://외부주소 --journal /approved/journals/sheet-clone-cutover-팀UUID
+   ```
+
+   도구는 먼저 4단계와 같은 미리보기를 다시 하고, 그다음 사내 DB 변환, 외부 DB 변환, Git 경계 커밋 게시, 표준 checkpoint 게시, 사내 커서 이동, 외부 커서 이동을 차례로 진행합니다. 각 DB 변환은 자기 트랜잭션 하나이고 계획한 결과 hash가 아니면 커밋하지 않습니다. Git 게시는 기대 head를 확인하는 CAS입니다. 끝나면 `checkpoint`·`resultHash`를 출력하며, 두 DB의 canonical head가 그 checkpoint, hash가 `resultHash`입니다. 실행 기록 `journal.json`은 끝난 단계와 도구 코드의 digest(`toolDigest`)를 담으므로 최종 백업과 함께 보관합니다.
+6. 새 릴리스를 배포하고 **사내 서버를 먼저** 시작합니다. 동기화 상태의 head가 checkpoint, `protocol`이 3 또는 4, 미전송·충돌 0인지 확인한 뒤 UI에서 재개합니다. 그다음 외부 Edge를 시작해 같은 확인 뒤 재개합니다. 기존 사본 열기·편집·재복사·문서/메모·링크·가져오기·이력 복구가 동작하는지 확인합니다.
+
+중간에 멈춘 경우: 오류를 해결한 뒤 **같은 명령을 다시 실행**합니다. 끝난 단계는 건너뛰며, 게시는 했지만 기록하지 못한 경계·checkpoint도 Git에서 확인해 이어 갑니다. 다른 팀·옵션의 기록이나 다른 버전의 도구가 쓴 기록이면 거절합니다. 이 도구가 게시하지 않은 커밋이 Git head에 있으면, 그 head를 보여 주고 멈춥니다. 덮어쓰거나 숨기지 않습니다. 변환 뒤 사이트가 먼저 시작돼 명령이 저장된 경우에도 커서 단계에서 멈추고 그 명령을 그대로 둡니다.
+
+실패와 되돌림: 되돌림의 경계는 **Git 경계 커밋 게시**입니다.
+
+- 게시 전에는 Git이 바뀌지 않았습니다. 변환한 DB를 사용하지 말고, 사내 DB·사내 이미지·외부 DB·R2를 2단계의 같은 시점 최종 백업으로 함께 복원하고 기존 릴리스로 되돌립니다. 한쪽 DB나 이미지만 되돌리지 않으며, 기록한 Git 기준 head가 그대로인지 확인합니다.
+- 최종 백업을 복원하면 그 백업 이후의 쓰기는 사라집니다. 정상 절차에서는 1단계에서 쓰기를 멈췄으므로 없지만, 백업 뒤에 들어온 변경이 있으면 복원 전에 따로 보존하고 복원 뒤 대조해 다시 반영합니다.
+- 게시 후에는 Git 이력에서 경계를 지우지 않습니다(이력은 바꾸지 않습니다). 이전 런타임은 경계 커밋을 읽지 못하므로 코드만 이전 릴리스로 되돌리지 않고, 같은 명령을 다시 실행해 전환을 끝냅니다. 쓰기 재개 후 문제가 발견되면 먼저 쓰기를 멈추고 그 사이 변경을 보존한 상태에서 복구 계획을 정합니다.
+- 전환을 끝낸 뒤에는 전환 전 백업을 그대로 복구 대상으로 쓰지 않습니다. 전환 후의 복구는 이 릴리스의 백업과 `sync:recover`를 씁니다. 새 사이트와 복구는 checkpoint부터 읽습니다.
+
+소스 분리 시점: 개발 전환 완료 후 리팩토링의 별도 커밋에서 최신 앱의 도구·원본 fixture·전환 전용 suite·npm 명령을 제거합니다. 운영 전환 완료는 이 분리의 선행 조건이 아닙니다. 미래 운영 실행·재개는 위의 고정 전체 커밋에서만 수행하며, 전환 후에만 새 앱을 배포합니다. 일반 migration·권한 검사는 최신 앱에 남고 변환 생성만 격리 고정 소스를 사용합니다. 최종 앱과 전환 결과의 내부/외부 API·동기화·checkpoint 복구 호환성을 별도 검사합니다. SQLite v34·PostgreSQL team v3 migration과 checksum, 프로토콜 3/4 표시, 논리 이관 v2의 v1 거절도 계속 남습니다. 고정 소스와 journal·최종 백업은 운영 전환·복구 검증이 끝나기 전에 정리하지 않습니다.
+
+## 동기화 프로토콜 4 명시 전환
+
+프로토콜 4는 사본 명칭 전환 전의 v2(사본 행·셀 분할)와 같은 구조입니다. 프로토콜 3(사본 한 레코드)인 팀만 이 절차의 대상이며, 앱 배포·migration은 프로토콜 3 이력을 자동 전환하지 않습니다. 양쪽에 같은 릴리스를 배포하고 운영 백업·복구 리허설과 전환 대상 팀의 승인을 먼저 완료합니다. 기존 사본 셀과 이력은 그대로 보존합니다.
 
 1. 양쪽의 사용자 쓰기와 자동 작업을 중지하고 미전송·충돌을 모두 처리합니다. 양쪽을 **일시정지**하고 정리·백업 작업이 완료됐는지 확인합니다.
 2. 각 사이트의 관리자 인증 쿠키를 별도 파일(권한 0600)에 준비합니다. 쿠키 원문은 명령 인자·Git·검증 로그에 넣지 않습니다. 아래 기본 명령은 상태만 조회합니다.
@@ -326,14 +396,14 @@ npm run sync:history-maintenance -- --engine postgres --url-env APPROVED_TEAM_DA
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie
    ```
 
-3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 v1 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 v2 상태의 용량 한도(snapshot·receipt, 지정한 경우 업무·엔티티 상한)를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
+3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`, `protocol:3`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 프로토콜 3 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 프로토콜 4 상태의 용량 한도(snapshot·receipt, 지정한 경우 업무·엔티티 상한)를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
 
    ```sh
    npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
    npm run sync:upgrade -- --url https://내부주소 --team 팀UUID --cookie-file /안전경로/internal-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
    ```
 
-4. 첫 명령은 v1 백업·v2 snapshot이 포함된 전환 커밋을 CAS로 게시합니다. 두 번째는 같은 v1 기준의 직계 전환 커밋만 검증해 수신합니다. 일반 커밋·다른 head·추가 미전송·충돌이 있으면 중단합니다. 양쪽은 계속 일시정지 상태입니다.
-5. 양쪽 응답의 `protocol:2`, `head`, `stateHash`가 같고 업무·사본·문서·이미지가 보존됐는지 확인한 뒤 UI에서 재개하고 쓰기·자동 작업을 다시 허용합니다.
+4. 첫 명령은 프로토콜 3 백업·프로토콜 4 snapshot이 포함된 전환 커밋을 CAS로 게시합니다. 두 번째는 같은 기준의 직계 전환 커밋만 검증해 수신합니다. 일반 커밋·다른 head·추가 미전송·충돌이 있으면 중단합니다. 양쪽은 계속 일시정지 상태입니다.
+5. 양쪽 응답의 `protocol:4`, `head`, `stateHash`가 같고 업무·사본·문서·이미지가 보존됐는지 확인한 뒤 UI에서 재개하고 쓰기·자동 작업을 다시 허용합니다.
 
-v1 과거 커밋은 reducer 1의 기존 차이 탐색 상한 20,000으로 재생하며 v2 새 커밋에만 상한 2,000을 적용합니다. 상한 초과는 원문을 보존한 충돌로 남습니다. v2 이후에는 구버전 코드만 되돌리지 않습니다. 전환 실패 시 양쪽의 현재 C/P/L·Git head·전환 전 백업을 보존하고 원인을 확인합니다. 운영자의 전환 실행과 로컬 이력 정리 실행은 별도 작업입니다.
+프로토콜 3 커밋은 기존 차이 탐색 상한 20,000으로 재생하며 프로토콜 4 커밋에만 상한 2,000을 적용합니다. 상한 초과는 원문을 보존한 충돌로 남습니다. 전환 이후에는 구버전 코드만 되돌리지 않습니다. 전환 실패 시 양쪽의 현재 C/P/L·Git head·전환 전 백업을 보존하고 원인을 확인합니다. 전환 뒤 새로 가져오는 외부 사이트와 복구는 그 앞의 표준 checkpoint부터 읽고 전환을 재생합니다. 다만 미전송 명령은 전환을 넘지 못하므로, 복구할 때 게시되지 않은 변경(미전송, 또는 `sync:recover`가 찾은 기록되지 않은 변경)이 있는 전환 전 백업은 전환 커밋 앞에서 `SYNC_TRANSITION_PENDING`으로 멈추고 그 변경을 그대로 보존합니다. 전환 뒤의 복구에는 전환 뒤에 만든 백업을 씁니다. 운영자의 전환 실행과 로컬 이력 정리 실행은 별도 작업입니다.
