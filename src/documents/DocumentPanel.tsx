@@ -48,6 +48,7 @@ import DocumentFullPageButton from "./DocumentFullPageButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
+  useDocumentPageTitle,
   type DocumentLinkTarget,
 } from "./document-links";
 import "./task-document.css";
@@ -73,6 +74,7 @@ type Props = Pick<
   inline?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
+  browserTitleFallback?: string;
   // Memo cards: each card's link.
   documentLink?: (documentId: string) => DocumentLinkTarget;
 };
@@ -134,6 +136,12 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const readOnly = props.readOnly || !!props.emptyUntilSaved;
     const label = props.label || "업무 문서";
     const current = documents.find((doc) => doc.id === selected);
+    useDocumentPageTitle(
+      (current?.title !== DEFAULT_DOCUMENT_TITLE && current?.title) ||
+        props.browserTitleFallback ||
+        current?.title ||
+        label,
+    );
     const menuDocument = documents.find((doc) => doc.id === menu);
     const listState = useRef({
       busy,

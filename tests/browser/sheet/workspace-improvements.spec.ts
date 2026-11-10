@@ -271,9 +271,8 @@ test("꼬리 메모 제목 줄 편집·전체 화면·드래그 스크롤은 편
   expect((await memos.boundingBox())!.width).toBeCloseTo(390, 0);
   expect((await memos.boundingBox())!.height).toBeCloseTo(900, 0);
   await expect(first.locator(".document-expand")).toBeHidden();
-  await expect(first.locator(".ProseMirror")).toContainText(
-    "전체 화면에서 저장한 내용",
-  );
+  await expect(source).toBeVisible();
+  await expect(source).toHaveValue("# 전체 화면에서 저장한 내용");
   await page.setViewportSize({ width: 1366, height: 900 });
   await expect(first).toHaveAttribute("role", "dialog");
   expect(await first.evaluate((el) => el.matches(":modal"))).toBe(true);
@@ -318,9 +317,8 @@ test("꼬리 메모 제목 줄 편집·전체 화면·드래그 스크롤은 편
   await expect(memos.locator(".memo-document-card:visible")).toHaveCount(1);
   await expect(memos.locator(`[data-document-id="${ids[2]}"]`)).toBeVisible();
   await memos.getByRole("tab", { name: "수정한 메모", exact: true }).click();
-  await expect(first.locator(".ProseMirror")).toContainText(
-    "전체 화면에서 저장한 내용",
-  );
+  await expect(source).toBeVisible();
+  await expect(source).toHaveValue("# 전체 화면에서 저장한 내용");
   await memos.screenshot({ path: info.outputPath("memo-mobile.png") });
   await memos.getByRole("button", { name: "꼬리 메모", exact: true }).click();
   expect((await request(page, `${path}/${ids[0]}`)).markdown).toContain(
