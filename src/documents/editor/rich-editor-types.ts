@@ -1,12 +1,19 @@
 import type { ReactNode } from "react";
 import type { DocumentImages } from "../document-storage";
+export type RemoteMarkdown = { markdown: string; sequence: number };
+// Lets the host show a merged remote version at once, before a key typed while
+// React renders could be merged away. Before the editor is ready the
+// remoteMarkdown prop applies it instead.
+export type RichEditorHandle = {
+  applyRemote: (remote: RemoteMarkdown) => void;
+};
 export type RichEditorProps = {
   label?: string;
   images?: DocumentImages;
   documentLinks?: boolean;
   linkTitles?: boolean;
   initialMarkdown: string;
-  remoteMarkdown?: { markdown: string; sequence: number };
+  remoteMarkdown?: RemoteMarkdown;
   readOnly: boolean;
   saveStatus?: ReactNode;
   modeControl?: ReactNode;
