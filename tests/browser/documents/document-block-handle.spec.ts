@@ -186,7 +186,7 @@ test("블록에 마우스를 올리면 손잡이가 나타나고 끌어서 옮�
   await expect(rich(page).locator(":scope > ul")).toHaveCount(2);
 });
 
-test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥 클릭으로 닫는다", async ({
+test("손잡이 메뉴로 형식을 바꾸고 복사·삭제하며 Esc와 바깥 클릭으로 닫는다", async ({
   page,
 }) => {
   await save(page, taskIds[0], "첫째 문단\n\n* 하나\n* 둘\n\n셋째 문단");
@@ -199,7 +199,7 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
   await expect(menu(page).getByRole("option")).toHaveText([
     "위에 추가",
     "아래에 추가",
-    "복제",
+    "복사",
     "위로 이동",
     "아래로 이동",
     "삭제",
@@ -226,7 +226,7 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
   );
   await expect(rich(page)).toBeFocused();
   // Keyboard navigation skips unavailable entries, like the "/" menu.
-  for (const name of ["아래에 추가", "복제"]) {
+  for (const name of ["아래에 추가", "복사"]) {
     await page.keyboard.press("ArrowDown");
     await expect(option(page, name)).toHaveAttribute("aria-selected", "true");
   }
@@ -266,34 +266,24 @@ test("손잡이 메뉴로 형식을 바꾸고 복제·삭제하며 Esc와 바깥
     .click();
   await expect(menu(page)).toHaveCount(0);
 
-  // Duplicate, then delete one copy with the keyboard; undo brings it back.
+  // Copy leaves the document unchanged; deleting and undoing still work.
   await hover(page, blocks.last());
   await handle(page).click();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
-  await expect(blocks).toHaveText([
-    "첫째 문단",
-    "하나둘",
-    "셋째 문단",
-    "셋째 문단",
-  ]);
+  await expect(blocks).toHaveText(["첫째 문단", "하나둘", "셋째 문단"]);
   await hover(page, blocks.nth(2));
   await handle(page).click();
   await option(page, "삭제").click();
-  await expect(blocks).toHaveText(["첫째 문단", "하나둘", "셋째 문단"]);
+  await expect(blocks).toHaveText(["첫째 문단", "하나둘", ""]);
   await expect
     .poll(() => markdown(page))
-    .toMatch(exact("## 첫째 문단\n\n1. 하나\n2. 둘\n\n셋째 문단"));
+    .toMatch(exact("## 첫째 문단\n\n1. 하나\n2. 둘"));
   await detail(page)
     .getByRole("button", { name: "문서 실행취소", exact: true })
     .click();
-  await expect(blocks).toHaveText([
-    "첫째 문단",
-    "하나둘",
-    "셋째 문단",
-    "셋째 문단",
-  ]);
+  await expect(blocks).toHaveText(["첫째 문단", "하나둘", "셋째 문단"]);
 });
 
 test("손잡이 메뉴의 위에 추가·아래에 추가는 빈 블록을 만들고 커서를 둔다", async ({
@@ -459,7 +449,7 @@ async function selectAcross(
 }
 const selected = (page: Page) => rich(page).locator(".document-block-selected");
 
-test("여러 블록에 걸친 선택은 손잡이·메뉴·방향키로 함께 옮기고 복제·삭제한다", async ({
+test("여러 블록에 걸친 선택은 손잡이·메뉴·방향키로 함께 옮기고 복사·삭제한다", async ({
   page,
 }) => {
   await save(page, taskIds[0], "하나\n\n둘\n\n셋\n\n넷\n\n다섯");
@@ -495,26 +485,94 @@ test("여러 블록에 걸친 선택은 손잡이·메뉴·방향키로 함께 �
   await page.keyboard.press("Alt+Shift+ArrowDown");
   await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
 
-  // The menu duplicates and deletes them together.
+  // Copy the selected blocks without changing the document.
+  await page.evaluate(() => {
+    (window as any).blockClipboard = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).blockClipboard = await (
+            await items[0].getType("text/plain")
+          ).text();
+        },
+      },
+    });
+  });
   await hover(page, blocks.nth(2));
   await handle(page).click();
-  await option(page, "복제").click();
-  await expect(blocks).toHaveText([
-    "하나",
-    "넷",
-    "둘",
-    "셋",
-    "둘",
-    "셋",
-    "다섯",
-  ]);
-  await hover(page, blocks.nth(4));
+  await option(page, "복사").click();
+  await expect(
+    detail(page).getByText("복사되었습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).blockClipboard)).toMatch(
+    exact("둘\n\n셋"),
+  );
+  await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
+  await hover(page, blocks.nth(2));
   await handle(page).click();
   await option(page, "삭제").click();
-  await expect(blocks).toHaveText(["하나", "넷", "둘", "셋", "다섯"]);
-  await expect
-    .poll(() => markdown(page))
-    .toMatch(exact("하나\n\n넷\n\n둘\n\n셋\n\n다섯"));
+  await expect(blocks).toHaveText(["하나", "넷", "다섯"]);
+  await expect.poll(() => markdown(page)).toMatch(exact("하나\n\n넷\n\n다섯"));
+});
+
+test("목록 항목 복사는 체크 상태와 목록 형식을 보존하고 이웃 항목은 제외한다", async ({
+  page,
+}) => {
+  const source = "- [ ] 앞 항목\n- [x] 선택 항목\n- [ ] 뒤 항목";
+  await save(page, taskIds[0], source);
+  await open(page);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).blockClipboard = {
+            text: await (await items[0].getType("text/plain")).text(),
+            html: await (await items[0].getType("text/html")).text(),
+          };
+        },
+      },
+    });
+  });
+  await hover(
+    page,
+    rich(page).locator("li p").filter({ hasText: "선택 항목" }),
+  );
+  await handle(page).click();
+  await option(page, "복사").click();
+  await expect(
+    detail(page).getByText("복사되었습니다.", { exact: true }),
+  ).toBeVisible();
+  const copied = await page.evaluate(() => (window as any).blockClipboard);
+  expect(copied.text).toMatch(/^[-*] \[x\] 선택 항목\n?$/);
+  expect(copied.html).toContain("<ul");
+  expect(copied.html).toContain("선택 항목");
+  expect(copied.html).not.toContain("앞 항목");
+  expect(copied.html).not.toContain("뒤 항목");
+  expect(await markdown(page)).toBe(source);
+
+  // A refused clipboard reports the failure and leaves the document alone.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async () => {
+          throw new Error("denied");
+        },
+      },
+    });
+  });
+  await hover(
+    page,
+    rich(page).locator("li p").filter({ hasText: "선택 항목" }),
+  );
+  await handle(page).click();
+  await option(page, "복사").click();
+  await expect(
+    detail(page).getByText("복사하지 못했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await markdown(page)).toBe(source);
 });
 
 test("커서가 토글 제목에 있어도 안쪽 블록의 손잡이는 그 블록만 다룬다", async ({

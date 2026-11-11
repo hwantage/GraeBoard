@@ -26,6 +26,7 @@ import DocumentLinkPanel, {
 } from "../documents/DocumentLinkPanel";
 import {
   DocumentLinkContext,
+  DocumentPageTitleContext,
   UNAVAILABLE_LINK_MESSAGE,
   documentLinkFullPage,
   documentLinkKey,
@@ -458,8 +459,27 @@ function Workspace({
   const [toast, setToast] = useToast();
   // Details opened from document links, over whatever is open below.
   const [linkPanels, setLinkPanels] = useState<
-    { key: string; link: OpenedDocumentLink; fullPage?: boolean }[]
+    {
+      key: string;
+      link: OpenedDocumentLink;
+      fullPage?: boolean;
+      browserTitle?: string;
+    }[]
   >([]);
+  const browserTitle =
+    (deepLink && linkPanels.at(-1)?.browserTitle) ||
+    {
+      annual: "연간 업무",
+      documents: "문서",
+      calendar: "캘린더",
+      insights: "인사이트",
+    }[workspaceRoute.route];
+  useEffect(() => {
+    document.title = `${browserTitle} · 그래보드`;
+    return () => {
+      document.title = "그래보드";
+    };
+  }, [browserTitle]);
   const [linkReload, setLinkReload] = useState(0);
   // "사본에서 열기" on a copy's task moves to that copy (linkNavigation).
   const [linkNavigation, setLinkNavigation] = useState<{
@@ -2896,22 +2916,40 @@ function Workspace({
         />
       )}
       {linkPanels.map(({ key, link, fullPage }) => (
-        <DocumentLinkPanel
+        <DocumentPageTitleContext.Provider
           key={key}
-          link={link}
-          user={user}
-          readOnly={presentation}
-          fullPage={fullPage}
-          calendarTheme={calendarTheme}
-          onClose={() => closeLinkPanel(key)}
-          onDeleted={() => closeLinkPanel(key)}
-          onOpenSheetClone={(target) =>
-            void openInSheetClone(
-              target,
-              link.kind === "sheet-clone-task" ? link.task.teamId : teamId,
-            )
+          value={
+            deepLink
+              ? (title) =>
+                  setLinkPanels((panels) => {
+                    const panel = panels.find((item) => item.key === key);
+                    return !panel || panel.browserTitle === title
+                      ? panels
+                      : panels.map((item) =>
+                          item === panel
+                            ? { ...item, browserTitle: title }
+                            : item,
+                        );
+                  })
+              : null
           }
-        />
+        >
+          <DocumentLinkPanel
+            link={link}
+            user={user}
+            readOnly={presentation}
+            fullPage={fullPage}
+            calendarTheme={calendarTheme}
+            onClose={() => closeLinkPanel(key)}
+            onDeleted={() => closeLinkPanel(key)}
+            onOpenSheetClone={(target) =>
+              void openInSheetClone(
+                target,
+                link.kind === "sheet-clone-task" ? link.task.teamId : teamId,
+              )
+            }
+          />
+        </DocumentPageTitleContext.Provider>
       ))}
       {panel === "export" && (
         <ExportPanel

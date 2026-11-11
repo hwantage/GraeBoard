@@ -68,11 +68,10 @@ export function installDocumentBusinessRoutes(
         status: 201,
       }),
     );
-    if (base.endsWith("/memos"))
-      app.post(`${base}/reorder`, (req, res, next) => {
-        const scope = documentRouteScope(req.path.slice(4, -8));
-        return send(business(req).reorder(scope, req.body), res, next);
-      });
+    app.post(`${base}/reorder`, (req, res, next) => {
+      const scope = documentRouteScope(req.path.slice(4, -8));
+      return send(business(req).reorder(scope, req.body), res, next);
+    });
     app.patch(`${base}/:documentId`, (req, res, next) =>
       send(business(req).rename(target(req), req.body), res, next),
     );

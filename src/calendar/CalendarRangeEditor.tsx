@@ -208,7 +208,19 @@ export default function CalendarRangeEditor({
   const changed = !same(range, base.current);
   return (
     <div className="calendar-range-editor">
-      <fieldset disabled={saving} aria-label="일정 기간">
+      <fieldset
+        disabled={saving}
+        aria-label="일정 기간"
+        onBlur={(event) => {
+          // flush() saves a valid range and reports an invalid one, which
+          // has no save button to show its error any more.
+          if (
+            !event.currentTarget.contains(event.relatedTarget as Node | null) &&
+            !readOnly
+          )
+            void flush();
+        }}
+      >
         {(["date", "endDate"] as const).map((field) => (
           <label key={field}>
             {field === "date" ? "시작일" : "종료일"}
@@ -226,18 +238,20 @@ export default function CalendarRangeEditor({
             />
           </label>
         ))}
-        {!readOnly && (
-          <Button
-            disabled={!changed || saving || !!conflict}
-            onClick={() => void flush()}
-          >
-            {saving ? "기간 저장 중…" : "기간 저장"}
-          </Button>
-        )}
+        {saving && <span role="status">기간 저장 중…</span>}
         {saved && !changed && <span role="status">기간 저장됨</span>}
       </fieldset>
       <ErrorNote error={error} />
-      {error && <Button onClick={onCloseWithDraft}>초안 보관하고 닫기</Button>}
+      {error && (
+        <>
+          {!readOnly && !conflict && (
+            <Button disabled={saving} onClick={() => void flush()}>
+              다시 시도
+            </Button>
+          )}
+          <Button onClick={onCloseWithDraft}>초안 보관하고 닫기</Button>
+        </>
+      )}
       {conflict && (
         <div className="document-conflict">
           <p>

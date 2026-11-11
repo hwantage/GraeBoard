@@ -215,16 +215,20 @@ test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설�
 }) => {
   await insights(page);
   await expect(page).toHaveURL(/\/insights$/);
+  await expect(page).toHaveTitle("인사이트 · 그래보드");
   await expect(page.getByText("업무 색상을 설정해 주세요")).toBeVisible();
   await page.reload();
   await expect(
     page.getByText("설정의 팀 일반에서 업무 표시 색상을 지정하세요."),
   ).toBeVisible();
+  await expect(page).toHaveTitle("인사이트 · 그래보드");
   await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await expect(page).toHaveTitle("연간 업무 · 그래보드");
   await page.goBack();
   await expect(
     page.getByRole("region", { name: "인사이트", exact: true }),
   ).toBeVisible();
+  await expect(page).toHaveTitle("인사이트 · 그래보드");
   const username = `member-${randomUUID().slice(0, 8)}@example.test`;
   const member = await request(page, "/admin/users", {
     username,

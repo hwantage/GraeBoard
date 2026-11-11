@@ -18,6 +18,7 @@ import {
   withoutImageSpacer,
   type ImagePreview,
 } from "./DocumentImageView";
+import { imageOriginals } from "./document-image-original";
 import {
   documentCodeBlockSelection,
   documentCodeBlockView,
@@ -221,6 +222,7 @@ export default function useRichEditorLifecycle(
                   setPreview(image);
                 },
                 latest.current.images,
+                imageUploads.uploadEdited,
               ),
             toggle_summary: (node, view, getPos) =>
               toggleSummaryView(
@@ -296,6 +298,7 @@ export default function useRichEditorLifecycle(
       .use(blockSelect)
       .use(imageCaret)
       .use(imageComposition)
+      .use(imageOriginals)
       .use(dropIndicator)
       .use(
         $prose(

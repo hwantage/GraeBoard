@@ -52,7 +52,12 @@ export function useListReorder<T extends HTMLElement>(
     cleanup.current?.();
   }, [disabled, ids.join(":")]);
   function start(event: PointerEvent<HTMLButtonElement>, id: string) {
-    if (disabled || event.button !== 0) return;
+    if (
+      disabled ||
+      event.button !== 0 ||
+      (horizontal && event.pointerType === "touch")
+    )
+      return;
     if (!horizontal) event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     cleanup.current?.();
