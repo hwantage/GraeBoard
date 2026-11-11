@@ -1,4 +1,4 @@
-import { normalizeStyle, sameStyle } from "./compact.js";
+import { backgroundWorkStyle, normalizeStyle, sameStyle } from "./compact.js";
 
 // A scope belongs to task IDs and column keys, never to positions in a View.
 // A null key list covers every current/future column of the same task.
@@ -28,20 +28,28 @@ function index(formatting) {
 
 export function commonStyle(task, key) {
   const formatting = task.formatting;
-  if (!formatting?.rules.length) return task.rowStyle || {};
+  if (!formatting?.rules.length) return backgroundWorkStyle(task.rowStyle);
   const { all, rows } = index(formatting),
-    style = { ...task.rowStyle },
+    style = { ...backgroundWorkStyle(task.rowStyle) },
     orders = {};
   for (const { rule, keys, excluded } of [
     ...all,
     ...(rows.get(task.id) || []),
   ]) {
     if ((keys && !keys.has(key)) || excluded.has(key)) continue;
-    for (const [name, order] of Object.entries(rule.orders)) {
+    const ruleOrders = { ...rule.orders };
+    // Legacy ordinary background rules also cancel an older inherited mark.
+    if (
+      Object.hasOwn(ruleOrders, "backgroundColor") &&
+      !Object.hasOwn(ruleOrders, "work")
+    )
+      ruleOrders.work = ruleOrders.backgroundColor;
+    const ruleStyle = backgroundWorkStyle(rule.style);
+    for (const [name, order] of Object.entries(ruleOrders)) {
       if ((orders[name] ?? -1) >= order) continue;
       orders[name] = order;
       // An ordered missing property means a reset to the task's base style.
-      if (Object.hasOwn(rule.style, name)) style[name] = rule.style[name];
+      if (Object.hasOwn(ruleStyle, name)) style[name] = ruleStyle[name];
       else delete style[name];
     }
   }
@@ -49,13 +57,19 @@ export function commonStyle(task, key) {
 }
 
 export function inheritedStyle(task, key) {
-  return { ...task.defaultStyle, ...commonStyle(task, key) };
+  return {
+    ...task.defaultStyle,
+    ...commonStyle(task, key),
+  };
 }
 
 // Row/column lines are explicit lines, just like cell overrides, and therefore
 // take priority over the computed week boundary in the grid and XLSX exports.
 export function explicitStyle(task, key) {
-  return { ...commonStyle(task, key), ...task.cells[key]?.style };
+  return {
+    ...commonStyle(task, key),
+    ...backgroundWorkStyle(task.cells[key]?.style),
+  };
 }
 
 export function normalizeCellStyle(task, key, style) {
@@ -74,11 +88,16 @@ export function normalizeCellStyle(task, key, style) {
 // Clearing one cell must also cancel common row/column properties. A null
 // override restores the native appearance when the task has no base value.
 export function resetCellStyle(task, key) {
+  const common = commonStyle(task, key);
   return Object.fromEntries(
-    Object.keys(commonStyle(task, key)).map((name) => [
-      name,
-      task.defaultStyle?.[name] ?? null,
-    ]),
+    Object.keys(common)
+      .filter(
+        (name) =>
+          name !== "work" ||
+          common.work === true ||
+          task.defaultStyle?.work === true,
+      )
+      .map((name) => [name, task.defaultStyle?.[name] ?? null]),
   );
 }
 

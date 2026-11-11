@@ -8,6 +8,7 @@ import { api } from "../platform/api";
 import { Modal } from "../ui/Modal";
 import { ErrorNote } from "../ui/ErrorNote";
 import Toast, { useToast } from "../ui/Toast";
+import LoadingState from "../ui/LoadingState";
 import DefaultStyleManager from "./DefaultStyleManager";
 import PropertiesManager from "./PropertiesManager";
 import { NewTeam, TeamGeneral, TeamMembers } from "./TeamSettings";
@@ -315,21 +316,24 @@ export default function SettingsPanel({
                 id={`panel-${selectedTab}`}
                 aria-labelledby={`tab-${selectedTab}`}
               >
-                {selectedTab === "general" && (
-                  <TeamGeneral
-                    key={selectedTeam.id}
-                    team={selectedTeam}
-                    canDelete={isAdmin}
-                    onSaved={saved}
-                    onDeleted={async () => {
-                      await saved();
-                      setMessage(
-                        `“${selectedTeam.name}” 팀과 모든 팀 데이터를 삭제했습니다.`,
-                      );
-                    }}
-                    onMessage={setMessage}
-                  />
-                )}
+                {selectedTab === "general" &&
+                  (isAdmin && !adminData && !error ? (
+                    <LoadingState label="팀 설정을 불러오고 있습니다" />
+                  ) : (
+                    <TeamGeneral
+                      key={selectedTeam.id}
+                      team={selectedTeam}
+                      canDelete={isAdmin}
+                      onSaved={saved}
+                      onDeleted={async () => {
+                        await saved();
+                        setMessage(
+                          `“${selectedTeam.name}” 팀과 모든 팀 데이터를 삭제했습니다.`,
+                        );
+                      }}
+                      onMessage={setMessage}
+                    />
+                  ))}
                 {selectedTab === "members" && (
                   <TeamMembers
                     key={selectedTeam.id}

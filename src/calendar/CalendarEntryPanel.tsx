@@ -33,6 +33,7 @@ import DocumentFullPageButton from "../documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "../documents/useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
+  useDocumentPageTitle,
   useOpenDocumentLink,
 } from "../documents/document-links";
 
@@ -61,6 +62,7 @@ export default function CalendarEntryPanel({
   const path = `/calendar/entries/${entry.id}`;
   const titleKey = `weekly-plan:calendar-title:${userId}:${entry.teamId}:${entry.id}`;
   const [title, setTitle] = useState(entry.title);
+  useDocumentPageTitle(title.trim() || "캘린더 일정");
   const [tagIds, setTagIds] = useState(entry.tagIds);
   const [checkedTagIds, setCheckedTagIds] = useState(entry.checkedTagIds);
   const [tagError, setTagError] = useState("");

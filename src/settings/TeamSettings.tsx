@@ -3,13 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, UserMinus } from "lucide-react";
 import Select from "../ui/Select";
 import ThemePicker from "./ThemePicker";
+import WorkColorsEditor from "./WorkColorsEditor";
+import { insightsSettingsSchema } from "../../shared/insights/insights-schema.js";
 import { api, send, type ApiError } from "../platform/api";
 import AccountLinkRequests from "../auth/AccountLinkRequests";
 import { Avatar } from "../ui/Avatar";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
 import { getTheme } from "../../shared/formatting/themes.js";
-import type { Team, TeamRole, ThemeId, User } from "../types";
+import type { Settings, Team, TeamRole, ThemeId, User } from "../types";
 
 import { teamRoleNames, teamRoleOrder, teamRoleHelp } from "../platform/roles";
 
@@ -41,8 +43,14 @@ export function TeamGeneral({
 }) {
   const [name, setName] = useState(team.name),
     [theme, setTheme] = useState<ThemeId>(getTheme(team.settings.theme).id),
+    [workColors, setWorkColors] = useState(
+      team.settings.insights?.workColors || [],
+    ),
+    [revision, setRevision] = useState(team.settings.revision || 0),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const parsedColors =
+    insightsSettingsSchema.shape.workColors.safeParse(workColors);
   return (
     <>
       <ErrorNote error={error} />
@@ -54,15 +62,20 @@ export function TeamGeneral({
           setError("");
           onMessage("");
           try {
-            await send(
+            if (!parsedColors.success)
+              throw new Error(parsedColors.error.issues[0].message);
+            const saved = await send<{ settings: Settings }>(
               `/teams/${team.id}`,
               {
                 name,
                 theme,
-                settingsRevision: team.settings.revision || 0,
+                settingsRevision: revision,
+                workColors: parsedColors.data,
               },
               "PATCH",
             );
+            setRevision(saved.settings.revision || 0);
+            setWorkColors(saved.settings.insights?.workColors || []);
             await onSaved();
             onMessage("팀 정보를 저장했습니다.");
           } catch (e) {
@@ -91,11 +104,21 @@ export function TeamGeneral({
           />
           <small>팀 메뉴·버튼·선택 강조에 적용됩니다.</small>
         </div>
+        <WorkColorsEditor
+          value={workColors}
+          onChange={setWorkColors}
+          disabled={busy}
+        />
+        <ErrorNote
+          error={
+            !parsedColors.success ? parsedColors.error.issues[0].message : ""
+          }
+        />
         <footer className="form-actions">
           <Button
             type="submit"
             className="primary"
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || !parsedColors.success}
           >
             저장
           </Button>

@@ -18,11 +18,16 @@ export default function useWorkspaceNavigation(options: {
   const annualMemoRef = useRef<DocumentPanelHandle>(null);
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const [insightsBusy, setInsightsBusy] = useState(false);
   const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const documentBrowser = workspaceRoute.route === "documents";
-  const screen: "annual" | "calendar" =
-    workspaceRoute.route === "calendar" ? "calendar" : "annual";
+  const screen: "annual" | "calendar" | "insights" =
+    workspaceRoute.route === "calendar"
+      ? "calendar"
+      : workspaceRoute.route === "insights"
+        ? "insights"
+        : "annual";
 
   async function navigateWorkspace(action: () => void | Promise<void>) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
@@ -30,13 +35,19 @@ export default function useWorkspaceNavigation(options: {
     else await action();
   }
   async function prepareWorkspaceRoute(next: Route) {
-    if (calendarBusy || workspaceNavigating || !options.canLeaveSheet())
+    if (
+      calendarBusy ||
+      insightsBusy ||
+      workspaceNavigating ||
+      !options.canLeaveSheet()
+    )
       return false;
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
       return false;
     const prepare = async () => {
       options.flushLayout();
-      if (next === "annual") await options.prepareAnnual(documentBrowser);
+      if (next === "annual" || next === "insights")
+        await options.prepareAnnual(documentBrowser);
       options.onPrepared(next);
     };
     try {
@@ -65,6 +76,8 @@ export default function useWorkspaceNavigation(options: {
     documentBrowserRef,
     calendarBusy,
     setCalendarBusy,
+    insightsBusy,
+    setInsightsBusy,
     workspaceNavigating,
     setWorkspaceNavigating,
     navigateWorkspace,

@@ -1,3 +1,4 @@
+import { insightPropertyUsages } from "../../shared/insights/insights-references.js";
 import Select from "../ui/Select";
 import ColorMenu from "../ui/ColorMenu";
 import { useEffect, useRef, useState } from "react";
@@ -483,8 +484,8 @@ export default function PropertiesManager({
             )}
             {property.id === "status" && (
               <p className="field-help">
-                기본 상태는 삭제하거나 타입을 바꿀 수 없습니다. 값의
-                이름·색상·순서를 변경하면 상단 상태별 통계에도 반영됩니다.
+                기본 상태는 삭제하거나 타입을 바꿀 수 없습니다. 상단 통계는
+                인사이트 설정에서 선택한 속성의 이름·색상·순서를 따릅니다.
               </p>
             )}
             {property.kind !== "option" && (
@@ -682,9 +683,15 @@ export default function PropertiesManager({
               const saved = stored.current.properties?.find(
                 (p) => p.id === property.id,
               );
+              const usages = insightPropertyUsages(settings, property.id);
+              const usageNote = usages.length
+                ? "\n사용 중: " +
+                  usages.join(", ") +
+                  "\n통계 참조와 기존 수치는 보존되며 보관된 속성으로 표시됩니다."
+                : "";
               if (
                 !confirm(
-                  `“${property.name.trim() || "이름 없는 속성"}” 속성을 삭제할까요?\n${saved ? "업무 표와 선택 목록에서 숨겨지며, 기존 업무 값은 보관됩니다.\n속성 저장을 눌러야 적용됩니다." : "아직 저장하지 않은 속성과 입력한 값을 지웁니다."}`,
+                  `“${property.name.trim() || "이름 없는 속성"}” 속성을 삭제할까요?\n${saved ? "업무 표와 선택 목록에서 숨겨지며, 기존 업무 값은 보관됩니다.\n속성 저장을 눌러야 적용됩니다." : "아직 저장하지 않은 속성과 입력한 값을 지웁니다."}${usageNote}`,
                 )
               )
                 return;

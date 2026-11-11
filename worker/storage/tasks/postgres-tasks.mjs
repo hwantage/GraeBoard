@@ -3,10 +3,13 @@ import { canManageTeam, periodYears } from "../../../shared/domain.js";
 import {
   scopeKey,
   scopeMatches,
+  scopesOverlap,
 } from "../../../shared/formatting/formatting.js";
 import {
   styleNormalizer,
   stringify,
+  STYLE_KEYS,
+  sameStyle,
 } from "../../../shared/formatting/compact.js";
 import { validateCellValue } from "../../../shared/validation.js";
 import { equal, digest } from "../../../server/sync/core/protocol.mjs";
@@ -293,20 +296,40 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
                         style: {},
                         orders: {},
                       };
-              for (const key of Object.keys(scope.style || {})) {
-                if (scope.reset) {
-                  if (key in rule.style) {
-                    delete rule.style[key];
-                    delete rule.orders[key];
-                  }
-                } else if (!equal(rule.style[key], scope.style[key])) {
-                  rule.style[key] = scope.style[key];
+              const names = scope.reset
+                ? Object.keys(STYLE_KEYS)
+                : Object.keys(scope.style);
+              for (const key of names) {
+                const desired = Object.hasOwn(scope.style, key)
+                  ? { [key]: scope.style[key] }
+                  : {};
+                const previous = Object.hasOwn(rule.style, key)
+                  ? { [key]: rule.style[key] }
+                  : {};
+                const conflict = rules.some(
+                  (other) =>
+                    other !== rule &&
+                    (other.orders[key] ?? -1) > (rule.orders[key] ?? -1) &&
+                    scopesOverlap(other, scope) &&
+                    !sameStyle(
+                      Object.hasOwn(other.style, key)
+                        ? { [key]: other.style[key] }
+                        : {},
+                      desired,
+                    ),
+                );
+                if (
+                  rule.orders[key] === undefined ||
+                  !sameStyle(previous, desired) ||
+                  conflict
+                )
                   rule.orders[key] = order++;
-                }
+                if (Object.hasOwn(desired, key)) rule.style[key] = desired[key];
+                else delete rule.style[key];
               }
-              if (index < 0 && Object.keys(rule.style).length) rules.push(rule);
-              else if (index >= 0 && !Object.keys(rule.style).length)
-                rules.splice(index, 1);
+              // An ordered missing property resets an older overlapping rule.
+              if (index < 0 && Object.keys(rule.orders).length)
+                rules.push(rule);
             }
             format = await s.put("formats", [], { rules });
             // Only a cell inside a scope that sets one of these style
@@ -323,7 +346,9 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
               [
                 ...new Set(
                   d.format.scopes.flatMap((scope) =>
-                    Object.keys(scope.style || {}),
+                    scope.reset
+                      ? Object.keys(STYLE_KEYS)
+                      : Object.keys(scope.style),
                   ),
                 ),
               ],
@@ -332,7 +357,9 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
               const style = { ...c.payload.style };
               for (const scope of d.format.scopes)
                 if (scopeMatches(scope, c.key[0], c.key[1]))
-                  for (const key of Object.keys(scope.style || {}))
+                  for (const key of scope.reset
+                    ? Object.keys(STYLE_KEYS)
+                    : Object.keys(scope.style))
                     delete style[key];
               if (!equal(style, c.payload.style)) {
                 before.push({

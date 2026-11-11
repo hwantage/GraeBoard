@@ -46,7 +46,11 @@ export async function sourceImportGraph(root, directories) {
   for (const [path, input] of Object.entries(metafile.inputs)) {
     const targets = input.imports.map(({ path: value }) => {
       if (!value.startsWith(".")) return value;
-      const target = resolve(root, dirname(path), value);
+      // Vite's CSS-as-text import is still a dependency on that exact asset.
+      // Keep all other queries unresolved; in particular, queries must never
+      // hide a JS runtime edge from the layer/cycle checks.
+      const asset = value.replace(/\.css\?inline$/, ".css");
+      const target = resolve(root, dirname(path), asset);
       // Bundler resolution supports extensionless TS/JS and .js specifiers for TS.
       const candidates = [target];
       if (!extname(target))

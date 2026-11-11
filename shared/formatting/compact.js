@@ -6,6 +6,7 @@ export const STYLE_KEYS = {
   borderLeft: "bl",
   color: "c",
   backgroundColor: "bg",
+  work: "wk",
   fontFamily: "ff",
   fontSize: "fs",
   textAlign: "ta",
@@ -57,11 +58,31 @@ export function expandStyle(style) {
 
 // Keep only overrides. null must survive when it cancels an inherited border;
 // 'none', false, 0 and empty strings are never mistaken for absent values.
+// An ordinary background replaces both its appearance and work meaning.
+// Other formatting leaves that meaning alone; an explicit marker wins.
+export function backgroundWorkStyle(style = {}) {
+  return Object.hasOwn(style, "backgroundColor") &&
+    !Object.hasOwn(style, "work")
+    ? { ...style, work: false }
+    : style;
+}
+
 export function normalizeStyle(style = {}, defaults = {}) {
+  style = backgroundWorkStyle(style);
   return Object.fromEntries(
     Object.entries(style).filter(([key, value]) => {
       if (value === undefined) return false;
-      const inherited = defaults[key];
+      const inherited =
+        key === "work" ? (defaults.work ?? false) : defaults[key];
+      // Keep an explicit mark beside an overridden background, even when its
+      // boolean equals the inherited marker: an unmarked fill means ordinary.
+      if (
+        key === "work" &&
+        value === true &&
+        Object.hasOwn(style, "backgroundColor") &&
+        style.backgroundColor !== defaults.backgroundColor
+      )
+        return true;
       if (value === null) return inherited != null;
       if (BORDER_KEYS.has(key)) {
         // An explicit line also has priority over the computed week boundary.

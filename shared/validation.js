@@ -9,6 +9,7 @@ import {
 } from "./sheet-clones/sheet-clone-names.js";
 import { z } from "zod";
 import { BORDER_STYLES } from "./formatting/borders.js";
+import { backgroundWorkStyle } from "./formatting/compact.js";
 import {
   FONTS,
   MIN_FONT_SIZE,
@@ -67,6 +68,7 @@ export const styleSchema = z
     borderLeft: borderSchema.nullable().optional(),
     color: hex.nullable().optional(),
     backgroundColor: hex.nullable().optional(),
+    work: z.boolean().nullable().optional(),
     fontFamily: z.enum(FONTS).nullable().optional(),
     fontSize: z
       .number()
@@ -167,7 +169,7 @@ export const formatSchema = z
             rows: z.array(z.string().uuid()).min(1).max(20000).nullable(),
             keys: z.array(z.string().max(80)).min(1).max(1000).nullable(),
             excludeKeys: z.array(z.string().max(80)).max(1000).optional(),
-            style: sharedStyleSchema,
+            style: sharedStyleSchema.transform(backgroundWorkStyle),
             reset: z.boolean().optional(),
           })
           .strict(),

@@ -613,6 +613,7 @@ small {
   flex-shrink: 0;
 }
 .heading-actions .button,
+.page-heading > .insights-toggle,
 .toolbar-add-task.button {
   font-size: 11px;
   min-height: 26px;
@@ -4274,41 +4275,32 @@ body.document-block-moving * {
   .sheet-scroll:not([data-presentation-tool="cursor"]) {
   touch-action: none;
 }
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll:not([data-presentation-tool="cursor"]),
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll:not([data-presentation-tool="cursor"])
   * {
   cursor: crosshair;
 }
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll[data-presentation-tool="cursor"],
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll[data-presentation-tool="cursor"]
   * {
   cursor: default;
 }
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll[data-presentation-tool="eraser"],
-.presentation-mode:not(:has(dialog:modal, .annual-memos:hover))
+.presentation-mode:not(:has(dialog:modal))
   .sheet-scroll[data-presentation-tool="eraser"]
   * {
   cursor: none;
 }
-.presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog:modal, .annual-memos:hover)
-  ),
-.presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog:modal, .annual-memos:hover)
-  )
-  *,
-.presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog:modal, .annual-memos:hover)
-  )
+.presentation-mode[data-presentation-laser="true"]:not(:has(dialog:modal)),
+.presentation-mode[data-presentation-laser="true"]:not(:has(dialog:modal)) *,
+.presentation-mode[data-presentation-laser="true"]:not(:has(dialog:modal))
   .sheet-scroll,
-.presentation-mode[data-presentation-laser="true"]:not(
-    :has(dialog:modal, .annual-memos:hover)
-  )
+.presentation-mode[data-presentation-laser="true"]:not(:has(dialog:modal))
   .sheet-scroll
   * {
   cursor: none;
@@ -4318,8 +4310,7 @@ body.document-block-moving * {
   :is(a[href], .task-document-indicator) {
   cursor: pointer;
 }
-.presentation-mode:has(dialog:modal, .annual-memos:hover)
-  .presentation-pointer {
+.presentation-mode:has(dialog:modal) .presentation-pointer {
   display: none;
 }
 .presentation-mode .sheet-cell.selected::after,
@@ -4983,6 +4974,20 @@ body.document-block-moving * {
 .settings-field small {
   color: var(--muted);
   font-weight: 400;
+}
+.work-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.work-color-row input {
+  min-width: 0;
+  flex: 1;
+}
+.work-color-row > span {
+  font-size: 12px;
+  color: var(--muted);
 }
 .settings-danger {
   display: flex;
@@ -5667,5 +5672,15 @@ body.document-block-moving * {
   }
   .workspace .saved-filter-trigger > span {
     display: none;
+  }
+}
+
+/* Keep editable controls readable without mobile browsers zooming on focus. */
+@media (max-width: 700px) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: max(16px, 1em) !important;
   }
 }

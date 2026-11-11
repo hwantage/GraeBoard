@@ -30,6 +30,7 @@ export function requireUniqueSheetCloneName(
 // 보고서의 셀과 필터를 해석하는 데 필요한 이름만 보관한다.
 // 프로필 이미지·색상·권한과 보고서에 등장하지 않는 팀원은 복사하지 않는다.
 export function encodeSheetClone({ tasks, users, view, settings }) {
+  const { insights, ...snapshotSettings } = settings || {};
   const memberKeys = new Set([
     "owner",
     "supporters",
@@ -52,7 +53,7 @@ export function encodeSheetClone({ tasks, users, view, settings }) {
         .filter((user) => referenced.has(user.id))
         .map(({ id, name }) => ({ id, name })),
       view,
-      settings,
+      settings: snapshotSettings,
     }),
     // Keep large snapshots from holding the API thread in maximum compression.
     { level: 1 },

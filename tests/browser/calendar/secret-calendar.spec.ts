@@ -159,8 +159,9 @@ test("시크릿 생성·제목·기간·삭제·실행취소는 브라우저에�
   await detail(page)
     .getByLabel("일정 종료일", { exact: true })
     .fill(addDays(todayKey(), 2));
+  await detail(page).getByLabel("일정 종료일", { exact: true }).focus();
   await detail(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expect(
     detail(page).getByText("기간 저장됨", { exact: true }),
@@ -765,8 +766,9 @@ test("다른 탭의 기간 변경은 제목 저장 뒤에도 덮어쓰지 않고
       ),
     )
     .toBe(changed);
+  await detail(page).getByLabel("일정 종료일", { exact: true }).focus();
   await detail(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expect(
     detail(page).getByText(

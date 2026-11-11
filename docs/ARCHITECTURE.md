@@ -21,7 +21,10 @@ flowchart TD
     App --> Rows["useSheetRowCommands: 행 명령·문서 보존"]
     App --> Cells["useSheetCellCommands: 셀·서식·붙여넣기"]
     App --> Undo["useSheetUndo: 실행취소 전달"]
-    App --> Navigation["useWorkspaceNavigation: 화면 이동 전 저장 조정"]
+    App --> Navigation["useWorkspaceNavigation: 연간·인사이트·캘린더·문서 이동 전 저장 조정"]
+    App --> Insights["Insights: 필터·파생 캐시·차트·설정"]
+    Read -->|"같은 공개 원본 목록"| Insights
+    Insights --> Metrics["shared/insights: 순수 집계·설정 계약"]
     Rows --> Write
     Rows --> History
     Rows --> Copy
@@ -36,12 +39,15 @@ flowchart TD
     Copy --> Platform
 ```
 
-저장 성공은 App의 콜백을 통해 원본 목록과 이력에 반영합니다. 조회 실패와 저장 실패는 서로 지우지 않습니다. 필터·배치의 팀 전환과 셀 저장의 팀·연도 전환에는 비동기 요청의 소유 범위를 검사합니다. `check:architecture`가 런타임 순환·프런트엔드 역방향 import·브라우저의 서버/Node 의존을, 기존 저장소 경계 검사가 외부 공통 서비스 목록과 간접 Node 의존을 검사합니다.
+저장 성공은 App의 콜백을 통해 원본 목록과 이력에 반영합니다. 원본의 팀·연도·순환 달력 범위는 `useTaskData`가 한 번만 읽고 연간 통계와 인사이트에 함께 제공합니다. 보고서 설정 저장도 공개 invalidate와 읽기 보류를 통해 늦은 원본/설정 응답을 차단하며 기존 snapshot 반환형은 Task[]입니다. 조회 실패와 저장 실패는 서로 지우지 않습니다. 필터·배치의 팀 전환과 셀 저장의 팀·연도 전환에는 비동기 요청의 소유 범위를 검사합니다. `check:architecture`가 런타임 순환·프런트엔드 역방향 import·브라우저의 서버/Node 의존을, 기존 저장소 경계 검사가 외부 공통 서비스 목록과 간접 Node 의존을 검사합니다.
+
+공유 strict 스키마를 사용하는 브라우저는 App보다 먼저 `platform/polyfills.ts`에서 Zod의 eval/JIT 확인을 끕니다. 같은 검증 계약을 인터프리터로 실행하며 서버 CSP와 Node/Edge의 스키마 정책은 유지합니다.
 
 화면 내부의 입력과 편집 수명도 독립적으로 관리합니다.
 
 | 조합 화면 | 상태·행동의 소유자 | 저장 경계 |
 | --- | --- | --- |
+| `Insights` | 원본은 같은 `useTaskData`, 로컬 필터·파생값·차트/설정은 `src/insights/` | 날짜는 공유 View/PeriodPicker, 설정은 기존 PATCH/CAS. 자체 원본 조회·poll·SSE 없이 공개 원본 목록과 retry를 사용 |
 | `Grid` | `useGridSelection`, `useGridRowDrag`, `useGridResize`, `useGridViewport` | 선택/크기 미리보기는 로컬 상태, 확정만 기존 시트 명령/개인 배치로 전달 |
 | `Calendar` | `useCalendarMutation`, `useCalendarCreation`, `useCalendarCommands`; 기존 조회·드래그 훅 재사용 | 서버 일정과 시크릿 저장소의 기존 API·초안·복원 계약 유지 |
 | `RichMarkdownEditor` | `useRichEditorLifecycle`, 입력·업로드·링크·슬래시·편집 명령 모듈 | 본문 변경을 `DocumentEditor`에 전달; 자동 저장·충돌·SSE는 문서 경계가 소유 |

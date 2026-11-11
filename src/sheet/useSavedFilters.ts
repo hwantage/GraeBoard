@@ -91,7 +91,10 @@ export default function useSavedFilters({
     setSelectedId("");
     setDeletingId("");
     current.current = { teamId, data: {}, selectedId: "" };
-    if (!enabled) return;
+    if (!teamId || !enabled) {
+      loading.current = Promise.resolve();
+      return;
+    }
     loading.current = queue.current
       .then(() => api(`/filters?teamId=${teamId}`))
       .then((result) => {

@@ -16,7 +16,7 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 
 ## 구조
 
-`shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
+`shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`insights/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
 Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이력·이관·이벤트/HTTP로 묶습니다. 공통 서비스는 `server/storage/` 기능 폴더에, SQLite repository는 같은 기능 폴더에, PostgreSQL repository는 `worker/storage/` 기능 폴더에 둡니다.
 
 동기화는 `server/sync/core/` 17개(간접 전용 cache 포함)·`server/sync/node/` 20개·`worker/sync/` 11개로 배치합니다. 외부 direct import는 portable 16개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
@@ -25,7 +25,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 배포 suite는 고정 `7fec065d1adc241da29d54474af06b390d12d72b`의 workflow·CLI를 Git에서 읽어 구·신 버전 4개 조합을 실행합니다. shallow clone에 해당 커밋이 없으면 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`로 준비하며 구조 CI는 `fetch-depth: 0`을 사용하고 이 배포 회귀도 함께 실행합니다.
 
-`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 115개, Playwright는 43개 spec·각 엔진 628건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
+`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 123개, Playwright는 46개 spec·각 엔진 676건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
 
 아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
@@ -123,6 +123,8 @@ DB 스키마·영속 데이터 형식·기존 데이터 일괄 변환·백업 �
 
 원본 조회가 세션 만료(401)로 재시도 대기에 들어간 경우, 같은 조회 범위의 셀 복구 스냅샷을 인증된 요청으로 받으면 `useTaskData`가 그 대기와 조회 오류를 해제합니다. 재인증 뒤 새 행의 리소스 알림이 이전 세션의 대기에 막히지 않도록 하기 위한 처리이며, 429의 Retry-After와 다른 오류의 재시도 정책은 유지합니다.
 
+브라우저에서 공유 strict 스키마를 불러오기 전에 `main.tsx`의 첫 `platform/polyfills.ts`가 Zod를 `jitless`로 설정합니다. 잡아서 무시하는 eval 기능 확인도 strict CSP의 위반 이벤트가 되므로, 브라우저는 같은 스키마를 인터프리터로 실행합니다. CSP에 unsafe-eval을 추가하지 않고 Node/Edge의 스키마 실행 정책도 바꾸지 않습니다. 초기 진입·편집 검증·저장·새로고침과 기존 Mermaid의 CSP 회귀를 실제 브라우저에서 확인합니다.
+
 변경되지 않은 ETag 요청은 업무를 조회·직렬화하기 전에 304로 응답합니다. 조회 캐시의 전체 예산은 64MiB입니다. 원문과 gzip의 합이 예산보다 크면 gzip만 보관하고, 압축을 받지 않는 클라이언트의 응답 시에만 원문을 복원합니다. 압축본도 예산을 넘으면 캐시하지 않습니다. 이전 팀의 보기 저장이 뒤늦게 실패해도 현재 팀 화면에 오류를 표시하지 않습니다.
 
 팀·연도 전환과 월 이동·월·주차 기간 선택은 왼쪽 업무 열에서 시작합니다. 달력은 항상 12개월이며 화살표는 한 달씩 이동합니다. `movePeriodView`는 월 선택을 실제 연월로, 주차 선택을 날짜로 유지하고 구간 경계에서만 선택 길이를 보존해 이동합니다. 연도 화살표의 전체 연도 초기화와 구분하며 원본·사본에 같은 규칙을 적용합니다. `taskQuery`는 같은 두 연도에 걸친 월들을 같은 요청 경로로 정규화하므로 월 이동마다 데이터를 재조회하지 않습니다. 보기의 저장 키와 업무 조회 범위를 분리하고, 늦은 조회 응답과 SSE가 다른 범위를 덮어쓰지 않도록 검사합니다. 기간 표는 포인터 캡처로 월/주 단위의 연속 범위를 선택하고 드래그를 마칠 때 보기를 저장합니다. 기존 보기 설정 모달은 제거했으며 열 고정은 머리글 메뉴, 팀 기본 셀 높이는 기본 서식 관리에 있습니다. 연도·기간 바, 서식 툴바와 팝업 제목 옆 `?` 도움말은 즉시 툴팁을 공유합니다. 팝업 소개 문구는 `Modal`의 `help`로 전달하며, 마우스 호버나 키보드 포커스로 확인합니다. 기본 서식과 표는 `Toolbar`를 공유하고, 서식 선택·테두리 팝업은 모달 안에서 열리면 해당 dialog를 portal 대상으로 사용합니다. 발표 모드는 현재 보기와 위치를 유지하며 종료하면 화면 위치를 복원합니다.
@@ -181,6 +183,20 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 ### 업무 문서와 에디터 선택
 
+업무 상세·꼬리 메모의 순서 변경은 `DocumentPanel` → 기존 `/reorder` 명령을 공유합니다. 원본 업무는 기존 `task_documents.position`, 사본 업무는 기존 문서 배열 순서, 외부는 기존 document entity의 position을 사용합니다. `expectedIds` 충돌·재시도·숨긴 문서 위치·권한 검사를 유지하며 DB 스키마·영속 형식은 변경하지 않습니다.
+
+`DocumentImageView` → `DocumentImageEditor`는 `DocumentImageTools`의 아이콘 도구 모음과 `document-image-annotations.ts`의 좌표·그리기 계산으로 펜·사각형·원·삼각형·글자를 편집합니다. `DocumentImageTextInput`은 이미지 좌표·배율·회전에 맞춘 textarea로 직접 입력하며 기존 글자는 더블클릭 또는 글자 도구로 다시 엽니다. Enter는 줄바꿈, 바깥 클릭·Ctrl/Cmd+Enter는 확정, Escape는 현재 입력 취소입니다. 조합 중 Enter/blur는 기존 인라인 편집기와 같은 IME 방어를 적용하며 확정한 한 번의 입력을 하나의 실행취소 단위로 기록합니다. 적용 직전의 DOM 값과 최신 이력을 읽어 마지막 입력을 합성하고 입력 테두리·커서는 저장하지 않습니다. 선택한 도형·글자를 이동·크기 조절·회전하거나 선/채우기 색상·굵기·글자 크기를 바꾸고, 실행취소·다시실행·선택 삭제·전체 지우기를 지원합니다. 확대·축소·화면 맞춤·이동은 표시 상태만 바꾸며 내보내기는 선택 테두리를 제외한 원래 이미지 해상도로 만듭니다. 그리기·이동·크기 조절은 기존 `trackPointerDrag`를 공유하여 캡처 해제를 취소로 보지 않고 버튼 해제 이동에서는 마지막 누른 좌표를 한 번만 확정합니다. 실제 pointercancel·blur·Escape는 진행 중 작업만 취소합니다. 주석과 편집 이력은 편집창의 메모리에만 있으며 저장 시 합성 이미지 한 장을 기존 이미지 업로드 경로에 전달합니다.
+
+이미지 수정창의 취소는 이번 편집을 버리고 닫으며 저장 중에는 비활성화합니다. 원본 보기는 `DocumentImagePreview`의 확대 팝업에서만 제공합니다. 적용 시 편집본과 기존 toggle 블록 안 원본 이미지 참조를 한 트랜잭션으로 반영하고, 보관 블록의 일반 Markdown 링크로 편집본과 원본을 연결합니다. `document-image-original.ts`는 보관 블록을 본문에서 숨기고 커서가 그 안으로 들어가지 않게 하며 HTML/PDF에서도 제외합니다. 숨김과 제외는 연결된 편집본 이미지가 문서에 있을 때(링크 없는 이전 형식은 이미지가 하나인 앞 블록 바로 뒤일 때)만 적용하며, 편집본을 지워 연결이 사라진 보관 블록과 같은 모양의 일반 토글은 본문·HTML·PDF에 그대로 표시합니다. Markdown 원문·동기화·백업에는 일반 이미지 참조가 남으므로 기존 이미지 권한·보존 경로를 유지합니다. 상대 링크는 검증된 첨부 이미지 경로만 추가 허용합니다. 재편집은 같은 보관 블록의 연결만 바꾸고 최초 원본을 유지합니다. 이전의 링크 없는 보관 블록은 앞 블록의 이미지가 하나일 때 연결하며 조회만으로 본문을 다시 저장하지 않습니다. 원본 주소는 기존 DocumentImages.source로 조회하고 팝업을 닫은 뒤 도착한 결과는 버립니다.
+
+업로드 중 원본 노드·읽기 권한·뷰 생존 상태가 달라지면 적용하지 않습니다. 업로드 대기는 붙여넣기와 같은 관리자에서 합산합니다. 블록 메뉴 복사는 기존 Markdown/HTML 직렬화와 클립보드 helper·토스트를 공유하며 본문을 수정하지 않습니다.
+
+캘린더 날짜 입력은 PC에서 각각 150px로 나란히 배치하고 600px 이하에서만 남은 폭을 나눠 사용하거나 줄을 바꿉니다. 이미지 크게 보기의 편집·원본·크기 버튼은 28px 높이와 8px 간격으로 배치하고 아이콘을 표시하며 좁은 화면에서는 줄을 바꿉니다.
+
+발표 커서 CSS는 꼬리 메모 hover를 중단 조건에서 제외하고 실제 modal 팝업에서만 일반 커서로 전환합니다. 필기 좌표계는 기존 표 스크롤 영역을 유지하므로 메모 위 필기는 지원하지 않습니다. `CalendarRangeEditor`는 유효한 기간을 fieldset 밖 blur와 상세 닫기의 기존 flush에서 저장하며 충돌·초안·재시도를 유지합니다. 종료일이 시작일보다 이른 기간은 fieldset을 벗어날 때 같은 flush 검증 오류를 표시합니다.
+
+브라우저 제목은 `App`의 Workspace가 `useWorkspaceRoute`의 현재 화면과 열린 링크 패널 순서로 결정합니다. 문서 주소로 시작한 탭에서만 `DocumentPageTitleContext`로 각 패널의 제목을 받고 맨 위 패널을 표시합니다. 업무는 `DocumentPanel`의 선택한 문서명(기본 **문서 1**은 업무명), 일정은 편집 중 일정명, 메모는 열린 메모명을 사용합니다. 이름·선택 변경은 기존 상태에서 전달하고 패널을 닫으면 아래 패널 또는 화면 제목으로 복원합니다. 일반 화면의 상세 열기는 기존 화면 제목을 유지하며 인쇄의 임시 제목·복원 경로도 유지합니다. 새 API·저장 형식은 추가하지 않습니다.
+
 문서 브라우저의 검색은 선택한 팀·연도·원본/사본 범위에서 작업 이름만 부분 일치로 비교하며, 앞뒤 공백과 영문 대소문자를 무시합니다. 문서 제목과 본문은 검색하지 않고, 일치한 작업의 모든 문서를 순서대로 표시합니다. 작업 이름을 클릭하면 첫 문서를 엽니다. 본문은 결과 페이지의 짧은 미리보기를 만들 때만 읽습니다.
 
 리치 편집기는 MIT 라이선스의 Milkdown Kit를 사용하며 ProseMirror의 편집·IME·history와 Remark의 Markdown 파이프라인을 연결합니다. CommonMark·GFM 확장과 기존 앱 버튼·팀 테마를 재사용하고 React effect에서 편집기 인스턴스를 생성·정리합니다. 한글 조합·붙여넣기·실행취소·키보드 경로는 실제 브라우저로 검증하며, 번들은 빌드 청크와 초기 네트워크 요청으로 확인합니다. 후보 비교와 채택 당시 검증은 [에디터 선택 이력](DEVELOPMENT_HISTORY.md#에디터-선택)에 보존합니다.
@@ -205,7 +221,7 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 사본 메모는 `server/documents/memo-storage.mjs`의 참조 복사와 `DocumentBusinessService`의 공통 편집 경로를 사용합니다. 사본 표를 읽거나 저장할 때 메모 본문을 읽거나 표 BLOB에 포함하지 않습니다. 테스트는 복사 전후 `document_versions` 수, 공유 참조 ID, 메모 편집 전후 표 BLOB·revision 동일성, 재복사·재시도·권한·충돌·정리·이미지·JSON 반출·백업과 화면의 닫힌 상태 복사·저장 직후 재복사·원본 분리를 검증합니다.
 
-업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 제목 버튼·중앙 가로 스크롤 영역·별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 아코디언은 `.sheet-scroll` 밖, 같은 `.grid-area`(세로 flex)의 아래쪽에 놓여 접으면 제목 행만, 펼치면 높이가 있는 패널로 고정되며 열고 닫아도 표의 스크롤 위치를 바꾸지 않습니다. 패널 높이는 사용자가 정하면 `weekly-plan:memo-height:…` 키에 기억하고 위쪽 가장자리 구분선(`.memo-height-handle`)으로 바꿉니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올리거나 dialog가 열리면 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
+업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 제목을 조합하는 중 다른 탭을 누르면 조합 확정에 따른 브라우저의 레일 스크롤을 누른 시점 위치로 되돌려, 좁은 화면의 더블클릭이 누른 탭에서 이름 변경을 시작하게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 제목 버튼·중앙 가로 스크롤 영역·별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 아코디언은 `.sheet-scroll` 밖, 같은 `.grid-area`(세로 flex)의 아래쪽에 놓여 접으면 제목 행만, 펼치면 높이가 있는 패널로 고정되며 열고 닫아도 표의 스크롤 위치를 바꾸지 않습니다. 패널 높이는 사용자가 정하면 `weekly-plan:memo-height:…` 키에 기억하고 위쪽 가장자리 구분선(`.memo-height-handle`)으로 바꿉니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올려도 레이저·필기 커서는 유지하며, 실제 modal dialog가 열린 동안에만 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
 
 ### 접속 토큰과 클라이언트 시각
 
@@ -217,7 +233,7 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 작업·팀원·상태는 필수 속성입니다. 팀원과 지원자는 업무 담당 정보를 나타내며 단일·복수 선택 구성을 유지합니다. 연간 업무의 편집 권한은 담당자·지원자 값에 의존하지 않습니다. 설정의 `revision`은 관리자 간 충돌을 검사합니다. 속성 종류 변경은 기존 셀을 변환하고, 변환 불가능한 값이 있으면 전체 변경을 취소합니다.
 
-상태 통계는 실제 상태 옵션을 기준으로 현재 달력의 최대 두 연도에 속하는 전체 업무를 중복 없이 집계합니다. 필터·숨김은 통계 분모를 바꾸지 않습니다. 보관된 속성과 값은 기존 셀·스냅샷을 해석할 수 있도록 보존합니다.
+상단 통계는 인사이트 설정에서 고른 선택형 속성(기본은 상태)의 실제 옵션을 기준으로 현재 달력의 최대 두 연도에 속하는 전체 업무를 중복 없이 집계합니다. 필터·숨김은 통계 분모를 바꾸지 않습니다. 보관된 속성과 값은 기존 셀·스냅샷을 해석할 수 있도록 보존합니다.
 
 ### 이관과 삭제
 
@@ -248,7 +264,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 | 원본 저장 중 상태·실패 입력·재시도 | `src/sheet/useSheetOperations.ts`                                                                | 셀은 `submit`/`retry`, 행 명령은 `begin`이 반환한 종료 함수를 `finally`에서 호출. 재전송은 같은 operation ID, 명시적 충돌 덮어쓰기는 최신 버전과 새 ID. 완료 결과를 App이 화면·이력에 연결 |
 | 원본 실행취소·재실행               | `src/sheet/useSheetHistory.ts`                                                                   | 셀/서식 결과는 `recordCells`, 행 추가/삭제/복구는 `recordTask`. 두 스택을 함께 갱신하며 이전 버전 재기반은 기존 `history.ts`를 사용                                                        |
 | 원본 개인 배치                     | `src/sheet/useSheetLayout.ts`                                                                    | 팀·연도별 `/views` 지연 저장·flush·해제. 필터 조건은 포함하지 않음                                                                                                                         |
-| 저장 필터·현재 조건·선택           | `src/sheet/useSavedFilters.ts`                                                                   | 팀별 목록과 순차 저장을 소유. 연도 이동은 같은 큐, 팀을 나갔다 돌아온 경우는 새 조회 소유 범위. App은 반환된 조건 적용과 스크롤만 결정                                                     |
+| 인사이트 파생값·필터·차트 설정 | `src/insights/Insights.tsx`, `shared/insights/insights.js` | 원본은 같은 `useTaskData`의 공개 tasks/ready/queryError/retry를 사용. 파생 캐시는 보고서가 소유하며 별도 원본 GET·poll·SSE를 만들지 않음 |
+| 저장 필터·현재 조건·선택           | `src/sheet/useSavedFilters.ts`                                                                   | 팀별 목록과 순차 저장을 소유하며 빈 팀 ID로 조회하지 않음. 연도 이동은 같은 큐, 팀을 나갔다 돌아온 경우는 새 조회 소유 범위. App은 반환된 조건 적용과 스크롤만 결정                                                     |
 | 필터 이름 입력                     | `src/sheet/SavedFilterDialog.tsx`                                                                | 폼·초기 포커스·입력 오류만 관리하고 `onSave`를 호출. 자체 API/별도 저장 큐를 만들지 않음                                                                                                   |
 | 사본 편집·저장·실행취소            | `src/sheet/useSheetCloneDraft.ts`                                                                | 원본 셀 저장 API와 분리된 기존 draft/command 경로 유지                                                                                                                                     |
 | 로그인·세션 복구                   | `src/auth/Auth.tsx`, `SessionLogin.tsx`                                                          | `resumeSession`을 포함한 내부/외부 인증 흐름 유지. 공용 UI가 인증 화면을 import하지 않음                                                                                                   |
@@ -256,7 +273,7 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 시트의 사용자 명령은 `useSheetRowCommands`(행 추가·복제·삽입·삭제·복구·순서·문서 복사), `useSheetCellCommands`(권한/버전 확인·값/서식·붙여넣기·서식 브러시), `useSheetUndo`(원본 이력 또는 사본 초안으로 실행취소 전달)가 소유합니다. 원본 저장과 이력은 위 담당 훅을 재사용하고 사본은 `useSheetCloneDraft`의 명령을 사용합니다. 행 복사 상태와 서식 브러시의 취소 수명도 해당 명령 훅에 있습니다. 새 명령은 이 경로를 확장하며 App은 선택·편집·알림 콜백을 연결합니다.
 
-`src/app/useWorkspaceNavigation.ts`는 화면 전환 전에 메모 flush와 문서 탐색의 기존 저장 경로를 조정합니다. URL·뒤로/앞으로 기록은 기존 `useWorkspaceRoute`가 소유하고, 각 기능의 저장 구현은 그 기능에 남습니다. 기능이 전달한 이동 가능 여부와 준비 동작을 사용해 메뉴 이동과 브라우저 이동의 같은 조건을 유지합니다.
+`src/app/useWorkspaceNavigation.ts`는 연간·인사이트·캘린더·문서 화면 전환 전에 메모 flush와 문서 탐색의 기존 저장 경로를 조정합니다. 인사이트 설정 저장 중 이동 금지와 원본 시트 준비도 이 경로를 확장합니다. URL·뒤로/앞으로 기록은 기존 `useWorkspaceRoute`가 소유하고, 각 기능의 저장 구현은 그 기능에 남습니다. 기능이 전달한 이동 가능 여부와 준비 동작을 사용해 메뉴 이동과 브라우저 이동의 같은 조건을 유지합니다.
 
 `useTaskData`의 조회 오류와 `useSheetOperations`의 실패 입력은 별도 상태입니다. 조회 복구로 저장 실패를 지우지 않습니다. 비동기 응답은 반영 직전 소유 범위를 검사하며, 팀 ID 문자열이 다시 같아졌다는 이유로 이전 화면의 응답을 허용하지 않습니다. 읽기/저장 담당 훅의 내부 ref나 큐를 App에 노출해 직접 조작하지 않습니다.
 
@@ -350,7 +367,7 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 ### 모바일
 
-모바일 배치는 기존 700px 경계를 사용하고, 터치 입력 판정은 화면 폭과 별도로 처리합니다. `useTouchPress`로 시트·일정의 길게 누르기 메뉴를 공유하며 스와이프·스크롤·취소가 선택이나 편집으로 이어지지 않도록 합니다. 모바일 문서는 `useDocumentFullPage`에서 전체 화면·전체 너비를 파생하고 데스크톱에 저장된 선택은 유지합니다. 문서 서식·블록 이동 도구는 숨기며 다운로드·목차는 남깁니다. 현재 사용법은 [업무 문서](USER_GUIDE.md#업무-문서), 실제 기기와 자동 검사 범위는 [모바일 검증 이력](DEVELOPMENT_HISTORY.md#모바일)을 참고합니다.
+모바일 배치는 기존 700px 경계를 사용하고, 터치 입력 판정은 화면 폭과 별도로 처리합니다. `useTouchPress`로 시트·일정의 길게 누르기 메뉴를 공유하며 스와이프·스크롤·취소가 선택이나 편집으로 이어지지 않도록 합니다. 모바일 문서는 `useDocumentFullPage`에서 전체 화면·전체 너비를 파생하고 데스크톱에 저장된 선택은 유지합니다. 문서 서식·블록 이동 도구는 숨기며 원문/리치 전환·다운로드·목차는 남깁니다. 모바일 진입 때 편집 모드를 강제로 바꾸지 않습니다. 입력란과 contenteditable의 최소 글자 크기는 16px이며 사용자 핀치 확대는 제한하지 않습니다. 가로 문서 탭의 터치는 브라우저 스크롤에 넘기고 마우스 드래그·Alt+방향키·메뉴로 순서를 변경합니다. 현재 사용법은 [업무 문서](USER_GUIDE.md#업무-문서), 실제 기기와 자동 검사 범위는 [모바일 검증 이력](DEVELOPMENT_HISTORY.md#모바일)을 참고합니다.
 
 ## 검증
 
@@ -368,7 +385,7 @@ npm run test:e2e
 
 전체 Node/PG 검사와 전체 브라우저 검사는 같은 머신에서 순차 실행합니다. 무거운 Git·DB 작업과 여러 브라우저가 겹치면 장애 주입이나 동기화 검사의 제한시간에 영향을 줄 수 있습니다. 실패를 부하 탓으로 단정하거나 제한시간을 늘리지 말고, 동일 소스를 단독 재실행해 결과를 비교합니다. 브라우저를 `--project`·`--shard`로 나누는 경우에는 실행별 `E2E_PORT`·결과 경로를 구분하고 모든 조합의 누락·중복을 확인합니다. 검증 중 구현을 계속해야 한다면 소스·테스트·빌드를 고정한 독립 사본을 사용합니다. 수집 수·실행 수·통과·실패·취소·skip과 재실행 결과를 구분해 기록합니다.
 
-`npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 통합 기준 `ad1e57d`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. Playwright spec은 기존 43개이며 PR #103의 대형 충돌 회귀가 같은 `data-sync.spec.ts`에 추가됐습니다. `tests/support/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
+`npm test`와 `npm run test:postgres`는 `scripts/testing/node-test-files.mjs`의 공통 재귀 수집기를 사용합니다. `node scripts/testing/run-node-tests.mjs --list`로 실행 목록을 확인합니다. `tests/`의 일반 `*.test.mjs`만 정렬해 수집하며 `browser/`, `support/`, 모든 `fixtures/` 하위와 symlink는 제외합니다. #100 통합 기준 `ad1e57d`의 기존 Node suite 114개에 P0 도구 검사 2개를 별도로 추가했습니다. 이후 책임 분리와 인사이트를 포함한 현재 목록은 위 수집 수를 따릅니다. PR #103의 대형 충돌 회귀는 같은 `data-sync.spec.ts`에 있습니다. `tests/support/worker-sheet-clone-sync-deno.mjs`는 수동 Deno 검사이며 Node suite가 아닙니다.
 
 `check:structure`는 Git 추적·미추적(제외되지 않은) 소스의 명명·폴더·정확한 기존 예외와 고정 바이트를 읽기 전용으로 검사합니다. 규칙은 `scripts/testing/code-organization-rules.json`, 전체 608개 이동 대응표와 신규 파일은 `docs/code-organization-moves.json`에 있습니다. `--migration-phase P3` 같은 옵션은 #100의 해당 시점 checkout에서 이동 기록을 재현할 때만 사용합니다. 후속 책임 분리·신규 기능이 포함된 현재 HEAD는 기본 `check:structure`로 검사하며, 과거 manifest 목록으로 새 기능을 제한하지 않습니다. `check:architecture`는 `src/shared/server/worker/edge/functions`의 정적 런타임 import·re-export·문자열 dynamic import를 수집해 순환, UI/통신 기반의 화면 역참조, 기능의 App 역참조, 브라우저의 간접 Node/호스트 의존을 검사합니다. 타입 전용 import는 런타임 순환에 포함하지 않으며 npm 패키지 내부·실행 시 계산한 import 경로는 이 검사의 범위 밖입니다. 외부 저장소 검사도 `edge/` 진입과 간접 의존을 포함합니다. PR의 경량 CI는 구조·도구·import 경계·고정 전환 의존성 격리를 검사하며 아래 DB·빌드·브라우저 검증을 대신하지 않습니다. import 경계는 공통 업무 14개·portable sync 16개를 정확한 경로로 관리하고, 허용 서비스 뒤의 간접 의존에서도 SQLite·파일·프로세스 모듈 제한을 검사합니다.
 
@@ -401,6 +418,61 @@ npm run licenses
 ## 저장소 범위
 
 소스, 잠금 파일, 테스트 코드, 실행 안내와 데이터 명세를 관리합니다. DB·백업·반출 파일·실제 환경 설정·로그·스크린샷·원본 시트가 참조된 초기 RFP는 Git에 포함하지 않습니다. `.env.example`에는 비밀값 없이 설정 항목만 제공합니다.
+
+## 연간 업무 인사이트
+
+`/insights`는 `src/app/useWorkspaceNavigation.ts`의 prepare/저장 조정과 `useWorkspaceRoute.ts`의 URL·방문 기록을 거쳐 연간 업무·문서·캘린더와 전환합니다. `src/insights/`는 고정 통계·팀 차트 7종·설정/편집기·필터·drill-down을 소유하며 `ColorMenu`/`ColorPicker`, `PropertyFilter`, `Modal`/`Button`/`Select`, `Toast`/`ErrorNote`, `useListReorder`, `useTodayKey`를 재사용합니다. App의 `annualHeading`·`dateControls` JSX를 연간/인사이트가 공유합니다. 상단 주 메뉴의 인사이트 텍스트 대신 전체 통계 오른쪽 `ChartColumn` Button을 사용하며 동일 prepare 경로로 열고 닫습니다. 모바일에서 숨기는 heading-actions 밖에 아이콘을 두고 활성 상태·툴팁을 제공합니다. 기존 `PeriodPicker`에 같은 View·changeView·moveYear·moveCalendar를 전달하고 연간의 발표/가져오기/내보내기·서식/검색 도구는 보고서에 노출하지 않습니다. 보고서의 범위 필터·인사이트 설정은 공유 날짜 선택기 오른쪽 같은 행에 함께 배치합니다. App이 날짜 행의 호스트를 제공하고 Insights는 기존 상태·권한·저장 이벤트를 유지한 채 버튼을 portal로 배치합니다. 보고서에만 적용하는 flex 규칙으로 모바일에서도 버튼을 함께 유지하고 날짜 영역만 가로 스크롤합니다. 범위 필터 팝업은 기존 `usePopover`의 별도 portal로 overflow 밖에 띄워 `PropertyFilter`·뷰포트 배치·Escape/포커스 복귀를 그대로 사용합니다. 연간 Toolbar의 업무 색별 가방 버튼은 `{backgroundColor, work:true}`를 즉시 적용하며 일반 ColorPicker에는 업무 프리셋을 전달하지 않습니다. 업무 색상 편집기는 `src/settings/WorkColorsEditor.tsx`가 소유하며 팀 일반의 ThemePicker 바로 아래 한 곳에만 놓고, 인사이트 설정은 상단 통계와 목표일 기준을 편집합니다. 실제 업무 상세는 원본 시트의 기존 RowPanel로 엽니다. 현재 순환 달력에 이미 포함된 다음 해 업무는 기준 연도를 바꾸지 않아 날짜 선택을 유지하며, 현재 자료 밖의 업무만 필요한 연도로 이동합니다.
+
+PDF 출력은 `Insights.tsx`의 공유 날짜 행 다운로드 Button에서 `insights-export.ts`로 전달합니다. 입력 경계는 보고서 제목·팀·연간 보기 설명·정확한 period.weeks·실제 적용 필터·현재 렌더링된 보고서 본문입니다. 클릭 시 동기적으로 DOM을 복제하여 비교/레이더/속성 통계의 실제 선택과 같은 aggregate 결과를 고정하고, 인쇄 자원 대기 중 들어오는 SSE 결과와 섞지 않습니다. 조회·캐시·집계·설정 저장 소유자를 추가하지 않습니다. 화면 본문 밖의 설정/편집/드릴다운/알림과 카드 도구는 출력하지 않으며, select는 현재 선택한 이름으로 바꾸고 수치 버튼은 정적 텍스트로 바꿉니다. 사용자 문구와 메타데이터는 DOM textContent로 작성해 HTML로 해석하지 않습니다. 빈 선택은 0/없음으로 표시하지만 미설정·미완료 조회·조회 오류·aggregate.errors 상태를 정상 보고서로 내보내지 않습니다. 읽기 권한으로 출력하며 revision/PATCH는 호출하지 않습니다.
+
+`InsightsChartData.tsx`는 SVG와 같은 aggregate의 모든 실제 행/계열/0·제외 수·전체 원값을 inert template의 출력용 표로 제공합니다. 화면 DOM/접근성 검색에는 중복 표를 노출하지 않고, 클릭 시 복제한 template 내용만 인쇄 본문으로 펼칩니다. `insights-print.css`는 화면의 scroll/sticky/최대 높이와 모바일 미디어 규칙을 덮어 A4 가로 페이지를 만들고, 넓은 매트릭스의 열 묶음은 머리글/책임자 행과 기존 교차값·합계를 그대로 복제합니다. 합계를 다시 더하거나 출력용 집계를 만들지 않습니다. 긴 가로 막대 SVG는 행 사이에서 나누고 전체 이름/숫자는 부속 표에 보존합니다. 수치·단위·농도/계열 범례·경고·정확한 선택 주차와 생성 시각을 포함합니다. 기본 PDF 저장 대화상자의 대상·배경 그래픽·배율은 브라우저가 결정하므로 자동 바이너리 다운로드라고 표시하지 않습니다.
+
+표 앞의 제목·필터/경고 문단·농도 범례와 scroll wrapper는 인쇄 전용 keep-with-next 규칙을 연결하여 머리글과 첫 데이터 행까지 같은 페이지에 둡니다. Chromium은 네이티브 table-caption을 본문과 분리할 수 있으므로 분할 매트릭스의 열 묶음명은 표 직전 `h4`와 그 표의 접근성 이름으로 제공합니다. 소제목의 keep-with-next는 해당 표의 머리글·첫 행까지 연결하며 원래의 행·교차값·합계는 그대로 유지합니다. 표 전체나 긴 카드 전체에 break-inside 금지를 적용하지 않으며 나머지 행은 계속 다음 페이지로 나눕니다.
+
+`tests/browser/support/insights-pdf-pagination.mjs`는 실제 Chromium PDF를 Poppler `pdftotext`로 읽어 Top50 제목과 여섯 매트릭스 열 묶음명 각각의 페이지에 해당 열 머리글과 전체 첫 행이 함께 있는지 검사합니다. 제목 **뒤부터 첫 행 전까지**의 머리글만 확인하므로 앞 표의 문구가 잘못 통과시키지 않습니다. HTML의 높이만으로 통과시키지 않으며 Top50 섹션의 모든 39개 합성 업무도 직렬화된 PDF에서 확인합니다. 이 Chromium 브라우저 검사에는 PATH의 `pdftotext`가 필요합니다(macOS: `brew install poppler`, Linux: `apt-get install poppler-utils`). 도구가 없으면 명시적으로 실패하며 skip하지 않습니다. 런타임 PDF 방식·라이브러리·서버를 추가하는 의존성이 아닙니다.
+
+문서/인사이트가 함께 사용하는 `platform/browser-print.ts`는 폰트 규칙 URL 정규화, iframe/자원 대기·20초 자원 오류 제한·인쇄 창·호스트 제목·afterprint/포커스 복귀·취소/실패 정리를 소유합니다. 문서의 Markdown/Milkdown 렌더링은 여전히 `documents/document-export.ts`에 있습니다. 보고서는 동시 요청을 막고 화면 이탈 시 AbortSignal로 프레임을 정리하며, 출력 때문에 사용자 날짜·필터·차트 설정을 쓰지 않습니다. 현재 단일 보고서의 렌더링 입력을 받으며 계획 중인 여러 reports/템플릿 저장 계약·마이그레이션은 구현하지 않습니다. import graph는 Vite의 정확한 `.css?inline` 자산 import를 실제 CSS 파일 의존성으로 해석하며, 없는 CSS와 JS/TS query는 계속 실패합니다. 런타임 계층·순환 검사 예외를 추가하지 않습니다.
+
+`shared/insights/insights.js`는 서식 상속을 포함한 순수 계산, `insights-schema.js`는 내부 Node/외부 Edge 설정 저장과 브라우저 편집기의 strict 계약입니다. 기간은 기존 연간 View의 개인 보기 저장/450ms debounce를 그대로 사용하고 보고서 범위 필터만 사용자·팀별 sessionStorage에 둡니다. 이전 Insights.period는 읽지 않습니다. `periodForWeeks`가 실제 visibleWeeks의 key/year/month를 내부 period.weeks에 복사하며, 월·주 범위/숨김/접힘/빈 선택과 순환 달력 경계의 표시 월을 집계·착수/완료 기준·드릴다운에 공유합니다. 이는 저장 차트나 DB 필드가 아닙니다. 레거시 월 전용 순수 계산 문맥은 그대로 허용합니다. 팀별 WeakMap이 변경 없는 업무의 주 목록·파생값을 재사용하고 업무/색 집합/선택 주차와 표시 월/KST 이번 주/목표일 기준 변경 때 무효화합니다.
+
+연간 표·머리글·인사이트는 같은 `useTaskData`의 원본 목록을 사용합니다. 기존 `taskQuery(teamId, year, startMonth)` 한 요청이 서버에서 실제 달력의 한두 연도를 중복 없이 읽으며, 보고서별 연도 조회·poll·SSE 훅은 없습니다. `useTaskData`는 조회 범위/세대·로컬/원격 변경·취소를 검사하고, `cell-updates.js`의 스냅샷 병합은 변경 없는 행 객체를 재사용해 보고서의 파생 캐시도 유지합니다. 헤더의 원본 통계와 보고서는 이 공개 목록을 함께 읽으므로 보고서에서 App의 private ref를 수정하지 않습니다. 인사이트 설정 저장을 시작하면 공개 `invalidate`를 호출하고 읽기를 보류하며, 이미 시작한 bootstrap 응답도 그 사이 적용된 최신 설정을 덮어쓰지 않습니다. `snapshot()`은 기존 Task[] 계약을 유지하며 private cursor/큐를 노출하지 않습니다. 모든 훅은 팀 없음 조기 반환 전에 호출합니다. 빈 팀 필터 조회는 담당 `useSavedFilters`에서 생략하고, 재배정은 기존 포커스/bootstrap·설정/구성원 저장 흐름을 사용합니다.
+
+주차 Monday 연도나 선택 표시 월로 원본 조회 연도를 추측하지 않습니다. 따라서 2000년 첫 주에 1999년 API를 호출하지 않고, 2026년 업무의 마지막 주가 순환 달력의 2027년 1월로 표시돼도 갱신 후 보존합니다. 같은 원본 연도 집합 안의 날짜 선택은 조회/오류 대기를 재시작하지 않고 계산 문맥만 바꿉니다. 캘린더 전환 때 원본 셀 구독·poll을 해제하고 복귀 시 같은 담당 훅이 재개합니다. 별도 집계 API나 차트 라이브러리는 없습니다. 계산·카디널리티·백분율·합계 규칙은 [데이터 형식](DATA_FORMAT.md#인사이트-팀-설정)을 따릅니다.
+
+`InsightsComparison.tsx`는 요약 아래의 책임자×선택 속성 비교를 소유합니다. 기본값은 활성 분류→category→상태 외 선택 속성→첫 선택 속성이며 업무 수·작업 주 합·숫자 합을 고를 수 있습니다. 기존 table 정의와 하나의 aggregate 결과를 매트릭스/가로 누적으로 전환하고 현재 기간·PropertyFilter·업무 표식을 그대로 따릅니다. `InsightsMatrix.tsx`는 저장된 두 기준 표에도 같은 농도·행/열/전체 합계·고정 머리글/행 이름을 적용하고 값 1~4개의 범례를 분리합니다. 단일 기준 표는 기존 통계 표로 유지합니다. `InsightsBarChart.tsx`·`InsightsRadarChart.tsx`는 0 기준 눈금·값과 실제 음수 위치를 그리며 0 막대 길이를 부풀리지 않습니다. 평균·비율·최댓값·계열 안 %는 누적하지 않습니다. 색·수치·농도/대비는 `insights-chart-presentation.tsx`, 기존 필드로 만든 빠른 시작은 `insights-chart-templates.ts`에서 재사용합니다. 선택형/책임자 계열 색은 전체 옵션/사용자 목록을 기준으로 정해 필터 변화로 바뀌지 않습니다. 유효하고 구분되는 옵션/사용자 색을 먼저 사용합니다.
+
+aggregate의 내부 `rowTotals`는 열/전체와 같이 업무 ID·주차 집합에서 다시 계산합니다. `ChartCell.scope`는 교차값·row·series·grand의 기여 업무를 기존 drillDown→목록→연간 RowPanel로 전달하며 API/저장 필드가 아닙니다. 서로 다른 열 분모의 %는 행 합계에서 원값으로 표시합니다. `insights-matrix.test.mjs`는 교차값/0·보관/누락·중복 제거·평균/비율/숫자 제외·필터/기간·행/열/전체 드릴다운을 독립 기대값으로 검사합니다. 브라우저는 실제 비교 조작부, 정확한 사람×분류 목록과 연간 상세, 양쪽 표시, 빠른 시작 저장/편집, 0/음수 도형, 다섯 테마 대비와 1404·390·360px 스크롤/고정 열을 검사합니다. 매트릭스의 표시 방식·합계·드릴다운은 기존 차트 필드를 사용하며 별도 저장 형식이나 마이그레이션을 추가하지 않습니다.
+
+선택형/숫자 후보는 활성 팀의 속성 ID·종류·이름·값에서 구합니다. 분류 이름/category ID는 기본 선택 우선순위뿐이며 값·팀원을 하드코딩하지 않습니다. 고정 속성별 통계의 선택 속성이 사라지거나 Option이 아니게 되면 유효한 Option으로 돌아갑니다. 비교·레이더도 유효한 활성 선택으로 해석하고 숫자 후보는 Number 또는 실제 파싱 가능한 Text만 제공합니다. 일반 count/workWeeks/duration/status는 공통 지표이며 Date는 목표일 기준입니다. 저장 차트의 참조는 보존합니다. 보관 참조는 경고와 과거 값을 유지하고, 누락·종류 불일치는 해당 차트의 집계를 중단해 재선택을 안내합니다.
+
+`InsightsAnalysis.tsx`는 매트릭스 아래의 업무 개수 추이·월별 작업량·책임자별 업무 비중·업무 기간 분포·목표일 준수 현황을 소유합니다. 같은 tasks/ctx와 aggregate/렌더러/드릴다운을 사용하고 기존 저장 차트를 변경하거나 시드하지 않습니다. 작업 월 막대는 실제 선택 주차가 있는 표시 월/분기의 0을(선택이 비면 월 축도 비움), 기간 막대는 실제 4개 기간 구간을, 목표일 막대는 범위 내 업무의 실제 6개 상태를 유지합니다. 작업 없는 업무는 기본 분석의 분모에 넣지 않으며 목표일 없음은 별도 상태입니다. 월 눈금은 월·연도를 나눠 표시합니다. 숫자 leaf 머리글·값의 오른쪽 정렬/안쪽 여백과 이름·상태의 왼쪽 정렬은 인사이트 표에만 적용합니다.
+
+`InsightsPeopleRadar.tsx`는 초기 업무 수 상위 3명(동률은 ID)과 사용자의 명시적 사람/속성 선택을 소유합니다. 일반 SSE 갱신은 선택을 바꾸지 않습니다. 실제 owner PropertyFilter를 검색/일치/제외/해제에 재사용하고, 내부 선택은 저장 설정이 아닙니다. count/series %의 분모는 현재 기간·필터 내 각 책임자의 고유 업무 수이며 0이면 0%입니다. 관측 없는 선택자는 0 계열로 표시하되 축은 실제 활성/관측된 보관·누락 값만 사용합니다. 축 3~12/사람 8명 밖이면 기존 table 정의로 같은 원자료를 다시 집계하며, 자료가 없으면 빈 상태를 표시합니다. 레이더 빠른 시작도 같은 정의와 상위 3명 owner 필터를 기존 차트 필드로만 만듭니다.
+
+팀 차트만 `useListReorder(..., "grid")`로 참여합니다. `list-reorder-grid.ts`는 변경하지 않은 카드 경계로 2차원 대상/빈 간격을 찾고, sparse row-major 배치·실제 열 폭·gap·행 최대 높이로 이동 카드의 미리보기 칸을 계산합니다. 호버 중 실제 카드를 재배치하지 않고 overlay는 pointer-events:none이므로 hit test를 흔들지 않습니다. 같은 Y의 가로 이동도 임계값을 넘으면 시작하고 실제 유효한 순서 변경만 기존 settings PATCH/CAS로 저장합니다. 활성 grid 드래그 동안만 카드/컨테이너 ResizeObserver와 scroll/resize를 관찰해 실시간 크기 변경도 반영합니다. 취소·blur·pointercancel·ID 목록/disabled 변경·unmount는 공통 trackPointerDrag가 정리하고 observer/이벤트도 해제합니다. 캡처 해제만으로는 취소하지 않는 기존 브라우저 복구 동작은 유지합니다. 속성 값·주간 업무·업무 색상·메모 탭의 기존 vertical/horizontal 경로와 Alt 방향키는 유지합니다. `insights-reorder.test.mjs`와 실제 포인터 브라우저 검사에서 미리보기 경계/저장 순서, 혼합 폭·높이·간격과 실시간 변경, 취소·권한·CAS를 확인합니다.
+
+`Style.work`는 선택적인 boolean/null이며 `STYLE_KEYS.work = "wk"`로 같은 사전·저장 경로를 사용합니다. 일반 배경색은 `backgroundWorkStyle`로 업무 의미도 교체하고, 개별 셀 정규화는 상속된 true를 취소하는 false를 남깁니다. 공통 서식의 색·work 적용 순서와 초기화 tombstone을 함께 처리하며 PG도 SQLite와 같은 초기화/재적용 우선순위를 사용합니다. 글자·테두리는 값을 보존하고 브러시·행 복사·셀 클립보드(JSON/HTML)는 표식을 전달합니다. `insights-work-marker.test.mjs`는 해석·상속·strict/compact·복사/초기화를, 실제 양쪽 HTTP와 백업 계약은 `insights-storage-contract.test.mjs`, Git 왕복은 `sync-calendar-documents.test.mjs`에서 확인합니다. 기존 무표식 자료는 외형만 유지하고 집계하지 않으며 자동 보정하지 않습니다.
+
+연간과 인사이트가 공유하는 `useTaskData`는 `useSite()`와 기존 `queryPolicyFor`를 따릅니다. 보이는 탭에서 성공 후 내부는 7초, 외부는 30초 주기로 확인합니다. 일반 오류는 내부 7초, 외부 5·10·20·40·60초(상한)의 연속 실패 대기를 사용하며, 429는 `ApiError.retryAfterMs`와 지수 대기 중 긴 값을 적용합니다. 같은 팀·연도 범위의 SSE·포커스·주기 재시도는 그 시각 전에는 업무/설정 HTTP를 보내지 않습니다. 원본 업무와 bootstrap을 함께 공유·취소하고 병렬 오류 중 가장 긴 대기를 보존합니다. 명시적 다시 조회 버튼만 대기를 초기화하며 자동 알림은 대기 시각을 유지합니다. 필요한 연도가 달라지면 새 범위를 즉시 조회하며 이전 범위의 오류가 새 범위를 막지 않습니다. 기존 Workspace의 탭 복귀 시 회원정보 확인 bootstrap 1회는 별도 흐름으로 유지합니다. 숫자 레이더의 저장된 차트와 편집 미리보기에도 막대와 같은 `제외 N건` 표시를 사용하며 빈값은 제외 건수에 포함하지 않습니다.
+
+저장은 기존 공통 `prepareSettings`와 SQLite/PostgreSQL 설정 repository의 권한·revision CAS를 사용하며 생략한 insights를 보존합니다. 팀 일반 PATCH의 `workColors`는 필수 `settingsRevision`과 함께 이름·테마와 원자적으로 저장하고 서버가 최신 차트·목표일을 유지한 채 색상만 병합합니다. 일반 초안은 열린 revision을 고정하고 관리자 목록을 처음 불러오기 전에는 편집기를 마운트하지 않아 오래된 bootstrap revision으로 시작하지 않습니다. 관리자 목록 조회가 실패하면 오류를 표시하고 bootstrap의 팀 정보로 편집기를 열며, 그 revision이 오래되었으면 기존 CAS가 409로 저장을 막습니다. 인사이트 설정·차트 PATCH가 성공한 뒤의 `/bootstrap` 갱신 실패는 저장 결과와 분리해 새 revision을 편집기에 돌려주고 다음 bootstrap 주기에서 화면을 맞춥니다. 저장 계약은 `tests/insights/insights-storage-contract.test.mjs`에서 실제 양쪽 HTTP 경로, 팀원/열람자 403·입력 400·CAS 409, 속성/서식/테마 보존, 다른 연도 셀, SheetClone 제외·JSON v7 포함과 실제 백업을 검사합니다. 기존 `sync-calendar-documents` 통합 검사는 실제 Git/SQLite/PG 왕복 후 생략 저장의 보존을 함께 확인합니다. 계산은 `insights-calculation.test.mjs`, 화면·편집·미리보기·다른 탭과 늦은 응답은 `tests/browser/insights/insights.spec.ts`로 검증합니다. 이 브라우저 검사는 실제 팀 설정 PATCH의 SSE로 실패한 조회를 유발한 뒤 가상 시계와 보류 응답으로 내부/외부의 Retry-After·보완 주기·복구 공유를 확인하고, 숫자 Text의 비숫자/빈값이 포함된 저장 레이더와 미리보기를 검사합니다.
+
+```sh
+TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/insights/*.test.mjs tests/sync/integration/sync-calendar-documents.test.mjs
+E2E_PORT=4399 npx playwright test tests/browser/insights/insights.spec.ts
+```
+
+PostgreSQL 경로는 설치 위치에 맞게 바꾸며 생략해 성공 처리하지 않습니다. 전체 검증·실패와 재실행은 날짜별 [변경 이력](DEVELOPMENT_HISTORY.md)에 기록합니다. 운영/개발 DB의 연결 경로가 검증되지 않은 경우 실데이터 대조는 미검증으로 남깁니다. 이슈의 2026-11-08 관찰값을 오늘의 데이터·KST 상태와 같다고 가정하지 않습니다. 두 환경의 양쪽 서버 업데이트 후 설정을 입력하는 순서와 롤백 한계는 [운영 안내](OPERATIONS.md#인사이트-설정-입력과-롤백)에 있습니다.
+
+### 인사이트 상단 통계·추이·파이
+
+`SheetSummary`는 연간/인사이트 공통 머리글의 전체 업무와 속성별 수치를 담당하며 기존 `statusSummary`가 선택적인 `insights.summaryPropertyId`를 읽습니다. 생략은 `status`, null은 전체 업무만 표시합니다. 선택형 속성의 이름·옵션 순서·점 색·미지정·보관된 값 집계를 재사용합니다. `insights-references.js`는 상단 참조 경고와 차트의 명시적 참조, 속성 보관 확인창에 표시할 사용처를 공유합니다. 보관 시 값과 참조를 유지하며 누락·종류 불일치 시 해당 집계만 멈춥니다.
+
+차트 추가·편집·복제·삭제·순서 변경은 `Insights.saveCharts`가 현재 `settings.insights`를 포함한 완전한 객체에 새 `charts`를 넣어 기존 PATCH/revision CAS 경로로 저장합니다. 상단 기준 속성 ID와 명시적인 null(전체 업무만 표시), 업무 색상·목표일 설정을 보존합니다. 서버는 제공된 `insights` 객체를 교체하는 기존 계약을 유지하며 부분 병합·구버전 우회·자동 재전송을 추가하지 않습니다. 브라우저 회귀는 두 상단 설정을 실제 설정 창에서 저장한 뒤 다섯 변경 각각의 API 값·revision·기존 차트/순서와 새로고침 후 공통 머리글을 확인합니다.
+
+`InsightsTrend`는 기본 분석의 주별/월별 업무 개수와 팀/책임자 선택을 소유합니다. `InsightsLineChart`·`InsightsPieChart`는 기존 `aggregate`의 결과와 색·수치·드릴다운·인쇄 수치표를 사용합니다. 새 조회나 저장 경로, 차트 라이브러리를 추가하지 않습니다. 시간 집계는 연간 보기의 정확한 주차·표시 월에 연결하며 월별 개수는 ID로 중복 제거합니다. 꺾은선은 빈 선택 구간을 0으로 채우고 표시된 직전 구간과의 차이를 점의 설명에 표시합니다. 파이는 가산 집계만 허용하고 음수는 오류, 0 합계는 빈 상태, 양수 한 분류는 완전한 원으로 표시합니다.
+
+공유 스키마에는 선택적인 `summaryPropertyId`, 차트 `line|pie`, 시간 단위 `week`만 확장했습니다. 팀장 권한·revision CAS·생략 필드 보존·백업·Git 동기화는 기존 설정 경로를 그대로 사용합니다. 관련 검증은 `tests/insights/insights-trends.test.mjs`, 기존 저장/백업 계약·Git 통합, `tests/browser/insights/insights.spec.ts` 및 기간·보고서·인쇄 검사입니다. 운영 적용은 양쪽 서버 업데이트 후 새 설정을 저장하는 기존 절차를 따릅니다.
 
 ## 과거 검증 기록
 

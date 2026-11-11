@@ -240,11 +240,17 @@ test("HTML은 화면과 같은 블록을 이미지·다이어그램과 함께 �
   page,
 }, info) => {
   const image = await uploadImage(page);
-  await save(page, taskIds[0], sample(image));
+  await save(
+    page,
+    taskIds[0],
+    `${sample(image)}\n\n<details>\n<summary>[원본 이미지](${image})</summary>\n\n![보관 원본](${image})\n\n</details>`,
+  );
   await open(page);
   const file = await download(page, "HTML (.html)");
   expect(name(file)).toBe("문서 1.html");
   const html = await text(file);
+  expect(html).not.toContain("원본 이미지");
+  expect(html).not.toContain("보관 원본");
   const origin = new URL(page.url()).origin;
   expect(html).toMatch(/^<!doctype html>/);
   expect(html).toContain("<title>문서 1</title>");
@@ -302,7 +308,18 @@ test("PDF는 모든 토글을 펼친 문서만 인쇄 창으로 보낸다", asyn
   page,
 }, info) => {
   const image = await uploadImage(page);
-  await save(page, taskIds[0], sample(image));
+  const toggle = (alt: string) =>
+    `<details>\n<summary>원본 이미지</summary>\n\n![${alt}](${image})\n\n</details>`;
+  // The older unlinked archive follows its image; the same shape after
+  // other blocks is a user's toggle and prints.
+  await save(
+    page,
+    taskIds[0],
+    `${sample(image).replace(
+      `![그림](${image}#width=120)`,
+      `![그림](${image}#width=120)\n\n${toggle("보관 원본")}`,
+    )}\n\n${toggle("사용자 토글")}`,
+  );
   await open(page);
   const siteTitle = await page.title();
   await downloadButton(detail(page)).click();
@@ -313,6 +330,9 @@ test("PDF는 모든 토글을 펼친 문서만 인쇄 창으로 보낸다", asyn
     .poll(() => page.evaluate(() => (window as any).printed.length))
     .toBe(1);
   const [printed] = await page.evaluate(() => (window as any).printed);
+  expect(printed.html.match(/원본 이미지/g)).toHaveLength(1);
+  expect(printed.html).toContain("사용자 토글");
+  expect(printed.html).not.toContain("보관 원본");
   // The document's title names the PDF: Chromium takes the page's title,
   // others the frame's.
   expect(printed.title).toBe("문서 1");

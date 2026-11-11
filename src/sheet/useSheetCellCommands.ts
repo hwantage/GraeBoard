@@ -105,7 +105,7 @@ export default function useSheetCellCommands({
   failed: ReturnType<typeof useSheetOperations>["failed"];
   range: ReturnType<typeof rangeOf>;
   count: number;
-  screen: "annual" | "calendar";
+  screen: "annual" | "calendar" | "insights";
 }) {
   // Cell commands own permission/version checks, clipboard decoding and format brush.
   const [formatBrush, setFormatBrush] = useState<{

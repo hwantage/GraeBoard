@@ -1036,6 +1036,8 @@ test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대�
     opened.getByRole("textbox", { name: "작업 편집", exact: true }),
   ).toHaveValue("링크 대상 업무");
   await expect(rich(opened)).toContainText("새 탭에서 읽을 내용");
+  await expect(tab).toHaveTitle("링크 대상 업무 · 그래보드");
+  await expect(page).toHaveTitle("연간 업무 · 그래보드");
   expect(order.indexOf("here saved")).toBeGreaterThanOrEqual(0);
   expect(order.indexOf("here saved")).toBeLessThan(order.indexOf("tab read"));
   await page.unroute(`**${documentUrl}`);
@@ -1089,17 +1091,70 @@ test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대�
     }),
   ).toHaveValue("새 탭 일정");
   await expect(tab.locator(".calendar-grid")).toBeAttached();
+  await expect(tab).toHaveTitle("새 탭 일정 · 그래보드");
   expect(new URL(tab.url()).pathname).toBe("/calendar");
   await tab.close();
   await expect(calendar).not.toHaveClass(/document-full-page/);
   await expect(calendarExpand).toHaveAttribute("aria-pressed", "false");
 });
 
+test("새 문서 탭 제목은 이름 변경·문서 선택·중첩 링크와 닫기를 따라간다", async ({
+  page,
+}) => {
+  const scheduled = await entry(page, "중첩 일정");
+  await saveTask(page, taskIds[1], `[일정](/links/calendar/${scheduled.id})`);
+  const source = await open(page, taskIds[1]);
+  const tab = await openInNewTab(page, source.locator(".document-expand"));
+  const opened = details(tab);
+  await expect(tab).toHaveTitle("링크 대상 업무 · 그래보드");
+  const taskTitle = opened.getByRole("textbox", {
+    name: "작업 편집",
+    exact: true,
+  });
+  await taskTitle.fill("변경한 업무");
+  await taskTitle.press("Tab");
+  await expect(tab).toHaveTitle("변경한 업무 · 그래보드");
+
+  await links(opened).first().click();
+  const calendar = calendarDetail(tab);
+  await expect(tab).toHaveTitle("중첩 일정 · 그래보드");
+  await calendar
+    .getByRole("textbox", { name: "일정 제목", exact: true })
+    .fill("변경한 일정");
+  await expect(tab).toHaveTitle("변경한 일정 · 그래보드");
+  await calendar.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(tab).toHaveTitle("변경한 업무 · 그래보드");
+
+  await opened.getByRole("button", { name: "문서 추가", exact: true }).click();
+  await expect(opened.getByRole("tab")).toHaveCount(2);
+  await opened.getByRole("tab").last().dblclick();
+  const name = opened
+    .locator(".document-tabs")
+    .getByRole("textbox", { name: "문서 제목", exact: true });
+  await name.fill("설계 검토");
+  await name.press("Enter");
+  await expect(tab).toHaveTitle("설계 검토 · 그래보드");
+  await opened.getByRole("tab", { name: "문서 1", exact: true }).click();
+  await expect(tab).toHaveTitle("변경한 업무 · 그래보드");
+  await opened.getByRole("tab", { name: "설계 검토", exact: true }).click();
+  await expect(tab).toHaveTitle("설계 검토 · 그래보드");
+  await opened.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(tab).toHaveTitle("연간 업무 · 그래보드");
+  await tab.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(tab).toHaveTitle("캘린더 · 그래보드");
+  await expect(page).toHaveTitle("연간 업무 · 그래보드");
+  await tab.close();
+});
+
 test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으로 새 탭에 열고 가운데 클릭도 같다", async ({
   page,
 }) => {
   const id = await memo(page, "새 탭 메모", 2026, "새 탭 메모 본문");
-  await copySheet(page);
+  const sheetClone = await copySheet(page);
+  await request(page, `/sheet-clones/${sheetClone}/memos/${id}`, "PATCH", {
+    title: "사본 메모 제목",
+    expectedTitle: "새 탭 메모",
+  });
   await page.reload();
   await openMemos(page);
   const card = memoCard(page, id);
@@ -1113,6 +1168,7 @@ test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으
   const full = memoPage(tab, "새 탭 메모");
   await expect(full).toHaveClass(/memo-full-page/);
   await expect(full).toContainText("새 탭 메모 본문");
+  await expect(tab).toHaveTitle("새 탭 메모 · 그래보드");
   await tab.close();
   await expect(card).not.toHaveClass(/memo-full-page/);
   await expect(expand).toHaveAttribute("aria-pressed", "false");
@@ -1149,8 +1205,18 @@ test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으
   await expect(
     copied.getByRole("textbox", { name: "작업 편집", exact: true }),
   ).toHaveValue("링크 대상 업무");
+  await expect(tab).toHaveTitle("링크 대상 업무 · 그래보드");
   await tab.close();
   await expect(detail).not.toHaveClass(/document-full-page/);
+  await detail.getByRole("button", { name: "닫기", exact: true }).click();
+  await openMemos(page);
+  tab = await openInNewTab(
+    page,
+    memoCard(page, id).locator(".document-expand"),
+  );
+  await expect(memoPage(tab, "사본 메모 제목")).toBeVisible();
+  await expect(tab).toHaveTitle("사본 메모 제목 · 그래보드");
+  await tab.close();
 });
 
 test("저장하지 못하면 전체 페이지 버튼으로 연 새 탭을 닫고 입력을 지금 창에 남긴다", async ({

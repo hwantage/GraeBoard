@@ -437,6 +437,118 @@ test(
       for (let i = 0; i < work.length; i++) await work[i];
       profile = profileFor(env, "outside", teamId);
       await settle();
+      // Team insights travels through the same real Git/SQLite/PG pipeline as
+      // other settings, including a reverse edit that omits the new field.
+      const insights = {
+        workColors: [{ color: "#0066cc", name: "Work" }],
+        deadlinePropertyId: "missingDate",
+        summaryPropertyId: "status",
+        charts: [
+          {
+            id: "c123abc",
+            title: "Weekly trend",
+            type: "line",
+            dimensions: { axis: { kind: "time", unit: "week", basis: "work" } },
+            values: [{ kind: "count" }],
+          },
+          {
+            id: "cpie001",
+            title: "Owner share",
+            type: "pie",
+            dimensions: { axis: { kind: "owner" } },
+            values: [{ kind: "count" }],
+          },
+        ],
+      };
+      const teamSettingsAt = async (where) =>
+        ok(await site[where]("/bootstrap")).teams.find((t) => t.id === teamId)
+          .settings;
+      await step("inside", async () =>
+        ok(
+          await inside(
+            `/teams/${teamId}/settings`,
+            {
+              revision: (await teamSettingsAt("inside")).revision || 0,
+              insights,
+            },
+            "PATCH",
+          ),
+        ),
+      );
+      assert.deepEqual((await teamSettingsAt("outside")).insights, insights);
+      await step("outside", async () =>
+        ok(
+          await outside(
+            `/teams/${teamId}/settings`,
+            {
+              revision: (await teamSettingsAt("outside")).revision,
+              defaultDensity: "dense",
+            },
+            "PATCH",
+          ),
+        ),
+      );
+      assert.deepEqual((await teamSettingsAt("inside")).insights, insights);
+      assert.equal((await teamSettingsAt("inside")).defaultDensity, "dense");
+      assert.deepEqual(
+        internalStore().readState().entities[entityId("team", [])].payload
+          .settings.insights,
+        insights,
+      );
+      // Work semantics travel as style data through the actual Git pipeline.
+      let workTask;
+      await step("inside", async () => {
+        workTask = ok(
+          await inside("/tasks", {
+            teamId,
+            year: 2026,
+            fields: { title: "Work marker roundtrip" },
+          }),
+        ).task;
+      });
+      const workTaskAt = async (where) =>
+        ok(await site[where](`/tasks?teamId=${teamId}&year=2026`)).tasks.find(
+          (task) => task.id === workTask.id,
+        );
+      const setWorkStyle = async (where, style) => {
+        const task = await workTaskAt(where);
+        ok(
+          await site[where]("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: workTask.id,
+                key: "2026-01-05",
+                style,
+                expectedVersion: task.cells["2026-01-05"]?.version || 0,
+                expectedFormatRevision: task.formatting?.revision || 0,
+              },
+            ],
+          }),
+        );
+      };
+      await step("inside", () =>
+        setWorkStyle("inside", { backgroundColor: "#0066cc", work: true }),
+      );
+      assert.equal(
+        (await workTaskAt("outside")).cells["2026-01-05"].style.work,
+        true,
+      );
+      await step("outside", () =>
+        setWorkStyle("outside", { backgroundColor: "#0066cc" }),
+      );
+      assert.notEqual(
+        (await workTaskAt("inside")).cells["2026-01-05"].style.work,
+        true,
+      );
+      await step("outside", () =>
+        setWorkStyle("outside", { backgroundColor: "#0066cc", work: true }),
+      );
+      assert.equal(
+        (await workTaskAt("inside")).cells["2026-01-05"].style.work,
+        true,
+      );
       assert.equal(
         await read("outside", withBody.id),
         "Genesis body, edited early",

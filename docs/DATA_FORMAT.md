@@ -96,6 +96,7 @@ XLSX 가져오기 작업은 작은 결과 응답을 직접 저장합니다. 팀 
 | -------------------------------------------------------- | ---------------------- |
 | `borderTop`, `borderRight`, `borderBottom`, `borderLeft` | `bt`, `br`, `bb`, `bl` |
 | `color`, `backgroundColor`                               | `c`, `bg`              |
+| `work` | `wk` (boolean 또는 `null`) |
 | `fontFamily`, `fontSize`                                 | `ff`, `fs`             |
 | `textAlign`, `verticalAlign`, `textMode`                 | `ta`, `va`, `tm`       |
 | `bold`, `italic`, `underline`, `strike`                  | `b`, `i`, `u`, `s`     |
@@ -212,6 +213,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | API (원본/사본 각각 동일한 문서 동작)                             | 의미                                                                                           |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `GET /api/tasks/:id/documents`                                    | 문서 ID·제목·내용 유무·revision 목록. `?content=1`은 행 복사에 필요한 전체 본문 조회           |
+| `POST /api/tasks/:id/documents/reorder` | `{ids,expectedIds}`로 기존 문서 순서 변경. main과 UUID 지원, 충돌 시 409. 사본 문서도 같은 경로 지원 |
 | `POST /api/tasks/:id/documents`                                   | `{id:UUID,title?}`로 추가. 제목 1~50자. 같은 ID의 재시도는 중복 생성하지 않음                  |
 | `GET/PUT /api/tasks/:id/documents/:documentId`                    | 조회 / `{markdown,expectedRevision,operationId}`로 독립 저장                                   |
 | `PATCH /api/tasks/:id/documents/:documentId`                      | `{title,expectedTitle}`로 이름 변경. 새 제목 1~50자, 이전 이름 충돌 검사                       |
@@ -346,6 +348,60 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 팀 설정의 선택 항목 `currentWeekBorders: {left?: Border, right?: Border}`는 한국 시간 기준 이번 주 열의 기본 좌우 테두리입니다. 주차 키는 `mondayOf(todayKey())`로 계산하고 실제 표시·반출 열에 그 키가 있을 때만 적용합니다. 값이 없거나 빈 객체이면 추가 선이 없으며, 방향별 `none`도 해당 방향의 이번 주 기본선을 해제합니다. 직접 지정한 셀·행·열 및 이웃 셀의 선 → 이번 주 기본선 → `weekBorders` 순으로 적용합니다. 셀의 `null`·`none`과 업무 기본 서식의 상속선은 기존 경계선과 동일하게 기본선으로 대체됩니다. 셀·버전·클립보드에는 합성한 선을 저장하지 않습니다. 설정 PATCH에서 항목 생략은 이전 값을 보존하고 빈 객체는 해제합니다. 기존 `teams.settings` JSON, 팀 양식·사본·JSON 반출에 보존하며, 기존 팀·사본에서 항목이 없으면 설정 없음으로 읽습니다. SQLite v29·JSON v6 및 백업 형식은 유지하고 기존 데이터 변환은 수행하지 않습니다.
 
+## 업무 표시 서식
+
+셀·업무 기본·행/열 공통 서식에 선택적 `work: boolean | null`을 사용합니다. 전용 업무 동작은 `{backgroundColor: "#0066cc", work: true}`를 저장합니다. 인사이트는 상속을 적용한 `work === true`이면서 등록된 업무 색상과 정확히 일치하는 주차만 셉니다. 같은 HEX의 일반 배경색은 별개 동작입니다. 배경색을 명시하면서 `work`를 생략하거나 `false`/`null`로 주면 상속된 업무 의미를 해제합니다. 배경색 없는 `work: false`/`null`도 상속 해제에 사용합니다. 기존에 색만 있는 셀·기본/행/열 서식은 일반 색으로 읽고 외형을 유지합니다. 일괄 변환·새 테이블·버전 증가는 없습니다.
+
+`STYLE_KEYS`의 저장 키는 `wk`입니다. strict style 계약, 정규화·공유 서식 사전, 셀/범위 저장·버전/CAS·이력 복원, 행 복사·서식 브러시·SheetClone, JSON v7·SQLite/PG 백업·Git 동기화에 포함합니다. 글자·폰트·테두리 도구는 표시를 보존합니다. 공통 규칙은 배경색과 업무 의미의 적용 순서를 함께 기록하고 초기화는 두 항목을 기본 서식으로 되돌립니다. 같은 색의 일반 채우기도 표시 변경이므로 저장되며, 동일한 표시를 재적용해 차이가 없으면 기존 no-op 규칙을 따릅니다.
+
+앱 셀 클립보드 JSON에는 `style.work`를, 앱 HTML에는 `data-work="true|false"`를 포함합니다. 이 속성이 없는 외부 HTML의 배경색은 일반 채우기이며, 텍스트만 붙여넣기는 기존 서식을 유지합니다. OS/외부 편집기가 사용자 정의 형식·HTML 속성을 제거하면 업무 의미를 보존할 수 없습니다. XLSX/CSV는 기존 내용·표현 반출 계약을 유지하며 업무 표식의 백업·복구 형식으로 사용하지 않습니다.
+
+## 인사이트 팀 설정
+
+팀 설정의 선택 항목 `insights`는 원본 연간 업무 분석에만 사용합니다. SQLite v34, PostgreSQL의 기존 team 엔티티와 migration 번호, JSON 반출 v7을 유지합니다. 테이블·스키마 버전·기존 업무·셀의 일괄 변환은 없습니다. 항목이 없거나 `workColors`가 비면 미설정입니다.
+
+```json
+{
+  "insights": {
+    "workColors": [{ "color": "#0066cc", "name": "작업" }],
+    "deadlinePropertyId": "deadline",
+    "summaryPropertyId": "status",
+    "charts": [{
+      "id": "c123abc",
+      "title": "책임자별 작업 주",
+      "type": "bar",
+      "dimensions": { "axis": { "kind": "owner" } },
+      "values": [{ "kind": "workWeeks" }],
+      "display": { "percent": "value", "orientation": "vertical", "mode": "grouped" },
+      "filter": { "propertyFilters": {}, "propertyFilterModes": {} }
+    }]
+  }
+}
+```
+
+- `workColors`: 최대 20개, 중복 없는 HEX 색과 선택적 이름(40자). 3자리·대문자 HEX는 소문자 `#rrggbb`로 정규화합니다. 유사 색은 일치하지 않습니다.
+- `deadlinePropertyId`: 기존 속성 ID 규칙(영문자로 시작, 영문·숫자·`_`·`-`, 60자 이내). 생략하면 Date 속성 `deadline`이 있을 때 이를 사용하고, `null`이면 사용하지 않습니다. 보관·삭제·종류 변경된 참조도 저장을 막지 않고 화면에서 경고합니다.
+- `summaryPropertyId`: 선택형 속성 ID 또는 `null`. 생략하면 기존 상태(`status`), `null`이면 상단에 전체 업무만 표시합니다. 보관한 참조는 값과 함께 유지하며, 누락·종류 불일치는 상단 집계를 중단하고 재선택을 안내합니다.
+- `charts`: 최대 30개, 순서대로 표시합니다. ID는 `c` + base36 6자리이고 팀 안에서 유일하며 제목은 1~80자입니다. 종류는 `number`, `bar`, `line`, `pie`, `radar`, `table`, `top`입니다. 알 수 없는 필드·종류·잘못된 칸·표시·상한은 공유 Zod 스키마가 거절합니다.
+- 기준은 `owner`, `property`(`propertyId`, Option), `time`(`unit: week|month|quarter`, `basis: work|start|end`), `deadlineState`, `progressState`, `durationBand`입니다. 막대는 `axis`와 선택적 `series`, 꺾은선은 시간 `axis`와 선택적 `series`, 파이는 시간이 아닌 `axis`만, 레이더는 `axis`·`series`, 표는 `row`와 선택적 `column`을 씁니다. 숫자 카드·Top N은 기준 칸이 없습니다.
+- 값은 `count`, `completed`, `inProgress`, `workWeeks`, `avgDuration`, `medianDuration`, `maxDuration`, `delayed`, `delayRate`, `avgDelay`, `numberSum|numberAvg|numberMax`(숫자·텍스트 `propertyId`)입니다. 표는 1~4개, 나머지는 1개입니다. `display.percent`는 `value|total|series`, 막대만 `orientation: vertical|horizontal`, `mode: grouped|stacked`를 사용합니다. Top N은 `sort: {kind: duration|delayWeeks}` 또는 `{kind: number, propertyId}`와 `limit: 5~50`을 씁니다.
+- 실제 집계 결과의 칸 수는 편집기에서 검증합니다. 막대 X 50개/나누기 12개, 레이더 축 3~12개/계열 8개, 표 200행을 초과하면 이유를 표시하고 저장하지 않습니다. 저장 후 데이터 증가로 상한을 넘은 차트도 같은 안내를 표시합니다.
+- 차트 필터는 기존 `propertyFilters`·`propertyFilterModes` 계약을 사용합니다. 날짜는 연간 업무와 같은 개인 View의 월·주차·숨김·접힘과 순환 12개월 달력을 사용하며 기존 보기 저장 API를 따릅니다. 화면의 보고서 필터만 사용자·팀별 sessionStorage에 유지하고 이전 Insights.period는 무시합니다. 팀 설정이나 개인 차트에 별도 기간을 저장하지 않습니다. 일반 사용자의 차트 미리보기는 메모리에만 둡니다.
+
+저장은 기존 `PATCH /api/teams/:id/settings`의 팀장·시스템 관리자 권한과 `revision` CAS를 사용하며, 다른 관리자가 먼저 저장한 요청은 409입니다. 입력에서 `insights`를 생략하면 이전 값을 유지합니다. 속성·서식 설정 저장과 `PATCH /api/teams/:id`의 테마 변경도 보존합니다. 팀 일반 저장은 같은 PATCH에 선택적 `workColors`를 받으며 이때 `settingsRevision`이 필수입니다. 이름·테마·업무 색상을 한 트랜잭션으로 저장하고 최신 insights에서 색상 배열만 교체해 차트·목표일은 유지합니다. 충돌은 이름 변경도 반영하지 않고 409이며 응답의 `settings`는 저장 후 revision을 포함합니다. 팀 모든 사용자와 열람자가 bootstrap에서 동일한 설정을 읽습니다. 동기화는 팀 설정 payload 전체로 전달하고 SQLite/외부 논리 백업·원본 JSON 반출에 포함합니다. 원본에서 생성·복제·가져온 SheetClone의 설정 스냅샷에는 포함하지 않습니다. JSON 직접 가져오기는 기존대로 제공하지 않습니다.
+
+기존 `GET /api/tasks?teamId&year[&startMonth]`는 선택된 업무의 다른 해 주차 셀도 반환합니다. 인사이트는 불러온 연간 달력의 한두 원본 연도를 재사용하고 기존 연도별 API로 갱신하며 업무 ID로 합칩니다. 조회 연도는 실제 연간 달력 범위이며 주차 Monday의 연도나 선택 표시 월의 연도가 아닙니다. 셀·팀 SSE와 복구·포커스 조회를 재사용하며 팀·기간 전환의 취소/늦은 응답을 보호합니다. 계산은 `cell(task,key)`의 기본·행·열·셀 서식 상속을 따릅니다. 셀 레코드가 없는 주도 업무 연도의 주차와 공통 서식의 명시적 업무 표시로 판정하며 삭제 업무는 제외합니다.
+
+업무 전체 작업 주로 기간·진행/목표일 상태를 구하고 범위 내 작업 주만 작업 주 합과 시간 집계에 씁니다. 화면의 내부 period.weeks는 실제 선택한 주 key와 연간 달력의 표시 year/month이며 월·주 범위·숨김·접힘과 빈 선택을 정확히 반영합니다. 월 귀속은 이 표시 월을 사용하므로 2026-12-28은 2026년 1~12월 달력에서 12월, 2026년 2월~2027년 1월 달력에서 2027년 1월입니다. 2000년 첫 주 1999-12-27도 2000년 1월에 포함합니다. 이번 주는 한국 시간의 월요일이며 착수·완료 시간 기준은 실제 해당 끝점 주가 선택되었을 때만 집계합니다. 월 전용 레거시 순수 계산 문맥은 기존 금요일 귀속을 유지합니다. 여러 월에 걸친 업무는 각 월에서 한 번 세지만 행·열·전체 합계는 각각 업무 ID를 중복 제거하고 작업 주를 합칩니다. 평균·중앙값·최댓값·지연율 합계도 원자료에서 다시 계산하며 셀 평균이나 비율을 더하지 않습니다. 전체/계열 비율의 분모도 같은 값 종류의 전체/계열 원자료 집계입니다. `display.percent: series`에서는 분모가 0이 아닌 열 합계가 해당 계열의 100%이고 행·전체 합계는 원값을 표시합니다. 분모가 0이면 0%입니다. 서로 다른 계열 분모의 퍼센트를 더하지 않습니다. 드릴다운은 교차값·행·열·전체 범위를 구분하고 선택한 값의 기여 업무를 보여 줍니다. 완료·진행 중·지연 수는 해당 상태, 숫자 값은 유효한 숫자, 지연율은 목표일이 있는 분모 업무를 포함합니다.
+
+책임자×속성 고정 비교와 저장된 두 기준 표는 기존 `table.dimensions.row/column`, 값·표시 계약으로 집계합니다. 활성 선택값은 관측 업무가 없어도 열에 0으로 남기며 보관·누락·미지정 값은 실제 업무가 있을 때 별도로 포함합니다. 농도 범위는 합계를 제외한 교차값의 절댓값 최대이고 값마다 따로 계산합니다. 고정 비교의 속성·값·매트릭스/누적 막대 선택과 집계 결과의 `rowTotals`·드릴다운 `scope`는 화면 내부 상태이며 저장 JSON에 추가하지 않습니다. 빠른 시작은 table/bar/radar/line/pie 정의와 필요한 owner 필터를 저장하며 기존 차트를 변환하지 않습니다. 평균·비율·최댓값·계열 안 %를 누적 막대로 요청하면 화면에서는 묶음 막대로 비교합니다. 고정 비교의 표시 전환과 행·열 합계 자체에는 별도 저장 필드가 없습니다.
+
+기본 분석 5개는 저장한 `charts` 배열과 별도의 파생 화면입니다. 업무 개수 추이는 line/count/time(work)의 주·월 기준과 선택적인 owner 계열/필터, 월별 작업량은 workWeeks/time(work), 책임자 비중은 property×owner count/series %, 기간 분포는 durationBand/count, 목표일 현황은 deadlineState/count를 사용합니다. 작업 월/분기는 선택 주차가 있는 표시 월/분기를 0으로 완성하고(빈 주차 선택은 월 축도 비움), 기간 4구간·작업 없음 외 목표일 6상태도 0을 유지합니다. 빈 칸에는 업무 ID나 가짜 분모를 추가하지 않습니다. 레이더의 초기 상위 3명 선택은 범위 내 owner별 업무 수와 ID 정렬로 구하며 이후 사람 선택은 마운트된 팀 화면 안에서만 유지합니다. 0 계열, 축/사람 한도 초과 시 표 대체도 집계/화면 내부 처리입니다. 드래그 격자 미리보기 역시 저장하지 않으며 드롭할 때 기존 차트 배열 순서만 CAS로 저장합니다. 기본 분석의 선택 상태를 위한 별도 저장 필드나 자료 변환은 없습니다.
+
+양쪽 서버와 접속 중인 브라우저를 이 항목과 `work`/`wk`를 아는 버전으로 갱신한 뒤 설정·업무 표시를 입력합니다. 구버전의 strict 설정 저장은 항목을 지우고 동기화로 퍼뜨릴 수 있습니다. [운영 안내](OPERATIONS.md#인사이트-설정-입력과-롤백)를 따릅니다.
+
+차트 참조의 보관은 경고와 기존 수치를 유지합니다. 차트의 분류·숫자 값·정렬·필터 속성 참조가 없거나 요구한 종류와 맞지 않으면 정의는 보존하고 해당 차트의 수치 표시는 중단합니다. 파이는 `count|completed|inProgress|workWeeks|delayed|numberSum`만 허용하고 음수 조각은 표시하지 않습니다. 꺾은선은 시간 110칸·계열 12개, 파이는 분류 50개 상한이며 0인 선택 구간도 같은 집계·드릴다운 경로를 사용합니다. 이 설정 확장은 DB 스키마·migration·JSON 반출 v7 번호를 바꾸거나 기존 자료를 일괄 변환하지 않습니다.
+
 ## 팀 스페이스 테마
 
 팀 설정의 `theme`는 `mint`·`sky`·`lavender`·`rose`·`sand` 중 하나이며 기본값은 민트입니다. 팔레트는 `shared/formatting/themes.js`에서 관리하고, 현재 팀의 테마를 메뉴·버튼·선택 강조·팝업에 적용합니다. 셀의 저장된 색상과 속성 옵션·사용자 아바타 색상은 변경하지 않습니다.
@@ -408,7 +464,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 담당자 없는 행은 미지정으로 유지하고 로그인한 관리자로 대체하지 않습니다. 수식은 저장된 계산 결과를 가져오며 재계산하지 않습니다. 부분 글자 서식, 대각선 테두리, 조건부 서식 등 지원 범위 밖의 표현은 원본 파일과 예외 목록을 함께 확인해야 합니다.
 
-상단 상태 통계는 `status` 속성의 활성 옵션 ID에 셀 값을 연결해 이름·점 색상·순서를 따릅니다. 미지정과 보관된 값도 별도 집계해 합계가 전체 업무 수와 같도록 합니다. 필터·숨김과 무관하게 달력에 해당하는 최대 두 연도의 업무 목록에서 ID 중복을 제거한 뒤 계산합니다.
+상단 통계는 `insights.summaryPropertyId`로 고른 선택형 속성(생략 시 `status`)의 활성 옵션 ID에 셀 값을 연결해 이름·점 색상·순서를 따릅니다. 미지정과 보관된 값도 별도 집계해 합계가 전체 업무 수와 같도록 합니다. 필터·숨김과 무관하게 달력에 해당하는 최대 두 연도의 업무 목록에서 ID 중복을 제거한 뒤 계산합니다.
 
 서식 메뉴의 재선택은 값 변경 여부와 관계없이 선택 범위의 `/cells/batch` 서식 변경을 요청합니다. 글꼴·크기·세로 정렬·텍스트 표시가 대상이며 내용은 보존하고 기존 원자적 저장·버전 검사·실행취소를 사용합니다.
 

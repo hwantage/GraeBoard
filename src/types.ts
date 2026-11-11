@@ -22,6 +22,8 @@ export type Style = {
   borderLeft?: Border | null;
   color?: string | null;
   backgroundColor?: string | null;
+  // true marks work; false/null explicitly cancel inherited work semantics.
+  work?: boolean | null;
   fontFamily?: string | null;
   fontSize?: number | null;
   textAlign?: "left" | "center" | "right" | null;
@@ -132,6 +134,7 @@ export type Property = {
   archived?: boolean;
 };
 export type Settings = {
+  insights?: import("./insights/insights-types").InsightsSettings;
   defaultDensity?: "comfortable" | "compact" | "dense";
   weekHeader?: { color?: string; backgroundColor?: string };
   weekBorders?: { left?: Border; right?: Border };

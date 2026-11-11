@@ -273,6 +273,9 @@ test("서식 범위의 패턴을 사본에 적용하고 사본 실행취소는 �
   });
   await page.reload();
   await page.getByRole("tab", { name: "서식 사본", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "서식 사본", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await drag(page, target(page, 0), target(page, 1));
   await page.getByRole("button", { name: "서식 복사", exact: true }).click();
   await target(page, 2).click();
@@ -674,20 +677,24 @@ for (const copy of [false, true]) {
       name: "꼬리 메모",
       exact: true,
     });
-    await memoToggle.hover();
-    await expect(page.locator(".presentation-pointer")).toBeHidden();
-    await expect(memoToggle).toHaveCSS("cursor", "pointer");
+    // The laser stays over the tail memo; the eraser works only on the table,
+    // so the memo keeps its ordinary cursor.
+    const ordinary = /^(?!none|crosshair)/;
+    const overMemo = async (element: Locator, cursor: string | RegExp) => {
+      await element.hover();
+      await expect(page.locator(".presentation-pointer")).toBeVisible({
+        visible: !copy,
+      });
+      await expect(element).toHaveCSS("cursor", copy ? cursor : "none");
+    };
+    await overMemo(memoToggle, "pointer");
     await memoToggle.click();
     const memoRich = memos.getByRole("textbox", {
       name: "연간 업무 메모 리치 편집",
     });
-    await memoRich.locator("h1").hover();
-    await expect(page.locator(".presentation-pointer")).toBeHidden();
-    await expect(memoRich).not.toHaveCSS("cursor", /none|crosshair/);
+    await overMemo(memoRich.locator("h1"), ordinary);
     const memoTab = memos.getByRole("tab", { name: "그림 메모", exact: true });
-    await memoTab.hover();
-    await expect(memoTab).toHaveCSS("cursor", "pointer");
-    await expect(page.locator(".presentation-pointer")).toBeHidden();
+    await overMemo(memoTab, "pointer");
     // Returning to the table restores the selected laser or eraser pointer.
     await target(page, 0).hover();
     await expect(target(page, 0)).toHaveCSS("cursor", "none");
@@ -695,8 +702,7 @@ for (const copy of [false, true]) {
     await expect(
       toolbar.getByRole("button", { name: "레이저 포인터", exact: true }),
     ).toHaveAttribute("aria-pressed", String(!copy));
-    await memoRich.locator("img[src]").hover();
-    await expect(page.locator(".presentation-pointer")).toBeHidden();
+    await overMemo(memoRich.locator("img[src]"), ordinary);
     await memoRich.locator("img[src]").dblclick();
     await expect(preview).toBeVisible();
     await expect(page.locator(".presentation-pointer")).toBeHidden();
@@ -713,9 +719,7 @@ for (const copy of [false, true]) {
     });
     await close.click();
     await expect(preview).toHaveCount(0);
-    await memoRich.locator("h1").hover();
-    await expect(page.locator(".presentation-pointer")).toBeHidden();
-    await expect(memoRich).not.toHaveCSS("cursor", /none|crosshair/);
+    await overMemo(memoRich.locator("h1"), ordinary);
     await expect(toolbar).toBeVisible();
     await expect(
       page.locator("[data-annotation]:not([data-draft])"),
