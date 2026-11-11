@@ -3936,6 +3936,13 @@ test("상세 기간의 실패·충돌·초안 보존과 본문 저장 응답의 
   await segment(page, entry.id).locator(".calendar-entry-card").first().click();
   await entryDialog(page).getByLabel("일정 시작일").fill("2026-10-25");
   await entryDialog(page)
+    .getByRole("textbox", { name: "일정 제목", exact: true })
+    .click();
+  await expect(
+    entryDialog(page).getByText(/유효한 시작일과 종료일/),
+  ).toBeVisible();
+  await expectRange(page, entry.id, "2026-10-12", "2026-10-23");
+  await entryDialog(page)
     .getByRole("button", { name: "닫기", exact: true })
     .click();
   await expect(entryDialog(page)).toBeVisible();

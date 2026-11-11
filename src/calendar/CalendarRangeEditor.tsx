@@ -212,10 +212,11 @@ export default function CalendarRangeEditor({
         disabled={saving}
         aria-label="일정 기간"
         onBlur={(event) => {
+          // flush() saves a valid range and reports an invalid one, which
+          // has no save button to show its error any more.
           if (
             !event.currentTarget.contains(event.relatedTarget as Node | null) &&
-            !readOnly &&
-            valid(draft.current)
+            !readOnly
           )
             void flush();
         }}

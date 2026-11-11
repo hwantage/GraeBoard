@@ -885,10 +885,18 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
           // in both the Markdown and HTML clipboard representations.
           if (LISTS.has(parent.type.name))
             content = Fragment.from(parent.copy(content));
-          const { text, dom } = current.serializeForClipboard(
-            new Slice(content, 0, 0),
-          );
-          void copyToClipboard(text, dom.innerHTML).then(
+          // The copy stays inside the click so the plain-HTTP fallback keeps
+          // its user activation; a serializer error shares the failure toast.
+          let copied: Promise<void>;
+          try {
+            const { text, dom } = current.serializeForClipboard(
+              new Slice(content, 0, 0),
+            );
+            copied = copyToClipboard(text, dom.innerHTML);
+          } catch (error) {
+            copied = Promise.reject(error);
+          }
+          void copied.then(
             () => notifyCopy("복사되었습니다."),
             () => notifyCopy("복사하지 못했습니다."),
           );

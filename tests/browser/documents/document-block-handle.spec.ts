@@ -551,6 +551,28 @@ test("목록 항목 복사는 체크 상태와 목록 형식을 보존하고 이
   expect(copied.html).not.toContain("앞 항목");
   expect(copied.html).not.toContain("뒤 항목");
   expect(await markdown(page)).toBe(source);
+
+  // A refused clipboard reports the failure and leaves the document alone.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async () => {
+          throw new Error("denied");
+        },
+      },
+    });
+  });
+  await hover(
+    page,
+    rich(page).locator("li p").filter({ hasText: "선택 항목" }),
+  );
+  await handle(page).click();
+  await option(page, "복사").click();
+  await expect(
+    detail(page).getByText("복사하지 못했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await markdown(page)).toBe(source);
 });
 
 test("커서가 토글 제목에 있어도 안쪽 블록의 손잡이는 그 블록만 다룬다", async ({
