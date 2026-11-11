@@ -1143,6 +1143,12 @@ test("다른 곳의 저장이 위·아래 문단을 함께 바꿔도 입력 중�
         (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
     )
     .toBe("첫째 문단 수정\n\n둘째 문단가나\n\n셋째 문단 수정\n");
+  // Rewriting hundreds of blocks at once still applies, as one replace.
+  const many = Array.from({ length: 300 }, (_, i) => `대량 문단 ${i}`);
+  const current = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  await save(page, taskIds[0], `${many.join("\n\n")}\n`, current.revision);
+  await expect(rich(page).locator("p")).toHaveCount(300);
+  await expect(rich(page).locator("p").last()).toHaveText("대량 문단 299");
 });
 
 test("실패·재시도·동시 수정·응답 대기 중 입력을 보존하고 다른 문서로 전이하지 않음", async ({
