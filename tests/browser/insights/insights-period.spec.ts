@@ -840,7 +840,7 @@ test("날짜 오른쪽의 범위·설정 버튼은 한 줄을 유지하고 좁�
 }, info) => {
   await openInsights(page);
   const dates = page.locator(".insights-board .date-controls");
-  const range = page.getByRole("button", { name: "범위 필터", exact: true });
+  const range = page.getByRole("button", { name: "속성 필터", exact: true });
   const settings = page.getByRole("button", {
     name: "인사이트 설정",
     exact: true,
@@ -889,7 +889,7 @@ test("날짜 오른쪽의 범위·설정 버튼은 한 줄을 유지하고 좁�
     await expect(
       page
         .locator(".insights-board .view-controls")
-        .getByRole("button", { name: "범위 필터", exact: true }),
+        .getByRole("button", { name: "속성 필터", exact: true }),
     ).toBeVisible();
     await page.screenshot({
       path: info.outputPath(`date-actions-${width}.png`),
@@ -915,7 +915,7 @@ test("날짜 오른쪽의 범위·설정 버튼은 한 줄을 유지하고 좁�
     await page.keyboard.press(forwardTab);
     await expect(range).toBeFocused();
     await range.press("Enter");
-    const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+    const popup = page.getByRole("dialog", { name: "속성 필터", exact: true });
     await expect(popup).toBeVisible();
     await popup.locator("summary").filter({ hasText: "제품 성격" }).click();
     const choice = popup.getByRole("checkbox", {
