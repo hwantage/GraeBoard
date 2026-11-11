@@ -589,6 +589,19 @@ export default forwardRef<DocumentPanelHandle, Props>(
     function focusTab(documentId: string) {
       setTabToFocus(documentId);
     }
+    // Pressing a tab while a title is being composed commits the composition,
+    // and the browser scrolls the narrow rail back to the title input. Keep
+    // the pressed tab under the pointer so a double-click renames that tab.
+    function keepTabRail() {
+      const rail = tabScroll.current;
+      if (!renaming || !rail) return;
+      const left = rail.scrollLeft;
+      const restore = () => {
+        rail.scrollLeft = left;
+      };
+      rail.addEventListener("scroll", restore, { once: true });
+      setTimeout(() => rail.removeEventListener("scroll", restore), 300);
+    }
     async function startRename(
       doc: DocumentInfo,
       location: RenameDraft["location"] = "tab",
@@ -830,7 +843,10 @@ export default forwardRef<DocumentPanelHandle, Props>(
                     tabIndex={selected === doc.id ? 0 : -1}
                     title={doc.title}
                     aria-label={doc.title}
-                    onPointerDown={tabReorder.handleProps(doc.id).onPointerDown}
+                    onPointerDown={(event) => {
+                      keepTabRail();
+                      tabReorder.handleProps(doc.id).onPointerDown(event);
+                    }}
                     onClickCapture={
                       tabReorder.handleProps(doc.id).onClickCapture
                     }

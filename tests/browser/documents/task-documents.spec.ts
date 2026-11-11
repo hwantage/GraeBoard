@@ -487,17 +487,9 @@ test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 �
   await save(page, taskIds[0], markdown);
   await open(page);
   await raw(page);
+  // The chosen Markdown mode stays on narrow screens too.
   const fits = async () => {
     const body = detail(page).locator(".modal-body");
-    if (page.viewportSize()!.width <= 700) {
-      await expect(source(page)).toHaveCount(0);
-      await expect(rich(page)).toContainText("높이 검증");
-      await expect(detail(page).locator(".document-rich-tools")).toBeHidden();
-      expect(
-        await body.evaluate((el) => el.scrollHeight - el.clientHeight),
-      ).toBeGreaterThan(100);
-      return;
-    }
     await expect
       .poll(async () => {
         const footer = (await detail(page).locator("footer").boundingBox())!;
@@ -4521,6 +4513,48 @@ test("이미지 원본 연결은 같은 문단의 여러 이미지와 기존 원
   expect(
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
   ).toBe(legacy);
+});
+
+test("편집본이 없는 원본 보관 블록과 같은 모양의 일반 토글은 본문에 표시한다", async ({
+  page,
+}) => {
+  await open(page);
+  await pasteImage(page);
+  await expect(detail(page).locator(".document-save-state")).toHaveText(
+    "저장됨",
+  );
+  const current = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  const reference = current.markdown.trim();
+  const src = reference.match(/\]\(([^)\s]+)/)![1];
+  await close(page);
+  const toggle = (summary: string) =>
+    `<details>\n<summary>${summary}</summary>\n\n${reference}\n\n</details>`;
+  // The linked archive belongs to the image; the same shape after a text
+  // paragraph is a user's own toggle.
+  await save(
+    page,
+    taskIds[0],
+    `${reference}\n\n${toggle(`[원본 이미지](${src})`)}\n\n본문 문단\n\n${toggle("원본 이미지")}`,
+    current.revision,
+  );
+  await open(page);
+  const archives = rich(page).locator(".document-image-original-archive");
+  const toggles = rich(page).getByRole("button", { name: /토글 펼치기/ });
+  await expect(archives).toHaveCount(1);
+  await expect(toggles).toHaveCount(1);
+  // Deleting the edited image leaves its archive visible to keep or delete.
+  await rich(page).locator(".document-image:visible img").first().click();
+  await page.keyboard.press("Backspace");
+  await expect(archives).toHaveCount(0);
+  await expect(toggles).toHaveCount(2);
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown.match(
+          /!\[/g,
+        )?.length,
+    )
+    .toBe(2);
 });
 
 test("이미지 편집 중 원격에서 이미지가 바뀌면 이전 편집본을 적용하지 않는다", async ({

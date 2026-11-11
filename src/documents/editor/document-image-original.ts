@@ -96,32 +96,83 @@ export function imageOriginalBlock(
   ]);
 }
 
+const linked = (archive: Node) =>
+  archive.firstChild?.firstChild?.marks.find(
+    (mark) => mark.type.name === "link",
+  );
+const imageCount = (block: Node) => {
+  let count = 0;
+  block.descendants((child) => {
+    if (originalImageIn(child)) return false;
+    if (child.type.name === "image") count++;
+  });
+  return count;
+};
+
+// Positions of the archives that belong to an image still in the document:
+// a linked one needs its edited image, an unlinked one of older saves must
+// follow a block with one image, as findImageOriginal reads them. Any other
+// toggle of the same shape, such as an archive left by deleting its edited
+// image or a user's own toggle, stays visible and in exports.
+function attachedOriginals(doc: Node): Set<number> {
+  const archives: { pos: number; parent: Node; index: number }[] = [];
+  const images = new Set<string>();
+  doc.descendants((node, pos, parent, index) => {
+    if (originalImageIn(node)) {
+      archives.push({ pos, parent: parent!, index });
+      return false;
+    }
+    if (node.type.name === "image") images.add(imageKey(node.attrs.src));
+  });
+  const attached = new Set<number>();
+  for (const { pos, parent, index } of archives) {
+    const link = linked(parent.child(index));
+    if (link) {
+      if (images.has(imageKey(link.attrs.href))) attached.add(pos);
+      continue;
+    }
+    for (let i = index - 1; i >= 0; i--) {
+      const block = parent.child(i);
+      if (originalImageIn(block)) {
+        if (linked(block)) break;
+        continue;
+      }
+      if (imageCount(block) === 1) attached.add(pos);
+      break;
+    }
+  }
+  return attached;
+}
+
 // Visual exports show the same content as the document. Stored Markdown keeps
 // the original references; opening the image preview is the viewing entry point.
-export function withoutImageOriginals(node: Node): Node {
-  if (node.isLeaf) return node;
-  const children: Node[] = [];
-  node.forEach((child) => {
-    if (!originalImageIn(child)) children.push(withoutImageOriginals(child));
-  });
-  return node.copy(Fragment.fromArray(children));
+export function withoutImageOriginals(doc: Node): Node {
+  const attached = attachedOriginals(doc);
+  if (!attached.size) return doc;
+  const strip = (node: Node, start: number): Node => {
+    if (node.isLeaf) return node;
+    const children: Node[] = [];
+    node.forEach((child, offset) => {
+      if (!attached.has(start + offset))
+        children.push(strip(child, start + offset + 1));
+    });
+    return node.copy(Fragment.fromArray(children));
+  };
+  return strip(doc, 0);
 }
 
 const originalsKey = new PluginKey<DecorationSet>("document-image-originals");
 function originalDecorations(doc: Node) {
-  const decorations: Decoration[] = [];
-  doc.descendants((node, pos) => {
-    if (!originalImageIn(node)) return;
-    decorations.push(
-      Decoration.node(pos, pos + node.nodeSize, {
+  return DecorationSet.create(
+    doc,
+    [...attachedOriginals(doc)].map((pos) =>
+      Decoration.node(pos, pos + doc.nodeAt(pos)!.nodeSize, {
         class: "document-image-original-archive",
         "aria-hidden": "true",
         style: "display: none",
       }),
-    );
-    return false;
-  });
-  return DecorationSet.create(doc, decorations);
+    ),
+  );
 }
 export const imageOriginals = $prose(
   () =>
