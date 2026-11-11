@@ -347,6 +347,10 @@ test("일반 설정 저장→업무 표시 한 번 클릭→수치 반영과 색
     .toBe("#0066cc");
   await insights(page);
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+  const other = await page.context().newPage();
+  await other.goto("/");
+  const otherCell = other.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`);
+  await expect(otherCell).toHaveCSS("background-color", "rgb(0, 102, 204)");
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await dialog
     .getByRole("button", { name: "업무 색상 1", exact: true })
@@ -357,7 +361,23 @@ test("일반 설정 저장→업무 표시 한 번 클릭→수치 반영과 색
   await dialog.getByRole("button", { name: "저장", exact: true }).click();
   await expect(dialog.getByText("팀 정보를 저장했습니다.")).toBeVisible();
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
-  await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
+  // Editing a work color repaints the cells marked with it, which keep counting.
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+  await expect
+    .poll(
+      async () =>
+        (await request(page, `/tasks?teamId=${teamId}&year=2026`)).tasks.find(
+          (task: any) => task.id === taskIds[0],
+        ).cells["2026-01-05"]?.style,
+    )
+    .toMatchObject({ backgroundColor: "#ff0000", work: true });
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await expect(
+    page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`),
+  ).toHaveCSS("background-color", "rgb(255, 0, 0)");
+  // An annual sheet already open in another tab follows without a reload.
+  await expect(otherCell).toHaveCSS("background-color", "rgb(255, 0, 0)");
+  await other.close();
 });
 
 test("다섯 종류 저장·즉시 미리보기·편집·복제·순서 변경·삭제와 막대→목록→연간 상세", async ({

@@ -90,6 +90,7 @@ const AUDIT_LABELS: Record<string, string> = {
   "calendar-rule": "주간 할 일 기준 변경",
   reorder: "업무 순서 변경",
   "property-convert": "속성 종류 변경",
+  "work-color": "업무 색상 변경",
   "team-update": "팀 정보 변경",
   "history-cleanup": "변경 이력 정리",
   "team-create": "팀 생성",
