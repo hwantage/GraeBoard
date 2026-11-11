@@ -9,7 +9,11 @@ import { api, ApiError, taskQuery } from "../platform/api";
 import { useSite } from "../platform/site-context";
 import { queryPolicyFor } from "../platform/query-policy";
 import { joinQuery } from "../platform/shared-query";
-import { mergeCellUpdates, mergeSnapshotCells } from "./cell-updates.js";
+import {
+  mergeCellUpdates,
+  mergeSnapshotCells,
+  reconcileTaskSnapshot,
+} from "./cell-updates.js";
 import { subscribeCellChanges } from "./cell-sync";
 import { updateDocumentLinkTitle } from "../documents/document-links";
 import type { Bootstrap, Task } from "../types";
@@ -64,8 +68,10 @@ export default function useTaskData(options: {
     bootJsonRef.current = JSON.stringify(boot);
   }, [boot]);
   function setTasks(next: SetStateAction<Task[]>) {
-    tasksRef.current =
-      typeof next === "function" ? next(tasksRef.current) : next;
+    tasksRef.current = reconcileTaskSnapshot(
+      tasksRef.current,
+      typeof next === "function" ? next(tasksRef.current) : next,
+    );
     updateTasks(tasksRef.current);
   }
   const queryPolicy = queryPolicyFor(site);
@@ -85,6 +91,9 @@ export default function useTaskData(options: {
     consumers: Set<object>;
     promise: Promise<boolean | undefined>;
   } | null>(null);
+  const invalidate = useCallback(() => {
+    mutationEpoch.current++;
+  }, []);
   function querySucceeded() {
     querySchedule.current = {
       nextPollAt: Date.now() + queryPolicy.pollMs,
@@ -138,12 +147,39 @@ export default function useTaskData(options: {
         try {
           // Consumers share one read until all subscriptions have left. Scope
           // and mutation guards below prevent late responses replacing new data.
-          const [r, latestBoot] = await Promise.all([
+          const beforeBoot = bootJsonRef.current;
+          const outcomes = await Promise.allSettled([
             api(taskQuery(teamId, year, latest.current.startMonth), {
               signal: work.controller.signal,
             }),
             api<Bootstrap>("/bootstrap", { signal: work.controller.signal }),
           ]);
+          const failures = outcomes.filter(
+            (result) => result.status === "rejected",
+          );
+          if (failures.length) {
+            // Parallel task/bootstrap failures obey the longest server deadline.
+            throw failures.reduce((longest, result) =>
+              queryPolicy.retryDelay(
+                querySchedule.current.failures + 1,
+                result.reason,
+              ) >
+              queryPolicy.retryDelay(
+                querySchedule.current.failures + 1,
+                longest.reason,
+              )
+                ? result
+                : longest,
+            ).reason;
+          }
+          const r = (
+            outcomes[0] as PromiseFulfilledResult<{
+              tasks: Task[];
+              cellEventId: string;
+            }>
+          ).value;
+          const latestBoot = (outcomes[1] as PromiseFulfilledResult<Bootstrap>)
+            .value;
           if (
             !work.controller.signal.aborted &&
             boardKey.current === key &&
@@ -159,7 +195,10 @@ export default function useTaskData(options: {
             setLoadedScope(scope);
             querySucceeded();
             // 바뀐 게 없으면 그대로 둔다. 새 객체를 넘기면 표 전체가 다시 그려진다.
-            if (JSON.stringify(latestBoot) !== bootJsonRef.current)
+            if (
+              beforeBoot === bootJsonRef.current &&
+              JSON.stringify(latestBoot) !== bootJsonRef.current
+            )
               onBootstrap(latestBoot);
             return true;
           }
@@ -332,6 +371,10 @@ export default function useTaskData(options: {
     setLoaded(true);
     return true;
   }
+  const retry = useCallback(() => {
+    querySchedule.current.retryAt = 0;
+    return refresh();
+  }, [refresh]);
   return {
     tasks,
     loaded,
@@ -340,12 +383,11 @@ export default function useTaskData(options: {
     taskScope,
     queryError,
     refresh,
+    retry,
     initialize,
     snapshot: () => tasksRef.current,
     replace: setTasks,
-    invalidate() {
-      mutationEpoch.current++;
-    },
+    invalidate,
     currentScope: () => taskScopeRef.current,
     failInitial(error?: Error) {
       if (error) queryFailed(error);

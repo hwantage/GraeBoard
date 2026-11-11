@@ -190,6 +190,8 @@ async function execute(ctx, command, body, sheetCloneId) {
             settings: await settingsFor(s),
           };
         }
+        // Insights belongs to the live team, never to a frozen sheet snapshot.
+        if (data.settings) delete data.settings.insights;
         // Only the documents being copied, grouped by task once: not every
         // document of the team (other copies hold most of them), and not a
         // scan of them per task.

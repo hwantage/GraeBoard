@@ -12,6 +12,7 @@ import {
   AlignRight,
   PaintBucket,
   PaintRoller,
+  BriefcaseBusiness,
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "../types";
 import BorderMenu from "./BorderMenu";
@@ -84,8 +85,10 @@ export default function Toolbar({
   formatPainting,
   canCopyFormat = true,
   onPaintFormat,
+  workColors,
 }: {
   style: Style;
+  workColors?: { color: string; name?: string }[];
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -178,8 +181,35 @@ export default function Toolbar({
           icon={<PaintBucket size={16} />}
           value={style.backgroundColor || "#ffffff"}
           disabled={disabled}
-          onApply={(backgroundColor) => onStyle({ backgroundColor })}
+          onApply={(backgroundColor) =>
+            onStyle({ backgroundColor, work: false })
+          }
         />
+        {workColors?.map(({ color, name }) => (
+          <button
+            key={color}
+            type="button"
+            className="color-tool"
+            aria-label={`업무 표시: ${name || color}`}
+            data-tooltip={`업무 표시: ${name || color}`}
+            aria-pressed={
+              style.work === true &&
+              style.backgroundColor?.toLowerCase() === color
+            }
+            disabled={disabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onStyle({ backgroundColor: color, work: true })}
+          >
+            <span className="color-tool-icon" aria-hidden="true">
+              <BriefcaseBusiness size={16} />
+            </span>
+            <span
+              className="color-tool-swatch"
+              style={{ backgroundColor: color }}
+              aria-hidden="true"
+            />
+          </button>
+        ))}
       </div>
       <div className="toolbar-group">
         {(

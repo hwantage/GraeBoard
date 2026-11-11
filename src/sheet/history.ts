@@ -82,6 +82,7 @@ export function describeStyle(style: Style) {
   const names: Record<string, string> = {
     color: "글자색",
     backgroundColor: "배경색",
+    work: "업무 표시",
     fontFamily: "글꼴",
     fontSize: "크기",
     bold: "굵게",

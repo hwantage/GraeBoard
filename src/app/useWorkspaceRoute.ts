@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 
-type WorkspaceRoute = "annual" | "documents" | "calendar";
+type WorkspaceRoute = "annual" | "documents" | "calendar" | "insights";
 type Entry = { index: number; route: WorkspaceRoute };
 const historyKey = "workspaceIndex";
 const paths: Record<WorkspaceRoute, string> = {
   annual: "/",
   documents: "/documents",
   calendar: "/calendar",
+  insights: "/insights",
 };
 function currentRoute(): WorkspaceRoute {
   return location.pathname === "/documents"
     ? "documents"
     : location.pathname === "/calendar"
       ? "calendar"
-      : "annual";
+      : location.pathname === "/insights"
+        ? "insights"
+        : "annual";
 }
 
 export default function useWorkspaceRoute(

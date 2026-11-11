@@ -96,9 +96,10 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 | `src/app/`       | 앱 조합, 주 화면 전환, 라우팅                                    | `App.tsx`, `useWorkspaceRoute.ts`                                                                                   |
 | `src/sheet/`     | 업무 표, 셀 편집·선택·서식, 시트 탐색                            | `Grid.tsx`, `InlineCellEditor.tsx`, `SheetTabs.tsx`, `clipboard.ts`                                                 |
 | `src/documents/` | 공용 문서 편집·목록·탐색, 링크·이미지·내보내기, 문서 종류별 래퍼 | `DocumentPanel.tsx`, `DocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `TaskDocumentPanel.tsx`, `AnnualMemoPanel.tsx` |
+| `src/insights/` | 연간 업무 인사이트, 팀 차트·설정·미리보기와 파생 캐시 | `Insights.tsx`, `InsightsChart.tsx`, `InsightsChartEditor.tsx`, `insights-types.ts`, `insights.css` |
 | `src/calendar/`  | 일정·태그·배치·주간 할 일·개인 일정                              | `Calendar.tsx`, `CalendarEntryPanel.tsx`, `useCalendarData.ts`, `calendar-types.ts`, `calendar.css`                 |
 | `src/auth/`      | 로그인, 세션 진입 UI, 계정 연결·개인 계정                        | `ExternalLogin.tsx`, `ExternalAccountLogin.tsx`, `AccountMenu.tsx`, `ProfilePanel.tsx`                              |
-| `src/settings/`  | 설정 화면 조합, 팀·사용자·속성·관리 설정                         | `SettingsPanel.tsx`, `TeamSettings.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`                                |
+| `src/settings/`  | 설정 화면 조합, 팀·사용자·속성·업무 색상·관리 설정                         | `SettingsPanel.tsx`, `TeamSettings.tsx`, `WorkColorsEditor.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`                                |
 | `src/sync/`      | Git 동기화 설정·상태·충돌 해결 UI                                | `SyncConflictBox.tsx`, `SyncSetupWizard.tsx`, `TeamSyncIndicator.tsx`, `sync-types.ts`                              |
 | `src/ui/`        | 특정 업무에 종속되지 않는 표시·조작 요소와 UI 훅                 | `Select.tsx`, `Toast.tsx`, `Tooltip.tsx`, `useListReorder.ts`                                                       |
 | `src/platform/`  | 공통 API 통신, 사이트 환경, 이벤트 스트림 기반                   | `api.ts`, `event-stream.ts`, `event-stream.worker.ts`, `site-context.tsx`                                           |
@@ -107,7 +108,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 
 공용 UI는 `src/ui/Button.tsx`·`Modal.tsx`·`Empty.tsx`·`ErrorNote.tsx`·`Avatar.tsx`가 소유하고 로그인·재인증은 `src/auth/Auth.tsx`·`SessionLogin.tsx`가 소유합니다. 통합 `src/components.tsx`와 옛 경로 재노출 파일은 없습니다. 두 화면에서 사용하는 `ZoomControls.tsx`도 `ui/`에 두어 시트가 앱 조합 폴더를 참조하지 않게 합니다.
 
-`App.tsx`는 화면·선택·패널과 업무 명령을 연결합니다. 원본 업무 조회는 `useTaskData`, 저장 전달·실패 입력은 `useSheetOperations`, 실행취소는 `useSheetHistory`, 개인 배치는 `useSheetLayout`, 필터 목록/저장은 `useSavedFilters`가 소유합니다. 행·셀 명령과 실행취소 전달은 `useSheetRowCommands`·`useSheetCellCommands`·`useSheetUndo`가 맡고, 화면 전환 시 저장 조정은 `app/useWorkspaceNavigation`이 맡습니다. 사본은 기존 `useSheetCloneDraft` 경로를 유지합니다. 새 기능의 연결 지점과 비동기 소유 범위는 [개발 안내의 책임 표](DEVELOPMENT.md#브라우저-상태와-저장-책임)를 따릅니다.
+`App.tsx`는 화면·선택·패널과 업무 명령을 연결합니다. 연간 표와 인사이트의 원본 업무 조회는 하나의 `useTaskData`가 소유하고, 보고서는 그 공개 목록에서 파생값만 계산합니다. 원본의 세대·커서·조회 큐는 App이나 보고서에 노출하지 않습니다. 브라우저 공유 스키마의 CSP 실행 정책은 먼저 적재되는 `platform/polyfills.ts`가 설정하며, 공유 스키마나 서버에 브라우저 초기화 책임을 넣지 않습니다. 저장 전달·실패 입력은 `useSheetOperations`, 실행취소는 `useSheetHistory`, 개인 배치는 `useSheetLayout`, 필터 목록/저장은 `useSavedFilters`가 소유합니다. 행·셀 명령과 실행취소 전달은 `useSheetRowCommands`·`useSheetCellCommands`·`useSheetUndo`가 맡고, 화면 전환 시 저장 조정은 `app/useWorkspaceNavigation`이 맡습니다. 사본은 기존 `useSheetCloneDraft` 경로를 유지합니다. 새 기능의 연결 지점과 비동기 소유 범위는 [개발 안내의 책임 표](DEVELOPMENT.md#브라우저-상태와-저장-책임)를 따릅니다.
 
 `Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
 
@@ -124,6 +125,12 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 - 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
 - 경로가 바뀌면 경계 검사의 경로 인식도 같은 변경에서 갱신합니다. 검사 대상을 제외하거나 허용 범위를 넓혀 통과시키지 않습니다. 간접 import까지 포함한 런타임 제한을 보존합니다.
 - CSS는 이동 후에도 전역에 영향을 줄 수 있습니다. 기존 클래스·적재 순서·이미지 URL을 유지하고, 지연 import와 Web Worker의 로딩 방식도 유지합니다.
+
+`shared/insights/`는 연간 업무의 순수 집계(`insights.js`: 브라우저·Node 검사)와 strict 설정 계약(`insights-schema.js`: 브라우저 편집기·내부 Node·외부 Edge)을 소유합니다. 화면·SVG·훅·타입·CSS는 `src/insights/`에, 계산/API 저장 계약은 `tests/insights/`, 실제 UI 흐름은 `tests/browser/insights/`에 둡니다. `src/app/App.tsx`는 연간/인사이트의 공유 제목·전체 통계·연도/PeriodPicker JSX와 담당 훅의 콜백을 조합합니다. View 저장은 `useSheetLayout`, 이동 전 저장·원본 준비는 `useWorkspaceNavigation`이 소유합니다. 보고서의 필터/설정 버튼은 Insights가 상태·권한·이벤트를 소유하고 App의 날짜 행 호스트에 portal로 배치하며, 같은 줄/지역 스크롤 규칙은 `insights.css`에 한정합니다. `shared/insights/insights.js`의 periodForWeeks는 화면이 전달한 실제 주차/표시 월을 순수 집계 문맥으로 바꾸며 별도 날짜 UI나 저장 형식을 소유하지 않습니다. 브라우저의 공통 월 선택 조작은 `tests/browser/support/annual-period.ts`에 둡니다. `Insights.tsx`는 화면 조합, `InsightsComparison.tsx`는 고정 책임자 비교, `InsightsAnalysis.tsx`는 기본 분석 5개, `InsightsPeopleRadar.tsx`는 책임자 선택/범위를 가진 비율 비교, `InsightsMatrix.tsx`·`InsightsBarChart.tsx`·`InsightsRadarChart.tsx`는 도형·표 표현, `insights-chart-presentation.tsx`는 같은 차트의 색·수치·범례, `insights-chart-templates.ts`는 기존 필드의 빠른 시작을 소유합니다. 공통 포인터 수명/저장은 기존 소유처를 유지하고 `src/ui/list-reorder-grid.ts`만 선택적인 격자 기하를 소유합니다. 인사이트 전용 drop slot/tint 스타일은 `insights.css`에 둡니다. `insights.js`는 DOM·통신 없는 계산, `insights.css`는 화면 스타일로 확장자만 같은 이름의 역할을 구분합니다. 업무 색상 편집기는 팀 일반에 속하므로 `src/settings/WorkColorsEditor.tsx`에 두고, 업무 표시 버튼은 `src/sheet/Toolbar.tsx`, 저장 의미·키는 `shared/formatting/`, 집계는 `shared/insights/`가 소유합니다. 서버의 저장 서비스·권한·동기화와 시트의 일반 색 메뉴는 기존 소유 폴더를 유지합니다. 네 도메인 폴더만 구조 규칙에 등록하며 기존 명명·import 경계를 완화하지 않습니다.
+
+PDF 보고서의 스냅샷·열/페이지 분할은 `src/insights/insights-export.ts`, 출력 전용 스타일은 `insights-print.css`, 같은 집계의 SVG 수치 표는 `InsightsChartData.tsx`가 소유합니다. 문서와 보고서가 공유하는 iframe/폰트/인쇄 창 수명만 `src/platform/browser-print.ts`에 두며 문서의 Markdown/Milkdown 파이프라인을 보고서가 import하지 않습니다. 보고서 출력은 원본 조회·화면 선택·설정 저장 소유권을 확장하지 않습니다.
+
+인사이트의 공통 머리글 통계는 `src/sheet/SheetSummary.tsx`, 분석 내 시간·책임자 선택은 `src/insights/InsightsTrend.tsx`, 새 표현은 같은 폴더의 `InsightsLineChart.tsx`·`InsightsPieChart.tsx`에 둡니다. 속성 참조 점검과 보관 시 사용처는 `shared/insights/insights-references.js`로 공유하고 App은 기존 공통 머리글에 연결만 합니다.
 
 ## 7. 가이드에 따른 리팩토링 절차
 

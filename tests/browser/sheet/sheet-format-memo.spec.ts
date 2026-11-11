@@ -273,6 +273,9 @@ test("서식 범위의 패턴을 사본에 적용하고 사본 실행취소는 �
   });
   await page.reload();
   await page.getByRole("tab", { name: "서식 사본", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "서식 사본", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await drag(page, target(page, 0), target(page, 1));
   await page.getByRole("button", { name: "서식 복사", exact: true }).click();
   await target(page, 2).click();

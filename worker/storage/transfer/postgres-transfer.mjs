@@ -458,6 +458,7 @@ export class PostgresTransferRepository {
           hiddenRows = [],
           rowHeights = {};
         delete settings.revision;
+        if (body.mode !== "tasks") delete settings.insights;
         extendImportProperties(settings, sheet.rows);
         let last = Math.max(
           0,

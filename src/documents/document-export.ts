@@ -21,6 +21,7 @@ import {
 } from "../../shared/documents/document-images.js";
 import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
 import { saveFile } from "../platform/api";
+import { printFontFaces, printPage } from "../platform/browser-print";
 import type { DocumentImages } from "./document-storage";
 
 // A document downloads as one file that opens away from this site: the
@@ -57,7 +58,10 @@ export async function exportDocument(
         }),
         fileName(input.title, "html"),
       );
-    else await printPage(page(input.title, body, fontFaces()), input.title);
+    else
+      await printPage(page(input.title, body, printFontFaces()), input.title, {
+        frameClass: "document-print-frame",
+      });
   }
   // Images that could not be read stay out of the file.
   return files.missing.size;
@@ -318,80 +322,6 @@ ${body}
 </body>
 </html>
 `;
-}
-
-// The app's own fonts for the print page. A saved HTML file uses the
-// viewer's fonts instead.
-function fontFaces() {
-  const rules: string[] = [];
-  for (const sheet of document.styleSheets) {
-    let list: CSSRuleList;
-    try {
-      list = sheet.cssRules;
-    } catch {
-      continue;
-    }
-    const base = sheet.href || document.baseURI;
-    for (const rule of list)
-      if (
-        rule instanceof CSSFontFaceRule &&
-        /Pretendard|Nanum Gothic Coding/i.test(
-          rule.style.getPropertyValue("font-family"),
-        )
-      )
-        rules.push(
-          rule.cssText.replace(
-            /url\((["']?)([^"')]+)\1\)/g,
-            (_, _quote, url: string) => `url("${new URL(url, base).href}")`,
-          ),
-        );
-  }
-  return rules.join("\n");
-}
-
-// A frame written by this page takes the page's address, which the print
-// dialog shows instead of about:blank. Chromium names the PDF after the
-// page's title, not the frame's, so the page carries the document's title
-// while the dialog is open.
-async function printPage(html: string, title: string) {
-  // Printing focuses the frame; focus returns where it was, such as the
-  // download button a keyboard pick went back to.
-  const focused = document.activeElement as HTMLElement | null;
-  // A frame left by a dialog that never reported closing.
-  document.querySelector(".document-print-frame")?.remove();
-  const frame = document.createElement("iframe");
-  frame.className = "document-print-frame";
-  frame.setAttribute("aria-hidden", "true");
-  frame.tabIndex = -1;
-  document.body.append(frame);
-  const doc = frame.contentDocument!;
-  doc.open();
-  doc.write(html);
-  doc.close();
-  const view = frame.contentWindow!;
-  void doc.body.offsetHeight;
-  await Promise.all(
-    [...doc.images].map((image) => image.decode().catch(() => {})),
-  );
-  await doc.fonts?.ready;
-  const pageTitle = document.title;
-  const restore = () => {
-    if (document.title === title) document.title = pageTitle;
-    frame.remove();
-    if (document.activeElement === document.body)
-      focused?.focus({ preventScroll: true });
-  };
-  view.addEventListener("afterprint", () => setTimeout(restore), {
-    once: true,
-  });
-  document.title = title;
-  try {
-    view.focus();
-    view.print();
-  } catch (error) {
-    restore();
-    throw error;
-  }
 }
 
 // The document's look on screen, without the app around it.

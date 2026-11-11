@@ -613,6 +613,7 @@ small {
   flex-shrink: 0;
 }
 .heading-actions .button,
+.page-heading > .insights-toggle,
 .toolbar-add-task.button {
   font-size: 11px;
   min-height: 26px;
@@ -4973,6 +4974,20 @@ body.document-block-moving * {
 .settings-field small {
   color: var(--muted);
   font-weight: 400;
+}
+.work-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.work-color-row input {
+  min-width: 0;
+  flex: 1;
+}
+.work-color-row > span {
+  font-size: 12px;
+  color: var(--muted);
 }
 .settings-danger {
   display: flex;

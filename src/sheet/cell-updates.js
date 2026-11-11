@@ -3,6 +3,25 @@
 /** @typedef {{ cells: SavedCell[], updatedAt?: Record<string, string>, formatting?: import("../types").Formatting, formatTeamId?: string, taskMetadata?: Record<string, Pick<Task, "updatedAt" | "position" | "defaultStyle" | "rowStyle">> }} CellUpdates */
 /** @typedef {{ tasks: Task[], cellEventId: string }} TaskSnapshot */
 
+// Complete HTTP snapshots preserve unchanged row identities for sheet and report
+// projections. A changed cell, formatting revision, metadata or order stays fresh.
+/** @param {Task[]} previous @param {Task[]} fresh @returns {Task[]} */
+export function reconcileTaskSnapshot(previous, fresh) {
+  if (fresh === previous) return previous;
+  const byId = new Map(previous.map((task) => [task.id, task]));
+  const next = fresh.map((task) => {
+    const old = byId.get(task.id);
+    // SSE/commands already share untouched rows; only compare new HTTP rows.
+    return old && (old === task || JSON.stringify(old) === JSON.stringify(task))
+      ? old
+      : task;
+  });
+  return next.length === previous.length &&
+    next.every((task, i) => task === previous[i])
+    ? previous
+    : next;
+}
+
 // HTTP acknowledgements and SSE can arrive in either order. Never replace a
 // newer cell with an older version, or clone rows that have not changed.
 /** @param {Task[]} tasks @param {CellUpdates} update @returns {Task[]} */

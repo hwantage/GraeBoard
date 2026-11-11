@@ -16,6 +16,7 @@ import {
   requireThat,
 } from "../../../shared/validation.js";
 import { THEME_IDS } from "../../../shared/formatting/themes.js";
+import { insightsSettingsSchema } from "../../../shared/insights/insights-schema.js";
 const weekBordersSchema = z
   .object({ left: borderSchema.optional(), right: borderSchema.optional() })
   .strict();
@@ -31,6 +32,7 @@ const settingsSchema = z
     weekHeader: weekHeaderSchema.optional(),
     weekBorders: weekBordersSchema.optional(),
     currentWeekBorders: weekBordersSchema.optional(),
+    insights: insightsSettingsSchema.optional(),
   })
   .strict();
 
@@ -99,6 +101,7 @@ export function prepareSettings(
     weekHeader: data.weekHeader ?? previous.weekHeader,
     weekBorders: data.weekBorders ?? previous.weekBorders,
     currentWeekBorders: data.currentWeekBorders ?? previous.currentWeekBorders,
+    insights: data.insights ?? previous.insights,
     revision: (previous.revision || 0) + 1,
   };
 
@@ -175,8 +178,30 @@ const teamGeneralSchema = z
     name: z.string().trim().min(1).max(80),
     theme: z.enum(THEME_IDS).optional(),
     settingsRevision: z.number().int().nonnegative().optional(),
+    workColors: insightsSettingsSchema.shape.workColors.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.workColors === undefined || input.settingsRevision !== undefined,
+    "업무 색상 저장에는 설정 revision이 필요합니다.",
+  );
+
+// General edits only replace the color list, retaining current charts/deadline.
+export function generalSettingsPatch(settings, input) {
+  return {
+    revision: input.settingsRevision,
+    ...(input.theme !== undefined ? { theme: input.theme } : {}),
+    ...(input.workColors !== undefined
+      ? {
+          insights: {
+            ...(settings.insights || { charts: [] }),
+            workColors: input.workColors,
+          },
+        }
+      : {}),
+  };
+}
 export class SettingsBusinessService {
   constructor(repository, user) {
     this.repository = repository;

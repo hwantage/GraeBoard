@@ -1,0 +1,292 @@
+/* A4 landscape report, independent of the screen's viewport/scrolling cards. */
+@page {
+  size: A4 landscape;
+  margin: 12mm;
+  @bottom-right {
+    content: counter(page) " / " counter(pages);
+    font-size: 9px;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: light;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+body {
+  margin: 0;
+  color: var(--ink, #293c42);
+  background: #fff;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+main {
+  width: 273mm;
+  margin: 0 auto;
+}
+h1 {
+  margin: 2px 0 12px;
+  font-size: 24px;
+}
+h2,
+h3 {
+  break-after: avoid;
+}
+p {
+  margin: 5px 0;
+}
+.insights-report-header {
+  margin-bottom: 18px;
+  border-bottom: 2px solid var(--accent-strong);
+  padding-bottom: 12px;
+}
+.insights-report-header > p:first-child {
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+.insights-report-weeks {
+  font-size: 10px;
+  color: var(--muted);
+}
+.insights-grid {
+  display: block;
+  margin: 0;
+}
+.insights-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.insights-summary .insights-card {
+  display: block;
+  padding: 10px;
+}
+.insights-summary .insights-number {
+  display: grid;
+  width: 100%;
+}
+.insights-summary .insights-number > span {
+  display: block;
+  font-size: 10px;
+}
+.insights-summary .insights-number strong {
+  font-size: 23px;
+}
+.insights-card {
+  padding: 12px;
+  border-radius: 0;
+  margin: 0 0 14px;
+}
+.insights-report-chart-figure,
+.insights-card:has(.insights-number) {
+  break-inside: avoid;
+}
+.insights-card-heading {
+  gap: 8px 16px;
+  margin-bottom: 8px;
+  break-after: avoid;
+}
+/* Carry the heading's keep-with-next rule through filter/warning paragraphs
+   and the scroll wrapper to the first table fragment. Body rows still flow. */
+.insights-card > p:has(~ .insights-table-scroll),
+.insights-matrix-scales {
+  break-after: avoid;
+}
+.insights-table-scroll,
+.insights-table-scroll > .insights-table {
+  break-before: avoid;
+}
+.insights-comparison-controls,
+.insights-analysis-property {
+  font-size: 11px;
+}
+.insights-view-switch {
+  background: none;
+  padding: 0;
+  width: auto;
+}
+.insights-view-switch .active {
+  padding: 0;
+  border: 0;
+}
+.insights-print-only,
+.insights-print-data {
+  display: block;
+}
+.insights-print-data {
+  margin-top: 10px;
+}
+.insights-table-scroll,
+.insights-chart-scroll,
+.insights-matrix-scroll,
+.insights-radar-scroll {
+  overflow: visible;
+  max-height: none;
+  max-width: none;
+  border: 0;
+  isolation: auto;
+}
+.insights-table {
+  table-layout: fixed;
+  width: 100%;
+  margin-bottom: 12px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.insights-table caption,
+.insights-print-matrix-caption {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: left;
+  font-weight: 600;
+  padding: 5px 0;
+  break-after: avoid;
+}
+.insights-table thead {
+  display: table-header-group;
+  break-after: avoid;
+}
+.insights-table tbody > tr:first-child {
+  break-before: avoid;
+}
+.insights-table tfoot {
+  display: table-row-group;
+}
+.insights-table tr {
+  break-inside: avoid;
+}
+.insights-table th,
+.insights-table td,
+.insights-matrix th,
+.insights-matrix td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  padding: 4px 6px;
+  vertical-align: top;
+}
+.insights-table thead,
+.insights-matrix thead,
+.insights-matrix tr > th:first-child {
+  position: static;
+  min-width: 0;
+  max-width: none;
+  width: auto;
+}
+.insights-table tr > :first-child {
+  width: 18%;
+  text-align: left;
+}
+.insights-matrix tr > :first-child {
+  width: 26%;
+}
+body .insights-matrix tbody tr > th:first-child,
+body .insights-matrix tfoot tr > th:first-child,
+body .insights-matrix thead tr:first-child > th:first-child {
+  position: static;
+  width: 26%;
+  min-width: 0;
+  max-width: none;
+}
+.insights-table:has(.insights-task-link) tr > :first-child {
+  width: 35%;
+}
+.insights-table:has(.insights-task-link) tr > :nth-child(2) {
+  width: 25%;
+}
+.insights-table .insights-number-column {
+  text-align: right;
+}
+.insights-table .insights-cell {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  padding: 0;
+}
+.insights-task-link {
+  min-width: 0;
+  color: inherit;
+}
+.insights-table .insights-excluded {
+  white-space: normal;
+}
+.insights-series-heading {
+  display: inline;
+}
+.insights-series-heading i {
+  display: inline-block;
+  margin-right: 4px;
+}
+.insights-matrix-scales {
+  break-inside: avoid;
+}
+.insights-bars {
+  width: 165mm;
+  max-width: 100%;
+  height: auto;
+}
+.insights-chart-unit {
+  break-after: avoid;
+}
+.insights-radar,
+.insights-analysis .insights-radar {
+  width: 100%;
+  height: 78mm;
+  max-height: none;
+}
+figure {
+  margin: 6px 0;
+  break-inside: avoid;
+}
+figcaption {
+  font-size: 10px;
+  color: var(--muted);
+}
+.insights-legend {
+  break-inside: auto;
+  margin: 6px 0 10px;
+}
+.insights-legend li {
+  break-inside: avoid;
+}
+.insights-data-check {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin: 6px 0 0;
+  break-inside: avoid;
+}
+.insights-data-check h2 {
+  margin: 0;
+  font-size: 12px;
+}
+.insights-data-check .button {
+  display: inline-block;
+  margin: 0;
+}
+.insights-supporting-tasks {
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+}
+.insights-supporting-tasks .insights-table {
+  margin-bottom: 0;
+  line-height: 1.25;
+}
+.insights-supporting-tasks .insights-table th,
+.insights-supporting-tasks .insights-table td {
+  padding-block: 2px;
+}
+
+.insights-lines {
+  min-width: 0 !important;
+  width: 100%;
+  height: auto;
+}
+.insights-pie-layout {
+  max-height: none;
+}

@@ -1,5 +1,6 @@
 import { defaultCoreProperties } from "./coreProperties.js";
 import { inheritedStyle } from "./formatting/formatting.js";
+import { backgroundWorkStyle } from "./formatting/compact.js";
 import { FONTS } from "./formatting/fonts.js";
 export {
   FONTS,
@@ -129,7 +130,10 @@ export function cell(task, key) {
   const current = task.cells[key] ?? emptyCell();
   return {
     ...current,
-    style: { ...inheritedStyle(task, key), ...current.style },
+    style: {
+      ...inheritedStyle(task, key),
+      ...backgroundWorkStyle(current.style),
+    },
   };
 }
 export function value(task, key) {
@@ -187,8 +191,11 @@ export function propertyOption(property, stored) {
     : undefined;
 }
 export function statusSummary(tasks, settings) {
-  const property = propertiesFor(settings).find((p) => p.id === "status");
-  if (!property) return [];
+  const id = settings.insights?.summaryPropertyId;
+  const property = propertiesFor(settings, true).find(
+    (p) => p.id === (id === undefined ? "status" : id),
+  );
+  if (!property || property.kind !== "option") return [];
   const groups = property.values
     .filter((v) => !v.archived)
     .map((option) => ({
@@ -201,7 +208,7 @@ export function statusSummary(tasks, settings) {
   let empty = 0,
     archived = 0;
   for (const task of tasks) {
-    const stored = value(task, "status");
+    const stored = value(task, property.id);
     if (stored === "" || stored === undefined || stored === null) {
       empty++;
       continue;

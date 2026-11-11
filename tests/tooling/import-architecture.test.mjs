@@ -143,3 +143,27 @@ test("an unresolved local runtime import fails instead of silently losing a grap
     /Unresolved local import: src\/sheet\/missing.ts -> .\/absent/,
   );
 });
+
+test("Vite inline CSS resolves its exact asset while missing assets and JS queries remain errors", async (t) => {
+  const f = fixture(t);
+  f.put("src/insights/chart.css", ".chart { color: black; }");
+  f.put(
+    "src/insights/print.ts",
+    'import css from "./chart.css?inline"; export const style = css;',
+  );
+  assert.deepEqual((await f.check()).violations, []);
+  f.put(
+    "src/insights/print.ts",
+    'import css from "./missing.css?inline"; export const style = css;',
+  );
+  await assert.rejects(
+    f.check(),
+    /Unresolved local import:.*missing\.css\?inline/,
+  );
+  f.put("src/insights/runtime.ts", "export const runtime = true;");
+  f.put("src/insights/print.ts", 'export * from "./runtime.ts?inline";');
+  await assert.rejects(
+    f.check(),
+    /Unresolved local import:.*runtime\.ts\?inline/,
+  );
+});
