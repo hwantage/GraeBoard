@@ -8,6 +8,7 @@ import { rangeOf, rangesOf } from "./grid-selection";
 
 import { useMobileLayout } from "../ui/useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
+import useSheetPresence, { type PresenceStore } from "./useSheetPresence";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
 import { explicitStyle } from "../../shared/formatting/formatting.js";
@@ -67,6 +68,7 @@ import {
   fontFamilyCSS,
 } from "../../shared/domain.js";
 import { Button } from "../ui/Button";
+import { inkFor } from "../ui/color";
 import { Empty } from "../ui/Empty";
 import InlineCellEditor, { type EditorState } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
@@ -106,6 +108,7 @@ export default function Grid({
   footer,
   canEditPeople,
   selection,
+  presence: presenceStore = null,
   settings,
   editor,
   onCommit,
@@ -147,6 +150,8 @@ export default function Grid({
   footer?: ReactNode;
   canEditPeople: boolean;
   selection: Selection | null;
+  // 같은 사내 서버의 다른 사람과 선택·편집 셀을 주고받는 팀 스트림. 외부·사본·발표는 null.
+  presence?: PresenceStore | null;
   settings: Settings;
   editor: EditorState | null;
   onCommit: (point: Point, value: Cell["value"]) => boolean;
@@ -331,6 +336,38 @@ export default function Grid({
     () => rangeOf(selection, tasks, columns),
     [selection, tasks, columns],
   );
+  // 다른 사람의 이동은 Grid만 다시 그리게 이 안에서 받는다.
+  const presence = useSheetPresence(
+    presenceStore,
+    editor?.point || selection?.focus || null,
+    !!editor,
+  );
+  const presenceRows = useMemo(() => {
+    const rows = new Map<string, Map<string, CellPresence>>(),
+      seen = new Set<string>();
+    for (const p of presence) {
+      const row = rows.get(p.taskId) || new Map<string, CellPresence>();
+      rows.set(p.taskId, row);
+      const current = row.get(p.key);
+      // 한 사람이 여러 탭에서 같은 셀에 있어도 이름은 한 번만 표시하고,
+      // 어느 탭이든 편집 중이면 편집 중으로 표시한다.
+      const named = seen.has(`${p.taskId}:${p.key}:${p.userId}`);
+      seen.add(`${p.taskId}:${p.key}:${p.userId}`);
+      row.set(
+        p.key,
+        current
+          ? {
+              ...current,
+              label: named ? current.label : `${current.label}, ${p.name}`,
+              editing: current.editing || p.editing,
+            }
+          : { color: p.color, label: p.name, editing: p.editing },
+      );
+    }
+    return new Map(
+      [...rows].map(([taskId, row]) => [taskId, JSON.stringify([...row])]),
+    );
+  }, [presence]);
   const ranges = useMemo(
     () => rangesOf(selection, tasks, columns),
     [selection, tasks, columns],
@@ -938,6 +975,7 @@ export default function Grid({
                   presentation={presentation}
                   sorted={sorted}
                   spans={spans}
+                  presence={presenceRows.get(task.id) || ""}
                   rowSelected={rowSelected}
                   focusKey={
                     selection?.focus.taskId === task.id
@@ -1220,6 +1258,7 @@ const RowBody = memo(function RowBody({
   presentation,
   sorted,
   spans,
+  presence,
   rowSelected,
   focusKey,
   editor,
@@ -1251,6 +1290,8 @@ const RowBody = memo(function RowBody({
   presentation: boolean;
   sorted: boolean;
   spans: string;
+  // 이 행에 있는 다른 사람의 셀. 문자열로 넘겨 다른 행은 다시 그리지 않는다.
+  presence: string;
   rowSelected: boolean;
   focusKey: string | null;
   editor: EditorState | null;
@@ -1268,6 +1309,10 @@ const RowBody = memo(function RowBody({
         .map((span) => span.split("-").map(Number))
     : [];
   const editable = !readOnly && (copyEditable || canEdit(user, task));
+  const presenceCells = useMemo(
+    () => new Map<string, CellPresence>(presence ? JSON.parse(presence) : []),
+    [presence],
+  );
   const displayStyles = useMemo(
     () =>
       withWeekBoundaries(
@@ -1433,6 +1478,7 @@ const RowBody = memo(function RowBody({
             }
             property={property}
             selection={selectionEdges(selectedSpans, ci)}
+            presence={presenceCells.get(c.key)}
             focused={focusKey === c.key}
             touchInput={touchInput}
             editor={editing ? editor : null}
@@ -1448,6 +1494,8 @@ const RowBody = memo(function RowBody({
     </>
   );
 });
+
+type CellPresence = { color: string; label: string; editing: boolean };
 
 function selectionEdges(spans: number[][], ci: number) {
   let hit = false,
@@ -1476,6 +1524,7 @@ const GridCell = memo(function GridCell({
   bottomBorder,
   property,
   selection,
+  presence,
   focused,
   touchInput,
   editor,
@@ -1498,6 +1547,7 @@ const GridCell = memo(function GridCell({
   property: Property | undefined;
   // 선택되지 않았으면 null, 선택됐으면 영역 외곽에 닿은 변(t·r·b·l).
   selection: string | null;
+  presence: CellPresence | undefined;
   focused: boolean;
   touchInput: boolean;
   editor: EditorState | null;
@@ -1629,7 +1679,20 @@ const GridCell = memo(function GridCell({
       data-text-mode={mode}
       className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${showDetailAction ? "has-detail-action" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
-      title={text || undefined}
+      title={
+        [
+          text,
+          presence &&
+            `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`,
+        ]
+          .filter(Boolean)
+          .join("\n") || undefined
+      }
+      aria-description={
+        presence
+          ? `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`
+          : undefined
+      }
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
       onPointerMove={(e) => actions.dragSelect(e, point)}
       onDoubleClick={() => editable && actions.doubleClick(point)}
@@ -1645,6 +1708,21 @@ const GridCell = memo(function GridCell({
         if (!presentation) actions.rowMenu(task);
       }}
     >
+      {/* 이름표는 CSS가 data-name으로 그려 셀 글자(textContent)에 섞지 않는다. */}
+      {presence && (
+        <span
+          className="sheet-presence"
+          data-name={presence.label}
+          data-editing={presence.editing || undefined}
+          style={
+            {
+              "--presence-color": presence.color,
+              "--presence-ink": inkFor(presence.color),
+            } as CSSProperties
+          }
+          aria-hidden="true"
+        />
+      )}
       {showDetailAction && (
         <button
           type="button"

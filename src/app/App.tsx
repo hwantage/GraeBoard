@@ -6,6 +6,7 @@ import useSheetHistory from "../sheet/useSheetHistory";
 import useSheetLayout from "../sheet/useSheetLayout";
 import useSheetOperations from "../sheet/useSheetOperations";
 import useTaskData from "../sheet/useTaskData";
+import { usePresenceStream } from "../sheet/useSheetPresence";
 import useSavedFilters, { type SavedFilter } from "../sheet/useSavedFilters";
 import SavedFilterDialog from "../sheet/SavedFilterDialog";
 import { RecentColorsProvider } from "../ui/recent-colors";
@@ -614,6 +615,17 @@ function Workspace({
     else setError("업무를 찾을 수 없습니다.");
   }, [insightTaskTarget, workspaceRoute.route, ready, tasks, year, teamId]);
   const teamUnavailable = teamUnavailableFor(boot, teamId, site.external);
+  // Cell positions are shared only between people on the same internal server.
+  const presence = usePresenceStream(
+    !site.external &&
+      !sheetClone &&
+      !presentation &&
+      screen !== "calendar" &&
+      ready &&
+      !teamUnavailable
+      ? teamId
+      : null,
+  );
   const sheetCloneDraft = useSheetCloneDraft(teamId, user.id);
   const editingSheetClone =
     !!sheetClone && sheetCloneDraft.draft?.sheetClone.id === sheetClone.id;
@@ -2637,6 +2649,7 @@ function Workspace({
                   }
                   canEditPeople={canAdd}
                   selection={selection}
+                  presence={workspaceRoute.route === "annual" ? presence : null}
                   settings={settings}
                   editor={editor}
                   onCancelEdit={() => setEditor(null)}
