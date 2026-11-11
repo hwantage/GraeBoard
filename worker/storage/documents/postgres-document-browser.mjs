@@ -13,7 +13,10 @@ import {
   documentPreview,
 } from "../../../server/storage/documents/document-browser-service.mjs";
 import { sheetCloneRevision } from "../sheet-clones/postgres-sheet-clones.mjs";
-import { documentKeysUnder } from "./postgres-documents.mjs";
+import {
+  byDocumentPosition,
+  documentKeysUnder,
+} from "./postgres-documents.mjs";
 export class PostgresDocumentBrowserRepository {
   constructor({ context }) {
     this.context = context;
@@ -114,12 +117,14 @@ export class PostgresDocumentBrowserRepository {
       const withDocs = tasks
           .map((task) => ({
             ...task,
-            documents: (byTask.get(task.id) || []).map((d) => ({
-              id: d.key.at(-1),
-              title: d.payload.title,
-              hasContent: hasDocumentContent(d.payload.markdown),
-              preview: documentPreview(d.payload.markdown),
-            })),
+            documents: (byTask.get(task.id) || [])
+              .sort(byDocumentPosition)
+              .map((d) => ({
+                id: d.key.at(-1),
+                title: d.payload.title,
+                hasContent: hasDocumentContent(d.payload.markdown),
+                preview: documentPreview(d.payload.markdown),
+              })),
           }))
           .filter((t) => t.documents.length),
         pageResult = documentBrowserPage(

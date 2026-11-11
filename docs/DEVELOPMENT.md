@@ -183,7 +183,7 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 ### 업무 문서와 에디터 선택
 
-업무 상세·꼬리 메모의 순서 변경은 `DocumentPanel` → 기존 `/reorder` 명령을 공유합니다. 원본 업무는 기존 `task_documents.position`, 사본 업무는 기존 문서 배열 순서, 외부는 기존 document entity의 position을 사용합니다. `expectedIds` 충돌·재시도·숨긴 문서 위치·권한 검사를 유지하며 DB 스키마·영속 형식은 변경하지 않습니다.
+업무 상세·꼬리 메모의 순서 변경은 `DocumentPanel` → 기존 `/reorder` 명령을 공유합니다. 원본 업무는 기존 `task_documents.position`, 사본 업무는 기존 문서 배열 순서, 외부는 기존 document entity의 position을 사용합니다. `expectedIds` 충돌·재시도·숨긴 문서 위치·권한 검사를 유지하며 DB 스키마·영속 형식은 변경하지 않습니다. 상세를 처음 열 때는 요청한 문서·보관된 초안이 없으면 저장된 순서의 첫 탭을 선택합니다. 외부 문서 브라우저도 업무별 문서를 같은 position 순서(`byDocumentPosition`)로 돌려주므로 작업 이름이 첫 탭의 문서를 엽니다.
 
 `DocumentImageView` → `DocumentImageEditor`는 `DocumentImageTools`의 아이콘 도구 모음과 `document-image-annotations.ts`의 좌표·그리기 계산으로 펜·사각형·원·삼각형·글자를 편집합니다. `DocumentImageTextInput`은 이미지 좌표·배율·회전에 맞춘 textarea로 직접 입력하며 기존 글자는 더블클릭 또는 글자 도구로 다시 엽니다. Enter는 줄바꿈, 바깥 클릭·Ctrl/Cmd+Enter는 확정, Escape는 현재 입력 취소입니다. 조합 중 Enter/blur는 기존 인라인 편집기와 같은 IME 방어를 적용하며 확정한 한 번의 입력을 하나의 실행취소 단위로 기록합니다. 적용 직전의 DOM 값과 최신 이력을 읽어 마지막 입력을 합성하고 입력 테두리·커서는 저장하지 않습니다. 선택한 도형·글자를 이동·크기 조절·회전하거나 선/채우기 색상·굵기·글자 크기를 바꾸고, 실행취소·다시실행·선택 삭제·전체 지우기를 지원합니다. 확대·축소·화면 맞춤·이동은 표시 상태만 바꾸며 내보내기는 선택 테두리를 제외한 원래 이미지 해상도로 만듭니다. 그리기·이동·크기 조절은 기존 `trackPointerDrag`를 공유하여 캡처 해제를 취소로 보지 않고 버튼 해제 이동에서는 마지막 누른 좌표를 한 번만 확정합니다. 실제 pointercancel·blur·Escape는 진행 중 작업만 취소합니다. 주석과 편집 이력은 편집창의 메모리에만 있으며 저장 시 합성 이미지 한 장을 기존 이미지 업로드 경로에 전달합니다.
 
