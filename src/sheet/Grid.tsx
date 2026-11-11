@@ -346,18 +346,19 @@ export default function Grid({
     const rows = new Map<string, Map<string, CellPresence>>(),
       seen = new Set<string>();
     for (const p of presence) {
-      // 한 사람이 여러 탭에서 같은 셀에 있어도 이름은 한 번만 표시한다.
-      if (seen.has(`${p.taskId}:${p.key}:${p.userId}`)) continue;
-      seen.add(`${p.taskId}:${p.key}:${p.userId}`);
       const row = rows.get(p.taskId) || new Map<string, CellPresence>();
       rows.set(p.taskId, row);
       const current = row.get(p.key);
+      // 한 사람이 여러 탭에서 같은 셀에 있어도 이름은 한 번만 표시하고,
+      // 어느 탭이든 편집 중이면 편집 중으로 표시한다.
+      const named = seen.has(`${p.taskId}:${p.key}:${p.userId}`);
+      seen.add(`${p.taskId}:${p.key}:${p.userId}`);
       row.set(
         p.key,
         current
           ? {
               ...current,
-              label: `${current.label}, ${p.name}`,
+              label: named ? current.label : `${current.label}, ${p.name}`,
               editing: current.editing || p.editing,
             }
           : { color: p.color, label: p.name, editing: p.editing },
@@ -1678,7 +1679,20 @@ const GridCell = memo(function GridCell({
       data-text-mode={mode}
       className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${showDetailAction ? "has-detail-action" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
-      title={text || undefined}
+      title={
+        [
+          text,
+          presence &&
+            `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`,
+        ]
+          .filter(Boolean)
+          .join("\n") || undefined
+      }
+      aria-description={
+        presence
+          ? `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`
+          : undefined
+      }
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
       onPointerMove={(e) => actions.dragSelect(e, point)}
       onDoubleClick={() => editable && actions.doubleClick(point)}

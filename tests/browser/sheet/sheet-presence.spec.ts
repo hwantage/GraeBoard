@@ -67,9 +67,17 @@ test("같은 사내 서버의 다른 사람이 선택·편집 중인 셀에 이�
     await peer.locator(`[data-cell="${taskIds[0]}:title"]`).click();
     await expect(marker("title")).toHaveAttribute("data-name", "옆자리 팀원");
     await expect(marker("title")).not.toHaveAttribute("data-editing");
-    // The name tag is drawn by CSS, so the cell's own text stays the same.
-    await expect(page.locator(`[data-cell="${taskIds[0]}:title"]`)).toHaveText(
-      "첫 업무",
+    // The name tag is drawn by CSS, so the cell's own text stays the same;
+    // the full name is in the tooltip and the cell's accessible description.
+    const watched = page.locator(`[data-cell="${taskIds[0]}:title"]`);
+    await expect(watched).toHaveText("첫 업무");
+    await expect(watched).toHaveAttribute(
+      "aria-description",
+      "옆자리 팀원 선택 중",
+    );
+    await expect(watched).toHaveAttribute(
+      "title",
+      "첫 업무\n옆자리 팀원 선택 중",
     );
     // A second tab of the same browser joins the shared stream and still gets
     // the current positions without anyone moving.

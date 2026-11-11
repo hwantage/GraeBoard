@@ -39,13 +39,18 @@ export function createPresenceEvents({
       });
     return teams.get(teamId);
   };
+  // The heartbeat runs while any team holds positions or listeners, so
+  // positions of a team nobody watches expire too.
   function forget(teamId) {
     const state = teams.get(teamId);
     if (state && !state.entries.size && !state.listeners.size)
       teams.delete(teamId);
-    if (![...teams.values()].some((s) => s.listeners.size)) {
+    if (!teams.size) {
       clearInterval(heartbeat);
       heartbeat = undefined;
+    } else if (!heartbeat && !shuttingDown) {
+      heartbeat = setInterval(tick, heartbeatMs);
+      heartbeat.unref();
     }
   }
   function prune(state, now = Date.now()) {
@@ -96,10 +101,9 @@ export function createPresenceEvents({
         });
       }
       const next = state.entries.get(id);
-      dirty ||=
-        previous?.taskId !== next?.taskId ||
-        previous?.key !== next?.key ||
-        previous?.editing !== next?.editing;
+      dirty ||= ["userId", "name", "color", "taskId", "key", "editing"].some(
+        (field) => previous?.[field] !== next?.[field],
+      );
       if (dirty) changed(teamId);
       forget(teamId);
     },
@@ -166,10 +170,7 @@ export function createPresenceEvents({
       res.on("close", close);
       if (prune(state)) state.sequence++;
       listener.send();
-      if (!heartbeat) {
-        heartbeat = setInterval(tick, heartbeatMs);
-        heartbeat.unref();
-      }
+      forget(teamId);
     },
     shutdown() {
       shuttingDown = true;

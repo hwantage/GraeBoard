@@ -243,3 +243,46 @@ test("한 사람이 보내는 탭 위치는 20개까지만 보관한다", () => 
   assert.equal(cells[0].taskId, "task-5");
   presence.shutdown();
 });
+
+test("같은 셀에 있어도 이름·색이 바뀌면 다시 알린다", () => {
+  const presence = createPresenceEvents({
+    refreshUser: (req) => req.user,
+    teamAccess: () => {},
+  });
+  const writes = [];
+  const res = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+    set() {},
+    flushHeaders() {},
+    write: (chunk) => writes.push(chunk),
+    end() {
+      this.writableEnded = true;
+      this.emit("close");
+    },
+  });
+  presence.subscribe({ user: { id: "watcher" } }, res, "team");
+  const tab = randomUUID(),
+    cell = { teamId: "team", taskId: "task", key: "title" };
+  presence.update(
+    { id: "other", name: "이전 이름", color: "#111111" },
+    tab,
+    cell,
+  );
+  presence.update(
+    { id: "other", name: "새 이름", color: "#222222" },
+    tab,
+    cell,
+  );
+  const last = writes
+    .filter((chunk) => chunk.includes("event: presence"))
+    .at(-1);
+  assert.deepEqual(
+    JSON.parse(last.split("data: ")[1]).cells.map(({ name, color }) => [
+      name,
+      color,
+    ]),
+    [["새 이름", "#222222"]],
+  );
+  presence.shutdown();
+});
