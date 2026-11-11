@@ -13,6 +13,7 @@ import { documentLinkPath } from "../../shared/documents/document-links.js";
 import {
   UNAVAILABLE_LINK_MESSAGE,
   useOpenDocumentLink,
+  useDocumentPageTitle,
   type DocumentLinkTarget,
 } from "./document-links";
 import type {
@@ -286,6 +287,7 @@ function MemoLinkPanel({
 }) {
   const id = useId();
   const editor = useRef<DocumentHandle>(null);
+  useDocumentPageTitle(title);
   const [loading, setLoading] = useState(true);
   const collection =
     target.kind === "memo"

@@ -5,6 +5,7 @@ import {
   type DocumentEditorProps,
 } from "./TaskDocumentEditor";
 import type { DocumentSaveResult } from "../types";
+import { value } from "../../shared/domain.js";
 export type { DocumentHandle, DocumentPanelHandle } from "./DocumentPanel";
 type Props = Omit<DocumentEditorProps, "documentId" | "controlsTarget"> & {
   initialDocumentId?: string;
@@ -20,6 +21,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
         {...props}
         ref={ref}
         path={path}
+        browserTitleFallback={String(value(props.task, "title"))}
         draftKey={(documentId) => documentDraftKey({ ...props, documentId })}
         emptyUntilSaved={props.sheetClone?.isNew}
         onSaved={(result) => props.onSaved(result as DocumentSaveResult)}

@@ -118,19 +118,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     const [editorFailed, setEditorFailed] = useState(false);
     const [preferredMode, setMode] = useState<DocumentMode>("rich");
     const mobile = useMobileLayout();
-    const [sourceRequired, setSourceRequired] = useState(false);
-    const mode = mobile && !sourceRequired ? "rich" : preferredMode;
-    const previousMobile = useRef(mobile);
-    useLayoutEffect(() => {
-      if (
-        mobile &&
-        !previousMobile.current &&
-        preferredMode === "source" &&
-        !sourceRequired
-      )
-        setEditorReady(false);
-      previousMobile.current = mobile;
-    }, [mobile, preferredMode, sourceRequired]);
+    const mode = preferredMode;
     const [notice, setNotice] = useState("");
     const [error, setError] = useState("");
     const [status, setStatus] = useState("문서를 불러오고 있습니다…");
@@ -214,7 +202,6 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     }
     function changeMode(value: DocumentMode) {
       if (value === "rich" && mode !== value) {
-        setSourceRequired(false);
         setEditorReady(false);
         setEditorFailed(false);
       }
@@ -817,7 +804,6 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
             ) : (
               <EditorBoundary
                 onSource={() => {
-                  setSourceRequired(true);
                   changeMode("source");
                 }}
                 onError={() => setEditorFailed(true)}
@@ -849,7 +835,6 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     onReady={() => setEditorReady(true)}
                     onUnsupported={(message) => {
                       setNotice(message);
-                      setSourceRequired(true);
                       setMode("source");
                     }}
                   />

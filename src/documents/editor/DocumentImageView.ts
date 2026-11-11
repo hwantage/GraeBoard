@@ -20,8 +20,18 @@ import {
 } from "../../../shared/documents/document-images.js";
 
 import type { DocumentImages } from "../document-storage";
+import {
+  findImageOriginal,
+  imageOriginalBlock,
+} from "./document-image-original";
 
-export type ImagePreview = { src: string; alt: string };
+export type ImagePreview = {
+  src: string;
+  alt: string;
+  apply?: (file: File, signal: AbortSignal) => Promise<void>;
+  edit?: boolean;
+  original?: { source: () => Promise<string>; alt: string };
+};
 
 // A screen capture holds the display's device pixels, twice its size on
 // screen on a Retina display. A pasted or dropped image starts at this width
@@ -177,6 +187,7 @@ export function documentImageView(
   readOnly: () => boolean,
   onPreview: (image: ImagePreview) => void,
   images?: DocumentImages,
+  upload?: (file: File, signal: AbortSignal) => Promise<string>,
 ): NodeView {
   let node = initial;
   let active = true;
@@ -280,13 +291,108 @@ export function documentImageView(
     );
     view.dispatch(closeHistory(view.state.tr));
   };
-  const preview = () => {
+  const preview = (edit = false) => {
+    const original = node;
+    const pos = getPos();
+    const archive =
+      pos === undefined
+        ? null
+        : findImageOriginal(view.state.doc, node.attrs.src, pos);
     const src = images
       ? img.getAttribute("src")
       : documentImageSource(node.attrs.src);
-    if (src) onPreview({ src, alt: node.attrs.alt || "문서 이미지" });
+    if (src)
+      onPreview({
+        src,
+        alt: node.attrs.alt || "문서 이미지",
+        edit,
+        original: archive
+          ? {
+              source: async () =>
+                images
+                  ? images.source(archive.image.attrs.src.split("#")[0])
+                  : documentImageSource(archive.image.attrs.src),
+              alt: archive.image.attrs.alt || "원본 이미지",
+            }
+          : undefined,
+        apply:
+          readOnly() || !upload
+            ? undefined
+            : async (file, signal) => {
+                const valid = () =>
+                  active &&
+                  !view.isDestroyed &&
+                  !readOnly() &&
+                  !signal.aborted &&
+                  node.eq(original) &&
+                  getPos() !== undefined;
+                if (!valid())
+                  throw new Error("이미지가 변경되었습니다. 다시 열어 주세요.");
+                const url = await upload(file, signal);
+                if (!valid())
+                  throw new Error("이미지가 변경되었습니다. 다시 열어 주세요.");
+                const pos = getPos()!;
+                const { schema } = view.state;
+                const archived = findImageOriginal(
+                  view.state.doc,
+                  original.attrs.src,
+                  pos,
+                );
+                const nextSrc =
+                  withWidth(url, widthOf(original.attrs.src)) || url;
+                const originalBlock = imageOriginalBlock(
+                  schema,
+                  archived?.image ?? original,
+                  nextSrc,
+                );
+                const tr = closeHistory(view.state.tr).setNodeMarkup(
+                  pos,
+                  undefined,
+                  {
+                    ...original.attrs,
+                    src: nextSrc,
+                  },
+                );
+                if (archived) {
+                  tr.replaceWith(
+                    archived.pos,
+                    archived.pos + archived.node.nodeSize,
+                    originalBlock,
+                  );
+                  view.dispatch(tr);
+                  view.dispatch(closeHistory(view.state.tr));
+                  return;
+                }
+                const $pos = view.state.doc.resolve(pos);
+                // Store the original in an ordinary existing toggle block. It remains an
+                // image reference for permissions, export, sync, backup and cleanup.
+                let depth = $pos.depth;
+                while (depth > 0) {
+                  const parent = $pos.node(depth - 1),
+                    index = $pos.index(depth - 1) + 1;
+                  if (parent.canReplaceWith(index, index, schema.nodes.toggle))
+                    break;
+                  depth--;
+                }
+                if (!depth)
+                  throw new Error(
+                    "이 위치에는 원본 이미지를 보관할 수 없습니다.",
+                  );
+                tr.insert($pos.after(depth), originalBlock);
+                view.dispatch(tr);
+                view.dispatch(closeHistory(view.state.tr));
+              },
+      });
   };
-  enlarge.addEventListener("click", preview);
+  const edit = iconButton("이미지 편집", [
+    "M12 20h9 M16.5 3.5l4 4L9 19l-5 1 1-5Z",
+  ]);
+  edit.className = "document-image-edit";
+  edit.hidden = !upload;
+  edit.addEventListener("click", () => {
+    if (!readOnly()) preview(true);
+  });
+  enlarge.addEventListener("click", () => preview());
   img.addEventListener("dblclick", (event) => {
     event.preventDefault();
     preview();
@@ -354,7 +460,7 @@ export function documentImageView(
       commit(next);
     }
   });
-  actions.append(reset, enlarge);
+  actions.append(edit, reset, enlarge);
   dom.append(img, missing, actions, handle, widthLabel);
   update(node);
   return {

@@ -242,6 +242,17 @@ export type DocumentLinkOpener = {
 export const DocumentLinkContext = createContext<DocumentLinkOpener | null>(
   null,
 );
+// Only link panels in a tab opened at a document address publish page titles.
+// The workspace owns the title and picks the topmost panel, including on close.
+export const DocumentPageTitleContext = createContext<
+  ((title: string) => void) | null
+>(null);
+export function useDocumentPageTitle(title: string) {
+  const reportTitle = useContext(DocumentPageTitleContext);
+  useEffect(() => {
+    reportTitle?.(title);
+  }, [reportTitle, title]);
+}
 export function useDocumentLinkOpener() {
   return useContext(DocumentLinkContext);
 }

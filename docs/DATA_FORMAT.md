@@ -212,6 +212,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | API (원본/사본 각각 동일한 문서 동작)                             | 의미                                                                                           |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `GET /api/tasks/:id/documents`                                    | 문서 ID·제목·내용 유무·revision 목록. `?content=1`은 행 복사에 필요한 전체 본문 조회           |
+| `POST /api/tasks/:id/documents/reorder` | `{ids,expectedIds}`로 기존 문서 순서 변경. main과 UUID 지원, 충돌 시 409. 사본 문서도 같은 경로 지원 |
 | `POST /api/tasks/:id/documents`                                   | `{id:UUID,title?}`로 추가. 제목 1~50자. 같은 ID의 재시도는 중복 생성하지 않음                  |
 | `GET/PUT /api/tasks/:id/documents/:documentId`                    | 조회 / `{markdown,expectedRevision,operationId}`로 독립 저장                                   |
 | `PATCH /api/tasks/:id/documents/:documentId`                      | `{title,expectedTitle}`로 이름 변경. 새 제목 1~50자, 이전 이름 충돌 검사                       |

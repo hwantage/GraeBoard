@@ -3655,8 +3655,9 @@ test("카드 이동과 양 끝 드래그가 주를 넘어 연결되고 상세 �
   );
   await entryDialog(page).getByLabel("일정 시작일").fill("2026-10-10");
   await entryDialog(page).getByLabel("일정 종료일").fill("2026-10-26");
+  await entryDialog(page).getByLabel("일정 종료일", { exact: true }).focus();
   await entryDialog(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expect(
     entryDialog(page).getByText("기간 저장됨", { exact: true }),
@@ -3867,8 +3868,9 @@ test("상세 기간의 실패·충돌·초안 보존과 본문 저장 응답의 
     expectedDate: entry.date,
     expectedEndDate: entry.endDate,
   });
+  await entryDialog(page).getByLabel("일정 종료일", { exact: true }).focus();
   await entryDialog(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expect(
     entryDialog(page).getByText("최신 서버 기간: 2026-10-12 ~ 2026-10-20"),
@@ -3918,8 +3920,9 @@ test("상세 기간의 실패·충돌·초안 보존과 본문 저장 응답의 
     expectedEndDate: "2026-10-19",
   });
   await entryDialog(page).getByLabel("일정 종료일").fill("2026-10-23");
+  await entryDialog(page).getByLabel("일정 종료일", { exact: true }).focus();
   await entryDialog(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expectRange(page, entry.id, "2026-10-12", "2026-10-23");
   release();
@@ -3932,6 +3935,13 @@ test("상세 기간의 실패·충돌·초안 보존과 본문 저장 응답의 
     await expect(card).toHaveAttribute("data-entry-lane", "2");
   await segment(page, entry.id).locator(".calendar-entry-card").first().click();
   await entryDialog(page).getByLabel("일정 시작일").fill("2026-10-25");
+  await entryDialog(page)
+    .getByRole("textbox", { name: "일정 제목", exact: true })
+    .click();
+  await expect(
+    entryDialog(page).getByText(/유효한 시작일과 종료일/),
+  ).toBeVisible();
+  await expectRange(page, entry.id, "2026-10-12", "2026-10-23");
   await entryDialog(page)
     .getByRole("button", { name: "닫기", exact: true })
     .click();
@@ -3947,8 +3957,9 @@ test("상세 기간의 실패·충돌·초안 보존과 본문 저장 응답의 
     expectedDate: "2026-10-12",
     expectedEndDate: "2026-10-23",
   });
+  await entryDialog(page).getByLabel("일정 종료일", { exact: true }).focus();
   await entryDialog(page)
-    .getByRole("button", { name: "기간 저장", exact: true })
+    .getByRole("textbox", { name: "일정 제목", exact: true })
     .click();
   await expect(
     entryDialog(page).getByText("최신 서버 기간: 2026-10-12 ~ 2026-10-24"),

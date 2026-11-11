@@ -12,6 +12,7 @@ import {
 } from "./editor/document-markdown";
 import { documentLinkSchema } from "./editor/DocumentLinkNode";
 import { remarkToggle, toggle } from "./editor/DocumentToggle";
+import { withoutImageOriginals } from "./editor/document-image-original";
 import { renderMermaid } from "./editor/DocumentCodeBlockView";
 import {
   documentImageSource,
@@ -186,7 +187,7 @@ async function documentFragment(markdown: string, doc: Document) {
   try {
     return editor.action((ctx) =>
       DOMSerializer.fromSchema(ctx.get(schemaCtx)).serializeFragment(
-        ctx.get(parserCtx)(markdown).content,
+        withoutImageOriginals(ctx.get(parserCtx)(markdown)).content,
         { document: doc },
       ),
     );
