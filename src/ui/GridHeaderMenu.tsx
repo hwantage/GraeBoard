@@ -29,6 +29,9 @@ export default function GridHeaderMenu({
   anchor?: HTMLElement | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  // 터치로 연 메뉴는 손가락 아래에 열리므로, 메뉴 안에서 누르지 않은 클릭
+  // (메뉴를 연 탭·길게 누르기의 손 떼기)은 항목을 실행하지 않는다.
+  const pressed = useRef(false);
   const [position, setPosition] = useState({ left: x, top: y });
   const close = useRef(onClose);
   close.current = onClose;
@@ -116,7 +119,15 @@ export default function GridHeaderMenu({
       aria-label={title}
       className={`grid-header-menu ${children ? "has-filter" : ""}`}
       style={position}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        pressed.current = true;
+        e.stopPropagation();
+      }}
+      onClickCapture={(e) => {
+        if (pressed.current || !e.detail) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

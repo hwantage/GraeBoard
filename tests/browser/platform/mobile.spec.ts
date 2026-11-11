@@ -589,6 +589,46 @@ test("셀·행·열 길게 누르기는 기존 메뉴를 열고 손을 떼어도
   await noKeyboard(page);
 });
 
+test("행 번호·열 머리글은 탭으로 선택하고 다시 탭하면 메뉴를 열며 손을 뗀 클릭은 항목을 실행하지 않는다", async ({
+  page,
+}) => {
+  const menu = page.locator(".grid-header-menu");
+  const count = async () =>
+    (await request(page, `/tasks?teamId=${teamId}&year=${year}`)).tasks.length;
+  const tasks = await count();
+  const rowButton = page.getByRole("button", {
+    name: "1행 전체 선택",
+    exact: true,
+  });
+  const column = page.locator('[data-header-key="title"]');
+  for (const [target, selected, title] of [
+    [rowButton, page.getByRole("rowheader").first(), "선택한 행 메뉴"],
+    [column, column, /열 메뉴$/],
+  ] as const) {
+    await target.tap();
+    await expect(selected).toHaveAttribute("aria-selected", "true");
+    await expect(menu).toHaveCount(0);
+    await noKeyboard(page);
+    await target.tap();
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-label", title);
+    await noKeyboard(page);
+    // 메뉴를 연 손가락 아래 항목에 눌림 없이 도착한 클릭은 무시한다.
+    await menu.getByRole("menuitem").first().dispatchEvent("click", {
+      detail: 1,
+    });
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  }
+  expect(await count()).toBe(tasks);
+  // 메뉴 안에서 직접 누른 항목은 그대로 실행한다.
+  await rowButton.tap();
+  await rowButton.tap();
+  await page.getByRole("menuitem", { name: "아래에 삽입", exact: true }).tap();
+  await expect.poll(count).toBe(tasks + 1);
+});
+
 test("시트 길게 누르기는 이동·스크롤·취소·다른 손가락에서 취소된다", async ({
   page,
 }) => {
