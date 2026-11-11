@@ -315,6 +315,37 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   await expect(page.locator(".calendar-view-options")).toBeVisible();
 });
 
+test("일정 추가 창은 제목·시크릿·태그·버튼 사이를 같은 간격으로 둔다", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  await page.getByRole("button", { name: "개인 월간 보기", exact: true }).tap();
+  for (const viewport of [mobile, desktop]) {
+    await page.setViewportSize(viewport);
+    await page
+      .getByRole("button", { name: /일정 추가/ })
+      .first()
+      .click();
+    const dialog = page.getByRole("dialog", { name: "일정 추가", exact: true });
+    const parts = [
+      dialog.locator(".calendar-field"),
+      dialog.locator(".switch-field"),
+      dialog.locator(".calendar-tag-picker"),
+      ...(viewport === desktop ? [dialog.locator(".calendar-hint")] : []),
+      dialog.getByRole("button", { name: "일정 만들기", exact: true }),
+    ];
+    const boxes = [];
+    for (const part of parts) boxes.push((await part.boundingBox())!);
+    const gaps = boxes
+      .slice(1)
+      .map((box, index) => box.y - (boxes[index].y + boxes[index].height));
+    for (const gap of gaps) expect(Math.abs(gap - gaps[0])).toBeLessThan(1.5);
+    expect(gaps[0]).toBeGreaterThan(8);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
 test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저의 손가락 확대는 그대로 둔다", async ({
   page,
 }) => {

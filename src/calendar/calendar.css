@@ -405,6 +405,19 @@
   line-height: 1.6;
   color: var(--muted);
 }
+/* 일정 추가 창의 날짜·제목·시크릿·태그·버튼 사이를 같은 간격으로 둔다. */
+.modal-body .calendar-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.modal-body .calendar-create-form > *,
+.modal-body .calendar-create-form > label:not(.checkbox) {
+  margin: 0;
+}
+.modal-body .calendar-create-form > .button {
+  align-self: flex-start;
+}
 .calendar-week-actions {
   display: flex;
   flex-wrap: wrap;
