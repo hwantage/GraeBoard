@@ -269,6 +269,11 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   const owners = page.getByRole("group", { name: "캘린더 팀원" });
   await expect(owners.getByRole("button")).toHaveCount(15);
   expect((await owners.boundingBox())!.height).toBeLessThan(50);
+  // 한 줄에 들어가지 않으면 날짜 선택 아래 줄에서 좌우로 넘겨 본다.
+  expect((await owners.boundingBox())!.y).toBeGreaterThan(
+    (await page.getByRole("group", { name: "캘린더 표시 기간" }).boundingBox())!
+      .y,
+  );
   expect(await owners.evaluate((el) => el.scrollWidth)).toBeGreaterThan(
     await owners.evaluate((el) => el.clientWidth),
   );
@@ -313,6 +318,39 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
     .click();
   await expect(name).toBeVisible();
   await expect(page.locator(".calendar-view-options")).toBeVisible();
+});
+
+test("팀원이 적으면 날짜 선택과 아바타를 한 줄에 둔다", async ({
+  page,
+}, info) => {
+  for (let i = 0; i < 4; i++)
+    await request(page, "/admin/users", "POST", {
+      username: `mobile-${randomUUID()}@example.com`,
+      password: "local-mobile-password",
+      name: `모바일 구성원 ${i + 1}`,
+      memberships: [{ teamId, role: "member" }],
+    });
+  await page.reload();
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  await page.getByRole("button", { name: "개인 월간 보기", exact: true }).tap();
+  const owners = page.getByRole("group", { name: "캘린더 팀원" });
+  const period = page.getByRole("group", { name: "캘린더 표시 기간" });
+  await expect(owners.getByRole("button")).toHaveCount(5);
+  // 360px에서는 5명이 날짜 선택 옆에 들어가지 않아 다음 줄로 넘긴다.
+  for (const width of [390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    const date = (await period.boundingBox())!;
+    const list = (await owners.boundingBox())!;
+    expect(list.x).toBeGreaterThanOrEqual(date.x + date.width);
+    expect(
+      Math.abs(list.y + list.height / 2 - (date.y + date.height / 2)),
+    ).toBeLessThan(4);
+    expect(await owners.evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(
+      await owners.evaluate((el) => el.clientWidth),
+    );
+    await fits(page);
+  }
+  await screenshot(page, info, "calendar-month-one-line");
 });
 
 test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저의 손가락 확대는 그대로 둔다", async ({

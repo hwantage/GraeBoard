@@ -2318,16 +2318,42 @@ body.document-block-moving * {
   background: var(--error-soft);
 }
 @media (max-width: 720px) {
+  /* 단계를 외부·Git·내부로 줄여 팀 선택과 같은 줄에 둔다. 들어가지 않을 때만 줄을 바꾼다. */
   .topbar:has(.team-sync-indicator) {
     height: auto;
     min-height: 38px;
     flex-wrap: wrap;
+    gap: 4px;
   }
-  .topbar .team-sync-indicator,
-  .topbar .team-sync-conflict-open {
-    order: 1;
-    flex-basis: 100%;
-    padding-bottom: 6px;
+  .topbar .team-sync-indicator {
+    gap: 2px;
+  }
+  .topbar .team-sync-stage {
+    padding-inline: 4px;
+  }
+  .topbar .team-sync-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .topbar .team-sync-stage::after {
+    content: attr(data-short);
+    content: attr(data-short) / "";
+  }
+  .topbar .team-select {
+    min-width: 64px;
+  }
+  .topbar:has(.team-sync-indicator) .button {
+    padding-inline: 5px;
+  }
+  .topbar:has(.team-sync-indicator) .calendar-launch {
+    margin-inline: 2px 0;
+  }
+  .topbar:has(.team-sync-indicator) .top-account > svg:last-child {
+    display: none;
   }
 }
 .modal {
