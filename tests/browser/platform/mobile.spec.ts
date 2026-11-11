@@ -188,8 +188,11 @@ test("실제 손가락 스와이프는 휴대폰과 태블릿에서 가로·세�
     await titleCell(page).tap({ position: { x: 70, y: 12 } });
     await noKeyboard(page);
     for (const axis of ["horizontal", "vertical"]) {
+      // Start inside the sheet even after a native fling has carried the
+      // title cell past its left edge.
       const box = (await titleCell(page).boundingBox())!;
-      const x = Math.min(viewport.width - 35, box.x + 220),
+      const area = (await grid.boundingBox())!;
+      const x = Math.min(viewport.width - 35, Math.max(box.x, area.x) + 220),
         y = box.y + 15;
       const start = await grid.evaluate((el) => ({
         x: el.scrollLeft,
@@ -224,6 +227,25 @@ test("실제 손가락 스와이프는 휴대폰과 태블릿에서 가로·세�
           ),
         )
         .toBeGreaterThan(axis === "horizontal" ? start.x : start.y);
+      // A swipe along one axis leaves the other where it was: scrolling down
+      // after moving right must not pull the sheet back to the left edge.
+      const settled = await grid.evaluate(
+        (el) =>
+          new Promise<{ x: number; y: number }>((resolve) => {
+            let last = "",
+              same = 0;
+            const check = () => {
+              const now = `${el.scrollLeft}:${el.scrollTop}`;
+              same = now === last ? same + 1 : 0;
+              last = now;
+              if (same >= 10) resolve({ x: el.scrollLeft, y: el.scrollTop });
+              else requestAnimationFrame(check);
+            };
+            check();
+          }),
+      );
+      if (axis === "horizontal") expect(settled.y).toBe(start.y);
+      else expect(settled.x).toBe(start.x);
       expect(
         await page.locator('[role="gridcell"][aria-selected="true"]').count(),
       ).toBe(1);

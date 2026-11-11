@@ -54,9 +54,13 @@ import { undoDepth, redoDepth } from "@milkdown/kit/prose/history";
 import { isInTable } from "@milkdown/kit/prose/tables";
 import { $prose } from "@milkdown/kit/utils";
 
-import type { RichEditorProps as Props } from "./rich-editor-types";
+import type {
+  RemoteMarkdown,
+  RichEditorProps as Props,
+} from "./rich-editor-types";
 
 import {
+  replaceChangedBlocks,
   needsTrailingParagraph,
   codeBlockMetaSchema,
   safeDocumentLink,
@@ -370,23 +374,14 @@ export default function useRichEditorLifecycle(
       if (editor.status === "Created") void editor.destroy();
     };
   }, []);
-  useEffect(() => {
-    if (
-      !ready ||
-      !props.remoteMarkdown ||
-      appliedRemote.current === props.remoteMarkdown
-    )
-      return;
-    appliedRemote.current = props.remoteMarkdown;
+  function applyRemote(remote: RemoteMarkdown) {
+    if (appliedRemote.current === remote || !editorRef.current) return;
+    appliedRemote.current = remote;
     try {
       applyingRemote.current = true;
-      editorRef.current?.action((ctx) => {
+      editorRef.current.action((ctx) => {
         const view = ctx.get(editorViewCtx);
-        const parsed = checkMarkdown(
-          ctx,
-          props.remoteMarkdown!.markdown,
-          latest.current,
-        );
+        const parsed = checkMarkdown(ctx, remote.markdown, latest.current);
         // Compare against the same trailing paragraph the view keeps so a
         // caret resting there is not moved by every remote save.
         const doc = needsTrailingParagraph(parsed.lastChild)
@@ -396,23 +391,17 @@ export default function useRichEditorLifecycle(
               ),
             )
           : parsed;
-        const start = view.state.doc.content.findDiffStart(doc.content);
-        if (start === null) return;
-        const end = view.state.doc.content.findDiffEnd(doc.content)!;
-        const overlap = start - Math.min(end.a, end.b);
-        const oldEnd = end.a + Math.max(0, overlap);
-        const newEnd = end.b + Math.max(0, overlap);
-        view.dispatch(
-          view.state.tr
-            .replace(start, oldEnd, doc.slice(start, newEnd))
-            .setMeta("addToHistory", false),
-        );
+        const tr = replaceChangedBlocks(view.state.tr, doc);
+        if (tr.docChanged) view.dispatch(tr.setMeta("addToHistory", false));
       });
     } catch (error) {
       latest.current.onUnsupported((error as Error).message);
     } finally {
       applyingRemote.current = false;
     }
+  }
+  useEffect(() => {
+    if (ready && props.remoteMarkdown) applyRemote(props.remoteMarkdown);
   }, [ready, props.remoteMarkdown]);
   useEffect(() => {
     if (props.readOnly) {
@@ -430,5 +419,13 @@ export default function useRichEditorLifecycle(
         input.disabled = props.readOnly;
       });
   }, [props.readOnly]);
-  return { ready, canUndo, canRedo, inTable, canDeleteRow, uploadError };
+  return {
+    ready,
+    canUndo,
+    canRedo,
+    inTable,
+    canDeleteRow,
+    uploadError,
+    applyRemote,
+  };
 }
