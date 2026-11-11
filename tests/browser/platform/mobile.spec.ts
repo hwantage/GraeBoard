@@ -315,6 +315,28 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   await expect(page.locator(".calendar-view-options")).toBeVisible();
 });
 
+test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저의 손가락 확대는 그대로 둔다", async ({
+  page,
+}) => {
+  const viewport = () =>
+    page.locator('meta[name="viewport"]').getAttribute("content");
+  expect(await viewport()).toBe("width=device-width, initial-scale=1.0");
+  // Only iOS WebKit supports touch callouts; stand in for it here.
+  await page.addInitScript(() => {
+    const supports = CSS.supports.bind(CSS);
+    CSS.supports = ((property: string, value?: string) =>
+      property === "-webkit-touch-callout" ||
+      (value === undefined
+        ? supports(property)
+        : supports(property, value))) as typeof CSS.supports;
+  });
+  await page.reload();
+  await expect(titleCell(page)).toBeVisible();
+  expect(await viewport()).toBe(
+    "width=device-width, initial-scale=1.0, maximum-scale=1",
+  );
+});
+
 test("업무 문서는 모바일에서도 모드를 전환하고 화면 폭이 바뀌어도 선택을 보존한다", async ({
   page,
 }, info) => {
