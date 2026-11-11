@@ -614,6 +614,15 @@ function Workspace({
     else setError("업무를 찾을 수 없습니다.");
   }, [insightTaskTarget, workspaceRoute.route, ready, tasks, year, teamId]);
   const teamUnavailable = teamUnavailableFor(boot, teamId, site.external);
+  // Cell positions are shared only between people on the same internal server.
+  const presenceTeamId =
+    !site.external &&
+    !sheetClone &&
+    !presentation &&
+    !teamUnavailable &&
+    workspaceRoute.route === "annual"
+      ? teamId
+      : null;
   const sheetCloneDraft = useSheetCloneDraft(teamId, user.id);
   const editingSheetClone =
     !!sheetClone && sheetCloneDraft.draft?.sheetClone.id === sheetClone.id;
@@ -2637,6 +2646,7 @@ function Workspace({
                   }
                   canEditPeople={canAdd}
                   selection={selection}
+                  presenceTeamId={presenceTeamId}
                   settings={settings}
                   editor={editor}
                   onCancelEdit={() => setEditor(null)}

@@ -2228,6 +2228,39 @@ body.document-block-moving * {
 .sheet-cell.focused {
   z-index: 5;
 }
+/* 같은 사내 서버의 다른 사람이 선택한 셀은 그 사람 색 테두리와 이름표로,
+   편집 중인 셀은 옅은 색을 더해 표시한다. */
+.sheet-presence {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--presence-color);
+  pointer-events: none;
+  z-index: 7;
+}
+.sheet-presence[data-editing] {
+  background: color-mix(in srgb, var(--presence-color) 14%, transparent);
+}
+.sheet-presence::before {
+  content: attr(data-name);
+  box-sizing: border-box;
+  position: absolute;
+  top: 0;
+  right: 0;
+  max-width: 100%;
+  padding: 0 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--presence-color);
+  color: var(--presence-ink);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+/* 내가 편집 중인 셀에서는 입력칸을 가리지 않도록 이름표를 숨긴다. */
+.sheet-cell.editing .sheet-presence::before {
+  display: none;
+}
 .person-cell {
   display: flex;
   align-items: center;
