@@ -282,6 +282,13 @@ test("document, sheetClone and browser reads cost the same statements for few or
           Number(task.title.slice(3)) % 2 > 0,
     ),
   );
+  // The browser lists documents in tab order, as the internal site does, so a
+  // task title opens its first tab.
+  assert.ok(
+    live.every(
+      (task) => task.documents.map((d) => d.title).join() === "첫째,둘째",
+    ),
+  );
   const [, copy] = many.sources.value.sources;
   assert.equal(copy.id, f.sheetCloneId);
   assert.equal(copy.taskCount, copied.length);
