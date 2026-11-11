@@ -84,8 +84,13 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
     sheet.addEventListener("scroll", fromSheet, { passive: true });
     bar.addEventListener("scroll", fromBar, { passive: true });
     sheet.addEventListener("wheel", wheel, { passive: false });
-    sheet.addEventListener("touchstart", touchstart, { passive: true });
-    sheet.addEventListener("touchmove", touchmove, { passive: false });
+    // Swipes pan sideways by script only where the sheet hides its native
+    // horizontal scrolling. Phones and tablets pan natively (styles.css), and
+    // a blocking touchmove listener there would hold up every scroll.
+    if (getComputedStyle(sheet).overflowX === "hidden") {
+      sheet.addEventListener("touchstart", touchstart, { passive: true });
+      sheet.addEventListener("touchmove", touchmove, { passive: false });
+    }
     return () => {
       resize.disconnect();
       sheet.removeEventListener("scroll", fromSheet);

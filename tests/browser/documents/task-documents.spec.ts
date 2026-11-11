@@ -3468,6 +3468,30 @@ test("탭 안의 제목 편집은 한글 조합·취소·저장 실패와 닫기
   ).toBe(longTitle);
 });
 
+test("첫 문서를 뒤로 옮긴 뒤 상세를 열면 맨 앞 탭의 문서를 먼저 연다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "원래 첫 문서 본문");
+  const path = `/tasks/${taskIds[0]}/documents`;
+  const ids = [randomUUID(), randomUUID()];
+  for (const [index, id] of ids.entries())
+    await post(page, path, { id, title: `${index + 2}번째로 만든 문서` });
+  await post(page, `${path}/reorder`, {
+    ids: [...ids, "main"],
+    expectedIds: ["main", ...ids],
+  });
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"]`)
+    .click({ button: "right" });
+  const tabs = detail(page).getByRole("tab");
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.first()).toHaveAttribute("aria-label", "2번째로 만든 문서");
+  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.last()).toHaveAttribute("aria-selected", "false");
+  await expect(rich(page)).toBeVisible();
+  await expect(rich(page)).not.toContainText("원래 첫 문서 본문");
+});
+
 test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫히고 상세는 유지된다", async ({
   page,
   browserName,
