@@ -477,6 +477,153 @@ async function contract(t, f, request, ids) {
       assert.deepEqual(exported.team.settings.insights, normalized);
     },
   );
+  await t.test(
+    "an edited work color repaints marked cells and rules, not ordinary fills, sheet clones or unrelated requests",
+    async () => {
+      const general = `/teams/${f.teamId}`,
+        query = `/tasks?teamId=${f.teamId}&year=2026`,
+        readTask = async () =>
+          ok(await request(query)).tasks.find((task) => task.id === f.taskId);
+      const name = (await read()).name || "Work color team";
+      let settings = ok(
+        await request(
+          general,
+          {
+            name,
+            settingsRevision: (await read()).revision,
+            workColors: [{ color: "#123456", name: "Old work" }],
+          },
+          "PATCH",
+          ids.lead,
+        ),
+      ).settings;
+      let task = await readTask();
+      ok(
+        await request("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          changes: [
+            ["2026-03-02", { backgroundColor: "#123456", work: true }],
+            ["2026-03-09", { backgroundColor: "#123456" }],
+          ].map(([key, style]) => ({
+            taskId: f.taskId,
+            key,
+            style,
+            expectedVersion: task.cells[key]?.version || 0,
+            expectedFormatRevision: task.formatting?.revision || 0,
+          })),
+        }),
+      );
+      task = await readTask();
+      ok(
+        await request("/cells/batch", {
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          format: {
+            teamId: f.teamId,
+            expectedRevision: task.formatting?.revision || 0,
+            scopes: [
+              {
+                rows: [f.taskId],
+                keys: ["2026-03-16"],
+                style: { backgroundColor: "#123456", work: true },
+              },
+            ],
+            expectedTasks: { [f.taskId]: task.updatedAt },
+          },
+        }),
+      );
+      const copy = ok(
+        await request("/sheet-clones", {
+          id: randomUUID(),
+          teamId: f.teamId,
+          year: 2026,
+          referenceDate: "2026-11-11",
+          name: "Before work color edit",
+          taskIds: [f.taskId],
+          view: defaultView(2026),
+        }),
+      );
+      const before = await readTask();
+      // A change naming a color that was never saved repaints nothing.
+      settings = ok(
+        await request(
+          general,
+          {
+            name,
+            settingsRevision: settings.revision,
+            workColors: [{ color: "#123456", name: "Old work" }],
+            workColorChanges: [{ from: "#000000", to: "#123456" }],
+          },
+          "PATCH",
+          ids.lead,
+        ),
+      ).settings;
+      assert.equal(
+        cell(await readTask(), "2026-03-02").style.backgroundColor,
+        "#123456",
+      );
+      assert.equal(
+        (
+          await request(
+            general,
+            {
+              name,
+              settingsRevision: settings.revision,
+              workColorChanges: [{ from: "#123456", to: "#654321" }],
+            },
+            "PATCH",
+            ids.lead,
+          )
+        ).status,
+        400,
+      );
+      settings = ok(
+        await request(
+          general,
+          {
+            name,
+            settingsRevision: settings.revision,
+            workColors: [{ color: "#654321", name: "Old work" }],
+            workColorChanges: [{ from: "#123456", to: "#654321" }],
+          },
+          "PATCH",
+          ids.lead,
+        ),
+      ).settings;
+      const after = await readTask();
+      assert.deepEqual(cell(after, "2026-03-02").style, {
+        ...cell(before, "2026-03-02").style,
+        backgroundColor: "#654321",
+      });
+      assert.ok(
+        after.cells["2026-03-02"].version > before.cells["2026-03-02"].version,
+      );
+      assert.equal(cell(after, "2026-03-16").style.backgroundColor, "#654321");
+      assert.equal(cell(after, "2026-03-16").style.work, true);
+      assert.deepEqual(
+        cell(after, "2026-03-09").style,
+        cell(before, "2026-03-09").style,
+        "an ordinary fill of the old color stays",
+      );
+      const snapshot = ok(await request(`/sheet-clones/${copy.id}`));
+      assert.equal(
+        cell(
+          snapshot.tasks.find((task) => task.id === f.taskId),
+          "2026-03-02",
+        ).style.backgroundColor,
+        "#123456",
+      );
+      ok(
+        await request(
+          path,
+          { revision: settings.revision, insights: config },
+          "PATCH",
+          ids.lead,
+        ),
+      );
+    },
+  );
   return normalized;
 }
 test("insights settings contract on SQLite routes and real backup", async (t) => {

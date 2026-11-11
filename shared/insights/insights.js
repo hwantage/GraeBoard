@@ -61,6 +61,26 @@ export function workColorSet(settings) {
       .filter(Boolean),
   );
 }
+// An edited work color names its saved color and the replacement. Only a
+// color that leaves the list for one that joins it repaints the marked cells;
+// an ordinary fill of the same color is not a work mark and stays.
+export function workRecolorMap(previous, next, changes = []) {
+  const before = workColorSet(previous),
+    after = workColorSet(next),
+    map = new Map();
+  for (const change of changes) {
+    const from = normalizeWorkColor(change.from),
+      to = normalizeWorkColor(change.to);
+    if (from && to && before.has(from) && !after.has(from) && after.has(to))
+      map.set(from, to);
+  }
+  return map;
+}
+export function recolorWorkStyle(style, map) {
+  if (!map.size || style?.work !== true) return null;
+  const to = map.get(normalizeWorkColor(style.backgroundColor));
+  return to ? { ...style, backgroundColor: to } : null;
+}
 export function weekMonth(week) {
   return new Date(Date.parse(week) + 4 * DAY).toISOString().slice(0, 7);
 }
