@@ -266,8 +266,14 @@ export default function Insights({
         { revision, insights: draft },
         "PATCH",
       );
-      const boot = await api<Bootstrap>("/bootstrap");
-      if (mounted.current) onBootstrap(boot);
+      // The settings are saved; a failed refresh must not hide the new
+      // revision from the editor. The next bootstrap poll catches up.
+      await api<Bootstrap>("/bootstrap").then(
+        (boot) => {
+          if (mounted.current) onBootstrap(boot);
+        },
+        () => {},
+      );
       return result.settings;
     } finally {
       if (mounted.current) setBusy(false);

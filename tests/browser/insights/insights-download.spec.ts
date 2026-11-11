@@ -547,7 +547,8 @@ test("인쇄 후 탭 포커스 복귀와 화면 이탈도 프레임·제목을 �
     .click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator(".insights-print-frame")).toHaveCount(0);
-  await expect(page).toHaveTitle(title);
+  // The report's print title gives way to the screen it moved to.
+  await expect(page).toHaveTitle("연간 업무 · 그래보드");
   await page
     .locator(".page-heading")
     .getByRole("button", { name: "인사이트", exact: true })
@@ -703,6 +704,7 @@ test("앱에서 생성한 보고서는 긴 한글·모든 행·여러 값의 매
   browserName,
 }, info) => {
   test.setTimeout(90000);
+  await mkdir(output, { recursive: true });
   for (let index = 0; index < 35; index++) {
     const user = (
       await api(page, "/admin/users", {

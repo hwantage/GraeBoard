@@ -317,7 +317,7 @@ export default function SettingsPanel({
                 aria-labelledby={`tab-${selectedTab}`}
               >
                 {selectedTab === "general" &&
-                  (isAdmin && !adminData ? (
+                  (isAdmin && !adminData && !error ? (
                     <LoadingState label="팀 설정을 불러오고 있습니다" />
                   ) : (
                     <TeamGeneral

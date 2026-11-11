@@ -259,6 +259,23 @@ test("메뉴·직접 주소·새로고침·뒤로가기가 동작하고 미설�
   }
 });
 
+test("관리자 목록 조회가 실패해도 팀 일반 설정을 열어 업무 색상을 관리한다", async ({
+  page,
+}) => {
+  await page.route("**/api/admin/users", (route) =>
+    route.fulfill({ status: 503, json: { error: "합성 관리자 조회 실패" } }),
+  );
+  await insights(page);
+  await page
+    .getByRole("button", { name: "업무 색상 설정", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+  await expect(dialog.getByText("합성 관리자 조회 실패")).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "업무 색상 추가", exact: true }),
+  ).toBeVisible();
+});
+
 test("일반 설정 저장→업무 표시 한 번 클릭→수치 반영과 색 편집, 일반 색상 메뉴 유지", async ({
   page,
 }) => {
@@ -1766,6 +1783,40 @@ test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유�
   await expect(
     list.getByRole("button", { name: "인사이트 검증 업무 3", exact: true }),
   ).toBeVisible();
+});
+
+test("설정 저장 뒤 화면 갱신 조회가 실패해도 저장을 알리고 다음 저장은 충돌하지 않는다", async ({
+  page,
+}) => {
+  await configure(page);
+  await page.reload();
+  await insights(page);
+  await page
+    .getByRole("button", { name: "인사이트 설정", exact: true })
+    .click();
+  const config = page.getByRole("dialog", {
+    name: "인사이트 설정",
+    exact: true,
+  });
+  const summaryProperty = config.getByLabel("상단 통계 기준 속성", {
+    exact: true,
+  });
+  // The save succeeds; only the refresh that follows it fails.
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ status: 503, json: { error: "합성 갱신 실패" } }),
+  );
+  await summaryProperty.selectOption("category");
+  await config.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(config).toContainText("인사이트 설정을 저장했습니다.");
+  await expect(config).not.toContainText("합성 갱신 실패");
+  await page.unroute("**/api/bootstrap");
+  await summaryProperty.selectOption("");
+  await config.getByRole("button", { name: "저장", exact: true }).click();
+  await expect
+    .poll(async () => (await settings(page)).insights.summaryPropertyId)
+    .toBeNull();
+  await expect(config).toContainText("인사이트 설정을 저장했습니다.");
+  await expect(config.locator(".error-note, [role=alert]")).toHaveCount(0);
 });
 
 test("상단 통계 속성은 설정 저장·다른 탭·보관·복원에서 참조와 값을 유지한다", async ({
