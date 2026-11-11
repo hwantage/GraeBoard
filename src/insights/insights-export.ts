@@ -93,7 +93,7 @@ export function captureInsightsReport(input: InsightsReportInput) {
     "p",
     `선택 표시 월: ${input.period.from} ~ ${input.period.to} · 선택 ${input.period.weeks?.length || 0}주`,
   );
-  line("p", `범위 필터: ${input.filters.join(" / ") || "전체"}`);
+  line("p", `속성 필터: ${input.filters.join(" / ") || "전체"}`);
   line(
     "p",
     `생성: ${new Intl.DateTimeFormat("ko-KR", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date())} (한국 시간)`,

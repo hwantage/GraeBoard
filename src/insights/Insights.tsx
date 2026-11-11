@@ -384,7 +384,7 @@ export default function Insights({
               aria-haspopup="dialog"
               onClick={() => rangeFilter.setOpen(!rangeFilter.open)}
             >
-              범위 필터
+              속성 필터
             </Button>
             {rangeFilter.open &&
               createPortal(
@@ -392,7 +392,7 @@ export default function Insights({
                   ref={rangeFilter.popup}
                   className="insights-range-filter-popover"
                   role="dialog"
-                  aria-label="범위 필터"
+                  aria-label="속성 필터"
                   tabIndex={-1}
                   style={rangeFilter.position}
                   onKeyDown={rangeFilter.onKeyDown}

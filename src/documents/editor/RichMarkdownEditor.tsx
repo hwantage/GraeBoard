@@ -10,8 +10,18 @@ import {
   blockCommand,
   type ListFormat,
 } from "./document-editor-commands";
-import type { RichEditorProps as Props } from "./rich-editor-types";
-import { useRef, useState, type ReactNode } from "react";
+import type {
+  RichEditorHandle,
+  RichEditorProps as Props,
+} from "./rich-editor-types";
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ForwardedRef,
+  type ReactNode,
+} from "react";
 import { type ImagePreview } from "./DocumentImageView";
 import Toast from "../../ui/Toast";
 import Select from "../../ui/Select";
@@ -77,7 +87,7 @@ import {
 } from "lucide-react";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
-export default function RichMarkdownEditor(props: Props) {
+function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
   const root = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Editor | null>(null);
 
@@ -119,18 +129,26 @@ export default function RichMarkdownEditor(props: Props) {
   } = links;
   const slashMenu = useDocumentSlash({ editorRef, latest, shell });
   const { slash, closeSlash, applySlash } = slashMenu;
-  const { ready, canUndo, canRedo, inTable, canDeleteRow, uploadError } =
-    useRichEditorLifecycle(props, {
-      root,
-      editorRef,
-      latest,
-      links,
-      slashMenu,
-      blockHandle,
-      toc,
-      setPreview,
-      setImageZoom,
-    });
+  const {
+    ready,
+    canUndo,
+    canRedo,
+    inTable,
+    canDeleteRow,
+    uploadError,
+    applyRemote,
+  } = useRichEditorLifecycle(props, {
+    root,
+    editorRef,
+    latest,
+    links,
+    slashMenu,
+    blockHandle,
+    toc,
+    setPreview,
+    setImageZoom,
+  });
+  useImperativeHandle(ref, () => ({ applyRemote }));
 
   function run(action: (ctx: Ctx) => unknown) {
     if (props.readOnly || !editorRef.current) return;
@@ -543,3 +561,4 @@ export default function RichMarkdownEditor(props: Props) {
     </div>
   );
 }
+export default forwardRef(RichMarkdownEditor);

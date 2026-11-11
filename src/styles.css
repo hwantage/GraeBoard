@@ -1563,6 +1563,18 @@ small {
   visibility: hidden;
   pointer-events: none;
 }
+/* Phones and tablets pan the table natively in both directions. iOS pulls a
+   position set by script in an overflow-x: hidden scroller back to the left
+   edge on the next vertical swipe. Their overlay scrollbar already lies right
+   above the memos, so the rail is not needed there. */
+@media (hover: none) and (pointer: coarse) {
+  .sheet-scroll.has-sheet-footer {
+    overflow-x: auto;
+  }
+  .sheet-scroll.has-sheet-footer > .sheet-horizontal-scroll {
+    display: none;
+  }
+}
 .sheet-header {
   display: flex;
   position: sticky;

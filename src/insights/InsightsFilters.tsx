@@ -33,41 +33,44 @@ export default function InsightsFilters({
           모든 필터 초기화
         </Button>
       )}
-      {propertiesFor(settings).map((property) => (
-        <details key={property.id}>
-          <summary>
-            {property.name}
-            {filter.propertyFilters?.[property.id]?.length
-              ? ` (${filter.propertyFilters[property.id].length})`
-              : ""}
-          </summary>
-          <PropertyFilter
-            property={property}
-            tasks={tasks}
-            users={users.filter((user) => isAssignable(user, teamId))}
-            selected={filter.propertyFilters?.[property.id] || []}
-            mode={filter.propertyFilterModes?.[property.id] || "include"}
-            onChange={(values) =>
-              onChange({
-                ...filter,
-                propertyFilters: {
-                  ...filter.propertyFilters,
-                  [property.id]: values,
-                },
-              })
-            }
-            onModeChange={(mode: FilterMode) =>
-              onChange({
-                ...filter,
-                propertyFilterModes: {
-                  ...filter.propertyFilterModes,
-                  [property.id]: mode,
-                },
-              })
-            }
-          />
-        </details>
-      ))}
+      {propertiesFor(settings)
+        // Free-text title and description values are almost all distinct.
+        .filter((p) => p.id !== "title" && p.id !== "description")
+        .map((property) => (
+          <details key={property.id}>
+            <summary>
+              {property.name}
+              {filter.propertyFilters?.[property.id]?.length
+                ? ` (${filter.propertyFilters[property.id].length})`
+                : ""}
+            </summary>
+            <PropertyFilter
+              property={property}
+              tasks={tasks}
+              users={users.filter((user) => isAssignable(user, teamId))}
+              selected={filter.propertyFilters?.[property.id] || []}
+              mode={filter.propertyFilterModes?.[property.id] || "include"}
+              onChange={(values) =>
+                onChange({
+                  ...filter,
+                  propertyFilters: {
+                    ...filter.propertyFilters,
+                    [property.id]: values,
+                  },
+                })
+              }
+              onModeChange={(mode: FilterMode) =>
+                onChange({
+                  ...filter,
+                  propertyFilterModes: {
+                    ...filter.propertyFilterModes,
+                    [property.id]: mode,
+                  },
+                })
+              }
+            />
+          </details>
+        ))}
     </div>
   );
 }

@@ -298,8 +298,8 @@ test("PDF 출력은 정확한 선택 주차·필터·현재 카드 선택과 저
   await first.focus();
   await first.press("Enter");
   await page.keyboard.press("Shift+ArrowRight");
-  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
-  const filters = page.getByRole("dialog", { name: "범위 필터", exact: true });
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
+  const filters = page.getByRole("dialog", { name: "속성 필터", exact: true });
   await filters.getByText("업무 방식", { exact: true }).click();
   await filters
     .getByRole("checkbox", { name: "병행 검토", exact: true })
@@ -443,7 +443,7 @@ test("PDF 출력은 정확한 선택 주차·필터·현재 카드 선택과 저
     });
     const controls = [
       dates,
-      page.getByRole("button", { name: "범위 필터", exact: true }),
+      page.getByRole("button", { name: "속성 필터", exact: true }),
       page.getByRole("button", { name: "인사이트 설정", exact: true }),
       pdf(page),
     ];
@@ -462,9 +462,9 @@ test("PDF 출력은 정확한 선택 주차·필터·현재 카드 선택과 저
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
-    await page.getByRole("button", { name: "범위 필터", exact: true }).click();
+    await page.getByRole("button", { name: "속성 필터", exact: true }).click();
     await expect(
-      page.getByRole("dialog", { name: "범위 필터", exact: true }),
+      page.getByRole("dialog", { name: "속성 필터", exact: true }),
     ).toBeVisible();
     await page.screenshot({
       path: resolve(output, `${info.project.name}-${width}px-filter.png`),
@@ -623,7 +623,7 @@ test("데이터 대기·조회 실패·미설정·잘못된 차트는 정상 PDF
   await expect(pdf(page)).toBeDisabled();
 });
 
-test("열람자도 PDF를 출력하고 좁은 화면의 날짜·범위 필터 행은 유지된다", async ({
+test("열람자도 PDF를 출력하고 좁은 화면의 날짜·속성 필터 행은 유지된다", async ({
   browser,
   baseURL,
 }) => {
@@ -668,7 +668,7 @@ test("열람자도 PDF를 출력하고 좁은 화면의 날짜·범위 필터 �
     const [dates, filter, button] = await Promise.all([
       page.locator(".insights-date-row .date-controls").boundingBox(),
       page
-        .getByRole("button", { name: "범위 필터", exact: true })
+        .getByRole("button", { name: "속성 필터", exact: true })
         .boundingBox(),
       pdf(page).boundingBox(),
     ]);
