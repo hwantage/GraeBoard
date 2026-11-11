@@ -537,7 +537,7 @@ test("삭제했거나 열 수 없는 링크는 저장된 글자를 흐리게 보
   expect(new URL(page.url()).pathname).toBe("/");
 });
 
-test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 동작한다", async ({
+test("HTTP·상대경로 링크는 붙여넣기·읽기 전용 클릭에서 그대로 동작한다", async ({
   page,
 }) => {
   const source = await open(page);
@@ -549,19 +549,18 @@ test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 �
   await expect(
     rich(source).getByRole("link", { name: "외부 자료", exact: true }),
   ).toHaveAttribute("href", "https://example.com/docs");
-  // Other relative addresses stay text, as before.
+  // Ordinary relative paths stay links, without becoming document links.
   await rich(source).press("End");
-  await paste(
-    rich(source),
-    " 상대 경로",
-    '<a href="/other/path">상대 경로</a>',
-  );
+  await paste(rich(source), "상대 경로", '<a href="/other/path">상대 경로</a>');
   await expect(rich(source)).toContainText("상대 경로");
-  await expect(rich(source).getByRole("link")).toHaveCount(1);
+  await expect(rich(source).getByRole("link")).toHaveCount(2);
+  await expect(
+    rich(source).getByRole("link", { name: "상대 경로" }),
+  ).toHaveAttribute("href", "/other/path");
   await expect(links(source)).toHaveCount(0);
   await expect
     .poll(() => taskMarkdown(page, taskIds[0]))
-    .toMatch(/^\[외부 자료\]\(https:\/\/example\.com\/docs\)\s+상대 경로\n$/);
+    .toBe("[외부 자료](https://example.com/docs)[상대 경로](/other/path)\n");
   await source.getByRole("button", { name: "닫기", exact: true }).click();
   await page.getByRole("button", { name: "발표 모드", exact: true }).click();
   await page
@@ -576,8 +575,56 @@ test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 �
     };
   });
   await rich(presented).getByRole("link", { name: "외부 자료" }).click();
+  await rich(presented).getByRole("link", { name: "상대 경로" }).click();
   expect(await page.evaluate(() => (window as any).__opened)).toEqual([
     ["https://example.com/docs", "_blank", "noopener,noreferrer"],
+    ["/other/path", "_blank", "noopener,noreferrer"],
+  ]);
+});
+
+test("파일 링크는 클릭·열기 메뉴·주소 수정·읽기 전용에서도 브라우저로 전달한다", async ({
+  page,
+}) => {
+  await saveTask(page, taskIds[0], "[첨부 파일](IMG_0001.HEIC)\n");
+  const source = await open(page);
+  await page.evaluate(() => {
+    (window as any).__opened = [];
+    window.open = (...args: unknown[]) => {
+      (window as any).__opened.push(args);
+      return null;
+    };
+  });
+  const link = rich(source).getByRole("link", {
+    name: "첨부 파일",
+    exact: true,
+  });
+  await link.click();
+  const tip = source.getByRole("group", { name: "링크", exact: true });
+  await tip.getByRole("button", { name: "링크 열기" }).click();
+  await tip.getByRole("button", { name: "링크 수정" }).click();
+  const address = source.getByRole("textbox", { name: "링크 주소" });
+  await expect(address).toHaveValue("IMG_0001.HEIC");
+  await address.fill("file:///tmp/report.pdf");
+  await address.press("Enter");
+  await expect(link).toHaveAttribute("href", "file:///tmp/report.pdf");
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toBe("[첨부 파일](file:///tmp/report.pdf)\n");
+  await link.click();
+  await source.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.getByRole("button", { name: "발표 모드", exact: true }).click();
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"] .task-document-indicator`)
+    .click();
+  await expect(rich(details(page))).toHaveAttribute("contenteditable", "false");
+  await rich(details(page))
+    .getByRole("link", { name: "첨부 파일", exact: true })
+    .click();
+  expect(await page.evaluate(() => (window as any).__opened)).toEqual([
+    ["IMG_0001.HEIC", "_blank", "noopener,noreferrer"],
+    ["IMG_0001.HEIC", "_blank", "noopener,noreferrer"],
+    ["file:///tmp/report.pdf", "_blank", "noopener,noreferrer"],
+    ["file:///tmp/report.pdf", "_blank", "noopener,noreferrer"],
   ]);
 });
 
