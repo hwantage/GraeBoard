@@ -3834,9 +3834,10 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
     if (i === 1)
       await expect.poll(async () => (await connections()).length).toBe(1);
   }
+  // The sheet's cell, team and cell-position streams.
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(2);
+    .toBe(3);
   await open(tabs[1], taskIds[0]);
   await open(tabs[2], taskIds[1]);
   await expect(rich(tabs[1])).toContainText("공유 첫 본문");
@@ -3844,7 +3845,7 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
   await open(tabs[3], taskIds[0]);
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(6);
+    .toBe(7);
   await raw(tabs[1]);
   await source(tabs[1]).fill("여덟 탭에서도 저장되는 본문");
   await expect(rich(tabs[3])).toContainText("여덟 탭에서도 저장되는 본문");
@@ -3863,7 +3864,7 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
   await tabs[2].close(); // Its private document subscriptions must disappear.
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(4);
+    .toBe(5);
   const changeCell = async (value: string) => {
     const data = await get(tabs[1], `/tasks?teamId=${teamId}&year=2026`);
     await post(tabs[1], "/cells/batch", {

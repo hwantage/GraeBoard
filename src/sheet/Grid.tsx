@@ -8,7 +8,7 @@ import { rangeOf, rangesOf } from "./grid-selection";
 
 import { useMobileLayout } from "../ui/useMobileLayout";
 import SheetHorizontalScroll from "./SheetHorizontalScroll";
-import useSheetPresence from "./useSheetPresence";
+import useSheetPresence, { type PresenceStore } from "./useSheetPresence";
 import { useTodayKey } from "./useTodayKey";
 import { FileText } from "lucide-react";
 import { explicitStyle } from "../../shared/formatting/formatting.js";
@@ -108,7 +108,7 @@ export default function Grid({
   footer,
   canEditPeople,
   selection,
-  presenceTeamId = null,
+  presence: presenceStore = null,
   settings,
   editor,
   onCommit,
@@ -150,8 +150,8 @@ export default function Grid({
   footer?: ReactNode;
   canEditPeople: boolean;
   selection: Selection | null;
-  // 같은 사내 서버의 다른 사람에게 선택·편집 셀을 알리고 받을 팀. 외부·사본·발표는 null.
-  presenceTeamId?: string | null;
+  // 같은 사내 서버의 다른 사람과 선택·편집 셀을 주고받는 팀 스트림. 외부·사본·발표는 null.
+  presence?: PresenceStore | null;
   settings: Settings;
   editor: EditorState | null;
   onCommit: (point: Point, value: Cell["value"]) => boolean;
@@ -338,7 +338,7 @@ export default function Grid({
   );
   // 다른 사람의 이동은 Grid만 다시 그리게 이 안에서 받는다.
   const presence = useSheetPresence(
-    presenceTeamId,
+    presenceStore,
     editor?.point || selection?.focus || null,
     !!editor,
   );
