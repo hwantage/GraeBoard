@@ -16,6 +16,7 @@ import { api, send } from "../platform/api";
 import {
   canManageTeam,
   filteredTasks,
+  isAssignable,
   mondayOf,
   propertiesFor,
   shortId,
@@ -188,12 +189,15 @@ export default function Insights({
     () => ({
       settings,
       users,
+      memberIds: new Set(
+        users.filter((u) => isAssignable(u, team.id)).map((u) => u.id),
+      ),
       period,
       currentWeek: mondayOf(today),
       colors: workColorSet(settings),
       cache: cache.current,
     }),
-    [settings, users, period, today],
+    [settings, users, team.id, period, today],
   );
   const metrics = useMemo(
     () => tasks.map((task) => taskMetrics(task, ctx)),
@@ -384,7 +388,7 @@ export default function Insights({
               aria-haspopup="dialog"
               onClick={() => rangeFilter.setOpen(!rangeFilter.open)}
             >
-              범위 필터
+              속성 필터
             </Button>
             {rangeFilter.open &&
               createPortal(
@@ -392,7 +396,7 @@ export default function Insights({
                   ref={rangeFilter.popup}
                   className="insights-range-filter-popover"
                   role="dialog"
-                  aria-label="범위 필터"
+                  aria-label="속성 필터"
                   tabIndex={-1}
                   style={rangeFilter.position}
                   onKeyDown={rangeFilter.onKeyDown}

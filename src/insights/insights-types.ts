@@ -42,6 +42,8 @@ export type TaskMetrics = {
 export type InsightsContext = {
   settings: Settings;
   users: User[];
+  /** Current team members; other owners are grouped as "팀원 외". */
+  memberIds?: Set<string>;
   period: InsightsPeriod;
   currentWeek: string;
   colors?: Set<string>;

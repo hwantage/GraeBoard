@@ -10,6 +10,7 @@ import {
   aggregate,
   createTaskMetricsCache,
   drillDown,
+  NON_MEMBER_OWNER,
   numericValue,
   numericProperties,
   taskMetrics,
@@ -899,5 +900,41 @@ test("report bars retain zero calendar months, all duration bands and explicit m
   assert.equal(empty.rows.length, 4);
   assert.ok(
     empty.cells.every((c) => c.values[0].raw === 0 && c.taskIds.length === 0),
+  );
+});
+test("owners who are not current team members count under one last 팀원 외 group", () => {
+  const weeks = ["2026-01-05"];
+  const rows = [
+    task("former-a", weeks, { owner: "former" }),
+    task("member-one", weeks, { owner: "one" }),
+    task("no-owner", weeks),
+    task("member-two", weeks, { owner: "two" }),
+    task("former-b", weeks, { owner: "former" }),
+  ];
+  const context = ctx({
+    users: [...ctx().users, { id: "former", name: "Former" }],
+    memberIds: new Set(["one", "two"]),
+  });
+  const result = aggregate(rows, chart(), context);
+  assert.deepEqual(
+    result.rows.map((row) => [row.key, row.label]),
+    [
+      ["one", "One"],
+      ["two", "Two"],
+      ["", "(미지정)"],
+      [NON_MEMBER_OWNER, "팀원 외"],
+    ],
+  );
+  assert.equal(result.rowTotals[NON_MEMBER_OWNER][0].raw, 2);
+  assert.equal(raw(rows, "count", undefined, context).raw, rows.length);
+  assert.deepEqual(
+    drillDown(rows, chart(), { scope: "row", row: NON_MEMBER_OWNER }, context)
+      .map((metric) => metric.task.id)
+      .sort(),
+    ["former-a", "former-b"],
+  );
+  // Without a member list every owner keeps their own row.
+  assert.ok(
+    aggregate(rows, chart(), ctx()).rows.some((row) => row.key === "former"),
   );
 });
