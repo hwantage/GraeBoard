@@ -27,9 +27,6 @@ export const DEADLINE_LABELS = {
   noDeadline: "목표일 없음",
   noWork: "작업 없음",
 };
-// Tasks whose owner is no longer on the team count under one group, so people
-// lists show current members only and totals still match the summary cards.
-export const NON_MEMBER_OWNER = "~nonMember";
 const DURATION_BANDS = [
   [1, "1주"],
   [4, "2~4주"],
@@ -344,8 +341,6 @@ function dimensionEntries(metric, dimension, ctx) {
   ];
   if (dimension.kind === "owner") {
     const id = String(value(task, "owner") || "");
-    if (id && ctx.memberIds && !ctx.memberIds.has(id))
-      return entry(NON_MEMBER_OWNER, "팀원 외");
     return entry(
       id,
       id ? ctx.users?.find((u) => u.id === id)?.name || id : "(미지정)",
@@ -600,12 +595,6 @@ export function aggregate(tasks, chart, ctx) {
     const entries = [...groups.values()];
     if (dimension?.kind === "time" || dimension?.kind === "durationBand")
       entries.sort((a, b) => a.key.localeCompare(b.key));
-    if (dimension?.kind === "owner")
-      entries.sort(
-        (a, b) =>
-          Number(a.key === NON_MEMBER_OWNER) -
-          Number(b.key === NON_MEMBER_OWNER),
-      );
     if (dimension?.kind === "deadlineState") {
       const states = Object.keys(DEADLINE_LABELS);
       entries.sort((a, b) => states.indexOf(a.key) - states.indexOf(b.key));

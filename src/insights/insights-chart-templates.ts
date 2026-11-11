@@ -1,5 +1,4 @@
 import { propertiesFor } from "../../shared/domain.js";
-import { NON_MEMBER_OWNER } from "../../shared/insights/insights.js";
 import type { Settings } from "../types";
 import type { ChartResult, InsightChart } from "./insights-types";
 
@@ -16,10 +15,8 @@ export const ownerCountDefinition: Omit<InsightChart, "id"> = {
   dimensions: { row: { kind: "owner" } },
   values: [{ kind: "count" }],
 };
-// People to pick for owner charts: the "팀원 외" group is not one person.
 export function rankedOwners(result: ChartResult) {
   return result.rows
-    .filter((row) => row.key !== NON_MEMBER_OWNER)
     .map((row) => ({
       id: row.key,
       name: row.label,

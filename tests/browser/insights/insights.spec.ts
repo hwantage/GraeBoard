@@ -602,7 +602,7 @@ test("순환 12개월은 기존 연간 API의 두 연도 자료를 합치고 전
   await expect(page.locator('input[type="month"]')).toHaveCount(0);
 });
 
-test("팀원 목록에 없는 책임자는 팀원 외로 묶고 속성 필터에는 작업·설명 열을 두지 않는다", async ({
+test("속성 필터에는 값이 업무마다 다른 작업·설명 열을 두지 않는다", async ({
   page,
 }) => {
   const current = await settings(page);
@@ -624,47 +624,9 @@ test("팀원 목록에 없는 책임자는 팀원 외로 묶고 속성 필터에
     },
     "PATCH",
   );
-  const account = {
-    name: "떠난 책임자",
-    username: `former-${randomUUID().slice(0, 8)}@example.test`,
-    password: "test-password-123",
-    systemRole: "user",
-    active: true,
-    memberships: [{ teamId, role: "member" }],
-  };
-  const former = (await request(page, "/admin/users", account)).user.id;
-  const owner = (
-    await request(page, `/tasks?teamId=${teamId}&year=2026`)
-  ).tasks.find((task: any) => task.id === taskIds[1]).cells.owner;
-  await request(page, "/cells/batch", {
-    operationId: randomUUID(),
-    createdAt: new Date().toISOString(),
-    changes: [
-      {
-        taskId: taskIds[1],
-        key: "owner",
-        value: former,
-        expectedVersion: owner.version,
-      },
-    ],
-  });
-  await request(
-    page,
-    `/admin/users/${former}`,
-    { ...account, memberships: [] },
-    "PATCH",
-  );
   await configure(page);
   await paint(page, 0, ["2026-01-05"]);
-  await paint(page, 1, ["2026-01-05"]);
   await insights(page);
-  await expect(card(page, "업무 수").locator("strong")).toHaveText("2");
-  const owners = card(page, "책임자별 통계").locator("tbody th");
-  await expect(owners).toHaveText([
-    (await request(page, "/bootstrap")).user.name,
-    "팀원 외",
-  ]);
-  await expect(card(page, "책임자별 통계")).not.toContainText("떠난 책임자");
   await page.getByRole("button", { name: "속성 필터", exact: true }).click();
   const filters = page.getByRole("dialog", { name: "속성 필터", exact: true });
   await expect(filters.getByText("분류", { exact: true })).toBeVisible();

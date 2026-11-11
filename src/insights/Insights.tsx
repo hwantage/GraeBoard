@@ -16,7 +16,6 @@ import { api, send } from "../platform/api";
 import {
   canManageTeam,
   filteredTasks,
-  isAssignable,
   mondayOf,
   propertiesFor,
   shortId,
@@ -189,15 +188,12 @@ export default function Insights({
     () => ({
       settings,
       users,
-      memberIds: new Set(
-        users.filter((u) => isAssignable(u, team.id)).map((u) => u.id),
-      ),
       period,
       currentWeek: mondayOf(today),
       colors: workColorSet(settings),
       cache: cache.current,
     }),
-    [settings, users, team.id, period, today],
+    [settings, users, period, today],
   );
   const metrics = useMemo(
     () => tasks.map((task) => taskMetrics(task, ctx)),
