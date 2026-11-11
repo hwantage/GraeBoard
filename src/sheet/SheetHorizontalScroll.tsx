@@ -61,9 +61,12 @@ export default function SheetHorizontalScroll({ width }: { width: number }) {
       sheet.scrollLeft += delta * unit;
     };
     let touch: { x: number; y: number; left: number } | null = null;
+    // Swipes pan sideways here only where the sheet hides its native
+    // horizontal scrolling; phones and tablets pan natively (styles.css).
     const touchstart = (event: TouchEvent) => {
       touch =
         event.touches.length === 1 &&
+        getComputedStyle(sheet).overflowX === "hidden" &&
         !insideFooter(event.target) &&
         !bar.contains(event.target as Node)
           ? {
