@@ -81,6 +81,7 @@ import {
   FolderOpen,
   Moon,
   Sun,
+  Tag,
 } from "lucide-react";
 import {
   api,
@@ -126,6 +127,7 @@ import type {
   SavedCell,
   Property,
   FormatRule,
+  Style,
 } from "../types";
 import { Auth } from "../auth/Auth";
 import { Button } from "../ui/Button";
@@ -142,6 +144,8 @@ import Grid from "../sheet/Grid";
 import type { Column } from "../sheet/grid-types";
 import { rangeOf, rangesOf } from "../sheet/grid-selection";
 import Toolbar from "../sheet/Toolbar";
+import { normalizeHex } from "../ui/color";
+import type { SheetUndoNotice } from "../sheet/sheet-command-types";
 import SaveStatus from "./SaveStatus";
 import ActiveFilterConditions from "../sheet/ActiveFilterConditions";
 import PeriodPicker from "../sheet/PeriodPicker";
@@ -332,13 +336,7 @@ function Workspace({
     [selection, setSelection] = useState<Selection | null>(null),
     [error, setError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
-    [undoToast, setUndoToast] = useState<
-      | ({ message: string } & (
-          | { kind: "filter"; undo: () => Promise<void> }
-          | { kind: "rows"; sheet: string; target: HistoryEntry | Task[] }
-        ))
-      | null
-    >(null),
+    [undoToast, setUndoToast] = useState<SheetUndoNotice>(null),
     [presentation, setPresentation] = useState(false),
     [gridZoom, setGridZoom] = useState(100),
     [viewMenu, setViewMenu] = useState(false),
@@ -938,16 +936,32 @@ function Workspace({
   }, [boot]);
   viewRef.current = view;
   editorRef.current = editor;
+  const sheetKey = `${teamId}:${year}:${sheetClone?.id || "original"}`,
+    historyTop = sheetClone
+      ? sheetCloneDraft.draft?.history[sheetCloneDraft.draft.cursor]
+      : undoStack.at(-1);
   const undoToastCurrent =
-    undoToast?.kind !== "rows" ||
-    (undoToast.sheet === `${teamId}:${year}:${sheetClone?.id || "original"}` &&
-      undoToast.target ===
-        (sheetClone
-          ? sheetCloneDraft.draft?.history[sheetCloneDraft.draft.cursor]
-          : undoStack.at(-1)));
+    !undoToast ||
+    undoToast.kind === "filter" ||
+    (undoToast.sheet === sheetKey &&
+      (undoToast.kind === "rows" || undoToast.target
+        ? undoToast.target === historyTop
+        : true));
   useEffect(() => {
     if (!undoToastCurrent) setUndoToast(null);
   }, [undoToastCurrent]);
+  // 일반 배경색 실행취소 안내는 저장이 끝나 기록이 생기면 그 기록에 묶는다.
+  useEffect(() => {
+    if (
+      undoToast?.kind === "work" &&
+      !undoToast.mark &&
+      !undoToast.target &&
+      undoToast.sheet === sheetKey &&
+      historyTop &&
+      historyTop !== undoToast.before
+    )
+      setUndoToast({ ...undoToast, target: historyTop });
+  }, [undoToast, historyTop, sheetKey]);
   useEffect(() => {
     if (undoToast) {
       const timer = setTimeout(() => setUndoToast(null), 8000);
@@ -1389,7 +1403,6 @@ function Workspace({
         id: Math.max(Date.now(), (previous?.id || 0) + 1),
       }));
   }
-  const sheetKey = `${teamId}:${year}:${sheetClone?.id || "original"}`;
   function revealChange(
     targets: ChangeTargets,
     selected: number,
@@ -1566,6 +1579,7 @@ function Workspace({
     submitChanges,
     mutate,
     applyStyle,
+    workMarkedCount,
     copyFormat,
     paintFormat,
     applyBorder,
@@ -1596,6 +1610,34 @@ function Workspace({
     taskData,
     teamId,
   });
+
+  // 툴바의 일반 배경색은 업무 표시를 해제한다. 업무 색과 같은 색으로 칠했거나
+  // 업무 표시를 덮었으면 실수로 집계에서 빠지지 않도록 알린다.
+  function applyToolbarStyle(part: Partial<Style>) {
+    const color = part.work === false ? part.backgroundColor : undefined,
+      colors = team?.settings.insights?.workColors || [];
+    if (!color || !colors.length) return applyStyle(part);
+    const target = selection,
+      before = historyTop,
+      released = workMarkedCount(
+        new Set(colors.map((entry) => entry.color)),
+        target,
+      ),
+      work = colors.find((entry) => entry.color === normalizeHex(color));
+    if (!applyStyle(part, false, target) || (!work && !released)) return;
+    setToast("");
+    setUndoToast({
+      kind: "work",
+      sheet: sheetKey,
+      before,
+      ...(work && target
+        ? {
+            message: `일반 배경색은 ‘${work.name || work.color}’ 업무로 집계되지 않습니다.`,
+            mark: { color: work.color, selection: target },
+          }
+        : { message: `업무 표시 ${released}칸이 해제되어 집계에서 빠집니다.` }),
+    });
+  }
 
   function applyResult(result: BatchResult) {
     const updatedTasks = mergeCellUpdates(taskData.snapshot(), result);
@@ -2413,7 +2455,7 @@ function Workspace({
                   canCopyFormat={!editor}
                   onPaintFormat={copyFormat}
                   disabled={!editable || !!pending}
-                  onStyle={(s) => applyStyle(s)}
+                  onStyle={applyToolbarStyle}
                   onBorder={applyBorder}
                   onUndo={() => undo()}
                   onRedo={() => undo(true)}
@@ -2779,12 +2821,22 @@ function Workspace({
       screen === "annual" ? (
         <UndoToast
           message={undoToast.message}
+          {...(undoToast.kind === "work"
+            ? {
+                icon: <Tag size={16} aria-hidden="true" />,
+                ...(undoToast.mark && { actionLabel: "업무 표시로 바꾸기" }),
+              }
+            : {})}
           disabled={
-            undoToast.kind === "rows" &&
-            (!!pending || !!failed || !!editor || (!!sheetClone && !canAdd))
+            (undoToast.kind !== "filter" &&
+              (!!pending ||
+                !!failed ||
+                !!editor ||
+                (!!sheetClone && !canAdd))) ||
+            (undoToast.kind === "work" && !undoToast.mark && !undoToast.target)
           }
           onUndo={() => {
-            if (undoToast.kind === "rows") {
+            if (undoToast.kind !== "filter") {
               if (
                 operations.isPending() ||
                 operations.failure() ||
@@ -2792,7 +2844,13 @@ function Workspace({
               )
                 return;
               setUndoToast(null);
-              void undo();
+              if (undoToast.kind === "work" && undoToast.mark)
+                applyStyle(
+                  { backgroundColor: undoToast.mark.color, work: true },
+                  false,
+                  undoToast.mark.selection,
+                );
+              else void undo();
             } else {
               undoToast.undo().catch((e) => setError((e as Error).message));
             }

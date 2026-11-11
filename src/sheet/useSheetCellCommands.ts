@@ -202,11 +202,11 @@ export default function useSheetCellCommands({
     });
   }
 
-  function applyStyle(part: Partial<Style>, reset = false) {
+  function applyStyle(part: Partial<Style>, reset = false, target = selection) {
     try {
-      if (applyCommonStyle(part, reset)) return;
-      mutate(
-        selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
+      if (applyCommonStyle(part, reset, undefined, target)) return true;
+      return mutate(
+        selectedPoints(target, matchingTasks, columnOrder, MAX_STYLE_CELLS),
         (t, k) => ({
           style: reset
             ? resetCellStyle(t, k)
@@ -215,7 +215,26 @@ export default function useSheetCellCommands({
       );
     } catch (e) {
       setError((e as Error).message);
+      return false;
     }
+  }
+
+  // 일반 배경색으로 덮으면 집계에서 빠질 업무 표시 칸 수(보이는 행·열 기준).
+  function workMarkedCount(colors: Set<string>, target = selection) {
+    const seen = new Set<string>();
+    for (const r of rangesOf(target, matchingTasks, columnOrder))
+      for (let i = r.r1; i <= r.r2; i++)
+        for (let j = r.c1; j <= r.c2; j++) {
+          const task = matchingTasks[i],
+            key = columnOrder[j].key,
+            { style } = cell(task, key);
+          if (
+            style.work === true &&
+            colors.has(style.backgroundColor?.toLowerCase() || "")
+          )
+            seen.add(`${task.id}:${key}`);
+        }
+    return seen.size;
   }
 
   function copyFormat(repeat: boolean) {
@@ -523,6 +542,7 @@ export default function useSheetCellCommands({
     submitChanges,
     mutate,
     applyStyle,
+    workMarkedCount,
     copyFormat,
     paintFormat,
     applyBorder,

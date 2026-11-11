@@ -1273,6 +1273,49 @@ small {
   opacity: 0.4;
   cursor: default;
 }
+.work-mark-group {
+  gap: 4px;
+}
+/* 업무 표시는 실제 업무 색을 채운 라벨 칩으로 보여 일반 배경색 버튼과 구분한다. */
+.work-mark-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  border: 0;
+  border-radius: 11px;
+  box-shadow: inset 0 0 0 1px #293c4226;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.work-mark-chip:not(:has(.work-mark-name)) {
+  justify-content: center;
+  padding: 0;
+}
+.work-mark-chip:not(:disabled):hover {
+  filter: brightness(0.94);
+}
+.work-mark-chip[aria-pressed="true"] {
+  box-shadow:
+    inset 0 0 0 1px #293c4226,
+    0 0 0 2px var(--accent-surface),
+    0 0 0 3.5px var(--ink);
+}
+.work-mark-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.work-mark-name {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .selection-label {
   font-size: 10px;
   color: #98a7a9;
