@@ -950,11 +950,15 @@ function Workspace({
   useEffect(() => {
     if (!undoToastCurrent) setUndoToast(null);
   }, [undoToastCurrent]);
-  // 일반 배경색 실행취소 안내는 저장이 끝나 기록이 생기면 그 기록에 묶는다.
+  // 필터·정렬·기간이 바뀌면 같은 선택이 다른 칸을 가리킬 수 있어 안내를 닫는다.
+  useEffect(() => {
+    setUndoToast((toast) => (toast?.kind === "work" ? null : toast));
+  }, [view]);
+  // 일반 배경색 안내는 저장이 끝나 기록이 생기면 그 기록에 묶고, 이후 다른
+  // 변경이 생기면 사라진다. 그래서 바꾸기·실행취소는 칠한 직후 상태에만 적용된다.
   useEffect(() => {
     if (
       undoToast?.kind === "work" &&
-      !undoToast.mark &&
       !undoToast.target &&
       undoToast.sheet === sheetKey &&
       historyTop &&
@@ -1579,7 +1583,7 @@ function Workspace({
     submitChanges,
     mutate,
     applyStyle,
-    workMarkedCount,
+    plainFillEffect,
     copyFormat,
     paintFormat,
     applyBorder,
@@ -1619,12 +1623,15 @@ function Workspace({
     if (!color || !colors.length) return applyStyle(part);
     const target = selection,
       before = historyTop,
-      released = workMarkedCount(
+      work = colors.find((entry) => entry.color === normalizeHex(color)),
+      { changed, released } = plainFillEffect(
+        normalizeHex(color) || color,
         new Set(colors.map((entry) => entry.color)),
         target,
-      ),
-      work = colors.find((entry) => entry.color === normalizeHex(color));
-    if (!applyStyle(part, false, target) || (!work && !released)) return;
+      );
+    // 바뀌는 칸이 없으면 실행취소 기록도 생기지 않으므로 알리지 않는다.
+    if (!applyStyle(part, false, target) || !changed || (!work && !released))
+      return;
     setToast("");
     setUndoToast({
       kind: "work",
@@ -2833,7 +2840,7 @@ function Workspace({
                 !!failed ||
                 !!editor ||
                 (!!sheetClone && !canAdd))) ||
-            (undoToast.kind === "work" && !undoToast.mark && !undoToast.target)
+            (undoToast.kind === "work" && !undoToast.target)
           }
           onUndo={() => {
             if (undoToast.kind !== "filter") {
@@ -3194,6 +3201,10 @@ function Workspace({
                 )
                   return;
                 operations.clearFailure();
+                // 버린 칠하기에 묶이지 않은 일반 배경색 안내가 다음 변경에 붙지 않게 한다.
+                setUndoToast((toast) =>
+                  toast?.kind === "work" && !toast.target ? null : toast,
+                );
                 setPanel("");
                 await refresh();
               }}

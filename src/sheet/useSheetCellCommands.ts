@@ -219,22 +219,26 @@ export default function useSheetCellCommands({
     }
   }
 
-  // 일반 배경색으로 덮으면 집계에서 빠질 업무 표시 칸 수(보이는 행·열 기준).
-  function workMarkedCount(colors: Set<string>, target = selection) {
+  // 일반 배경색 칠하기가 보이는 칸을 바꾸는지와, 집계에서 빠질 업무 표시 칸 수.
+  function plainFillEffect(
+    color: string,
+    colors: Set<string>,
+    target = selection,
+  ) {
     const seen = new Set<string>();
+    let changed = false;
     for (const r of rangesOf(target, matchingTasks, columnOrder))
       for (let i = r.r1; i <= r.r2; i++)
         for (let j = r.c1; j <= r.c2; j++) {
           const task = matchingTasks[i],
             key = columnOrder[j].key,
-            { style } = cell(task, key);
-          if (
-            style.work === true &&
-            colors.has(style.backgroundColor?.toLowerCase() || "")
-          )
+            { style } = cell(task, key),
+            background = style.backgroundColor?.toLowerCase() || "";
+          if (background !== color || style.work === true) changed = true;
+          if (style.work === true && colors.has(background))
             seen.add(`${task.id}:${key}`);
         }
-    return seen.size;
+    return { changed, released: seen.size };
   }
 
   function copyFormat(repeat: boolean) {
@@ -542,7 +546,7 @@ export default function useSheetCellCommands({
     submitChanges,
     mutate,
     applyStyle,
-    workMarkedCount,
+    plainFillEffect,
     copyFormat,
     paintFormat,
     applyBorder,
