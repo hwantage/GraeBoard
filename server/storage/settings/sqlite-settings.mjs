@@ -1,10 +1,22 @@
 import { requireThat, validateCellValue } from "../../../shared/validation.js";
-import { audit, json, parse, touchTasks, transaction } from "../../db.mjs";
+import {
+  audit,
+  json,
+  parse,
+  pruneStyles,
+  readFormatting,
+  styleWriter,
+  touchTasks,
+  transaction,
+  writeFormatting,
+} from "../../db.mjs";
 import { expandStyle } from "../../../shared/formatting/compact.js";
+import { recolorWorkStyle } from "../../../shared/insights/insights.js";
 
 import {
   prepareSettings,
   generalSettingsPatch,
+  generalWorkRecolor,
   changedSettingsProperties,
   convertSettingsValue,
   normalizeSettingsAuxiliary,
@@ -114,6 +126,99 @@ function convertChangedKinds(
   );
 }
 
+// 업무 색상을 바꾸면 그 색으로 업무 표시한 셀·행·서식 규칙도 새 색으로 바꾼다.
+// 같은 색의 일반 채우기(업무 표식 없음)와 사본은 그대로 둔다.
+function recolorWorkMarks(db, teamId, actorId, map) {
+  if (!map.size) return;
+  const intern = styleWriter(db),
+    recolored = new Map(),
+    previous = new Map();
+  for (const row of db
+    .prepare("SELECT id,data FROM styles WHERE json_extract(data,'$.wk')=1")
+    .all()) {
+    const style = expandStyle(JSON.parse(row.data)),
+      next = recolorWorkStyle(style, map);
+    if (!next) continue;
+    previous.set(row.id, style);
+    recolored.set(row.id, intern(next));
+  }
+  if (!recolored.size) return;
+  const ids = [...recolored.keys()],
+    marks = ids.map(() => "?").join(",");
+  const cells = db
+    .prepare(
+      `SELECT c.task_id,c.key,c.value,c.version,c.style_id FROM cells c JOIN tasks t ON t.id=c.task_id WHERE t.team_id=? AND c.style_id IN (${marks})`,
+    )
+    .all(teamId, ...ids);
+  const updateCell = db.prepare(
+    "UPDATE cells SET style_id=?,version=? WHERE task_id=? AND key=?",
+  );
+  const before = [],
+    after = [];
+  for (const c of cells) {
+    updateCell.run(recolored.get(c.style_id), c.version + 1, c.task_id, c.key);
+    const prior = {
+      taskId: c.task_id,
+      key: c.key,
+      value: parse(c.value),
+      style: previous.get(c.style_id),
+      version: c.version,
+    };
+    before.push(prior);
+    after.push({
+      ...prior,
+      style: recolorWorkStyle(prior.style, map),
+      version: c.version + 1,
+    });
+  }
+  const rows = db
+    .prepare(
+      `SELECT id,default_style,row_style FROM tasks WHERE team_id=? AND (default_style IN (${marks}) OR row_style IN (${marks}))`,
+    )
+    .all(teamId, ...ids, ...ids);
+  const updateTask = db.prepare(
+    "UPDATE tasks SET default_style=?,row_style=? WHERE id=?",
+  );
+  for (const t of rows)
+    updateTask.run(
+      recolored.get(t.default_style) ?? t.default_style,
+      recolored.get(t.row_style) ?? t.row_style,
+      t.id,
+    );
+  const formatting = readFormatting(db, teamId);
+  let rulesChanged = false;
+  const rules = formatting.rules.map((rule) => {
+    const style = recolorWorkStyle(rule.style, map);
+    if (!style) return rule;
+    rulesChanged = true;
+    return { ...rule, style };
+  });
+  if (rulesChanged)
+    writeFormatting(db, teamId, { revision: formatting.revision + 1, rules });
+  const changedIds = [
+    ...new Set([...cells.map((c) => c.task_id), ...rows.map((t) => t.id)]),
+  ];
+  if (changedIds.length)
+    touchTasks(
+      db,
+      db
+        .prepare(
+          `SELECT id,updated_at AS updatedAt FROM tasks WHERE id IN (${changedIds.map(() => "?").join(",")})`,
+        )
+        .all(...changedIds),
+    );
+  pruneStyles(db, [...previous.values()]);
+  audit(
+    db,
+    actorId,
+    teamId,
+    "work-color",
+    teamId,
+    { colors: [...map.keys()], cells: before },
+    { colors: [...map.values()], cells: after },
+  );
+}
+
 export class SqliteSettingsRepository {
   constructor({ db, managedTeam }) {
     Object.assign(this, { db, managedTeam });
@@ -148,6 +253,12 @@ export class SqliteSettingsRepository {
         this.db
           .prepare("UPDATE teams SET settings=? WHERE id=?")
           .run(json(next), teamId);
+      recolorWorkMarks(
+        this.db,
+        teamId,
+        user.id,
+        generalWorkRecolor(settings, input),
+      );
       audit(
         this.db,
         user.id,

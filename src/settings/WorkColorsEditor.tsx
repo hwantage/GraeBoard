@@ -5,7 +5,11 @@ import ColorMenu from "../ui/ColorMenu";
 import { reorderItems, useListReorder } from "../ui/useListReorder";
 import type { Settings } from "../types";
 
-type WorkColors = NonNullable<Settings["insights"]>["workColors"];
+// `origin` is the saved color an entry started from; edits keep it so the
+// save can repaint the cells marked with that color.
+export type WorkColors = (NonNullable<
+  Settings["insights"]
+>["workColors"][number] & { origin?: string })[];
 export default function WorkColorsEditor({
   value,
   onChange,

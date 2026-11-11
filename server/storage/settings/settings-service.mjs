@@ -17,6 +17,7 @@ import {
 } from "../../../shared/validation.js";
 import { THEME_IDS } from "../../../shared/formatting/themes.js";
 import { insightsSettingsSchema } from "../../../shared/insights/insights-schema.js";
+import { workRecolorMap } from "../../../shared/insights/insights.js";
 const weekBordersSchema = z
   .object({ left: borderSchema.optional(), right: borderSchema.optional() })
   .strict();
@@ -173,18 +174,29 @@ export function normalizeSettingsAuxiliary(kind, data, settings) {
     ? viewLayout(normalizeView(data, settings))
     : savedFilter(data, settings);
 }
+const workColorSchema =
+  insightsSettingsSchema.shape.workColors.element.shape.color;
 const teamGeneralSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     theme: z.enum(THEME_IDS).optional(),
     settingsRevision: z.number().int().nonnegative().optional(),
     workColors: insightsSettingsSchema.shape.workColors.optional(),
+    // Request-only: which saved work colors were edited into which colors.
+    workColorChanges: z
+      .array(z.object({ from: workColorSchema, to: workColorSchema }).strict())
+      .max(20)
+      .optional(),
   })
   .strict()
   .refine(
     (input) =>
       input.workColors === undefined || input.settingsRevision !== undefined,
     "업무 색상 저장에는 설정 revision이 필요합니다.",
+  )
+  .refine(
+    (input) => !input.workColorChanges || input.workColors !== undefined,
+    "업무 색상 변경에는 새 업무 색상 목록이 필요합니다.",
   );
 
 // General edits only replace the color list, retaining current charts/deadline.
@@ -201,6 +213,15 @@ export function generalSettingsPatch(settings, input) {
         }
       : {}),
   };
+}
+export function generalWorkRecolor(settings, input) {
+  return input.workColors === undefined
+    ? new Map()
+    : workRecolorMap(
+        settings,
+        { insights: { workColors: input.workColors } },
+        input.workColorChanges,
+      );
 }
 export class SettingsBusinessService {
   constructor(repository, user) {

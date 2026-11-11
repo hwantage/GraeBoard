@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, UserMinus } from "lucide-react";
 import Select from "../ui/Select";
 import ThemePicker from "./ThemePicker";
-import WorkColorsEditor from "./WorkColorsEditor";
+import WorkColorsEditor, { type WorkColors } from "./WorkColorsEditor";
 import { insightsSettingsSchema } from "../../shared/insights/insights-schema.js";
 import { api, send, type ApiError } from "../platform/api";
 import AccountLinkRequests from "../auth/AccountLinkRequests";
@@ -28,6 +28,12 @@ type UserSummary = Pick<
   | "avatarImage"
 >;
 
+const savedWorkColors = (settings: Settings): WorkColors =>
+  (settings.insights?.workColors || []).map((entry) => ({
+    ...entry,
+    origin: entry.color,
+  }));
+
 export function TeamGeneral({
   team,
   canDelete,
@@ -43,14 +49,18 @@ export function TeamGeneral({
 }) {
   const [name, setName] = useState(team.name),
     [theme, setTheme] = useState<ThemeId>(getTheme(team.settings.theme).id),
-    [workColors, setWorkColors] = useState(
-      team.settings.insights?.workColors || [],
+    [workColors, setWorkColors] = useState<WorkColors>(() =>
+      savedWorkColors(team.settings),
     ),
     [revision, setRevision] = useState(team.settings.revision || 0),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const parsedColors =
-    insightsSettingsSchema.shape.workColors.safeParse(workColors);
+  const parsedColors = insightsSettingsSchema.shape.workColors.safeParse(
+    workColors.map(({ origin: _, ...entry }) => entry),
+  );
+  const workColorChanges = workColors.flatMap(({ origin, color }) =>
+    origin && origin !== color ? [{ from: origin, to: color }] : [],
+  );
   return (
     <>
       <ErrorNote error={error} />
@@ -71,11 +81,12 @@ export function TeamGeneral({
                 theme,
                 settingsRevision: revision,
                 workColors: parsedColors.data,
+                ...(workColorChanges.length ? { workColorChanges } : {}),
               },
               "PATCH",
             );
             setRevision(saved.settings.revision || 0);
-            setWorkColors(saved.settings.insights?.workColors || []);
+            setWorkColors(savedWorkColors(saved.settings));
             await onSaved();
             onMessage("팀 정보를 저장했습니다.");
           } catch (e) {

@@ -3,11 +3,13 @@ import { validateCellValue, requireThat } from "../../../shared/validation.js";
 import {
   prepareSettings,
   generalSettingsPatch,
+  generalWorkRecolor,
   changedSettingsProperties,
   convertSettingsValue,
   normalizeSettingsAuxiliary,
 } from "../../../server/storage/settings/settings-service.mjs";
 import { entityId } from "../../../server/sync/core/protocol.mjs";
+import { recolorWorkStyle } from "../../../shared/insights/insights.js";
 
 export async function savePostgresSettings(session, input, people) {
   const row = await session.get("team", []);
@@ -80,6 +82,40 @@ export async function savePostgresSettings(session, input, people) {
   const saved = await session.put("team", [], { ...row.payload, settings });
   return { ...saved.payload.settings, revision: saved.revision };
 }
+// An edited work color repaints its marked cells, rows and rules in the same
+// transaction, so the other site receives them with the team change. Ordinary
+// fills of that color and sheet clones stay.
+async function recolorPostgresWorkMarks(session, map) {
+  if (!map.size) return;
+  const touched = new Set();
+  for (const cell of await session.cellsStyling(["work"])) {
+    const style = recolorWorkStyle(cell.payload.style, map);
+    if (!style) continue;
+    await session.put("cell", cell.key, { ...cell.payload, style });
+    touched.add(cell.key[0]);
+  }
+  for (const task of await session.list("task")) {
+    const defaultStyle = recolorWorkStyle(task.payload.defaultStyle, map),
+      rowStyle = recolorWorkStyle(task.payload.rowStyle, map);
+    if (!defaultStyle && !rowStyle) continue;
+    await session.put("task", task.key, {
+      ...task.payload,
+      ...(defaultStyle ? { defaultStyle } : {}),
+      ...(rowStyle ? { rowStyle } : {}),
+    });
+    touched.delete(task.key[0]);
+  }
+  for (const id of touched) await session.touch("task", [id]);
+  const formats = await session.get("formats", []);
+  let changed = false;
+  const rules = (formats?.payload.rules || []).map((rule) => {
+    const style = recolorWorkStyle(rule.style, map);
+    if (!style) return rule;
+    changed = true;
+    return { ...rule, style };
+  });
+  if (changed) await session.put("formats", [], { ...formats.payload, rules });
+}
 export class PostgresSettingsRepository {
   constructor({ context }) {
     this.context = context;
@@ -119,6 +155,10 @@ export class PostgresSettingsRepository {
             },
             people,
           );
+        await recolorPostgresWorkMarks(
+          s,
+          generalWorkRecolor(row.payload.settings, input),
+        );
         const current = await s.get("team", []);
         const saved = await s.put("team", [], {
           ...current.payload,
