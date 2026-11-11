@@ -1109,6 +1109,48 @@ test("문서 생성·Markdown 왕복·자동 저장·아이콘·재열기·새�
   await expect(rich(page)).toHaveText("");
 });
 
+test("다른 곳의 저장이 위·아래 문단을 함께 바꿔도 입력 중인 문단의 커서를 유지한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "첫째 문단\n\n둘째 문단\n\n셋째 문단\n");
+  await open(page);
+  await rich(page)
+    .getByText("둘째 문단", { exact: true })
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await settleRichSelection(page);
+  // A Git sync brings the other site's edits above and below at once.
+  await save(
+    page,
+    taskIds[0],
+    "첫째 문단 수정\n\n둘째 문단\n\n셋째 문단 수정\n",
+    1,
+  );
+  await expect(rich(page)).toContainText("셋째 문단 수정");
+  await expect(rich(page)).toContainText("첫째 문단 수정");
+  await page.keyboard.type("가나");
+  await expect(rich(page).locator("p").nth(1)).toHaveText("둘째 문단가나");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toBe("첫째 문단 수정\n\n둘째 문단가나\n\n셋째 문단 수정\n");
+  // Rewriting hundreds of blocks at once still applies, as one replace.
+  const many = Array.from({ length: 300 }, (_, i) => `대량 문단 ${i}`);
+  const current = await get(page, `/tasks/${taskIds[0]}/documents/main`);
+  await save(page, taskIds[0], `${many.join("\n\n")}\n`, current.revision);
+  await expect(rich(page).locator("p")).toHaveCount(300);
+  await expect(rich(page).locator("p").last()).toHaveText("대량 문단 299");
+});
+
 test("실패·재시도·동시 수정·응답 대기 중 입력을 보존하고 다른 문서로 전이하지 않음", async ({
   page,
 }) => {
@@ -3426,6 +3468,30 @@ test("탭 안의 제목 편집은 한글 조합·취소·저장 실패와 닫기
   ).toBe(longTitle);
 });
 
+test("첫 문서를 뒤로 옮긴 뒤 상세를 열면 맨 앞 탭의 문서를 먼저 연다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "원래 첫 문서 본문");
+  const path = `/tasks/${taskIds[0]}/documents`;
+  const ids = [randomUUID(), randomUUID()];
+  for (const [index, id] of ids.entries())
+    await post(page, path, { id, title: `${index + 2}번째로 만든 문서` });
+  await post(page, `${path}/reorder`, {
+    ids: [...ids, "main"],
+    expectedIds: ["main", ...ids],
+  });
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"]`)
+    .click({ button: "right" });
+  const tabs = detail(page).getByRole("tab");
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.first()).toHaveAttribute("aria-label", "2번째로 만든 문서");
+  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.last()).toHaveAttribute("aria-selected", "false");
+  await expect(rich(page)).toBeVisible();
+  await expect(rich(page)).not.toContainText("원래 첫 문서 본문");
+});
+
 test("문서 메뉴는 바깥 클릭·Escape·키보드 초점 이동으로 닫히고 상세는 유지된다", async ({
   page,
   browserName,
@@ -3768,9 +3834,10 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
     if (i === 1)
       await expect.poll(async () => (await connections()).length).toBe(1);
   }
+  // The sheet's cell, team and cell-position streams.
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(2);
+    .toBe(3);
   await open(tabs[1], taskIds[0]);
   await open(tabs[2], taskIds[1]);
   await expect(rich(tabs[1])).toContainText("공유 첫 본문");
@@ -3778,7 +3845,7 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
   await open(tabs[3], taskIds[0]);
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(6);
+    .toBe(7);
   await raw(tabs[1]);
   await source(tabs[1]).fill("여덟 탭에서도 저장되는 본문");
   await expect(rich(tabs[3])).toContainText("여덟 탭에서도 저장되는 본문");
@@ -3797,7 +3864,7 @@ test("SharedWorker는 여덟 탭의 시트·문서를 한 연결로 공유하고
   await tabs[2].close(); // Its private document subscriptions must disappear.
   await expect
     .poll(async () => (await connections())[0]?.streams.length)
-    .toBe(4);
+    .toBe(5);
   const changeCell = async (value: string) => {
     const data = await get(tabs[1], `/tasks?teamId=${teamId}&year=2026`);
     await post(tabs[1], "/cells/batch", {

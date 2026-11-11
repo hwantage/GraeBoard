@@ -580,9 +580,9 @@ test("순환 12개월은 기존 연간 API의 두 연도 자료를 합치고 전
     page.locator('.period-month[data-year="2027"][data-month="2"]'),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(card(page, "작업 주 합").locator("strong")).toHaveText("2");
-  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
   await page
-    .getByRole("dialog", { name: "범위 필터", exact: true })
+    .getByRole("dialog", { name: "속성 필터", exact: true })
     .getByText("분류", { exact: true })
     .click();
   await page
@@ -592,14 +592,46 @@ test("순환 12개월은 기존 연간 API의 두 연도 자료를 합치고 전
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
   await page.reload();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
-  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
   await page
-    .getByRole("dialog", { name: "범위 필터", exact: true })
+    .getByRole("dialog", { name: "속성 필터", exact: true })
     .getByRole("button", { name: "모든 필터 초기화", exact: true })
     .click();
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
   await expect(page.locator(".period-month")).toHaveCount(12);
   await expect(page.locator('input[type="month"]')).toHaveCount(0);
+});
+
+test("속성 필터에는 값이 업무마다 다른 작업·설명 열을 두지 않는다", async ({
+  page,
+}) => {
+  const current = await settings(page);
+  await request(
+    page,
+    `/teams/${teamId}/settings`,
+    {
+      revision: current.revision,
+      properties: [
+        ...current.properties,
+        {
+          id: "description",
+          name: "설명",
+          kind: "text",
+          display: "text",
+          values: [],
+        },
+      ],
+    },
+    "PATCH",
+  );
+  await configure(page);
+  await paint(page, 0, ["2026-01-05"]);
+  await insights(page);
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
+  const filters = page.getByRole("dialog", { name: "속성 필터", exact: true });
+  await expect(filters.getByText("분류", { exact: true })).toBeVisible();
+  for (const name of ["작업", "설명"])
+    await expect(filters.getByText(name, { exact: true })).toHaveCount(0);
 });
 
 test("차트 편집 중 다른 팀장이 저장하면 409를 표시하고 초안을 유지한다", async ({
@@ -936,7 +968,7 @@ test("사용자 검토: 같은 HEX의 일반 채우기는 업무 표시 없이 �
   await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
 });
 
-test("사용자 검토: 기간은 한 줄이며 데스크톱·좁은 화면의 범위 필터가 보이고 수치를 바꾼다", async ({
+test("사용자 검토: 기간은 한 줄이며 데스크톱·좁은 화면의 속성 필터가 보이고 수치를 바꾼다", async ({
   page,
 }, info) => {
   await configure(page);
@@ -952,8 +984,8 @@ test("사용자 검토: 기간은 한 줄이며 데스크톱·좁은 화면의 �
       .boundingBox())!;
     expect(Math.abs(year.y - picker.y)).toBeLessThan(2);
     await expect(page.locator('input[type="month"]')).toHaveCount(0);
-    await page.getByRole("button", { name: "범위 필터", exact: true }).click();
-    const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+    await page.getByRole("button", { name: "속성 필터", exact: true }).click();
+    const popup = page.getByRole("dialog", { name: "속성 필터", exact: true });
     await popup.locator("summary").filter({ hasText: "분류" }).click();
     const option = popup.getByRole("checkbox", { name: "개발", exact: true });
     await option.check();
@@ -1762,8 +1794,8 @@ test("비교 범위·테마: 기간과 속성 필터를 두 표시에서 공유�
       .getByRole("button", { name: `${a} · UX 개선: 1`, exact: true }),
   ).toBeVisible();
   await report.getByRole("button", { name: "매트릭스", exact: true }).click();
-  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
-  const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "속성 필터", exact: true });
   await popup.locator("summary").filter({ hasText: "분류" }).click();
   await popup.getByRole("checkbox", { name: "차별화", exact: true }).check();
   await page.keyboard.press("Escape");

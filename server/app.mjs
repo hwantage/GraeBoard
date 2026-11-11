@@ -24,6 +24,7 @@ import { createNodeSync, installSyncRoutes } from "./sync/node/node.mjs";
 import { installMaintenanceRoutes } from "./sync/node/maintenance-sqlite.mjs";
 import { installRetentionContext } from "./sync/node/visibility.mjs";
 import { installEventStreams } from "./events/event-streams.mjs";
+import { installPresenceRoutes } from "./events/presence-events.mjs";
 import {
   documentImagesDirectory,
   installDocumentImageRoutes,
@@ -228,6 +229,10 @@ export function createApp({
     documentEvents,
   });
   installEventStreams(app);
+  app.locals.presenceEvents = installPresenceRoutes(app, {
+    refreshUser,
+    teamAccess,
+  });
   installResourceEvents(app, {
     db,
     documentEvents,

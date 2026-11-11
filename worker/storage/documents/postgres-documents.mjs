@@ -93,6 +93,13 @@ export async function documentKeysUnder(s, parent, { deleted = false } = {}) {
     )
   ).rows.map((row) => JSON.parse(row.entity_key));
 }
+// The user's tab order: position, then document id for rows saved alike.
+export function byDocumentPosition(a, b) {
+  return (
+    a.payload.position - b.payload.position ||
+    a.key.at(-1).localeCompare(b.key.at(-1))
+  );
+}
 // One owner's list from its live rows. A task or sheetClone task that never had a
 // document shows the empty main document; `used` says whether a deleted one
 // exists and is asked only when no live row does.
@@ -100,11 +107,7 @@ export async function documentKeysUnder(s, parent, { deleted = false } = {}) {
 // is what the internal site answers for a task's or copy row's documents with
 // their content, and all a pasted or restored row may carry (copiedRowSchema).
 async function listView(rows, kind, used, content) {
-  rows.sort(
-    (a, b) =>
-      a.payload.position - b.payload.position ||
-      a.key.at(-1).localeCompare(b.key.at(-1)),
-  );
+  rows.sort(byDocumentPosition);
   if (content === "stored")
     return rows.map((r) => ({
       id: r.key.at(-1),
@@ -477,11 +480,7 @@ export class PostgresDocumentRepository {
           if (requireDocumentOrder(ids, body, docs)) return result(s, scope);
           const full = (await s.list("document", { deleted: true }))
               .filter((row) => matching(row, prefix))
-              .sort(
-                (a, b) =>
-                  a.payload.position - b.payload.position ||
-                  a.key.at(-1).localeCompare(b.key.at(-1)),
-              ),
+              .sort(byDocumentPosition),
             ordered = body.ids[Symbol.iterator]();
           for (const [position, slot] of full.entries()) {
             if (slot.deleted) continue;

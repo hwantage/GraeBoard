@@ -64,6 +64,7 @@ async function shutdown() {
   );
   app.locals.cellEvents.shutdown();
   app.locals.documentEvents.shutdown();
+  app.locals.presenceEvents.shutdown();
   server.closeIdleConnections();
   await Promise.all([closed, app.locals.sync.close()]);
   clearTimeout(deadline);

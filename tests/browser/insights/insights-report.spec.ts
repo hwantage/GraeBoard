@@ -524,8 +524,8 @@ test("레이더 선택은 실시간 갱신에도 유지하고 모든 기본 차�
       .locator("svg")
       .getByRole("button", { name: "목표일 없음 · 전체: 1", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "범위 필터", exact: true }).click();
-  const popup = page.getByRole("dialog", { name: "범위 필터", exact: true });
+  await page.getByRole("button", { name: "속성 필터", exact: true }).click();
+  const popup = page.getByRole("dialog", { name: "속성 필터", exact: true });
   await popup.locator("summary").filter({ hasText: "분류" }).click();
   await popup.getByRole("checkbox", { name: "차별화", exact: true }).check();
   await page.keyboard.press("Escape");

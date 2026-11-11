@@ -11,6 +11,8 @@ import {
 import { codeBlockSchema } from "@milkdown/kit/preset/commonmark";
 
 import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
+import type { Transaction } from "@milkdown/kit/prose/state";
+import { diffArrays } from "diff";
 
 import { $remark } from "@milkdown/kit/utils";
 import type { Ctx } from "@milkdown/kit/ctx";
@@ -311,4 +313,70 @@ export function tableCellPaste(ctx: Ctx, text: string) {
       });
   }
   return new Slice(Fragment.fromArray(content), 0, 0);
+}
+
+// Replace only the runs of top-level blocks that differ, last first, each
+// narrowed to its changed text. One replace from the first to the last change
+// would move a caret in an untouched block between them to the end of the
+// change, as a Git sync bringing several edits at once does.
+export function replaceChangedBlocks(tr: Transaction, next: Node) {
+  const before = tr.doc;
+  const blocks = (node: Node) => {
+    const list: Node[] = [];
+    node.forEach((child) => list.push(child));
+    return list;
+  };
+  const offsets = (list: Node[]) => {
+    const at = [0];
+    for (const child of list) at.push(at.at(-1)! + child.nodeSize);
+    return at;
+  };
+  const oldBlocks = blocks(before),
+    newBlocks = blocks(next);
+  const oldAt = offsets(oldBlocks),
+    newAt = offsets(newBlocks);
+  // Blocks are compared on the main thread, so a sync that rewrites hundreds
+  // of them, or takes too long to compare, falls back to one replace over the
+  // whole changed range.
+  const parts = diffArrays(oldBlocks, newBlocks, {
+    comparator: (left, right) => left.eq(right),
+    timeout: 50,
+    maxEditLength: 200,
+  }) || [
+    { value: oldBlocks, removed: true, added: false },
+    { value: newBlocks, removed: false, added: true },
+  ];
+  const runs: { a: number; b: number; removed: number; added: number }[] = [];
+  let a = 0,
+    b = 0;
+  for (const part of parts) {
+    const count = part.value.length;
+    const last = runs.at(-1);
+    const open =
+      last && last.a + last.removed === a && last.b + last.added === b;
+    if (part.removed || part.added) {
+      const run = open ? last : { a, b, removed: 0, added: 0 };
+      if (!open) runs.push(run);
+      if (part.removed) run.removed += count;
+      else run.added += count;
+    }
+    if (!part.added) a += count;
+    if (!part.removed) b += count;
+  }
+  for (const run of runs.reverse()) {
+    const from = oldAt[run.a],
+      to = newAt[run.b];
+    const oldPart = before.content.cut(from, oldAt[run.a + run.removed]);
+    const newPart = next.content.cut(to, newAt[run.b + run.added]);
+    const start = oldPart.findDiffStart(newPart);
+    if (start === null) continue;
+    const end = oldPart.findDiffEnd(newPart)!;
+    const overlap = Math.max(0, start - Math.min(end.a, end.b));
+    tr.replace(
+      from + start,
+      from + end.a + overlap,
+      next.slice(to + start, to + end.b + overlap),
+    );
+  }
+  return tr;
 }

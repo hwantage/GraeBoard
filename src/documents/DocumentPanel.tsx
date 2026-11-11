@@ -101,7 +101,8 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const [documents, setDocuments] = useState<DocumentInfo[]>([]);
     const [documentsLoaded, setDocumentsLoaded] = useState(false);
     const [opened, setOpened] = useState(false);
-    const [selected, setSelected] = useState(DEFAULT_DOCUMENT_ID);
+    // Empty until the list loads, so the first tab in saved order is chosen.
+    const [selected, setSelected] = useState("");
     const [visited, setVisited] = useState<string[]>([]);
     const [loading, setLoading] = useState<Record<string, boolean>>({});
     const [error, setError] = useState("");

@@ -188,8 +188,11 @@ test("실제 손가락 스와이프는 휴대폰과 태블릿에서 가로·세�
     await titleCell(page).tap({ position: { x: 70, y: 12 } });
     await noKeyboard(page);
     for (const axis of ["horizontal", "vertical"]) {
+      // Start inside the sheet even after a native fling has carried the
+      // title cell past its left edge.
       const box = (await titleCell(page).boundingBox())!;
-      const x = Math.min(viewport.width - 35, box.x + 220),
+      const area = (await grid.boundingBox())!;
+      const x = Math.min(viewport.width - 35, Math.max(box.x, area.x) + 220),
         y = box.y + 15;
       const start = await grid.evaluate((el) => ({
         x: el.scrollLeft,
@@ -224,6 +227,25 @@ test("실제 손가락 스와이프는 휴대폰과 태블릿에서 가로·세�
           ),
         )
         .toBeGreaterThan(axis === "horizontal" ? start.x : start.y);
+      // A swipe along one axis leaves the other where it was: scrolling down
+      // after moving right must not pull the sheet back to the left edge.
+      const settled = await grid.evaluate(
+        (el) =>
+          new Promise<{ x: number; y: number }>((resolve) => {
+            let last = "",
+              same = 0;
+            const check = () => {
+              const now = `${el.scrollLeft}:${el.scrollTop}`;
+              same = now === last ? same + 1 : 0;
+              last = now;
+              if (same >= 10) resolve({ x: el.scrollLeft, y: el.scrollTop });
+              else requestAnimationFrame(check);
+            };
+            check();
+          }),
+      );
+      if (axis === "horizontal") expect(settled.y).toBe(start.y);
+      else expect(settled.x).toBe(start.x);
       expect(
         await page.locator('[role="gridcell"][aria-selected="true"]').count(),
       ).toBe(1);
@@ -291,6 +313,28 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
     .click();
   await expect(name).toBeVisible();
   await expect(page.locator(".calendar-view-options")).toBeVisible();
+});
+
+test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저의 손가락 확대는 그대로 둔다", async ({
+  page,
+}) => {
+  const viewport = () =>
+    page.locator('meta[name="viewport"]').getAttribute("content");
+  expect(await viewport()).toBe("width=device-width, initial-scale=1.0");
+  // Only iOS WebKit supports touch callouts; stand in for it here.
+  await page.addInitScript(() => {
+    const supports = CSS.supports.bind(CSS);
+    CSS.supports = ((property: string, value?: string) =>
+      property === "-webkit-touch-callout" ||
+      (value === undefined
+        ? supports(property)
+        : supports(property, value))) as typeof CSS.supports;
+  });
+  await page.reload();
+  await expect(titleCell(page)).toBeVisible();
+  expect(await viewport()).toBe(
+    "width=device-width, initial-scale=1.0, maximum-scale=1",
+  );
 });
 
 test("업무 문서는 모바일에서도 모드를 전환하고 화면 폭이 바뀌어도 선택을 보존한다", async ({
