@@ -490,6 +490,72 @@ test("데스크톱 마우스 선택·더블클릭과 서식 도구는 그대로 
   await noKeyboard(page);
 });
 
+test("휴대폰 툴바는 핵심 서식 도구를 보이고 더 보기로 전체 도구를 펼친다", async ({
+  page,
+}, info) => {
+  const toolbar = page.locator('.format-toolbar[aria-label="셀 서식 도구"]');
+  const tool = (name: string) =>
+    toolbar.getByRole("button", { name, exact: true });
+  const core = [
+    "업무 추가",
+    "실행취소",
+    "재실행",
+    "굵게",
+    "글자 색상",
+    "배경색",
+    "도구 더 보기",
+  ];
+  const extra = [
+    toolbar.getByRole("combobox", { name: "글꼴", exact: true }),
+    tool("기울임"),
+    tool("왼쪽 정렬"),
+    tool("테두리"),
+    toolbar.getByRole("group", { name: "확대와 축소", exact: true }),
+  ];
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const name of core) {
+      await expect(tool(name)).toBeVisible();
+      const box = (await tool(name).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    for (const item of extra) await expect(item).toBeHidden();
+    await fits(page);
+  }
+  await tool("도구 더 보기").tap();
+  await expect(tool("도구 접기")).toHaveAttribute("aria-expanded", "true");
+  for (const item of extra) await expect(item).toBeVisible();
+  for (const name of core.slice(0, -1)) await expect(tool(name)).toBeVisible();
+  await expect(tool("서식 복사")).toBeHidden();
+  expect(
+    await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await fits(page);
+  await screenshot(page, info, "toolbar-expanded");
+  await tool("도구 접기").tap();
+  for (const item of extra) await expect(item).toBeHidden();
+  await screenshot(page, info, "toolbar");
+
+  await titleCell(page).tap({ position: { x: 70, y: 12 } });
+  await tool("굵게").tap();
+  await expect
+    .poll(async () => {
+      const { tasks } = await request(
+        page,
+        `/tasks?teamId=${teamId}&year=${year}`,
+      );
+      return tasks.find((task: any) => task.id === taskId).cells.title?.style
+        ?.bold;
+    })
+    .toBe(true);
+  await noKeyboard(page);
+
+  await page.setViewportSize(desktop);
+  await expect(tool("도구 더 보기")).toBeHidden();
+  for (const item of extra) await expect(item).toBeVisible();
+});
+
 test("캘린더 카드 위 손가락 이동도 일정을 바꾸지 않고 스크롤한다", async ({
   page,
   context,

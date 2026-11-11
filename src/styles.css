@@ -1191,6 +1191,20 @@ small {
 .toolbar-add-task {
   flex-shrink: 0;
 }
+/* 휴대폰 폭에서만 보이는 도구 펼치기 버튼. */
+.format-toolbar > .toolbar-more {
+  display: none;
+  min-height: 27px;
+  height: 27px;
+  padding: 4px 5px;
+  border-color: transparent;
+  border-radius: 4px;
+  color: #637b81;
+}
+.format-toolbar > .toolbar-more[aria-expanded="true"] {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+}
 .sheet-scroll[data-format-painting] .sheet-cell,
 .sheet-scroll[data-format-painting] .sheet-header,
 .sheet-scroll[data-format-painting] .row-number {
@@ -5588,20 +5602,34 @@ body.document-block-moving * {
   .topbar .top-account {
     padding-left: 4px;
   }
-  .workspace .format-toolbar > .toolbar-group,
+  .workspace .format-toolbar:not(.expanded) > .toolbar-group:not(.toolbar-core),
+  .workspace .format-toolbar:not(.expanded) .toolbar-extra,
   .workspace .format-toolbar > .selection-label,
-  .workspace .format-toolbar > .zoom-controls,
   .workspace .page-heading:not(.calendar-heading) .heading-actions,
   .workspace .row-drag-handle,
   .workspace .row-resizer,
   .workspace .column-resizer {
     display: none;
   }
-  .workspace .format-toolbar > .toolbar-group:first-of-type {
-    display: flex;
-  }
   .workspace .format-toolbar [aria-label="서식 복사"] {
     display: none;
+  }
+  /* 펼친 도구는 가로로 넘기지 않고 여러 줄로 보여 준다. */
+  .workspace .format-toolbar.expanded {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    overflow-x: visible;
+  }
+  .workspace .format-toolbar > .toolbar-more {
+    display: inline-flex;
+    position: sticky;
+    right: 0;
+    flex-shrink: 0;
+    margin-left: auto;
+    background: var(--accent-surface);
+  }
+  .workspace .format-toolbar > .toolbar-more[aria-expanded="true"] {
+    background: var(--accent-pastel);
   }
   .workspace .date-search-controls {
     flex-wrap: wrap;
