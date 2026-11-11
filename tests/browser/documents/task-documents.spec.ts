@@ -1109,6 +1109,42 @@ test("문서 생성·Markdown 왕복·자동 저장·아이콘·재열기·새�
   await expect(rich(page)).toHaveText("");
 });
 
+test("다른 곳의 저장이 위·아래 문단을 함께 바꿔도 입력 중인 문단의 커서를 유지한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "첫째 문단\n\n둘째 문단\n\n셋째 문단\n");
+  await open(page);
+  await rich(page)
+    .getByText("둘째 문단", { exact: true })
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (el.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await settleRichSelection(page);
+  // A Git sync brings the other site's edits above and below at once.
+  await save(
+    page,
+    taskIds[0],
+    "첫째 문단 수정\n\n둘째 문단\n\n셋째 문단 수정\n",
+    1,
+  );
+  await expect(rich(page)).toContainText("셋째 문단 수정");
+  await expect(rich(page)).toContainText("첫째 문단 수정");
+  await page.keyboard.type("가나");
+  await expect(rich(page).locator("p").nth(1)).toHaveText("둘째 문단가나");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toBe("첫째 문단 수정\n\n둘째 문단가나\n\n셋째 문단 수정\n");
+});
+
 test("실패·재시도·동시 수정·응답 대기 중 입력을 보존하고 다른 문서로 전이하지 않음", async ({
   page,
 }) => {

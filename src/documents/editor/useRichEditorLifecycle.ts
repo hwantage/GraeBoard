@@ -46,15 +46,19 @@ import {
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { history } from "@milkdown/kit/plugin/history";
-import { Plugin } from "@milkdown/kit/prose/state";
-import { Fragment } from "@milkdown/kit/prose/model";
+import { Plugin, type Transaction } from "@milkdown/kit/prose/state";
+import { Fragment, type Node } from "@milkdown/kit/prose/model";
+import { diffArrays } from "diff";
 
 import { dropCursor } from "@milkdown/kit/prose/dropcursor";
 import { undoDepth, redoDepth } from "@milkdown/kit/prose/history";
 import { isInTable } from "@milkdown/kit/prose/tables";
 import { $prose } from "@milkdown/kit/utils";
 
-import type { RichEditorProps as Props } from "./rich-editor-types";
+import type {
+  RemoteMarkdown,
+  RichEditorProps as Props,
+} from "./rich-editor-types";
 
 import {
   needsTrailingParagraph,
@@ -76,6 +80,62 @@ const dropIndicator = $prose(() =>
 // Uploaded images land at the end of their paragraph without a visible caret.
 // Continue typing in the paragraph below, creating it when needed.
 
+// Replace only the runs of top-level blocks that differ, last first, each
+// narrowed to its changed text. One replace from the first to the last change
+// would move a caret in an untouched block between them to the end of the
+// change, as a Git sync bringing several edits at once does.
+function replaceChangedBlocks(tr: Transaction, next: Node) {
+  const before = tr.doc;
+  const blocks = (node: Node) => {
+    const list: Node[] = [];
+    node.forEach((child) => list.push(child));
+    return list;
+  };
+  const offsets = (list: Node[]) => {
+    const at = [0];
+    for (const child of list) at.push(at.at(-1)! + child.nodeSize);
+    return at;
+  };
+  const oldBlocks = blocks(before),
+    newBlocks = blocks(next);
+  const oldAt = offsets(oldBlocks),
+    newAt = offsets(newBlocks);
+  const runs: { a: number; b: number; removed: number; added: number }[] = [];
+  let a = 0,
+    b = 0;
+  for (const part of diffArrays(oldBlocks, newBlocks, {
+    comparator: (left, right) => left.eq(right),
+  })) {
+    const count = part.value.length;
+    const last = runs.at(-1);
+    const open =
+      last && last.a + last.removed === a && last.b + last.added === b;
+    if (part.removed || part.added) {
+      const run = open ? last : { a, b, removed: 0, added: 0 };
+      if (!open) runs.push(run);
+      if (part.removed) run.removed += count;
+      else run.added += count;
+    }
+    if (!part.added) a += count;
+    if (!part.removed) b += count;
+  }
+  for (const run of runs.reverse()) {
+    const from = oldAt[run.a],
+      to = newAt[run.b];
+    const oldPart = before.content.cut(from, oldAt[run.a + run.removed]);
+    const newPart = next.content.cut(to, newAt[run.b + run.added]);
+    const start = oldPart.findDiffStart(newPart);
+    if (start === null) continue;
+    const end = oldPart.findDiffEnd(newPart)!;
+    const overlap = Math.max(0, start - Math.min(end.a, end.b));
+    tr.replace(
+      from + start,
+      from + end.a + overlap,
+      next.slice(to + start, to + end.b + overlap),
+    );
+  }
+  return tr;
+}
 export default function useRichEditorLifecycle(
   props: Props,
   {
@@ -349,6 +409,8 @@ export default function useRichEditorLifecycle(
           });
           editorRef.current = editor;
           initialized = true;
+          if (latest.current.remoteApply)
+            latest.current.remoteApply.current = applyRemote;
           setReady(true);
           latest.current.onReady();
         } catch (error) {
@@ -363,6 +425,8 @@ export default function useRichEditorLifecycle(
       });
     return () => {
       active = false;
+      if (latest.current.remoteApply?.current === applyRemote)
+        latest.current.remoteApply.current = null;
       linkTitlesRef.current = null;
       linkTitles.dispose();
       imageUploads.dispose();
@@ -370,23 +434,14 @@ export default function useRichEditorLifecycle(
       if (editor.status === "Created") void editor.destroy();
     };
   }, []);
-  useEffect(() => {
-    if (
-      !ready ||
-      !props.remoteMarkdown ||
-      appliedRemote.current === props.remoteMarkdown
-    )
-      return;
-    appliedRemote.current = props.remoteMarkdown;
+  function applyRemote(remote: RemoteMarkdown) {
+    if (appliedRemote.current === remote || !editorRef.current) return;
+    appliedRemote.current = remote;
     try {
       applyingRemote.current = true;
-      editorRef.current?.action((ctx) => {
+      editorRef.current.action((ctx) => {
         const view = ctx.get(editorViewCtx);
-        const parsed = checkMarkdown(
-          ctx,
-          props.remoteMarkdown!.markdown,
-          latest.current,
-        );
+        const parsed = checkMarkdown(ctx, remote.markdown, latest.current);
         // Compare against the same trailing paragraph the view keeps so a
         // caret resting there is not moved by every remote save.
         const doc = needsTrailingParagraph(parsed.lastChild)
@@ -396,23 +451,17 @@ export default function useRichEditorLifecycle(
               ),
             )
           : parsed;
-        const start = view.state.doc.content.findDiffStart(doc.content);
-        if (start === null) return;
-        const end = view.state.doc.content.findDiffEnd(doc.content)!;
-        const overlap = start - Math.min(end.a, end.b);
-        const oldEnd = end.a + Math.max(0, overlap);
-        const newEnd = end.b + Math.max(0, overlap);
-        view.dispatch(
-          view.state.tr
-            .replace(start, oldEnd, doc.slice(start, newEnd))
-            .setMeta("addToHistory", false),
-        );
+        const tr = replaceChangedBlocks(view.state.tr, doc);
+        if (tr.docChanged) view.dispatch(tr.setMeta("addToHistory", false));
       });
     } catch (error) {
       latest.current.onUnsupported((error as Error).message);
     } finally {
       applyingRemote.current = false;
     }
+  }
+  useEffect(() => {
+    if (ready && props.remoteMarkdown) applyRemote(props.remoteMarkdown);
   }, [ready, props.remoteMarkdown]);
   useEffect(() => {
     if (props.readOnly) {

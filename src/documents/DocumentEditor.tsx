@@ -37,6 +37,7 @@ import {
   type DocumentStorage,
 } from "./document-storage";
 import type { TaskDocument } from "../types";
+import type { RemoteMarkdown } from "./editor/rich-editor-types";
 import "./task-document.css";
 
 const RichMarkdownEditor = lazy(() => import("./editor/RichMarkdownEditor"));
@@ -125,10 +126,9 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     const [conflict, setConflict] = useState<TaskDocument | null>(null);
     const [loadAttempt, setLoadAttempt] = useState(0);
     const [uploadCount, setUploadCount] = useState(0);
-    const [remoteMarkdown, setRemoteMarkdown] = useState<{
-      markdown: string;
-      sequence: number;
-    }>();
+    const [remoteMarkdown, setRemoteMarkdown] = useState<RemoteMarkdown>();
+    const remoteApply = useRef<((remote: RemoteMarkdown) => void) | null>(null);
+    const remoteSequence = useRef(0);
     const sourceInput = useRef<HTMLTextAreaElement>(null);
     const pendingRemote = useRef<TaskDocument | null>(null);
     const loading = !loaded
@@ -276,10 +276,11 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
           : null;
       current.current.markdown = value;
       setMarkdown(value);
-      setRemoteMarkdown((previous) => ({
-        markdown: value,
-        sequence: (previous?.sequence || 0) + 1,
-      }));
+      const remote = { markdown: value, sequence: ++remoteSequence.current };
+      // The open rich editor shows it now; a key typed before React renders
+      // would otherwise be dropped by a merge made without it.
+      remoteApply.current?.(remote);
+      setRemoteMarkdown(remote);
       if (input && selection)
         requestAnimationFrame(() => {
           if (!input.isConnected) return;
@@ -813,6 +814,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     label={`${label} 리치 편집`}
                     initialMarkdown={current.current.markdown}
                     remoteMarkdown={remoteMarkdown}
+                    remoteApply={remoteApply}
                     readOnly={docReadOnly}
                     saveStatus={saveStatus}
                     modeControl={
