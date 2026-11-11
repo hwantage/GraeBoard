@@ -58,6 +58,7 @@ import type { RichEditorProps as Props } from "./rich-editor-types";
 import {
   needsTrailingParagraph,
   codeBlockMetaSchema,
+  documentLinkMarkSchema,
   safeDocumentLink,
   isPlainLineBreak,
   remarkTableShape,
@@ -282,6 +283,7 @@ export default function useRichEditorLifecycle(
       })
       .use(commonmark)
       .use(codeBlockMetaSchema)
+      .use(documentLinkMarkSchema)
       .use(documentCodeBlockSelection)
       .use(gfm)
       .use(documentLinkTitle)

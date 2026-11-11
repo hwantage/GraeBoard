@@ -298,6 +298,33 @@ test("HTML은 화면과 같은 블록을 이미지·다이어그램과 함께 �
   await viewer.close();
 });
 
+test("파일 경로 링크는 Markdown·HTML 내려받기와 인쇄에서 보존한다", async ({
+  page,
+}) => {
+  const markdown =
+    "# 첨부 자료\n\n[상대 파일](IMG_0001.HEIC)\n\n[로컬 파일](file:///tmp/report.pdf)\n\n[공백 파일](<folder/report draft.pdf>)\n";
+  await save(page, taskIds[0], markdown);
+  await open(page);
+  await expect(rich(detail(page))).toBeVisible();
+  expect(await text(await download(page, "Markdown (.md)"))).toBe(markdown);
+  const html = await text(await download(page, "HTML (.html)"));
+  for (const href of [
+    "IMG_0001.HEIC",
+    "file:///tmp/report.pdf",
+    "folder/report draft.pdf",
+  ])
+    expect(html).toContain(`href="${href}"`);
+  await downloadButton(detail(page)).click();
+  await menu(page)
+    .getByRole("menuitem", { name: "PDF (인쇄 창에서 저장)" })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).printed.length))
+    .toBe(1);
+  const [printed] = await page.evaluate(() => (window as any).printed);
+  expect(printed.html).toContain('href="file:///tmp/report.pdf"');
+});
+
 test("PDF는 모든 토글을 펼친 문서만 인쇄 창으로 보낸다", async ({
   page,
 }, info) => {

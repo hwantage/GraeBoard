@@ -163,7 +163,7 @@ export default function useDocumentLinkActions({
       !safeDocumentLink(href) ||
       (props.documentLinks === false && !!documentLinkTarget(href))
     ) {
-      setLinkError("https:// 또는 mailto:로 시작하는 주소를 입력하세요.");
+      setLinkError("웹·메일 주소 또는 파일 경로를 입력하세요.");
       return;
     }
     linkFormOpen.current = false;
@@ -225,7 +225,8 @@ export default function useDocumentLinkActions({
         linkOpener.current,
         setLinkOpenError,
       );
-    else window.open(href, "_blank", "noopener,noreferrer");
+    else if (safeDocumentLink(href))
+      window.open(href, "_blank", "noopener,noreferrer");
   }
   async function copyLink(href: string) {
     try {

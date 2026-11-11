@@ -7,6 +7,7 @@ import { gfm } from "@milkdown/kit/preset/gfm";
 import { DOMSerializer } from "@milkdown/kit/prose/model";
 import {
   codeBlockMetaSchema,
+  documentLinkMarkSchema,
   remarkTableShape,
   safeDocumentLink,
 } from "./editor/document-markdown";
@@ -177,6 +178,7 @@ async function documentFragment(markdown: string, doc: Document) {
     .config((ctx) => ctx.set(rootCtx, document.createElement("div")))
     .use(commonmark)
     .use(codeBlockMetaSchema)
+    .use(documentLinkMarkSchema)
     .use(gfm)
     .use(documentLinkSchema)
     .use(toggle)

@@ -99,6 +99,133 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(`[data-cell="${taskId}:title"]`)).toBeVisible();
 });
 
+test("파일 경로가 있는 원문은 리치 전환·편집·저장·재열기에서 링크를 보존한다", async ({
+  page,
+}) => {
+  const paths = [
+    "IMG_0001.HEIC",
+    "../자료/보고서.pdf",
+    "/attachments/report.pdf",
+    "file:///tmp/report.pdf",
+    "C:/reports/report.pdf",
+    "folder/report draft.pdf",
+    "#section",
+  ];
+  const input =
+    "# 자료 목록\n\n" +
+    paths
+      .map((href, i) => `[자료 ${i + 1}](<${href}> "원본 파일")`)
+      .join("\n\n") +
+    "\n\n끝 문단\n";
+  await open(page);
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  const source = detail(page).getByRole("textbox", {
+    name: "업무 문서 Markdown 원문",
+  });
+  await source.fill(input);
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(rich(page)).toBeVisible();
+  await expect(rich(page).locator("h1")).toHaveText("자료 목록");
+  for (const [i, href] of paths.entries()) {
+    const link = rich(page).getByRole("link", {
+      name: `자료 ${i + 1}`,
+      exact: true,
+    });
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("title", "원본 파일");
+  }
+  // Switching modes alone does not rewrite the original Markdown.
+  await expect.poll(() => markdown(page)).toBe(input);
+  await rich(page).locator("p").last().click();
+  await page.keyboard.press("End");
+  await page.keyboard.insertText(" 수정");
+  await expect.poll(() => markdown(page)).toContain("끝 문단 수정");
+  const saved = await markdown(page);
+  for (const href of paths) expect(saved).toContain(href);
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  await open(page);
+  for (const [i, href] of paths.entries())
+    await expect(
+      rich(page).getByRole("link", { name: `자료 ${i + 1}`, exact: true }),
+    ).toHaveAttribute("href", href);
+});
+
+test("파일 링크 Markdown·HTML 붙여넣기는 제목·표·링크를 유지한다", async ({
+  page,
+}) => {
+  await open(page);
+  await paste(
+    rich(page),
+    "# 첨부 자료\n\n| 항목 | 파일 |\n| --- | --- |\n| 사진 | [원본](IMG_0001.HEIC) |\n\n끝\n",
+  );
+  await expect(rich(page).locator("h1")).toHaveText("첨부 자료");
+  await expect(rich(page).locator("table")).toHaveCount(1);
+  await expect(
+    rich(page).getByRole("link", { name: "원본", exact: true }),
+  ).toHaveAttribute("href", "IMG_0001.HEIC");
+  await rich(page).locator("p").last().click();
+  await page.keyboard.press("End");
+  await paste(
+    rich(page),
+    "HTML 자료",
+    '<p><strong>첨부</strong> <a href="file:///tmp/report.pdf">HTML 자료</a></p>',
+  );
+  await expect(rich(page).locator("strong")).toHaveText("첨부");
+  await expect(
+    rich(page).getByRole("link", { name: "HTML 자료", exact: true }),
+  ).toHaveAttribute("href", "file:///tmp/report.pdf");
+  await expect
+    .poll(() => markdown(page))
+    .toContain("[HTML 자료](file:///tmp/report.pdf)");
+  expect(await markdown(page)).toContain("[원본](IMG_0001.HEIC)");
+});
+
+test("파일 경로 허용 후에도 실행용 주소는 원문에 보존하고 HTML 붙여넣기에서 실행하지 않는다", async ({
+  page,
+}) => {
+  await open(page);
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  const source = detail(page).getByRole("textbox", {
+    name: "업무 문서 Markdown 원문",
+  });
+  for (const href of [
+    "javascript:alert(1)",
+    "data:text/html,attack",
+    "vbscript:msgbox(1)",
+    "java&#x09;script:alert(1)",
+  ]) {
+    const input = `[실행](<${href}>)`;
+    await source.fill(input);
+    await detail(page)
+      .getByRole("button", { name: "리치 문서", exact: true })
+      .click();
+    await expect(source).toBeVisible();
+    await expect(source).toHaveValue(input);
+    await expect(detail(page).locator(".document-notice")).toContainText(
+      "원문",
+    );
+  }
+  await source.fill("본문");
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await rich(page).click();
+  await page.keyboard.press("End");
+  await paste(
+    rich(page),
+    " 실행",
+    '<a href="java&#x09;script:alert(1)">실행</a>',
+  );
+  await expect(rich(page)).toContainText("실행");
+  await expect(rich(page).locator("a")).toHaveCount(0);
+});
+
 test("Tab은 문단에서 머물고 목록을 들여쓰며 표 셀을 옮기고 Esc로 빠져나간다", async ({
   page,
 }) => {

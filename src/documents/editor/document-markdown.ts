@@ -1,5 +1,4 @@
 import { isDocumentImage } from "../../../shared/documents/document-images.js";
-import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import { documentLinkTarget } from "../document-links";
 
 import {
@@ -8,7 +7,7 @@ import {
   serializerCtx,
   remarkCtx,
 } from "@milkdown/kit/core";
-import { codeBlockSchema } from "@milkdown/kit/preset/commonmark";
+import { codeBlockSchema, linkSchema } from "@milkdown/kit/preset/commonmark";
 
 import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
 
@@ -82,11 +81,44 @@ export const codeBlockMetaSchema = codeBlockSchema.extendSchema(
   },
 );
 export function safeDocumentLink(url: string) {
+  if (
+    !url.trim() ||
+    /[\u0000-\u001f\u007f-\u00a0\u200b-\u200d\u2028\u2029\ufeff]/u.test(url)
+  )
+    return false;
+  // Keep file names (including spaces), relative URLs and Windows drive paths.
+  // Check the scheme independently of existence or browser access to the file.
+  const normalized = url.trim().replaceAll(" ", "");
   return (
-    (/^(https?:|mailto:)/i.test(url) || !!parseDocumentLinkPath(url)) &&
-    !/[\u0000-\u0020\u007f-\u00a0\u200b-\u200d\u2028\u2029\ufeff]/u.test(url)
+    /^(https?:|mailto:|file:)/i.test(normalized) ||
+    /^[a-z]:[/\\]/i.test(normalized) ||
+    !/^[a-z][a-z\d+.-]*:/i.test(normalized)
   );
 }
+// Milkdown's default DOM sanitizer removes file: URLs. Use the same policy
+// for real anchors, clipboard HTML and exports as for Markdown validation.
+export const documentLinkMarkSchema = linkSchema.extendSchema(
+  (prev) => (ctx) => {
+    const base = prev(ctx);
+    return {
+      ...base,
+      toDOM: (mark, inline) => {
+        const [tag, attrs, ...rest] = base.toDOM!(mark, inline) as [
+          string,
+          object,
+        ];
+        return [
+          tag,
+          {
+            ...attrs,
+            href: safeDocumentLink(mark.attrs.href) ? mark.attrs.href : "",
+          },
+          ...rest,
+        ];
+      },
+    };
+  },
+);
 export function isPlainLineBreak(value: unknown): value is string {
   return typeof value === "string" && /^<br\s*\/?\s*>$/i.test(value.trim());
 }
@@ -192,7 +224,7 @@ export function checkMarkdown(
         (options?.documentLinks === false && !!documentLinkTarget(node.url)))
     )
       throw new Error(
-        "HTTP(S)·메일·문서 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
+        "HTTP(S)·메일·파일 경로·문서 링크만 리치 편집에서 지원합니다. 원문은 그대로 보존됩니다.",
       );
     if (
       node.type === "image" &&
