@@ -29,6 +29,9 @@ export default function GridHeaderMenu({
   anchor?: HTMLElement | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  // 터치로 연 메뉴는 손가락 아래에 열리므로, 메뉴 안에서 누르지 않은 클릭
+  // (메뉴를 연 탭·길게 누르기의 손 떼기)은 항목을 실행하지 않는다.
+  const pressed = useRef(false);
   const [position, setPosition] = useState({ left: x, top: y });
   const close = useRef(onClose);
   close.current = onClose;
@@ -57,6 +60,14 @@ export default function GridHeaderMenu({
         !anchor?.contains(event.target)
       )
         close.current();
+    };
+    // A press outside, including the anchor that reopens this same menu,
+    // starts a new opening whose release must not run an item.
+    const press = (event: Event) => {
+      if (!(
+        event.target instanceof Node && root.current?.contains(event.target)
+      ))
+        pressed.current = false;
     };
     const dismiss = () => close.current();
     // Pointer interaction can leave focus on the body, especially when a
@@ -95,6 +106,7 @@ export default function GridHeaderMenu({
         return;
       outside(event);
     };
+    document.addEventListener("pointerdown", press, true);
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", outside);
     document.addEventListener("keydown", keydown, true);
@@ -102,6 +114,7 @@ export default function GridHeaderMenu({
     window.addEventListener("scroll", scroll, true);
     return () => {
       resize.disconnect();
+      document.removeEventListener("pointerdown", press, true);
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("focusin", outside);
       document.removeEventListener("keydown", keydown, true);
@@ -116,7 +129,15 @@ export default function GridHeaderMenu({
       aria-label={title}
       className={`grid-header-menu ${children ? "has-filter" : ""}`}
       style={position}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        pressed.current = true;
+        e.stopPropagation();
+      }}
+      onClickCapture={(e) => {
+        if (pressed.current || !e.detail) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

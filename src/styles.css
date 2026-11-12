@@ -5755,6 +5755,12 @@ body.document-block-moving * {
   .calendar-entry-card {
     -webkit-touch-callout: none;
   }
+  /* 길게 누를 때 머리글 글자가 선택되어 기기 복사 메뉴가 함께 뜨지 않게 한다. */
+  .sheet-scroll .header-cell,
+  .sheet-scroll .row-number {
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 @media (max-width: 700px) {

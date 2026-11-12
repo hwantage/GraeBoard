@@ -704,6 +704,46 @@ test("셀·행·열 길게 누르기는 기존 메뉴를 열고 손을 떼어도
   await noKeyboard(page);
 });
 
+test("행 번호·열 머리글은 탭으로 선택하고 다시 탭하면 메뉴를 열며 손을 뗀 클릭은 항목을 실행하지 않는다", async ({
+  page,
+}) => {
+  const menu = page.locator(".grid-header-menu");
+  const count = async () =>
+    (await request(page, `/tasks?teamId=${teamId}&year=${year}`)).tasks.length;
+  const tasks = await count();
+  const rowButton = page.getByRole("button", {
+    name: "1행 전체 선택",
+    exact: true,
+  });
+  const column = page.locator('[data-header-key="title"]');
+  for (const [target, selected, title] of [
+    [rowButton, page.getByRole("rowheader").first(), "선택한 행 메뉴"],
+    [column, column, /열 메뉴$/],
+  ] as const) {
+    await target.tap();
+    await expect(selected).toHaveAttribute("aria-selected", "true");
+    await expect(menu).toHaveCount(0);
+    await noKeyboard(page);
+    await target.tap();
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-label", title);
+    await noKeyboard(page);
+    // 메뉴를 연 손가락 아래 항목에 눌림 없이 도착한 클릭은 무시한다.
+    await menu.getByRole("menuitem").first().dispatchEvent("click", {
+      detail: 1,
+    });
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  }
+  expect(await count()).toBe(tasks);
+  // 메뉴 안에서 직접 누른 항목은 그대로 실행한다.
+  await rowButton.tap();
+  await rowButton.tap();
+  await page.getByRole("menuitem", { name: "아래에 삽입", exact: true }).tap();
+  await expect.poll(count).toBe(tasks + 1);
+});
+
 test("시트 길게 누르기는 이동·스크롤·취소·다른 손가락에서 취소된다", async ({
   page,
 }) => {
@@ -884,7 +924,23 @@ test("일정 길게 누르기로 복제·태그·삭제 메뉴를 열고 탭은 
   await card.dispatchEvent("click", { detail: 1 });
   await expect(page.locator(".calendar-entry-modal")).toHaveCount(0);
   await noKeyboard(page);
+  // 메뉴 안을 누른 뒤 같은 일정을 다시 길게 눌러 열어도, 손을 뗀 클릭은
+  // 손가락 아래 항목을 실행하지 않는다.
+  const menu = page.locator(".grid-header-menu");
+  const inside = (await menu.boundingBox())!;
+  await pointer(menu, "pointerdown", inside.x + 2, inside.y + 2);
+  await pointer(menu, "pointerup", inside.x + 2, inside.y + 2);
+  const again = await hold(card);
+  await expect(menu).toBeVisible();
+  await pointer(card, "pointerup", again.x, again.y);
+  await page
+    .getByRole("menuitem", { name: "일정 복제", exact: true })
+    .dispatchEvent("click", { detail: 1 });
+  await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(
+    page.locator(`[data-entry-id] .calendar-entry-card`),
+  ).toHaveCount(29);
   await card.tap();
   await expect(
     page.getByRole("dialog", { name: "캘린더 일정", exact: true }),
