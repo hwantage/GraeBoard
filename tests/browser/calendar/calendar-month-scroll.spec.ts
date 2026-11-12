@@ -452,50 +452,55 @@ test("12개월까지 이어 붙이면 안내를 보이고 그 뒤의 다음 달�
   await expect(limit).toHaveCount(0);
 });
 
-test("팀 변경 알림은 화면에 보이는 달만 다시 읽고 나머지 달은 다시 보일 때 읽는다", async ({
+test("응답이 늦어도 휠로 내리면 붙는 달마다 한 번씩만 읽는다", async ({
   page,
 }) => {
+  test.setTimeout(60000);
+  await page.route("**/api/calendar?*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      await route.continue();
+    } catch {
+      /* aborted while waiting */
+    }
+  });
+  const reads: string[] = [];
+  const aborted: string[] = [];
+  let contextReads = 0;
+  let pending = 0;
+  const isRead = (url: string) => new URL(url).pathname === "/api/calendar";
+  page.on("request", (r) => {
+    if (new URL(r.url()).pathname === `/api/calendar/teams/${teamId}`)
+      contextReads++;
+    if (!isRead(r.url())) return;
+    pending++;
+    reads.push(new URL(r.url()).searchParams.get("from")!);
+  });
+  page.on("requestfinished", (r) => {
+    if (isRead(r.url())) pending--;
+  });
+  page.on("requestfailed", (r) => {
+    if (!isRead(r.url())) return;
+    pending--;
+    aborted.push(new URL(r.url()).searchParams.get("from")!);
+  });
   await open(page, "2026-11-12T03:00:00+09:00");
-  await scrollUntil(page, calendar(page).locator('[data-date="2027-04-20"]'));
-  // March's first week at the top: February's last week and March show.
-  await scrollToTop(page, row(page, "2027-02-28"));
-  await shownMonth(page, "2027", "3");
-  await expect(calendar(page).locator(".calendar-month-loading")).toHaveCount(
-    0,
-  );
-  const reads = calendarReads(page);
-  // Entries made through the API, like another member's, reach the open
-  // calendar as a team change.
-  await seedEntry(page, "다른 곳에서 만든 3월 일정", "2027-03-10");
-  await expect(
-    calendar(page).getByRole("button", {
-      name: "다른 곳에서 만든 3월 일정",
-      exact: true,
-    }),
-  ).toBeVisible();
-  expect(reads.length).toBeLessThanOrEqual(2);
-  expect(
-    [...new Set(reads.map((params) => params.get("from")))].sort(),
-  ).toEqual(["2027-02-07", "2027-03-07"]);
-  // November is off screen and keeps what it read until it shows again.
-  const before = reads.length;
-  await seedEntry(page, "다른 곳에서 만든 11월 일정", "2026-11-18");
-  await expect.poll(() => reads.length).toBeGreaterThan(before);
-  expect(reads.every((params) => params.get("from")! >= "2027-02-07")).toBe(
-    true,
-  );
-  const november = calendar(page).getByRole("button", {
-    name: "다른 곳에서 만든 11월 일정",
-    exact: true,
-  });
-  await expect(november).toHaveCount(0);
-  await scroller(page).evaluate((element) => {
-    element.scrollTop = 0;
-  });
-  await expect(november).toBeVisible();
-  expect(reads.some((params) => params.get("from") === "2026-10-25")).toBe(
-    true,
-  );
+  // The calendar reads again once on the team's first event; count after it.
+  await expect.poll(() => contextReads >= 2 && pending === 0).toBe(true);
+  reads.length = 0;
+  aborted.length = 0;
+  await scroller(page).hover();
+  const april = calendar(page).locator('[data-date="2027-04-20"]');
+  for (let i = 0; i < 80 && !(await april.count()); i++) {
+    await page.mouse.wheel(0, 500);
+    await page.waitForTimeout(100);
+  }
+  await expect(april).toHaveCount(1);
+  await expect.poll(() => pending).toBe(0);
+  expect(aborted).toEqual([]);
+  expect(reads.length).toBeGreaterThanOrEqual(3);
+  expect(reads).toEqual([...new Set(reads)]);
+  expect(reads).toContain("2027-03-07");
 });
 
 test("휴대폰에서도 아래로 넘기면 다음 달이 이어지고 2100년 12월에서 멈춘다", async ({
