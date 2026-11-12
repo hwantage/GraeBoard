@@ -8,6 +8,17 @@ import { entityId, stateHash } from "../../../server/sync/core/protocol.mjs";
 import { reduceMany, project } from "../../../server/sync/core/reducer.mjs";
 import { getTask } from "../../../server/db.mjs";
 import { unpack } from "../../../shared/formatting/compact.js";
+import { RESOLUTION_REJECTED } from "../../../shared/sync/conflict-origin.js";
+
+// A resolution that would be archived again is refused before anything is
+// saved: P and visible data stay as they were and the conflict stays open.
+function assertRefused(f, result, reason, immutable) {
+  assert.equal(result.status, 409, JSON.stringify(result));
+  assert.deepEqual(result.data.details, { code: RESOLUTION_REJECTED, reason });
+  assert.deepEqual(f.s.readPending(), immutable, "nothing is enqueued");
+  for (const [id, conflict] of Object.entries(f.s.readState().conflicts))
+    assert.equal(conflict.resolution, null, id);
+}
 
 async function fixture(t, rows = 3) {
   const f = await performanceFixture({ rows, users: 1, clients: 1 });
@@ -134,7 +145,7 @@ test("actual resolve preserves unrelated concurrent API save without retry and c
 });
 
 for (const action of ["same cell", "parent delete"])
-  test(`actual resolve rechecks ${action} after preparation without losing its operation`, async (t) => {
+  test(`actual resolve rechecks ${action} after preparation and refuses a resolution that would conflict again`, async (t) => {
     const f = await fixture(t),
       gate = f.gate(),
       pending = f.resolve();
@@ -151,23 +162,28 @@ for (const action of ["same cell", "parent delete"])
     const immutable = f.s.readPendingRows().map((row) => row.operation);
     gate.release();
     const result = await pending;
-    assert.equal(result.status, 200);
-    assert.equal(
-      gate.metrics.length,
-      2,
-      "intersecting P must cause fresh projection",
+    // The first preparation saw no conflict; only the fresh projection over
+    // the intersecting P can refuse it, before a second onResolvePrepared.
+    assert.equal(gate.metrics.length, 1);
+    assertRefused(
+      f,
+      result,
+      action === "same cell"
+        ? "Concurrent field change"
+        : "Parent task deleted",
+      immutable,
     );
-    assert.deepEqual(f.s.readPending().slice(0, immutable.length), immutable);
     if (action === "same cell")
       assert.equal(
         getTask(f.db, f.taskIds[0]).cells.title.value,
         "new local edit",
       );
     else assert.ok(getTask(f.db, f.taskIds[0]).deletedAt);
-    const projected = project(f.state, f.s.readPending());
+    const kept = await f.resolve({ choice: "current" });
+    assert.equal(kept.status, 200, JSON.stringify(kept));
     assert.ok(
-      projected.held.includes(result.data.opId),
-      "conflicting resolution must remain as a held immutable submission",
+      !project(f.state, f.s.readPending()).held.includes(kept.data.opId),
+      "keeping the first edit still settles the conflict",
     );
   });
 
@@ -287,6 +303,9 @@ function semanticConflict(f, entity, key, base, desired) {
   return {
     id,
     state,
+    opId: submitted.opId,
+    head: link.canonical_head,
+    desired: submitted.changes.map((change) => change.desired),
     resolve: () =>
       f.api(`/teams/${f.teamId}/sync/conflicts/${submitted.opId}/resolve`, {
         expectedHead: link.canonical_head,
@@ -295,7 +314,7 @@ function semanticConflict(f, entity, key, base, desired) {
   };
 }
 
-test("resolve replans concurrent tag-name uniqueness and preserves the accepted rename", async (t) => {
+test("resolve replans concurrent tag-name uniqueness, preserves the accepted rename and refuses the duplicate", async (t) => {
   const f = await fixture(t);
   const createTag = (name) =>
     f.api(`/calendar/teams/${f.teamId}/tags`, {
@@ -332,13 +351,10 @@ test("resolve replans concurrent tag-name uniqueness and preserves the accepted 
   assert.equal(immutable.length, 1);
   gate.release();
   const result = await pending;
-  assert.equal(result.status, 200, JSON.stringify(result));
-  assert.equal(
-    gate.metrics.length,
-    2,
-    "different tag IDs still interfere through the unique-name constraint",
-  );
-  assert.deepEqual(f.s.readPending().slice(0, immutable.length), immutable);
+  // Different tag IDs still interfere through the unique-name constraint: the
+  // fresh projection refuses the duplicate instead of archiving it again.
+  assert.equal(gate.metrics.length, 1);
+  assertRefused(f, result, "Duplicate name", immutable);
   assert.equal(
     f.db.prepare("SELECT name FROM calendar_tags WHERE id=?").get(first.data.id)
       .name,
@@ -350,18 +366,52 @@ test("resolve replans concurrent tag-name uniqueness and preserves the accepted 
       .get(second.data.id).name,
     "Shared name",
   );
-  const projected = project(conflict.state, f.s.readPending());
-  assert.ok(projected.held.includes(result.data.opId));
-  assert.equal(projected.entities[conflict.id].payload.name, "Canonical tag");
-  assert.equal(
-    reduceMany(conflict.state, f.s.readPending()).conflicts[result.data.opId]
-      .reason,
-    "Duplicate name",
-  );
   assert.equal(
     stateHash(f.s.readState()),
     stateHash(conflict.state),
-    "resolution remains P until publication",
+    "a refused resolution changes nothing",
+  );
+});
+
+test("resolve refuses a duplicate name before saving and accepts a renamed edit", async (t) => {
+  const f = await fixture(t);
+  const createTag = (name) =>
+    f.api(`/calendar/teams/${f.teamId}/tags`, {
+      id: randomUUID(),
+      name,
+      color: "green",
+      kind: "label",
+    });
+  const first = await createTag("Canonical tag"),
+    second = await createTag("Shared name");
+  assert.equal(first.status, 201, JSON.stringify(first));
+  assert.equal(second.status, 201, JSON.stringify(second));
+  // The later edit renames the first tag to a name the shared state already
+  // holds, the way two sites name a new copy "(2)" at the same time.
+  const conflict = semanticConflict(
+    f,
+    "tag",
+    [first.data.id],
+    { name: "Original tag" },
+    { name: "Shared name" },
+  );
+  const count = () => Object.keys(f.s.readState().conflicts).length,
+    before = count();
+  for (let attempt = 0; attempt < 2; attempt++)
+    assertRefused(f, await conflict.resolve(), "Duplicate name", []);
+  assert.equal(count(), before, "retrying never adds conflicts");
+  const desired = structuredClone(conflict.desired);
+  desired[0].name = "Renamed later tag";
+  const edited = await f.api(
+    `/teams/${f.teamId}/sync/conflicts/${conflict.opId}/resolve`,
+    { expectedHead: conflict.head, choice: "edited", desired },
+  );
+  assert.equal(edited.status, 200, JSON.stringify(edited));
+  const projected = project(conflict.state, f.s.readPending());
+  assert.ok(!projected.held.includes(edited.data.opId));
+  assert.equal(
+    projected.entities[conflict.id].payload.name,
+    "Renamed later tag",
   );
 });
 
@@ -411,13 +461,10 @@ test("resolve replans a calendar entry when its referenced tag is concurrently d
   );
   gate.release();
   const result = await pending;
-  assert.equal(result.status, 200, JSON.stringify(result));
-  assert.equal(
-    gate.metrics.length,
-    2,
-    "calendar desired tag reference must fence a concurrent tag deletion",
-  );
-  assert.deepEqual(f.s.readPending().slice(0, immutable.length), immutable);
+  // The desired tag reference fences the concurrent tag deletion; the fresh
+  // projection refuses the resolution that would reference a deleted tag.
+  assert.equal(gate.metrics.length, 1);
+  assertRefused(f, result, "Missing or foreign calendar tag", immutable);
   assert.equal(
     f.db.prepare("SELECT id FROM calendar_tags WHERE id=?").get(tag.data.id),
     undefined,
@@ -435,7 +482,6 @@ test("resolve replans a calendar entry when its referenced tag is concurrently d
     0,
   );
   const projected = project(conflict.state, f.s.readPending());
-  assert.ok(projected.held.includes(result.data.opId));
   assert.equal(
     projected.entities[conflict.id].payload.title,
     "Canonical entry",
@@ -443,11 +489,6 @@ test("resolve replans a calendar entry when its referenced tag is concurrently d
   assert.equal(
     projected.entities[entityId("tag", [tag.data.id])].deleted,
     true,
-  );
-  assert.equal(
-    reduceMany(conflict.state, f.s.readPending()).conflicts[result.data.opId]
-      .reason,
-    "Missing or foreign calendar tag",
   );
   assert.equal(stateHash(f.s.readState()), stateHash(conflict.state));
 });

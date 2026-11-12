@@ -40,6 +40,7 @@ import {
 } from "../../documents/document-images.mjs";
 import {
   RESOLUTION_PENDING,
+  resolutionRejected,
   resolvesAny,
 } from "../../../shared/sync/conflict-origin.js";
 import {
@@ -272,6 +273,14 @@ function compute(request) {
           candidates.add(entityId(change.entity, change.key));
       for (const change of operation.changes) touch(change);
       const projected = project(state, [...pending, operation]);
+      // A resolution archived again would leave this conflict open and add
+      // another one, so every retry of it would only grow the conflict box.
+      if (projected.held.includes(operation.opId)) {
+        const { message, details } = resolutionRejected(
+          projected.reasons[operation.opId],
+        );
+        throw new HttpError(409, message, details);
+      }
       const exclusions = store.readExclusions(link.installation_id);
       const prepared = projectionPatch(
         request.teamId,
@@ -897,6 +906,7 @@ parentPort.on(
           message: error.message,
           code: error.code,
           status: error.status,
+          details: error.details,
           retryAt: error.retryAt,
         },
       });

@@ -5,6 +5,7 @@ import {
   conflictOrigin,
   conflictPeople,
   pendingResolutions,
+  resolutionRejected,
   resolvesAny,
 } from "../../shared/sync/conflict-origin.js";
 import {
@@ -562,17 +563,21 @@ export async function adminRoutes(
           objects: [],
           resolves: frontier,
         };
+        // Checked after the pending operations, which publish first, as the
+        // Node server does: a resolution archived again would leave this
+        // conflict open and add another one.
         const { state: resolved } = reduceSlice(
           state,
-          [op],
+          [...pending, op],
           null,
           await slice.context(state),
         );
-        assert(
-          ["applied", "noop"].includes(resolved.receipts[op.opId].result),
-          409,
-          "다시 충돌했습니다. 최신 내용을 확인하세요.",
-        );
+        if (!["applied", "noop"].includes(resolved.receipts[op.opId].result)) {
+          const { message, details } = resolutionRejected(
+            resolved.conflicts[op.opId]?.reason,
+          );
+          assert(false, 409, message, details);
+        }
         await tx.sync.enqueue(op);
         // C is unchanged; only what pending operations touch projects anew.
         await materializeSlice(tx, teamId, {

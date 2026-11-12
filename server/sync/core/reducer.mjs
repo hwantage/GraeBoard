@@ -633,15 +633,20 @@ export function reduceMany(state, operations, identity, options = {}) {
 export function project(state, pending) {
   // Projection consumers read shared immutable records; an empty P needs no
   // entity/receipt/conflict map copies or validation index.
-  if (!pending.length) return { entities: state.entities, held: [] };
+  if (!pending.length)
+    return { entities: state.entities, held: [], reasons: {} };
   const projected = reduceMany(state, pending);
+  const held = pending
+    .filter(
+      (op) => !["applied", "noop"].includes(projected.receipts[op.opId].result),
+    )
+    .map((op) => op.opId);
   return {
     entities: projected.entities,
-    held: pending
-      .filter(
-        (op) =>
-          !["applied", "noop"].includes(projected.receipts[op.opId].result),
-      )
-      .map((op) => op.opId),
+    held,
+    // The conflict reason each held operation would be archived with.
+    reasons: Object.fromEntries(
+      held.map((id) => [id, projected.conflicts[id]?.reason ?? null]),
+    ),
   };
 }
