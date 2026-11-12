@@ -809,7 +809,23 @@ test("일정 길게 누르기로 복제·태그·삭제 메뉴를 열고 탭은 
   await card.dispatchEvent("click", { detail: 1 });
   await expect(page.locator(".calendar-entry-modal")).toHaveCount(0);
   await noKeyboard(page);
+  // 메뉴 안을 누른 뒤 같은 일정을 다시 길게 눌러 열어도, 손을 뗀 클릭은
+  // 손가락 아래 항목을 실행하지 않는다.
+  const menu = page.locator(".grid-header-menu");
+  const inside = (await menu.boundingBox())!;
+  await pointer(menu, "pointerdown", inside.x + 2, inside.y + 2);
+  await pointer(menu, "pointerup", inside.x + 2, inside.y + 2);
+  const again = await hold(card);
+  await expect(menu).toBeVisible();
+  await pointer(card, "pointerup", again.x, again.y);
+  await page
+    .getByRole("menuitem", { name: "일정 복제", exact: true })
+    .dispatchEvent("click", { detail: 1 });
+  await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(
+    page.locator(`[data-entry-id] .calendar-entry-card`),
+  ).toHaveCount(29);
   await card.tap();
   await expect(
     page.getByRole("dialog", { name: "캘린더 일정", exact: true }),

@@ -61,6 +61,14 @@ export default function GridHeaderMenu({
       )
         close.current();
     };
+    // A press outside, including the anchor that reopens this same menu,
+    // starts a new opening whose release must not run an item.
+    const press = (event: Event) => {
+      if (!(
+        event.target instanceof Node && root.current?.contains(event.target)
+      ))
+        pressed.current = false;
+    };
     const dismiss = () => close.current();
     // Pointer interaction can leave focus on the body, especially when a
     // clicked control becomes disabled. Escape must still dismiss the popover.
@@ -98,6 +106,7 @@ export default function GridHeaderMenu({
         return;
       outside(event);
     };
+    document.addEventListener("pointerdown", press, true);
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", outside);
     document.addEventListener("keydown", keydown, true);
@@ -105,6 +114,7 @@ export default function GridHeaderMenu({
     window.addEventListener("scroll", scroll, true);
     return () => {
       resize.disconnect();
+      document.removeEventListener("pointerdown", press, true);
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("focusin", outside);
       document.removeEventListener("keydown", keydown, true);
