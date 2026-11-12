@@ -37,7 +37,10 @@ export async function documentRoutes(ctx, path, method, body, query) {
     if (method === "GET")
       return target.documentId
         ? service.read(target)
-        : service.list(target, { content: query.get("content") === "1" });
+        : service.list(target, {
+            content: query.get("content") === "1",
+            preview: query.get("preview") === "1",
+          });
     if (method === "POST" && !target.documentId)
       return service.create(target, body);
     if (method === "PUT") return service.save(target, body);

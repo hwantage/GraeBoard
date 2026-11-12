@@ -405,6 +405,13 @@ test(
           .length,
         1,
       );
+      // The external route passes the document browser's preview flag.
+      assert.deepEqual(
+        (
+          await request(`/teams/${teamId}/years/2026/memos?preview=1`)
+        ).body.documents.map((doc) => [doc.id, doc.preview, doc.markdown]),
+        [[memoId, "", undefined]],
+      );
       const tagId = randomUUID();
       assert.equal(
         (
