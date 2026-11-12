@@ -547,7 +547,7 @@ test("화살표 합치기는 방금 바뀐 화살표에만 적용하고 제목�
   await open(page, "``a`b`` 끝\n");
   await rich(page).locator("p").first().click();
   await page.keyboard.press("End");
-  await settle(page);
+  await settle(rich(page));
   await rich(page).pressSequentially(" c->d");
   await expect(rich(page).locator("p code")).toHaveText("a`b");
   await expect
@@ -603,33 +603,23 @@ test("화살표는 코드·인라인 코드·붙여넣기·원문에서는 그�
   await rich(page).pressSequentially("a->b <=> c");
   await expect(rich(page).locator("pre")).toHaveText("a->b <=> c");
   await rich(page).locator("td p").first().click();
-  await settle(page);
+  await settle(rich(page));
   await rich(page).pressSequentially("x<->y");
   await expect(rich(page).locator("td").first()).toHaveText("x↔y");
   await rich(page).locator("p").last().click();
   await page.keyboard.press("End");
-  await settle(page);
+  await settle(rich(page));
   // Inline code typed with backticks keeps its arrow; text after it converts.
   await rich(page).pressSequentially(" `c->d` e->f");
   await expect(rich(page).locator("p code")).toHaveText("c->d");
   await expect(rich(page).locator("p").last()).toHaveText("마지막 c->d e→f");
   // Typing inside an existing inline code mark keeps the characters too.
-  await rich(page)
-    .locator("p code")
-    .evaluate((el) => {
-      const range = document.createRange();
-      range.setStart(el.firstChild!, 1);
-      range.collapse(true);
-      const selection = window.getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
-  await settle(page);
+  await caret(rich(page).locator("p code"), 1);
   await rich(page).pressSequentially("<=");
   await expect(rich(page).locator("p code")).toHaveText("c<=->d");
   await rich(page).locator("p").last().click();
   await page.keyboard.press("End");
-  await settle(page);
+  await settle(rich(page));
   // Pasted text is not typed input, so it keeps its characters.
   await paste(rich(page), "p->q");
   await expect(rich(page).locator("p").last()).toContainText("p->q");
@@ -701,11 +691,7 @@ test("구분선 단축키는 그대로이고 한 화면의 여러 꼬리 메모 
     const editor = memoEditor(id);
     await editor.locator("p").last().click();
     await page.keyboard.press("End");
-    await editor.evaluate(async () => {
-      await new Promise<void>((r) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => r())),
-      );
-    });
+    await settle(editor);
     await editor.pressSequentially(` ${index}->`);
     await expect(editor.locator("p").last()).toContainText(`${index}→`);
   }
