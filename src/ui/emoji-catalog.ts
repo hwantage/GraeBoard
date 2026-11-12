@@ -1,7 +1,7 @@
 // Built-in emoji set for EmojiPicker: commonly used emoji grouped by
 // category, with Korean names and Korean/English search words. It ships with
 // the app so the picker works on the internal network without fetching data.
-// Only emoji that older Windows and macOS fonts draw are listed (no flags).
+// Flags are left out because Windows does not draw them as emoji.
 
 export type EmojiEntry = { emoji: string; name: string; keywords: string };
 export type EmojiCategory = {

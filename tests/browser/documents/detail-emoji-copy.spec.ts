@@ -312,3 +312,23 @@ test("일정 상세의 이모지 복사도 닫기 바로 왼쪽에 있고 방향
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
+
+test("HTTP 사이트에서도 복사 명령으로 이모지를 복사한다", async ({ page }) => {
+  const dialog = await openTask(page);
+  await page.evaluate(() => {
+    Object.defineProperty(window, "isSecureContext", { value: false });
+    (window as any).__copied = null;
+    const setData = DataTransfer.prototype.setData;
+    DataTransfer.prototype.setData = function (type, value) {
+      if (type === "text/plain") (window as any).__copied = value;
+      return setData.call(this, type, value);
+    };
+  });
+  await emojiButton(dialog).click();
+  await picker(page).getByRole("textbox", { name: "이모지 검색" }).fill("커피");
+  await picker(page).getByRole("button", { name: "커피", exact: true }).click();
+  await expect(notice(page)).toHaveText("☕ 이모지를 복사했습니다.");
+  expect(await page.evaluate(() => (window as any).__copied)).toBe("☕");
+  await expect(picker(page)).toHaveCount(0);
+  await expect(emojiButton(dialog)).toBeFocused();
+});
