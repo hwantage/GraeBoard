@@ -199,18 +199,20 @@ function liftItemOutOfList(tr: Transaction, pos: number) {
   return true;
 }
 
-// Lift every list item whose first paragraph the selection touches. The last
-// one goes first: a lift keeps the positions before the lifted item, so the
-// positions found earlier stay valid, and a nested item leaves before its
-// parent item does.
+// Lift every list item whose first paragraph the selection touches. A
+// selection ending at the start of an item's line, as Shift+Down leaves it,
+// does not take that item, as for the block handle. The last item goes
+// first: a lift keeps the positions before the lifted item, so the positions
+// found earlier stay valid, and a nested item leaves before its parent item
+// does.
 function liftSelectedListItems(state: EditorState): Transaction | null {
-  const { from, to } = state.selection;
+  const { from, to, empty } = state.selection;
   const listItem = state.schema.nodes.list_item;
   const found: number[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
     if (
       node.type === listItem &&
-      pos + 1 < to &&
+      (empty ? pos + 1 : pos + 2) < to &&
       pos + 1 + node.firstChild!.nodeSize > from
     )
       found.push(pos);

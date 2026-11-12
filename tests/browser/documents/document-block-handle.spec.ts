@@ -564,6 +564,39 @@ test("토글 내용에 커서가 있어도 토글 손잡이의 전환은 토글 
     .toMatch(exact("## 토글 제목\n\n안쪽 문단"));
 });
 
+test("선택이 다음 항목의 줄 첫머리에서 끝나면 그 항목은 바꾸지 않는다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "* 하나\n* 둘\n* 셋");
+  await open(page);
+  const items = rich(page).locator("li p");
+  // Shift+Down from the first item leaves the selection at the start of the
+  // second item's line.
+  const second = await items.nth(1).elementHandle();
+  await items.nth(0).evaluate((first, second) => {
+    getSelection()!.setBaseAndExtent(
+      first.firstChild!,
+      1,
+      second!.firstChild!,
+      0,
+    );
+    (first.closest("[contenteditable]") as HTMLElement).focus();
+  }, second);
+  await rich(page).evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  await detail(page)
+    .getByRole("combobox", { name: "문서 블록", exact: true })
+    .selectOption("h2");
+  await expect(rich(page).locator(":scope > h2")).toHaveText("하나");
+  await expect(rich(page).locator(":scope > ul > li")).toHaveText(["둘", "셋"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("## 하나\n\n* 둘\n* 셋"));
+});
+
 test("손잡이 메뉴의 위에 추가·아래에 추가는 빈 블록을 만들고 커서를 둔다", async ({
   page,
 }, info) => {
