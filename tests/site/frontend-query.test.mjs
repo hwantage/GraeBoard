@@ -197,6 +197,13 @@ async function calendarHarness(t) {
       JSON.stringify(
         new URL("../../shared/calendar/calendar.js", import.meta.url).href,
       ),
+    )
+    .replace(
+      '"../../shared/calendar/calendar-layout.js"',
+      JSON.stringify(
+        new URL("../../shared/calendar/calendar-layout.js", import.meta.url)
+          .href,
+      ),
     );
   const { useCalendarData } = await import(moduleURL(code));
   return {
