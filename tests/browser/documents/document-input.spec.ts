@@ -558,9 +558,9 @@ test("화살표 합치기는 방금 바뀐 화살표에만 적용하고 제목�
   await rich(page).pressSequentially("x<-");
   await expect.poll(() => text(rich(page))).toBe("x←");
   await page.keyboard.press("ArrowLeft");
-  await page.waitForTimeout(200);
+  await settle(rich(page));
   await page.keyboard.press("ArrowRight");
-  await page.waitForTimeout(200);
+  await settle(rich(page));
   await rich(page).pressSequentially(">");
   await expect.poll(() => text(rich(page))).toBe("x←>");
   await clear(page);
