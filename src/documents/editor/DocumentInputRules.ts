@@ -60,6 +60,7 @@ function canFormat(
 
 // Same nodes, text and marks; node attributes such as heading ids may differ.
 function sameContent(a: Node, b: Node): boolean {
+  if (a === b) return true;
   if (
     a.type !== b.type ||
     a.text !== b.text ||
@@ -109,11 +110,9 @@ function documentRulesPlugin(rules: InputRule[]) {
 export function configureDocumentInputRules(ctx: Ctx) {
   ctx.update(editorStateOptionsCtx, (previous) => (options) => {
     const configured = previous(options);
+    const own = ctx.get(inputRulesCtx).map(implementation);
     const taskSource = source(wrapInTaskListInputRule);
-    const gfmTask = ctx
-      .get(inputRulesCtx)
-      .map(implementation)
-      .find((rule) => rule.match.source === taskSource);
+    const gfmTask = own.find((rule) => rule.match.source === taskSource);
     const task = new InputRule(/^\[( |x)?\] $/, (state, match, start, end) => {
       if (!canFormat(state, start, end, true)) return null;
       const { $from } = state.selection;
@@ -154,9 +153,7 @@ export function configureDocumentInputRules(ctx: Ctx) {
     ]);
     const rules = [
       task,
-      ...ctx
-        .get(inputRulesCtx)
-        .filter((rule) => implementation(rule).match.source !== taskSource),
+      ...own.filter((rule) => rule.match.source !== taskSource),
     ]
       .map(implementation)
       .map(
