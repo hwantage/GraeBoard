@@ -6022,6 +6022,7 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
     name: "설명 편집",
     exact: true,
   });
+  await detail.getByRole("button", { name: "설명 수정", exact: true }).click();
   await description.fill("숨긴 열도 상세에서 직접 편집");
   await detail.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(detail).toHaveCount(0);
@@ -6029,7 +6030,9 @@ test("셀 내부에서 바로 입력하고 Tab·포커스 이동으로 저장하
     page,
     page.locator(".sheet-row").filter({ has: second }),
   );
-  await expect(description).toHaveValue("숨긴 열도 상세에서 직접 편집");
+  await expect(detail.locator(".task-detail-description")).toHaveText(
+    "숨긴 열도 상세에서 직접 편집",
+  );
 });
 
 test("컬럼 클릭은 열을 선택하고 우클릭 메뉴에서 정렬·해제를 저장한다", async ({
@@ -6780,8 +6783,9 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await expect(
     dialog.locator('.detail-fields [data-property="description"]'),
   ).toHaveCount(0);
-  const description = dialog.getByRole("textbox", {
-    name: "설명 편집",
+  const description = dialog.locator(".task-detail-description");
+  const descriptionEdit = dialog.getByRole("button", {
+    name: "설명 수정",
     exact: true,
   });
   const titleBox = (await dialog
@@ -6790,6 +6794,11 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   const descriptionBox = (await description.boundingBox())!;
   expect(descriptionBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
   expect(descriptionBox.height).toBeLessThan(30);
+  const editBox = (await descriptionEdit.boundingBox())!;
+  expect(editBox.y).toBeGreaterThanOrEqual(descriptionBox.y);
+  expect(editBox.y + editBox.height).toBeLessThanOrEqual(
+    descriptionBox.y + descriptionBox.height,
+  );
   await expect(
     dialog.getByRole("button", { name: "문서 작성", exact: true }),
   ).toBeVisible();
@@ -6911,6 +6920,8 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   await expect(dialog.locator(".task-detail-year")).toBeVisible();
   await expect(dialog.locator(".task-detail-properties")).toBeVisible();
   await expect(description).toBeVisible();
+  await expect(descriptionEdit).toBeInViewport();
+  expect((await description.boundingBox())!.height).toBeLessThan(30);
   await expect(
     dialog.getByRole("button", { name: "상태 수정", exact: true }),
   ).toBeEnabled();
@@ -6925,7 +6936,10 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
     .getByRole("button", { name: "전체 페이지 닫기", exact: true })
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await description.fill("상세 창에서 바로 수정\n두 번째 줄");
+  await descriptionEdit.click();
+  await dialog
+    .getByRole("textbox", { name: "설명 편집", exact: true })
+    .fill("상세 창에서 바로 수정\n두 번째 줄");
   await dialog
     .getByRole("button", { name: "목표일 수정", exact: true })
     .click();
@@ -6997,6 +7011,198 @@ test("업무 상세는 속성을 한 줄로 표시하고 상단 업무 버튼과
   expect(saved.cells.status.value).toBe("status-completed");
   expect(saved.cells.owner.value).toBe(boot.user.id);
   expect(saved.cells.supporters.value).toContain(boot.user.id);
+});
+
+test("업무 상세 설명은 링크를 열고 수정 버튼으로만 편집하며 읽기 전용에는 버튼이 없다", async ({
+  page,
+}, info) => {
+  const linked = "일감 #123456 참고 https://example.com/spec 확인";
+  const long = `${"긴 설명이 한 줄을 넘어갑니다. ".repeat(12)}#123456`;
+  await setTaskCells(page, [
+    { index: 0, key: "description", value: linked },
+    { index: 2, key: "description", value: long },
+  ]);
+  for (const id of [taskIds[0], taskIds[1]]) {
+    const r = await page.request.put(`/api/tasks/${id}/documents/main`, {
+      headers: { "X-Requested-With": "WeeklyPlan" },
+      data: {
+        markdown: "# 설명 링크 문서",
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+    });
+    expect(r.ok(), await r.text()).toBeTruthy();
+  }
+  // Links open in a new tab; answer them locally instead of the real sites.
+  await page
+    .context()
+    .route(/redmine\.somansa\.com|example\.com/, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>linked</p>" }),
+    );
+  await page.reload();
+  await openRowDetails(page, page.locator(`[data-row-id="${taskIds[0]}"]`));
+  const dialog = page.getByRole("dialog", { name: "업무 상세", exact: true });
+  const description = dialog.locator(".task-detail-description");
+  const shown = description.locator(".task-detail-description-text");
+  const input = dialog.getByRole("textbox", { name: "설명 편집", exact: true });
+  const edit = dialog.getByRole("button", { name: "설명 수정", exact: true });
+  const redmine = description.getByRole("link", {
+    name: "#123456",
+    exact: true,
+  });
+  await expect(description).toHaveText(linked);
+  await expect(redmine).toHaveAttribute(
+    "href",
+    "http://redmine.somansa.com/redmine/issues/123456",
+  );
+  await expect(redmine).toHaveAttribute("target", "_blank");
+  await expect(redmine).toHaveCSS("color", "rgb(37, 99, 235)");
+  await expect(
+    description.getByRole("link", {
+      name: "https://example.com/spec",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", "https://example.com/spec");
+  await expect(shown).toHaveAttribute("title", linked);
+  await expect(input).toHaveCount(0);
+  await expect(edit).toBeVisible();
+  const textBox = (await shown.boundingBox())!,
+    editBox = (await edit.boundingBox())!;
+  expect(editBox.x).toBeGreaterThanOrEqual(textBox.x + textBox.width);
+  expect(editBox.x - textBox.x - textBox.width).toBeLessThan(8);
+  const shownHeight = (await description.boundingBox())!.height;
+  await expect(dialog.locator(".task-document-shell")).not.toHaveAttribute(
+    "data-loading",
+    /.*/,
+  );
+  await edit.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("설명 수정");
+  await dialog.screenshot({ path: info.outputPath("description-links.png") });
+
+  const popup = page.waitForEvent("popup");
+  await redmine.click();
+  const opened = await popup;
+  await expect(opened).toHaveURL(
+    "http://redmine.somansa.com/redmine/issues/123456",
+  );
+  await opened.close();
+  await expect(input).toHaveCount(0);
+  await shown.click({ position: { x: 4, y: 8 } });
+  await expect(input).toHaveCount(0);
+
+  await edit.click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue(linked);
+  expect(
+    await input.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]),
+  ).toEqual([linked.length, linked.length]);
+  await expect(edit).toHaveCount(0);
+  expect(
+    Math.abs((await description.boundingBox())!.height - shownHeight),
+  ).toBeLessThanOrEqual(1);
+  await dialog.screenshot({ path: info.outputPath("description-editing.png") });
+  await page.keyboard.type(" 완료");
+  await page.keyboard.press("Enter");
+  await expect(input).toHaveCount(0);
+  await expect(description).toHaveText(`${linked} 완료`);
+  await expect(edit).toBeFocused();
+  const savedDescription = async () =>
+    (
+      await (
+        await page.request.get(`/api/tasks?teamId=${teamId}&year=2026`)
+      )
+        .json()
+        .then(unpack)
+    ).tasks.find((t: any) => t.id === taskIds[0]).cells.description.value;
+  await expect.poll(savedDescription).toBe(`${linked} 완료`);
+
+  // A failed save keeps the input open until it is saved.
+  let fail = true;
+  await page.route("**/api/cells/batch", async (route) => {
+    if (fail)
+      await route.fulfill({
+        status: 503,
+        json: { error: "설명 저장 실패 검증" },
+      });
+    else await route.continue();
+  });
+  await edit.click();
+  await input.fill("저장 실패에도 남는 설명 #654321");
+  await input.press("Enter");
+  await expect(dialog.getByRole("alert")).toContainText("설명 저장 실패 검증");
+  await expect(input).toHaveValue("저장 실패에도 남는 설명 #654321");
+  await expect(edit).toHaveCount(0);
+  fail = false;
+  await dialog
+    .getByRole("button", { name: "저장 다시 시도", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(input).toHaveCount(0);
+  await expect(
+    description.getByRole("link", { name: "#654321", exact: true }),
+  ).toBeVisible();
+  await expect.poll(savedDescription).toBe("저장 실패에도 남는 설명 #654321");
+  await page.unroute("**/api/cells/batch");
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+
+  // An empty description starts editing from its placeholder too.
+  await openRowDetails(page, page.locator(`[data-row-id="${taskIds[1]}"]`));
+  await expect(description).toHaveText("설명을 입력하세요…");
+  await shown.click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("");
+  await input.press("Escape");
+  await expect(input).toHaveCount(0);
+  await expect(description).toHaveText("설명을 입력하세요…");
+  await expect(edit).toBeFocused();
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+
+  // A long description stays one line with an ellipsis on a phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRowDetails(page, page.locator(`[data-row-id="${taskIds[2]}"]`));
+  await expect(shown).toHaveAttribute("title", long);
+  await expect(shown).toHaveCSS("text-overflow", "ellipsis");
+  expect(
+    await shown.evaluate((el) => el.scrollWidth > el.clientWidth),
+  ).toBeTruthy();
+  expect((await description.boundingBox())!.height).toBeLessThan(30);
+  await expect(edit).toBeInViewport();
+  expect(
+    (await edit.boundingBox())!.x + (await edit.boundingBox())!.width,
+  ).toBeLessThanOrEqual(
+    (await description.boundingBox())!.x +
+      (await description.boundingBox())!.width,
+  );
+  await dialog.screenshot({
+    path: info.outputPath("description-links-mobile.png"),
+  });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await page.setViewportSize({ width: 1366, height: 900 });
+
+  // Presentation mode shows the links without an edit button.
+  await page.getByRole("button", { name: "발표 모드", exact: true }).click();
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"] .task-document-indicator`)
+    .click();
+  await expect(
+    description.getByRole("link", { name: "#654321", exact: true }),
+  ).toHaveAttribute("href", "http://redmine.somansa.com/redmine/issues/654321");
+  await expect(edit).toHaveCount(0);
+  await expect(input).toHaveCount(0);
+  await dialog.screenshot({
+    path: info.outputPath("description-links-read-only.png"),
+  });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await page
+    .locator(`[data-cell="${taskIds[1]}:title"] .task-document-indicator`)
+    .click();
+  await expect(description).toHaveText("설명 없음");
+  await expect(edit).toHaveCount(0);
+  await shown.click();
+  await expect(input).toHaveCount(0);
 });
 
 test("주간 날짜 헤더는 월/일 한 줄·절반 너비이며 정렬하지 않는다", async ({
