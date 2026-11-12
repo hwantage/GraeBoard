@@ -76,6 +76,44 @@ async function clear(page: Page) {
   await rich(page).press("ControlOrMeta+A");
   await rich(page).press("Backspace");
 }
+// Home differs by browser and OS, so place the caret by text offset instead.
+// A just-finished click can still restore its own caret, so place it again
+// until the editor keeps it.
+async function caret(page: Page, block: Locator, offset = 0) {
+  const place = (el: Element, offset: number) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && offset > node.textContent!.length) {
+      offset -= node.textContent!.length;
+      node = walker.nextNode();
+    }
+    const range = document.createRange();
+    if (node) range.setStart(node, offset);
+    else range.setStart(el, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  const at = (el: Element) => {
+    const selection = window.getSelection()!;
+    if (!selection.isCollapsed || !el.contains(selection.anchorNode)) return -1;
+    const range = document.createRange();
+    range.setStart(el, 0);
+    range.setEnd(selection.anchorNode!, selection.anchorOffset);
+    return range.toString().length;
+  };
+  await expect
+    .poll(async () => {
+      await block.evaluate(place, offset);
+      await settle(page);
+      await settle(page);
+      return block.evaluate(at);
+    })
+    .toBe(offset);
+}
+const text = async (locator: Locator) =>
+  (await locator.textContent())?.replaceAll("\u00a0", " ");
 
 test.beforeEach(async ({ page }) => {
   await request(page, "/auth/login", "POST", {
@@ -233,6 +271,112 @@ for (const [marker, selector, saved] of [
     await rich(page).pressSequentially("항목");
     await expect.poll(() => markdown(page)).toContain(saved);
   });
+
+for (const [marker, selector, saved] of [
+  ["-", "ul > li", "* 기존 **문장**"],
+  ["*", "ul > li", "* 기존 **문장**"],
+  ["+", "ul > li", "* 기존 **문장**"],
+  ["1.", "ol > li", "1. 기존 **문장**"],
+  ["3.", "ol > li", "3. 기존 **문장**"],
+  ["[ ]", "li.document-check-item", "* [ ] 기존 **문장**"],
+  ["[]", "li.document-check-item", "* [ ] 기존 **문장**"],
+  ["[x]", "li.document-check-item", "* [x] 기존 **문장**"],
+  ["#", "h1", "# 기존 **문장**"],
+  ["##", "h2", "## 기존 **문장**"],
+  ["###", "h3", "### 기존 **문장**"],
+  [">", "blockquote", "> 기존 **문장**"],
+])
+  test(`글이 있는 문단 맨 앞의 ${marker} 스페이스도 글을 유지해 변환하고 Backspace와 실행취소로 복원한다`, async ({
+    page,
+  }) => {
+    await open(page, "기존 **문장**\n");
+    const convert = async () => {
+      await caret(page, rich(page).locator("p").first());
+      await rich(page).pressSequentially(marker + " ");
+      await expect(rich(page).locator(selector)).toHaveCount(1);
+      expect(await text(rich(page).locator(selector))).toBe("기존 문장");
+      await expect(rich(page).locator(`${selector} strong`)).toHaveText("문장");
+    };
+    // The typed marker comes back in front of the kept text, with the caret
+    // after it, so removing the marker restores the original paragraph.
+    const restored = async () => {
+      await expect(rich(page).locator(selector)).toHaveCount(0);
+      expect(await text(rich(page))).toBe(marker + " 기존 문장");
+      for (let i = 0; i <= marker.length; i++)
+        await page.keyboard.press("Backspace");
+      expect(await text(rich(page))).toBe("기존 문장");
+      await expect(rich(page).locator("p strong")).toHaveText("문장");
+    };
+    await convert();
+    if (marker === "[x]")
+      await expect(rich(page).getByRole("checkbox")).toBeChecked();
+    await page.keyboard.press("Backspace");
+    await restored();
+    await convert();
+    await page.keyboard.press("ControlOrMeta+z");
+    await restored();
+    await convert();
+    await expect.poll(() => markdown(page)).toContain(saved);
+  });
+
+test("문장 중간 기호와 글 앞 코드 울타리·구분선은 변환하지 않고 뒤쪽 인라인 코드는 막지 않는다", async ({
+  page,
+}) => {
+  await open(page, "기존 문장\n\n기존 `코드` 문장\n\n`코드`로 시작\n");
+  const first = rich(page).locator("p").first();
+  for (const [offset, marker, selector] of [
+    [3, "- ", "li"],
+    [2, "# ", "h1"],
+    [0, "``` ", "pre"],
+    [0, "*** ", "hr"],
+  ] as const) {
+    await caret(page, first, offset);
+    await rich(page).pressSequentially(marker);
+    await expect(rich(page).locator(selector)).toHaveCount(0);
+    const typed = "기존 문장".slice(0, offset) + marker;
+    expect(await text(first)).toBe(typed + "기존 문장".slice(offset));
+    for (let i = 0; i < marker.length; i++)
+      await page.keyboard.press("Backspace");
+    expect(await text(first)).toBe("기존 문장");
+  }
+  await caret(page, rich(page).locator("p").nth(1));
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("ul > li")).toHaveCount(1);
+  expect(await text(rich(page).locator("li"))).toBe("기존 코드 문장");
+  await expect(rich(page).locator("li code")).toHaveText("코드");
+  // Inline code is not inclusive, so a marker typed before it stays plain.
+  await caret(page, rich(page).locator("p", { hasText: "로 시작" }));
+  await rich(page).pressSequentially("> ");
+  await expect(rich(page).locator("blockquote")).toHaveCount(1);
+  expect(await text(rich(page).locator("blockquote"))).toBe("코드로 시작");
+  await expect(rich(page).locator("blockquote code")).toHaveText("코드");
+  await expect
+    .poll(() => markdown(page))
+    .toContain("* 기존 `코드` 문장\n\n> `코드`로 시작");
+});
+
+test("목록 항목과 인용 안의 글 앞 기호는 빈 문단과 같은 규칙으로 바꾼다", async ({
+  page,
+}) => {
+  await open(page, "- 첫째\n\n> 인용 문장\n");
+  const item = rich(page).locator("li p");
+  // A list item starts with a paragraph, so only the checklist form applies.
+  await caret(page, item);
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("li li")).toHaveCount(0);
+  expect(await text(item)).toBe("- 첫째");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await caret(page, item);
+  await rich(page).pressSequentially("[ ] ");
+  await expect(rich(page).locator("li.document-check-item")).toHaveCount(1);
+  expect(await text(item)).toBe("첫째");
+  await caret(page, rich(page).locator("blockquote p"));
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("blockquote ul > li")).toHaveCount(1);
+  expect(await text(rich(page).locator("blockquote li"))).toBe("인용 문장");
+  await expect.poll(() => markdown(page)).toContain("* [ ] 첫째");
+});
 
 test("목록 안 체크박스와 코드 울타리 Enter도 변환하고 입력대로 복원한다", async ({
   page,
