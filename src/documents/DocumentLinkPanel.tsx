@@ -298,7 +298,8 @@ function MemoLinkPanel({
       ? `/teams/${target.teamId}/years/${target.year}/memos`
       : `/sheet-clones/${target.sheetCloneId}/memos`;
   const path = `${collection}/${target.id}`;
-  // AnnualMemoPanel's key, so a draft is shared with the memo card.
+  // AnnualMemoDocumentPanel's key, so a draft is shared with the memo card
+  // and the document browser's memo tab.
   const draftKey = `weekly-plan:memo:${user.id}:${teamId}:${target.kind === "memo" ? target.year : target.sheetCloneId}:${target.id}`;
   const close = async () => {
     if (editor.current && !(await editor.current.flush())) return false;

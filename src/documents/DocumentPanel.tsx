@@ -61,7 +61,7 @@ export type DocumentListResult = { documents: DocumentInfo[] } & Partial<
   Pick<DocumentSaveResult, "hasDocument" | "documentCount" | "taskUpdatedAt">
 >;
 export type DocumentResult = TaskDocument & Partial<DocumentSaveResult>;
-type Props = Pick<
+export type DocumentPanelProps = Pick<
   SharedDocumentEditorProps,
   "readOnly" | "emptyUntilSaved" | "onCloseWithDraft" | "onLoadingChange"
 > & {
@@ -72,6 +72,9 @@ type Props = Pick<
   initialDocumentId?: string;
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
+  // Memos shown as tabs (document browser): the list may be empty, and it
+  // opens with any memo as the inline cards do.
+  memoTabs?: boolean;
   onScrollRatioChange?: (ratio: number, scrollable: boolean) => void;
   label?: string;
   browserTitleFallback?: string;
@@ -96,7 +99,7 @@ function tabTitle(title: string) {
   return letters.length >= 10 ? `${letters.slice(0, 9).join("")}…` : title;
 }
 
-export default forwardRef<DocumentPanelHandle, Props>(
+export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
   function DocumentPanel(props, ref) {
     const [documents, setDocuments] = useState<DocumentInfo[]>([]);
     const [documentsLoaded, setDocumentsLoaded] = useState(false);
@@ -136,6 +139,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
     const path = props.path;
     const readOnly = props.readOnly || !!props.emptyUntilSaved;
     const label = props.label || "업무 문서";
+    const memos = !!props.inline || !!props.memoTabs;
     const current = documents.find((doc) => doc.id === selected);
     useDocumentPageTitle(
       (current?.title !== DEFAULT_DOCUMENT_TITLE && current?.title) ||
@@ -190,7 +194,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
       }
       if (
         result.documents.length &&
-        (props.inline || result.documents.some((doc) => doc.hasContent))
+        (memos || result.documents.some((doc) => doc.hasContent))
       ) {
         setOpened(true);
         const target = result.documents.some((doc) => doc.id === selected)
@@ -335,7 +339,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
             !!requested ||
             !!draft ||
             result.documents.some((doc) => doc.hasContent) ||
-            (!!props.inline && result.documents.length > 0);
+            (memos && result.documents.length > 0);
           setSelected(
             (previous) =>
               requested ||
@@ -528,7 +532,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
         for (const doc of result.documents)
           updateDocumentLinkTitle(props.documentLink(doc.id), doc.title);
     }
-    async function add() {
+    async function add(focus = !!props.inline) {
       if (readOnly || busy || !(await finishRename())) return;
       setBusy(true);
       setError("");
@@ -539,7 +543,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
         const result = await send<ListResult>(path, { id: documentId });
         changed(result);
         setOpened(true);
-        focusEditor.current = !!props.inline;
+        focusEditor.current = focus;
         navigateDocument.current = true;
         setSelected(documentId);
         setVisited((previous) => [...new Set([...previous, documentId])]);
@@ -670,7 +674,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
           [selected]: (previous[selected] || 0) + 1,
         }));
         changed(result);
-        const empty = props.inline
+        const empty = memos
           ? !result.documents.length
           : result.documentCount === 0;
         if (empty) {
@@ -774,6 +778,33 @@ export default forwardRef<DocumentPanelHandle, Props>(
             <Button onClick={() => setAttempt((value) => value + 1)}>
               문서 다시 불러오기
             </Button>
+          ) : props.memoTabs ? (
+            documentsLoaded &&
+            !documents.length && (
+              <div className="document-empty">
+                {!readOnly && (
+                  <Button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => void add(true)}
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    메모 추가
+                  </Button>
+                )}
+                <Grae className="document-empty-character" />
+                <h3>
+                  {readOnly
+                    ? "작성된 메모가 없습니다."
+                    : "꼬리 메모를 남겨 보세요"}
+                </h3>
+                <p>
+                  {readOnly
+                    ? "메모가 작성되면 이곳에서 내용을 확인할 수 있습니다."
+                    : "Markdown 문서로 연간 업무 전체에 대한 메모를 기록할 수 있습니다."}
+                </p>
+              </div>
+            )
           ) : (
             !!documents.length && (
               <div className="document-empty">
@@ -915,7 +946,7 @@ export default forwardRef<DocumentPanelHandle, Props>(
           </div>
           {!readOnly && (
             <Button
-              tooltip={props.inline ? "메모 추가" : "문서 추가"}
+              tooltip={memos ? "메모 추가" : "문서 추가"}
               className={props.inline ? "memo-add-document" : undefined}
               disabled={
                 busy ||

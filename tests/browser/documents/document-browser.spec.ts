@@ -1276,3 +1276,288 @@ test("공통 메뉴는 문서 저장 후 열리고 표 단축키가 문서 화�
     "로그아웃 전에 저장할 문서",
   );
 });
+
+const memoItem = (page: Page, source = "live") =>
+  sheet(page, source).locator(".document-browser-memos");
+const memoRich = (page: Page) =>
+  detail(page).getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+const memoRaw = (page: Page) =>
+  detail(page).getByRole("textbox", { name: "연간 업무 메모 Markdown 원문" });
+async function addMemo(page: Page, base: string, title: string, text: string) {
+  const id = randomUUID();
+  await send(page, base, { id, title });
+  await send(
+    page,
+    `${base}/${id}`,
+    { markdown: text, expectedRevision: 0, operationId: randomUUID() },
+    "PUT",
+  );
+  return id;
+}
+async function expandSource(page: Page, source: string) {
+  const toggle = sheet(page, source).locator(".document-browser-source-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+}
+
+test("원본 목록 맨 아래의 꼬리 메모는 검색과 관계없이 남고 편집 내용을 연간 업무 메모에 저장한다", async ({
+  page,
+}, info) => {
+  const memoBase = `/teams/${teamId}/years/2026/memos`;
+  const memoId = await addMemo(
+    page,
+    memoBase,
+    "회의 메모",
+    "# 회의\n\n원본 메모 본문입니다.",
+  );
+  await openBrowser(page, "live");
+  const item = memoItem(page);
+  // The memo item closes the source after its tasks.
+  await expect(
+    sheet(page).locator(".document-browser-source-body > :last-child"),
+  ).toHaveClass("document-browser-memos");
+  await expect(
+    item.getByRole("img", { name: "등록된 메모 1개", exact: true }),
+  ).toBeVisible();
+  await item.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  const memoButton = item.getByRole("button", {
+    name: "회의 메모",
+    exact: true,
+  });
+  await expect(
+    memoButton.locator(".document-browser-document-preview"),
+  ).toHaveText("회의 원본 메모 본문입니다.");
+  const search = page.getByRole("searchbox", { name: "작업 이름 검색" });
+  for (const q of ["서비스 사용성", "존재하지않는문구"]) {
+    await search.fill(q);
+    await expect(
+      page.getByRole("status").filter({ hasText: "검색 결과" }),
+    ).toBeVisible();
+    await expect(
+      item.getByRole("button", { name: "꼬리 메모", exact: true }),
+    ).toBeVisible();
+    await expect(memoButton).toBeVisible();
+  }
+  await search.fill("");
+  await expect(
+    sheet(page).locator(".document-browser-task-toggle"),
+  ).toHaveCount(2);
+  await item.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await expect(
+    detail(page).getByRole("tab", { name: "회의 메모", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(memoButton).toHaveAttribute("aria-current", "true");
+  await expect(
+    detail(page).locator(".document-browser-detail-bar"),
+  ).toContainText("원본 / 꼬리 메모");
+  await expect(
+    detail(page).locator(".document-browser-detail-bar small"),
+  ).toHaveText("자동 저장");
+  await expect(memoRich(page)).toContainText("원본 메모 본문입니다.");
+  if (info.project.name === "chromium")
+    await page.screenshot({ path: info.outputPath("original-memos.png") });
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  await memoRaw(page).fill("문서 브라우저에서 고친 원본 메모");
+  await expect(
+    memoButton.locator(".document-browser-document-preview"),
+  ).toHaveText("문서 브라우저에서 고친 원본 메모");
+  await memoRaw(page).fill("작업 문서로 이동하기 전에 저장할 메모");
+  await openDocument(page, "live", "설계 노트");
+  expect((await get(page, `${memoBase}/${memoId}`)).markdown).toBe(
+    "작업 문서로 이동하기 전에 저장할 메모",
+  );
+  await expect(memoButton).not.toHaveAttribute("aria-current", "true");
+  await memoButton.click();
+  await expect(memoRich(page)).toContainText("작업 문서로 이동하기 전에");
+  await expect(memoButton).toHaveAttribute("aria-current", "true");
+  await page.getByRole("button", { name: "연간 업무로 돌아가기" }).click();
+  const memos = page.getByRole("region", { name: "연간 업무 메모 목록" });
+  await memos
+    .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+    .click();
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toContainText("작업 문서로 이동하기 전에 저장할 메모");
+});
+
+test("전체 범위에서 사본마다 자기 꼬리 메모를 붙이고 사본 메모 편집은 원본을 바꾸지 않는다", async ({
+  page,
+}, info) => {
+  const memoBase = `/teams/${teamId}/years/2026/memos`;
+  const memoId = await addMemo(
+    page,
+    memoBase,
+    "공유 메모",
+    "사본을 만들기 전의 원본 메모",
+  );
+  const copyC = (
+    await send(page, "/sheet-clones", {
+      teamId,
+      year: 2026,
+      name: "메모 사본",
+      referenceDate: "2026-10-17",
+      view: defaultView(2026),
+      taskIds: [taskId],
+    })
+  ).id;
+  await openBrowser(page, "all");
+  for (const [source, count] of [
+    ["live", 1],
+    [copyA, 0],
+    [copyB, 0],
+    [copyC, 1],
+  ] as const) {
+    await expandSource(page, source);
+    await expect(
+      sheet(page, source).locator(
+        ".document-browser-source-body > :last-child",
+      ),
+    ).toHaveClass("document-browser-memos");
+    await expect(
+      memoItem(page, source).getByRole("img", {
+        name: `등록된 메모 ${count}개`,
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
+  if (info.project.name === "chromium")
+    await page.screenshot({ path: info.outputPath("copy-memos.png") });
+  const copyItem = memoItem(page, copyC);
+  await copyItem.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  await copyItem
+    .getByRole("button", { name: "공유 메모", exact: true })
+    .click();
+  await expect(
+    detail(page).locator(".document-browser-detail-bar"),
+  ).toContainText("메모 사본 / 꼬리 메모");
+  await expect(memoRich(page)).toContainText("사본을 만들기 전의 원본 메모");
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  await memoRaw(page).fill("사본에서만 고친 메모");
+  await expect(
+    copyItem
+      .getByRole("button", { name: "공유 메모", exact: true })
+      .locator(".document-browser-document-preview"),
+  ).toHaveText("사본에서만 고친 메모");
+  // An empty copy offers to add its first memo in the detail pane.
+  await memoItem(page, copyA)
+    .getByRole("button", { name: "꼬리 메모", exact: true })
+    .click();
+  expect(
+    (await get(page, `/sheet-clones/${copyC}/memos/${memoId}`)).markdown,
+  ).toBe("사본에서만 고친 메모");
+  expect((await get(page, `${memoBase}/${memoId}`)).markdown).toBe(
+    "사본을 만들기 전의 원본 메모",
+  );
+  await expect(
+    detail(page).getByRole("heading", { name: "꼬리 메모를 남겨 보세요" }),
+  ).toBeVisible();
+  if (info.project.name === "chromium")
+    await page.screenshot({ path: info.outputPath("empty-copy-memos.png") });
+  await detail(page)
+    .getByRole("button", { name: "메모 추가", exact: true })
+    .click();
+  await expect(
+    detail(page).getByRole("tab", { name: "메모 1", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  await memoRaw(page).fill("빈 사본에 추가한 메모");
+  const added = memoItem(page, copyA).getByRole("button", {
+    name: "메모 1",
+    exact: true,
+  });
+  await expect(added).toHaveAttribute("aria-current", "true");
+  await expect(added.locator(".document-browser-document-preview")).toHaveText(
+    "빈 사본에 추가한 메모",
+  );
+  await page.getByRole("button", { name: "연간 업무로 돌아가기" }).click();
+  expect(
+    (await get(page, `/sheet-clones/${copyA}/memos`)).documents.map(
+      (doc: { title: string }) => doc.title,
+    ),
+  ).toEqual(["메모 1"]);
+  expect(
+    (await get(page, memoBase)).documents.map(
+      (doc: { title: string }) => doc.title,
+    ),
+  ).toEqual(["공유 메모"]);
+  expect((await get(page, `/sheet-clones/${copyB}/memos`)).documents).toEqual(
+    [],
+  );
+});
+
+test("열람자는 꼬리 메모를 읽기만 하고 빈 사본에는 추가 버튼 없이 안내를 본다", async ({
+  page,
+}) => {
+  await addMemo(
+    page,
+    `/teams/${teamId}/years/2026/memos`,
+    "읽기 메모",
+    "열람자가 읽는 메모",
+  );
+  const username = `memo-viewer-${randomUUID()}@example.com`;
+  await send(page, "/admin/users", {
+    username,
+    password: "local-test-only-password",
+    name: "메모 열람자",
+    memberships: [{ teamId, role: "viewer" }],
+  });
+  await page.context().clearCookies();
+  await send(page, "/auth/login", {
+    username,
+    password: "local-test-only-password",
+  });
+  await page.reload();
+  await openBrowser(page);
+  await memoItem(page)
+    .getByRole("button", { name: "꼬리 메모", exact: true })
+    .click();
+  await expect(memoRich(page)).toContainText("열람자가 읽는 메모");
+  await expect(memoRich(page)).toHaveAttribute("contenteditable", "false");
+  await expect(
+    detail(page).locator(".document-browser-detail-bar small"),
+  ).toHaveText("읽기 전용");
+  await expect(
+    detail(page).getByRole("button", { name: "메모 추가", exact: true }),
+  ).toHaveCount(0);
+  await expandSource(page, copyA);
+  await memoItem(page, copyA)
+    .getByRole("button", { name: "꼬리 메모", exact: true })
+    .click();
+  await expect(
+    detail(page).getByRole("heading", { name: "작성된 메모가 없습니다." }),
+  ).toBeVisible();
+  await expect(
+    detail(page).getByRole("button", { name: "메모 추가", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("휴대폰 폭에서도 꼬리 메모는 작업처럼 상세를 열고 목록으로 돌아온다", async ({
+  page,
+}, info) => {
+  await addMemo(
+    page,
+    `/teams/${teamId}/years/2026/memos`,
+    "휴대폰 메모",
+    "좁은 화면에서 읽는 메모",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openBrowser(page, "live");
+  const item = memoItem(page);
+  await item.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  await item.getByRole("button", { name: "휴대폰 메모", exact: true }).click();
+  await expect(memoRich(page)).toContainText("좁은 화면에서 읽는 메모");
+  await expect(tree(page)).toBeHidden();
+  if (info.project.name === "chromium")
+    await page.screenshot({ path: info.outputPath("mobile-memos.png") });
+  await detail(page).getByRole("button", { name: "목록으로" }).click();
+  await expect(tree(page)).toBeVisible();
+  await expect(
+    item.getByRole("button", { name: "휴대폰 메모", exact: true }),
+  ).toHaveAttribute("aria-current", "true");
+});

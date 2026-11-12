@@ -127,7 +127,10 @@
 .document-browser-task-toggle,
 .document-browser-task-open,
 .document-browser-group-toggle,
-.document-browser-document {
+.document-browser-document,
+.document-browser-memo-toggle,
+.document-browser-memo-open,
+.document-browser-memo-document {
   display: flex;
   align-items: center;
   width: 100%;
@@ -226,18 +229,36 @@
 .document-browser-task {
   margin: 3px 0;
 }
+/* Each source's tail memos close its list, after the tasks and paging. */
+.document-browser-memos {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+.document-browser-memo-icon {
+  color: var(--document-accent);
+}
+.document-browser-memo-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  font-size: 12px;
+}
 .document-browser-task-header {
   display: flex;
   align-items: center;
 }
-.document-browser-task-toggle {
+.document-browser-task-toggle,
+.document-browser-memo-toggle {
   flex: 0 0 26px;
   width: 26px;
   align-self: stretch;
   padding: 7px 4px;
   border-radius: 4px;
 }
-.document-browser-task-open {
+.document-browser-task-open,
+.document-browser-memo-open {
   flex: 1;
   min-width: 0;
   padding: 7px 4px 7px 0;
@@ -259,7 +280,8 @@
   font-size: 13px;
   font-weight: 600;
 }
-.document-browser-document-count {
+.document-browser-document-count,
+.document-browser-memo-count {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -297,7 +319,8 @@
   border-left: 1px solid var(--line);
   padding-left: 8px;
 }
-.document-browser-document {
+.document-browser-document,
+.document-browser-memo-document {
   gap: var(--document-icon-gap);
   padding: 9px 10px;
   border-radius: 5px;
@@ -331,10 +354,14 @@
 .document-browser-source-toggle:hover,
 .document-browser-task-toggle:hover,
 .document-browser-task-open:hover,
-.document-browser-document:hover {
+.document-browser-document:hover,
+.document-browser-memo-toggle:hover,
+.document-browser-memo-open:hover,
+.document-browser-memo-document:hover {
   background: var(--surface);
 }
-.document-browser-document[aria-current="true"] {
+.document-browser-document[aria-current="true"],
+.document-browser-memo-document[aria-current="true"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;
