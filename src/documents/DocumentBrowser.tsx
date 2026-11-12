@@ -282,6 +282,8 @@ export default function DocumentBrowser({
   const previousRefresh = useRef(refresh);
   const content = useRef<TaskDetailHandle>(null);
   const memoPanel = useRef<DocumentPanelHandle>(null);
+  // A memo chosen before the memo panel had its list; opened once it has.
+  const pendingMemo = useRef("");
   const [memoLoading, setMemoLoading] = useState(true);
   const navigation = useRef(false);
   const split = useRef<HTMLDivElement>(null);
@@ -654,9 +656,13 @@ export default function DocumentBrowser({
         if (
           documentId &&
           !(await memoPanel.current?.selectDocument(documentId))
-        )
-          return;
+        ) {
+          // The loading panel cannot switch tabs yet; it does when it opens.
+          if (!memoLoading) return;
+          pendingMemo.current = documentId;
+        }
       } else {
+        pendingMemo.current = "";
         setDetail(null);
         setMemoLoading(true);
         saveRevision.current = null;
@@ -675,6 +681,13 @@ export default function DocumentBrowser({
       setMemosOpen((old) => new Set(old).add(source.id));
       setMobileDetail(true);
     });
+  }
+  function showMemo(documentId: string) {
+    setSelected((previous) =>
+      previous?.memo && previous.documentId !== documentId
+        ? { ...previous, documentId }
+        : previous,
+    );
   }
   async function saveProperty(
     payload: PropertySaveRequest,
@@ -1359,13 +1372,17 @@ export default function DocumentBrowser({
                       userId={boot.user.id}
                       readOnly={!canContribute(boot.user, teamId)}
                       initialDocumentId={selected.documentId || undefined}
-                      onDocumentSelected={(id) =>
-                        setSelected((previous) =>
-                          previous?.memo && previous.documentId !== id
-                            ? { ...previous, documentId: id }
-                            : previous,
-                        )
-                      }
+                      onDocumentSelected={(id) => {
+                        const pending = pendingMemo.current;
+                        pendingMemo.current = "";
+                        if (pending && pending !== id)
+                          void memoPanel.current
+                            ?.selectDocument(pending)
+                            .then((opened) => {
+                              if (!opened) showMemo(id);
+                            });
+                        else showMemo(id);
+                      }}
                       onSaved={() => memosChanged(selected.source)}
                       onListChanged={() => memosChanged(selected.source)}
                       onLoadingChange={setMemoLoading}

@@ -1644,3 +1644,41 @@ test("꼬리 메모는 불러오는 중·실패 후 다시 시도를 표시하�
   );
   expect(memoRequests).toHaveLength(2);
 });
+
+test("꼬리 메모 패널이 목록을 불러오는 중에 고른 메모는 불러온 뒤 그 탭으로 열린다", async ({
+  page,
+}) => {
+  const memoBase = `/teams/${teamId}/years/2026/memos`;
+  await addMemo(page, memoBase, "첫 메모", "첫 메모 본문");
+  await addMemo(page, memoBase, "둘째 메모", "나중에 고른 메모 본문");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // Hold only the panel's own list; the tree's preview list answers at once.
+  await page.route(
+    (url) => url.pathname === `/api${memoBase}` && !url.search,
+    async (route) => {
+      await held;
+      await route.continue();
+    },
+  );
+  await openBrowser(page, "live");
+  const item = memoItem(page);
+  await item.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  const second = item.getByRole("button", { name: "둘째 메모", exact: true });
+  await expect(second).toBeVisible();
+  await item.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await expect(
+    detail(page).locator(".document-browser-detail-bar"),
+  ).toContainText("원본 / 꼬리 메모");
+  await second.click();
+  await expect(second).toHaveAttribute("aria-current", "true");
+  release();
+  await expect(
+    detail(page).getByRole("tab", { name: "둘째 메모", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(memoRich(page)).toContainText("나중에 고른 메모 본문");
+  await expect(second).toHaveAttribute("aria-current", "true");
+  await expect(
+    item.getByRole("button", { name: "첫 메모", exact: true }),
+  ).not.toHaveAttribute("aria-current", "true");
+});
