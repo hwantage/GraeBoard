@@ -25,29 +25,38 @@ export function usePopover(
       const rect = trigger.current!.getBoundingClientRect();
       const height = popup.current?.offsetHeight || 280;
       const popupWidth = popup.current?.offsetWidth || width;
-      setPosition({
-        top: Math.max(
-          8,
-          Math.min(rect.bottom + 4, window.innerHeight - height - 8),
+      const top = Math.max(
+        8,
+        Math.min(rect.bottom + 4, window.innerHeight - height - 8),
+      );
+      const left = Math.max(
+        8,
+        Math.min(
+          align === "end" ? rect.right - popupWidth : rect.left,
+          window.innerWidth - popupWidth - 8,
         ),
-        left: Math.max(
-          8,
-          Math.min(
-            align === "end" ? rect.right - popupWidth : rect.left,
-            window.innerWidth - popupWidth - 8,
-          ),
-        ),
-      });
+      );
+      // An unchanged place keeps the same object, so the popup does not
+      // render again.
+      setPosition((previous) =>
+        previous.top === top && previous.left === left
+          ? previous
+          : { top, left },
+      );
+    };
+    // Scrolling inside the popup (a long list) does not move it.
+    const scrolled = (event: Event) => {
+      if (!popup.current?.contains(event.target as Node)) place();
     };
     place();
     if (focusOnOpen) popup.current?.querySelector("button")?.focus();
     const observer = new ResizeObserver(place);
     if (popup.current) observer.observe(popup.current);
     window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
+    window.addEventListener("scroll", scrolled, true);
     return () => {
       window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("scroll", scrolled, true);
       observer.disconnect();
     };
   }, [open]);
