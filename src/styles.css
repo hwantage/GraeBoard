@@ -5716,10 +5716,6 @@ body.document-block-moving * {
   .workspace .date-controls {
     flex-basis: 100%;
   }
-  .workspace .sheet-cell .task-document-indicator.is-empty {
-    opacity: 0.65;
-    pointer-events: auto;
-  }
   .modal.wide.settings-modal {
     width: calc(100vw - 12px);
     height: calc(100dvh - 24px);
