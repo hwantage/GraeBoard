@@ -36,6 +36,7 @@ const REASONS = {
   "Delete conflicts with edit":
     "한쪽은 삭제하고 다른 쪽은 고쳐서 보관했습니다.",
   "Entity deleted": "항목이 그사이 삭제되어 보관했습니다.",
+  "Duplicate name": "같은 이름이 이미 있어 보관했습니다.",
 };
 
 const FIELD_NAMES = {

@@ -99,6 +99,36 @@ export function conflictOrigin(
 export const RESOLUTION_PENDING =
   "이 충돌은 이미 해결 방법을 저장했습니다. 다음 동기화 때 공유됩니다.";
 
+const REJECTED_BECAUSE = {
+  "Duplicate name": "같은 이름이 이미 있어",
+  "Concurrent field change": "그사이 같은 항목이 다시 바뀌어",
+  "Failed dependency": "앞선 수정이 아직 보관된 상태라",
+  "Parent task deleted": "상위 업무가 삭제되어",
+  "Entity already exists": "같은 항목이 이미 있어",
+  "Restore base changed": "복원하려던 항목이 그사이 바뀌어",
+  "Entity generation changed": "항목이 그사이 다시 만들어져",
+  "Delete conflicts with edit": "삭제하려던 항목이 그사이 고쳐져",
+  "Entity deleted": "항목이 삭제되어",
+};
+
+/** `details.code` of a refused resolution, for the conflict box guidance. */
+export const RESOLUTION_REJECTED = "resolution-rejected";
+
+/**
+ * A resolution applied after what is shared and pending that would itself be
+ * archived as a new conflict. It would leave this conflict open and add
+ * another one, so each retry would only grow the conflict box; both servers
+ * refuse it before saving. `reason` is the reducer's conflict reason.
+ */
+export const resolutionRejected = (reason) => ({
+  message: `${rejectedBecause(reason)} 먼저 수정으로 유지하거나 직접 고치기로 고친 뒤 적용하세요.`,
+  details: { code: RESOLUTION_REJECTED, reason: reason || null },
+});
+
+/** "같은 이름이 이미 있어 반영하면 다시 충돌합니다." for a refused resolution. */
+export const rejectedBecause = (reason) =>
+  `${REJECTED_BECAUSE[reason] || "그사이 바뀐 내용과 부딪혀"} 반영하면 다시 충돌합니다.`;
+
 // A resolution waiting to be published already decides these conflicts; a
 // second one would race it and could itself conflict.
 export const resolvesAny = (pending, conflictIds) =>

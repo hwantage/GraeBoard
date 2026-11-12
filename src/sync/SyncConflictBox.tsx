@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
-import { api, send } from "../platform/api";
+import { api, send, type ApiError } from "../platform/api";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
 import { Modal } from "../ui/Modal";
@@ -15,10 +15,17 @@ import {
   conflictEditors,
   conflictKinds,
 } from "../../shared/sync/conflict-diff.js";
+import {
+  RESOLUTION_REJECTED,
+  rejectedBecause,
+} from "../../shared/sync/conflict-origin.js";
 import { syncErrorMessage } from "../../shared/sync/sync-error-message.js";
 import "./team-sync-settings.css";
 
 type Choice = "current" | "submitted" | "edited";
+// A resolution both servers refused because it would conflict again (see
+// resolutionRejected in shared/sync/conflict-origin.js).
+type Refusal = { choice: Choice; reason: string | null };
 export type Conflict = {
   conflictId: string;
   opId: string;
@@ -71,6 +78,7 @@ export default function SyncConflictBox({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [refusals, setRefusals] = useState<Record<string, Refusal>>({});
   // Conflicts checked for a batch resolution, and its progress or result.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batch, setBatch] = useState("");
@@ -104,6 +112,20 @@ export default function SyncConflictBox({
   }, [teamId]);
   const fail = (conflictId: string, message: string) =>
     setErrors((current) => ({ ...current, [conflictId]: message }));
+  // Remember a refusal so its card can guide the person to keep the first
+  // edit; any other error stays a plain error note. Returns whether refused.
+  const refuse = (conflictId: string, choice: Choice, error?: unknown) => {
+    const details = (error as ApiError | undefined)?.details;
+    const refused = details?.code === RESOLUTION_REJECTED;
+    setRefusals((current) => {
+      const next = { ...current };
+      if (refused)
+        next[conflictId] = { choice, reason: details.reason ?? null };
+      else delete next[conflictId];
+      return next;
+    });
+    return refused;
+  };
   const submit = (conflict: Conflict, choice: Choice, desired?: unknown) =>
     send(
       `${prefix}/conflicts/${encodeURIComponent(conflict.conflictId)}/resolve`,
@@ -134,22 +156,31 @@ export default function SyncConflictBox({
       return;
     setBusy(true);
     setEditing("");
-    let saved = 0;
+    let saved = 0,
+      refused = 0;
     for (const [index, conflict] of targets.entries()) {
       setBatch(`${index + 1}/${targets.length} 처리 중…`);
       fail(conflict.conflictId, "");
+      refuse(conflict.conflictId, choice);
       try {
         await submit(conflict, choice);
         saved++;
       } catch (error) {
-        fail(conflict.conflictId, failure(error));
+        if (refuse(conflict.conflictId, choice, error)) refused++;
+        else fail(conflict.conflictId, failure(error));
       }
     }
     const failed = targets.length - saved;
     setBatch(
-      failed
-        ? `${saved}개 저장, ${failed}개 실패했습니다. 실패한 항목을 펼쳐 이유를 확인하세요.`
-        : `충돌 ${saved}개의 해결 방법을 저장했습니다. 다음 동기화 때 상대 사이트에도 반영됩니다.`,
+      !failed
+        ? `충돌 ${saved}개의 해결 방법을 저장했습니다. 다음 동기화 때 상대 사이트에도 반영됩니다.`
+        : `${saved}개 저장, ${failed}개 실패했습니다. ` +
+            (refused
+              ? `이 중 ${refused}개는 반영하면 다시 충돌해 저장하지 않았습니다. "덮어쓰기 불가" 항목을 펼쳐 사라질 나중에 수정 내용을 확인하고 정리한 뒤 먼저 수정으로 유지하세요.` +
+                (failed > refused
+                  ? " 나머지는 항목을 펼쳐 이유를 확인하세요."
+                  : "")
+              : "실패한 항목을 펼쳐 이유를 확인하세요."),
     );
     if (saved) onChanged?.();
     await load().catch(() => {});
@@ -169,13 +200,15 @@ export default function SyncConflictBox({
     }
     setBusy(true);
     fail(conflict.conflictId, "");
+    refuse(conflict.conflictId, choice);
     try {
       await submit(conflict, choice, desired);
       setEditing("");
       onChanged?.();
     } catch (error) {
       // Keep manually edited text on a rejected or interrupted resolution.
-      fail(conflict.conflictId, failure(error));
+      if (!refuse(conflict.conflictId, choice, error))
+        fail(conflict.conflictId, failure(error));
     } finally {
       // Show the saved resolution, or what another tab already saved.
       await load().catch(() => {});
@@ -211,7 +244,8 @@ export default function SyncConflictBox({
           <section className="team-sync-conflicts" aria-label="충돌 보관함">
             {conflicts.map((conflict) => {
               const saved = conflict.pendingResolution,
-                edit = editing === conflict.conflictId;
+                edit = editing === conflict.conflictId,
+                refusal = saved ? undefined : refusals[conflict.conflictId];
               return (
                 <details
                   key={conflict.conflictId}
@@ -251,6 +285,13 @@ export default function SyncConflictBox({
                         해결 저장됨
                       </span>
                     )}
+                    {refusal && (
+                      <span className="tag team-sync-conflict-refused">
+                        {refusal.choice === "edited"
+                          ? "고친 내용 충돌"
+                          : "덮어쓰기 불가"}
+                      </span>
+                    )}
                     <time dateTime={conflict.createdAt}>
                       {syncTime(conflict.createdAt)}
                     </time>
@@ -264,6 +305,7 @@ export default function SyncConflictBox({
                         사이트에도 반영되고, 그 뒤 이 목록에서 사라집니다.
                       </p>
                     )}
+                    {refusal && <RefusalGuide refusal={refusal} />}
                     <SyncConflictDiff conflict={conflict} people={people} />
                     <SyncConflictRaw conflict={conflict} />
                     {!saved && edit && (
@@ -299,6 +341,7 @@ export default function SyncConflictBox({
                         ) : (
                           <>
                             <Button
+                              className={refusal ? "primary" : undefined}
                               {...busyProps(busy)}
                               onClick={() => void resolve(conflict, "current")}
                             >
@@ -335,6 +378,48 @@ export default function SyncConflictBox({
       )}
     </Modal>,
     document.body,
+  );
+}
+
+/**
+ * A refused resolution would only be archived again, so the card explains why
+ * and how to settle it: review what keeping the first edit discards, copy what
+ * must stay, then keep the first edit.
+ */
+function RefusalGuide({ refusal }: { refusal: Refusal }) {
+  return (
+    <div className="team-sync-conflict-guide" role="alert">
+      <p>
+        <strong>
+          {refusal.choice === "edited"
+            ? "고친 내용으로 해결할 수 없습니다."
+            : "나중에 수정으로 덮어쓸 수 없습니다."}
+        </strong>{" "}
+        {rejectedBecause(refusal.reason)} 상황이 그대로면 다시 눌러도 같은
+        이유로 저장되지 않으니 아래 순서로 정리하세요.
+      </p>
+      <ol>
+        <li>
+          아래 비교에서 <strong>나중에 수정</strong>을 눌러, 먼저 수정으로
+          유지하면 사라질 내용을 확인합니다. 겹치지 않은 항목이 있으면 함께 펼쳐
+          확인하세요.
+        </li>
+        <li>
+          남겨야 할 내용은 복사해 두었다가, 충돌을 정리한 뒤 화면에서 다시
+          입력합니다.
+        </li>
+        <li>
+          <strong>먼저 수정으로 유지</strong>를 누릅니다. 나중에 수정은
+          버려지고, 이 항목은 다음 동기화 뒤 목록에서 사라집니다.
+        </li>
+      </ol>
+      {refusal.reason === "Duplicate name" && (
+        <p>
+          나중에 수정을 그대로 살리려면 <strong>직접 고치기</strong>에서
+          이름(name)을 겹치지 않게 바꿔 적용할 수도 있습니다.
+        </p>
+      )}
+    </div>
   );
 }
 

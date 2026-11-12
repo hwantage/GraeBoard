@@ -1352,6 +1352,138 @@ test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결�
   );
 });
 
+test("충돌 보관함은 다시 충돌할 덮어쓰기를 거절된 항목으로 표시하고 먼저 수정으로 유지하도록 안내한다", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1080, height: 900 });
+  const bootstrap = await configuredBootstrap(page);
+  const saved = new Map<string, string>();
+  const requests: [string, string][] = [];
+  const copyConflict = (id: string) => {
+    const key = [`${id}-copy`];
+    return {
+      conflictId: id,
+      opId: id,
+      createdAt: "2026-11-08T07:57:17.000Z",
+      target: "sheetClone " + key.join("/"),
+      result: "Duplicate name",
+      base: [null],
+      current: { [JSON.stringify(["sheetClone", key])]: null },
+      desired: [{ name: "2026-11-08의 사본 (2)", year: 2026 }],
+      expectedHead: "head-1",
+      frontier: [id],
+      resolved: false,
+      origin: {
+        held: { site: "external", actor: "김정환", createdAt: null },
+        writers: {},
+      },
+      pendingResolution: saved.has(id)
+        ? {
+            opId: "resolution-" + id,
+            createdAt: "2026-11-12T11:00:00.000Z",
+            choice: saved.get(id),
+          }
+        : null,
+    };
+  };
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        profileId: "local",
+        pending: 0,
+        conflicts: 2,
+        canonicalHead: "head-1",
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({
+      json: { conflicts: ["c1", "c2"].map(copyConflict) },
+    }),
+  );
+  await page.route(
+    `**/api/teams/${teamId}/sync/conflicts/*/resolve`,
+    (route) => {
+      const id = route.request().url().split("/").at(-2)!,
+        { choice } = route.request().postDataJSON();
+      requests.push([id, choice]);
+      // Both servers refuse an overwrite that would be archived again.
+      if (id === "c1" && choice === "submitted")
+        return route.fulfill({
+          status: 409,
+          json: {
+            error:
+              "같은 이름이 이미 있어 반영하면 다시 충돌합니다. 먼저 수정으로 유지하거나 직접 고치기로 고친 뒤 적용하세요.",
+            details: { code: "resolution-rejected", reason: "Duplicate name" },
+          },
+        });
+      saved.set(id, choice);
+      return route.fulfill({ json: { opId: "resolution-" + id } });
+    },
+  );
+  await page.reload();
+  await page
+    .locator(".topbar")
+    .getByRole("button", { name: "충돌 보관함" })
+    .click();
+  const box = page.getByRole("dialog", { name: "충돌 보관함" });
+  const items = box.locator(".team-sync-conflict");
+  await expect(items).toHaveCount(2);
+  await box.getByLabel("전체 선택").click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await box
+    .getByRole("group", { name: "선택한 충돌 일괄 해결" })
+    .getByRole("button", { name: "나중에 수정으로 덮어쓰기", exact: true })
+    .click();
+  await expect(box.locator(".team-sync-conflict-batch-status")).toHaveText(
+    '1개 저장, 1개 실패했습니다. 이 중 1개는 반영하면 다시 충돌해 저장하지 않았습니다. "덮어쓰기 불가" 항목을 펼쳐 사라질 나중에 수정 내용을 확인하고 정리한 뒤 먼저 수정으로 유지하세요.',
+  );
+  expect(requests).toEqual([
+    ["c1", "submitted"],
+    ["c2", "submitted"],
+  ]);
+  // The refused one is marked, stays selected and is left closed until the
+  // person opens it to review what keeping the first edit discards.
+  const refused = items.nth(0);
+  await expect(refused.locator(":scope > summary")).toContainText(
+    "덮어쓰기 불가",
+  );
+  await expect(refused).not.toHaveAttribute("open", "");
+  await expect(box.locator(".team-sync-conflict-batch-count")).toHaveText(
+    "1개 선택",
+  );
+  await refused.locator(":scope > summary").click();
+  const guide = refused.locator(".team-sync-conflict-guide");
+  await expect(guide).toContainText("나중에 수정으로 덮어쓸 수 없습니다.");
+  await expect(guide).toContainText(
+    "같은 이름이 이미 있어 반영하면 다시 충돌합니다.",
+  );
+  await expect(guide).toContainText("직접 고치기");
+  // The guide replaces the plain error note.
+  await expect(refused.locator(".error-note")).toHaveCount(0);
+  await refused.getByRole("button", { name: "나중에 수정 (외부)" }).click();
+  await expect(
+    refused.locator(".sync-diff-legend", {
+      hasText: "나중에 수정이 바꾸려던 부분",
+    }),
+  ).toBeVisible();
+  const keep = refused.getByRole("button", {
+    name: "먼저 수정으로 유지",
+    exact: true,
+  });
+  await expect(keep).toHaveClass(/primary/);
+  await keep.click();
+  await expect(refused.locator(":scope > summary")).toContainText(
+    "해결 저장됨",
+  );
+  await expect(refused.locator(".team-sync-conflict-guide")).toHaveCount(0);
+  expect(requests.at(-1)).toEqual(["c1", "current"]);
+});
+
 test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된 작업을 이어서 실행한다", async ({
   page,
 }) => {
