@@ -829,14 +829,16 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
     const single =
       range.from === block.pos && range.to === block.pos + block.node.nodeSize;
     const text = block.node.type.name === "table" ? null : firstText(block);
-    // Conversions act on the caret, so it moves into the block first. The
+    // Conversions act on the caret, so it moves into the block's first line
+    // first, also from a sub-item or a toggle's content inside the block. The
     // start of the line never completes a "/" query. Selected blocks keep
     // their selection, and every item acts on all of them.
     const { selection } = view.state;
     if (
       single &&
       text !== null &&
-      (selection.from < block.pos ||
+      (selection.from < text ||
+        selection.from > view.state.doc.resolve(text).end() ||
         selection.to > block.pos + block.node.nodeSize)
     )
       view.dispatch(
