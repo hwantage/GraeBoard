@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-12 — 업무 상세 설명의 링크를 열고 수정 버튼으로 편집
+
+- 사용자 요청(2026-11-12): 업무 상세 팝업의 설명에 있는 `#111111` 같은 글자가 하이퍼링크가 되지 않았습니다. 설명은 누르면 바로 수정되는 입력칸이라서였습니다. 설명 오른쪽의 작은 수정 아이콘으로 수정하도록 바꾸고, 제목은 그대로 두어 달라는 요청이었습니다.
+- 원인: `TaskPropertyEditor`가 설명을 항상 `textarea`로 그려 `textLinks`(웹 주소·`#` 여섯 자리 Redmine 번호)를 표에서만 사용했습니다.
+- 수정: 표 셀의 링크 그리기를 `src/sheet/LinkedText.tsx`로 옮기고 `Grid`와 상세 설명이 같이 씁니다. 표 셀의 DOM·`cell-linked-text`·글자 장식·`onPointerDown` 처리는 그대로입니다. 상세 설명은 평소 한 줄 표시(말줄임, 전체 글은 `title`)로 링크를 새 탭에서 열고, 글자 클릭으로는 편집을 시작하지 않습니다. 오른쪽 **설명 수정**(lucide `Pencil`, 툴팁, 항상 표시) 버튼이나 빈 설명의 **설명을 입력하세요…**를 누르면 기존 입력칸을 열고 끝에 커서를 둡니다. 입력칸은 포커스가 있거나 저장하지 않은 입력이 있는 동안 유지되므로, 저장에 성공하면 표시로 돌아가고 실패하면 입력과 **저장 다시 시도**·**입력 취소**가 남습니다. Enter·Esc로 마쳐 표시로 돌아오면 초점을 수정 버튼에 둡니다(그사이 다른 곳에 초점이 있으면 옮기지 않음). 링크 색은 표와 같은 규칙(`.sheet-cell a`, `.task-detail-description a`)을 씁니다. 터치 기기에서는 버튼 크기를 바꾸지 않고 누르는 영역만 넓혔습니다. 읽기 전용(보기 권한·`propertiesReadOnly`·발표 모드)은 링크만 표시하고 버튼이 없습니다. 자동 저장·셀 버전·재시도 경로, 제목 입력, DB·저장 형식은 바꾸지 않았고 사내·외부 서버에 같은 화면이 적용됩니다.
+- 검증: `tests/browser/sheet/workspace.spec.ts`에 검사 1건을 추가했습니다. `#123456`·웹 주소의 링크 주소와 새 탭 열기, 링크·글자 클릭으로 편집이 시작되지 않는지 확인합니다. 수정 버튼으로 끝에 커서가 놓인 입력칸이 같은 높이로 열리고 Enter로 저장 후 표시·초점이 돌아오는지도 확인합니다. 저장 실패(503) 때 입력 유지와 재시도 후 표시, 빈 설명의 안내 문구 클릭, 390px의 한 줄 말줄임, 발표 모드의 버튼 없음·**설명 없음**도 봅니다. 설명을 바로 입력하던 기존 검사 2건은 수정 버튼을 먼저 누르도록 바꿨습니다. `npm run check:structure`(오류 0)·`check:architecture`(위반 0)·`build`·`build:edge`가 통과했습니다. `E2E_PORT=4351 npx playwright test tests/browser/sheet/workspace.spec.ts tests/browser/documents/document-browser.spec.ts tests/browser/documents/document-links.spec.ts tests/browser/documents/task-documents.spec.ts tests/browser/platform/mobile.spec.ts tests/browser/sheet-clones/sheet-clone-editing.spec.ts --project=chromium`은 305건 모두 통과했습니다. 같은 명령의 `--project=firefox --project=webkit`은 586건 통과, 18건 skip(브라우저 조건), 6건 실패였습니다. 실패는 모두 WebKit이고 표 셀 편집·실행취소·저장된 필터·사용자 관리·사본 문서 개수 검사입니다(그중 하나는 `ECONNRESET`). 6건은 수정 전 `origin/main`(`098c213`) 빌드와 이 브랜치에서 따로 실행하면 모두 통과했습니다. 이 브랜치의 `workspace.spec.ts`·`task-documents.spec.ts`를 WebKit으로 다시 실행해도 229건 통과·6건 skip·실패 0이었습니다. 전체 Node 테스트와 전체 브라우저 검사는 실행하지 않았습니다.
+
 ## 2026-11-12 — 충돌 보관함 덮어쓰기가 충돌 수를 늘리던 문제
 
 - 사용자 보고(2026-11-12, 개발 사내 서버): 공유 충돌 보관함에서 전체 선택 후 **나중에 수정으로 덮어쓰기**를 할 때마다 충돌 수가 줄지 않고 늘었습니다(1→2→4→6→8).
