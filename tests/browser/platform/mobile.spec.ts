@@ -1154,6 +1154,53 @@ test("업무와 일정 문서는 처음부터 전체 화면이며 너비 설정�
   ).toBeVisible();
 });
 
+test("일정 상세의 긴 제목은 앞부터 보이고 시작일·종료일 칸은 겹치지 않는다", async ({
+  page,
+}, info) => {
+  const title = "[EndPoint][내부] 분석 시간 초과 DLPCenter 사용성 개선 요청";
+  const entry = await request(page, "/calendar/entries", "POST", {
+    id: randomUUID(),
+    teamId,
+    userId,
+    date: todayKey(),
+    endDate: addDays(todayKey(), 3),
+    title,
+  });
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page
+      .locator(`[data-entry-id="${entry.id}"] .calendar-entry-card`)
+      .first()
+      .tap();
+    const calendar = page.getByRole("dialog", {
+      name: "캘린더 일정",
+      exact: true,
+    });
+    const input = calendar.getByRole("textbox", {
+      name: "일정 제목",
+      exact: true,
+    });
+    await expect(input).toHaveValue(title);
+    await expect(input).not.toBeFocused();
+    expect(await input.evaluate((el) => el.scrollLeft)).toBe(0);
+    const boxes = [];
+    for (const name of ["일정 시작일", "일정 종료일"]) {
+      const field = calendar.getByLabel(name, { exact: true });
+      const box = (await field.boundingBox())!;
+      const label = (await field.locator("xpath=..").boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.x + box.width).toBeLessThanOrEqual(label.x + label.width + 1);
+      boxes.push(box);
+    }
+    expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x);
+    await screenshot(page, info, `calendar-entry-title-${width}`);
+    await calendar.getByRole("button", { name: "닫기", exact: true }).tap();
+    await expect(calendar).toHaveCount(0);
+  }
+});
+
 test("꼬리 메모와 링크 문서는 전체 화면으로 읽고 메모 탭·입력·저장 실패를 보존한다", async ({
   page,
 }, info) => {
