@@ -356,7 +356,7 @@ export function RowPanel({
               </div>
             ))}
           {documentFullPage && <DocumentFullWidthButton />}
-          <CopyEmojiButton />
+          <CopyEmojiButton userId={user.id} />
         </>
       }
     >

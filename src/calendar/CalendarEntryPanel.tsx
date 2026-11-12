@@ -373,7 +373,7 @@ export default function CalendarEntryPanel({
       headerActions={
         <>
           {documentFullPage && <DocumentFullWidthButton />}
-          <CopyEmojiButton />
+          <CopyEmojiButton userId={userId} />
         </>
       }
       titleAction={

@@ -180,7 +180,7 @@ export default function SecretCalendarEntryPanel({
       headerActions={
         <>
           {documentFullPage && <DocumentFullWidthButton />}
-          <CopyEmojiButton />
+          <CopyEmojiButton userId={entry.userId} />
         </>
       }
       titleAction={

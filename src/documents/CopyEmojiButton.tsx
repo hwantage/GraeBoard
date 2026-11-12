@@ -5,13 +5,14 @@ import { copyToClipboard } from "./document-links";
 
 // The emoji button just left of the close button in task and calendar entry
 // details. A picked emoji is copied for pasting into the title or document.
-export default function CopyEmojiButton() {
+export default function CopyEmojiButton({ userId }: { userId: string }) {
   const [message, setMessage] = useToast();
   const [failed, setFailed] = useState(false);
   return (
     <>
       <EmojiPicker
         label="이모지 복사"
+        userId={userId}
         className="emoji-copy"
         onPick={(emoji) => {
           copyToClipboard(emoji).then(
