@@ -27,7 +27,15 @@
 - 붙여넣기·IME 조합 중·Markdown 원문은 입력 규칙 대상이 아닙니다. 표 셀의 블록 단축키 차단은 그대로이며 화살표만 허용했습니다(문단 안 글자 교체라 GFM 표 저장에 영향이 없음). DB·저장 형식·서버 변경은 없고 저장 Markdown에는 Unicode 기호가 들어갑니다.
 - 확인한 점: 번들한 Pretendard 글꼴의 문맥 대체(`calt`)는 원문 textarea의 `->`·`<=>` 같은 글자를 화살표 모양으로 이어 그립니다. 저장된 글자는 바뀌지 않으며, 증거 화면 하나는 확인용으로 문맥 대체를 끈 CSS를 주입해 찍었습니다.
 - 남는 한계: 백틱 판단은 ProseMirror 입력 규칙의 500자 창이 아니라 문단 처음부터 커서까지의 일반 글을 셉니다. 닫지 않은 백틱이 일반 글자로 남아 있는 문단에서는 그 뒤의 화살표를 바꾸지 않으며, 백틱을 하나 더 넣으면 다시 바뀝니다.
-- 검증: RESULTS
+- 검증: `document-input.spec.ts`에 다음 검사를 추가했습니다.
+  - 여섯 변환 각각의 글자 사이 변환, Backspace·실행취소 복원, 저장 Markdown(6건)
+  - 합치기 조건: 기존 인라인 코드 안 백틱 무시, 커서 이동 뒤 `x←>` 유지, `**a<-**>`의 굵게 `a←`와 글자 `>`, Backspace로 되돌린 `<-` 뒤 `>`의 ↔와 `<->` 복원, 제목 `## x <->`·`## x a->`의 변환과 Backspace 복원
+  - 코드 블록·인라인 코드(백틱 입력 중과 기존 코드 안)·붙여넣기·원문 미변환, 표 셀·목록 변환
+  - 구분선(`---`) 단축키 유지, 꼬리 메모 편집기 두 개에서 첫 편집기·둘째 편집기·다시 첫 편집기 변환
+  - Chromium IME 한글 조합 앞뒤 변환
+- `document-mermaid.spec.ts`에는 Mermaid 소스에 한 글자씩 친 `<-->`·`==>`·`-.->`·`<==`가 그대로 저장되는 검사를 추가했습니다. 기존 `selectContents`에 커서를 끝에 두는 선택지를 더해 재사용했습니다.
+- 수정 전 확인: 첫 구현으로 빌드하면 합치기 검사가 백틱 단계에서 실패하고, 합치기 조건만 예전처럼 느슨하게 하면 굵게 단계에서 실패했습니다.
+- 실행 결과: `npm run check:structure`(0 errors)·`npm run check:architecture`(0 violations)·`npm run build`·`npm run build:edge`가 통과했습니다. `E2E_PORT=4354`로 `document-input`·`document-editor-blocks`·`document-mermaid` spec을 실행한 결과는 Chromium 71건 통과, Firefox·WebKit 135건 통과·7건 skip입니다. skip은 Chromium 전용 IME 검사 3건×2와 Firefox의 deviceScaleFactor 검사 1건입니다. #138 최종 커밋(`d3b7d7c`, 검사·문서만 변경)으로 다시 rebase한 뒤 `document-input.spec.ts`를 세 브라우저에서 다시 실행해 142건 통과·2건 skip(IME)을 확인했습니다. 전체 Node/PG·전체 브라우저 검사는 실행하지 않았습니다(통합 단계에서 실행).
 
 ## 2026-11-12 — 글이 있는 문단 맨 앞의 Markdown 기호로 블록 바꾸기
 
