@@ -1588,7 +1588,8 @@ function Workspace({
     submitChanges,
     mutate,
     applyStyle,
-    plainFillEffect,
+    plainFillChanges,
+    markedWorkColors,
     copyFormat,
     paintFormat,
     applyBorder,
@@ -1620,34 +1621,41 @@ function Workspace({
     teamId,
   });
 
-  // 툴바의 일반 배경색은 업무 표시를 해제한다. 업무 색과 같은 색으로 칠했거나
-  // 업무 표시를 덮었으면 실수로 집계에서 빠지지 않도록 알린다.
+  const workColors = team?.settings.insights?.workColors;
+  // 선택 범위에 있는 업무 표시의 색. 업무 표시 칸은 같은 칩을 다시 눌러 해제하기
+  // 전까지 배경색·다른 업무 색으로 칠하지 않는다.
+  const markedWork = useMemo(
+    () =>
+      markedWorkColors(
+        new Set((workColors || []).map((entry) => entry.color)),
+        selection,
+      ),
+    // markedWorkColors는 렌더마다 새로 만들어지며 아래 값만 읽는다.
+    [selection, matchingTasks, columnOrder, workColors],
+  );
+
+  // 툴바 칠하기. 업무 표시 칸은 막고(칩을 다시 눌러 해제하는 것만 허용),
+  // 일반 배경색을 업무 색과 같은 색으로 칠하면 집계에서 빠진다는 것을 알린다.
   function applyToolbarStyle(part: Partial<Style>) {
+    if (part.backgroundColor && markedWork.size) return;
     const color = part.work === false ? part.backgroundColor : undefined,
-      colors = team?.settings.insights?.workColors || [];
+      colors = workColors || [];
     if (!color || !colors.length) return applyStyle(part);
     const target = selection,
       before = historyTop,
-      work = colors.find((entry) => entry.color === normalizeHex(color)),
-      { changed, released } = plainFillEffect(
-        normalizeHex(color) || color,
-        new Set(colors.map((entry) => entry.color)),
-        target,
-      );
+      hex = normalizeHex(color) || color,
+      work = colors.find((entry) => entry.color === hex),
+      changed = plainFillChanges(hex, target);
     // 바뀌는 칸이 없으면 실행취소 기록도 생기지 않으므로 알리지 않는다.
-    if (!applyStyle(part, false, target) || !changed || (!work && !released))
+    if (!applyStyle(part, false, target) || !changed || !work || !target)
       return;
     setToast("");
     setUndoToast({
       kind: "work",
       sheet: sheetKey,
       before,
-      ...(work && target
-        ? {
-            message: `일반 배경색은 ‘${work.name || work.color}’ 업무로 집계되지 않습니다.`,
-            mark: { color: work.color, selection: target },
-          }
-        : { message: `업무 표시 ${released}칸이 해제되어 집계에서 빠집니다.` }),
+      message: `일반 배경색은 ‘${work.name || work.color}’ 업무로 집계되지 않습니다.`,
+      mark: { color: work.color, selection: target },
     });
   }
 
@@ -2429,7 +2437,8 @@ function Workspace({
               </fieldset>
               {(!sheetClone || editingSheetClone) && (
                 <Toolbar
-                  workColors={team.settings.insights?.workColors}
+                  workColors={workColors}
+                  markedWorkColors={markedWork}
                   leadingAction={
                     (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (
                       <Button
@@ -2836,7 +2845,7 @@ function Workspace({
           {...(undoToast.kind === "work"
             ? {
                 icon: <Tag size={16} aria-hidden="true" />,
-                ...(undoToast.mark && { actionLabel: "업무 표시로 바꾸기" }),
+                actionLabel: "업무 표시로 바꾸기",
               }
             : {})}
           disabled={
@@ -2856,7 +2865,7 @@ function Workspace({
               )
                 return;
               setUndoToast(null);
-              if (undoToast.kind === "work" && undoToast.mark)
+              if (undoToast.kind === "work")
                 applyStyle(
                   { backgroundColor: undoToast.mark.color, work: true },
                   false,
