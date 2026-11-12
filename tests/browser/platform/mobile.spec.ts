@@ -269,6 +269,11 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   const owners = page.getByRole("group", { name: "캘린더 팀원" });
   await expect(owners.getByRole("button")).toHaveCount(15);
   expect((await owners.boundingBox())!.height).toBeLessThan(50);
+  // 한 줄에 들어가지 않으면 날짜 선택 아래 줄에서 좌우로 넘겨 본다.
+  expect((await owners.boundingBox())!.y).toBeGreaterThan(
+    (await page.getByRole("group", { name: "캘린더 표시 기간" }).boundingBox())!
+      .y,
+  );
   expect(await owners.evaluate((el) => el.scrollWidth)).toBeGreaterThan(
     await owners.evaluate((el) => el.clientWidth),
   );
@@ -315,6 +320,70 @@ test("구성원은 한 줄 아바타로 압축되고 월간·주간 본문과 �
   await expect(page.locator(".calendar-view-options")).toBeVisible();
 });
 
+test("팀원이 적으면 날짜 선택과 아바타를 한 줄에 둔다", async ({
+  page,
+}, info) => {
+  for (let i = 0; i < 4; i++)
+    await request(page, "/admin/users", "POST", {
+      username: `mobile-${randomUUID()}@example.com`,
+      password: "local-mobile-password",
+      name: `모바일 구성원 ${i + 1}`,
+      memberships: [{ teamId, role: "member" }],
+    });
+  await page.reload();
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  await page.getByRole("button", { name: "개인 월간 보기", exact: true }).tap();
+  const owners = page.getByRole("group", { name: "캘린더 팀원" });
+  const period = page.getByRole("group", { name: "캘린더 표시 기간" });
+  await expect(owners.getByRole("button")).toHaveCount(5);
+  // 360px에서는 5명이 날짜 선택 옆에 들어가지 않아 다음 줄로 넘긴다.
+  for (const width of [390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    const date = (await period.boundingBox())!;
+    const list = (await owners.boundingBox())!;
+    expect(list.x).toBeGreaterThanOrEqual(date.x + date.width);
+    expect(
+      Math.abs(list.y + list.height / 2 - (date.y + date.height / 2)),
+    ).toBeLessThan(4);
+    expect(await owners.evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(
+      await owners.evaluate((el) => el.clientWidth),
+    );
+    await fits(page);
+  }
+  await screenshot(page, info, "calendar-month-one-line");
+});
+
+test("일정 추가 창은 제목·시크릿·태그·버튼 사이를 같은 간격으로 둔다", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  await page.getByRole("button", { name: "개인 월간 보기", exact: true }).tap();
+  for (const viewport of [mobile, desktop]) {
+    await page.setViewportSize(viewport);
+    await page
+      .getByRole("button", { name: /일정 추가/ })
+      .first()
+      .click();
+    const dialog = page.getByRole("dialog", { name: "일정 추가", exact: true });
+    const parts = [
+      dialog.locator(".calendar-field"),
+      dialog.locator(".switch-field"),
+      dialog.locator(".calendar-tag-picker"),
+      ...(viewport === desktop ? [dialog.locator(".calendar-hint")] : []),
+      dialog.getByRole("button", { name: "일정 만들기", exact: true }),
+    ];
+    const boxes = [];
+    for (const part of parts) boxes.push((await part.boundingBox())!);
+    const gaps = boxes
+      .slice(1)
+      .map((box, index) => box.y - (boxes[index].y + boxes[index].height));
+    for (const gap of gaps) expect(Math.abs(gap - gaps[0])).toBeLessThan(1.5);
+    expect(gaps[0]).toBeGreaterThan(8);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
 test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저의 손가락 확대는 그대로 둔다", async ({
   page,
 }) => {
@@ -335,6 +404,38 @@ test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저�
   expect(await viewport()).toBe(
     "width=device-width, initial-scale=1.0, maximum-scale=1",
   );
+});
+
+test("휴대폰에서는 문서가 있는 업무에만 문서 아이콘을 보이고 선택한 작업명 칸에서 문서를 연다", async ({
+  page,
+}) => {
+  const other = (
+    await request(page, "/tasks", "POST", {
+      teamId,
+      year,
+      fields: { title: "문서 없는 업무", owner: userId },
+    })
+  ).task.id;
+  await request(page, `/tasks/${taskId}/documents/main`, "PUT", {
+    markdown: "# 문서 있는 업무",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  const withDocument = titleCell(page).locator(".task-document-indicator");
+  const emptyCell = page.locator(`[data-cell="${other}:title"]`);
+  const empty = emptyCell.locator(".task-document-indicator");
+  await expect(withDocument).toHaveCSS("opacity", "1");
+  await expect(empty).toHaveCSS("opacity", "0");
+  await expect(empty).toHaveCSS("pointer-events", "none");
+  // 작업명 칸을 선택하면 흐린 아이콘으로 업무 상세를 열어 문서를 만들 수 있다.
+  await emptyCell.tap({ position: { x: 40, y: 12 } });
+  await expect(emptyCell).toHaveAttribute("aria-selected", "true");
+  await expect(empty).not.toHaveCSS("opacity", "0");
+  await empty.tap();
+  await expect(
+    page.getByRole("dialog", { name: "업무 상세", exact: true }),
+  ).toBeVisible();
 });
 
 test("업무 문서는 모바일에서도 모드를 전환하고 화면 폭이 바뀌어도 선택을 보존한다", async ({
@@ -490,6 +591,121 @@ test("데스크톱 마우스 선택·더블클릭과 서식 도구는 그대로 
   await noKeyboard(page);
 });
 
+test("휴대폰 툴바는 핵심 서식 도구를 보이고 더 보기로 전체 도구를 펼친다", async ({
+  page,
+}, info) => {
+  const toolbar = page.locator('.format-toolbar[aria-label="셀 서식 도구"]');
+  const tool = (name: string) =>
+    toolbar.getByRole("button", { name, exact: true });
+  const core = [
+    "업무 추가",
+    "실행취소",
+    "재실행",
+    "굵게",
+    "글자 색상",
+    "배경색",
+    "도구 더 보기",
+  ];
+  const extra = [
+    toolbar.getByRole("combobox", { name: "글꼴", exact: true }),
+    tool("기울임"),
+    tool("왼쪽 정렬"),
+    tool("테두리"),
+    toolbar.getByRole("group", { name: "확대와 축소", exact: true }),
+  ];
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const name of core) {
+      await expect(tool(name)).toBeVisible();
+      const box = (await tool(name).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    for (const item of extra) await expect(item).toBeHidden();
+    await fits(page);
+  }
+  await tool("도구 더 보기").tap();
+  await expect(tool("도구 접기")).toHaveAttribute("aria-expanded", "true");
+  for (const item of extra) await expect(item).toBeVisible();
+  for (const name of core.slice(0, -1)) await expect(tool(name)).toBeVisible();
+  await expect(tool("서식 복사")).toBeHidden();
+  expect(
+    await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await fits(page);
+  await screenshot(page, info, "toolbar-expanded");
+  await tool("도구 접기").tap();
+  for (const item of extra) await expect(item).toBeHidden();
+  await screenshot(page, info, "toolbar");
+
+  await titleCell(page).tap({ position: { x: 70, y: 12 } });
+  await tool("굵게").tap();
+  await expect
+    .poll(async () => {
+      const { tasks } = await request(
+        page,
+        `/tasks?teamId=${teamId}&year=${year}`,
+      );
+      return tasks.find((task: any) => task.id === taskId).cells.title?.style
+        ?.bold;
+    })
+    .toBe(true);
+  await noKeyboard(page);
+
+  await page.setViewportSize(desktop);
+  await expect(tool("도구 더 보기")).toBeHidden();
+  for (const item of extra) await expect(item).toBeVisible();
+});
+
+test("업무 색이 많아도 휴대폰 툴바의 핵심 도구는 앞에 남고 업무 버튼은 넘겨서 모두 누를 수 있다", async ({
+  page,
+}) => {
+  const team = (await request(page, "/bootstrap")).teams.find(
+    (item: any) => item.id === teamId,
+  );
+  await request(page, `/teams/${teamId}/settings`, "PATCH", {
+    revision: team.settings.revision || 0,
+    insights: {
+      workColors: Array.from({ length: 12 }, (_, index) => ({
+        color: `#${(0x205080 + index * 0x0a0a00).toString(16)}`,
+        name: `업무 ${index + 1}`,
+      })),
+      charts: [],
+    },
+  });
+  await page.reload();
+  await page.setViewportSize({ width: 360, height: 844 });
+  const toolbar = page.locator('.format-toolbar[aria-label="셀 서식 도구"]');
+  const tool = (name: string) =>
+    toolbar.getByRole("button", { name, exact: true });
+  const more = tool("도구 더 보기");
+  await expect(tool("업무 표시: 업무 12")).toBeAttached();
+  // 업무 버튼이 늘어나도 앞쪽 핵심 도구와 더 보기 버튼은 화면 안에 있다.
+  for (const name of ["실행취소", "재실행", "굵게", "글자 색상", "배경색"]) {
+    const box = (await tool(name).boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+  }
+  const moreBox = (await more.boundingBox())!;
+  expect(moreBox.x + moreBox.width).toBeLessThanOrEqual(360);
+  expect(await toolbar.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  // 마지막 업무 버튼까지 넘겨 볼 수 있고 더 보기 버튼에 가리지 않는다.
+  const last = tool("업무 표시: 업무 12");
+  await last.evaluate((el) =>
+    el.scrollIntoView({ block: "nearest", inline: "nearest" }),
+  );
+  const lastBox = (await last.boundingBox())!;
+  const stuck = (await more.boundingBox())!;
+  expect(lastBox.x + lastBox.width).toBeLessThanOrEqual(stuck.x + 1);
+  await more.tap();
+  expect(
+    await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await expect(last).toBeInViewport();
+  await fits(page);
+});
+
 test("캘린더 카드 위 손가락 이동도 일정을 바꾸지 않고 스크롤한다", async ({
   page,
   context,
@@ -587,6 +803,46 @@ test("셀·행·열 길게 누르기는 기존 메뉴를 열고 손을 떼어도
     page.getByRole("menuitem", { name: "복사한 행 붙여넣기", exact: true }),
   ).toBeEnabled();
   await noKeyboard(page);
+});
+
+test("행 번호·열 머리글은 탭으로 선택하고 다시 탭하면 메뉴를 열며 손을 뗀 클릭은 항목을 실행하지 않는다", async ({
+  page,
+}) => {
+  const menu = page.locator(".grid-header-menu");
+  const count = async () =>
+    (await request(page, `/tasks?teamId=${teamId}&year=${year}`)).tasks.length;
+  const tasks = await count();
+  const rowButton = page.getByRole("button", {
+    name: "1행 전체 선택",
+    exact: true,
+  });
+  const column = page.locator('[data-header-key="title"]');
+  for (const [target, selected, title] of [
+    [rowButton, page.getByRole("rowheader").first(), "선택한 행 메뉴"],
+    [column, column, /열 메뉴$/],
+  ] as const) {
+    await target.tap();
+    await expect(selected).toHaveAttribute("aria-selected", "true");
+    await expect(menu).toHaveCount(0);
+    await noKeyboard(page);
+    await target.tap();
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-label", title);
+    await noKeyboard(page);
+    // 메뉴를 연 손가락 아래 항목에 눌림 없이 도착한 클릭은 무시한다.
+    await menu.getByRole("menuitem").first().dispatchEvent("click", {
+      detail: 1,
+    });
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  }
+  expect(await count()).toBe(tasks);
+  // 메뉴 안에서 직접 누른 항목은 그대로 실행한다.
+  await rowButton.tap();
+  await rowButton.tap();
+  await page.getByRole("menuitem", { name: "아래에 삽입", exact: true }).tap();
+  await expect.poll(count).toBe(tasks + 1);
 });
 
 test("시트 길게 누르기는 이동·스크롤·취소·다른 손가락에서 취소된다", async ({
@@ -769,7 +1025,23 @@ test("일정 길게 누르기로 복제·태그·삭제 메뉴를 열고 탭은 
   await card.dispatchEvent("click", { detail: 1 });
   await expect(page.locator(".calendar-entry-modal")).toHaveCount(0);
   await noKeyboard(page);
+  // 메뉴 안을 누른 뒤 같은 일정을 다시 길게 눌러 열어도, 손을 뗀 클릭은
+  // 손가락 아래 항목을 실행하지 않는다.
+  const menu = page.locator(".grid-header-menu");
+  const inside = (await menu.boundingBox())!;
+  await pointer(menu, "pointerdown", inside.x + 2, inside.y + 2);
+  await pointer(menu, "pointerup", inside.x + 2, inside.y + 2);
+  const again = await hold(card);
+  await expect(menu).toBeVisible();
+  await pointer(card, "pointerup", again.x, again.y);
+  await page
+    .getByRole("menuitem", { name: "일정 복제", exact: true })
+    .dispatchEvent("click", { detail: 1 });
+  await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(
+    page.locator(`[data-entry-id] .calendar-entry-card`),
+  ).toHaveCount(29);
   await card.tap();
   await expect(
     page.getByRole("dialog", { name: "캘린더 일정", exact: true }),
@@ -981,6 +1253,53 @@ test("업무와 일정 문서는 처음부터 전체 화면이며 너비 설정�
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("일정 상세의 긴 제목은 앞부터 보이고 시작일·종료일 칸은 겹치지 않는다", async ({
+  page,
+}, info) => {
+  const title = "[EndPoint][내부] 분석 시간 초과 DLPCenter 사용성 개선 요청";
+  const entry = await request(page, "/calendar/entries", "POST", {
+    id: randomUUID(),
+    teamId,
+    userId,
+    date: todayKey(),
+    endDate: addDays(todayKey(), 3),
+    title,
+  });
+  await page.getByRole("button", { name: "캘린더", exact: true }).tap();
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page
+      .locator(`[data-entry-id="${entry.id}"] .calendar-entry-card`)
+      .first()
+      .tap();
+    const calendar = page.getByRole("dialog", {
+      name: "캘린더 일정",
+      exact: true,
+    });
+    const input = calendar.getByRole("textbox", {
+      name: "일정 제목",
+      exact: true,
+    });
+    await expect(input).toHaveValue(title);
+    await expect(input).not.toBeFocused();
+    expect(await input.evaluate((el) => el.scrollLeft)).toBe(0);
+    const boxes = [];
+    for (const name of ["일정 시작일", "일정 종료일"]) {
+      const field = calendar.getByLabel(name, { exact: true });
+      const box = (await field.boundingBox())!;
+      const label = (await field.locator("xpath=..").boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.x + box.width).toBeLessThanOrEqual(label.x + label.width + 1);
+      boxes.push(box);
+    }
+    expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x);
+    await screenshot(page, info, `calendar-entry-title-${width}`);
+    await calendar.getByRole("button", { name: "닫기", exact: true }).tap();
+    await expect(calendar).toHaveCount(0);
+  }
 });
 
 test("꼬리 메모와 링크 문서는 전체 화면으로 읽고 메모 탭·입력·저장 실패를 보존한다", async ({

@@ -23,6 +23,7 @@ import {
 import { requireThat } from "../../../shared/validation.js";
 import { profileFields } from "../../../shared/identity/profiles.js";
 import { deleteTeam } from "../../control/team-deletion.mjs";
+import { syncActorId } from "../../sync/node/entities.mjs";
 import { removeTeamDocumentImages } from "../../documents/document-images.mjs";
 import {
   loginId,
@@ -34,6 +35,20 @@ import {
 } from "./control-service.mjs";
 const string = (max = 100) => z.string().trim().min(1).max(max);
 
+// 동기화가 만든 자리표시 계정(팀별 "외부 동기화" 문서 작성자, 사람 정보가 아직
+// 없어 ID를 이름으로 둔 계정)은 로그인할 수 없고 사람 목록에 보이지 않는다.
+// 문서 기록이 참조하므로 행은 그대로 둔다.
+function withoutSyncPlaceholders(db, users) {
+  const actors = new Set(
+    db
+      .prepare("SELECT id FROM teams")
+      .all()
+      .map((team) => syncActorId(team.id)),
+  );
+  return users.filter(
+    (u) => !actors.has(u.id) && !(u.password === "!" && u.name === u.id),
+  );
+}
 export class SqliteControlRepository {
   constructor(options) {
     this.options = options;
@@ -186,7 +201,10 @@ function execute(
     return {
       users: usersWithTeams(
         db,
-        db.prepare("SELECT * FROM users ORDER BY created_at").all(),
+        withoutSyncPlaceholders(
+          db,
+          db.prepare("SELECT * FROM users ORDER BY created_at").all(),
+        ),
       ),
       teams: db
         .prepare("SELECT * FROM teams ORDER BY name")
@@ -343,18 +361,18 @@ function execute(
     // 다른 팀 소속이나 시스템 권한은 시스템 관리자 화면에서만 보여 준다.
     return {
       members: teamMembers(team.id),
-      users: db
-        .prepare("SELECT * FROM users ORDER BY name")
-        .all()
-        .map((u) => ({
-          id: u.id,
-          username: u.username,
-          name: u.name,
-          active: !!u.active,
-          color: u.color,
-          avatarInitials: u.avatar_initials || "",
-          avatarImage: u.avatar_image || "",
-        })),
+      users: withoutSyncPlaceholders(
+        db,
+        db.prepare("SELECT * FROM users ORDER BY name").all(),
+      ).map((u) => ({
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        active: !!u.active,
+        color: u.color,
+        avatarInitials: u.avatar_initials || "",
+        avatarImage: u.avatar_image || "",
+      })),
     };
   }
   if (command === "replaceMembers") {
