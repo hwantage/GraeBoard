@@ -131,7 +131,11 @@ export default forwardRef<
     input.scrollLeft = input.scrollWidth;
   }, [descriptionOpen]);
   useEffect(() => {
-    if (readOnly) setDescriptionOpen(false);
+    if (!readOnly) return;
+    // The input disappears without a blur event in some browsers (Firefox);
+    // release it the same way so a later draft is not held as focused.
+    if (focused.current === "description") blur("description");
+    else setDescriptionOpen(false);
   }, [readOnly]);
 
   function begin(key: string) {
