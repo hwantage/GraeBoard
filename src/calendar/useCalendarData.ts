@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../platform/api";
-import type { CalendarData } from "./calendar-types";
+import type {
+  CalendarData,
+  CalendarEntry,
+  CalendarPlacement,
+  WeeklyItem,
+} from "./calendar-types";
 import { CALENDAR_MEMBER_BATCH } from "../../shared/calendar/calendar.js";
+import { mergeCalendarLayout } from "../../shared/calendar/calendar-layout.js";
 
 export type CalendarQuery = { userId: string | null; from: string; to: string };
 type LoadedCalendar = {
@@ -15,6 +21,48 @@ type CalendarUpdate = (
   data: CalendarData,
   query: CalendarQuery,
 ) => CalendarData;
+
+// The monthly views read one member's calendar as consecutive ranges, a month
+// at a time. They show as one calendar: an entry crossing ranges keeps its
+// newest copy and the first range's failure is the calendar's failure.
+function mergeCalendarRanges(
+  results: (LoadedCalendar | undefined)[],
+): LoadedCalendar | undefined {
+  const [first] = results;
+  const ready = results.filter(
+    (result): result is LoadedCalendar & { data: CalendarData } =>
+      !!result?.data,
+  );
+  if (!ready.length) return first;
+  const entries = new Map<string, CalendarEntry>();
+  const weekly = new Map<string, WeeklyItem>();
+  let layout: CalendarPlacement[] = [];
+  for (const { data } of ready) {
+    for (const entry of data.entries) {
+      const known = entries.get(entry.id);
+      if (!known || known.revision <= entry.revision)
+        entries.set(entry.id, entry);
+    }
+    for (const item of data.weekly)
+      weekly.set(`${item.userId}:${item.weekStart}:${item.taskId}`, item);
+    layout = mergeCalendarLayout(layout, data.layout);
+  }
+  return {
+    key: ready.map((result) => result.key).join("|"),
+    query: {
+      userId: ready[0].query.userId,
+      from: ready[0].query.from,
+      to: ready[ready.length - 1].query.to,
+    },
+    reload: ready[0].reload,
+    data: {
+      entries: [...entries.values()],
+      weekly: [...weekly.values()],
+      layout,
+    },
+    error: first?.error,
+  };
+}
 
 export function useCalendarData(
   teamId: string,
@@ -30,18 +78,21 @@ export function useCalendarData(
   const pendingUpdates = useRef(new Set<CalendarUpdate[]>());
   const keyFor = (query: CalendarQuery) =>
     `${teamId}:${query.userId}:${query.from}:${query.to}`;
+  // One result per range: adding a month to a monthly view reads only it.
+  const slotFor = (query: CalendarQuery) =>
+    `${query.userId ?? "team"}:${query.from}`;
 
   useEffect(() => {
     const controller = new AbortController();
     const reads = new Set<() => void>();
-    // Keep one range per visible member. Navigating one member reuses the
-    // others' completed requests; unfinished requests are safely restarted.
+    // Keep the visible ranges only. Navigating one member reuses the others'
+    // completed requests; unfinished requests are safely restarted.
     // A failed range is read again below, so it shows as loading, not failed.
     setLoaded((previous) =>
       Object.fromEntries(
-        queries.flatMap(({ userId }) => {
-          const owner = userId ?? "team";
-          return previous[owner]?.data ? [[owner, previous[owner]]] : [];
+        queries.flatMap((query) => {
+          const slot = slotFor(query);
+          return previous[slot]?.data ? [[slot, previous[slot]]] : [];
         }),
       ),
     );
@@ -49,7 +100,7 @@ export function useCalendarData(
     // request (one server call) instead of one per member.
     const batches: CalendarQuery[][] = [];
     for (const query of queries) {
-      const previous = loaded[query.userId ?? "team"];
+      const previous = loaded[slotFor(query)];
       if (
         previous?.key === keyFor(query) &&
         previous.reload === reload &&
@@ -87,7 +138,7 @@ export function useCalendarData(
           ...current,
           ...Object.fromEntries(
             batch.map((query, i) => [
-              query.userId ?? "team",
+              slotFor(query),
               { key: keyFor(query), query, reload, ...result(query, i) },
             ]),
           ),
@@ -139,19 +190,30 @@ export function useCalendarData(
     // Loaded results deliberately do not trigger new requests.
   }, [teamId, queries, reload, attempt]);
 
-  const schedules = useMemo(
+  // Results in the order of the queries; a member with several ranges reads
+  // them in schedules as one calendar.
+  const ranges = useMemo(
     () =>
-      new Map(
-        queries.map((query) => {
-          const result = loaded[query.userId ?? "team"];
-          return [
-            query.userId,
-            result?.key === keyFor(query) ? result : undefined,
-          ];
-        }),
-      ),
+      queries.map((query) => {
+        const result = loaded[slotFor(query)];
+        return result?.key === keyFor(query) ? result : undefined;
+      }),
     [teamId, queries, reload, loaded],
   );
+  const schedules = useMemo(() => {
+    const owners = new Map<string | null, (LoadedCalendar | undefined)[]>();
+    queries.forEach((query, i) => {
+      const results = owners.get(query.userId) || [];
+      results.push(ranges[i]);
+      owners.set(query.userId, results);
+    });
+    return new Map(
+      [...owners].map(([owner, results]) => [
+        owner,
+        results.length === 1 ? results[0] : mergeCalendarRanges(results),
+      ]),
+    );
+  }, [queries, ranges]);
   const data = useMemo(() => {
     const available = [...schedules.values()].flatMap((result) =>
       result?.data ? [result.data] : [],
@@ -191,5 +253,13 @@ export function useCalendarData(
   function retry() {
     setAttempt((value) => value + 1);
   }
-  return { data, schedules, updateData, beginMutation, endMutation, retry };
+  return {
+    data,
+    schedules,
+    ranges,
+    updateData,
+    beginMutation,
+    endMutation,
+    retry,
+  };
 }
