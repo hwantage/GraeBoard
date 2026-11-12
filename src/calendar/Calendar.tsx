@@ -220,7 +220,7 @@ export default function Calendar({
   const members = context?.members || EMPTY_MEMBERS;
   // The team week lists the viewer's own week first; everyone else keeps the
   // server's order. Someone outside the team sees the server's order as is.
-  const teamSections = useMemo(() => {
+  const teamWeekMembers = useMemo(() => {
     const own = members.find((m) => m.id === user.id);
     return own ? [own, ...members.filter((m) => m !== own)] : members;
   }, [members, user.id]);
@@ -1254,7 +1254,7 @@ export default function Calendar({
                 {weeks.map((start) => weekRow(start, monthlyOwner))}
               </div>
             ) : (
-              teamSections.map((m) => {
+              teamWeekMembers.map((m) => {
                 const start = memberWeeks[m.id] || calendarWeek(today);
                 const schedule = schedules.get(m.id);
                 return (
