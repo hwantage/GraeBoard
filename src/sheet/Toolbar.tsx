@@ -12,7 +12,7 @@ import {
   AlignRight,
   PaintBucket,
   PaintRoller,
-  BriefcaseBusiness,
+  Tag,
   Ellipsis,
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "../types";
@@ -21,6 +21,7 @@ import ColorMenu from "../ui/ColorMenu";
 import ZoomControls from "../ui/ZoomControls";
 import { FONTS, FONT_SIZES, textMode } from "../../shared/domain.js";
 import { Button } from "../ui/Button";
+import { inkFor } from "../ui/color";
 
 const ICON_PATHS: Record<string, string> = {
   top: "M4 4h16M12 20V8m-4 4 4-4 4 4",
@@ -192,32 +193,42 @@ export default function Toolbar({
             onStyle({ backgroundColor, work: false })
           }
         />
-        {workColors?.map(({ color, name }) => (
-          <button
-            key={color}
-            type="button"
-            className="color-tool"
-            aria-label={`업무 표시: ${name || color}`}
-            data-tooltip={`업무 표시: ${name || color}`}
-            aria-pressed={
-              style.work === true &&
-              style.backgroundColor?.toLowerCase() === color
-            }
-            disabled={disabled}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onStyle({ backgroundColor: color, work: true })}
-          >
-            <span className="color-tool-icon" aria-hidden="true">
-              <BriefcaseBusiness size={16} />
-            </span>
-            <span
-              className="color-tool-swatch"
-              style={{ backgroundColor: color }}
-              aria-hidden="true"
-            />
-          </button>
-        ))}
       </div>
+      {!!workColors?.length && (
+        // 업무 표시는 일반 배경색과 결과가 같아 보여도 집계 여부가 다르므로
+        // 별도 묶음에 실제 색을 채운 칩으로 구분한다. 휴대폰 폭에서도 접힌
+        // 핵심 도구 줄에 남긴다.
+        <div
+          className="toolbar-group toolbar-core work-mark-group"
+          role="group"
+          aria-label="업무 표시"
+        >
+          {workColors.map(({ color, name }) => (
+            <button
+              key={color}
+              type="button"
+              className="work-mark-chip"
+              aria-label={`업무 표시: ${name || color}`}
+              data-tooltip={`업무 표시: ${name || color}`}
+              aria-pressed={
+                style.work === true &&
+                style.backgroundColor?.toLowerCase() === color
+              }
+              disabled={disabled}
+              style={{ backgroundColor: color, color: inkFor(color) }}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onStyle({ backgroundColor: color, work: true })}
+            >
+              <Tag size={12} aria-hidden="true" />
+              {name && (
+                <span className="work-mark-name" aria-hidden="true">
+                  {name}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="toolbar-group">
         {(
           [
