@@ -338,6 +338,10 @@ test("휴대폰 폭에서는 외부·Git·내부로 줄여 팀 선택과 같은 
       await page.setViewportSize({ width, height: 844 });
       // 전체 문구는 접근성 이름·툴팁으로 남고 화면에는 짧은 이름만 보인다.
       await expect(stages(page)).toHaveText(complete);
+      await expect(indicator(page)).toHaveAttribute(
+        "title",
+        new RegExp(`^${complete.join(" · ")}\n`),
+      );
       expect(
         await stages(page).evaluateAll((items) =>
           items.map(

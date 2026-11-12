@@ -114,13 +114,17 @@ export default function TeamSyncIndicator({
     { label: git, short: "Git", complete: published },
     { label: peer, short: external ? "내부" : "외부", complete: reflected },
   ];
+  // 단계별 title은 상위 상세 툴팁을 가리므로, 전체 단계 문구를 상세 툴팁 첫 줄에 둔다.
+  const title = problem
+    ? detail
+    : `${stages.map((stage) => stage.label).join(" · ")}\n${detail}`;
   const indicator = (
     <span
       className="team-sync-indicator"
       role="status"
       aria-label="팀 동기화 상태"
       aria-atomic="true"
-      title={detail}
+      title={title}
     >
       {problem ? (
         <span className="tag team-sync-problem">{problem}</span>
