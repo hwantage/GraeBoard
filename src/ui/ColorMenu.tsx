@@ -5,6 +5,7 @@ import { usePopover } from "./usePopover";
 
 export default function ColorMenu({
   label,
+  tooltip,
   icon,
   value,
   disabled,
@@ -12,6 +13,8 @@ export default function ColorMenu({
   compact = false,
 }: {
   label: string;
+  // 버튼 툴팁만 바꿀 때 쓴다(예: 비활성 이유). 접근성 이름은 label을 유지한다.
+  tooltip?: string;
   icon?: ReactNode;
   value: string;
   disabled?: boolean;
@@ -36,7 +39,7 @@ export default function ColorMenu({
         className={
           compact ? "color-input" : `color-tool ${disabled ? "disabled" : ""}`
         }
-        data-tooltip={label}
+        data-tooltip={tooltip ?? label}
         aria-label={label}
         disabled={disabled}
         aria-expanded={open}
