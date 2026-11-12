@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
-let taskId: string;
+let taskId: string, teamId: string;
 const detail = (page: Page) =>
   page.getByRole("dialog", { name: "업무 상세", exact: true });
 const rich = (page: Page) =>
@@ -79,7 +79,7 @@ async function clear(page: Page) {
 // Home differs by browser and OS, so place the caret by text offset instead.
 // A just-finished click can still restore its own caret, so place it again
 // until the editor keeps it.
-async function caret(page: Page, block: Locator, offset = 0) {
+async function caret(block: Locator, offset = 0) {
   const place = (el: Element, offset: number) => {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
@@ -103,11 +103,15 @@ async function caret(page: Page, block: Locator, offset = 0) {
     range.setEnd(selection.anchorNode!, selection.anchorOffset);
     return range.toString().length;
   };
+  const frames = () =>
+    block.evaluate(async () => {
+      for (let i = 0; i < 4; i++)
+        await new Promise((r) => requestAnimationFrame(r));
+    });
   await expect
     .poll(async () => {
       await block.evaluate(place, offset);
-      await settle(page);
-      await settle(page);
+      await frames();
       return block.evaluate(at);
     })
     .toBe(offset);
@@ -125,6 +129,7 @@ test.beforeEach(async ({ page }) => {
     name: `입력 ${randomUUID().slice(0, 8)}`,
     members: [{ userId: boot.user.id, role: "lead" }],
   });
+  teamId = team.id;
   taskId = (
     await request(page, "/tasks", "POST", {
       teamId: team.id,
@@ -291,7 +296,7 @@ for (const [marker, selector, saved] of [
   }) => {
     await open(page, "기존 **문장**\n");
     const convert = async () => {
-      await caret(page, rich(page).locator("p").first());
+      await caret(rich(page).locator("p").first());
       await rich(page).pressSequentially(marker + " ");
       await expect(rich(page).locator(selector)).toHaveCount(1);
       expect(await text(rich(page).locator(selector))).toBe("기존 문장");
@@ -330,7 +335,7 @@ test("문장 중간 기호와 글 앞 코드 울타리·구분선은 변환하�
     [0, "``` ", "pre"],
     [0, "*** ", "hr"],
   ] as const) {
-    await caret(page, first, offset);
+    await caret(first, offset);
     await rich(page).pressSequentially(marker);
     await expect(rich(page).locator(selector)).toHaveCount(0);
     const typed = "기존 문장".slice(0, offset) + marker;
@@ -339,13 +344,13 @@ test("문장 중간 기호와 글 앞 코드 울타리·구분선은 변환하�
       await page.keyboard.press("Backspace");
     expect(await text(first)).toBe("기존 문장");
   }
-  await caret(page, rich(page).locator("p").nth(1));
+  await caret(rich(page).locator("p").nth(1));
   await rich(page).pressSequentially("- ");
   await expect(rich(page).locator("ul > li")).toHaveCount(1);
   expect(await text(rich(page).locator("li"))).toBe("기존 코드 문장");
   await expect(rich(page).locator("li code")).toHaveText("코드");
   // Inline code is not inclusive, so a marker typed before it stays plain.
-  await caret(page, rich(page).locator("p", { hasText: "로 시작" }));
+  await caret(rich(page).locator("p", { hasText: "로 시작" }));
   await rich(page).pressSequentially("> ");
   await expect(rich(page).locator("blockquote")).toHaveCount(1);
   expect(await text(rich(page).locator("blockquote"))).toBe("코드로 시작");
@@ -361,21 +366,66 @@ test("목록 항목과 인용 안의 글 앞 기호는 빈 문단과 같은 규�
   await open(page, "- 첫째\n\n> 인용 문장\n");
   const item = rich(page).locator("li p");
   // A list item starts with a paragraph, so only the checklist form applies.
-  await caret(page, item);
+  await caret(item);
   await rich(page).pressSequentially("- ");
   await expect(rich(page).locator("li li")).toHaveCount(0);
   expect(await text(item)).toBe("- 첫째");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
-  await caret(page, item);
+  await caret(item);
   await rich(page).pressSequentially("[ ] ");
   await expect(rich(page).locator("li.document-check-item")).toHaveCount(1);
   expect(await text(item)).toBe("첫째");
-  await caret(page, rich(page).locator("blockquote p"));
+  await caret(rich(page).locator("blockquote p"));
   await rich(page).pressSequentially("- ");
   await expect(rich(page).locator("blockquote ul > li")).toHaveCount(1);
   expect(await text(rich(page).locator("blockquote li"))).toBe("인용 문장");
   await expect.poll(() => markdown(page)).toContain("* [ ] 첫째");
+});
+
+test("여러 편집기가 함께 열린 꼬리 메모에서도 모든 메모가 글 앞 기호와 코드 울타리를 바꾼다", async ({
+  page,
+}) => {
+  // Milkdown keeps one module-level rule object per built-in rule and points it
+  // at the last editor initialized, so each memo must use its own rules.
+  const titles = ["첫 메모", "둘째 메모"];
+  for (const title of titles) {
+    const id = randomUUID();
+    await request(page, `/teams/${teamId}/years/2026/memos`, "POST", {
+      id,
+      title,
+    });
+    await request(page, `/teams/${teamId}/years/2026/memos/${id}`, "PUT", {
+      markdown: "기존 문장\n",
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+  }
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  const memos = page.locator(".annual-memos");
+  await memos
+    .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+    .click();
+  const editor = (title: string) =>
+    memos
+      .getByRole("tabpanel", { name: title, exact: true })
+      .getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+  for (const title of titles)
+    await expect(editor(title)).toHaveText("기존 문장");
+  for (const title of titles) {
+    await editor(title).click();
+    await caret(editor(title).locator("p").first());
+    await editor(title).pressSequentially("- ");
+    await expect(editor(title).locator("ul > li")).toHaveCount(1);
+    expect(await text(editor(title).locator("li"))).toBe("기존 문장");
+    await caret(editor(title).locator("li p"), 5);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await editor(title).pressSequentially("```");
+    await page.keyboard.press("Enter");
+    await expect(editor(title).locator("pre")).toHaveCount(1);
+  }
 });
 
 test("목록 안 체크박스와 코드 울타리 Enter도 변환하고 입력대로 복원한다", async ({

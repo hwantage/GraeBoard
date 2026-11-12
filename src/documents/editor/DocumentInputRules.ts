@@ -1,7 +1,6 @@
 import { editorStateOptionsCtx, inputRulesCtx } from "@milkdown/kit/core";
 import type { Ctx } from "@milkdown/kit/ctx";
 import {
-  createCodeBlockInputRule,
   wrapInBlockquoteInputRule,
   wrapInBulletListInputRule,
   wrapInHeadingInputRule,
@@ -11,6 +10,7 @@ import { wrapInTaskListInputRule } from "@milkdown/kit/preset/gfm";
 import {
   InputRule,
   inputRules,
+  textblockTypeInputRule,
   undoInputRule,
   wrappingInputRule,
 } from "@milkdown/kit/prose/inputrules";
@@ -31,6 +31,10 @@ const implementation = (rule: InputRule) =>
       end: number,
     ) => Transaction | null;
   };
+// Milkdown reassigns each built-in rule's `inputRule` to the editor that
+// initialized last, so match an editor's own rules by their pattern.
+const source = (plugin: { inputRule: InputRule }) =>
+  implementation(plugin.inputRule).match.source;
 const codeMark = (node: Node) => node.marks.some((mark) => mark.type.spec.code);
 // A block shortcut needs the typed marker to be the whole text before the
 // caret. With `keepText`, the text after the caret becomes the new block's
@@ -105,6 +109,11 @@ function documentRulesPlugin(rules: InputRule[]) {
 export function configureDocumentInputRules(ctx: Ctx) {
   ctx.update(editorStateOptionsCtx, (previous) => (options) => {
     const configured = previous(options);
+    const taskSource = source(wrapInTaskListInputRule);
+    const gfmTask = ctx
+      .get(inputRulesCtx)
+      .map(implementation)
+      .find((rule) => rule.match.source === taskSource);
     const task = new InputRule(/^\[( |x)?\] $/, (state, match, start, end) => {
       if (!canFormat(state, start, end, true)) return null;
       const { $from } = state.selection;
@@ -116,12 +125,7 @@ export function configureDocumentInputRules(ctx: Ctx) {
         const normalized = Object.assign([...match], {
           groups: { checked: match[1] || " " },
         }) as unknown as RegExpMatchArray;
-        return implementation(wrapInTaskListInputRule.inputRule).handler(
-          state,
-          normalized,
-          start,
-          end,
-        );
+        return gfmTask?.handler(state, normalized, start, end) ?? null;
       }
       const wrap = wrappingInputRule(/^\[( |x)?\] $/, schema.nodes.bullet_list);
       const tr = implementation(wrap).handler(state, match, start, end);
@@ -139,18 +143,20 @@ export function configureDocumentInputRules(ctx: Ctx) {
     });
     // List, checklist, heading and quote markers also convert a paragraph
     // that already has text. Code fences, rules and tables stay empty-only.
-    const keepText = new Set<InputRule>([
-      task,
-      wrapInBulletListInputRule.inputRule,
-      wrapInOrderedListInputRule.inputRule,
-      wrapInHeadingInputRule.inputRule,
-      wrapInBlockquoteInputRule.inputRule,
+    const keepText = new Set([
+      implementation(task).match.source,
+      ...[
+        wrapInBulletListInputRule,
+        wrapInOrderedListInputRule,
+        wrapInHeadingInputRule,
+        wrapInBlockquoteInputRule,
+      ].map(source),
     ]);
     const rules = [
       task,
       ...ctx
         .get(inputRulesCtx)
-        .filter((rule) => rule !== wrapInTaskListInputRule.inputRule),
+        .filter((rule) => implementation(rule).match.source !== taskSource),
     ]
       .map(implementation)
       .map(
@@ -167,7 +173,7 @@ export function configureDocumentInputRules(ctx: Ctx) {
                 return null;
               if (
                 rule.match.source.startsWith("^") &&
-                !canFormat(state, start, end, keepText.has(rule))
+                !canFormat(state, start, end, keepText.has(rule.match.source))
               )
                 return null;
               return rule.handler(state, match, start, end);
@@ -184,17 +190,22 @@ export function configureDocumentInputRules(ctx: Ctx) {
   });
 }
 
-// Enter is a key event rather than text input. Use the existing fence handler
-// and the input-rule plugin's metadata so Backspace/Mod-Z restore the fence.
+// Enter is a key event rather than text input. Apply the fence rule's block
+// change and the input-rule plugin's metadata so Backspace/Mod-Z restore it.
+// Build it from this editor's schema; the shared Milkdown rule object may
+// belong to another editor on the page.
 function fenceEnter(view: EditorView) {
   const { state } = view;
   const { $from } = state.selection;
   if ($from.pos !== $from.end()) return false;
-  const match = /^```(?<language>[a-z]*)?\n$/.exec(
-    $from.parent.textContent + "\n",
-  );
+  const fence = /^```(?<language>[a-z]*)?\n$/;
+  const match = fence.exec($from.parent.textContent + "\n");
   if (!match || !canFormat(state, $from.start(), $from.end())) return false;
-  const rule = implementation(createCodeBlockInputRule.inputRule);
+  const rule = implementation(
+    textblockTypeInputRule(fence, state.schema.nodes.code_block, (match) => ({
+      language: match.groups?.language ?? "",
+    })),
+  );
   const tr = rule.handler(state, match, $from.start(), $from.end());
   if (!tr) return false;
   const plugin = state.plugins.find((plugin) => plugin.spec.isInputRules);
