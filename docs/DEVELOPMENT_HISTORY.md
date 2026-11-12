@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-12 — 리치 문서의 화살표 자동 변환
+
+- 사용자 요청(2026-11-12): `=>`·`->`와 반대 방향을 기호 모양으로 바꿔 달라는 요청이었습니다. 변환 대상은 사용자가 고른 `->` → `→`, `<-` → `←`, `=>` → `⇒`, `<=` → `⇐`, `<->` → `↔`, `<=>` → `⇔` 여섯 가지이며 `>=`·`!=`·`--`·`...`·`(c)` 등은 넣지 않았습니다.
+- 수정: `src/documents/editor/DocumentInputRules.ts`에 `arrowInputRules()`를 추가해 기존 블록 단축키 뒤에 붙였습니다. 규칙은 편집기마다 새로 만들고 Milkdown 규칙의 객체 동일성에 의존하지 않습니다. 단어 경계 없이(`a->b`) 문단·목록·표 셀에서 바꾸며, 코드 블록(Mermaid 포함)은 입력 규칙 플러그인이, 인라인 코드는 `inCodeMark: false`가 제외합니다. 커서 앞 백틱 수가 홀수이면(백틱으로 인라인 코드를 입력하는 중) 바꾸지 않아 `` `a->b` ``가 코드 그대로 남습니다. `<-`·`<=`가 먼저 바뀐 직후 `>`를 치면 `←>`·`⇐>` 규칙이 ↔·⇔로 합치고, 이 규칙은 실행취소 정보를 직접 넣어 Backspace·⌘/Ctrl+Z가 중간 화살표가 아닌 `<->`·`<=>`를 복원합니다. 직전 변환이 없으면(커서를 옮긴 뒤의 `>`) 합치지 않습니다. Backspace로 `<-`를 되돌린 뒤 `>`를 치면 `<->` 규칙이 바로 ↔로 바꿉니다. 붙여넣기·IME 조합 중·Markdown 원문은 입력 규칙 대상이 아닙니다. 표 셀의 블록 단축키 차단은 그대로이며 화살표만 허용했습니다(문단 안 글자 교체라 GFM 표 저장에 영향이 없음). DB·저장 형식·서버 변경은 없고 저장 Markdown에는 Unicode 기호가 들어갑니다.
+- 확인한 점: 번들한 Pretendard 글꼴의 문맥 대체(`calt`)는 원문 textarea의 `->`·`<=>` 같은 글자를 화살표 모양으로 이어 그립니다. 저장된 글자는 바뀌지 않으며, 증거 화면 하나는 확인용으로 문맥 대체를 끈 CSS를 주입해 찍었습니다.
+- 검증: `tests/browser/documents/document-input.spec.ts`에 여섯 변환의 글자 사이 변환·Backspace·실행취소 복원·저장 Markdown(6건), 코드 블록·인라인 코드(백틱 입력 중과 기존 코드 안)·붙여넣기·원문 미변환과 표 셀·목록 변환, 구분선(`---`) 단축키 유지와 꼬리 메모 편집기 두 개에서 첫 편집기·둘째 편집기·다시 첫 편집기 변환, Chromium IME 한글 조합 앞뒤 변환 검사를 추가했습니다. `document-mermaid.spec.ts`에는 Mermaid 소스에 한 글자씩 친 `<-->`·`==>`·`-.->`·`<==`가 그대로 저장되는지 확인하는 검사를 추가했습니다. 변경 전 소스로 빌드하면 새 입력 검사 8건이 실패하는 것을 확인했습니다. `npm run check:structure`(0 errors)·`npm run check:architecture`(0 violations)·`npm run build`·`npm run build:edge` 통과. `E2E_PORT=4354 npx playwright test tests/browser/documents/document-input.spec.ts tests/browser/documents/document-editor-blocks.spec.ts tests/browser/documents/document-mermaid.spec.ts --project=chromium` 53건 통과, 같은 spec의 `--project=firefox --project=webkit` 99건 통과·7건 skip(Chromium 전용 IME 검사 3건×2, Firefox의 deviceScaleFactor 검사 1건)입니다. 전체 Node/PG·전체 브라우저 검사는 실행하지 않았습니다(통합 단계에서 실행).
+
 ## 2026-11-12 — 글이 있는 문단 맨 앞의 Markdown 기호로 블록 바꾸기
 
 - 사용자 요청(2026-11-12): 리치 문서에 일반 글을 써 둔 뒤 맨 앞으로 가서 `-`와 스페이스를 입력하면 글머리 목록으로 바뀌면 좋겠다는 요청이었습니다.
