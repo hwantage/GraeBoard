@@ -734,6 +734,59 @@ test("모바일에서 시크릿 상세는 처음부터 전체 화면·전체 너
   ).toBeVisible();
 });
 
+test("시크릿 상세도 닫기 왼쪽의 이모지 복사로 찾은 이모지를 서버 요청 없이 복사한다", async ({
+  page,
+}, testInfo) => {
+  const title = `이모지 시크릿 ${randomUUID()}`;
+  await create(page, title);
+  const requests = observe(page);
+  await card(page, title).click();
+  const buttons = detail(page).locator(":scope > header > button");
+  await expect(buttons.last()).toHaveAccessibleName("닫기");
+  const emoji = buttons.nth(-2);
+  await expect(emoji).toHaveAccessibleName("이모지 복사");
+  const [left, right] = await Promise.all([
+    emoji.boundingBox(),
+    buttons.last().boundingBox(),
+  ]);
+  expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
+  expect(Math.abs(left!.y - right!.y)).toBeLessThan(2);
+  await page.evaluate(() => {
+    (window as any).__copied = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).__copied = await (
+            await items[0].getType("text/plain")
+          ).text();
+        },
+      },
+    });
+  });
+  await emoji.click();
+  const picker = page.getByRole("dialog", { name: "이모지 복사", exact: true });
+  await picker.getByRole("textbox", { name: "이모지 검색" }).fill("자물쇠");
+  await expect(
+    picker.getByRole("region", { name: "검색 결과" }).getByRole("button"),
+  ).toHaveText(["🔒", "🔓"]);
+  await page.screenshot({
+    path: testInfo.outputPath("secret-emoji-picker.png"),
+  });
+  await picker.getByRole("button", { name: "자물쇠", exact: true }).click();
+  await expect(
+    page.locator(".toast").filter({ hasText: "이모지를 복사했습니다." }),
+  ).toHaveText("🔒 이모지를 복사했습니다.");
+  expect(await page.evaluate(() => (window as any).__copied)).toBe("🔒");
+  await expect(picker).toHaveCount(0);
+  await emoji.click();
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveCount(0);
+  await expect(detail(page)).toBeVisible();
+  await closeDetail(page);
+  expectPrivate(requests, title);
+});
+
 test("다른 탭의 기간 변경은 제목 저장 뒤에도 덮어쓰지 않고 초안으로 복원한다", async ({
   page,
   context,
