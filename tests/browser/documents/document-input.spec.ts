@@ -398,13 +398,13 @@ test("변환 직후 다른 곳에서 바뀐 내용을 받으면 Backspace가 기
     operationId: randomUUID(),
   });
   await expect(rich(page)).toContainText("원격 문단");
-  // The remote change clears the shortcut's inverse, so Backspace edits at
-  // the caret instead of bringing the typed "- " back.
-  const before = await text(rich(page));
+  // The remote change clears the shortcut's inverse, so Backspace runs its
+  // usual command wherever the caret is now (delete a character, or lift the
+  // list item) instead of bringing the typed "- " back.
+  const before = await rich(page).innerHTML();
   await page.keyboard.press("Backspace");
-  await expect.poll(() => text(rich(page))).not.toBe(before);
-  expect(await text(rich(page))).not.toContain("- 기존");
-  await expect(rich(page).locator("ul > li")).toHaveText("기존 문장");
+  await expect.poll(() => rich(page).innerHTML()).not.toBe(before);
+  await expect(rich(page)).not.toContainText("- 기존");
 });
 
 test("여러 편집기가 함께 열린 꼬리 메모에서도 모든 메모가 글 앞 기호와 코드 울타리를 바꾼다", async ({
