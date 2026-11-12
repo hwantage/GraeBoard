@@ -10,10 +10,6 @@
   border-radius: 8px;
   box-shadow: 0 8px 26px #152c3526;
 }
-/* Hidden while the list loads on the first open. */
-.emoji-popover:empty {
-  visibility: hidden;
-}
 .emoji-picker-panel {
   display: flex;
   flex-direction: column;

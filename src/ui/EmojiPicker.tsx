@@ -1,4 +1,5 @@
 import {
+  Component,
   Suspense,
   lazy,
   useCallback,
@@ -6,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { SmilePlus } from "lucide-react";
@@ -13,7 +15,38 @@ import { usePopover } from "./usePopover";
 import "./emoji-picker.css";
 
 // The list, search and emoji data load on the first open, not with the page.
-const EmojiPickerPanel = lazy(() => import("./EmojiPickerPanel"));
+// Pointing at or focusing the button fetches them ahead of the click.
+const loadPanel = () => import("./EmojiPickerPanel");
+const EmojiPickerPanel = lazy(loadPanel);
+let prefetched = false;
+function prefetchPanel() {
+  if (prefetched) return;
+  prefetched = true;
+  // A failure shows when the list opens (EmojiListBoundary).
+  loadPanel().catch(() => {});
+}
+// A list that cannot load (a removed build file, offline) stays inside the
+// popup instead of unmounting the page. React remembers the failed import,
+// so the message asks for a reload.
+class EmojiListBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? (
+      <p className="emoji-empty" role="alert">
+        이모지 목록을 불러오지 못했습니다. 화면을 새로고침한 뒤 다시 열어
+        주세요.
+      </p>
+    ) : (
+      this.props.children
+    );
+  }
+}
 
 const editable = (element: Element | null): element is HTMLElement =>
   element instanceof HTMLElement &&
@@ -108,8 +141,11 @@ export default function EmojiPicker({
         aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
+        onPointerEnter={prefetchPanel}
+        onFocus={prefetchPanel}
         onPointerDown={(event) => {
           touch.current = event.pointerType === "touch";
+          prefetchPanel();
         }}
         // Keep the caret where it was, so a pick can return there.
         onMouseDown={(event) => event.preventDefault()}
@@ -141,13 +177,21 @@ export default function EmojiPicker({
                 event.preventDefault();
             }}
           >
-            <Suspense fallback={null}>
-              <EmojiPickerPanel
-                userId={userId}
-                focusSearch={focusSearch}
-                onPick={pick}
-              />
-            </Suspense>
+            <EmojiListBoundary>
+              <Suspense
+                fallback={
+                  <p className="emoji-empty" role="status">
+                    이모지 목록을 불러오는 중…
+                  </p>
+                }
+              >
+                <EmojiPickerPanel
+                  userId={userId}
+                  focusSearch={focusSearch}
+                  onPick={pick}
+                />
+              </Suspense>
+            </EmojiListBoundary>
           </div>,
           container(),
         )}
