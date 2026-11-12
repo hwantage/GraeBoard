@@ -1573,7 +1573,7 @@ test("휴대폰 폭에서도 꼬리 메모는 작업처럼 상세를 열고 목�
   ).toHaveAttribute("aria-current", "true");
 });
 
-test("꼬리 메모는 불러오는 중을 표시하고 다음 작업 더 보기 뒤에도 목록 맨 아래에 남는다", async ({
+test("꼬리 메모는 불러오는 중·실패 후 다시 시도를 표시하고 다음 작업 더 보기 뒤에도 목록 맨 아래에 남는다", async ({
   page,
 }) => {
   for (let n = 0; n < 40; n++) {
@@ -1600,6 +1600,12 @@ test("꼬리 메모는 불러오는 중을 표시하고 다음 작업 더 보기
     (url) => url.pathname === `/api${memoBase}`,
     async (route) => {
       memoRequests.push(route.request().url());
+      if (memoRequests.length === 1)
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "메모 목록 서버 오류" }),
+        });
       await held;
       await route.continue();
     },
@@ -1612,13 +1618,17 @@ test("꼬리 메모는 불러오는 중을 표시하고 다음 작업 더 보기
   ).toHaveCount(40);
   const item = memoItem(page);
   await item.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  await expect(item.getByRole("alert")).toContainText("메모 목록 서버 오류");
+  await item.getByRole("button", { name: "다시 시도", exact: true }).click();
+  // The retry replaces the error with the loading line until it answers.
   await expect(item.getByRole("status")).toHaveText("목록 불러오는 중…");
+  await expect(item.getByRole("alert")).toHaveCount(0);
   release();
   const count = item.getByRole("img", { name: "등록된 메모 1개", exact: true });
   const memo = item.getByRole("button", { name: "더 보기 메모", exact: true });
   await expect(count).toBeVisible();
   await expect(memo).toBeVisible();
-  expect(memoRequests).toHaveLength(1);
+  expect(memoRequests).toHaveLength(2);
   await sheet(page)
     .getByRole("button", { name: "다음 작업 더 보기", exact: false })
     .click();
@@ -1632,5 +1642,5 @@ test("꼬리 메모는 불러오는 중을 표시하고 다음 작업 더 보기
   await expect(memo.locator(".document-browser-document-preview")).toHaveText(
     "다음 페이지 뒤에도 남는 메모",
   );
-  expect(memoRequests).toHaveLength(1);
+  expect(memoRequests).toHaveLength(2);
 });

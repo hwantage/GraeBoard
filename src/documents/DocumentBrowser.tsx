@@ -90,10 +90,10 @@ type Listing = {
   properties: { id: string; name: string }[];
 };
 type ListState = { data?: Listing; loading?: boolean; error?: string };
-// The memo list API answers with the listing fields of a task document, plus
-// the same preview (?preview=1).
-type Memo = Entry["documents"][number];
-type MemoState = { memos?: Memo[]; error?: string };
+// A task document or tail memo in the list. The memo list API answers with
+// these listing fields too, previews included (?preview=1).
+type BrowserDocument = Entry["documents"][number];
+type MemoState = { memos?: BrowserDocument[]; error?: string };
 type Detail = {
   task: Task;
   settings: Settings;
@@ -111,9 +111,23 @@ type Selection = {
 // Copies are sheetClones; the original is "live".
 const sheetCloneOf = (source: string) =>
   source === "live" ? undefined : source;
+// Runs `work` for each item, at most `limit` at a time, until aborted.
+async function runBounded<T>(
+  items: T[],
+  limit: number,
+  signal: AbortSignal,
+  work: (item: T) => Promise<void>,
+) {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length && !signal.aborted) await work(items[next++]);
+    }),
+  );
+}
 
 // A task or the tail memos in a source's list: the toggle that shows its
-// documents and the button that opens it. `kind` marks which one it is.
+// documents and the button that opens it.
 function EntryHeader({
   kind,
   title,
@@ -138,7 +152,8 @@ function EntryHeader({
   return (
     <div className="document-browser-task-header">
       <button
-        className={`document-browser-entry-toggle document-browser-${kind}-toggle`}
+        // Tests count the tasks by their toggles.
+        className={`document-browser-entry-toggle${kind === "task" ? " document-browser-task-toggle" : ""}`}
         aria-expanded={opened}
         aria-label={`${title} ${kind === "task" ? "문서 " : ""}${opened ? "접기" : "펼치기"}`}
         onClick={onToggle}
@@ -146,14 +161,17 @@ function EntryHeader({
         {opened ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
       </button>
       <button
-        className={`document-browser-entry-open document-browser-${kind}-open`}
+        className="document-browser-entry-open"
         aria-label={title}
         title={tooltip}
         onClick={onOpen}
       >
         <span className="document-browser-task-heading">
           {icon}
-          <span className="document-browser-task-title" title={title}>
+          <span
+            className="document-browser-task-title"
+            title={tooltip ?? title}
+          >
             {title}
           </span>
           {count && (
@@ -175,13 +193,13 @@ function EntryHeader({
 }
 // A task document or a tail memo with its preview.
 function DocumentRow({
-  document,
+  doc,
   empty,
   tooltip,
   current,
   onSelect,
 }: {
-  document: Memo;
+  doc: BrowserDocument;
   empty: string;
   tooltip: string;
   current: boolean;
@@ -190,19 +208,19 @@ function DocumentRow({
   return (
     <button
       className="document-browser-document"
-      aria-label={document.title}
-      aria-description={document.hasContent ? document.preview : empty}
+      aria-label={doc.title}
+      aria-description={doc.hasContent ? doc.preview : empty}
       aria-current={current ? "true" : undefined}
       title={tooltip}
       onClick={onSelect}
     >
       <FileText size={14} aria-hidden="true" />
-      <span className="document-browser-document-title">{document.title}</span>
+      <span className="document-browser-document-title">{doc.title}</span>
       <span
         className="document-browser-document-preview"
-        title={document.preview || undefined}
+        title={doc.preview || undefined}
       >
-        {document.hasContent ? document.preview : empty}
+        {doc.hasContent ? doc.preview : empty}
       </span>
     </button>
   );
@@ -488,50 +506,44 @@ export default function DocumentBrowser({
           ),
         }));
         // Keep concurrent search requests bounded even with many copies.
-        let next = 0;
-        await Promise.all(
-          Array.from({ length: Math.min(3, targets.length) }, async () => {
-            while (next < targets.length && !controller.signal.aborted) {
-              const source = targets[next++];
-              try {
-                let data = await loadList(source.id, controller.signal);
-                // Refresh only the pages the user has already opened.
-                while (
-                  data.nextOffset !== null &&
-                  data.tasks.length < (counts[source.id] || 0) &&
-                  !controller.signal.aborted
-                ) {
-                  const next = await loadList(
-                    source.id,
-                    controller.signal,
-                    data.nextOffset,
-                  );
-                  data = {
-                    ...next,
-                    tasks: [...data.tasks, ...next.tasks],
-                    owners: { ...data.owners, ...next.owners },
-                  };
-                }
-                if (!controller.signal.aborted) {
-                  loadedVersions.current.set(
-                    source.id,
-                    versions.get(source.id) || 0,
-                  );
-                  setLists((previous) => ({
-                    ...previous,
-                    [source.id]: { data },
-                  }));
-                }
-              } catch (e) {
-                if (!controller.signal.aborted)
-                  setLists((previous) => ({
-                    ...previous,
-                    [source.id]: { error: (e as Error).message },
-                  }));
-              }
+        await runBounded(targets, 3, controller.signal, async (source) => {
+          try {
+            let data = await loadList(source.id, controller.signal);
+            // Refresh only the pages the user has already opened.
+            while (
+              data.nextOffset !== null &&
+              data.tasks.length < (counts[source.id] || 0) &&
+              !controller.signal.aborted
+            ) {
+              const next = await loadList(
+                source.id,
+                controller.signal,
+                data.nextOffset,
+              );
+              data = {
+                ...next,
+                tasks: [...data.tasks, ...next.tasks],
+                owners: { ...data.owners, ...next.owners },
+              };
             }
-          }),
-        );
+            if (!controller.signal.aborted) {
+              loadedVersions.current.set(
+                source.id,
+                versions.get(source.id) || 0,
+              );
+              setLists((previous) => ({
+                ...previous,
+                [source.id]: { data },
+              }));
+            }
+          } catch (e) {
+            if (!controller.signal.aborted)
+              setLists((previous) => ({
+                ...previous,
+                [source.id]: { error: (e as Error).message },
+              }));
+          }
+        });
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
@@ -560,28 +572,27 @@ export default function DocumentBrowser({
     );
     const controller = new AbortController();
     // At most three requests at once, as for the task pages.
-    let next = 0;
-    void Promise.all(
-      Array.from({ length: Math.min(3, targets.length) }, async () => {
-        while (next < targets.length && !controller.signal.aborted) {
-          const id = targets[next++];
-          let state: MemoState;
-          try {
-            const { documents } = await api<{ documents: Memo[] }>(
-              `${annualMemoPath({ teamId, year, sheetCloneId: sheetCloneOf(id) })}?preview=1`,
-              { signal: controller.signal },
-            );
-            state = { memos: documents };
-          } catch (e) {
-            state = { error: (e as Error).message };
-          }
-          if (controller.signal.aborted) return;
-          if (!state.error)
-            loadedMemoVersions.current.set(id, versions.get(id) || 0);
-          setMemoLists((previous) => ({ ...previous, [id]: state }));
-        }
-      }),
-    );
+    void runBounded(targets, 3, controller.signal, async (id) => {
+      // A retry shows the loading line again instead of the last error.
+      setMemoLists((previous) => ({
+        ...previous,
+        [id]: { memos: previous[id]?.memos },
+      }));
+      let state: MemoState;
+      try {
+        const { documents } = await api<{ documents: BrowserDocument[] }>(
+          `${annualMemoPath({ teamId, year, sheetCloneId: sheetCloneOf(id) })}?preview=1`,
+          { signal: controller.signal },
+        );
+        state = { memos: documents };
+      } catch (e) {
+        state = { error: (e as Error).message };
+      }
+      if (controller.signal.aborted) return;
+      if (!state.error)
+        loadedMemoVersions.current.set(id, versions.get(id) || 0);
+      setMemoLists((previous) => ({ ...previous, [id]: state }));
+    });
     return () => controller.abort();
   }, [scopeKey, refresh, memoRefresh, openedSources]);
   function resetSelection() {
@@ -1138,7 +1149,7 @@ export default function DocumentBrowser({
                                             {task.documents.map((doc) => (
                                               <DocumentRow
                                                 key={doc.id}
-                                                document={doc}
+                                                doc={doc}
                                                 empty="빈 문서"
                                                 tooltip={`${source.name} / ${task.title} / ${doc.title}`}
                                                 current={
@@ -1181,7 +1192,6 @@ export default function DocumentBrowser({
                               setLists((old) => ({
                                 ...old,
                                 [source.id]: {
-                                  ...old[source.id],
                                   data: {
                                     ...data,
                                     tasks: [...list.data!.tasks, ...data.tasks],
@@ -1199,7 +1209,7 @@ export default function DocumentBrowser({
                         {list.data.matchedTaskCount})
                       </Button>
                     )}
-                    <div className="document-browser-task document-browser-memos">
+                    <div className="document-browser-memos">
                       <EntryHeader
                         kind="memo"
                         title="꼬리 메모"
@@ -1243,7 +1253,7 @@ export default function DocumentBrowser({
                             memoList.memos.map((memo) => (
                               <DocumentRow
                                 key={memo.id}
-                                document={memo}
+                                doc={memo}
                                 empty="빈 메모"
                                 tooltip={`${source.name} / 꼬리 메모 / ${memo.title}`}
                                 current={
