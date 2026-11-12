@@ -1255,7 +1255,7 @@ test("업무와 일정 문서는 처음부터 전체 화면이며 너비 설정�
   ).toBeVisible();
 });
 
-test("일정 상세의 긴 제목은 앞부터 보이고 시작일·종료일 칸은 겹치지 않는다", async ({
+test("일정 상세의 긴 제목은 앞부터 보이고 옮긴 커서를 따라가며 시작일·종료일 칸은 겹치지 않는다", async ({
   page,
 }, info) => {
   const title = "[EndPoint][내부] 분석 시간 초과 DLPCenter 사용성 개선 요청";
@@ -1297,6 +1297,29 @@ test("일정 상세의 긴 제목은 앞부터 보이고 시작일·종료일 �
     }
     expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x);
     await screenshot(page, info, `calendar-entry-title-${width}`);
+    if (width === 360) {
+      // iOS는 손으로 옮긴 커서를 따라 스크롤하지 않는다. 엔진이 스스로 맞춘
+      // 위치를 되돌린 뒤 커서 변경(selectionchange)만으로 따라가는지 본다.
+      await input.focus();
+      const moveCaret = (position: "start" | "end") =>
+        input.evaluate((el: HTMLInputElement, position) => {
+          const at = position === "end" ? el.value.length : 0;
+          el.setSelectionRange(1, 1);
+          el.setSelectionRange(at, at);
+          el.scrollLeft = position === "end" ? 0 : el.scrollWidth;
+        }, position);
+      await moveCaret("end");
+      await expect
+        .poll(() =>
+          input.evaluate(
+            (el) => el.scrollWidth - el.clientWidth - el.scrollLeft,
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      expect(await input.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+      await moveCaret("start");
+      await expect.poll(() => input.evaluate((el) => el.scrollLeft)).toBe(0);
+    }
     await calendar.getByRole("button", { name: "닫기", exact: true }).tap();
     await expect(calendar).toHaveCount(0);
   }
