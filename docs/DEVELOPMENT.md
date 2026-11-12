@@ -287,6 +287,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 `Calendar.tsx`는 보기·날짜·패널과 일정 배치를 조합합니다. 조회·요청 취소는 기존 `useCalendarData`, 드래그는 기존 `useCalendarDrag`를 사용합니다. `useCalendarMutation`은 요청 직렬화와 조회 중단/재개를, `useCalendarCreation`은 새 일정의 임시 보관·저장을, `useCalendarCommands`는 일정·태그·주간 목록 변경과 단일 삭제 복원 기회를 소유합니다. 새 명령은 이 경로를 통해 조회 캐시를 갱신하고 기존 서버/시크릿 저장소를 재사용합니다. 일정의 기간 충돌과 패널 열림 상태는 화면에서 전달하며 별도 저장 경로를 만들지 않습니다.
 
+팀원 목록은 `GET /calendar/teams/:teamId`가 두 사이트 모두 이름 순서로 반환하며, 개인 월간의 아바타·조회 범위(`queries`)·주차 상태는 이 순서를 그대로 사용합니다. 팀 주간 구역만 `Calendar.tsx`의 `teamSections`가 로그인 사용자를 맨 앞으로 옮겨 렌더링하고, 사용자가 팀원이 아니면 서버 순서를 유지합니다. 구역의 `key`·주 이동·이번 주·시크릿 토글은 팀원 ID로 연결되어 순서와 무관하며, 탭 이동은 화면 순서를 따릅니다. 서버 정렬은 바꾸지 않습니다.
+
 ### 리치 문서 편집 책임
 
 `DocumentEditor.tsx`는 기존 문서 자동 저장·초안·충돌 병합·SSE 계약을 유지합니다. `editor/RichMarkdownEditor.tsx`는 편집 화면과 도구를 조합하며 아래 소유자를 사용합니다.
