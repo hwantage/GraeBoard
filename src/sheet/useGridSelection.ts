@@ -205,8 +205,19 @@ export default function useGridSelection({
     if (e.button !== 0 || presentation) return;
     if (e.pointerType === "touch") {
       e.preventDefault();
+      // 셀 편집처럼 첫 탭은 선택하고, 이미 선택한 행·열을 다시 탭하면 메뉴를 연다.
+      const selected = ranges.some(
+        (r) =>
+          r.kind === kind &&
+          (kind === "columns"
+            ? index >= r.c1 && index <= r.c2
+            : index >= r.r1 && index <= r.r2),
+      );
       touchPress.start(e, {
-        onTap: () => selectHeader(kind, index),
+        onTap: () =>
+          selected
+            ? showHeaderMenu(kind, index, e.clientX, e.clientY)
+            : selectHeader(kind, index),
         onLongPress: () => showHeaderMenu(kind, index, e.clientX, e.clientY),
       });
       return;

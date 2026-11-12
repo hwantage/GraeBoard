@@ -520,6 +520,10 @@ test("긴 제목·묶음 보기·분할 너비 기억·좁은 화면 목록 전�
     "PUT",
   );
   await openBrowser(page);
+  // 원본·사본 범위를 먼저, 그 오른쪽에 묶음 보기를 둔다.
+  const scopeBox = (await page.getByLabel("문서 검색 범위").boundingBox())!;
+  const groupBox = (await page.getByLabel("문서 묶음 보기").boundingBox())!;
+  expect(scopeBox.x + scopeBox.width).toBeLessThanOrEqual(groupBox.x);
   await page.getByLabel("문서 묶음 보기").selectOption("owner");
   await expect(
     sheet(page)

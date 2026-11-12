@@ -44,11 +44,15 @@ export function Modal({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    ref.current?.showModal();
-    (
+    const target =
       initialFocus?.current ||
-      (hasHelp || hasHeaderActions ? closeButton.current : null)
-    )?.focus({
+      (hasHelp || hasHeaderActions ? closeButton.current : null);
+    // autofocus가 없으면 showModal()이 첫 입력칸(긴 제목 등)에 포커스해 글자
+    // 끝으로 스크롤해 둔다. 처음부터 포커스할 대상에 포커스하게 한다.
+    target?.setAttribute("autofocus", "");
+    ref.current?.showModal();
+    target?.removeAttribute("autofocus");
+    target?.focus({
       preventScroll: true,
     });
     const el = ref.current;
