@@ -780,6 +780,7 @@ test("시크릿 상세도 닫기 왼쪽의 이모지 복사로 찾은 이모지�
   expect(await page.evaluate(() => (window as any).__copied)).toBe("🔒");
   await expect(picker).toHaveCount(0);
   await emoji.click();
+  await expect(picker).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(picker).toHaveCount(0);
   await expect(detail(page)).toBeVisible();

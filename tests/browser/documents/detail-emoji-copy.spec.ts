@@ -4,8 +4,9 @@ import { unpack } from "../../../shared/formatting/compact.js";
 import { todayKey } from "../../../shared/domain.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
-const recentKey = "weekly-plan:recent-emojis";
 let teamId: string, userId: string, taskId: string;
+// Recent picks are kept per user.
+const recentKey = () => `weekly-plan:recent-emojis:${userId}`;
 async function request(
   page: Page,
   path: string,
@@ -106,7 +107,7 @@ test.beforeEach(async ({ page }) => {
     })
   ).task.id;
   await page.goto("/");
-  await page.evaluate((key) => localStorage.removeItem(key), recentKey);
+  await page.evaluate((key) => localStorage.removeItem(key), recentKey());
   await page.getByLabel("팀 선택").selectOption(teamId);
   await expect(page.locator(`[data-cell="${taskId}:title"]`)).toBeVisible();
 });
@@ -137,6 +138,11 @@ test("업무 상세의 이모지 복사는 닫기 바로 왼쪽에서 이름으�
   await expect(
     picker(page).getByRole("region", { name: "표정", exact: true }),
   ).toBeVisible();
+  // The emoji are one tab stop, not one per emoji.
+  const tabStops = picker(page).locator('.emoji-option[tabindex="0"]');
+  await expect(tabStops).toHaveCount(1);
+  await expect(tabStops).toHaveAccessibleName("활짝 웃는 얼굴");
+  await expect(picker(page).locator(".emoji-option")).toHaveCount(382);
   const [grid, trigger] = await Promise.all([
     picker(page).boundingBox(),
     emojiButton(dialog).boundingBox(),
@@ -168,7 +174,7 @@ test("업무 상세의 이모지 복사는 닫기 바로 왼쪽에서 이름으�
   expect(
     await page.evaluate(
       (key) => JSON.parse(localStorage.getItem(key)!),
-      recentKey,
+      recentKey(),
     ),
   ).toEqual(["❤️"]);
 
@@ -189,6 +195,11 @@ test("업무 상세의 이모지 복사는 닫기 바로 왼쪽에서 이름으�
   await expect(
     categories.getByRole("button", { name: "음식", exact: true }),
   ).toHaveAttribute("aria-current", "true");
+  // ↓ from the search goes into the chosen category.
+  await search.press("ArrowDown");
+  await expect(
+    picker(page).getByRole("button", { name: "사과", exact: true }),
+  ).toBeFocused();
   await expect(
     picker(page).getByRole("button", { name: "커피", exact: true }),
   ).toBeInViewport();
@@ -279,6 +290,30 @@ test("일정 상세의 이모지 복사도 닫기 바로 왼쪽에 있고 방향
   await expect(smileys.nth(8)).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(smileys.nth(0)).toBeFocused();
+  // The focused emoji keeps the single tab stop.
+  await expect(smileys.nth(0)).toHaveAttribute("tabindex", "0");
+  await expect(picker(page).locator('.emoji-option[tabindex="0"]')).toHaveCount(
+    1,
+  );
+  // Moving through rows that scroll never hides the emoji under the sticky
+  // category heading.
+  const belowHeading = () =>
+    page.evaluate(() => {
+      const focused = document.activeElement as HTMLElement;
+      const heading = focused.closest("section")!.querySelector("h3")!;
+      return (
+        focused.getBoundingClientRect().top -
+        heading.getBoundingClientRect().bottom
+      );
+    });
+  for (const key of [
+    ...Array(8).fill("ArrowDown"),
+    ...Array(8).fill("ArrowUp"),
+  ]) {
+    await page.keyboard.press(key);
+    expect(await belowHeading()).toBeGreaterThanOrEqual(-0.5);
+  }
+  await expect(smileys.nth(0)).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(search).toBeFocused();
   await search.press("ArrowDown");
@@ -331,4 +366,29 @@ test("HTTP 사이트에서도 복사 명령으로 이모지를 복사한다", as
   expect(await page.evaluate(() => (window as any).__copied)).toBe("☕");
   await expect(picker(page)).toHaveCount(0);
   await expect(emojiButton(dialog)).toBeFocused();
+});
+
+test("손가락으로 연 이모지 목록은 검색칸에 포커스하지 않고 Esc는 목록만 닫는다", async ({
+  page,
+}) => {
+  const dialog = await openTask(page);
+  const button = emojiButton(dialog);
+  await button.dispatchEvent("pointerdown", {
+    pointerType: "touch",
+    isPrimary: true,
+  });
+  await button.dispatchEvent("click", { detail: 1 });
+  await expect(picker(page)).toBeVisible();
+  await expect(
+    picker(page).getByRole("textbox", { name: "이모지 검색" }),
+  ).not.toBeFocused();
+  expect(
+    await picker(page).evaluate((popup) =>
+      popup.contains(document.activeElement),
+    ),
+  ).toBe(false);
+  // A hardware keyboard's Esc closes the list, not the detail around it.
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toHaveCount(0);
+  await expect(dialog).toBeVisible();
 });
