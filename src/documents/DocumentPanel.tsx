@@ -139,7 +139,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
     const path = props.path;
     const readOnly = props.readOnly || !!props.emptyUntilSaved;
     const label = props.label || "업무 문서";
-    const memos = !!props.inline || !!props.memoTabs;
+    const memoList = !!props.inline || !!props.memoTabs;
     const current = documents.find((doc) => doc.id === selected);
     useDocumentPageTitle(
       (current?.title !== DEFAULT_DOCUMENT_TITLE && current?.title) ||
@@ -194,7 +194,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
       }
       if (
         result.documents.length &&
-        (memos || result.documents.some((doc) => doc.hasContent))
+        (memoList || result.documents.some((doc) => doc.hasContent))
       ) {
         setOpened(true);
         const target = result.documents.some((doc) => doc.id === selected)
@@ -339,7 +339,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
             !!requested ||
             !!draft ||
             result.documents.some((doc) => doc.hasContent) ||
-            (memos && result.documents.length > 0);
+            (memoList && result.documents.length > 0);
           setSelected(
             (previous) =>
               requested ||
@@ -674,7 +674,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
           [selected]: (previous[selected] || 0) + 1,
         }));
         changed(result);
-        const empty = memos
+        const empty = memoList
           ? !result.documents.length
           : result.documentCount === 0;
         if (empty) {
@@ -764,7 +764,41 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
         </span>
       );
     }
-    if (!opened && !props.inline)
+    if (!opened && !props.inline) {
+      // An empty memo list, or task documents without content: add or write
+      // one, or (read-only) a notice.
+      const empty = props.memoTabs
+        ? documentsLoaded &&
+          !documents.length && {
+            icon: <Plus size={16} aria-hidden="true" />,
+            action: "메모 추가",
+            disabled: busy,
+            start: () => void add(true),
+            title: props.readOnly
+              ? "작성된 메모가 없습니다."
+              : "꼬리 메모를 남겨 보세요",
+            text: props.readOnly
+              ? "메모가 작성되면 이곳에서 내용을 확인할 수 있습니다."
+              : "Markdown 문서로 연간 업무 전체에 대한 메모를 기록할 수 있습니다.",
+          }
+        : !!documents.length && {
+            icon: <Pencil size={16} aria-hidden="true" />,
+            action: "문서 작성",
+            disabled: readOnly,
+            start: () => {
+              focusEditor.current = true;
+              firstReady.current = false;
+              props.onLoadingChange(true);
+              setVisited([selected]);
+              setOpened(true);
+            },
+            title: props.readOnly
+              ? "작성된 문서가 없습니다."
+              : "업무를 문서로 정리해 보세요",
+            text: props.readOnly
+              ? "문서가 작성되면 이곳에서 내용을 확인할 수 있습니다."
+              : "Markdown 문서로 업무의 배경과 진행 내용, 결정 사항을 기록할 수 있습니다.",
+          };
       return (
         <section
           className="task-documents"
@@ -778,68 +812,28 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
             <Button onClick={() => setAttempt((value) => value + 1)}>
               문서 다시 불러오기
             </Button>
-          ) : props.memoTabs ? (
-            documentsLoaded &&
-            !documents.length && (
-              <div className="document-empty">
-                {!readOnly && (
-                  <Button
-                    className="primary"
-                    disabled={busy}
-                    onClick={() => void add(true)}
-                  >
-                    <Plus size={16} aria-hidden="true" />
-                    메모 추가
-                  </Button>
-                )}
-                <Grae className="document-empty-character" />
-                <h3>
-                  {readOnly
-                    ? "작성된 메모가 없습니다."
-                    : "꼬리 메모를 남겨 보세요"}
-                </h3>
-                <p>
-                  {readOnly
-                    ? "메모가 작성되면 이곳에서 내용을 확인할 수 있습니다."
-                    : "Markdown 문서로 연간 업무 전체에 대한 메모를 기록할 수 있습니다."}
-                </p>
-              </div>
-            )
           ) : (
-            !!documents.length && (
+            empty && (
               <div className="document-empty">
                 {!props.readOnly && (
                   <Button
                     className="primary"
-                    disabled={readOnly}
-                    onClick={() => {
-                      focusEditor.current = true;
-                      firstReady.current = false;
-                      props.onLoadingChange(true);
-                      setVisited([selected]);
-                      setOpened(true);
-                    }}
+                    disabled={empty.disabled}
+                    onClick={empty.start}
                   >
-                    <Pencil size={16} aria-hidden="true" />
-                    문서 작성
+                    {empty.icon}
+                    {empty.action}
                   </Button>
                 )}
                 <Grae className="document-empty-character" />
-                <h3>
-                  {props.readOnly
-                    ? "작성된 문서가 없습니다."
-                    : "업무를 문서로 정리해 보세요"}
-                </h3>
-                <p>
-                  {props.readOnly
-                    ? "문서가 작성되면 이곳에서 내용을 확인할 수 있습니다."
-                    : "Markdown 문서로 업무의 배경과 진행 내용, 결정 사항을 기록할 수 있습니다."}
-                </p>
+                <h3>{empty.title}</h3>
+                <p>{empty.text}</p>
               </div>
             )
           )}
         </section>
       );
+    }
     return (
       <section
         className="task-documents"
@@ -946,7 +940,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
           </div>
           {!readOnly && (
             <Button
-              tooltip={memos ? "메모 추가" : "문서 추가"}
+              tooltip={memoList ? "메모 추가" : "문서 추가"}
               className={props.inline ? "memo-add-document" : undefined}
               disabled={
                 busy ||

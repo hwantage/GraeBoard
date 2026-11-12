@@ -124,13 +124,10 @@
   background: var(--paper);
 }
 .document-browser-source-toggle,
-.document-browser-task-toggle,
-.document-browser-task-open,
+.document-browser-entry-toggle,
+.document-browser-entry-open,
 .document-browser-group-toggle,
-.document-browser-document,
-.document-browser-memo-toggle,
-.document-browser-memo-open,
-.document-browser-memo-document {
+.document-browser-document {
   display: flex;
   align-items: center;
   width: 100%;
@@ -173,7 +170,9 @@
   padding: 12px 10px 12px 20px;
 }
 .document-browser-source-body > p,
-.document-browser-source-body > [role="alert"] {
+.document-browser-source-body > [role="alert"],
+.document-browser-documents > p,
+.document-browser-documents > [role="alert"] {
   padding: 8px;
   font-size: 12px;
 }
@@ -235,30 +234,21 @@
   padding-top: 6px;
   border-top: 1px dashed var(--line);
 }
-.document-browser-memo-icon {
+.document-browser-memos .document-browser-task-heading > svg {
   color: var(--document-accent);
-}
-.document-browser-memo-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  font-size: 12px;
 }
 .document-browser-task-header {
   display: flex;
   align-items: center;
 }
-.document-browser-task-toggle,
-.document-browser-memo-toggle {
+.document-browser-entry-toggle {
   flex: 0 0 26px;
   width: 26px;
   align-self: stretch;
   padding: 7px 4px;
   border-radius: 4px;
 }
-.document-browser-task-open,
-.document-browser-memo-open {
+.document-browser-entry-open {
   flex: 1;
   min-width: 0;
   padding: 7px 4px 7px 0;
@@ -280,8 +270,7 @@
   font-size: 13px;
   font-weight: 600;
 }
-.document-browser-document-count,
-.document-browser-memo-count {
+.document-browser-document-count {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -319,8 +308,7 @@
   border-left: 1px solid var(--line);
   padding-left: 8px;
 }
-.document-browser-document,
-.document-browser-memo-document {
+.document-browser-document {
   gap: var(--document-icon-gap);
   padding: 9px 10px;
   border-radius: 5px;
@@ -352,16 +340,12 @@
   display: none;
 }
 .document-browser-source-toggle:hover,
-.document-browser-task-toggle:hover,
-.document-browser-task-open:hover,
-.document-browser-document:hover,
-.document-browser-memo-toggle:hover,
-.document-browser-memo-open:hover,
-.document-browser-memo-document:hover {
+.document-browser-entry-toggle:hover,
+.document-browser-entry-open:hover,
+.document-browser-document:hover {
   background: var(--surface);
 }
-.document-browser-document[aria-current="true"],
-.document-browser-memo-document[aria-current="true"] {
+.document-browser-document[aria-current="true"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;

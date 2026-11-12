@@ -205,7 +205,10 @@ test("접힌 사본 집계, 작업 이름 검색, 정확한 문서 선택과 원
     page.getByRole("status").filter({ hasText: "검색 결과" }),
   ).toContainText("작업 3개 · 문서 6개");
   await expect(
-    sheet(page, copyA).locator(".document-browser-document-count"),
+    sheet(page, copyA)
+      .locator(".document-browser-task")
+      .filter({ hasText: longTitle })
+      .locator(".document-browser-document-count"),
   ).toHaveAttribute("aria-label", "등록된 문서 2개");
   await expect(
     sheet(page, copyA)
@@ -1315,7 +1318,7 @@ test("원본 목록 맨 아래의 꼬리 메모는 검색과 관계없이 남고
   // The memo item closes the source after its tasks.
   await expect(
     sheet(page).locator(".document-browser-source-body > :last-child"),
-  ).toHaveClass("document-browser-memos");
+  ).toHaveClass(/\bdocument-browser-memos\b/);
   await expect(
     item.getByRole("img", { name: "등록된 메모 1개", exact: true }),
   ).toBeVisible();
@@ -1359,10 +1362,18 @@ test("원본 목록 맨 아래의 꼬리 메모는 검색과 관계없이 남고
   await detail(page)
     .getByRole("button", { name: "Markdown 원문", exact: true })
     .click();
+  // A memo save reloads only the memo list, not the task pages or counts.
+  const listRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/document-browser/"))
+      listRequests.push(url.pathname);
+  });
   await memoRaw(page).fill("문서 브라우저에서 고친 원본 메모");
   await expect(
     memoButton.locator(".document-browser-document-preview"),
   ).toHaveText("문서 브라우저에서 고친 원본 메모");
+  expect(listRequests).toEqual([]);
   await memoRaw(page).fill("작업 문서로 이동하기 전에 저장할 메모");
   await openDocument(page, "live", "설계 노트");
   expect((await get(page, `${memoBase}/${memoId}`)).markdown).toBe(
@@ -1414,7 +1425,7 @@ test("전체 범위에서 사본마다 자기 꼬리 메모를 붙이고 사본 
       sheet(page, source).locator(
         ".document-browser-source-body > :last-child",
       ),
-    ).toHaveClass("document-browser-memos");
+    ).toHaveClass(/\bdocument-browser-memos\b/);
     await expect(
       memoItem(page, source).getByRole("img", {
         name: `등록된 메모 ${count}개`,
@@ -1560,4 +1571,66 @@ test("휴대폰 폭에서도 꼬리 메모는 작업처럼 상세를 열고 목�
   await expect(
     item.getByRole("button", { name: "휴대폰 메모", exact: true }),
   ).toHaveAttribute("aria-current", "true");
+});
+
+test("꼬리 메모는 불러오는 중을 표시하고 다음 작업 더 보기 뒤에도 목록 맨 아래에 남는다", async ({
+  page,
+}) => {
+  for (let n = 0; n < 40; n++) {
+    const id = (
+      await send(page, "/tasks", {
+        teamId,
+        year: 2026,
+        fields: { title: `메모 페이지 작업 ${String(n).padStart(2, "0")}` },
+      })
+    ).task.id;
+    await send(
+      page,
+      `/tasks/${id}/documents/main`,
+      { markdown: `본문 ${n}`, expectedRevision: 0, operationId: randomUUID() },
+      "PUT",
+    );
+  }
+  const memoBase = `/teams/${teamId}/years/2026/memos`;
+  await addMemo(page, memoBase, "더 보기 메모", "다음 페이지 뒤에도 남는 메모");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const memoRequests: string[] = [];
+  await page.route(
+    (url) => url.pathname === `/api${memoBase}`,
+    async (route) => {
+      memoRequests.push(route.request().url());
+      await held;
+      await route.continue();
+    },
+  );
+  await page
+    .getByRole("button", { name: "문서 브라우저", exact: true })
+    .click();
+  await expect(
+    sheet(page).locator(".document-browser-task-toggle"),
+  ).toHaveCount(40);
+  const item = memoItem(page);
+  await item.getByRole("button", { name: "꼬리 메모 펼치기" }).click();
+  await expect(item.getByRole("status")).toHaveText("목록 불러오는 중…");
+  release();
+  const count = item.getByRole("img", { name: "등록된 메모 1개", exact: true });
+  const memo = item.getByRole("button", { name: "더 보기 메모", exact: true });
+  await expect(count).toBeVisible();
+  await expect(memo).toBeVisible();
+  expect(memoRequests).toHaveLength(1);
+  await sheet(page)
+    .getByRole("button", { name: "다음 작업 더 보기", exact: false })
+    .click();
+  await expect(
+    sheet(page).locator(".document-browser-task-toggle"),
+  ).toHaveCount(42);
+  await expect(
+    sheet(page).locator(".document-browser-source-body > :last-child"),
+  ).toHaveClass(/\bdocument-browser-memos\b/);
+  await expect(count).toBeVisible();
+  await expect(memo.locator(".document-browser-document-preview")).toHaveText(
+    "다음 페이지 뒤에도 남는 메모",
+  );
+  expect(memoRequests).toHaveLength(1);
 });

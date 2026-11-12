@@ -8,6 +8,7 @@ import CalendarTagManager from "../calendar/CalendarTags";
 import DocumentEditor, { type DocumentHandle } from "./DocumentEditor";
 import { DocumentPage } from "./DocumentPanel";
 import DocumentLoading from "./DocumentLoading";
+import { annualMemoDraftKey, annualMemoPath } from "./AnnualMemoDocumentPanel";
 import { canContribute, canManageTeam } from "../../shared/domain.js";
 import { documentLinkPath } from "../../shared/documents/document-links.js";
 import {
@@ -293,14 +294,18 @@ function MemoLinkPanel({
   const editor = useRef<DocumentHandle>(null);
   useDocumentPageTitle(title);
   const [loading, setLoading] = useState(true);
-  const collection =
+  const owner =
     target.kind === "memo"
-      ? `/teams/${target.teamId}/years/${target.year}/memos`
-      : `/sheet-clones/${target.sheetCloneId}/memos`;
-  const path = `${collection}/${target.id}`;
-  // AnnualMemoDocumentPanel's key, so a draft is shared with the memo card
-  // and the document browser's memo tab.
-  const draftKey = `weekly-plan:memo:${user.id}:${teamId}:${target.kind === "memo" ? target.year : target.sheetCloneId}:${target.id}`;
+      ? { teamId: target.teamId, year: target.year }
+      : { teamId, sheetCloneId: target.sheetCloneId };
+  const path = `${annualMemoPath(owner)}/${target.id}`;
+  // AnnualMemoPanel's key, so a draft is shared with the memo card.
+  const draftKey = annualMemoDraftKey({
+    ...owner,
+    teamId,
+    userId: user.id,
+    documentId: target.id,
+  });
   const close = async () => {
     if (editor.current && !(await editor.current.flush())) return false;
     onClose();
