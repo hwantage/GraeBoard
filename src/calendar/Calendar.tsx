@@ -218,6 +218,12 @@ export default function Calendar({
         ? calendarWeek(today)
         : weeks[0];
   const members = context?.members || EMPTY_MEMBERS;
+  // The team week lists the viewer's own week first; everyone else keeps the
+  // server's order. Someone outside the team sees the server's order as is.
+  const teamSections = useMemo(() => {
+    const own = members.find((m) => m.id === user.id);
+    return own ? [own, ...members.filter((m) => m !== own)] : members;
+  }, [members, user.id]);
   const tags = context?.tags || EMPTY_TAGS;
   const tagMap = useMemo(
     () => new Map(tags.map((tag) => [tag.id, tag])),
@@ -1248,7 +1254,7 @@ export default function Calendar({
                 {weeks.map((start) => weekRow(start, monthlyOwner))}
               </div>
             ) : (
-              members.map((m) => {
+              teamSections.map((m) => {
                 const start = memberWeeks[m.id] || calendarWeek(today);
                 const schedule = schedules.get(m.id);
                 return (
