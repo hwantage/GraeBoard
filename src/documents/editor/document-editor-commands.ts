@@ -4,7 +4,7 @@ import {
   unwrapToggleCommand,
 } from "./DocumentToggle";
 
-import { editorViewCtx, commandsCtx } from "@milkdown/kit/core";
+import { commandsCtx } from "@milkdown/kit/core";
 import {
   wrapInHeadingCommand,
   turnIntoTextCommand,
@@ -154,8 +154,9 @@ export const listFormatKeydown = keydownHandler({
 // list. The list splits around the item. The item's other blocks, such as its
 // sub-items, follow its paragraph and join the items after it when both are
 // the same kind of list. A checklist item's check is dropped with the item.
-// When the list splits, an ordered list's later items keep their numbers.
-function liftListItem(tr: Transaction, pos: number) {
+// When an ordered list splits, the list after the item continues from the
+// item's number.
+function liftItemOutOfList(tr: Transaction, pos: number) {
   const { doc } = tr;
   const item = doc.nodeAt(pos);
   if (!item) return false;
@@ -198,28 +199,42 @@ function liftListItem(tr: Transaction, pos: number) {
   return true;
 }
 
-// Lift every list item whose first paragraph the selection touches, the last
-// one first so that a nested item leaves before its parent item does.
+// Lift every list item whose first paragraph the selection touches. The last
+// one goes first: a lift keeps the positions before the lifted item, so the
+// positions found earlier stay valid, and a nested item leaves before its
+// parent item does.
 function liftSelectedListItems(state: EditorState): Transaction | null {
-  const { selection } = state;
+  const { from, to } = state.selection;
   const listItem = state.schema.nodes.list_item;
+  const found: number[] = [];
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (
+      node.type === listItem &&
+      pos + 1 < to &&
+      pos + 1 + node.firstChild!.nodeSize > from
+    )
+      found.push(pos);
+  });
+  if (!found.length) return null;
   const tr = state.tr;
-  for (;;) {
-    const from = tr.mapping.map(selection.from);
-    const to = tr.mapping.map(selection.to);
-    let found = -1;
-    tr.doc.nodesBetween(from, to, (node, pos) => {
-      if (
-        node.type === listItem &&
-        pos + 1 < to &&
-        pos + 1 + node.firstChild!.nodeSize > from
-      )
-        found = pos;
-    });
-    if (found < 0) break;
-    if (!liftListItem(tr, found)) return null;
+  for (const pos of found.reverse())
+    if (!liftItemOutOfList(tr, pos)) return null;
+  return tr;
+}
+
+// The block menu checks every format against the same state. They share one
+// lifted state instead of lifting again for each format.
+const liftedStates = new WeakMap<EditorState, EditorState | null>();
+function liftedState(state: EditorState) {
+  if (!liftedStates.has(state)) {
+    const lifted = liftSelectedListItems(state);
+    liftedStates.set(
+      state,
+      lifted &&
+        EditorState.create({ doc: lifted.doc, selection: lifted.selection }),
+    );
   }
-  return tr.docChanged ? tr : null;
+  return liftedStates.get(state)!;
 }
 
 // A list item starts with a paragraph, so a heading, quote, code block or
@@ -228,6 +243,12 @@ function liftSelectedListItems(state: EditorState): Transaction | null {
 // paragraphs needs only the lift.
 function outOfListCommand(convert: Command, liftConverts = false): Command {
   return (state, dispatch, view) => {
+    if (!dispatch) {
+      const next = liftedState(state);
+      return next
+        ? convert(next) || liftConverts
+        : convert(state, undefined, view);
+    }
     const lifted = liftSelectedListItems(state);
     if (!lifted) return convert(state, dispatch, view);
     const next = EditorState.create({
@@ -235,21 +256,23 @@ function outOfListCommand(convert: Command, liftConverts = false): Command {
       selection: lifted.selection,
     });
     const result: { tr: Transaction | null } = { tr: null };
-    if (!convert(next, dispatch && ((tr) => (result.tr = tr))) && !liftConverts)
-      return false;
-    if (dispatch) {
-      const converted = result.tr;
-      if (converted) {
-        for (const step of converted.steps) lifted.step(step);
-        if (converted.selectionSet)
-          lifted.setSelection(
-            converted.selection.map(lifted.doc, StepMap.empty),
-          );
-      }
-      dispatch(closeHistory(lifted).scrollIntoView());
+    if (!convert(next, (tr) => (result.tr = tr)) && !liftConverts) return false;
+    const converted = result.tr;
+    if (converted) {
+      for (const step of converted.steps) lifted.step(step);
+      if (converted.selectionSet)
+        lifted.setSelection(converted.selection.map(lifted.doc, StepMap.empty));
     }
+    dispatch(closeHistory(lifted).scrollIntoView());
     return true;
   };
+}
+
+// In a toggle's title the toggle itself changes. The state the command runs
+// on decides, so a check against another selection gives the same answer.
+function summaryOr(summary: Command, other: Command): Command {
+  return (state, dispatch, view) =>
+    (inToggleSummary(state) ? summary : other)(state, dispatch, view);
 }
 
 export function blockCommand(ctx: Ctx, value: string): Command | null {
@@ -258,17 +281,18 @@ export function blockCommand(ctx: Ctx, value: string): Command | null {
   if (value.startsWith("toggle"))
     return outOfListCommand(setToggleCommand(Number(value.slice(6)) || 0));
   const commands = ctx.get(commandsCtx);
-  const summary = inToggleSummary(ctx.get(editorViewCtx).state);
   if (value.startsWith("h")) {
     const level = Number(value.slice(1));
-    return summary
-      ? unwrapToggleCommand(headingSchema.type(ctx), { level })
-      : outOfListCommand(commands.get(wrapInHeadingCommand.key)(level));
+    return summaryOr(
+      unwrapToggleCommand(headingSchema.type(ctx), { level }),
+      outOfListCommand(commands.get(wrapInHeadingCommand.key)(level)),
+    );
   }
   if (value === "paragraph")
-    return summary
-      ? unwrapToggleCommand(paragraphSchema.type(ctx))
-      : outOfListCommand(commands.get(turnIntoTextCommand.key)(), true);
+    return summaryOr(
+      unwrapToggleCommand(paragraphSchema.type(ctx)),
+      outOfListCommand(commands.get(turnIntoTextCommand.key)(), true),
+    );
   if (value === "quote")
     return outOfListCommand(commands.get(wrapInBlockquoteCommand.key)());
   if (value === "code")

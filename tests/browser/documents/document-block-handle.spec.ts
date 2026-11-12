@@ -330,7 +330,8 @@ test("목록 항목을 제목·본문·인용·토글로 바꾸면 그 항목만
     .toMatch(exact(`* 하나\n\n## 둘\n\n* 셋\n\n${tail}\n\n${tasks}`));
   // One undo puts the item back into one list.
   await undoButton(page).click();
-  await expect(rich(page).locator(":scope > ul").first()).toHaveCount(1);
+  // The bullet list is one list again, beside the checklist further down.
+  await expect(rich(page).locator(":scope > ul")).toHaveCount(2);
   await expect(
     rich(page).locator(":scope > ul").first().locator(":scope > li"),
   ).toHaveText(["하나", "둘", "셋"]);
@@ -399,6 +400,9 @@ test("목록 항목을 제목·본문·인용·토글로 바꾸면 그 항목만
   await expect(rich(page).locator(":scope > p strong")).toHaveText("굵게");
 });
 
+const caretIn = (block: ReturnType<Page["locator"]>) =>
+  block.evaluate((element) => element.contains(getSelection()!.anchorNode));
+
 test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위 항목은 뒤 항목과 이어진다", async ({
   page,
 }) => {
@@ -410,8 +414,15 @@ test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위
   const nested = rich(page).locator(":scope > ul > li > div > ul > li");
 
   // The handle of an item with sub-items converts that item, even with the
-  // caret in a sub-item. Its sub-items move up and continue the list.
+  // caret in a sub-item. Its sub-items move up and continue the list. Only a
+  // conversion moves the caret; closing the menu leaves it in the sub-item.
   await place(page, nested.nth(1));
+  await hover(page, top.nth(0).locator(":scope > div > p"));
+  await handle(page).click();
+  await expect(option(page, "제목 2")).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+  expect(await caretIn(nested.nth(1))).toBe(true);
   await hover(page, top.nth(0).locator(":scope > div > p"));
   await handle(page).click();
   await option(page, "제목 2").click();
@@ -525,6 +536,32 @@ test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위
   await undoButton(page).click();
   await expect(nested).toHaveText(["안건 하나", "안건 둘", "안건 셋"]);
   await expect(top).toHaveCount(2);
+});
+
+test("토글 내용에 커서가 있어도 토글 손잡이의 전환은 토글 제목에 적용한다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "<details open>\n<summary>토글 제목</summary>\n\n안쪽 문단\n\n</details>",
+  );
+  await open(page);
+  const inner = rich(page).locator(".document-toggle-content p");
+  await place(page, inner);
+  await hover(page, rich(page).locator(".document-toggle-title"));
+  await handle(page).click();
+  await expect(option(page, "제목 2")).toBeEnabled();
+  await page.keyboard.press("Escape");
+  expect(await caretIn(inner)).toBe(true);
+  await hover(page, rich(page).locator(".document-toggle-title"));
+  await handle(page).click();
+  await option(page, "제목 2").click();
+  await expect(rich(page).locator(".document-toggle")).toHaveCount(0);
+  await expect(rich(page).locator(":scope > h2")).toHaveText("토글 제목");
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("## 토글 제목\n\n안쪽 문단"));
 });
 
 test("손잡이 메뉴의 위에 추가·아래에 추가는 빈 블록을 만들고 커서를 둔다", async ({
