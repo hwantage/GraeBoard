@@ -38,11 +38,13 @@ async function open(page: Page) {
     .click({ button: "right" });
   await expect(rich(page)).toBeVisible();
 }
-async function selectContents(locator: Locator) {
-  await locator.evaluate(async (el) => {
+// With `collapseToEnd`, place the caret after the contents instead.
+async function selectContents(locator: Locator, collapseToEnd = false) {
+  await locator.evaluate(async (el, collapseToEnd) => {
     (el.closest("[contenteditable=true]") as HTMLElement).focus();
     const range = document.createRange();
     range.selectNodeContents(el);
+    if (collapseToEnd) range.collapse(false);
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(range);
     // Notify the editor before its delayed focus handler restores the cursor.
@@ -50,7 +52,7 @@ async function selectContents(locator: Locator) {
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
     );
-  });
+  }, collapseToEnd);
 }
 async function editSource(page: Page, value: string, index = 0) {
   const current = block(page).nth(index);
@@ -423,18 +425,7 @@ test("Mermaid 소스에 한 글자씩 입력한 화살표는 기호로 바꾸지
   await block(page).getByRole("img", { name: "Mermaid 다이어그램" }).click();
   const code = block(page).locator("pre code");
   await expect(code).toBeVisible();
-  await code.evaluate(async (el) => {
-    (el.closest("[contenteditable=true]") as HTMLElement).focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    window.getSelection()!.removeAllRanges();
-    window.getSelection()!.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
-  });
+  await selectContents(code, true);
   // Keystrokes, not inserted text, are what run the editor's input rules.
   const typed = "\n  B <--> C ==> D -.-> E <== F";
   for (const key of typed)

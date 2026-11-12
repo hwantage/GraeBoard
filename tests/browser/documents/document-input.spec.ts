@@ -513,8 +513,6 @@ test("코드·인라인 코드·표 셀·문장 중간에서는 자동 블록 �
   await expect(rich(page).locator("li")).toHaveCount(0);
 });
 
-const typedText = async (editor: Locator) =>
-  (await editor.textContent())?.replaceAll(" ", " ");
 for (const [typed, symbol] of [
   ["->", "→"],
   ["<-", "←"],
@@ -528,19 +526,74 @@ for (const [typed, symbol] of [
   }) => {
     await open(page);
     await rich(page).pressSequentially(`가${typed}`);
-    await expect.poll(() => typedText(rich(page))).toBe(`가${symbol}`);
+    await expect.poll(() => text(rich(page))).toBe(`가${symbol}`);
     await page.keyboard.press("Backspace");
-    await expect.poll(() => typedText(rich(page))).toBe(`가${typed}`);
+    await expect.poll(() => text(rich(page))).toBe(`가${typed}`);
     await clear(page);
     await rich(page).pressSequentially(`가${typed}`);
-    await expect.poll(() => typedText(rich(page))).toBe(`가${symbol}`);
+    await expect.poll(() => text(rich(page))).toBe(`가${symbol}`);
     await page.keyboard.press("ControlOrMeta+z");
-    await expect.poll(() => typedText(rich(page))).toBe(`가${typed}`);
+    await expect.poll(() => text(rich(page))).toBe(`가${typed}`);
     await clear(page);
     await rich(page).pressSequentially(`a${typed}b 다음`);
-    await expect.poll(() => typedText(rich(page))).toBe(`a${symbol}b 다음`);
+    await expect.poll(() => text(rich(page))).toBe(`a${symbol}b 다음`);
     await expect.poll(() => markdown(page)).toBe(`a${symbol}b 다음\n`);
   });
+
+test("화살표 합치기는 방금 바뀐 화살표에만 적용하고 제목에서도 입력한 글자로 되돌린다", async ({
+  page,
+}) => {
+  // A backtick inside existing inline code does not open new inline code.
+  await open(page, "``a`b`` 끝\n");
+  await rich(page).locator("p").first().click();
+  await page.keyboard.press("End");
+  await settle(page);
+  await rich(page).pressSequentially(" c->d");
+  await expect(rich(page).locator("p code")).toHaveText("a`b");
+  await expect
+    .poll(() => text(rich(page).locator("p").first()))
+    .toBe("a`b 끝 c→d");
+  await clear(page);
+  // After the caret moves away and back, `>` is an ordinary character.
+  await rich(page).pressSequentially("x<-");
+  await expect.poll(() => text(rich(page))).toBe("x←");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForTimeout(200);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(200);
+  await rich(page).pressSequentially(">");
+  await expect.poll(() => text(rich(page))).toBe("x←>");
+  await clear(page);
+  // The bold shortcut after the arrow is the last conversion; `>` stays.
+  await rich(page).pressSequentially("**a<-**>");
+  await expect(rich(page).locator("strong")).toHaveText("a←");
+  await expect.poll(() => text(rich(page))).toBe("a←>");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => text(rich(page))).toBe("a←");
+  await expect(rich(page).locator("strong")).toHaveText("a←");
+  await clear(page);
+  // `<-` restored by Backspace and then `>` is typed `<->`.
+  await rich(page).pressSequentially("y<-");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => text(rich(page))).toBe("y<-");
+  await rich(page).pressSequentially(">");
+  await expect.poll(() => text(rich(page))).toBe("y↔");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => text(rich(page))).toBe("y<->");
+  await clear(page);
+  // Milkdown's heading id sync must not drop the undo information.
+  await rich(page).pressSequentially("## x <->");
+  const headings = rich(page).locator("h2");
+  await expect(headings).toHaveText("x ↔");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => text(headings)).toBe("x <->");
+  await page.keyboard.press("Enter");
+  await rich(page).pressSequentially("## x a->");
+  await expect(headings.nth(1)).toHaveText("x a→");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => text(headings.nth(1))).toBe("x a->");
+  await expect.poll(() => markdown(page)).toBe("## x <->\n\n## x a->\n");
+});
 
 test("화살표는 코드·인라인 코드·붙여넣기·원문에서는 그대로 두고 표 셀과 목록에서는 바꾼다", async ({
   page,
@@ -592,8 +645,8 @@ test("화살표는 코드·인라인 코드·붙여넣기·원문에서는 그�
   ];
   await expect
     .poll(async () => {
-      const text = await markdown(page);
-      return saved.filter((part) => !text.includes(part));
+      const stored = await markdown(page);
+      return saved.filter((part) => !stored.includes(part));
     })
     .toEqual([]);
   await detail(page)
@@ -687,24 +740,24 @@ test("Chromium IME 한글 조합 앞뒤에서도 화살표를 바꾼다", async 
       code: "KeyG",
       windowsVirtualKeyCode: 229,
     });
-    for (const text of steps) {
+    for (const step of steps) {
       await client.send("Input.imeSetComposition", {
-        text,
-        selectionStart: text.length,
-        selectionEnd: text.length,
+        text: step,
+        selectionStart: step.length,
+        selectionEnd: step.length,
       });
-      await expect.poll(() => typedText(rich(page))).toContain(text);
+      await expect.poll(() => text(rich(page))).toContain(step);
     }
     await client.send("Input.insertText", { text: steps.at(-1)! });
   }
   await compose(["ㅎ", "하", "한"]);
   await rich(page).pressSequentially("->");
-  await expect.poll(() => typedText(rich(page))).toBe("한→");
+  await expect.poll(() => text(rich(page))).toBe("한→");
   await compose(["ㄱ", "그", "글"]);
-  await expect.poll(() => typedText(rich(page))).toBe("한→글");
+  await expect.poll(() => text(rich(page))).toBe("한→글");
   await rich(page).pressSequentially("<=>");
   await compose(["ㅁ", "마", "말"]);
-  await expect.poll(() => typedText(rich(page))).toBe("한→글⇔말");
+  await expect.poll(() => text(rich(page))).toBe("한→글⇔말");
   await expect.poll(() => markdown(page)).toBe("한→글⇔말\n");
 });
 
