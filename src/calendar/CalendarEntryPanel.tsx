@@ -29,6 +29,7 @@ import {
 } from "./calendar-tag-checks";
 import CopyDocumentLinkButton from "../documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "../documents/DocumentFullWidthButton";
+import CopyEmojiButton from "../documents/CopyEmojiButton";
 import DocumentFullPageButton from "../documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "../documents/useDocumentFullPage";
 import {
@@ -369,7 +370,12 @@ export default function CalendarEntryPanel({
     <Modal
       title="캘린더 일정"
       className={`task-detail-modal calendar-entry-modal${documentFullPage ? ` document-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
-      headerActions={documentFullPage && <DocumentFullWidthButton />}
+      headerActions={
+        <>
+          {documentFullPage && <DocumentFullWidthButton />}
+          <CopyEmojiButton />
+        </>
+      }
       titleAction={
         <>
           <CopyDocumentLinkButton target={linkTarget} title={title} />

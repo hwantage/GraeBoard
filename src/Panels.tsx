@@ -40,6 +40,7 @@ import { describeStyle } from "./sheet/history";
 import { pack, compactStyle } from "../shared/formatting/compact.js";
 import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
+import CopyEmojiButton from "./documents/CopyEmojiButton";
 import DocumentFullPageButton from "./documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
@@ -355,6 +356,7 @@ export function RowPanel({
               </div>
             ))}
           {documentFullPage && <DocumentFullWidthButton />}
+          <CopyEmojiButton />
         </>
       }
     >

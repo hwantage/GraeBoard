@@ -2565,9 +2565,15 @@ body.document-block-moving * {
 .task-detail-modal > header > .button {
   flex-shrink: 0;
 }
+/* The title takes the free space, so the header buttons stay together at the
+   right and the emoji button stays just left of the close button. */
+.task-detail-modal > header > .modal-heading {
+  flex-grow: 1;
+}
 .task-detail-modal > header .document-expand,
 .task-detail-modal > header .document-link-copy,
-.task-detail-modal > header .document-full-width {
+.task-detail-modal > header .document-full-width,
+.task-detail-modal > header .emoji-copy {
   color: var(--ink);
 }
 .task-detail-modal .modal-body {

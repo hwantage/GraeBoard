@@ -1,0 +1,125 @@
+.emoji-popover {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  background: white;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 26px #152c3526;
+}
+.emoji-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+}
+.emoji-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.emoji-search > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.emoji-categories {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.emoji-categories > button {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoji-categories > button:is(:hover, :focus-visible) {
+  background: var(--accent-surface);
+}
+.emoji-categories > button[aria-current="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.emoji-scroll {
+  position: relative;
+  height: 248px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: 0;
+  background: inherit;
+}
+.emoji-scroll h3 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 4px 2px;
+  background: inherit;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.emoji-scroll > section {
+  background: inherit;
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+  padding-bottom: 6px;
+}
+.emoji-option {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family:
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoji-option:hover,
+.emoji-option:focus-visible {
+  background: var(--accent-surface);
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
+}
+.emoji-empty {
+  margin: 0;
+  padding: 24px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
