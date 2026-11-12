@@ -106,6 +106,7 @@ export default function DocumentLinkPanel({
   user,
   readOnly,
   fullPage,
+  documentId,
   calendarTheme,
   onClose,
   onDeleted,
@@ -115,6 +116,7 @@ export default function DocumentLinkPanel({
   user: User;
   readOnly: boolean;
   fullPage?: boolean;
+  documentId?: string;
   calendarTheme: { theme: string; palette: string; style?: CSSProperties };
   onClose: () => void;
   onDeleted: (entry: CalendarEntry) => void;
@@ -129,6 +131,7 @@ export default function DocumentLinkPanel({
         users={link.context.members}
         readOnly={readOnly}
         initialFullPage={fullPage}
+        initialDocumentId={documentId}
         onClose={onClose}
       />
     );
@@ -169,6 +172,7 @@ export default function DocumentLinkPanel({
       sheetCloneMode
       documentSheetClone={{ id: link.sheetClone.id, isNew: false }}
       initialFullPage={fullPage}
+      initialDocumentId={documentId}
       headerAction={
         <div
           className="task-detail-actions"

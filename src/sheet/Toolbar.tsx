@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -12,7 +12,8 @@ import {
   AlignRight,
   PaintBucket,
   PaintRoller,
-  BriefcaseBusiness,
+  Tag,
+  Ellipsis,
 } from "lucide-react";
 import type { Style, Border, BorderPreset } from "../types";
 import BorderMenu from "./BorderMenu";
@@ -20,6 +21,7 @@ import ColorMenu from "../ui/ColorMenu";
 import ZoomControls from "../ui/ZoomControls";
 import { FONTS, FONT_SIZES, textMode } from "../../shared/domain.js";
 import { Button } from "../ui/Button";
+import { inkFor } from "../ui/color";
 
 const ICON_PATHS: Record<string, string> = {
   top: "M4 4h16M12 20V8m-4 4 4-4 4 4",
@@ -86,9 +88,13 @@ export default function Toolbar({
   canCopyFormat = true,
   onPaintFormat,
   workColors,
+  markedWorkColors,
 }: {
   style: Style;
   workColors?: { color: string; name?: string }[];
+  // 선택 범위의 업무 표시에 쓰인 색. 있으면 배경색·다른 업무 칩을 막고,
+  // 그 색의 칩은 눌린 상태로 다시 누르면 업무 표시를 해제한다.
+  markedWorkColors?: ReadonlySet<string>;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -106,10 +112,16 @@ export default function Toolbar({
   canCopyFormat?: boolean;
   onPaintFormat?: (repeat: boolean) => void;
 }) {
+  // 휴대폰 폭에서는 핵심 도구만 보이고 "도구 더 보기"로 전체 도구를 펼친다.
+  const [expanded, setExpanded] = useState(false);
+  const workLocked = !!markedWorkColors?.size;
   return (
-    <div className="format-toolbar" aria-label={label}>
+    <div
+      className={`format-toolbar${expanded ? " expanded" : ""}`}
+      aria-label={label}
+    >
       {leadingAction}
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-core">
         <Button tooltip="실행취소" disabled={!canUndo} onClick={onUndo}>
           <Undo2 size={16} />
         </Button>
@@ -148,7 +160,7 @@ export default function Toolbar({
           onSelect={(value) => onStyle({ fontSize: Number(value) })}
         />
       </div>
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-core">
         {(
           [
             [Bold, "굵게", "bold"],
@@ -160,6 +172,7 @@ export default function Toolbar({
           <Button
             key={key}
             tooltip={title}
+            className={key === "bold" ? "" : "toolbar-extra"}
             disabled={disabled}
             active={!!style[key]}
             onClick={() => onStyle({ [key]: !style[key] })}
@@ -168,7 +181,7 @@ export default function Toolbar({
           </Button>
         ))}
       </div>
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-core">
         <ColorMenu
           label="글자 색상"
           icon="A"
@@ -178,39 +191,67 @@ export default function Toolbar({
         />
         <ColorMenu
           label="배경색"
+          tooltip={
+            workLocked
+              ? "배경색: 업무 표시 칩을 다시 눌러 해제한 뒤 칠하세요"
+              : undefined
+          }
           icon={<PaintBucket size={16} />}
           value={style.backgroundColor || "#ffffff"}
-          disabled={disabled}
+          disabled={disabled || workLocked}
           onApply={(backgroundColor) =>
             onStyle({ backgroundColor, work: false })
           }
         />
-        {workColors?.map(({ color, name }) => (
-          <button
-            key={color}
-            type="button"
-            className="color-tool"
-            aria-label={`업무 표시: ${name || color}`}
-            data-tooltip={`업무 표시: ${name || color}`}
-            aria-pressed={
-              style.work === true &&
-              style.backgroundColor?.toLowerCase() === color
-            }
-            disabled={disabled}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onStyle({ backgroundColor: color, work: true })}
-          >
-            <span className="color-tool-icon" aria-hidden="true">
-              <BriefcaseBusiness size={16} />
-            </span>
-            <span
-              className="color-tool-swatch"
-              style={{ backgroundColor: color }}
-              aria-hidden="true"
-            />
-          </button>
-        ))}
       </div>
+      {!!workColors?.length && (
+        // 업무 표시는 일반 배경색과 결과가 같아 보여도 집계 여부가 다르므로
+        // 별도 묶음에 실제 색을 채운 칩으로 구분한다. 휴대폰 폭에서도 접힌
+        // 핵심 도구 줄에 남긴다.
+        <div
+          className="toolbar-group toolbar-core work-mark-group"
+          role="group"
+          aria-label="업무 표시"
+        >
+          {workColors.map(({ color, name }) => {
+            const label = `업무 표시: ${name || color}`,
+              marked = !!markedWorkColors?.has(color);
+            return (
+              <button
+                key={color}
+                type="button"
+                className="work-mark-chip"
+                aria-label={label}
+                data-tooltip={
+                  marked
+                    ? `${label} (다시 눌러 해제)`
+                    : workLocked
+                      ? `${label} (업무 표시를 먼저 해제하세요)`
+                      : label
+                }
+                aria-pressed={marked}
+                disabled={disabled || (workLocked && !marked)}
+                style={{ backgroundColor: color, color: inkFor(color) }}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  onStyle(
+                    marked
+                      ? { backgroundColor: null, work: false }
+                      : { backgroundColor: color, work: true },
+                  )
+                }
+              >
+                <Tag size={12} aria-hidden="true" />
+                {name && (
+                  <span className="work-mark-name" aria-hidden="true">
+                    {name}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="toolbar-group">
         {(
           [
@@ -263,6 +304,14 @@ export default function Toolbar({
         <ZoomControls value={zoom} onChange={onZoom} />
       )}
       {trailingAction && <div className="toolbar-group">{trailingAction}</div>}
+      <Button
+        className="toolbar-more"
+        tooltip={expanded ? "도구 접기" : "도구 더 보기"}
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <Ellipsis size={16} aria-hidden="true" />
+      </Button>
       {selectionLabel !== undefined && (
         <span className="selection-label">
           {selectionLabel || "셀을 선택해 편집하세요"}

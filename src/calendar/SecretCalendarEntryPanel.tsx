@@ -25,6 +25,7 @@ import { useDocumentFullPage } from "../documents/useDocumentFullPage";
 import { CalendarTagPicker } from "./CalendarTags";
 import type { CalendarTag } from "./calendar-types";
 import { secretDocumentStorage } from "./secret-document-storage";
+import { revealCaretOnSelection } from "../ui/revealInputCaret";
 
 export default function SecretCalendarEntryPanel({
   entry,
@@ -203,6 +204,12 @@ export default function SecretCalendarEntryPanel({
             <input
               className="calendar-entry-title"
               aria-label="일정 제목"
+              // 편집을 마치면 긴 제목도 앞부터 보이게 한다(iOS는 커서 위치를 유지).
+              onBlur={(event) => {
+                event.currentTarget.scrollLeft = 0;
+              }}
+              // 손으로 옮긴 커서도 따라가도록 커서가 바뀔 때 가로 위치를 맞춘다.
+              ref={revealCaretOnSelection}
               placeholder="일정 제목"
               maxLength={120}
               value={title}

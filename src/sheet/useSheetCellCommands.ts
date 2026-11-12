@@ -202,11 +202,11 @@ export default function useSheetCellCommands({
     });
   }
 
-  function applyStyle(part: Partial<Style>, reset = false) {
+  function applyStyle(part: Partial<Style>, reset = false, target = selection) {
     try {
-      if (applyCommonStyle(part, reset)) return;
-      mutate(
-        selectedPoints(selection, matchingTasks, columnOrder, MAX_STYLE_CELLS),
+      if (applyCommonStyle(part, reset, undefined, target)) return true;
+      return mutate(
+        selectedPoints(target, matchingTasks, columnOrder, MAX_STYLE_CELLS),
         (t, k) => ({
           style: reset
             ? resetCellStyle(t, k)
@@ -215,7 +215,40 @@ export default function useSheetCellCommands({
       );
     } catch (e) {
       setError((e as Error).message);
+      return false;
     }
+  }
+
+  // 일반 배경색 칠하기가 보이는 칸을 바꾸는지.
+  function plainFillChanges(color: string, target = selection) {
+    for (const r of rangesOf(target, matchingTasks, columnOrder))
+      for (let i = r.r1; i <= r.r2; i++)
+        for (let j = r.c1; j <= r.c2; j++) {
+          const { style } = cell(matchingTasks[i], columnOrder[j].key);
+          if (
+            (style.backgroundColor?.toLowerCase() || "") !== color ||
+            style.work === true
+          )
+            return true;
+        }
+    return false;
+  }
+
+  // 선택 범위의 업무 표시 칸(현재 업무 색인 유효 배경과 work: true)에 쓰인 업무 색.
+  // 업무 표시 칸은 칩을 다시 눌러 해제하기 전까지 다른 색으로 칠하지 않는다.
+  function markedWorkColors(colors: ReadonlySet<string>, target = selection) {
+    const found = new Set<string>();
+    if (!colors.size) return found;
+    for (const r of rangesOf(target, matchingTasks, columnOrder))
+      for (let i = r.r1; i <= r.r2; i++)
+        for (let j = r.c1; j <= r.c2; j++) {
+          const { style } = cell(matchingTasks[i], columnOrder[j].key),
+            background = style.backgroundColor?.toLowerCase() || "";
+          if (style.work !== true || !colors.has(background)) continue;
+          found.add(background);
+          if (found.size === colors.size) return found;
+        }
+    return found;
   }
 
   function copyFormat(repeat: boolean) {
@@ -523,6 +556,8 @@ export default function useSheetCellCommands({
     submitChanges,
     mutate,
     applyStyle,
+    plainFillChanges,
+    markedWorkColors,
     copyFormat,
     paintFormat,
     applyBorder,

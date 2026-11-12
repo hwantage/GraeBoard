@@ -129,7 +129,7 @@ export function createNodeBackground({
   const failure = (error) =>
     Object.assign(
       [400, 404, 409].includes(error.status)
-        ? new HttpError(error.status, error.message)
+        ? new HttpError(error.status, error.message, error.details)
         : new Error(error.message),
       { code: error.code, retryAt: error.retryAt },
     );

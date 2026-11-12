@@ -30,10 +30,20 @@ export const documentLinkUrl = (target: DocumentLinkTarget) =>
 // The full-page button opens its document in a new tab at this address. The
 // workspace reads the flag once and cleans the address (App.tsx); stored and
 // copied links never carry it.
-export const documentFullPageUrl = (target: DocumentLinkTarget) =>
-  `${documentLinkUrl(target)}?view=full`;
+// A task with several documents also names the one shown, so the new tab
+// opens that document rather than the first.
+export const documentFullPageUrl = (
+  target: DocumentLinkTarget,
+  documentId?: string,
+) =>
+  `${documentLinkUrl(target)}?${new URLSearchParams({
+    view: "full",
+    ...(documentId ? { document: documentId } : {}),
+  })}`;
 export const documentLinkFullPage = (search: string) =>
   new URLSearchParams(search).get("view") === "full";
+export const documentLinkDocument = (search: string) =>
+  new URLSearchParams(search).get("document") || undefined;
 export const UNAVAILABLE_LINK_MESSAGE =
   "링크한 문서를 열 수 없습니다. 삭제되었거나 접근 권한이 없습니다.";
 

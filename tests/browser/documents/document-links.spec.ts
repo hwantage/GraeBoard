@@ -981,7 +981,8 @@ test("링크로 연 일정 상세는 캘린더에서 연 것과 같은 모습이
   expect(linked).toEqual(direct);
 });
 
-const fullPageHint = "문서 전체 페이지로 보기 (⌘/Ctrl+클릭: 새 탭)";
+const fullPageHint =
+  "문서 전체 페이지로 보기 (⌘/Ctrl+Shift+Enter · ⌘/Ctrl+클릭: 새 탭)";
 // ⌘/Ctrl+click, or a middle click, on a full-page button opens a new tab.
 async function openInNewTab(page: Page, button: Locator, middle = false) {
   const [tab] = await Promise.all([
@@ -992,6 +993,53 @@ async function openInNewTab(page: Page, button: Locator, middle = false) {
   ]);
   return tab;
 }
+
+test("두 번째 문서를 보다 새 탭 전체 페이지로 열면 그 문서가 열리고 ⌘/Ctrl+Shift+Enter로 전체 페이지를 바꾼다", async ({
+  page,
+}) => {
+  await saveTask(page, taskIds[1], "# 첫 문서\n\n첫 문서 본문");
+  const second = randomUUID();
+  await request(page, `/tasks/${taskIds[1]}/documents`, "POST", {
+    id: second,
+  });
+  await request(page, `/tasks/${taskIds[1]}/documents/${second}`, "PUT", {
+    markdown: "# 둘째 문서\n\n둘째 문서 본문",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  const dialog = await open(page, taskIds[1]);
+  const tabs = dialog.getByRole("tab");
+  await expect(tabs).toHaveCount(2);
+  await tabs.nth(1).click();
+  await expect(rich(dialog)).toContainText("둘째 문서 본문");
+  const expand = dialog.getByRole("button", {
+    name: "문서 전체 페이지로 보기",
+    exact: true,
+  });
+  const tab = await openInNewTab(page, expand);
+  const opened = details(tab);
+  await expect(opened).toHaveClass(/document-full-page/);
+  await expect(opened.getByRole("tab").nth(1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rich(opened)).toContainText("둘째 문서 본문");
+  expect(new URL(tab.url()).search).toBe("");
+  await tab.close();
+
+  // 편집 중에도 단축키는 줄을 바꾸지 않고 전체 페이지만 바꾼다.
+  await rich(dialog).click();
+  const blocks = await rich(dialog).locator(":scope > *").count();
+  await page.keyboard.press("ControlOrMeta+Shift+Enter");
+  await expect(dialog).toHaveClass(/document-full-page/);
+  await expect(
+    dialog.getByRole("button", { name: "전체 페이지 닫기", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("ControlOrMeta+Shift+Enter");
+  await expect(dialog).not.toHaveClass(/document-full-page/);
+  expect(await rich(dialog).locator(":scope > *").count()).toBe(blocks);
+});
 
 test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대로 두고 방금 입력까지 저장해 새 탭에서 전체 페이지로 연다", async ({
   page,
@@ -1064,7 +1112,9 @@ test("전체 페이지 버튼을 ⌘/Ctrl+클릭하면 지금 상세는 그대�
     exact: true,
   });
   await leave.hover();
-  await expect(page.getByRole("tooltip")).toHaveText("전체 페이지 닫기");
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "전체 페이지 닫기 (⌘/Ctrl+Shift+Enter)",
+  );
   await leave.click();
   await expect(dialog).not.toHaveClass(/document-full-page/);
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();

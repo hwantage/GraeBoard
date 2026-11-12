@@ -603,26 +603,6 @@ export default function DocumentBrowser({
       </section>
       <div className="document-browser-filters">
         <Select
-          className="document-browser-group-select"
-          aria-label="문서 묶음 보기"
-          value={groupBy}
-          disabled={navigating}
-          onChange={(e) => {
-            const value = e.target.value;
-            void leave(() => {
-              setGroupBy(value);
-              setGroupsClosed(new Set());
-            });
-          }}
-        >
-          <option value="">묶음 없음</option>
-          {properties.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </Select>
-        <Select
           className="document-browser-scope-select"
           aria-label="문서 검색 범위"
           value={scope}
@@ -642,6 +622,26 @@ export default function DocumentBrowser({
                 {s.name}
               </option>
             ))}
+        </Select>
+        <Select
+          className="document-browser-group-select"
+          aria-label="문서 묶음 보기"
+          value={groupBy}
+          disabled={navigating}
+          onChange={(e) => {
+            const value = e.target.value;
+            void leave(() => {
+              setGroupBy(value);
+              setGroupsClosed(new Set());
+            });
+          }}
+        >
+          <option value="">묶음 없음</option>
+          {properties.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
         </Select>
         <div
           className="search-box document-browser-search"

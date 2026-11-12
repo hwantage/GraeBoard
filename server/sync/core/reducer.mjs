@@ -635,13 +635,18 @@ export function project(state, pending) {
   // entity/receipt/conflict map copies or validation index.
   if (!pending.length) return { entities: state.entities, held: [] };
   const projected = reduceMany(state, pending);
+  const held = pending
+    .filter(
+      (op) => !["applied", "noop"].includes(projected.receipts[op.opId].result),
+    )
+    .map((op) => op.opId);
   return {
     entities: projected.entities,
-    held: pending
-      .filter(
-        (op) =>
-          !["applied", "noop"].includes(projected.receipts[op.opId].result),
-      )
-      .map((op) => op.opId),
+    held,
+    // The conflict reason each held operation would be archived with; only
+    // a non-empty P can hold one.
+    reasons: Object.fromEntries(
+      held.map((id) => [id, projected.conflicts[id]?.reason ?? null]),
+    ),
   };
 }

@@ -29,6 +29,7 @@ import { SheetCloneBusinessService } from "../../../server/storage/sheet-clones/
 import { PostgresSheetCloneRepository } from "../../../worker/storage/sheet-clones/postgres-sheet-clones.mjs";
 import { materialize } from "../../../worker/sync/materialize.mjs";
 import { adminRoutes } from "../../../worker/control/admin.mjs";
+import { RESOLUTION_REJECTED } from "../../../shared/sync/conflict-origin.js";
 import {
   encodeSnapshot,
   decodeSnapshot,
@@ -693,6 +694,155 @@ test("A3 protocol 4 logical transfer preserves canonical children and exports th
     "pending transfer copy",
   );
   assert.equal(restored.readLink(f.teamId).mode, "recovery");
+});
+
+test("Edge conflict resolution refuses a duplicate copy name before saving and accepts a renamed edit", async (t) => {
+  const f = await postgresFixture(t);
+  if (!f) return;
+  const state = upgradeState(f.state),
+    id = entityId("sheetClone", [f.sheetCloneId]),
+    original = state.entities[id],
+    otherId = randomUUID(),
+    link = { ...f.link, protocol: 4 };
+  // Two sites take the same copy name: one makes another copy with it, the
+  // other renames this copy to it from the same base.
+  const other = makeOperation({
+      link,
+      actorRef: f.user.id,
+      before: {},
+      after: {
+        [entityId("sheetClone", [otherId])]: {
+          entity: "sheetClone",
+          key: [otherId],
+          payload: { ...original.payload, name: "Shared copy name" },
+        },
+      },
+    }),
+    rename = makeOperation({
+      link,
+      actorRef: f.user.id,
+      before: { [id]: original },
+      after: {
+        [id]: {
+          ...original,
+          payload: { ...original.payload, name: "Shared copy name" },
+        },
+      },
+    }),
+    conflicted = reduceMany(state, [other, rename]);
+  assert.equal(conflicted.receipts[other.opId].result, "applied");
+  assert.equal(conflicted.conflicts[rename.opId].reason, "Duplicate name");
+  await f.adapter.withTeamTransaction(f.teamId, async (tx) => {
+    await tx.sync.writeState(conflicted, f.link.canonical_head);
+    await materialize(tx, f.teamId, {
+      state: conflicted,
+      pending: [],
+      exclusions: [],
+    });
+  });
+  const resolve = (body) =>
+    adminRoutes(
+      f.makeContext(),
+      `/teams/${f.teamId}/sync/conflicts/${rename.opId}/resolve`,
+      "POST",
+      { expectedHead: f.link.canonical_head, ...body },
+    );
+  // Saved, it would be archived again and leave this conflict open, so each
+  // retry would only add a conflict.
+  for (let attempt = 0; attempt < 2; attempt++)
+    await assert.rejects(resolve({ choice: "submitted" }), (error) => {
+      assert.equal(error.status, 409);
+      assert.deepEqual(error.details, {
+        code: RESOLUTION_REJECTED,
+        reason: "Duplicate name",
+      });
+      return true;
+    });
+  assert.deepEqual(await f.adapter.readPending(f.teamId), []);
+  await resolve({
+    choice: "edited",
+    desired: [{ ...original.payload, name: "Renamed copy" }],
+  });
+  const pending = await f.adapter.readPending(f.teamId),
+    resolved = reduceMany(conflicted, pending);
+  assert.equal(pending.length, 1);
+  assert.equal(resolved.receipts[pending[0].opId].result, "applied");
+  assert.equal(resolved.conflicts[rename.opId].resolution, pending[0].opId);
+  assert.equal(resolved.entities[id].payload.name, "Renamed copy");
+});
+
+test("Edge conflict resolution refuses a name an unpublished operation already took", async (t) => {
+  const f = await postgresFixture(t);
+  if (!f) return;
+  const state = upgradeState(f.state),
+    id = entityId("sheetClone", [f.sheetCloneId]),
+    original = state.entities[id],
+    otherId = randomUUID(),
+    otherKey = entityId("sheetClone", [otherId]),
+    link = { ...f.link, protocol: 4 };
+  const rename = (key, record, name) =>
+    makeOperation({
+      link,
+      actorRef: f.user.id,
+      before: record ? { [key]: record } : {},
+      after: {
+        [key]: {
+          ...(record || { entity: "sheetClone", key: [otherId] }),
+          payload: { ...original.payload, name },
+        },
+      },
+    });
+  // Shared: another copy, and this copy renamed first; the later rename of
+  // this copy is archived. Only the unpublished rename of the other copy
+  // takes the later name, so shared state alone would accept overwriting.
+  const other = rename(otherKey, null, "Other copy"),
+    first = rename(id, original, "Canonical name"),
+    later = rename(id, original, "Later name"),
+    conflicted = reduceMany(state, [other, first, later]);
+  assert.equal(
+    conflicted.conflicts[later.opId].reason,
+    "Concurrent field change",
+  );
+  const unpublished = rename(
+    otherKey,
+    conflicted.entities[otherKey],
+    "Later name",
+  );
+  await f.adapter.withTeamTransaction(f.teamId, async (tx) => {
+    await tx.sync.writeState(conflicted, f.link.canonical_head);
+    await materialize(tx, f.teamId, {
+      state: conflicted,
+      pending: [],
+      exclusions: [],
+    });
+    await tx.sync.enqueue(unpublished);
+  });
+  const resolve = (choice) =>
+    adminRoutes(
+      f.makeContext(),
+      `/teams/${f.teamId}/sync/conflicts/${later.opId}/resolve`,
+      "POST",
+      { choice, expectedHead: f.link.canonical_head },
+    );
+  await assert.rejects(resolve("submitted"), (error) => {
+    assert.equal(error.status, 409);
+    assert.deepEqual(error.details, {
+      code: RESOLUTION_REJECTED,
+      reason: "Duplicate name",
+    });
+    return true;
+  });
+  assert.deepEqual(
+    (await f.adapter.readPending(f.teamId)).map((op) => op.opId),
+    [unpublished.opId],
+    "the unpublished operation stays and nothing is added",
+  );
+  await resolve("current");
+  const pending = await f.adapter.readPending(f.teamId),
+    replayed = reduceMany(conflicted, pending);
+  assert.equal(pending.length, 2);
+  assert.equal(replayed.conflicts[later.opId].resolution, pending[1].opId);
+  assert.equal(replayed.entities[id].payload.name, "Canonical name");
 });
 
 test("A3 actual Edge conflict resolution creates a protocol 4 operation and preserves both original submissions", async (t) => {

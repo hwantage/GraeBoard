@@ -232,6 +232,7 @@ export function RowPanel({
   documentSheetClone,
   headerAction,
   initialFullPage = false,
+  initialDocumentId,
   onDocumentSaved,
   copySaveError,
   onRetryCopySave,
@@ -252,6 +253,8 @@ export function RowPanel({
   headerAction?: ReactNode;
   // Opened from another tab's full-page button (DocumentFullPageButton).
   initialFullPage?: boolean;
+  // The document that tab was showing.
+  initialDocumentId?: string;
   onDocumentSaved: (result: DocumentSaveResult) => void;
   copySaveError?: string;
   onRetryCopySave?: () => void;
@@ -262,6 +265,8 @@ export function RowPanel({
   const editable = !readOnly && canEdit(user, task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
+  // The full-page button's new tab opens the document shown here.
+  const [shownDocument, setShownDocument] = useState(initialDocumentId);
   const { fullPage: documentFullPage, fullWidth } =
     useDocumentFullPage(preferredFullPage);
   // A copy's task keeps the original's ID, so its link also names the copy.
@@ -307,6 +312,7 @@ export function RowPanel({
           <DocumentFullPageButton
             fullPage={documentFullPage}
             link={linkTarget}
+            documentId={shownDocument}
             onToggle={() => setDocumentFullPage((value) => !value)}
             onNewTab={() => detailRef.current?.flush() ?? Promise.resolve(true)}
           />
@@ -361,6 +367,8 @@ export function RowPanel({
         readOnly={readOnly}
         propertiesReadOnly={propertiesReadOnly}
         documentSheetClone={documentSheetClone}
+        initialDocumentId={initialDocumentId}
+        onDocumentSelected={setShownDocument}
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={async (request) => {
           const cells = await onSaveProperty(request);
@@ -394,6 +402,7 @@ export function StandaloneRowPanel({
   users,
   readOnly,
   initialFullPage,
+  initialDocumentId,
   onClose,
   onCellsSaved,
   onDocumentSaved,
@@ -404,6 +413,7 @@ export function StandaloneRowPanel({
   users: User[];
   readOnly?: boolean;
   initialFullPage?: boolean;
+  initialDocumentId?: string;
   onClose: () => void;
   onCellsSaved?: (result: BatchResult) => void;
   onDocumentSaved?: (result: DocumentSaveResult) => void;
@@ -417,6 +427,7 @@ export function StandaloneRowPanel({
       users={users}
       readOnly={readOnly}
       initialFullPage={initialFullPage}
+      initialDocumentId={initialDocumentId}
       onClose={onClose}
       onDocumentSaved={(result) => {
         onDocumentSaved?.(result);
