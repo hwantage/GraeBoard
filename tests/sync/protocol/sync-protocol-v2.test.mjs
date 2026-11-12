@@ -771,6 +771,80 @@ test("Edge conflict resolution refuses a duplicate copy name before saving and a
   assert.equal(resolved.entities[id].payload.name, "Renamed copy");
 });
 
+test("Edge conflict resolution refuses a name an unpublished operation already took", async (t) => {
+  const f = await postgresFixture(t);
+  if (!f) return;
+  const state = upgradeState(f.state),
+    id = entityId("sheetClone", [f.sheetCloneId]),
+    original = state.entities[id],
+    otherId = randomUUID(),
+    otherKey = entityId("sheetClone", [otherId]),
+    link = { ...f.link, protocol: 4 };
+  const rename = (key, record, name) =>
+    makeOperation({
+      link,
+      actorRef: f.user.id,
+      before: record ? { [key]: record } : {},
+      after: {
+        [key]: {
+          ...(record || { entity: "sheetClone", key: [otherId] }),
+          payload: { ...original.payload, name },
+        },
+      },
+    });
+  // Shared: another copy, and this copy renamed first; the later rename of
+  // this copy is archived. Only the unpublished rename of the other copy
+  // takes the later name, so shared state alone would accept overwriting.
+  const other = rename(otherKey, null, "Other copy"),
+    first = rename(id, original, "Canonical name"),
+    later = rename(id, original, "Later name"),
+    conflicted = reduceMany(state, [other, first, later]);
+  assert.equal(
+    conflicted.conflicts[later.opId].reason,
+    "Concurrent field change",
+  );
+  const unpublished = rename(
+    otherKey,
+    conflicted.entities[otherKey],
+    "Later name",
+  );
+  await f.adapter.withTeamTransaction(f.teamId, async (tx) => {
+    await tx.sync.writeState(conflicted, f.link.canonical_head);
+    await materialize(tx, f.teamId, {
+      state: conflicted,
+      pending: [],
+      exclusions: [],
+    });
+    await tx.sync.enqueue(unpublished);
+  });
+  const resolve = (choice) =>
+    adminRoutes(
+      f.makeContext(),
+      `/teams/${f.teamId}/sync/conflicts/${later.opId}/resolve`,
+      "POST",
+      { choice, expectedHead: f.link.canonical_head },
+    );
+  await assert.rejects(resolve("submitted"), (error) => {
+    assert.equal(error.status, 409);
+    assert.deepEqual(error.details, {
+      code: RESOLUTION_REJECTED,
+      reason: "Duplicate name",
+    });
+    return true;
+  });
+  assert.deepEqual(
+    (await f.adapter.readPending(f.teamId)).map((op) => op.opId),
+    [unpublished.opId],
+    "the unpublished operation stays and nothing is added",
+  );
+  await resolve("current");
+  const pending = await f.adapter.readPending(f.teamId),
+    replayed = reduceMany(conflicted, pending);
+  assert.equal(pending.length, 2);
+  assert.equal(replayed.conflicts[later.opId].resolution, pending[1].opId);
+  assert.equal(replayed.entities[id].payload.name, "Canonical name");
+});
+
 test("A3 actual Edge conflict resolution creates a protocol 4 operation and preserves both original submissions", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;

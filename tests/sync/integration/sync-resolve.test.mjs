@@ -9,6 +9,7 @@ import { reduceMany, project } from "../../../server/sync/core/reducer.mjs";
 import { getTask } from "../../../server/db.mjs";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { RESOLUTION_REJECTED } from "../../../shared/sync/conflict-origin.js";
+import { defaultView } from "../../../shared/domain.js";
 
 // A resolution that would be archived again is refused before anything is
 // saved: P and visible data stay as they were and the conflict stays open.
@@ -414,6 +415,134 @@ test("resolve refuses a duplicate name before saving and accepts a renamed edit"
     "Renamed later tag",
   );
 });
+
+// The reported case: both sites make a copy under the same name, and the
+// later one (with a document of its own) is archived as "Duplicate name".
+// Returns that conflict over an acknowledged canonical state.
+async function copyNameConflict(f) {
+  const name = "2026-11-08의 사본 (2)";
+  const created = await f.api("/sheet-clones", {
+    id: randomUUID(),
+    teamId: f.teamId,
+    year: 2026,
+    referenceDate: "2026-11-08",
+    name,
+    taskIds: [f.taskIds[0]],
+    view: defaultView(2026),
+  });
+  assert.equal(created.status, 201, JSON.stringify(created));
+  const initialPending = f.s.readPending(),
+    link = f.s.readLink(),
+    seeded = reduceMany(f.s.readState(), initialPending),
+    first = created.data.id,
+    later = randomUUID();
+  // The later copy: every record of the first one under another ID, plus a
+  // document only the later copy has.
+  const after = {};
+  for (const record of Object.values(seeded.entities)) {
+    const key =
+      record.entity === "document" && record.key[1] === first
+        ? [record.key[0], later, ...record.key.slice(2)]
+        : record.entity.startsWith("sheetClone") && record.key[0] === first
+          ? [later, ...record.key.slice(1)]
+          : null;
+    if (key && !record.deleted)
+      after[entityId(record.entity, key)] = {
+        entity: record.entity,
+        key,
+        payload: record.payload,
+      };
+  }
+  const document = ["sheetClone", later, f.taskIds[0], "main"];
+  after[entityId("document", document)] = {
+    entity: "document",
+    key: document,
+    payload: { title: "", markdown: "later copy note", position: 0 },
+  };
+  const submitted = makeOperation({
+    link,
+    actorRef: f.submitted.actorRef,
+    before: {},
+    after,
+  });
+  const next = reduceMany(seeded, [submitted]);
+  assert.equal(next.conflicts[submitted.opId]?.reason, "Duplicate name");
+  f.s.writeState(next, link.canonical_head);
+  f.s.acknowledge(initialPending.map((op) => op.opId));
+  const state = f.s.readState();
+  f.s.writeLink({ canonical_hash: stateHash(state) });
+  f.app.locals.sync.capture.refresh();
+  const sheetClone = submitted.changes.findIndex(
+    (change) => change.entity === "sheetClone",
+  );
+  return {
+    state,
+    later,
+    opId: submitted.opId,
+    desired: submitted.changes.map((change) => change.desired),
+    sheetClone,
+    resolve: (body) =>
+      f.api(`/teams/${f.teamId}/sync/conflicts/${submitted.opId}/resolve`, {
+        expectedHead: link.canonical_head,
+        ...body,
+      }),
+  };
+}
+
+for (const choice of ["current", "edited"])
+  test(`a copy archived for its duplicate name refuses overwrites and settles by ${choice}`, async (t) => {
+    const f = await fixture(t),
+      conflict = await copyNameConflict(f),
+      count = () => Object.keys(f.s.readState().conflicts).length,
+      before = count(),
+      copies = () =>
+        f.db
+          .prepare("SELECT name FROM sheet_clones WHERE id=?")
+          .all(conflict.later)
+          .map((row) => row.name),
+      notes = () =>
+        f.db
+          .prepare(
+            "SELECT COUNT(*) n FROM sheet_clone_documents WHERE sheet_clone_id=?",
+          )
+          .get(conflict.later).n;
+    for (let attempt = 0; attempt < 2; attempt++)
+      assertRefused(
+        f,
+        await conflict.resolve({ choice: "submitted" }),
+        "Duplicate name",
+        [],
+      );
+    assert.equal(count(), before, "retrying never adds conflicts");
+    assert.deepEqual(copies(), []);
+    assert.equal(notes(), 0);
+    const desired = structuredClone(conflict.desired);
+    desired[conflict.sheetClone].name = "2026-11-08의 사본 (3)";
+    const settled = await conflict.resolve(
+      choice === "edited" ? { choice, desired } : { choice },
+    );
+    assert.equal(settled.status, 200, JSON.stringify(settled));
+    const pending = f.s.readPending(),
+      replayed = reduceMany(conflict.state, pending);
+    assert.equal(
+      replayed.receipts[settled.data.opId].result,
+      choice === "edited" ? "applied" : "noop",
+    );
+    assert.equal(
+      replayed.conflicts[conflict.opId].resolution,
+      settled.data.opId,
+      "the archived copy is settled, not archived again",
+    );
+    if (choice === "edited") {
+      // Renamed, the later copy and its document are kept.
+      assert.deepEqual(copies(), ["2026-11-08의 사본 (3)"]);
+      assert.equal(notes(), 1);
+    } else {
+      // Keeping the first copy discards the later one with its document.
+      assert.deepEqual(copies(), []);
+      assert.equal(notes(), 0);
+    }
+  });
 
 test("resolve replans a calendar entry when its referenced tag is concurrently deleted", async (t) => {
   const f = await fixture(t);
