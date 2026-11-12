@@ -225,16 +225,14 @@ function liftSelectedListItems(state: EditorState): Transaction | null {
 // The block menu checks every format against the same state. They share one
 // lifted state instead of lifting again for each format.
 const liftedStates = new WeakMap<EditorState, EditorState | null>();
-function liftedState(state: EditorState) {
-  if (!liftedStates.has(state)) {
-    const lifted = liftSelectedListItems(state);
-    liftedStates.set(
-      state,
-      lifted &&
-        EditorState.create({ doc: lifted.doc, selection: lifted.selection }),
-    );
+function liftedState(state: EditorState): EditorState | null {
+  let lifted = liftedStates.get(state);
+  if (lifted === undefined) {
+    const tr = liftSelectedListItems(state);
+    lifted = tr && EditorState.create({ doc: tr.doc, selection: tr.selection });
+    liftedStates.set(state, lifted);
   }
-  return liftedStates.get(state)!;
+  return lifted;
 }
 
 // A list item starts with a paragraph, so a heading, quote, code block or

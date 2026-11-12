@@ -860,17 +860,17 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
             doc: view.state.doc,
             selection: TextSelection.create(view.state.doc, firstLine),
           });
+    // Any document change closes the menu, so the first line still stands.
     const convert = (run: () => void) => () => {
       const current = getView();
-      const target =
-        firstLine === null || !current
-          ? null
-          : blockFrom(current.state.doc, range.from);
-      const line = target && firstText(target);
-      if (current && line != null)
+      if (
+        current &&
+        firstLine !== null &&
+        current.state.doc === formatState.doc
+      )
         current.dispatch(
           current.state.tr.setSelection(
-            TextSelection.create(current.state.doc, line),
+            TextSelection.create(current.state.doc, firstLine),
           ),
         );
       run();
