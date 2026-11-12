@@ -531,7 +531,7 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 `/api/teams/:teamId/years/:year/memos`에서 목록 조회·생성을, `/:documentId`에서 본문 조회·저장·이름 변경·삭제를 제공합니다. 본문 저장은 revision과 operationId로 충돌·재시도를 검사합니다. `POST /api/teams/:teamId/years/:year/memos/reorder`는 `{ids, expectedIds}`로 전체 메모 순서를 저장합니다. 현재 목록·순서를 검사하고 이미 같은 순서인 재시도는 허용하며, 본문 revision과 수정 시각은 바꾸지 않습니다. 전체 SQLite 백업·복구와 JSON 반출(`memos`, 포함된 사본의 `data.memos`)에 포함합니다. XLSX·CSV는 업무 표만 반출합니다. 참조 정리와 팀 삭제 시 메모 참조도 함께 처리합니다.
 
-사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/sheet-clones/:sheetCloneId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `sheet_clone_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.
+사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/sheet-clones/:sheetCloneId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `sheet_clone_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 원본·사본 메모 목록에 `?preview=1`을 붙이면 각 메모에 문서 브라우저의 작업 문서와 같은 짧은 본문 미리보기 `preview`(본문 앞 1024자에서 만든 240자 이하 문자열, 빈 본문은 `""`)를 더하고 본문은 보내지 않습니다. 문서 브라우저의 꼬리 메모 목록이 사용하며 업무 문서 목록에는 적용하지 않습니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.
 
 ## 내부·외부 동기화 저장
 

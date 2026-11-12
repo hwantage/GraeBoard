@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-12 — 문서 브라우저 원본·사본마다 꼬리 메모 항목
+
+- 사용자 요청(2026-11-12): 문서 브라우저 원본 목록 맨 아래에 꼬리 메모 항목이 항상 있고, 사본을 함께 고르면 사본마다 자기 꼬리 메모가 붙게 해 달라는 요청이었습니다.
+- 변경: 현재 범위에 보이는 원본·사본 영역마다 작업 묶음과 **다음 작업 더 보기** 뒤에 **꼬리 메모** 항목을 둡니다. 메모가 없어도 표시하고, 꼬리 메모는 작업이 아니므로 작업 이름 검색·묶음 보기·문서 집계와 관계없이 남깁니다(“항상”의 의미). 항목은 작업 항목처럼 펼침 화살표·메모 아이콘·메모 수를 보이고, 펼치면 메모 제목과 본문 미리보기를 표시합니다. **꼬리 메모**를 누르면 오른쪽 상세에 그 원본·사본의 메모를 탭으로 열고, 목록의 메모를 누르면 그 탭을 엽니다. 목록 강조는 선택한 탭을 따릅니다. 편집은 메모 API와 같은 `canContribute`(팀장·팀원·시스템 관리자)로 자동 저장하고, 열람자는 읽기 전용입니다. 메모가 없으면 편집자에게 **메모 추가**, 열람자에게 안내만 보입니다. 작업 문서와 같은 `leave` 경로로 다른 작업·메모·화면으로 이동하기 전에 저장합니다.
+- 구현: `AnnualMemoDocumentPanel`을 추가해 원본/사본 메모의 경로·초안 키·링크 대상을 연간 업무의 `AnnualMemoPanel`(카드)과 문서 브라우저(탭)가 함께 씁니다. `DocumentPanel`의 `memoTabs`는 업무 문서 탭 화면을 쓰되 메모가 있으면 바로 열고 빈 목록 안내를 표시합니다. 미리보기는 기존 메모 목록 API의 `?preview=1`로 받습니다. 공통 `DocumentBusinessService.list`가 메모 범위에서만 본문을 읽어 작업 문서와 같은 `documentPreview`로 바꾸므로 사내·외부 서버가 같은 응답을 주고 본문은 보내지 않습니다. 메모 저장·목록 변경 뒤에는 해당 원본·사본의 메모 목록만 다시 읽고 작업 페이지와 집계는 다시 읽지 않습니다. 검색어·묶음·범위만 바꾸면 받은 메모 목록을 유지합니다. DB·저장 형식 변경은 없습니다.
+- 검증: 문서 브라우저 검사에 4건을 추가했습니다. ① 원본 범위에서 항목이 목록 마지막에 있고 메모 수·미리보기를 보이며, 검색 중에도 남고, 편집 내용이 미리보기에 반영되고 작업 문서로 이동하기 전에 저장되며, 연간 업무 꼬리 메모에 보이는지 확인합니다. ② 전체 범위에서 원본·사본 4곳 모두 마지막에 자기 메모 항목이 있고, 사본 메모 편집이 원본을 바꾸지 않으며, 빈 사본에서 **메모 추가**로 만든 메모가 그 사본에만 저장되는지 확인합니다. ③ 열람자는 읽기 전용이고 빈 사본에서 추가 버튼 없이 안내만 보는지, ④ 390px에서 메모 상세를 열고 목록으로 돌아오는지 확인합니다. `E2E_PORT=4359 npx playwright test tests/browser/documents/document-browser.spec.ts tests/browser/documents/annual-memos.spec.ts tests/browser/documents/document-links.spec.ts`는 Chromium 47건 통과·1건 skip(WebKit 전용 검사), Firefox·WebKit 95건 통과·1건 skip입니다. `TEST_PG_BIN=/opt/homebrew/Cellar/postgresql@17/17.11_1/bin`으로 `tests/documents/task-documents.test.mjs`·`document-storage-contract.test.mjs`(SQLite·PostgreSQL 저장소 계약에 미리보기 목록 추가)·`edge-document-round-trips.test.mjs`·`tests/site/worker-api.test.mjs`(외부 경로가 `?preview=1`을 전달)·`internal-api-contract-regressions.test.mjs`·`tests/tooling/storage-import-boundaries.test.mjs` 64건이 통과했습니다. `npm run check:structure`, `npm run check:architecture`, `npm run build`, `npm run build:edge`도 통과했습니다. 전체 Node·전체 브라우저 검사는 실행하지 않았습니다.
+
 ## 2026-11-12 — 충돌 보관함 덮어쓰기가 충돌 수를 늘리던 문제
 
 - 사용자 보고(2026-11-12, 개발 사내 서버): 공유 충돌 보관함에서 전체 선택 후 **나중에 수정으로 덮어쓰기**를 할 때마다 충돌 수가 줄지 않고 늘었습니다(1→2→4→6→8).
