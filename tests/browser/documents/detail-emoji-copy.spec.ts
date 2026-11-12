@@ -392,3 +392,32 @@ test("손가락으로 연 이모지 목록은 검색칸에 포커스하지 않�
   await expect(picker(page)).toHaveCount(0);
   await expect(dialog).toBeVisible();
 });
+
+test("이모지 목록 파일을 받지 못해도 상세는 그대로 두고 팝업 안에서 새로고침을 안내한다", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // As after a server rebuild removed the old build file, or offline.
+  await page.route("**/assets/EmojiPickerPanel-*.js", (route) =>
+    route.fulfill({ status: 404, body: "" }),
+  );
+  const dialog = await openTask(page);
+  const title = dialog.getByRole("textbox", { name: "작업 편집", exact: true });
+  await expect(title).toHaveValue("이모지 업무");
+  await emojiButton(dialog).click();
+  const alert = picker(page).getByRole("alert");
+  await expect(alert).toHaveText(
+    "이모지 목록을 불러오지 못했습니다. 화면을 새로고침한 뒤 다시 열어 주세요.",
+  );
+  await expect(dialog).toBeVisible();
+  await expect(title).toHaveValue("이모지 업무");
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  // Opening again says the same, without unmounting the page.
+  await emojiButton(dialog).click();
+  await expect(alert).toBeVisible();
+  await expect(page.locator("#root")).not.toBeEmpty();
+  expect(errors).toEqual([]);
+});
