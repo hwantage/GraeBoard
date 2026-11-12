@@ -34,6 +34,12 @@ import { MAX_DOCUMENT_BYTES } from "../../shared/documents/task-documents.js";
 import { CALENDAR_TAG_COLORS } from "../../shared/calendar/calendar-tags.js";
 import { unpack } from "../../shared/formatting/compact.js";
 import { backupDatabase } from "../../scripts/transfer/backup.mjs";
+import {
+  ensurePersonReference,
+  materializePerson,
+  syncActorId,
+  SYNC_ACTOR_NAME,
+} from "../../server/sync/node/entities.mjs";
 import { restoreDatabase } from "../../scripts/transfer/restore.mjs";
 
 const deletionFor = (entry) => ({
@@ -45,6 +51,40 @@ const deletionFor = (entry) => ({
   expectedEndDate: entry.endDate,
   expectedTagIds: entry.tagIds,
   expectedCheckedTagIds: entry.checkedTagIds,
+});
+
+test("동기화 자리표시 계정은 캘린더 팀원·사용자 목록에 보이지 않고 받은 사람은 보인다", async (t) => {
+  const f = await fixture(t);
+  // 작성자 없는 문서를 받을 때 만드는 "외부 동기화"와, 사람 정보 없이 참조만 온
+  // ID 이름 자리표시, 사람 정보가 온 외부 팀원을 사내 DB에 만든다.
+  const actor = syncActorId(f.teamId),
+    unnamed = randomUUID(),
+    external = randomUUID();
+  materializePerson(f.db, f.teamId, actor, SYNC_ACTOR_NAME, now());
+  ensurePersonReference(f.db, f.teamId, unnamed, now());
+  materializePerson(f.db, f.teamId, external, "외부 팀원", now());
+  const team = (await f.req(`/calendar/teams/${f.teamId}`)).data;
+  const ids = team.members.map((member) => member.id);
+  assert.ok(ids.includes(external));
+  assert.ok(ids.includes(f.people.member.id));
+  assert.ok(!ids.includes(actor));
+  assert.ok(!ids.includes(unnamed));
+  for (const [path, role] of [
+    ["/admin/users", "admin"],
+    [`/teams/${f.teamId}/members`, "lead"],
+  ]) {
+    const { status, data } = await f.req(path, "GET", undefined, role);
+    assert.equal(status, 200);
+    const listed = data.users.map((user) => user.id);
+    assert.ok(!listed.includes(actor), path);
+    assert.ok(!listed.includes(unnamed), path);
+    assert.ok(listed.includes(external), path);
+  }
+  // 문서 기록이 참조하므로 계정 행은 지우지 않는다.
+  assert.equal(
+    f.db.prepare("SELECT name FROM users WHERE id=?").get(actor).name,
+    SYNC_ACTOR_NAME,
+  );
 });
 
 test("일정 복제는 월 밖의 이름·동시 요청·재시도를 고려해 번호를 붙이고 본문 없이 태그를 보존한다", async (t) => {

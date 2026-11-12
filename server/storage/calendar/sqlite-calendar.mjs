@@ -1,4 +1,5 @@
 import { retentionView } from "../../sync/node/visibility.mjs";
+import { syncActorId } from "../../sync/node/entities.mjs";
 import {
   audit,
   json,
@@ -402,13 +403,15 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
   };
   operations.getTeam = (request) => {
     const team = teamAccess(request.user, request.params.teamId);
+    // 동기화로 받은 사람은 보이되, 동기화가 만든 자리표시(작성자 없는 문서의
+    // "외부 동기화" 계정, 사람 정보가 아직 없어 ID를 이름으로 둔 계정)는 팀원이 아니다.
     const members = usersWithTeams(
       db,
       db
         .prepare(
-          "SELECT u.* FROM users u WHERE (u.active=1 AND u.id IN (SELECT user_id FROM memberships WHERE team_id=?)) OR u.id IN (SELECT person_id FROM sync_person_refs WHERE team_id=?) ORDER BY u.name,u.id",
+          "SELECT u.* FROM users u WHERE (u.active=1 AND u.id IN (SELECT user_id FROM memberships WHERE team_id=?)) OR (u.id IN (SELECT person_id FROM sync_person_refs WHERE team_id=?) AND u.id<>? AND NOT (u.password='!' AND u.name=u.id)) ORDER BY u.name,u.id",
         )
-        .all(team.id, team.id),
+        .all(team.id, team.id, syncActorId(team.id)),
     );
     const rule = ruleFor(team.id);
     return {

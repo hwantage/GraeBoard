@@ -309,3 +309,60 @@ test("외부 업무 저장 중·실패는 세 태그를 대기로 두고 클라�
     release();
   }
 });
+
+test("휴대폰 폭에서는 외부·Git·내부로 줄여 팀 선택과 같은 줄에 표시한다", async ({
+  page,
+}, info) => {
+  await setup(page, "external");
+  const team = page.getByLabel("팀 선택", { exact: true });
+  const sameLine = async () => {
+    const select = (await team.boundingBox())!;
+    for (const index of [0, 1, 2]) {
+      const box = (await stages(page).nth(index).boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(select.y - 6);
+      expect(box.y + box.height).toBeLessThanOrEqual(
+        select.y + select.height + 6,
+      );
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(page.viewportSize()!.width);
+    // 계정·캘린더 닫기 등 나머지 상단 도구도 줄을 바꾸지 않는다.
+    const bar = (await page.locator(".topbar").boundingBox())!;
+    expect(bar.height).toBeLessThan(select.height + 30);
+  };
+  for (const screen of ["annual", "calendar"] as const) {
+    if (screen === "calendar")
+      await page.getByRole("button", { name: "캘린더", exact: true }).click();
+    for (const width of [360, 390, 430]) {
+      await page.setViewportSize({ width, height: 844 });
+      // 전체 문구는 접근성 이름·툴팁으로 남고 화면에는 짧은 이름만 보인다.
+      await expect(stages(page)).toHaveText(complete);
+      await expect(indicator(page)).toHaveAttribute(
+        "title",
+        new RegExp(`^${complete.join(" · ")}\n`),
+      );
+      expect(
+        await stages(page).evaluateAll((items) =>
+          items.map(
+            (item) =>
+              getComputedStyle(item, "::after").content.match(
+                /^"([^"]*)"/,
+              )?.[1],
+          ),
+        ),
+      ).toEqual(["외부", "Git", "내부"]);
+      await sameLine();
+      await page.screenshot({
+        path: info.outputPath(`sync-${screen}-${width}.png`),
+        clip: { x: 0, y: 0, width, height: 120 },
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1366, height: 900 });
+  expect(
+    await stages(page)
+      .first()
+      .evaluate((item) => getComputedStyle(item, "::after").content),
+  ).toBe("none");
+});
