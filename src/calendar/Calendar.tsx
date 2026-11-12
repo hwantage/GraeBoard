@@ -4,7 +4,6 @@ import useCalendarCommands from "./useCalendarCommands";
 import useResourceSync from "../platform/useResourceSync";
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -59,13 +58,18 @@ import CalendarTagManager, {
 import { useCalendarDrag, type CalendarRange } from "./useCalendarDrag";
 import { reorderItems, useListReorder } from "../ui/useListReorder";
 import { useCalendarData } from "./useCalendarData";
+import {
+  CALENDAR_SCROLL_MONTHS,
+  calendarMonthFirstDay,
+  useCalendarMonthRange,
+  useCalendarMonthScroll,
+} from "./useCalendarMonthScroll";
 import { placeCalendarEntry } from "../../shared/calendar/calendar-layout.js";
 import { CalendarRuleSettings, CalendarWeekdays } from "./CalendarSettings";
 import {
   addDays,
   calendarWeek,
   monthWeeks,
-  moveMonth,
   weekLabel,
   CALENDAR_DAYS,
   DAY_LABELS,
@@ -151,9 +155,10 @@ export default function Calendar({
   onNotify: (message: string) => void;
 }) {
   const today = todayKey();
-  const [month, setMonth] = useState(today.slice(0, 7));
-  const [todayJump, setTodayJump] = useState(0);
-  const appliedJump = useRef(0);
+  // The monthly views list months one after another from range.start;
+  // `month` is the month in the period selects.
+  const months = useCalendarMonthRange(today);
+  const { month, range: monthRange, chunks: monthChunks } = months;
   const scroll = useRef<HTMLDivElement>(null);
   const createTitle = useRef<HTMLInputElement>(null);
   const composingTitle = useRef(false);
@@ -210,13 +215,6 @@ export default function Calendar({
 
   const [task, setTask] = useState<Task | null>(null);
 
-  const weeks = useMemo(() => monthWeeks(month), [month]);
-  const navigationWeek =
-    view === "team"
-      ? memberWeeks[memberId] || calendarWeek(today)
-      : month === today.slice(0, 7)
-        ? calendarWeek(today)
-        : weeks[0];
   const members = context?.members || EMPTY_MEMBERS;
   const tags = context?.tags || EMPTY_TAGS;
   const tagMap = useMemo(
@@ -237,24 +235,54 @@ export default function Calendar({
 
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
+    // A month at a time, so a month added by scrolling reads only itself.
     if (view !== "team")
-      return [
-        {
-          userId: view === "shared" ? null : memberId,
-          from: weeks[0],
-          to: addDays(weeks[weeks.length - 1], 6),
-        },
-      ];
+      return monthChunks.map(({ weeks }) => ({
+        userId: view === "shared" ? null : memberId,
+        from: weeks[0],
+        to: addDays(weeks[weeks.length - 1], 6),
+      }));
     return members.map((member) => {
       const from = memberWeeks[member.id] || calendarWeek(today);
       return { userId: member.id, from, to: addDays(from, 6) };
     });
-  }, [members, memberId, view, weeks, memberWeeks, today]);
-  const { data, schedules, updateData, beginMutation, endMutation, retry } =
-    useCalendarData(team.id, queries, reload);
+  }, [members, memberId, view, monthChunks, memberWeeks, today]);
+  const {
+    data,
+    schedules,
+    ranges,
+    updateData,
+    beginMutation,
+    endMutation,
+    retry,
+  } = useCalendarData(team.id, queries, reload);
   const loadError =
     view !== "team" ? schedules.get(monthlyOwner)?.error || "" : "";
-  const scope = `${team.id}:${view}:${JSON.stringify(queries)}`;
+  // Months show in order once loaded; the first month still loading or
+  // failed shows its state below them.
+  const missingMonth = ranges.findIndex((result) => !result?.data);
+  const loadedMonths =
+    view === "team" ? 0 : missingMonth === -1 ? ranges.length : missingMonth;
+  const weeks = useMemo(
+    () => monthChunks.slice(0, loadedMonths).flatMap(({ weeks }) => weeks),
+    [monthChunks, loadedMonths],
+  );
+  const waitingMonth =
+    view !== "team" && loadedMonths < ranges.length
+      ? { ...monthChunks[loadedMonths], result: ranges[loadedMonths] }
+      : null;
+  const monthScroll = useCalendarMonthScroll(
+    scroll,
+    months,
+    weeks,
+    data,
+    view !== "team",
+  );
+  // Adding months below keeps the scope: open menus, drags and saves go on.
+  const scope =
+    view === "team"
+      ? `${team.id}:${view}:${JSON.stringify(queries)}`
+      : `${team.id}:${view}:${monthlyOwner}:${monthRange.start}`;
 
   const mutation = useCalendarMutation(
     scope,
@@ -390,32 +418,6 @@ export default function Calendar({
     openTask,
     checkTag,
   } = commands;
-  useLayoutEffect(() => {
-    if (!data || todayJump === appliedJump.current || !scroll.current) return;
-    appliedJump.current = todayJump;
-    const root = scroll.current;
-    const target = root.querySelector<HTMLElement>(`[data-date="${today}"]`);
-    if (!target) return;
-    const bounds = root.getBoundingClientRect();
-    const cell = target.getBoundingClientRect();
-    const stickyWidth =
-      root.querySelector(".calendar-week-tasks")?.getBoundingClientRect()
-        .width || 0;
-    const headerHeight =
-      root.querySelector(".calendar-grid-header")?.getBoundingClientRect()
-        .height || 0;
-    root.scrollTo({
-      left: Math.max(
-        0,
-        root.scrollLeft + cell.left - bounds.left - stickyWidth - 1,
-      ),
-      top: Math.max(
-        0,
-        root.scrollTop + cell.top - bounds.top - headerHeight - 1,
-      ),
-    });
-  }, [data, todayJump, today]);
-
   useEffect(() => {
     onBusyChange(
       locked ||
@@ -586,56 +588,74 @@ export default function Calendar({
     return map;
   }, [data]);
 
-  function changeMonth(next: string) {
-    if (
-      !/^\d{4}-(0[1-9]|1[0-2])$/.test(next) ||
-      next < "2000-01" ||
-      next > "2100-12"
-    )
-      return;
-    setMonth(next);
-  }
-
   // Removing a weekly item only unlinks the task from that week. Undo links
   // the same task again at its previous position, like a card's undo.
 
   // Moving a weekly item saves the week's new order. The list shows it at
   // once and returns to the saved order when saving fails.
 
-  const dayCell = (date: string, ownerId: string | null, column: number) => (
-    <div
-      key={date}
-      className={`calendar-day${date === today ? " is-today" : ""}${view !== "team" && !date.startsWith(month) ? " is-outside" : ""}`}
-      data-date={date}
-      data-weekday={weekdays[column]}
-      data-owner-id={ownerId ?? "team"}
-      style={
-        { "--calendar-day-column": column + 1, gridRow: 1 } as CSSProperties
-      }
-    >
-      <div className="calendar-date">
-        <time
-          dateTime={date}
-          aria-label={date}
-          aria-current={date === today ? "date" : undefined}
-        >
-          {view !== "team" && !date.startsWith(month)
-            ? date.slice(5).replace("-", "/")
-            : date.slice(8).replace(/^0/, "")}
-          {date === today && <span>오늘</span>}
-        </time>
-        {(writable(ownerId) || ownerId === user.id) && (
-          <Button
-            title={`${date} ${ownerId === null ? "팀 공용" : members.find((m) => m.id === ownerId)?.name} 일정 추가`}
-            {...busyProps(locked)}
-            onClick={() => newEntry(date, ownerId)}
+  // In the monthly views only days before the first listed month are outside.
+  // A line steps along each month boundary, and the month's first shown day
+  // names the month (with the year in January).
+  const dayCell = (
+    date: string,
+    ownerId: string | null,
+    column: number,
+    dates: string[],
+    firstRow: boolean,
+  ) => {
+    const monthly = view !== "team";
+    const outside = monthly && date < `${monthRange.start}-01`;
+    const monthStart =
+      monthly &&
+      !outside &&
+      date === calendarMonthFirstDay(date.slice(0, 7), weekdays);
+    const boundary = monthly
+      ? `${!firstRow && Number(date.slice(8)) <= 7 ? " is-month-top" : ""}${column > 0 && dates[column - 1].slice(0, 7) !== date.slice(0, 7) ? " is-month-left" : ""}`
+      : "";
+    return (
+      <div
+        key={date}
+        className={`calendar-day${date === today ? " is-today" : ""}${outside ? " is-outside" : ""}${boundary}`}
+        data-date={date}
+        data-weekday={weekdays[column]}
+        data-owner-id={ownerId ?? "team"}
+        style={
+          { "--calendar-day-column": column + 1, gridRow: 1 } as CSSProperties
+        }
+      >
+        <div className="calendar-date">
+          <time
+            dateTime={date}
+            aria-label={date}
+            aria-current={date === today ? "date" : undefined}
           >
-            <Plus size={15} />
-          </Button>
-        )}
+            {monthStart && (
+              <strong className="calendar-month-label">
+                {date.slice(5, 7) === "01" && (
+                  <span>{date.slice(0, 4)}년 </span>
+                )}
+                {Number(date.slice(5, 7))}월
+              </strong>
+            )}
+            {outside
+              ? date.slice(5).replace("-", "/")
+              : date.slice(8).replace(/^0/, "")}
+            {date === today && <span>오늘</span>}
+          </time>
+          {(writable(ownerId) || ownerId === user.id) && (
+            <Button
+              title={`${date} ${ownerId === null ? "팀 공용" : members.find((m) => m.id === ownerId)?.name} 일정 추가`}
+              {...busyProps(locked)}
+              onClick={() => newEntry(date, ownerId)}
+            >
+              <Plus size={15} />
+            </Button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
   const weeklyCell = (start: string, ownerId: string) => {
     const items = weeklyMap.get(`${ownerId}:${start}`) || [];
     const editable = writable(ownerId);
@@ -763,6 +783,14 @@ export default function Calendar({
           view !== "team"
             ? weeks
             : [memberWeeks[item.userId!] || calendarWeek(today)];
+        // Entries of months still loading are not counted as hidden.
+        if (
+          view !== "team" &&
+          (!weeks.length ||
+            item.date > addDays(weeks[weeks.length - 1], 6) ||
+            item.endDate < weeks[0])
+        )
+          return false;
         return !starts.some((start) =>
           weekdays.some((day) => {
             const date = addDays(start, day);
@@ -772,7 +800,7 @@ export default function Calendar({
       }),
     [displayEntries, view, weeks, memberWeeks, weekdays, today, searchQuery],
   );
-  const weekRow = (start: string, ownerId: string | null) => {
+  const weekRow = (start: string, ownerId: string | null, firstRow = true) => {
     const dates = weekdays.map((day) => addDays(start, day));
     return (
       <div
@@ -782,7 +810,9 @@ export default function Calendar({
         data-owner-id={ownerId ?? "team"}
       >
         {ownerId !== null && weeklyCell(start, ownerId)}
-        {dates.map((date, index) => dayCell(date, ownerId, index))}
+        {dates.map((date, index) =>
+          dayCell(date, ownerId, index, dates, firstRow),
+        )}
         <CalendarEntries
           entries={displayedCalendars.get(ownerId) || EMPTY_ENTRIES}
           tags={tagMap}
@@ -901,8 +931,8 @@ export default function Calendar({
             aria-pressed={view === "shared"}
             {...busyProps(locked)}
             onClick={() => {
-              if (!weeks.includes(navigationWeek))
-                setMonth(addDays(navigationWeek, 3).slice(0, 7));
+              if (view === "shared") return;
+              months.open();
               setView("shared");
             }}
           >
@@ -913,9 +943,21 @@ export default function Calendar({
             aria-pressed={view === "team"}
             {...busyProps(locked)}
             onClick={() => {
+              // Members without a week of their own start from the month in
+              // the period selects: this week in the current month.
+              const monthWeek =
+                month === today.slice(0, 7)
+                  ? calendarWeek(today)
+                  : monthWeeks(month)[0];
               setMemberWeeks((previous) =>
                 Object.fromEntries(
-                  members.map((m) => [m.id, previous[m.id] || navigationWeek]),
+                  members.map((m) => [
+                    m.id,
+                    previous[m.id] ||
+                      (view === "team"
+                        ? memberWeeks[memberId] || calendarWeek(today)
+                        : monthWeek),
+                  ]),
                 ),
               );
               setView("team");
@@ -928,8 +970,8 @@ export default function Calendar({
             aria-pressed={view === "month"}
             {...busyProps(locked)}
             onClick={() => {
-              if (!weeks.includes(navigationWeek))
-                setMonth(addDays(navigationWeek, 3).slice(0, 7));
+              if (view === "month") return;
+              months.open();
               setView("month");
             }}
           >
@@ -994,7 +1036,7 @@ export default function Calendar({
                   <Button
                     title="이전 달"
                     {...busyProps(locked, month === "2000-01")}
-                    onClick={() => changeMonth(moveMonth(month, -1))}
+                    onClick={months.previous}
                   >
                     <ChevronLeft size={15} />
                   </Button>
@@ -1004,7 +1046,7 @@ export default function Calendar({
                       {...busyProps(locked)}
                       value={month.slice(0, 4)}
                       onChange={(e) =>
-                        changeMonth(`${e.target.value}-${month.slice(5)}`)
+                        months.select(`${e.target.value}-${month.slice(5)}`)
                       }
                     >
                       {Array.from({ length: 101 }, (_, i) => 2000 + i).map(
@@ -1020,7 +1062,7 @@ export default function Calendar({
                       {...busyProps(locked)}
                       value={Number(month.slice(5))}
                       onChange={(e) =>
-                        changeMonth(
+                        months.select(
                           `${month.slice(0, 4)}-${e.target.value.padStart(2, "0")}`,
                         )
                       }
@@ -1037,7 +1079,7 @@ export default function Calendar({
                   <Button
                     title="다음 달"
                     {...busyProps(locked, month === "2100-12")}
-                    onClick={() => changeMonth(moveMonth(month, 1))}
+                    onClick={months.next}
                   >
                     <ChevronRight size={15} />
                   </Button>
@@ -1059,7 +1101,11 @@ export default function Calendar({
                         active={memberId === member.id}
                         aria-pressed={memberId === member.id}
                         {...busyProps(locked, !context)}
-                        onClick={() => setMemberId(member.id)}
+                        onClick={() => {
+                          if (memberId === member.id) return;
+                          months.restart();
+                          setMemberId(member.id);
+                        }}
                       >
                         <Avatar user={member} small />
                         <span>{member.name}</span>
@@ -1132,10 +1178,7 @@ export default function Calendar({
                 className="calendar-today-control"
                 title="오늘"
                 {...busyProps(locked)}
-                onClick={() => {
-                  setMonth(today.slice(0, 7));
-                  setTodayJump((n) => n + 1);
-                }}
+                onClick={months.today}
               >
                 오늘
               </Button>
@@ -1241,12 +1284,43 @@ export default function Calendar({
             tabIndex={0}
             aria-label="달력 가로·세로 스크롤"
             style={{ "--calendar-days": weekdays.length } as CSSProperties}
+            {...monthScroll}
           >
             {view !== "team" ? (
-              <div className="calendar-grid">
-                {gridHeader()}
-                {weeks.map((start) => weekRow(start, monthlyOwner))}
-              </div>
+              <>
+                <div className="calendar-grid">
+                  {gridHeader()}
+                  {weeks.map((start, index) =>
+                    weekRow(start, monthlyOwner, index === 0),
+                  )}
+                </div>
+                {waitingMonth ? (
+                  <div className="calendar-member-loading calendar-month-loading">
+                    {waitingMonth.result?.error ? (
+                      <>
+                        <ErrorNote error={waitingMonth.result.error} />
+                        <Button {...busyProps(locked)} onClick={retry}>
+                          {Number(waitingMonth.month.slice(5))}월 일정 다시
+                          불러오기
+                        </Button>
+                      </>
+                    ) : (
+                      <LoadingState
+                        className="compact"
+                        label={`${waitingMonth.month.slice(0, 4)}년 ${Number(waitingMonth.month.slice(5))}월 일정을 불러오는 중`}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  monthRange.end < "2100-12" &&
+                  monthChunks.length >= CALENDAR_SCROLL_MONTHS && (
+                    <p className="calendar-month-limit">
+                      한 번에 {CALENDAR_SCROLL_MONTHS}개월까지 이어서
+                      표시합니다. 다음 달 버튼으로 계속 볼 수 있습니다.
+                    </p>
+                  )
+                )}
+              </>
             ) : (
               members.map((m) => {
                 const start = memberWeeks[m.id] || calendarWeek(today);
