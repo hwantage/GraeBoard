@@ -7,17 +7,19 @@ import {
   useState,
 } from "react";
 import type { CompositionEvent, KeyboardEvent } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Pencil } from "lucide-react";
 import {
   cell,
   displayValue,
   isAssignable,
   propertiesFor,
+  textLinks,
 } from "../../shared/domain.js";
 import CellDatePicker, { normalizeDateInput } from "./CellDatePicker";
 import CellOptionPicker from "./CellOptionPicker";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
+import LinkedText from "./LinkedText";
 import { ApiError, serverNow } from "../platform/api";
 import type {
   Cell,
@@ -60,6 +62,9 @@ export default forwardRef<
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [popupKey, setPopupKey] = useState<string | null>(null);
+  // The description shows its links until the edit button opens the input.
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const descriptionReturn = useRef(false);
   const root = useRef<HTMLDivElement>(null);
   const controls = useRef(
     new Map<string, HTMLTextAreaElement | HTMLInputElement>(),
@@ -117,6 +122,13 @@ export default forwardRef<
     if (popupKey)
       controls.current.get(popupKey)?.focus({ preventScroll: true });
   }, [popupKey]);
+  useLayoutEffect(() => {
+    const input = controls.current.get("description");
+    if (!descriptionOpen || !input || document.activeElement === input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.scrollLeft = input.scrollWidth;
+  }, [descriptionOpen]);
 
   function begin(key: string) {
     if (current.current.readOnly || drafts.current.has(key)) return;
@@ -253,6 +265,7 @@ export default forwardRef<
 
   function blur(key: string) {
     focused.current = null;
+    if (key === "description") setDescriptionOpen(false);
     const draft = drafts.current.get(key);
     if (
       draft &&
@@ -277,10 +290,12 @@ export default forwardRef<
       void flush();
     } else if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      descriptionReturn.current = key === "description";
       controls.current.get(key)?.blur();
       void flush();
     } else if (event.key === "Escape") {
       event.preventDefault();
+      descriptionReturn.current = key === "description";
       controls.current.get(key)?.blur();
     }
   }
@@ -328,6 +343,56 @@ export default forwardRef<
         value={String(raw(property.id))}
         onChange={(e) => change(property.id, e.target.value)}
       />
+    );
+  }
+  function descriptionField(property: Property) {
+    const key = property.id;
+    const draft = drafts.current.get(key);
+    // Unsaved or failed input stays in the textarea until it is saved/cancelled.
+    if (
+      !readOnly &&
+      (descriptionOpen ||
+        focused.current === key ||
+        (draft && !same(draft.value, draft.baseline)))
+    )
+      return textInput(property, "설명을 입력하세요…");
+    const text = String(raw(key));
+    const open = () => setDescriptionOpen(true);
+    return (
+      <div className="task-detail-description-view">
+        <span
+          className={`task-detail-description-text ${text ? "" : "is-empty"}`}
+          title={text || undefined}
+          onClick={!text && !readOnly ? open : undefined}
+        >
+          {text ? (
+            <LinkedText parts={textLinks(text)} />
+          ) : readOnly ? (
+            "설명 없음"
+          ) : (
+            "설명을 입력하세요…"
+          )}
+        </span>
+        {!readOnly && (
+          <button
+            type="button"
+            className="task-detail-description-edit"
+            aria-label={`${property.name} 수정`}
+            data-tooltip={`${property.name} 수정`}
+            ref={(el) => {
+              // Enter/Esc leave the input; keep keyboard focus nearby.
+              if (!el || !descriptionReturn.current) return;
+              descriptionReturn.current = false;
+              const active = document.activeElement;
+              if (!active || active === document.body)
+                el.focus({ preventScroll: true });
+            }}
+            onClick={open}
+          >
+            <Pencil size={13} aria-hidden="true" />
+          </button>
+        )}
+      </div>
     );
   }
   const portalContainer = root.current?.closest("dialog") || undefined;
@@ -478,10 +543,7 @@ export default forwardRef<
         </div>
         {description && (
           <div className="task-detail-description">
-            {textInput(
-              description,
-              readOnly ? "설명 없음" : "설명을 입력하세요…",
-            )}
+            {descriptionField(description)}
           </div>
         )}
       </div>

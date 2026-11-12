@@ -2772,6 +2772,49 @@ body.document-block-moving * {
   line-height: 1.7;
   color: var(--muted);
 }
+/* Shown text keeps one line; links open and only the button starts editing. */
+.task-detail-description-view {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.task-detail-description-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-detail-description-text.is-empty {
+  color: #8a969c;
+}
+.task-detail-description-view:has(.task-detail-description-edit)
+  .task-detail-description-text.is-empty {
+  cursor: text;
+}
+.task-detail-description-edit {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: #8a969c;
+}
+.task-detail-description-edit:hover {
+  color: var(--accent-strong);
+  background: var(--accent-surface);
+}
+@media (hover: none) and (pointer: coarse) {
+  /* A larger touch area without growing the one-line description. */
+  .task-detail-description-edit::before {
+    content: "";
+    position: absolute;
+    inset: -4px -8px;
+  }
+}
 .task-inline-properties .detail-text-input {
   display: block;
   width: calc(100% + 12px);
@@ -3396,7 +3439,8 @@ body.document-block-moving * {
   display: inline-block;
   max-width: 100%;
 }
-.sheet-cell a {
+.sheet-cell a,
+.task-detail-description a {
   color: #2563eb;
   font-weight: 400;
   font-style: normal;
