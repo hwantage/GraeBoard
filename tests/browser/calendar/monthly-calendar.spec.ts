@@ -2,7 +2,12 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { todayKey } from "../../../shared/domain.js";
-import { calendarWeek, addDays } from "../../../shared/calendar/calendar.js";
+import {
+  calendarWeek,
+  addDays,
+  monthWeeks,
+  moveMonth,
+} from "../../../shared/calendar/calendar.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 const password = "local-test-only-password";
@@ -57,6 +62,23 @@ async function teamWeek(page: Page, start: string) {
       await expect(row).toHaveAttribute("data-week", week);
     }
   }
+}
+// The selected month's weeks come first; the following months are added below
+// as the grid scrolls.
+async function expectMonthRows(page: Page, month: string) {
+  const weeks = monthWeeks(month);
+  await expect
+    .poll(async () =>
+      (
+        await calendar(page)
+          .locator(".calendar-week-row")
+          .evaluateAll((rows) =>
+            rows.map((row) => row.getAttribute("data-week")),
+          )
+      ).slice(0, weeks.length),
+    )
+    .toEqual(weeks);
+  return weeks;
 }
 async function create(page: Page, title: string, date = todayKey()) {
   await calendar(page)
@@ -257,6 +279,12 @@ test("주간 업무를 과거·미래에 선택해 넣고 원본 제목과 중�
     )
       reads.push(r.url());
   });
+  // Reads of the edited week; scrolling may still add later months.
+  const covering = (week: string) =>
+    reads.filter((url) => {
+      const params = new URL(url).searchParams;
+      return params.get("from")! <= week && week <= params.get("to")!;
+    });
   await picker
     .getByRole("button", { name: "선택한 업무 추가 (1)", exact: true })
     .click();
@@ -264,7 +292,7 @@ test("주간 업무를 과거·미래에 선택해 넣고 원본 제목과 중�
   await expect(
     past.getByRole("button", { name: title, exact: true }),
   ).toBeVisible();
-  expect(reads).toHaveLength(0);
+  expect(covering(pastWeek!)).toHaveLength(0);
   await past.getByRole("button", { name: "업무 추가", exact: true }).click();
   await expect(
     picker.getByRole("checkbox", { name: title, exact: true }),
@@ -280,8 +308,11 @@ test("주간 업무를 과거·미래에 선택해 넣고 원본 제목과 중�
   await calendar(page)
     .getByRole("button", { name: "다음 달", exact: true })
     .click();
-  const future = calendar(page).locator(".calendar-week-row").last();
-  const futureWeek = await future.getAttribute("data-week");
+  // The next month's last week; later months may follow it below.
+  const futureWeek = monthWeeks(moveMonth(todayKey().slice(0, 7), 1)).at(-1)!;
+  const future = calendar(page).locator(
+    `.calendar-week-row[data-week="${futureWeek}"]`,
+  );
   await future.getByRole("button", { name: "업무 추가", exact: true }).click();
   await picker.getByRole("checkbox", { name: title, exact: true }).check();
   await picker
@@ -293,7 +324,7 @@ test("주간 업무를 과거·미래에 선택해 넣고 원본 제목과 중�
     .click();
   await expect(picker).toHaveCount(0);
   await expect(future.locator(".calendar-week-tasks li")).toHaveCount(2);
-  expect(reads).toHaveLength(0);
+  expect(covering(futureWeek)).toHaveLength(0);
   trackReads = false;
   await future.getByRole("button", { name: title, exact: true }).click();
   const detail = page.getByRole("dialog", { name: "업무 상세", exact: true });
@@ -1583,7 +1614,7 @@ test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 �
   await enter(page);
   await calendar(page).getByLabel("캘린더 연도").selectOption("2024");
   await calendar(page).getByLabel("표시 월", { exact: true }).selectOption("2");
-  await expect(calendar(page).locator(".calendar-week-row")).toHaveCount(5);
+  expect(await expectMonthRows(page, "2024-02")).toHaveLength(5);
   await expect(
     calendar(page).getByRole("button", { name: "윤일 일정", exact: true }),
   ).toBeVisible();
@@ -1591,9 +1622,9 @@ test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 �
     calendar(page).locator('[data-date="2024-02-29"]'),
   ).toBeVisible();
   await calendar(page).getByLabel("캘린더 연도").selectOption("2026");
-  await expect(calendar(page).locator(".calendar-week-row")).toHaveCount(6);
+  expect(await expectMonthRows(page, "2026-02")).toHaveLength(6);
   await calendar(page).getByLabel("표시 월", { exact: true }).selectOption("8");
-  await expect(calendar(page).locator(".calendar-week-row")).toHaveCount(6);
+  expect(await expectMonthRows(page, "2026-08")).toHaveLength(6);
   await calendar(page)
     .getByLabel("표시 월", { exact: true })
     .selectOption("12");
@@ -1624,9 +1655,12 @@ test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 �
   await expect(
     calendar(page).locator(".calendar-grid-header > div"),
   ).toHaveCount(2);
-  await expect(
-    calendar(page).locator(".calendar-week-row").first(),
-  ).toContainText("12/27 ~ 01/02");
+  // 다음 달 brought January's first week to the top of the continuing list.
+  const january = calendar(page).locator(
+    '.calendar-week-row[data-week="2026-12-27"]',
+  );
+  await expect(january).toContainText("12/27 ~ 01/02");
+  await expect(january).toBeInViewport();
   await expect(
     calendar(page).locator('[data-date="2026-12-27"]'),
   ).toBeVisible();
@@ -2083,11 +2117,13 @@ for (const view of ["month", "shared", "team"] as const)
       expectedDate: target.date,
       expectedEndDate: target.endDate,
     });
-    await october(page);
+    // A monthly view opens on today; choose October after switching.
+    await enter(page);
     if (view === "shared")
       await calendar(page)
         .getByRole("button", { name: "팀 월간 보기", exact: true })
         .click();
+    await october(page);
     if (view === "team") await teamWeek(page, "2026-09-27");
     await expect(segment(page, entries[0].id)).toHaveCount(0);
     await expect(segment(page, target.id)).toHaveAttribute(
@@ -2145,11 +2181,12 @@ for (const view of ["month", "shared"] as const)
         date: "2026-10-19",
         title: `도착할 날짜의 일정 ${index + 1}`,
       });
-    await october(page);
+    await enter(page);
     if (view === "shared")
       await calendar(page)
         .getByRole("button", { name: "팀 월간 보기", exact: true })
         .click();
+    await october(page);
     const entry = entries[4];
     const body = segment(page, entry.id).locator(".calendar-entry-card");
     await expect(body).toBeEnabled();
@@ -2224,11 +2261,12 @@ for (const view of ["month", "shared"] as const)
     await expect(preview).toHaveCount(0);
     expect(updates).toHaveLength(1);
     await page.reload();
-    await october(page);
+    await enter(page);
     if (view === "shared")
       await calendar(page)
         .getByRole("button", { name: "팀 월간 보기", exact: true })
         .click();
+    await october(page);
     await expect(segment(page, entry.id)).toHaveAttribute(
       "data-entry-lane",
       "0",
@@ -3719,7 +3757,7 @@ test("인접 월 경계 주와 숨긴 요일 사이를 가로지르는 기간을
   await expect(
     calendar(page).locator('[data-date="2026-03-06"]'),
   ).toBeAttached();
-  await expect(calendar(page).locator(".calendar-week-row")).toHaveCount(6);
+  expect(await expectMonthRows(page, "2026-02")).toHaveLength(6);
 });
 
 test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변경의 재시도를 처리한다", async ({

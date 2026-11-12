@@ -372,6 +372,11 @@ test("팀 월간 보기에서 일반 팀원이 공용 태그·일정을 만들�
   await checkbox().check();
   await expect(checkbox()).toBeChecked();
   await expect(card(page, entry.id)).toBeEnabled();
+  // The month opens with today's week right below the weekday header, where
+  // dragging scrolls the grid up; drag from the top of the month instead.
+  await page.locator(".calendar-scroll").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   let reads = 0;
   page.on("request", (req) => {
     if (
