@@ -301,6 +301,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 | 목록·블록·표의 편집 명령 | `document-editor-commands.ts` |
 | Markdown 스키마·변환 보존 검사·클립보드 직렬화 | `document-markdown.ts` |
 
+블록 자동 서식은 `DocumentInputRules.ts`가 Milkdown commonmark/gfm 입력 규칙을 감싸 같은 경계(`canFormat`)로 검사합니다. 입력한 기호가 문단 처음부터 커서까지의 글 전체여야 하며 표 셀·코드 블록·인라인 코드 안에서는 변환하지 않습니다. 글머리·번호·체크리스트·제목·인용 규칙(`keepText`)은 커서 뒤의 기존 글과 서식을 새 블록의 내용으로 유지하고, 코드 울타리·구분선·표 삽입 규칙은 빈 문단에서만 동작합니다. 인라인 코드 검사는 기호 범위만 보므로 뒤쪽 글의 인라인 코드는 변환을 막지 않습니다. 목록 항목의 첫 문단과 인용 안에서는 빈 문단과 같은 결과입니다. 목록 항목 첫 문단에서는 스키마(`paragraph block*`)상 체크리스트만 바뀌고, 인용 안에서는 인용 안에 목록·제목·중첩 인용을 만듭니다. 변환 직후 Backspace·⌘/Ctrl+Z는 ProseMirror `undoInputRule`로 기호를 되돌립니다. trailing 플러그인의 끝 빈 문단 추가와 이력에 남지 않는 속성 변경(Milkdown 제목 id 동기화)은 이 되돌리기 정보를 지우지 않습니다.
+
 문서 내보내기는 `document-markdown.ts`의 동일 스키마와 링크 규칙을 직접 참조합니다. 변환 규칙은 편집 화면에 추가하지 않습니다. 저장 형식에 영향을 주는 변경은 DB 변경 지침을 따르며, 미지원 문법은 원문 보존과 기존 Markdown 전환 경로를 유지합니다.
 
 ### 내부·외부 API의 연결 책임
