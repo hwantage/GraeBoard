@@ -337,6 +337,38 @@ test("아이폰에서만 입력칸 자동 확대를 막고 다른 브라우저�
   );
 });
 
+test("휴대폰에서는 문서가 있는 업무에만 문서 아이콘을 보이고 선택한 작업명 칸에서 문서를 연다", async ({
+  page,
+}) => {
+  const other = (
+    await request(page, "/tasks", "POST", {
+      teamId,
+      year,
+      fields: { title: "문서 없는 업무", owner: userId },
+    })
+  ).task.id;
+  await request(page, `/tasks/${taskId}/documents/main`, "PUT", {
+    markdown: "# 문서 있는 업무",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  const withDocument = titleCell(page).locator(".task-document-indicator");
+  const emptyCell = page.locator(`[data-cell="${other}:title"]`);
+  const empty = emptyCell.locator(".task-document-indicator");
+  await expect(withDocument).toHaveCSS("opacity", "1");
+  await expect(empty).toHaveCSS("opacity", "0");
+  await expect(empty).toHaveCSS("pointer-events", "none");
+  // 작업명 칸을 선택하면 흐린 아이콘으로 업무 상세를 열어 문서를 만들 수 있다.
+  await emptyCell.tap({ position: { x: 40, y: 12 } });
+  await expect(emptyCell).toHaveAttribute("aria-selected", "true");
+  await expect(empty).not.toHaveCSS("opacity", "0");
+  await empty.tap();
+  await expect(
+    page.getByRole("dialog", { name: "업무 상세", exact: true }),
+  ).toBeVisible();
+});
+
 test("업무 문서는 모바일에서도 모드를 전환하고 화면 폭이 바뀌어도 선택을 보존한다", async ({
   page,
 }, info) => {
