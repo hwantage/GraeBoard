@@ -513,6 +513,201 @@ test("코드·인라인 코드·표 셀·문장 중간에서는 자동 블록 �
   await expect(rich(page).locator("li")).toHaveCount(0);
 });
 
+const typedText = async (editor: Locator) =>
+  (await editor.textContent())?.replaceAll(" ", " ");
+for (const [typed, symbol] of [
+  ["->", "→"],
+  ["<-", "←"],
+  ["=>", "⇒"],
+  ["<=", "⇐"],
+  ["<->", "↔"],
+  ["<=>", "⇔"],
+])
+  test(`${typed}는 글자 사이에서도 ${symbol}로 바꾸고 Backspace와 실행취소로 입력한 글자를 복원한다`, async ({
+    page,
+  }) => {
+    await open(page);
+    await rich(page).pressSequentially(`가${typed}`);
+    await expect.poll(() => typedText(rich(page))).toBe(`가${symbol}`);
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => typedText(rich(page))).toBe(`가${typed}`);
+    await clear(page);
+    await rich(page).pressSequentially(`가${typed}`);
+    await expect.poll(() => typedText(rich(page))).toBe(`가${symbol}`);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(() => typedText(rich(page))).toBe(`가${typed}`);
+    await clear(page);
+    await rich(page).pressSequentially(`a${typed}b 다음`);
+    await expect.poll(() => typedText(rich(page))).toBe(`a${symbol}b 다음`);
+    await expect.poll(() => markdown(page)).toBe(`a${symbol}b 다음\n`);
+  });
+
+test("화살표는 코드·인라인 코드·붙여넣기·원문에서는 그대로 두고 표 셀과 목록에서는 바꾼다", async ({
+  page,
+}) => {
+  await open(page, "```\n\n```\n\n| A | B |\n| - | - |\n|  |  |\n\n마지막\n");
+  await rich(page).locator("pre").click();
+  await rich(page).pressSequentially("a->b <=> c");
+  await expect(rich(page).locator("pre")).toHaveText("a->b <=> c");
+  await rich(page).locator("td p").first().click();
+  await settle(page);
+  await rich(page).pressSequentially("x<->y");
+  await expect(rich(page).locator("td").first()).toHaveText("x↔y");
+  await rich(page).locator("p").last().click();
+  await page.keyboard.press("End");
+  await settle(page);
+  // Inline code typed with backticks keeps its arrow; text after it converts.
+  await rich(page).pressSequentially(" `c->d` e->f");
+  await expect(rich(page).locator("p code")).toHaveText("c->d");
+  await expect(rich(page).locator("p").last()).toHaveText("마지막 c->d e→f");
+  // Typing inside an existing inline code mark keeps the characters too.
+  await rich(page)
+    .locator("p code")
+    .evaluate((el) => {
+      const range = document.createRange();
+      range.setStart(el.firstChild!, 1);
+      range.collapse(true);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  await settle(page);
+  await rich(page).pressSequentially("<=");
+  await expect(rich(page).locator("p code")).toHaveText("c<=->d");
+  await rich(page).locator("p").last().click();
+  await page.keyboard.press("End");
+  await settle(page);
+  // Pasted text is not typed input, so it keeps its characters.
+  await paste(rich(page), "p->q");
+  await expect(rich(page).locator("p").last()).toContainText("p->q");
+  await page.keyboard.press("Enter");
+  await rich(page).pressSequentially("- 목록=>끝");
+  await expect(rich(page).locator("li")).toHaveText("목록⇒끝");
+  const saved = [
+    "```\na->b <=> c\n```",
+    "| x↔y |",
+    "마지막 `c<=->d` e→f",
+    "p->q",
+    "* 목록⇒끝",
+  ];
+  await expect
+    .poll(async () => {
+      const text = await markdown(page);
+      return saved.filter((part) => !text.includes(part));
+    })
+    .toEqual([]);
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  const source = detail(page).getByRole("textbox", {
+    name: "업무 문서 Markdown 원문",
+  });
+  await source.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  });
+  await source.pressSequentially("원문->그대로");
+  await expect(source).toHaveValue(/원문->그대로$/);
+  await expect.poll(() => markdown(page)).toContain("원문->그대로");
+});
+
+test("구분선 단축키는 그대로이고 한 화면의 여러 꼬리 메모 편집기에서 모두 바꾼다", async ({
+  page,
+}) => {
+  await open(page);
+  await rich(page).pressSequentially("---");
+  await expect(rich(page).locator("hr")).toHaveCount(1);
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  const path = `/teams/${teamId}/years/2026/memos`;
+  const memoIds: string[] = [];
+  for (const title of ["첫 메모", "둘째 메모"]) {
+    const id = randomUUID();
+    memoIds.push(id);
+    await request(page, path, "POST", { id, title });
+    await request(page, `${path}/${id}`, "PUT", {
+      markdown: `${title} 내용\n`,
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+  }
+  await page.reload();
+  const toggle = page
+    .getByRole("region", { name: "연간 업무 메모 목록" })
+    .getByRole("button", { name: "꼬리 메모", exact: true });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  const memoEditor = (id: string) =>
+    page
+      .locator(`.memo-document-card[data-document-id="${id}"]`)
+      .getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+  // Both editors are created before typing, so neither replaces the other's
+  // rules; the first one created still converts.
+  await expect(memoEditor(memoIds[0])).toContainText("첫 메모 내용");
+  await expect(memoEditor(memoIds[1])).toContainText("둘째 메모 내용");
+  for (const [index, id] of [memoIds[0], memoIds[1], memoIds[0]].entries()) {
+    const editor = memoEditor(id);
+    await editor.locator("p").last().click();
+    await page.keyboard.press("End");
+    await editor.evaluate(async () => {
+      await new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => r())),
+      );
+    });
+    await editor.pressSequentially(` ${index}->`);
+    await expect(editor.locator("p").last()).toContainText(`${index}→`);
+  }
+  await expect
+    .poll(
+      async () =>
+        (await request(page, `${path}/${memoIds[0]}`)).markdown as string,
+    )
+    .toBe("첫 메모 내용 0→ 2→\n");
+  await expect
+    .poll(
+      async () =>
+        (await request(page, `${path}/${memoIds[1]}`)).markdown as string,
+    )
+    .toBe("둘째 메모 내용 1→\n");
+});
+
+test("Chromium IME 한글 조합 앞뒤에서도 화살표를 바꾼다", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "IME 조합 명령은 Chromium CDP에서 제공",
+  );
+  await open(page);
+  const client = await page.context().newCDPSession(page);
+  async function compose(steps: string[]) {
+    await client.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Process",
+      code: "KeyG",
+      windowsVirtualKeyCode: 229,
+    });
+    for (const text of steps) {
+      await client.send("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+      await expect.poll(() => typedText(rich(page))).toContain(text);
+    }
+    await client.send("Input.insertText", { text: steps.at(-1)! });
+  }
+  await compose(["ㅎ", "하", "한"]);
+  await rich(page).pressSequentially("->");
+  await expect.poll(() => typedText(rich(page))).toBe("한→");
+  await compose(["ㄱ", "그", "글"]);
+  await expect.poll(() => typedText(rich(page))).toBe("한→글");
+  await rich(page).pressSequentially("<=>");
+  await compose(["ㅁ", "마", "말"]);
+  await expect.poll(() => typedText(rich(page))).toBe("한→글⇔말");
+  await expect.poll(() => markdown(page)).toBe("한→글⇔말\n");
+});
+
 test("외부 URL은 즉시 링크가 되고 제목 변경만 한 번의 실행취소로 되돌린다", async ({
   page,
 }) => {

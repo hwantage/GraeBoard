@@ -105,6 +105,56 @@ function documentRulesPlugin(rules: InputRule[]) {
   return plugin;
 }
 
+// Typed arrows become symbols anywhere in text, table cells included. The
+// plugin skips code blocks, and inCodeMark: false keeps inline code as typed.
+// After an odd number of backticks, inline code is still being typed (`a->b`),
+// so the arrow stays until the closing backtick makes the code mark.
+const arrows = [
+  ["<->", "↔"],
+  ["<=>", "⇔"],
+  ["->", "→"],
+  ["<-", "←"],
+  ["=>", "⇒"],
+  ["<=", "⇐"],
+].map(
+  ([typed, symbol]) =>
+    [new RegExp(`(?<=^[^\`]*(?:\`[^\`]*\`[^\`]*)*)${typed}$`), symbol] as const,
+);
+// `<-` and `<=` convert before the `>` of `<->` and `<=>` is typed. Join only
+// an arrow converted by the previous keystroke, and let Backspace or Mod-Z
+// restore all three typed characters instead of the intermediate arrow.
+const arrowJoins = [
+  [/←>$/, "↔", "<->"],
+  [/⇐>$/, "⇔", "<=>"],
+] as const;
+function arrowInputRules() {
+  return [
+    ...arrowJoins.map(
+      ([match, symbol, typed]) =>
+        new InputRule(
+          match,
+          (state, _match, start, end) => {
+            const plugin = state.plugins.find(
+              (plugin) => plugin.spec.isInputRules,
+            );
+            if (!plugin?.getState(state)) return null;
+            const tr = state.tr.insertText(symbol, start, end);
+            return tr.setMeta(plugin, {
+              transform: tr,
+              from: start,
+              to: end,
+              text: typed,
+            });
+          },
+          { inCodeMark: false, undoable: false },
+        ),
+    ),
+    ...arrows.map(
+      ([match, symbol]) => new InputRule(match, symbol, { inCodeMark: false }),
+    ),
+  ];
+}
+
 // Preserve Milkdown's handlers and undo-input-rule metadata, with the same
 // boundaries for every block shortcut, including the additional task forms.
 export function configureDocumentInputRules(ctx: Ctx) {
@@ -181,7 +231,9 @@ export function configureDocumentInputRules(ctx: Ctx) {
     return {
       ...configured,
       plugins: configured.plugins?.map((plugin) =>
-        plugin.spec.isInputRules ? documentRulesPlugin(rules) : plugin,
+        plugin.spec.isInputRules
+          ? documentRulesPlugin([...rules, ...arrowInputRules()])
+          : plugin,
       ),
     };
   });

@@ -414,3 +414,31 @@ test("큰 다이어그램은 블록 안에서 스크롤하고 strict 모드가 �
     preview.locator("script, [onclick], a[href^='javascript:']"),
   ).toHaveCount(0);
 });
+
+test("Mermaid 소스에 한 글자씩 입력한 화살표는 기호로 바꾸지 않는다", async ({
+  page,
+}) => {
+  await save(page, `${fence(diagram)}\n`);
+  await open(page);
+  await block(page).getByRole("img", { name: "Mermaid 다이어그램" }).click();
+  const code = block(page).locator("pre code");
+  await expect(code).toBeVisible();
+  await code.evaluate(async (el) => {
+    (el.closest("[contenteditable=true]") as HTMLElement).focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  // Keystrokes, not inserted text, are what run the editor's input rules.
+  const typed = "\n  B <--> C ==> D -.-> E <== F";
+  for (const key of typed)
+    await page.keyboard.press(key === "\n" ? "Enter" : key);
+  await expect(block(page).locator("pre")).toHaveText(diagram + typed);
+  await expect.poll(() => stored(page)).toBe(`${fence(diagram + typed)}\n`);
+});
