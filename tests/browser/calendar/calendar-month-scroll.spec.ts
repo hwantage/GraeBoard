@@ -452,7 +452,7 @@ test("12개월까지 이어 붙이면 안내를 보이고 그 뒤의 다음 달�
   await expect(limit).toHaveCount(0);
 });
 
-test("응답이 늦어도 휠로 내리면 붙는 달마다 한 번씩만 읽는다", async ({
+test("응답이 늦어도 휠로 내리거나 팀이 바뀌면 달마다 한 번씩만 읽는다", async ({
   page,
 }) => {
   test.setTimeout(60000);
@@ -501,6 +501,21 @@ test("응답이 늦어도 휠로 내리면 붙는 달마다 한 번씩만 읽는
   expect(reads.length).toBeGreaterThanOrEqual(3);
   expect(reads).toEqual([...new Set(reads)]);
   expect(reads).toContain("2027-03-07");
+  // A team change (an entry made elsewhere) reads each listed month once
+  // again; reloading the team's members does not restart those reads.
+  const contexts = contextReads;
+  reads.length = 0;
+  await seedEntry(page, "다른 곳에서 만든 일정", "2026-11-18");
+  await expect(
+    calendar(page).getByRole("button", {
+      name: "다른 곳에서 만든 일정",
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  await expect.poll(() => contextReads > contexts && pending === 0).toBe(true);
+  expect(aborted).toEqual([]);
+  expect(reads).toEqual([...new Set(reads)]);
+  expect(reads).toEqual(expect.arrayContaining(["2026-10-25", "2027-03-07"]));
 });
 
 test("휴대폰에서도 아래로 넘기면 다음 달이 이어지고 2100년 12월에서 멈춘다", async ({

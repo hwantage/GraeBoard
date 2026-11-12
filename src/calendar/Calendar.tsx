@@ -239,6 +239,9 @@ export default function Calendar({
     tagCatalogs.get(ownerId) || EMPTY_TAGS;
   const monthlyOwner = view === "shared" ? null : memberId;
 
+  // Reads depend on the member ids only. A team change reloads the context
+  // with new member objects; keying on them would restart every read.
+  const memberKey = members.map((member) => member.id).join(",");
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
     // A month at a time, so a month added by scrolling reads only itself.
@@ -252,7 +255,7 @@ export default function Calendar({
       const from = memberWeeks[member.id] || calendarWeek(today);
       return { userId: member.id, from, to: addDays(from, 6) };
     });
-  }, [members, memberId, view, monthChunks, memberWeeks, today]);
+  }, [memberKey, memberId, view, monthChunks, memberWeeks, today]);
   const {
     data,
     schedules,
