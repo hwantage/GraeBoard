@@ -36,6 +36,7 @@ import {
   useDocumentPageTitle,
   useOpenDocumentLink,
 } from "../documents/document-links";
+import { revealCaretOnSelection } from "../ui/revealInputCaret";
 
 export default function CalendarEntryPanel({
   entry,
@@ -393,6 +394,8 @@ export default function CalendarEntryPanel({
             onBlur={(event) => {
               event.currentTarget.scrollLeft = 0;
             }}
+            // 손으로 옮긴 커서도 따라가도록 커서가 바뀔 때 가로 위치를 맞춘다.
+            ref={revealCaretOnSelection}
             placeholder="일정 제목"
             maxLength={120}
             value={title}
