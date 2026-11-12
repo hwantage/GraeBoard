@@ -1154,6 +1154,95 @@ test("사용자 검토: 행·열 업무 상속도 같은 HEX 일반 채우기와
   );
 });
 
+test("사용자 요청: 업무 표시는 색을 채운 칩으로 구분하고 일반 배경색 실수를 알린다", async ({
+  page,
+}, info) => {
+  await configure(
+    page,
+    [],
+    [
+      { color: "#0066cc", name: "개발 작업" },
+      { color: "#ffd84d", name: "" },
+    ],
+  );
+  await page.reload();
+  const marks = page.getByRole("group", { name: "업무 표시", exact: true });
+  const chip = marks.getByRole("button", {
+    name: "업무 표시: 개발 작업",
+    exact: true,
+  });
+  await expect(chip).toHaveCSS("background-color", "rgb(0, 102, 204)");
+  await expect(chip).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(chip).toContainText("개발 작업");
+  const unnamed = marks.getByRole("button", {
+    name: "업무 표시: #ffd84d",
+    exact: true,
+  });
+  await expect(unnamed).toHaveCSS("background-color", "rgb(255, 216, 77)");
+  await expect(unnamed).toHaveText("");
+  // 일반 배경색 버튼은 업무 표시 묶음 밖에 있다.
+  await expect(marks.getByRole("button", { name: "배경색" })).toHaveCount(0);
+
+  const toast = page.locator(".toast");
+  const first = page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`);
+  await first.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  await expect(toast).toContainText(
+    "일반 배경색은 ‘개발 작업’ 업무로 집계되지 않습니다.",
+  );
+  await page.screenshot({ path: info.outputPath("work-mark-toolbar.png") });
+  await page.locator(`[data-cell="${taskIds[1]}:2026-01-12"]`).click();
+  // 안내 뒤 다른 칸을 골라도 칠한 범위만 업무 표시로 바꾼다.
+  await savedAction(page, () =>
+    toast.getByRole("button", { name: "업무 표시로 바꾸기" }).click(),
+  );
+  await expect(toast).toHaveCount(0);
+  expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(true);
+  expect(
+    effectiveCell(await taskAt(page, 1), "2026-01-12").style.work,
+  ).not.toBe(true);
+  await first.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+
+  await savedAction(page, () => pickColor(page, "배경색", "#ff0000"));
+  await expect(toast).toContainText(
+    "업무 표시 1칸이 해제되어 집계에서 빠집니다.",
+  );
+  await savedAction(page, () =>
+    toast.getByRole("button", { name: "실행취소", exact: true }).click(),
+  );
+  const restored = effectiveCell(await taskAt(page), "2026-01-05").style;
+  expect(restored.work).toBe(true);
+  expect(restored.backgroundColor).toBe("#0066cc");
+
+  // 업무 표시가 없는 칸을 업무 색이 아닌 색으로 칠하면 알리지 않는다.
+  await page.locator(`[data-cell="${taskIds[2]}:2026-01-05"]`).click();
+  await savedAction(page, () => pickColor(page, "배경색", "#ff0000"));
+  await expect(toast).toHaveCount(0);
+  // 같은 칸을 다시 칠하면 이전 안내는 사라져 새 색을 업무 색으로 되돌리지 않는다.
+  const later = page.locator(`[data-cell="${taskIds[2]}:2026-01-12"]`);
+  await later.click();
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  await expect(
+    toast.getByRole("button", { name: "업무 표시로 바꾸기" }),
+  ).toBeVisible();
+  await savedAction(page, () => pickColor(page, "배경색", "#ff0000"));
+  await expect(toast).toHaveCount(0);
+  const repainted = effectiveCell(await taskAt(page, 2), "2026-01-12").style;
+  expect(repainted.backgroundColor).toBe("#ff0000");
+  expect(repainted.work).not.toBe(true);
+  // 이미 같은 색인 칸을 다시 칠해 바뀌는 칸이 없으면 알리지 않는다.
+  await paint(page, 1, ["2026-01-19"], "#0066cc", false);
+  const same = page.locator(`[data-cell="${taskIds[1]}:2026-01-19"]`);
+  await expect(same).toHaveCSS("background-color", "rgb(0, 102, 204)");
+  await same.click();
+  await savedAction(page, () => pickColor(page, "배경색", "#0066cc"));
+  await expect(toast).toHaveCount(0);
+  await insights(page);
+  await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
+});
+
 test("사용자 검토: 업무 색상은 일반 테마 바로 아래 한 곳에서 CAS로 저장하고 최신 차트·목표일을 보존한다", async ({
   page,
 }, info) => {

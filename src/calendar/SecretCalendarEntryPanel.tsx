@@ -203,6 +203,10 @@ export default function SecretCalendarEntryPanel({
             <input
               className="calendar-entry-title"
               aria-label="일정 제목"
+              // 편집을 마치면 긴 제목도 앞부터 보이게 한다(iOS는 커서 위치를 유지).
+              onBlur={(event) => {
+                event.currentTarget.scrollLeft = 0;
+              }}
               placeholder="일정 제목"
               maxLength={120}
               value={title}

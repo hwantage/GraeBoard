@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, CircleAlert, LoaderCircle, Trash2 } from "lucide-react";
 
 export function useToast() {
@@ -44,16 +44,20 @@ export default function Toast({
 
 export function UndoToast({
   message,
+  icon = <Trash2 size={16} aria-hidden="true" />,
+  actionLabel = "실행취소",
   disabled = false,
   onUndo,
 }: {
   message: string;
+  icon?: ReactNode;
+  actionLabel?: string;
   disabled?: boolean;
   onUndo: () => void;
 }) {
   return (
     <div className="toast" role="status" aria-atomic="true">
-      <Trash2 size={16} aria-hidden="true" />
+      {icon}
       <span>{message}</span>
       <button
         type="button"
@@ -61,7 +65,7 @@ export function UndoToast({
         disabled={disabled}
         onClick={onUndo}
       >
-        실행취소
+        {actionLabel}
       </button>
     </div>
   );
