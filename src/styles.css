@@ -2711,7 +2711,8 @@ body.document-block-moving * {
 .detail-field-value .person-cell {
   white-space: nowrap;
 }
-.detail-field-value.is-empty {
+.detail-field-value.is-empty,
+.task-detail-description-text.is-empty {
   color: #8a969c;
 }
 .detail-field-value:disabled {
@@ -2785,11 +2786,7 @@ body.document-block-moving * {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.task-detail-description-text.is-empty {
-  color: #8a969c;
-}
-.task-detail-description-view:has(.task-detail-description-edit)
-  .task-detail-description-text.is-empty {
+.task-detail-description-text.opens-input {
   cursor: text;
 }
 .task-detail-description-edit {
@@ -2808,11 +2805,11 @@ body.document-block-moving * {
   background: var(--accent-surface);
 }
 @media (hover: none) and (pointer: coarse) {
-  /* A larger touch area without growing the one-line description. */
+  /* A larger touch area without growing the line or covering the text. */
   .task-detail-description-edit::before {
     content: "";
     position: absolute;
-    inset: -4px -8px;
+    inset: -4px -8px -4px 0;
   }
 }
 .task-inline-properties .detail-text-input {

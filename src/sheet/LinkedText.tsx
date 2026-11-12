@@ -1,7 +1,7 @@
 // Text split by textLinks() in shared/domain.js: URLs and "#123456" Redmine
 // numbers open in a new tab. Grid cells and the task detail description share
 // it so both show the same links.
-export type LinkedTextPart = { text: string; href?: string };
+type LinkedTextPart = { text: string; href?: string };
 
 export default function LinkedText({
   parts,

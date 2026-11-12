@@ -65,6 +65,7 @@ export default forwardRef<
   // The description shows its links until the edit button opens the input.
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const descriptionReturn = useRef(false);
+  const descriptionEdit = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const controls = useRef(
     new Map<string, HTMLTextAreaElement | HTMLInputElement>(),
@@ -129,6 +130,9 @@ export default forwardRef<
     input.setSelectionRange(input.value.length, input.value.length);
     input.scrollLeft = input.scrollWidth;
   }, [descriptionOpen]);
+  useEffect(() => {
+    if (readOnly) setDescriptionOpen(false);
+  }, [readOnly]);
 
   function begin(key: string) {
     if (current.current.readOnly || drafts.current.has(key)) return;
@@ -306,6 +310,8 @@ export default forwardRef<
       readOnly,
       onFocus: () => {
         focused.current = key;
+        // Returning to the input cancels the earlier Enter/Esc focus return.
+        if (key === "description") descriptionReturn.current = false;
         begin(key);
         render();
       },
@@ -325,6 +331,22 @@ export default forwardRef<
   }
   const raw = (key: string) =>
     drafts.current.get(key)?.value ?? cell(task, key).value;
+  const descriptionDraft = drafts.current.get("description");
+  // Unsaved or failed input stays in the textarea until it is saved/cancelled.
+  const descriptionEditing =
+    !readOnly &&
+    (descriptionOpen ||
+      focused.current === "description" ||
+      (!!descriptionDraft &&
+        !same(descriptionDraft.value, descriptionDraft.baseline)));
+  useLayoutEffect(() => {
+    // Enter/Esc leave the input; keep keyboard focus nearby once it closes.
+    if (descriptionEditing || !descriptionReturn.current) return;
+    descriptionReturn.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body)
+      descriptionEdit.current?.focus({ preventScroll: true });
+  }, [descriptionEditing]);
   function textInput(property: Property, placeholder: string) {
     return (
       <textarea
@@ -346,24 +368,23 @@ export default forwardRef<
     );
   }
   function descriptionField(property: Property) {
-    const key = property.id;
-    const draft = drafts.current.get(key);
-    // Unsaved or failed input stays in the textarea until it is saved/cancelled.
-    if (
-      !readOnly &&
-      (descriptionOpen ||
-        focused.current === key ||
-        (draft && !same(draft.value, draft.baseline)))
-    )
-      return textInput(property, "설명을 입력하세요…");
-    const text = String(raw(key));
+    if (descriptionEditing) return textInput(property, "설명을 입력하세요…");
+    const text = String(raw(property.id));
     const open = () => setDescriptionOpen(true);
+    // Only the empty placeholder opens the input; text keeps its links.
+    const placeholderOpens = !text && !readOnly;
     return (
       <div className="task-detail-description-view">
         <span
-          className={`task-detail-description-text ${text ? "" : "is-empty"}`}
+          className={[
+            "task-detail-description-text",
+            text ? "" : "is-empty",
+            placeholderOpens ? "opens-input" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           title={text || undefined}
-          onClick={!text && !readOnly ? open : undefined}
+          onClick={placeholderOpens ? open : undefined}
         >
           {text ? (
             <LinkedText parts={textLinks(text)} />
@@ -375,18 +396,11 @@ export default forwardRef<
         </span>
         {!readOnly && (
           <button
+            ref={descriptionEdit}
             type="button"
             className="task-detail-description-edit"
             aria-label={`${property.name} 수정`}
             data-tooltip={`${property.name} 수정`}
-            ref={(el) => {
-              // Enter/Esc leave the input; keep keyboard focus nearby.
-              if (!el || !descriptionReturn.current) return;
-              descriptionReturn.current = false;
-              const active = document.activeElement;
-              if (!active || active === document.body)
-                el.focus({ preventScroll: true });
-            }}
             onClick={open}
           >
             <Pencil size={13} aria-hidden="true" />

@@ -7145,6 +7145,25 @@ test("업무 상세 설명은 링크를 열고 수정 버튼으로만 편집하�
     description.getByRole("link", { name: "#654321", exact: true }),
   ).toBeVisible();
   await expect.poll(savedDescription).toBe("저장 실패에도 남는 설명 #654321");
+  // Going back into a failed input cancels the earlier Enter focus return.
+  fail = true;
+  await edit.click();
+  await page.keyboard.type(" 추가");
+  await input.press("Enter");
+  await expect(dialog.getByRole("alert")).toContainText("설명 저장 실패 검증");
+  fail = false;
+  await input.click();
+  await input.press("End");
+  await page.keyboard.type("!");
+  // Leave focus on the page body, as a click outside does in the document
+  // browser (the dialog itself would take focus here).
+  await input.evaluate((el) => el.blur());
+  await expect(input).toHaveCount(0);
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(edit).not.toBeFocused();
+  await expect
+    .poll(savedDescription)
+    .toBe("저장 실패에도 남는 설명 #654321 추가!");
   await page.unroute("**/api/cells/batch");
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
 
