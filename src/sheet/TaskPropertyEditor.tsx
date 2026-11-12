@@ -134,8 +134,11 @@ export default forwardRef<
     if (!readOnly) return;
     // The input disappears without a blur event in some browsers (Firefox);
     // release it the same way so a later draft is not held as focused.
-    if (focused.current === "description") blur("description");
-    else setDescriptionOpen(false);
+    // A removed input never ends its IME composition, which would block saves.
+    if (focused.current === "description") {
+      composing.current.delete("description");
+      blur("description");
+    } else setDescriptionOpen(false);
   }, [readOnly]);
 
   function begin(key: string) {
