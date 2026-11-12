@@ -18,6 +18,14 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-12 — 상세 제목 줄의 이모지 복사
+
+- 사용자 요청(2026-11-12): 이모지 입력을 편하게 하도록 제목 줄 오른쪽 X 왼쪽에 이모지 선택 버튼을 두고, 고르면 복사되게 해 달라는 요청이었습니다. 이모지는 자주 쓰는 약 300개를 분류별로 내장하고 한국어 이름으로 찾으며(새 npm 의존성·네트워크 조회 없음, 사내망에서도 동작), 일정 상세(시크릿 포함)와 업무 상세 모두에 두기로 했습니다.
+- 구현: `src/ui/EmojiPicker.tsx`(버튼·팝업·검색·분류·최근 사용·키보드)와 `src/ui/emoji-catalog.ts`(8개 분류 382개, 한국어 이름·한국어/영어 검색어, 국기 제외)를 추가했습니다. `src/documents/CopyEmojiButton.tsx`가 기존 `copyToClipboard`와 `Toast`를 연결해 `RowPanel`·`CalendarEntryPanel`·`SecretCalendarEntryPanel`의 `headerActions` 마지막(닫기 바로 왼쪽)에 놓습니다. 공용 UI가 문서 기능을 import하지 않도록 복사는 이 래퍼가 맡습니다. `usePopover`에 팝업 오른쪽 끝을 버튼에 맞추는 `align: "end"`를 더했고 기존 호출은 그대로입니다. 팝업은 대화상자 안·헤더 밖에 portal로 띄웁니다. 업무 상세 제목 줄의 `.modal-heading`에 `flex-grow: 1`을 주어 업무 동작·전체 너비 버튼 유무와 360px 이하 줄바꿈에서도 버튼이 닫기 옆에 붙게 했습니다. 다크 캘린더는 기존 팝업 목록에 `.emoji-popover`를 더했습니다.
+- 동작 결정: 고르면 복사하고 팝업을 닫습니다. 열기 전에 같은 상세의 제목·문서를 편집 중이었다면 그 자리로 포커스를 돌려 바로 붙여넣을 수 있게 하고, 아니면 버튼으로 돌아갑니다. Esc는 팝업만 닫고 버튼으로 돌아갑니다. 손가락으로 열면 화면 키보드가 뜨지 않도록 검색칸에 포커스하지 않습니다. 최근 사용은 브라우저 `localStorage` `weekly-plan:recent-emojis`에 16개까지 두며 저장소를 못 쓰면 페이지 안에서만 유지합니다. 열람자도 복사할 수 있습니다. DB·저장 형식·서버 변경은 없습니다.
+- 검증: `tests/browser/documents/detail-emoji-copy.spec.ts`를 추가했습니다. 업무·일정 상세에서 버튼이 닫기 바로 왼쪽인지(기본·전체 페이지·390/320px), 팝업이 버튼 오른쪽 끝에 맞고 헤더 밖에 있는지, 한국어 검색("하트" 첫 결과 빨간 하트, 없는 이름 안내), 검색 Enter·클릭·방향키(↑로 검색칸 복귀) 선택의 클립보드 내용과 알림, 최근 사용 순서와 분류 이동, Esc·바깥 클릭이 상세를 닫지 않는지, 일정 제목으로 포커스 복귀, 다크 캘린더 색, HTTP 사이트의 복사 명령 경로를 확인합니다. `secret-calendar.spec.ts`에 시크릿 상세의 버튼 위치·검색 복사·Esc와 서버 요청이 없는지 확인하는 검사를 더했습니다. `task-documents.spec.ts`의 전체 너비 버튼 위치 검사는 너비 버튼과 닫기 사이에 이모지 버튼이 들어간 배치로 고쳤습니다.
+- 실행 결과(`E2E_PORT=4357`): Chromium에서 새 spec·`secret-calendar`·`document-links`·`calendar-improvements`·`mobile` 81건 통과, `workspace.spec.ts -g "상세|업무 동작|숨기기|복제"` 3건 통과. `task-documents.spec.ts`는 Chromium 83건 통과·1건 실패(위 전체 너비 위치 검사, 수정 후 재실행 통과). Firefox·WebKit에서 같은 spec 6개는 317건 통과·12건 skip·1건 실패였습니다. 실패한 WebKit `task-documents.spec.ts:3825`(SharedWorker 여덟 탭, 테스트 서버 `/__test/streams` 요청의 `ECONNRESET`)는 단독 재실행에서 통과했습니다. HTTP 복사 검사를 더한 새 spec 3건은 세 브라우저에서 9건 통과, `workspace.spec.ts` 같은 필터는 Firefox·WebKit 6건 통과입니다. `check:structure`(오류 0)·`check:architecture`(위반 0)·`build`·`build:edge`와 변경 파일 Prettier 검사도 통과했습니다. 전체 Node/PG 테스트와 전체 브라우저 검사는 실행하지 않았습니다.
+
 ## 2026-11-12 — 충돌 보관함 덮어쓰기가 충돌 수를 늘리던 문제
 
 - 사용자 보고(2026-11-12, 개발 사내 서버): 공유 충돌 보관함에서 전체 선택 후 **나중에 수정으로 덮어쓰기**를 할 때마다 충돌 수가 줄지 않고 늘었습니다(1→2→4→6→8).
