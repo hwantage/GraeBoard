@@ -108,18 +108,23 @@ export default function TeamSyncIndicator({
   const detail = status
     ? `${storage}: ${syncTime(status.lastLocalSavedAt)}\nGit 반영: ${syncTime(status.lastPublishedAt)}\n${target} 마지막 확인: ${syncTime(remote?.observedAt)}${status.lastError ? `\n${status.lastError}` : ""}`
     : "동기화 상태를 확인할 수 없습니다.";
+  // 좁은 화면에서는 단계 이름(data-short)만 보이고 전체 문구는 툴팁·화면 낭독기로 전한다.
   const stages = [
-    { label: local, complete: stored },
-    { label: git, complete: published },
-    { label: peer, complete: reflected },
+    { label: local, short: external ? "외부" : "내부", complete: stored },
+    { label: git, short: "Git", complete: published },
+    { label: peer, short: external ? "내부" : "외부", complete: reflected },
   ];
+  // 단계별 title은 상위 상세 툴팁을 가리므로, 전체 단계 문구를 상세 툴팁 첫 줄에 둔다.
+  const title = problem
+    ? detail
+    : `${stages.map((stage) => stage.label).join(" · ")}\n${detail}`;
   const indicator = (
     <span
       className="team-sync-indicator"
       role="status"
       aria-label="팀 동기화 상태"
       aria-atomic="true"
-      title={detail}
+      title={title}
     >
       {problem ? (
         <span className="tag team-sync-problem">{problem}</span>
@@ -128,8 +133,9 @@ export default function TeamSyncIndicator({
           <span
             key={index}
             className={`tag team-sync-stage${stage.complete ? " is-complete" : ""}`}
+            data-short={stage.short}
           >
-            {stage.label}
+            <span className="team-sync-label">{stage.label}</span>
           </span>
         ))
       )}
