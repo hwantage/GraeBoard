@@ -1191,6 +1191,20 @@ small {
 .toolbar-add-task {
   flex-shrink: 0;
 }
+/* 휴대폰 폭에서만 보이는 도구 펼치기 버튼. */
+.format-toolbar > .toolbar-more {
+  display: none;
+  min-height: 27px;
+  height: 27px;
+  padding: 4px 5px;
+  border-color: transparent;
+  border-radius: 4px;
+  color: #637b81;
+}
+.format-toolbar > .toolbar-more[aria-expanded="true"] {
+  background: var(--accent-pastel);
+  color: var(--accent-strong);
+}
 .sheet-scroll[data-format-painting] .sheet-cell,
 .sheet-scroll[data-format-painting] .sheet-header,
 .sheet-scroll[data-format-painting] .row-number {
@@ -1272,6 +1286,49 @@ small {
 .color-tool.disabled {
   opacity: 0.4;
   cursor: default;
+}
+.work-mark-group {
+  gap: 4px;
+}
+/* 업무 표시는 실제 업무 색을 채운 라벨 칩으로 보여 일반 배경색 버튼과 구분한다. */
+.work-mark-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  border: 0;
+  border-radius: 11px;
+  box-shadow: inset 0 0 0 1px #293c4226;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.work-mark-chip:not(:has(.work-mark-name)) {
+  justify-content: center;
+  padding: 0;
+}
+.work-mark-chip:not(:disabled):hover {
+  filter: brightness(0.94);
+}
+.work-mark-chip[aria-pressed="true"] {
+  box-shadow:
+    inset 0 0 0 1px #293c4226,
+    0 0 0 2px var(--accent-surface),
+    0 0 0 3.5px var(--ink);
+}
+.work-mark-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.work-mark-name {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .selection-label {
   font-size: 10px;
@@ -5588,20 +5645,44 @@ body.document-block-moving * {
   .topbar .top-account {
     padding-left: 4px;
   }
-  .workspace .format-toolbar > .toolbar-group,
+  .workspace .format-toolbar:not(.expanded) > .toolbar-group:not(.toolbar-core),
+  .workspace .format-toolbar:not(.expanded) .toolbar-extra,
   .workspace .format-toolbar > .selection-label,
-  .workspace .format-toolbar > .zoom-controls,
   .workspace .page-heading:not(.calendar-heading) .heading-actions,
   .workspace .row-drag-handle,
   .workspace .row-resizer,
   .workspace .column-resizer {
     display: none;
   }
-  .workspace .format-toolbar > .toolbar-group:first-of-type {
-    display: flex;
-  }
   .workspace .format-toolbar [aria-label="서식 복사"] {
     display: none;
+  }
+  /* 업무 색이 많아 접힌 줄이 넘치면 가로로 넘겨 보며, 키보드로 옮긴 버튼은
+     오른쪽 끝의 더 보기 버튼 아래에 가리지 않게 한다. */
+  .workspace .format-toolbar:not(.expanded) {
+    scroll-padding-inline-end: 40px;
+  }
+  /* 펼친 도구는 가로로 넘기지 않고 여러 줄로 보여 준다. */
+  .workspace .format-toolbar.expanded {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    overflow-x: visible;
+  }
+  .workspace .format-toolbar.expanded > .toolbar-group {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    max-width: 100%;
+  }
+  .workspace .format-toolbar > .toolbar-more {
+    display: inline-flex;
+    position: sticky;
+    right: 0;
+    flex-shrink: 0;
+    margin-left: auto;
+    background: var(--accent-surface);
+  }
+  .workspace .format-toolbar > .toolbar-more[aria-expanded="true"] {
+    background: var(--accent-pastel);
   }
   .workspace .date-search-controls {
     flex-wrap: wrap;
@@ -5673,6 +5754,12 @@ body.document-block-moving * {
   .sheet-scroll .row-number,
   .calendar-entry-card {
     -webkit-touch-callout: none;
+  }
+  /* 길게 누를 때 머리글 글자가 선택되어 기기 복사 메뉴가 함께 뜨지 않게 한다. */
+  .sheet-scroll .header-cell,
+  .sheet-scroll .row-number {
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 
