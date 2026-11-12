@@ -1660,7 +1660,20 @@ test("월 경계·윤일·4~6주·임의 요일은 실제 화면의 날짜와 �
     '.calendar-week-row[data-week="2026-12-27"]',
   );
   await expect(january).toContainText("12/27 ~ 01/02");
-  await expect(january).toBeInViewport();
+  // Right below the sticky weekday header.
+  await expect
+    .poll(() =>
+      january.evaluate((element) =>
+        Math.abs(
+          element.getBoundingClientRect().top -
+            element
+              .closest(".calendar-scroll")!
+              .querySelector(".calendar-grid-header")!
+              .getBoundingClientRect().bottom,
+        ),
+      ),
+    )
+    .toBeLessThanOrEqual(2);
   await expect(
     calendar(page).locator('[data-date="2026-12-27"]'),
   ).toBeVisible();

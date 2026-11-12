@@ -65,13 +65,11 @@ const rowOffset = (page: Page, target: Locator) =>
         header.getBoundingClientRect().bottom,
     );
   });
-// A web font loading after the jump can still change the header by a few
-// pixels; the row stays right below it.
 async function expectAtTop(page: Page, target: Locator) {
-  await expect.poll(() => rowOffset(page, target)).toBeGreaterThanOrEqual(-8);
-  await expect.poll(() => rowOffset(page, target)).toBeLessThanOrEqual(8);
+  await expect.poll(() => rowOffset(page, target)).toBeGreaterThanOrEqual(-2);
+  await expect.poll(() => rowOffset(page, target)).toBeLessThanOrEqual(2);
 }
-// Scrolls by hand, as a wheel would, until the row is listed.
+// Scrolls the grid to its end until the target is listed.
 async function scrollUntil(page: Page, target: Locator) {
   await expect
     .poll(async () => {
@@ -201,7 +199,7 @@ test("월간 보기는 아래로 스크롤하면 다음 달을 이어 붙이고 
 }, info) => {
   await seedEntry(page, "월 경계 일정", "2026-11-28", "2026-12-03");
   await seedEntry(page, "12월 일정", "2026-12-16");
-  const january = await seedEntry(page, "1월 일정", "2027-01-20");
+  await seedEntry(page, "1월 일정", "2027-01-20");
   const reads = calendarReads(page);
   await open(page, "2026-11-12T03:00:00+09:00");
   await shownMonth(page, "2026", "11");
@@ -279,7 +277,6 @@ test("월간 보기는 아래로 스크롤하면 다음 달을 이어 붙이고 
   );
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(january.id).toBeTruthy();
   // Scrolling back up stops at the first listed month.
   const before = reads.length;
   await scroller(page).evaluate((element) => {
@@ -415,6 +412,90 @@ test("이어 붙일 달의 실패는 그 달만 다시 읽고 늦은 응답은 �
   await expect(
     calendar(page).getByRole("button", { name: "늦은 1월 일정", exact: true }),
   ).toBeVisible();
+});
+
+test("12개월까지 이어 붙이면 안내를 보이고 그 뒤의 다음 달은 그 달부터 다시 그린다", async ({
+  page,
+}) => {
+  const reads = calendarReads(page);
+  await open(page, "2026-11-12T03:00:00+09:00");
+  const limit = calendar(page).locator(".calendar-month-limit");
+  await scrollUntil(page, limit);
+  await expect(limit).toHaveText(
+    "한 번에 12개월까지 이어서 표시합니다. 다음 달 버튼으로 계속 볼 수 있습니다.",
+  );
+  // November 2026 to October 2027; nothing after October is read.
+  await expect(calendar(page).locator('[data-date="2027-10-31"]')).toHaveCount(
+    1,
+  );
+  await scroller(page).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await shownMonth(page, "2027", "10");
+  await expect(calendar(page).locator(".calendar-month-loading")).toHaveCount(
+    0,
+  );
+  expect(reads.filter((params) => params.get("from")! > "2027-10-31")).toEqual(
+    [],
+  );
+  await calendar(page)
+    .getByRole("button", { name: "다음 달", exact: true })
+    .click();
+  await shownMonth(page, "2027", "11");
+  await expect(
+    calendar(page).locator(".calendar-week-row").first(),
+  ).toHaveAttribute("data-week", "2027-10-31");
+  await expect(calendar(page).locator('[data-date="2026-11-12"]')).toHaveCount(
+    0,
+  );
+  expect(await scroller(page).evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(limit).toHaveCount(0);
+});
+
+test("팀 변경 알림은 화면에 보이는 달만 다시 읽고 나머지 달은 다시 보일 때 읽는다", async ({
+  page,
+}) => {
+  await open(page, "2026-11-12T03:00:00+09:00");
+  await scrollUntil(page, calendar(page).locator('[data-date="2027-04-20"]'));
+  // March's first week at the top: February's last week and March show.
+  await scrollToTop(page, row(page, "2027-02-28"));
+  await shownMonth(page, "2027", "3");
+  await expect(calendar(page).locator(".calendar-month-loading")).toHaveCount(
+    0,
+  );
+  const reads = calendarReads(page);
+  // Entries made through the API, like another member's, reach the open
+  // calendar as a team change.
+  await seedEntry(page, "다른 곳에서 만든 3월 일정", "2027-03-10");
+  await expect(
+    calendar(page).getByRole("button", {
+      name: "다른 곳에서 만든 3월 일정",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(reads.length).toBeLessThanOrEqual(2);
+  expect(
+    [...new Set(reads.map((params) => params.get("from")))].sort(),
+  ).toEqual(["2027-02-07", "2027-03-07"]);
+  // November is off screen and keeps what it read until it shows again.
+  const before = reads.length;
+  await seedEntry(page, "다른 곳에서 만든 11월 일정", "2026-11-18");
+  await expect.poll(() => reads.length).toBeGreaterThan(before);
+  expect(reads.every((params) => params.get("from")! >= "2027-02-07")).toBe(
+    true,
+  );
+  const november = calendar(page).getByRole("button", {
+    name: "다른 곳에서 만든 11월 일정",
+    exact: true,
+  });
+  await expect(november).toHaveCount(0);
+  await scroller(page).evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(november).toBeVisible();
+  expect(reads.some((params) => params.get("from") === "2026-10-25")).toBe(
+    true,
+  );
 });
 
 test("휴대폰에서도 아래로 넘기면 다음 달이 이어지고 2100년 12월에서 멈춘다", async ({
