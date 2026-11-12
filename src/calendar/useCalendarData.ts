@@ -9,14 +9,7 @@ import type {
 import { CALENDAR_MEMBER_BATCH } from "../../shared/calendar/calendar.js";
 import { mergeCalendarLayout } from "../../shared/calendar/calendar-layout.js";
 
-// A lazy range keeps a result it already has when `reload` changes; it is
-// read again once it is no longer lazy (a month scrolled back into view).
-export type CalendarQuery = {
-  userId: string | null;
-  from: string;
-  to: string;
-  lazy?: boolean;
-};
+export type CalendarQuery = { userId: string | null; from: string; to: string };
 type LoadedCalendar = {
   key: string;
   query: CalendarQuery;
@@ -95,17 +88,14 @@ export function useCalendarData(
     // Keep the visible ranges only. Navigating one member reuses the others'
     // completed requests; unfinished requests are safely restarted.
     // A failed range is read again below, so it shows as loading, not failed.
-    setLoaded((previous) => {
-      const kept = Object.fromEntries(
+    setLoaded((previous) =>
+      Object.fromEntries(
         queries.flatMap((query) => {
           const slot = slotFor(query);
           return previous[slot]?.data ? [[slot, previous[slot]]] : [];
         }),
-      );
-      return Object.keys(kept).length === Object.keys(previous).length
-        ? previous
-        : kept;
-    });
+      ),
+    );
     // Members on the same range load together, so the team view costs one
     // request (one server call) instead of one per member.
     const batches: CalendarQuery[][] = [];
@@ -113,7 +103,7 @@ export function useCalendarData(
       const previous = loaded[slotFor(query)];
       if (
         previous?.key === keyFor(query) &&
-        (previous.reload === reload || query.lazy) &&
+        previous.reload === reload &&
         previous.data
       )
         continue;
@@ -201,16 +191,14 @@ export function useCalendarData(
   }, [teamId, queries, reload, attempt]);
 
   // Results in the order of the queries; a member with several ranges reads
-  // them in schedules as one calendar. Only the ranges matter here, so a
-  // range turning lazy does not rebuild the calendars.
-  const rangeKeys = queries.map(keyFor).join("|");
+  // them in schedules as one calendar.
   const ranges = useMemo(
     () =>
       queries.map((query) => {
         const result = loaded[slotFor(query)];
         return result?.key === keyFor(query) ? result : undefined;
       }),
-    [rangeKeys, loaded],
+    [teamId, queries, reload, loaded],
   );
   const schedules = useMemo(() => {
     const owners = new Map<string | null, (LoadedCalendar | undefined)[]>();
@@ -225,7 +213,7 @@ export function useCalendarData(
         results.length === 1 ? results[0] : mergeCalendarRanges(results),
       ]),
     );
-  }, [ranges]);
+  }, [queries, ranges]);
   const data = useMemo(() => {
     const available = [...schedules.values()].flatMap((result) =>
       result?.data ? [result.data] : [],

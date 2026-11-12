@@ -164,7 +164,6 @@ export default function Calendar({
     range: monthRange,
     chunks: monthChunks,
     capped: monthsCapped,
-    onScreen,
   } = months;
   const scroll = useRef<HTMLDivElement>(null);
   const createTitle = useRef<HTMLInputElement>(null);
@@ -243,20 +242,17 @@ export default function Calendar({
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
     // A month at a time, so a month added by scrolling reads only itself.
-    // Months off screen keep what they read when the team changes; they are
-    // read again once scrolled back into view.
     if (view !== "team")
-      return monthChunks.map(({ weeks }, index) => ({
+      return monthChunks.map(({ weeks }) => ({
         userId: view === "shared" ? null : memberId,
         from: weeks[0],
         to: addDays(weeks[weeks.length - 1], 6),
-        lazy: !!onScreen && (index < onScreen.first || index > onScreen.last),
       }));
     return members.map((member) => {
       const from = memberWeeks[member.id] || calendarWeek(today);
       return { userId: member.id, from, to: addDays(from, 6) };
     });
-  }, [members, memberId, view, monthChunks, onScreen, memberWeeks, today]);
+  }, [members, memberId, view, monthChunks, memberWeeks, today]);
   const {
     data,
     schedules,

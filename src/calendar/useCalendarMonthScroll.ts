@@ -68,11 +68,6 @@ export function useCalendarMonthRange(today: string) {
     date: today,
   });
   const [jumped, setJumped] = useState(0);
-  // Listed months with rows on screen, by index; null until measured.
-  const [onScreen, setOnScreen] = useState<{
-    first: number;
-    last: number;
-  } | null>(null);
   const chunks = useMemo(
     () => calendarMonthChunks(range.start, range.end),
     [range.start, range.end],
@@ -94,7 +89,6 @@ export function useCalendarMonthRange(today: string) {
     header = start,
   ) {
     setRange({ start, end: start });
-    setOnScreen(null);
     go(target, header);
   }
   return {
@@ -103,8 +97,6 @@ export function useCalendarMonthRange(today: string) {
     chunks,
     full,
     capped,
-    onScreen,
-    setOnScreen,
     jump,
     jumped,
     setMonth,
@@ -149,42 +141,34 @@ export function useCalendarMonthRange(today: string) {
 
 type CalendarMonthRange = ReturnType<typeof useCalendarMonthRange>;
 
-// The first and last rows between the sticky header and the grid's bottom.
-// Rows are in order, so each edge is found by binary search.
-function rowsInView(root: HTMLElement) {
-  const rows = root.querySelectorAll<HTMLElement>(
-    ".calendar-week-row[data-week]",
-  );
+// The month whose first day is at or above the top row, i.e. the month of the
+// top row's Saturday. At the very end of a list that cannot grow, the last
+// month, whose first row may never reach the top.
+function monthInView(
+  root: HTMLElement,
+  start: string,
+  end: string,
+  full: boolean,
+) {
   const top =
     (root.querySelector(".calendar-grid-header")?.getBoundingClientRect()
       .bottom ?? root.getBoundingClientRect().top) + 1;
-  const bottom = root.getBoundingClientRect().bottom;
-  const firstWhere = (from: number, test: (row: HTMLElement) => boolean) => {
-    let low = from;
-    let high = rows.length;
-    while (low < high) {
-      const middle = (low + high) >> 1;
-      if (test(rows[middle])) high = middle;
-      else low = middle + 1;
+  let month = start;
+  for (const row of root.querySelectorAll<HTMLElement>(
+    ".calendar-week-row[data-week]",
+  ))
+    if (row.getBoundingClientRect().bottom > top) {
+      month = addDays(row.dataset.week!, 6).slice(0, 7);
+      break;
     }
-    return low;
-  };
-  const first = firstWhere(
-    0,
-    (row) => row.getBoundingClientRect().bottom > top,
-  );
-  if (first === rows.length) return null;
-  const last = Math.max(
-    first,
-    firstWhere(first, (row) => row.getBoundingClientRect().top >= bottom) - 1,
-  );
-  return { first: rows[first].dataset.week!, last: rows[last].dataset.week! };
+  if (full && root.scrollTop + root.clientHeight >= root.scrollHeight - 1)
+    month = end;
+  return month < start ? start : month > end ? end : month;
 }
 
-// Applies jumps, follows the scrolled month in the period selects, records
-// which months are on screen and adds the next month when the grid is
-// scrolled within a screen of its end. `shown` lists the rendered weeks;
-// months still loading are not rendered.
+// Applies jumps, follows the scrolled month in the period selects and adds
+// the next month when the grid is scrolled within a screen of its end.
+// `shown` lists the rendered weeks; months still loading are not rendered.
 // A jump turns off the browser's scroll anchoring for the grid until the user
 // scrolls. Anchoring would otherwise move the grid by itself when content
 // changes size (the sticky header once web fonts load, for one), leaving the
@@ -197,20 +181,10 @@ export function useCalendarMonthScroll(
   shown: string[],
   enabled: boolean,
 ) {
-  const { range, chunks, full, jump, jumped, setMonth, setOnScreen, append } =
-    months;
+  const { range, chunks, full, jump, jumped, setMonth, append } = months;
   // Where the last jump left the grid; its own scroll event keeps the month
   // moved to instead of the one at the top.
   const placed = useRef<{ top: number; left: number } | null>(null);
-  const chunkOf = useMemo(
-    () =>
-      new Map(
-        chunks.flatMap(({ weeks }, index) =>
-          weeks.map((week) => [week, index] as const),
-        ),
-      ),
-    [chunks],
-  );
   const lastWeek = chunks[chunks.length - 1].weeks.at(-1)!;
   function fill(root: HTMLElement) {
     if (
@@ -220,28 +194,6 @@ export function useCalendarMonthScroll(
     )
       return;
     append(range.end);
-  }
-  // Records the months on screen and, after a user's scroll, shows in the
-  // period selects the month whose first day is at or above the top row: the
-  // month of its Saturday. At the very end of a list that cannot grow, the
-  // last month, whose first row may never reach the top.
-  function measure(root: HTMLElement, followed: boolean) {
-    const rows = rowsInView(root);
-    if (!rows) return;
-    const first = chunkOf.get(rows.first)!;
-    const last = chunkOf.get(rows.last)!;
-    setOnScreen((previous) =>
-      previous?.first === first && previous.last === last
-        ? previous
-        : { first, last },
-    );
-    if (!followed) return;
-    let month = addDays(rows.first, 6).slice(0, 7);
-    if (full && root.scrollTop + root.clientHeight >= root.scrollHeight - 1)
-      month = range.end;
-    setMonth(
-      month < range.start ? range.start : month > range.end ? range.end : month,
-    );
   }
   useLayoutEffect(() => {
     const root = scroll.current;
@@ -291,7 +243,6 @@ export function useCalendarMonthScroll(
       if (full || root.scrollTop >= top - 1) jump.current = null;
     }
     fill(root);
-    measure(root, false);
   }, [enabled, shown, jumped]);
   const release = () => {
     jump.current = null;
@@ -302,13 +253,15 @@ export function useCalendarMonthScroll(
       const root = scroll.current;
       if (!enabled || !root) return;
       const at = placed.current;
-      const followed =
+      if (
         !jump.current &&
         (!at ||
           Math.abs(root.scrollTop - at.top) > 1 ||
-          Math.abs(root.scrollLeft - at.left) > 1);
-      if (followed) placed.current = null;
-      measure(root, followed);
+          Math.abs(root.scrollLeft - at.left) > 1)
+      ) {
+        placed.current = null;
+        setMonth(monthInView(root, range.start, range.end, full));
+      }
       fill(root);
     },
     onWheel: release,
