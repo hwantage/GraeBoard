@@ -69,6 +69,7 @@ import { CalendarRuleSettings, CalendarWeekdays } from "./CalendarSettings";
 import {
   addDays,
   calendarWeek,
+  daysBetween,
   monthWeeks,
   weekLabel,
   CALENDAR_DAYS,
@@ -158,7 +159,13 @@ export default function Calendar({
   // The monthly views list months one after another from range.start;
   // `month` is the month in the period selects.
   const months = useCalendarMonthRange(today);
-  const { month, range: monthRange, chunks: monthChunks } = months;
+  const {
+    month,
+    range: monthRange,
+    chunks: monthChunks,
+    capped: monthsCapped,
+    onScreen,
+  } = months;
   const scroll = useRef<HTMLDivElement>(null);
   const createTitle = useRef<HTMLInputElement>(null);
   const composingTitle = useRef(false);
@@ -236,17 +243,20 @@ export default function Calendar({
   const queries = useMemo(() => {
     if (view !== "shared" && (!members.length || !memberId)) return [];
     // A month at a time, so a month added by scrolling reads only itself.
+    // Months off screen keep what they read when the team changes; they are
+    // read again once scrolled back into view.
     if (view !== "team")
-      return monthChunks.map(({ weeks }) => ({
+      return monthChunks.map(({ weeks }, index) => ({
         userId: view === "shared" ? null : memberId,
         from: weeks[0],
         to: addDays(weeks[weeks.length - 1], 6),
+        lazy: !!onScreen && (index < onScreen.first || index > onScreen.last),
       }));
     return members.map((member) => {
       const from = memberWeeks[member.id] || calendarWeek(today);
       return { userId: member.id, from, to: addDays(from, 6) };
     });
-  }, [members, memberId, view, monthChunks, memberWeeks, today]);
+  }, [members, memberId, view, monthChunks, onScreen, memberWeeks, today]);
   const {
     data,
     schedules,
@@ -773,32 +783,32 @@ export default function Calendar({
       </aside>
     );
   };
-  const hiddenEntries = useMemo(
-    () =>
-      displayEntries.filter((item) => {
-        if (!normalizeSearchQuery(item.title).includes(searchQuery))
-          return false;
-        const starts =
-          view !== "team"
-            ? weeks
-            : [memberWeeks[item.userId!] || calendarWeek(today)];
-        // Entries of months still loading are not counted as hidden.
-        if (
-          view !== "team" &&
-          (!weeks.length ||
-            item.date > addDays(weeks[weeks.length - 1], 6) ||
-            item.endDate < weeks[0])
-        )
-          return false;
-        return !starts.some((start) =>
-          weekdays.some((day) => {
-            const date = addDays(start, day);
-            return date >= item.date && date <= item.endDate;
-          }),
-        );
-      }),
-    [displayEntries, view, weeks, memberWeeks, weekdays, today, searchQuery],
-  );
+  // Entries whose days in the listed weeks all fall on hidden weekdays.
+  // Weeks are contiguous, so only the clipped range's weekdays are checked;
+  // entries of months still loading are not counted.
+  const hiddenEntries = useMemo(() => {
+    const shownDays = new Set(weekdays);
+    const thisWeek = calendarWeek(today);
+    const listed =
+      view !== "team" && weeks.length
+        ? { from: weeks[0], to: addDays(weeks[weeks.length - 1], 6) }
+        : null;
+    return displayEntries.filter((item) => {
+      if (!normalizeSearchQuery(item.title).includes(searchQuery)) return false;
+      if (view !== "team" && !listed) return false;
+      const start = listed?.from ?? memberWeeks[item.userId!] ?? thisWeek;
+      const end = listed?.to ?? addDays(start, 6);
+      const from = item.date > start ? item.date : start;
+      const to = item.endDate < end ? item.endDate : end;
+      if (from > to) return false;
+      const days = daysBetween(from, to) + 1;
+      if (days >= 7) return false;
+      const first = new Date(`${from}T12:00:00Z`).getUTCDay();
+      for (let day = 0; day < days; day++)
+        if (shownDays.has((first + day) % 7)) return false;
+      return true;
+    });
+  }, [displayEntries, view, weeks, memberWeeks, weekdays, today, searchQuery]);
   const weekRow = (start: string, ownerId: string | null, firstRow = true) => {
     const dates = weekdays.map((day) => addDays(start, day));
     return (
@@ -1311,8 +1321,7 @@ export default function Calendar({
                     )}
                   </div>
                 ) : (
-                  monthRange.end < "2100-12" &&
-                  monthChunks.length >= CALENDAR_SCROLL_MONTHS && (
+                  monthsCapped && (
                     <p className="calendar-month-limit">
                       한 번에 {CALENDAR_SCROLL_MONTHS}개월까지 이어서
                       표시합니다. 다음 달 버튼으로 계속 볼 수 있습니다.

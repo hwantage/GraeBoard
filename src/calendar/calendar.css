@@ -843,17 +843,18 @@
   width: fit-content;
   background: transparent;
 }
-/* The next month below the monthly grid while it loads or after it failed. */
-.calendar-month-loading {
-  min-height: 0;
-  position: sticky;
-  left: 0;
-  width: fit-content;
-}
+/* Below the monthly grid: the next month while it loads or after it failed,
+   or the note that no more months are added. Kept in the visible part. */
+.calendar-month-loading,
 .calendar-month-limit {
   position: sticky;
   left: 0;
   width: fit-content;
+}
+.calendar-month-loading {
+  min-height: 0;
+}
+.calendar-month-limit {
   margin: 0;
   padding: 16px;
   color: var(--muted);
