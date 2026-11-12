@@ -30,6 +30,7 @@ import {
   DocumentPageTitleContext,
   UNAVAILABLE_LINK_MESSAGE,
   documentLinkFullPage,
+  documentLinkDocument,
   documentLinkKey,
   refreshDocumentLinkTitles,
   type DocumentLinkOpener,
@@ -263,9 +264,10 @@ function Workspace({
   const [deepLink] = useState(() => {
     const target = parseDocumentLinkPath(location.pathname);
     if (!target) return null;
-    const fullPage = documentLinkFullPage(location.search);
+    const fullPage = documentLinkFullPage(location.search),
+      documentId = documentLinkDocument(location.search);
     history.replaceState(history.state, "", "/");
-    return { target, fullPage };
+    return { target, fullPage, documentId };
   });
   const navigation = useWorkspaceNavigation({
     canLeaveSheet: () =>
@@ -464,6 +466,8 @@ function Workspace({
       key: string;
       link: OpenedDocumentLink;
       fullPage?: boolean;
+      // The document a full-page button's new tab was showing.
+      documentId?: string;
       browserTitle?: string;
     }[]
   >([]);
@@ -564,6 +568,7 @@ function Workspace({
             key: documentLinkKey(deepLink.target),
             link,
             fullPage: deepLink.fullPage,
+            documentId: deepLink.documentId,
           },
         ]);
       },
@@ -2928,7 +2933,7 @@ function Workspace({
           onAction={presentation ? undefined : detailAction}
         />
       )}
-      {linkPanels.map(({ key, link, fullPage }) => (
+      {linkPanels.map(({ key, link, fullPage, documentId }) => (
         <DocumentPageTitleContext.Provider
           key={key}
           value={
@@ -2952,6 +2957,7 @@ function Workspace({
             user={user}
             readOnly={presentation}
             fullPage={fullPage}
+            documentId={documentId}
             calendarTheme={calendarTheme}
             onClose={() => closeLinkPanel(key)}
             onDeleted={() => closeLinkPanel(key)}
