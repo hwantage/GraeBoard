@@ -65,9 +65,11 @@ const rowOffset = (page: Page, target: Locator) =>
         header.getBoundingClientRect().bottom,
     );
   });
+// A web font loading after the jump can still change the header by a few
+// pixels; the row stays right below it.
 async function expectAtTop(page: Page, target: Locator) {
-  await expect.poll(() => rowOffset(page, target)).toBeGreaterThanOrEqual(-2);
-  await expect.poll(() => rowOffset(page, target)).toBeLessThanOrEqual(2);
+  await expect.poll(() => rowOffset(page, target)).toBeGreaterThanOrEqual(-8);
+  await expect.poll(() => rowOffset(page, target)).toBeLessThanOrEqual(8);
 }
 // Scrolls by hand, as a wheel would, until the row is listed.
 async function scrollUntil(page: Page, target: Locator) {

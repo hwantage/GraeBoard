@@ -275,7 +275,6 @@ export default function Calendar({
     scroll,
     months,
     weeks,
-    data,
     view !== "team",
   );
   // Adding months below keeps the scope: open menus, drags and saves go on.

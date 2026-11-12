@@ -540,11 +540,6 @@
 .calendar-scroll:has(.calendar-team-section) {
   border-top: 0;
 }
-/* Months are added below while a jump keeps its row at the top; scroll
-   anchoring would move the grid on its own (useCalendarMonthScroll). */
-.calendar-workspace:not([data-calendar-view="team"]) .calendar-scroll {
-  overflow-anchor: none;
-}
 .calendar-grid-header,
 .calendar-week-row {
   display: grid;
@@ -848,13 +843,9 @@
   width: fit-content;
   background: transparent;
 }
-/* The next month below the monthly grid while it loads or after it failed.
-   A fixed height: the grid's end must not move up while a jump waits at it
-   (useCalendarMonthScroll). */
+/* The next month below the monthly grid while it loads or after it failed. */
 .calendar-month-loading {
-  height: 148px;
   min-height: 0;
-  box-sizing: border-box;
   position: sticky;
   left: 0;
   width: fit-content;
