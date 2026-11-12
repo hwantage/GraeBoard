@@ -602,7 +602,12 @@ test("팀원 제목과 아바타 아래에서 주차를 독립적으로 이동�
 
 test("팀 주간은 내 주간 일정을 맨 위에 두고 다른 팀원은 기존 이름 순서를 유지한다", async ({
   page,
+  browserName,
 }, info) => {
+  const tabKey =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
   const start = calendarWeek(todayKey());
   // 지윤 is the viewer; 서연 from beforeEach and 가람·나연 sort before 지윤.
   const outside = (
@@ -621,7 +626,9 @@ test("팀 주간은 내 주간 일정을 맨 위에 두고 다른 팀원은 기�
         ...(name === "가람" ? [{ teamId: outside, role: "member" }] : []),
       ],
     });
-  // The team list is read at page load, so the new team needs a reload.
+  // The team list is read at page load, so the new team needs a reload. Leave
+  // the sheet first: WebKit reports its unload presence beacon as a page error.
+  await enter(page);
   await page.reload();
   await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
   await enter(page);
@@ -648,12 +655,15 @@ test("팀 주간은 내 주간 일정을 맨 위에 두고 다른 팀원은 기�
       start,
     );
   await page.setViewportSize({ width: 1366, height: 1800 });
-  await page.screenshot({ path: info.outputPath("team-week-me-first.png") });
+  await page.screenshot({
+    path: info.outputPath("team-week-me-first.png"),
+    animations: "disabled",
+  });
   await page.setViewportSize({ width: 1366, height: 900 });
 
   // Keyboard order follows the displayed order: my week's controls come first.
   await calendar(page).getByLabel("달력 가로·세로 스크롤").focus();
-  await page.keyboard.press("Tab");
+  await page.keyboard.press(tabKey);
   expect(
     await page.evaluate(
       () =>
@@ -710,8 +720,13 @@ test("팀 주간은 내 주간 일정을 맨 위에 두고 다른 팀원은 기�
     .click();
   await expect(names).toHaveText(["가람", "서연"]);
   await expect(sections.locator(".calendar-member-label")).toHaveCount(0);
+  await expect(sections.locator(".calendar-week-row")).toHaveCount(2);
+  await expect(
+    calendar(page).getByRole("button", { name: "팀 주간 일정 보기" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({
     path: info.outputPath("team-week-outside-team.png"),
+    animations: "disabled",
   });
 });
 
