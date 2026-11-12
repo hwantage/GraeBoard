@@ -5614,11 +5614,21 @@ body.document-block-moving * {
   .workspace .format-toolbar [aria-label="서식 복사"] {
     display: none;
   }
+  /* 업무 색이 많아 접힌 줄이 넘치면 가로로 넘겨 보며, 키보드로 옮긴 버튼은
+     오른쪽 끝의 더 보기 버튼 아래에 가리지 않게 한다. */
+  .workspace .format-toolbar:not(.expanded) {
+    scroll-padding-inline-end: 40px;
+  }
   /* 펼친 도구는 가로로 넘기지 않고 여러 줄로 보여 준다. */
   .workspace .format-toolbar.expanded {
     flex-wrap: wrap;
     row-gap: 4px;
     overflow-x: visible;
+  }
+  .workspace .format-toolbar.expanded > .toolbar-group {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    max-width: 100%;
   }
   .workspace .format-toolbar > .toolbar-more {
     display: inline-flex;

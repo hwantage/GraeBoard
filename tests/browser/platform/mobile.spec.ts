@@ -556,6 +556,55 @@ test("휴대폰 툴바는 핵심 서식 도구를 보이고 더 보기로 전체
   for (const item of extra) await expect(item).toBeVisible();
 });
 
+test("업무 색이 많아도 휴대폰 툴바의 핵심 도구는 앞에 남고 업무 버튼은 넘겨서 모두 누를 수 있다", async ({
+  page,
+}) => {
+  const team = (await request(page, "/bootstrap")).teams.find(
+    (item: any) => item.id === teamId,
+  );
+  await request(page, `/teams/${teamId}/settings`, "PATCH", {
+    revision: team.settings.revision || 0,
+    insights: {
+      workColors: Array.from({ length: 12 }, (_, index) => ({
+        color: `#${(0x205080 + index * 0x0a0a00).toString(16)}`,
+        name: `업무 ${index + 1}`,
+      })),
+      charts: [],
+    },
+  });
+  await page.reload();
+  await page.setViewportSize({ width: 360, height: 844 });
+  const toolbar = page.locator('.format-toolbar[aria-label="셀 서식 도구"]');
+  const tool = (name: string) =>
+    toolbar.getByRole("button", { name, exact: true });
+  const more = tool("도구 더 보기");
+  await expect(tool("업무 표시: 업무 12")).toBeAttached();
+  // 업무 버튼이 늘어나도 앞쪽 핵심 도구와 더 보기 버튼은 화면 안에 있다.
+  for (const name of ["실행취소", "재실행", "굵게", "글자 색상", "배경색"]) {
+    const box = (await tool(name).boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+  }
+  const moreBox = (await more.boundingBox())!;
+  expect(moreBox.x + moreBox.width).toBeLessThanOrEqual(360);
+  expect(await toolbar.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  // 마지막 업무 버튼까지 넘겨 볼 수 있고 더 보기 버튼에 가리지 않는다.
+  const last = tool("업무 표시: 업무 12");
+  await last.evaluate((el) =>
+    el.scrollIntoView({ block: "nearest", inline: "nearest" }),
+  );
+  const lastBox = (await last.boundingBox())!;
+  const stuck = (await more.boundingBox())!;
+  expect(lastBox.x + lastBox.width).toBeLessThanOrEqual(stuck.x + 1);
+  await more.tap();
+  expect(
+    await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await expect(last).toBeInViewport();
+  await fits(page);
+});
+
 test("캘린더 카드 위 손가락 이동도 일정을 바꾸지 않고 스크롤한다", async ({
   page,
   context,
