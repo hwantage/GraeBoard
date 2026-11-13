@@ -346,17 +346,30 @@ test("한 이벤트에 든 같은 사본의 연속 편집은 반복되는 사본
   const plain = reduceMany(f.state, received()),
     inRun = received(),
     serialized = [];
+  // 명령의 결과가 레코드가 됐을 때의 문자열: 실행 밖에서 만든 기준값.
+  const record = (operation) => ({
+      entity: "sheetClone",
+      key: operation.changes[0].key,
+      payload: { ...operation.changes[0].desired },
+      deleted: false,
+    }),
+    recordTexts = received().map((operation) => canonical(record(operation))),
+    inRunRecordTexts = [];
   const shared = withSyncOperationCache(() => {
-    for (const operation of inRun)
+    for (const operation of inRun) {
       validateOperation(
         operation,
         { teamId: operation.teamId, repoId: operation.repoId },
         undefined,
         { onSerialized: (text) => serialized.push(text) },
       );
+      // 실행 안에서는 이미 만든 data 문자열로 조립하지만 결과는 같다.
+      inRunRecordTexts.push(canonical(record(operation)));
+    }
     return reduceMany(f.state, received());
   });
   assert.deepEqual(serialized, texts);
+  assert.deepEqual(inRunRecordTexts, recordTexts);
   assert.equal(stateHash(shared), stateHash(plain));
   assert.deepEqual(
     Object.values(shared.receipts).map((receipt) => receipt.result),

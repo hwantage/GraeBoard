@@ -382,7 +382,14 @@ export function reduce(
             const base = normalizedBase?.[field],
               desired = normalizedDesired?.[field],
               value = normalized?.[field];
-            if (equal(value, desired) || equal(desired, base)) continue;
+            // The same object on both sides (successive edits of one copy
+            // share it) needs one comparison with the desired value, not two.
+            if (
+              value === base
+                ? equal(desired, base)
+                : equal(value, desired) || equal(desired, base)
+            )
+              continue;
             if (equal(value, base)) {
               if (c.desired?.[field] !== undefined)
                 payload[field] = c.desired[field];

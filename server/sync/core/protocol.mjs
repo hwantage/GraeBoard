@@ -64,11 +64,21 @@ export const protocolMarker = (version, token) => ({
   deleted: false,
 });
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
+// A record or payload whose `data` already has its canonical text in this run
+// (a sheet copy of megabytes, serialized when its command was validated) is
+// assembled around that text instead of being walked and serialized again.
+const holdsKnownText = (value, cache) =>
+  !!cache &&
+  !Array.isArray(value) &&
+  !!value.data &&
+  typeof value.data === "object" &&
+  cache.texts.has(value.data);
 export function canonical(value) {
   const cache = syncCanonicalCache();
   if (value && typeof value === "object") {
     const cached = cache?.texts.get(value);
     if (cached !== undefined) return cached;
+    if (holdsKnownText(value, cache)) return canonicalValue(value, cache);
     // Parsed canonical JSON keeps its keys in canonical order, so the native
     // serializer writes the same text without the intermediate strings that
     // joining piece by piece allocates (hundreds of megabytes for a sheet
@@ -121,6 +131,7 @@ function canonicalValue(value, cache, depth = 0) {
     depth <= NATIVE_DEPTH &&
     value &&
     typeof value === "object" &&
+    !holdsKnownText(value, cache) &&
     inCanonicalOrder(value)
   )
     return rememberSyncCanonical(cache, value, JSON.stringify(value));
@@ -481,12 +492,15 @@ const keyLengths = {
 };
 const plain = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
+// serializable: the caller already made the payload's canonical text, which
+// fails for exactly the values assertCanonical rejects.
 export function validateEntityPayload(
   entity,
   key,
   payload,
   teamId,
   version = PROTOCOL,
+  { serializable = false } = {},
 ) {
   if (
     !(version === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(entity) ||
@@ -519,7 +533,7 @@ export function validateEntityPayload(
         ? "Account credentials and privileges are local"
         : "Unsupported entity payload",
     );
-  assertCanonical(payload);
+  if (!serializable) assertCanonical(payload);
   const string = (field, max = 200000) => {
     if (typeof payload[field] !== "string" || payload[field].length > max)
       throw new Error("Invalid " + entity + " " + field);
@@ -753,17 +767,32 @@ export function validateOperation(
     const run = known === undefined ? syncRunPayloads() : null;
     if (run && !Object.isFrozen(c)) {
       try {
-        const previous = run.latest.get(key),
-          baseText =
-            c.base && typeof c.base === "object" ? canonical(c.base) : null;
-        if (baseText !== null) {
-          if (previous && previous.text === baseText) c.base = previous.object;
-          texts.set(c.base, baseText);
+        const previous = run.latest.get(key);
+        if (c.base && typeof c.base === "object") {
+          // The engine's own serialization first: when it equals the earlier
+          // canonical text, the base is that content and needs no walk.
+          if (previous && JSON.stringify(c.base) === previous.text) {
+            c.base = previous.object;
+            texts.set(c.base, previous.text);
+          } else texts.set(c.base, canonical(c.base));
         }
         if (c.desired && typeof c.desired === "object") {
-          const text = canonical(c.desired);
+          // The data's text is kept for the run: the record this payload
+          // becomes is serialized again for its digest, size and storage.
+          const data = c.desired.data,
+            cache = syncCanonicalCache();
+          let text;
+          if (cache && data && typeof data === "object") {
+            const dataText = canonical(data);
+            text = canonicalWith(c.desired, (value) =>
+              value === data ? dataText : undefined,
+            );
+            if (previous?.data && previous.data !== data)
+              cache.texts.delete(previous.data);
+            cache.texts.set(data, dataText);
+          } else text = canonical(c.desired);
           texts.set(c.desired, text);
-          run.latest.set(key, { object: c.desired, text });
+          run.latest.set(key, { object: c.desired, text, data });
         } else run.latest.delete(key);
       } catch {
         // A payload canonical JSON cannot hold is rejected by the validation
@@ -779,7 +808,9 @@ export function validateOperation(
       if (payload === null) continue;
       const object = run && payload && typeof payload === "object";
       if (object && run.validated.get(payload) === signature) continue;
-      validateEntityPayload(c.entity, c.key, payload, op.teamId, op.protocol);
+      validateEntityPayload(c.entity, c.key, payload, op.teamId, op.protocol, {
+        serializable: texts.has(payload),
+      });
       if (object) run.validated.set(payload, signature);
     }
     if (c.desired === null && c.action !== "delete")

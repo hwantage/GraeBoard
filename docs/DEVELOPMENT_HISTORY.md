@@ -26,6 +26,20 @@
 - 검증(Windows 11·Node.js 22.14.0·설치된 Chrome): 새 브라우저 테스트는 업무 438건 사본 충돌 15개를 서버와 같이 `pack`한 응답으로 열고, 전체 선택 덮어쓰기와 한 항목 펼치기를 확인합니다. 이전 화면 코드에서는 접힌 항목에 비교가 15개 생겨 실패했습니다. 대기 시간을 늘려 재면 메인 스레드가 한 번에 15,254ms 막혔고 흐름 전체가 3.2분 걸렸습니다. 새 코드에서는 50ms를 넘는 작업이 없었습니다. `data-sync.spec.ts` 20건 중 19건이 통과했고, 실패 1건 "실제 Git 초기 게시…"는 앞선 기록과 같이 수정 전 소스에서도 실패하는 환경 문제입니다. `conflict-diff.test.mjs`·`conflict-origin.test.mjs` 15건이 통과했습니다. Node 테스트 전체는 755건(통과 592·실패 121·skip 42)이며, 직전 릴리스 코드(`450e154`)와 실패 목록이 같고 새 단위 테스트 2건만 더 통과했습니다. `check:structure`(오류 0)·`check:architecture`(위반 0)·`build`·`build:edge`·변경 코드 Prettier·`git diff --check`를 통과했습니다.
 - 미실행: `TEST_PG_BIN` 전체 테스트와 Firefox·WebKit 브라우저 검사(앞선 기록과 같은 환경 제약). 사본 충돌의 **직접 고치기**는 여전히 사본 전체 JSON을 편집하므로 범위 밖입니다. 운영 서버 반영과 실제 화면 확인은 수행하지 않았습니다.
 
+## 2026-11-13 — 외부 실행 환경의 단계별 시간에 맞춘 추가 CPU 절감
+
+- 경과: 아래 항목(#153)을 release `fefeef4`로 배포한 뒤에도 `CPU Time exceeded`가 났습니다(08:49:22Z). 사용자 승인으로 운영 Supabase에 `SYNC_PHASE_LOG=1`을 넣어(09:06:24Z) 단계별 시간을 받았습니다.
+- 운영 측정(09:10~09:11Z 실행, 25.4MiB 이벤트): `readChain` 3,429ms(커밋 4개, 대부분 네트워크 대기), `readSlice` 9,581ms(내려받기·파싱·기준본 716개, 대부분 대기), `reduce` 877ms(동기 구간이라 CPU와 같음). 그 뒤 단계의 기록 없이 종료됐습니다. 같은 `reduce`가 로컬에서는 155ms라 5.6배입니다.
+- 해석: 외부는 실행마다 새 isolate로 뜨므로 JS가 최적화되기 전 상태로 돕니다. 로컬에서 최적화를 끄면(`node --max-lazy --no-opt --no-sparkplug --no-maglev`) 같은 `reduce`가 365~373ms로, 운영과의 차이가 약 2.4배(기계 속도)로 줄어듭니다. 이 조건에서는 엔진 내장 작업(`JSON.parse`·`JSON.stringify`)보다 JS로 객체를 훑는 작업(정렬 확인, 표현 가능 검사, 사전 풀기)이 훨씬 비쌉니다. 이후 측정은 이 조건을 씁니다.
+- 수정(`server/sync/core/protocol.mjs`·`reducer.mjs`, 출력과 판정은 그대로):
+  - 다음 명령의 `base`는 먼저 `JSON.stringify` 결과를 앞 명령 결과의 canonical 문자열과 비교합니다. 같으면 그 내용이므로 정렬 확인 없이 같은 객체로 바꿔 끼웁니다.
+  - `desired`는 `data`의 문자열을 따로 만들어 실행 동안 기억하고 payload 문자열은 그것으로 조립합니다. 이 payload가 레코드가 된 뒤의 다이제스트·크기·저장용 직렬화가 그 문자열을 다시 씁니다(`holdsKnownText`).
+  - 이미 문자열을 만든 payload는 `validateEntityPayload`의 표현 가능 검사(`assertCanonical`)를 건너뜁니다. 문자열 생성이 같은 값을 거절하기 때문입니다.
+  - reducer는 현재 값과 기준이 같은 객체이면 결과와의 비교를 한 번만 합니다.
+- 측정(최적화를 끈 로컬 Node, 30.6MB 이벤트, 외부에 미전송 사본 편집 1건): 수신 한 번의 CPU 1,065ms → 952ms, `reduce` 373ms → 246ms, `stateSum` 29ms → 17ms. #153 이전 원래 코드의 `reduce`는 같은 조건에서 더 큽니다(최적화를 켠 조건 기준 494ms → 155ms).
+- 검증: `sync-sheet-clone-format.test.mjs`의 연속 편집 검사에 "실행 안에서 조립한 레코드 문자열이 실행 밖의 문자열과 같다"를 더했습니다. 프로토콜·동기화 통합 검사 116건(PostgreSQL 포함)이 통과했습니다.
+- 확인하지 못한 것: 운영에서 2초 안에 들어오는지는 배포 뒤 단계 기록으로 확인합니다. `SYNC_PHASE_LOG`는 확인 후 지웁니다.
+
 ## 2026-11-13 — 같은 사본을 여러 번 고친 이벤트의 처리 CPU 절감
 
 - 경과: 아래 항목의 내려받기 수정(#151)을 release `ff9de83`으로 배포한 뒤 외부 서버의 실패가 `Memory limit exceeded`에서 `CPU Time exceeded`로 바뀌었습니다(08:19:11Z, `cpu_time_used` 2,063ms, 힙 192MB, 외부 버퍼 3MB). 내려받기는 통과하고, 사본 편집 7개가 든 26.6MB 이벤트의 처리가 Edge의 CPU 상한 2초를 넘습니다. 외부가 받지 못한 이벤트 35개 중 큰 것은 3개(25.4MB·18.1MB·10.9MB)입니다.
