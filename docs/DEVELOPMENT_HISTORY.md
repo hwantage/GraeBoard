@@ -36,6 +36,7 @@
 - `document-mermaid.spec.ts`에는 Mermaid 소스에 한 글자씩 친 `<-->`·`==>`·`-.->`·`<==`가 그대로 저장되는 검사를 추가했습니다. 기존 `selectContents`에 커서를 끝에 두는 선택지를 더해 재사용했습니다.
 - 수정 전 확인: 첫 구현으로 빌드하면 합치기 검사가 백틱 단계에서 실패하고, 합치기 조건만 예전처럼 느슨하게 하면 굵게 단계에서 실패했습니다.
 - 실행 결과: `npm run check:structure`(0 errors)·`npm run check:architecture`(0 violations)·`npm run build`·`npm run build:edge`가 통과했습니다. `E2E_PORT=4354`로 `document-input`·`document-editor-blocks`·`document-mermaid` spec을 실행한 결과는 Chromium 71건 통과, Firefox·WebKit 135건 통과·7건 skip입니다. skip은 Chromium 전용 IME 검사 3건×2와 Firefox의 deviceScaleFactor 검사 1건입니다. #138 최종 커밋(`d3b7d7c`, 검사·문서만 변경)으로 다시 rebase한 뒤 `document-input.spec.ts`를 세 브라우저에서 다시 실행해 142건 통과·2건 skip(IME)을 확인했습니다. 리뷰 2차 반영으로 커서 이동 검사의 고정 대기(200ms)를 `settle`(2프레임)로 바꾸고, 그 합치기 검사를 `--repeat-each=5`로 세 브라우저에서 15건 모두 통과했습니다. 전체 Node/PG·전체 브라우저 검사는 실행하지 않았습니다(통합 단계에서 실행).
+- CodeRabbit 반영(2026-11-13): 백틱 두 개로 시작해 `a->b`를 입력하면 백틱 수가 짝수라 화살표가 바뀌었고, 이어 백틱 하나를 넣으면 Milkdown이 마지막 한 쌍을 코드로 만들어 코드 안에 →가 남았습니다(Chromium 재현). Milkdown은 입력한 `` `x` ``를 코드로 바꾸며 백틱을 지우므로, `typingInlineCode`는 홀짝 대신 커서 앞 일반 글자에 백틱이 남아 있는지로 판단합니다. 위 기록의 "백틱을 하나 더 넣으면 다시 바뀝니다"는 이 수정으로 바뀌어, 일반 글자로 남은 백틱 뒤의 화살표는 바꾸지 않습니다. `document-input.spec.ts`에 ``` ``a->b` ```를 입력해 코드가 `a->b`로 남는 검사를 추가했습니다(수정 전 실패). `document-input`·`document-mermaid`·`document-editor-blocks` 세 엔진 209건 통과·7건 건너뜀(기존 브라우저 전용 검사)입니다. 이 Mac의 시스템 프록시 때문에 Firefox·WebKit은 루프백을 프록시에서 빼는 임시 Playwright 설정으로 실행했습니다.
 
 ## 2026-11-12 — 글이 있는 문단 맨 앞의 Markdown 기호로 블록 바꾸기
 

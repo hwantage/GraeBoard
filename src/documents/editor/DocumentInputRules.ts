@@ -121,17 +121,17 @@ function recordInputRule(
   return tr;
 }
 
-// An odd number of backticks in the plain text before `pos` means inline code
-// is still being typed (`a->b`); its closing backtick makes the code mark.
+// Milkdown turns typed `x` into a code mark and drops its backticks, so a
+// backtick left in the plain text before `pos` opens inline code still being
+// typed (`a->b`, ``a->b): the next backtick makes the code mark.
 function typingInlineCode(state: EditorState, pos: number) {
   const $pos = state.doc.resolve(pos);
-  let ticks = 0;
+  let open = false;
   $pos.parent.forEach((node, offset) => {
-    if (node.isText && offset < $pos.parentOffset && !codeMark(node))
-      ticks +=
-        node.text!.slice(0, $pos.parentOffset - offset).split("`").length - 1;
+    if (!open && node.isText && offset < $pos.parentOffset && !codeMark(node))
+      open = node.text!.slice(0, $pos.parentOffset - offset).includes("`");
   });
-  return ticks % 2 === 1;
+  return open;
 }
 
 // Typed arrows become symbols anywhere in text, table cells included. The

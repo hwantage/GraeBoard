@@ -540,6 +540,18 @@ for (const [typed, symbol] of [
     await expect.poll(() => markdown(page)).toBe(`a${symbol}b 다음\n`);
   });
 
+test("백틱 두 개로 시작한 인라인 코드를 입력하는 중에도 화살표를 바꾸지 않는다", async ({
+  page,
+}) => {
+  await open(page, "시작\n");
+  await rich(page).locator("p").first().click();
+  await page.keyboard.press("End");
+  await settle(rich(page));
+  // Milkdown makes code of the last backtick pair, so the arrow stays typed.
+  await rich(page).pressSequentially(" ``a->b`");
+  await expect(rich(page).locator("p code")).toHaveText("a->b");
+});
+
 test("화살표 합치기는 방금 바뀐 화살표에만 적용하고 제목에서도 입력한 글자로 되돌린다", async ({
   page,
 }) => {
