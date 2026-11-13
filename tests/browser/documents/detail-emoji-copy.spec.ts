@@ -181,7 +181,17 @@ test("업무 상세의 이모지 복사는 닫기 바로 왼쪽에서 이름으�
   // A word that matches nothing says so.
   await emojiButton(dialog).click();
   await search.fill("없는이모지");
-  await expect(picker(page)).toContainText("찾는 이모지가 없습니다.");
+  await expect(picker(page).getByRole("status")).toHaveText(
+    "찾는 이모지가 없습니다.",
+  );
+  // An Esc that ends a Korean composition keeps the grid and the search.
+  await search.dispatchEvent("keydown", {
+    key: "Escape",
+    isComposing: true,
+    keyCode: 229,
+  });
+  await expect(search).toHaveValue("없는이모지");
+  await expect(dialog).toBeVisible();
   await search.fill("");
   // The recent row comes first, and the categories move the list.
   const recent = picker(page).getByRole("region", { name: "최근 사용" });
@@ -233,13 +243,21 @@ test("업무 상세의 이모지 복사는 닫기 바로 왼쪽에서 이름으�
   await expect(picker(page)).toHaveCount(0);
   await expect(dialog).toHaveClass(/document-full-page/);
   // So does the small screen, where the detail opens as a full page.
-  for (const width of [390, 320]) {
-    await page.setViewportSize({ width, height: 844 });
+  // A low landscape screen shrinks the list to reach its last row.
+  for (const [width, height] of [
+    [390, 844],
+    [320, 844],
+    [640, 320],
+  ]) {
+    await page.setViewportSize({ width, height });
     await besideClose(dialog);
     await emojiButton(dialog).click();
     await expect(picker(page)).toBeInViewport({ ratio: 1 });
+    const last = picker(page).locator(".emoji-option").last();
+    await last.scrollIntoViewIfNeeded();
+    await expect(last).toBeInViewport({ ratio: 1 });
     await page.screenshot({
-      path: info.outputPath(`task-emoji-mobile-${width}.png`),
+      path: info.outputPath(`task-emoji-mobile-${width}x${height}.png`),
     });
     await page.keyboard.press("Escape");
     await expect(picker(page)).toHaveCount(0);

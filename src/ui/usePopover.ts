@@ -88,7 +88,8 @@ export function usePopover(
     trigger,
     close,
     onKeyDown: (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // An Esc that ends a Korean composition stays in the input.
+      if (e.key !== "Escape" || e.nativeEvent.isComposing) return;
       e.preventDefault();
       e.stopPropagation();
       close();

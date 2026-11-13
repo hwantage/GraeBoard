@@ -337,7 +337,9 @@ export default function EmojiPickerPanel({
           results.length ? (
             <section aria-label="검색 결과">{grid(lists[0])}</section>
           ) : (
-            <p className="emoji-empty">찾는 이모지가 없습니다.</p>
+            <p className="emoji-empty" role="status">
+              찾는 이모지가 없습니다.
+            </p>
           )
         ) : (
           sections.map((section) => (
