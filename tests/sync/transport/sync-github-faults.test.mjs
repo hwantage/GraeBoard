@@ -258,3 +258,63 @@ test("request and streamed blob budgets fail before accepting oversized external
     (error) => error.status === 413,
   );
 });
+
+test("a blob streamed in small pieces is returned exactly, without keeping the pieces' buffers", async () => {
+  // A compressed GitHub response arrives as small views on larger buffers of
+  // the runtime. Each piece here is 1000 bytes of its own 64 KiB buffer.
+  const pieces = 300,
+    expected = new Uint8Array(pieces * 1000).map((_, i) => (i * 31 + 7) % 251),
+    backing = [];
+  const streamed = (declared) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < pieces; i++) {
+            const buffer = new ArrayBuffer(65536),
+              view = new Uint8Array(buffer, 4096, 1000);
+            view.set(expected.subarray(i * 1000, (i + 1) * 1000));
+            backing.push(buffer);
+            controller.enqueue(view);
+          }
+          controller.close();
+        },
+      }),
+      declared ? { headers: { "content-length": String(declared) } } : {},
+    );
+  for (const declared of [0, expected.byteLength, 1234]) {
+    const bytes = await new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture",
+      fetch: async () => streamed(declared),
+    }).request("/git/blobs/a", { raw: true });
+    assert.equal(bytes.byteLength, expected.byteLength);
+    assert.equal(Buffer.compare(bytes, expected), 0);
+    // Its own exact buffer: neither a piece's nor one with spare capacity.
+    assert.equal(bytes.byteOffset, 0);
+    assert.equal(bytes.buffer.byteLength, expected.byteLength);
+    assert.ok(!backing.includes(bytes.buffer));
+  }
+  // The limit still applies to what actually arrives, piece by piece.
+  await assert.rejects(
+    new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture",
+      maxBlobBytes: expected.byteLength - 1,
+      fetch: async () => streamed(0),
+    }).request("/git/blobs/a", { raw: true }),
+    (error) => error.status === 413,
+  );
+  const exact = await new GitHubApiTransport({
+    repository: "fixture/team",
+    token: "fixture",
+    maxBlobBytes: expected.byteLength,
+    fetch: async () => streamed(0),
+  }).request("/git/blobs/a", { raw: true });
+  assert.equal(Buffer.compare(exact, expected), 0);
+  const empty = await new GitHubApiTransport({
+    repository: "fixture/team",
+    token: "fixture",
+    fetch: async () => new Response(new Uint8Array(0)),
+  }).request("/git/blobs/a", { raw: true });
+  assert.equal(empty.byteLength, 0);
+});

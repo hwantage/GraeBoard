@@ -192,26 +192,38 @@ export class GitHubApiTransport {
         413,
         "Git object exceeds configured byte capacity",
       );
-      const chunks = [],
-        reader = response.body.getReader();
-      let size = 0;
+      // Copy each chunk as it arrives instead of keeping the chunks. A
+      // compressed response arrives in pieces of about 4 KiB, each a view on
+      // a 64 KiB buffer of the runtime: holding all of them for a 25 MB event
+      // held over 400 MB, beyond a hosted runtime's memory.
+      const reader = response.body.getReader(),
+        limit = Number.isFinite(this.maxBlobBytes)
+          ? this.maxBlobBytes
+          : Number.MAX_SAFE_INTEGER;
+      let buffer = new Uint8Array(Math.min(Math.max(declared, 65536), limit)),
+        size = 0;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        size += value.byteLength;
-        if (size > this.maxBlobBytes) {
+        if (size + value.byteLength > limit) {
           await reader.cancel();
           assert(false, 413, "Git object exceeds configured byte capacity");
         }
-        chunks.push(value);
+        if (size + value.byteLength > buffer.byteLength) {
+          const grown = new Uint8Array(
+            Math.min(
+              limit,
+              Math.max(buffer.byteLength * 2, size + value.byteLength),
+            ),
+          );
+          grown.set(buffer.subarray(0, size));
+          buffer = grown;
+        }
+        buffer.set(value, size);
+        size += value.byteLength;
       }
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
-      return bytes;
+      // Exactly the file, not a view on spare capacity.
+      return buffer.byteLength === size ? buffer : buffer.slice(0, size);
     }
     if (!reuse) return response.json();
     const text = await response.text(),
