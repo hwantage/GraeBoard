@@ -399,10 +399,24 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
   b.db
     .prepare("UPDATE memberships SET role='member' WHERE team_id=?")
     .run(teamId);
-  const conflict = ok(
+  const summary = ok(
     await b.api(`/teams/${teamId}/sync/conflicts`),
   ).conflicts.find((row) => !row.resolved);
-  assert.ok(conflict);
+  assert.ok(summary);
+  // The list carries no values; one conflict is read whole.
+  for (const side of ["base", "current", "desired"])
+    assert.ok(!(side in summary), side);
+  const conflict = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts/${summary.conflictId}`),
+  );
+  assert.deepEqual(
+    { ...conflict, base: 0, current: 0, desired: 0 },
+    { ...summary, base: 0, current: 0, desired: 0 },
+  );
+  assert.equal(
+    (await b.api(`/teams/${teamId}/sync/conflicts/missing`)).status,
+    404,
+  );
   // The conflict box pairs the API's current record with the change it blocks.
   const [change] = conflictChanges(conflict);
   assert.equal(change.key, `${task.id}/title`);
@@ -995,7 +1009,9 @@ test("reconnecting same-cell offline edits preserves the peer value and the subm
   ).conflicts;
   assert.equal(conflicts.length, 1);
   assert.ok(
-    conflicts[0].desired.some((value) => value.value === "internal offline"),
+    ok(
+      await a.api(`/teams/${teamId}/sync/conflicts/${conflicts[0].conflictId}`),
+    ).desired.some((value) => value.value === "internal offline"),
   );
   assert.equal(getTask(a.db, task.id).cells.title.value, "external online");
   assert.equal(getTask(b.db, task.id).cells.title.value, "external online");
@@ -1522,6 +1538,111 @@ test(
     assert.deepEqual(page.entries, all.slice(-2));
     assert.equal(page.next, null);
     assert.deepEqual(ok(await a.api(route + "?before=")).entries, all);
+  },
+);
+
+test(
+  "an event gathers pending commands up to the batch size instead of every one of them",
+  { timeout: 60000 },
+  async (t) => {
+    const { a, b, teamId } = await fixture(t);
+    const task = ok(
+      await a.api("/tasks", { teamId, year: 2026, fields: { title: "batch" } }),
+    ).task;
+    await joinPeer(a, b, teamId);
+    const store = a.app.locals.sync.store(teamId),
+      save = async (value) =>
+        ok(
+          await a.api("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: task.id,
+                key: "title",
+                value,
+                expectedVersion: getTask(a.db, task.id).cells.title.version,
+              },
+            ],
+          }),
+        ),
+      // The operations in each event published after `head`, oldest first.
+      events = async (head) => {
+        const paths = async (commit) =>
+            (await a.transport.readCommit(commit)).files
+              .map((file) => file.path)
+              .filter((file) => file.startsWith("events/")),
+          known = new Set(await paths(head)),
+          counts = [];
+        for (const commit of (
+          await a.transport.git(["rev-list", "--reverse", `${head}..sync-v1`])
+        )
+          .toString()
+          .split("\n")
+          .filter(Boolean)) {
+          const [added, ...others] = (await paths(commit)).filter(
+            (file) => !known.has(file),
+          );
+          assert.equal(others.length, 0);
+          known.add(added);
+          counts.push(
+            JSON.parse((await a.transport.readFile(commit, added)).toString())
+              .operations.length,
+          );
+        }
+        return counts;
+      },
+      publish = async () => {
+        for (let i = 0; i < 10 && store.readPending().length; i++)
+          await a.app.locals.sync.get(teamId).run();
+        assert.equal(store.readPending().length, 0);
+      };
+    let head = store.readLink().canonical_head;
+    await a.transport.git(["update-ref", "refs/heads/sync-v1", head]);
+    for (let i = 0; i < 3; i++) await save("small " + i);
+    assert.equal(store.readPending().length, 3);
+    await publish();
+    await a.transport.readHead();
+    await a.transport.git([
+      "update-ref",
+      "refs/heads/sync-v1",
+      "refs/remotes/origin/sync-v1",
+    ]);
+    assert.deepEqual(await events(head), [3]);
+    // Each save carries the body before and after, about half a megabyte:
+    // two fit the batch size, four no longer travel as one event of 2 MB.
+    head = store.readLink().canonical_head;
+    let revision = 0;
+    for (let i = 0; i < 4; i++)
+      revision = ok(
+        await a.api(
+          `/tasks/${task.id}/document`,
+          {
+            markdown: "x".repeat(250000) + i,
+            expectedRevision: revision,
+            operationId: randomUUID(),
+          },
+          "PUT",
+        ),
+      ).revision;
+    assert.equal(store.readPending().length, 4);
+    await publish();
+    await a.transport.readHead();
+    await a.transport.git([
+      "update-ref",
+      "refs/heads/sync-v1",
+      "refs/remotes/origin/sync-v1",
+    ]);
+    assert.deepEqual(await events(head), [2, 2]);
+    for (let i = 0; i < 6; i++) await b.app.locals.sync.get(teamId).run();
+    assert.equal(
+      ok(await b.api(`/tasks/${task.id}/document`)).markdown,
+      "x".repeat(250000) + 3,
+    );
+    assert.equal(
+      stateHash(store.readState()),
+      stateHash(b.app.locals.sync.store(teamId).readState()),
+    );
   },
 );
 

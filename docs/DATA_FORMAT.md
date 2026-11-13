@@ -305,6 +305,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 | 외부 `site_entities`의 `sheetClone`   | 공유 사전 형태의 `data`, `DataSession`이 읽을 때 풂         |
 | 외부 `site_audit`의 사본 수정         | 공유 사전 형태의 전후 `data`, 이력 조회가 읽을 때 풂        |
 | 외부 `site_operations.response`       | 응답 전체를 `pack`한 JSON, 재시도 응답 때 풂                |
+| 충돌 보관함 응답의 `base`·`current`·`desired` | 사본 `data`를 평문으로 풀어 응답 전체 공유 사전에 포함. 저장된 충돌은 공유 사전 형태 유지 |
 
 외부 사본 생성의 `site_audit`은 내부 `audit`처럼 `{name, count}`만 남깁니다. 저장 형태 `[{entity:"sheetClone", key:[id], before:null, after:{name, count}}]`이며 복사한 문서는 기록하지 않습니다. 2026-11-02 이전에 기록한 평문 감사·재시도 기록은 그대로 읽습니다. 이 형태로 기록한 뒤 이전 release로 되돌리면 그 이후의 사본 수정 이력에서 **삭제한 업무 복구**를 쓸 수 없고, 같은 요청의 재시도 응답이 공유 사전 형태로 나갈 수 있습니다.
 
