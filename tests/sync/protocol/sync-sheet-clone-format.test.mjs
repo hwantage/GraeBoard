@@ -14,7 +14,8 @@ import {
   readEntity,
 } from "../../../server/sync/node/entities.mjs";
 import { makeOperation } from "../../../server/sync/core/operations.mjs";
-import { reduce } from "../../../server/sync/core/reducer.mjs";
+import { reduce, reduceMany } from "../../../server/sync/core/reducer.mjs";
+import { withSyncOperationCache } from "../../../server/sync/core/sync-operation-cache.mjs";
 import { splitSheetCloneRecord } from "../../../server/sync/core/versions.mjs";
 import {
   canonical,
@@ -22,6 +23,7 @@ import {
   entityId,
   stateHash,
   validateEntityPayload,
+  validateOperation,
 } from "../../../server/sync/core/protocol.mjs";
 import { defaultView } from "../../../shared/domain.js";
 import { stringify, unpack } from "../../../shared/formatting/compact.js";
@@ -282,6 +284,110 @@ test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편
     }),
   );
   assert.equal(conflicting.receipt.result, "conflict");
+});
+
+test("한 이벤트에 든 같은 사본의 연속 편집은 반복되는 사본을 한 번만 검증·비교하고 결과는 그대로다", (t) => {
+  const f = sqliteFixture(t);
+  const id = entityId("sheetClone", [f.sheetCloneId]),
+    identity = { teamId: f.link.team_id ?? f.teamId, repoId: f.link.repo_id };
+  // 사내에서 사본을 연달아 고친 명령들: 앞 명령의 결과가 다음 명령의 기준이다.
+  const operations = [];
+  let state = f.state;
+  for (let i = 0; i < 5; i++) {
+    const record = state.entities[id],
+      data = structuredClone(unpackSheetCloneData(record.payload.data));
+    data.tasks[0].cells.title = {
+      ...data.tasks[0].cells.title,
+      value: "연속 편집 " + i,
+    };
+    const operation = makeOperation({
+      link: f.link,
+      actorRef: f.user.id,
+      before: { [id]: record },
+      after: {
+        [id]: {
+          ...record,
+          payload: { ...record.payload, data: packSheetCloneData(data) },
+        },
+      },
+    });
+    operations.push(operation);
+    const applied = reduce(state, operation);
+    assert.equal(applied.receipt.result, "applied");
+    state = applied.state;
+  }
+  // 마지막은 오래된 기준의 편집이라 충돌로 보관된다.
+  const stale = structuredClone(
+    unpackSheetCloneData(f.state.entities[id].payload.data),
+  );
+  stale.tasks[0].cells.title = {
+    ...stale.tasks[0].cells.title,
+    value: "오래된 기준",
+  };
+  operations.push(
+    makeOperation({
+      link: f.link,
+      actorRef: f.user.id,
+      before: { [id]: f.state.entities[id] },
+      after: {
+        [id]: {
+          ...f.state.entities[id],
+          payload: {
+            ...f.state.entities[id].payload,
+            data: packSheetCloneData(stale),
+          },
+        },
+      },
+    }),
+  );
+  // 이벤트에서 읽은 것처럼 명령마다 따로 파싱한 객체다.
+  const texts = operations.map(canonical),
+    received = () => texts.map((text) => JSON.parse(text));
+  const plain = reduceMany(f.state, received()),
+    inRun = received(),
+    serialized = [];
+  const shared = withSyncOperationCache(() => {
+    for (const operation of inRun)
+      validateOperation(
+        operation,
+        { teamId: operation.teamId, repoId: operation.repoId },
+        undefined,
+        { onSerialized: (text) => serialized.push(text) },
+      );
+    return reduceMany(f.state, received());
+  });
+  assert.deepEqual(serialized, texts);
+  assert.equal(stateHash(shared), stateHash(plain));
+  assert.deepEqual(
+    Object.values(shared.receipts).map((receipt) => receipt.result),
+    Object.values(plain.receipts).map((receipt) => receipt.result),
+  );
+  assert.equal(
+    Object.values(shared.receipts).filter(
+      (receipt) => receipt.result === "conflict",
+    ).length,
+    1,
+  );
+  assert.equal(Object.keys(shared.conflicts).length, 1);
+  // 실행 안에서는 다음 명령의 기준이 앞 명령의 결과와 같은 객체가 된다.
+  for (let i = 1; i < 5; i++)
+    assert.equal(
+      inRun[i].changes[0].base,
+      inRun[i - 1].changes[0].desired,
+      "command " + i,
+    );
+  assert.notEqual(inRun[5].changes[0].base, inRun[4].changes[0].desired);
+  // 잘못된 사본은 같은 객체를 다시 만나도, 처음 만나도 같은 문구로 거절한다.
+  const broken = JSON.parse(texts[1]);
+  broken.changes[0].desired.data.$data = { tasks: "x" };
+  for (const run of [(work) => work(), withSyncOperationCache])
+    assert.throws(
+      () =>
+        run(() =>
+          reduceMany(f.state, [JSON.parse(texts[0]), structuredClone(broken)]),
+        ),
+      /Invalid sheetClone payload/,
+    );
 });
 
 test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 저장·전송하고 앱에는 풀린 서식을 돌려준다", async (t) => {
