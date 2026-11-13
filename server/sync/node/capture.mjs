@@ -2,7 +2,7 @@ import {
   captureDetectors,
   defineCaptureTriggers,
 } from "./capture-triggers.mjs";
-import { splitSheetCloneRecord } from "../core/versions.mjs";
+import { sheetCloneSplitter } from "../core/versions.mjs";
 import { createReceiptCapacityGuard } from "./receipt-capacity.mjs";
 import { HttpError } from "../../../shared/validation.js";
 import { LINK_METADATA_COLUMNS } from "../../../shared/sync/sync-team-store.mjs";
@@ -358,7 +358,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       for (const [teamId, group] of teams) {
         const link = links.get(teamId);
         let referenceRecords = Object.values(group.after);
-        if (link.protocol === SPLIT_PROTOCOL) {
+        const split = sheetCloneSplitter(link.protocol);
+        if (split) {
           referenceRecords = [];
           const beforeExpanded = {},
             afterExpanded = {};
@@ -375,13 +376,13 @@ export function installCapture(db, { onPending = () => {} } = {}) {
               continue;
             }
             const old = new Map(
-                splitSheetCloneRecord(previous).map((record) => [
+                split(previous).map((record) => [
                   entityId(record.entity, record.key),
                   record,
                 ]),
               ),
               current = new Map(
-                splitSheetCloneRecord(next).map((record) => [
+                split(next).map((record) => [
                   entityId(record.entity, record.key),
                   record,
                 ]),
@@ -504,7 +505,12 @@ export function installCapture(db, { onPending = () => {} } = {}) {
           if (record.entity === "cell") collect(record.payload.value);
           if (record.entity === "sheetCloneCell")
             collect(record.payload.data.value);
-          if (record.entity === "sheetCloneTask") collect(record.payload.data);
+          if (record.entity === "sheetCloneTask") {
+            collect(record.payload.data);
+            // Protocol 5 rows hold their cells.
+            for (const cell of Object.values(record.payload.cells || {}))
+              collect(cell.value);
+          }
           if (["sheetClone", "filter"].includes(record.entity))
             collect(record.payload.data);
           if (record.entity === "rule") collect(record.payload.values);

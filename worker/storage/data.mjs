@@ -1,4 +1,7 @@
-import { splitSheetCloneRecord } from "../../server/sync/core/versions.mjs";
+import {
+  isSheetCloneChild,
+  sheetCloneSplitter,
+} from "../../server/sync/core/versions.mjs";
 import { pack, unpack } from "../../shared/formatting/compact.js";
 import {
   protocolVersion,
@@ -566,19 +569,20 @@ export class DataSession {
     const changes = [],
       version = protocolVersion(projectedState);
     const captured = new Map(this.changes);
-    if (version === SPLIT_PROTOCOL)
+    const split = sheetCloneSplitter(version);
+    if (split)
       for (const [id, change] of this.changes) {
         if (change.entity !== "sheetClone") continue;
         captured.delete(id);
         const after = new Map(
-          splitSheetCloneRecord(change.after).map((record) => [
+          split(change.after).map((record) => [
             entityId(record.entity, record.key),
             record,
           ]),
         );
         for (const record of Object.values(entities))
           if (
-            ["sheetCloneTask", "sheetCloneCell"].includes(record.entity) &&
+            isSheetCloneChild(record.entity) &&
             record.key[0] === change.key[0] &&
             !after.has(entityId(record.entity, record.key))
           )
@@ -599,16 +603,13 @@ export class DataSession {
       // 동기화 명령은 저장 형태(사본 data의 공유 사전)를 그대로 싣는다.
       const desired = this.stored(entity, after.payload);
       if (
-        version === SPLIT_PROTOCOL &&
+        split &&
         current &&
         equal(current.payload, desired) &&
         !!current.deleted === !!after.deleted
       )
         continue;
-      if (
-        version === SPLIT_PROTOCOL &&
-        ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-      ) {
+      if (split && isSheetCloneChild(entity)) {
         for (const parent of [
           ["sheetClone", [key[0]]],
           ...(entity === "sheetCloneCell"

@@ -1,4 +1,4 @@
-import { applicationEntities } from "../core/versions.mjs";
+import { applicationEntities, isSheetCloneChild } from "../core/versions.mjs";
 import { syncImageReferences } from "../../../shared/sync/sync-image-references.js";
 import {
   encodeStoredSnapshot,
@@ -477,12 +477,8 @@ function projectionPatch(
           ? []
           : [
               entityId(
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? "sheetClone"
-                  : entity,
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? [key[0]]
-                  : key,
+                isSheetCloneChild(entity) ? "sheetClone" : entity,
+                isSheetCloneChild(entity) ? [key[0]] : key,
               ),
             ];
       }),

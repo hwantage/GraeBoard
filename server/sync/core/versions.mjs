@@ -50,6 +50,17 @@ export const splitSheetCloneRecord = (record) => {
   return records;
 };
 
+/** Records that belong to a sheet clone under protocols 4 and 5. */
+export const isSheetCloneChild = (entity) =>
+  ["sheetCloneTask", "sheetCloneCell", "sheetCloneFormat"].includes(entity);
+/** How a protocol splits a sheet clone into records; null when it does not. */
+export const sheetCloneSplitter = (version) =>
+  version === ROW_PROTOCOL
+    ? splitSheetCloneRows
+    : version === SPLIT_PROTOCOL
+      ? splitSheetCloneRecord
+      : null;
+
 const plainObject = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
 // Protocol 5: the parent keeps the row order and which formatting each row
