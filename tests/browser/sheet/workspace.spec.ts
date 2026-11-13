@@ -7224,6 +7224,40 @@ test("업무 상세 설명은 링크를 열고 수정 버튼으로만 편집하�
   await expect(input).toHaveCount(0);
 });
 
+test.describe("터치 화면", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  test("긴 업무 설명은 옆으로 넘겨 끝의 링크까지 누를 수 있다", async ({
+    page,
+  }) => {
+    const long = `${"긴 설명이 한 줄을 넘어갑니다. ".repeat(8)}#123456`;
+    await setTaskCells(page, [{ index: 2, key: "description", value: long }]);
+    await page.reload();
+    await openRowDetails(page, page.locator(`[data-row-id="${taskIds[2]}"]`));
+    const dialog = page.getByRole("dialog", { name: "업무 상세", exact: true });
+    const shown = dialog.locator(".task-detail-description-text");
+    // Touch has no tooltip: the line scrolls sideways instead of an ellipsis.
+    await expect(shown).toHaveCSS("overflow-x", "auto");
+    await expect(shown).toHaveCSS("text-overflow", "clip");
+    const link = shown.getByRole("link", { name: "#123456", exact: true });
+    await expect(link).not.toBeInViewport();
+    await shown.evaluate((el) => (el.scrollLeft = el.scrollWidth));
+    await expect(link).toBeInViewport();
+    await page
+      .context()
+      .route("http://redmine.somansa.com/**", (route) =>
+        route.fulfill({ body: "redmine" }),
+      );
+    const opened = page.waitForEvent("popup");
+    await link.tap();
+    expect((await opened).url()).toBe(
+      "http://redmine.somansa.com/redmine/issues/123456",
+    );
+    await expect(
+      dialog.locator(".task-detail-description textarea"),
+    ).toHaveCount(0);
+  });
+});
+
 test("주간 날짜 헤더는 월/일 한 줄·절반 너비이며 정렬하지 않는다", async ({
   page,
 }, info) => {

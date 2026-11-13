@@ -2805,6 +2805,16 @@ body.document-block-moving * {
   background: var(--accent-surface);
 }
 @media (hover: none) and (pointer: coarse) {
+  /* Touch has no tooltip, so a long description scrolls sideways to show
+     the rest and its links, also when it is read-only. */
+  .task-detail-description-text {
+    overflow-x: auto;
+    text-overflow: clip;
+    scrollbar-width: none;
+  }
+  .task-detail-description-text::-webkit-scrollbar {
+    display: none;
+  }
   /* A larger touch area without growing the line or covering the text. */
   .task-detail-description-edit::before {
     content: "";
