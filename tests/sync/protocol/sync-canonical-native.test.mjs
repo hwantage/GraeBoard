@@ -192,3 +192,26 @@ test("canonical() inside a synchronization run still reuses the run's operation 
     assert.equal(canonical({ wrap: parsed }), reference({ wrap: operation }));
   });
 });
+
+test("equal() answers exactly whether the canonical texts are the same", () => {
+  const { value, next } = generator(4242),
+    values = Array.from({ length: 400 }, () => value(0));
+  // Scalars that differ only in type or sign, which the texts tell apart or not.
+  values.push(0, -0, 1, "1", "", null, false, true, "true", "null", 1.5, "1.5");
+  for (let i = 0; i < 6000; i++) {
+    const a = values[Math.floor(next() * values.length)],
+      b =
+        next() < 0.3
+          ? JSON.parse(reference(a))
+          : values[Math.floor(next() * values.length)];
+    assert.equal(
+      equal(a, b),
+      reference(a) === reference(b),
+      reference(a) + " vs " + reference(b),
+    );
+  }
+  for (const bad of [NaN, Infinity, 2 ** 53, undefined]) {
+    assert.throws(() => equal({ a: bad }, { a: bad }));
+    assert.throws(() => equal([bad], [1]));
+  }
+});

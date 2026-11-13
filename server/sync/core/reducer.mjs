@@ -5,6 +5,7 @@ import {
   digest,
   equal,
   payloadEqual,
+  normalizedPayload,
   entityId,
   validateOperation,
   validateEntityPayload,
@@ -13,7 +14,6 @@ import {
   PROTOCOL,
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
-import { normalizeEntityPayload } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Reducer 3 keeps protocol 1's difference budget and reducer 4 protocol 2's.
 function edits(base, value, reducer = PROTOCOL) {
@@ -375,9 +375,9 @@ export function reduce(
           payload = { ...current.payload };
           // 사본 data는 평문·공유 사전 형태를 내용으로 비교한다. 과거 평문 이벤트의
           // 재생 결과는 바뀌지 않는다.
-          const normalized = normalizeEntityPayload(c.entity, current.payload),
-            normalizedBase = normalizeEntityPayload(c.entity, c.base),
-            normalizedDesired = normalizeEntityPayload(c.entity, c.desired);
+          const normalized = normalizedPayload(c.entity, current.payload),
+            normalizedBase = normalizedPayload(c.entity, c.base),
+            normalizedDesired = normalizedPayload(c.entity, c.desired);
           for (const field of c.fields) {
             const base = normalizedBase?.[field],
               desired = normalizedDesired?.[field],
