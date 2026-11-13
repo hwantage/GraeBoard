@@ -14,6 +14,7 @@ import {
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
+  conflictSummary,
   pendingResolutions,
 } from "../../../shared/sync/conflict-origin.js";
 import { plainConflictPayloads } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
@@ -406,15 +407,18 @@ function installTeamSyncRoutes(
       "충돌 보관함은 팀장·팀원만 사용할 수 있습니다.",
     );
   };
-  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
+  // The list carries no values: a conflict over a sheet copy holds megabytes
+  // per side. One conflict (`conflictId`) is sent whole.
+  const conflictViews = async (req, conflictId = null) => {
     conflictTeam(req.user, id(req));
     const s = sync.store(id(req)),
-      conflicts = db
+      whole = db
         .prepare(
-          "SELECT payload FROM sync_conflicts WHERE team_id=? ORDER BY conflict_id",
+          "SELECT payload FROM sync_conflicts WHERE team_id=? AND (? IS NULL OR conflict_id=?) ORDER BY conflict_id",
         )
-        .all(id(req))
+        .all(id(req), conflictId, conflictId)
         .map((row) => JSON.parse(row.payload)),
+      conflicts = conflictId ? whole : whole.map(conflictSummary),
       link = s.readLink(),
       head = link?.canonical_head;
     // This site's own operations among the held ones and the current writers;
@@ -457,29 +461,39 @@ function installTeamSyncRoutes(
           )
           .map((row) => [JSON.parse(row.entity_key)[0], row.name]),
       ),
-      resolutions = pendingResolutions(open, s.readPending());
-    res.json({
-      conflicts: conflicts.map((c) => ({
-        conflictId: c.conflictId,
-        opId: c.opId,
-        createdAt: c.operation.createdAt,
-        result: c.reason,
-        target: c.operation.changes
-          .map((x) => x.entity + " " + x.key.join("/"))
-          .join(", "),
-        ...plainConflictPayloads(c),
-        resolved: !!c.resolution,
-        expectedHead: head,
-        origin: conflictOrigin(c, {
-          site: "internal",
-          local,
-          remote,
-          names,
-          writerEpoch: link?.writer_epoch,
-        }),
-        pendingResolution: resolutions.get(c.conflictId) || null,
-      })),
-    });
+      // What a saved resolution chose is told from the later values.
+      resolutions = pendingResolutions(
+        whole.filter((c) => !c.resolution),
+        s.readPending(),
+      );
+    return conflicts.map((c) => ({
+      conflictId: c.conflictId,
+      opId: c.opId,
+      createdAt: c.operation.createdAt,
+      result: c.reason,
+      target: c.operation.changes
+        .map((x) => x.entity + " " + x.key.join("/"))
+        .join(", "),
+      ...(conflictId ? plainConflictPayloads(c) : {}),
+      resolved: !!c.resolution,
+      expectedHead: head,
+      origin: conflictOrigin(c, {
+        site: "internal",
+        local,
+        remote,
+        names,
+        writerEpoch: link?.writer_epoch,
+      }),
+      pendingResolution: resolutions.get(c.conflictId) || null,
+    }));
+  };
+  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
+    res.json({ conflicts: await conflictViews(req) });
+  });
+  app.get("/api/teams/:id/sync/conflicts/:conflictId", async (req, res) => {
+    const [conflict] = await conflictViews(req, req.params.conflictId);
+    requireThat(conflict, 404, "충돌을 찾을 수 없습니다.");
+    res.json(conflict);
   });
   app.post(
     "/api/teams/:id/sync/conflicts/:conflictId/resolve",

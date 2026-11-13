@@ -397,10 +397,24 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
   b.db
     .prepare("UPDATE memberships SET role='member' WHERE team_id=?")
     .run(teamId);
-  const conflict = ok(
+  const summary = ok(
     await b.api(`/teams/${teamId}/sync/conflicts`),
   ).conflicts.find((row) => !row.resolved);
-  assert.ok(conflict);
+  assert.ok(summary);
+  // The list carries no values; one conflict is read whole.
+  for (const side of ["base", "current", "desired"])
+    assert.ok(!(side in summary), side);
+  const conflict = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts/${summary.conflictId}`),
+  );
+  assert.deepEqual(
+    { ...conflict, base: 0, current: 0, desired: 0 },
+    { ...summary, base: 0, current: 0, desired: 0 },
+  );
+  assert.equal(
+    (await b.api(`/teams/${teamId}/sync/conflicts/missing`)).status,
+    404,
+  );
   // The conflict box pairs the API's current record with the change it blocks.
   const [change] = conflictChanges(conflict);
   assert.equal(change.key, `${task.id}/title`);
@@ -993,7 +1007,9 @@ test("reconnecting same-cell offline edits preserves the peer value and the subm
   ).conflicts;
   assert.equal(conflicts.length, 1);
   assert.ok(
-    conflicts[0].desired.some((value) => value.value === "internal offline"),
+    ok(
+      await a.api(`/teams/${teamId}/sync/conflicts/${conflicts[0].conflictId}`),
+    ).desired.some((value) => value.value === "internal offline"),
   );
   assert.equal(getTask(a.db, task.id).cells.title.value, "external online");
   assert.equal(getTask(b.db, task.id).cells.title.value, "external online");
