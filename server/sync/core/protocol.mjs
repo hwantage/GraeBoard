@@ -64,9 +64,47 @@ export const protocolMarker = (version, token) => ({
 });
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
 export function canonical(value) {
-  return canonicalValue(value, syncCanonicalCache());
+  const cache = syncCanonicalCache();
+  if (value && typeof value === "object") {
+    const cached = cache?.texts.get(value);
+    if (cached !== undefined) return cached;
+    // Parsed canonical JSON keeps its keys in canonical order, so the native
+    // serializer writes the same text without the intermediate strings that
+    // joining piece by piece allocates (hundreds of megabytes for a sheet
+    // copy of a few megabytes).
+    if (inCanonicalOrder(value))
+      return rememberSyncCanonical(cache, value, JSON.stringify(value));
+  }
+  return canonicalValue(value, cache);
 }
-function canonicalValue(value, cache) {
+// Whether JSON.stringify(value) is exactly canonical(value): every object is
+// plain with its keys already sorted, and every value is one canonical JSON
+// can hold. Anything else is left to canonicalValue, which sorts or throws.
+function inCanonicalOrder(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string")
+    return true;
+  if (typeof value === "number")
+    return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++)
+      if (!(i in value) || !inCanonicalOrder(value[i])) return false;
+    return true;
+  }
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  let previous;
+  for (const key of Object.keys(value)) {
+    if (previous !== undefined && previous > key) return false;
+    previous = key;
+    if (!inCanonicalOrder(value[key])) return false;
+  }
+  return true;
+}
+// A record built here (entity, key, payload) has its own keys unsorted but
+// holds parsed JSON a level or two down, so the native path is tried again for
+// the first few levels below an unsorted object. The limit bounds how often a
+// subtree that fails the check is walked again.
+const NATIVE_DEPTH = 4;
+function canonicalValue(value, cache, depth = 0) {
   if (value === null || typeof value === "boolean" || typeof value === "string")
     return JSON.stringify(value);
   if (
@@ -77,11 +115,21 @@ function canonicalValue(value, cache) {
     return JSON.stringify(value);
   const cached = cache?.texts.get(value);
   if (cached !== undefined) return cached;
+  if (
+    depth &&
+    depth <= NATIVE_DEPTH &&
+    value &&
+    typeof value === "object" &&
+    inCanonicalOrder(value)
+  )
+    return rememberSyncCanonical(cache, value, JSON.stringify(value));
   if (Array.isArray(value))
     return rememberSyncCanonical(
       cache,
       value,
-      "[" + value.map((item) => canonicalValue(item, cache)).join(",") + "]",
+      "[" +
+        value.map((item) => canonicalValue(item, cache, depth + 1)).join(",") +
+        "]",
     );
   if (value && Object.getPrototypeOf(value) === Object.prototype)
     return rememberSyncCanonical(
@@ -90,7 +138,12 @@ function canonicalValue(value, cache) {
       "{" +
         Object.keys(value)
           .sort()
-          .map((k) => JSON.stringify(k) + ":" + canonicalValue(value[k], cache))
+          .map(
+            (k) =>
+              JSON.stringify(k) +
+              ":" +
+              canonicalValue(value[k], cache, depth + 1),
+          )
           .join(",") +
         "}",
     );

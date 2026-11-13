@@ -32,6 +32,7 @@ import { pendingNeedsProjection } from "./projection.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../../shared/documents/document-image-references.js";
 import {
+  SYNC_EVENT_BATCH_BYTES,
   SYNC_FILE_MAX_BYTES,
   SYNC_ENVELOPE_RESERVE_BYTES,
 } from "../../../shared/sync/sync-limits.js";
@@ -392,11 +393,15 @@ export class SyncService {
         const events = added.filter((f) => f.path.startsWith("events/"));
         if (events.length !== 1)
           throw new ProtocolError("SYNC_FORMAT", "Expected one event envelope");
-        const envelopeBytes = await this.transport.readFile(
-            commit.oid,
-            events[0].path,
-          ),
-          envelope = decode(envelopeBytes, 64 * 1024 * 1024);
+        // Only the size is needed after parsing; an event of many megabytes
+        // is not kept beside its parsed form for the rest of the commit.
+        let envelopeBytes = await this.transport.readFile(
+          commit.oid,
+          events[0].path,
+        );
+        const envelope = decode(envelopeBytes, 64 * 1024 * 1024),
+          envelopeSize = envelopeBytes.byteLength;
+        envelopeBytes = null;
         if (
           envelope.parent !== parent ||
           !supportedVersion(
@@ -576,7 +581,7 @@ export class SyncService {
               : await this.store.readPending();
           // Use the received bytes: serializing untrusted input here would
           // repeat reducer work and bypass protocolValidation's error mapping.
-          this.chargeBytes(envelopeBytes.byteLength);
+          this.chargeBytes(envelopeSize);
           const reduced = await this.reduceCanonical(
             envelope.operations,
             { ...this.identity, protocol: envelope.protocol },
@@ -791,7 +796,7 @@ export class SyncService {
             await this.store.readPending(),
             this.maxOperations,
             SYNC_FILE_MAX_BYTES,
-            this.maxRunBytes - this.runBytes,
+            Math.min(this.maxRunBytes - this.runBytes, SYNC_EVENT_BATCH_BYTES),
           );
           if (!pending.length) break;
           // As in receive(), finish the first atomic command even if it
