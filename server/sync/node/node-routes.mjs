@@ -16,6 +16,7 @@ import {
   conflictPeople,
   pendingResolutions,
 } from "../../../shared/sync/conflict-origin.js";
+import { plainConflictPayloads } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 import { createSyncStatusReader } from "./node-status.mjs";
 const id = (req) => req.params.id;
@@ -466,9 +467,7 @@ function installTeamSyncRoutes(
         target: c.operation.changes
           .map((x) => x.entity + " " + x.key.join("/"))
           .join(", "),
-        base: c.operation.changes.map((x) => x.base),
-        current: c.current,
-        desired: c.operation.changes.map((x) => x.desired),
+        ...plainConflictPayloads(c),
         resolved: !!c.resolution,
         expectedHead: head,
         origin: conflictOrigin(c, {
