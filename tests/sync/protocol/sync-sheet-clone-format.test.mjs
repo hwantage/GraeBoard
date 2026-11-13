@@ -24,10 +24,11 @@ import {
   validateEntityPayload,
 } from "../../../server/sync/core/protocol.mjs";
 import { defaultView } from "../../../shared/domain.js";
-import { stringify } from "../../../shared/formatting/compact.js";
+import { stringify, unpack } from "../../../shared/formatting/compact.js";
 import {
   isPackedSheetCloneData,
   packSheetCloneData,
+  plainConflictPayloads,
   unpackSheetCloneData,
   unpackSheetClonePayload,
 } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
@@ -380,4 +381,81 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
     await new Promise((resolve) => server.close(resolve));
     await app.close();
   }
+});
+
+// 두 서버의 충돌 보관함 응답은 전체를 다시 pack하고 브라우저가 unpack으로 읽는다.
+// 사본 자체 사전의 $s·$f 참조가 응답 사전으로 해석되면 화면이 형식 오류로 멈춘다.
+test("충돌 보관함 응답은 사본 payload를 평문으로 내려 응답 전체 사전에서도 같은 내용으로 풀린다", () => {
+  const ids = [randomUUID(), randomUUID()],
+    rules = productionRules(ids),
+    data = {
+      tasks: ids.map((id, index) => ({
+        id,
+        formatting: rules,
+        defaultStyle: { fontFamily: "Noto Sans KR", fontSize: 9 },
+        cells: {
+          title: {
+            value: "row " + index,
+            style: { backgroundColor: index ? "#0064fa" : "#ffd84d" },
+          },
+        },
+      })),
+      users: [],
+      view: defaultView(2026),
+      settings: {},
+    },
+    record = { key: [randomUUID()] },
+    payload = { year: 2026, name: "first", data: packSheetCloneData(data) },
+    cell = {
+      entity: "cell",
+      key: [ids[0], "title"],
+      payload: { value: "first", style: { textAlign: "right" } },
+    },
+    sheetClone = { entity: "sheetClone", key: record.key, payload };
+  assert.equal(payload.data.$formats.length, 1);
+  const conflict = {
+    operation: {
+      changes: [
+        {
+          entity: "cell",
+          key: cell.key,
+          base: cell.payload,
+          desired: { ...cell.payload, value: "later" },
+        },
+        {
+          entity: "sheetClone",
+          key: record.key,
+          base: payload,
+          desired: { ...payload, name: "later" },
+        },
+      ],
+    },
+    current: {
+      [entityId("cell", cell.key)]: cell,
+      [entityId("sheetClone", record.key)]: sheetClone,
+      [entityId("task", ["deleted"])]: null,
+    },
+  };
+  const wire = (view) => unpack(JSON.parse(stringify(view)));
+  // 이전 응답 형태: 사본의 $s·$f 참조를 응답 사전에서 찾다가 실패한다.
+  assert.throws(
+    () =>
+      wire({
+        base: conflict.operation.changes.map((change) => change.base),
+        current: conflict.current,
+      }),
+    /서식 참조를 확인하세요/,
+  );
+  const listed = wire(plainConflictPayloads(conflict));
+  assert.deepEqual(listed.base[0], cell.payload);
+  assert.deepEqual(listed.base[1].data, data);
+  assert.deepEqual(listed.desired[1], { ...payload, name: "later", data });
+  assert.deepEqual(listed.current[entityId("sheetClone", record.key)], {
+    ...sheetClone,
+    payload: { ...payload, data },
+  });
+  assert.deepEqual(listed.current[entityId("cell", cell.key)], cell);
+  assert.equal(listed.current[entityId("task", ["deleted"])], null);
+  // 저장된 충돌은 그대로 공유 사전 형태를 유지한다.
+  assert.ok(isPackedSheetCloneData(conflict.operation.changes[1].base.data));
 });

@@ -18,6 +18,15 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-13 — 사본 충돌이 있으면 충돌 보관함이 열리지 않던 문제
+
+- 사용자 보고(2026-11-13, 사내 운영 서버 `release` `f595b96`): 충돌 보관함이 "동기화 조회 실패: 서버가 예상한 데이터 형식으로 응답하지 않았습니다. (HTTP 200 · INVALID_RESPONSE)"로 열리지 않았습니다. 같은 API를 브라우저에서 직접 열어 보니 응답은 정상 JSON이었습니다. 최상위 `$styles`는 37개이고 `$formats`는 없는데, 본문에 `{"$s":130}`까지의 서식 참조와 `{"$f":0}` 271개가 있었습니다. 모두 `sheetClone` 충돌의 `base`·`current` 안에 있었습니다.
+- 원인: 사본 동기화 payload의 `data`는 자기 공유 사전(`$data`·`$formats`·`$styles`)을 가진 형태로 저장됩니다. 두 서버의 충돌 목록(`server/sync/node/node-routes.mjs`, `worker/control/admin.mjs`)은 이를 그대로 담은 뒤 응답 전체를 다시 `pack`했습니다. 브라우저의 `unpack`은 사본 안의 참조를 응답 사전 기준으로 찾다가 범위를 벗어나 "서식 참조를 확인하세요"를 던졌고, `src/platform/api.ts`는 이를 INVALID_RESPONSE로 표시했습니다. 참조가 우연히 범위 안이면 오류 없이 다른 서식으로 풀렸습니다. 관련 코드는 `main`과 `release`가 같습니다.
+- 수정: `shared/sheet-clones/sheet-clone-sync-data.js`에 `plainConflictPayloads`를 추가했습니다. 기존 `normalizeEntityPayload`로 `base`·`desired`(변경별)와 `current`(레코드별 `payload`)의 사본 `data`를 평문으로 풀고, 두 서버의 충돌 목록이 함께 사용합니다. 저장된 충돌·동기화 형식·DB는 바꾸지 않았습니다. 직접 고치기는 이 평문 `desired`를 보내며, 기존 payload 검증이 평문과 공유 사전 형태를 모두 받습니다.
+- 검증(Windows 11·Node.js 22.14.0): 새 테스트 `sync-resolve.test.mjs` "the conflict box lists a copy's records…"는 수정 전 코드에서 실패(사본 `data`가 `$styles` 형태로 내려옴)하고 수정 후 통과했습니다. 기존 사본을 두 곳에서 이름 변경한 충돌을 실제 Node API로 조회하고, 직접 고치기로 해결하는 경로까지 확인합니다. 같은 파일 14건이 모두 통과했습니다. `sync-sheet-clone-format.test.mjs`의 새 단위 테스트는 공통 서식 규칙(`$formats`)을 가진 사본으로 운영과 같은 예외를 재현하고, `plainConflictPayloads` 후에는 응답 전체 `pack`→`unpack`이 원래 내용과 같음을 확인합니다.
+- 같은 PC에서 Node 테스트 목록 전체를 수정 전(`origin/main` `098c213`)과 수정 후로 각각 실행했습니다. 수정 전 751건(통과 588·실패 121·skip 42), 수정 후 753건(통과 590·실패 121·skip 42)이며, 실패 목록은 두 실행이 같고 차이는 새 테스트 2건의 통과뿐입니다. 실패·skip은 고정 `/tmp` 경로, `TEST_PG_BIN` 미지정, Windows 경로·줄바꿈에 따른 환경 원인입니다. `npm run check:structure`(오류 0)·`check:architecture`(위반 0)·`build`·`build:edge`·변경 코드 Prettier·`git diff --check`를 통과했습니다. 브라우저는 설치된 Chrome(Playwright `channel: "chrome"`)으로 `tests/browser/sync/data-sync.spec.ts`를 실행해 충돌 보관함 6건을 포함한 18건이 통과했습니다. 실패한 "실제 Git 초기 게시…" 1건은 수정 전 소스에서도 같은 단언으로 실패했습니다.
+- 미실행: 외부 경로 회귀로 `worker-sync-integration.test.mjs`에 두 사이트가 같은 사본 이름을 바꾼 충돌을 양쪽 목록에서 평문으로 받는 검사를 추가했습니다. 이 PC는 해당 테스트의 PostgreSQL 조건(`initdb` 경로·Unix 소켓)을 만족하지 않아 skip되었으므로, `TEST_PG_BIN`을 지정한 전체 `npm test`와 Firefox·WebKit 브라우저 검사는 별도 환경에서 확인해야 합니다. 운영 서버 반영과 실제 화면 확인은 수행하지 않았습니다.
+
 ## 2026-11-12 — 충돌 보관함 덮어쓰기가 충돌 수를 늘리던 문제
 
 - 사용자 보고(2026-11-12, 개발 사내 서버): 공유 충돌 보관함에서 전체 선택 후 **나중에 수정으로 덮어쓰기**를 할 때마다 충돌 수가 줄지 않고 늘었습니다(1→2→4→6→8).

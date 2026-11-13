@@ -8,6 +8,7 @@ import {
   resolutionRejected,
   resolvesAny,
 } from "../../shared/sync/conflict-origin.js";
+import { plainConflictPayloads } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 import {
   SYSTEM_AUDIT_ROUTES,
   matchBusinessRoute,
@@ -429,9 +430,7 @@ export async function adminRoutes(
               .map((x) => x.entity + " " + x.key.join("/"))
               .join(", "),
             result: c.reason,
-            base: c.operation.changes.map((x) => x.base),
-            current: c.current,
-            desired: c.operation.changes.map((x) => x.desired),
+            ...plainConflictPayloads(c),
             expectedHead: link.canonical_head,
             frontier: [c.opId],
             resolved: !!c.resolution,
