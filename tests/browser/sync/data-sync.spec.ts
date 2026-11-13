@@ -1426,7 +1426,16 @@ test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전
       pendingResolution: null,
     };
   });
-  const body = JSON.stringify(pack({ conflicts }));
+  // The list carries no values; an opened conflict is requested whole.
+  const body = JSON.stringify(
+    pack({
+      conflicts: conflicts.map(
+        ({ base: _base, current: _current, desired: _desired, ...summary }) =>
+          summary,
+      ),
+    }),
+  );
+  const opened: string[] = [];
   const resolved: string[] = [];
   await page.route("**/api/bootstrap", (route) =>
     route.fulfill({ json: bootstrap }),
@@ -1445,6 +1454,22 @@ test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전
   await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
     route.fulfill({ contentType: "application/json", body }),
   );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts/*`, (route) => {
+    const id = route.request().url().split("/").at(-1)!;
+    opened.push(id);
+    // The external server can exceed its limits on one large copy.
+    return id === "copy-1"
+      ? route.fulfill({
+          status: 546,
+          json: { code: "WORKER_RESOURCE_LIMIT", message: "limit" },
+        })
+      : route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(
+            pack(conflicts.find((conflict) => conflict.conflictId === id)),
+          ),
+        });
+  });
   await page.route(
     `**/api/teams/${teamId}/sync/conflicts/*/resolve`,
     (route) => {
@@ -1497,6 +1522,23 @@ test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전
     /name: "나중 사본"/,
   ]);
   await expect(box.locator(".sync-conflict-diff")).toHaveCount(1);
+  // Only the opened conflict was requested. One that cannot be loaded says
+  // so and can still be settled without its values, except by editing them.
+  expect(opened).toEqual(["copy-0"]);
+  const second = items.nth(1);
+  await second.locator(":scope > summary").click();
+  await expect(second.locator(".error-note")).toContainText(
+    "내용을 불러오지 못했습니다",
+  );
+  await expect(second.locator(".sync-conflict-diff")).toHaveCount(0);
+  await expect(
+    second.getByRole("button", { name: "직접 고치기" }),
+  ).toBeDisabled();
+  await second
+    .getByRole("button", { name: "먼저 수정으로 유지", exact: true })
+    .click();
+  await expect.poll(() => resolved.length).toBe(16);
+  expect(resolved.at(-1)).toBe("copy-1");
   const longest = await page.evaluate(
     () => (window as unknown as { longestTask: number }).longestTask,
   );
