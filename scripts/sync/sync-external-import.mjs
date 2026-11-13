@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { lookup } from "node:dns/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs, parseEnv } from "node:util";
@@ -33,6 +36,87 @@ export const REQUIRED_SETTINGS = [
   "GRAEBOARD_RESOURCE_SECRET",
 ];
 
+// The gateway's resource secret is stored only in deployment secrets, which
+// cannot be read back. An operator whose Wrangler is logged in to the site's
+// Cloudflare account can reach the same R2 bucket without it.
+export function wranglerBucket(
+  name,
+  run = (args) =>
+    new Promise((resolve) =>
+      execFile(
+        "npx",
+        ["wrangler", "r2", "object", ...args, "--remote"],
+        { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
+        (error, stdout, stderr) =>
+          resolve({ ok: !error, stdout, stderr: stderr.toString() }),
+      ),
+    ),
+) {
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(name))
+    throw new Error("R2 bucket 이름이 올바르지 않습니다.");
+  const target = (key) => {
+    if (!/^[\w./-]+$/.test(key)) throw new Error("Unsupported object key");
+    return `${name}/${key}`;
+  };
+  const failed = (result) =>
+    Object.assign(
+      new Error(
+        "Wrangler R2 요청 실패: " +
+          (result.stderr.match(/ERROR[^\n]*\n?[^\n]*/)?.[0] || "unknown").slice(
+            0,
+            200,
+          ),
+      ),
+      { status: 503 },
+    );
+  const get = async (key) => {
+    const result = await run(["get", target(key), "--pipe"]);
+    if (result.ok) return new Uint8Array(result.stdout);
+    if (/specified key does not exist/i.test(result.stderr)) return null;
+    throw failed(result);
+  };
+  return {
+    async get(key) {
+      const bytes = await get(key);
+      return (
+        bytes && {
+          arrayBuffer: async () =>
+            bytes.buffer.slice(
+              bytes.byteOffset,
+              bytes.byteOffset + bytes.byteLength,
+            ),
+        }
+      );
+    },
+    async head(key) {
+      const bytes = await get(key);
+      return bytes && { key, size: bytes.byteLength };
+    },
+    async put(key, bytes, metadata = {}) {
+      const dir = mkdtempSync(join(tmpdir(), "graeboard-r2-"));
+      try {
+        const file = join(dir, "object");
+        writeFileSync(file, bytes);
+        const result = await run([
+          "put",
+          target(key),
+          "--file",
+          file,
+          "--content-type",
+          metadata.httpMetadata?.contentType || "application/octet-stream",
+        ]);
+        if (!result.ok) throw failed(result);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    async delete(key) {
+      const result = await run(["delete", target(key)]);
+      if (!result.ok) throw failed(result);
+    },
+  };
+}
+
 // Transient resolver and connection failures on the operator network should
 // not abort a long pass; retry a few times before giving up.
 const isTransient = (error) =>
@@ -63,7 +147,13 @@ export async function retrying(
 // Idle connections die on NAT/VPN paths in that window, so every phase opens a
 // fresh connection: no idle reuse, a generous connect timeout, the host resolved
 // once up front (DNS failed mid-run on this path) and a few connect retries.
-export async function externalEnvironment(settings, { log = () => {} } = {}) {
+export async function externalEnvironment(
+  settings,
+  { log = () => {}, r2Bucket = "" } = {},
+) {
+  // With the bucket reached through Wrangler nothing goes to the gateway.
+  if (r2Bucket && !settings.GRAEBOARD_RESOURCE_SECRET)
+    settings = { ...settings, GRAEBOARD_RESOURCE_SECRET: "wrangler" };
   const missing = REQUIRED_SETTINGS.filter((key) => !settings[key]);
   if (missing.length)
     throw new Error(`설정 파일에 ${missing.join(", ")} 값이 필요합니다.`);
@@ -113,7 +203,7 @@ export async function externalEnvironment(settings, { log = () => {} } = {}) {
         connectionString: url.href,
         pool: { connect, end: () => pool.end() },
       },
-      R2_TEAM: resources.bucket,
+      R2_TEAM: r2Bucket ? wranglerBucket(r2Bucket) : resources.bucket,
       IMAGES: resources.images,
     },
     close: () => pool.end(),
@@ -224,7 +314,7 @@ export async function importExternalTeam(
 
 // How long the catch-up waits for a hosted run's lease: an invocation stopped
 // at its limit leaves the team leased for seven minutes.
-export const CATCH_UP_WAIT_MS = 10 * 60 * 1000;
+export const CATCH_UP_WAIT_MS = 20 * 60 * 1000;
 
 // Receive what an active team could not: commits whose events exceed the hosted
 // runtime's CPU or memory limit stop every hosted run at the same commit. This
@@ -234,7 +324,10 @@ export const CATCH_UP_WAIT_MS = 10 * 60 * 1000;
 // any receive; the hosted runs publish them afterwards unless `publish` is set.
 export async function catchUpExternalTeam(settings, options = {}) {
   const log = options.log || console.log;
-  const { env, close } = await externalEnvironment(settings, { log });
+  const { env, close } = await externalEnvironment(settings, {
+    log,
+    r2Bucket: options.r2Bucket,
+  });
   try {
     const teamId = siteTeamId(env);
     const profile = profileFor(
@@ -253,8 +346,9 @@ export async function catchUpTeam(
   {
     dryRun = false,
     publish = false,
+    deferImages = false,
     waitMs = CATCH_UP_WAIT_MS,
-    pollMs = 3000,
+    pollMs = 200,
     log = console.log,
   } = {},
 ) {
@@ -302,6 +396,7 @@ export async function catchUpTeam(
   for (let cycle = 1; cycle <= 40;) {
     const result = await runTeam(env, profile, {
       receiveOnly: !publish,
+      deferImages,
       transport: transportFor(),
       // Every commit behind the head in one leased run: releasing the lease
       // between commits would hand the next large one back to a hosted run.
@@ -313,7 +408,13 @@ export async function catchUpTeam(
         throw new Error(
           "다른 동기화 실행이 끝나지 않아 이어받지 못했습니다. 잠시 뒤 다시 실행하세요.",
         );
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      // Hosted runs take an expired lease within seconds, so try again at
+      // the moment the current one ends instead of at a fixed interval.
+      const held = await db.readLink(teamId),
+        left = held?.lease_owner ? Number(held.lease_until) - Date.now() : 0;
+      await new Promise((resolve) =>
+        setTimeout(resolve, left > 0 ? Math.min(left, 30000) : pollMs),
+      );
       continue;
     }
     log(JSON.stringify({ cycle, ...result }));
@@ -338,9 +439,9 @@ export async function catchUpTeam(
 // so this pass can be repeated until it reports zero remaining.
 export async function installExternalImages(
   settings,
-  { profileId = "", log = console.log } = {},
+  { profileId = "", r2Bucket = "", log = console.log } = {},
 ) {
-  const { env, close } = await externalEnvironment(settings, { log });
+  const { env, close } = await externalEnvironment(settings, { log, r2Bucket });
   try {
     const teamId = siteTeamId(env);
     const profile = profileFor(
@@ -398,6 +499,8 @@ export async function main(args = process.argv.slice(2)) {
       "with-images": { type: "boolean" },
       "catch-up": { type: "boolean" },
       publish: { type: "boolean" },
+      "defer-images": { type: "boolean" },
+      "r2-bucket": { type: "string" },
       help: { type: "boolean" },
     },
   });
@@ -405,7 +508,7 @@ export async function main(args = process.argv.slice(2)) {
     console.log(
       "npm run sync:external-import -- --settings /private/external-import.env [--profile-id ID] [--dry-run] [--with-images]\n" +
         "npm run sync:external-import -- --settings /private/external-import.env --images\n" +
-        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish]",
+        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish] [--defer-images] [--r2-bucket NAME]",
     );
     if (!values.help) process.exitCode = 1;
     return;
@@ -416,7 +519,10 @@ export async function main(args = process.argv.slice(2)) {
   for (const key of REQUIRED_SETTINGS)
     if (!settings[key] && process.env[key]) settings[key] = process.env[key];
   if (values.images) {
-    await installExternalImages(settings, { profileId: values["profile-id"] });
+    await installExternalImages(settings, {
+      profileId: values["profile-id"],
+      r2Bucket: values["r2-bucket"],
+    });
     return;
   }
   if (values["catch-up"]) {
@@ -424,6 +530,8 @@ export async function main(args = process.argv.slice(2)) {
       profileId: values["profile-id"],
       dryRun: !!values["dry-run"],
       publish: !!values.publish,
+      deferImages: !!values["defer-images"],
+      r2Bucket: values["r2-bucket"],
     });
     return;
   }
