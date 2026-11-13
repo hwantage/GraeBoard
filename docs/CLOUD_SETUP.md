@@ -574,6 +574,19 @@ node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings 
 
 `--dry-run`은 저장소 head, 외부 연결의 상태·적용 위치·리스·미전송 건수·마지막 오류만 출력하고 쓰지 않습니다. 두 번째 명령은 외부 서버의 평상시 수신과 같은 경로를 실행 한도 없이 돌려 저장소 head까지 받습니다. 연결이 `active`가 아니거나 `INSTALLATION_ID`가 연결과 다르면 아무것도 바꾸지 않고 끝납니다. 중단된 실행의 리스가 남아 있으면 풀릴 때까지 최대 10분 기다리고, 받는 동안에는 30분 리스를 잡아 외부 서버의 Cron 실행이 끼어들지 않습니다. 외부의 미전송 변경은 그대로 남아 평상시처럼 재배치되고, 이후 외부 서버가 게시합니다. 외부 게시까지 운영자 PC에서 끝내려면 `--publish`를 붙입니다. 중간에 실패하면 그 커밋의 DB 변경은 롤백되고 이전 커밋까지의 적용은 남으므로 다시 실행해 이어갑니다.
 
+이미지 설치에는 두 옵션을 쓸 수 있습니다.
+
+- `--defer-images`: 받은 커밋의 이미지 설치를 미루고 업무 자료만 받습니다. 미룬 이미지는 뒤에 `--images`로 설치하며, 그때까지 외부 사이트에서 해당 이미지만 비어 보입니다. `--publish`는 외부에서 올린 이미지를 읽어야 하므로 이미지 저장소에 닿을 수 있어야 합니다.
+- `--r2-bucket <버킷 이름>`: gateway 자원 주소 대신 운영자 PC의 Wrangler 로그인(`npx wrangler login`)으로 R2 버킷을 직접 읽고 씁니다. 이때 설정 파일의 `GRAEBOARD_RESOURCE_SECRET`은 비워도 됩니다. gateway의 자원용 Secret 값을 알 수 없을 때 사용하며 `--images`·`--catch-up` 모두에 붙일 수 있습니다. 버킷 이름은 gateway 배포 설정의 R2 바인딩에 있습니다.
+
+```sh
+node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --catch-up --defer-images
+npm run sync:external-import -- --settings /private/external-import.env --images --r2-bucket <버킷 이름>
+npm run sync:external-import -- --settings /private/external-import.env --catch-up --publish --r2-bucket <버킷 이름>
+```
+
+이 도구는 외부 서버와 같은 동기화 코드를 실행합니다. 따라서 운영 외부 서버에 배포된 것과 같은 `release` 커밋의 체크아웃에서 실행합니다. 더 오래된 체크아웃은 팀의 동기화 프로토콜을 모를 수 있습니다.
+
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
 외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.

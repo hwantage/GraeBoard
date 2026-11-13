@@ -1470,13 +1470,16 @@ test(
         await outside(`/teams/${teamId}/sync/conflicts`),
       ).conflicts.filter((c) => !c.resolved);
       assert.ok(titleConflict, "the second title is kept as a conflict");
+      // The list carries no values; one conflict is read whole.
+      assert.ok(!("desired" in titleConflict) && !("current" in titleConflict));
+      const titleValues = ok(
+        await outside(
+          `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
+        ),
+      );
       assert.deepEqual(
-        ok(
-          await outside(
-            `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
-          ),
-        ).conflictId,
-        titleConflict.conflictId,
+        { ...titleValues, base: 0, current: 0, desired: 0 },
+        { ...titleConflict, base: 0, current: 0, desired: 0 },
       );
       // Each site names where the two edits came from: the external title
       // was held, the internal one had landed first.
@@ -1498,7 +1501,7 @@ test(
         "Inside",
       );
       assert.equal(Object.values(titleConflict.origin.writers)[0].actor, null);
-      const submittedTitle = titleConflict.desired[0].value;
+      const submittedTitle = titleValues.desired[0].value;
       ok(
         await outside(
           `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}/resolve`,
@@ -1574,10 +1577,21 @@ test(
       await runTeam(env, p);
       await app.locals.sync.get(teamId).run();
       const copyId = entityId("sheetClone", [sheetClone.id]),
-        copyConflict = async (site) =>
-          ok(await site(`/teams/${teamId}/sync/conflicts`)).conflicts.find(
-            (c) => !c.resolved && Object.hasOwn(c.current || {}, copyId),
+        copyConflict = async (site) => {
+          const summary = ok(
+            await site(`/teams/${teamId}/sync/conflicts`),
+          ).conflicts.find(
+            (c) => !c.resolved && c.target === "sheetClone " + sheetClone.id,
           );
+          return (
+            summary &&
+            ok(
+              await site(
+                `/teams/${teamId}/sync/conflicts/${summary.conflictId}`,
+              ),
+            )
+          );
+        };
       const outsideCopy = await copyConflict(outside),
         insideCopy = await copyConflict(inside);
       assert.ok(outsideCopy, "the second rename is kept as a conflict");
