@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
 import { api, send, type ApiError } from "../platform/api";
@@ -82,6 +82,22 @@ export default function SyncConflictBox({
   // Conflicts checked for a batch resolution, and its progress or result.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batch, setBatch] = useState("");
+  // A copy conflict carries whole sheets: compare only the expanded cards and
+  // summarize each card once per loaded list, not on every checkbox click.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const summaries = useMemo(
+    () =>
+      new Map(
+        (conflicts || []).map((conflict) => [
+          conflict.conflictId,
+          {
+            kind: conflictKinds(conflict.target) || "업무 변경",
+            editors: conflict.origin ? conflictEditors(conflict) : "",
+          },
+        ]),
+      ),
+    [conflicts],
+  );
   async function load(signal?: AbortSignal) {
     const result = await api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, {
       signal,
@@ -245,17 +261,28 @@ export default function SyncConflictBox({
             {conflicts.map((conflict) => {
               const saved = conflict.pendingResolution,
                 edit = editing === conflict.conflictId,
-                refusal = saved ? undefined : refusals[conflict.conflictId];
+                refusal = saved ? undefined : refusals[conflict.conflictId],
+                summary = summaries.get(conflict.conflictId)!;
               return (
                 <details
                   key={conflict.conflictId}
                   className="team-sync-conflict"
+                  onToggle={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    const open = event.currentTarget.open;
+                    setExpanded((current) => {
+                      const next = new Set(current);
+                      if (open) next.add(conflict.conflictId);
+                      else next.delete(conflict.conflictId);
+                      return next;
+                    });
+                  }}
                 >
                   <summary>
                     <input
                       type="checkbox"
                       className="team-sync-conflict-check"
-                      aria-label={`${conflictKinds(conflict.target) || "업무 변경"} 충돌 선택`}
+                      aria-label={`${summary.kind} 충돌 선택`}
                       checked={selected.has(conflict.conflictId)}
                       disabled={!!saved || busy}
                       onChange={() =>
@@ -273,11 +300,11 @@ export default function SyncConflictBox({
                       aria-hidden="true"
                     />
                     <span className="team-sync-conflict-kind">
-                      {conflictKinds(conflict.target) || "업무 변경"}
+                      {summary.kind}
                     </span>
                     {conflict.origin && (
                       <span className="team-sync-conflict-people">
-                        {conflictEditors(conflict)}
+                        {summary.editors}
                       </span>
                     )}
                     {saved && (
@@ -306,7 +333,9 @@ export default function SyncConflictBox({
                       </p>
                     )}
                     {refusal && <RefusalGuide refusal={refusal} />}
-                    <SyncConflictDiff conflict={conflict} people={people} />
+                    {expanded.has(conflict.conflictId) && (
+                      <SyncConflictDiff conflict={conflict} people={people} />
+                    )}
                     <SyncConflictRaw conflict={conflict} />
                     {!saved && edit && (
                       <label className="team-sync-conflict-edit">

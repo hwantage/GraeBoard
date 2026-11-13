@@ -230,22 +230,32 @@ const SIDE_NOTES = {
  * multi-line string (a document body) becomes one line per text line so that
  * a line diff points at the changed sentence instead of one huge JSON string.
  * @param {Side} value
- * @returns {string[]}
+ * @param {number} [max] stop and return null past this many lines
+ * @returns {string[] | null}
  */
-export function sideLines(value) {
+export function sideLines(value, max = Infinity) {
   if (value.state === "absent") return [SIDE_NOTES.absent];
-  const lines = payloadLines(value.payload);
-  if (value.state !== "present") lines.unshift(SIDE_NOTES[value.state]);
+  const lines = payloadLines(value.payload, max);
+  if (lines && value.state !== "present")
+    lines.unshift(SIDE_NOTES[value.state]);
   return lines;
 }
 
-export function payloadLines(value) {
+const TOO_LONG = Symbol("too long");
+
+export function payloadLines(value, max = Infinity) {
   const lines = [];
-  write(value, "", "", lines);
+  try {
+    write(value, "", "", lines, max);
+  } catch (error) {
+    if (error === TOO_LONG) return null;
+    throw error;
+  }
   return lines;
 }
 
-function write(value, indent, prefix, lines) {
+function write(value, indent, prefix, lines, max) {
+  if (lines.length > max) throw TOO_LONG;
   if (typeof value === "string" && value.includes("\n")) {
     lines.push(indent + prefix + "|");
     for (const line of value.split("\n")) lines.push(indent + "  " + line);
@@ -257,7 +267,7 @@ function write(value, indent, prefix, lines) {
     const inner = prefix ? indent + "  " : indent;
     for (const item of value) {
       const start = lines.length;
-      write(item, inner + "  ", "", lines);
+      write(item, inner + "  ", "", lines, max);
       lines[start] = inner + "- " + lines[start].slice(inner.length + 2);
     }
     return;
@@ -267,7 +277,7 @@ function write(value, indent, prefix, lines) {
     if (!keys.length) return void lines.push(indent + prefix + "{}");
     if (prefix) lines.push(indent + prefix.trimEnd());
     const inner = prefix ? indent + "  " : indent;
-    for (const key of keys) write(value[key], inner, key + ": ", lines);
+    for (const key of keys) write(value[key], inner, key + ": ", lines, max);
     return;
   }
   lines.push(indent + prefix + JSON.stringify(value ?? null));
@@ -278,9 +288,10 @@ export function changedFields(from, to) {
   if (from.state === "absent" || to.state === "absent")
     return from.state === to.state ? [] : [stateField(from, to)];
   const a = objectOf(from.payload),
-    b = objectOf(to.payload);
+    b = objectOf(to.payload),
+    seen = new WeakMap();
   const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])]
-    .filter((key) => canonical(a[key]) !== canonical(b[key]))
+    .filter((key) => !sameValue(a[key], b[key], seen))
     .sort();
   if (from.state !== to.state) fields.unshift(stateField(from, to));
   return fields;
@@ -300,21 +311,40 @@ const objectOf = (payload) =>
     ? payload
     : { 값: payload };
 
-function canonical(value) {
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  if (value && typeof value === "object")
-    return (
-      "{" +
-      Object.keys(value)
-        .sort()
-        .map((key) => JSON.stringify(key) + ":" + canonical(value[key]))
-        .join(",") +
-      "}"
-    );
-  return JSON.stringify(value ?? null);
+// Equal as sorted JSON (undefined reads as null) without building strings. A
+// copy repeats one formatting object under every task, so a compared pair of
+// objects is remembered and a shared object is not walked again.
+function sameValue(a, b, seen) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object")
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  let pairs = seen.get(a);
+  if (pairs?.has(b)) return pairs.get(b);
+  let equal;
+  if (Array.isArray(a))
+    equal =
+      a.length === b.length &&
+      a.every((item, index) => sameValue(item, b[index], seen));
+  else {
+    const keys = Object.keys(a);
+    equal =
+      keys.length === Object.keys(b).length &&
+      keys.every(
+        (key) => Object.hasOwn(b, key) && sameValue(a[key], b[key], seen),
+      );
+  }
+  if (!pairs) seen.set(a, (pairs = new WeakMap()));
+  pairs.set(b, equal);
+  return equal;
 }
 
 const INLINE_LIMIT = 4000;
+
+// Lines per side above which only the differing top-level fields are compared.
+// A copy repeats the team's formatting rules under every task: 438 tasks make
+// about 1.1 million lines, while document bodies stay well below this.
+export const DIFF_LINE_LIMIT = 200000;
 
 /**
  * @typedef {{ text: string, changed: boolean }} Segment
@@ -326,12 +356,35 @@ const INLINE_LIMIT = 4000;
 /**
  * Line diff of two sides. Unchanged runs longer than 2×context lines are
  * folded; removed lines directly followed by added lines are paired and
- * marked character by character.
- * @returns {{ equal: boolean, rows: (DiffRow | DiffFold)[] }}
+ * marked character by character. A side longer than `limit` lines is compared
+ * on its differing top-level fields only (`partial`); if those are still too
+ * long the line diff is skipped (`omitted`).
+ * @returns {{ equal: boolean, rows: (DiffRow | DiffFold)[],
+ *   partial: boolean, omitted: boolean }}
  */
-export function diffSides(from, to, context = 3) {
-  const a = sideLines(from),
-    b = sideLines(to);
+export function diffSides(from, to, context = 3, limit = DIFF_LINE_LIMIT) {
+  let a = sideLines(from, limit),
+    b = sideLines(to, limit),
+    partial = false;
+  if (!a || !b) {
+    partial = true;
+    const fields = new Set(changedFields(from, to));
+    const pick = (side) =>
+      side.state === "absent"
+        ? side
+        : {
+            ...side,
+            payload: Object.fromEntries(
+              Object.entries(objectOf(side.payload)).filter(([key]) =>
+                fields.has(key),
+              ),
+            ),
+          };
+    a = sideLines(pick(from), limit);
+    b = sideLines(pick(to), limit);
+    // Only differing fields remain, so this is never an equal pair.
+    if (!a || !b) return { equal: false, rows: [], partial, omitted: true };
+  }
   const rows = [];
   let fromLine = 1,
     toLine = 1,
@@ -365,6 +418,8 @@ export function diffSides(from, to, context = 3) {
   return {
     equal: rows.every((row) => row.type === "same"),
     rows: fold(rows, context),
+    partial,
+    omitted: false,
   };
 }
 
