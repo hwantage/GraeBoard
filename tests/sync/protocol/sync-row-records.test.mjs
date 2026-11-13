@@ -15,7 +15,12 @@ import {
   validateEntityPayload,
   ROW_PROTOCOL,
 } from "../../../server/sync/core/protocol.mjs";
-import { validateSnapshot } from "../../../server/sync/core/reducer.mjs";
+import {
+  reduce,
+  reduceMany,
+  validateSnapshot,
+} from "../../../server/sync/core/reducer.mjs";
+import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import {
   encodeSnapshot,
   decodeSnapshot,
@@ -225,4 +230,93 @@ test("protocol 3 to 5 keeps every copy exactly, deleted ones included, and old s
     assert.equal(stateHash(decoded), stateHash(next));
     assert.throws(() => upgradeState(next, ROW_PROTOCOL), /version 3/);
   }
+});
+
+test("protocol 5 merges different cells of one row, keeps a same-cell edit as a conflict and carries one row per edit", (t) => {
+  const f = sqliteFixture(t),
+    state = upgradeState(
+      {
+        ...f.state,
+        entities: {
+          ...f.state.entities,
+          [entityId("sheetClone", ["copy"])]: copy(false, f.teamId),
+        },
+      },
+      ROW_PROTOCOL,
+    ),
+    link = { ...f.link, protocol: ROW_PROTOCOL },
+    rowId = entityId("sheetCloneTask", ["copy", "c"]),
+    row = state.entities[rowId],
+    edit = (change) =>
+      makeOperation({
+        link,
+        actorRef: f.user.id,
+        before: { [rowId]: row },
+        after: { [rowId]: { ...row, payload: change(row.payload) } },
+      }),
+    setCell = (key, value) =>
+      edit((payload) => ({
+        ...payload,
+        cells: { ...payload.cells, [key]: cell(value) },
+      }));
+  const title = setCell("title", "제목 수정"),
+    note = setCell("note", "메모 수정"),
+    added = setCell("owner", "담당"),
+    renamed = edit((payload) => ({
+      ...payload,
+      data: { ...payload.data, updatedAt: "2026-11-14T00:00:00.000Z" },
+    }));
+  // The command depends on the row, its copy and its formatting record.
+  assert.equal(title.protocol, ROW_PROTOCOL);
+  assert.deepEqual(title.changes[0].fields, ["cells"]);
+  assert.ok(Buffer.byteLength(canonical(title)) < 3000);
+  const orders = [
+      [title, note, added, renamed],
+      [renamed, added, note, title],
+    ].map((ops) => reduceMany(state, ops)),
+    merged = orders[0].entities[rowId].payload;
+  // Either order gives the same row; its version names the last command.
+  assert.deepEqual(orders[1].entities[rowId].payload, merged);
+  assert.deepEqual(Object.keys(orders[0].conflicts), []);
+  assert.equal(merged.cells.title.value, "제목 수정");
+  assert.equal(merged.cells.note.value, "메모 수정");
+  assert.equal(merged.cells.owner.value, "담당");
+  assert.equal(merged.data.updatedAt, "2026-11-14T00:00:00.000Z");
+  assert.equal(merged.format, row.payload.format);
+  // Nothing else of the copy changes.
+  for (const [id, record] of Object.entries(state.entities))
+    if (id !== rowId) assert.strictEqual(orders[0].entities[id], record, id);
+  // The same cell changed twice from one base: the later one is kept aside.
+  const again = setCell("title", "다른 제목"),
+    contested = reduceMany(state, [title, again]);
+  assert.equal(
+    contested.entities[rowId].payload.cells.title.value,
+    "제목 수정",
+  );
+  assert.deepEqual(
+    Object.values(contested.conflicts).map((c) => [c.opId, c.reason]),
+    [[again.opId, "Concurrent field change"]],
+  );
+  // Removing one cell and changing another merge as well.
+  const removed = edit(({ cells: { note: _note, ...cells }, ...payload }) => ({
+      ...payload,
+      cells,
+    })),
+    without = reduceMany(state, [removed, title]);
+  assert.deepEqual(Object.keys(without.entities[rowId].payload.cells), [
+    "title",
+  ]);
+  assert.deepEqual(Object.keys(without.conflicts), []);
+  // A row cannot name formatting the copy does not hold, and another
+  // protocol's command is refused.
+  const dangling = edit((payload) => ({ ...payload, format: "f".repeat(32) }));
+  assert.deepEqual(
+    Object.values(reduceMany(state, [dangling]).conflicts).map((c) => c.reason),
+    ["Missing sheetClone format"],
+  );
+  assert.throws(
+    () => reduce(state, { ...title, protocol: 4, reducer: 4 }),
+    /Unsupported protocol/,
+  );
+  assert.throws(() => reduce(f.state, title), /Unsupported protocol/);
 });

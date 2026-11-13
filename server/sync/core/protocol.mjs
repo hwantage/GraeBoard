@@ -884,7 +884,11 @@ export function validateOperation(
     }
     if (c.desired === null && c.action !== "delete")
       throw new Error("Missing desired entity");
-    if (c.fields.some((field) => !payloadFields[c.entity].includes(field)))
+    if (
+      c.fields.some(
+        (field) => !fieldsFor(c.entity, op.protocol).includes(field),
+      )
+    )
       throw new Error("Unsupported entity field");
     if (c.entity === "team" && c.action === "delete")
       throw new Error("Remote team deletion forbidden");
