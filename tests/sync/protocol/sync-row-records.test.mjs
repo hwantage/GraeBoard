@@ -103,18 +103,22 @@ test("protocol 5 splits a copy into its order, one record per distinct formattin
     ],
   );
   assert.deepEqual(
-    rows.map((r) => [
-      r.key[1],
-      r.payload.format,
-      Object.keys(r.payload.cells).sort(),
-    ]),
+    rows.map((r) => [r.key[1], Object.keys(r.payload.cells).sort()]),
     [
-      ["c", sheetCloneFormatId(rules("#fff")), ["note", "title"]],
-      ["a", sheetCloneFormatId(rules("#fff")), ["title"]],
-      ["b", sheetCloneFormatId(rules("#000")), []],
-      ["d", null, ["title"]],
+      ["c", ["note", "title"]],
+      ["a", ["title"]],
+      ["b", []],
+      ["d", ["title"]],
     ],
   );
+  // The parent names each formatted row's record; a row without formatting
+  // has no entry.
+  assert.deepEqual(parent.payload.formats, {
+    c: sheetCloneFormatId(rules("#fff")),
+    a: sheetCloneFormatId(rules("#fff")),
+    b: sheetCloneFormatId(rules("#000")),
+  });
+  assert.ok(rows.every((r) => !("format" in r.payload)));
   for (const record of records)
     validateEntityPayload(
       record.entity,
@@ -266,7 +270,6 @@ test("protocol 5 merges different cells of one row, keeps a same-cell edit as a 
       ...payload,
       data: { ...payload.data, updatedAt: "2026-11-14T00:00:00.000Z" },
     }));
-  // The command depends on the row, its copy and its formatting record.
   assert.equal(title.protocol, ROW_PROTOCOL);
   assert.deepEqual(title.changes[0].fields, ["cells"]);
   assert.ok(Buffer.byteLength(canonical(title)) < 3000);
@@ -282,7 +285,6 @@ test("protocol 5 merges different cells of one row, keeps a same-cell edit as a 
   assert.equal(merged.cells.note.value, "메모 수정");
   assert.equal(merged.cells.owner.value, "담당");
   assert.equal(merged.data.updatedAt, "2026-11-14T00:00:00.000Z");
-  assert.equal(merged.format, row.payload.format);
   // Nothing else of the copy changes.
   for (const [id, record] of Object.entries(state.entities))
     if (id !== rowId) assert.strictEqual(orders[0].entities[id], record, id);
@@ -307,11 +309,78 @@ test("protocol 5 merges different cells of one row, keeps a same-cell edit as a 
     "title",
   ]);
   assert.deepEqual(Object.keys(without.conflicts), []);
-  // A row cannot name formatting the copy does not hold, and another
-  // protocol's command is refused.
-  const dangling = edit((payload) => ({ ...payload, format: "f".repeat(32) }));
+  // A format change over rows writes one formatting record and the parent's
+  // assignments, no row; assignments of different rows merge.
+  const parentId = entityId("sheetClone", ["copy"]),
+    parent = state.entities[parentId],
+    newFormat = rules("#abc"),
+    formatId = entityId("sheetCloneFormat", [
+      "copy",
+      sheetCloneFormatId(newFormat),
+    ]),
+    assign = (rows, withRecord = true) =>
+      makeOperation({
+        link,
+        actorRef: f.user.id,
+        before: { [parentId]: parent },
+        after: {
+          [parentId]: {
+            ...parent,
+            payload: {
+              ...parent.payload,
+              formats: {
+                ...parent.payload.formats,
+                ...Object.fromEntries(
+                  rows.map((id) => [id, sheetCloneFormatId(newFormat)]),
+                ),
+              },
+            },
+          },
+          ...(withRecord
+            ? {
+                [formatId]: {
+                  ...parent,
+                  entity: "sheetCloneFormat",
+                  key: ["copy", sheetCloneFormatId(newFormat)],
+                  payload: { data: newFormat },
+                },
+              }
+            : {}),
+        },
+      });
+  const all = assign(["a", "b", "c", "d"]);
   assert.deepEqual(
-    Object.values(reduceMany(state, [dangling]).conflicts).map((c) => c.reason),
+    all.changes.map((c) => [c.entity, c.action, c.fields]),
+    [
+      ["sheetClone", "edit", ["formats"]],
+      ["sheetCloneFormat", "create", ["data"]],
+    ],
+  );
+  const formatted = reduceMany(state, [all, title]);
+  assert.deepEqual(Object.keys(formatted.conflicts), []);
+  assert.deepEqual(
+    Object.values(formatted.entities[parentId].payload.formats),
+    Array(4).fill(sheetCloneFormatId(newFormat)),
+  );
+  const tasks = unpackSheetCloneData(
+    applicationEntities(formatted.entities)[parentId].payload.data,
+  ).tasks;
+  assert.ok(
+    tasks.every((task) => canonical(task.formatting) === canonical(newFormat)),
+  );
+  assert.equal(tasks[0].cells.title.value, "제목 수정");
+  const split = reduceMany(state, [assign(["a"]), assign(["d"], false)]);
+  assert.deepEqual(Object.keys(split.conflicts), []);
+  assert.equal(
+    split.entities[parentId].payload.formats.d,
+    sheetCloneFormatId(newFormat),
+  );
+  // A copy cannot name formatting it does not hold, and another protocol's
+  // command is refused.
+  assert.deepEqual(
+    Object.values(reduceMany(state, [assign(["a"], false)]).conflicts).map(
+      (c) => c.reason,
+    ),
     ["Missing sheetClone format"],
   );
   assert.throws(

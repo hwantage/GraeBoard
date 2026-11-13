@@ -52,8 +52,9 @@ export const splitSheetCloneRecord = (record) => {
 
 const plainObject = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
-// Protocol 5: the parent keeps the row order, each distinct formatting value
-// is one record keyed by its hash and each row is one record with its cells.
+// Protocol 5: the parent keeps the row order and which formatting each row
+// uses, each distinct formatting value is one record keyed by its hash and
+// each row is one record with its cells.
 // A row whose formatting is not an object keeps it in its own data.
 export const splitSheetCloneRows = (record) => {
   if (!record) return [];
@@ -64,6 +65,7 @@ export const splitSheetCloneRows = (record) => {
   if (!Array.isArray(source?.tasks)) return [record];
   const { tasks, ...data } = source,
     formats = new Map(),
+    assigned = {},
     ids = new Set(),
     rows = [];
   for (const task of tasks) {
@@ -73,9 +75,9 @@ export const splitSheetCloneRows = (record) => {
       );
     ids.add(task.id);
     const { cells = {}, ...metadata } = task;
-    let format = null;
     if (plainObject(metadata.formatting)) {
-      format = sheetCloneFormatId(metadata.formatting);
+      const format = sheetCloneFormatId(metadata.formatting);
+      assigned[task.id] = format;
       if (!formats.has(format))
         formats.set(format, {
           ...record,
@@ -89,7 +91,7 @@ export const splitSheetCloneRows = (record) => {
       ...record,
       entity: "sheetCloneTask",
       key: [record.key[0], task.id],
-      payload: { data: metadata, format, cells },
+      payload: { data: metadata, cells },
     });
   }
   return [
@@ -99,6 +101,7 @@ export const splitSheetCloneRows = (record) => {
         ...record.payload,
         data,
         order: tasks.map((task) => task.id),
+        formats: assigned,
       },
     },
     ...formats.values(),
@@ -214,7 +217,11 @@ export function composedRows(entities, only = null) {
       visible.delete(taskId);
     }
     ordered.push(...visible.values());
-    const { order: _order, ...payload } = record.payload;
+    const {
+      order: _order,
+      formats: assigned = {},
+      ...payload
+    } = record.payload;
     output[id] = {
       ...record,
       payload: {
@@ -223,8 +230,8 @@ export function composedRows(entities, only = null) {
           ...unpackSheetCloneData(record.payload.data),
           tasks: ordered.map((row) => {
             const format =
-              row.payload.format &&
-              formats.get(canonical([record.key[0], row.payload.format]));
+              Object.hasOwn(assigned, row.key[1]) &&
+              formats.get(canonical([record.key[0], assigned[row.key[1]]]));
             return {
               ...row.payload.data,
               ...(format ? { formatting: format.payload.data } : {}),

@@ -78,8 +78,8 @@ export function mergeMarkdown(base, current, desired, reducer = PROTOCOL) {
 }
 // The protocols that keep a sheet clone's rows as their own records.
 const SHEET_CLONE_RECORDS = [SPLIT_PROTOCOL, ROW_PROTOCOL];
-// Protocol 5 row cells: different cells merge, the same cell changed on both
-// sides does not.
+// Protocol 5 row cells and format assignments: different keys merge, the same
+// key changed on both sides does not.
 function mergeSheetCloneCells(base, current, desired) {
   const result = { ...current };
   for (const key of new Set([
@@ -242,12 +242,13 @@ function validateState(entities) {
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
-    // Protocol 5: a row names its formatting record.
-    if (e.entity === "sheetCloneTask" && typeof p.format === "string") {
-      const format =
-        entities[entityId("sheetCloneFormat", [e.key[0], p.format])];
-      if (!format || format.deleted) return "Missing sheetClone format";
-    }
+    // Protocol 5: a copy names its rows' formatting records.
+    if (e.entity === "sheetClone" && p.formats)
+      for (const format of new Set(Object.values(p.formats))) {
+        const record =
+          entities[entityId("sheetCloneFormat", [e.key[0], format])];
+        if (!record || record.deleted) return "Missing sheetClone format";
+      }
     if (
       e.entity === "sheetCloneCell" &&
       !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]
@@ -435,10 +436,12 @@ export function reduce(
                 continue;
               }
             }
+            // Protocol 5: cells of a row and format assignments of a copy
+            // merge key by key.
             if (
               op.reducer === ROW_PROTOCOL &&
-              c.entity === "sheetCloneTask" &&
-              field === "cells"
+              ((c.entity === "sheetCloneTask" && field === "cells") ||
+                (c.entity === "sheetClone" && field === "formats"))
             ) {
               const merged = mergeSheetCloneCells(base, value, desired);
               if (merged !== null) {
@@ -595,12 +598,13 @@ function validateIncrement(entities, undo, context) {
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
-    // Protocol 5: a row names its formatting record.
-    if (e.entity === "sheetCloneTask" && typeof p.format === "string") {
-      const format =
-        entities[entityId("sheetCloneFormat", [e.key[0], p.format])];
-      if (!format || format.deleted) return "Missing sheetClone format";
-    }
+    // Protocol 5: a copy names its rows' formatting records.
+    if (e.entity === "sheetClone" && p.formats)
+      for (const format of new Set(Object.values(p.formats))) {
+        const record =
+          entities[entityId("sheetCloneFormat", [e.key[0], format])];
+        if (!record || record.deleted) return "Missing sheetClone format";
+      }
     if (
       e.entity === "sheetCloneCell" &&
       !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]

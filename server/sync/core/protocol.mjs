@@ -498,9 +498,9 @@ const payloadFields = {
 };
 // Protocol 5 shapes of the sheet clone records.
 const rowPayloadFields = {
-  sheetClone: [...payloadFields.sheetClone, "order"],
+  sheetClone: [...payloadFields.sheetClone, "order", "formats"],
   sheetCloneFormat: ["data"],
-  sheetCloneTask: ["data", "format", "cells"],
+  sheetCloneTask: ["data", "cells"],
 };
 const fieldsFor = (entity, version) =>
   (version === ROW_PROTOCOL && rowPayloadFields[entity]) ||
@@ -659,14 +659,13 @@ export function validateEntityPayload(
     if (!plain(payload.data) || sheetCloneFormatId(payload.data) !== key[1])
       throw new Error("Invalid sheetClone format");
   } else if (entity === "sheetCloneTask" && version === ROW_PROTOCOL) {
-    const { data, format, cells } = payload;
+    const { data, cells } = payload;
     if (
       !plain(data) ||
       data.id !== key[1] ||
       data.teamId !== teamId ||
       Object.hasOwn(data, "cells") ||
       plain(data.formatting) ||
-      !(format === null || /^[a-f0-9]{32}$/.test(format)) ||
       !plain(cells) ||
       Object.entries(cells).some(
         ([cellKey, cell]) =>
@@ -729,7 +728,9 @@ export function validateEntityPayload(
       throw new Error("Private account data in sheetClone");
     if (data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team sheetClone row");
-    // Protocol 5: the rows are their own records, in this order.
+    // Protocol 5: the rows are their own records, in this order, and the
+    // parent names each formatted row's formatting record. Keeping that here
+    // lets a format change over every row carry no row.
     if (
       version === ROW_PROTOCOL &&
       (!Array.isArray(payload.order) ||
@@ -739,6 +740,19 @@ export function validateEntityPayload(
         new Set(payload.order).size !== payload.order.length)
     )
       throw new Error("Invalid sheetClone order");
+    if (
+      version === ROW_PROTOCOL &&
+      (!plain(payload.formats) ||
+        Object.entries(payload.formats).some(
+          ([id, format]) =>
+            !id ||
+            id.length > 200 ||
+            ["__proto__", "constructor", "prototype"].includes(id) ||
+            typeof format !== "string" ||
+            !/^[a-f0-9]{32}$/.test(format),
+        ))
+    )
+      throw new Error("Invalid sheetClone formats");
   }
   if (entity === "document")
     for (const url of documentImageUrls(payload.markdown))

@@ -4,9 +4,10 @@ export function entityReferences(entity, key, payload) {
   const refs = [];
   if (entity === "sheetCloneTask" || entity === "sheetCloneFormat")
     refs.push(["sheetClone", [key[0]]]);
-  // Protocol 5: a row names its formatting record.
-  if (entity === "sheetCloneTask" && typeof payload?.format === "string")
-    refs.push(["sheetCloneFormat", [key[0], payload.format]]);
+  // Protocol 5: a copy names its rows' formatting records.
+  if (entity === "sheetClone" && payload?.formats)
+    for (const format of new Set(Object.values(payload.formats)))
+      refs.push(["sheetCloneFormat", [key[0], format]]);
   if (entity === "sheetCloneCell")
     refs.push(["sheetClone", [key[0]]], ["sheetCloneTask", key.slice(0, 2)]);
   if (entity === "cell") refs.push(["task", [key[0]]]);
