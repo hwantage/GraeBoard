@@ -292,3 +292,34 @@ test("members on one week load in one request and a retry reads only the failed 
   assert.equal(state.schedules.get("three").data.entries[0].title, "d");
   assert.equal(requests.length, 3);
 });
+
+test("an entry crossing monthly ranges read at different times shows the later read", async (t) => {
+  const { requests, render } = await calendarHarness(t);
+  // One member's November and December; a long entry crosses both.
+  const queries = [
+    { userId: "one", from: "2026-10-25", to: "2026-12-05" },
+    { userId: "one", from: "2026-12-06", to: "2027-01-02" },
+  ];
+  render(queries);
+  assert.equal(requests.length, 2);
+  const view = (title, lane) => ({
+    entries: [{ id: "long", title }],
+    weekly: [],
+    layout: [{ id: "long", date: "2026-12-04", endDate: "2026-12-08", lane }],
+  });
+  // December answers with the copy from before an edit made elsewhere, then
+  // November, read after the edit, with the edited copy and its placement.
+  requests[1].resolve(view("before", 0));
+  await setImmediate();
+  requests[0].resolve(view("after", 1));
+  await setImmediate();
+  const { data } = render(queries).schedules.get("one");
+  assert.deepEqual(
+    data.entries.map((entry) => entry.title),
+    ["after"],
+  );
+  assert.deepEqual(
+    data.layout.map((placement) => placement.lane),
+    [1],
+  );
+});

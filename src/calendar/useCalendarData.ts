@@ -14,6 +14,8 @@ type LoadedCalendar = {
   key: string;
   query: CalendarQuery;
   reload: number;
+  // The order reads finished in: a larger number is a later read.
+  order: number;
   data?: CalendarData;
   error?: string;
 };
@@ -23,8 +25,9 @@ type CalendarUpdate = (
 ) => CalendarData;
 
 // The monthly views read one member's calendar as consecutive ranges, a month
-// at a time. They show as one calendar: an entry crossing ranges keeps its
-// newest copy and the first range's failure is the calendar's failure.
+// at a time. They show as one calendar: an entry crossing ranges keeps the
+// copy and placement of the latest read, as ranges read at different times can
+// differ, and the first range's failure is the calendar's failure.
 function mergeCalendarRanges(
   results: (LoadedCalendar | undefined)[],
 ): LoadedCalendar | undefined {
@@ -37,12 +40,8 @@ function mergeCalendarRanges(
   const entries = new Map<string, CalendarEntry>();
   const weekly = new Map<string, WeeklyItem>();
   let layout: CalendarPlacement[] = [];
-  for (const { data } of ready) {
-    for (const entry of data.entries) {
-      const known = entries.get(entry.id);
-      if (!known || known.revision <= entry.revision)
-        entries.set(entry.id, entry);
-    }
+  for (const { data } of [...ready].sort((a, b) => a.order - b.order)) {
+    for (const entry of data.entries) entries.set(entry.id, entry);
     for (const item of data.weekly)
       weekly.set(`${item.userId}:${item.weekStart}:${item.taskId}`, item);
     layout = mergeCalendarLayout(layout, data.layout);
@@ -55,6 +54,7 @@ function mergeCalendarRanges(
       to: ready[ready.length - 1].query.to,
     },
     reload: ready[0].reload,
+    order: Math.max(...ready.map((result) => result.order)),
     data: {
       entries: [...entries.values()],
       weekly: [...weekly.values()],
@@ -74,6 +74,7 @@ export function useCalendarData(
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   const mutations = useRef(0);
+  const finishedReads = useRef(0);
   const deferred = useRef(new Set<() => void>());
   const pendingUpdates = useRef(new Set<CalendarUpdate[]>());
   const keyFor = (query: CalendarQuery) =>
@@ -133,16 +134,18 @@ export function useCalendarData(
               `/calendar?${new URLSearchParams({ teamId, from, to, ...(userId === null ? { scope: "team" } : { userId }) })}`,
               { signal: controller.signal },
             ).then((data) => [data]);
-      const settle = (result: (query: CalendarQuery, i: number) => object) =>
+      const settle = (result: (query: CalendarQuery, i: number) => object) => {
+        const order = ++finishedReads.current;
         setLoaded((current) => ({
           ...current,
           ...Object.fromEntries(
             batch.map((query, i) => [
               slotFor(query),
-              { key: keyFor(query), query, reload, ...result(query, i) },
+              { key: keyFor(query), query, reload, order, ...result(query, i) },
             ]),
           ),
         }));
+      };
       const read = () => {
         if (controller.signal.aborted) return;
         if (mutations.current) {

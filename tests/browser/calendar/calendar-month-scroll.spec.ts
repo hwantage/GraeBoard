@@ -452,6 +452,59 @@ test("12개월까지 이어 붙이면 안내를 보이고 그 뒤의 다음 달�
   await expect(limit).toHaveCount(0);
 });
 
+test("열두 번째 달을 읽는 동안 다음 달로 옮긴 주는 그 달이 그려진 뒤 위에 맞춘다", async ({
+  page,
+}) => {
+  // October 2027, the twelfth month from November 2026, answers on release.
+  let requested = false;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/calendar?*", async (route) => {
+    if (
+      new URL(route.request().url()).searchParams.get("from") === "2027-10-03"
+    ) {
+      requested = true;
+      await gate;
+    }
+    try {
+      await route.continue();
+    } catch {
+      /* aborted while waiting */
+    }
+  });
+  await open(page, "2026-11-12T03:00:00+09:00");
+  await expect
+    .poll(async () => {
+      await scroller(page).evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+      return requested;
+    })
+    .toBe(true);
+  await expect(calendar(page).locator(".calendar-month-loading")).toBeVisible();
+  await scrollToTop(page, row(page, "2027-08-01"));
+  await shownMonth(page, "2027", "8");
+  for (const month of ["9", "10"]) {
+    await calendar(page)
+      .getByRole("button", { name: "다음 달", exact: true })
+      .click();
+    await shownMonth(page, "2027", month);
+  }
+  // The week of October 1st is the last one shown and cannot reach the top
+  // until October is listed below it.
+  await expect
+    .poll(() => rowOffset(page, row(page, "2027-09-26")))
+    .toBeGreaterThan(2);
+  release();
+  await expect(calendar(page).locator('[data-date="2027-10-31"]')).toHaveCount(
+    1,
+  );
+  await expectAtTop(page, row(page, "2027-09-26"));
+  await shownMonth(page, "2027", "10");
+});
+
 test("응답이 늦어도 휠로 내리거나 팀이 바뀌면 달마다 한 번씩만 읽는다", async ({
   page,
 }) => {

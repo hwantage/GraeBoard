@@ -240,7 +240,11 @@ export function useCalendarMonthScroll(
         top,
       });
       placed.current = { top: root.scrollTop, left: root.scrollLeft };
-      if (full || root.scrollTop >= top - 1) jump.current = null;
+      if (
+        (full && shown[shown.length - 1] === lastWeek) ||
+        root.scrollTop >= top - 1
+      )
+        jump.current = null;
     }
     fill(root);
   }, [enabled, shown, jumped]);
