@@ -172,10 +172,16 @@ export function originLabel(origin) {
  */
 export function conflictEditors(conflict) {
   if (!conflict.origin) return "";
-  const { contested, clean } = splitContested(conflictChanges(conflict));
-  const writers = (contested.length ? contested : clean)
-    .map((change) => change.writer)
-    .filter(Boolean);
+  // The conflict list carries no values (see conflictSummary): until the
+  // conflict is opened every current writer counts, overlapping or not.
+  let writers = Object.values(conflict.origin.writers || {});
+  if (conflict.desired !== undefined) {
+    const { contested, clean } = splitContested(conflictChanges(conflict));
+    writers = (contested.length ? contested : clean).map(
+      (change) => change.writer,
+    );
+  }
+  writers = writers.filter(Boolean);
   const labels = [...new Set(writers.map(originLabel))];
   const sites = [...new Set(writers.map(siteName).filter(Boolean))];
   const first =

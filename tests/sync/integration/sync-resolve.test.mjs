@@ -582,7 +582,17 @@ test("the conflict box lists a copy's records in plain form and settles the edit
     "GET",
   );
   assert.equal(listed.status, 200, JSON.stringify(listed));
-  const item = listed.data.conflicts.find((c) => c.opId === conflict.opId),
+  const summary = listed.data.conflicts.find((c) => c.opId === conflict.opId);
+  // The list leaves the copy out; the opened conflict carries it in plain form.
+  assert.ok(!("desired" in summary) && !("current" in summary));
+  assert.ok(JSON.stringify(listed.data).length < 20000);
+  const item = (
+      await f.api(
+        `/teams/${f.teamId}/sync/conflicts/${summary.conflictId}`,
+        undefined,
+        "GET",
+      )
+    ).data,
     plain = unpackSheetCloneData(stored.payload.data);
   for (const payload of [
     item.base[0],
