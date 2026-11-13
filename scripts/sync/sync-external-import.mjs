@@ -6,7 +6,7 @@ import pg from "pg";
 import { resourceBindings } from "../../edge/resources.mjs";
 import { databaseFor, controlTransaction } from "../../worker/storage/data.mjs";
 import { GitHubApiTransport } from "../../worker/sync/git.mjs";
-import { importTeam, imageSync } from "../../worker/sync/sync.mjs";
+import { importTeam, imageSync, runTeam } from "../../worker/sync/sync.mjs";
 import { materialize } from "../../worker/sync/materialize.mjs";
 import { R2ImageStore } from "../../worker/documents/images.mjs";
 import { profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
@@ -222,6 +222,117 @@ export async function importExternalTeam(
   }
 }
 
+// How long the catch-up waits for a hosted run's lease: an invocation stopped
+// at its limit leaves the team leased for seven minutes.
+export const CATCH_UP_WAIT_MS = 10 * 60 * 1000;
+
+// Receive what an active team could not: commits whose events exceed the hosted
+// runtime's CPU or memory limit stop every hosted run at the same commit. This
+// runs the ordinary receive (same code path as the hosted run, images included)
+// from the operator machine, under the team's lease, until the site reaches the
+// repository head. Local unpublished changes stay pending and are rebased as in
+// any receive; the hosted runs publish them afterwards unless `publish` is set.
+export async function catchUpExternalTeam(settings, options = {}) {
+  const log = options.log || console.log;
+  const { env, close } = await externalEnvironment(settings, { log });
+  try {
+    const teamId = siteTeamId(env);
+    const profile = profileFor(
+      env,
+      options.profileId || JSON.parse(env.SYNC_PROFILES)[0]?.profileId,
+      teamId,
+    );
+    return await catchUpTeam(env, profile, options);
+  } finally {
+    await close();
+  }
+}
+export async function catchUpTeam(
+  env,
+  profile,
+  {
+    dryRun = false,
+    publish = false,
+    waitMs = CATCH_UP_WAIT_MS,
+    pollMs = 3000,
+    log = console.log,
+  } = {},
+) {
+  const teamId = profile.teamId,
+    db = databaseFor(env, profile);
+  await db.health();
+  const transportFor = () =>
+    new GitHubApiTransport({
+      repository: profile.repository,
+      token: env[profile.githubSecret],
+      maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
+      maxRequests: OPERATOR_REQUEST_BUDGET,
+    });
+  const probe = transportFor();
+  await probe.check();
+  const head = await probe.readHead();
+  const link = await db.readLink(teamId);
+  const pending = (await db.readPending(teamId)).length;
+  log(
+    JSON.stringify({
+      teamId,
+      profileId: profile.profileId,
+      repository: profile.repository,
+      head,
+      linkMode: link?.mode || "none",
+      canonicalHead: link?.canonical_head || null,
+      installationMatches: link?.installation_id === env.INSTALLATION_ID,
+      leaseUntil:
+        link?.lease_owner && link.lease_until
+          ? new Date(Number(link.lease_until)).toISOString()
+          : null,
+      pending,
+      lastError: link?.last_error || null,
+      dryRun,
+    }),
+  );
+  // runTeam moves a link with another installation's identity to recovery;
+  // a wrong settings file must not do that to a production team.
+  if (link?.mode !== "active")
+    throw new Error("동기화 중(active)인 팀만 이어받을 수 있습니다.");
+  if (link.installation_id !== env.INSTALLATION_ID)
+    throw new Error("INSTALLATION_ID가 이 팀의 연결과 다릅니다.");
+  if (dryRun) return { dryRun: true, head };
+  const deadline = Date.now() + waitMs;
+  for (let cycle = 1; cycle <= 40;) {
+    const result = await runTeam(env, profile, {
+      receiveOnly: !publish,
+      transport: transportFor(),
+      // Every commit behind the head in one leased run: releasing the lease
+      // between commits would hand the next large one back to a hosted run.
+      maxCommits: 64,
+      leaseMs: 30 * 60 * 1000,
+    });
+    if (result.busy) {
+      if (Date.now() > deadline)
+        throw new Error(
+          "다른 동기화 실행이 끝나지 않아 이어받지 못했습니다. 잠시 뒤 다시 실행하세요.",
+        );
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      continue;
+    }
+    log(JSON.stringify({ cycle, ...result }));
+    if (!result.head || result.head === (await transportFor().readHead()))
+      break;
+    cycle++;
+  }
+  const after = await db.readLink(teamId);
+  const final = {
+    teamId,
+    linkMode: after.mode,
+    canonicalHead: after.canonical_head,
+    pending: (await db.readPending(teamId)).length,
+    lastError: after.last_error || null,
+  };
+  log(JSON.stringify(final));
+  return final;
+}
+
 // Install every image the current state references and R2 does not hold yet.
 // Each image is read from the canonical head and hash-verified before upload,
 // so this pass can be repeated until it reports zero remaining.
@@ -285,13 +396,16 @@ export async function main(args = process.argv.slice(2)) {
       "dry-run": { type: "boolean" },
       images: { type: "boolean" },
       "with-images": { type: "boolean" },
+      "catch-up": { type: "boolean" },
+      publish: { type: "boolean" },
       help: { type: "boolean" },
     },
   });
   if (values.help || !values.settings) {
     console.log(
       "npm run sync:external-import -- --settings /private/external-import.env [--profile-id ID] [--dry-run] [--with-images]\n" +
-        "npm run sync:external-import -- --settings /private/external-import.env --images",
+        "npm run sync:external-import -- --settings /private/external-import.env --images\n" +
+        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish]",
     );
     if (!values.help) process.exitCode = 1;
     return;
@@ -303,6 +417,14 @@ export async function main(args = process.argv.slice(2)) {
     if (!settings[key] && process.env[key]) settings[key] = process.env[key];
   if (values.images) {
     await installExternalImages(settings, { profileId: values["profile-id"] });
+    return;
+  }
+  if (values["catch-up"]) {
+    await catchUpExternalTeam(settings, {
+      profileId: values["profile-id"],
+      dryRun: !!values["dry-run"],
+      publish: !!values.publish,
+    });
     return;
   }
   await importExternalTeam(settings, {

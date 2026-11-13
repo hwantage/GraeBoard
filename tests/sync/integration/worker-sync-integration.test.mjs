@@ -35,6 +35,7 @@ import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import { sqliteTeamStore } from "../../../server/storage/sqlite.mjs";
 import { calendarWeek } from "../../../shared/calendar/calendar.js";
 import { backfillWeeklyOrder } from "../../../scripts/sync/sync-weekly-order.mjs";
+import { catchUpTeam } from "../../../scripts/sync/sync-external-import.mjs";
 import { migratePostgres } from "../../../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../../../worker/storage/postgres.mjs";
 import { createWorker } from "../../../worker/entry.mjs";
@@ -1354,6 +1355,76 @@ test(
       assert.equal(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
+      );
+      // The operator catch-up receives, in one leased run, more commits than
+      // a hosted run takes (four), after waiting out a stopped run's lease.
+      for (let i = 0; i < 6; i++) {
+        const row = ok(
+          await inside("/tasks?teamId=" + teamId + "&year=2026"),
+        ).tasks.find((item) => item.id === task.id);
+        ok(
+          await inside("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: task.id,
+                key: "title",
+                expectedVersion: row.cells.title.version,
+                value: "Catch up " + i,
+              },
+            ],
+          }),
+        );
+        await app.locals.sync.get(teamId).run();
+      }
+      const catchUpHead = github.text(["rev-parse", "refs/heads/sync-v1"]),
+        behind = (await pgStore.readLink(teamId)).canonical_head,
+        quiet = { log: () => {}, pollMs: 100 },
+        lease = (ms) =>
+          pgStore.withTeamTransaction(teamId, (tx) =>
+            tx.query(
+              "UPDATE team_sync_links SET lease_owner='stopped-run',lease_until=$2 WHERE team_id=$1",
+              [teamId, Date.now() + ms],
+            ),
+          );
+      assert.equal(
+        Number(
+          github.text(["rev-list", "--count", `${behind}..${catchUpHead}`]),
+        ),
+        6,
+      );
+      assert.deepEqual(await catchUpTeam(env, p, { ...quiet, dryRun: true }), {
+        dryRun: true,
+        head: catchUpHead,
+      });
+      await assert.rejects(
+        catchUpTeam({ ...env, INSTALLATION_ID: randomUUID() }, p, quiet),
+        /INSTALLATION_ID/,
+      );
+      await lease(600000);
+      await assert.rejects(
+        catchUpTeam(env, p, { ...quiet, waitMs: 300 }),
+        /이어받지/,
+      );
+      let caught = await pgStore.readLink(teamId);
+      assert.equal(caught.mode, "active");
+      assert.equal(caught.canonical_head, behind);
+      await lease(700);
+      const caughtUp = await catchUpTeam(env, p, quiet);
+      assert.equal(caughtUp.canonicalHead, catchUpHead);
+      assert.equal(caughtUp.linkMode, "active");
+      caught = await pgStore.readLink(teamId);
+      assert.equal(caught.lease_owner, null);
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
+      assert.equal(
+        ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks.find(
+          (item) => item.id === task.id,
+        ).cells.title.value,
+        "Catch up 5",
       );
       // Both sites change one title from the same base: the later one is
       // kept as a conflict. The Worker lists and resolves it on a slice of C
