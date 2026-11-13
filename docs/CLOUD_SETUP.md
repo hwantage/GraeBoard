@@ -514,6 +514,7 @@ fi
 | Access 401                                             | 이 앱 AUD·정확한 발급자·로그인 만료                                                             | 다른 서비스 토큰 재사용 금지              |
 | Access는 통과했는데 403                                | 사내 활성 계정·연결 승인·팀 역할                                                                | 조직 전체 사용자를 자동 추가하지 않음     |
 | Git 연결 시간 초과                                     | 앱 clone의 GitHub 프록시 주소·접속 허용·네트워크                                                | 미전송 내용과 clone 보존                  |
+| 사내 `Git operation failed (코드, 단계)`               | 외부 동기화 화면의 **동기화 로그**에서 실패한 Git 명령의 출력 원문과 조치 안내([운영 안내](OPERATIONS.md#사내-서버-동기화-로그)) | 미전송 내용과 clone 보존                  |
 | JSON 대신 HTML / `Unexpected token '<'`                | 실제 Production branch, Pages Functions와 gateway 연결                                          | DB를 초기화하지 않음                      |
 | 외부 JSON 503 / 외부 서버 연결 실패                    | Pages binding, gateway의 Edge URL·전달 Secret, Edge 로그                                        | 마지막 정상 자료·입력 보존                |
 | Google 로그인 대신 JSON 401                            | 운영 주소 자체의 Access 보호와 issuer/AUD. 미리보기 wildcard만 설정했는지 확인                  | 다른 앱 정책을 넓히지 않음                |
