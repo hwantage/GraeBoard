@@ -1296,6 +1296,111 @@ test(
   },
 );
 
+test(
+  "an event gathers pending commands up to the batch size instead of every one of them",
+  { timeout: 60000 },
+  async (t) => {
+    const { a, b, teamId } = await fixture(t);
+    const task = ok(
+      await a.api("/tasks", { teamId, year: 2026, fields: { title: "batch" } }),
+    ).task;
+    await joinPeer(a, b, teamId);
+    const store = a.app.locals.sync.store(teamId),
+      save = async (value) =>
+        ok(
+          await a.api("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: task.id,
+                key: "title",
+                value,
+                expectedVersion: getTask(a.db, task.id).cells.title.version,
+              },
+            ],
+          }),
+        ),
+      // The operations in each event published after `head`, oldest first.
+      events = async (head) => {
+        const paths = async (commit) =>
+            (await a.transport.readCommit(commit)).files
+              .map((file) => file.path)
+              .filter((file) => file.startsWith("events/")),
+          known = new Set(await paths(head)),
+          counts = [];
+        for (const commit of (
+          await a.transport.git(["rev-list", "--reverse", `${head}..sync-v1`])
+        )
+          .toString()
+          .split("\n")
+          .filter(Boolean)) {
+          const [added, ...others] = (await paths(commit)).filter(
+            (file) => !known.has(file),
+          );
+          assert.equal(others.length, 0);
+          known.add(added);
+          counts.push(
+            JSON.parse((await a.transport.readFile(commit, added)).toString())
+              .operations.length,
+          );
+        }
+        return counts;
+      },
+      publish = async () => {
+        for (let i = 0; i < 10 && store.readPending().length; i++)
+          await a.app.locals.sync.get(teamId).run();
+        assert.equal(store.readPending().length, 0);
+      };
+    let head = store.readLink().canonical_head;
+    await a.transport.git(["update-ref", "refs/heads/sync-v1", head]);
+    for (let i = 0; i < 3; i++) await save("small " + i);
+    assert.equal(store.readPending().length, 3);
+    await publish();
+    await a.transport.readHead();
+    await a.transport.git([
+      "update-ref",
+      "refs/heads/sync-v1",
+      "refs/remotes/origin/sync-v1",
+    ]);
+    assert.deepEqual(await events(head), [3]);
+    // Each save carries the body before and after, about half a megabyte:
+    // two fit the batch size, four no longer travel as one event of 2 MB.
+    head = store.readLink().canonical_head;
+    let revision = 0;
+    for (let i = 0; i < 4; i++)
+      revision = ok(
+        await a.api(
+          `/tasks/${task.id}/document`,
+          {
+            markdown: "x".repeat(250000) + i,
+            expectedRevision: revision,
+            operationId: randomUUID(),
+          },
+          "PUT",
+        ),
+      ).revision;
+    assert.equal(store.readPending().length, 4);
+    await publish();
+    await a.transport.readHead();
+    await a.transport.git([
+      "update-ref",
+      "refs/heads/sync-v1",
+      "refs/remotes/origin/sync-v1",
+    ]);
+    assert.deepEqual(await events(head), [2, 2]);
+    for (let i = 0; i < 6; i++) await b.app.locals.sync.get(teamId).run();
+    assert.equal(
+      ok(await b.api(`/tasks/${task.id}/document`)).markdown,
+      "x".repeat(250000) + 3,
+    );
+    assert.equal(
+      stateHash(store.readState()),
+      stateHash(b.app.locals.sync.store(teamId).readState()),
+    );
+  },
+);
+
 test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent protocol 4 copy cells", async (t) => {
   const { a, b, teamId } = await fixture(t);
   const task = ok(
