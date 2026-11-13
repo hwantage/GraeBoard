@@ -21,8 +21,15 @@ import {
 // the one-time SheetClone cutover (tools/sheet-clone-cutover, SYNC_PROTOCOL.md),
 // which leaves a standard checkpoint for new readers; this runtime reads
 // neither 1 nor 2.
+//
+// Protocol 5 keeps a sheet clone as a parent (metadata and row order), one
+// record per distinct formatting value and one record per row holding its
+// cells. A cell edit then carries one row, not the whole clone (protocol 3),
+// without one record per cell and the formatting repeated in every row
+// (protocol 4). Number 4 stays readable and is never reused.
 export const PROTOCOL = 3;
 export const SPLIT_PROTOCOL = 4;
+export const ROW_PROTOCOL = 5;
 
 export const ENTITIES_WHOLE = new Set([
   "team",
@@ -39,22 +46,37 @@ export const ENTITIES_WHOLE = new Set([
   "formats",
   "protocol",
 ]);
-export const ENTITIES = new Set([
+const ENTITIES_SPLIT = new Set([
   ...ENTITIES_WHOLE,
   "sheetCloneTask",
   "sheetCloneCell",
 ]);
+const ENTITIES_ROWS = new Set([
+  ...ENTITIES_WHOLE,
+  "sheetCloneFormat",
+  "sheetCloneTask",
+]);
+// Every shared entity of any supported protocol, for storage scans.
+export const ENTITIES = new Set([...ENTITIES_SPLIT, ...ENTITIES_ROWS]);
+/** The entities one protocol version shares. */
+export const entitiesFor = (version) =>
+  version === ROW_PROTOCOL
+    ? ENTITIES_ROWS
+    : version === SPLIT_PROTOCOL
+      ? ENTITIES_SPLIT
+      : ENTITIES_WHOLE;
+const VERSIONS = [PROTOCOL, SPLIT_PROTOCOL, ROW_PROTOCOL];
 // The version C's protocol marker names. Before anything is shared C is
 // empty and its first publication starts at protocol 3; records without a
 // supported marker (0) belong to a protocol this runtime does not read.
 export const protocolVersion = (state) => {
   const entities = state?.entities,
     version = entities?.[JSON.stringify(["protocol", []])]?.payload?.version;
-  if (version === PROTOCOL || version === SPLIT_PROTOCOL) return version;
+  if (VERSIONS.includes(version)) return version;
   return entities && !Object.keys(entities).length ? PROTOCOL : 0;
 };
 export const supportedVersion = (protocol, reducer = protocol) =>
-  [PROTOCOL, SPLIT_PROTOCOL].includes(protocol) && reducer === protocol;
+  VERSIONS.includes(protocol) && reducer === protocol;
 export const protocolMarker = (version, token) => ({
   entity: "protocol",
   key: [],
@@ -474,6 +496,18 @@ const payloadFields = {
   sheetCloneTask: ["data", "index"],
   sheetCloneCell: ["data"],
 };
+// Protocol 5 shapes of the sheet clone records.
+const rowPayloadFields = {
+  sheetClone: [...payloadFields.sheetClone, "order"],
+  sheetCloneFormat: ["data"],
+  sheetCloneTask: ["data", "format", "cells"],
+};
+const fieldsFor = (entity, version) =>
+  (version === ROW_PROTOCOL && rowPayloadFields[entity]) ||
+  payloadFields[entity];
+/** The key of a sheet clone's formatting record: a hash of its value. */
+export const sheetCloneFormatId = (formatting) =>
+  digest(formatting).slice(0, 32);
 const keyLengths = {
   team: 0,
   person: 1,
@@ -487,6 +521,7 @@ const keyLengths = {
   filter: 1,
   formats: 0,
   protocol: 0,
+  sheetCloneFormat: 2,
   sheetCloneTask: 2,
   sheetCloneCell: 3,
 };
@@ -503,7 +538,7 @@ export function validateEntityPayload(
   { serializable = false } = {},
 ) {
   if (
-    !(version === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(entity) ||
+    !entitiesFor(version).has(entity) ||
     !Array.isArray(key) ||
     key.some(
       (part) =>
@@ -526,7 +561,9 @@ export function validateEntityPayload(
     throw new Error("Invalid entity key length");
   if (
     !plain(payload) ||
-    Object.keys(payload).some((field) => !payloadFields[entity].includes(field))
+    Object.keys(payload).some(
+      (field) => !fieldsFor(entity, version).includes(field),
+    )
   )
     throw new Error(
       entity === "person"
@@ -618,7 +655,31 @@ export function validateEntityPayload(
     (payload.version !== version || payload.reducer !== version)
   )
     throw new Error("Invalid protocol marker");
-  if (
+  if (entity === "sheetCloneFormat") {
+    if (!plain(payload.data) || sheetCloneFormatId(payload.data) !== key[1])
+      throw new Error("Invalid sheetClone format");
+  } else if (entity === "sheetCloneTask" && version === ROW_PROTOCOL) {
+    const { data, format, cells } = payload;
+    if (
+      !plain(data) ||
+      data.id !== key[1] ||
+      data.teamId !== teamId ||
+      Object.hasOwn(data, "cells") ||
+      plain(data.formatting) ||
+      !(format === null || /^[a-f0-9]{32}$/.test(format)) ||
+      !plain(cells) ||
+      Object.entries(cells).some(
+        ([cellKey, cell]) =>
+          !cellKey ||
+          cellKey.length > 200 ||
+          ["__proto__", "constructor", "prototype"].includes(cellKey) ||
+          !plain(cell) ||
+          !Object.hasOwn(cell, "value") ||
+          !plain(cell.style),
+      )
+    )
+      throw new Error("Invalid sheetClone task");
+  } else if (
     entity === "sheetCloneTask" &&
     (!plain(payload.data) ||
       payload.data.id !== key[1] ||
@@ -668,6 +729,16 @@ export function validateEntityPayload(
       throw new Error("Private account data in sheetClone");
     if (data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team sheetClone row");
+    // Protocol 5: the rows are their own records, in this order.
+    if (
+      version === ROW_PROTOCOL &&
+      (!Array.isArray(payload.order) ||
+        payload.order.some(
+          (id) => typeof id !== "string" || !id || id.length > 200,
+        ) ||
+        new Set(payload.order).size !== payload.order.length)
+    )
+      throw new Error("Invalid sheetClone order");
   }
   if (entity === "document")
     for (const url of documentImageUrls(payload.markdown))
@@ -734,9 +805,7 @@ export function validateOperation(
     texts = new Map();
   for (const c of op.changes) {
     if (
-      !(op.protocol === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(
-        c.entity,
-      ) ||
+      !entitiesFor(op.protocol).has(c.entity) ||
       c.entity === "protocol" ||
       !Array.isArray(c.key) ||
       c.key.some((v) => typeof v !== "string" || v.length > 200) ||

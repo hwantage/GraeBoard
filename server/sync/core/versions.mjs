@@ -5,7 +5,9 @@ import {
   protocolVersion,
   protocolMarker,
   PROTOCOL,
+  ROW_PROTOCOL,
   SPLIT_PROTOCOL,
+  sheetCloneFormatId,
 } from "./protocol.mjs";
 import {
   packSheetCloneData,
@@ -48,6 +50,62 @@ export const splitSheetCloneRecord = (record) => {
   return records;
 };
 
+const plainObject = (value) =>
+  value && Object.getPrototypeOf(value) === Object.prototype;
+// Protocol 5: the parent keeps the row order, each distinct formatting value
+// is one record keyed by its hash and each row is one record with its cells.
+// A row whose formatting is not an object keeps it in its own data.
+export const splitSheetCloneRows = (record) => {
+  if (!record) return [];
+  const source =
+    record.entity === "sheetClone"
+      ? unpackSheetCloneData(record.payload?.data)
+      : null;
+  if (!Array.isArray(source?.tasks)) return [record];
+  const { tasks, ...data } = source,
+    formats = new Map(),
+    ids = new Set(),
+    rows = [];
+  for (const task of tasks) {
+    if (ids.has(task.id))
+      throw new Error(
+        "Duplicate sheet clone task identity prevents lossless protocol upgrade",
+      );
+    ids.add(task.id);
+    const { cells = {}, ...metadata } = task;
+    let format = null;
+    if (plainObject(metadata.formatting)) {
+      format = sheetCloneFormatId(metadata.formatting);
+      if (!formats.has(format))
+        formats.set(format, {
+          ...record,
+          entity: "sheetCloneFormat",
+          key: [record.key[0], format],
+          payload: { data: metadata.formatting },
+        });
+      delete metadata.formatting;
+    }
+    rows.push({
+      ...record,
+      entity: "sheetCloneTask",
+      key: [record.key[0], task.id],
+      payload: { data: metadata, format, cells },
+    });
+  }
+  return [
+    {
+      ...record,
+      payload: {
+        ...record.payload,
+        data,
+        order: tasks.map((task) => task.id),
+      },
+    },
+    ...formats.values(),
+    ...rows,
+  ];
+};
+
 const deletionCommand = (record) =>
   record.version.slice(
     0,
@@ -71,7 +129,9 @@ const MARKER = entityId("protocol", []);
 // rewritten into the parent simply to serve a whole-sheet HTTP response. The
 // protocol marker is not application data.
 export function applicationEntities(entities) {
-  if (protocolVersion({ entities }) !== SPLIT_PROTOCOL) {
+  const version = protocolVersion({ entities });
+  if (version === ROW_PROTOCOL) return composedRows(entities);
+  if (version !== SPLIT_PROTOCOL) {
     if (!Object.hasOwn(entities, MARKER)) return entities;
     const { [MARKER]: marker, ...rest } = entities;
     return rest;
@@ -118,16 +178,82 @@ export function applicationEntities(entities) {
   return output;
 }
 
-// The explicit protocol 3 -> 4 transition (formerly 1 -> 2): each sheet clone
-// is split into deterministic row and cell records.
-export function upgradeState(state) {
+// Protocol 5 recomposition: rows in the parent's order, then any row the
+// order does not list by key; an order entry without a visible row is
+// skipped. `only` limits the work to those sheet clone IDs.
+export function composedRows(entities, only = null) {
+  const output = {},
+    rows = new Map(),
+    formats = new Map();
+  for (const [id, record] of Object.entries(entities)) {
+    if (record.entity === "protocol") continue;
+    if (record.entity === "sheetCloneTask") {
+      if (!rows.has(record.key[0])) rows.set(record.key[0], []);
+      rows.get(record.key[0]).push(record);
+    } else if (record.entity === "sheetCloneFormat")
+      formats.set(canonical(record.key), record);
+    else output[id] = record;
+  }
+  for (const [id, record] of Object.entries(output)) {
+    if (record.entity !== "sheetClone") continue;
+    if (only && !only.has(record.key[0])) {
+      delete output[id];
+      continue;
+    }
+    const visible = new Map(
+        (rows.get(record.key[0]) || [])
+          .filter((row) => visibleChild(record, row))
+          .sort(compareKeys)
+          .map((row) => [row.key[1], row]),
+      ),
+      ordered = [];
+    for (const taskId of record.payload.order || []) {
+      const row = visible.get(taskId);
+      if (!row) continue;
+      ordered.push(row);
+      visible.delete(taskId);
+    }
+    ordered.push(...visible.values());
+    const { order: _order, ...payload } = record.payload;
+    output[id] = {
+      ...record,
+      payload: {
+        ...payload,
+        data: packSheetCloneData({
+          ...unpackSheetCloneData(record.payload.data),
+          tasks: ordered.map((row) => {
+            const format =
+              row.payload.format &&
+              formats.get(canonical([record.key[0], row.payload.format]));
+            return {
+              ...row.payload.data,
+              ...(format ? { formatting: format.payload.data } : {}),
+              cells: row.payload.cells,
+            };
+          }),
+        }),
+      },
+    };
+  }
+  return output;
+}
+
+// The explicit transition from protocol 3: each sheet clone is split into
+// deterministic records, rows and cells for protocol 4 (formerly 1 -> 2) or
+// formats and rows for protocol 5. The token labels are part of each format.
+export function upgradeState(state, target = SPLIT_PROTOCOL) {
+  if (![SPLIT_PROTOCOL, ROW_PROTOCOL].includes(target))
+    throw new Error("Unsupported protocol upgrade target");
+  const split =
+      target === ROW_PROTOCOL ? splitSheetCloneRows : splitSheetCloneRecord,
+    label = target === ROW_PROTOCOL ? "protocol-5" : "protocol-2";
   if (protocolVersion(state) !== PROTOCOL)
     throw new Error("Protocol upgrade requires version 3");
   if (Object.values(state.conflicts).some((conflict) => !conflict.resolution))
     throw new Error("Protocol upgrade requires resolved conflicts");
   const entities = {};
   for (const record of Object.values(state.entities)) {
-    for (const next of splitSheetCloneRecord(record)) {
+    for (const next of split(record)) {
       const changed = next !== record;
       entities[entityId(next.entity, next.key)] = changed
         ? {
@@ -136,7 +262,7 @@ export function upgradeState(state) {
               next.entity === "sheetClone"
                 ? record.generation
                 : digest([
-                    "protocol-2-generation",
+                    label + "-generation",
                     record.generation,
                     next.entity,
                     next.key,
@@ -144,13 +270,13 @@ export function upgradeState(state) {
             version:
               record.deleted && next.entity !== "sheetClone"
                 ? digest([
-                    "protocol-2-version",
+                    label + "-version",
                     record.version,
                     "sheetClone",
                     record.key,
                   ]) + ":0"
                 : digest([
-                    "protocol-2-version",
+                    label + "-version",
                     record.version,
                     next.entity,
                     next.key,
@@ -160,8 +286,8 @@ export function upgradeState(state) {
     }
   }
   entities[MARKER] = protocolMarker(
-    SPLIT_PROTOCOL,
-    digest(["protocol-4", digest(state)]),
+    target,
+    digest(["protocol-" + target, digest(state)]),
   );
   return {
     entities,
