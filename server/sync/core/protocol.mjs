@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   preparedSyncOperation,
   syncCanonicalCache,
+  syncRunPayloads,
   rememberSyncCanonical,
 } from "./sync-operation-cache.mjs";
 import { SYNC_OPERATION_MAX_BYTES } from "../../../shared/sync/sync-limits.js";
@@ -299,6 +300,19 @@ function sameCanonical(a, b, seen) {
       assertCanonical(b);
       return false;
     }
+    // Two strings have the same canonical text exactly when they are the
+    // same string; null and booleans likewise. Everything else (numbers,
+    // mixed types, values canonical() rejects) keeps the serialized compare.
+    if (typeof a === "string" && typeof b === "string") return a === b;
+    if (
+      a === b &&
+      (a === null ||
+        typeof a === "boolean" ||
+        (typeof a === "number" &&
+          Number.isFinite(a) &&
+          Math.abs(a) <= Number.MAX_SAFE_INTEGER))
+    )
+      return true;
     return canonical(a) === canonical(b);
   }
   if (a === b) return true;
@@ -329,9 +343,30 @@ function sameCanonical(a, b, seen) {
   }
   return same;
 }
+// A sheet copy's shared-dictionary data, unpacked once per data object.
+// Validation and the reducer both read the unpacked form of the same payload,
+// and successive commands on one copy share payload objects, so each object is
+// unpacked once instead of at every use. The result is only read, never
+// changed. Keyed by the object, so an entry ends with its event.
+const unpackedSheetClones = new WeakMap();
+const unpackedSheetCloneData = (data) => {
+  if (!data || typeof data !== "object") return data;
+  let unpacked = unpackedSheetClones.get(data);
+  if (unpacked === undefined) {
+    unpacked = unpackSheetCloneData(data);
+    unpackedSheetClones.set(data, unpacked);
+  }
+  return unpacked;
+};
+// normalizeEntityPayload() with the unpacked data shared as above.
+export const normalizedPayload = (entity, payload) => {
+  if (entity !== "sheetClone" || !payload) return payload;
+  const data = unpackedSheetCloneData(payload.data);
+  return data === payload.data ? payload : { ...payload, data };
+};
 // 사본 data는 평문과 공유 사전 형태가 섞여 있을 수 있으므로 내용으로 비교한다.
 export const payloadEqual = (entity, a, b) =>
-  equal(normalizeEntityPayload(entity, a), normalizeEntityPayload(entity, b));
+  a === b || equal(normalizedPayload(entity, a), normalizedPayload(entity, b));
 export const emptyState = () => ({ entities: {}, receipts: {}, conflicts: {} });
 export const stateHash = (state) => digest(state);
 
@@ -591,7 +626,7 @@ export function validateEntityPayload(
     let data = payload.data;
     if (plain(data))
       try {
-        data = unpackSheetCloneData(data);
+        data = unpackedSheetCloneData(data);
       } catch {
         throw new Error("Invalid sheetClone payload");
       }
@@ -680,7 +715,9 @@ export function validateOperation(
       throw new Error("Invalid conflict resolution references");
     validateResolutionState(op, state);
   }
-  const seen = new Set();
+  const seen = new Set(),
+    // Canonical text of this command's payload objects, where already made.
+    texts = new Map();
   for (const c of op.changes) {
     if (
       !(op.protocol === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(
@@ -706,11 +743,45 @@ export function validateOperation(
     const key = entityId(c.entity, c.key);
     if (seen.has(key)) throw new Error("Duplicate entity change");
     seen.add(key);
+    // Successive commands of one run that edit the same record carry its
+    // payload twice: one command's desired value is the next one's base (a
+    // sheet copy of megabytes, in protocol 3). When the two have the same
+    // canonical text, this command's base becomes the earlier desired object,
+    // so validation, unpacking and comparison do their work once. The
+    // command's canonical text is unchanged, and it is assembled below from
+    // the payload texts already made here.
+    const run = known === undefined ? syncRunPayloads() : null;
+    if (run && !Object.isFrozen(c)) {
+      try {
+        const previous = run.latest.get(key),
+          baseText =
+            c.base && typeof c.base === "object" ? canonical(c.base) : null;
+        if (baseText !== null) {
+          if (previous && previous.text === baseText) c.base = previous.object;
+          texts.set(c.base, baseText);
+        }
+        if (c.desired && typeof c.desired === "object") {
+          const text = canonical(c.desired);
+          texts.set(c.desired, text);
+          run.latest.set(key, { object: c.desired, text });
+        } else run.latest.delete(key);
+      } catch {
+        // A payload canonical JSON cannot hold is rejected by the validation
+        // below, with its own message.
+        run.latest.delete(key);
+      }
+    }
     // validateEntityPayload checks a non-null value serializes canonically.
-    if (c.base !== null)
-      validateEntityPayload(c.entity, c.key, c.base, op.teamId, op.protocol);
-    if (c.desired !== null)
-      validateEntityPayload(c.entity, c.key, c.desired, op.teamId, op.protocol);
+    // A payload object already validated in this run as the same record is
+    // not validated again.
+    const signature = run && key + "\n" + op.teamId + "\n" + op.protocol;
+    for (const payload of [c.base, c.desired]) {
+      if (payload === null) continue;
+      const object = run && payload && typeof payload === "object";
+      if (object && run.validated.get(payload) === signature) continue;
+      validateEntityPayload(c.entity, c.key, payload, op.teamId, op.protocol);
+      if (object) run.validated.set(payload, signature);
+    }
     if (c.desired === null && c.action !== "delete")
       throw new Error("Missing desired entity");
     if (c.fields.some((field) => !payloadFields[c.entity].includes(field)))
@@ -738,7 +809,11 @@ export function validateOperation(
     )
       throw new Error("Private team setting in shared payload");
   }
-  const serialized = known ?? canonical(op);
+  const serialized =
+    known ??
+    (texts.size
+      ? canonicalWith(op, (value) => texts.get(value))
+      : canonical(op));
   validateOperationSize(serialized);
   onSerialized?.(serialized);
   if (prepared) prepared.validated = true;
