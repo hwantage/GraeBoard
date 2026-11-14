@@ -47,6 +47,10 @@ export function parseSyncOperation(text) {
 export const preparedSyncOperation = (operation) =>
   active()?.prepared.get(operation);
 export const syncCanonicalCache = () => active();
+// What this run knows about payloads, for validateOperation: the objects it
+// already validated (each with what it was validated as), and the last desired
+// payload of each record with its canonical text.
+export const syncRunPayloads = () => active()?.payloads;
 export function rememberSyncCanonical(scope, value, text) {
   if (scope?.jsonObjects.has(value) && !scope.texts.has(value)) {
     const bytes = Buffer.byteLength(text);
@@ -68,6 +72,7 @@ export function withSyncOperationCache(work) {
     texts: new WeakMap(),
     jsonObjects: new WeakSet(),
     textBytes: 0,
+    payloads: { validated: new WeakMap(), latest: new Map() },
   };
   const close = () => {
     scope.closed = true;
@@ -75,6 +80,7 @@ export function withSyncOperationCache(work) {
     scope.prepared = new WeakMap();
     scope.texts = new WeakMap();
     scope.jsonObjects = new WeakSet();
+    scope.payloads = { validated: new WeakMap(), latest: new Map() };
   };
   return scopes.run(scope, () => {
     try {

@@ -9,7 +9,10 @@ const settings = Deno.env.toObject();
 const pool = new pg.Pool({
   connectionString: settings.GRAEBOARD_DATABASE_URL || settings.SUPABASE_DB_URL,
   max: 3,
-  idleTimeoutMillis: 10000,
+  // Opening a connection costs several round trips (TCP, TLS, sign-in, the
+  // schema check), so one stays open across a user's consecutive requests.
+  idleTimeoutMillis: 60000,
+  keepAlive: true,
   connectionTimeoutMillis: 10000,
   statement_timeout: 15000,
 });

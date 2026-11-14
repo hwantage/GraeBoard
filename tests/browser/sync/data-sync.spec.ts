@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { GitCliTransport } from "../../../server/sync/node/git-cli.mjs";
 import { createApp } from "../../../server/app.mjs";
 import { openDatabase } from "../../../server/db.mjs";
-import { unpack } from "../../../shared/formatting/compact.js";
+import { pack, unpack } from "../../../shared/formatting/compact.js";
 
 let db: ReturnType<typeof openDatabase>;
 let app: ReturnType<typeof createApp>;
@@ -1350,6 +1350,200 @@ test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결�
   await expect(items.nth(1).getByRole("alert")).toContainText(
     "이미 해결 방법을 저장했습니다",
   );
+});
+
+// Shaped like the 2026-11-13 production box: fifteen copy conflicts whose
+// sheets repeat the team's formatting rules under 438 tasks, packed the way
+// both servers send them.
+test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전체 선택으로 덮어쓰고 펼친 항목만 비교한다", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  const bootstrap = await configuredBootstrap(page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const ids = Array.from({ length: 438 }, (_, i) => `task-${i}`);
+  const formatting = {
+    revision: 8,
+    rules: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({
+      id: `rule-${i}`,
+      rows: ids.slice(0, i > 5 ? 19 : 430),
+      keys: ["title"],
+      excludeKeys: [],
+      style: { backgroundColor: "#d1eee6" },
+      orders: { backgroundColor: i },
+    })),
+  };
+  const copy = (name: string) => ({
+    name,
+    year: 2026,
+    data: {
+      tasks: ids.map((id, i) => ({
+        id,
+        formatting,
+        cells: {
+          title: { value: `업무 ${i}`, style: { backgroundColor: "#ffffff" } },
+        },
+      })),
+      users: [],
+      view: {},
+      settings: {},
+    },
+  });
+  const conflicts = Array.from({ length: 15 }, (_, i) => {
+    const key = [`clone-${i}`];
+    return {
+      conflictId: `copy-${i}`,
+      opId: `copy-${i}`,
+      createdAt: "2026-11-13T02:56:00.000Z",
+      target: "sheetClone " + key[0],
+      result: "Concurrent field change",
+      base: [copy("원래 사본")],
+      current: {
+        [JSON.stringify(["sheetClone", key])]: {
+          entity: "sheetClone",
+          key,
+          generation: "g".repeat(64),
+          version: `writer-${i}:0`,
+          deleted: false,
+          payload: copy("먼저 사본"),
+        },
+      },
+      desired: [copy("나중 사본")],
+      expectedHead: "head-1",
+      frontier: [`copy-${i}`],
+      resolved: false,
+      origin: {
+        held: { site: "internal", actor: "최수연", createdAt: null },
+        writers: {
+          [JSON.stringify(["sheetClone", key])]: {
+            site: "external",
+            actor: "황지선",
+            createdAt: null,
+          },
+        },
+      },
+      pendingResolution: null,
+    };
+  });
+  // The list carries no values; an opened conflict is requested whole.
+  const body = JSON.stringify(
+    pack({
+      conflicts: conflicts.map(
+        ({ base: _base, current: _current, desired: _desired, ...summary }) =>
+          summary,
+      ),
+    }),
+  );
+  const opened: string[] = [];
+  const resolved: string[] = [];
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({ json: bootstrap }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({
+      json: {
+        mode: "active",
+        profileId: "local",
+        pending: 0,
+        conflicts: 15,
+        canonicalHead: "head-1",
+      },
+    }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    route.fulfill({ contentType: "application/json", body }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/conflicts/*`, (route) => {
+    const id = route.request().url().split("/").at(-1)!;
+    opened.push(id);
+    // The external server can exceed its limits on one large copy.
+    return id === "copy-1"
+      ? route.fulfill({
+          status: 546,
+          json: { code: "WORKER_RESOURCE_LIMIT", message: "limit" },
+        })
+      : route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(
+            pack(conflicts.find((conflict) => conflict.conflictId === id)),
+          ),
+        });
+  });
+  await page.route(
+    `**/api/teams/${teamId}/sync/conflicts/*/resolve`,
+    (route) => {
+      resolved.push(route.request().url().split("/").at(-2)!);
+      return route.fulfill({ json: { opId: "resolution" } });
+    },
+  );
+  await page.reload();
+  // The longest main-thread task from here on: a page blocked for long gets
+  // Chrome's "page unresponsive" prompt.
+  await page.evaluate(() => {
+    const w = window as unknown as { longestTask: number };
+    w.longestTask = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries())
+        w.longestTask = Math.max(w.longestTask, entry.duration);
+    }).observe({ type: "longtask", buffered: false });
+  });
+  await page
+    .locator(".topbar")
+    .getByRole("button", { name: "충돌 보관함" })
+    .click();
+  const box = page.getByRole("dialog", { name: "충돌 보관함" });
+  const items = box.locator(".team-sync-conflict");
+  await expect(items).toHaveCount(15);
+  await expect(items.first().locator(":scope > summary")).toContainText(
+    "(외부) 황지선 → (사내) 최수연",
+  );
+  // Closed cards hold no comparison.
+  await expect(box.locator(".sync-conflict-diff")).toHaveCount(0);
+  await box.getByLabel("전체 선택").click();
+  await expect(box.locator(".team-sync-conflict-batch-count")).toHaveText(
+    "15개 선택",
+  );
+  page.once("dialog", (dialog) => void dialog.accept());
+  await box
+    .getByRole("group", { name: "선택한 충돌 일괄 해결" })
+    .getByRole("button", { name: "나중에 수정으로 덮어쓰기", exact: true })
+    .click();
+  await expect(box.locator(".team-sync-conflict-batch-status")).toHaveText(
+    "충돌 15개의 해결 방법을 저장했습니다. 다음 동기화 때 상대 사이트에도 반영됩니다.",
+  );
+  expect(resolved).toHaveLength(15);
+  // An expanded copy compares the renamed field only.
+  await items.first().locator(":scope > summary").click();
+  const change = items.first().locator(".sync-diff-change");
+  await expect(change).toContainText("내용이 커서 바뀐 항목만 비교합니다");
+  await expect(change.locator(".sync-diff-line")).toHaveText([
+    /name: "먼저 사본"/,
+    /name: "나중 사본"/,
+  ]);
+  await expect(box.locator(".sync-conflict-diff")).toHaveCount(1);
+  // Only the opened conflict was requested. One that cannot be loaded says
+  // so and can still be settled without its values, except by editing them.
+  expect(opened).toEqual(["copy-0"]);
+  const second = items.nth(1);
+  await second.locator(":scope > summary").click();
+  await expect(second.locator(".error-note")).toContainText(
+    "내용을 불러오지 못했습니다",
+  );
+  await expect(second.locator(".sync-conflict-diff")).toHaveCount(0);
+  await expect(
+    second.getByRole("button", { name: "직접 고치기" }),
+  ).toBeDisabled();
+  await second
+    .getByRole("button", { name: "먼저 수정으로 유지", exact: true })
+    .click();
+  await expect.poll(() => resolved.length).toBe(16);
+  expect(resolved.at(-1)).toBe("copy-1");
+  const longest = await page.evaluate(
+    () => (window as unknown as { longestTask: number }).longestTask,
+  );
+  expect(longest).toBeLessThan(3000);
+  expect(errors).toEqual([]);
 });
 
 test("충돌 보관함은 다시 충돌할 덮어쓰기를 거절된 항목으로 표시하고 먼저 수정으로 유지하도록 안내한다", async ({

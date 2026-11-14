@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
 import { api, send, type ApiError } from "../platform/api";
@@ -32,9 +32,10 @@ export type Conflict = {
   createdAt: string;
   target: string;
   result: string;
-  base: unknown;
-  current: unknown;
-  desired: unknown;
+  // The list carries no values; they arrive when the conflict is opened.
+  base?: unknown;
+  current?: unknown;
+  desired?: unknown;
   expectedHead: string;
   frontier?: string[];
   resolved?: boolean;
@@ -49,6 +50,9 @@ export type Conflict = {
     choice: Choice;
   } | null;
 };
+
+type LoadedConflict = Conflict &
+  Required<Pick<Conflict, "base" | "current" | "desired">>;
 
 const choices: Record<Choice, string> = {
   current: "먼저 수정으로 유지",
@@ -82,6 +86,54 @@ export default function SyncConflictBox({
   // Conflicts checked for a batch resolution, and its progress or result.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batch, setBatch] = useState("");
+  // A copy conflict carries whole sheets: compare only the expanded cards and
+  // summarize each card once per loaded list, not on every checkbox click.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Values of the opened conflicts, kept across reloads of the list.
+  const [values, setValues] = useState<
+    Record<string, Pick<Conflict, "base" | "current" | "desired">>
+  >({});
+  const [valueErrors, setValueErrors] = useState<Record<string, string>>({});
+  const listed = useMemo(
+    () =>
+      conflicts &&
+      conflicts.map((conflict) =>
+        conflict.desired === undefined && values[conflict.conflictId]
+          ? { ...conflict, ...values[conflict.conflictId] }
+          : conflict,
+      ),
+    [conflicts, values],
+  );
+  async function loadValues(conflictId: string) {
+    setValueErrors((current) => ({ ...current, [conflictId]: "" }));
+    try {
+      const { base, current, desired } = await api<Conflict>(
+        `${prefix}/conflicts/${encodeURIComponent(conflictId)}`,
+      );
+      setValues((kept) => ({
+        ...kept,
+        [conflictId]: { base, current, desired },
+      }));
+    } catch (error) {
+      setValueErrors((current) => ({
+        ...current,
+        [conflictId]: `내용을 불러오지 못했습니다: ${syncErrorMessage(error) || (error as Error).message}`,
+      }));
+    }
+  }
+  const summaries = useMemo(
+    () =>
+      new Map(
+        (listed || []).map((conflict) => [
+          conflict.conflictId,
+          {
+            kind: conflictKinds(conflict.target) || "업무 변경",
+            editors: conflict.origin ? conflictEditors(conflict) : "",
+          },
+        ]),
+      ),
+    [listed],
+  );
   async function load(signal?: AbortSignal) {
     const result = await api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, {
       signal,
@@ -141,7 +193,7 @@ export default function SyncConflictBox({
   // One request per conflict, in order, through the same API as a single
   // resolution; a failed one is reported on its card and the rest go on.
   async function resolveSelected(choice: "current" | "submitted") {
-    const targets = (conflicts || []).filter(
+    const targets = (listed || []).filter(
       (conflict) =>
         selected.has(conflict.conflictId) && !conflict.pendingResolution,
     );
@@ -227,14 +279,14 @@ export default function SyncConflictBox({
     >
       {loadError ? (
         <ErrorNote error={loadError} />
-      ) : !conflicts ? (
+      ) : !listed ? (
         <LoadingState label="충돌 보관함을 불러오는 중" />
-      ) : !conflicts.length ? (
+      ) : !listed.length ? (
         <p className="field-help">보관된 충돌이 없습니다.</p>
       ) : (
         <>
           <BatchBar
-            conflicts={conflicts}
+            conflicts={listed}
             selected={selected}
             busy={busy}
             status={batch}
@@ -242,20 +294,33 @@ export default function SyncConflictBox({
             onResolve={(choice) => void resolveSelected(choice)}
           />
           <section className="team-sync-conflicts" aria-label="충돌 보관함">
-            {conflicts.map((conflict) => {
-              const saved = conflict.pendingResolution,
+            {listed.map((conflict) => {
+              const loaded = conflict.desired !== undefined,
+                saved = conflict.pendingResolution,
                 edit = editing === conflict.conflictId,
-                refusal = saved ? undefined : refusals[conflict.conflictId];
+                refusal = saved ? undefined : refusals[conflict.conflictId],
+                summary = summaries.get(conflict.conflictId)!;
               return (
                 <details
                   key={conflict.conflictId}
                   className="team-sync-conflict"
+                  onToggle={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    const open = event.currentTarget.open;
+                    if (open && !loaded) void loadValues(conflict.conflictId);
+                    setExpanded((current) => {
+                      const next = new Set(current);
+                      if (open) next.add(conflict.conflictId);
+                      else next.delete(conflict.conflictId);
+                      return next;
+                    });
+                  }}
                 >
                   <summary>
                     <input
                       type="checkbox"
                       className="team-sync-conflict-check"
-                      aria-label={`${conflictKinds(conflict.target) || "업무 변경"} 충돌 선택`}
+                      aria-label={`${summary.kind} 충돌 선택`}
                       checked={selected.has(conflict.conflictId)}
                       disabled={!!saved || busy}
                       onChange={() =>
@@ -273,11 +338,11 @@ export default function SyncConflictBox({
                       aria-hidden="true"
                     />
                     <span className="team-sync-conflict-kind">
-                      {conflictKinds(conflict.target) || "업무 변경"}
+                      {summary.kind}
                     </span>
                     {conflict.origin && (
                       <span className="team-sync-conflict-people">
-                        {conflictEditors(conflict)}
+                        {summary.editors}
                       </span>
                     )}
                     {saved && (
@@ -306,8 +371,31 @@ export default function SyncConflictBox({
                       </p>
                     )}
                     {refusal && <RefusalGuide refusal={refusal} />}
-                    <SyncConflictDiff conflict={conflict} people={people} />
-                    <SyncConflictRaw conflict={conflict} />
+                    {!loaded ? (
+                      valueErrors[conflict.conflictId] ? (
+                        <>
+                          <ErrorNote error={valueErrors[conflict.conflictId]} />
+                          <p className="field-help">
+                            내용을 보지 않고도 아래에서 해결 방법을 고를 수
+                            있습니다.
+                          </p>
+                        </>
+                      ) : (
+                        <LoadingState label="충돌 내용을 불러오는 중" />
+                      )
+                    ) : (
+                      <>
+                        {expanded.has(conflict.conflictId) && (
+                          <SyncConflictDiff
+                            conflict={conflict as LoadedConflict}
+                            people={people}
+                          />
+                        )}
+                        <SyncConflictRaw
+                          conflict={conflict as LoadedConflict}
+                        />
+                      </>
+                    )}
                     {!saved && edit && (
                       <label className="team-sync-conflict-edit">
                         적용할 내용
@@ -356,7 +444,7 @@ export default function SyncConflictBox({
                               {choices.submitted}
                             </Button>
                             <Button
-                              {...busyProps(busy)}
+                              {...busyProps(busy, !loaded)}
                               onClick={() => {
                                 setEditing(conflict.conflictId);
                                 setDraft(conflictRawText(conflict.desired));

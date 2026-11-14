@@ -14,7 +14,8 @@ import {
   readEntity,
 } from "../../../server/sync/node/entities.mjs";
 import { makeOperation } from "../../../server/sync/core/operations.mjs";
-import { reduce } from "../../../server/sync/core/reducer.mjs";
+import { reduce, reduceMany } from "../../../server/sync/core/reducer.mjs";
+import { withSyncOperationCache } from "../../../server/sync/core/sync-operation-cache.mjs";
 import { splitSheetCloneRecord } from "../../../server/sync/core/versions.mjs";
 import {
   canonical,
@@ -22,12 +23,14 @@ import {
   entityId,
   stateHash,
   validateEntityPayload,
+  validateOperation,
 } from "../../../server/sync/core/protocol.mjs";
 import { defaultView } from "../../../shared/domain.js";
-import { stringify } from "../../../shared/formatting/compact.js";
+import { stringify, unpack } from "../../../shared/formatting/compact.js";
 import {
   isPackedSheetCloneData,
   packSheetCloneData,
+  plainConflictPayloads,
   unpackSheetCloneData,
   unpackSheetClonePayload,
 } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
@@ -283,6 +286,123 @@ test("기존 평문 사본 기준본에 공유 사전 명령을 적용해도 편
   assert.equal(conflicting.receipt.result, "conflict");
 });
 
+test("한 이벤트에 든 같은 사본의 연속 편집은 반복되는 사본을 한 번만 검증·비교하고 결과는 그대로다", (t) => {
+  const f = sqliteFixture(t);
+  const id = entityId("sheetClone", [f.sheetCloneId]),
+    identity = { teamId: f.link.team_id ?? f.teamId, repoId: f.link.repo_id };
+  // 사내에서 사본을 연달아 고친 명령들: 앞 명령의 결과가 다음 명령의 기준이다.
+  const operations = [];
+  let state = f.state;
+  for (let i = 0; i < 5; i++) {
+    const record = state.entities[id],
+      data = structuredClone(unpackSheetCloneData(record.payload.data));
+    data.tasks[0].cells.title = {
+      ...data.tasks[0].cells.title,
+      value: "연속 편집 " + i,
+    };
+    const operation = makeOperation({
+      link: f.link,
+      actorRef: f.user.id,
+      before: { [id]: record },
+      after: {
+        [id]: {
+          ...record,
+          payload: { ...record.payload, data: packSheetCloneData(data) },
+        },
+      },
+    });
+    operations.push(operation);
+    const applied = reduce(state, operation);
+    assert.equal(applied.receipt.result, "applied");
+    state = applied.state;
+  }
+  // 마지막은 오래된 기준의 편집이라 충돌로 보관된다.
+  const stale = structuredClone(
+    unpackSheetCloneData(f.state.entities[id].payload.data),
+  );
+  stale.tasks[0].cells.title = {
+    ...stale.tasks[0].cells.title,
+    value: "오래된 기준",
+  };
+  operations.push(
+    makeOperation({
+      link: f.link,
+      actorRef: f.user.id,
+      before: { [id]: f.state.entities[id] },
+      after: {
+        [id]: {
+          ...f.state.entities[id],
+          payload: {
+            ...f.state.entities[id].payload,
+            data: packSheetCloneData(stale),
+          },
+        },
+      },
+    }),
+  );
+  // 이벤트에서 읽은 것처럼 명령마다 따로 파싱한 객체다.
+  const texts = operations.map(canonical),
+    received = () => texts.map((text) => JSON.parse(text));
+  const plain = reduceMany(f.state, received()),
+    inRun = received(),
+    serialized = [];
+  // 명령의 결과가 레코드가 됐을 때의 문자열: 실행 밖에서 만든 기준값.
+  const record = (operation) => ({
+      entity: "sheetClone",
+      key: operation.changes[0].key,
+      payload: { ...operation.changes[0].desired },
+      deleted: false,
+    }),
+    recordTexts = received().map((operation) => canonical(record(operation))),
+    inRunRecordTexts = [];
+  const shared = withSyncOperationCache(() => {
+    for (const operation of inRun) {
+      validateOperation(
+        operation,
+        { teamId: operation.teamId, repoId: operation.repoId },
+        undefined,
+        { onSerialized: (text) => serialized.push(text) },
+      );
+      // 실행 안에서는 이미 만든 data 문자열로 조립하지만 결과는 같다.
+      inRunRecordTexts.push(canonical(record(operation)));
+    }
+    return reduceMany(f.state, received());
+  });
+  assert.deepEqual(serialized, texts);
+  assert.deepEqual(inRunRecordTexts, recordTexts);
+  assert.equal(stateHash(shared), stateHash(plain));
+  assert.deepEqual(
+    Object.values(shared.receipts).map((receipt) => receipt.result),
+    Object.values(plain.receipts).map((receipt) => receipt.result),
+  );
+  assert.equal(
+    Object.values(shared.receipts).filter(
+      (receipt) => receipt.result === "conflict",
+    ).length,
+    1,
+  );
+  assert.equal(Object.keys(shared.conflicts).length, 1);
+  // 실행 안에서는 다음 명령의 기준이 앞 명령의 결과와 같은 객체가 된다.
+  for (let i = 1; i < 5; i++)
+    assert.equal(
+      inRun[i].changes[0].base,
+      inRun[i - 1].changes[0].desired,
+      "command " + i,
+    );
+  assert.notEqual(inRun[5].changes[0].base, inRun[4].changes[0].desired);
+  // 잘못된 사본은 같은 객체를 다시 만나도, 처음 만나도 같은 문구로 거절한다.
+  const broken = JSON.parse(texts[1]);
+  broken.changes[0].desired.data.$data = { tasks: "x" };
+  for (const run of [(work) => work(), withSyncOperationCache])
+    assert.throws(
+      () =>
+        run(() =>
+          reduceMany(f.state, [JSON.parse(texts[0]), structuredClone(broken)]),
+        ),
+      /Invalid sheetClone payload/,
+    );
+});
+
 test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 저장·전송하고 앱에는 풀린 서식을 돌려준다", async (t) => {
   const seed = sqliteFixture(t);
   writeFormatting(seed.db, seed.teamId, {
@@ -380,4 +500,81 @@ test("실제 PostgreSQL 외부 사이트는 사본을 공유 사전 형태로 �
     await new Promise((resolve) => server.close(resolve));
     await app.close();
   }
+});
+
+// 두 서버의 충돌 보관함 응답은 전체를 다시 pack하고 브라우저가 unpack으로 읽는다.
+// 사본 자체 사전의 $s·$f 참조가 응답 사전으로 해석되면 화면이 형식 오류로 멈춘다.
+test("충돌 보관함 응답은 사본 payload를 평문으로 내려 응답 전체 사전에서도 같은 내용으로 풀린다", () => {
+  const ids = [randomUUID(), randomUUID()],
+    rules = productionRules(ids),
+    data = {
+      tasks: ids.map((id, index) => ({
+        id,
+        formatting: rules,
+        defaultStyle: { fontFamily: "Noto Sans KR", fontSize: 9 },
+        cells: {
+          title: {
+            value: "row " + index,
+            style: { backgroundColor: index ? "#0064fa" : "#ffd84d" },
+          },
+        },
+      })),
+      users: [],
+      view: defaultView(2026),
+      settings: {},
+    },
+    record = { key: [randomUUID()] },
+    payload = { year: 2026, name: "first", data: packSheetCloneData(data) },
+    cell = {
+      entity: "cell",
+      key: [ids[0], "title"],
+      payload: { value: "first", style: { textAlign: "right" } },
+    },
+    sheetClone = { entity: "sheetClone", key: record.key, payload };
+  assert.equal(payload.data.$formats.length, 1);
+  const conflict = {
+    operation: {
+      changes: [
+        {
+          entity: "cell",
+          key: cell.key,
+          base: cell.payload,
+          desired: { ...cell.payload, value: "later" },
+        },
+        {
+          entity: "sheetClone",
+          key: record.key,
+          base: payload,
+          desired: { ...payload, name: "later" },
+        },
+      ],
+    },
+    current: {
+      [entityId("cell", cell.key)]: cell,
+      [entityId("sheetClone", record.key)]: sheetClone,
+      [entityId("task", ["deleted"])]: null,
+    },
+  };
+  const wire = (view) => unpack(JSON.parse(stringify(view)));
+  // 이전 응답 형태: 사본의 $s·$f 참조를 응답 사전에서 찾다가 실패한다.
+  assert.throws(
+    () =>
+      wire({
+        base: conflict.operation.changes.map((change) => change.base),
+        current: conflict.current,
+      }),
+    /서식 참조를 확인하세요/,
+  );
+  const listed = wire(plainConflictPayloads(conflict));
+  assert.deepEqual(listed.base[0], cell.payload);
+  assert.deepEqual(listed.base[1].data, data);
+  assert.deepEqual(listed.desired[1], { ...payload, name: "later", data });
+  assert.deepEqual(listed.current[entityId("sheetClone", record.key)], {
+    ...sheetClone,
+    payload: { ...payload, data },
+  });
+  assert.deepEqual(listed.current[entityId("cell", cell.key)], cell);
+  assert.equal(listed.current[entityId("task", ["deleted"])], null);
+  // 저장된 충돌은 그대로 공유 사전 형태를 유지한다.
+  assert.ok(isPackedSheetCloneData(conflict.operation.changes[1].base.data));
 });

@@ -70,6 +70,7 @@ export class PostgresControlRepository {
       read: async (currentUser, cursor) => {
         this.context.user = currentUser;
         this.context.teamCache.clear();
+        this.context.controlStore.forget?.();
         const value = await this.watch(currentUser, teamId),
           next = `pg:team:${teamId}:${value.revision}`;
         return {
@@ -93,8 +94,10 @@ export async function bootstrapFromTeamStores(ctx) {
   } catch {
     // A saved connection must remain manageable when its profile is broken.
   }
-  const controlUsers = await ctx.controlStore.users();
-  for (const row of await ctx.teams()) {
+  const { users: controlUsers, teams: rows } = ctx.controlStore.usersAndTeams
+    ? await ctx.controlStore.usersAndTeams(ctx.user)
+    : { users: await ctx.controlStore.users(), teams: await ctx.teams() };
+  for (const row of rows) {
     let settings = DEFAULT_SETTINGS,
       name = row.name,
       connectionError = null,

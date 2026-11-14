@@ -38,11 +38,13 @@ async function open(page: Page) {
     .click({ button: "right" });
   await expect(rich(page)).toBeVisible();
 }
-async function selectContents(locator: Locator) {
-  await locator.evaluate(async (el) => {
+// With `collapseToEnd`, place the caret after the contents instead.
+async function selectContents(locator: Locator, collapseToEnd = false) {
+  await locator.evaluate(async (el, collapseToEnd) => {
     (el.closest("[contenteditable=true]") as HTMLElement).focus();
     const range = document.createRange();
     range.selectNodeContents(el);
+    if (collapseToEnd) range.collapse(false);
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(range);
     // Notify the editor before its delayed focus handler restores the cursor.
@@ -50,7 +52,7 @@ async function selectContents(locator: Locator) {
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
     );
-  });
+  }, collapseToEnd);
 }
 async function editSource(page: Page, value: string, index = 0) {
   const current = block(page).nth(index);
@@ -413,4 +415,21 @@ test("큰 다이어그램은 블록 안에서 스크롤하고 strict 모드가 �
   await expect(
     preview.locator("script, [onclick], a[href^='javascript:']"),
   ).toHaveCount(0);
+});
+
+test("Mermaid 소스에 한 글자씩 입력한 화살표는 기호로 바꾸지 않는다", async ({
+  page,
+}) => {
+  await save(page, `${fence(diagram)}\n`);
+  await open(page);
+  await block(page).getByRole("img", { name: "Mermaid 다이어그램" }).click();
+  const code = block(page).locator("pre code");
+  await expect(code).toBeVisible();
+  await selectContents(code, true);
+  // Keystrokes, not inserted text, are what run the editor's input rules.
+  const typed = "\n  B <--> C ==> D -.-> E <== F";
+  for (const key of typed)
+    await page.keyboard.press(key === "\n" ? "Enter" : key);
+  await expect(block(page).locator("pre")).toHaveText(diagram + typed);
+  await expect.poll(() => stored(page)).toBe(`${fence(diagram + typed)}\n`);
 });

@@ -119,7 +119,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 ## 6. 공유와 import 경계
 
 - 앱 조합 코드에서 기능을 연결합니다. 공통 UI·통신 기반이 특정 업무 화면을 다시 import하는 새 역방향 의존이나 순환 의존을 만들지 않습니다. 현재 런타임 파일 import 순환은 제거했으며 `npm run check:architecture`가 새 순환을 차단합니다.
-- 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoPanel`은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
+- 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoDocumentPanel`(꼬리 메모 패널·문서 브라우저 공용)은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
 - 기능 간 직접 사용은 공유 역할과 의존 방향을 설명할 수 있어야 합니다. 폴더 안의 모든 파일을 공개 API로 간주하지 않습니다. import 경로를 짧게 만들려고 전역 barrel이나 별칭 체계를 새로 도입하지 않습니다.
 - 내부 Node와 공통 모듈이 외부 호스트 구현을 역참조하지 않도록 유지합니다. PostgreSQL repository는 `worker/storage/` 경계를 유지하고 SQLite·Node 전용 구현을 외부에서 재사용하지 않습니다.
 - 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
