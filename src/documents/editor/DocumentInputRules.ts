@@ -111,6 +111,81 @@ function documentRulesPlugin(rules: InputRule[]) {
   return plugin;
 }
 
+const inputRulesPlugin = (state: EditorState) =>
+  state.plugins.find((plugin) => plugin.spec.isInputRules);
+// Store the inverse that Backspace/Mod-Z (`undoInputRule`) apply: undo `tr`,
+// then put `text` over from..to of the document before it.
+function recordInputRule(
+  state: EditorState,
+  tr: Transaction,
+  from: number,
+  to: number,
+  text: string,
+) {
+  const plugin = inputRulesPlugin(state);
+  if (plugin) tr.setMeta(plugin, { transform: tr, from, to, text });
+  return tr;
+}
+
+// Milkdown turns typed `x` into a code mark and drops its backticks, so a
+// backtick left in the plain text before `pos` opens inline code still being
+// typed (`a->b`, ``a->b): the next backtick makes the code mark.
+function typingInlineCode(state: EditorState, pos: number) {
+  const $pos = state.doc.resolve(pos);
+  let open = false;
+  $pos.parent.forEach((node, offset) => {
+    if (!open && node.isText && offset < $pos.parentOffset && !codeMark(node))
+      open = node.text!.slice(0, $pos.parentOffset - offset).includes("`");
+  });
+  return open;
+}
+
+// Typed arrows become symbols anywhere in text, table cells included. The
+// plugin skips code blocks, and inCodeMark: false keeps inline code as typed.
+// `<-` and `<=` convert before the `>` of `<->` and `<=>` is typed, so a `>`
+// right after that conversion joins the arrow, and Backspace or Mod-Z restore
+// all three typed characters instead of the intermediate arrow.
+const arrowRules = [
+  ...(
+    [
+      [/←>$/, "↔", "<->"],
+      [/⇐>$/, "⇔", "<=>"],
+    ] as const
+  ).map(
+    ([match, symbol, typed]) =>
+      new InputRule(
+        match,
+        (state, _match, start, end) => {
+          // Join only when the last input rule converted this `<-`/`<=`
+          // where the caret is, not after a caret move or another rule.
+          const undo = inputRulesPlugin(state)?.getState(state);
+          if (undo?.text !== typed[1] || undo.to !== end) return null;
+          const tr = state.tr.insertText(symbol, start, end);
+          return recordInputRule(state, tr, start, end, typed);
+        },
+        { inCodeMark: false, undoable: false },
+      ),
+  ),
+  ...[
+    ["<->", "↔"],
+    ["<=>", "⇔"],
+    ["->", "→"],
+    ["<-", "←"],
+    ["=>", "⇒"],
+    ["<=", "⇐"],
+  ].map(
+    ([typed, symbol]) =>
+      new InputRule(
+        new RegExp(`${typed}$`),
+        (state, _match, start, end) =>
+          typingInlineCode(state, start)
+            ? null
+            : state.tr.insertText(symbol, start, end),
+        { inCodeMark: false },
+      ),
+  ),
+];
+
 // Preserve Milkdown's handlers and undo-input-rule metadata, with the same
 // boundaries for every block shortcut, including the additional task forms.
 export function configureDocumentInputRules(ctx: Ctx) {
@@ -187,7 +262,9 @@ export function configureDocumentInputRules(ctx: Ctx) {
     return {
       ...configured,
       plugins: configured.plugins?.map((plugin) =>
-        plugin.spec.isInputRules ? documentRulesPlugin(rules) : plugin,
+        plugin.spec.isInputRules
+          ? documentRulesPlugin([...rules, ...arrowRules])
+          : plugin,
       ),
     };
   });
@@ -211,15 +288,7 @@ function fenceEnter(view: EditorView) {
   );
   const tr = rule.handler(state, match, $from.start(), $from.end());
   if (!tr) return false;
-  const plugin = state.plugins.find((plugin) => plugin.spec.isInputRules);
-  if (plugin)
-    tr.setMeta(plugin, {
-      transform: tr,
-      from: $from.pos,
-      to: $from.pos,
-      text: "",
-    });
-  view.dispatch(tr);
+  view.dispatch(recordInputRule(state, tr, $from.pos, $from.pos, ""));
   return true;
 }
 
