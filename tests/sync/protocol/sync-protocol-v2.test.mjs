@@ -725,8 +725,9 @@ test("protocol 5 logical transfer carries a copy as its row records and restores
         JSON.parse(item.entity_key)[1] === f.taskId,
     );
   // The site rows an external site at protocol 5 stores: the parent with its
-  // row order, and each row with its cells.
-  assert.ok(parent.order.includes(f.taskId));
+  // format assignment, and each row with its cells.
+  assert.equal(parent.order, undefined);
+  assert.equal(typeof parent.formats, "object");
   assert.equal(parent.data.tasks, undefined);
   assert.equal(
     JSON.parse(row.payload).cells.title.value,

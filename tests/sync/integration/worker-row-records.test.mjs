@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 import { transaction, writeFormatting } from "../../../server/db.mjs";
 import { defaultView } from "../../../shared/domain.js";
 import {
@@ -15,23 +16,38 @@ import {
   ok,
 } from "../../support/worker-bridge-fixture.mjs";
 
+// Rows in the order the sheet shows them: a site may keep them in another.
 const plain = (sheetClone) => ({
   name: sheetClone.name,
   year: sheetClone.year,
-  tasks: sheetClone.tasks.map((task) => ({
-    id: task.id,
-    title: task.cells.title?.value,
-    note: task.cells["2026-10-19"]?.value ?? null,
-    rules: (task.formatting?.rules || []).map((rule) => rule.id),
-  })),
+  tasks: sheetClone.tasks
+    .toSorted((a, b) => a.position - b.position)
+    .map((task) => ({
+      id: task.id,
+      title: task.cells.title?.value,
+      note: task.cells["2026-10-19"]?.value ?? null,
+      rules: (task.formatting?.rules || []).map((rule) => rule.id),
+    })),
 });
+// The query that reads every row of a copy (DataSession.composed).
+const WHOLE_COPY = "entity=ANY($2::text[]) AND left(entity_key";
 
 test(
   "protocol 5 on the external site: a copy is stored and synchronized by row, and an edit reads and writes only its row",
   { skip: !existsSync(join(bridgePgBin, "initdb")), timeout: 180000 },
   async (t) => {
     const f = await bridgeFixture(t, { port: 55447 }),
-      { teamId, inside, outside, team } = f;
+      { teamId, inside, outside, team } = f,
+      queries = [],
+      query = pg.Client.prototype.query;
+    pg.Client.prototype.query = function (...args) {
+      const text = typeof args[0] === "string" ? args[0] : args[0]?.text;
+      if (text) queries.push(text);
+      return query.apply(this, args);
+    };
+    t.after(() => {
+      pg.Client.prototype.query = query;
+    });
     const tasks = [];
     for (let i = 0; i < 6; i++)
       tasks.push(
@@ -97,11 +113,14 @@ test(
           .filter(([id, revision]) => before.get(id) !== revision)
           .map(([id]) => id)
           .sort(),
-      edit = async (site, operations) => {
-        const before = ok(await site(path));
-        return ok(
+      // An editor's save: it asks for the rows the save changed. `queries`
+      // holds what the save itself ran.
+      edit = async (site, operations, target = path) => {
+        const before = ok(await site(target));
+        queries.length = 0;
+        const saved = ok(
           await site(
-            path,
+            target + "?changes=1",
             {
               operationId: randomUUID(),
               revision: before.revision,
@@ -110,7 +129,20 @@ test(
             "PATCH",
           ),
         );
+        assert.equal(saved.tasks, undefined);
+        return saved;
       },
+      rowsChanged = (before, after) =>
+        changed(before, after).filter((id) => id.startsWith("sheetCloneTask")),
+      rowId = (taskId) => `sheetCloneTask["${sheetClone.id}","${taskId}"]`,
+      wholeReads = () => queries.filter((text) => text.includes(WHOLE_COPY)),
+      create = (taskId, title, insertAt) => ({
+        kind: "create",
+        taskId,
+        at: new Date().toISOString(),
+        fields: { title },
+        ...(insertAt ? { insertAt } : {}),
+      }),
       cell = (taskId, value) => ({
         kind: "cells",
         at: new Date().toISOString(),
@@ -171,11 +203,26 @@ test(
       "Rows",
     );
 
+    // Opening the copy reads every row; the checks below rely on seeing it.
+    queries.length = 0;
+    ok(await outside(path));
+    assert.equal(wholeReads().length, 1);
     // An external edit of one cell writes that row and moves the copy's
     // revision; its command carries that row alone.
     let at = await revisions();
     const edited = await edit(outside, [cell(tasks[1].id, "outside")]);
-    assert.equal(plain(edited).tasks[1].note, "outside");
+    // The save read that row, not the copy, and answered that row with the
+    // revision a later read of the copy gives.
+    assert.deepEqual(wholeReads(), []);
+    assert.deepEqual(
+      edited.changes.tasks.map((task) => [
+        task.id,
+        task.cells["2026-10-19"].value,
+      ]),
+      [[tasks[1].id, "outside"]],
+    );
+    assert.deepEqual(edited.changes.removed, []);
+    assert.equal(edited.revision, ok(await outside(path)).revision);
     let now = await revisions();
     assert.deepEqual(changed(at, now), rowAndCopy(tasks[1].id));
     const [pending] = await f.pgStore.readPending(teamId);
@@ -276,6 +323,84 @@ test(
       "Added inside",
     );
 
+    // A row placed between two rows externally takes a position between
+    // theirs: no other row is read or written.
+    const between = randomUUID();
+    at = await revisions();
+    const placed = await edit(outside, [
+      create(between, "Between", { taskId: tasks[0].id, placement: "after" }),
+    ]);
+    now = await revisions();
+    assert.deepEqual(wholeReads(), []);
+    assert.deepEqual(rowsChanged(at, now), [rowId(between)]);
+    assert.deepEqual(
+      placed.changes.tasks.map((task) => task.id),
+      [between],
+    );
+    await f.settle();
+    merged = plain(await same());
+    assert.deepEqual(
+      merged.tasks.slice(0, 2).map((task) => task.id),
+      [tasks[0].id, between],
+    );
+
+    // Both sites place a row at once, at different places: both stay, in the
+    // same order on both sites, without a conflict.
+    const [here, there] = [randomUUID(), randomUUID()];
+    await edit(inside, [
+      create(here, "Inside row", { taskId: tasks[3].id, placement: "after" }),
+    ]);
+    await edit(outside, [
+      create(there, "Outside row", {
+        taskId: tasks[5].id,
+        placement: "before",
+      }),
+    ]);
+    await f.settle();
+    merged = plain(await same());
+    const order = merged.tasks.map((task) => task.id),
+      index = (id) => order.indexOf(id);
+    assert.equal(index(here), index(tasks[3].id) + 1);
+    assert.equal(index(there), index(tasks[5].id) - 1);
+    assert.deepEqual(
+      Object.keys((await f.pgStore.readState(teamId)).conflicts),
+      [],
+    );
+
+    // Moving a row externally writes that row alone.
+    at = await revisions();
+    await edit(outside, [
+      {
+        kind: "reorder",
+        at: new Date().toISOString(),
+        taskIds: [tasks[5].id],
+        targetId: tasks[0].id,
+        placement: "before",
+      },
+    ]);
+    now = await revisions();
+    assert.deepEqual(wholeReads(), []);
+    assert.deepEqual(rowsChanged(at, now), [rowId(tasks[5].id)]);
+    await f.settle();
+    assert.equal(plain(await same()).tasks[0].id, tasks[5].id);
+
+    // A format over every row writes the format and the copy's assignment,
+    // and no row.
+    at = await revisions();
+    await edit(outside, [
+      {
+        kind: "format",
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        scopes: [{ rows: null, keys: null, style: { color: "#123456" } }],
+      },
+    ]);
+    now = await revisions();
+    assert.deepEqual(rowsChanged(at, now), []);
+    await f.settle();
+    merged = plain(await same());
+    assert.ok(merged.tasks.every((task) => task.rules.length >= 1));
+
     // A copy made externally under protocol 5 is written as records at once.
     const second = ok(
       await outside("/sheet-clones", {
@@ -291,9 +416,9 @@ test(
     await f.settle();
     assert.equal(
       ok(await inside("/sheet-clones/" + second.id)).tasks.length,
-      7,
+      10,
     );
-    assert.deepEqual((await siteRows()).sheetCloneTask, 14);
+    assert.deepEqual((await siteRows()).sheetCloneTask, 20);
 
     // Deleting a copy deletes every record of it on both sites.
     ok(
@@ -306,11 +431,8 @@ test(
     await f.settle();
     assert.equal((await inside(path)).status, 404);
     assert.equal((await outside(path)).status, 404);
-    assert.deepEqual(await siteRows(), {
-      sheetClone: 1,
-      sheetCloneFormat: 2,
-      sheetCloneTask: 7,
-    });
+    const left = await siteRows();
+    assert.deepEqual([left.sheetClone, left.sheetCloneTask], [1, 10]);
     assert.equal(
       stateHash(f.internalStore().readState()),
       stateHash(await f.pgStore.readState(teamId)),

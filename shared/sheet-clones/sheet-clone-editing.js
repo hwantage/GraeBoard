@@ -10,6 +10,35 @@ import {
 
 export class SheetCloneEditError extends Error {}
 
+// The order the sheet shows rows in (see filteredTasks).
+const inSheetOrder = (a, b) =>
+  a.position - b.position ||
+  String(a.createdAt).localeCompare(String(b.createdAt)) ||
+  a.id.localeCompare(b.id);
+// Positions for `count` rows placed between two neighbouring positions (either
+// is undefined at an end of the sheet), so placing rows changes no other row.
+// Null when no distinct values fit between the neighbours; the caller then
+// numbers every row again.
+function positionsBetween(before, after, count) {
+  const positions = [];
+  let last = before ?? -Infinity;
+  for (let i = 1; i <= count; i++) {
+    const position =
+      before === undefined
+        ? after === undefined
+          ? i * 100
+          : after - (count - i + 1) * 100
+        : after === undefined
+          ? before + i * 100
+          : before + ((after - before) * i) / (count + 1);
+    if (!Number.isFinite(position) || !(position > last)) return null;
+    positions.push((last = position));
+  }
+  return after === undefined || last < after ? positions : null;
+}
+const renumbered = (ordered) =>
+  ordered.map((task, i) => ({ ...task, position: (i + 1) * 100 }));
+
 // Both the draft and the server operate only on the sheetClone's own task objects.
 // No live task IDs are resolved through the database here.
 export function applySheetCloneOperation(tasks, operation, context) {
@@ -86,6 +115,7 @@ export function applySheetCloneOperation(tasks, operation, context) {
         current.rules.map((rule) => [scopeKey(rule), rule]),
       );
       const cells = { ...task.cells };
+      let cleared = false;
       for (const [index, scope] of scopes.entries()) {
         const key = scopeKey(scope),
           old = rules.get(key);
@@ -105,15 +135,21 @@ export function applySheetCloneOperation(tasks, operation, context) {
         });
         for (const [key, previous] of Object.entries(cells)) {
           if (!scopeMatches(scope, task.id, key)) continue;
+          // Only a cell whose own style sets one of these properties changes:
+          // the rule alone formats the rest, so a rule over the whole sheet
+          // does not rewrite every row.
+          if (!names.some((name) => Object.hasOwn(previous.style || {}, name)))
+            continue;
           const style = { ...previous.style };
           for (const name of names) delete style[name];
           cells[key] = { ...previous, style, version: previous.version + 1 };
+          cleared = true;
         }
       }
       return {
         ...task,
         cells,
-        updatedAt: stamp,
+        ...(cleared ? { updatedAt: stamp } : {}),
         formatting: { revision, rules: [...rules.values()] },
       };
     });
@@ -178,14 +214,21 @@ export function applySheetCloneOperation(tasks, operation, context) {
       ...(copied?.rowStyle ? { rowStyle: copied.rowStyle } : {}),
     };
     if (!target) return [...tasks, task];
-    const ordered = [...tasks].sort((a, b) => a.position - b.position);
-    const index = ordered.findIndex((t) => t.id === target.id);
+    const ordered = tasks.toSorted(inSheetOrder);
+    const at =
+      ordered.findIndex((t) => t.id === target.id) +
+      (operation.insertAt.placement === "after" ? 1 : 0);
+    const position = positionsBetween(
+      ordered[at - 1]?.position,
+      ordered[at]?.position,
+      1,
+    )?.[0];
     ordered.splice(
-      index + (operation.insertAt.placement === "after" ? 1 : 0),
+      at,
       0,
-      task,
+      position === undefined ? task : { ...task, position },
     );
-    return ordered.map((t, i) => ({ ...t, position: (i + 1) * 100 }));
+    return position === undefined ? renumbered(ordered) : ordered;
   }
   if (operation.kind === "delete") {
     operation.taskIds.forEach(get);
@@ -198,20 +241,29 @@ export function applySheetCloneOperation(tasks, operation, context) {
     operation.taskIds.forEach(get);
     if (ids.has(operation.targetId))
       throw new SheetCloneEditError("이동할 행과 기준 행은 달라야 합니다.");
-    const ordered = [...tasks].sort((a, b) => a.position - b.position);
+    const ordered = tasks.toSorted(inSheetOrder);
     const moving = ordered.filter((task) => ids.has(task.id));
     const rest = ordered.filter((task) => !ids.has(task.id));
-    const index = rest.findIndex((task) => task.id === operation.targetId);
-    rest.splice(
-      index + (operation.placement === "after" ? 1 : 0),
-      0,
-      ...moving,
+    const at =
+      rest.findIndex((task) => task.id === operation.targetId) +
+      (operation.placement === "after" ? 1 : 0);
+    const positions = positionsBetween(
+      rest[at - 1]?.position,
+      rest[at]?.position,
+      moving.length,
     );
-    return rest.map((task, i) => ({
-      ...task,
-      position: (i + 1) * 100,
-      updatedAt: stamp,
-    }));
+    rest.splice(
+      at,
+      0,
+      ...moving.map((task, i) =>
+        positions
+          ? { ...task, position: positions[i], updatedAt: stamp }
+          : task,
+      ),
+    );
+    return positions
+      ? rest
+      : renumbered(rest).map((task) => ({ ...task, updatedAt: stamp }));
   }
   throw new SheetCloneEditError("지원하지 않는 사본 편집입니다.");
 }

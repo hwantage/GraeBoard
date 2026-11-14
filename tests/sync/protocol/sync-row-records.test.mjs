@@ -67,29 +67,43 @@ const copy = (deleted = false, teamId = fixedTeam) => ({
         {
           id: "c",
           teamId,
+          position: 100,
           formatting: rules("#fff"),
           cells: { title: cell("셋째"), note: cell("메모") },
         },
         {
           id: "a",
           teamId,
+          position: 150,
           formatting: rules("#fff"),
           cells: { title: cell("첫째") },
         },
-        { id: "b", teamId, formatting: rules("#000"), cells: {} },
-        { id: "d", teamId, cells: { title: cell("넷째") } },
+        {
+          id: "b",
+          teamId,
+          position: 300,
+          formatting: rules("#000"),
+          cells: {},
+        },
+        { id: "d", teamId, position: 400, cells: { title: cell("넷째") } },
       ],
     }),
   },
 });
 
-test("protocol 5 splits a copy into its order, one record per distinct formatting and one record per row", () => {
+test("protocol 5 splits a copy into its parent, one record per distinct formatting and one record per row", () => {
   const records = splitSheetCloneRows(copy()),
     [parent, ...children] = records,
     formats = children.filter((r) => r.entity === "sheetCloneFormat"),
     rows = children.filter((r) => r.entity === "sheetCloneTask");
   assert.equal(records.length, 1 + 2 + 4);
-  assert.deepEqual(parent.payload.order, ["c", "a", "b", "d"]);
+  // The parent keeps no row order: each row carries its own position, so
+  // placing a row changes that row alone.
+  assert.equal("order" in parent.payload, false);
+  assert.deepEqual(
+    rows.map((r) => r.payload.data.position),
+    [100, 150, 300, 400],
+  );
   assert.deepEqual(Object.keys(parent.payload.data).sort(), [
     "settings",
     "users",
@@ -141,7 +155,7 @@ test("protocol 5 splits a copy into its order, one record per distinct formattin
       ),
     /Invalid sheetClone format/,
   );
-  // Protocol 3 does not know these records, and its copy has no order.
+  // Protocol 3 does not know these records, and its copy has no assignment.
   assert.throws(
     () =>
       validateEntityPayload(
@@ -157,7 +171,7 @@ test("protocol 5 splits a copy into its order, one record per distinct formattin
       validateEntityPayload(
         "sheetClone",
         parent.key,
-        { ...copy().payload, order: [] },
+        { ...copy().payload, formats: {} },
         fixedTeam,
       ),
     /Unsupported entity payload/,

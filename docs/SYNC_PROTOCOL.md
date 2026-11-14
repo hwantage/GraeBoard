@@ -198,13 +198,13 @@ C11은 연결 유휴 저장(세 번의 순서 교차 비교), 연결·미연결 
 
 | 레코드             | 키                   | payload                                                                                                                        |
 | ------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `sheetClone`       | `[사본 ID]`          | `{year, name, referenceDate, createdBy, createdAt, data: {users, view, settings}, order: [행 ID…], formats: {행 ID: 서식 ID}}` |
+| `sheetClone`       | `[사본 ID]`          | `{year, name, referenceDate, createdBy, createdAt, data: {users, view, settings}, formats: {행 ID: 서식 ID}}`                  |
 | `sheetCloneFormat` | `[사본 ID, 서식 ID]` | `{data: {revision, rules}}`                                                                                                    |
 | `sheetCloneTask`   | `[사본 ID, 행 ID]`   | `{data: 셀·서식을 뺀 행 정보, cells: {셀 키: {value, style, version}}}`                                                        |
 
 - 서식 ID는 서식 값 canonical JSON의 SHA-256 앞 32자입니다. 같은 서식을 쓰는 행은 서식 레코드 하나를 가리킵니다. 서식 레코드는 내용이 바뀌지 않으며, 사본을 지울 때만 함께 지웁니다.
-- 행 순서는 부모의 `order`, 행이 쓰는 서식은 부모의 `formats`가 갖습니다. 조합할 때 `order`에 없는 행은 행 ID 순으로 뒤에 붙이고, 행이 없는 `order` 항목은 건너뜁니다.
-- 병합(reducer 5): 행의 `data`는 필드별(`updatedAt`은 큰 값), 행의 `cells`는 셀 키별, 부모의 `formats`는 행 ID별 3-way입니다. 같은 셀을 다르게 고치면 충돌입니다. 부모의 `order`는 필드 전체 3-way라 양쪽이 동시에 행을 넣거나 지우면 충돌입니다.
+- 행이 쓰는 서식은 부모의 `formats`가 갖습니다. 행 순서는 레코드로 두지 않고 각 행의 `data.position`으로 정합니다(같으면 `createdAt`, 그다음 행 ID 순). 화면의 기본 정렬과 같은 규칙입니다. 행을 사이에 넣거나 옮기면 그 행만 앞뒤 행 사이의 값을 받으므로 다른 레코드는 바뀌지 않습니다.
+- 병합(reducer 5): 행의 `data`는 필드별(`updatedAt`은 큰 값), 행의 `cells`는 셀 키별, 부모의 `formats`는 행 ID별 3-way입니다. 같은 셀을 다르게 고치면 충돌입니다. 양쪽이 동시에 행을 넣거나 지워도 서로 다른 행 레코드라 충돌하지 않습니다. 같은 행을 양쪽이 다른 자리로 옮기면 그 행의 `position` 충돌입니다.
 - 살아 있는 사본의 `formats`는 살아 있는 서식 레코드를 가리켜야 합니다(`Missing sheetClone format`). 문서 차이 탐색 상한은 프로토콜 4와 같은 2,000입니다.
 - 사내 서버는 SQLite `sheet_clones.data`를 그대로 두고 명령을 만들 때 분해합니다. 외부 서버는 `site_entities`에도 같은 세 레코드를 저장합니다([데이터 형식](DATA_FORMAT.md#동기화-프로토콜-5와-외부-사본-저장)). 앱 응답은 두 서버 모두 기존 사본 형식입니다.
 

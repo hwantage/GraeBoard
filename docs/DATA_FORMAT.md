@@ -317,6 +317,8 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 팀원·팀장·시스템 관리자는 `PATCH /api/sheet-clones/:id`로 사본을 편집합니다. 요청은 `{operationId,revision,operations,view?}`이며 `cells`, `format`, `create`, `delete`, `reorder`, 실행취소용 `restore`를 지원합니다. 최대 1,000개 작업·200,000셀 변경을 허용하며 모든 작업을 같은 트랜잭션에서 검증·저장합니다. 사본의 속성 정의와 업무 ID만 해석하고 원본 업무·서식·보기·필터 테이블은 쓰지 않습니다. 브라우저는 입력을 즉시 표시하고 짧은 지연 후 자동 저장하며 저장 중 새 입력은 다음 요청으로 이어갑니다. 실패한 요청은 같은 ID로 재시도합니다. 저장 후 실행취소·재실행은 보상 작업을 저장합니다. `restore`는 기존 업무의 최신 문서를 유지하며 삭제된 행의 복원은 삭제 전에 읽어 보관한 문서 본문을 포함합니다. 원본으로 돌아가기 전 저장을 완료하며 오류가 있으면 탭 전환을 막습니다.
 
+화면은 `PATCH /api/sheet-clones/:id?changes=1`로 저장합니다. 이때 응답은 사본 전체가 아니라 `{id,name,year,referenceDate,createdAt,users,view,revision,changes:{tasks,removed}}`이고, `changes.tasks`는 이 요청이 바꾸거나 만든 행, `changes.removed`는 지운 행의 ID입니다. 화면은 저장 전에 가진 사본에 합칩니다. `changes=1`이 없으면 사본 전체를 답합니다. 행을 사이에 넣거나 옮기면 그 행만 앞뒤 행 `position` 사이의 값을 받고 다른 행은 바뀌지 않습니다. 사이에 값이 더 들어갈 수 없을 때만 모든 행을 100 간격으로 다시 매깁니다. 전체 행 서식(`rows: null`)은 자기 스타일에 그 속성이 있는 셀만 바꿉니다. 외부 서버에서 프로토콜 5 팀의 `revision`은 사본 설정·서식 배정과 각 행의 사이트 revision으로 계산하고, 수정 요청은 요청이 이름을 든 행만 읽습니다.
+
 `POST /api/sheet-clones`의 선택적 `sourceId`로 기존 사본을 복제합니다. 클라이언트가 생성한 선택적 `id`(UUID)를 같은 요청의 재시도에 유지하면 최초 성공 결과를 돌려주고 중복 생성하지 않습니다. 요청 내용·수행자가 달라지면 충돌로 거절합니다. 이름 변경은 `PATCH /api/sheet-clones/:id/name`의 `{name,expectedName}`으로 처리하고 중복 이름·오래된 이름을 거절합니다. 조회·이름 변경은 별도로 표 revision을 바꾸지 않습니다.
 
 사본 조회에는 현재 업무 화면의 연도 제한을 적용하지 않습니다. 날짜 열과 달력은 저장된 `year`, `view.startMonth`를 사용합니다. 닫을 때 현재 업무 화면의 연도·보기·스크롤을 복원하고 연간 보기나 필터 저장소에는 사본의 조건을 쓰지 않습니다. 선택 삭제는 모든 ID가 해당 팀의 사본인지 검사한 뒤 하나의 트랜잭션으로 삭제하며, 원본 업무를 유지하고 `sheet-clone-delete` 이력을 남깁니다.
@@ -596,7 +598,7 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 
 ### 동기화 프로토콜 5와 외부 사본 저장
 
-프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행 순서 `order`·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
+프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
 
 외부 서버의 `site_entities`는 팀의 프로토콜에 따라 사본을 다르게 보관합니다. 스키마는 같고 행의 내용만 다릅니다.
 

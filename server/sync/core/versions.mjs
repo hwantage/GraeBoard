@@ -63,9 +63,10 @@ export const sheetCloneSplitter = (version) =>
 
 const plainObject = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
-// Protocol 5: the parent keeps the row order and which formatting each row
-// uses, each distinct formatting value is one record keyed by its hash and
-// each row is one record with its cells.
+// Protocol 5: the parent keeps which formatting each row uses, each distinct
+// formatting value is one record keyed by its hash and each row is one record
+// with its cells. Rows are ordered by their own position (see
+// sheetCloneRowOrder), so adding or moving a row changes no other record.
 // A row whose formatting is not an object keeps it in its own data.
 export const splitSheetCloneRows = (record) => {
   if (!record) return [];
@@ -118,7 +119,6 @@ export const splitSheetCloneRows = (record) => {
       payload: {
         ...record.payload,
         data,
-        order: tasks.map((task) => task.id),
         formats: assigned,
       },
     },
@@ -199,7 +199,7 @@ export function applicationEntities(entities) {
   return output;
 }
 
-// Protocol 5 recomposition (see orderedSheetCloneRows for the row order).
+// Protocol 5 recomposition (see sheetCloneRowOrder for the row order).
 // `only` limits the work to those sheet clone IDs.
 export function composedRows(entities, only = null) {
   const output = {},
@@ -227,9 +227,7 @@ export function composedRows(entities, only = null) {
     );
     const composed = composeSheetClone(
       record.payload,
-      orderedSheetCloneRows(record.payload.order, visible.keys()).map(
-        (rowId) => [rowId, visible.get(rowId)],
-      ),
+      sheetCloneRowOrder([...visible]),
       (format) => formats.get(canonical([record.key[0], format]))?.payload,
     );
     output[id] = {
@@ -240,11 +238,11 @@ export function composedRows(entities, only = null) {
   return output;
 }
 
-// A protocol 5 copy as the application reads it: the parent without its row
-// order and format assignment, and `rows` ([row ID, row payload] in display
-// order) as tasks. Rows with the same format share one formatting object.
+// A protocol 5 copy as the application reads it: the parent without its
+// format assignment, and `rows` ([row ID, row payload] in display order) as
+// tasks. Rows with the same format share one formatting object.
 export function composeSheetClone(parent, rows, formatOf) {
-  const { order: _order, formats: assigned = {}, ...payload } = parent;
+  const { formats: assigned = {}, ...payload } = parent;
   return {
     ...payload,
     data: {
@@ -261,14 +259,22 @@ export function composeSheetClone(parent, rows, formatOf) {
     },
   };
 }
-// The display order of a protocol 5 copy's rows: the parent's order, then any
-// row it does not list by ID; an order entry without a row is skipped.
-export function orderedSheetCloneRows(order, rowIds) {
-  const left = new Set(rowIds),
-    ordered = [];
-  for (const id of order || []) if (left.delete(id)) ordered.push(id);
-  return [...ordered, ...[...left].sort()];
+// The order of a protocol 5 copy's rows, as the sheet shows them: by position,
+// then creation time, then ID. `rows` are [row ID, row payload] pairs.
+export function sheetCloneRowOrder(rows) {
+  const text = (value) => String(value ?? "");
+  return rows.toSorted(([leftId, left], [rightId, right]) => {
+    const a = left.data || {},
+      b = right.data || {},
+      byPosition = (Number(a.position) || 0) - (Number(b.position) || 0);
+    if (byPosition) return byPosition;
+    const [created, other] = [text(a.createdAt), text(b.createdAt)];
+    if (created !== other) return created < other ? -1 : 1;
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
 }
+/** Whether a sheet clone payload is the protocol 5 parent of row records. */
+export const isSheetCloneRowParent = (payload) => plainObject(payload?.formats);
 
 // What an external site stores in its site rows. Under protocol 5 it keeps a
 // copy as the same parent, format and row records as C, so a change to one
@@ -351,7 +357,10 @@ export function composedSiteEntities(entities) {
       children.get(record.key[0]).push(record);
     } else output[id] = record;
   for (const [id, record] of Object.entries(output)) {
-    if (record.entity !== "sheetClone" || !Array.isArray(record.payload?.order))
+    if (
+      record.entity !== "sheetClone" ||
+      !isSheetCloneRowParent(record.payload)
+    )
       continue;
     const rows = new Map(),
       formats = new Map();
@@ -362,10 +371,7 @@ export function composedSiteEntities(entities) {
         rows.set(child.key[1], child.payload);
     const composed = composeSheetClone(
       record.payload,
-      orderedSheetCloneRows(record.payload.order, rows.keys()).map((rowId) => [
-        rowId,
-        rows.get(rowId),
-      ]),
+      sheetCloneRowOrder([...rows]),
       (format) => formats.get(format),
     );
     output[id] = {

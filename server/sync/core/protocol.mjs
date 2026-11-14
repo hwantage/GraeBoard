@@ -498,7 +498,7 @@ const payloadFields = {
 };
 // Protocol 5 shapes of the sheet clone records.
 const rowPayloadFields = {
-  sheetClone: [...payloadFields.sheetClone, "order", "formats"],
+  sheetClone: [...payloadFields.sheetClone, "formats"],
   sheetCloneFormat: ["data"],
   sheetCloneTask: ["data", "cells"],
 };
@@ -728,18 +728,9 @@ export function validateEntityPayload(
       throw new Error("Private account data in sheetClone");
     if (data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team sheetClone row");
-    // Protocol 5: the rows are their own records, in this order, and the
-    // parent names each formatted row's formatting record. Keeping that here
-    // lets a format change over every row carry no row.
-    if (
-      version === ROW_PROTOCOL &&
-      (!Array.isArray(payload.order) ||
-        payload.order.some(
-          (id) => typeof id !== "string" || !id || id.length > 200,
-        ) ||
-        new Set(payload.order).size !== payload.order.length)
-    )
-      throw new Error("Invalid sheetClone order");
+    // Protocol 5: the rows are their own records and the parent names each
+    // formatted row's formatting record. Keeping that here lets a format
+    // change over every row carry no row.
     if (
       version === ROW_PROTOCOL &&
       (!plain(payload.formats) ||
