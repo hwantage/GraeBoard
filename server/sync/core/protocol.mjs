@@ -22,7 +22,7 @@ import {
 // which leaves a standard checkpoint for new readers; this runtime reads
 // neither 1 nor 2.
 //
-// Protocol 5 keeps a sheet clone as a parent (metadata and row order), one
+// Protocol 5 keeps a sheet clone as a parent (metadata and each row's format), one
 // record per distinct formatting value and one record per row holding its
 // cells. A cell edit then carries one row, not the whole clone (protocol 3),
 // without one record per cell and the formatting repeated in every row

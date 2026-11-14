@@ -11,16 +11,23 @@ import {
 export class SheetCloneEditError extends Error {}
 
 // The order the sheet shows rows in (see filteredTasks).
+// Compared by code unit, as the servers order a copy's rows, so every
+// runtime agrees.
+const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const inSheetOrder = (a, b) =>
   a.position - b.position ||
-  String(a.createdAt).localeCompare(String(b.createdAt)) ||
-  a.id.localeCompare(b.id);
-// Positions for `count` rows placed between two neighbouring positions (either
-// is undefined at an end of the sheet), so placing rows changes no other row.
-// Null when no distinct values fit between the neighbours; the caller then
-// numbers every row again.
-function positionsBetween(before, after, count) {
-  const positions = [];
+  byText(String(a.createdAt ?? ""), String(b.createdAt ?? "")) ||
+  byText(a.id, b.id);
+// Positions for `count` rows placed between two neighbouring rows (either is
+// absent at an end of the sheet), so placing rows changes no other row.
+// Null when no distinct values fit between the neighbours or a neighbour has
+// no usable position; the caller then numbers every row again.
+function positionsBetween(previous, next, count) {
+  if ([previous, next].some((row) => row && !Number.isFinite(row.position)))
+    return null;
+  const before = previous?.position,
+    after = next?.position,
+    positions = [];
   let last = before ?? -Infinity;
   for (let i = 1; i <= count; i++) {
     const position =
@@ -136,8 +143,9 @@ export function applySheetCloneOperation(tasks, operation, context) {
         for (const [key, previous] of Object.entries(cells)) {
           if (!scopeMatches(scope, task.id, key)) continue;
           // Only a cell whose own style sets one of these properties changes:
-          // the rule alone formats the rest, so a rule over the whole sheet
-          // does not rewrite every row.
+          // the rule alone formats the rest. A rule over the whole sheet then
+          // changes every row's formatting, kept apart from the row, and not
+          // every row's cells.
           if (!names.some((name) => Object.hasOwn(previous.style || {}, name)))
             continue;
           const style = { ...previous.style };
@@ -218,11 +226,7 @@ export function applySheetCloneOperation(tasks, operation, context) {
     const at =
       ordered.findIndex((t) => t.id === target.id) +
       (operation.insertAt.placement === "after" ? 1 : 0);
-    const position = positionsBetween(
-      ordered[at - 1]?.position,
-      ordered[at]?.position,
-      1,
-    )?.[0];
+    const position = positionsBetween(ordered[at - 1], ordered[at], 1)?.[0];
     ordered.splice(
       at,
       0,
@@ -247,11 +251,7 @@ export function applySheetCloneOperation(tasks, operation, context) {
     const at =
       rest.findIndex((task) => task.id === operation.targetId) +
       (operation.placement === "after" ? 1 : 0);
-    const positions = positionsBetween(
-      rest[at - 1]?.position,
-      rest[at]?.position,
-      moving.length,
-    );
+    const positions = positionsBetween(rest[at - 1], rest[at], moving.length);
     rest.splice(
       at,
       0,

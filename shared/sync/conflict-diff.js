@@ -58,6 +58,8 @@ const FIELD_NAMES = {
   color: "색",
   defaultStyle: "기본 서식",
   rowStyle: "행 서식",
+  cells: "셀",
+  formats: "행별 서식",
 };
 
 /** "서식(style)" for known payload fields so the diff key stays findable. */

@@ -401,6 +401,25 @@ test(
     merged = plain(await same());
     assert.ok(merged.tasks.every((task) => task.rules.length >= 1));
 
+    // The same format made on the internal site: every row leaves its
+    // format, and those format records stay, as the external site keeps them.
+    const formatsBefore = (await siteRows()).sheetCloneFormat;
+    await edit(inside, [
+      {
+        kind: "format",
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        scopes: [{ rows: null, keys: null, style: { color: "#654321" } }],
+      },
+    ]);
+    await f.settle();
+    await same();
+    assert.ok((await siteRows()).sheetCloneFormat > formatsBefore);
+    assert.deepEqual(
+      Object.keys((await f.pgStore.readState(teamId)).conflicts),
+      [],
+    );
+
     // A copy made externally under protocol 5 is written as records at once.
     const second = ok(
       await outside("/sheet-clones", {

@@ -138,6 +138,9 @@ async function edit(ctx, s, teamId, sheetCloneId, body, changesOnly, all) {
   const row = all
     ? await s.get("sheetClone", key)
     : await s.getCopyRows(key, named.ids);
+  // Not stored as row records after all: read it whole.
+  if (!row && !all)
+    return edit(ctx, s, teamId, sheetCloneId, body, changesOnly, true);
   assert(row && !row.deleted, 404, "사본을 찾을 수 없습니다.");
   assert(
     body.revision === (await copyRevision(s, row)),
@@ -469,10 +472,11 @@ async function execute(ctx, command, body, sheetCloneId, options) {
       teamId,
       async (s) => {
         // A name is on the copy's own record: its rows are not read.
-        const named = command === "rename" && (await s.rowRecords()),
-          row = named
-            ? await s.getCopyRows([sheetCloneId], [])
-            : await s.get("sheetClone", [sheetCloneId]);
+        const named =
+            command === "rename" && (await s.rowRecords())
+              ? await s.getCopyRows([sheetCloneId], [])
+              : null,
+          row = named || (await s.get("sheetClone", [sheetCloneId]));
         assert(row && !row.deleted, 404, "사본을 찾을 수 없습니다.");
         if (command === "read") return sheetCloneView(s, row);
         const name = sheetCloneNameSchema.parse(body.name);

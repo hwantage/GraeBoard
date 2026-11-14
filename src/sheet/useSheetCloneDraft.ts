@@ -321,13 +321,18 @@ export default function useSheetCloneDraft(teamId: string, actorId: string) {
           try {
             // The answer carries the rows this save changed; the rest of the
             // copy is the one the revision was sent for.
+            const answer = await send<SavedSheetClone>(
+              `/sheet-clones/${current.sheetClone.id}?changes=1`,
+              batch.data,
+              "PATCH",
+            );
+            // Merged into the copy held now: a document saved meanwhile
+            // changed its row's document marks there.
             saved = savedSheetClone(
-              current.sheetClone,
-              await send<SavedSheetClone>(
-                `/sheet-clones/${current.sheetClone.id}?changes=1`,
-                batch.data,
-                "PATCH",
-              ),
+              ref.current?.sheetClone.id === current.sheetClone.id
+                ? ref.current.sheetClone
+                : current.sheetClone,
+              answer,
             );
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) {

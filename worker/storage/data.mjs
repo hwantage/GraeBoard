@@ -264,6 +264,10 @@ export class DataSession {
     if (!stored) return null;
     const parent = rowEntity(stored);
     if (!isRowParent(parent.payload)) return null;
+    // get() and list() must not answer the copy read before this edit.
+    this.cache.delete(entityId("sheetClone", key));
+    this.lists.delete("sheetClone");
+    this.listIndex.delete("sheetClone");
     const ids = [...new Set(rowIds)],
       wanted = new Set(
         ids.map((id) => parent.payload.formats[id]).filter(Boolean),
@@ -608,6 +612,9 @@ export class DataSession {
       },
       storedDeleted = deleted || locallyHidden;
     assert(Array.isArray(payload?.data?.tasks), 400, "사본 내용을 확인하세요.");
+    // A copy read whole since getCopyRows() would lose the rows left out here.
+    if (part && !known.partial)
+      throw new Error("A copy read whole cannot be saved by its rows");
     const [parent, ...children] = splitSheetCloneRows({
         entity: "sheetClone",
         key,

@@ -397,6 +397,27 @@ test("protocol 5 merges different cells of one row, keeps a same-cell edit as a 
     ),
     ["Missing sheetClone format"],
   );
+  // Nor can a format a live copy still names be deleted, by a command that
+  // leaves the copy itself untouched.
+  const usedId = entityId("sheetCloneFormat", [
+      "copy",
+      sheetCloneFormatId(rules("#fff")),
+    ]),
+    used = state.entities[usedId],
+    dropped = reduceMany(state, [
+      makeOperation({
+        link,
+        actorRef: f.user.id,
+        before: { [usedId]: used },
+        after: { [usedId]: { ...used, deleted: true } },
+      }),
+    ]);
+  assert.deepEqual(
+    Object.values(dropped.conflicts).map((c) => c.reason),
+    ["Missing sheetClone format"],
+  );
+  assert.equal(dropped.entities[usedId].deleted, false);
+  validateSnapshot(dropped, { teamId: f.teamId, repoId: f.link.repo_id });
   assert.throws(
     () => reduce(state, { ...title, protocol: 4, reducer: 4 }),
     /Unsupported protocol/,

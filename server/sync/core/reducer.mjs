@@ -589,6 +589,17 @@ function validateIncrement(entities, undo, context) {
   }
   for (const id of touched) {
     const e = entities[id];
+    // Protocol 5: a format a live copy still names cannot be deleted. The
+    // copy itself may be untouched, so its own check below does not see it.
+    if (e?.deleted && e.entity === "sheetCloneFormat") {
+      const copy = entities[entityId("sheetClone", [e.key[0]])];
+      if (
+        copy &&
+        !copy.deleted &&
+        Object.values(copy.payload?.formats || {}).includes(e.key[1])
+      )
+        return "Missing sheetClone format";
+    }
     if (!e || e.deleted) continue;
     const p = e.payload;
     if (e.entity === "cell" && !entities[entityId("task", [e.key[0]])])
