@@ -371,10 +371,17 @@ test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 
     .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
     .click();
   const close = detail(page).getByRole("button", { name: "닫기", exact: true });
+  // Only the emoji copy button sits between the width toggle and close.
+  const emoji = detail(page)
+    .locator(":scope > header")
+    .getByRole("button", { name: "이모지 복사", exact: true });
   const toggle = (await wide.boundingBox())!;
+  const emojiBox = (await emoji.boundingBox())!;
   const closeBox = (await close.boundingBox())!;
-  expect(toggle.x + toggle.width).toBeLessThanOrEqual(closeBox.x);
-  expect(closeBox.x - toggle.x - toggle.width).toBeLessThan(16);
+  expect(toggle.x + toggle.width).toBeLessThanOrEqual(emojiBox.x);
+  expect(emojiBox.x - toggle.x - toggle.width).toBeLessThan(16);
+  expect(emojiBox.x + emojiBox.width).toBeLessThanOrEqual(closeBox.x);
+  expect(closeBox.x - emojiBox.x - emojiBox.width).toBeLessThan(16);
   expect(await width(detail(page))).toBeLessThanOrEqual(1120);
   await wide.click();
   const narrow = detail(page).getByRole("button", { name: "기본 너비로 보기" });

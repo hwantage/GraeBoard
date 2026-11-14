@@ -21,6 +21,7 @@ import DocumentEditor, {
 } from "../documents/DocumentEditor";
 import DocumentLoading from "../documents/DocumentLoading";
 import DocumentFullWidthButton from "../documents/DocumentFullWidthButton";
+import CopyEmojiButton from "../documents/CopyEmojiButton";
 import { useDocumentFullPage } from "../documents/useDocumentFullPage";
 import { CalendarTagPicker } from "./CalendarTags";
 import type { CalendarTag } from "./calendar-types";
@@ -176,7 +177,12 @@ export default function SecretCalendarEntryPanel({
     <Modal
       title="시크릿 일정"
       className={`task-detail-modal calendar-entry-modal${documentFullPage ? ` document-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
-      headerActions={documentFullPage && <DocumentFullWidthButton />}
+      headerActions={
+        <>
+          {documentFullPage && <DocumentFullWidthButton />}
+          <CopyEmojiButton userId={entry.userId} />
+        </>
+      }
       titleAction={
         <Button
           tooltip={

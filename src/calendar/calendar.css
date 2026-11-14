@@ -1143,7 +1143,12 @@
 .workspace[data-screen="calendar"]
   .calendar-entry-modal
   > header
-  :is(.document-expand, .document-link-copy, .document-full-width):not(:hover) {
+  :is(
+    .document-expand,
+    .document-link-copy,
+    .document-full-width,
+    .emoji-copy
+  ):not(:hover) {
   background: transparent;
 }
 .calendar-range-editor label {
@@ -1278,6 +1283,7 @@
     .document-tabs,
     .document-tab-menu [role="menu"],
     .document-tool-menu,
+    .emoji-popover,
     .cell-option-popup,
     .popover,
     .loading-state
