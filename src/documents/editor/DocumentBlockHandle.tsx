@@ -18,13 +18,13 @@ import {
 } from "lucide-react";
 import { Fragment, Slice, type Node } from "@milkdown/kit/prose/model";
 import {
+  EditorState,
   NodeSelection,
   Plugin,
   PluginKey,
   Selection,
   TextSelection,
   type Command,
-  type EditorState,
   type Transaction,
 } from "@milkdown/kit/prose/state";
 import {
@@ -688,7 +688,7 @@ type Props = {
   view: () => EditorView | null;
   shell: RefObject<HTMLDivElement | null>;
   formats: SlashItem[];
-  canFormat: (id: string) => boolean;
+  canFormat: (id: string, state: EditorState) => boolean;
   onOpen: () => void;
 };
 type Spot = { pos: number; left: number; top: number };
@@ -843,6 +843,38 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         view.state.tr.setSelection(TextSelection.create(view.state.doc, text)),
       );
     view.focus();
+    // A caret in a sub-item or a toggle's content converts the block's first
+    // line instead. It moves there only when a conversion is chosen, and the
+    // menu checks the formats against that line.
+    const firstLine =
+      single &&
+      text !== null &&
+      (view.state.selection.from < text ||
+        view.state.selection.from > view.state.doc.resolve(text).end())
+        ? text
+        : null;
+    const formatState =
+      firstLine === null
+        ? view.state
+        : EditorState.create({
+            doc: view.state.doc,
+            selection: TextSelection.create(view.state.doc, firstLine),
+          });
+    // Any document change closes the menu, so the first line still stands.
+    const convert = (run: () => void) => () => {
+      const current = getView();
+      if (
+        current &&
+        firstLine !== null &&
+        current.state.doc === formatState.doc
+      )
+        current.dispatch(
+          current.state.tr.setSelection(
+            TextSelection.create(current.state.doc, firstLine),
+          ),
+        );
+      run();
+    };
     const act =
       (make: (state: EditorState, range: Range) => Transaction | null) =>
       () => {
@@ -930,7 +962,8 @@ export default forwardRef<BlockHandleApi, Props>(function DocumentBlockHandle(
         : formats.map((item) => ({
             ...item,
             group: "전환",
-            disabled: !canFormat(item.id),
+            disabled: !canFormat(item.id, formatState),
+            run: convert(item.run),
           }))),
     ];
     const box = button.current?.getBoundingClientRect();
