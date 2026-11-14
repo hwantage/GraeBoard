@@ -91,114 +91,119 @@ async function repository(t, f) {
   return { transport, head };
 }
 
-test("A3/A6 two paused peers perform one immutable protocol 4 transition, preserve protocol 3 backup and reject unsupported readers without advancing cursors", async (t) => {
-  const f = sqliteFixture(t),
-    { transport, head } = await repository(t, f),
-    identity = { teamId: f.teamId, repoId: f.link.repo_id };
-  const a = store(f, head),
-    b = store(f, head),
-    legacy = store(f, head),
-    service = new SyncService({ transport, store: a, identity }),
-    peer = new SyncService({ transport, store: b, identity }),
-    old = new SyncService({
-      transport,
-      store: legacy,
-      identity,
-      maxProtocol: 3,
-    }),
-    options = {
-      expectedHead: head,
-      expectedHash: stateHash(f.state),
-      peersStopped: true,
-    };
-  await assert.rejects(
-    service.upgrade({ ...options, peersStopped: false }),
-    (error) => error.status === 400,
-  );
-  const published = await service.upgrade(options);
-  assert.equal(published.protocol, 4);
-  assert.notEqual(published.head, head);
-  assert.equal(a.link.mode, "paused");
-  await assert.rejects(old.receive(legacy.link, published.head), /protocol/i);
-  assert.equal(legacy.link.canonical_head, head);
-  assert.equal(stateHash(legacy.state), options.expectedHash);
-  const id = entityId("cell", [f.taskId, "title"]),
-    previous = f.state.entities[id];
-  b.pending.push(
-    makeOperation({
-      link: f.link,
-      actorRef: f.user.id,
-      before: { [id]: previous },
-      after: {
-        [id]: {
-          ...previous,
-          payload: { ...previous.payload, value: "held input" },
+// Protocol 5 is what a new transition makes; protocol 4 transitions already in
+// a repository are still read, so both are exercised.
+for (const target of [4, 5])
+  test(`A3/A6 two paused peers perform one immutable protocol ${target} transition, preserve protocol 3 backup and reject unsupported readers without advancing cursors`, async (t) => {
+    const f = sqliteFixture(t),
+      { transport, head } = await repository(t, f),
+      identity = { teamId: f.teamId, repoId: f.link.repo_id };
+    const a = store(f, head),
+      b = store(f, head),
+      legacy = store(f, head),
+      service = new SyncService({ transport, store: a, identity }),
+      peer = new SyncService({ transport, store: b, identity }),
+      old = new SyncService({
+        transport,
+        store: legacy,
+        identity,
+        maxProtocol: target - 1,
+      }),
+      options = {
+        expectedHead: head,
+        expectedHash: stateHash(f.state),
+        peersStopped: true,
+      };
+    await assert.rejects(
+      service.upgrade({ ...options, peersStopped: false }),
+      (error) => error.status === 400,
+    );
+    const published = await service.upgrade({ ...options, target });
+    assert.equal(published.protocol, target);
+    assert.notEqual(published.head, head);
+    assert.equal(a.link.mode, "paused");
+    await assert.rejects(old.receive(legacy.link, published.head), /protocol/i);
+    assert.equal(legacy.link.canonical_head, head);
+    assert.equal(stateHash(legacy.state), options.expectedHash);
+    const id = entityId("cell", [f.taskId, "title"]),
+      previous = f.state.entities[id];
+    b.pending.push(
+      makeOperation({
+        link: f.link,
+        actorRef: f.user.id,
+        before: { [id]: previous },
+        after: {
+          [id]: {
+            ...previous,
+            payload: { ...previous.payload, value: "held input" },
+          },
         },
-      },
-    }),
-  );
-  const held = canonical(b.pending);
-  await assert.rejects(peer.upgrade(options), /pending\/held/);
-  assert.equal(canonical(b.pending), held);
-  assert.equal(b.link.canonical_head, head);
-  b.pending = [];
-  const received = await peer.upgrade(options);
-  assert.equal(received.received, true);
-  assert.equal(received.head, published.head);
-  assert.equal(stateHash(a.state), stateHash(b.state));
-  assert.equal(b.link.mode, "paused");
-  const added = await service.verifyFiles(
-      await transport.readCommit(published.head),
-      head,
-    ),
-    event = added.find((file) => file.path.startsWith("events/")),
-    envelope = JSON.parse(await transport.readFile(published.head, event.path));
-  assert.equal(
-    stateHash(
-      decodeSnapshot(
-        await transport.readFile(published.head, envelope.previousPath),
-      ).state,
-    ),
-    options.expectedHash,
-  );
-  const again = await service.upgrade({
-    ...options,
-    expectedHead: published.head,
-    expectedHash: published.stateHash,
-  });
-  assert.equal(again.upgraded, false);
-  assert.equal(await transport.readHead(), published.head);
-  a.link.mode = "active";
-  await service.checkpoint();
-  const fresh = store(f, null, emptyState());
-  fresh.link.mode = "importing";
-  const imported = new SyncService({ transport, store: fresh, identity });
-  await imported.run({
-    receiveOnly: true,
-    updateStatus: false,
-    loadCheckpoint: true,
-  });
-  assert.equal(stateHash(fresh.state), stateHash(a.state));
-  assert.equal(fresh.link.canonical_head, await transport.readHead());
-  const oldFresh = store(f, null, emptyState());
-  oldFresh.link.mode = "importing";
-  const oldImporter = new SyncService({
-    transport,
-    store: oldFresh,
-    identity,
-    maxProtocol: 3,
-  });
-  await assert.rejects(
-    oldImporter.run({
+      }),
+    );
+    const held = canonical(b.pending);
+    await assert.rejects(peer.upgrade(options), /pending\/held/);
+    assert.equal(canonical(b.pending), held);
+    assert.equal(b.link.canonical_head, head);
+    b.pending = [];
+    const received = await peer.upgrade(options);
+    assert.equal(received.received, true);
+    assert.equal(received.head, published.head);
+    assert.equal(stateHash(a.state), stateHash(b.state));
+    assert.equal(b.link.mode, "paused");
+    const added = await service.verifyFiles(
+        await transport.readCommit(published.head),
+        head,
+      ),
+      event = added.find((file) => file.path.startsWith("events/")),
+      envelope = JSON.parse(
+        await transport.readFile(published.head, event.path),
+      );
+    assert.equal(
+      stateHash(
+        decodeSnapshot(
+          await transport.readFile(published.head, envelope.previousPath),
+        ).state,
+      ),
+      options.expectedHash,
+    );
+    const again = await service.upgrade({
+      ...options,
+      expectedHead: published.head,
+      expectedHash: published.stateHash,
+    });
+    assert.equal(again.upgraded, false);
+    assert.equal(await transport.readHead(), published.head);
+    a.link.mode = "active";
+    await service.checkpoint();
+    const fresh = store(f, null, emptyState());
+    fresh.link.mode = "importing";
+    const imported = new SyncService({ transport, store: fresh, identity });
+    await imported.run({
       receiveOnly: true,
       updateStatus: false,
       loadCheckpoint: true,
-    }),
-    /protocol/i,
-  );
-  assert.equal(oldFresh.link.canonical_head, null);
-  assert.equal(stateHash(oldFresh.state), stateHash(emptyState()));
-});
+    });
+    assert.equal(stateHash(fresh.state), stateHash(a.state));
+    assert.equal(fresh.link.canonical_head, await transport.readHead());
+    const oldFresh = store(f, null, emptyState());
+    oldFresh.link.mode = "importing";
+    const oldImporter = new SyncService({
+      transport,
+      store: oldFresh,
+      identity,
+      maxProtocol: target - 1,
+    });
+    await assert.rejects(
+      oldImporter.run({
+        receiveOnly: true,
+        updateStatus: false,
+        loadCheckpoint: true,
+      }),
+      /protocol/i,
+    );
+    assert.equal(oldFresh.link.canonical_head, null);
+    assert.equal(stateHash(oldFresh.state), stateHash(emptyState()));
+  });
 
 test("A3/A6 actual PostgreSQL receiver validates paused transition then publishes ordinary protocol 4 sheetClone edits", async (t) => {
   const f = await postgresFixture(t);

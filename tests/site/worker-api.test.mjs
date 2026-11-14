@@ -1190,9 +1190,11 @@ test(
         "UPDATE graeboard.site_entities SET payload='{\"nextAt\":0}' WHERE entity='syncRefresh'",
       );
       const installedProfile = JSON.parse(env.SYNC_PROFILES)[0];
+      // Past the deadline this isolate remembers from the check above.
+      const later = { now: Date.now() + 31000 };
       await Promise.all([
-        refreshTeam(env, installedProfile),
-        refreshTeam(env, installedProfile),
+        refreshTeam(env, installedProfile, later),
+        refreshTeam(env, installedProfile, later),
       ]);
       assert.equal(
         headChecks,

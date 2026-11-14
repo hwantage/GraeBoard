@@ -250,7 +250,7 @@ test("느린 자동 저장 중에도 새 셀 입력을 이어서 저장하고 �
   let release!: () => void;
   const wait = new Promise<void>((r) => (release = r));
   let first = true;
-  await page.route(`**/api/sheet-clones/${sheetCloneId}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${sheetCloneId}*`, async (route) => {
     if (route.request().method() === "PATCH" && first) {
       first = false;
       const res = await route.fetch();
@@ -290,7 +290,7 @@ test("이름 변경 뒤 늦게 도착한 표 자동 저장 응답은 새 사본 
   let release!: () => void;
   const wait = new Promise<void>((r) => (release = r));
   let responseReady = false;
-  await page.route(`**/api/sheet-clones/${sheetCloneId}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${sheetCloneId}*`, async (route) => {
     if (route.request().method() !== "PATCH") return route.continue();
     const response = await route.fetch();
     responseReady = true;
@@ -329,7 +329,7 @@ test("사본 저장 실패는 입력과 탭을 보존하고 재시도 후 전환
 }) => {
   await openSheetClone(page);
   let fail = true;
-  await page.route(`**/api/sheet-clones/${sheetCloneId}`, (route) =>
+  await page.route(`**/api/sheet-clones/${sheetCloneId}*`, (route) =>
     route.request().method() === "PATCH" && fail
       ? route.fulfill({
           status: 503,
@@ -586,7 +586,7 @@ test("사본 상세 속성은 자동 저장하고 실패 안내·재시도를 �
 }) => {
   await openSheetClone(page);
   let fail = true;
-  await page.route(`**/api/sheet-clones/${sheetCloneId}`, (route) =>
+  await page.route(`**/api/sheet-clones/${sheetCloneId}*`, (route) =>
     route.request().method() === "PATCH" && fail
       ? route.fulfill({
           status: 503,

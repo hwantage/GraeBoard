@@ -84,6 +84,7 @@ export async function documentRoutes(ctx, path, method, body, query) {
         converted = await convertImage(file, ctx.env.IMAGES);
       ctx.user = await authenticate(ctx.env, ctx.identity, ctx.request);
       ctx.teamCache.clear();
+      ctx.controlStore.forget?.();
       const refreshed = await ctx.team(teamId);
       assert(
         refreshed.profile_id === profile.profileId,
