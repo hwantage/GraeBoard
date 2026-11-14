@@ -1820,6 +1820,19 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
   page,
   context,
 }) => {
+  // The monthly view reads each listed month separately, and the entry made
+  // below makes it read them again. WebKit reports reads cut off by a reload
+  // as page errors, so each reload waits for them.
+  const reading = new Set<object>();
+  page.on("request", (r) => {
+    if (
+      new URL(r.url()).pathname.startsWith("/api/calendar") &&
+      !r.url().includes("/events")
+    )
+      reading.add(r);
+  });
+  for (const settled of ["requestfinished", "requestfailed"] as const)
+    page.on(settled, (r) => reading.delete(r));
   const server = await request(page, "/calendar/entries", "POST", {
     id: randomUUID(),
     teamId,
@@ -1827,6 +1840,10 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
     date: todayKey(),
     title: "맨 위 일반 일정",
   });
+  await expect(
+    page.locator(`[data-entry-id="${server.id}"]`).first(),
+  ).toBeAttached();
+  await expect.poll(() => reading.size).toBe(0);
   await page.reload();
   const title = `순서 복제 ${randomUUID()}`;
   const requests = observe(page);
@@ -1874,6 +1891,7 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
   const peer = await context.newPage();
   await peer.goto("/calendar");
   await expectDisplayOrder(peer, ids);
+  await expect.poll(() => reading.size).toBe(0);
   await page.reload();
   await expectDisplayOrder(page, ids);
   expectPrivate(requests, title, "나중에 만든 시크릿");

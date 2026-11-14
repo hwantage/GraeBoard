@@ -843,6 +843,23 @@
   width: fit-content;
   background: transparent;
 }
+/* Below the monthly grid: the next month while it loads or after it failed,
+   or the note that no more months are added. Kept in the visible part. */
+.calendar-month-loading,
+.calendar-month-limit {
+  position: sticky;
+  left: 0;
+  width: fit-content;
+}
+.calendar-month-loading {
+  min-height: 0;
+}
+.calendar-month-limit {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .calendar-day {
   grid-column: calc(var(--calendar-day-column) + var(--calendar-day-offset, 1));
   min-width: 0;
@@ -867,6 +884,26 @@
 }
 .calendar-day.is-today {
   background: var(--calendar-today);
+}
+/* Months follow one another in the monthly views; a line steps along each
+   boundary, above a month's first week and left of its first day. */
+.calendar-day.is-month-top {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.calendar-day.is-month-left {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.calendar-day.is-month-top.is-month-left {
+  box-shadow:
+    inset 0 2px 0 var(--accent),
+    inset 2px 0 0 var(--accent);
+}
+.calendar-date time .calendar-month-label {
+  font-size: 12px;
+  color: var(--accent-strong);
+}
+.calendar-date time .calendar-month-label span {
+  font-size: inherit;
 }
 .calendar-date {
   justify-content: space-between;
@@ -1697,6 +1734,9 @@
   }
   .calendar-day.is-outside .calendar-date time {
     padding: 0;
+    font-size: 9px;
+  }
+  .calendar-date time .calendar-month-label {
     font-size: 9px;
   }
   .calendar-date .button {

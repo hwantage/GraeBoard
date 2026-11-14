@@ -110,7 +110,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 
 `App.tsx`는 화면·선택·패널과 업무 명령을 연결합니다. 연간 표와 인사이트의 원본 업무 조회는 하나의 `useTaskData`가 소유하고, 보고서는 그 공개 목록에서 파생값만 계산합니다. 원본의 세대·커서·조회 큐는 App이나 보고서에 노출하지 않습니다. 브라우저 공유 스키마의 CSP 실행 정책은 먼저 적재되는 `platform/polyfills.ts`가 설정하며, 공유 스키마나 서버에 브라우저 초기화 책임을 넣지 않습니다. 저장 전달·실패 입력은 `useSheetOperations`, 실행취소는 `useSheetHistory`, 개인 배치는 `useSheetLayout`, 필터 목록/저장은 `useSavedFilters`가 소유합니다. 행·셀 명령과 실행취소 전달은 `useSheetRowCommands`·`useSheetCellCommands`·`useSheetUndo`가 맡고, 화면 전환 시 저장 조정은 `app/useWorkspaceNavigation`이 맡습니다. 사본은 기존 `useSheetCloneDraft` 경로를 유지합니다. 새 기능의 연결 지점과 비동기 소유 범위는 [개발 안내의 책임 표](DEVELOPMENT.md#브라우저-상태와-저장-책임)를 따릅니다.
 
-`Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
+`Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. 월간 보기의 이어지는 달·기간 이동·스크롤 위치는 `useCalendarMonthScroll`이 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
 
 루트의 `Panels.tsx`·`types.ts`·`styles.css`·`main.tsx`·`app-version.d.ts`는 현재 남아 있는 통합 모듈·진입점입니다. `GridHeaderMenu`는 여러 기능에서 사용하는 조작 UI로 `ui/`가 소유하고, 업무 속성 편집은 `sheet/`, 리치 편집기 내부 모듈은 `documents/editor/`가 소유합니다. 폴더 사이의 양방향 사용과 실제 파일 import 순환은 구분하며, 합당한 문서/캘린더 재사용까지 금지하지 않습니다.
 
