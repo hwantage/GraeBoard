@@ -115,6 +115,7 @@ export function createApp({
     documentImagesDir,
     cachedTasks,
     syncProfiles: () => sync.profiles,
+    removeTeamSyncLog: (teamId) => sync.log.removeTeam(teamId),
   });
   app.locals.controlRepository = controlsRepository;
   const sync = createNodeSync({
