@@ -213,6 +213,8 @@ function fullCalendarView(view: View, year: number, startMonth = 1): View {
     collapsedMonths: [],
   };
 }
+// How the notices shown while an earlier change is being saved begin.
+const SAVING_NOTICE = "앞선 변경을 저장 중입니다";
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null),
     [authReady, setAuthReady] = useState(false),
@@ -386,6 +388,12 @@ function Workspace({
     onError: setError,
   });
   const { pending, failed } = operations;
+  // "앞선 변경을 저장 중입니다" tells the user to wait for a save: once
+  // nothing is being saved it no longer applies, so it goes away by itself.
+  useEffect(() => {
+    if (!pending)
+      setError((message) => (message.startsWith(SAVING_NOTICE) ? "" : message));
+  }, [pending]);
   const taskData = useTaskData({
     teamId,
     year,

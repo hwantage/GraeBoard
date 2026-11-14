@@ -303,16 +303,16 @@ export async function measureReviewScenarios({
     await peer.api(path + "/upgrade", upgrade);
     const upgraded = f.app.locals.sync.store(f.teamId).readState();
     if (
-      protocolVersion(upgraded) !== 4 ||
+      protocolVersion(upgraded) !== 5 ||
       stateHash(upgraded) !==
         stateHash(peer.app.locals.sync.store(f.teamId).readState())
     )
       throw new Error(
-        "Both paused sites must complete the same protocol 4 upgrade",
+        "Both paused sites must complete the same protocol 5 upgrade",
       );
     await f.api(path + "/resume", {});
     log(
-      "C11: linked protocol-v2 sheetClone create and edit with 1000 tasks and 100 documents",
+      "C11: linked protocol 5 sheetClone create and edit with 1000 tasks and 100 documents",
     );
     const sheetCloneIds = [],
       sheetCloneCreate = await measure(async (i) => {
@@ -495,7 +495,7 @@ export async function measureReviewScenarios({
         ...sheetCloneCreate,
         tasks: rows,
         documents: sheetCloneDocumentCount,
-        protocol: 4,
+        protocol: 5,
         upgradeHead: upgrade.expectedHead,
       },
       sheetCloneEdit: {

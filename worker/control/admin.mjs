@@ -8,6 +8,7 @@ import {
   resolutionRejected,
   resolvesAny,
 } from "../../shared/sync/conflict-origin.js";
+import { plainConflictPayloads } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
 import {
   SYSTEM_AUDIT_ROUTES,
   matchBusinessRoute,
@@ -41,6 +42,23 @@ import { beginProfileSwitch } from "../sync/profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "../sync/sync.mjs";
 import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
 import { materializeSlice } from "../sync/materialize.mjs";
+// Each conflict without the values of its command and of the current
+// records: what the list shows and what tells where each edit came from.
+// OFFSET 0 keeps the subquery as written. Without it PostgreSQL inlines the
+// cast into every use of p and reads and parses a conflict's text (megabytes
+// for a sheet copy) once per field instead of once.
+const CONFLICT_SUMMARIES = `SELECT jsonb_build_object(
+  'conflictId', p->'conflictId', 'opId', p->'opId', 'reason', p->'reason',
+  'resolution', CASE WHEN jsonb_typeof(p->'resolution') NOT IN ('null', 'boolean') OR p->'resolution'='true'::jsonb THEN 'true'::jsonb END,
+  'operation', ((p->'operation') - 'changes') || jsonb_build_object('changes', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('entity', c->'entity', 'key', c->'key') ORDER BY n)
+    FROM jsonb_array_elements(p->'operation'->'changes') WITH ORDINALITY AS x(c, n)), '[]'::jsonb)),
+  'current', CASE WHEN jsonb_typeof(p->'current')='object' THEN (
+    SELECT COALESCE(jsonb_object_agg(k, CASE WHEN jsonb_typeof(v)='object' THEN v - 'payload' ELSE v END), '{}'::jsonb)
+    FROM jsonb_each(p->'current') AS e(k, v)) END
+)::text AS payload
+FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1 OFFSET 0) conflicts
+ORDER BY conflict_id`;
 
 async function serviceStatus(ctx, { check = false } = {}) {
   ctx.admin();
@@ -365,10 +383,15 @@ export async function adminRoutes(
             await db.withTeamTransaction(
               teamId,
               async (tx) => {
+                // The list carries no payloads: PostgreSQL drops them, so a
+                // conflict over a sheet copy (megabytes per side) is neither
+                // parsed nor sent here. One conflict is read whole.
                 const conflicts = (
                   await tx.query(
-                    "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND ($2::text IS NULL OR conflict_id=$2) ORDER BY conflict_id",
-                    [teamId, sync[3] || null],
+                    sync[3]
+                      ? "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2"
+                      : CONFLICT_SUMMARIES,
+                    sync[3] ? [teamId, sync[3]] : [teamId],
                   )
                 ).rows.map((row) => JSON.parse(row.payload));
                 // This site's own operations among the held ones and the
@@ -408,12 +431,27 @@ export async function adminRoutes(
                     [teamId],
                   )
                 ).rows.map((row) => JSON.parse(row.payload));
+                // What a saved resolution chose is told from the conflict's
+                // later values, so those few conflicts are read whole.
+                const decided = sync[3]
+                  ? conflicts
+                  : conflicts.filter(
+                      (c) =>
+                        !c.resolution && resolvesAny(pending, [c.conflictId]),
+                    );
                 return {
                   conflicts,
                   local,
                   names,
                   resolutions: pendingResolutions(
-                    conflicts.filter((c) => !c.resolution),
+                    sync[3] || !decided.length
+                      ? decided.filter((c) => !c.resolution)
+                      : (
+                          await tx.query(
+                            "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[])",
+                            [teamId, decided.map((c) => c.conflictId)],
+                          )
+                        ).rows.map((row) => JSON.parse(row.payload)),
                     pending,
                   ),
                 };
@@ -429,9 +467,7 @@ export async function adminRoutes(
               .map((x) => x.entity + " " + x.key.join("/"))
               .join(", "),
             result: c.reason,
-            base: c.operation.changes.map((x) => x.base),
-            current: c.current,
-            desired: c.operation.changes.map((x) => x.desired),
+            ...(sync[3] ? plainConflictPayloads(c) : {}),
             expectedHead: link.canonical_head,
             frontier: [c.opId],
             resolved: !!c.resolution,

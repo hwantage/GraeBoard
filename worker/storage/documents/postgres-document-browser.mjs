@@ -12,7 +12,7 @@ import {
   documentBrowserPage,
   documentPreview,
 } from "../../../server/storage/documents/document-browser-service.mjs";
-import { sheetCloneRevision } from "../sheet-clones/postgres-sheet-clones.mjs";
+import { copyRevision } from "../sheet-clones/postgres-sheet-clones.mjs";
 import {
   byDocumentPosition,
   documentKeysUnder,
@@ -99,7 +99,7 @@ export class PostgresDocumentBrowserRepository {
           settings,
           users,
           ...(sheetClone
-            ? { revision: sheetCloneRevision(sheetClone.payload.data) }
+            ? { revision: await copyRevision(s, sheetClone) }
             : {}),
         };
       }

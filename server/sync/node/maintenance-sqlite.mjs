@@ -11,7 +11,7 @@ import { sqliteTeamStore } from "../../storage/sqlite.mjs";
 import { materialize } from "./entities.mjs";
 import { canonical, entityId } from "../core/protocol.mjs";
 import { project } from "../core/reducer.mjs";
-import { applicationEntities } from "../core/versions.mjs";
+import { applicationEntities, isSheetCloneChild } from "../core/versions.mjs";
 import {
   MaintenanceService,
   maintenanceRevision,
@@ -249,7 +249,7 @@ export function sqliteMaintenanceAdapter({ db, teamId, siteId, sync }) {
           records = {};
         for (const encoded of keys) {
           const [entity, key] = JSON.parse(encoded);
-          const target = ["sheetCloneTask", "sheetCloneCell"].includes(entity)
+          const target = isSheetCloneChild(entity)
             ? entityId("sheetClone", [key[0]])
             : encoded;
           revisions.add(target);

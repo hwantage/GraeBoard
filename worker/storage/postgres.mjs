@@ -10,6 +10,21 @@ import {
   postgresLayout,
 } from "../../shared/storage/postgres-schema-version.js";
 
+// A statement with its parameters written in as literals, for the simple
+// query that opens a transaction (several statements, no parameters). Only
+// null, booleans, finite numbers and strings: anything else belongs in a
+// statement of its own.
+export function inlineParameters(client, sql, params) {
+  return sql.replace(/\$(\d+)/g, (_, index) => {
+    const value = params[index - 1];
+    if (value === null || value === undefined) return "NULL";
+    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+    if (typeof value === "number" && Number.isFinite(value))
+      return String(value);
+    if (typeof value === "string") return client.escapeLiteral(value);
+    throw new Error("Unsupported inline parameter");
+  });
+}
 export class PostgresDatabase extends DatabaseAdapter {
   constructor(
     pool,
@@ -38,7 +53,13 @@ export class PostgresDatabase extends DatabaseAdapter {
     this.statementTimeout = statementTimeout;
     Object.assign(this, postgresLayout(scope, site));
   }
-  async transaction(work, { teamId, readOnly = false, retries = 0 } = {}) {
+  // `first` are statements ({sql, params}) the work would run first: they go
+  // in the round trip that opens the transaction and their results come as
+  // `tx.first`.
+  async transaction(
+    work,
+    { teamId, readOnly = false, retries = 0, first = [] } = {},
+  ) {
     if (
       this.scope === "team" &&
       (!teamId || (this.teamId && this.teamId !== teamId))
@@ -75,10 +96,13 @@ export class PostgresDatabase extends DatabaseAdapter {
               ...(teamId
                 ? ["SELECT team_id FROM team_meta WHERE singleton=1"]
                 : []),
+              ...first.map(({ sql, params = [] }) =>
+                inlineParameters(client, sql, params),
+              ),
             ].join(";"),
           ),
         );
-        if (teamId && opened.at(-1).rows[0]?.team_id !== teamId)
+        if (teamId && opened.at(-1 - first.length).rows[0]?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
         open = true;
         const run = (sql, params = []) => {
@@ -92,7 +116,13 @@ export class PostgresDatabase extends DatabaseAdapter {
               { batchSize: 500 },
             )
           : null;
-        const result = await work({ teamId, query: run, sync, store: sync });
+        const result = await work({
+          teamId,
+          query: run,
+          sync,
+          store: sync,
+          first: first.length ? opened.slice(-first.length) : [],
+        });
         open = false;
         committing = true;
         await client.query("COMMIT");

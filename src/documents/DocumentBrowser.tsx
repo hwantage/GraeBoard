@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type Ref,
 } from "react";
 import {
@@ -16,6 +17,7 @@ import {
   FileText,
   FolderOpen,
   Search,
+  StickyNote,
 } from "lucide-react";
 import { api, send } from "../platform/api";
 import { Avatar } from "../ui/Avatar";
@@ -23,6 +25,11 @@ import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
 import Select from "../ui/Select";
 import { TaskDetailContent, type TaskDetailHandle } from "../Panels";
+import AnnualMemoDocumentPanel, {
+  annualMemoPath,
+} from "./AnnualMemoDocumentPanel";
+import type { DocumentPanelHandle } from "./DocumentPanel";
+import DocumentLoading from "./DocumentLoading";
 import type { PropertySaveRequest } from "../sheet/TaskPropertyEditor";
 import type {
   Bootstrap,
@@ -83,6 +90,10 @@ type Listing = {
   properties: { id: string; name: string }[];
 };
 type ListState = { data?: Listing; loading?: boolean; error?: string };
+// A task document or tail memo in the list. The memo list API answers with
+// these listing fields too, previews included (?preview=1).
+type BrowserDocument = Entry["documents"][number];
+type MemoState = { memos?: BrowserDocument[]; error?: string };
 type Detail = {
   task: Task;
   settings: Settings;
@@ -91,10 +102,129 @@ type Detail = {
 };
 type Selection = {
   source: string;
+  // Empty for the source's tail memos.
   taskId: string;
   documentId: string;
   sourceName: string;
+  memo?: boolean;
 };
+// Copies are sheetClones; the original is "live".
+const sheetCloneOf = (source: string) =>
+  source === "live" ? undefined : source;
+// Runs `work` for each item, at most `limit` at a time, until aborted.
+async function runBounded<T>(
+  items: T[],
+  limit: number,
+  signal: AbortSignal,
+  work: (item: T) => Promise<void>,
+) {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length && !signal.aborted) await work(items[next++]);
+    }),
+  );
+}
+
+// A task or the tail memos in a source's list: the toggle that shows its
+// documents and the button that opens it.
+function EntryHeader({
+  kind,
+  title,
+  icon,
+  tooltip,
+  count,
+  opened,
+  onToggle,
+  onOpen,
+  children,
+}: {
+  kind: "task" | "memo";
+  title: string;
+  icon?: ReactNode;
+  tooltip?: string;
+  count?: { value: number; label: string };
+  opened: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="document-browser-task-header">
+      <button
+        // Tests count the tasks by their toggles.
+        className={`document-browser-entry-toggle${kind === "task" ? " document-browser-task-toggle" : ""}`}
+        aria-expanded={opened}
+        aria-label={`${title} ${kind === "task" ? "문서 " : ""}${opened ? "접기" : "펼치기"}`}
+        onClick={onToggle}
+      >
+        {opened ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </button>
+      <button
+        className="document-browser-entry-open"
+        aria-label={title}
+        title={tooltip}
+        onClick={onOpen}
+      >
+        <span className="document-browser-task-heading">
+          {icon}
+          <span
+            className="document-browser-task-title"
+            title={tooltip ?? title}
+          >
+            {title}
+          </span>
+          {count && (
+            <span
+              className="document-browser-document-count"
+              role="img"
+              aria-label={count.label}
+              title={count.label}
+            >
+              <FileText size={11} aria-hidden="true" />
+              <span aria-hidden="true">{count.value}</span>
+            </span>
+          )}
+        </span>
+        {children}
+      </button>
+    </div>
+  );
+}
+// A task document or a tail memo with its preview.
+function DocumentRow({
+  doc,
+  empty,
+  tooltip,
+  current,
+  onSelect,
+}: {
+  doc: BrowserDocument;
+  empty: string;
+  tooltip: string;
+  current: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      className="document-browser-document"
+      aria-label={doc.title}
+      aria-description={doc.hasContent ? doc.preview : empty}
+      aria-current={current ? "true" : undefined}
+      title={tooltip}
+      onClick={onSelect}
+    >
+      <FileText size={14} aria-hidden="true" />
+      <span className="document-browser-document-title">{doc.title}</span>
+      <span
+        className="document-browser-document-preview"
+        title={doc.preview || undefined}
+      >
+        {doc.hasContent ? doc.preview : empty}
+      </span>
+    </button>
+  );
+}
 
 export type DocumentBrowserHandle = {
   navigate: (action: () => void | Promise<void>) => Promise<boolean>;
@@ -123,9 +253,13 @@ export default function DocumentBrowser({
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
+  // The team and year `sources` were listed for.
+  const [sourcesScope, setSourcesScope] = useState("");
   const [lists, setLists] = useState<Record<string, ListState>>({});
   const [expanded, setExpanded] = useState(new Set(["live"]));
   const [tasksOpen, setTasksOpen] = useState(new Set<string>());
+  const [memosOpen, setMemosOpen] = useState(new Set<string>());
+  const [memoLists, setMemoLists] = useState<Record<string, MemoState>>({});
   const [groupsClosed, setGroupsClosed] = useState(new Set<string>());
   const [selected, setSelected] = useState<Selection | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -135,11 +269,22 @@ export default function DocumentBrowser({
   const [navigating, setNavigating] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [sourceRefresh, setSourceRefresh] = useState(0);
+  const [memoRefresh, setMemoRefresh] = useState(0);
   const sourceVersions = useRef(new Map<string, number>());
   const loadedVersions = useRef(new Map<string, number>());
+  // Memo lists load apart from the task pages: a memo save reloads only its
+  // source's memo list.
+  const memoVersions = useRef(new Map<string, number>());
+  const loadedMemoVersions = useRef(new Map<string, number>());
+  const memoListScope = useRef("");
+  const memoListRefresh = useRef(refresh);
   const loadedSourcesKey = useRef("");
   const previousRefresh = useRef(refresh);
   const content = useRef<TaskDetailHandle>(null);
+  const memoPanel = useRef<DocumentPanelHandle>(null);
+  // A memo chosen before the memo panel had its list; opened once it has.
+  const pendingMemo = useRef("");
+  const [memoLoading, setMemoLoading] = useState(true);
   const navigation = useRef(false);
   const split = useRef<HTMLDivElement>(null);
   const requestEpoch = useRef(0);
@@ -148,6 +293,9 @@ export default function DocumentBrowser({
     revision?: string;
   } | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const memoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
   const widthKey = `graeboard:document-browser:width:${boot.user.id}`;
@@ -168,6 +316,7 @@ export default function DocumentBrowser({
     setGroupBy("");
     setGroupsClosed(new Set());
     setTasksOpen(new Set());
+    setMemosOpen(new Set());
     setExpanded(new Set(["live"]));
     resetSelection();
   }, [teamId]);
@@ -195,6 +344,16 @@ export default function DocumentBrowser({
       scope === "all" ||
       (scope === "copies" ? source.id !== "live" : source.id === scope),
   );
+  const sourceOpen = (id: string) =>
+    query ? !groupsClosed.has(`source:${id}`) : expanded.has(id);
+  // Sources whose lists, and so tail memos, are shown.
+  const openedSources =
+    sourcesScope === scopeKey
+      ? shownSources
+          .filter((source) => sourceOpen(source.id))
+          .map((source) => source.id)
+          .join(",")
+      : "";
   const properties = useMemo(
     () => [
       ...new Map([
@@ -216,7 +375,10 @@ export default function DocumentBrowser({
     onNavigationChange(true);
     setError("");
     try {
-      if (content.current && !(await content.current.flush(keepDraft))) {
+      const saved = content.current
+        ? await content.current.flush(keepDraft)
+        : keepDraft || !memoPanel.current || (await memoPanel.current.flush());
+      if (!saved) {
         setError(
           "저장을 완료하지 못했습니다. 상세 화면에서 입력을 확인한 뒤 다시 이동하세요.",
         );
@@ -247,7 +409,13 @@ export default function DocumentBrowser({
     }, 350);
     return () => clearTimeout(timer);
   }, [input, query]);
-  useEffect(() => () => clearTimeout(refreshTimer.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(refreshTimer.current);
+      clearTimeout(memoTimer.current);
+    },
+    [],
+  );
   function changed(source: string) {
     sourceVersions.current.set(
       source,
@@ -259,8 +427,17 @@ export default function DocumentBrowser({
       250,
     );
   }
+  function memosChanged(source: string) {
+    memoVersions.current.set(
+      source,
+      (memoVersions.current.get(source) || 0) + 1,
+    );
+    clearTimeout(memoTimer.current);
+    memoTimer.current = setTimeout(() => setMemoRefresh((n) => n + 1), 250);
+  }
   function refreshAll() {
     clearTimeout(refreshTimer.current);
+    clearTimeout(memoTimer.current);
     setRefresh((n) => n + 1);
   }
   async function loadList(source: string, signal?: AbortSignal, offset = 0) {
@@ -307,6 +484,7 @@ export default function DocumentBrowser({
         loadedSourcesKey.current = sourcesKey;
         sourcesRef.current = sources;
         setSources(sources);
+        setSourcesScope(scopeKey);
         const targets = sources.filter(
           (source) =>
             (scope === "all" ||
@@ -330,50 +508,44 @@ export default function DocumentBrowser({
           ),
         }));
         // Keep concurrent search requests bounded even with many copies.
-        let next = 0;
-        await Promise.all(
-          Array.from({ length: Math.min(3, targets.length) }, async () => {
-            while (next < targets.length && !controller.signal.aborted) {
-              const source = targets[next++];
-              try {
-                let data = await loadList(source.id, controller.signal);
-                // Refresh only the pages the user has already opened.
-                while (
-                  data.nextOffset !== null &&
-                  data.tasks.length < (counts[source.id] || 0) &&
-                  !controller.signal.aborted
-                ) {
-                  const next = await loadList(
-                    source.id,
-                    controller.signal,
-                    data.nextOffset,
-                  );
-                  data = {
-                    ...next,
-                    tasks: [...data.tasks, ...next.tasks],
-                    owners: { ...data.owners, ...next.owners },
-                  };
-                }
-                if (!controller.signal.aborted) {
-                  loadedVersions.current.set(
-                    source.id,
-                    versions.get(source.id) || 0,
-                  );
-                  setLists((previous) => ({
-                    ...previous,
-                    [source.id]: { data },
-                  }));
-                }
-              } catch (e) {
-                if (!controller.signal.aborted)
-                  setLists((previous) => ({
-                    ...previous,
-                    [source.id]: { error: (e as Error).message },
-                  }));
-              }
+        await runBounded(targets, 3, controller.signal, async (source) => {
+          try {
+            let data = await loadList(source.id, controller.signal);
+            // Refresh only the pages the user has already opened.
+            while (
+              data.nextOffset !== null &&
+              data.tasks.length < (counts[source.id] || 0) &&
+              !controller.signal.aborted
+            ) {
+              const next = await loadList(
+                source.id,
+                controller.signal,
+                data.nextOffset,
+              );
+              data = {
+                ...next,
+                tasks: [...data.tasks, ...next.tasks],
+                owners: { ...data.owners, ...next.owners },
+              };
             }
-          }),
-        );
+            if (!controller.signal.aborted) {
+              loadedVersions.current.set(
+                source.id,
+                versions.get(source.id) || 0,
+              );
+              setLists((previous) => ({
+                ...previous,
+                [source.id]: { data },
+              }));
+            }
+          } catch (e) {
+            if (!controller.signal.aborted)
+              setLists((previous) => ({
+                ...previous,
+                [source.id]: { error: (e as Error).message },
+              }));
+          }
+        });
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
@@ -384,6 +556,47 @@ export default function DocumentBrowser({
       });
     return () => controller.abort();
   }, [listKey, expanded, refresh, sourceRefresh]);
+  // Tail memos do not depend on the search, grouping or scope selection;
+  // opened sources load theirs once and again after a memo change or refresh.
+  useEffect(() => {
+    if (memoListScope.current !== scopeKey) {
+      memoListScope.current = scopeKey;
+      loadedMemoVersions.current.clear();
+      setMemoLists({});
+    }
+    if (memoListRefresh.current !== refresh) {
+      memoListRefresh.current = refresh;
+      loadedMemoVersions.current.clear();
+    }
+    const versions = new Map(memoVersions.current);
+    const targets = (openedSources ? openedSources.split(",") : []).filter(
+      (id) => loadedMemoVersions.current.get(id) !== (versions.get(id) || 0),
+    );
+    const controller = new AbortController();
+    // At most three requests at once, as for the task pages.
+    void runBounded(targets, 3, controller.signal, async (id) => {
+      // A retry shows the loading line again instead of the last error.
+      setMemoLists((previous) => ({
+        ...previous,
+        [id]: { memos: previous[id]?.memos },
+      }));
+      let state: MemoState;
+      try {
+        const { documents } = await api<{ documents: BrowserDocument[] }>(
+          `${annualMemoPath({ teamId, year, sheetCloneId: sheetCloneOf(id) })}?preview=1`,
+          { signal: controller.signal },
+        );
+        state = { memos: documents };
+      } catch (e) {
+        state = { error: (e as Error).message };
+      }
+      if (controller.signal.aborted) return;
+      if (!state.error)
+        loadedMemoVersions.current.set(id, versions.get(id) || 0);
+      setMemoLists((previous) => ({ ...previous, [id]: state }));
+    });
+    return () => controller.abort();
+  }, [scopeKey, refresh, memoRefresh, openedSources]);
   function resetSelection() {
     setSelected(null);
     setDetail(null);
@@ -397,6 +610,7 @@ export default function DocumentBrowser({
       setScope("live");
       setGroupsClosed(new Set());
       setTasksOpen(new Set());
+      setMemosOpen(new Set());
       setExpanded(new Set(["live"]));
       resetSelection();
     });
@@ -433,6 +647,47 @@ export default function DocumentBrowser({
       else setTasksOpen((old) => new Set(old).add(key));
       setMobileDetail(true);
     });
+  }
+  // Opens the source's tail memos in the detail pane, at `documentId` when a
+  // listed memo was chosen, as task titles and documents do.
+  async function selectMemo(source: Source, documentId = "") {
+    await leave(async () => {
+      if (selected?.memo && selected.source === source.id) {
+        if (
+          documentId &&
+          !(await memoPanel.current?.selectDocument(documentId))
+        ) {
+          // The loading panel cannot switch tabs yet; it does when it opens.
+          if (!memoLoading) return;
+          pendingMemo.current = documentId;
+        }
+      } else {
+        pendingMemo.current = "";
+        setDetail(null);
+        setMemoLoading(true);
+        saveRevision.current = null;
+      }
+      setSelected((previous) => ({
+        source: source.id,
+        sourceName: source.name,
+        taskId: "",
+        memo: true,
+        documentId:
+          documentId ||
+          (previous?.memo && previous.source === source.id
+            ? previous.documentId
+            : ""),
+      }));
+      setMemosOpen((old) => new Set(old).add(source.id));
+      setMobileDetail(true);
+    });
+  }
+  function showMemo(documentId: string) {
+    setSelected((previous) =>
+      previous?.memo && previous.documentId !== documentId
+        ? { ...previous, documentId }
+        : previous,
+    );
   }
   async function saveProperty(
     payload: PropertySaveRequest,
@@ -710,9 +965,9 @@ export default function DocumentBrowser({
             )}
           {shownSources.map((source) => {
             const list = lists[source.id];
-            const open = query
-              ? !groupsClosed.has(`source:${source.id}`)
-              : expanded.has(source.id);
+            const open = sourceOpen(source.id);
+            const memoList = memoLists[source.id];
+            const memosShown = memosOpen.has(source.id);
             return (
               <section
                 className="document-browser-source"
@@ -858,127 +1113,72 @@ export default function DocumentBrowser({
                                         className="document-browser-task"
                                         key={task.id}
                                       >
-                                        <div className="document-browser-task-header">
-                                          <button
-                                            className="document-browser-task-toggle"
-                                            aria-expanded={opened}
-                                            aria-label={`${task.title} 문서 ${opened ? "접기" : "펼치기"}`}
-                                            onClick={() =>
-                                              void leave(() =>
-                                                (query
-                                                  ? setGroupsClosed
-                                                  : setTasksOpen)((old) => {
-                                                  const next = new Set(old);
-                                                  const entry = query
-                                                    ? `task:${key}`
-                                                    : key;
-                                                  if (next.has(entry))
-                                                    next.delete(entry);
-                                                  else next.add(entry);
-                                                  return next;
-                                                }),
-                                              )
-                                            }
+                                        <EntryHeader
+                                          kind="task"
+                                          title={task.title}
+                                          count={{
+                                            value: task.documentCount,
+                                            label: `등록된 문서 ${task.documentCount}개`,
+                                          }}
+                                          opened={opened}
+                                          onToggle={() =>
+                                            void leave(() =>
+                                              (query
+                                                ? setGroupsClosed
+                                                : setTasksOpen)((old) => {
+                                                const next = new Set(old);
+                                                const entry = query
+                                                  ? `task:${key}`
+                                                  : key;
+                                                if (next.has(entry))
+                                                  next.delete(entry);
+                                                else next.add(entry);
+                                                return next;
+                                              }),
+                                            )
+                                          }
+                                          onOpen={() =>
+                                            void selectDocument(
+                                              source,
+                                              task.id,
+                                              task.documents[0].id,
+                                            )
+                                          }
+                                        >
+                                          <span
+                                            className="document-browser-owner"
+                                            title={`담당자: ${owner?.name || "미지정"}`}
+                                            role="img"
+                                            aria-label={`담당자: ${owner?.name || "미지정"}`}
                                           >
-                                            {opened ? (
-                                              <ChevronDown size={14} />
-                                            ) : (
-                                              <ChevronRight size={14} />
-                                            )}
-                                          </button>
-                                          <button
-                                            className="document-browser-task-open"
-                                            aria-label={task.title}
-                                            onClick={() =>
-                                              void selectDocument(
-                                                source,
-                                                task.id,
-                                                task.documents[0].id,
-                                              )
-                                            }
-                                          >
-                                            <span className="document-browser-task-heading">
-                                              <span
-                                                className="document-browser-task-title"
-                                                title={task.title}
-                                              >
-                                                {task.title}
-                                              </span>
-                                              <span
-                                                className="document-browser-document-count"
-                                                role="img"
-                                                aria-label={`등록된 문서 ${task.documentCount}개`}
-                                                title={`등록된 문서 ${task.documentCount}개`}
-                                              >
-                                                <FileText
-                                                  size={11}
-                                                  aria-hidden="true"
-                                                />
-                                                <span aria-hidden="true">
-                                                  {task.documentCount}
-                                                </span>
-                                              </span>
+                                            <Avatar user={owner} small />
+                                            <span className="document-browser-owner-name">
+                                              {owner?.name || "미지정"}
                                             </span>
-                                            <span
-                                              className="document-browser-owner"
-                                              title={`담당자: ${owner?.name || "미지정"}`}
-                                              role="img"
-                                              aria-label={`담당자: ${owner?.name || "미지정"}`}
-                                            >
-                                              <Avatar user={owner} small />
-                                              <span className="document-browser-owner-name">
-                                                {owner?.name || "미지정"}
-                                              </span>
-                                            </span>
-                                          </button>
-                                        </div>
+                                          </span>
+                                        </EntryHeader>
                                         {opened && (
                                           <div className="document-browser-documents">
                                             {task.documents.map((doc) => (
-                                              <button
+                                              <DocumentRow
                                                 key={doc.id}
-                                                className="document-browser-document"
-                                                aria-label={doc.title}
-                                                aria-description={
-                                                  doc.hasContent
-                                                    ? doc.preview
-                                                    : "빈 문서"
-                                                }
-                                                aria-current={
+                                                doc={doc}
+                                                empty="빈 문서"
+                                                tooltip={`${source.name} / ${task.title} / ${doc.title}`}
+                                                current={
                                                   selected?.source ===
                                                     source.id &&
                                                   selected.taskId === task.id &&
                                                   selected.documentId === doc.id
-                                                    ? "true"
-                                                    : undefined
                                                 }
-                                                title={`${source.name} / ${task.title} / ${doc.title}`}
-                                                onClick={() =>
+                                                onSelect={() =>
                                                   void selectDocument(
                                                     source,
                                                     task.id,
                                                     doc.id,
                                                   )
                                                 }
-                                              >
-                                                <FileText
-                                                  size={14}
-                                                  aria-hidden="true"
-                                                />
-                                                <span className="document-browser-document-title">
-                                                  {doc.title}
-                                                </span>
-                                                <span
-                                                  className="document-browser-document-preview"
-                                                  title={
-                                                    doc.preview || undefined
-                                                  }
-                                                >
-                                                  {doc.hasContent
-                                                    ? doc.preview
-                                                    : "빈 문서"}
-                                                </span>
-                                              </button>
+                                              />
                                             ))}
                                           </div>
                                         )}
@@ -1022,6 +1222,67 @@ export default function DocumentBrowser({
                         {list.data.matchedTaskCount})
                       </Button>
                     )}
+                    <div className="document-browser-memos">
+                      <EntryHeader
+                        kind="memo"
+                        title="꼬리 메모"
+                        icon={<StickyNote size={14} aria-hidden="true" />}
+                        tooltip={`${source.name} / 꼬리 메모`}
+                        count={
+                          memoList?.memos && {
+                            value: memoList.memos.length,
+                            label: `등록된 메모 ${memoList.memos.length}개`,
+                          }
+                        }
+                        opened={memosShown}
+                        onToggle={() =>
+                          void leave(() =>
+                            setMemosOpen((old) => {
+                              const next = new Set(old);
+                              if (memosShown) next.delete(source.id);
+                              else next.add(source.id);
+                              return next;
+                            }),
+                          )
+                        }
+                        onOpen={() => void selectMemo(source)}
+                      />
+                      {memosShown && (
+                        <div className="document-browser-documents">
+                          {memoList?.error ? (
+                            <div role="alert">
+                              {memoList.error}
+                              <Button onClick={() => memosChanged(source.id)}>
+                                다시 시도
+                              </Button>
+                            </div>
+                          ) : !memoList?.memos ? (
+                            <p role="status">목록 불러오는 중…</p>
+                          ) : !memoList.memos.length ? (
+                            <p className="document-browser-empty">
+                              등록된 메모가 없습니다.
+                            </p>
+                          ) : (
+                            memoList.memos.map((memo) => (
+                              <DocumentRow
+                                key={memo.id}
+                                doc={memo}
+                                empty="빈 메모"
+                                tooltip={`${source.name} / 꼬리 메모 / ${memo.title}`}
+                                current={
+                                  !!selected?.memo &&
+                                  selected.source === source.id &&
+                                  selected.documentId === memo.id
+                                }
+                                onSelect={() =>
+                                  void selectMemo(source, memo.id)
+                                }
+                              />
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </section>
@@ -1073,7 +1334,65 @@ export default function DocumentBrowser({
           aria-label="문서 상세"
           aria-busy={navigating}
         >
-          {selected && detail ? (
+          {selected?.memo ? (
+            <>
+              <div className="document-browser-detail-bar">
+                <Button
+                  className="document-browser-back"
+                  onClick={() => void leave(() => setMobileDetail(false))}
+                >
+                  <ArrowLeft size={16} />
+                  목록으로
+                </Button>
+                <span title={`${selected.sourceName} / 꼬리 메모`}>
+                  {selected.sourceName} / 꼬리 메모
+                </span>
+                <small>
+                  {canContribute(boot.user, teamId) ? "자동 저장" : "읽기 전용"}
+                </small>
+              </div>
+              <div className="document-browser-detail-scroll task-detail-modal">
+                <div
+                  className="task-document-shell"
+                  data-loading={memoLoading || undefined}
+                >
+                  {memoLoading && <DocumentLoading />}
+                  <div
+                    className="task-document-surface"
+                    aria-hidden={memoLoading || undefined}
+                    inert={memoLoading}
+                  >
+                    <AnnualMemoDocumentPanel
+                      key={`${selected.source}:memos`}
+                      ref={memoPanel}
+                      memoTabs
+                      teamId={teamId}
+                      year={year}
+                      sheetCloneId={sheetCloneOf(selected.source)}
+                      userId={boot.user.id}
+                      readOnly={!canContribute(boot.user, teamId)}
+                      initialDocumentId={selected.documentId || undefined}
+                      onDocumentSelected={(id) => {
+                        const pending = pendingMemo.current;
+                        pendingMemo.current = "";
+                        if (pending && pending !== id)
+                          void memoPanel.current
+                            ?.selectDocument(pending)
+                            .then((opened) => {
+                              if (!opened) showMemo(id);
+                            });
+                        else showMemo(id);
+                      }}
+                      onSaved={() => memosChanged(selected.source)}
+                      onListChanged={() => memosChanged(selected.source)}
+                      onLoadingChange={setMemoLoading}
+                      onCloseWithDraft={() => void leave(onClose, true)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : selected && detail ? (
             <>
               <div className="document-browser-detail-bar">
                 <Button
