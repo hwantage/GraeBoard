@@ -55,3 +55,25 @@ export const unpackSheetClonePayload = (payload) =>
 // 동기화 기준본·로컬 투영·명령 base를 비교할 때 표현 형식(평문/공유 사전)에 영향받지 않게 한다.
 export const normalizeEntityPayload = (entity, payload) =>
   entity === "sheetClone" ? unpackSheetClonePayload(payload) : payload;
+
+// 충돌 보관함 응답은 전체를 다시 pack하므로, 사본 자체 사전의 참조가 응답 사전에서
+// 해석되지 않도록 사본 payload를 평문으로 푼다.
+export const plainConflictPayloads = (conflict) => ({
+  base: conflict.operation.changes.map((change) =>
+    normalizeEntityPayload(change.entity, change.base),
+  ),
+  current:
+    conflict.current &&
+    Object.fromEntries(
+      Object.entries(conflict.current).map(([key, record]) => [
+        key,
+        record && {
+          ...record,
+          payload: normalizeEntityPayload(record.entity, record.payload),
+        },
+      ]),
+    ),
+  desired: conflict.operation.changes.map((change) =>
+    normalizeEntityPayload(change.entity, change.desired),
+  ),
+});

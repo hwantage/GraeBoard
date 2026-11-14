@@ -1,0 +1,173 @@
+/* Opened from inside the settings dialog, whose body has its own layout. */
+.modal.sync-log-dialog .modal-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-content: start;
+  padding: 16px 24px 24px;
+}
+.sync-log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+}
+.sync-log-toolbar label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sync-log-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.sync-log-toolbar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sync-log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.sync-log-entry + .sync-log-entry {
+  border-top: 1px solid var(--line);
+}
+.sync-log-row {
+  display: grid;
+  grid-template-columns: 15px 62px 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  color: var(--ink);
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.sync-log-row:hover,
+.sync-log-row:focus-visible {
+  background: var(--accent-surface);
+}
+.sync-log-row time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sync-log-badge {
+  padding: 1px 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--accent-surface);
+  font-size: 11px;
+  text-align: center;
+}
+.sync-log-entry.ok .sync-log-badge {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.sync-log-entry.fail .sync-log-badge {
+  color: var(--error-ink);
+  background: var(--error-soft);
+}
+.sync-log-entry.fail .sync-log-text {
+  color: var(--error-ink);
+}
+.sync-log-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-log-row[aria-expanded="true"] .sync-log-text {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sync-log-details {
+  display: grid;
+  gap: 8px;
+  padding: 4px 12px 12px 33px;
+  font-size: 12px;
+}
+.sync-log-guidance {
+  padding: 8px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--accent-surface);
+}
+.sync-log-guidance p {
+  margin: 0;
+  line-height: 1.5;
+}
+.sync-log-guidance p + p {
+  margin-top: 4px;
+}
+.sync-log-guidance b {
+  margin-right: 6px;
+  color: var(--accent-strong);
+}
+.sync-log-details dl {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+.sync-log-details dl div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 8px;
+}
+.sync-log-details dt {
+  color: var(--muted);
+}
+.sync-log-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sync-log-raw-title {
+  margin: 0;
+  color: var(--muted);
+}
+.sync-log-raw {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbfb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sync-log-more {
+  display: flex;
+  justify-content: center;
+}
+.sync-log-note {
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .sync-log-row {
+    grid-template-columns: 15px 58px 40px minmax(0, 1fr);
+    gap: 6px;
+  }
+  .sync-log-details {
+    padding-left: 12px;
+  }
+  .sync-log-details dl div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .sync-log-toolbar-actions {
+    margin-left: 0;
+  }
+}

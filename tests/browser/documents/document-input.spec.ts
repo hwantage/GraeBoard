@@ -407,6 +407,30 @@ test("변환 직후 다른 곳에서 바뀐 내용을 받으면 Backspace가 기
   await expect(rich(page)).not.toContainText("- 기존");
 });
 
+test("변환 직후 다른 곳에서 체크 상태만 바꿔도 Backspace가 기호를 되살리지 않는다", async ({
+  page,
+}) => {
+  await open(page, "기존 문장\n");
+  await caret(rich(page).locator("p").first());
+  await rich(page).pressSequentially("[ ] ");
+  await expect(rich(page).getByRole("checkbox")).not.toBeChecked();
+  await expect.poll(() => markdown(page)).toContain("* [ ] 기존 문장");
+  const path = `/tasks/${taskId}/documents/main`;
+  const saved = await request(page, path);
+  await request(page, path, "PUT", {
+    markdown: "* [x] 기존 문장\n",
+    expectedRevision: saved.revision,
+    operationId: randomUUID(),
+  });
+  await expect(rich(page).getByRole("checkbox")).toBeChecked();
+  // Only an attribute changed remotely; the inverse is dropped all the same,
+  // so Backspace cannot undo the conversion over the remote check.
+  await page.keyboard.press("Backspace");
+  await settle(rich(page));
+  await expect(rich(page)).not.toContainText("[ ]");
+  await expect(rich(page).getByRole("checkbox")).toBeChecked();
+});
+
 test("여러 편집기가 함께 열린 꼬리 메모에서도 모든 메모가 글 앞 기호와 코드 울타리를 바꾼다", async ({
   page,
 }) => {

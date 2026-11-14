@@ -9,6 +9,10 @@ import { reduceMany, project } from "../../../server/sync/core/reducer.mjs";
 import { getTask } from "../../../server/db.mjs";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { RESOLUTION_REJECTED } from "../../../shared/sync/conflict-origin.js";
+import {
+  isPackedSheetCloneData,
+  unpackSheetCloneData,
+} from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 import { defaultView } from "../../../shared/domain.js";
 
 // A resolution that would be archived again is refused before anything is
@@ -543,6 +547,74 @@ for (const choice of ["current", "edited"])
       assert.equal(notes(), 0);
     }
   });
+
+// A copy's sync payload carries its own style dictionary. The conflict box
+// response is packed once more as a whole, so the copy must be listed plain:
+// its references would otherwise be read against the response's dictionary.
+test("the conflict box lists a copy's records in plain form and settles the edit shown there", async (t) => {
+  const f = await fixture(t);
+  const created = await f.api("/sheet-clones", {
+    id: randomUUID(),
+    teamId: f.teamId,
+    year: 2026,
+    referenceDate: "2026-11-08",
+    name: "Shared copy",
+    taskIds: f.taskIds,
+    view: defaultView(2026),
+  });
+  assert.equal(created.status, 201, JSON.stringify(created));
+  const id = entityId("sheetClone", [created.data.id]),
+    stored = reduceMany(f.s.readState(), f.s.readPending()).entities[id];
+  assert.ok(
+    isPackedSheetCloneData(stored.payload.data),
+    "the copy syncs packed",
+  );
+  const conflict = semanticConflict(
+    f,
+    "sheetClone",
+    [created.data.id],
+    { name: "Original copy" },
+    { name: "Later copy" },
+  );
+  const listed = await f.api(
+    `/teams/${f.teamId}/sync/conflicts`,
+    undefined,
+    "GET",
+  );
+  assert.equal(listed.status, 200, JSON.stringify(listed));
+  const summary = listed.data.conflicts.find((c) => c.opId === conflict.opId);
+  // The list leaves the copy out; the opened conflict carries it in plain form.
+  assert.ok(!("desired" in summary) && !("current" in summary));
+  assert.ok(JSON.stringify(listed.data).length < 20000);
+  const item = (
+      await f.api(
+        `/teams/${f.teamId}/sync/conflicts/${summary.conflictId}`,
+        undefined,
+        "GET",
+      )
+    ).data,
+    plain = unpackSheetCloneData(stored.payload.data);
+  for (const payload of [
+    item.base[0],
+    item.current[id].payload,
+    item.desired[0],
+  ])
+    assert.deepEqual(payload.data, plain);
+  assert.equal(item.desired[0].name, "Later copy");
+  const desired = structuredClone(item.desired);
+  desired[0].name = "Edited copy";
+  const settled = await f.api(
+    `/teams/${f.teamId}/sync/conflicts/${conflict.opId}/resolve`,
+    { expectedHead: conflict.head, choice: "edited", desired },
+  );
+  assert.equal(settled.status, 200, JSON.stringify(settled));
+  assert.equal(
+    f.db
+      .prepare("SELECT name FROM sheet_clones WHERE id=?")
+      .get(created.data.id).name,
+    "Edited copy",
+  );
+});
 
 test("resolve replans a calendar entry when its referenced tag is concurrently deleted", async (t) => {
   const f = await fixture(t);

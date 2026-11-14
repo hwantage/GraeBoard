@@ -77,8 +77,14 @@ export class SheetCloneBusinessService {
   rename(sheetCloneId, input) {
     return this.mutate("rename", [sheetCloneId, renameSchema.parse(input)]);
   }
-  edit(sheetCloneId, input) {
-    return this.mutate("edit", [sheetCloneId, editSchema.parse(input)]);
+  // `changes=1` answers the rows the edit changed instead of the whole copy:
+  // the editor already holds the copy it edited.
+  edit(sheetCloneId, input, query) {
+    return this.mutate("edit", [
+      sheetCloneId,
+      editSchema.parse(input),
+      { changes: query?.changes === "1" },
+    ]);
   }
   remove(input) {
     return this.mutate("remove", [removeSchema.parse(input)]);

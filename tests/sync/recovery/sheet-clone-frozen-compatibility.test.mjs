@@ -755,7 +755,7 @@ for (const [label, from, to, port] of [
         ok(await inside(documentPath)).markdown,
         new RegExp(`\\[새 링크\\]\\(${path}\\)`),
       );
-      // The ordinary protocol 3 → 4 upgrade after the cutover: the newest
+      // The ordinary protocol 3 → 5 upgrade after the cutover: the newest
       // snapshot is then that transition, and new and recovering sites still
       // start at the cutover checkpoint and replay the transition after it.
       let transition, afterTransition;
@@ -784,7 +784,7 @@ for (const [label, from, to, port] of [
           transition,
         );
         for (const send of [inside, outside])
-          assert.equal(ok(await send(`/teams/${teamId}/sync`)).protocol, 4);
+          assert.equal(ok(await send(`/teams/${teamId}/sync`)).protocol, 5);
         // Edits after it, with a copy of the internal database between them
         // for the recovery below.
         const editCell = async (send, value) => {

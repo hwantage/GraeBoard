@@ -114,6 +114,20 @@ async function documentContract({ f, service, counts, failOnce }) {
         );
         copiedRowSchema.shape.documents.parse(listed);
       }
+      // The document browser's memo list: listing fields plus a preview, no
+      // body. Other owners ignore the option.
+      const plain = (await service.list(owner)).documents,
+        previewed = (await service.list(owner, { preview: true })).documents;
+      assert.deepEqual(
+        previewed,
+        ["annual", "sheetCloneMemo"].includes(owner.kind)
+          ? plain.map((doc) => ({
+              ...doc,
+              preview: doc.id === scope.documentId ? `${owner.kind} first` : "",
+            }))
+          : plain,
+        owner.kind + " preview listing",
+      );
       if (
         ["task", "sheetClone", "annual", "sheetCloneMemo"].includes(owner.kind)
       ) {

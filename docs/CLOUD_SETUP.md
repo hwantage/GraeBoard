@@ -367,7 +367,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 7. 사내 설치 ID가 없으면 새 UUID를 한 번 발급해 고정합니다. 기존 사내 설치 ID가 있으면 유지합니다. 새 외부 설치 ID와 양쪽 상대 설치 ID, 프로필·`SITE_TEAM_ID`·gateway 팀 UUID를 맞춥니다. 이전 개발 서버의 프로필과 설치 ID를 그대로 복사하지 않습니다. 환경 설정만 바꾸면서 기존 DB·이미지 경로는 유지합니다.
 8. 사내에서 **이 팀에 연결 → 연결 검사 → 초기 게시**를 완료합니다. 외부 설정과 동일 릴리스의 Edge/gateway를 반영한 뒤 사내 팀장이 연결 키를 발급하고, 외부에서 자신의 사내 계정을 연결해 **팀 가져오기**를 수행합니다. 사용자 접근은 운영자 검증 범위로 제한하고 Cron은 계속 중지합니다. 업무·문서·이미지·구성원과 양방향 반영을 검증한 뒤 Cron과 사용자 접근을 재개합니다.
 
-현재 `SyncService.initialize`의 최초 게시 형식은 protocol 3입니다. 최신 앱 배포나 외부 DB 초기화만으로 protocol 4가 되지는 않습니다. protocol 4로 운영할 경우 최초 연결 후 [명시 전환 절차](OPERATIONS.md#동기화-프로토콜-4-명시-전환)를 수행합니다. 형식 전환이 용량 상한을 없애지는 않습니다.
+현재 `SyncService.initialize`의 최초 게시 형식은 protocol 3입니다. 최신 앱 배포나 외부 DB 초기화만으로 protocol 5(사본 행 단위 레코드)가 되지는 않습니다. protocol 5로 운영할 경우 최초 연결 후 [명시 전환 절차](OPERATIONS.md#동기화-프로토콜-5-명시-전환)를 수행합니다. 형식 전환이 용량 상한을 없애지는 않습니다.
 
 외부 화면의 `외부 클라우드 저장`, `Git 반영`, `내부망 반영 대기/내부망 반영 완료`는 서로 다른 단계이며 각각 태그로 표시합니다. 대기·진행 중은 회색, 완료는 푸른색입니다. 내부 화면은 정상·대기 태그를 숨기고 오류·충돌·복구 필요·동기화 중단만 표시합니다. Git 게시 시각만 있다고 내부 반영이 끝난 것은 아닙니다. 상대 서버 상태가 오래됐거나 복구 점검 중이면 상대 반영 완료로 표시하지 않습니다. **동기화 확인 불가**는 현재 상태 조회 자체가 실패한 경우이므로 연결과 API 오류를 확인합니다. 내부가 꺼져 있어도 외부 저장·Git 게시가 가능할 수 있으며, 이 경우 내부 적용 확인은 대기합니다.
 
@@ -514,6 +514,7 @@ fi
 | Access 401                                             | 이 앱 AUD·정확한 발급자·로그인 만료                                                             | 다른 서비스 토큰 재사용 금지              |
 | Access는 통과했는데 403                                | 사내 활성 계정·연결 승인·팀 역할                                                                | 조직 전체 사용자를 자동 추가하지 않음     |
 | Git 연결 시간 초과                                     | 앱 clone의 GitHub 프록시 주소·접속 허용·네트워크                                                | 미전송 내용과 clone 보존                  |
+| 사내 `Git operation failed (코드, 단계)`               | 외부 동기화 화면의 **동기화 로그**에서 실패한 Git 명령의 출력 원문과 조치 안내([운영 안내](OPERATIONS.md#사내-서버-동기화-로그)) | 미전송 내용과 clone 보존                  |
 | JSON 대신 HTML / `Unexpected token '<'`                | 실제 Production branch, Pages Functions와 gateway 연결                                          | DB를 초기화하지 않음                      |
 | 외부 JSON 503 / 외부 서버 연결 실패                    | Pages binding, gateway의 Edge URL·전달 Secret, Edge 로그                                        | 마지막 정상 자료·입력 보존                |
 | Google 로그인 대신 JSON 401                            | 운영 주소 자체의 Access 보호와 issuer/AUD. 미리보기 wildcard만 설정했는지 확인                  | 다른 앱 정책을 넓히지 않음                |
@@ -562,6 +563,30 @@ rm /private/external-import.env
 ```
 
 `--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
+
+### 외부 수신이 같은 커밋에서 계속 중단될 때
+
+사내 서버가 올린 이벤트가 커서 외부 서버의 실행이 매번 `CPU Time exceeded`나 `Memory limit exceeded`로 끝나면, 외부 서버는 같은 커밋에서 더 나아가지 못합니다. 상대 화면에는 외부 서버의 적용 위치가 멈춘 채로 보이고, 외부의 **지금 동기화**는 중단된 실행의 리스(7분) 때문에 "다른 동기화 실행이 아직 끝나지 않아"를 표시합니다. 이때는 위와 같은 설정 파일로 운영자 PC에서 수신을 대신 실행합니다.
+
+```sh
+npm run sync:external-import -- --settings /private/external-import.env --catch-up --dry-run
+node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --catch-up
+```
+
+`--dry-run`은 저장소 head, 외부 연결의 상태·적용 위치·리스·미전송 건수·마지막 오류만 출력하고 쓰지 않습니다. 두 번째 명령은 외부 서버의 평상시 수신과 같은 경로를 실행 한도 없이 돌려 저장소 head까지 받습니다. 연결이 `active`가 아니거나 `INSTALLATION_ID`가 연결과 다르면 아무것도 바꾸지 않고 끝납니다. 중단된 실행의 리스가 남아 있으면 풀릴 때까지 최대 10분 기다리고, 받는 동안에는 30분 리스를 잡아 외부 서버의 Cron 실행이 끼어들지 않습니다. 외부의 미전송 변경은 그대로 남아 평상시처럼 재배치되고, 이후 외부 서버가 게시합니다. 외부 게시까지 운영자 PC에서 끝내려면 `--publish`를 붙입니다. 중간에 실패하면 그 커밋의 DB 변경은 롤백되고 이전 커밋까지의 적용은 남으므로 다시 실행해 이어갑니다.
+
+이미지 설치에는 두 옵션을 쓸 수 있습니다.
+
+- `--defer-images`: 받은 커밋의 이미지 설치를 미루고 업무 자료만 받습니다. 미룬 이미지는 뒤에 `--images`로 설치하며, 그때까지 외부 사이트에서 해당 이미지만 비어 보입니다. `--publish`는 외부에서 올린 이미지를 읽어야 하므로 이미지 저장소에 닿을 수 있어야 합니다.
+- `--r2-bucket <버킷 이름>`: gateway 자원 주소 대신 운영자 PC의 Wrangler 로그인(`npx wrangler login`)으로 R2 버킷을 직접 읽고 씁니다. 이때 설정 파일의 `GRAEBOARD_RESOURCE_SECRET`은 비워도 됩니다. gateway의 자원용 Secret 값을 알 수 없을 때 사용하며 `--images`·`--catch-up` 모두에 붙일 수 있습니다. 버킷 이름은 gateway 배포 설정의 R2 바인딩에 있습니다.
+
+```sh
+node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --catch-up --defer-images
+npm run sync:external-import -- --settings /private/external-import.env --images --r2-bucket <버킷 이름>
+npm run sync:external-import -- --settings /private/external-import.env --catch-up --publish --r2-bucket <버킷 이름>
+```
+
+이 도구는 외부 서버와 같은 동기화 코드를 실행합니다. 따라서 운영 외부 서버에 배포된 것과 같은 `release` 커밋의 체크아웃에서 실행합니다. 더 오래된 체크아웃은 팀의 동기화 프로토콜을 모를 수 있습니다.
 
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
@@ -848,6 +873,6 @@ Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마�
 
 ## 리뷰 반영 릴리스 적용
 
-앱 내부 실행은 SQLite 전용이며, PostgreSQL 업무 API는 `worker/storage/`를 사용하는 외부 Edge 경로에서 실행합니다. 전체 업무 Worker 모드는 제거했고 gateway·forwarder는 요청 전달만 담당합니다. 동기화 프로토콜 4는 앱 배포와 별도인 [명시 전환 절차](OPERATIONS.md#동기화-프로토콜-4-명시-전환)를 따릅니다.
+앱 내부 실행은 SQLite 전용이며, PostgreSQL 업무 API는 `worker/storage/`를 사용하는 외부 Edge 경로에서 실행합니다. 전체 업무 Worker 모드는 제거했고 gateway·forwarder는 요청 전달만 담당합니다. 동기화 프로토콜 5는 앱 배포와 별도인 [명시 전환 절차](OPERATIONS.md#동기화-프로토콜-5-명시-전환)를 따릅니다.
 
 이벤트 파일은 32MiB 이내로 분할하고 snapshot은 압축·해제 각각 64MiB를 검사합니다. 외부의 업무·충돌·pending에는 기본 상한이 없고(선택 설정), receipt는 16MiB 예산(12MiB 경고)으로 따로 검사합니다. 과거 receipt가 한도를 넘어도 조회·반출은 가능하며 새 저장은 사전에 거절합니다. GitHub의 429·Retry-After·제한 초기화 시각은 제한된 재시도와 DB의 다음 실행 시각에 반영합니다. GET 업무 조회는 원격 Git 최신화를 백그라운드로 예약하고 기존 DB 응답을 즉시 제공합니다.

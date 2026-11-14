@@ -58,14 +58,20 @@ function canFormat(
   );
 }
 
-// Same nodes, text and marks; node attributes such as heading ids may differ.
+// Same nodes, text, marks and attributes; only a heading's synced id may
+// differ. Any other attribute change, such as a remote check, is real content.
 function sameContent(a: Node, b: Node): boolean {
   if (a === b) return true;
   if (
     a.type !== b.type ||
     a.text !== b.text ||
     a.childCount !== b.childCount ||
-    !Mark.sameSet(a.marks, b.marks)
+    !Mark.sameSet(a.marks, b.marks) ||
+    Object.keys(a.attrs).some(
+      (key) =>
+        a.attrs[key] !== b.attrs[key] &&
+        !(key === "id" && a.type.name === "heading"),
+    )
   )
     return false;
   for (let i = 0; i < a.childCount; i++)
@@ -91,7 +97,7 @@ function documentRulesPlugin(rules: InputRule[]) {
     )
       return value;
     // Milkdown's heading id sync follows a heading with text in a separate
-    // dispatch outside history. Attribute-only changes keep the inverse valid.
+    // dispatch outside history. Only that id change keeps the inverse valid.
     if (
       value &&
       tr.docChanged &&
