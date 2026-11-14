@@ -95,8 +95,9 @@ export async function capacityTotals(tx, teamId) {
 }
 // The sync store also needs C alone (stateBytes) to size each reduced state;
 // the reported capacity keeps its own shape.
-async function measureTotals(tx, teamId) {
-  const totals = await capacityTotals(tx, teamId);
+const measureTotals = async (tx, teamId) =>
+  measureOf(await capacityTotals(tx, teamId));
+function measureOf(totals) {
   return {
     size: {
       entities: totals.entities,
@@ -134,6 +135,9 @@ export async function measureDatabaseCapacity(
 ) {
   return withinCapacity(await measureDatabase(database, teamId), limits);
 }
+// The check on totals a caller already read in its transaction.
+export const assertCapacityTotals = (totals, limits = capacityLimits()) =>
+  withinCapacity(measureOf(totals), limits).size;
 // The same measurement inside a caller's transaction.
 export async function measureTransactionCapacity(
   tx,

@@ -70,6 +70,7 @@ export class PostgresControlRepository {
       read: async (currentUser, cursor) => {
         this.context.user = currentUser;
         this.context.teamCache.clear();
+        this.context.controlStore.forget?.();
         const value = await this.watch(currentUser, teamId),
           next = `pg:team:${teamId}:${value.revision}`;
         return {

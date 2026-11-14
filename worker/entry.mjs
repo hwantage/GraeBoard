@@ -101,6 +101,12 @@ async function pullFirst(ctx, teamId, { wait = true } = {}) {
   const promise = refreshTeam(ctx.env, profile).catch(() => {});
   ctx.execution?.waitUntil(promise);
   if (!wait) return;
+  // A write asks for the team's members next (see RequestContext.data):
+  // read them while the refresh check runs instead of after it.
+  // Only a store that keeps the answer for this request (see
+  // PostgresControlStore.members).
+  if (ctx.controlStore.forget)
+    ctx.controlStore.members(teamId, { activeOnly: true }).catch(() => {});
   await Promise.race([
     promise,
     new Promise((resolve) => setTimeout(resolve, 1500)),
