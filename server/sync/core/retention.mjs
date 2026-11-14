@@ -24,7 +24,11 @@ export function isExcluded(record, state, retentions = []) {
     );
   if (record.entity === "sheetClone")
     return years.has(String(record.payload.year));
-  if (["sheetCloneTask", "sheetCloneCell"].includes(record.entity))
+  if (
+    ["sheetCloneTask", "sheetCloneCell", "sheetCloneFormat"].includes(
+      record.entity,
+    )
+  )
     return isExcluded(
       entities[entityId("sheetClone", [record.key[0]])],
       entities,

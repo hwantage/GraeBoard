@@ -1,6 +1,10 @@
 import { prepareSheetCloneEdits } from "../../../server/storage/sheet-clones/sheet-clone-command-rules.mjs";
 import { subscribePostgresEvents } from "../events/postgres-events.mjs";
 import { z } from "zod";
+import {
+  DEFAULT_DOCUMENT_ID,
+  DEFAULT_DOCUMENT_TITLE,
+} from "../../../shared/documents/task-documents.js";
 import { applySheetCloneOperation } from "../../../shared/sheet-clones/sheet-clone-editing.js";
 import {
   propertiesFor,
@@ -42,11 +46,12 @@ export const sheetCloneRevision = (data) =>
 // What the sheetClone list shows, without the data: PostgreSQL drops it, so the
 // list does not transfer and unpack every sheetClone's sheet. A payload that
 // jsonb cannot read (\u0000 or a lone surrogate escape) comes whole instead.
-// The team's copies without their sheets: names and metadata only.
+// The team's copies without their sheets: names and metadata only. A copy
+// stored as row records also drops its row order and format assignment.
 export async function sheetCloneSummaries(s) {
   return (
     await s.tx.query(
-      "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND deleted=0 ORDER BY entity_key",
+      "SELECT entity_key,CASE WHEN payload ~ $2 THEN payload ELSE (payload::jsonb - 'data' - 'order' - 'formats')::text END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND deleted=0 ORDER BY entity_key",
       [s.teamId, "\\\\u(0000|[dD][89a-fA-F])"],
     )
   ).rows.map((row) => ({
@@ -332,6 +337,20 @@ async function execute(ctx, command, body, sheetCloneId) {
         for (const doc of lists.rows)
           if (!remainingIds.has(doc.key[2]))
             await s.put("document", doc.key, doc.payload, { deleted: true });
+        // A row that never had a document lists the empty main document
+        // (see listView). It is shown, not stored: saving it would write a
+        // document and rewrite the row for every row of the copy on the
+        // copy's first edit.
+        const shownOnly = (doc) =>
+          doc.id === DEFAULT_DOCUMENT_ID &&
+          doc.revision === 0 &&
+          doc.hasContent === false &&
+          doc.markdown === "" &&
+          doc.title === DEFAULT_DOCUMENT_TITLE;
+        for (const task of tasks)
+          task.documents = (task.documents || []).filter(
+            (doc) => !shownOnly(doc),
+          );
         for (const task of tasks)
           for (const doc of task.documents || [])
             if (typeof doc.markdown === "string")

@@ -76,6 +76,8 @@ export const splitSheetCloneRows = (record) => {
   if (!Array.isArray(source?.tasks)) return [record];
   const { tasks, ...data } = source,
     formats = new Map(),
+    // Rows usually share one formatting object: hash each object once.
+    formatIds = new Map(),
     assigned = {},
     ids = new Set(),
     rows = [];
@@ -87,7 +89,12 @@ export const splitSheetCloneRows = (record) => {
     ids.add(task.id);
     const { cells = {}, ...metadata } = task;
     if (plainObject(metadata.formatting)) {
-      const format = sheetCloneFormatId(metadata.formatting);
+      if (!formatIds.has(metadata.formatting))
+        formatIds.set(
+          metadata.formatting,
+          sheetCloneFormatId(metadata.formatting),
+        );
+      const format = formatIds.get(metadata.formatting);
       assigned[task.id] = format;
       if (!formats.has(format))
         formats.set(format, {
@@ -192,9 +199,8 @@ export function applicationEntities(entities) {
   return output;
 }
 
-// Protocol 5 recomposition: rows in the parent's order, then any row the
-// order does not list by key; an order entry without a visible row is
-// skipped. `only` limits the work to those sheet clone IDs.
+// Protocol 5 recomposition (see orderedSheetCloneRows for the row order).
+// `only` limits the work to those sheet clone IDs.
 export function composedRows(entities, only = null) {
   const output = {},
     rows = new Map(),
@@ -215,45 +221,64 @@ export function composedRows(entities, only = null) {
       continue;
     }
     const visible = new Map(
-        (rows.get(record.key[0]) || [])
-          .filter((row) => visibleChild(record, row))
-          .sort(compareKeys)
-          .map((row) => [row.key[1], row]),
+      (rows.get(record.key[0]) || [])
+        .filter((row) => visibleChild(record, row))
+        .map((row) => [row.key[1], row.payload]),
+    );
+    const composed = composeSheetClone(
+      record.payload,
+      orderedSheetCloneRows(record.payload.order, visible.keys()).map(
+        (rowId) => [rowId, visible.get(rowId)],
       ),
-      ordered = [];
-    for (const taskId of record.payload.order || []) {
-      const row = visible.get(taskId);
-      if (!row) continue;
-      ordered.push(row);
-      visible.delete(taskId);
-    }
-    ordered.push(...visible.values());
-    const {
-      order: _order,
-      formats: assigned = {},
-      ...payload
-    } = record.payload;
+      (format) => formats.get(canonical([record.key[0], format]))?.payload,
+    );
     output[id] = {
       ...record,
-      payload: {
-        ...payload,
-        data: packSheetCloneData({
-          ...unpackSheetCloneData(record.payload.data),
-          tasks: ordered.map((row) => {
-            const format =
-              Object.hasOwn(assigned, row.key[1]) &&
-              formats.get(canonical([record.key[0], assigned[row.key[1]]]));
-            return {
-              ...row.payload.data,
-              ...(format ? { formatting: format.payload.data } : {}),
-              cells: row.payload.cells,
-            };
-          }),
-        }),
-      },
+      payload: { ...composed, data: packSheetCloneData(composed.data) },
     };
   }
   return output;
+}
+
+// A protocol 5 copy as the application reads it: the parent without its row
+// order and format assignment, and `rows` ([row ID, row payload] in display
+// order) as tasks. Rows with the same format share one formatting object.
+export function composeSheetClone(parent, rows, formatOf) {
+  const { order: _order, formats: assigned = {}, ...payload } = parent;
+  return {
+    ...payload,
+    data: {
+      ...unpackSheetCloneData(parent.data),
+      tasks: rows.map(([rowId, row]) => {
+        const format =
+          Object.hasOwn(assigned, rowId) && formatOf(assigned[rowId]);
+        return {
+          ...row.data,
+          ...(format ? { formatting: format.data } : {}),
+          cells: row.cells,
+        };
+      }),
+    },
+  };
+}
+// The display order of a protocol 5 copy's rows: the parent's order, then any
+// row it does not list by ID; an order entry without a row is skipped.
+export function orderedSheetCloneRows(order, rowIds) {
+  const left = new Set(rowIds),
+    ordered = [];
+  for (const id of order || []) if (left.delete(id)) ordered.push(id);
+  return [...ordered, ...[...left].sort()];
+}
+
+// What an external site stores in its site rows. Under protocol 5 it keeps a
+// copy as the same parent, format and row records as C, so a change to one
+// row writes one row; earlier protocols keep the copy as one record.
+export function siteEntities(entities) {
+  if (protocolVersion({ entities }) !== ROW_PROTOCOL)
+    return applicationEntities(entities);
+  if (!Object.hasOwn(entities, MARKER)) return entities;
+  const { [MARKER]: marker, ...rest } = entities;
+  return rest;
 }
 
 // The explicit transition from protocol 3: each sheet clone is split into
