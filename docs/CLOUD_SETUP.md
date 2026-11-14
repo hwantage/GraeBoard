@@ -563,6 +563,30 @@ rm /private/external-import.env
 
 `--dry-run`은 DB 연결·스키마, GitHub 토큰·저장소 head·manifest, 외부 팀 상태와 기존 연결만 확인하고 쓰지 않습니다. 두 번째 명령은 Edge의 가져오기와 같은 순서로 연결 행과 팀 행을 만든 뒤 스냅샷과 이후 커밋을 받아 업무 자료를 기록하고 팀을 `active`로 바꿉니다. 이 단계는 이미지 설치를 미루고(`--with-images`로 Edge처럼 한 번에 처리할 수도 있음), 커밋당 64개씩 적용하며 변경된 행만 쓰고 끝에 한 번 전체 대조합니다. 리스는 6시간으로 잡으므로 긴 이력도 한 번에 따라잡습니다. 세 번째 명령은 현재 상태가 참조하는 이미지 중 R2에 없는 것만 GitHub에서 읽어 해시를 검증한 뒤 gateway 자원 주소로 올리며, 중단되면 다시 실행해 이어서 설치합니다. 이미지가 설치되기 전에도 외부 사이트에서 업무·문서 조회와 편집은 가능하고 해당 이미지만 비어 보입니다. Edge에서 546으로 중단된 뒤 남은 `importing` 상태의 팀·연결은 그대로 이어서 처리합니다. GitHub 토큰은 `GIT_TEAM` 환경 변수로도 줄 수 있고(예: `GIT_TEAM=$(gh auth token)`), PC가 HTTP 프록시를 거쳐야 하면 `node --use-env-proxy scripts/sync/sync-external-import.mjs ...`로 실행합니다. 다만 PostgreSQL 연결은 HTTP 프록시를 통과하지 못하므로 5432 포트로 직접 나갈 수 있는 네트워크에서만 실행할 수 있습니다. Supabase 직접 연결 주소는 IPv6 전용이므로 IPv4 환경에서는 세션 풀러 주소(`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`)를 사용합니다. 가져오기 뒤의 평상시 동기화는 변경분만 처리하므로 Edge에서 계속 실행하되, 첫 체크포인트와 Cron 실행의 CPU 시간을 함수 로그에서 확인합니다.
 
+### 외부 수신이 같은 커밋에서 계속 중단될 때
+
+사내 서버가 올린 이벤트가 커서 외부 서버의 실행이 매번 `CPU Time exceeded`나 `Memory limit exceeded`로 끝나면, 외부 서버는 같은 커밋에서 더 나아가지 못합니다. 상대 화면에는 외부 서버의 적용 위치가 멈춘 채로 보이고, 외부의 **지금 동기화**는 중단된 실행의 리스(7분) 때문에 "다른 동기화 실행이 아직 끝나지 않아"를 표시합니다. 이때는 위와 같은 설정 파일로 운영자 PC에서 수신을 대신 실행합니다.
+
+```sh
+npm run sync:external-import -- --settings /private/external-import.env --catch-up --dry-run
+node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --catch-up
+```
+
+`--dry-run`은 저장소 head, 외부 연결의 상태·적용 위치·리스·미전송 건수·마지막 오류만 출력하고 쓰지 않습니다. 두 번째 명령은 외부 서버의 평상시 수신과 같은 경로를 실행 한도 없이 돌려 저장소 head까지 받습니다. 연결이 `active`가 아니거나 `INSTALLATION_ID`가 연결과 다르면 아무것도 바꾸지 않고 끝납니다. 중단된 실행의 리스가 남아 있으면 풀릴 때까지 최대 10분 기다리고, 받는 동안에는 30분 리스를 잡아 외부 서버의 Cron 실행이 끼어들지 않습니다. 외부의 미전송 변경은 그대로 남아 평상시처럼 재배치되고, 이후 외부 서버가 게시합니다. 외부 게시까지 운영자 PC에서 끝내려면 `--publish`를 붙입니다. 중간에 실패하면 그 커밋의 DB 변경은 롤백되고 이전 커밋까지의 적용은 남으므로 다시 실행해 이어갑니다.
+
+이미지 설치에는 두 옵션을 쓸 수 있습니다.
+
+- `--defer-images`: 받은 커밋의 이미지 설치를 미루고 업무 자료만 받습니다. 미룬 이미지는 뒤에 `--images`로 설치하며, 그때까지 외부 사이트에서 해당 이미지만 비어 보입니다. `--publish`는 외부에서 올린 이미지를 읽어야 하므로 이미지 저장소에 닿을 수 있어야 합니다.
+- `--r2-bucket <버킷 이름>`: gateway 자원 주소 대신 운영자 PC의 Wrangler 로그인(`npx wrangler login`)으로 R2 버킷을 직접 읽고 씁니다. 이때 설정 파일의 `GRAEBOARD_RESOURCE_SECRET`은 비워도 됩니다. gateway의 자원용 Secret 값을 알 수 없을 때 사용하며 `--images`·`--catch-up` 모두에 붙일 수 있습니다. 버킷 이름은 gateway 배포 설정의 R2 바인딩에 있습니다.
+
+```sh
+node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --catch-up --defer-images
+npm run sync:external-import -- --settings /private/external-import.env --images --r2-bucket <버킷 이름>
+npm run sync:external-import -- --settings /private/external-import.env --catch-up --publish --r2-bucket <버킷 이름>
+```
+
+이 도구는 외부 서버와 같은 동기화 코드를 실행합니다. 따라서 운영 외부 서버에 배포된 것과 같은 `release` 커밋의 체크아웃에서 실행합니다. 더 오래된 체크아웃은 팀의 동기화 프로토콜을 모를 수 있습니다.
+
 ### 외부 게시의 실행 자원 한도 초과 (546)
 
 외부 Edge는 게시와 원격 명령 수신을 팀 전체 상태가 아니라 명령이 건드리는 기록에만 적용합니다. 바뀐 기록과 그 상위 업무, 복원되는 하위 셀·문서, 모든 태그, 건드린 태그를 쓰는 일정, 프로토콜 표시, 명령이 가리키는 수신 이력·충돌만 읽습니다. 결과 해시(`resultHash`)는 PostgreSQL이 저장된 정규 JSON 문자열로 계산합니다(`worker/sync/sync-partial.mjs`). 같은 계산으로 만든 현재 상태 해시가 연결의 `canonical_hash`와 같을 때만 그 결과를 씁니다. 다르거나, 기본 다국어 평면 밖 문자가 든 키가 있거나, 프로토콜 v2 팀이거나, 체크포인트·형식 전환 커밋이면 이전처럼 전체 상태를 읽어 계산합니다. 사이트 반영도 이번 커밋이 바꾼 기록과 남은 미전송 명령이 건드린 기록만 비교하며, 그 밖의 사이트 행은 다시 검사하지 않습니다.
