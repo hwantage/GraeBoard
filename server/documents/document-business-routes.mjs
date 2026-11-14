@@ -58,7 +58,10 @@ export function installDocumentBusinessRoutes(
     });
     app.get(base, (req, res, next) =>
       send(
-        business(req).list(target(req), { content: req.query.content === "1" }),
+        business(req).list(target(req), {
+          content: req.query.content === "1",
+          preview: req.query.preview === "1",
+        }),
         res,
         next,
       ),

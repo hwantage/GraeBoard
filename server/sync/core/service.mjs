@@ -25,6 +25,7 @@ import {
   protocolVersion,
   supportedVersion,
   PROTOCOL,
+  ROW_PROTOCOL,
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
 import { withSyncOperationCache } from "./sync-operation-cache.mjs";
@@ -32,6 +33,7 @@ import { pendingNeedsProjection } from "./projection.mjs";
 import { reduceMany, validateSnapshot } from "./reducer.mjs";
 import { withDocumentImageReferences } from "../../../shared/documents/document-image-references.js";
 import {
+  SYNC_EVENT_BATCH_BYTES,
   SYNC_FILE_MAX_BYTES,
   SYNC_ENVELOPE_RESERVE_BYTES,
 } from "../../../shared/sync/sync-limits.js";
@@ -128,7 +130,7 @@ export class SyncService {
     // keep their commit/count throughput; one large atomic command stays whole.
     maxRunBytes = Infinity,
     maxOperations = 50,
-    maxProtocol = SPLIT_PROTOCOL,
+    maxProtocol = ROW_PROTOCOL,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
     snapshotDecoder = decodeSnapshot,
     // An operator-side first import may commit the state first and install the
@@ -392,11 +394,15 @@ export class SyncService {
         const events = added.filter((f) => f.path.startsWith("events/"));
         if (events.length !== 1)
           throw new ProtocolError("SYNC_FORMAT", "Expected one event envelope");
-        const envelopeBytes = await this.transport.readFile(
-            commit.oid,
-            events[0].path,
-          ),
-          envelope = decode(envelopeBytes, 64 * 1024 * 1024);
+        // Only the size is needed after parsing; an event of many megabytes
+        // is not kept beside its parsed form for the rest of the commit.
+        let envelopeBytes = await this.transport.readFile(
+          commit.oid,
+          events[0].path,
+        );
+        const envelope = decode(envelopeBytes, 64 * 1024 * 1024),
+          envelopeSize = envelopeBytes.byteLength;
+        envelopeBytes = null;
         if (
           envelope.parent !== parent ||
           !supportedVersion(
@@ -463,8 +469,9 @@ export class SyncService {
             );
           if (
             protocolVersion(state) !== PROTOCOL ||
-            envelope.protocol !== SPLIT_PROTOCOL ||
-            envelope.reducer !== SPLIT_PROTOCOL ||
+            // History may hold a transition to protocol 4; new ones go to 5.
+            ![SPLIT_PROTOCOL, ROW_PROTOCOL].includes(envelope.protocol) ||
+            envelope.reducer !== envelope.protocol ||
             envelope.fromProtocol !== PROTOCOL ||
             envelope.previousHash !== stateHash(state) ||
             !snapshotPath(envelope.path) ||
@@ -504,7 +511,9 @@ export class SyncService {
             previous = protocolValidation(() =>
               this.snapshotDecoder(previousBytes),
             );
-          const expected = protocolValidation(() => upgradeState(state));
+          const expected = protocolValidation(() =>
+            upgradeState(state, envelope.protocol),
+          );
           if (
             bundle.atCommit !== parent ||
             previous.atCommit !== parent ||
@@ -576,7 +585,7 @@ export class SyncService {
               : await this.store.readPending();
           // Use the received bytes: serializing untrusted input here would
           // repeat reducer work and bypass protocolValidation's error mapping.
-          this.chargeBytes(envelopeBytes.byteLength);
+          this.chargeBytes(envelopeSize);
           const reduced = await this.reduceCanonical(
             envelope.operations,
             { ...this.identity, protocol: envelope.protocol },
@@ -791,7 +800,7 @@ export class SyncService {
             await this.store.readPending(),
             this.maxOperations,
             SYNC_FILE_MAX_BYTES,
-            this.maxRunBytes - this.runBytes,
+            Math.min(this.maxRunBytes - this.runBytes, SYNC_EVENT_BATCH_BYTES),
           );
           if (!pending.length) break;
           // As in receive(), finish the first atomic command even if it
@@ -952,8 +961,16 @@ export class SyncService {
       }
     }
   }
-  async upgrade({ expectedHead, expectedHash, peersStopped } = {}) {
+  // `target` is protocol 5. Protocol 4 remains only so its history and tests
+  // replay; the routes and the CLI never ask for it.
+  async upgrade({
+    expectedHead,
+    expectedHash,
+    peersStopped,
+    target = ROW_PROTOCOL,
+  } = {}) {
     if (
+      ![SPLIT_PROTOCOL, ROW_PROTOCOL].includes(target) ||
       peersStopped !== true ||
       !/^[a-f0-9]{40}$/.test(expectedHead || "") ||
       !/^[a-f0-9]{64}$/.test(expectedHash || "")
@@ -1013,27 +1030,28 @@ export class SyncService {
             new Error("Remote head is not a protocol transition"),
             { status: 409, code: "SYNC_UPGRADE_HEAD" },
           );
-        const received = await this.receive(link, remoteHead);
+        const received = await this.receive(link, remoteHead),
+          receivedState = await this.store.readState();
         return {
           head: received.canonical_head,
-          stateHash: stateHash(await this.store.readState()),
-          protocol: SPLIT_PROTOCOL,
-          reducer: SPLIT_PROTOCOL,
+          stateHash: stateHash(receivedState),
+          protocol: protocolVersion(receivedState),
+          reducer: protocolVersion(receivedState),
           upgraded: true,
           received: true,
         };
       }
-      if (protocolVersion(state) === SPLIT_PROTOCOL)
+      if (protocolVersion(state) !== PROTOCOL)
         return {
           head: expectedHead,
           stateHash: expectedHash,
-          protocol: SPLIT_PROTOCOL,
-          reducer: SPLIT_PROTOCOL,
+          protocol: protocolVersion(state),
+          reducer: protocolVersion(state),
           upgraded: false,
         };
       protocolValidation(() => validateSnapshot(state, this.identity));
       const next = protocolValidation(() =>
-        validateSnapshot(upgradeState(state), this.identity),
+        validateSnapshot(upgradeState(state, target), this.identity),
       );
       this.assertCapacity(next);
       const path = "snapshots/" + randomUUID() + ".json.gz",
@@ -1041,8 +1059,8 @@ export class SyncService {
         bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
         previousBytes = encodeSnapshot({ atCommit: expectedHead, state }),
         envelope = {
-          protocol: SPLIT_PROTOCOL,
-          reducer: SPLIT_PROTOCOL,
+          protocol: target,
+          reducer: target,
           kind: "transition",
           fromProtocol: PROTOCOL,
           parent: expectedHead,
@@ -1069,8 +1087,8 @@ export class SyncService {
       return {
         head: received.canonical_head,
         stateHash: envelope.resultHash,
-        protocol: SPLIT_PROTOCOL,
-        reducer: SPLIT_PROTOCOL,
+        protocol: target,
+        reducer: target,
         upgraded: true,
       };
     } finally {

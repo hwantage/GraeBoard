@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
-let taskId: string;
+let taskId: string, teamId: string;
 const detail = (page: Page) =>
   page.getByRole("dialog", { name: "업무 상세", exact: true });
 const rich = (page: Page) =>
@@ -43,11 +43,7 @@ async function open(page: Page, markdown?: string) {
   await rich(page).click();
 }
 async function paste(editor: Locator, text: string, html = "") {
-  await editor.evaluate(async () => {
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
-  });
+  await settle(editor);
   await editor.evaluate(
     (el, { text, html }) => {
       const event = new Event("paste", { bubbles: true, cancelable: true });
@@ -65,17 +61,54 @@ async function paste(editor: Locator, text: string, html = "") {
 }
 const markdown = async (page: Page) =>
   (await request(page, `/tasks/${taskId}/documents/main`)).markdown as string;
-async function settle(page: Page) {
-  await rich(page).evaluate(async () => {
-    await new Promise<void>((r) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => r())),
-    );
-  });
+// Let the editor holding `target` paint the latest changes.
+async function settle(target: Locator, frames = 2) {
+  await target.evaluate(async (_, frames) => {
+    for (let i = 0; i < frames; i++)
+      await new Promise((r) => requestAnimationFrame(r));
+  }, frames);
 }
 async function clear(page: Page) {
   await rich(page).press("ControlOrMeta+A");
   await rich(page).press("Backspace");
 }
+// Home differs by browser and OS, so place the caret by text offset instead.
+// A just-finished click can still restore its own caret, so place it again
+// until the editor keeps it.
+async function caret(block: Locator, offset = 0) {
+  const place = (el: Element, offset: number) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && offset > node.textContent!.length) {
+      offset -= node.textContent!.length;
+      node = walker.nextNode();
+    }
+    const range = document.createRange();
+    if (node) range.setStart(node, offset);
+    else range.setStart(el, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  const at = (el: Element) => {
+    const selection = window.getSelection()!;
+    if (!selection.isCollapsed || !el.contains(selection.anchorNode)) return -1;
+    const range = document.createRange();
+    range.setStart(el, 0);
+    range.setEnd(selection.anchorNode!, selection.anchorOffset);
+    return range.toString().length;
+  };
+  await expect
+    .poll(async () => {
+      await block.evaluate(place, offset);
+      await settle(block, 4);
+      return block.evaluate(at);
+    })
+    .toBe(offset);
+}
+const text = async (locator: Locator) =>
+  (await locator.textContent())?.replaceAll("\u00a0", " ");
 
 test.beforeEach(async ({ page }) => {
   await request(page, "/auth/login", "POST", {
@@ -87,6 +120,7 @@ test.beforeEach(async ({ page }) => {
     name: `입력 ${randomUUID().slice(0, 8)}`,
     members: [{ userId: boot.user.id, role: "lead" }],
   });
+  teamId = team.id;
   taskId = (
     await request(page, "/tasks", "POST", {
       teamId: team.id,
@@ -114,19 +148,15 @@ test("Tab은 문단에서 머물고 목록을 들여쓰며 표 셀을 옮기고 
     expect(await rich(page).textContent()).toBe(before);
   }
   await rich(page).locator("li p").nth(1).click();
-  await rich(page).evaluate(async () => {
-    await new Promise<void>((r) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => r())),
-    );
-  });
+  await settle(rich(page));
   await page.keyboard.press("Tab");
   await expect(rich(page).locator("li li")).toHaveCount(1);
   await page.keyboard.press("Shift+Tab");
   await expect(rich(page).locator("li li")).toHaveCount(0);
   await rich(page).locator("th p").first().click();
-  await settle(page);
+  await settle(rich(page));
   await page.keyboard.press("Tab");
-  await settle(page);
+  await settle(rich(page));
   expect(
     await rich(page).evaluate(
       () =>
@@ -161,7 +191,7 @@ test("코드 블록 Tab은 2칸이고 읽기 전용 Tab은 포커스를 옮긴�
       selection.removeAllRanges();
       selection.addRange(range);
     });
-  await settle(page);
+  await settle(rich(page));
   await page.keyboard.press("Tab");
   await expect
     .poll(() => rich(page).locator("pre").textContent())
@@ -218,21 +248,233 @@ for (const [marker, selector, saved] of [
     if (marker === "[x]")
       await expect(rich(page).getByRole("checkbox")).toBeChecked();
     await page.keyboard.press("Backspace");
-    expect((await rich(page).textContent())?.replaceAll("\u00a0", " ")).toBe(
-      marker + " ",
-    );
+    expect(await text(rich(page))).toBe(marker + " ");
     await clear(page);
     await rich(page).pressSequentially(marker + " ");
     await expect(rich(page).locator(selector)).toHaveCount(1);
     await page.keyboard.press("ControlOrMeta+z");
-    expect((await rich(page).textContent())?.replaceAll("\u00a0", " ")).toBe(
-      marker + " ",
-    );
+    expect(await text(rich(page))).toBe(marker + " ");
     await clear(page);
     await rich(page).pressSequentially(marker + " ");
     await rich(page).pressSequentially("항목");
     await expect.poll(() => markdown(page)).toContain(saved);
   });
+
+for (const [marker, selector, saved] of [
+  ["-", "ul > li", "* 기존 **문장**"],
+  ["*", "ul > li", "* 기존 **문장**"],
+  ["+", "ul > li", "* 기존 **문장**"],
+  ["1.", "ol > li", "1. 기존 **문장**"],
+  ["3.", "ol > li", "3. 기존 **문장**"],
+  ["[ ]", "li.document-check-item", "* [ ] 기존 **문장**"],
+  ["[]", "li.document-check-item", "* [ ] 기존 **문장**"],
+  ["[x]", "li.document-check-item", "* [x] 기존 **문장**"],
+  ["#", "h1", "# 기존 **문장**"],
+  ["##", "h2", "## 기존 **문장**"],
+  ["###", "h3", "### 기존 **문장**"],
+  [">", "blockquote", "> 기존 **문장**"],
+])
+  test(`글이 있는 문단 맨 앞의 ${marker} 스페이스도 글을 유지해 변환하고 Backspace와 실행취소로 복원한다`, async ({
+    page,
+  }) => {
+    await open(page, "기존 **문장**\n");
+    const convert = async () => {
+      await caret(rich(page).locator("p").first());
+      await rich(page).pressSequentially(marker + " ");
+      await expect(rich(page).locator(selector)).toHaveCount(1);
+      expect(await text(rich(page).locator(selector))).toBe("기존 문장");
+      await expect(rich(page).locator(`${selector} strong`)).toHaveText("문장");
+    };
+    // The typed marker comes back in front of the kept text, with the caret
+    // after it, so removing the marker restores the original paragraph.
+    const restored = async () => {
+      await expect(rich(page).locator(selector)).toHaveCount(0);
+      expect(await text(rich(page))).toBe(marker + " 기존 문장");
+      for (let i = 0; i <= marker.length; i++)
+        await page.keyboard.press("Backspace");
+      expect(await text(rich(page))).toBe("기존 문장");
+      await expect(rich(page).locator("p strong")).toHaveText("문장");
+    };
+    await convert();
+    if (marker === "[x]")
+      await expect(rich(page).getByRole("checkbox")).toBeChecked();
+    await page.keyboard.press("Backspace");
+    await restored();
+    await convert();
+    await page.keyboard.press("ControlOrMeta+z");
+    await restored();
+    await convert();
+    await expect.poll(() => markdown(page)).toContain(saved);
+  });
+
+test("문장 중간 기호와 글 앞 코드 울타리·구분선은 변환하지 않고 뒤쪽 인라인 코드는 막지 않는다", async ({
+  page,
+}) => {
+  await open(page, "기존 문장\n\n기존 `코드` 문장\n\n`코드`로 시작\n");
+  const first = rich(page).locator("p").first();
+  for (const [offset, marker, selector] of [
+    [3, "- ", "li"],
+    [2, "# ", "h1"],
+    [0, "``` ", "pre"],
+    [0, "*** ", "hr"],
+  ] as const) {
+    await caret(first, offset);
+    await rich(page).pressSequentially(marker);
+    await expect(rich(page).locator(selector)).toHaveCount(0);
+    const typed = "기존 문장".slice(0, offset) + marker;
+    expect(await text(first)).toBe(typed + "기존 문장".slice(offset));
+    for (let i = 0; i < marker.length; i++)
+      await page.keyboard.press("Backspace");
+    expect(await text(first)).toBe("기존 문장");
+  }
+  await caret(rich(page).locator("p").nth(1));
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("ul > li")).toHaveCount(1);
+  expect(await text(rich(page).locator("li"))).toBe("기존 코드 문장");
+  await expect(rich(page).locator("li code")).toHaveText("코드");
+  // Inline code is not inclusive, so a marker typed before it stays plain.
+  await caret(rich(page).locator("p", { hasText: "로 시작" }));
+  await rich(page).pressSequentially("> ");
+  await expect(rich(page).locator("blockquote")).toHaveCount(1);
+  expect(await text(rich(page).locator("blockquote"))).toBe("코드로 시작");
+  await expect(rich(page).locator("blockquote code")).toHaveText("코드");
+  await expect
+    .poll(() => markdown(page))
+    .toContain("* 기존 `코드` 문장\n\n> `코드`로 시작");
+});
+
+test("목록 항목과 인용 안의 글 앞 기호는 빈 문단과 같은 규칙으로 바꾼다", async ({
+  page,
+}) => {
+  await open(page, "- 첫째\n\n> 인용 문장\n");
+  const item = rich(page).locator("li p");
+  // A list item starts with a paragraph, so only the checklist form applies.
+  await caret(item);
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("li li")).toHaveCount(0);
+  expect(await text(item)).toBe("- 첫째");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await caret(item);
+  await rich(page).pressSequentially("[ ] ");
+  await expect(rich(page).locator("li.document-check-item")).toHaveCount(1);
+  expect(await text(item)).toBe("첫째");
+  await caret(rich(page).locator("blockquote p"));
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("blockquote ul > li")).toHaveCount(1);
+  expect(await text(rich(page).locator("blockquote li"))).toBe("인용 문장");
+  await expect.poll(() => markdown(page)).toContain("* [ ] 첫째");
+});
+
+test("문단 맨 앞에 이미 있던 기호 뒤의 스페이스도 변환하고 Backspace로 되돌린다", async ({
+  page,
+}) => {
+  await open(page, "1.5배 증가\n");
+  const first = rich(page).locator("p").first();
+  await caret(first, 2);
+  await rich(page).pressSequentially(" ");
+  await expect(rich(page).locator("ol > li")).toHaveCount(1);
+  expect(await text(rich(page).locator("li"))).toBe("5배 증가");
+  await page.keyboard.press("Backspace");
+  await expect(rich(page).locator("ol")).toHaveCount(0);
+  expect(await text(first)).toBe("1. 5배 증가");
+  await page.keyboard.press("Backspace");
+  expect(await text(first)).toBe("1.5배 증가");
+});
+
+test("변환 직후 다른 곳에서 바뀐 내용을 받으면 Backspace가 기호를 되살리지 않는다", async ({
+  page,
+}) => {
+  await open(page, "기존 문장\n");
+  await caret(rich(page).locator("p").first());
+  await rich(page).pressSequentially("- ");
+  await expect(rich(page).locator("ul > li")).toHaveCount(1);
+  await expect.poll(() => markdown(page)).toContain("* 기존 문장");
+  const path = `/tasks/${taskId}/documents/main`;
+  const saved = await request(page, path);
+  await request(page, path, "PUT", {
+    markdown: "* 기존 문장\n\n원격 문단\n",
+    expectedRevision: saved.revision,
+    operationId: randomUUID(),
+  });
+  await expect(rich(page)).toContainText("원격 문단");
+  // The remote change clears the shortcut's inverse, so Backspace runs its
+  // usual command wherever the caret is now (delete a character, or lift the
+  // list item) instead of bringing the typed "- " back.
+  const before = await rich(page).innerHTML();
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => rich(page).innerHTML()).not.toBe(before);
+  await expect(rich(page)).not.toContainText("- 기존");
+});
+
+test("변환 직후 다른 곳에서 체크 상태만 바꿔도 Backspace가 기호를 되살리지 않는다", async ({
+  page,
+}) => {
+  await open(page, "기존 문장\n");
+  await caret(rich(page).locator("p").first());
+  await rich(page).pressSequentially("[ ] ");
+  await expect(rich(page).getByRole("checkbox")).not.toBeChecked();
+  await expect.poll(() => markdown(page)).toContain("* [ ] 기존 문장");
+  const path = `/tasks/${taskId}/documents/main`;
+  const saved = await request(page, path);
+  await request(page, path, "PUT", {
+    markdown: "* [x] 기존 문장\n",
+    expectedRevision: saved.revision,
+    operationId: randomUUID(),
+  });
+  await expect(rich(page).getByRole("checkbox")).toBeChecked();
+  // Only an attribute changed remotely; the inverse is dropped all the same,
+  // so Backspace cannot undo the conversion over the remote check.
+  await page.keyboard.press("Backspace");
+  await settle(rich(page));
+  await expect(rich(page)).not.toContainText("[ ]");
+  await expect(rich(page).getByRole("checkbox")).toBeChecked();
+});
+
+test("여러 편집기가 함께 열린 꼬리 메모에서도 모든 메모가 글 앞 기호와 코드 울타리를 바꾼다", async ({
+  page,
+}) => {
+  // Milkdown keeps one module-level rule object per built-in rule and points it
+  // at the last editor initialized, so each memo must use its own rules.
+  const titles = ["첫 메모", "둘째 메모"];
+  for (const title of titles) {
+    const id = randomUUID();
+    await request(page, `/teams/${teamId}/years/2026/memos`, "POST", {
+      id,
+      title,
+    });
+    await request(page, `/teams/${teamId}/years/2026/memos/${id}`, "PUT", {
+      markdown: "기존 문장\n",
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+  }
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  const memos = page.locator(".annual-memos");
+  await memos
+    .getByRole("button", { name: "꼬리 메모", expanded: false, exact: true })
+    .click();
+  const editor = (title: string) =>
+    memos
+      .getByRole("tabpanel", { name: title, exact: true })
+      .getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+  for (const title of titles)
+    await expect(editor(title)).toHaveText("기존 문장");
+  for (const title of titles) {
+    await editor(title).click();
+    await caret(editor(title).locator("p").first());
+    await editor(title).pressSequentially("- ");
+    await expect(editor(title).locator("ul > li")).toHaveCount(1);
+    expect(await text(editor(title).locator("li"))).toBe("기존 문장");
+    await caret(editor(title).locator("li p"), 5);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await editor(title).pressSequentially("```");
+    await page.keyboard.press("Enter");
+    await expect(editor(title).locator("pre")).toHaveCount(1);
+  }
+});
 
 test("목록 안 체크박스와 코드 울타리 Enter도 변환하고 입력대로 복원한다", async ({
   page,
@@ -242,9 +484,7 @@ test("목록 안 체크박스와 코드 울타리 Enter도 변환하고 입력�
   await expect(rich(page).locator("li.document-check-item")).toHaveCount(1);
   await page.keyboard.press("Backspace");
   await expect(rich(page).locator("li.document-check-item")).toHaveCount(0);
-  expect(
-    (await rich(page).locator("li").textContent())?.replaceAll("\u00a0", " "),
-  ).toBe("[ ] ");
+  expect(await text(rich(page).locator("li"))).toBe("[ ] ");
   await clear(page);
   await rich(page).pressSequentially("```");
   await page.keyboard.press("Enter");
@@ -263,7 +503,7 @@ test("목록 안 체크박스와 코드 울타리 Enter도 변환하고 입력�
       selection.removeAllRanges();
       selection.addRange(range);
     });
-  await settle(page);
+  await settle(rich(page));
   await page.keyboard.press("Enter");
   await expect(rich(page).locator("pre")).toHaveCount(0);
   await expect(rich(page)).toHaveText("```");
@@ -277,7 +517,7 @@ test("코드·인라인 코드·표 셀·문장 중간에서는 자동 블록 �
   await rich(page).pressSequentially("- ");
   await expect(rich(page).locator("li")).toHaveCount(0);
   await rich(page).locator("td p").first().click();
-  await settle(page);
+  await settle(rich(page));
   await rich(page).pressSequentially("# ");
   await expect(rich(page).locator("h1")).toHaveCount(0);
   await rich(page).locator("p").last().click();
@@ -292,7 +532,7 @@ test("코드·인라인 코드·표 셀·문장 중간에서는 자동 블록 �
     .click();
   await expect(rich(page).locator("code")).toHaveText("-");
   await page.keyboard.press("ArrowRight");
-  await settle(page);
+  await settle(rich(page));
   await rich(page).pressSequentially(" ");
   await expect(rich(page).locator("li")).toHaveCount(0);
 });
@@ -348,7 +588,7 @@ test("조회 중 고친 URL과 실패한 URL은 그대로 두고 선택 글자�
   );
   release();
   await response;
-  await settle(page);
+  await settle(rich(page));
   await expect(rich(page)).toContainText("수정");
   await expect(rich(page)).not.toContainText("늦은 제목");
   await clear(page);
@@ -379,11 +619,11 @@ test("링크 앞 문단 편집은 제목 위치를 추적하고 코드·원문 �
   await open(page, "앞 문단\n\n마지막\n");
   await rich(page).locator("p").last().click();
   await page.keyboard.press("End");
-  await settle(page);
+  await settle(rich(page));
   await paste(rich(page), "https://position.example");
   await rich(page).locator("p").first().click();
   await page.keyboard.press("Home");
-  await settle(page);
+  await settle(rich(page));
   await rich(page).pressSequentially("새로 ");
   release();
   await expect(rich(page).locator("a")).toHaveText("추적한 제목");
@@ -426,7 +666,7 @@ test("제목 조회 중 링크를 지우면 늦은 제목으로 다시 삽입하
   await clear(page);
   release();
   await response;
-  await settle(page);
+  await settle(rich(page));
   await expect(rich(page).locator("a")).toHaveCount(0);
   await expect(rich(page)).toHaveText("");
 });

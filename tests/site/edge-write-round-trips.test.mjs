@@ -130,10 +130,15 @@ test("PostgreSQL: a cell save checks every member's person record in one query",
     few.length,
     "a cell save must cost the same SQL round trips for 1 or 41 members",
   );
-  assert.deepEqual(
-    many.map((q) => q.sql),
-    few.map((q) => q.sql),
-  );
+  // The statement that opens the transaction carries its own values (the
+  // time, the request ID): the statements are the same apart from those.
+  const shape = (queries) =>
+    queries.map((q) =>
+      q.sql
+        .replace(/lease_until>\d+/g, "lease_until>?")
+        .replace(/o\.op_id='[^']*'/g, "o.op_id=?"),
+    );
+  assert.deepEqual(shape(many), shape(few));
 });
 
 test("PostgreSQL: a cell events poll reads every task it names in one query", async (t) => {

@@ -5,7 +5,8 @@ import TeamSetupKey from "./TeamSetupKey";
 import SyncSetupWizard from "./SyncSetupWizard";
 import SyncConnectionDetails from "./SyncConnectionDetails";
 import SyncConflictBox from "./SyncConflictBox";
-import { syncTime, type SyncStatus } from "./sync-types";
+import SyncLogDialog from "./SyncLogDialog";
+import { syncModeNames, syncTime, type SyncStatus } from "./sync-types";
 import { useEffect, useRef, useState } from "react";
 import { Plug, RefreshCw } from "lucide-react";
 import { api, send } from "../platform/api";
@@ -31,15 +32,7 @@ type Connection = {
   profiles: ResourceProfile[];
   switchJob?: SwitchJob | null;
 };
-const modes: Record<SyncStatus["mode"], string> = {
-  unlinked: "미연결",
-  initializing: "초기 게시 중",
-  importing: "가져오는 중",
-  active: "동기화 중",
-  paused: "일시정지",
-  recovery: "복구 점검 필요",
-  disconnected: "연결 해제",
-};
+const modes = syncModeNames;
 
 type ErrorTarget = "connection" | "actions" | `conflict:${string}`;
 const actionNames: Record<string, string> = {
@@ -94,6 +87,7 @@ export default function TeamSyncSettings({
   const [profileId, setProfileId] = useState("");
   const [check, setCheck] = useState<ConnectionCheck | null>(null);
   const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState("");
   const [notice, setNotice] = useState("");
@@ -790,6 +784,10 @@ export default function TeamSyncSettings({
                     재개
                   </Button>
                 )}
+                {/* Only the internal server keeps a synchronization log. */}
+                {admin && !external && !!status.profileId && (
+                  <Button onClick={() => setLogOpen(true)}>동기화 로그</Button>
+                )}
                 {admin && linked && (
                   <Button
                     className="team-sync-disconnect"
@@ -857,6 +855,13 @@ export default function TeamSyncSettings({
                 onMessage={onMessage}
               />
             )}
+          {logOpen && (
+            <SyncLogDialog
+              teamId={team.id}
+              teamName={team.name}
+              onClose={() => setLogOpen(false)}
+            />
+          )}
           {conflictsOpen && (
             <SyncConflictBox
               teamId={team.id}
