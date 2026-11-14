@@ -111,8 +111,10 @@ export function controlPool(env) {
     site: !!siteTeamId(env),
   });
 }
-// Counts control writes, so a value read before one is read again after it
-// (see PostgresControlStore.members).
+// Counts this isolate's control writes, when one starts and when it ends, so
+// a value read before or during one is read again after it (see
+// PostgresControlStore.members). Another isolate's write is seen by the next
+// request, which reads anew.
 let controlWriteCount = 0;
 export const controlWrites = () => controlWriteCount;
 export async function controlTransaction(env, work, { write = false } = {}) {
@@ -150,6 +152,7 @@ export async function controlTransaction(env, work, { write = false } = {}) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
+    if (write) controlWriteCount++;
     await client.release();
   }
 }

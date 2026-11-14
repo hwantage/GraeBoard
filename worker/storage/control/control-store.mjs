@@ -71,9 +71,12 @@ export class PostgresControlStore {
     const key = teamId + ":" + activeOnly,
       known = this.memberLists.get(key);
     if (known?.writes === controlWrites()) return [...(await known.rows)];
-    const rows = this.readMembers(teamId, activeOnly);
-    this.memberLists.set(key, { writes: controlWrites(), rows });
-    rows.catch(() => this.memberLists.delete(key));
+    const rows = this.readMembers(teamId, activeOnly),
+      entry = { writes: controlWrites(), rows };
+    this.memberLists.set(key, entry);
+    rows.catch(() => {
+      if (this.memberLists.get(key) === entry) this.memberLists.delete(key);
+    });
     return [...(await rows)];
   }
   readMembers(teamId, activeOnly) {
