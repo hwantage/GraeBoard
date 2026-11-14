@@ -2,7 +2,7 @@ import { commitCanonicalForTest } from "../../support/canonical-storage-fixture.
 import { recoverSync } from "../../../scripts/sync/sync-recover.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -21,6 +21,7 @@ import {
   readEntity,
 } from "../../../server/sync/node/entities.mjs";
 import { decodeSnapshot } from "../../../server/sync/core/snapshot.mjs";
+import { syncLogDate } from "../../../server/sync/node/sync-log.mjs";
 import {
   conflictChanges,
   diffSides,
@@ -67,6 +68,7 @@ async function fixture(t) {
         profiles: [{ profileId: name, teamId, repository: "test/data" }],
         transports: { [name]: transport },
         schedule: false,
+        logDir: join(dir, name + "-sync-logs"),
       },
     });
     const server = app.listen(0, "127.0.0.1");
@@ -1309,6 +1311,233 @@ test(
     );
     assert.equal(await a.transport.readHead(), canonicalHead);
     assert.equal(await a.transport.readHead("sync-status/" + aId), aStatus);
+  },
+);
+
+test(
+  "the internal sync log records cycles, the failed Git step with its output, actions and level changes",
+  { timeout: 30000 },
+  async (t) => {
+    const { a, b, teamId, dir } = await fixture(t);
+    ok(await a.api("/tasks", { teamId, year: 2026, fields: { title: "log" } }));
+    await joinPeer(a, b, teamId);
+    const aId = a.app.locals.sync.installationId,
+      bId = b.app.locals.sync.installationId;
+    a.app.locals.sync.profiles[0].peerInstallationId = bId;
+    b.app.locals.sync.profiles[0].peerInstallationId = aId;
+    a.app.locals.sync.clear(teamId);
+    b.app.locals.sync.clear(teamId);
+    const today = syncLogDate(),
+      route = `/teams/${teamId}/sync/log`,
+      file = join(dir, "a-sync-logs", teamId, today + ".jsonl"),
+      written = () =>
+        existsSync(file)
+          ? readFileSync(file, "utf8").split('"kind":"cycle"').length - 1
+          : 0,
+      // A cycle's entry is written after the run settles, on a separate
+      // branch, so a run that is logged waits for its line.
+      run = async ({ quiet = false } = {}) => {
+        const before = written();
+        let failure;
+        try {
+          await a.app.locals.sync.get(teamId).run();
+        } catch (error) {
+          failure = error;
+        }
+        for (let attempt = 0; !quiet && attempt < 400; attempt++) {
+          if (written() > before) break;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        if (failure) throw failure;
+      },
+      entries = async (query = "") => ok(await a.api(route + query)).entries;
+    for (let i = 0; i < 2; i++) {
+      await run();
+      await b.app.locals.sync.get(teamId).run();
+    }
+    const canonicalHead = await a.transport.readHead();
+    let log = ok(await a.api(route));
+    assert.equal(log.level, "cycles");
+    assert.equal(log.canSetLevel, true);
+    assert.equal(log.date, today);
+    assert.deepEqual(log.dates, [today]);
+    assert.equal(log.retentionDays, 14);
+    let listed = await entries();
+    const enabled = listed.find((entry) => entry.kind === "action");
+    assert.equal(enabled.action, "enable");
+    assert.equal(enabled.ok, true);
+    assert.equal(enabled.actor.name, "테스트");
+    const cycle = listed.find((entry) => entry.kind === "cycle");
+    assert.equal(cycle.ok, true);
+    assert.equal(cycle.action, "run");
+    assert.equal(cycle.mode, "active");
+    assert.equal(cycle.head, canonicalHead);
+    assert.equal(cycle.peerHead, canonicalHead);
+    assert.ok(Number.isInteger(cycle.ms));
+    // The first publication moved the head and is counted.
+    const published = listed.find((entry) => entry.published);
+    assert.equal(published.head, canonicalHead);
+    // Successful Git commands are not written at the default level.
+    assert.ok(!listed.some((entry) => entry.kind === "git"));
+
+    // The reported failure: the peer's status names a commit this clone has
+    // not fetched. The log says which Git step failed and what Git printed.
+    const publishPeerStatus = async (appliedCanonicalHead) => {
+      const parent = await b.transport.readHead("sync-status/" + bId),
+        old = JSON.parse(
+          (await b.transport.readFile(parent, "status.json")).toString(),
+        );
+      assert.equal(
+        await b.transport.publish(
+          await b.transport.createCandidate(parent, {
+            "status.json": canonical({
+              ...old,
+              appliedCanonicalHead,
+              observedAt: new Date().toISOString(),
+            }),
+          }),
+          parent,
+          "sync-status/" + bId,
+        ),
+        true,
+      );
+    };
+    const ahead = await b.transport.createCandidate(canonicalHead, {
+      "events/ahead.json": "{}",
+    });
+    await publishPeerStatus(ahead);
+    await assert.rejects(run(), /Git operation failed \(128, merge-base\)/);
+    assert.equal(
+      ok(await a.api(`/teams/${teamId}/sync`)).lastError,
+      "Git operation failed (128, merge-base)",
+    );
+    listed = await entries("?problems=1");
+    const failed = listed.find((entry) => entry.kind === "cycle");
+    assert.equal(failed.ok, false);
+    assert.equal(
+      failed.error.message,
+      "Git operation failed (128, merge-base)",
+    );
+    assert.equal(failed.error.code, 128);
+    assert.equal(failed.head, canonicalHead);
+    const git = listed.find((entry) => entry.kind === "git");
+    assert.equal(git.command, "merge-base");
+    assert.equal(git.code, 128);
+    assert.match(git.stderr, /Not a valid commit name/);
+    assert.ok(git.args.includes(ahead));
+    assert.ok(
+      listed.every((entry) => entry.ok === false || entry.kind === "state"),
+    );
+    // The next successful cycle is marked as the recovery.
+    await publishPeerStatus(canonicalHead);
+    await run();
+    listed = await entries();
+    assert.equal(listed[0].kind, "cycle");
+    assert.equal(listed[0].ok, true);
+    assert.equal(listed[0].recovered, true);
+
+    // Every Git command is written only after the administrator asks for it.
+    const level = `/admin/teams/${teamId}/sync-log-level`;
+    assert.equal((await a.api(level, { level: "all" }, "PUT")).status, 400);
+    assert.deepEqual(ok(await a.api(level, { level: "git" }, "PUT")), {
+      level: "git",
+    });
+    await run();
+    listed = await entries();
+    assert.ok(
+      listed.some(
+        (entry) =>
+          entry.kind === "git" && entry.ok && entry.command === "fetch",
+      ),
+    );
+    const changed = listed.find((entry) => entry.action === "log-level");
+    assert.deepEqual([changed.from, changed.to], ["cycles", "git"]);
+    // "changes" keeps failures and state changes and drops quiet cycles.
+    ok(await a.api(level, { level: "changes" }, "PUT"));
+    const cycleCount = async () =>
+        (await entries()).filter((entry) => entry.kind === "cycle").length,
+      count = await cycleCount();
+    await run({ quiet: true });
+    // The quiet run above is absent once a later, logged run has been written.
+    ok(await a.api(level, { level: "cycles" }, "PUT"));
+    await run();
+    assert.equal(await cycleCount(), count + 1);
+    ok(await a.api(`/teams/${teamId}/sync/pause`, {}));
+    listed = await entries();
+    assert.ok(
+      listed.some((entry) => entry.action === "pause" && entry.ok === true),
+    );
+
+    // Pages, the file download and who may see them.
+    const origin = `http://127.0.0.1:${a.server.address().port}/api`,
+      session = (id, role, systemRole) => {
+        const token = randomUUID();
+        a.db
+          .prepare(
+            "INSERT INTO users(id,username,name,password,system_role,created_at) VALUES(?,?,?,'!',?,?)",
+          )
+          .run(id, id + "@example.com", role, systemRole, "2026-01-01");
+        if (role !== "outsider")
+          a.db
+            .prepare("INSERT INTO memberships VALUES(?,?,?)")
+            .run(id, teamId, role);
+        a.db
+          .prepare("INSERT INTO sessions VALUES(?,?,?)")
+          .run(
+            createHash("sha256").update(token).digest("hex"),
+            id,
+            Date.now() + 86400000,
+          );
+        return (path, body, method = body ? "POST" : "GET") =>
+          fetch(origin + path, {
+            method,
+            headers: {
+              cookie: "weekly_session=" + token,
+              "X-Requested-With": "WeeklyPlan",
+              "Content-Type": "application/json",
+            },
+            body: body ? JSON.stringify(body) : undefined,
+          });
+      },
+      lead = session(randomUUID(), "lead", "user"),
+      member = session(randomUUID(), "member", "user"),
+      outsider = session(randomUUID(), "outsider", "user");
+    const viewed = await lead(route);
+    assert.equal(viewed.status, 200);
+    assert.equal(unpack(await viewed.json()).canSetLevel, false);
+    const downloaded = await lead(route + "/download", { date: today });
+    assert.equal(downloaded.status, 200);
+    assert.match(
+      downloaded.headers.get("content-disposition"),
+      new RegExp(`sync-log-${today}\\.jsonl`),
+    );
+    assert.equal(await downloaded.text(), readFileSync(file, "utf8"));
+    assert.equal(
+      (await lead(route + "/download", { date: "2020-01-01" })).status,
+      404,
+    );
+    assert.equal(
+      (await lead(route + "/download", { date: "../settings" })).status,
+      404,
+    );
+    assert.equal((await lead(level, { level: "git" }, "PUT")).status, 403);
+    for (const request of [member, outsider]) {
+      assert.ok([403, 404].includes((await request(route)).status));
+      assert.ok(
+        [403, 404].includes(
+          (await request(route + "/download", { date: today })).status,
+        ),
+      );
+    }
+    // A refused request leaves no entry in the team's log.
+    assert.equal((await member(`/teams/${teamId}/sync/run`, {})).status, 403);
+    assert.ok(!readFileSync(file, "utf8").includes('"name":"member"'));
+    // The position of an entry pages to the ones written before it.
+    const all = ok(await a.api(route)).entries,
+      page = ok(await a.api(`${route}?before=${all.at(-3).line}`));
+    assert.deepEqual(page.entries, all.slice(-2));
+    assert.equal(page.next, null);
+    assert.deepEqual(ok(await a.api(route + "?before=")).entries, all);
   },
 );
 
