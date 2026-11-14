@@ -1,4 +1,4 @@
-import { controlTransaction } from "../data.mjs";
+import { controlTransaction, controlWrites } from "../data.mjs";
 import { CALENDAR_DAYS } from "../../../shared/calendar/calendar.js";
 import {
   userDto,
@@ -17,6 +17,13 @@ export class PostgresControlStore {
   constructor(env) {
     this.env = env;
     this.authenticationMode = "access";
+    // One request asks for a team's members several times (the write guard,
+    // the task view): each answer is read once per request.
+    this.memberLists = new Map();
+  }
+  // Forgets what this store read; a context kept across requests calls it.
+  forget() {
+    this.memberLists.clear();
   }
   revision() {
     return controlTransaction(
@@ -60,7 +67,19 @@ export class PostgresControlStore {
       ),
     );
   }
-  members(teamId, { activeOnly = false } = {}) {
+  async members(teamId, { activeOnly = false } = {}) {
+    const key = teamId + ":" + activeOnly,
+      known = this.memberLists.get(key);
+    if (known?.writes === controlWrites()) return [...(await known.rows)];
+    const rows = this.readMembers(teamId, activeOnly),
+      entry = { writes: controlWrites(), rows };
+    this.memberLists.set(key, entry);
+    rows.catch(() => {
+      if (this.memberLists.get(key) === entry) this.memberLists.delete(key);
+    });
+    return [...(await rows)];
+  }
+  readMembers(teamId, activeOnly) {
     return controlTransaction(this.env, async (tx) => {
       const rows = (
         await tx.query(

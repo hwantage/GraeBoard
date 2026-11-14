@@ -546,6 +546,7 @@ export class PostgresSheetCloneRepository {
         );
         this.context.user = currentUser;
         this.context.teamCache.clear();
+        this.context.controlStore.forget?.();
         const { teamId, row } = await this.located(sheetCloneId);
         const next = `pg:sheet-clone:${sheetCloneId}:${row.revision}`;
         return {

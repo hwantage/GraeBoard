@@ -53,6 +53,9 @@ async function hasLinkedLead(tx, teamId) {
     ).rows.length > 0
   );
 }
+// The site's team row read while authenticating, by the user record it came
+// with: nearly every request asks for it next, in a transaction of its own.
+export const authenticatedTeams = new WeakMap();
 export async function authenticateSite(env, identity, request) {
   return controlTransaction(env, async (tx) => {
     const selected = (
@@ -69,7 +72,12 @@ export async function authenticateSite(env, identity, request) {
     assert(selected, 401, "연결할 사내 계정을 선택하세요.");
     const user = await eligible(tx, siteTeamId(env), selected.user_id);
     assert(user, 403, "현재 이 팀에 접근할 권한이 없습니다.");
-    return userRecord(tx, user);
+    const record = await userRecord(tx, user),
+      team = (
+        await tx.query("SELECT * FROM teams WHERE id=$1", [siteTeamId(env)])
+      ).rows[0];
+    if (team) authenticatedTeams.set(record, team);
+    return record;
   });
 }
 async function accounts(env, identity) {

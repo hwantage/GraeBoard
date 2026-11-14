@@ -15,7 +15,12 @@ import {
   SPLIT_PROTOCOL,
 } from "../../server/sync/core/protocol.mjs";
 import pg from "pg";
-import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
+import {
+  assertCapacityTotals,
+  capacityLimits,
+  CapacityError,
+  capacityTotals,
+} from "./capacity.mjs";
 import {
   assertReceiptCapacity,
   recordBytes,
@@ -106,7 +111,14 @@ export function controlPool(env) {
     site: !!siteTeamId(env),
   });
 }
+// Counts this isolate's control writes, when one starts and when it ends, so
+// a value read before or during one is read again after it (see
+// PostgresControlStore.members). Another isolate's write is seen by the next
+// request, which reads anew.
+let controlWriteCount = 0;
+export const controlWrites = () => controlWriteCount;
 export async function controlTransaction(env, work, { write = false } = {}) {
+  if (write) controlWriteCount++;
   const team = siteTeamId(env);
   const client = await controlPool(env).connect();
   try {
@@ -140,6 +152,7 @@ export async function controlTransaction(env, work, { write = false } = {}) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
+    if (write) controlWriteCount++;
     await client.release();
   }
 }
@@ -586,22 +599,20 @@ export class DataSession {
       return before;
     if (shared && !this.changes.has(id))
       this.changes.set(id, { entity, key, before });
+    // The next revision and the record in one statement: one round trip
+    // per record written.
     const result = await this.tx.query(
-      `INSERT INTO site_entity_revisions(team_id,entity,entity_key,revision) VALUES($1,$2,$3,$4) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET revision=GREATEST(site_entity_revisions.revision+1,EXCLUDED.revision) RETURNING revision`,
-      [this.teamId, entity, JSON.stringify(key), Date.now()],
-    );
-    const revision = Number(result.rows[0].revision);
-    await this.tx.query(
-      `INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload,revision=EXCLUDED.revision,deleted=EXCLUDED.deleted`,
+      `WITH next AS (INSERT INTO site_entity_revisions(team_id,entity,entity_key,revision) VALUES($1,$2,$3,$4::bigint) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET revision=GREATEST(site_entity_revisions.revision+1,EXCLUDED.revision) RETURNING revision) INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) SELECT $1,$2,$3,$5,next.revision,$6::integer FROM next ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload,revision=EXCLUDED.revision,deleted=EXCLUDED.deleted RETURNING revision`,
       [
         this.teamId,
         entity,
         JSON.stringify(key),
+        Date.now(),
         this.storedText(entity, payload),
-        revision,
         storedDeleted ? 1 : 0,
       ],
     );
+    const revision = Number(result.rows[0].revision);
     const after = { entity, key, payload, revision, deleted: storedDeleted };
     if (this.lists.has(entity)) {
       const rows = this.lists.get(entity),
@@ -978,7 +989,9 @@ export class DataSession {
     const limited =
         Number.isFinite(this.limits.maxEntities) ||
         Number.isFinite(this.limits.maxBytes),
-      totals = await capacityTotals(this.tx, this.teamId),
+      // Read when the transaction opened (see withData): nothing since
+      // changed what it sums.
+      totals = this.capacity || (await capacityTotals(this.tx, this.teamId)),
       delta = (before, after) => {
         let bytes = 0,
           count = 0;
@@ -1255,6 +1268,25 @@ const changedRows = (change, side) =>
           ),
         },
       };
+// Several single-row inserts as one statement, so they cost one round trip:
+// each is `[INSERT INTO table(columns), values]`.
+async function insertTogether(tx, inserts) {
+  if (!inserts.length) return;
+  const params = [],
+    statements = inserts.map(([insert, values]) => {
+      const places = values.map((value) => "$" + params.push(value));
+      return `${insert} VALUES(${places.join(",")})`;
+    });
+  await tx.query(
+    statements.length === 1
+      ? statements[0]
+      : `WITH ${statements
+          .slice(0, -1)
+          .map((statement, i) => `w${i} AS (${statement})`)
+          .join(",")} ${statements.at(-1)}`,
+    params,
+  );
+}
 export async function withData(
   database,
   teamId,
@@ -1313,8 +1345,14 @@ export async function withData(
         );
         return unpack(JSON.parse(previous.response));
       }
-      const session = new DataSession(tx, teamId, { limits }),
-        result = await work(session);
+      const session = new DataSession(tx, teamId, { limits });
+      // A full database refuses the write before any work, in this
+      // transaction instead of one of its own; the capture reuses the totals.
+      if (write) {
+        session.capacity = await capacityTotals(tx, teamId);
+        assertCapacityTotals(session.capacity, limits);
+      }
+      const result = await work(session);
       if (write) {
         if (validateImages)
           await validateImages(
@@ -1323,9 +1361,12 @@ export async function withData(
               .map((c) => c.after.payload),
           );
         await session.capture(actorId);
+        // What the save records about itself (its history entry, the event
+        // viewers follow and the answer kept for a retry), in one statement.
+        const records = [];
         if (session.changes.size) {
-          await tx.query(
-            "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+          records.push([
+            "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at)",
             [
               crypto.randomUUID(),
               teamId,
@@ -1342,25 +1383,35 @@ export async function withData(
               ),
               new Date().toISOString(),
             ],
-          );
+          ]);
           // A complete cell delta already carries revisions and task timestamps.
           // Adding a structural event here would reset every cell subscriber.
           if (!(
             session.eventKinds.has("cells") &&
             [...session.changes.values()].every((c) => c.entity === "cell")
-          ))
-            await session.event("changed", {
-              teamId,
-              entities: [...session.changes.values()].map((c) => ({
-                entity: c.entity,
-                key: c.key,
-              })),
-              actorId,
-            });
+          )) {
+            session.eventKinds.add("changed");
+            records.push([
+              "INSERT INTO site_events(team_id,kind,payload,created_at)",
+              [
+                teamId,
+                "changed",
+                canonical({
+                  teamId,
+                  entities: [...session.changes.values()].map((c) => ({
+                    entity: c.entity,
+                    key: c.key,
+                  })),
+                  actorId,
+                }),
+                new Date().toISOString(),
+              ],
+            ]);
+          }
         }
         if (operationId)
-          await tx.query(
-            "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at) VALUES($1,$2,$3,$4,$5,$6)",
+          records.push([
+            "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at)",
             [
               teamId,
               operationId,
@@ -1372,7 +1423,8 @@ export async function withData(
               JSON.stringify(pack(result)),
               new Date().toISOString(),
             ],
-          );
+          ]);
+        await insertTogether(tx, records);
       }
       return result;
     },
