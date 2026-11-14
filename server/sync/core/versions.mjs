@@ -52,7 +52,12 @@ export const splitSheetCloneRecord = (record) => {
 
 /** Records that belong to a sheet clone under protocols 4 and 5. */
 export const isSheetCloneChild = (entity) =>
-  ["sheetCloneTask", "sheetCloneCell", "sheetCloneFormat"].includes(entity);
+  [
+    "sheetCloneTask",
+    "sheetCloneCell",
+    "sheetCloneFormat",
+    "sheetCloneRule",
+  ].includes(entity);
 /** How a protocol splits a sheet clone into records; null when it does not. */
 export const sheetCloneSplitter = (version) =>
   version === ROW_PROTOCOL
@@ -64,7 +69,8 @@ export const sheetCloneSplitter = (version) =>
 const plainObject = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
 // Protocol 5: the parent keeps which formatting each row uses, each distinct
-// formatting value is one record keyed by its hash and each row is one record
+// formatting value is one record keyed by its hash that names its rules, each
+// distinct rule is one record keyed by its hash and each row is one record
 // with its cells. Rows are ordered by their own position (see
 // sheetCloneRowOrder), so adding or moving a row changes no other record.
 // A row whose formatting is not an object keeps it in its own data.
@@ -77,11 +83,45 @@ export const splitSheetCloneRows = (record) => {
   if (!Array.isArray(source?.tasks)) return [record];
   const { tasks, ...data } = source,
     formats = new Map(),
-    // Rows usually share one formatting object: hash each object once.
+    rules = new Map(),
+    // Rows usually share one formatting object, and formatting values share
+    // their rule objects: hash each object once.
     formatIds = new Map(),
+    ruleIds = new Map(),
     assigned = {},
     ids = new Set(),
-    rows = [];
+    rows = [],
+    child = (entity, id, payload) => ({
+      ...record,
+      entity,
+      key: [record.key[0], id],
+      payload,
+    }),
+    ruleId = (rule) => {
+      if (!ruleIds.has(rule)) {
+        const id = sheetCloneFormatId(rule);
+        ruleIds.set(rule, id);
+        if (!rules.has(id))
+          rules.set(id, child("sheetCloneRule", id, { data: rule }));
+      }
+      return ruleIds.get(rule);
+    },
+    formatId = (formatting) => {
+      if (!formatIds.has(formatting)) {
+        // A formatting's rules are stored once each and named here, so
+        // adding a rule adds that rule and this short list.
+        const { rules: list, ...rest } = formatting,
+          payload =
+            Array.isArray(list) && list.every(plainObject)
+              ? { data: rest, rules: list.map(ruleId) }
+              : { data: formatting },
+          id = sheetCloneFormatId(payload);
+        formatIds.set(formatting, id);
+        if (!formats.has(id))
+          formats.set(id, child("sheetCloneFormat", id, payload));
+      }
+      return formatIds.get(formatting);
+    };
   for (const task of tasks) {
     if (ids.has(task.id))
       throw new Error(
@@ -90,28 +130,10 @@ export const splitSheetCloneRows = (record) => {
     ids.add(task.id);
     const { cells = {}, ...metadata } = task;
     if (plainObject(metadata.formatting)) {
-      if (!formatIds.has(metadata.formatting))
-        formatIds.set(
-          metadata.formatting,
-          sheetCloneFormatId(metadata.formatting),
-        );
-      const format = formatIds.get(metadata.formatting);
-      assigned[task.id] = format;
-      if (!formats.has(format))
-        formats.set(format, {
-          ...record,
-          entity: "sheetCloneFormat",
-          key: [record.key[0], format],
-          payload: { data: metadata.formatting },
-        });
+      assigned[task.id] = formatId(metadata.formatting);
       delete metadata.formatting;
     }
-    rows.push({
-      ...record,
-      entity: "sheetCloneTask",
-      key: [record.key[0], task.id],
-      payload: { data: metadata, cells },
-    });
+    rows.push(child("sheetCloneTask", task.id, { data: metadata, cells }));
   }
   return [
     {
@@ -123,6 +145,7 @@ export const splitSheetCloneRows = (record) => {
       },
     },
     ...formats.values(),
+    ...rules.values(),
     ...rows,
   ];
 };
@@ -204,7 +227,8 @@ export function applicationEntities(entities) {
 export function composedRows(entities, only = null) {
   const output = {},
     rows = new Map(),
-    formats = new Map();
+    formats = new Map(),
+    rules = new Map();
   for (const [id, record] of Object.entries(entities)) {
     if (record.entity === "protocol") continue;
     if (record.entity === "sheetCloneTask") {
@@ -212,6 +236,8 @@ export function composedRows(entities, only = null) {
       rows.get(record.key[0]).push(record);
     } else if (record.entity === "sheetCloneFormat")
       formats.set(canonical(record.key), record);
+    else if (record.entity === "sheetCloneRule")
+      rules.set(canonical(record.key), record);
     else output[id] = record;
   }
   for (const [id, record] of Object.entries(output)) {
@@ -228,7 +254,10 @@ export function composedRows(entities, only = null) {
     const composed = composeSheetClone(
       record.payload,
       sheetCloneRowOrder([...visible]),
-      (format) => formats.get(canonical([record.key[0], format]))?.payload,
+      sheetCloneFormattings(
+        (format) => formats.get(canonical([record.key[0], format]))?.payload,
+        (rule) => rules.get(canonical([record.key[0], rule]))?.payload,
+      ),
     );
     output[id] = {
       ...record,
@@ -238,21 +267,44 @@ export function composedRows(entities, only = null) {
   return output;
 }
 
+// The formatting value of each format record, from the format's payload and
+// its rule records' payloads by ID. One value per format, so rows with the
+// same format share one formatting object.
+export function sheetCloneFormattings(formatOf, ruleOf) {
+  const values = new Map();
+  return (id) => {
+    if (!values.has(id)) {
+      const format = formatOf(id);
+      values.set(
+        id,
+        !format
+          ? null
+          : Array.isArray(format.rules)
+            ? {
+                ...format.data,
+                rules: format.rules.map((rule) => ruleOf(rule)?.data),
+              }
+            : format.data,
+      );
+    }
+    return values.get(id);
+  };
+}
 // A protocol 5 copy as the application reads it: the parent without its
 // format assignment, and `rows` ([row ID, row payload] in display order) as
-// tasks. Rows with the same format share one formatting object.
-export function composeSheetClone(parent, rows, formatOf) {
+// tasks. `formattingOf` gives a format's value (see sheetCloneFormattings).
+export function composeSheetClone(parent, rows, formattingOf) {
   const { formats: assigned = {}, ...payload } = parent;
   return {
     ...payload,
     data: {
       ...unpackSheetCloneData(parent.data),
       tasks: rows.map(([rowId, row]) => {
-        const format =
-          Object.hasOwn(assigned, rowId) && formatOf(assigned[rowId]);
+        const formatting =
+          Object.hasOwn(assigned, rowId) && formattingOf(assigned[rowId]);
         return {
           ...row.data,
-          ...(format ? { formatting: format.data } : {}),
+          ...(formatting ? { formatting } : {}),
           cells: row.cells,
         };
       }),
@@ -352,7 +404,11 @@ export function composedSiteEntities(entities) {
   const output = {},
     children = new Map();
   for (const [id, record] of Object.entries(entities))
-    if (["sheetCloneTask", "sheetCloneFormat"].includes(record.entity)) {
+    if (
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+        record.entity,
+      )
+    ) {
       if (!children.has(record.key[0])) children.set(record.key[0], []);
       children.get(record.key[0]).push(record);
     } else output[id] = record;
@@ -363,16 +419,22 @@ export function composedSiteEntities(entities) {
     )
       continue;
     const rows = new Map(),
-      formats = new Map();
+      formats = new Map(),
+      rules = new Map();
     for (const child of children.get(record.key[0]) || [])
       if (child.entity === "sheetCloneFormat")
         formats.set(child.key[1], child.payload);
+      else if (child.entity === "sheetCloneRule")
+        rules.set(child.key[1], child.payload);
       else if (record.deleted || !child.deleted)
         rows.set(child.key[1], child.payload);
     const composed = composeSheetClone(
       record.payload,
       sheetCloneRowOrder([...rows]),
-      (format) => formats.get(format),
+      sheetCloneFormattings(
+        (format) => formats.get(format),
+        (rule) => rules.get(rule),
+      ),
     );
     output[id] = {
       ...record,

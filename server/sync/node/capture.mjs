@@ -396,10 +396,12 @@ export function installCapture(db, { onPending = () => {} } = {}) {
             const changed = candidates.filter((id) => {
               const before = old.get(id),
                 after = current.get(id);
-              // A format record stays while its copy lives, as on the
-              // external site: the other site may be assigning it to a row.
+              // Format and rule records stay while their copy lives, as on
+              // the external site: the other site may be naming them.
               if (
-                before?.entity === "sheetCloneFormat" &&
+                ["sheetCloneFormat", "sheetCloneRule"].includes(
+                  before?.entity,
+                ) &&
                 !after &&
                 next &&
                 !next.deleted
@@ -434,6 +436,17 @@ export function installCapture(db, { onPending = () => {} } = {}) {
               const sample = old.get(id) || current.get(id),
                 pending = prior.get(teamId + id),
                 stored = storedRows.get(id);
+              // A format or rule the copy stopped using stays in C (see
+              // above). Using it again, as an undo does, changes nothing: its
+              // ID is its content's hash. Sending it as a new record would be
+              // refused as one that already exists.
+              if (
+                !old.get(id) &&
+                stored &&
+                !stored.deleted &&
+                ["sheetCloneFormat", "sheetCloneRule"].includes(sample.entity)
+              )
+                continue;
               let base =
                 old.get(id) ||
                 (stored?.deleted
