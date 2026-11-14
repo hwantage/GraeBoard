@@ -14,6 +14,7 @@ const ENTITY_NAMES = {
   sheetClone: "사본",
   sheetCloneTask: "사본 업무",
   sheetCloneCell: "사본 셀",
+  sheetCloneFormat: "사본 서식",
   formats: "공통 서식",
   rule: "캘린더 규칙",
   weekly: "주간 항목",
@@ -57,6 +58,8 @@ const FIELD_NAMES = {
   color: "색",
   defaultStyle: "기본 서식",
   rowStyle: "행 서식",
+  cells: "셀",
+  formats: "행별 서식",
 };
 
 /** "서식(style)" for known payload fields so the diff key stays findable. */

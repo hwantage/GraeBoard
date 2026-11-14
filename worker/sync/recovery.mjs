@@ -1,9 +1,11 @@
-import { applicationEntities } from "../../server/sync/core/versions.mjs";
+import { siteEntities } from "../../server/sync/core/versions.mjs";
 import {
   canonical,
   payloadEqual,
   entityId,
   ENTITIES,
+  protocolVersion,
+  ROW_PROTOCOL,
 } from "../../server/sync/core/protocol.mjs";
 import { project } from "../../server/sync/core/reducer.mjs";
 import { isExcluded } from "../../server/sync/core/retention.mjs";
@@ -142,9 +144,10 @@ export async function recoveryRoutes(ctx, path, method, body) {
         );
       }
       const snapshot = await tx.sync.readSnapshot(),
-        visible = applicationEntities(
-          project(snapshot, snapshot.pending).entities,
-        ),
+        visible = siteEntities(project(snapshot, snapshot.pending).entities),
+        // Under protocol 5 the site rows of a copy are its row records and
+        // compare with C one by one; before it they are part of the copy.
+        rowRecords = protocolVersion(snapshot) === ROW_PROTOCOL,
         exclusions = snapshot.exclusions.filter(
           (r) => r.site_id === ctx.env.INSTALLATION_ID,
         ),
@@ -156,7 +159,9 @@ export async function recoveryRoutes(ctx, path, method, body) {
       ).rows) {
         if (
           !ENTITIES.has(row.entity) ||
-          ["protocol", "sheetCloneTask", "sheetCloneCell"].includes(row.entity)
+          ["protocol", "sheetCloneCell"].includes(row.entity) ||
+          (!rowRecords &&
+            ["sheetCloneTask", "sheetCloneFormat"].includes(row.entity))
         )
           continue;
         const key = JSON.parse(row.entity_key),
