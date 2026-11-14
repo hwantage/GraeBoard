@@ -107,9 +107,10 @@ export class PostgresControlStore {
   }
   // Takes a member list read elsewhere in this request (see
   // authenticateSite) as the answer members() gives.
-  remember(teamId, activeOnly, rows) {
+  // `writes` is the control write count taken before that read.
+  remember(teamId, activeOnly, rows, writes) {
     this.memberLists.set(teamId + ":" + activeOnly, {
-      writes: controlWrites(),
+      writes,
       rows: Promise.resolve(rows),
     });
   }

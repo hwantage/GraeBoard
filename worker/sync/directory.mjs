@@ -83,10 +83,12 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
       repoId: manifest.repoId,
     },
   );
-  return applyDirectory(env, directory, {
+  const applied = await applyDirectory(env, directory, {
     head,
     previousHead: previous.directory_head,
   });
+  directoryChecked.set(teamId, Date.now());
+  return applied;
 }
 
 async function applyDirectory(env, directory, { head, previousHead }) {

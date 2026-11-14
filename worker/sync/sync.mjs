@@ -212,9 +212,10 @@ export function serviceFor(env, profile, link, options = {}) {
 // request needs no database read to learn that it is throttled.
 const refreshNotBefore = new Map();
 export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
+  // The member directory keeps its own interval (and its own memory of it).
+  await refreshDirectory(env).catch(() => {});
   if ((refreshNotBefore.get(profile.teamId) || 0) > now)
     return { throttled: true };
-  await refreshDirectory(env).catch(() => {});
   const database = syncDatabase(env, profile);
   const snapshot = await database.withTeamTransaction(
     profile.teamId,

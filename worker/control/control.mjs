@@ -168,7 +168,8 @@ export class RequestContext {
     const team = authenticatedTeams.get(user);
     if (team) this.teamCache.set(team.id, team);
     const members = authenticatedMembers.get(user);
-    if (team && members) this.controlStore.remember?.(team.id, true, members);
+    if (team && members)
+      this.controlStore.remember?.(team.id, true, members.rows, members.writes);
     this.changedTeams = new Set();
   }
   admin() {

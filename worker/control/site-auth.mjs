@@ -1,7 +1,7 @@
 import { refreshSetupKeys } from "./setup-keys.mjs";
 import { deploymentSite } from "../../shared/site/site-mode.js";
 import { setupKeyId } from "../../server/sync/core/setup-keys.mjs";
-import { controlTransaction } from "../storage/data.mjs";
+import { controlTransaction, controlWrites } from "../storage/data.mjs";
 import { teamMembers } from "../storage/control/control-store.mjs";
 import { siteTeamId } from "../../shared/sync/sync-profiles.js";
 import { refreshDirectory } from "../sync/directory.mjs";
@@ -80,11 +80,19 @@ export async function authenticateSite(env, identity, request) {
         await tx.query("SELECT * FROM teams WHERE id=$1", [siteTeamId(env)])
       ).rows[0];
     if (team) authenticatedTeams.set(record, team);
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(request?.method))
-      authenticatedMembers.set(
-        record,
-        await teamMembers(tx, siteTeamId(env), true),
-      );
+    // Not for event streams, sign-in or administration: they write no team
+    // data. The count of control writes is taken before the read, as
+    // PostgresControlStore.members takes it.
+    if (
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request?.method) &&
+      !/\/events$|^\/api\/(admin|auth)\//.test(new URL(request.url).pathname)
+    ) {
+      const writes = controlWrites();
+      authenticatedMembers.set(record, {
+        writes,
+        rows: await teamMembers(tx, siteTeamId(env), true),
+      });
+    }
     return record;
   });
 }

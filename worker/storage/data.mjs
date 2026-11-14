@@ -193,7 +193,11 @@ const COPY_STORE = {
 const childPrefix = (key) => JSON.stringify(key).slice(0, -1) + ",";
 const LINK_SQL = "SELECT * FROM team_sync_links WHERE team_id=$1",
   OUTBOX_SQL =
-    "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq";
+    "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+  // The same rows when together they are small: a write that changes
+  // nothing, or is refused, must not pay for a backlog of megabytes.
+  SMALL_OUTBOX_BYTES = 256 * 1024,
+  SMALL_OUTBOX_SQL = `SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged')<${256 * 1024} ORDER BY local_seq`;
 export class DataSession {
   constructor(tx, teamId, { limits = capacityLimits() } = {}) {
     this.limits = limits;
@@ -1302,7 +1306,15 @@ export async function withData(
     limits = capacityLimits(),
   } = {},
 ) {
-  const operationId = write ? body?.operationId || null : null,
+  // As text, the way a bound parameter sends it: the opening statement
+  // writes the value in as a literal.
+  const requested = write ? body?.operationId || null : null,
+    operationId =
+      requested === null
+        ? null
+        : typeof requested === "object"
+          ? JSON.stringify(requested)
+          : String(requested),
     year =
       write && body?.year !== undefined ? canonical([String(body.year)]) : null;
   return database.withTeamTransaction(
@@ -1343,7 +1355,16 @@ export async function withData(
       if (write) {
         session.capacity = await capacityTotals(tx, teamId, tx.first[1]);
         assertCapacityTotals(session.capacity, limits);
-        session.opened = { link: tx.first[2], outbox: tx.first[3] };
+        // The unsent operations come along only while they are small (see
+        // SMALL_OUTBOX_SQL); a large backlog is read when a capture needs it.
+        session.opened = {
+          link: tx.first[2],
+          outbox:
+            Number(tx.first[1].rows[0]?.outbox_bytes ?? Infinity) <
+            SMALL_OUTBOX_BYTES
+              ? tx.first[3]
+              : null,
+        };
       }
       const result = await work(session);
       if (write) {
@@ -1434,7 +1455,7 @@ export async function withData(
         },
         // What a write's capture reads, while nothing else can change it.
         ...(write
-          ? [KEPT_TOTALS_SQL, LINK_SQL, OUTBOX_SQL].map((sql) => ({
+          ? [KEPT_TOTALS_SQL, LINK_SQL, SMALL_OUTBOX_SQL].map((sql) => ({
               sql,
               params: [teamId],
             }))
