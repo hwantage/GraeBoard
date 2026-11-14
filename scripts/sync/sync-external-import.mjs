@@ -9,7 +9,16 @@ import pg from "pg";
 import { resourceBindings } from "../../edge/resources.mjs";
 import { databaseFor, controlTransaction } from "../../worker/storage/data.mjs";
 import { GitHubApiTransport } from "../../worker/sync/git.mjs";
-import { importTeam, imageSync, runTeam } from "../../worker/sync/sync.mjs";
+import {
+  importTeam,
+  imageSync,
+  runTeam,
+  serviceFor,
+} from "../../worker/sync/sync.mjs";
+import {
+  protocolVersion,
+  stateHash,
+} from "../../server/sync/core/protocol.mjs";
 import { materialize } from "../../worker/sync/materialize.mjs";
 import { R2ImageStore } from "../../worker/documents/images.mjs";
 import { profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
@@ -434,6 +443,103 @@ export async function catchUpTeam(
   return final;
 }
 
+// The explicit protocol transition of the external site, from the operator
+// machine. The transition validates, converts and hashes the team's whole
+// state several times, which exceeds the hosted runtime's CPU limit for any
+// team of real size (HTTP 546 from POST /sync/upgrade). This runs the same
+// SyncService.upgrade against the team's PostgreSQL without that limit.
+// Without `execute` it only reports the state, including the state hash the
+// hosted status cannot afford to compute.
+export async function upgradeExternalTeam(settings, options = {}) {
+  const log = options.log || console.log;
+  const { env, close } = await externalEnvironment(settings, {
+    log,
+    r2Bucket: options.r2Bucket,
+  });
+  try {
+    const teamId = siteTeamId(env);
+    const profile = profileFor(
+      env,
+      options.profileId || JSON.parse(env.SYNC_PROFILES)[0]?.profileId,
+      teamId,
+    );
+    return await upgradeTeam(env, profile, options);
+  } finally {
+    await close();
+  }
+}
+export async function upgradeTeam(
+  env,
+  profile,
+  { execute = false, expectedHead, expectedHash, log = console.log } = {},
+) {
+  const teamId = profile.teamId,
+    db = databaseFor(env, profile);
+  await db.health();
+  const transport = new GitHubApiTransport({
+    repository: profile.repository,
+    token: env[profile.githubSecret],
+    maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
+    maxRequests: OPERATOR_REQUEST_BUDGET,
+  });
+  await transport.check();
+  const link = await db.readLink(teamId),
+    state = await db.readState(teamId),
+    status = {
+      teamId,
+      profileId: profile.profileId,
+      repository: profile.repository,
+      head: await transport.readHead(),
+      mode: link?.mode || "none",
+      protocol: protocolVersion(state),
+      expectedHead: link?.canonical_head || null,
+      expectedHash: stateHash(state),
+      installationMatches: link?.installation_id === env.INSTALLATION_ID,
+      pending: (await db.readPending(teamId)).length,
+      conflicts: Object.values(state.conflicts).filter(
+        (conflict) => !conflict.resolution,
+      ).length,
+      execute,
+    };
+  log(JSON.stringify(status));
+  if (!execute) return status;
+  // The same preconditions the hosted route and the service enforce, checked
+  // here first so a wrong settings file or a running site changes nothing.
+  if (link?.mode !== "paused")
+    throw new Error("일시정지(paused)한 팀만 전환할 수 있습니다.");
+  if (link.installation_id !== env.INSTALLATION_ID)
+    throw new Error("INSTALLATION_ID가 이 팀의 연결과 다릅니다.");
+  if (
+    !/^[a-f0-9]{40}$/.test(expectedHead || "") ||
+    !/^[a-f0-9]{64}$/.test(expectedHash || "")
+  )
+    throw new Error(
+      "실행에는 --expected-head(40hex)와 --expected-hash(64hex)가 필요합니다.",
+    );
+  const jobs = await db.withTeamTransaction(
+    teamId,
+    (tx) =>
+      tx.query(
+        "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
+        [teamId],
+      ),
+    { readOnly: true },
+  );
+  if (jobs.rows.length) throw new Error("정리·백업 작업을 먼저 완료하세요.");
+  // A transition changes no image, so the image store is not consulted: the
+  // operator machine often cannot reach it (see --r2-bucket).
+  const result = await serviceFor(env, profile, link, {
+    transport,
+    deferImages: true,
+  }).upgrade({
+    expectedHead,
+    expectedHash,
+    peersStopped: true,
+  });
+  log(JSON.stringify(result));
+  return result;
+}
+
 // Install every image the current state references and R2 does not hold yet.
 // Each image is read from the canonical head and hash-verified before upload,
 // so this pass can be repeated until it reports zero remaining.
@@ -498,6 +604,10 @@ export async function main(args = process.argv.slice(2)) {
       images: { type: "boolean" },
       "with-images": { type: "boolean" },
       "catch-up": { type: "boolean" },
+      upgrade: { type: "boolean" },
+      execute: { type: "boolean" },
+      "expected-head": { type: "string" },
+      "expected-hash": { type: "string" },
       publish: { type: "boolean" },
       "defer-images": { type: "boolean" },
       "r2-bucket": { type: "string" },
@@ -508,7 +618,8 @@ export async function main(args = process.argv.slice(2)) {
     console.log(
       "npm run sync:external-import -- --settings /private/external-import.env [--profile-id ID] [--dry-run] [--with-images]\n" +
         "npm run sync:external-import -- --settings /private/external-import.env --images\n" +
-        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish] [--defer-images] [--r2-bucket NAME]",
+        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish] [--defer-images] [--r2-bucket NAME]\n" +
+        "npm run sync:external-import -- --settings /private/external-import.env --upgrade [--expected-head HEAD --expected-hash HASH --execute] [--r2-bucket NAME]",
     );
     if (!values.help) process.exitCode = 1;
     return;
@@ -521,6 +632,16 @@ export async function main(args = process.argv.slice(2)) {
   if (values.images) {
     await installExternalImages(settings, {
       profileId: values["profile-id"],
+      r2Bucket: values["r2-bucket"],
+    });
+    return;
+  }
+  if (values.upgrade) {
+    await upgradeExternalTeam(settings, {
+      profileId: values["profile-id"],
+      execute: !!values.execute,
+      expectedHead: values["expected-head"],
+      expectedHash: values["expected-hash"],
       r2Bucket: values["r2-bucket"],
     });
     return;
