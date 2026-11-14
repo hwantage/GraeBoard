@@ -338,3 +338,40 @@ export function upgradeState(state, target = SPLIT_PROTOCOL) {
     conflicts: { ...state.conflicts },
   };
 }
+
+// Site rows of copies kept as row records (see siteEntities), as the single
+// record per copy the internal SQLite site keeps. Rows carry no version, so a
+// live copy takes its live rows and a deleted copy every row it has.
+export function composedSiteEntities(entities) {
+  const output = {},
+    children = new Map();
+  for (const [id, record] of Object.entries(entities))
+    if (["sheetCloneTask", "sheetCloneFormat"].includes(record.entity)) {
+      if (!children.has(record.key[0])) children.set(record.key[0], []);
+      children.get(record.key[0]).push(record);
+    } else output[id] = record;
+  for (const [id, record] of Object.entries(output)) {
+    if (record.entity !== "sheetClone" || !Array.isArray(record.payload?.order))
+      continue;
+    const rows = new Map(),
+      formats = new Map();
+    for (const child of children.get(record.key[0]) || [])
+      if (child.entity === "sheetCloneFormat")
+        formats.set(child.key[1], child.payload);
+      else if (record.deleted || !child.deleted)
+        rows.set(child.key[1], child.payload);
+    const composed = composeSheetClone(
+      record.payload,
+      orderedSheetCloneRows(record.payload.order, rows.keys()).map((rowId) => [
+        rowId,
+        rows.get(rowId),
+      ]),
+      (format) => formats.get(format),
+    );
+    output[id] = {
+      ...record,
+      payload: { ...composed, data: packSheetCloneData(composed.data) },
+    };
+  }
+  return output;
+}

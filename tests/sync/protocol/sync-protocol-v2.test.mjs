@@ -696,6 +696,59 @@ test("A3 protocol 4 logical transfer preserves canonical children and exports th
   assert.equal(restored.readLink(f.teamId).mode, "recovery");
 });
 
+test("protocol 5 logical transfer carries a copy as its row records and restores the established sheetClone", async (t) => {
+  const f = sqliteFixture(t),
+    state = upgradeState(f.state, 5);
+  f.adapter.withTeamTransaction(f.teamId, (tx) =>
+    tx.sync.writeState(state, f.link.canonical_head),
+  );
+  f.db.syncCapture.refresh();
+  const service = new SheetCloneBusinessService(
+      f.app.locals.sheetCloneRepository,
+      f.user,
+    ),
+    before = service.read(f.sheetCloneId);
+  await service.edit(
+    f.sheetCloneId,
+    editRequest(f, before, "pending transfer copy"),
+  );
+  const pending = f.adapter.readPending(f.teamId),
+    job = await freezeTeam(f.adapter, f.teamId),
+    bundle = await exportTeam(f.adapter, f.teamId, { omitJobId: job }),
+    site = bundle.payload.tables.site_entities,
+    parent = JSON.parse(
+      site.find((row) => row.entity === "sheetClone").payload,
+    ),
+    row = site.find(
+      (item) =>
+        item.entity === "sheetCloneTask" &&
+        JSON.parse(item.entity_key)[1] === f.taskId,
+    );
+  // The site rows an external site at protocol 5 stores: the parent with its
+  // row order, and each row with its cells.
+  assert.ok(parent.order.includes(f.taskId));
+  assert.equal(parent.data.tasks, undefined);
+  assert.equal(
+    JSON.parse(row.payload).cells.title.value,
+    "pending transfer copy",
+  );
+  assert.ok(!site.some((item) => item.entity === "protocol"));
+  const db = openDatabase(join(f.dir, "restored-v5.sqlite"));
+  t.after(() => db.close());
+  const restored = new SqliteDatabase(db);
+  await importTeam(restored, bundle);
+  assert.equal(stateHash(restored.readState(f.teamId)), stateHash(state));
+  assert.deepEqual(restored.readPending(f.teamId), pending);
+  const tasks = sheetCloneTasks(
+    readEntity(db, f.teamId, "sheetClone", [f.sheetCloneId]),
+  );
+  assert.equal(tasks.length, before.tasks.length);
+  assert.equal(
+    tasks.find((task) => task.id === f.taskId).cells.title.value,
+    "pending transfer copy",
+  );
+});
+
 test("Edge conflict resolution refuses a duplicate copy name before saving and accepts a renamed edit", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;

@@ -14,6 +14,7 @@ const ENTITY_NAMES = {
   sheetClone: "사본",
   sheetCloneTask: "사본 업무",
   sheetCloneCell: "사본 셀",
+  sheetCloneFormat: "사본 서식",
   formats: "공통 서식",
   rule: "캘린더 규칙",
   weekly: "주간 항목",

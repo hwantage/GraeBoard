@@ -594,4 +594,21 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 
 프로토콜 3의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 프로토콜 3 백업과 프로토콜 4 snapshot을 포함하며, 프로토콜 4 C에는 `protocol`/`[]`의 `{version:4,reducer:4}` 표식이 있습니다. 프로토콜 4 사본은 `sheetClone` 메타데이터, `sheetCloneTask(sheetCloneId,taskId)`의 행 데이터, `sheetCloneCell(sheetCloneId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 프로토콜 3 형태의 `sheetClone.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. 프로토콜 4 부모 `sheetClone`과 `sheetCloneTask`·`sheetCloneCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, 프로토콜 4 전환 전에 이 중복을 줄이는 방안을 정합니다. 프로토콜 3·4는 사본 명칭 전환 전의 프로토콜 1·2와 구조·병합 규칙이 같고 이름만 다릅니다([사본 명칭](SYNC_PROTOCOL.md#사본-명칭sheetclone-전환)).
 
+### 동기화 프로토콜 5와 외부 사본 저장
+
+프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행 순서 `order`·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
+
+외부 서버의 `site_entities`는 팀의 프로토콜에 따라 사본을 다르게 보관합니다. 스키마는 같고 행의 내용만 다릅니다.
+
+| 팀의 프로토콜 | `site_entities`의 사본                                                                    |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| 3             | `sheetClone` 행 하나. `payload.data`는 행 배열을 포함한 공유 사전 형태                    |
+| 5             | C와 같은 `sheetClone`·`sheetCloneFormat`·`sheetCloneTask` 행. 삭제된 행은 `deleted=1`로 남음 |
+
+- 저장 형식은 프로토콜 전환 커밋을 반영하는 트랜잭션에서 함께 바뀝니다. 별도의 site migration이나 변환 명령은 없습니다.
+- `DataSession`(`worker/storage/data.mjs`)이 사본을 읽을 때 행을 모아 기존 형식으로 조합하고, 저장할 때 분해해 저장된 레코드와 다른 것만 씁니다. 셀 하나를 고치면 그 행 하나를 쓰고, 동기화 명령도 그 행만 싣습니다.
+- 사본의 `revision`(화면이 변경을 감지하는 값)은 그 사본의 어느 레코드가 바뀌어도 올라갑니다.
+- 감사 이력(`site_audit`)의 사본 변경은 바뀐 행만 기록합니다(수정 전에는 바뀌거나 지워진 행, 수정 후에는 바뀌거나 추가된 행).
+- 사내 SQLite `sheet_clones.data`와 앱·API 응답 형식은 바뀌지 않습니다.
+
 receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending과 공유 엔티티 수에는 기본 상한이 없으며, 외부 환경에 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.
