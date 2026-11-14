@@ -152,6 +152,12 @@
 - 같은 PC에서 Node 테스트 목록 전체를 수정 전(`origin/main` `098c213`)과 수정 후로 각각 실행했습니다. 수정 전 751건(통과 588·실패 121·skip 42), 수정 후 753건(통과 590·실패 121·skip 42)이며, 실패 목록은 두 실행이 같고 차이는 새 테스트 2건의 통과뿐입니다. 실패·skip은 고정 `/tmp` 경로, `TEST_PG_BIN` 미지정, Windows 경로·줄바꿈에 따른 환경 원인입니다. `npm run check:structure`(오류 0)·`check:architecture`(위반 0)·`build`·`build:edge`·변경 코드 Prettier·`git diff --check`를 통과했습니다. 브라우저는 설치된 Chrome(Playwright `channel: "chrome"`)으로 `tests/browser/sync/data-sync.spec.ts`를 실행해 충돌 보관함 6건을 포함한 18건이 통과했습니다. 실패한 "실제 Git 초기 게시…" 1건은 수정 전 소스에서도 같은 단언으로 실패했습니다.
 - 미실행: 외부 경로 회귀로 `worker-sync-integration.test.mjs`에 두 사이트가 같은 사본 이름을 바꾼 충돌을 양쪽 목록에서 평문으로 받는 검사를 추가했습니다. 이 PC는 해당 테스트의 PostgreSQL 조건(`initdb` 경로·Unix 소켓)을 만족하지 않아 skip되었으므로, `TEST_PG_BIN`을 지정한 전체 `npm test`와 Firefox·WebKit 브라우저 검사는 별도 환경에서 확인해야 합니다. 운영 서버 반영과 실제 화면 확인은 수행하지 않았습니다.
 
+## 2026-11-12 — 팀 주간에서 내 주간 일정을 맨 위에 표시
+
+- 사용자 요청(2026-11-12): 팀 주간 캘린더에서는 내 일정이 항상 맨 위에 나오고, 나머지는 기존 순서대로 나와도 된다는 요청이었습니다.
+- 변경: 팀원 목록(`GET /calendar/teams/:teamId`)은 서버가 준 순서(활성 팀원은 이름 순서)를 그대로 씁니다. `Calendar.tsx`의 `teamWeekMembers`가 팀 주간 구역을 그릴 때만 로그인 사용자를 맨 앞으로 옮기고 나머지는 서버가 준 순서를 유지합니다. 소속되지 않은 팀을 보는 시스템 관리자처럼 사용자가 목록에 없으면 순서를 바꾸지 않습니다. 개인 월간의 아바타 순서, 조회 범위(`queries`), 서버 정렬은 바꾸지 않아 사내·외부 동작이 같습니다. 구역 `key`·주 이동·**이번 주**·시크릿 토글은 팀원 ID로 연결되어 순서와 무관하고, 탭 이동은 화면 순서를 따릅니다. DB·저장 형식 변경은 없습니다.
+- 검증: `monthly-calendar.spec.ts`에 검사를 추가했습니다. 이름이 앞서는 팀원(가람·나연·서연)과 뒤의 팀원(하늘)을 둔 팀에서 팀 주간 순서가 지윤(나)·가람·나연·서연·하늘이고 개인 월간 아바타는 기존 순서인지, "나" 표시가 첫 구역에만 있는지, 탭 이동의 첫 초점이 내 구역인지, 소속되지 않은 팀에서는 순서를 바꾸지 않는지 확인합니다(수정 전 코드에서 실패). 구역별 주 이동은 기존 "팀원 제목과 아바타 아래에서 주차를 독립적으로 이동…" 검사가 확인합니다. 기존 요일 설정 검사의 팀 주간 순서 기대(서연·지윤)를 지윤·서연으로 고쳤습니다. `npx prettier --check src/calendar/Calendar.tsx tests/browser/calendar/monthly-calendar.spec.ts`·`npm run check:structure`(0 errors)·`npm run check:architecture`(0 violations)·`npm run build`·`npm run build:edge` 통과. `E2E_PORT=4355 npx playwright test tests/browser/calendar/monthly-calendar.spec.ts tests/browser/calendar/secret-calendar.spec.ts`: `--project=chromium` 82건 통과, `--project=firefox --project=webkit` 162건 통과·2건 건너뜀(터치 포인터 검사). 팀 주간을 여는 다른 검사(`calendar-*.spec.ts` 5개·`mobile.spec.ts`) Chromium 62건과 `workspace-improvements.spec.ts`의 캘린더 검사 4건도 통과했습니다(1차 리뷰 전 코드 기준, 이후 이름 변경만 있음).
+
 ## 2026-11-12 — 충돌 보관함 덮어쓰기가 충돌 수를 늘리던 문제
 
 - 사용자 보고(2026-11-12, 개발 사내 서버): 공유 충돌 보관함에서 전체 선택 후 **나중에 수정으로 덮어쓰기**를 할 때마다 충돌 수가 줄지 않고 늘었습니다(1→2→4→6→8).
