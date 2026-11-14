@@ -191,10 +191,11 @@ test(
     assert.equal(protocolVersion(await f.pgStore.readState(teamId)), 5);
     // The transition rewrote the site rows as the copy's records: the parent,
     // one format for the three rows under the rule, one for the rows whose
-    // formatting has no rule, and six rows.
+    // formatting has no rule, the rule itself, and six rows.
     assert.deepEqual(await siteRows(), {
       sheetClone: 1,
       sheetCloneFormat: 2,
+      sheetCloneRule: 1,
       sheetCloneTask: 6,
     });
     assert.deepEqual(plain(await same()), before);
@@ -284,6 +285,7 @@ test(
     assert.deepEqual(await siteRows(), {
       sheetClone: 1,
       sheetCloneFormat: 2,
+      sheetCloneRule: 1,
       sheetCloneTask: 5,
     });
     await f.settle();
@@ -397,13 +399,27 @@ test(
     ]);
     now = await revisions();
     assert.deepEqual(rowsChanged(at, now), []);
+    // The command carries each new format as the list of its rules' IDs and
+    // the new rule once per format it was added to (rows count their own
+    // formatting revisions, so the rule differs between formats), not a rule
+    // set per row.
+    const formatted = (await f.pgStore.readPending(teamId)).at(-1).changes,
+      made = (entity) => formatted.filter((change) => change.entity === entity);
+    assert.ok(made("sheetCloneFormat").length >= 1);
+    assert.ok(made("sheetCloneRule").length <= made("sheetCloneFormat").length);
+    assert.ok(
+      made("sheetCloneFormat").every((change) =>
+        change.desired.rules.every((rule) => /^[a-f0-9]{32}$/.test(rule)),
+      ),
+    );
     await f.settle();
     merged = plain(await same());
     assert.ok(merged.tasks.every((task) => task.rules.length >= 1));
 
     // The same format made on the internal site: every row leaves its
     // format, and those format records stay, as the external site keeps them.
-    const formatsBefore = (await siteRows()).sheetCloneFormat;
+    const formatsBefore = (await siteRows()).sheetCloneFormat,
+      unformatted = ok(await inside(path)).tasks;
     await edit(inside, [
       {
         kind: "format",
@@ -415,6 +431,33 @@ test(
     await f.settle();
     await same();
     assert.ok((await siteRows()).sheetCloneFormat > formatsBefore);
+    assert.deepEqual(
+      Object.keys((await f.pgStore.readState(teamId)).conflicts),
+      [],
+    );
+    // Undoing it there names the formats and rules the copy used before,
+    // which C still holds: nothing is made again, and no conflict follows.
+    await edit(inside, [
+      {
+        kind: "restore",
+        at: new Date().toISOString(),
+        tasks: unformatted,
+        removeIds: [],
+      },
+    ]);
+    await f.settle();
+    // Both sites show the text colour the rows had before the format.
+    const colours = (tasks) =>
+      tasks
+        .toSorted((a, b) => a.position - b.position)
+        .map((task) =>
+          (task.formatting?.rules || []).map((rule) => rule.style.color),
+        );
+    await same();
+    assert.deepEqual(
+      colours(ok(await outside(path)).tasks),
+      colours(unformatted),
+    );
     assert.deepEqual(
       Object.keys((await f.pgStore.readState(teamId)).conflicts),
       [],

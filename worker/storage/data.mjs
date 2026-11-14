@@ -2,6 +2,7 @@ import {
   composeSheetClone,
   isSheetCloneChild,
   isSheetCloneRowParent as isRowParent,
+  sheetCloneFormattings,
   sheetCloneRowOrder,
   splitSheetCloneRecord,
   splitSheetCloneRows,
@@ -168,7 +169,13 @@ const rowEntity = (row) => ({
 });
 // Under protocol 5 a copy's site rows are its parent, format and row records
 // (see siteEntities).
-const COPY_RECORDS = ["sheetCloneTask", "sheetCloneFormat"];
+const COPY_RECORDS = ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"];
+// Where a session keeps each kind of a copy's stored records.
+const COPY_STORE = {
+  sheetCloneTask: "rows",
+  sheetCloneFormat: "formats",
+  sheetCloneRule: "rules",
+};
 const childPrefix = (key) => JSON.stringify(key).slice(0, -1) + ",";
 export class DataSession {
   constructor(tx, teamId, { limits = capacityLimits() } = {}) {
@@ -215,28 +222,26 @@ export class DataSession {
   // A copy stored as row records, as the one record the application reads:
   // its live rows in sheet order (every row of a deleted copy).
   async composed(parent) {
-    const rows = new Map(),
-      formats = new Map();
+    const known = { rows: new Map(), formats: new Map(), rules: new Map() };
     for (const row of (
       await this.tx.query(
         "SELECT entity,entity_key,payload,deleted FROM site_entities WHERE team_id=$1 AND entity=ANY($2::text[]) AND left(entity_key,length($3))=$3",
         [this.teamId, COPY_RECORDS, childPrefix(parent.key)],
       )
     ).rows)
-      (row.entity === "sheetCloneTask" ? rows : formats).set(
-        JSON.parse(row.entity_key)[1],
-        { payload: JSON.parse(row.payload), deleted: !!row.deleted },
-      );
-    const view = this.copyView(parent, rows, formats);
+      known[COPY_STORE[row.entity]].set(JSON.parse(row.entity_key)[1], {
+        payload: JSON.parse(row.payload),
+        deleted: !!row.deleted,
+      });
+    const view = this.copyView(parent, known);
     this.copies.set(parent.key[0], {
       parent: { payload: parent.payload, deleted: parent.deleted },
-      rows,
-      formats,
+      ...known,
       view,
     });
     return view;
   }
-  copyView(parent, rows, formats) {
+  copyView(parent, { rows, formats, rules }) {
     return {
       ...parent,
       payload: composeSheetClone(
@@ -246,7 +251,10 @@ export class DataSession {
             .filter(([, row]) => parent.deleted || !row.deleted)
             .map(([id, row]) => [id, row.payload]),
         ),
-        (format) => formats.get(format)?.payload,
+        sheetCloneFormattings(
+          (format) => formats.get(format)?.payload,
+          (rule) => rules.get(rule)?.payload,
+        ),
       ),
     };
   }
@@ -272,33 +280,49 @@ export class DataSession {
       wanted = new Set(
         ids.map((id) => parent.payload.formats[id]).filter(Boolean),
       ),
-      rows = new Map(),
-      formats = new Map();
-    for (const row of (
-      await this.tx.query(
-        // A format's payload is read only when one of these rows uses it;
-        // the others are known by ID, which is their content's hash.
-        "SELECT entity,entity_key,deleted,CASE WHEN entity='sheetCloneTask' OR entity_key=ANY($4::text[]) THEN payload END AS payload FROM site_entities WHERE team_id=$1 AND ((entity='sheetCloneTask' AND entity_key=ANY($2::text[])) OR (entity='sheetCloneFormat' AND left(entity_key,length($3))=$3))",
-        [
-          this.teamId,
-          ids.map((id) => JSON.stringify([key[0], id])),
-          childPrefix(key),
-          [...wanted].map((id) => JSON.stringify([key[0], id])),
-        ],
-      )
-    ).rows)
-      (row.entity === "sheetCloneTask" ? rows : formats).set(
-        JSON.parse(row.entity_key)[1],
-        {
-          payload: row.payload == null ? null : JSON.parse(row.payload),
-          deleted: !!row.deleted,
-        },
-      );
-    const view = this.copyView(parent, rows, formats);
+      known = { rows: new Map(), formats: new Map(), rules: new Map() },
+      read = (rows) => {
+        for (const row of rows)
+          known[COPY_STORE[row.entity]].set(JSON.parse(row.entity_key)[1], {
+            payload: row.payload == null ? null : JSON.parse(row.payload),
+            deleted: !!row.deleted,
+          });
+      };
+    read(
+      (
+        await this.tx.query(
+          // A format's payload is read only when one of these rows uses it;
+          // the others are known by ID, which is their content's hash.
+          "SELECT entity,entity_key,deleted,CASE WHEN entity='sheetCloneTask' OR entity_key=ANY($4::text[]) THEN payload END AS payload FROM site_entities WHERE team_id=$1 AND ((entity='sheetCloneTask' AND entity_key=ANY($2::text[])) OR (entity='sheetCloneFormat' AND left(entity_key,length($3))=$3))",
+          [
+            this.teamId,
+            ids.map((id) => JSON.stringify([key[0], id])),
+            childPrefix(key),
+            [...wanted].map((id) => JSON.stringify([key[0], id])),
+          ],
+        )
+      ).rows,
+    );
+    // Likewise the rules: those of the formats read, the others by ID.
+    const named = new Set(
+      [...wanted].flatMap((id) => known.formats.get(id)?.payload?.rules || []),
+    );
+    read(
+      (
+        await this.tx.query(
+          "SELECT entity,entity_key,deleted,CASE WHEN entity_key=ANY($3::text[]) THEN payload END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetCloneRule' AND left(entity_key,length($2))=$2",
+          [
+            this.teamId,
+            childPrefix(key),
+            [...named].map((id) => JSON.stringify([key[0], id])),
+          ],
+        )
+      ).rows,
+    );
+    const view = this.copyView(parent, known);
     this.copies.set(key[0], {
       parent: { payload: parent.payload, deleted: parent.deleted },
-      rows,
-      formats,
+      ...known,
       view,
       partial: true,
     });
@@ -609,6 +633,7 @@ export class DataSession {
         parent: null,
         rows: new Map(),
         formats: new Map(),
+        rules: new Map(),
       },
       storedDeleted = deleted || locallyHidden;
     assert(Array.isArray(payload?.data?.tasks), 400, "사본 내용을 확인하세요.");
@@ -625,8 +650,10 @@ export class DataSession {
         if (
           !previous ||
           previous.deleted !== storedDeleted ||
-          // A format's ID is its content's hash: a stored one is the same.
-          (entity !== "sheetCloneFormat" && !equal(previous.payload, value))
+          // A format's or rule's ID is its content's hash: a stored one is
+          // the same.
+          (!["sheetCloneFormat", "sheetCloneRule"].includes(entity) &&
+            !equal(previous.payload, value))
         )
           writes.push({ entity, key: recordKey, payload: value, previous });
       },
@@ -642,19 +669,19 @@ export class DataSession {
     }
     consider("sheetClone", key, parent.payload, known.parent);
     for (const child of children) {
-      const stored = child.entity === "sheetCloneTask" ? "rows" : "formats";
       kept.add(child.entity + child.key[1]);
       consider(
         child.entity,
         child.key,
         child.payload,
-        known[stored].get(child.key[1]),
+        known[COPY_STORE[child.entity]].get(child.key[1]),
       );
     }
     const removed = [];
     for (const [entity, stored] of [
       ["sheetCloneTask", known.rows],
       ["sheetCloneFormat", known.formats],
+      ["sheetCloneRule", known.rules],
     ])
       for (const [childId, previous] of stored)
         if (
@@ -746,11 +773,7 @@ export class DataSession {
         deleted: row.deleted && !(locallyHidden && !deleted),
       };
       if (row.entity === "sheetClone") known.parent = stored;
-      else
-        known[row.entity === "sheetCloneTask" ? "rows" : "formats"].set(
-          row.key[1],
-          stored,
-        );
+      else known[COPY_STORE[row.entity]].set(row.key[1], stored);
     }
     const after = {
       entity: "sheetClone",
