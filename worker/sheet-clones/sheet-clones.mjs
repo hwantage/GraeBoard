@@ -39,20 +39,17 @@ export async function sheetCloneRoutes(ctx, path, method, body, query) {
       "사본 업무 목록을 확인하세요.",
     );
     return ctx.data(teamId, async (s) => {
-      const sheetClone = await s.get("sheetClone", [batch[1]]),
-        // Every requested task's documents from one read of the sheetClone's.
+      // The requested rows and their documents, not the copy or its others.
+      const rows = await s.copyRowsAmong(batch[1], body.taskIds),
         documents = await documentListsUnder(
           s,
           ["sheetClone", batch[1]],
           "sheetClone",
+          { owners: new Set(body.taskIds) },
         ),
         tasks = [];
       for (const id of body.taskIds) {
-        assert(
-          sheetClone.payload.data.tasks.some((t) => t.id === id),
-          404,
-          "사본 업무를 찾을 수 없습니다.",
-        );
+        assert(rows.has(id), 404, "사본 업무를 찾을 수 없습니다.");
         tasks.push({
           id,
           documents: await documents.list(id, { content: "stored" }),

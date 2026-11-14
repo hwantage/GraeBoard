@@ -1,9 +1,6 @@
 import { channel } from "node:diagnostics_channel";
 import { createHash } from "node:crypto";
-import {
-  splitSheetCloneRecord,
-  applicationEntities,
-} from "../core/versions.mjs";
+import { sheetCloneSplitter, applicationEntities } from "../core/versions.mjs";
 import { expandStyle } from "../../../shared/formatting/compact.js";
 import {
   packSheetCloneData,
@@ -522,10 +519,11 @@ export function allEntities(
           PROTOCOL,
           initialToken(link.bootstrap_id, "protocol", []),
         );
-  if (marker.payload.version === SPLIT_PROTOCOL) {
+  const split = sheetCloneSplitter(marker.payload.version);
+  if (split) {
     const expanded = {};
     for (const record of Object.values(result))
-      for (const child of splitSheetCloneRecord(record)) {
+      for (const child of split(record)) {
         const token = initialToken(link.bootstrap_id, child.entity, child.key);
         expanded[entityId(child.entity, child.key)] = {
           ...child,

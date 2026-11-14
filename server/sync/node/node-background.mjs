@@ -42,7 +42,14 @@ export function interferenceKeys(entity, key, payload) {
   const keys = new Set([JSON.stringify([entity, key])]);
   const add = (type, parts) => keys.add(JSON.stringify([type, parts]));
   if (entity === "cell") add("task", [key[0]]);
-  if (["sheetCloneTask", "sheetCloneCell"].includes(entity))
+  if (
+    [
+      "sheetCloneTask",
+      "sheetCloneCell",
+      "sheetCloneFormat",
+      "sheetCloneRule",
+    ].includes(entity)
+  )
     add("sheetClone", [key[0]]);
   if (entity === "sheetCloneCell") add("sheetCloneTask", key.slice(0, 2));
   if (entity === "document") {

@@ -405,6 +405,13 @@ test(
           .length,
         1,
       );
+      // The external route passes the document browser's preview flag.
+      assert.deepEqual(
+        (
+          await request(`/teams/${teamId}/years/2026/memos?preview=1`)
+        ).body.documents.map((doc) => [doc.id, doc.preview, doc.markdown]),
+        [[memoId, "", undefined]],
+      );
       const tagId = randomUUID();
       assert.equal(
         (
@@ -1183,9 +1190,11 @@ test(
         "UPDATE graeboard.site_entities SET payload='{\"nextAt\":0}' WHERE entity='syncRefresh'",
       );
       const installedProfile = JSON.parse(env.SYNC_PROFILES)[0];
+      // Past the deadline this isolate remembers from the check above.
+      const later = { now: Date.now() + 31000 };
       await Promise.all([
-        refreshTeam(env, installedProfile),
-        refreshTeam(env, installedProfile),
+        refreshTeam(env, installedProfile, later),
+        refreshTeam(env, installedProfile, later),
       ]);
       assert.equal(
         headChecks,

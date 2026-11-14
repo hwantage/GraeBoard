@@ -173,7 +173,7 @@ test("prepared canonical delta accepts unrelated P and rejects same-field or par
   );
 });
 
-test("review performance scenarios exercise both protocol 4 upgrade endpoints, sheetClone workload and remote metadata without refetch", async () => {
+test("review performance scenarios exercise both protocol 5 upgrade endpoints, sheetClone workload and remote metadata without refetch", async () => {
   const result = await runReviewPerformance({
     rows: 40,
     documents: 4,
@@ -186,7 +186,7 @@ test("review performance scenarios exercise both protocol 4 upgrade endpoints, s
   assert.equal(result.bulk2000.cells, 80);
   assert.equal(result.unlinkedTeamInLinkedDatabase.capturedOperations, 0);
   assert.equal(result.users1000.users, 3);
-  assert.equal(result.sheetCloneCreate.protocol, 4);
+  assert.equal(result.sheetCloneCreate.protocol, 5);
   assert.equal(result.sheetCloneEdit.tasks, 40);
   assert.equal(result.sheetCloneEdit.documents, 4);
   assert.equal(result.retentionQuery.active.samples, 1);

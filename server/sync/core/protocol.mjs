@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   preparedSyncOperation,
   syncCanonicalCache,
+  syncRunPayloads,
   rememberSyncCanonical,
 } from "./sync-operation-cache.mjs";
 import { SYNC_OPERATION_MAX_BYTES } from "../../../shared/sync/sync-limits.js";
@@ -20,8 +21,16 @@ import {
 // the one-time SheetClone cutover (tools/sheet-clone-cutover, SYNC_PROTOCOL.md),
 // which leaves a standard checkpoint for new readers; this runtime reads
 // neither 1 nor 2.
+//
+// Protocol 5 keeps a sheet clone as a parent (metadata and each row's format), one
+// record per distinct formatting value (its rules by ID), one record per
+// distinct formatting rule and one record per row holding its
+// cells. A cell edit then carries one row, not the whole clone (protocol 3),
+// without one record per cell and the formatting repeated in every row
+// (protocol 4). Number 4 stays readable and is never reused.
 export const PROTOCOL = 3;
 export const SPLIT_PROTOCOL = 4;
+export const ROW_PROTOCOL = 5;
 
 export const ENTITIES_WHOLE = new Set([
   "team",
@@ -38,22 +47,38 @@ export const ENTITIES_WHOLE = new Set([
   "formats",
   "protocol",
 ]);
-export const ENTITIES = new Set([
+const ENTITIES_SPLIT = new Set([
   ...ENTITIES_WHOLE,
   "sheetCloneTask",
   "sheetCloneCell",
 ]);
+const ENTITIES_ROWS = new Set([
+  ...ENTITIES_WHOLE,
+  "sheetCloneFormat",
+  "sheetCloneRule",
+  "sheetCloneTask",
+]);
+// Every shared entity of any supported protocol, for storage scans.
+export const ENTITIES = new Set([...ENTITIES_SPLIT, ...ENTITIES_ROWS]);
+/** The entities one protocol version shares. */
+export const entitiesFor = (version) =>
+  version === ROW_PROTOCOL
+    ? ENTITIES_ROWS
+    : version === SPLIT_PROTOCOL
+      ? ENTITIES_SPLIT
+      : ENTITIES_WHOLE;
+const VERSIONS = [PROTOCOL, SPLIT_PROTOCOL, ROW_PROTOCOL];
 // The version C's protocol marker names. Before anything is shared C is
 // empty and its first publication starts at protocol 3; records without a
 // supported marker (0) belong to a protocol this runtime does not read.
 export const protocolVersion = (state) => {
   const entities = state?.entities,
     version = entities?.[JSON.stringify(["protocol", []])]?.payload?.version;
-  if (version === PROTOCOL || version === SPLIT_PROTOCOL) return version;
+  if (VERSIONS.includes(version)) return version;
   return entities && !Object.keys(entities).length ? PROTOCOL : 0;
 };
 export const supportedVersion = (protocol, reducer = protocol) =>
-  [PROTOCOL, SPLIT_PROTOCOL].includes(protocol) && reducer === protocol;
+  VERSIONS.includes(protocol) && reducer === protocol;
 export const protocolMarker = (version, token) => ({
   entity: "protocol",
   key: [],
@@ -63,10 +88,58 @@ export const protocolMarker = (version, token) => ({
   deleted: false,
 });
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
+// A record or payload whose `data` already has its canonical text in this run
+// (a sheet copy of megabytes, serialized when its command was validated) is
+// assembled around that text instead of being walked and serialized again.
+const holdsKnownText = (value, cache) =>
+  !!cache &&
+  !Array.isArray(value) &&
+  !!value.data &&
+  typeof value.data === "object" &&
+  cache.texts.has(value.data);
 export function canonical(value) {
-  return canonicalValue(value, syncCanonicalCache());
+  const cache = syncCanonicalCache();
+  if (value && typeof value === "object") {
+    const cached = cache?.texts.get(value);
+    if (cached !== undefined) return cached;
+    if (holdsKnownText(value, cache)) return canonicalValue(value, cache);
+    // Parsed canonical JSON keeps its keys in canonical order, so the native
+    // serializer writes the same text without the intermediate strings that
+    // joining piece by piece allocates (hundreds of megabytes for a sheet
+    // copy of a few megabytes).
+    if (inCanonicalOrder(value))
+      return rememberSyncCanonical(cache, value, JSON.stringify(value));
+  }
+  return canonicalValue(value, cache);
 }
-function canonicalValue(value, cache) {
+// Whether JSON.stringify(value) is exactly canonical(value): every object is
+// plain with its keys already sorted, and every value is one canonical JSON
+// can hold. Anything else is left to canonicalValue, which sorts or throws.
+function inCanonicalOrder(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string")
+    return true;
+  if (typeof value === "number")
+    return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++)
+      if (!(i in value) || !inCanonicalOrder(value[i])) return false;
+    return true;
+  }
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  let previous;
+  for (const key of Object.keys(value)) {
+    if (previous !== undefined && previous > key) return false;
+    previous = key;
+    if (!inCanonicalOrder(value[key])) return false;
+  }
+  return true;
+}
+// A record built here (entity, key, payload) has its own keys unsorted but
+// holds parsed JSON a level or two down, so the native path is tried again for
+// the first few levels below an unsorted object. The limit bounds how often a
+// subtree that fails the check is walked again.
+const NATIVE_DEPTH = 4;
+function canonicalValue(value, cache, depth = 0) {
   if (value === null || typeof value === "boolean" || typeof value === "string")
     return JSON.stringify(value);
   if (
@@ -77,11 +150,22 @@ function canonicalValue(value, cache) {
     return JSON.stringify(value);
   const cached = cache?.texts.get(value);
   if (cached !== undefined) return cached;
+  if (
+    depth &&
+    depth <= NATIVE_DEPTH &&
+    value &&
+    typeof value === "object" &&
+    !holdsKnownText(value, cache) &&
+    inCanonicalOrder(value)
+  )
+    return rememberSyncCanonical(cache, value, JSON.stringify(value));
   if (Array.isArray(value))
     return rememberSyncCanonical(
       cache,
       value,
-      "[" + value.map((item) => canonicalValue(item, cache)).join(",") + "]",
+      "[" +
+        value.map((item) => canonicalValue(item, cache, depth + 1)).join(",") +
+        "]",
     );
   if (value && Object.getPrototypeOf(value) === Object.prototype)
     return rememberSyncCanonical(
@@ -90,7 +174,12 @@ function canonicalValue(value, cache) {
       "{" +
         Object.keys(value)
           .sort()
-          .map((k) => JSON.stringify(k) + ":" + canonicalValue(value[k], cache))
+          .map(
+            (k) =>
+              JSON.stringify(k) +
+              ":" +
+              canonicalValue(value[k], cache, depth + 1),
+          )
           .join(",") +
         "}",
     );
@@ -246,6 +335,19 @@ function sameCanonical(a, b, seen) {
       assertCanonical(b);
       return false;
     }
+    // Two strings have the same canonical text exactly when they are the
+    // same string; null and booleans likewise. Everything else (numbers,
+    // mixed types, values canonical() rejects) keeps the serialized compare.
+    if (typeof a === "string" && typeof b === "string") return a === b;
+    if (
+      a === b &&
+      (a === null ||
+        typeof a === "boolean" ||
+        (typeof a === "number" &&
+          Number.isFinite(a) &&
+          Math.abs(a) <= Number.MAX_SAFE_INTEGER))
+    )
+      return true;
     return canonical(a) === canonical(b);
   }
   if (a === b) return true;
@@ -276,9 +378,30 @@ function sameCanonical(a, b, seen) {
   }
   return same;
 }
+// A sheet copy's shared-dictionary data, unpacked once per data object.
+// Validation and the reducer both read the unpacked form of the same payload,
+// and successive commands on one copy share payload objects, so each object is
+// unpacked once instead of at every use. The result is only read, never
+// changed. Keyed by the object, so an entry ends with its event.
+const unpackedSheetClones = new WeakMap();
+const unpackedSheetCloneData = (data) => {
+  if (!data || typeof data !== "object") return data;
+  let unpacked = unpackedSheetClones.get(data);
+  if (unpacked === undefined) {
+    unpacked = unpackSheetCloneData(data);
+    unpackedSheetClones.set(data, unpacked);
+  }
+  return unpacked;
+};
+// normalizeEntityPayload() with the unpacked data shared as above.
+export const normalizedPayload = (entity, payload) => {
+  if (entity !== "sheetClone" || !payload) return payload;
+  const data = unpackedSheetCloneData(payload.data);
+  return data === payload.data ? payload : { ...payload, data };
+};
 // 사본 data는 평문과 공유 사전 형태가 섞여 있을 수 있으므로 내용으로 비교한다.
 export const payloadEqual = (entity, a, b) =>
-  equal(normalizeEntityPayload(entity, a), normalizeEntityPayload(entity, b));
+  a === b || equal(normalizedPayload(entity, a), normalizedPayload(entity, b));
 export const emptyState = () => ({ entities: {}, receipts: {}, conflicts: {} });
 export const stateHash = (state) => digest(state);
 
@@ -375,6 +498,21 @@ const payloadFields = {
   sheetCloneTask: ["data", "index"],
   sheetCloneCell: ["data"],
 };
+// Protocol 5 shapes of the sheet clone records.
+const rowPayloadFields = {
+  sheetClone: [...payloadFields.sheetClone, "formats"],
+  sheetCloneFormat: ["data", "rules"],
+  sheetCloneRule: ["data"],
+  sheetCloneTask: ["data", "cells"],
+};
+const fieldsFor = (entity, version) =>
+  (version === ROW_PROTOCOL && rowPayloadFields[entity]) ||
+  payloadFields[entity];
+/**
+ * The key of a sheet clone's formatting or rule record: a hash of its payload
+ * (a format) or of the rule (a rule).
+ */
+export const sheetCloneFormatId = (value) => digest(value).slice(0, 32);
 const keyLengths = {
   team: 0,
   person: 1,
@@ -388,20 +526,25 @@ const keyLengths = {
   filter: 1,
   formats: 0,
   protocol: 0,
+  sheetCloneFormat: 2,
+  sheetCloneRule: 2,
   sheetCloneTask: 2,
   sheetCloneCell: 3,
 };
 const plain = (value) =>
   value && Object.getPrototypeOf(value) === Object.prototype;
+// serializable: the caller already made the payload's canonical text, which
+// fails for exactly the values assertCanonical rejects.
 export function validateEntityPayload(
   entity,
   key,
   payload,
   teamId,
   version = PROTOCOL,
+  { serializable = false } = {},
 ) {
   if (
-    !(version === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(entity) ||
+    !entitiesFor(version).has(entity) ||
     !Array.isArray(key) ||
     key.some(
       (part) =>
@@ -424,14 +567,16 @@ export function validateEntityPayload(
     throw new Error("Invalid entity key length");
   if (
     !plain(payload) ||
-    Object.keys(payload).some((field) => !payloadFields[entity].includes(field))
+    Object.keys(payload).some(
+      (field) => !fieldsFor(entity, version).includes(field),
+    )
   )
     throw new Error(
       entity === "person"
         ? "Account credentials and privileges are local"
         : "Unsupported entity payload",
     );
-  assertCanonical(payload);
+  if (!serializable) assertCanonical(payload);
   const string = (field, max = 200000) => {
     if (typeof payload[field] !== "string" || payload[field].length > max)
       throw new Error("Invalid " + entity + " " + field);
@@ -516,7 +661,44 @@ export function validateEntityPayload(
     (payload.version !== version || payload.reducer !== version)
   )
     throw new Error("Invalid protocol marker");
-  if (
+  if (entity === "sheetCloneFormat") {
+    // The formatting without its rules, and the rules by record ID. A value
+    // whose rules are not a list of objects stays whole in `data`.
+    if (
+      !plain(payload.data) ||
+      sheetCloneFormatId(payload) !== key[1] ||
+      (Object.hasOwn(payload, "rules") &&
+        (!Array.isArray(payload.rules) ||
+          Object.hasOwn(payload.data, "rules") ||
+          payload.rules.some(
+            (rule) => typeof rule !== "string" || !/^[a-f0-9]{32}$/.test(rule),
+          )))
+    )
+      throw new Error("Invalid sheetClone format");
+  } else if (entity === "sheetCloneRule") {
+    if (!plain(payload.data) || sheetCloneFormatId(payload.data) !== key[1])
+      throw new Error("Invalid sheetClone rule");
+  } else if (entity === "sheetCloneTask" && version === ROW_PROTOCOL) {
+    const { data, cells } = payload;
+    if (
+      !plain(data) ||
+      data.id !== key[1] ||
+      data.teamId !== teamId ||
+      Object.hasOwn(data, "cells") ||
+      plain(data.formatting) ||
+      !plain(cells) ||
+      Object.entries(cells).some(
+        ([cellKey, cell]) =>
+          !cellKey ||
+          cellKey.length > 200 ||
+          ["__proto__", "constructor", "prototype"].includes(cellKey) ||
+          !plain(cell) ||
+          !Object.hasOwn(cell, "value") ||
+          !plain(cell.style),
+      )
+    )
+      throw new Error("Invalid sheetClone task");
+  } else if (
     entity === "sheetCloneTask" &&
     (!plain(payload.data) ||
       payload.data.id !== key[1] ||
@@ -538,7 +720,7 @@ export function validateEntityPayload(
     let data = payload.data;
     if (plain(data))
       try {
-        data = unpackSheetCloneData(data);
+        data = unpackedSheetCloneData(data);
       } catch {
         throw new Error("Invalid sheetClone payload");
       }
@@ -566,6 +748,22 @@ export function validateEntityPayload(
       throw new Error("Private account data in sheetClone");
     if (data.tasks?.some((task) => task.teamId !== teamId))
       throw new Error("Foreign team sheetClone row");
+    // Protocol 5: the rows are their own records and the parent names each
+    // formatted row's formatting record. Keeping that here lets a format
+    // change over every row carry no row.
+    if (
+      version === ROW_PROTOCOL &&
+      (!plain(payload.formats) ||
+        Object.entries(payload.formats).some(
+          ([id, format]) =>
+            !id ||
+            id.length > 200 ||
+            ["__proto__", "constructor", "prototype"].includes(id) ||
+            typeof format !== "string" ||
+            !/^[a-f0-9]{32}$/.test(format),
+        ))
+    )
+      throw new Error("Invalid sheetClone formats");
   }
   if (entity === "document")
     for (const url of documentImageUrls(payload.markdown))
@@ -627,12 +825,12 @@ export function validateOperation(
       throw new Error("Invalid conflict resolution references");
     validateResolutionState(op, state);
   }
-  const seen = new Set();
+  const seen = new Set(),
+    // Canonical text of this command's payload objects, where already made.
+    texts = new Map();
   for (const c of op.changes) {
     if (
-      !(op.protocol === SPLIT_PROTOCOL ? ENTITIES : ENTITIES_WHOLE).has(
-        c.entity,
-      ) ||
+      !entitiesFor(op.protocol).has(c.entity) ||
       c.entity === "protocol" ||
       !Array.isArray(c.key) ||
       c.key.some((v) => typeof v !== "string" || v.length > 200) ||
@@ -653,14 +851,69 @@ export function validateOperation(
     const key = entityId(c.entity, c.key);
     if (seen.has(key)) throw new Error("Duplicate entity change");
     seen.add(key);
+    // Successive commands of one run that edit the same record carry its
+    // payload twice: one command's desired value is the next one's base (a
+    // sheet copy of megabytes, in protocol 3). When the two have the same
+    // canonical text, this command's base becomes the earlier desired object,
+    // so validation, unpacking and comparison do their work once. The
+    // command's canonical text is unchanged, and it is assembled below from
+    // the payload texts already made here.
+    const run = known === undefined ? syncRunPayloads() : null;
+    if (run && !Object.isFrozen(c)) {
+      try {
+        const previous = run.latest.get(key);
+        if (c.base && typeof c.base === "object") {
+          // The engine's own serialization first: when it equals the earlier
+          // canonical text, the base is that content and needs no walk.
+          if (previous && JSON.stringify(c.base) === previous.text) {
+            c.base = previous.object;
+            texts.set(c.base, previous.text);
+          } else texts.set(c.base, canonical(c.base));
+        }
+        if (c.desired && typeof c.desired === "object") {
+          // The data's text is kept for the run: the record this payload
+          // becomes is serialized again for its digest, size and storage.
+          const data = c.desired.data,
+            cache = syncCanonicalCache();
+          let text;
+          if (cache && data && typeof data === "object") {
+            const dataText = canonical(data);
+            text = canonicalWith(c.desired, (value) =>
+              value === data ? dataText : undefined,
+            );
+            if (previous?.data && previous.data !== data)
+              cache.texts.delete(previous.data);
+            cache.texts.set(data, dataText);
+          } else text = canonical(c.desired);
+          texts.set(c.desired, text);
+          run.latest.set(key, { object: c.desired, text, data });
+        } else run.latest.delete(key);
+      } catch {
+        // A payload canonical JSON cannot hold is rejected by the validation
+        // below, with its own message.
+        run.latest.delete(key);
+      }
+    }
     // validateEntityPayload checks a non-null value serializes canonically.
-    if (c.base !== null)
-      validateEntityPayload(c.entity, c.key, c.base, op.teamId, op.protocol);
-    if (c.desired !== null)
-      validateEntityPayload(c.entity, c.key, c.desired, op.teamId, op.protocol);
+    // A payload object already validated in this run as the same record is
+    // not validated again.
+    const signature = run && key + "\n" + op.teamId + "\n" + op.protocol;
+    for (const payload of [c.base, c.desired]) {
+      if (payload === null) continue;
+      const object = run && payload && typeof payload === "object";
+      if (object && run.validated.get(payload) === signature) continue;
+      validateEntityPayload(c.entity, c.key, payload, op.teamId, op.protocol, {
+        serializable: texts.has(payload),
+      });
+      if (object) run.validated.set(payload, signature);
+    }
     if (c.desired === null && c.action !== "delete")
       throw new Error("Missing desired entity");
-    if (c.fields.some((field) => !payloadFields[c.entity].includes(field)))
+    if (
+      c.fields.some(
+        (field) => !fieldsFor(c.entity, op.protocol).includes(field),
+      )
+    )
       throw new Error("Unsupported entity field");
     if (c.entity === "team" && c.action === "delete")
       throw new Error("Remote team deletion forbidden");
@@ -685,7 +938,11 @@ export function validateOperation(
     )
       throw new Error("Private team setting in shared payload");
   }
-  const serialized = known ?? canonical(op);
+  const serialized =
+    known ??
+    (texts.size
+      ? canonicalWith(op, (value) => texts.get(value))
+      : canonical(op));
   validateOperationSize(serialized);
   onSerialized?.(serialized);
   if (prepared) prepared.validated = true;
