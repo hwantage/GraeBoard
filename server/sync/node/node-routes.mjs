@@ -1,7 +1,7 @@
 import { installSetupKeyRoutes } from "./setup-key-issuer.mjs";
 import { SQLITE_VERSION } from "../../migrations/sqlite.mjs";
 import { siteInitializeSql } from "../../migrations/site-initialize-sql.mjs";
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { profileToken, sealToken } from "./credentials.mjs";
@@ -14,11 +14,40 @@ import {
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
+  conflictSummary,
   pendingResolutions,
 } from "../../../shared/sync/conflict-origin.js";
+import { plainConflictPayloads } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 import { createSyncStatusReader } from "./node-status.mjs";
+import {
+  SYNC_LOG_LEVELS,
+  SYNC_LOG_RETENTION_DAYS,
+  syncLogDate,
+} from "./sync-log.mjs";
 const id = (req) => req.params.id;
+// Records who asked for a synchronization action and how it ended. Only an
+// authorized request is written, so the log holds no attempts by outsiders.
+const logged = (sync, authorize, action, handler) => async (req, res) => {
+  authorize(req);
+  let failure;
+  try {
+    return await handler(req, res);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    sync.log.write(id(req), {
+      kind: "action",
+      action,
+      actor: { id: req.user.id, name: req.user.name },
+      ok: !failure,
+      ...(failure
+        ? { error: { message: String(failure.message || failure) } }
+        : {}),
+    });
+  }
+};
 export function installSyncRoutes(app, options) {
   installSetupKeyRoutes(app, options);
   installConnectionRoutes(app, options);
@@ -77,17 +106,26 @@ function installConnectionRoutes(
     sync.clear(id(req));
     res.set("Cache-Control", "no-store").json({ ok: true });
   });
-  app.post("/api/admin/teams/:id/sync-reset", (req, res) => {
-    requireSystemAdmin(req.user);
-    managedTeam(req.user, id(req));
-    requireThat(
-      req.body?.confirmed === true,
-      400,
-      "연결 기록 초기화를 확인하세요.",
-    );
-    sync.forget(id(req), req.user.id);
-    res.set("Cache-Control", "no-store").json({ ok: true });
-  });
+  app.post(
+    "/api/admin/teams/:id/sync-reset",
+    logged(
+      sync,
+      (req) => {
+        requireSystemAdmin(req.user);
+        managedTeam(req.user, id(req));
+      },
+      "reset",
+      (req, res) => {
+        requireThat(
+          req.body?.confirmed === true,
+          400,
+          "연결 기록 초기화를 확인하세요.",
+        );
+        sync.forget(id(req), req.user.id);
+        res.set("Cache-Control", "no-store").json({ ok: true });
+      },
+    ),
+  );
   app.delete("/api/admin/teams/:id/sync-credential", (req, res) => {
     requireSystemAdmin(req.user);
     managedTeam(req.user, id(req));
@@ -209,6 +247,7 @@ function installConnectionRoutes(
         ),
         repository: profile.repository,
         token: profileToken(db, profile),
+        log: (entry) => sync.log.git(teamId, entry),
       });
       await transport.check();
       const head = await transport.readHead();
@@ -263,20 +302,26 @@ function installTeamSyncRoutes(
   { db, sync, teamAccess, managedTeam, requireSystemAdmin, refreshUser },
 ) {
   const status = createSyncStatusReader({ db, sync });
+  const managed = (req) => managedTeam(req.user, id(req));
   app.get("/api/teams/:id/sync", (req, res) => {
     teamAccess(req.user, id(req));
     res.json(status(id(req)));
   });
-  app.post("/api/teams/:id/sync/reconnect", async (req, res) => {
-    const teamId = id(req);
-    managedTeam(req.user, teamId);
-    await sync.reconnect(teamId, req.user.id, () =>
-      managedTeam(refreshUser(req), teamId),
-    );
-    res.json(status(teamId));
-  });
-  app.post("/api/teams/:id/sync/check", async (req, res) => {
-    managedTeam(req.user, id(req));
+  app.post(
+    "/api/teams/:id/sync/reconnect",
+    logged(sync, managed, "reconnect", async (req, res) => {
+      const teamId = id(req);
+      await sync.reconnect(teamId, req.user.id, () =>
+        managedTeam(refreshUser(req), teamId),
+      );
+      res.json(status(teamId));
+    }),
+  );
+  app.post(
+    "/api/teams/:id/sync/check",
+    logged(sync, managed, "check", checkConnection),
+  );
+  async function checkConnection(req, res) {
     const service = sync.get(id(req));
     // Without any token GitHub answers 401/404, which reads like a permission
     // problem of an existing token.
@@ -318,7 +363,7 @@ function installTeamSyncRoutes(
         { name: "SQLite", status: "ok", message: "팀 저장소 확인" },
       ],
     });
-  });
+  }
   for (const action of [
     "enable",
     "pause",
@@ -327,58 +372,71 @@ function installTeamSyncRoutes(
     "disconnect",
     "checkpoint",
   ])
-    app.post("/api/teams/:id/sync/" + action, async (req, res) => {
-      managedTeam(req.user, id(req));
-      const teamId = id(req),
-        link = sync.store(teamId).readLink();
-      requireThat(link, 400, "연결 프로필을 선택하세요.");
-      if (action === "pause" || action === "disconnect") {
+    app.post(
+      "/api/teams/:id/sync/" + action,
+      logged(sync, managed, action, (req, res) => runAction(action, req, res)),
+    );
+  async function runAction(action, req, res) {
+    const teamId = id(req),
+      link = sync.store(teamId).readLink();
+    requireThat(link, 400, "연결 프로필을 선택하세요.");
+    if (action === "pause" || action === "disconnect") {
+      db.prepare(
+        "UPDATE team_sync_links SET mode=?,generation=generation+1 WHERE team_id=?",
+      ).run(action === "pause" ? "paused" : "disconnected", teamId);
+      sync.capture.refresh();
+      try {
+        await sync.get(teamId).run({ receiveOnly: true });
+      } catch {}
+    } else {
+      requireThat(
+        link.mode !== "disconnected",
+        409,
+        "연결 해제된 자료는 복구 대조가 필요합니다.",
+      );
+      if (action === "enable" || action === "resume") {
+        requireThat(
+          link.mode !== "recovery",
+          409,
+          "복구 점검을 먼저 완료하세요.",
+        );
         db.prepare(
           "UPDATE team_sync_links SET mode=?,generation=generation+1 WHERE team_id=?",
-        ).run(action === "pause" ? "paused" : "disconnected", teamId);
+        ).run(link.canonical_head ? "active" : "initializing", teamId);
         sync.capture.refresh();
-        try {
-          await sync.get(teamId).run({ receiveOnly: true });
-        } catch {}
-      } else {
-        requireThat(
-          link.mode !== "disconnected",
-          409,
-          "연결 해제된 자료는 복구 대조가 필요합니다.",
-        );
-        if (action === "enable" || action === "resume") {
-          requireThat(
-            link.mode !== "recovery",
-            409,
-            "복구 점검을 먼저 완료하세요.",
-          );
-          db.prepare(
-            "UPDATE team_sync_links SET mode=?,generation=generation+1 WHERE team_id=?",
-          ).run(link.canonical_head ? "active" : "initializing", teamId);
-          sync.capture.refresh();
-        }
-        let result;
-        if (action === "checkpoint") {
-          requireThat(
-            link.mode === "active" && link.canonical_head,
-            409,
-            "활성 동기화의 공유본에서만 checkpoint를 만들 수 있습니다.",
-          );
-          result = await sync.get(teamId).checkpoint();
-        } else
-          result = await sync.get(teamId).run({
-            initialize: !link.canonical_head,
-          });
-        sync.schedule(teamId);
-        // Another run holding the lease means this request did nothing.
-        if (result?.busy) return res.json({ ...status(teamId), busy: true });
       }
-      res.json(status(teamId));
-    });
-  app.post("/api/teams/:id/sync/upgrade", async (req, res) => {
-    requireSystemAdmin(req.user);
+      let result;
+      if (action === "checkpoint") {
+        requireThat(
+          link.mode === "active" && link.canonical_head,
+          409,
+          "활성 동기화의 공유본에서만 checkpoint를 만들 수 있습니다.",
+        );
+        result = await sync.get(teamId).checkpoint();
+      } else
+        result = await sync.get(teamId).run({
+          initialize: !link.canonical_head,
+        });
+      sync.schedule(teamId);
+      // Another run holding the lease means this request did nothing.
+      if (result?.busy) return res.json({ ...status(teamId), busy: true });
+    }
+    res.json(status(teamId));
+  }
+  app.post(
+    "/api/teams/:id/sync/upgrade",
+    logged(
+      sync,
+      (req) => {
+        requireSystemAdmin(req.user);
+        managed(req);
+      },
+      "upgrade",
+      upgrade,
+    ),
+  );
+  async function upgrade(req, res) {
     const teamId = id(req);
-    managedTeam(req.user, teamId);
     requireThat(
       !db
         .prepare(
@@ -395,6 +453,78 @@ function installTeamSyncRoutes(
     });
     sync.clear(teamId);
     res.json(result);
+  }
+  // The synchronization log of this server: the team's lead reads and
+  // downloads it, the system administrator also sets how much is written.
+  app.get("/api/teams/:id/sync/log", (req, res) => {
+    managed(req);
+    const teamId = id(req),
+      today = syncLogDate(),
+      dates = [...new Set([today, ...sync.log.dates(teamId)])].sort().reverse(),
+      date = dates.includes(req.query.date) ? req.query.date : today,
+      before = /^\d+$/.test(req.query.before || "")
+        ? Number(req.query.before)
+        : undefined;
+    res.set("Cache-Control", "no-store").json({
+      level: sync.log.level(teamId),
+      levels: SYNC_LOG_LEVELS,
+      canSetLevel: req.user.systemRole === "admin",
+      retentionDays: SYNC_LOG_RETENTION_DAYS,
+      date,
+      dates,
+      ...sync.log.read(teamId, {
+        date,
+        problems: req.query.problems === "1",
+        ...(before !== undefined ? { before } : {}),
+      }),
+    });
+  });
+  app.post("/api/teams/:id/sync/log/download", (req, res) => {
+    managed(req);
+    const file = sync.log.file(id(req), req.body?.date);
+    requireThat(file, 404, "해당 날짜의 동기화 로그가 없습니다.");
+    // Streamed: a day of every Git command can be large.
+    const stream = createReadStream(file);
+    stream.once("error", () => {
+      // The file was pruned between the check and the read.
+      if (res.headersSent) res.destroy();
+      else
+        res.status(404).json({ error: "해당 날짜의 동기화 로그가 없습니다." });
+    });
+    stream.once("open", () => {
+      res
+        .set("Cache-Control", "no-store")
+        .type("application/x-ndjson")
+        .attachment(`sync-log-${req.body.date}.jsonl`);
+      stream.pipe(res);
+    });
+  });
+  app.put("/api/admin/teams/:id/sync-log-level", (req, res) => {
+    requireSystemAdmin(req.user);
+    managed(req);
+    const teamId = id(req),
+      level = req.body?.level;
+    requireThat(
+      SYNC_LOG_LEVELS.includes(level),
+      400,
+      "로그 수준을 확인하세요.",
+    );
+    requireThat(
+      sync.log.directory,
+      409,
+      "이 서버는 동기화 로그를 기록하지 않습니다.",
+    );
+    const from = sync.log.level(teamId);
+    sync.log.setLevel(teamId, level);
+    sync.log.write(teamId, {
+      kind: "action",
+      action: "log-level",
+      actor: { id: req.user.id, name: req.user.name },
+      ok: true,
+      from,
+      to: level,
+    });
+    res.set("Cache-Control", "no-store").json({ level });
   });
   // Whoever edits the team's work settles its conflicts, not only its lead.
   const conflictTeam = (user, teamId) => {
@@ -405,15 +535,18 @@ function installTeamSyncRoutes(
       "충돌 보관함은 팀장·팀원만 사용할 수 있습니다.",
     );
   };
-  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
+  // The list carries no values: a conflict over a sheet copy holds megabytes
+  // per side. One conflict (`conflictId`) is sent whole.
+  const conflictViews = async (req, conflictId = null) => {
     conflictTeam(req.user, id(req));
     const s = sync.store(id(req)),
-      conflicts = db
+      whole = db
         .prepare(
-          "SELECT payload FROM sync_conflicts WHERE team_id=? ORDER BY conflict_id",
+          "SELECT payload FROM sync_conflicts WHERE team_id=? AND (? IS NULL OR conflict_id=?) ORDER BY conflict_id",
         )
-        .all(id(req))
+        .all(id(req), conflictId, conflictId)
         .map((row) => JSON.parse(row.payload)),
+      conflicts = conflictId ? whole : whole.map(conflictSummary),
       link = s.readLink(),
       head = link?.canonical_head;
     // This site's own operations among the held ones and the current writers;
@@ -456,31 +589,39 @@ function installTeamSyncRoutes(
           )
           .map((row) => [JSON.parse(row.entity_key)[0], row.name]),
       ),
-      resolutions = pendingResolutions(open, s.readPending());
-    res.json({
-      conflicts: conflicts.map((c) => ({
-        conflictId: c.conflictId,
-        opId: c.opId,
-        createdAt: c.operation.createdAt,
-        result: c.reason,
-        target: c.operation.changes
-          .map((x) => x.entity + " " + x.key.join("/"))
-          .join(", "),
-        base: c.operation.changes.map((x) => x.base),
-        current: c.current,
-        desired: c.operation.changes.map((x) => x.desired),
-        resolved: !!c.resolution,
-        expectedHead: head,
-        origin: conflictOrigin(c, {
-          site: "internal",
-          local,
-          remote,
-          names,
-          writerEpoch: link?.writer_epoch,
-        }),
-        pendingResolution: resolutions.get(c.conflictId) || null,
-      })),
-    });
+      // What a saved resolution chose is told from the later values.
+      resolutions = pendingResolutions(
+        whole.filter((c) => !c.resolution),
+        s.readPending(),
+      );
+    return conflicts.map((c) => ({
+      conflictId: c.conflictId,
+      opId: c.opId,
+      createdAt: c.operation.createdAt,
+      result: c.reason,
+      target: c.operation.changes
+        .map((x) => x.entity + " " + x.key.join("/"))
+        .join(", "),
+      ...(conflictId ? plainConflictPayloads(c) : {}),
+      resolved: !!c.resolution,
+      expectedHead: head,
+      origin: conflictOrigin(c, {
+        site: "internal",
+        local,
+        remote,
+        names,
+        writerEpoch: link?.writer_epoch,
+      }),
+      pendingResolution: resolutions.get(c.conflictId) || null,
+    }));
+  };
+  app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
+    res.json({ conflicts: await conflictViews(req) });
+  });
+  app.get("/api/teams/:id/sync/conflicts/:conflictId", async (req, res) => {
+    const [conflict] = await conflictViews(req, req.params.conflictId);
+    requireThat(conflict, 404, "충돌을 찾을 수 없습니다.");
+    res.json(conflict);
   });
   app.post(
     "/api/teams/:id/sync/conflicts/:conflictId/resolve",

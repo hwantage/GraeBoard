@@ -238,6 +238,95 @@ test("equal current and submitted sides report no difference", () => {
   assert.deepEqual(changedFields(change.current, change.desired), []);
 });
 
+test("changed fields compare like sorted JSON, reading undefined as null", () => {
+  const side = (payload) => ({ state: "present", payload });
+  assert.deepEqual(
+    changedFields(
+      side({ a: { x: 1, y: [1, { z: null }] }, b: undefined, c: [] }),
+      side({ a: { y: [1, { z: undefined }], x: 1 }, b: null, c: {} }),
+    ),
+    ["c"],
+  );
+  assert.deepEqual(
+    changedFields(side({ a: { k: undefined } }), side({ a: {} })),
+    ["a"],
+  );
+  assert.deepEqual(changedFields(side({ a: [1, 2] }), side({ a: [2, 1] })), [
+    "a",
+  ]);
+  assert.deepEqual(changedFields(side("text"), side("other")), ["값"]);
+});
+
+// A copy repeats the team's formatting rules under every task. Shaped like the
+// 2026-11-13 production conflicts: 438 tasks and eight column rules.
+function largeCopy(name) {
+  const ids = Array.from({ length: 438 }, (_, i) => `task-${i}`);
+  const rule = (index, rows) => ({
+    id: `rule-${index}`,
+    rows,
+    keys: ["title"],
+    style: { backgroundColor: "#d1eee6" },
+  });
+  const formatting = {
+    revision: 8,
+    rules: [1, 2, 3, 4, 5, 6, 7, 8].map((i) =>
+      rule(i, ids.slice(0, i > 5 ? 19 : 430)),
+    ),
+  };
+  return {
+    name,
+    year: 2026,
+    data: {
+      tasks: ids.map((id, i) => ({
+        id,
+        formatting,
+        cells: { title: { value: `업무 ${i}`, style: { bold: false } } },
+      })),
+      users: [],
+      view: {},
+      settings: {},
+    },
+  };
+}
+
+test("a large copy compares only its differing fields and stays reachable in raw JSON", () => {
+  const before = largeCopy("먼저 이름"),
+    later = { ...largeCopy("나중 이름"), data: before.data },
+    side = (payload) => ({ state: "present", payload });
+  assert.equal(sideLines(side(before), 200000), null);
+  assert.ok(payloadLines(before).length > 900000);
+  assert.deepEqual(changedFields(side(before), side(later)), ["name"]);
+  const renamed = diffSides(side(before), side(later));
+  assert.equal(renamed.partial, true);
+  assert.equal(renamed.omitted, false);
+  assert.deepEqual(lines(renamed.rows), [
+    '-name: "먼저 이름"',
+    '+name: "나중 이름"',
+  ]);
+  const same = diffSides(side(before), side(largeCopy("먼저 이름")));
+  assert.equal(same.equal, true);
+  assert.equal(same.partial, true);
+  // The differing field itself is too long to compare line by line.
+  const edited = largeCopy("먼저 이름");
+  edited.data.tasks[0].cells.title.value = "고친 업무";
+  const data = diffSides(side(before), side(edited));
+  assert.deepEqual(changedFields(side(before), side(edited)), ["data"]);
+  assert.equal(data.equal, false);
+  assert.equal(data.omitted, true);
+  assert.deepEqual(data.rows, []);
+  // A smaller payload keeps the whole comparison.
+  const small = diffSides(
+    side({ name: "a", body: "x" }),
+    side({ name: "b", body: "x" }),
+  );
+  assert.equal(small.partial, false);
+  assert.deepEqual(lines(small.rows), [
+    ' body: "x"',
+    '-name: "a"',
+    '+name: "b"',
+  ]);
+});
+
 test("a large command lists the changes the other side also touched first", () => {
   // Shaped like the 2026-11-04 production conflict: a new alignment rule plus
   // hundreds of cells losing their own alignment, two of which the other side

@@ -1,4 +1,7 @@
-import { applicationEntities } from "../../server/sync/core/versions.mjs";
+import {
+  isSheetCloneChild,
+  siteEntities,
+} from "../../server/sync/core/versions.mjs";
 import {
   canonical,
   entityId,
@@ -17,7 +20,11 @@ import { CanonicalSlice, reduceSlice } from "./sync-partial.mjs";
 // Writes projected records to the site rows that differ from them, retires
 // rows, then bumps the owning tasks and announces the change once.
 function siteWriter(tx, teamId, visible, exclusions) {
+  // Owners whose revision follows their children: a task for its cells and
+  // documents, a copy for its row and format records (protocol 5). A copy's
+  // revision is what its viewers watch.
   const touched = new Set(),
+    copies = new Set(),
     now = Date.now();
   let changedCount = 0;
   const revisions = async (batch) =>
@@ -92,12 +99,16 @@ function siteWriter(tx, teamId, visible, exclusions) {
           (e.entity === "document" && e.key[0] === "task")
         )
           touched.add(e.entity === "cell" ? e.key[0] : e.key[1]);
+        if (isSheetCloneChild(e.entity)) copies.add(e.key[0]);
       }
     }
     await write(changes);
   };
   const retire = async (rows) => {
     if (!rows.length) return;
+    for (const row of rows)
+      if (isSheetCloneChild(row.entity))
+        copies.add(JSON.parse(row.entity_key)[0]);
     const revs = await revisions(rows);
     await tx.query(
       `UPDATE site_entities s SET deleted=1,revision=r.revision FROM jsonb_to_recordset($2::jsonb) AS r(entity text,entity_key text,revision bigint) WHERE s.team_id=$1 AND s.entity=r.entity AND s.entity_key=r.entity_key`,
@@ -109,15 +120,19 @@ function siteWriter(tx, teamId, visible, exclusions) {
     changedCount += rows.length;
   };
   const finish = async () => {
-    if (touched.size) {
-      const ids = [...touched].map((id) => canonical([id]));
+    for (const [entity, owners] of [
+      ["task", touched],
+      ["sheetClone", copies],
+    ]) {
+      if (!owners.size) continue;
+      const ids = [...owners].map((id) => canonical([id]));
       await tx.query(
-        `UPDATE site_entity_revisions SET revision=GREATEST(revision+1,$3) WHERE team_id=$1 AND entity='task' AND entity_key=ANY($2::text[])`,
-        [teamId, ids, now],
+        `UPDATE site_entity_revisions SET revision=GREATEST(revision+1,$3) WHERE team_id=$1 AND entity=$4 AND entity_key=ANY($2::text[])`,
+        [teamId, ids, now, entity],
       );
       await tx.query(
-        `UPDATE site_entities s SET revision=r.revision FROM site_entity_revisions r WHERE s.team_id=$1 AND s.entity='task' AND s.entity_key=ANY($2::text[]) AND r.team_id=s.team_id AND r.entity=s.entity AND r.entity_key=s.entity_key`,
-        [teamId, ids],
+        `UPDATE site_entities s SET revision=r.revision FROM site_entity_revisions r WHERE s.team_id=$1 AND s.entity=$3 AND s.entity_key=ANY($2::text[]) AND r.team_id=s.team_id AND r.entity=s.entity AND r.entity_key=s.entity_key`,
+        [teamId, ids, entity],
       );
     }
     const team = visible[entityId("team", [])];
@@ -156,13 +171,13 @@ export async function materialize(
       ? pending
       : [];
   if (replay.length) onPendingProjection(replay);
-  const visible = applicationEntities(project(state, replay).entities),
+  const visible = siteEntities(project(state, replay).entities),
     protectedKeys = pendingEntityKeys(pending),
     site = siteWriter(tx, teamId, visible, exclusions);
   // With the previous canonical state known, only entities whose projection
   // changed need a row comparison; rows that vanished are retired below.
   const previousVisible = previousState
-    ? applicationEntities(project(previousState, replay).entities)
+    ? siteEntities(project(previousState, replay).entities)
     : null;
   let batch = [];
   for (const id in visible) {
@@ -233,7 +248,7 @@ export async function materializeSlice(
       await slice.context(state),
     ));
   }
-  const visible = applicationEntities(projected.entities),
+  const visible = siteEntities(projected.entities),
     protectedKeys = pendingEntityKeys(pending),
     site = siteWriter(tx, teamId, visible, exclusions);
   for (const [id, record] of Object.entries(projected.entities))

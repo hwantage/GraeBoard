@@ -5,20 +5,21 @@ import {
   digest,
   equal,
   payloadEqual,
+  normalizedPayload,
   entityId,
   validateOperation,
   validateEntityPayload,
   protocolVersion,
   supportedVersion,
   PROTOCOL,
+  ROW_PROTOCOL,
   SPLIT_PROTOCOL,
 } from "./protocol.mjs";
-import { normalizeEntityPayload } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 
 // Reducer 3 keeps protocol 1's difference budget and reducer 4 protocol 2's.
 function edits(base, value, reducer = PROTOCOL) {
   const chunks = diffChars(base, value, {
-    maxEditLength: reducer === SPLIT_PROTOCOL ? 2000 : 20000,
+    maxEditLength: SHEET_CLONE_RECORDS.includes(reducer) ? 2000 : 20000,
   }); // deterministic work budget, never wall-clock timeout
   if (!chunks) return null;
   let offset = 0,
@@ -74,6 +75,26 @@ export function mergeMarkdown(base, current, desired, reducer = PROTOCOL) {
     offset = edit.end;
   }
   return text + base.slice(offset);
+}
+// The protocols that keep a sheet clone's rows as their own records.
+const SHEET_CLONE_RECORDS = [SPLIT_PROTOCOL, ROW_PROTOCOL];
+// Protocol 5 row cells and format assignments: different keys merge, the same
+// key changed on both sides does not.
+function mergeSheetCloneCells(base, current, desired) {
+  const result = { ...current };
+  for (const key of new Set([
+    ...Object.keys(base || {}),
+    ...Object.keys(desired || {}),
+  ])) {
+    const before = base?.[key],
+      value = current?.[key],
+      next = desired?.[key];
+    if (equal(value, next) || equal(next, before)) continue;
+    if (!equal(value, before)) return null;
+    if (next === undefined) delete result[key];
+    else result[key] = next;
+  }
+  return result;
 }
 function mergeSheetCloneTask(base, current, desired) {
   const result = { ...current };
@@ -217,10 +238,25 @@ function validateState(entities) {
     if (e.entity === "cell" && !alive("task", [e.key[0]]))
       return "Missing parent task";
     if (
-      e.entity === "sheetCloneTask" &&
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+        e.entity,
+      ) &&
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
+    // Protocol 5: a copy names its rows' formatting records.
+    if (e.entity === "sheetClone" && p.formats)
+      for (const format of new Set(Object.values(p.formats))) {
+        const record =
+          entities[entityId("sheetCloneFormat", [e.key[0], format])];
+        if (!record || record.deleted) return "Missing sheetClone format";
+      }
+    // ...and a format names its rule records.
+    if (e.entity === "sheetCloneFormat" && Array.isArray(p.rules))
+      for (const rule of new Set(p.rules)) {
+        const record = entities[entityId("sheetCloneRule", [e.key[0], rule])];
+        if (!record || record.deleted) return "Missing sheetClone rule";
+      }
     if (
       e.entity === "sheetCloneCell" &&
       !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]
@@ -311,7 +347,9 @@ export function reduce(
           ? entities[entityId("task", [c.key[0]])]
           : c.entity === "document" && ["task", "calendar"].includes(c.key[0])
             ? entities[entityId(c.key[0], [c.key[1]])]
-            : op.protocol === SPLIT_PROTOCOL && c.entity === "sheetCloneTask"
+            : (SHEET_CLONE_RECORDS.includes(op.protocol) &&
+                  c.entity === "sheetCloneTask") ||
+                ["sheetCloneFormat", "sheetCloneRule"].includes(c.entity)
               ? entities[entityId("sheetClone", [c.key[0]])]
               : op.protocol === SPLIT_PROTOCOL && c.entity === "sheetCloneCell"
                 ? entities[entityId("sheetCloneTask", c.key.slice(0, 2))]
@@ -375,14 +413,21 @@ export function reduce(
           payload = { ...current.payload };
           // 사본 data는 평문·공유 사전 형태를 내용으로 비교한다. 과거 평문 이벤트의
           // 재생 결과는 바뀌지 않는다.
-          const normalized = normalizeEntityPayload(c.entity, current.payload),
-            normalizedBase = normalizeEntityPayload(c.entity, c.base),
-            normalizedDesired = normalizeEntityPayload(c.entity, c.desired);
+          const normalized = normalizedPayload(c.entity, current.payload),
+            normalizedBase = normalizedPayload(c.entity, c.base),
+            normalizedDesired = normalizedPayload(c.entity, c.desired);
           for (const field of c.fields) {
             const base = normalizedBase?.[field],
               desired = normalizedDesired?.[field],
               value = normalized?.[field];
-            if (equal(value, desired) || equal(desired, base)) continue;
+            // The same object on both sides (successive edits of one copy
+            // share it) needs one comparison with the desired value, not two.
+            if (
+              value === base
+                ? equal(desired, base)
+                : equal(value, desired) || equal(desired, base)
+            )
+              continue;
             if (equal(value, base)) {
               if (c.desired?.[field] !== undefined)
                 payload[field] = c.desired[field];
@@ -399,8 +444,21 @@ export function reduce(
                 continue;
               }
             }
+            // Protocol 5: cells of a row and format assignments of a copy
+            // merge key by key.
             if (
-              op.reducer === SPLIT_PROTOCOL &&
+              op.reducer === ROW_PROTOCOL &&
+              ((c.entity === "sheetCloneTask" && field === "cells") ||
+                (c.entity === "sheetClone" && field === "formats"))
+            ) {
+              const merged = mergeSheetCloneCells(base, value, desired);
+              if (merged !== null) {
+                payload[field] = merged;
+                continue;
+              }
+            }
+            if (
+              SHEET_CLONE_RECORDS.includes(op.reducer) &&
               c.entity === "sheetCloneTask" &&
               field === "data"
             ) {
@@ -539,15 +597,42 @@ function validateIncrement(entities, undo, context) {
   }
   for (const id of touched) {
     const e = entities[id];
+    // Protocol 5: format and rule records are named by their content and are
+    // removed only with their copy. The copy that names a format, or the
+    // format that names a rule, may be untouched by this command, so its own
+    // check below would not see the record go.
+    if (
+      e?.deleted &&
+      ["sheetCloneFormat", "sheetCloneRule"].includes(e.entity) &&
+      entities[entityId("sheetClone", [e.key[0]])]?.deleted === false
+    )
+      return e.entity === "sheetCloneFormat"
+        ? "Missing sheetClone format"
+        : "Missing sheetClone rule";
     if (!e || e.deleted) continue;
     const p = e.payload;
     if (e.entity === "cell" && !entities[entityId("task", [e.key[0]])])
       return "Missing parent task";
     if (
-      e.entity === "sheetCloneTask" &&
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+        e.entity,
+      ) &&
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
+    // Protocol 5: a copy names its rows' formatting records.
+    if (e.entity === "sheetClone" && p.formats)
+      for (const format of new Set(Object.values(p.formats))) {
+        const record =
+          entities[entityId("sheetCloneFormat", [e.key[0], format])];
+        if (!record || record.deleted) return "Missing sheetClone format";
+      }
+    // ...and a format names its rule records.
+    if (e.entity === "sheetCloneFormat" && Array.isArray(p.rules))
+      for (const rule of new Set(p.rules)) {
+        const record = entities[entityId("sheetCloneRule", [e.key[0], rule])];
+        if (!record || record.deleted) return "Missing sheetClone rule";
+      }
     if (
       e.entity === "sheetCloneCell" &&
       !entities[entityId("sheetCloneTask", e.key.slice(0, 2))]

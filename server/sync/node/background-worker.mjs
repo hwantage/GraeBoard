@@ -1,4 +1,4 @@
-import { applicationEntities } from "../core/versions.mjs";
+import { applicationEntities, isSheetCloneChild } from "../core/versions.mjs";
 import { syncImageReferences } from "../../../shared/sync/sync-image-references.js";
 import {
   encodeStoredSnapshot,
@@ -23,6 +23,7 @@ import { sqliteTeamStore } from "../../storage/sqlite.mjs";
 import { prepareStatePatch } from "../../../shared/sync/sync-team-store.mjs";
 import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
+import { createSyncLog } from "./sync-log.mjs";
 import {
   normalizeSyncError,
   protocolValidation,
@@ -477,12 +478,8 @@ function projectionPatch(
           ? []
           : [
               entityId(
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? "sheetClone"
-                  : entity,
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? [key[0]]
-                  : key,
+                isSheetCloneChild(entity) ? "sheetClone" : entity,
+                isSheetCloneChild(entity) ? [key[0]] : key,
               ),
             ];
       }),
@@ -743,9 +740,11 @@ function serviceFor(config) {
       return mutate("status", teamId, owner, { serialized: canonical(value) });
     },
   };
+  const syncLog = createSyncLog(config.logDir);
   const transport = new GitCliTransport({
     ...config.transport,
     signal: activeRequest?.controller.signal,
+    log: (entry) => syncLog.git(teamId, entry),
   });
   const git = transport.git.bind(transport);
   transport.git = async (...args) => {
@@ -754,8 +753,10 @@ function serviceFor(config) {
     progress();
     return result;
   };
-  const skippedImage = (path, reason) =>
+  const skippedImage = (path, reason) => {
     console.warn("GraeBoard image skipped", JSON.stringify({ path, reason }));
+    syncLog.write(teamId, { kind: "image", path, reason });
+  };
   const images = {
     async *publish(state, { parent, transport } = {}) {
       const inherited = new Set(
