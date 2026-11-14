@@ -737,8 +737,8 @@ test("tampered checkpoint metadata/state, incompatible history, pending hash and
   }
 });
 test("after a protocol transition new and recovering sites still start at the newest checkpoint and replay the transition", async () => {
-  // genesis → 6 protocol 3 operations → checkpoint → 3→4 transition → a
-  // protocol 4 operation → another.
+  // genesis → 6 protocol 3 operations → checkpoint → 3→5 transition → a
+  // protocol 5 operation → another.
   const { repo, state, genesis, states } = await fixture(6),
     publisher = store(state, repo.head),
     svc = new SyncService({ transport: repo, store: publisher, identity });
@@ -754,8 +754,8 @@ test("after a protocol transition new and recovering sites still start at the ne
   assert.equal(repo.commits.get(transition).parents[0], checkpoint);
   const operation = (opId, parent, before) => {
     const op = {
-      protocol: 4,
-      reducer: 4,
+      protocol: 5,
+      reducer: 5,
       ...identity,
       opId,
       writerEpoch: "epoch",
@@ -784,8 +784,8 @@ test("after a protocol transition new and recovering sites still start at the ne
       parent = repo.head;
     repo.head = await repo.createCandidate(parent, {
       [`events/${opId}.json`]: canonical({
-        protocol: 4,
-        reducer: 4,
+        protocol: 5,
+        reducer: 5,
         kind: "operations",
         parent,
         operations: [op],

@@ -1646,7 +1646,7 @@ test(
   },
 );
 
-test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent protocol 4 copy cells", async (t) => {
+test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronizes independent protocol 5 copy rows", async (t) => {
   const { a, b, teamId } = await fixture(t);
   const task = ok(
     await a.api("/tasks", {
@@ -1686,7 +1686,7 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   );
   assert.equal(storeA.readLink().canonical_head, options.expectedHead);
   const upgraded = ok(await a.api(`/teams/${teamId}/sync/upgrade`, options));
-  assert.equal(upgraded.protocol, 4);
+  assert.equal(upgraded.protocol, 5);
   assert.equal(storeA.readLink().mode, "paused");
   const received = ok(await b.api(`/teams/${teamId}/sync/upgrade`, options));
   assert.equal(received.received, true);
@@ -1730,14 +1730,14 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   for (const store of [storeA, storeB]) {
     const pending = store.readPending();
     assert.equal(pending.length, 1);
-    assert.equal(pending[0].protocol, 4);
-    assert.equal(
-      pending[0].changes.filter((change) => change.entity === "sheetCloneCell")
-        .length,
-      1,
-    );
-    assert.ok(
-      !pending[0].changes.some((change) => change.entity === "sheetClone"),
+    assert.equal(pending[0].protocol, 5);
+    // One row with its changed cell and update time; the copy is not sent.
+    assert.deepEqual(
+      pending[0].changes.map((change) => [
+        change.entity,
+        [...change.fields].sort(),
+      ]),
+      [["sheetCloneTask", ["cells", "data"]]],
     );
   }
   await a.app.locals.sync.get(teamId).run();
@@ -1774,7 +1774,7 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
       },
     ),
   );
-  assert.equal(storeB.readPending()[0].protocol, 4);
+  assert.equal(storeB.readPending()[0].protocol, 5);
   await b.app.locals.sync.get(teamId).run();
   await a.app.locals.sync.get(teamId).run();
   assert.equal(
@@ -1786,7 +1786,7 @@ test("A3/A6 actual Node upgrade API keeps both peers paused and then synchronize
   await save(a, "title", "offline v2 copy");
   ok(await a.api(`/teams/${teamId}/sync/reconnect`, {}));
   assert.ok(
-    storeA.readPending().every((operation) => operation.protocol === 4),
+    storeA.readPending().every((operation) => operation.protocol === 5),
   );
   await a.app.locals.sync.get(teamId).run();
   await b.app.locals.sync.get(teamId).run();
