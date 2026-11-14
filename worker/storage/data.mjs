@@ -20,6 +20,7 @@ import {
   capacityLimits,
   CapacityError,
   capacityTotals,
+  KEPT_TOTALS_SQL,
 } from "./capacity.mjs";
 import {
   assertReceiptCapacity,
@@ -190,6 +191,13 @@ const COPY_STORE = {
   sheetCloneRule: "rules",
 };
 const childPrefix = (key) => JSON.stringify(key).slice(0, -1) + ",";
+const LINK_SQL = "SELECT * FROM team_sync_links WHERE team_id=$1",
+  OUTBOX_SQL =
+    "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+  // The same rows when together they are small: a write that changes
+  // nothing, or is refused, must not pay for a backlog of megabytes.
+  SMALL_OUTBOX_BYTES = 256 * 1024,
+  SMALL_OUTBOX_SQL = `SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged')<${256 * 1024} ORDER BY local_seq`;
 export class DataSession {
   constructor(tx, teamId, { limits = capacityLimits() } = {}) {
     this.limits = limits;
@@ -894,12 +902,10 @@ export class DataSession {
   // operation runs from that operation's base to this capture's result.
   async projectedFor(replaceable = () => null, changes = this.changes) {
     let rows = (
-        await this.tx.query(
-          "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
-          [this.teamId],
-        )
+        this.opened?.outbox || (await this.tx.query(OUTBOX_SQL, [this.teamId]))
       ).rows,
       pending = rows.map((row) => JSON.parse(row.payload));
+    if (this.opened) this.opened.outbox = null;
     const replaced = rows.length
       ? replaceable(rows.at(-1), pending.at(-1))
       : null;
@@ -1039,10 +1045,10 @@ export class DataSession {
   }
   async capture(actorId) {
     if (!this.changes.size) return;
+    // The link and the unsent operations were read when the transaction
+    // opened (see withData); the team lock keeps both as they were.
     const link = (
-      await this.tx.query("SELECT * FROM team_sync_links WHERE team_id=$1", [
-        this.teamId,
-      ])
+      this.opened?.link || (await this.tx.query(LINK_SQL, [this.teamId]))
     ).rows[0];
     if (!link || link.mode === "disconnected") return;
     assert(
@@ -1300,26 +1306,24 @@ export async function withData(
     limits = capacityLimits(),
   } = {},
 ) {
+  // As text, the way a bound parameter sends it: the opening statement
+  // writes the value in as a literal.
+  const requested = write ? body?.operationId || null : null,
+    operationId =
+      requested === null
+        ? null
+        : typeof requested === "object"
+          ? JSON.stringify(requested)
+          : String(requested),
+    year =
+      write && body?.year !== undefined ? canonical([String(body.year)]) : null;
   return database.withTeamTransaction(
     teamId,
     async (tx) => {
-      // Every guard of this transaction in one round trip; each is asserted
-      // in the same order as before.
-      const operationId = write ? body?.operationId || null : null,
-        year =
-          write && body?.year !== undefined
-            ? canonical([String(body.year)])
-            : null,
-        guards = (
-          await tx.query(
-            `SELECT
-              EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
-              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
-              $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
-              (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
-            [teamId, write, Date.now(), year, operationId],
-          )
-        ).rows[0];
+      // Every guard of this transaction, asserted in the same order as
+      // before. They and a write's capacity totals are read in the round trip
+      // that opens the transaction (see `first` below).
+      const guards = tx.first[0].rows[0];
       assert(
         !guards.maintenance,
         409,
@@ -1349,8 +1353,18 @@ export async function withData(
       // A full database refuses the write before any work, in this
       // transaction instead of one of its own; the capture reuses the totals.
       if (write) {
-        session.capacity = await capacityTotals(tx, teamId);
+        session.capacity = await capacityTotals(tx, teamId, tx.first[1]);
         assertCapacityTotals(session.capacity, limits);
+        // The unsent operations come along only while they are small (see
+        // SMALL_OUTBOX_SQL); a large backlog is read when a capture needs it.
+        session.opened = {
+          link: tx.first[2],
+          outbox:
+            Number(tx.first[1].rows[0]?.outbox_bytes ?? Infinity) <
+            SMALL_OUTBOX_BYTES
+              ? tx.first[3]
+              : null,
+        };
       }
       const result = await work(session);
       if (write) {
@@ -1428,6 +1442,25 @@ export async function withData(
       }
       return result;
     },
-    { readOnly: !write },
+    {
+      readOnly: !write,
+      first: [
+        {
+          sql: `SELECT
+              EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
+              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
+              $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
+              (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
+          params: [teamId, write, Date.now(), year, operationId],
+        },
+        // What a write's capture reads, while nothing else can change it.
+        ...(write
+          ? [KEPT_TOTALS_SQL, LINK_SQL, SMALL_OUTBOX_SQL].map((sql) => ({
+              sql,
+              params: [teamId],
+            }))
+          : []),
+      ],
+    },
   );
 }
