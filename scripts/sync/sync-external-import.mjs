@@ -526,7 +526,12 @@ export async function upgradeTeam(
     { readOnly: true },
   );
   if (jobs.rows.length) throw new Error("정리·백업 작업을 먼저 완료하세요.");
-  const result = await serviceFor(env, profile, link, { transport }).upgrade({
+  // A transition changes no image, so the image store is not consulted: the
+  // operator machine often cannot reach it (see --r2-bucket).
+  const result = await serviceFor(env, profile, link, {
+    transport,
+    deferImages: true,
+  }).upgrade({
     expectedHead,
     expectedHash,
     peersStopped: true,
