@@ -44,6 +44,9 @@ import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
 import { materializeSlice } from "../sync/materialize.mjs";
 // Each conflict without the values of its command and of the current
 // records: what the list shows and what tells where each edit came from.
+// OFFSET 0 keeps the subquery as written. Without it PostgreSQL inlines the
+// cast into every use of p and reads and parses a conflict's text (megabytes
+// for a sheet copy) once per field instead of once.
 const CONFLICT_SUMMARIES = `SELECT jsonb_build_object(
   'conflictId', p->'conflictId', 'opId', p->'opId', 'reason', p->'reason',
   'resolution', CASE WHEN jsonb_typeof(p->'resolution') NOT IN ('null', 'boolean') OR p->'resolution'='true'::jsonb THEN 'true'::jsonb END,
@@ -54,7 +57,7 @@ const CONFLICT_SUMMARIES = `SELECT jsonb_build_object(
     SELECT COALESCE(jsonb_object_agg(k, CASE WHEN jsonb_typeof(v)='object' THEN v - 'payload' ELSE v END), '{}'::jsonb)
     FROM jsonb_each(p->'current') AS e(k, v)) END
 )::text AS payload
-FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1) conflicts
+FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1 OFFSET 0) conflicts
 ORDER BY conflict_id`;
 
 async function serviceStatus(ctx, { check = false } = {}) {
