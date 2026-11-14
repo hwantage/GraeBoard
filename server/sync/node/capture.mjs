@@ -436,6 +436,17 @@ export function installCapture(db, { onPending = () => {} } = {}) {
               const sample = old.get(id) || current.get(id),
                 pending = prior.get(teamId + id),
                 stored = storedRows.get(id);
+              // A format or rule the copy stopped using stays in C (see
+              // above). Using it again, as an undo does, changes nothing: its
+              // ID is its content's hash. Sending it as a new record would be
+              // refused as one that already exists.
+              if (
+                !old.get(id) &&
+                stored &&
+                !stored.deleted &&
+                ["sheetCloneFormat", "sheetCloneRule"].includes(sample.entity)
+              )
+                continue;
               let base =
                 old.get(id) ||
                 (stored?.deleted

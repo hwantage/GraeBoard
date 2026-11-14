@@ -57,6 +57,9 @@ export class CanonicalSlice {
       ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(entity)
     )
       this.want("sheetClone", [key[0]]);
+    // A format must name live rule records.
+    if (entity === "sheetCloneFormat")
+      this.children("sheetCloneRule", [key[0]]);
     if (entity === "sheetCloneCell") {
       this.want("sheetClone", [key[0]]);
       this.want("sheetCloneTask", key.slice(0, 2));
