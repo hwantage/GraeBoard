@@ -457,9 +457,11 @@ Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 �
 3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`, `protocol:3`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 프로토콜 3 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 프로토콜 5 상태의 용량 한도(snapshot·receipt, 지정한 경우 업무·엔티티 상한)를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
 
    ```sh
-   npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
+   node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /private/external-import.env --upgrade --expected-head 기록한40자리head --expected-hash 기록한64자리hash --execute
    npm run sync:upgrade -- --url https://내부주소 --team 팀UUID --cookie-file /안전경로/internal-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
    ```
+
+   외부 사이트의 전환은 `sync:upgrade`가 아니라 운영자 PC의 `sync:external-import --upgrade`로 실행합니다([클라우드 설정](CLOUD_SETUP.md#외부-사이트의-프로토콜-전환)). 외부 서버의 전환 요청은 팀 전체 상태를 다루느라 실행 한도를 넘어 HTTP 546으로 끝나고 아무것도 바꾸지 않습니다. 외부의 `expectedHash`도 이 도구의 조회(`--upgrade`만)로 확인합니다.
 
 4. 첫 명령은 프로토콜 3 백업·프로토콜 5 snapshot이 포함된 전환 커밋을 CAS로 게시합니다. 외부 서버는 같은 트랜잭션에서 사본의 화면용 저장 행을 행 단위로 다시 씁니다. 두 번째는 같은 기준의 직계 전환 커밋만 검증해 수신합니다. 일반 커밋·다른 head·추가 미전송·충돌이 있으면 중단합니다. 양쪽은 계속 일시정지 상태입니다.
 5. 양쪽 응답의 `protocol:5`, `head`, `stateHash`가 같고 업무·사본·문서·이미지가 보존됐는지 확인한 뒤 UI에서 재개하고 쓰기·자동 작업을 다시 허용합니다.
