@@ -191,10 +191,11 @@ test(
     assert.equal(protocolVersion(await f.pgStore.readState(teamId)), 5);
     // The transition rewrote the site rows as the copy's records: the parent,
     // one format for the three rows under the rule, one for the rows whose
-    // formatting has no rule, and six rows.
+    // formatting has no rule, the rule itself, and six rows.
     assert.deepEqual(await siteRows(), {
       sheetClone: 1,
       sheetCloneFormat: 2,
+      sheetCloneRule: 1,
       sheetCloneTask: 6,
     });
     assert.deepEqual(plain(await same()), before);
@@ -284,6 +285,7 @@ test(
     assert.deepEqual(await siteRows(), {
       sheetClone: 1,
       sheetCloneFormat: 2,
+      sheetCloneRule: 1,
       sheetCloneTask: 5,
     });
     await f.settle();
@@ -397,6 +399,19 @@ test(
     ]);
     now = await revisions();
     assert.deepEqual(rowsChanged(at, now), []);
+    // The command carries each new format as the list of its rules' IDs and
+    // the new rule once per format it was added to (rows count their own
+    // formatting revisions, so the rule differs between formats), not a rule
+    // set per row.
+    const formatted = (await f.pgStore.readPending(teamId)).at(-1).changes,
+      made = (entity) => formatted.filter((change) => change.entity === entity);
+    assert.ok(made("sheetCloneFormat").length >= 1);
+    assert.ok(made("sheetCloneRule").length <= made("sheetCloneFormat").length);
+    assert.ok(
+      made("sheetCloneFormat").every((change) =>
+        change.desired.rules.every((rule) => /^[a-f0-9]{32}$/.test(rule)),
+      ),
+    );
     await f.settle();
     merged = plain(await same());
     assert.ok(merged.tasks.every((task) => task.rules.length >= 1));

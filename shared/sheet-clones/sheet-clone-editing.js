@@ -111,35 +111,54 @@ export function applySheetCloneOperation(tasks, operation, context) {
     };
     for (const scope of operation.scopes)
       for (const id of scope.rows || []) get(id);
+    // Rows that share one formatting object and match the same scopes get
+    // one new formatting object: servers and the response then handle each
+    // distinct formatting once, not once per row.
+    const none = { revision: 0, rules: [] },
+      made = new Map(),
+      namesOf = (scope) =>
+        scope.reset ? Object.keys(STYLE_KEYS) : Object.keys(scope.style);
     return tasks.map((task) => {
-      const scopes = operation.scopes.filter((scope) =>
-        scopeMatches(scope, task.id),
-      );
-      if (!scopes.length) return task;
-      const current = task.formatting || { revision: 0, rules: [] };
-      const revision = current.revision + 1;
-      const rules = new Map(
-        current.rules.map((rule) => [scopeKey(rule), rule]),
-      );
+      const matched = operation.scopes
+        .map((scope, index) => (scopeMatches(scope, task.id) ? index : -1))
+        .filter((index) => index >= 0);
+      if (!matched.length) return task;
+      const scopes = matched.map((index) => operation.scopes[index]),
+        current = task.formatting || none,
+        revision = current.revision + 1,
+        signature = matched.join(",");
+      if (!made.has(current)) made.set(current, new Map());
+      if (!made.get(current).has(signature)) {
+        const rules = new Map(
+          current.rules.map((rule) => [scopeKey(rule), rule]),
+        );
+        for (const [index, scope] of scopes.entries()) {
+          const key = scopeKey(scope),
+            old = rules.get(key);
+          rules.set(key, {
+            id: old?.id || `${operation.id}:${index}`,
+            rows: scope.rows,
+            keys: scope.keys,
+            excludeKeys: scope.excludeKeys || [],
+            style: scope.reset
+              ? scope.style
+              : { ...old?.style, ...scope.style },
+            orders: {
+              ...old?.orders,
+              ...Object.fromEntries(
+                namesOf(scope).map((name) => [name, revision]),
+              ),
+            },
+          });
+        }
+        made
+          .get(current)
+          .set(signature, { revision, rules: [...rules.values()] });
+      }
       const cells = { ...task.cells };
       let cleared = false;
-      for (const [index, scope] of scopes.entries()) {
-        const key = scopeKey(scope),
-          old = rules.get(key);
-        const names = scope.reset
-          ? Object.keys(STYLE_KEYS)
-          : Object.keys(scope.style);
-        rules.set(key, {
-          id: old?.id || `${operation.id}:${index}`,
-          rows: scope.rows,
-          keys: scope.keys,
-          excludeKeys: scope.excludeKeys || [],
-          style: scope.reset ? scope.style : { ...old?.style, ...scope.style },
-          orders: {
-            ...old?.orders,
-            ...Object.fromEntries(names.map((name) => [name, revision])),
-          },
-        });
+      for (const scope of scopes) {
+        const names = namesOf(scope);
         for (const [key, previous] of Object.entries(cells)) {
           if (!scopeMatches(scope, task.id, key)) continue;
           // Only a cell whose own style sets one of these properties changes:
@@ -158,7 +177,7 @@ export function applySheetCloneOperation(tasks, operation, context) {
         ...task,
         cells,
         ...(cleared ? { updatedAt: stamp } : {}),
-        formatting: { revision, rules: [...rules.values()] },
+        formatting: made.get(current).get(signature),
       };
     });
   }

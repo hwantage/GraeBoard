@@ -161,7 +161,9 @@ export async function recoveryRoutes(ctx, path, method, body) {
           !ENTITIES.has(row.entity) ||
           ["protocol", "sheetCloneCell"].includes(row.entity) ||
           (!rowRecords &&
-            ["sheetCloneTask", "sheetCloneFormat"].includes(row.entity))
+            ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+              row.entity,
+            ))
         )
           continue;
         const key = JSON.parse(row.entity_key),

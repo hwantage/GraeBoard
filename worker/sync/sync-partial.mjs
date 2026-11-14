@@ -53,18 +53,21 @@ export class CanonicalSlice {
       else if (key[0].startsWith("sheetClone"))
         this.want("sheetClone", [key[1]]);
     }
-    if (["sheetCloneTask", "sheetCloneFormat"].includes(entity))
+    if (
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(entity)
+    )
       this.want("sheetClone", [key[0]]);
     if (entity === "sheetCloneCell") {
       this.want("sheetClone", [key[0]]);
       this.want("sheetCloneTask", key.slice(0, 2));
     }
     if (entity === "sheetClone") {
-      // A live copy must name live format records (protocol 5); a copy has
-      // few of them. An operation lists every row it changes, so its rows
+      // A live copy must name live format records and those their rule
+      // records (protocol 5); both are small. An operation lists every row it changes, so its rows
       // are read only for a capture that looks for the rows it removes
       // (protocol 4, no action given).
       this.children("sheetCloneFormat", [key[0]]);
+      this.children("sheetCloneRule", [key[0]]);
       if (action === undefined) {
         this.children("sheetCloneTask", [key[0]]);
         this.children("sheetCloneCell", [key[0]]);

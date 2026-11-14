@@ -23,7 +23,8 @@ import {
 // neither 1 nor 2.
 //
 // Protocol 5 keeps a sheet clone as a parent (metadata and each row's format), one
-// record per distinct formatting value and one record per row holding its
+// record per distinct formatting value (its rules by ID), one record per
+// distinct formatting rule and one record per row holding its
 // cells. A cell edit then carries one row, not the whole clone (protocol 3),
 // without one record per cell and the formatting repeated in every row
 // (protocol 4). Number 4 stays readable and is never reused.
@@ -54,6 +55,7 @@ const ENTITIES_SPLIT = new Set([
 const ENTITIES_ROWS = new Set([
   ...ENTITIES_WHOLE,
   "sheetCloneFormat",
+  "sheetCloneRule",
   "sheetCloneTask",
 ]);
 // Every shared entity of any supported protocol, for storage scans.
@@ -499,15 +501,18 @@ const payloadFields = {
 // Protocol 5 shapes of the sheet clone records.
 const rowPayloadFields = {
   sheetClone: [...payloadFields.sheetClone, "formats"],
-  sheetCloneFormat: ["data"],
+  sheetCloneFormat: ["data", "rules"],
+  sheetCloneRule: ["data"],
   sheetCloneTask: ["data", "cells"],
 };
 const fieldsFor = (entity, version) =>
   (version === ROW_PROTOCOL && rowPayloadFields[entity]) ||
   payloadFields[entity];
-/** The key of a sheet clone's formatting record: a hash of its value. */
-export const sheetCloneFormatId = (formatting) =>
-  digest(formatting).slice(0, 32);
+/**
+ * The key of a sheet clone's formatting or rule record: a hash of its payload
+ * (a format) or of the rule (a rule).
+ */
+export const sheetCloneFormatId = (value) => digest(value).slice(0, 32);
 const keyLengths = {
   team: 0,
   person: 1,
@@ -522,6 +527,7 @@ const keyLengths = {
   formats: 0,
   protocol: 0,
   sheetCloneFormat: 2,
+  sheetCloneRule: 2,
   sheetCloneTask: 2,
   sheetCloneCell: 3,
 };
@@ -656,8 +662,22 @@ export function validateEntityPayload(
   )
     throw new Error("Invalid protocol marker");
   if (entity === "sheetCloneFormat") {
-    if (!plain(payload.data) || sheetCloneFormatId(payload.data) !== key[1])
+    // The formatting without its rules, and the rules by record ID. A value
+    // whose rules are not a list of objects stays whole in `data`.
+    if (
+      !plain(payload.data) ||
+      sheetCloneFormatId(payload) !== key[1] ||
+      (Object.hasOwn(payload, "rules") &&
+        (!Array.isArray(payload.rules) ||
+          Object.hasOwn(payload.data, "rules") ||
+          payload.rules.some(
+            (rule) => typeof rule !== "string" || !/^[a-f0-9]{32}$/.test(rule),
+          )))
+    )
       throw new Error("Invalid sheetClone format");
+  } else if (entity === "sheetCloneRule") {
+    if (!plain(payload.data) || sheetCloneFormatId(payload.data) !== key[1])
+      throw new Error("Invalid sheetClone rule");
   } else if (entity === "sheetCloneTask" && version === ROW_PROTOCOL) {
     const { data, cells } = payload;
     if (

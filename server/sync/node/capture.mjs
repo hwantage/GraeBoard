@@ -396,10 +396,12 @@ export function installCapture(db, { onPending = () => {} } = {}) {
             const changed = candidates.filter((id) => {
               const before = old.get(id),
                 after = current.get(id);
-              // A format record stays while its copy lives, as on the
-              // external site: the other site may be assigning it to a row.
+              // Format and rule records stay while their copy lives, as on
+              // the external site: the other site may be naming them.
               if (
-                before?.entity === "sheetCloneFormat" &&
+                ["sheetCloneFormat", "sheetCloneRule"].includes(
+                  before?.entity,
+                ) &&
                 !after &&
                 next &&
                 !next.deleted

@@ -89,7 +89,7 @@ export class PostgresAdminHistoryRepository {
                 ? {}
                 : (
                     await tx.query(
-                      "SELECT COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity NOT IN ('sheetClone','sheetCloneTask','sheetCloneFormat','import')),0) current,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity IN ('sheetClone','sheetCloneTask','sheetCloneFormat')),0) sheet_clone,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='import'),0) import FROM site_entities",
+                      "SELECT COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity NOT IN ('sheetClone','sheetCloneTask','sheetCloneFormat','sheetCloneRule','import')),0) current,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity IN ('sheetClone','sheetCloneTask','sheetCloneFormat','sheetCloneRule')),0) sheet_clone,COALESCE(SUM(octet_length(payload)) FILTER(WHERE entity='import'),0) import FROM site_entities",
                     )
                   ).rows[0];
             return {

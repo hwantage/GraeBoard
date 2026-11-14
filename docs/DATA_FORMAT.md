@@ -598,14 +598,14 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 
 ### 동기화 프로토콜 5와 외부 사본 저장
 
-프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
+프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나: 규칙을 뺀 값과 규칙 ID 목록), `sheetCloneRule(sheetCloneId,ruleId)`(서식 규칙 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
 
 외부 서버의 `site_entities`는 팀의 프로토콜에 따라 사본을 다르게 보관합니다. 스키마는 같고 행의 내용만 다릅니다.
 
 | 팀의 프로토콜 | `site_entities`의 사본                                                                    |
 | ------------- | ----------------------------------------------------------------------------------------- |
 | 3             | `sheetClone` 행 하나. `payload.data`는 행 배열을 포함한 공유 사전 형태                    |
-| 5             | C와 같은 `sheetClone`·`sheetCloneFormat`·`sheetCloneTask` 행. 삭제된 행은 `deleted=1`로 남음 |
+| 5             | C와 같은 `sheetClone`·`sheetCloneFormat`·`sheetCloneRule`·`sheetCloneTask` 행. 삭제된 행은 `deleted=1`로 남음 |
 
 - 저장 형식은 프로토콜 전환 커밋을 반영하는 트랜잭션에서 함께 바뀝니다. 별도의 site migration이나 변환 명령은 없습니다.
 - `DataSession`(`worker/storage/data.mjs`)이 사본을 읽을 때 행을 모아 기존 형식으로 조합하고, 저장할 때 분해해 저장된 레코드와 다른 것만 씁니다. 셀 하나를 고치면 그 행 하나를 쓰고, 동기화 명령도 그 행만 싣습니다.

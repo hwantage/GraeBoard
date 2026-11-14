@@ -238,7 +238,9 @@ function validateState(entities) {
     if (e.entity === "cell" && !alive("task", [e.key[0]]))
       return "Missing parent task";
     if (
-      ["sheetCloneTask", "sheetCloneFormat"].includes(e.entity) &&
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+        e.entity,
+      ) &&
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
@@ -248,6 +250,12 @@ function validateState(entities) {
         const record =
           entities[entityId("sheetCloneFormat", [e.key[0], format])];
         if (!record || record.deleted) return "Missing sheetClone format";
+      }
+    // ...and a format names its rule records.
+    if (e.entity === "sheetCloneFormat" && Array.isArray(p.rules))
+      for (const rule of new Set(p.rules)) {
+        const record = entities[entityId("sheetCloneRule", [e.key[0], rule])];
+        if (!record || record.deleted) return "Missing sheetClone rule";
       }
     if (
       e.entity === "sheetCloneCell" &&
@@ -341,7 +349,7 @@ export function reduce(
             ? entities[entityId(c.key[0], [c.key[1]])]
             : (SHEET_CLONE_RECORDS.includes(op.protocol) &&
                   c.entity === "sheetCloneTask") ||
-                c.entity === "sheetCloneFormat"
+                ["sheetCloneFormat", "sheetCloneRule"].includes(c.entity)
               ? entities[entityId("sheetClone", [c.key[0]])]
               : op.protocol === SPLIT_PROTOCOL && c.entity === "sheetCloneCell"
                 ? entities[entityId("sheetCloneTask", c.key.slice(0, 2))]
@@ -589,23 +597,26 @@ function validateIncrement(entities, undo, context) {
   }
   for (const id of touched) {
     const e = entities[id];
-    // Protocol 5: a format a live copy still names cannot be deleted. The
-    // copy itself may be untouched, so its own check below does not see it.
-    if (e?.deleted && e.entity === "sheetCloneFormat") {
-      const copy = entities[entityId("sheetClone", [e.key[0]])];
-      if (
-        copy &&
-        !copy.deleted &&
-        Object.values(copy.payload?.formats || {}).includes(e.key[1])
-      )
-        return "Missing sheetClone format";
-    }
+    // Protocol 5: format and rule records are named by their content and are
+    // removed only with their copy. The copy that names a format, or the
+    // format that names a rule, may be untouched by this command, so its own
+    // check below would not see the record go.
+    if (
+      e?.deleted &&
+      ["sheetCloneFormat", "sheetCloneRule"].includes(e.entity) &&
+      entities[entityId("sheetClone", [e.key[0]])]?.deleted === false
+    )
+      return e.entity === "sheetCloneFormat"
+        ? "Missing sheetClone format"
+        : "Missing sheetClone rule";
     if (!e || e.deleted) continue;
     const p = e.payload;
     if (e.entity === "cell" && !entities[entityId("task", [e.key[0]])])
       return "Missing parent task";
     if (
-      ["sheetCloneTask", "sheetCloneFormat"].includes(e.entity) &&
+      ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"].includes(
+        e.entity,
+      ) &&
       !entities[entityId("sheetClone", [e.key[0]])]
     )
       return "Missing parent sheetClone";
@@ -615,6 +626,12 @@ function validateIncrement(entities, undo, context) {
         const record =
           entities[entityId("sheetCloneFormat", [e.key[0], format])];
         if (!record || record.deleted) return "Missing sheetClone format";
+      }
+    // ...and a format names its rule records.
+    if (e.entity === "sheetCloneFormat" && Array.isArray(p.rules))
+      for (const rule of new Set(p.rules)) {
+        const record = entities[entityId("sheetCloneRule", [e.key[0], rule])];
+        if (!record || record.deleted) return "Missing sheetClone rule";
       }
     if (
       e.entity === "sheetCloneCell" &&
