@@ -9,9 +9,14 @@ import { controlTransaction } from "../storage/data.mjs";
 import { profiles, siteTeamId } from "../../shared/sync/sync-profiles.js";
 import { assert } from "../control/access.mjs";
 
+// When this isolate last saw the member directory checked, by site team: a
+// request within the 30-second interval needs no database read to skip it.
+const directoryChecked = new Map();
 export async function refreshDirectory(env, { force = false, transport } = {}) {
   const teamId = siteTeamId(env);
   if (!teamId) return;
+  if (!force && Date.now() - (directoryChecked.get(teamId) || 0) < 30000)
+    return;
   const profile = profiles(env)[0];
   assert(
     /^[a-f0-9-]{36}$/i.test(env.PEER_INSTALLATION_ID || ""),
@@ -27,8 +32,10 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
     !force &&
     previous.directory_head &&
     Date.now() - Number(previous.directory_checked_at) < 30000
-  )
+  ) {
+    directoryChecked.set(teamId, Number(previous.directory_checked_at));
     return;
+  }
   transport ||= new GitHubApiTransport({
     repository: profile.repository,
     token: env[profile.githubSecret],
@@ -45,6 +52,7 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
         [Date.now(), head],
       ),
     );
+    directoryChecked.set(teamId, Date.now());
     return;
   }
   if (previous.directory_head)

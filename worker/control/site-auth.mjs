@@ -2,6 +2,7 @@ import { refreshSetupKeys } from "./setup-keys.mjs";
 import { deploymentSite } from "../../shared/site/site-mode.js";
 import { setupKeyId } from "../../server/sync/core/setup-keys.mjs";
 import { controlTransaction } from "../storage/data.mjs";
+import { teamMembers } from "../storage/control/control-store.mjs";
 import { siteTeamId } from "../../shared/sync/sync-profiles.js";
 import { refreshDirectory } from "../sync/directory.mjs";
 import { assert, verifySetupToken } from "./access.mjs";
@@ -55,7 +56,9 @@ async function hasLinkedLead(tx, teamId) {
 }
 // The site's team row read while authenticating, by the user record it came
 // with: nearly every request asks for it next, in a transaction of its own.
+// A request that writes asks for the team's active members as well.
 export const authenticatedTeams = new WeakMap();
+export const authenticatedMembers = new WeakMap();
 export async function authenticateSite(env, identity, request) {
   return controlTransaction(env, async (tx) => {
     const selected = (
@@ -77,6 +80,11 @@ export async function authenticateSite(env, identity, request) {
         await tx.query("SELECT * FROM teams WHERE id=$1", [siteTeamId(env)])
       ).rows[0];
     if (team) authenticatedTeams.set(record, team);
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request?.method))
+      authenticatedMembers.set(
+        record,
+        await teamMembers(tx, siteTeamId(env), true),
+      );
     return record;
   });
 }

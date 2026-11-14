@@ -18,7 +18,11 @@ import {
   profileFor,
   siteTeamId,
 } from "../../shared/sync/sync-profiles.js";
-import { authenticateSite, authenticatedTeams } from "./site-auth.mjs";
+import {
+  authenticateSite,
+  authenticatedMembers,
+  authenticatedTeams,
+} from "./site-auth.mjs";
 import { R2ImageStore } from "../documents/images.mjs";
 import { profileFields } from "../../shared/identity/profiles.js";
 import { z } from "zod";
@@ -163,6 +167,8 @@ export class RequestContext {
     this.teamCache = new Map();
     const team = authenticatedTeams.get(user);
     if (team) this.teamCache.set(team.id, team);
+    const members = authenticatedMembers.get(user);
+    if (team && members) this.controlStore.remember?.(team.id, true, members);
     this.changedTeams = new Set();
   }
   admin() {

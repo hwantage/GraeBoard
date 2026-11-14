@@ -207,7 +207,13 @@ export function serviceFor(env, profile, link, options = {}) {
 // A persisted per-team deadline coalesces browser focus, polling and pre-edit
 // refreshes across isolates. It is advanced before network I/O, including errors.
 // Foreground checks never read/publish status branches or load C for an equal head.
+// When each team's next refresh may run, as this isolate last read or wrote
+// it. The stored deadline only moves forward, so while this one lies ahead a
+// request needs no database read to learn that it is throttled.
+const refreshNotBefore = new Map();
 export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
+  if ((refreshNotBefore.get(profile.teamId) || 0) > now)
+    return { throttled: true };
   await refreshDirectory(env).catch(() => {});
   const database = syncDatabase(env, profile);
   const snapshot = await database.withTeamTransaction(
@@ -229,8 +235,13 @@ export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
     (!link.lease_owner || Number(link.lease_until) < now);
   if (!eligible(snapshot.link))
     return { mode: snapshot.link?.mode || "unlinked" };
-  if (Number(JSON.parse(snapshot.refresh?.payload || "{}").nextAt || 0) > now)
+  const nextAt = Number(
+    JSON.parse(snapshot.refresh?.payload || "{}").nextAt || 0,
+  );
+  if (nextAt > now) {
+    refreshNotBefore.set(profile.teamId, nextAt);
     return { throttled: true };
+  }
   const link = await database.withTeamTransaction(
     profile.teamId,
     async (tx) => {
@@ -246,6 +257,7 @@ export async function refreshTeam(env, profile, { now = Date.now() } = {}) {
     },
   );
   if (!link) return { throttled: true };
+  refreshNotBefore.set(profile.teamId, now + 30000);
   const transport = new GitHubApiTransport({
     repository: profile.repository,
     token: env[profile.githubSecret],

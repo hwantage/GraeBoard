@@ -13,6 +13,27 @@ export async function userRecord(tx, row) {
   ).rows;
   return userDto(row, memberships);
 }
+// A team's members with their memberships, as PostgresControlStore.members
+// answers them.
+export async function teamMembers(tx, teamId, activeOnly) {
+  const rows = (
+    await tx.query(
+      "SELECT u.*,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=$1" +
+        (activeOnly ? " AND u.active=TRUE" : "") +
+        " ORDER BY u.name,u.id",
+      [teamId],
+    )
+  ).rows;
+  const memberships = rows.length
+    ? (
+        await tx.query(
+          "SELECT user_id,team_id,role FROM memberships WHERE user_id=ANY($1::text[]) ORDER BY user_id,team_id",
+          [rows.map((r) => r.id)],
+        )
+      ).rows
+    : [];
+  return directory(rows, memberships);
+}
 export class PostgresControlStore {
   constructor(env) {
     this.env = env;
@@ -80,25 +101,39 @@ export class PostgresControlStore {
     return [...(await rows)];
   }
   readMembers(teamId, activeOnly) {
-    return controlTransaction(this.env, async (tx) => {
-      const rows = (
-        await tx.query(
-          "SELECT u.*,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=$1" +
-            (activeOnly ? " AND u.active=TRUE" : "") +
-            " ORDER BY u.name,u.id",
-          [teamId],
-        )
-      ).rows;
-      const memberships = rows.length
-        ? (
-            await tx.query(
-              "SELECT user_id,team_id,role FROM memberships WHERE user_id=ANY($1::text[]) ORDER BY user_id,team_id",
-              [rows.map((r) => r.id)],
-            )
-          ).rows
-        : [];
-      return directory(rows, memberships);
+    return controlTransaction(this.env, (tx) =>
+      teamMembers(tx, teamId, activeOnly),
+    );
+  }
+  // Takes a member list read elsewhere in this request (see
+  // authenticateSite) as the answer members() gives.
+  remember(teamId, activeOnly, rows) {
+    this.memberLists.set(teamId + ":" + activeOnly, {
+      writes: controlWrites(),
+      rows: Promise.resolve(rows),
     });
+  }
+  // Every user and the teams this user sees, in one transaction: what the
+  // bootstrap asks for.
+  usersAndTeams(user) {
+    return controlTransaction(this.env, async (tx) => ({
+      users: directory(
+        (await tx.query("SELECT * FROM users ORDER BY name")).rows,
+        (
+          await tx.query(
+            "SELECT user_id,team_id,role FROM memberships ORDER BY user_id,team_id",
+          )
+        ).rows,
+      ),
+      teams: (
+        await tx.query(
+          user.systemRole === "admin"
+            ? "SELECT * FROM teams ORDER BY name"
+            : "SELECT t.* FROM teams t JOIN memberships m ON m.team_id=t.id WHERE m.user_id=$1 ORDER BY t.name",
+          user.systemRole === "admin" ? [] : [user.id],
+        )
+      ).rows,
+    }));
   }
   calendarPreferences(userId) {
     return controlTransaction(this.env, async (tx) => {
