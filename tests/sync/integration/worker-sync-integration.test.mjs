@@ -35,6 +35,7 @@ import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import { sqliteTeamStore } from "../../../server/storage/sqlite.mjs";
 import { calendarWeek } from "../../../shared/calendar/calendar.js";
 import { backfillWeeklyOrder } from "../../../scripts/sync/sync-weekly-order.mjs";
+import { catchUpTeam } from "../../../scripts/sync/sync-external-import.mjs";
 import { migratePostgres } from "../../../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../../../worker/storage/postgres.mjs";
 import { createWorker } from "../../../worker/entry.mjs";
@@ -1355,6 +1356,76 @@ test(
         stateHash(await pgStore.readState(teamId)),
         stateHash(app.locals.sync.store(teamId).readState()),
       );
+      // The operator catch-up receives, in one leased run, more commits than
+      // a hosted run takes (four), after waiting out a stopped run's lease.
+      for (let i = 0; i < 6; i++) {
+        const row = ok(
+          await inside("/tasks?teamId=" + teamId + "&year=2026"),
+        ).tasks.find((item) => item.id === task.id);
+        ok(
+          await inside("/cells/batch", {
+            operationId: randomUUID(),
+            createdAt: new Date().toISOString(),
+            changes: [
+              {
+                taskId: task.id,
+                key: "title",
+                expectedVersion: row.cells.title.version,
+                value: "Catch up " + i,
+              },
+            ],
+          }),
+        );
+        await app.locals.sync.get(teamId).run();
+      }
+      const catchUpHead = github.text(["rev-parse", "refs/heads/sync-v1"]),
+        behind = (await pgStore.readLink(teamId)).canonical_head,
+        quiet = { log: () => {}, pollMs: 100 },
+        lease = (ms) =>
+          pgStore.withTeamTransaction(teamId, (tx) =>
+            tx.query(
+              "UPDATE team_sync_links SET lease_owner='stopped-run',lease_until=$2 WHERE team_id=$1",
+              [teamId, Date.now() + ms],
+            ),
+          );
+      assert.equal(
+        Number(
+          github.text(["rev-list", "--count", `${behind}..${catchUpHead}`]),
+        ),
+        6,
+      );
+      assert.deepEqual(await catchUpTeam(env, p, { ...quiet, dryRun: true }), {
+        dryRun: true,
+        head: catchUpHead,
+      });
+      await assert.rejects(
+        catchUpTeam({ ...env, INSTALLATION_ID: randomUUID() }, p, quiet),
+        /INSTALLATION_ID/,
+      );
+      await lease(600000);
+      await assert.rejects(
+        catchUpTeam(env, p, { ...quiet, waitMs: 300 }),
+        /이어받지/,
+      );
+      let caught = await pgStore.readLink(teamId);
+      assert.equal(caught.mode, "active");
+      assert.equal(caught.canonical_head, behind);
+      await lease(700);
+      const caughtUp = await catchUpTeam(env, p, quiet);
+      assert.equal(caughtUp.canonicalHead, catchUpHead);
+      assert.equal(caughtUp.linkMode, "active");
+      caught = await pgStore.readLink(teamId);
+      assert.equal(caught.lease_owner, null);
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
+      assert.equal(
+        ok(await outside("/tasks?teamId=" + teamId + "&year=2026")).tasks.find(
+          (item) => item.id === task.id,
+        ).cells.title.value,
+        "Catch up 5",
+      );
       // Both sites change one title from the same base: the later one is
       // kept as a conflict. The Worker lists and resolves it on a slice of C
       // (the whole team cost more than one Edge call), and both sites end
@@ -1399,13 +1470,16 @@ test(
         await outside(`/teams/${teamId}/sync/conflicts`),
       ).conflicts.filter((c) => !c.resolved);
       assert.ok(titleConflict, "the second title is kept as a conflict");
+      // The list carries no values; one conflict is read whole.
+      assert.ok(!("desired" in titleConflict) && !("current" in titleConflict));
+      const titleValues = ok(
+        await outside(
+          `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
+        ),
+      );
       assert.deepEqual(
-        ok(
-          await outside(
-            `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}`,
-          ),
-        ).conflictId,
-        titleConflict.conflictId,
+        { ...titleValues, base: 0, current: 0, desired: 0 },
+        { ...titleConflict, base: 0, current: 0, desired: 0 },
       );
       // Each site names where the two edits came from: the external title
       // was held, the internal one had landed first.
@@ -1427,7 +1501,7 @@ test(
         "Inside",
       );
       assert.equal(Object.values(titleConflict.origin.writers)[0].actor, null);
-      const submittedTitle = titleConflict.desired[0].value;
+      const submittedTitle = titleValues.desired[0].value;
       ok(
         await outside(
           `/teams/${teamId}/sync/conflicts/${titleConflict.conflictId}/resolve`,
@@ -1465,6 +1539,93 @@ test(
       await runTeam(env, p);
       await app.locals.sync.get(teamId).run();
       assert.equal(getTask(db, task.id).cells.title.value, submittedTitle);
+      assert.ok(
+        ok(await outside(`/teams/${teamId}/sync/conflicts`)).conflicts.every(
+          (c) => c.resolved,
+        ),
+      );
+      assert.equal(
+        stateHash(await pgStore.readState(teamId)),
+        stateHash(app.locals.sync.store(teamId).readState()),
+      );
+      // Both sites rename the shared copy. Its payload syncs with its own
+      // style and rule dictionary, and each conflict box lists it plain: the
+      // whole response is packed again with one dictionary of its own.
+      ok(await inside(`/teams/${teamId}/sync/pause`, {}));
+      ok(await outside(`/teams/${teamId}/sync/pause`, {}));
+      await drain();
+      for (const [site, name] of [
+        [inside, "Copy inside"],
+        [outside, "Copy outside"],
+      ])
+        ok(
+          await site(
+            `/sheet-clones/${sheetClone.id}/name`,
+            { name, expectedName: "Outside sheetClone" },
+            "PATCH",
+          ),
+        );
+      await drain();
+      app.locals.sync.store(teamId).writeLink({ mode: "active" });
+      app.locals.sync.capture.refresh();
+      await pgStore.withTeamTransaction(teamId, (tx) =>
+        tx.query("UPDATE team_sync_links SET mode='active' WHERE team_id=$1", [
+          teamId,
+        ]),
+      );
+      await app.locals.sync.get(teamId).run();
+      await runTeam(env, p);
+      await app.locals.sync.get(teamId).run();
+      const copyId = entityId("sheetClone", [sheetClone.id]),
+        copyConflict = async (site) => {
+          const summary = ok(
+            await site(`/teams/${teamId}/sync/conflicts`),
+          ).conflicts.find(
+            (c) => !c.resolved && c.target === "sheetClone " + sheetClone.id,
+          );
+          return (
+            summary &&
+            ok(
+              await site(
+                `/teams/${teamId}/sync/conflicts/${summary.conflictId}`,
+              ),
+            )
+          );
+        };
+      const outsideCopy = await copyConflict(outside),
+        insideCopy = await copyConflict(inside);
+      assert.ok(outsideCopy, "the second rename is kept as a conflict");
+      assert.equal(insideCopy?.conflictId, outsideCopy.conflictId);
+      assert.ok(
+        isPackedSheetCloneData(
+          (await pgStore.readState(teamId)).entities[copyId].payload.data,
+        ),
+        "the copy is still shared packed",
+      );
+      for (const view of [outsideCopy, insideCopy])
+        for (const payload of [
+          view.base[0],
+          view.current[copyId].payload,
+          view.desired[0],
+        ]) {
+          assert.ok(!isPackedSheetCloneData(payload.data));
+          assert.equal(
+            payload.data.tasks[0].formatting?.rules[0]?.id,
+            "bridge-rule",
+          );
+        }
+      ok(
+        await outside(
+          `/teams/${teamId}/sync/conflicts/${outsideCopy.conflictId}/resolve`,
+          {
+            expectedHead: outsideCopy.expectedHead,
+            frontier: outsideCopy.frontier,
+            choice: "current",
+          },
+        ),
+      );
+      await runTeam(env, p);
+      await app.locals.sync.get(teamId).run();
       assert.ok(
         ok(await outside(`/teams/${teamId}/sync/conflicts`)).conflicts.every(
           (c) => c.resolved,

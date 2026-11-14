@@ -245,8 +245,13 @@ function ChangeDiff({
     () => diffSides(change[from], change[to]),
     [change, from, to],
   );
-  const first = changedFields(change.base, change.current),
-    second = changedFields(change.base, change.desired),
+  const { first, second } = useMemo(
+      () => ({
+        first: changedFields(change.base, change.current),
+        second: changedFields(change.base, change.desired),
+      }),
+      [change],
+    ),
     both = second.filter((field) => first.includes(field));
   return (
     <div className="sync-diff-change">
@@ -268,7 +273,14 @@ function ChangeDiff({
           </li>
         )}
       </ul>
-      {diff.equal ? (
+      {diff.partial && (
+        <p className="sync-diff-legend">
+          {diff.omitted
+            ? "내용이 너무 커서 줄 비교를 생략합니다. 아래 원본 JSON 보기에서 확인하세요."
+            : "내용이 커서 바뀐 항목만 비교합니다. 전체 내용은 아래 원본 JSON 보기에서 확인하세요."}
+        </p>
+      )}
+      {diff.omitted ? null : diff.equal ? (
         <p className="sync-diff-equal">
           {from === "current"
             ? "두 수정의 결과가 같습니다."

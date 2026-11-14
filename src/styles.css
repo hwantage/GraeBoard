@@ -2717,7 +2717,8 @@ body.document-block-moving * {
 .detail-field-value .person-cell {
   white-space: nowrap;
 }
-.detail-field-value.is-empty {
+.detail-field-value.is-empty,
+.task-detail-description-text.is-empty {
   color: #8a969c;
 }
 .detail-field-value:disabled {
@@ -2777,6 +2778,55 @@ body.document-block-moving * {
   font-size: 13px;
   line-height: 1.7;
   color: var(--muted);
+}
+/* Shown text keeps one line; links open and only the button starts editing. */
+.task-detail-description-view {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.task-detail-description-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-detail-description-text.opens-input {
+  cursor: text;
+}
+.task-detail-description-edit {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: #8a969c;
+}
+.task-detail-description-edit:hover {
+  color: var(--accent-strong);
+  background: var(--accent-surface);
+}
+@media (hover: none) and (pointer: coarse) {
+  /* Touch has no tooltip, so a long description scrolls sideways to show
+     the rest and its links, also when it is read-only. */
+  .task-detail-description-text {
+    overflow-x: auto;
+    text-overflow: clip;
+    scrollbar-width: none;
+  }
+  .task-detail-description-text::-webkit-scrollbar {
+    display: none;
+  }
+  /* A larger touch area without growing the line or covering the text. */
+  .task-detail-description-edit::before {
+    content: "";
+    position: absolute;
+    inset: -4px -8px -4px 0;
+  }
 }
 .task-inline-properties .detail-text-input {
   display: block;
@@ -3402,7 +3452,8 @@ body.document-block-moving * {
   display: inline-block;
   max-width: 100%;
 }
-.sheet-cell a {
+.sheet-cell a,
+.task-detail-description a {
   color: #2563eb;
   font-weight: 400;
   font-style: normal;

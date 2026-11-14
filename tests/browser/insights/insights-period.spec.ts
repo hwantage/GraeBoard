@@ -764,7 +764,7 @@ test("사본 저장·뒤로가기와 보고서 설정 저장의 기존 guard를 
   const held = new Promise<void>((r) => {
     release = r;
   });
-  await page.route(`**/api/sheet-clones/${copy.id}`, async (route) => {
+  await page.route(`**/api/sheet-clones/${copy.id}*`, async (route) => {
     if (route.request().method() !== "PATCH") return route.continue();
     const response = await route.fetch();
     pending = true;

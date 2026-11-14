@@ -600,6 +600,85 @@ test("팀원 제목과 아바타 아래에서 주차를 독립적으로 이동�
   });
 });
 
+test("팀 주간은 내 주간 일정을 맨 위에 두고 다른 팀원은 기존 이름 순서를 유지한다", async ({
+  page,
+  browserName,
+}, info) => {
+  const tabKey =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  // 지윤 is the viewer; 서연 from beforeEach and 가람·나연 sort before 지윤.
+  const outside = (
+    await request(page, "/admin/teams", "POST", {
+      name: `다른 팀 ${randomUUID().slice(0, 6)}`,
+      members: [{ userId: memberId, role: "lead" }],
+    })
+  ).id;
+  for (const name of ["하늘", "가람", "나연"])
+    await request(page, "/admin/users", "POST", {
+      username: `calendar-${randomUUID()}@example.com`,
+      password,
+      name,
+      memberships: [
+        { teamId, role: "member" },
+        ...(name === "가람" ? [{ teamId: outside, role: "member" }] : []),
+      ],
+    });
+  // The team list is read at page load, so the new team needs a reload. Leave
+  // the sheet first: WebKit reports its unload presence beacon as a page error.
+  await enter(page);
+  await page.reload();
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await enter(page);
+  // The personal month keeps the server's name order.
+  await expect(
+    calendar(page).locator(".calendar-owner-button > span:not(.avatar)"),
+  ).toHaveText(["가람", "나연", "서연", "지윤", "하늘"]);
+  await calendar(page)
+    .getByRole("button", { name: "팀 주간 일정 보기" })
+    .click();
+  const sections = calendar(page).locator(".calendar-team-section");
+  const names = sections.locator(".calendar-member h2");
+  await expect(names).toHaveText(["지윤", "가람", "나연", "서연", "하늘"]);
+  await expect(sections.first()).toHaveAttribute("data-member-id", userId);
+  await expect(sections.first().locator(".calendar-member-label")).toHaveText(
+    "나",
+  );
+  await expect(
+    sections.locator(".calendar-member-label", { hasText: "나" }),
+  ).toHaveCount(1);
+  await expect(sections.locator(".calendar-week-row")).toHaveCount(5);
+  await page.setViewportSize({ width: 1366, height: 1800 });
+  await page.screenshot({
+    path: info.outputPath("team-week-me-first.png"),
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1366, height: 900 });
+
+  // Keyboard order follows the displayed order: my week's controls come first.
+  await calendar(page).getByLabel("달력 가로·세로 스크롤").focus();
+  await page.keyboard.press(tabKey);
+  await expect(sections.first().locator(":focus")).toHaveCount(1);
+
+  // A system admin viewing a team they do not belong to sees the server order.
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(outside);
+  await expect(calendar(page).locator(".calendar-grid")).toBeVisible();
+  await calendar(page)
+    .getByRole("button", { name: "팀 주간 일정 보기" })
+    .click();
+  await expect(names).toHaveText(["가람", "서연"]);
+  await expect(sections.locator(".calendar-member-label")).toHaveCount(0);
+  await expect(sections.locator(".calendar-week-row")).toHaveCount(2);
+  await expect(
+    calendar(page).getByRole("button", { name: "팀 주간 일정 보기" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({
+    path: info.outputPath("team-week-outside-team.png"),
+    animations: "disabled",
+  });
+});
+
 test("팀원별 조회 실패가 다른 달력을 가리지 않고 해당 주의 가져오기와 편집을 유지한다", async ({
   page,
 }) => {
@@ -904,9 +983,10 @@ test("개인 요일 설정은 재로그인 후 유지되고 숨긴 날짜 보존
   await expect(
     calendar(page).getByRole("button", { name: "서연의 일정", exact: true }),
   ).toBeVisible();
+  // The viewer's own week comes first even though 서연 sorts before 지윤.
   await expect(calendar(page).locator(".calendar-member")).toContainText([
-    "서연",
     "지윤",
+    "서연",
   ]);
   await page.screenshot({
     path: info.outputPath("team-weekly-calendar.png"),

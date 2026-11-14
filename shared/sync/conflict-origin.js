@@ -14,6 +14,35 @@ export function writerOpId(record) {
   return colon > 0 ? version.slice(0, colon) : null;
 }
 
+/**
+ * A conflict without the values of its command and of the current records:
+ * what the conflict list shows and what tells where each edit came from. A
+ * conflict over a sheet copy carries megabytes per side, so the list leaves
+ * the values to the request for one conflict.
+ */
+export const conflictSummary = (conflict) => ({
+  conflictId: conflict.conflictId,
+  opId: conflict.opId,
+  reason: conflict.reason,
+  resolution: conflict.resolution ? true : null,
+  operation: {
+    ...conflict.operation,
+    changes: (conflict.operation?.changes || []).map(({ entity, key }) => ({
+      entity,
+      key,
+    })),
+  },
+  current:
+    conflict.current &&
+    Object.fromEntries(
+      Object.entries(conflict.current).map(([id, record]) => {
+        if (!record || typeof record !== "object") return [id, record];
+        const { payload: _payload, ...rest } = record;
+        return [id, rest];
+      }),
+    ),
+});
+
 /** Operation IDs to look up in this site's sync_outbox. */
 export function conflictOpIds(conflicts) {
   const ids = new Set();

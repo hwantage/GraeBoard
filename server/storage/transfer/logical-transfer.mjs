@@ -15,7 +15,10 @@ import {
 } from "../../sync/core/protocol.mjs";
 import { SqliteDatabase } from "../sqlite.mjs";
 import { allEntities, materialize } from "../../sync/node/entities.mjs";
-import { applicationEntities } from "../../sync/core/versions.mjs";
+import {
+  composedSiteEntities,
+  siteEntities,
+} from "../../sync/core/versions.mjs";
 import { readFormatting } from "../../db.mjs";
 
 const SHARED = TEAM_TRANSFER_TABLES.filter(
@@ -110,7 +113,9 @@ function sqlitePresentation(db, teamId, link) {
       .all(teamId, teamId)
       .map((row) => row.entity_key),
   );
-  const entities = applicationEntities(
+  // The portable site rows keep a copy in the form of the team's protocol:
+  // one record, or its row records under protocol 5 (see siteEntities).
+  const entities = siteEntities(
     allEntities(
       db,
       {
@@ -390,19 +395,22 @@ function restoreSqlitePresentation(db, teamId, rows) {
   );
   const local = archive ? JSON.parse(archive.payload) : {};
   const shared = rows.filter((row) => ENTITIES.has(row.entity));
-  const records = Object.fromEntries(
-    shared.map((row) => {
-      const key = JSON.parse(row.entity_key);
-      return [
-        entityId(row.entity, key),
-        {
-          entity: row.entity,
-          key,
-          payload: JSON.parse(row.payload),
-          deleted: !!row.deleted,
-        },
-      ];
-    }),
+  // SQLite keeps a copy as one record whatever form the site rows carry.
+  const records = composedSiteEntities(
+    Object.fromEntries(
+      shared.map((row) => {
+        const key = JSON.parse(row.entity_key);
+        return [
+          entityId(row.entity, key),
+          {
+            entity: row.entity,
+            key,
+            payload: JSON.parse(row.payload),
+            deleted: !!row.deleted,
+          },
+        ];
+      }),
+    ),
   );
   const people = new Map((local.people || []).map((row) => [row.id, row]));
   for (const record of Object.values(records))
