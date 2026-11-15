@@ -200,11 +200,14 @@ export async function logout() {
   }
   return true;
 }
-export async function download(path: string, body: unknown) {
+export async function download(path: string, body: unknown, filename?: string) {
   const res = await send<Response>(path, body);
   saveFile(
     await res.blob(),
-    res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1] ||
+    filename ||
+      res.headers
+        .get("content-disposition")
+        ?.match(/filename="?([^";]+)/)?.[1] ||
       "graeboard",
   );
 }

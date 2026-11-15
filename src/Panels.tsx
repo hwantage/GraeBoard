@@ -570,17 +570,27 @@ export function ExportPanel({
             setBusy(true);
             setError("");
             try {
-              await download("/export", {
-                teamId,
-                sheetCloneId: sheetClone?.id,
-                revision: sheetClone?.revision,
-                year,
-                startMonth: scope === "all" ? 1 : startMonth,
-                format,
-                scope: scope === "worked" ? "view" : scope,
-                taskIds: scope === "worked" ? worked.taskIds : taskIds,
-                keys,
-              });
+              const filename =
+                (format === "json-data" || format === "json") &&
+                scope !== "all" &&
+                worked.period
+                  ? `graeboard-${weeks[0].year === weeks.at(-1)?.year ? `${weeks[0].year}년-` : ""}${worked.period.replaceAll(" ", "")}${format === "json-data" ? "-tasks" : ""}.json`
+                  : undefined;
+              await download(
+                "/export",
+                {
+                  teamId,
+                  sheetCloneId: sheetClone?.id,
+                  revision: sheetClone?.revision,
+                  year,
+                  startMonth: scope === "all" ? 1 : startMonth,
+                  format,
+                  scope: scope === "worked" ? "view" : scope,
+                  taskIds: scope === "worked" ? worked.taskIds : taskIds,
+                  keys,
+                },
+                filename,
+              );
               onClose();
             } catch (e) {
               setError((e as Error).message);
