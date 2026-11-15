@@ -1630,6 +1630,12 @@ function Workspace({
   });
 
   const workColors = team?.settings.insights?.workColors;
+  const workColorsDisabled =
+    !!selection &&
+    [selection, ...(selection.areas || [])].some(
+      (area) =>
+        area.kind === "rows" || area.kind === "columns" || area.kind === "all",
+    );
   // 선택 범위에 있는 업무 표시의 색. 업무 표시 칸은 같은 칩을 다시 눌러 해제하기
   // 전까지 배경색·다른 업무 색으로 칠하지 않는다.
   const markedWork = useMemo(
@@ -1645,6 +1651,7 @@ function Workspace({
   // 툴바 칠하기. 업무 표시 칸은 막고(칩을 다시 눌러 해제하는 것만 허용),
   // 일반 배경색을 업무 색과 같은 색으로 칠하면 집계에서 빠진다는 것을 알린다.
   function applyToolbarStyle(part: Partial<Style>) {
+    if (part.work === true && workColorsDisabled) return;
     if (part.backgroundColor && markedWork.size) return;
     const color = part.work === false ? part.backgroundColor : undefined,
       colors = workColors || [];
@@ -1655,7 +1662,13 @@ function Workspace({
       work = colors.find((entry) => entry.color === hex),
       changed = plainFillChanges(hex, target);
     // 바뀌는 칸이 없으면 실행취소 기록도 생기지 않으므로 알리지 않는다.
-    if (!applyStyle(part, false, target) || !changed || !work || !target)
+    if (
+      !applyStyle(part, false, target) ||
+      !changed ||
+      !work ||
+      !target ||
+      workColorsDisabled
+    )
       return;
     setToast("");
     setUndoToast({
@@ -2446,6 +2459,7 @@ function Workspace({
               {(!sheetClone || editingSheetClone) && (
                 <Toolbar
                   workColors={workColors}
+                  workColorsDisabled={workColorsDisabled}
                   markedWorkColors={markedWork}
                   leadingAction={
                     (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (

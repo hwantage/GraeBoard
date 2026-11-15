@@ -16,7 +16,12 @@ const sides = [
 export default function SyncConflictRaw({
   conflict,
 }: {
-  conflict: { base: unknown; current: unknown; desired: unknown };
+  conflict: {
+    base: unknown;
+    current: unknown;
+    desired: unknown;
+    resolved?: boolean;
+  };
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -28,7 +33,15 @@ export default function SyncConflictRaw({
       {open && (
         <dl>
           {sides.map(([side, label]) => (
-            <RawValue key={side} label={label} value={conflict[side]} />
+            <RawValue
+              key={side}
+              label={
+                conflict.resolved && side === "current"
+                  ? "충돌 당시 먼저 수정"
+                  : label
+              }
+              value={conflict[side]}
+            />
           ))}
         </dl>
       )}

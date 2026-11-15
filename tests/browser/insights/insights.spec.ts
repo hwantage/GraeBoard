@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { cell as effectiveCell } from "../../../shared/domain.js";
+import { cell as effectiveCell, defaultView } from "../../../shared/domain.js";
 import { pickColor } from "../support/colors";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { selectMonths, moveCalendarMonths } from "../support/annual-period";
@@ -1120,19 +1120,143 @@ test("사용자 검토: 원클릭 업무 표시와 같은 HEX 일반 채우기�
   await expect(card(page, "작업 주 합").locator("strong")).toHaveText("4");
 });
 
+for (const copy of [false, true]) {
+  test(`${copy ? "사본" : "원본"} 행·열 전체 선택은 업무 색상을 막고 셀 범위와 일반 배경색은 유지한다`, async ({
+    page,
+  }) => {
+    await configure(page);
+    let cloneId = "";
+    if (copy) {
+      const clone = await request(page, "/sheet-clones", {
+        id: randomUUID(),
+        teamId,
+        year: 2026,
+        referenceDate: "2026-01-05",
+        name: "업무 색상 사본",
+        taskIds,
+        view: defaultView(2026),
+      });
+      cloneId = clone.id;
+    }
+    await page.reload();
+    if (copy) {
+      const tab = page.getByRole("tab", {
+        name: "업무 색상 사본",
+        exact: true,
+      });
+      await tab.click();
+      await expect(tab).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("grid")).toHaveAttribute(
+        "aria-readonly",
+        "false",
+      );
+    }
+    const chip = page.getByRole("button", {
+      name: "업무 표시: 개발 작업",
+      exact: true,
+    });
+    const fill = page.getByRole("button", { name: "배경색", exact: true });
+    const first = page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`);
+    const row = page.getByRole("button", {
+      name: "1행 전체 선택",
+      exact: true,
+    });
+    const read = async () =>
+      copy
+        ? (await request(page, `/sheet-clones/${cloneId}`)).tasks[0]
+        : await taskAt(page);
+    const writes: string[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() !== "GET" &&
+        /\/api\/(cells\/batch|sheet-clones\/[^/]+)$/.test(
+          new URL(req.url()).pathname,
+        )
+      )
+        writes.push(req.url());
+    });
+    await row.click();
+    await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
+    await chip.click({ force: true });
+    expect(writes).toEqual([]);
+    await pickColor(page, "배경색", "#0066cc");
+    await expect
+      .poll(
+        async () => effectiveCell(await read(), "title").style.backgroundColor,
+      )
+      .toBe("#0066cc");
+    expect(effectiveCell(await read(), "2026-01-05").style.work).toBe(false);
+    await expect(
+      page.getByRole("button", { name: "업무 표시로 바꾸기", exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "작업 열 선택", exact: true })
+      .click();
+    await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
+    await first.click();
+    await expect(chip).toBeEnabled();
+    await row.click({ modifiers: ["ControlOrMeta"] });
+    await expect(chip).toBeDisabled();
+    await first.click();
+    await page
+      .locator(`[data-cell="${taskIds[0]}:2026-01-12"]`)
+      .click({ modifiers: ["Shift"] });
+    await expect(chip).toBeEnabled();
+    await chip.click();
+    await expect
+      .poll(async () => effectiveCell(await read(), "2026-01-12").style.work)
+      .toBe(true);
+    expect(effectiveCell(await read(), "2026-01-05").style.work).toBe(true);
+    expect(effectiveCell(await read(), "title").style.work).toBe(false);
+    await row.click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(chip).toBeDisabled();
+    await first.click();
+    await expect(chip).toBeEnabled();
+    await chip.click();
+    await expect
+      .poll(async () => effectiveCell(await read(), "2026-01-05").style.work)
+      .toBe(false);
+    expect(effectiveCell(await read(), "2026-01-12").style.work).toBe(true);
+  });
+}
+
 test("사용자 검토: 행·열에서 상속한 업무 표시도 칸에서 칩을 다시 눌러 해제하고 실행취소로 되돌린다", async ({
   page,
 }) => {
   await configure(page);
+  // Legacy row/column work marks remain readable and can still be cleared
+  // on individual cells; the toolbar no longer creates these broad marks.
+  const beforeTasks = (await request(page, `/tasks?teamId=${teamId}&year=2026`))
+    .tasks;
+  const before = beforeTasks.find((task: any) => task.id === taskIds[0]);
+  await request(page, "/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [],
+    format: {
+      teamId,
+      expectedRevision: before.formatting?.revision || 0,
+      expectedTasks: Object.fromEntries(
+        beforeTasks.map((task: any) => [task.id, task.updatedAt]),
+      ),
+      scopes: [
+        {
+          rows: [before.id],
+          keys: null,
+          style: { backgroundColor: "#0066cc", work: true },
+        },
+        {
+          rows: null,
+          keys: ["title"],
+          style: { backgroundColor: "#0066cc", work: true },
+        },
+      ],
+    },
+  });
   await page.reload();
-  await page
-    .getByRole("button", { name: "1행 전체 선택", exact: true })
-    .click();
-  await savedAction(page, () =>
-    page
-      .getByRole("button", { name: "업무 표시: 개발 작업", exact: true })
-      .click(),
-  );
   expect(effectiveCell(await taskAt(page), "2026-01-05").style.work).toBe(true);
   const fill = page.getByRole("button", { name: "배경색", exact: true }),
     chip = page.getByRole("button", {
@@ -1148,17 +1272,10 @@ test("사용자 검토: 행·열에서 상속한 업무 표시도 칸에서 칩�
   expect(cleared.backgroundColor).toBeNull();
   await expect(fill).toBeEnabled();
   expect(effectiveCell(await taskAt(page), "2026-01-12").style.work).toBe(true);
-  // The task property column uses the same column formatting path as weeks.
-  // 1행 업무 표시가 걸친 열이라 칩은 눌린 상태이며, 첫 클릭은 해제하고
-  // 다시 누르면 열 전체를 업무 표시한다.
   await page.getByRole("button", { name: "작업 열 선택", exact: true }).click();
   await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await expect(chip).toBeDisabled();
   await expect(fill).toBeDisabled();
-  await savedAction(page, () => chip.click());
-  expect(effectiveCell(await taskAt(page), "title").style.work).toBe(false);
-  await expect(chip).toHaveAttribute("aria-pressed", "false");
-  await savedAction(page, () => chip.click());
-  expect(effectiveCell(await taskAt(page), "title").style.work).toBe(true);
   expect(effectiveCell(await taskAt(page, 1), "title").style.work).toBe(true);
   await page.locator(`[data-cell="${taskIds[1]}:title"]`).click();
   await expect(fill).toBeDisabled();
