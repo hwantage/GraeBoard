@@ -1213,6 +1213,7 @@ for (const copy of [false, true]) {
     await row.click();
     await expect(chip).toHaveAttribute("aria-pressed", "true");
     await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
     await first.click();
     await expect(chip).toBeEnabled();
     await chip.click();
@@ -1220,6 +1221,239 @@ for (const copy of [false, true]) {
       .poll(async () => effectiveCell(await read(), "2026-01-05").style.work)
       .toBe(false);
     expect(effectiveCell(await read(), "2026-01-12").style.work).toBe(true);
+  });
+}
+
+for (const copy of [false, true]) {
+  test(`${copy ? "사본" : "원본"} 사용자 요청: 업무 표시가 든 행·열·전체 선택은 일반 배경색으로 표시를 해제하며 칠한다`, async ({
+    page,
+  }) => {
+    test.setTimeout(120000);
+    await configure(page);
+    // 화면 아래(렌더하지 않는 행)와 숨긴 행까지 열 전체 범위에 들어가도록 행을 늘린다.
+    for (let i = taskIds.length; i < 60; i++)
+      taskIds.push(
+        (
+          await request(page, "/tasks", {
+            teamId,
+            year: 2026,
+            fields: { title: `아래 행 ${i + 1}`, owner: userId },
+          })
+        ).task.id,
+      );
+    const last = taskIds.length - 1;
+    // 1/9 열: 보이는 행·숨길 행·화면 아래 행. 1/16·1/23·2/6: 선택 밖 또는 나중 선택.
+    // 1/30 열은 비워 두고, 3/13 열은 화면 아래 행에만 열 서식으로 상속한 표시를 둔다.
+    await paint(page, 0, ["2026-01-05", "2026-01-12"]);
+    await paint(page, 1, ["2026-01-05"]);
+    await paint(page, 2, ["2026-01-19"]);
+    await paint(page, last, ["2026-01-05", "2026-02-02"]);
+    const all = (await request(page, `/tasks?teamId=${teamId}&year=2026`))
+      .tasks;
+    await request(page, "/cells/batch", {
+      operationId: randomUUID(),
+      createdAt: new Date().toISOString(),
+      changes: [],
+      format: {
+        teamId,
+        expectedRevision: all[0].formatting?.revision || 0,
+        expectedTasks: Object.fromEntries(
+          all.map((task: any) => [task.id, task.updatedAt]),
+        ),
+        scopes: [
+          {
+            rows: [taskIds[last]],
+            keys: ["2026-03-09"],
+            style: { backgroundColor: "#0066cc", work: true },
+          },
+        ],
+      },
+    });
+    let cloneId = "";
+    if (copy)
+      cloneId = (
+        await request(page, "/sheet-clones", {
+          id: randomUUID(),
+          teamId,
+          year: 2026,
+          referenceDate: "2026-01-05",
+          name: "업무 색상 사본",
+          taskIds,
+          view: defaultView(2026),
+        })
+      ).id;
+    const open = async () => {
+      await page.reload();
+      if (!copy) return;
+      const tab = page.getByRole("tab", {
+        name: "업무 색상 사본",
+        exact: true,
+      });
+      await tab.click();
+      await expect(tab).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("grid")).toHaveAttribute(
+        "aria-readonly",
+        "false",
+      );
+    };
+    await open();
+    const style = async (index: number, key: string) => {
+      const tasks = copy
+        ? (await request(page, `/sheet-clones/${cloneId}`)).tasks
+        : (await request(page, `/tasks?teamId=${teamId}&year=2026`)).tasks;
+      const { backgroundColor, work } = effectiveCell(
+        tasks.find((task: any) => task.id === taskIds[index]),
+        key,
+      ).style;
+      return { backgroundColor: backgroundColor ?? null, work: work === true };
+    };
+    const expectStyle = (
+      index: number,
+      key: string,
+      expected: { backgroundColor: string | null; work: boolean },
+    ) => expect.poll(() => style(index, key)).toEqual(expected);
+    const chip = page.getByRole("button", {
+      name: "업무 표시: 개발 작업",
+      exact: true,
+    });
+    const fill = page.getByRole("button", { name: "배경색", exact: true });
+    const at = (index: number, key: string) =>
+      page.locator(`[data-cell="${taskIds[index]}:${key}"]`);
+    const column = (key: string) =>
+      page.locator(`[data-header-key="${key}"]`).click();
+    const marked = { backgroundColor: "#0066cc", work: true };
+    const noConvertPrompt = async () => {
+      await expect(
+        page.getByRole("button", { name: "업무 표시로 바꾸기", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.getByText("업무로 집계되지 않습니다")).toHaveCount(0);
+    };
+
+    // 2행(두 번째 업무)을 숨긴다. 숨긴 행도 열 전체 서식 범위에 든다.
+    await page
+      .getByRole("button", { name: "2행 전체 선택", exact: true })
+      .click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "행 숨기기", exact: true })
+      .click();
+    await expect(at(1, "title")).toHaveCount(0);
+    await expect(at(last, "title")).toHaveCount(0);
+
+    // 업무 표시가 든 열 → 표시 없는 1/30 열로 옮겨도 잘못된 잠금이 남지 않는다.
+    await column("2026-01-05");
+    await expect(chip).toBeDisabled();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(fill).toBeEnabled();
+    await column("2026-01-26");
+    await expect(chip).toBeDisabled();
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    await expect(fill).toBeEnabled();
+    await at(0, "2026-01-26").click();
+    await expect(chip).toBeEnabled();
+    await expect(fill).toBeEnabled();
+    // 개별 셀·셀 범위의 업무 표시 잠금은 유지한다.
+    await at(0, "2026-01-05").click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(chip).toBeEnabled();
+    await expect(fill).toBeDisabled();
+    await at(0, "2026-01-12").click({ modifiers: ["Shift"] });
+    await expect(fill).toBeDisabled();
+
+    // 3/13 열: 화면 아래 행에서 상속한 표시만 있어도 열 전체는 배경색으로 칠한다.
+    // 업무 색과 같은 HEX여도 일반 배경색이므로 표시를 해제하고 전환 알림은 없다.
+    await column("2026-03-09");
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
+    await pickColor(page, "배경색", "#0066cc");
+    await expectStyle(last, "2026-03-09", {
+      backgroundColor: "#0066cc",
+      work: false,
+    });
+    expect(await style(0, "2026-03-09")).toEqual({
+      backgroundColor: "#0066cc",
+      work: false,
+    });
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    await noConvertPrompt();
+
+    // 1/9 열: 보이는 행·숨긴 행·화면 아래 행의 표시를 모두 같은 일반 배경색으로 바꾼다.
+    await column("2026-01-05");
+    await expect(fill).toBeEnabled();
+    await pickColor(page, "배경색", "#fff2c6");
+    const plain = { backgroundColor: "#fff2c6", work: false };
+    for (const index of [0, 1, last])
+      await expectStyle(index, "2026-01-05", plain);
+    expect(await style(5, "2026-01-05")).toEqual(plain);
+    // 선택 밖의 업무 표시는 그대로다.
+    expect(await style(0, "2026-01-12")).toEqual(marked);
+    expect(await style(2, "2026-01-19")).toEqual(marked);
+    await noConvertPrompt();
+    await page.getByRole("button", { name: "실행취소", exact: true }).click();
+    for (const index of [0, 1, last])
+      await expectStyle(index, "2026-01-05", marked);
+    await page.getByRole("button", { name: "재실행", exact: true }).click();
+    for (const index of [0, 1, last])
+      await expectStyle(index, "2026-01-05", plain);
+
+    // 추가 영역에 행 전체가 섞인 선택도 같다: 셀(1/16 표시)과 3행 전체(1/23 표시).
+    await at(0, "2026-01-12").click();
+    await expect(fill).toBeDisabled();
+    await page
+      .getByRole("button", { name: "3행 전체 선택", exact: true })
+      .click({ modifiers: ["ControlOrMeta"] });
+    await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
+    await pickColor(page, "배경색", "#0066cc");
+    await expectStyle(2, "2026-01-19", {
+      backgroundColor: "#0066cc",
+      work: false,
+    });
+    await expectStyle(0, "2026-01-12", {
+      backgroundColor: "#0066cc",
+      work: false,
+    });
+    expect(await style(2, "title")).toEqual({
+      backgroundColor: "#0066cc",
+      work: false,
+    });
+    expect(await style(last, "2026-02-02")).toEqual(marked);
+    await noConvertPrompt();
+
+    if (!copy) {
+      await insights(page);
+      await expect(card(page, "작업 주 합").locator("strong")).toHaveText("1");
+      await page
+        .getByRole("button", { name: "연간 업무", exact: true })
+        .click();
+    }
+    // 시트 전체 선택은 남은 화면 아래 행의 표시까지 해제한다.
+    await page
+      .getByRole("button", { name: "모든 셀 선택", exact: true })
+      .click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(chip).toBeDisabled();
+    await expect(fill).toBeEnabled();
+    await pickColor(page, "배경색", "#fff2c6");
+    await expectStyle(last, "2026-02-02", plain);
+    await noConvertPrompt();
+
+    await open();
+    for (const [index, key] of [
+      [0, "2026-01-05"],
+      [1, "2026-01-05"],
+      [last, "2026-01-05"],
+      [0, "2026-01-12"],
+      [2, "2026-01-19"],
+      [last, "2026-02-02"],
+      [last, "2026-03-09"],
+    ] as const)
+      expect(await style(index, key)).toEqual(plain);
+    if (!copy) {
+      await insights(page);
+      await expect(card(page, "작업 주 합").locator("strong")).toHaveText("0");
+      await expect(card(page, "업무 수").locator("strong")).toHaveText("0");
+    }
   });
 }
 
@@ -1275,7 +1509,8 @@ test("사용자 검토: 행·열에서 상속한 업무 표시도 칸에서 칩�
   await page.getByRole("button", { name: "작업 열 선택", exact: true }).click();
   await expect(chip).toHaveAttribute("aria-pressed", "true");
   await expect(chip).toBeDisabled();
-  await expect(fill).toBeDisabled();
+  // 열 전체 선택은 일반 배경색으로 표시를 덮을 수 있다(칠하지는 않는다).
+  await expect(fill).toBeEnabled();
   expect(effectiveCell(await taskAt(page, 1), "title").style.work).toBe(true);
   await page.locator(`[data-cell="${taskIds[1]}:title"]`).click();
   await expect(fill).toBeDisabled();
