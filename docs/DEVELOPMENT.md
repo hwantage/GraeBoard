@@ -389,6 +389,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 ### 시크릿 캘린더
 
+시크릿 보기의 `hidden/only/all` 선택은 일정 v2 저장 형식을 바꾸지 않고 별도 사용자별 localStorage 키 `weekly-plan:secret-calendar-mode:<userId>`로 기억합니다. 기존 `visible:false`는 숨기기, `visible:true`는 전체 보기로 호환하고, only 선택은 visible 상태에서만 적용합니다. 쓰기는 기존 boolean도 함께 유지하며 다른 탭의 storage 이벤트와 로컬 알림을 구독합니다. `Calendar`의 상단 표시 월에 대한 기존 `monthWeeks` 범위(edge week 포함), 또는 본인의 주간 조회 query와 겹치는 본인·현재 팀의 로컬 일정만 배지에 한 번씩 셉니다. 스크롤로 앞뒤 여러 달을 불러왔어도 배지는 상단 표시 월을 따릅니다. 제목 검색·요일 숨기기·모드별 필터 전의 목록에서 세므로 검색으로 복귀 버튼이 비활성화되지 않습니다. only는 본인의 일반 일정만 숨기며 공용/타인의 보기는 유지합니다. 현재 범위의 시크릿 개수가 0이면 버튼은 계속 비활성화하되 only의 표시용 모드만 all로 바꿔 일반 일정을 표시합니다. 아이콘·툴팁·검색·카드 표시도 이 유효 모드를 사용하고 저장된 선호는 덮어쓰지 않습니다. 마지막 일정 삭제, 주·월 이동, 팀 전환과 다른 탭의 갱신에 동일하게 적용하며 시크릿이 있는 범위로 돌아오거나 삭제를 실행취소하면 only 선호가 다시 적용됩니다.
+
 `src/calendar/secret-calendar.ts`·`useSecretCalendar`는 사용자별 localStorage에 시크릿 일정의 제목·기간·태그 연결·체크·표시 순서와 보이기 선택을 저장합니다. 본인 개인 월간과 팀 주간의 본인 줄에 표시 전용으로 합치며 서버 일정의 저장 순서는 바꾸지 않습니다. 사용법과 저장 범위는 [시크릿 일정 안내](USER_GUIDE.md#시크릿-일정)를 따릅니다.
 
 `DocumentEditor`는 선택적 `DocumentStorage`로 조회·저장·이미지·구독 경로를 주입받으며, 미지정이면 기존 API·SSE를 사용합니다. `src/calendar/secret-document-storage.ts`는 사용자별 IndexedDB v2의 `documents`에 본문·revision·이미지 메타데이터를, `images`에 이미지 바이트를 분리해 저장합니다. 로컬 자료는 서버·Git 동기화·DB 백업에 포함하지 않으며 브라우저 저장소를 지우면 사라집니다. 구버전 저장소 이전과 정리 검증은 [시크릿 캘린더 이력](DEVELOPMENT_HISTORY.md#시크릿-캘린더)에 보존합니다.

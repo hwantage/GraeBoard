@@ -18,6 +18,15 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-16 — 시크릿 일정 배지와 3단 보기 독립 분리
+
+- 합본의 최종 소스 `9420992`에서 시크릿 일정 기능만 공통 base `ecfb556` 기반 `feat/secret-calendar-view-modes`로 분리했습니다. `Calendar.tsx`·`secret-calendar.css`·`secret-calendar.ts`·`useSecretCalendar.ts`·`secret-calendar.spec.ts`는 원본과 바이트 단위로 동일하며, 개발·사용 안내는 해당 기능 문단만 반영했습니다.
+- 현재 개인 월간의 상단 표시 월 범위 또는 본인의 주간 기간과 겹치는 시크릿 일정 개수를 배지로 표시하고 숨기기 → 시크릿만 보기 → 전체 보기로 전환합니다. 기존 버튼·로컬 저장·storage 이벤트·삭제·실행취소 경로를 재사용합니다. 일정 v2·IndexedDB·서버 DB 형식은 유지하고 보기 선호만 별도 사용자별 localStorage 키에 기억합니다.
+- 1차 리뷰의 `only + 현재 범위 0개` 잠금 수정을 포함합니다. 0개일 때 버튼은 비활성화하되 표시용 모드만 전체 보기로 바꿔 일반 일정을 보여 주고, 저장된 only 선호는 보존합니다. 마지막 일정 삭제·빈 주/월·팀 이동·다른 탭·새로고침에서 일반 일정이 표시되고, 시크릿이 있는 범위로 복귀하거나 삭제를 실행취소하면 only로 돌아오는 회귀를 유지했습니다.
+- 독립 검증: Node 22.23.1·npm 10.9.8에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` **826/826 통과**(실패·취소·skip 0). `npm run build`·`npm run build:edge` 성공, `npm run check:structure` 오류 0(기존 역할 검토 안내 38건), `npm run check:architecture` 위반 0을 확인했습니다. 프런트 빌드의 700kB 초과 청크 안내는 남아 있습니다.
+- `E2E_PORT=4446 PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/graeboard-split-secret-browser.json npx playwright test tests/browser/calendar/secret-calendar.spec.ts --reporter=list,json --output=/tmp/graeboard-split-secret-browser-results` **87/87 통과**(Chromium·Firefox·WebKit 각 29건, 실패·skip 0). 범위 겹침·3단 모드·0개 비활성/일반 일정 표시·검색·선호 보존·다른 탭·팀 전환·삭제복원과 기존 문서/이미지·소유자 격리 회귀를 실행했습니다. 생성된 390px 모바일 배지와 팀 주간 화면도 확인했습니다.
+- 그래프 MCP가 세션에 노출되지 않아 `rg`·파일 읽기로 실제 호출 경로를 확인했습니다. Node/PG와 브라우저 검사는 이 워크트리 안에서 순차 실행하고 임시 DB·이미지만 사용했습니다. 이번 독립 실행 수치만 기록하며 과거 합본의 검증 수치를 재사용하지 않습니다. 푸시·PR·병합·배포와 운영 화면 검증은 수행하지 않았습니다. 실행 로그·원본 해시·최종 커밋 보고서는 `/tmp/graeboard-split-secret-*`에 보존했습니다.
+
 ## 2026-11-15 — JSON 파일명에 선택 주차 표시
 
 - 현재 보기·선택 기간 수행 업무의 두 JSON 형식에 화면과 같은 월별 주차 범위를 넣었습니다. 업무 데이터는 `graeboard-2026년-10월1주~11월4주-tasks.json`, 상세 보관은 같은 이름에서 `-tasks`를 뺍니다. 한 주는 한 번만, 연말을 넘는 기간은 양쪽 연도를 표시합니다. 원본·사본에 동일하게 적용하고 전체는 기존 연도 기준 이름을 유지합니다.
