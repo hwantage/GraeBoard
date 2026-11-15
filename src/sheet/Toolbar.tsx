@@ -88,12 +88,16 @@ export default function Toolbar({
   canCopyFormat = true,
   onPaintFormat,
   workColors,
+  workColorsDisabled = false,
   markedWorkColors,
 }: {
   style: Style;
   workColors?: { color: string; name?: string }[];
+  workColorsDisabled?: boolean;
   // 선택 범위의 업무 표시에 쓰인 색. 있으면 배경색·다른 업무 칩을 막고,
   // 그 색의 칩은 눌린 상태로 다시 누르면 업무 표시를 해제한다.
+  // 행·열·전체 선택(workColorsDisabled)에서는 칩만 눌린 상태로 보이고
+  // 배경색은 막지 않는다. 일반 배경색이 선택한 업무 표시를 덮어 해제한다.
   markedWorkColors?: ReadonlySet<string>;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
@@ -114,7 +118,7 @@ export default function Toolbar({
 }) {
   // 휴대폰 폭에서는 핵심 도구만 보이고 "도구 더 보기"로 전체 도구를 펼친다.
   const [expanded, setExpanded] = useState(false);
-  const workLocked = !!markedWorkColors?.size;
+  const workLocked = !workColorsDisabled && !!markedWorkColors?.size;
   return (
     <div
       className={`format-toolbar${expanded ? " expanded" : ""}`}
@@ -223,14 +227,18 @@ export default function Toolbar({
                 className="work-mark-chip"
                 aria-label={label}
                 data-tooltip={
-                  marked
-                    ? `${label} (다시 눌러 해제)`
-                    : workLocked
-                      ? `${label} (업무 표시를 먼저 해제하세요)`
-                      : label
+                  workColorsDisabled
+                    ? label
+                    : marked
+                      ? `${label} (다시 눌러 해제)`
+                      : workLocked
+                        ? `${label} (업무 표시를 먼저 해제하세요)`
+                        : label
                 }
                 aria-pressed={marked}
-                disabled={disabled || (workLocked && !marked)}
+                disabled={
+                  disabled || workColorsDisabled || (workLocked && !marked)
+                }
                 style={{ backgroundColor: color, color: inkFor(color) }}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() =>

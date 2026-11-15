@@ -14,10 +14,28 @@ import {
   entityId,
   initialToken,
   canonical,
+  equal,
   validateOperation,
   PROTOCOL,
   SPLIT_PROTOCOL,
 } from "../core/protocol.mjs";
+
+// SQLite keeps the original formats without an order and reads them by rule
+// ID. The reducer compares an edit's whole rules list with shared state, order
+// included, and shared state may hold the same rules in another order (the
+// external site appends a new rule). A base in ID order would be refused as a
+// concurrent change, so the base takes the shared order. Rules shared state
+// lacks follow in the order given (the ID order read); content still decides
+// whether an edit conflicts.
+function inSharedOrder(rules, shared) {
+  if (!Array.isArray(rules) || !Array.isArray(shared)) return rules;
+  const position = new Map(shared.map((rule, index) => [rule?.id, index])),
+    known = [],
+    added = [];
+  for (const rule of rules) (position.has(rule.id) ? known : added).push(rule);
+  known.sort((a, b) => position.get(a.id) - position.get(b.id));
+  return [...known, ...added];
+}
 
 export function installCapture(db, { onPending = () => {} } = {}) {
   const requestActor = new AsyncLocalStorage();
@@ -147,6 +165,23 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     reconcileTriggers();
   };
   refresh();
+  // The rules the reducer will compare a formats edit's base with: those of
+  // the newest pending formats edit, or else those of shared state. Only the
+  // order is taken, so a missing outbox row falls back to shared state.
+  const sharedFormatRules = (teamId, pending) => {
+    let rules;
+    if (pending) {
+      const index = Number(pending.version.slice(pending.opId.length + 1));
+      if (Number.isInteger(index))
+        rules = prepare(
+          "SELECT json_extract(payload,?) AS rules FROM sync_outbox WHERE op_id=? AND team_id=?",
+        ).get(`$.changes[${index}].desired.rules`, pending.opId, teamId)?.rules;
+    }
+    rules ??= prepare(
+      "SELECT json_extract(payload,'$.rules') AS rules FROM sync_entities WHERE team_id=? AND entity='formats' AND entity_key='[]' AND deleted=0",
+    ).get(teamId)?.rules;
+    return typeof rules === "string" ? JSON.parse(rules) : null;
+  };
   const record = (teamId, entity, key, beforeImage = undefined) => {
     if (!active || suppressed || !links.has(teamId)) return;
     const mapKey = teamId + entityId(entity, key);
@@ -207,6 +242,14 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         : initialToken(links.get(teamId).bootstrap_id, entity, key);
       value.generation = row?.generation || token;
       value.version = row?.version || token;
+      if (entity === "formats" && row)
+        value.payload = {
+          ...value.payload,
+          rules: inSharedOrder(
+            value.payload.rules,
+            sharedFormatRules(teamId, pending),
+          ),
+        };
     }
     before.set(mapKey, { teamId, entity, key, value, body });
   };
@@ -353,6 +396,24 @@ export function installCapture(db, { onPending = () => {} } = {}) {
             };
           else if (!calendarBodySaved(item)) after = null;
         }
+        // Formats written with the same rules change nothing: the ID order
+        // read back is not an edit of the shared order kept in the base.
+        if (
+          after &&
+          item.value &&
+          item.entity === "formats" &&
+          equal(
+            {
+              ...after.payload,
+              rules: inSharedOrder(
+                after.payload.rules,
+                item.value.payload.rules,
+              ),
+            },
+            item.value.payload,
+          )
+        )
+          after = { ...after, payload: item.value.payload };
         group.after[key] = after;
       }
       for (const [teamId, group] of teams) {

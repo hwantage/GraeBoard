@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
 import { api, send, type ApiError } from "../platform/api";
+import { useSite } from "../platform/site-context";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
 import { Modal } from "../ui/Modal";
@@ -76,8 +77,16 @@ export default function SyncConflictBox({
   onChanged?: () => void;
 }) {
   const prefix = `/teams/${teamId}/sync`;
+  const { external } = useSite();
+  const peerSite = external ? "내부 사이트" : "외부 사이트";
+  const tabId = useId();
+  const [view, setView] = useState<"open" | "resolved">("open");
   const [conflicts, setConflicts] = useState<Conflict[] | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [next, setNext] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState("");
+  const listRequest = useRef(0);
   const [editing, setEditing] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,12 +106,14 @@ export default function SyncConflictBox({
   const listed = useMemo(
     () =>
       conflicts &&
-      conflicts.map((conflict) =>
-        conflict.desired === undefined && values[conflict.conflictId]
-          ? { ...conflict, ...values[conflict.conflictId] }
-          : conflict,
-      ),
-    [conflicts, values],
+      conflicts
+        .filter((conflict) => !!conflict.resolved === (view === "resolved"))
+        .map((conflict) =>
+          conflict.desired === undefined && values[conflict.conflictId]
+            ? { ...conflict, ...values[conflict.conflictId] }
+            : conflict,
+        ),
+    [conflicts, values, view],
   );
   async function loadValues(conflictId: string) {
     setValueErrors((current) => ({ ...current, [conflictId]: "" }));
@@ -134,34 +145,76 @@ export default function SyncConflictBox({
       ),
     [listed],
   );
-  async function load(signal?: AbortSignal) {
-    const result = await api<{ conflicts: Conflict[] }>(`${prefix}/conflicts`, {
-      signal,
-    });
-    if (signal?.aborted) return;
-    setLoadError("");
-    const open = result.conflicts.filter((conflict) => !conflict.resolved);
-    setConflicts(open);
-    setSelected(
-      (current) =>
-        new Set(
-          open
-            .filter(
-              (conflict) =>
-                !conflict.pendingResolution && current.has(conflict.conflictId),
-            )
-            .map((conflict) => conflict.conflictId),
-        ),
-    );
+  async function load(signal?: AbortSignal, append = false, refreshCount = 0) {
+    const request = ++listRequest.current;
+    const active = () => !signal?.aborted && request === listRequest.current;
+    let after = append ? next : null;
+    const loaded: Conflict[] = [];
+    setMoreError("");
+    if (append) setLoadingMore(true);
+    try {
+      do {
+        const query = new URLSearchParams({ status: view });
+        if (after) query.set("after", after);
+        const result = await api<{
+          conflicts: Conflict[];
+          next?: string | null;
+        }>(`${prefix}/conflicts?${query}`, { signal });
+        if (!active()) return;
+        loaded.push(...result.conflicts);
+        const previous = after;
+        after = result.next || null;
+        if (after === previous) after = null;
+        // Refresh only as many records as the person already loaded after a
+        // resolution. Opening a tab and More each fetch just one page.
+      } while (!append && after && loaded.length < refreshCount);
+      setLoadError("");
+      setNext(after);
+      setConflicts((current) =>
+        append
+          ? [
+              ...new Map(
+                [...(current || []), ...loaded].map((c) => [c.conflictId, c]),
+              ).values(),
+            ]
+          : loaded,
+      );
+      if (!append) {
+        setSelected(
+          (current) =>
+            new Set(
+              loaded
+                .filter(
+                  (c) =>
+                    !c.resolved &&
+                    !c.pendingResolution &&
+                    current.has(c.conflictId),
+                )
+                .map((c) => c.conflictId),
+            ),
+        );
+      }
+    } catch (error) {
+      if (active())
+        (append ? setMoreError : setLoadError)(
+          syncErrorMessage(error) || (error as Error).message,
+        );
+    } finally {
+      if (active()) setLoadingMore(false);
+    }
   }
   useEffect(() => {
     const controller = new AbortController();
-    load(controller.signal).catch((error: Error) => {
-      if (!controller.signal.aborted)
-        setLoadError(syncErrorMessage(error) || error.message);
-    });
-    return () => controller.abort();
-  }, [teamId]);
+    setConflicts(null);
+    setNext(null);
+    setLoadError("");
+    setLoadingMore(false);
+    void load(controller.signal);
+    return () => {
+      controller.abort();
+      listRequest.current++;
+    };
+  }, [teamId, view]);
   const fail = (conflictId: string, message: string) =>
     setErrors((current) => ({ ...current, [conflictId]: message }));
   // Remember a refusal so its card can guide the person to keep the first
@@ -195,7 +248,9 @@ export default function SyncConflictBox({
   async function resolveSelected(choice: "current" | "submitted") {
     const targets = (listed || []).filter(
       (conflict) =>
-        selected.has(conflict.conflictId) && !conflict.pendingResolution,
+        selected.has(conflict.conflictId) &&
+        !conflict.resolved &&
+        !conflict.pendingResolution,
     );
     if (busy || !targets.length) return;
     if (
@@ -225,7 +280,7 @@ export default function SyncConflictBox({
     const failed = targets.length - saved;
     setBatch(
       !failed
-        ? `충돌 ${saved}개의 해결 방법을 저장했습니다. 다음 동기화 때 상대 사이트에도 반영됩니다.`
+        ? `충돌 ${saved}개의 해결 방법을 저장했습니다. 다음 동기화 때 ${peerSite}에도 반영됩니다.`
         : `${saved}개 저장, ${failed}개 실패했습니다. ` +
             (refused
               ? `이 중 ${refused}개는 반영하면 다시 충돌해 저장하지 않았습니다. "덮어쓰기 불가" 항목을 펼쳐 사라질 나중에 수정 내용을 확인하고 정리한 뒤 먼저 수정으로 유지하세요.` +
@@ -235,11 +290,11 @@ export default function SyncConflictBox({
               : "실패한 항목을 펼쳐 이유를 확인하세요."),
     );
     if (saved) onChanged?.();
-    await load().catch(() => {});
+    await load(undefined, false, conflicts?.length || 0);
     setBusy(false);
   }
   async function resolve(conflict: Conflict, choice: Choice) {
-    if (busy) return;
+    if (busy || conflict.resolved || conflict.pendingResolution) return;
     let desired: unknown;
     if (choice === "edited") {
       try {
@@ -263,7 +318,7 @@ export default function SyncConflictBox({
         fail(conflict.conflictId, failure(error));
     } finally {
       // Show the saved resolution, or what another tab already saved.
-      await load().catch(() => {});
+      await load(undefined, false, conflicts?.length || 0);
       setBusy(false);
     }
   }
@@ -272,198 +327,287 @@ export default function SyncConflictBox({
   return createPortal(
     <Modal
       title="충돌 보관함"
-      help="같은 항목을 사내와 외부에서 함께 고쳐, 나중에 수정이 반영되지 않고 보관된 목록입니다. 항목을 펼쳐 두 수정을 비교한 뒤 해결 방법을 고르세요."
+      help="같은 항목을 사내와 외부에서 함께 고쳐 충돌한 목록입니다. 해결 필요에서 두 수정을 비교해 해결 방법을 고르고, 해결 내역에서 과거 충돌을 확인할 수 있습니다."
       wide
       className="sync-conflict-box"
       onClose={onClose}
     >
-      {loadError ? (
+      <div className="settings-tabs" role="tablist" aria-label="충돌 목록">
+        {(["open", "resolved"] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            id={`${tabId}-${key}`}
+            role="tab"
+            aria-selected={view === key}
+            aria-controls={`${tabId}-panel`}
+            tabIndex={view === key ? 0 : -1}
+            disabled={busy}
+            onClick={() => {
+              if (view === key) return;
+              setView(key);
+              setSelected(new Set());
+              setExpanded(new Set());
+            }}
+            onKeyDown={(event) => {
+              const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+              if (!keys.includes(event.key)) return;
+              event.preventDefault();
+              const next =
+                event.key === "Home"
+                  ? "open"
+                  : event.key === "End"
+                    ? "resolved"
+                    : key === "open"
+                      ? "resolved"
+                      : "open";
+              const tab = document.getElementById(`${tabId}-${next}`);
+              tab?.click();
+              tab?.focus();
+            }}
+          >
+            {key === "open" ? "해결 필요" : "해결 내역"}
+          </button>
+        ))}
+      </div>
+      <div
+        role="tabpanel"
+        id={`${tabId}-panel`}
+        aria-labelledby={`${tabId}-${view}`}
+      >
         <ErrorNote error={loadError} />
-      ) : !listed ? (
-        <LoadingState label="충돌 보관함을 불러오는 중" />
-      ) : !listed.length ? (
-        <p className="field-help">보관된 충돌이 없습니다.</p>
-      ) : (
-        <>
-          <BatchBar
-            conflicts={listed}
-            selected={selected}
-            busy={busy}
-            status={batch}
-            onSelect={setSelected}
-            onResolve={(choice) => void resolveSelected(choice)}
-          />
-          <section className="team-sync-conflicts" aria-label="충돌 보관함">
-            {listed.map((conflict) => {
-              const loaded = conflict.desired !== undefined,
-                saved = conflict.pendingResolution,
-                edit = editing === conflict.conflictId,
-                refusal = saved ? undefined : refusals[conflict.conflictId],
-                summary = summaries.get(conflict.conflictId)!;
-              return (
-                <details
-                  key={conflict.conflictId}
-                  className="team-sync-conflict"
-                  onToggle={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    const open = event.currentTarget.open;
-                    if (open && !loaded) void loadValues(conflict.conflictId);
-                    setExpanded((current) => {
-                      const next = new Set(current);
-                      if (open) next.add(conflict.conflictId);
-                      else next.delete(conflict.conflictId);
-                      return next;
-                    });
-                  }}
-                >
-                  <summary>
-                    <input
-                      type="checkbox"
-                      className="team-sync-conflict-check"
-                      aria-label={`${summary.kind} 충돌 선택`}
-                      checked={selected.has(conflict.conflictId)}
-                      disabled={!!saved || busy}
-                      onChange={() =>
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          if (!next.delete(conflict.conflictId))
-                            next.add(conflict.conflictId);
-                          return next;
-                        })
-                      }
-                    />
-                    <ChevronRight
-                      className="team-sync-conflict-chevron"
-                      size={14}
-                      aria-hidden="true"
-                    />
-                    <span className="team-sync-conflict-kind">
-                      {summary.kind}
-                    </span>
-                    {conflict.origin && (
-                      <span className="team-sync-conflict-people">
-                        {summary.editors}
-                      </span>
-                    )}
-                    {saved && (
-                      <span className="tag team-sync-conflict-saved">
-                        해결 저장됨
-                      </span>
-                    )}
-                    {refusal && (
-                      <span className="tag team-sync-conflict-refused">
-                        {refusal.choice === "edited"
-                          ? "고친 내용 충돌"
-                          : "덮어쓰기 불가"}
-                      </span>
-                    )}
-                    <time dateTime={conflict.createdAt}>
-                      {syncTime(conflict.createdAt)}
-                    </time>
-                  </summary>
-                  <div className="team-sync-conflict-body">
-                    {saved && (
-                      <p className="team-sync-conflict-notice" role="status">
-                        해결 방법을 저장했습니다:{" "}
-                        <strong>{choices[saved.choice]}</strong> (
-                        {syncTime(saved.createdAt)}). 다음 동기화 때 상대
-                        사이트에도 반영되고, 그 뒤 이 목록에서 사라집니다.
-                      </p>
-                    )}
-                    {refusal && <RefusalGuide refusal={refusal} />}
-                    {!loaded ? (
-                      valueErrors[conflict.conflictId] ? (
-                        <>
-                          <ErrorNote error={valueErrors[conflict.conflictId]} />
-                          <p className="field-help">
-                            내용을 보지 않고도 아래에서 해결 방법을 고를 수
-                            있습니다.
-                          </p>
-                        </>
-                      ) : (
-                        <LoadingState label="충돌 내용을 불러오는 중" />
-                      )
-                    ) : (
-                      <>
-                        {expanded.has(conflict.conflictId) && (
-                          <SyncConflictDiff
-                            conflict={conflict as LoadedConflict}
-                            people={people}
-                          />
-                        )}
-                        <SyncConflictRaw
-                          conflict={conflict as LoadedConflict}
+        {!listed ? (
+          !loadError && <LoadingState label="충돌 보관함을 불러오는 중" />
+        ) : !listed.length ? (
+          <p className="field-help">
+            {view === "open"
+              ? "해결이 필요한 충돌이 없습니다."
+              : "해결된 충돌이 없습니다."}
+          </p>
+        ) : (
+          <>
+            {view === "open" && (
+              <BatchBar
+                conflicts={listed}
+                selected={selected}
+                busy={busy}
+                status={batch}
+                onSelect={setSelected}
+                onResolve={(choice) => void resolveSelected(choice)}
+              />
+            )}
+            <section
+              key={view}
+              className="team-sync-conflicts"
+              aria-label="충돌 보관함"
+            >
+              {listed.map((conflict) => {
+                const loaded = conflict.desired !== undefined,
+                  saved = !conflict.resolved && conflict.pendingResolution,
+                  edit = editing === conflict.conflictId,
+                  refusal =
+                    saved || conflict.resolved
+                      ? undefined
+                      : refusals[conflict.conflictId],
+                  summary = summaries.get(conflict.conflictId)!;
+                return (
+                  <details
+                    key={conflict.conflictId}
+                    className="team-sync-conflict"
+                    onToggle={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      const open = event.currentTarget.open;
+                      if (open && !loaded) void loadValues(conflict.conflictId);
+                      setExpanded((current) => {
+                        const next = new Set(current);
+                        if (open) next.add(conflict.conflictId);
+                        else next.delete(conflict.conflictId);
+                        return next;
+                      });
+                    }}
+                  >
+                    <summary>
+                      {!conflict.resolved && (
+                        <input
+                          type="checkbox"
+                          className="team-sync-conflict-check"
+                          aria-label={`${summary.kind} 충돌 선택`}
+                          checked={selected.has(conflict.conflictId)}
+                          disabled={!!saved || busy}
+                          onChange={() =>
+                            setSelected((current) => {
+                              const next = new Set(current);
+                              if (!next.delete(conflict.conflictId))
+                                next.add(conflict.conflictId);
+                              return next;
+                            })
+                          }
                         />
-                      </>
-                    )}
-                    {!saved && edit && (
-                      <label className="team-sync-conflict-edit">
-                        적용할 내용
-                        <textarea
-                          aria-label="적용할 내용"
-                          rows={8}
-                          value={draft}
-                          {...busyProps(busy)}
-                          onChange={(event) => setDraft(event.target.value)}
-                        />
-                      </label>
-                    )}
-                    {!saved && (
-                      <div className="form-actions">
-                        {edit ? (
+                      )}
+                      <ChevronRight
+                        className="team-sync-conflict-chevron"
+                        size={14}
+                        aria-hidden="true"
+                      />
+                      <span className="team-sync-conflict-kind">
+                        {summary.kind}
+                      </span>
+                      {conflict.origin && (
+                        <span className="team-sync-conflict-people">
+                          {summary.editors}
+                        </span>
+                      )}
+                      {saved && (
+                        <span className="tag team-sync-conflict-saved">
+                          해결 저장됨
+                        </span>
+                      )}
+                      {conflict.resolved && (
+                        <span className="tag team-sync-conflict-saved">
+                          해결 완료
+                        </span>
+                      )}
+                      {refusal && (
+                        <span className="tag team-sync-conflict-refused">
+                          {refusal.choice === "edited"
+                            ? "고친 내용 충돌"
+                            : "덮어쓰기 불가"}
+                        </span>
+                      )}
+                      <time dateTime={conflict.createdAt}>
+                        발생 {syncTime(conflict.createdAt)}
+                      </time>
+                    </summary>
+                    <div className="team-sync-conflict-body">
+                      {saved && (
+                        <p className="team-sync-conflict-notice" role="status">
+                          해결 방법을 저장했습니다:{" "}
+                          <strong>{choices[saved.choice]}</strong> (
+                          {syncTime(saved.createdAt)}). 다음 동기화 때{" "}
+                          {peerSite}에도 반영되고, 그 뒤 해결 내역에서 볼 수
+                          있습니다.
+                        </p>
+                      )}
+                      {conflict.resolved && (
+                        <p className="team-sync-conflict-notice">
+                          해결된 충돌입니다. 아래는 충돌 당시의 수정 내용이며,
+                          최종 해결 결과가 아닙니다.
+                        </p>
+                      )}
+                      {refusal && <RefusalGuide refusal={refusal} />}
+                      {!loaded ? (
+                        valueErrors[conflict.conflictId] ? (
                           <>
-                            <Button
-                              {...busyProps(busy)}
-                              onClick={() => setEditing("")}
-                            >
-                              편집 취소
-                            </Button>
-                            <Button
-                              className="primary"
-                              {...busyProps(busy)}
-                              onClick={() => void resolve(conflict, "edited")}
-                            >
-                              고친 내용 적용
-                            </Button>
+                            <ErrorNote
+                              error={valueErrors[conflict.conflictId]}
+                            />
+                            {!conflict.resolved && (
+                              <p className="field-help">
+                                내용을 보지 않고도 아래에서 해결 방법을 고를 수
+                                있습니다.
+                              </p>
+                            )}
                           </>
                         ) : (
-                          <>
-                            <Button
-                              className={refusal ? "primary" : undefined}
-                              {...busyProps(busy)}
-                              onClick={() => void resolve(conflict, "current")}
-                            >
-                              {choices.current}
-                            </Button>
-                            <Button
-                              {...busyProps(busy)}
-                              onClick={() =>
-                                void resolve(conflict, "submitted")
-                              }
-                            >
-                              {choices.submitted}
-                            </Button>
-                            <Button
-                              {...busyProps(busy, !loaded)}
-                              onClick={() => {
-                                setEditing(conflict.conflictId);
-                                setDraft(conflictRawText(conflict.desired));
-                              }}
-                            >
-                              직접 고치기
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    <ErrorNote error={errors[conflict.conflictId] || ""} />
-                  </div>
-                </details>
-              );
-            })}
-          </section>
-        </>
-      )}
+                          <LoadingState label="충돌 내용을 불러오는 중" />
+                        )
+                      ) : (
+                        <>
+                          {expanded.has(conflict.conflictId) && (
+                            <SyncConflictDiff
+                              conflict={conflict as LoadedConflict}
+                              people={people}
+                            />
+                          )}
+                          <SyncConflictRaw
+                            conflict={conflict as LoadedConflict}
+                          />
+                        </>
+                      )}
+                      {!conflict.resolved && !saved && edit && (
+                        <label className="team-sync-conflict-edit">
+                          적용할 내용
+                          <textarea
+                            aria-label="적용할 내용"
+                            rows={8}
+                            value={draft}
+                            {...busyProps(busy)}
+                            onChange={(event) => setDraft(event.target.value)}
+                          />
+                        </label>
+                      )}
+                      {!conflict.resolved && !saved && (
+                        <div className="form-actions">
+                          {edit ? (
+                            <>
+                              <Button
+                                {...busyProps(busy)}
+                                onClick={() => setEditing("")}
+                              >
+                                편집 취소
+                              </Button>
+                              <Button
+                                className="primary"
+                                {...busyProps(busy)}
+                                onClick={() => void resolve(conflict, "edited")}
+                              >
+                                고친 내용 적용
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                className={refusal ? "primary" : undefined}
+                                {...busyProps(busy)}
+                                onClick={() =>
+                                  void resolve(conflict, "current")
+                                }
+                              >
+                                {choices.current}
+                              </Button>
+                              <Button
+                                {...busyProps(busy)}
+                                onClick={() =>
+                                  void resolve(conflict, "submitted")
+                                }
+                              >
+                                {choices.submitted}
+                              </Button>
+                              <Button
+                                {...busyProps(busy, !loaded)}
+                                onClick={() => {
+                                  setEditing(conflict.conflictId);
+                                  setDraft(conflictRawText(conflict.desired));
+                                }}
+                              >
+                                직접 고치기
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {!conflict.resolved && (
+                        <ErrorNote error={errors[conflict.conflictId] || ""} />
+                      )}
+                    </div>
+                  </details>
+                );
+              })}
+            </section>
+          </>
+        )}
+        {next && (
+          <div className="form-actions">
+            <Button
+              {...busyProps(busy || loadingMore)}
+              onClick={() => void load(undefined, true)}
+            >
+              {loadingMore ? "불러오는 중…" : "더 보기"}
+            </Button>
+          </div>
+        )}
+        <ErrorNote error={moreError} />
+      </div>
     </Modal>,
     document.body,
   );
@@ -498,7 +642,7 @@ function RefusalGuide({ refusal }: { refusal: Refusal }) {
         </li>
         <li>
           <strong>먼저 수정으로 유지</strong>를 누릅니다. 나중에 수정은
-          버려지고, 이 항목은 다음 동기화 뒤 목록에서 사라집니다.
+          버려지고, 이 항목은 다음 동기화 뒤 해결 내역으로 이동합니다.
         </li>
       </ol>
       {refusal.reason === "Duplicate name" && (
@@ -528,7 +672,7 @@ function BatchBar({
   onResolve: (choice: "current" | "submitted") => void;
 }) {
   const selectable = conflicts
-    .filter((conflict) => !conflict.pendingResolution)
+    .filter((conflict) => !conflict.resolved && !conflict.pendingResolution)
     .map((conflict) => conflict.conflictId);
   const all = selectable.length > 0 && selected.size === selectable.length;
   return (
