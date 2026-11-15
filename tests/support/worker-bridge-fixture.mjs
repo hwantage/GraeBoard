@@ -146,7 +146,13 @@ export async function bridgeFixture(t, { port }) {
     internalUser,
     teamId,
   );
-  const token = randomUUID();
+  const token = randomUUID(),
+    internalProfile = {
+      profileId: "inside",
+      teamId,
+      repository: "fixture/team",
+      peerInstallationId: externalInstallation,
+    };
   db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
     createHash("sha256").update(token).digest("hex"),
     internalUser,
@@ -158,14 +164,7 @@ export async function bridgeFixture(t, { port }) {
     documentImagesDir: join(dir, "images"),
     syncOptions: {
       installationId: internalInstallation,
-      profiles: [
-        {
-          profileId: "inside",
-          teamId,
-          repository: "fixture/team",
-          peerInstallationId: externalInstallation,
-        },
-      ],
+      profiles: [{ ...internalProfile }],
       transports: {
         inside: new GitCliTransport({
           directory: join(dir, "inside.git"),
@@ -280,6 +279,10 @@ export async function bridgeFixture(t, { port }) {
     teamId,
     db,
     app,
+    // What a recovery of the internal site needs (scripts/sync/sync-recover.mjs).
+    dir,
+    remote,
+    internalProfile,
     team,
     pgStore,
     github,
