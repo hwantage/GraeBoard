@@ -1,12 +1,8 @@
 import {
   appendFileSync,
-  closeSync,
   existsSync,
-  fstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
-  readSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -14,6 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 // The internal site's only link to its peer is Git, so what a cycle did and
@@ -25,18 +22,23 @@ export const SYNC_LOG_LEVELS = ["changes", "cycles", "git"];
 export const SYNC_LOG_DEFAULT_LEVEL = "cycles";
 export const SYNC_LOG_RETENTION_DAYS = 14;
 export const SYNC_LOG_PAGE = 200;
+// The bytes of lines a filtered read may pass over in one request. A day of
+// every Git command with few problems is read this much at a time from
+// `next`, so one request never reads and parses the whole day.
+export const SYNC_LOG_SCAN = 4 * 1024 * 1024;
 const TEAM = /^[A-Za-z0-9-]{1,64}$/,
   DATE = /^\d{4}-\d{2}-\d{2}$/,
   DAY = 86400000,
   CHUNK = 1024 * 1024;
 
-// The lines of a file from its end, each with the byte offset it starts at.
-// Read in chunks so a large day (every Git command logged) costs one page,
-// not the whole file. The offset stays valid while the file grows.
-function* linesBackward(file, before) {
-  const descriptor = openSync(file, "r");
+// The lines of a file from its end, each with the byte offset it starts at
+// and its length in bytes with the newline that ends it. Read in chunks so a large day (every Git command
+// logged) costs one page, not the whole file, and without holding the event
+// loop while the disk reads. The offset stays valid while the file grows.
+async function* linesBackward(file, before) {
+  const handle = await open(file, "r");
   try {
-    const size = fstatSync(descriptor).size;
+    const { size } = await handle.stat();
     let end = Math.min(
         Number.isInteger(before) && before >= 0 ? before : size,
         size,
@@ -46,7 +48,7 @@ function* linesBackward(file, before) {
     while (end > 0) {
       const start = Math.max(0, end - CHUNK),
         chunk = Buffer.alloc(end - start);
-      readSync(descriptor, chunk, 0, chunk.length, start);
+      await handle.read(chunk, 0, chunk.length, start);
       const data = tail.length ? Buffer.concat([chunk, tail]) : chunk;
       let stop = data.length;
       for (;;) {
@@ -55,17 +57,23 @@ function* linesBackward(file, before) {
         if (stop > newline + 1)
           yield {
             offset: start + newline + 1,
+            bytes: stop - newline,
             text: data.toString("utf8", newline + 1, stop),
           };
         stop = newline;
       }
       if (start === 0) {
-        if (stop > 0) yield { offset: 0, text: data.toString("utf8", 0, stop) };
+        if (stop > 0)
+          yield {
+            offset: 0,
+            bytes: stop + 1,
+            text: data.toString("utf8", 0, stop),
+          };
       } else tail = data.subarray(0, stop);
       end = start;
     }
   } finally {
-    closeSync(descriptor);
+    await handle.close();
   }
 }
 
@@ -224,30 +232,40 @@ export function createSyncLog(directory) {
       return existsSync(file) ? file : null;
     },
     // Newest first. Each entry's `line` is the byte offset its line starts
-    // at; `before` is the `next` of the previous page.
-    read(teamId, { date, before, limit = SYNC_LOG_PAGE, problems } = {}) {
+    // at; `before` is the `next` of the previous page. A filtered page may
+    // hold fewer entries, none included, and still have a `next`: the lines
+    // it passed over reached SYNC_LOG_SCAN.
+    async read(teamId, { date, before, limit = SYNC_LOG_PAGE, problems } = {}) {
       const entries = [];
-      let next = null;
+      let next = null,
+        skipped = 0;
       if (!valid(teamId, date)) return { entries, next };
       try {
-        for (const { offset, text } of linesBackward(
+        for await (const { offset, bytes, text } of linesBackward(
           path(teamId, date),
           before,
         )) {
-          let entry;
+          let entry = null;
           try {
             entry = JSON.parse(text);
           } catch {
             // A line cut short by a crash is skipped.
-            continue;
           }
-          if (!entry || typeof entry !== "object") continue;
-          if (problems && !syncLogProblem(entry)) continue;
-          if (entries.length === limit) {
-            next = entries.at(-1).line;
+          if (
+            entry &&
+            typeof entry === "object" &&
+            (!problems || syncLogProblem(entry))
+          ) {
+            if (entries.length === limit) {
+              next = entries.at(-1).line;
+              break;
+            }
+            entries.push({ ...entry, line: offset });
+          } else if ((skipped += bytes) >= SYNC_LOG_SCAN) {
+            // The first line of the file leaves nothing earlier to read.
+            next = offset || null;
             break;
           }
-          entries.push({ ...entry, line: offset });
         }
       } catch {
         // A missing or unreadable file is an empty day.

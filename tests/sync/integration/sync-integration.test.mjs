@@ -2,7 +2,15 @@ import { commitCanonicalForTest } from "../../support/canonical-storage-fixture.
 import { recoverSync } from "../../../scripts/sync/sync-recover.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -21,7 +29,10 @@ import {
   readEntity,
 } from "../../../server/sync/node/entities.mjs";
 import { decodeSnapshot } from "../../../server/sync/core/snapshot.mjs";
-import { syncLogDate } from "../../../server/sync/node/sync-log.mjs";
+import {
+  syncLogDate,
+  SYNC_LOG_SCAN,
+} from "../../../server/sync/node/sync-log.mjs";
 import {
   conflictChanges,
   diffSides,
@@ -1538,6 +1549,72 @@ test(
     assert.deepEqual(page.entries, all.slice(-2));
     assert.equal(page.next, null);
     assert.deepEqual(ok(await a.api(route + "?before=")).entries, all);
+  },
+);
+
+test(
+  "the sync log's problem filter reads a large quiet day a bounded part per request, serving other requests meanwhile, and the pages hold each problem once",
+  { timeout: 60000 },
+  async (t) => {
+    const { a, teamId, dir } = await fixture(t);
+    // Yesterday, at the level that writes every Git command: two problems
+    // among more quiet lines than two requests pass over.
+    const day = syncLogDate(Date.now() - 86400000),
+      folder = join(dir, "a-sync-logs", teamId),
+      file = join(folder, day + ".jsonl"),
+      line = (entry) =>
+        JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n",
+      quiet = line({
+        kind: "git",
+        command: "rev-parse",
+        args: "rev-parse HEAD",
+        ok: true,
+        ms: 2,
+      }),
+      block = quiet.repeat(Math.ceil((SYNC_LOG_SCAN * 1.5) / quiet.length));
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      file,
+      line({ kind: "cycle", ok: false, n: 0 }) +
+        block +
+        line({
+          kind: "state",
+          change: "mode",
+          from: "active",
+          to: "paused",
+          n: 1,
+        }) +
+        block,
+    );
+    const size = statSync(file).size,
+      route = `/teams/${teamId}/sync/log?date=${day}&problems=1`,
+      first = ok(await a.api(route));
+    assert.equal(first.date, day);
+    // One request reads a bounded part of the day, not all of it.
+    assert.deepEqual(first.entries, []);
+    assert.ok(first.next !== null);
+    assert.ok(size - first.next <= SYNC_LOG_SCAN + quiet.length);
+    // Following `next` as the dialog does; a request made meanwhile is
+    // answered between the parts.
+    const order = [],
+      other = a.api(`/teams/${teamId}/sync`).then((response) => {
+        ok(response);
+        order.push("other");
+      }),
+      seen = [];
+    let before = first.next,
+      pages = 1;
+    while (before !== null) {
+      const page = ok(await a.api(`${route}&before=${before}`));
+      seen.push(...page.entries.map((entry) => entry.n));
+      before = page.next;
+      pages++;
+    }
+    order.push("log");
+    await other;
+    assert.deepEqual(seen, [1, 0]);
+    assert.ok(pages >= 3, String(pages));
+    assert.deepEqual(order, ["other", "log"]);
   },
 );
 

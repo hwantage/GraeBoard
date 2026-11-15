@@ -456,7 +456,7 @@ function installTeamSyncRoutes(
   }
   // The synchronization log of this server: the team's lead reads and
   // downloads it, the system administrator also sets how much is written.
-  app.get("/api/teams/:id/sync/log", (req, res) => {
+  app.get("/api/teams/:id/sync/log", async (req, res) => {
     managed(req);
     const teamId = id(req),
       today = syncLogDate(),
@@ -465,6 +465,11 @@ function installTeamSyncRoutes(
       before = /^\d+$/.test(req.query.before || "")
         ? Number(req.query.before)
         : undefined;
+    const page = await sync.log.read(teamId, {
+      date,
+      problems: req.query.problems === "1",
+      ...(before !== undefined ? { before } : {}),
+    });
     res.set("Cache-Control", "no-store").json({
       level: sync.log.level(teamId),
       levels: SYNC_LOG_LEVELS,
@@ -472,11 +477,7 @@ function installTeamSyncRoutes(
       retentionDays: SYNC_LOG_RETENTION_DAYS,
       date,
       dates,
-      ...sync.log.read(teamId, {
-        date,
-        problems: req.query.problems === "1",
-        ...(before !== undefined ? { before } : {}),
-      }),
+      ...page,
     });
   });
   app.post("/api/teams/:id/sync/log/download", (req, res) => {

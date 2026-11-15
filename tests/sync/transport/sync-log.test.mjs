@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ import {
   createSyncLog,
   syncLogDate,
   SYNC_LOG_RETENTION_DAYS,
+  SYNC_LOG_SCAN,
 } from "../../../server/sync/node/sync-log.mjs";
 
 const team = "11111111-1111-4111-8111-111111111111";
@@ -29,7 +31,7 @@ function temporary(t) {
   return dir;
 }
 
-test("sync log writes dated JSON lines and reads them newest first in pages", (t) => {
+test("sync log writes dated JSON lines and reads them newest first in pages", async (t) => {
   const dir = temporary(t),
     log = createSyncLog(join(dir, "sync-logs")),
     today = syncLogDate();
@@ -40,7 +42,7 @@ test("sync log writes dated JSON lines and reads them newest first in pages", (t
   assert.deepEqual(readdirSync(join(dir, "sync-logs", team)), [
     today + ".jsonl",
   ]);
-  const first = log.read(team, { date: today, limit: 4 });
+  const first = await log.read(team, { date: today, limit: 4 });
   assert.deepEqual(
     first.entries.map((entry) => entry.n ?? entry.kind),
     ["state", 4, 3, 2],
@@ -48,7 +50,11 @@ test("sync log writes dated JSON lines and reads them newest first in pages", (t
   assert.ok(
     first.entries.every((entry) => !Number.isNaN(Date.parse(entry.at))),
   );
-  const second = log.read(team, { date: today, limit: 4, before: first.next });
+  const second = await log.read(team, {
+    date: today,
+    limit: 4,
+    before: first.next,
+  });
   assert.deepEqual(
     second.entries.map((entry) => entry.n),
     [1, 0],
@@ -56,9 +62,9 @@ test("sync log writes dated JSON lines and reads them newest first in pages", (t
   assert.equal(second.next, null);
   // Failures and state changes only.
   assert.deepEqual(
-    log
-      .read(team, { date: today, problems: true })
-      .entries.map((entry) => entry.n ?? entry.kind),
+    (await log.read(team, { date: today, problems: true })).entries.map(
+      (entry) => entry.n ?? entry.kind,
+    ),
     ["state", 2],
   );
   // A line cut short by a crash does not hide the others.
@@ -66,10 +72,10 @@ test("sync log writes dated JSON lines and reads them newest first in pages", (t
     log.file(team, today),
     readFileSync(log.file(team, today), "utf8") + '{"kind":"cy',
   );
-  assert.equal(log.read(team, { date: today }).entries.length, 6);
+  assert.equal((await log.read(team, { date: today })).entries.length, 6);
 });
 
-test("sync log levels are per team, default to cycles and apply without a restart", (t) => {
+test("sync log levels are per team, default to cycles and apply without a restart", async (t) => {
   const dir = temporary(t),
     directory = join(dir, "sync-logs"),
     log = createSyncLog(directory),
@@ -79,7 +85,7 @@ test("sync log levels are per team, default to cycles and apply without a restar
   log.git(team, { command: "fetch", ok: true });
   log.git(team, { command: "fetch", ok: false, code: 128, stderr: "fatal" });
   assert.deepEqual(
-    log.read(team, { date: today }).entries.map((entry) => entry.ok),
+    (await log.read(team, { date: today })).entries.map((entry) => entry.ok),
     [false],
   );
   log.setLevel(team, "git");
@@ -87,7 +93,7 @@ test("sync log levels are per team, default to cycles and apply without a restar
   assert.equal(other.level(team), "git");
   assert.equal(other.level("22222222-2222-4222-8222-222222222222"), "cycles");
   other.git(team, { command: "fetch", ok: true });
-  assert.equal(log.read(team, { date: today }).entries.length, 2);
+  assert.equal((await log.read(team, { date: today })).entries.length, 2);
   assert.throws(() => log.setLevel(team, "verbose"));
   assert.throws(() => log.setLevel("../x", "git"));
   // A damaged settings file falls back to the default.
@@ -95,7 +101,7 @@ test("sync log levels are per team, default to cycles and apply without a restar
   assert.equal(log.level(team), "cycles");
 });
 
-test("sync log keeps fourteen days, ignores unsafe names and never throws", (t) => {
+test("sync log keeps fourteen days, ignores unsafe names and never throws", async (t) => {
   const dir = temporary(t),
     directory = join(dir, "sync-logs"),
     log = createSyncLog(directory),
@@ -110,7 +116,10 @@ test("sync log keeps fourteen days, ignores unsafe names and never throws", (t) 
   assert.ok(existsSync(join(directory, team, "notes.jsonl")));
   log.write("../escape", { kind: "cycle" });
   assert.equal(log.file(team, "../../x"), null);
-  assert.deepEqual(log.read("../escape", { date: syncLogDate() }).entries, []);
+  assert.deepEqual(
+    (await log.read("../escape", { date: syncLogDate() })).entries,
+    [],
+  );
   assert.ok(!existsSync(join(dir, "escape")));
   log.removeTeam(team);
   assert.deepEqual(log.dates(team), []);
@@ -136,11 +145,11 @@ test("sync log keeps fourteen days, ignores unsafe names and never throws", (t) 
   off.write(team, { kind: "cycle" });
   off.git(team, { ok: false });
   assert.equal(off.level(team), "cycles");
-  assert.deepEqual(off.read(team, { date: syncLogDate() }).entries, []);
+  assert.deepEqual((await off.read(team, { date: syncLogDate() })).entries, []);
   assert.deepEqual(off.dates(team), []);
 });
 
-test("sync log pages a large day in chunks and its positions stay valid while the file grows", (t) => {
+test("sync log pages a large day in chunks and its positions stay valid while the file grows", async (t) => {
   const dir = temporary(t),
     log = createSyncLog(join(dir, "sync-logs")),
     today = syncLogDate(),
@@ -154,7 +163,7 @@ test("sync log pages a large day in chunks and its positions stay valid while th
   let before,
     pages = 0;
   do {
-    const page = log.read(team, { date: today, before, limit: 120 });
+    const page = await log.read(team, { date: today, before, limit: 120 });
     seen.push(...page.entries.map((entry) => entry.n));
     // New entries arrive while an older page is being read.
     log.write(team, { kind: "cycle", ok: true, n: 1000 + pages });
@@ -166,16 +175,75 @@ test("sync log pages a large day in chunks and its positions stay valid while th
     Array.from({ length: 502 }, (_, i) => 501 - i),
   );
   assert.equal(pages, 5);
-  assert.deepEqual(
-    log
-      .read(team, { date: today, problems: true })
-      .entries.map((entry) => entry.n),
-    [450, 400, 350, 300, 250, 200, 150, 100, 50, 0],
-  );
+  // The problems among them, read a bounded part at a time.
+  const problems = [];
+  before = undefined;
+  do {
+    const page = await log.read(team, { date: today, before, problems: true });
+    problems.push(...page.entries.map((entry) => entry.n));
+    before = page.next;
+  } while (before !== null);
+  assert.deepEqual(problems, [450, 400, 350, 300, 250, 200, 150, 100, 50, 0]);
   assert.ok(
-    log
-      .read(team, { date: today, limit: 3 })
-      .entries.every((entry) => entry.filler === undefined),
+    (await log.read(team, { date: today, limit: 3 })).entries.every(
+      (entry) => entry.filler === undefined,
+    ),
+  );
+});
+
+test("a filtered read passes over a bounded part of a day per request and continues from next without losing or repeating an entry", async (t) => {
+  const dir = temporary(t),
+    log = createSyncLog(join(dir, "sync-logs")),
+    today = syncLogDate(),
+    file = join(dir, "sync-logs", team, today + ".jsonl"),
+    line = (entry) =>
+      JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n",
+    quiet = line({ kind: "git", command: "rev-parse", ok: true, ms: 2 }),
+    // More quiet lines than one request passes over, twice, around a
+    // problem and a quiet line longer than the bound.
+    block = quiet.repeat(Math.ceil((SYNC_LOG_SCAN * 1.2) / quiet.length)),
+    long = line({ kind: "git", ok: true, filler: "x".repeat(SYNC_LOG_SCAN) });
+  mkdirSync(join(dir, "sync-logs", team), { recursive: true });
+  writeFileSync(
+    file,
+    line({ kind: "cycle", ok: false, n: 0 }) +
+      block +
+      line({ kind: "state", n: 1 }) +
+      long +
+      block,
+  );
+  const size = statSync(file).size,
+    first = await log.read(team, { date: today, problems: true });
+  // The newest quiet lines fill the first request: nothing to show yet, and
+  // the rest of the day is left to `next`.
+  assert.deepEqual(first.entries, []);
+  assert.ok(first.next !== null);
+  assert.ok(size - first.next <= SYNC_LOG_SCAN + quiet.length);
+  // An entry written meanwhile is after the cursor and not in these pages.
+  log.write(team, { kind: "cycle", ok: false, n: 2 });
+  const seen = [];
+  let before = first.next,
+    pages = 1;
+  while (before !== null) {
+    const page = await log.read(team, { date: today, before, problems: true });
+    seen.push(...page.entries.map((entry) => entry.n));
+    // Every request moves on, the one passing over the long line included.
+    assert.ok(page.next === null || page.next < before);
+    before = page.next;
+    pages++;
+  }
+  assert.deepEqual(seen, [1, 0]);
+  assert.ok(pages >= 4, String(pages));
+  // A read without the filter is bounded by its page, not by the lines.
+  assert.equal(
+    (await log.read(team, { date: today, limit: 5 })).entries.length,
+    5,
+  );
+  assert.deepEqual(
+    (await log.read(team, { date: today, problems: true })).entries.map(
+      (entry) => entry.n,
+    ),
+    [2],
   );
 });
 

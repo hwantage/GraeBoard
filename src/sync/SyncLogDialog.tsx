@@ -248,18 +248,29 @@ export default function SyncLogDialog({
   const [error, setError] = useState("");
   const request = useRef(0);
   const load = useCallback(
-    async (before?: number) => {
+    // `before` is a position in the file of `day`: a page continues its own day.
+    async (before?: number, day = date) => {
       const id = ++request.current;
       setBusy(true);
       setError("");
       try {
-        const query = new URLSearchParams();
-        if (date) query.set("date", date);
-        if (problems) query.set("problems", "1");
-        if (before !== undefined) query.set("before", String(before));
-        const result = await api<SyncLogPage>(
-          `/teams/${teamId}/sync/log?${query}`,
-        );
+        const read = (from: string, cursor?: number) => {
+          const query = new URLSearchParams();
+          if (from) query.set("date", from);
+          if (problems) query.set("problems", "1");
+          if (cursor !== undefined) query.set("before", String(cursor));
+          return api<SyncLogPage>(`/teams/${teamId}/sync/log?${query}`);
+        };
+        let result = await read(day, before);
+        // The server reads a filtered day a part at a time: a part with
+        // nothing to show continues from `next` until entries or the day's
+        // start.
+        while (
+          id === request.current &&
+          !result.entries.length &&
+          result.next !== null
+        )
+          result = await read(result.date, result.next);
         if (id !== request.current) return;
         setPage(result);
         setEntries((current) =>
@@ -416,7 +427,10 @@ export default function SyncLogDialog({
       )}
       {page?.next !== null && page?.next !== undefined && (
         <div className="sync-log-more">
-          <Button {...busyProps(busy)} onClick={() => void load(page.next!)}>
+          <Button
+            {...busyProps(busy)}
+            onClick={() => void load(page.next!, page.date)}
+          >
             이전 기록 더 보기
           </Button>
         </div>
