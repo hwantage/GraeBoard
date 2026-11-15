@@ -299,6 +299,62 @@ test("T2/T3/T5 immutable receipts preserve conflicts and dependent final drafts"
   );
   assert.equal(state.entities[entityId("person", ["p"])].payload.name, "first");
 });
+// The internal site reads original formats in rule ID order; shared state may
+// hold the same rules in another order. The reducer still compares the whole
+// list, order included, so recorded history replays to the same receipts.
+// Capture sends a base in the shared order instead
+// (tests/sync/integration/worker-format-conflicts.test.mjs).
+test("formats rules stay an ordered list in protocols 3 to 5, so recorded history replays unchanged", () => {
+  const rule = (id) => ({
+      id,
+      rows: [id],
+      keys: ["title"],
+      excludeKeys: [],
+      style: { bold: true },
+      orders: { bold: 1 },
+    }),
+    [a, b, c] = ["a", "b", "c"].map(rule);
+  for (const version of [3, 4, 5]) {
+    const formats = (id, desired, base = null) => ({
+      ...operation(id, [
+        {
+          entity: "formats",
+          key: [],
+          generation: "g",
+          baseVersion: null,
+          action: base ? "edit" : "create",
+          base,
+          desired,
+          fields: ["rules"],
+        },
+      ]),
+      protocol: version,
+      reducer: version,
+    });
+    const state = reduce(
+      markedState(version),
+      formats("create", { rules: [b, a] }),
+    ).state;
+    const idOrder = reduce(
+      state,
+      formats("id-order", { rules: [a, b, c] }, { rules: [a, b] }),
+    ).state;
+    assert.equal(idOrder.receipts["id-order"].result, "conflict", version);
+    assert.equal(
+      idOrder.conflicts["id-order"].reason,
+      "Concurrent field change",
+    );
+    const sharedOrder = reduce(
+      state,
+      formats("shared-order", { rules: [a, b, c] }, { rules: [b, a] }),
+    ).state;
+    assert.equal(sharedOrder.receipts["shared-order"].result, "applied");
+    assert.deepEqual(
+      sharedOrder.entities[entityId("formats", [])].payload.rules,
+      [a, b, c],
+    );
+  }
+});
 test("T4 deterministic markdown merges only independent ranges", () => {
   assert.equal(
     mergeMarkdown("one\ntwo\nthree", "ONE\ntwo\nthree", "one\ntwo\nTHREE"),
