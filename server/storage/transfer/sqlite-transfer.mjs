@@ -1,4 +1,5 @@
 import { retentionView } from "../../sync/node/visibility.mjs";
+import { taskDataRows } from "../../../shared/transfer/task-data.js";
 import { exportDocumentImages } from "../../documents/document-images.mjs";
 import { memoContents } from "../../documents/memo-storage.mjs";
 import {
@@ -99,7 +100,7 @@ export class SqliteTransferRepository {
         revision: z.string().optional(),
         year: yearSchema,
         startMonth: z.number().int().min(1).max(12).default(1),
-        format: z.enum(["xlsx", "csv", "json"]),
+        format: z.enum(["xlsx", "csv", "json-data", "json"]),
         scope: z.enum(["view", "all"]),
         taskIds: z.array(z.string().uuid()).max(20000).default([]),
         keys: z.array(z.string()).max(150).optional(),
@@ -126,7 +127,11 @@ export class SqliteTransferRepository {
       retentionView(db, d.teamId).requireVisible("sheetClone", [
         sheetCloneRow.id,
       ]);
-    const sheetClone = sheetCloneRow ? readSheetClone(db, sheetCloneRow) : null;
+    const sheetClone = sheetCloneRow
+      ? d.format === "json-data"
+        ? decodeSheetClone(sheetCloneRow.data)
+        : readSheetClone(db, sheetCloneRow)
+      : null;
     requireThat(
       !sheetCloneRow || d.year === sheetCloneRow.year,
       409,
@@ -172,6 +177,12 @@ export class SqliteTransferRepository {
         : {}),
     });
     const filename = `graeboard-${d.year}${startMonth > 1 ? `-${d.year + 1}` : ""}.${d.format}`;
+    if (d.format === "json-data")
+      return transferDownload(
+        JSON.stringify(taskDataRows(tasks, keys, users, settings), null, 2),
+        "application/json",
+        filename.replace(/\.json-data$/, "-tasks.json"),
+      );
     if (d.format === "xlsx")
       return transferDownload(
         Buffer.from(await makeWorkbook(tasks, keys, users, d.year, settings)),

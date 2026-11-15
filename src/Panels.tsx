@@ -549,13 +549,16 @@ export function ExportPanel({
         <Select value={format} onChange={(e) => setFormat(e.target.value)}>
           <option value="xlsx">Excel (.xlsx) · 값과 기본 서식</option>
           <option value="csv">CSV (.csv) · 값만</option>
-          <option value="json">JSON (.json) · ID·서식·사본 보관</option>
+          <option value="json-data">JSON (.json) · 업무 데이터</option>
+          <option value="json">JSON (.json) · 상세 자료 보관</option>
         </Select>
       </label>
       <p className="field-help">
-        {sheetClone
-          ? `‘${sheetClone.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON에 포함됩니다.`
-          : "JSON 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
+        {format === "json-data"
+          ? "업무마다 속성 이름과 값을 담은 배열로 내보냅니다. 주차 칸, 서식, 문서·메모·이미지는 포함하지 않습니다."
+          : sheetClone
+            ? `‘${sheetClone.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON 상세 자료 보관에 포함됩니다.`
+            : "JSON 상세 자료 보관의 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
       </p>
       <ErrorNote error={error} />
       <footer className="form-actions">

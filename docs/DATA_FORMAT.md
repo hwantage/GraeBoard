@@ -6,16 +6,18 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 
 ## 기준
 
-표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
+표시 브랜드는 그래보드(GraeBoard)이며 상세 자료 보관 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`이며 업무 데이터 JSON에는 `-tasks`가 붙습니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까지는 사본 목록이 `reports`, v7부터 `sheetClones`). `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 34입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+상세 자료 보관 JSON의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까지는 사본 목록이 `reports`, v7부터 `sheetClones`). `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 34입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+
+**JSON · 업무 데이터**는 `POST /api/export`의 `format:"json-data"`로 받습니다. 현재 보기·선택 기간 수행 업무·전체 모두 최상위가 배열이며, 업무마다 선택된 활성 속성의 표시 이름을 키로 한 객체 하나를 담습니다. 날짜 주차 열·셀 메타데이터·내부 ID·문서·이미지·보기 설정은 제외합니다. 담당자 ID와 선택값 ID는 원본 또는 사본의 이름으로 바꾸고, 이름을 찾을 수 없으면 원래 값을 보존합니다. 단일 담당자는 문자열/`null`, 다중 담당자는 문자열 배열(비었으면 `[]`), 다른 빈 값은 `null`입니다. 숫자 0·불리언 false·날짜 문자열·진척률 텍스트는 변환하지 않습니다. 읽기 전용 업무 활용 형식이며 `schemaVersion`이나 보관용 사전은 넣지 않습니다. 파일명은 `graeboard-연도-tasks.json`입니다. 기존 `format:"json"` 요청은 계속 v7 **상세 자료 보관**을 반환합니다. 이 문서의 v7 형식·사전·본문·이미지 설명은 상세 자료 보관에 해당하며 DB 저장 형식·백업·동기화에는 영향이 없습니다.
 
 ## 버전과 운영 호환성
 
 | 구분               | 현재 저장소 기준                             | 확인 위치와 의미                                                                                                 |
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
-| JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
+| JSON 상세 보관 형식 | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
 | DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
 | 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
