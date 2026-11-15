@@ -18,6 +18,15 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-15 — 원본 공통 서식의 거짓 충돌과 덮어쓰기 실패
+
+- 증상(개발 내부 환경): 한 사용자가 사내에서 원본 서식을 이어서 바꾼 두 건이 `Concurrent field change` 충돌로 보관됐습니다. 첫 충돌을 나중에 수정으로 덮어쓴 뒤 둘째를 덮어쓰면 `UNIQUE constraint failed: format_rules.team_id, format_rules.selector`로 500이 났습니다.
+- 원인 1: 외부는 새 규칙을 공유본 목록 끝에 붙이고, 사내 SQLite는 규칙 ID 순으로 읽습니다. 사내 캡처가 ID 순 목록을 base로 보냈고, reducer는 `rules`를 순서까지 비교하므로 내용이 같은 공유값과 다르다고 판정했습니다. 두 충돌의 base와 공유값은 같은 버전이고 규칙 내용도 같았으며 순서만 달랐습니다.
+- 원인 2: `writeFormatting`이 새 규칙을 먼저 넣고 빠진 규칙을 나중에 지웠습니다. 같은 범위(`selector`)를 다른 ID 규칙이 이어받으면 이전 규칙이 남은 채로 UNIQUE에 걸렸습니다. 두 거짓 충돌의 추가 규칙은 범위·서식 값이 같고 ID·`orders`만 달랐습니다. 같은 범위·다른 ID 규칙을 받는 사내 수신 반영도 같은 이유로 실패합니다(수정 전 main에 새 통합 검사를 돌려 확인).
+- 수정: 캡처가 서식 base를 공유값(같은 서식의 미전송 명령이 있으면 그 desired)의 순서로 맞추고, 규칙 내용이 그대로인 서식 쓰기는 명령을 만들지 않습니다. desired는 이전처럼 ID 순입니다. `writeFormatting`은 빠진 규칙을 먼저 지웁니다. reducer·명령 형식·DB 스키마·저장 형식은 바꾸지 않았으므로 과거 이력의 재생 결과는 같고, 이미 보관된 충돌은 그대로 남아 덮어쓰기로 해결할 수 있습니다.
+- 회귀 검사: `worker-format-conflicts.test.mjs`(실제 SQLite 앱·PostgreSQL 외부·bare Git), `sync-resolve.test.mjs`의 서식 덮어쓰기·롤백, `sync-protocol.test.mjs`의 프로토콜 3~5 순서 비교 고정. 수정 전 main `1b3e807`에서는 앞의 둘이 실패했습니다(첫 사내 연속 편집이 `conflict`, 덮어쓰기가 500 UNIQUE). 캡처만 고친 상태에서는 통합 검사가 같은 범위 규칙의 수신 반영에서 UNIQUE로 실패했습니다. 셋째는 수정 전후 모두 통과합니다.
+- 검증(커밋 `71efd30`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 817개 통과·실패 0, `npm run check:structure` 오류 0, `npm run check:architecture` 위반 0, `npm run build`·`npm run build:edge` 성공. 브라우저는 Node 24로 `tests/browser/sheet/common-formatting.spec.ts`·`tests/browser/sync/data-sync.spec.ts`를 Chromium·Firefox·WebKit에서 실행해 78개 통과했습니다. 개발 DB의 실제 충돌은 읽기 전용으로만 확인했고 해결 요청은 보내지 않았습니다.
+
 ## 2026-11-14 — 외부 서버 요청의 DB 왕복 줄이기 (2차)
 
 - 측정(개발 외부 사이트): DB 왕복 한 번이 약 0.065초입니다(외부 서버는 서울, 개발 DB는 싱가포르). 로그인 확인만 하는 요청이 6회·0.47초, 기본 정보 약 21회·1.4~1.8초였습니다. 1차 수정(#164) 뒤 원본 화면 3행 서식 저장은 8.0초 → 2.9~4.4초였습니다.
