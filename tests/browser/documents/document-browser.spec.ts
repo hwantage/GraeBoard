@@ -1393,6 +1393,95 @@ test("원본 목록 맨 아래의 꼬리 메모는 검색과 관계없이 남고
   ).toContainText("작업 문서로 이동하기 전에 저장할 메모");
 });
 
+test("원본·사본의 열린 꼬리 메모 제목을 다시 누르면 저장 후 목록과 상세를 닫고 다시 열 수 있다", async ({
+  page,
+}) => {
+  const owners = [
+    { source: "live", base: `/teams/${teamId}/years/2026/memos` },
+    { source: copyA, base: `/sheet-clones/${copyA}/memos` },
+  ];
+  const memos = [];
+  for (const owner of owners)
+    memos.push({
+      ...owner,
+      id: await addMemo(page, owner.base, "접을 메모", "기존 메모 본문"),
+    });
+  await openBrowser(page, "all");
+  for (const { source, base, id } of memos) {
+    await expandSource(page, source);
+    const item = memoItem(page, source),
+      title = item.getByRole("button", { name: "꼬리 메모", exact: true }),
+      toggle = item.locator(".document-browser-entry-toggle");
+    await title.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(memoRich(page)).toContainText("기존 메모 본문");
+    await detail(page)
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    await memoRaw(page).fill("제목을 다시 눌러 닫기 전에 저장할 메모");
+    await title.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(item.locator(".document-browser-documents")).toHaveCount(0);
+    await expect(
+      detail(page).getByRole("heading", { name: "살펴볼 문서를 선택하세요" }),
+    ).toBeVisible();
+    expect((await get(page, `${base}/${id}`)).markdown).toBe(
+      "제목을 다시 눌러 닫기 전에 저장할 메모",
+    );
+    await title.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(memoRich(page)).toContainText(
+      "제목을 다시 눌러 닫기 전에 저장할 메모",
+    );
+    await title.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
+test("꼬리 메모 저장이 실패하면 제목을 다시 눌러도 닫지 않고 입력을 보존한다", async ({
+  page,
+}) => {
+  const base = `/teams/${teamId}/years/2026/memos`,
+    id = await addMemo(page, base, "저장 확인 메모", "기존 본문");
+  await openBrowser(page, "live");
+  const item = memoItem(page),
+    title = item.getByRole("button", { name: "꼬리 메모", exact: true }),
+    toggle = item.locator(".document-browser-entry-toggle");
+  await title.click();
+  await expect(memoRich(page)).toContainText("기존 본문");
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  let fail = true;
+  await page.route(`**/api${base}/${id}`, (route) =>
+    fail && route.request().method() === "PUT"
+      ? route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "검증용 메모 저장 실패" }),
+        })
+      : route.continue(),
+  );
+  await memoRaw(page).fill("저장에 실패해도 남아 있어야 할 메모");
+  await title.click();
+  await expect(
+    page.getByText("저장을 완료하지 못했습니다.", { exact: false }),
+  ).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(memoRaw(page)).toHaveValue(
+    "저장에 실패해도 남아 있어야 할 메모",
+  );
+  fail = false;
+  await detail(page)
+    .getByRole("button", { name: "저장 다시 시도", exact: true })
+    .click();
+  await title.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect((await get(page, `${base}/${id}`)).markdown).toBe(
+    "저장에 실패해도 남아 있어야 할 메모",
+  );
+});
+
 test("전체 범위에서 사본마다 자기 꼬리 메모를 붙이고 사본 메모 편집은 원본을 바꾸지 않는다", async ({
   page,
 }, info) => {
@@ -1571,6 +1660,17 @@ test("휴대폰 폭에서도 꼬리 메모는 작업처럼 상세를 열고 목�
   await expect(
     item.getByRole("button", { name: "휴대폰 메모", exact: true }),
   ).toHaveAttribute("aria-current", "true");
+  await item.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await expect(memoRich(page)).toBeVisible();
+  await expect(memoRich(page)).toContainText("좁은 화면에서 읽는 메모");
+  await detail(page).getByRole("button", { name: "목록으로" }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(memoRich(page)).toBeVisible();
+  await item.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await expect(
+    item.getByRole("button", { name: "꼬리 메모 펼치기" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(memoRich(page)).toHaveCount(0);
 });
 
 test("꼬리 메모는 불러오는 중·실패 후 다시 시도를 표시하고 다음 작업 더 보기 뒤에도 목록 맨 아래에 남는다", async ({

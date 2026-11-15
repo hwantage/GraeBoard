@@ -652,6 +652,26 @@ export default function DocumentBrowser({
   // listed memo was chosen, as task titles and documents do.
   async function selectMemo(source: Source, documentId = "") {
     await leave(async () => {
+      // The heading also closes the currently shown memos. Returning to the
+      // list on mobile keeps the selection, so its heading must still reopen it.
+      if (
+        !documentId &&
+        selected?.memo &&
+        selected.source === source.id &&
+        memosOpen.has(source.id) &&
+        split.current
+          ?.querySelector(".document-browser-detail")
+          ?.getClientRects().length
+      ) {
+        setMemosOpen((old) => {
+          const next = new Set(old);
+          next.delete(source.id);
+          return next;
+        });
+        pendingMemo.current = "";
+        resetSelection();
+        return;
+      }
       if (selected?.memo && selected.source === source.id) {
         if (
           documentId &&
