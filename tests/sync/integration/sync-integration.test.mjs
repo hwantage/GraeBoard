@@ -37,6 +37,7 @@ import {
   conflictChanges,
   diffSides,
 } from "../../../shared/sync/conflict-diff.js";
+import { writerOpId } from "../../../shared/sync/conflict-origin.js";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-sync-")),
@@ -443,6 +444,17 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
   assert.equal(conflict.origin.held.site, "internal");
   assert.equal(conflict.origin.held.actor, "테스트");
   assert.equal(change.writer.site, "external");
+  // a's operation is not in b's outbox: its author comes from b's Git clone.
+  const aWriter = a.db
+    .prepare(
+      "SELECT json_extract(payload,'$.actorRef') actor_ref,json_extract(payload,'$.createdAt') created_at FROM sync_outbox WHERE team_id=? AND op_id=?",
+    )
+    .get(teamId, writerOpId(Object.values(conflict.current)[0]));
+  assert.ok(aWriter?.created_at);
+  assert.deepEqual(
+    [change.writer.actorId, change.writer.actor, change.writer.createdAt],
+    [aWriter.actor_ref, "테스트", aWriter.created_at],
+  );
   const beforeHead = await b.transport.readHead();
   const resolution = ok(
     await b.api(
@@ -500,6 +512,18 @@ test("conflict resolution projects immediately and a follow-up API edit depends 
     stateHash(a.app.locals.sync.store(teamId).readState()),
     stateHash(b.app.locals.sync.store(teamId).readState()),
   );
+  // The resolution history still names who wrote the record it met, in the
+  // list and in the one conflict read whole.
+  const history = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts?status=resolved`),
+  ).conflicts.find((row) => row.conflictId === conflict.conflictId);
+  assert.equal(history.resolved, true);
+  assert.deepEqual(history.origin, conflict.origin);
+  const resolved = ok(
+    await b.api(`/teams/${teamId}/sync/conflicts/${conflict.conflictId}`),
+  );
+  assert.equal(resolved.resolved, true);
+  assert.deepEqual(resolved.origin, conflict.origin);
 });
 test("a peer task created and deleted before this site received it keeps its trash row for cells and documents", async (t) => {
   const { a, b, teamId } = await fixture(t);

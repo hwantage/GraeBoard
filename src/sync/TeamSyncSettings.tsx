@@ -442,7 +442,7 @@ export default function TeamSyncSettings({
                     <dt>충돌 보관</dt>
                     <dd className="team-sync-conflict-count">
                       {status.conflicts}건
-                      {status.conflicts > 0 && canContribute(user, team.id) && (
+                      {canContribute(user, team.id) && (
                         // The same button as next to the warning in the top bar.
                         <button
                           type="button"

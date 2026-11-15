@@ -14,8 +14,10 @@ import {
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
-  conflictSummary,
+  CONFLICT_PAGE_SIZE,
+  conflictPage,
   pendingResolutions,
+  resolvesAny,
 } from "../../../shared/sync/conflict-origin.js";
 import { plainConflictPayloads } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 
@@ -26,6 +28,22 @@ import {
   syncLogDate,
 } from "./sync-log.mjs";
 const id = (req) => req.params.id;
+// Parse each of this page's JSON documents once in SQLite, and return only
+// metadata to Node. Large before/after images are fetched on expansion.
+const CONFLICT_SUMMARIES = `WITH conflicts AS MATERIALIZED (
+  SELECT conflict_id, jsonb(payload) p FROM sync_conflicts
+  WHERE team_id=? AND conflict_id IN (SELECT value FROM json_each(?))
+)
+SELECT json_object(
+  'conflictId', p->'$.conflictId', 'opId', p->'$.opId', 'reason', p->'$.reason',
+  'resolution', CASE WHEN json_extract(p, '$.resolution') IS NOT NULL AND json_extract(p, '$.resolution') <> 0 THEN 1 END,
+  'operation', json(jsonb_set(jsonb_extract(p, '$.operation'), '$.changes', jsonb((
+    SELECT json_group_array(json_object('entity', jsonb_extract(p, fullkey||'.entity'), 'key', json(jsonb_extract(p, fullkey||'.key'))))
+    FROM json_each(p, '$.operation.changes'))))),
+  'current', CASE WHEN json_type(p, '$.current')='object' THEN json((
+    SELECT json_group_object(key, json(CASE WHEN type='object' THEN jsonb_remove(jsonb_extract(p, fullkey), '$.payload') ELSE jsonb_extract(p, fullkey) END))
+    FROM json_each(p, '$.current'))) END
+) payload FROM conflicts ORDER BY conflict_id`;
 // Records who asked for a synchronization action and how it ended. Only an
 // authorized request is written, so the log holds no attempts by outsiders.
 const logged = (sync, authorize, action, handler) => async (req, res) => {
@@ -540,14 +558,29 @@ function installTeamSyncRoutes(
   // per side. One conflict (`conflictId`) is sent whole.
   const conflictViews = async (req, conflictId = null) => {
     conflictTeam(req.user, id(req));
+    const page = conflictPage(req.query),
+      ids = conflictId
+        ? [conflictId]
+        : db
+            .prepare(
+              `SELECT conflict_id FROM sync_conflicts WHERE team_id=? AND conflict_id>?${page.status === "all" ? "" : page.status === "resolved" ? " AND resolution IS NOT NULL" : " AND resolution IS NULL"} ORDER BY conflict_id LIMIT ?`,
+            )
+            .all(id(req), page.after, CONFLICT_PAGE_SIZE + 1)
+            .map((row) => row.conflict_id),
+      next =
+        ids.length > CONFLICT_PAGE_SIZE ? ids[CONFLICT_PAGE_SIZE - 1] : null;
     const s = sync.store(id(req)),
-      whole = db
+      conflicts = db
         .prepare(
-          "SELECT payload FROM sync_conflicts WHERE team_id=? AND (? IS NULL OR conflict_id=?) ORDER BY conflict_id",
+          conflictId
+            ? "SELECT payload FROM sync_conflicts WHERE team_id=? AND conflict_id=?"
+            : CONFLICT_SUMMARIES,
         )
-        .all(id(req), conflictId, conflictId)
+        .all(
+          id(req),
+          conflictId || JSON.stringify(ids.slice(0, CONFLICT_PAGE_SIZE)),
+        )
         .map((row) => JSON.parse(row.payload)),
-      conflicts = conflictId ? whole : whole.map(conflictSummary),
       link = s.readLink(),
       head = link?.canonical_head;
     // This site's own operations among the held ones and the current writers;
@@ -565,12 +598,13 @@ function installTeamSyncRoutes(
       ),
       open = conflicts.filter((c) => !c.resolution);
     // External operations among them: their authors come from this site's
-    // Git clone. The list still works without them.
+    // Git clone, for this page's conflicts in either tab. The list still
+    // works without them.
     let remote = new Map();
     try {
       remote = await sync.readOperationAuthors(
         id(req),
-        conflictOpIds(open).filter((opId) => !local.has(opId)),
+        conflictOpIds(conflicts).filter((opId) => !local.has(opId)),
       );
     } catch {
       // Authors stay unknown; sites are still shown.
@@ -590,37 +624,58 @@ function installTeamSyncRoutes(
           )
           .map((row) => [JSON.parse(row.entity_key)[0], row.name]),
       ),
-      // What a saved resolution chose is told from the later values.
+      // Only this page's unpublished resolutions need full later values.
+      pending = open.length
+        ? db
+            .prepare(
+                "SELECT payload FROM sync_outbox WHERE team_id=? AND status<>'acknowledged' AND EXISTS (SELECT 1 FROM json_each(payload, '$.resolves') WHERE value IN (SELECT value FROM json_each(?))) ORDER BY local_seq",
+            )
+            .all(id(req), JSON.stringify(open.map((c) => c.conflictId)))
+            .map((row) => JSON.parse(row.payload))
+        : [],
+      decided = open.filter((c) => resolvesAny(pending, [c.conflictId])),
       resolutions = pendingResolutions(
-        whole.filter((c) => !c.resolution),
-        s.readPending(),
+        conflictId || !decided.length
+          ? decided
+          : db
+              .prepare(
+                "SELECT payload FROM sync_conflicts WHERE team_id=? AND conflict_id IN (SELECT value FROM json_each(?))",
+              )
+              .all(id(req), JSON.stringify(decided.map((c) => c.conflictId)))
+              .map((row) => JSON.parse(row.payload)),
+        pending,
       );
-    return conflicts.map((c) => ({
-      conflictId: c.conflictId,
-      opId: c.opId,
-      createdAt: c.operation.createdAt,
-      result: c.reason,
-      target: c.operation.changes
-        .map((x) => x.entity + " " + x.key.join("/"))
-        .join(", "),
-      ...(conflictId ? plainConflictPayloads(c) : {}),
-      resolved: !!c.resolution,
-      expectedHead: head,
-      origin: conflictOrigin(c, {
-        site: "internal",
-        local,
-        remote,
-        names,
-        writerEpoch: link?.writer_epoch,
-      }),
-      pendingResolution: resolutions.get(c.conflictId) || null,
-    }));
+    return {
+      next,
+      conflicts: conflicts.map((c) => ({
+        conflictId: c.conflictId,
+        opId: c.opId,
+        createdAt: c.operation.createdAt,
+        result: c.reason,
+        target: c.operation.changes
+          .map((x) => x.entity + " " + x.key.join("/"))
+          .join(", "),
+        ...(conflictId ? plainConflictPayloads(c) : {}),
+        resolved: !!c.resolution,
+        expectedHead: head,
+        origin: conflictOrigin(c, {
+          site: "internal",
+          local,
+          remote,
+          names,
+          writerEpoch: link?.writer_epoch,
+        }),
+        pendingResolution: resolutions.get(c.conflictId) || null,
+      })),
+    };
   };
   app.get("/api/teams/:id/sync/conflicts", async (req, res) => {
-    res.json({ conflicts: await conflictViews(req) });
+    res.json(await conflictViews(req));
   });
   app.get("/api/teams/:id/sync/conflicts/:conflictId", async (req, res) => {
-    const [conflict] = await conflictViews(req, req.params.conflictId);
+    const {
+      conflicts: [conflict],
+    } = await conflictViews(req, req.params.conflictId);
     requireThat(conflict, 404, "충돌을 찾을 수 없습니다.");
     res.json(conflict);
   });
