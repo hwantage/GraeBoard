@@ -34,6 +34,7 @@ import {
   documentLinkKey,
   refreshDocumentLinkTitles,
   type DocumentLinkOpener,
+  type DocumentLinkNavigation,
   type DocumentLinkTarget,
 } from "../documents/document-links";
 import { parseDocumentLinkPath } from "../../shared/documents/document-links.js";
@@ -498,15 +499,19 @@ function Workspace({
     teamId: string;
   } | null>(null);
   // Detail windows open now, oldest first, with their own close paths.
-  const openDetails = useRef<{ key: string; close: () => Promise<boolean> }[]>(
-    [],
-  );
+  const openDetails = useRef<
+    {
+      key: string;
+      close: () => Promise<boolean>;
+      navigation?: DocumentLinkNavigation;
+    }[]
+  >([]);
   const openingTargets = useRef(new Set<string>());
   const openLink = useRef(async (_target: DocumentLinkTarget) => {});
   const documentLinks = useMemo<DocumentLinkOpener>(
     () => ({
-      register(target, close) {
-        const entry = { key: documentLinkKey(target), close };
+      register(target, close, navigation) {
+        const entry = { key: documentLinkKey(target), close, navigation };
         openDetails.current.push(entry);
         return () => {
           openDetails.current = openDetails.current.filter(
@@ -518,17 +523,27 @@ function Workspace({
     }),
     [],
   );
-  // Every link opens over the current screen; closing returns to it. A
-  // target whose window is already open stays as it is.
+  // Linked detail windows keep the screen below them for the return on close.
   openLink.current = async (target) => {
     const key = documentLinkKey(target);
-    if (
-      openDetails.current.some((entry) => entry.key === key) ||
-      openingTargets.current.has(key)
-    )
-      return;
+    if (openingTargets.current.has(key)) return;
     openingTargets.current.add(key);
     try {
+      // A memo list owns all its tabs, even though the panel's React key is
+      // the link it first opened. Select through its existing save path before
+      // either exact-target guard can mistake that first link for a no-op.
+      const details = [...openDetails.current];
+      const existing = details
+        .reverse()
+        .find((entry) => entry.navigation?.accepts(target));
+      if (existing) {
+        for (const above of details.slice(0, details.indexOf(existing)))
+          if (!(await above.close())) return;
+        if (openDetails.current.includes(existing))
+          await existing.navigation!.select(target);
+        return;
+      }
+      if (openDetails.current.some((entry) => entry.key === key)) return;
       const link = await loadDocumentLink(target);
       if (!openDetails.current.some((entry) => entry.key === key))
         setLinkPanels((panels) =>

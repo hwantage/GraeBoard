@@ -140,8 +140,10 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
     const label = props.label || "업무 문서";
     const memoList = !!props.inline || !!props.memoTabs;
     const current = documents.find((doc) => doc.id === selected);
+    // A memo's own name wins even when it equals the generic task document name.
     useDocumentPageTitle(
-      (current?.title !== DEFAULT_DOCUMENT_TITLE && current?.title) ||
+      ((memoList || current?.title !== DEFAULT_DOCUMENT_TITLE) &&
+        current?.title) ||
         props.browserTitleFallback ||
         current?.title ||
         label,

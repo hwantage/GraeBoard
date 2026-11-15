@@ -188,7 +188,7 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 ### 업무 문서와 에디터 선택
 
-`AnnualMemoPanel`의 전체 화면은 고정 **꼬리 메모** 제목 → 기존 `DocumentPanel` 탭 → 선택 문서 순서로 표시합니다. 인라인 문서들을 재마운트하지 않고 CSS로 선택 문서만 보이게 하므로 원문/리치 선택·초안·undo를 유지합니다. 닫기와 접기는 기존 flush 성공 뒤 진행하며 모바일은 기존 아코디언 닫기를 사용합니다. `MemoLinkPanel`도 같은 패널에 초기 문서 ID를 전달해 원본·사본의 목록, 읽기 전용·발표, 제목/순서 저장과 링크 열기 흐름을 공유합니다.
+`AnnualMemoPanel`의 전체 화면은 고정 **꼬리 메모** 제목 → 기존 `DocumentPanel` 탭 → 선택 문서 순서로 표시합니다. 인라인 문서들을 재마운트하지 않고 CSS로 선택 문서만 보이게 하므로 원문/리치 선택·초안·undo를 유지합니다. 닫기와 접기는 기존 flush 성공 뒤 진행하며 모바일은 기존 아코디언 닫기를 사용합니다. `MemoLinkPanel`도 같은 패널에 초기 문서 ID를 전달해 원본·사본의 목록, 읽기 전용·발표, 제목/순서 저장과 링크 열기 흐름을 공유합니다. 메모 링크 페이지의 브라우저 제목은 `DocumentPanel` 한 곳에서 선택한 문서 이름을 보고하며, 목록 로딩·오류 중에만 초기 링크 제목을 대체값으로 사용합니다. `MemoLinkPanel`은 현재 선택 문서를 열린 대상으로 등록하고, 같은 팀·연도(원본) 또는 같은 사본의 메모 링크는 `App.openLink`에서 기존 목록의 `selectDocument`로 전달합니다. 위에 중첩 패널이 있으면 각 패널의 닫기/flush를 거친 뒤 선택하며, 이름 변경·본문 저장 실패는 이동을 중단하고 초안을 유지합니다. 다른 팀·연도·사본의 링크는 기존처럼 별도 패널로 엽니다.
 
 URL 붙여넣기는 기존 `DocumentLinkTitle` → 인증된 `/api/link-title` → `createLinkTitleService` 경로를 사용합니다. YouTube watch/단축/shorts/live/embed 주소는 고정 HTTPS oEmbed 주소, Claude 공개 Artifact UUID 주소는 고정 `claude.ai/api/published_artifacts/:id`에서 JSON 제목을 먼저 조회합니다. Node와 Edge는 동일 URL 선택·JSON/HTML 제목 파서를 공유하며 제공자 조회와 HTML 대체 조회 전체에 기존 5초 제한을 적용합니다. 각 리다이렉트의 DNS·IP 검사, IP 고정 접속, 256KiB 응답 제한, 인증·요청 빈도 제한을 유지합니다. 응답이 광고하는 임의 oEmbed 주소·스크립트는 실행/조회하지 않고 제공자 실패/제목 없음은 기존 HTML 또는 URL 대체 경로로 돌아갑니다. 사용자가 선택한 텍스트와 조회 중 수정·삭제한 링크를 바꾸지 않는 편집기 위치 추적은 그대로 사용합니다.
 
@@ -395,7 +395,7 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 ### 시크릿 캘린더
 
-시크릿 보기의 `hidden/only/all` 선택은 일정 v2 저장 형식을 바꾸지 않고 별도 사용자별 localStorage 키 `weekly-plan:secret-calendar-mode:<userId>`로 기억합니다. 기존 `visible:false`는 숨기기, `visible:true`는 전체 보기로 호환하고, only 선택은 visible 상태에서만 적용합니다. 쓰기는 기존 boolean도 함께 유지하며 다른 탭의 storage 이벤트와 로컬 알림을 구독합니다. `Calendar`의 상단 표시 월에 대한 기존 `monthWeeks` 범위(edge week 포함), 또는 본인의 주간 조회 query와 겹치는 본인·현재 팀의 로컬 일정만 배지에 한 번씩 셉니다. 스크롤로 앞뒤 여러 달을 불러왔어도 배지는 상단 표시 월을 따릅니다. 제목 검색·요일 숨기기·모드별 필터 전의 목록에서 세므로 검색으로 복귀 버튼이 비활성화되지 않습니다. only는 본인의 일반 일정만 숨기며 공용/타인의 보기는 유지합니다.
+시크릿 보기의 `hidden/only/all` 선택은 일정 v2 저장 형식을 바꾸지 않고 별도 사용자별 localStorage 키 `weekly-plan:secret-calendar-mode:<userId>`로 기억합니다. 기존 `visible:false`는 숨기기, `visible:true`는 전체 보기로 호환하고, only 선택은 visible 상태에서만 적용합니다. 쓰기는 기존 boolean도 함께 유지하며 다른 탭의 storage 이벤트와 로컬 알림을 구독합니다. `Calendar`의 상단 표시 월에 대한 기존 `monthWeeks` 범위(edge week 포함), 또는 본인의 주간 조회 query와 겹치는 본인·현재 팀의 로컬 일정만 배지에 한 번씩 셉니다. 스크롤로 앞뒤 여러 달을 불러왔어도 배지는 상단 표시 월을 따릅니다. 제목 검색·요일 숨기기·모드별 필터 전의 목록에서 세므로 검색으로 복귀 버튼이 비활성화되지 않습니다. only는 본인의 일반 일정만 숨기며 공용/타인의 보기는 유지합니다. 현재 범위의 시크릿 개수가 0이면 버튼은 계속 비활성화하되 only의 표시용 모드만 all로 바꿔 일반 일정을 표시합니다. 아이콘·툴팁·검색·카드 표시도 이 유효 모드를 사용하고 저장된 선호는 덮어쓰지 않습니다. 마지막 일정 삭제, 주·월 이동, 팀 전환과 다른 탭의 갱신에 동일하게 적용하며 시크릿이 있는 범위로 돌아오거나 삭제를 실행취소하면 only 선호가 다시 적용됩니다.
 
 `src/calendar/secret-calendar.ts`·`useSecretCalendar`는 사용자별 localStorage에 시크릿 일정의 제목·기간·태그 연결·체크·표시 순서와 보이기 선택을 저장합니다. 본인 개인 월간과 팀 주간의 본인 줄에 표시 전용으로 합치며 서버 일정의 저장 순서는 바꾸지 않습니다. 사용법과 저장 범위는 [시크릿 일정 안내](USER_GUIDE.md#시크릿-일정)를 따릅니다.
 

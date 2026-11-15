@@ -2323,3 +2323,110 @@ test("시크릿 3단 보기와 범위 배지는 검색·다른 팀·기간을 �
   await expect(toggle.locator(".calendar-secret-count")).toHaveCount(0);
   await peer.close();
 });
+
+test("시크릿만 선호는 빈 주·월·팀과 마지막 삭제에서 일반 일정으로 복귀하고 다시 적용된다", async ({
+  page,
+  context,
+}) => {
+  const today = todayKey();
+  const future = addDays(today, 63);
+  const emptyTeam = (
+    await request(page, "/admin/teams", "POST", {
+      name: `빈 시크릿 팀 ${randomUUID().slice(0, 6)}`,
+      members: [{ userId, role: "lead" }],
+    })
+  ).id;
+  for (const [ownerTeam, date, title] of [
+    [teamId, today, "현재 일반 일정"],
+    [teamId, addDays(today, 7), "다음 주 일반 일정"],
+    [teamId, future, "다른 달 일반 일정"],
+    [emptyTeam, today, "다른 팀 일반 일정"],
+  ])
+    await request(page, "/calendar/entries", "POST", {
+      teamId: ownerTeam,
+      userId,
+      id: randomUUID(),
+      title,
+      date,
+      endDate: date,
+    });
+  await page.reload();
+  await create(page, "마지막 시크릿");
+  const toggle = page.locator(".calendar-secret-toggle");
+  const normal = (target: Page, title: string) =>
+    target.locator(".calendar-entry-card").filter({ hasText: title }).first();
+  await toggle.click();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  const peer = await context.newPage();
+  await enter(peer);
+  const peerToggle = peer.locator(".calendar-secret-toggle");
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
+  await mine.getByRole("button", { name: /다음 주$/ }).click();
+  await expect(toggle).toBeDisabled();
+  await expect(normal(page, "다음 주 일반 일정")).toBeVisible();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(toggle).toHaveAttribute(
+    "aria-label",
+    "전체 보기 · 시크릿 숨기기로 전환",
+  );
+  await mine.getByRole("button", { name: /이전 주$/ }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "개인 월간 보기", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "캘린더 연도" })
+    .selectOption(future.slice(0, 4));
+  await page
+    .getByRole("combobox", { name: "표시 월" })
+    .selectOption(String(Number(future.slice(5, 7))));
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(page, "다른 달 일반 일정")).toBeVisible();
+  await page.getByRole("button", { name: "오늘", exact: true }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(emptyTeam);
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(page, "다른 팀 일반 일정")).toBeVisible();
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await card(page, "마지막 시크릿").click();
+  await detail(page)
+    .getByRole("button", { name: "일정 삭제", exact: true })
+    .click();
+  for (const target of [page, peer]) {
+    await expect(target.locator(".calendar-secret-toggle")).toBeDisabled();
+    await expect(target.locator(".calendar-secret-toggle")).toHaveAttribute(
+      "data-secret-mode",
+      "all",
+    );
+    await expect(normal(target, "현재 일반 일정")).toBeVisible();
+  }
+  await peer.reload();
+  await expect(peerToggle).toBeDisabled();
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(peer, "현재 일반 일정")).toBeVisible();
+  expect(
+    await page.evaluate(
+      (id) => localStorage.getItem(`weekly-plan:secret-calendar-mode:${id}`),
+      userId,
+    ),
+  ).toBe("only");
+  await page.getByRole("button", { name: "실행취소", exact: true }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  await peer.reload();
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await peer.close();
+});

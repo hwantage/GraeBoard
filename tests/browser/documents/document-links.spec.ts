@@ -1312,3 +1312,215 @@ test("저장하지 못하면 전체 페이지 버튼으로 연 새 탭을 닫고
   await expect(rich(dialog)).toContainText("저장 실패 입력");
   await expect(dialog).not.toHaveClass(/document-full-page/);
 });
+
+for (const copy of [false, true]) {
+  test(`${copy ? "사본" : "원본"} 메모 주소의 제목은 선택·이름 변경·중첩 패널 닫기를 따른다`, async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    const first = await memo(page, "첫 메모", 2026, "첫 본문");
+    await memo(page, "둘째 메모", 2026, `[업무](/links/task/${taskIds[1]})`);
+    const clone = copy ? await copySheet(page) : "";
+    const path = copy
+      ? `/links/sheet-clone-memo/${clone}/${first}`
+      : `/links/memo/${teamId}/2026/${first}`;
+    await page.goto(path);
+    const panel = page.getByRole("dialog", {
+      name: "연간 업무 메모 목록",
+      exact: true,
+    });
+    await expect(page).toHaveTitle("첫 메모 · 그래보드");
+    await panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+    await expect(
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(page).toHaveTitle("둘째 메모 · 그래보드");
+    await panel.getByRole("tab", { name: "둘째 메모", exact: true }).dblclick();
+    const title = panel
+      .locator(".document-tabs")
+      .getByRole("textbox", { name: "문서 제목", exact: true });
+    // A memo named like the default task document still owns its page title.
+    await title.fill("문서 1");
+    await title.press("Enter");
+    await expect(page).toHaveTitle("문서 1 · 그래보드");
+    await panel.locator(".document-page[data-selected] .document-link").click();
+    await expect(details(page)).toBeVisible();
+    await expect(page).toHaveTitle("링크 대상 업무 · 그래보드");
+    await details(page)
+      .getByRole("button", { name: "닫기", exact: true })
+      .click();
+    await expect(page).toHaveTitle("문서 1 · 그래보드");
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(page).toHaveTitle("연간 업무 · 그래보드");
+    expect(pageErrors).toEqual([]);
+  });
+
+  test(`${copy ? "사본" : "원본"} 메모 내부 링크는 같은 목록의 탭을 저장 후 선택하고 다른 목록은 분리한다`, async ({
+    page,
+  }) => {
+    const first = await memo(page, "첫 메모", 2026, "첫 본문");
+    const second = await memo(page, "둘째 메모");
+    const previous = await memo(page, "지난 메모", 2025);
+    const clone = await copySheet(page);
+    const collection = copy
+      ? `/sheet-clones/${clone}/memos`
+      : `/teams/${teamId}/years/2026/memos`;
+    const linkPath = copy
+      ? `/links/sheet-clone-memo/${clone}/${first}`
+      : `/links/memo/${teamId}/2026/${first}`;
+    await request(
+      page,
+      `/teams/${teamId}/years/2025/memos/${previous}`,
+      "PUT",
+      {
+        markdown: `[열린 목록으로](${linkPath})`,
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+    );
+    const otherCopy = copy
+      ? `/links/memo/${teamId}/2026/${first}`
+      : `/links/sheet-clone-memo/${clone}/${first}`;
+    const otherTeam = (
+      await request(page, "/admin/teams", "POST", {
+        name: `메모 다른 팀 ${randomUUID().slice(0, 6)}`,
+        members: [{ userId, role: "lead" }],
+      })
+    ).id;
+    const otherMemo = randomUUID();
+    await request(page, `/teams/${otherTeam}/years/2026/memos`, "POST", {
+      id: otherMemo,
+      title: "다른 팀 메모",
+    });
+    const markdown = `[처음](${linkPath})\n\n[다른 연도](/links/memo/${teamId}/2025/${previous})\n\n[다른 시트](${otherCopy})\n\n[다른 팀](/links/memo/${otherTeam}/2026/${otherMemo})`;
+    await request(page, `${collection}/${second}`, "PUT", {
+      markdown,
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+    await saveTask(page, taskIds[0], `[메모](${linkPath})`);
+    const source = await open(page);
+    await links(source).click();
+    const panels = page.getByRole("dialog", {
+      name: "연간 업무 메모 목록",
+      exact: true,
+    });
+    const panel = panels.first();
+    const selectSecond = () =>
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+    const currentLinks = () =>
+      panel.locator(".document-page[data-selected] .document-link");
+    await selectSecond();
+    await currentLinks().first().click();
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panels).toHaveCount(1);
+    await selectSecond();
+    // A rejected save must keep B and its draft, with no extra A panel.
+    await page.route(`**/api${collection}/${second}`, (route) =>
+      route.request().method() === "PUT"
+        ? route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "탭 이동 저장 실패" }),
+          })
+        : route.continue(),
+    );
+    const body = panel
+      .locator(".document-page[data-selected]")
+      .getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+    await panel
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    await panel
+      .getByRole("textbox", { name: "연간 업무 메모 Markdown 원문" })
+      .fill(`${markdown}\n\n남길 입력`);
+    await panel.getByRole("button", { name: "리치 문서", exact: true }).click();
+    await expect(body).toContainText("남길 입력");
+    await expect(currentLinks()).toHaveCount(4);
+    await currentLinks().first().click();
+    await expect(panel.getByRole("alert").first()).toContainText(
+      "탭 이동 저장 실패",
+    );
+    await expect(
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panels).toHaveCount(1);
+    await expect(body).toContainText("남길 입력");
+    await page.unroute(`**/api${collection}/${second}`);
+    await panel
+      .getByRole("button", { name: "저장 다시 시도", exact: true })
+      .click();
+    await currentLinks().first().click();
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect((await request(page, `${collection}/${second}`)).markdown).toContain(
+      "남길 입력",
+    );
+    await selectSecond();
+    await currentLinks().nth(1).click();
+    await expect(panels).toHaveCount(2);
+    await panels.last().locator(".document-link").click();
+    await expect(panels).toHaveCount(1);
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await selectSecond();
+    for (const index of [2, 3]) {
+      await currentLinks().nth(index).click();
+      await expect(panels).toHaveCount(2);
+      await panels
+        .last()
+        .getByRole("button", { name: "닫기", exact: true })
+        .click();
+      await expect(panels).toHaveCount(1);
+      await expect(
+        panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+    }
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(source).toBeVisible();
+    // Closing unregisters the list; opening A again starts at A, once.
+    await links(source).click();
+    await expect(panels).toHaveCount(1);
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+  });
+}
+
+test("메모 목록 로딩 오류의 제목은 한 번만 보고하고 재시도 후 선택 제목을 따른다", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const first = await memo(page, "첫 메모");
+  await memo(page, "둘째 메모");
+  const path = `/api/teams/${teamId}/years/2026/memos`;
+  await page.route(`**${path}`, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "목록 일시 실패" }),
+    }),
+  );
+  await page.goto(`/links/memo/${teamId}/2026/${first}`);
+  const panel = page.getByRole("dialog", {
+    name: "연간 업무 메모 목록",
+    exact: true,
+  });
+  await expect(panel.getByRole("alert")).toContainText("목록 일시 실패");
+  await expect(page).toHaveTitle("첫 메모 · 그래보드");
+  await page.unroute(`**${path}`);
+  await panel
+    .getByRole("button", { name: "문서 다시 불러오기", exact: true })
+    .click();
+  await panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+  await expect(page).toHaveTitle("둘째 메모 · 그래보드");
+  expect(pageErrors).toEqual([]);
+});

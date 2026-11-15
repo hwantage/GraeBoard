@@ -13,7 +13,6 @@ import { documentLinkPath } from "../../shared/documents/document-links.js";
 import {
   UNAVAILABLE_LINK_MESSAGE,
   useOpenDocumentLink,
-  useDocumentPageTitle,
   type DocumentLinkTarget,
 } from "./document-links";
 import type {
@@ -272,8 +271,8 @@ function CalendarLinkPanel({
   );
 }
 
-// One memo in the full page of the tail memo cards, with the card's editor,
-// draft and document route. Closing saves first.
+// The linked memo's list shares tab selection, drafts and the save path.
+// DocumentPanel alone reports the selected document's browser title.
 function MemoLinkPanel({
   target,
   teamId,
@@ -290,13 +289,23 @@ function MemoLinkPanel({
   onClose: () => void;
 }) {
   const panel = useRef<DocumentPanelHandle>(null);
-  useDocumentPageTitle(title);
+  const [selected, setSelected] = useState(target.id);
   const close = async () => {
     if (panel.current && !(await panel.current.flush())) return false;
     onClose();
     return true;
   };
-  useOpenDocumentLink(target, close);
+  useOpenDocumentLink({ ...target, id: selected }, close, {
+    accepts: (next) =>
+      target.kind === "memo"
+        ? next.kind === "memo" &&
+          next.teamId === target.teamId &&
+          next.year === target.year
+        : next.kind === "sheet-clone-memo" &&
+          next.sheetCloneId === target.sheetCloneId,
+    select: (next) =>
+      panel.current?.selectDocument(next.id) ?? Promise.resolve(false),
+  });
   return (
     <AnnualMemoPanel
       ref={panel}
@@ -308,6 +317,8 @@ function MemoLinkPanel({
       userId={user.id}
       readOnly={readOnly}
       initialDocumentId={target.id}
+      onDocumentSelected={setSelected}
+      browserTitleFallback={title}
       onClose={onClose}
     />
   );

@@ -18,6 +18,17 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-16 — 이미지 피드백 1차 리뷰 보완
+
+- 기준 `9f244e3`에서 메모 주소로 진입한 뒤 다른 탭을 고르면 초기 링크와 선택 문서가 서로 다른 브라우저 제목을 반복 보고해 React #185로 화면이 사라졌습니다. `DocumentPanel`을 제목의 단일 소유자로 두고 `AnnualMemoPanel`은 선택 알림과 로딩·오류 대체 제목만 전달합니다. 원본·사본 주소의 탭 선택, 이름 변경, 중첩 업무 상세 닫기와 연간 업무 복귀를 기존 링크 suite에 추가했습니다. 후속 점검에서 메모 이름이 업무 문서의 기본 이름인 `문서 1`이면 초기 링크 제목이 우선하던 경우도 확인했습니다(보완 전 Chromium 원본·사본 2건 실패). 메모는 그 이름도 그대로 표시하도록 하고 기존 업무 문서의 제목 대체 규칙은 유지합니다.
+- 시크릿 개수가 0인 범위에서 only 선호 때문에 일반 일정까지 숨겨져 복귀할 수 없었습니다. 개수와 저장된 선호로 표시용 모드를 계산해 이때는 all을 표시하되 버튼은 비활성화하고 선호 값은 유지합니다. 빈 주·월·팀 이동과 복귀, 마지막 일정 삭제·실행취소, 다른 탭의 갱신·새로고침을 기존 시크릿 suite에서 검증합니다.
+- 메모 목록의 등록 대상이 최초 링크에 고정돼 다른 탭에서 최초 메모로 돌아가는 링크를 무시했습니다. 현재 선택 문서를 등록하고, 앱의 기존 링크 열기에서 같은 팀·연도 또는 사본 목록을 먼저 찾아 기존 `selectDocument`로 이동합니다. 저장 실패 시 선택과 초안을 보존하고 재시도 뒤 이동하며, 중첩된 다른 목록에서 돌아오면 위 패널을 기존 flush/닫기 순서로 닫습니다. 다른 연도·사본·팀 링크의 별도 패널과 닫은 목록 재열기도 검사합니다.
+- 회귀 근거: 새 시나리오 6건을 이전 빌드에 실행하면 Chromium 6건 모두 실패했습니다. 탭 이동·제목 변경·일반 일정 표시를 실제 앱에서 단언하며 내부 계산을 복사한 검사가 아닙니다. 초기 저장 실패 검사 2건은 리치 편집기에서 남아 있던 링크 선택을 타이핑으로 교체해 다른 링크를 누르던 테스트 준비 오류가 있었습니다. 기존 Markdown 원문 입력으로 링크를 유지한 채 초안을 만든 뒤 리치 링크를 누르도록 고쳤으며, 저장 거절/재시도 단언은 그대로 유지했습니다.
+- Claude 근거 범위 정정: 별도 공개 페이지 `https://claude.ai/public/artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec`의 인라인 스크립트에서 `/api/published_artifacts/:id`와 `/meta` 조회 주소를 확인했습니다. 두 API 응답은 Cloudflare 차단 HTML이었고, 받아진 공개 진입 JS에는 제목 필드가 없었으며 관련 분할 JS 조회도 403이었습니다. 따라서 fixture의 `artifact.title` 또는 JSON 루트 `title` 구조는 실제 공개 응답/클라이언트에서 검증된 형식이 아닌 추정입니다. 이전 검증은 이 fixture가 Node·Edge·편집기 경로에서 처리됨을 확인한 것이며 실제 Claude 제목 조회 성공의 증거는 아닙니다. 사용자 이미지의 특정 URL도 제공되지 않았습니다.
+
+- 검증: Node 22.23.1에서 `npm run build`·`npm run build:edge` 성공(기존 700kB chunk 경고 유지), `npm run check:structure` 오류 0·검토 알림 38, `npm run check:architecture` 위반 0, 변경 코드 Prettier와 `git diff --check` 통과. `E2E_PORT=4437 npx playwright test tests/browser/documents/document-links.spec.ts tests/browser/documents/annual-memos.spec.ts tests/browser/calendar/secret-calendar.spec.ts`는 Chromium·Firefox·WebKit 186건 중 184통과·2건너뜀(기존 오버레이 스크롤바 조건)이었습니다. 후속 기본 이름 제목 보완과 빈 범위 새로고침 단언을 포함한 최종 빌드에서는 `E2E_PORT=4437 npx playwright test tests/browser/documents/document-links.spec.ts tests/browser/documents/document-browser.spec.ts tests/browser/calendar/secret-calendar.spec.ts --grep 'document-links|꼬리 메모|시크릿만 선호'`로 링크 전체·문서 브라우저 메모·빈 시크릿 범위 복귀 99/99를 세 엔진에서 통과했습니다.
+- 이번 보완은 프런트엔드·브라우저 검사·문서만 변경합니다. 부모가 지정한 범위에 따라 서버/shared/worker/edge 변경이 없는 기존 828건 Node 전체 검사는 반복하지 않았으며 이전 통과 수치를 이번 실행으로 계산하지 않습니다. 임시 E2E SQLite·이미지와 별도 포트만 사용했고 메인 체크아웃·운영 DB·저장 형식은 변경하지 않았습니다. 로그와 상세 보고서는 `/tmp/graeboard-feedback-review1-*`에 남겼으며 푸시·PR·병합·배포는 수행하지 않았습니다.
+
 ## 2026-11-16 — 링크 제목·이력 날짜·시크릿 보기·꼬리 메모 피드백
 
 - YouTube 공개 영상은 고정된 oEmbed 주소, Claude 공개 Artifact는 공개 메타데이터 주소에서 제목을 먼저 조회합니다. 기존 편집기의 비동기 텍스트 보존 경로와 Node·Edge의 공통 제목 서비스를 재사용하며, 허용 IP·리다이렉트 검사·256KiB 응답 제한·총 5초 제한을 유지합니다. 메타데이터가 없거나 차단되면 기존 HTML 제목 조회로 돌아갑니다.

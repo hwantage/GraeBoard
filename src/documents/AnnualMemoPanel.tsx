@@ -33,10 +33,22 @@ export default forwardRef<
     readOnly: boolean;
     sheetCloneId?: string;
     initialDocumentId?: string;
+    onDocumentSelected?: (id: string) => void;
+    browserTitleFallback?: string;
     onClose?: () => void;
   }
 >(function AnnualMemoPanel(
-  { teamId, year, userId, readOnly, sheetCloneId, initialDocumentId, onClose },
+  {
+    teamId,
+    year,
+    userId,
+    readOnly,
+    sheetCloneId,
+    initialDocumentId,
+    onDocumentSelected,
+    browserTitleFallback,
+    onClose,
+  },
   ref,
 ) {
   const storageKey = `weekly-plan:memo-open:${userId}:${teamId}:${sheetCloneId || year}`;
@@ -403,7 +415,11 @@ export default forwardRef<
             ref={panel}
             inline
             initialDocumentId={initialDocumentId}
-            onDocumentSelected={setSelectedDocument}
+            onDocumentSelected={(id) => {
+              setSelectedDocument(id);
+              onDocumentSelected?.(id);
+            }}
+            browserTitleFallback={browserTitleFallback}
             inlineFullPage={fullPage}
             onExpand={() => setExpanded(true)}
             onScrollRatioChange={(ratio, available) => {
