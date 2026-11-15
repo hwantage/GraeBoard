@@ -3,12 +3,11 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { openDatabase, transaction } from "../../server/db.mjs";
 import { createNodeSync } from "../../server/sync/node/node.mjs";
-import { allEntities } from "../../server/sync/node/entities.mjs";
+import { localAfterImage } from "../../server/sync/node/entities.mjs";
 import { project } from "../../server/sync/core/reducer.mjs";
 import { makeOperation } from "../../server/sync/core/operations.mjs";
 import {
   canonical,
-  entityId,
   protocolVersion,
 } from "../../server/sync/core/protocol.mjs";
 
@@ -47,13 +46,14 @@ export async function recoverSync({
     const canonicalState = store.readState(),
       pending = store.readPending();
     const before = project(canonicalState, pending).entities;
-    // A calendar document with no saved body is published only when shared
-    // state already has it.
-    const after = allEntities(db, link, {
-      calendarDocuments: (key, saved) =>
-        saved || !!before[entityId("document", key)],
-    });
-    for (const key of Object.keys(before)) if (!after[key]) after[key] = null;
+    // The same capture as reconnection: local retention, tombstones, unused
+    // person references and a living copy's formats are not deletions.
+    const after = localAfterImage(
+      db,
+      link,
+      before,
+      store.readExclusions(link.installation_id),
+    );
     const actorRef = db
       .prepare(
         "SELECT user_id FROM memberships WHERE team_id=? ORDER BY user_id LIMIT 1",

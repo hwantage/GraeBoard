@@ -6,7 +6,12 @@ import {
 } from "../core/snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
-import { allEntities, readEntity, localPayloadEqual } from "./entities.mjs";
+import {
+  allEntities,
+  localAfterImage,
+  readEntity,
+  localPayloadEqual,
+} from "./entities.mjs";
 import {
   canonical,
   digest,
@@ -143,21 +148,12 @@ function compute(request) {
       const pending = store.readPending(),
         canonicalState = store.readState(),
         before = project(canonicalState, pending).entities,
-        // A calendar document with no saved body is published only when
-        // shared state already has it.
-        after = allEntities(db, link, {
-          calendarDocuments: (key, saved) =>
-            saved || !!before[entityId("document", key)],
-        }),
-        exclusions = store.readExclusions(link.installation_id);
-      for (const [key, previous] of Object.entries(before)) {
-        // Local retention and unused person references are not shared deletions.
-        // Keep already deleted records as tombstones when their rows are absent.
-        if (isExcluded(previous, before, exclusions)) delete after[key];
-        else if (!after[key])
-          after[key] =
-            previous.deleted || previous.entity === "person" ? previous : null;
-      }
+        after = localAfterImage(
+          db,
+          link,
+          before,
+          store.readExclusions(link.installation_id),
+        );
       const operation = makeOperation({
         link: { ...link, protocol: protocolVersion({ entities: before }) },
         actorRef: request.actorRef,
