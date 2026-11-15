@@ -191,15 +191,28 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
           scope === "all" ? ["작업", "팀원", "상태"] : ["작업"],
         );
       }
-      expect(download.suggestedFilename()).toBe("graeboard-2026-tasks.json");
+      expect(download.suggestedFilename().normalize("NFC")).toBe(
+        scope === "all"
+          ? "graeboard-2026-tasks.json"
+          : "graeboard-2026년-10월1주~11월4주-tasks.json",
+      );
       expect(text).not.toContain("리뷰 회의");
     } else if (format === "json") {
       const data = unpack(JSON.parse(text));
       expect(data.schemaVersion).toBe(7);
       expect(data.tasks).toHaveLength(expected.length);
+      expect(data.tasks.map((task: any) => task.cells.title?.value)).toEqual(
+        expected,
+      );
+      expect(download.suggestedFilename().normalize("NFC")).toBe(
+        scope === "all"
+          ? "graeboard-2026.json"
+          : "graeboard-2026년-10월1주~11월4주.json",
+      );
     }
-    for (const title of titles)
-      expect(text.includes(title), title).toBe(expected.includes(title));
+    if (format !== "json")
+      for (const title of titles)
+        expect(text.includes(title), title).toBe(expected.includes(title));
     await expect(box).toHaveCount(0);
   };
   await downloads("worked", [titles[0], titles[3], titles[4], titles[5]]);
@@ -213,6 +226,7 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     "json-data",
   );
   await downloads("all", titles, 4, "json-data");
+  await downloads("view", [titles[0], titles[2], titles[5]], 4, "json");
   await downloads("all", titles, 4, "json");
   const tab = page.getByRole("tab", { name: copyName, exact: true });
   await tab.click();
@@ -243,5 +257,31 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     chunks.push(chunk);
   const text = Buffer.concat(chunks).toString("utf8");
   expect(JSON.parse(text)).toEqual([]);
+  expect(empty.suggestedFilename().normalize("NFC")).toBe(
+    "graeboard-2026년-1월1주~1월5주-tasks.json",
+  );
   for (const title of titles) expect(text).not.toContain(title);
+
+  for (const [week, extend, filename] of [
+    ["2026-09-28", 0, "graeboard-2026년-10월1주-tasks.json"],
+    ["2026-12-21", 2, "graeboard-2026년12월4주~2027년1월2주-tasks.json"],
+  ] as const) {
+    if (extend)
+      await page
+        .getByRole("button", { name: "다음 달로 이동", exact: true })
+        .click();
+    const start = page.locator(`.period-week[data-week="${week}"]`);
+    await start.click();
+    for (let index = 0; index < extend; index++)
+      await page.keyboard.press("Shift+ArrowRight");
+    await page.getByRole("button", { name: "내보내기", exact: true }).click();
+    await box.getByLabel("내보낼 범위").selectOption("worked");
+    await box.getByLabel("파일 형식").selectOption("json-data");
+    const [result] = await Promise.all([
+      page.waitForEvent("download"),
+      box.getByRole("button", { name: "내보내기", exact: true }).click(),
+    ]);
+    expect(result.suggestedFilename().normalize("NFC")).toBe(filename);
+    await expect(box).toHaveCount(0);
+  }
 });
