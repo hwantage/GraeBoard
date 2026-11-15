@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   readSecretCalendar,
+  secretCalendarMode,
+  secretCalendarModeKey,
+  type SecretCalendarMode,
   secretCalendarChanged,
   secretCalendarKey,
   secretEntries,
@@ -17,7 +20,7 @@ export default function useSecretCalendar(userId: string, teamId: string) {
   const [state, setState] = useState({
     key: "",
     entries: [] as SecretCalendarEntry[],
-    visible: true,
+    mode: "all" as SecretCalendarMode,
     error: "",
   });
   useEffect(() => {
@@ -42,7 +45,7 @@ export default function useSecretCalendar(userId: string, teamId: string) {
             ...entry,
             ...summaries.get(entry.id),
           })),
-          visible: store.visible,
+          mode: secretCalendarMode(userId, store.visible),
           error,
         });
       } catch (error) {
@@ -50,7 +53,7 @@ export default function useSecretCalendar(userId: string, teamId: string) {
         setState({
           key,
           entries: [],
-          visible: true,
+          mode: "all" as SecretCalendarMode,
           error: (error as Error).message,
         });
       }
@@ -58,7 +61,9 @@ export default function useSecretCalendar(userId: string, teamId: string) {
     const storageChanged = (event: StorageEvent) => {
       if (
         event.storageArea === localStorage &&
-        (event.key === secretCalendarKey(userId) || event.key === null)
+        (event.key === secretCalendarKey(userId) ||
+          event.key === secretCalendarModeKey(userId) ||
+          event.key === null)
       )
         refresh();
     };
@@ -76,5 +81,7 @@ export default function useSecretCalendar(userId: string, teamId: string) {
       window.removeEventListener(secretCalendarChanged, localChanged);
     };
   }, [key, userId, teamId]);
-  return state.key === key ? state : { entries: [], visible: true, error: "" };
+  return state.key === key
+    ? state
+    : { entries: [], mode: "all" as SecretCalendarMode, error: "" };
 }

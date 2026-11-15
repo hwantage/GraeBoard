@@ -178,6 +178,8 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 전체 행·열 선택은 선택한 업무 ID·열 키와 서식만 서버로 보내며 셀마다 요청을 만들지 않습니다. 서버는 공통 규칙과 영향을 받는 기존 셀 예외만 변경합니다. `shared/formatting/formatting.js`가 표시·행 복사·XLSX 반출에서 같은 상속 계산을 사용하고, `src/sheet/format-selection.js`가 숨김을 포함한 선택 영역의 테두리를 같은 패턴끼리 묶습니다. 셀 예외와 값은 개별 버전으로, 공통 규칙은 팀별 revision으로 충돌을 검사합니다. `format-audit` 재시도·이력 정리·업무별 이력 조회도 일반 셀 변경과 같은 보관 계약을 따릅니다. 공통 규칙 전송은 문서별 `$formats` 사전으로 중복을 제거합니다.
 
+연간 날짜 열은 `shared/domain.js`의 `annualWeekDate`(월요일 키 + 4일)를 `weeksForPeriod`와 `HistoryPanel`이 함께 사용합니다. 이력 표시는 연도를 포함한 금요일이며 셀 키·원본 이력·복원 요청은 기존 월요일 그대로입니다. 사본 편집 이력은 기존 개수/revision 요약만 기록하며 셀 날짜가 없는 요약 형식은 변경하지 않습니다.
+
 저장 규칙의 기준 문서는 [데이터 형식과 API](DATA_FORMAT.md#저장-규칙-요약)입니다. 내부 모델은 긴 서식 이름을 사용하되, 변경 이력의 JSON 표시는 `pack`으로 저장 형식을 그대로 재구성합니다. 셀 서식 요약 JSON도 `compactStyle`로 축약합니다. 업무 생성·이동·삭제 이력에는 `taskAuditSnapshot`으로 관계없는 행 규칙과 업무 ID를 제외합니다. 실시간 업무 응답의 팀별 공통 상태는 유지합니다.
 
 `tests/formatting/common-formatting.test.mjs`는 공통 행·열 저장, 연도 경계, 1,000행 빈 셀 미생성, 속성별 우선순위, 셀 예외 재적용, 복사, 충돌·권한·이력 복원과 업무 이력의 불필요한 규칙 제외를 실제 API로 검증합니다. `tests/browser/sheet/common-formatting.spec.ts`는 화면의 행 선택→월 이동→새해→새로고침, 열 서식→셀 예외→재적용→실행취소·재실행, 큰 글자의 행 높이·테두리, 축약된 이력 JSON 표시를 확인합니다.
@@ -185,6 +187,10 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 `/api/teams/:id/events`와 `/api/sheet-clones/:id/events`는 성공한 변경 뒤 재조회 알림을 보냅니다. 개인 보기 저장은 알리지 않으며 셀 값은 기존 델타 스트림을 유지합니다. `useResourceSync`는 같은 리소스의 연결을 탭 안에서 공유하고 짧은 연속 알림을 묶습니다. 페이지별 `X-Client-ID`로 이미 응답을 반영한 자기 변경 알림의 중복 조회를 줄이며 같은 계정의 다른 탭은 별도로 갱신합니다. 편집·저장 중에는 갱신을 보류하고 화면·팀을 떠날 때 연결과 요청을 정리합니다. 사본의 독립 셀 수정은 `rebaseSheetCloneCells`로 최신 시트에 재적용하되 동일 셀·행 삭제·구조 작업 충돌은 기존 오류 흐름으로 남깁니다. 원격 변경 뒤 실행취소 기준에는 상대방의 최신 값이 포함됩니다. 문서 유무·개수는 사본 시트 revision과 독립적이므로 같은 revision 응답에서도 기존 문서 메타데이터 갱신 경로를 사용합니다. 조회 중 로컬 문서나 이름이 바뀌면 오래된 응답을 적용하지 않고 다시 읽습니다.
 
 ### 업무 문서와 에디터 선택
+
+`AnnualMemoPanel`의 전체 화면은 고정 **꼬리 메모** 제목 → 기존 `DocumentPanel` 탭 → 선택 문서 순서로 표시합니다. 인라인 문서들을 재마운트하지 않고 CSS로 선택 문서만 보이게 하므로 원문/리치 선택·초안·undo를 유지합니다. 닫기와 접기는 기존 flush 성공 뒤 진행하며 모바일은 기존 아코디언 닫기를 사용합니다. `MemoLinkPanel`도 같은 패널에 초기 문서 ID를 전달해 원본·사본의 목록, 읽기 전용·발표, 제목/순서 저장과 링크 열기 흐름을 공유합니다.
+
+URL 붙여넣기는 기존 `DocumentLinkTitle` → 인증된 `/api/link-title` → `createLinkTitleService` 경로를 사용합니다. YouTube watch/단축/shorts/live/embed 주소는 고정 HTTPS oEmbed 주소, Claude 공개 Artifact UUID 주소는 고정 `claude.ai/api/published_artifacts/:id`에서 JSON 제목을 먼저 조회합니다. Node와 Edge는 동일 URL 선택·JSON/HTML 제목 파서를 공유하며 제공자 조회와 HTML 대체 조회 전체에 기존 5초 제한을 적용합니다. 각 리다이렉트의 DNS·IP 검사, IP 고정 접속, 256KiB 응답 제한, 인증·요청 빈도 제한을 유지합니다. 응답이 광고하는 임의 oEmbed 주소·스크립트는 실행/조회하지 않고 제공자 실패/제목 없음은 기존 HTML 또는 URL 대체 경로로 돌아갑니다. 사용자가 선택한 텍스트와 조회 중 수정·삭제한 링크를 바꾸지 않는 편집기 위치 추적은 그대로 사용합니다.
 
 업무 상세·꼬리 메모의 순서 변경은 `DocumentPanel` → 기존 `/reorder` 명령을 공유합니다. 원본 업무는 기존 `task_documents.position`, 사본 업무는 기존 문서 배열 순서, 외부는 기존 document entity의 position을 사용합니다. `expectedIds` 충돌·재시도·숨긴 문서 위치·권한 검사를 유지하며 DB 스키마·영속 형식은 변경하지 않습니다. 상세를 처음 열 때는 요청한 문서·보관된 초안이 없으면 저장된 순서의 첫 탭을 선택합니다. 외부 문서 브라우저도 업무별 문서를 같은 position 순서(`byDocumentPosition`)로 돌려주므로 작업 이름이 첫 탭의 문서를 엽니다.
 
@@ -388,6 +394,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 이모지 자료는 `src/ui/emoji-catalog.ts`의 정적 목록(8개 분류, 382개, 한국어 이름·한국어/영어 검색어)입니다. 네트워크 조회·새 npm 의존성이 없어 사내망에서도 같고, 국기처럼 Windows에서 그려지지 않는 이모지는 넣지 않았습니다. `searchEmojis`는 공백을 무시하고 이름 전체·검색어 일치, 이름 시작, 이름 포함, 검색어 부분 일치 순으로 정렬합니다. 최근 사용은 로그인 사용자별 `localStorage` `weekly-plan:recent-emojis:<userId>`에 목록에 있는 이모지만 중복 없이 16개까지 보관하며, 저장소를 쓸 수 없으면 그 페이지에서만 사용자별 메모리로 유지합니다. 서버·DB·동기화 자료는 바뀌지 않습니다.
 
 ### 시크릿 캘린더
+
+시크릿 보기의 `hidden/only/all` 선택은 일정 v2 저장 형식을 바꾸지 않고 별도 사용자별 localStorage 키 `weekly-plan:secret-calendar-mode:<userId>`로 기억합니다. 기존 `visible:false`는 숨기기, `visible:true`는 전체 보기로 호환하고, only 선택은 visible 상태에서만 적용합니다. 쓰기는 기존 boolean도 함께 유지하며 다른 탭의 storage 이벤트와 로컬 알림을 구독합니다. `Calendar`의 상단 표시 월에 대한 기존 `monthWeeks` 범위(edge week 포함), 또는 본인의 주간 조회 query와 겹치는 본인·현재 팀의 로컬 일정만 배지에 한 번씩 셉니다. 스크롤로 앞뒤 여러 달을 불러왔어도 배지는 상단 표시 월을 따릅니다. 제목 검색·요일 숨기기·모드별 필터 전의 목록에서 세므로 검색으로 복귀 버튼이 비활성화되지 않습니다. only는 본인의 일반 일정만 숨기며 공용/타인의 보기는 유지합니다.
 
 `src/calendar/secret-calendar.ts`·`useSecretCalendar`는 사용자별 localStorage에 시크릿 일정의 제목·기간·태그 연결·체크·표시 순서와 보이기 선택을 저장합니다. 본인 개인 월간과 팀 주간의 본인 줄에 표시 전용으로 합치며 서버 일정의 저장 순서는 바꾸지 않습니다. 사용법과 저장 범위는 [시크릿 일정 안내](USER_GUIDE.md#시크릿-일정)를 따릅니다.
 

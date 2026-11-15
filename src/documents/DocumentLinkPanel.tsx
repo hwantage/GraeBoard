@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { ExternalLink } from "lucide-react";
 import { api, ApiError, send } from "../platform/api";
 import { Button } from "../ui/Button";
@@ -6,9 +6,8 @@ import { RowPanel, StandaloneRowPanel } from "../Panels";
 import CalendarEntryPanel from "../calendar/CalendarEntryPanel";
 import CalendarTagManager from "../calendar/CalendarTags";
 import DocumentEditor, { type DocumentHandle } from "./DocumentEditor";
-import { DocumentPage } from "./DocumentPanel";
-import DocumentLoading from "./DocumentLoading";
-import { annualMemoDraftKey, annualMemoPath } from "./AnnualMemoDocumentPanel";
+import type { DocumentPanelHandle } from "./DocumentPanel";
+import AnnualMemoPanel from "./AnnualMemoPanel";
 import { canContribute, canManageTeam } from "../../shared/domain.js";
 import { documentLinkPath } from "../../shared/documents/document-links.js";
 import {
@@ -290,62 +289,26 @@ function MemoLinkPanel({
   readOnly: boolean;
   onClose: () => void;
 }) {
-  const id = useId();
-  const editor = useRef<DocumentHandle>(null);
+  const panel = useRef<DocumentPanelHandle>(null);
   useDocumentPageTitle(title);
-  const [loading, setLoading] = useState(true);
-  const owner =
-    target.kind === "memo"
-      ? { teamId: target.teamId, year: target.year }
-      : { teamId, sheetCloneId: target.sheetCloneId };
-  const path = `${annualMemoPath(owner)}/${target.id}`;
-  // AnnualMemoPanel's key, so a draft is shared with the memo card.
-  const draftKey = annualMemoDraftKey({
-    ...owner,
-    teamId,
-    userId: user.id,
-    documentId: target.id,
-  });
   const close = async () => {
-    if (editor.current && !(await editor.current.flush())) return false;
+    if (panel.current && !(await panel.current.flush())) return false;
     onClose();
     return true;
   };
   useOpenDocumentLink(target, close);
-  // The memo cards' full-page rules are scoped to `.annual-memos`.
   return (
-    <div className="annual-memos" style={{ display: "contents" }}>
-      <DocumentPage
-        pageId={`${id}-page`}
-        tabId={`${id}-tab`}
-        documentId={target.id}
-        title={title}
-        widthKey={`${draftKey}:width`}
-        link={target}
-        onNewTab={() => editor.current?.flush() ?? Promise.resolve(true)}
-        inline
-        selected
-        loading={loading}
-        controlsTarget={null}
-        onSelect={() => {}}
-        onClose={() => void close()}
-      >
-        {(controls) => (
-          <>
-            {loading && <DocumentLoading />}
-            <DocumentEditor
-              ref={editor}
-              path={path}
-              draftKey={draftKey}
-              label="연간 업무 메모"
-              readOnly={readOnly}
-              controlsTarget={controls}
-              saveDocument={(input) => send<TaskDocument>(path, input, "PUT")}
-              onLoadingChange={setLoading}
-            />
-          </>
-        )}
-      </DocumentPage>
-    </div>
+    <AnnualMemoPanel
+      ref={panel}
+      teamId={teamId}
+      year={target.kind === "memo" ? target.year : 0}
+      sheetCloneId={
+        target.kind === "sheet-clone-memo" ? target.sheetCloneId : undefined
+      }
+      userId={user.id}
+      readOnly={readOnly}
+      initialDocumentId={target.id}
+      onClose={onClose}
+    />
   );
 }

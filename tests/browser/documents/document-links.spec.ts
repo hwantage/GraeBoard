@@ -461,9 +461,9 @@ test("⌘/Ctrl+클릭은 새 탭으로 열고 그 주소는 팀과 화면을 바
   const id = await memo(page, "주소로 연 메모", 2026, "주소 메모 본문");
   await page.getByLabel("팀 선택").selectOption(other);
   await page.goto(`/links/memo/${teamId}/2026/${id}`);
-  await expect(
-    page.getByRole("dialog", { name: "주소로 연 메모", exact: true }),
-  ).toContainText("주소 메모 본문");
+  await expect(memoPage(page, "주소로 연 메모")).toContainText(
+    "주소 메모 본문",
+  );
   await expect(page.getByLabel("팀 선택")).toHaveValue(teamId);
   expect(new URL(page.url()).pathname).toBe("/");
 });
@@ -741,13 +741,15 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
 });
 
 const memoPage = (page: Page, title: string) =>
-  page.getByRole("dialog", { name: title, exact: true });
+  page
+    .getByRole("dialog", { name: "연간 업무 메모 목록", exact: true })
+    .filter({ has: page.getByRole("tab", { name: title, exact: true }) });
 const memoToggle = (page: Page) =>
   page
     .getByRole("region", { name: "연간 업무 메모 목록" })
     .getByRole("button", { name: "꼬리 메모", exact: true });
 
-test("메모 링크는 지금 화면 위에 그 메모만 전체 페이지로 열고 닫으면 보던 상세로 돌아온다", async ({
+test("메모 링크는 지금 화면 위에 선택 메모의 탭을 전체 페이지로 열고 닫으면 보던 상세로 돌아온다", async ({
   page,
 }, info) => {
   const current = await memo(
@@ -766,7 +768,7 @@ test("메모 링크는 지금 화면 위에 그 메모만 전체 페이지로 �
   await expect(links(source)).toHaveText(["링크할 메모", "지난해 메모"]);
   await links(source).nth(0).click();
   const full = memoPage(page, "링크할 메모");
-  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toHaveClass(/document-full-page/);
   await expect(full).toContainText("올해 메모 본문");
   // The detail below stays open and the screen does not move.
   await expect(source).toBeVisible();
@@ -1216,26 +1218,37 @@ test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으
   await expect(page.getByRole("tooltip")).toHaveText(fullPageHint);
   let tab = await openInNewTab(page, expand, true);
   const full = memoPage(tab, "새 탭 메모");
-  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toHaveClass(/document-full-page/);
   await expect(full).toContainText("새 탭 메모 본문");
   await expect(tab).toHaveTitle("새 탭 메모 · 그래보드");
   await tab.close();
-  await expect(card).not.toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).not.toHaveClass(/document-full-page/);
   await expect(expand).toHaveAttribute("aria-pressed", "false");
   // In full page the button also opens a new tab and keeps this page.
   await expand.click();
-  await expect(card).toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).toHaveClass(/document-full-page/);
   tab = await openInNewTab(
     page,
-    card.getByRole("button", { name: "전체 페이지 닫기", exact: true }),
+    memoPage(page, "새 탭 메모").getByRole("button", {
+      name: "전체 페이지 닫기",
+      exact: true,
+    }),
   );
-  await expect(memoPage(tab, "새 탭 메모")).toHaveClass(/memo-full-page/);
+  await expect(memoPage(tab, "새 탭 메모")).toHaveClass(/document-full-page/);
   await tab.close();
-  await expect(card).toHaveClass(/memo-full-page/);
-  await card
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).toHaveClass(/document-full-page/);
+  await memoPage(page, "새 탭 메모")
     .getByRole("button", { name: "전체 페이지 닫기", exact: true })
     .click();
-  await expect(card).not.toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).not.toHaveClass(/document-full-page/);
 
   // A copy's task opens as the copy's task.
   const copyTab = page.getByRole("tab", { name: "링크 사본", exact: true });

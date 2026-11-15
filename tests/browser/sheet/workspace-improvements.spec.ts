@@ -250,21 +250,23 @@ test("꼬리 메모 제목 줄 편집·전체 화면·드래그 스크롤은 편
   await first
     .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
     .click();
-  await expect(first).toHaveAttribute("role", "dialog");
-  expect(await first.evaluate((el) => el.matches(":modal"))).toBe(true);
-  expect((await first.boundingBox())!.width).toBe(1366);
+  await expect(memos).toHaveAttribute("role", "dialog");
+  expect(await memos.evaluate((el) => el.matches(":modal"))).toBe(true);
+  expect((await memos.boundingBox())!.width).toBe(1366);
   expect(
     await source.evaluate((el, original) => el === original, originalEditor),
   ).toBe(true);
   await source.fill("# 전체 화면에서 저장한 내용");
-  const header = first.locator(".memo-document-heading");
+  const header = memos.locator(".memo-accordion-heading");
   const close = header.getByRole("button", { name: "닫기", exact: true });
   const headerBox = (await header.boundingBox())!;
   const closeBox = (await close.boundingBox())!;
   expect(headerBox.y).toBe(0);
   expect(headerBox.width).toBe(1366);
-  expect(closeBox.x).toBeGreaterThan(1300);
-  await first.screenshot({ path: info.outputPath("memo-full-page.png") });
+  expect(
+    headerBox.x + headerBox.width - closeBox.x - closeBox.width,
+  ).toBeLessThanOrEqual(40);
+  await memos.screenshot({ path: info.outputPath("memo-full-page.png") });
   await page.setViewportSize({ width: 390, height: 900 });
   await expect(memos).toHaveClass(/document-full-page/);
   await expect(first).toHaveAttribute("role", "tabpanel");
@@ -274,8 +276,8 @@ test("꼬리 메모 제목 줄 편집·전체 화면·드래그 스크롤은 편
   await expect(source).toBeVisible();
   await expect(source).toHaveValue("# 전체 화면에서 저장한 내용");
   await page.setViewportSize({ width: 1366, height: 900 });
-  await expect(first).toHaveAttribute("role", "dialog");
-  expect(await first.evaluate((el) => el.matches(":modal"))).toBe(true);
+  await expect(memos).toHaveAttribute("role", "dialog");
+  expect(await memos.evaluate((el) => el.matches(":modal"))).toBe(true);
   await expect(source).toHaveValue("# 전체 화면에서 저장한 내용");
   const restoredEditor = await source.elementHandle();
   await close.click();
@@ -320,7 +322,7 @@ test("꼬리 메모 제목 줄 편집·전체 화면·드래그 스크롤은 편
   await expect(source).toBeVisible();
   await expect(source).toHaveValue("# 전체 화면에서 저장한 내용");
   await memos.screenshot({ path: info.outputPath("memo-mobile.png") });
-  await memos.getByRole("button", { name: "꼬리 메모", exact: true }).click();
+  await memos.getByRole("button", { name: "닫기", exact: true }).click();
   expect((await request(page, `${path}/${ids[0]}`)).markdown).toContain(
     "전체 화면에서 저장한 내용",
   );

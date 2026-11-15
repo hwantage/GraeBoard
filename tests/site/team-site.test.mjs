@@ -421,7 +421,15 @@ test(
     const worker = createWorker({
       linkTitleOptions: {
         resolve: async () => [{ address: "93.184.215.14" }],
-        request: async () => ({ title: "외부 링크 제목" }),
+        request: async (url) => ({
+          title:
+            url.pathname === "/oembed"
+              ? "외부 영상 제목"
+              : url.pathname ===
+                  "/api/published_artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec"
+                ? "외부 아티팩트 제목"
+                : "외부 링크 제목",
+        }),
       },
       verify: async (request) => ({
         issuer: env.ACCESS_ISSUER,
@@ -620,6 +628,22 @@ test(
       ),
       { title: "외부 링크 제목" },
     );
+    for (const [url, title] of [
+      ["https://youtu.be/dQw4w9WgXcQ", "외부 영상 제목"],
+      [
+        "https://claude.ai/public/artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec",
+        "외부 아티팩트 제목",
+      ],
+    ])
+      assert.deepEqual(
+        success(
+          await outside(
+            "lead-google",
+            `/link-title?url=${encodeURIComponent(url)}`,
+          ),
+        ),
+        { title },
+      );
     assert.equal(
       (await outside("lead-google", "/link-title?url=http%3A%2F%2F127.0.0.1"))
         .status,

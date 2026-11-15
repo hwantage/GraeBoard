@@ -1438,8 +1438,8 @@ body.document-block-selecting * {
   flex: 1;
   min-height: 0;
 }
-/* Cards fill the panel's height and scroll their own body. Cards are open
-   dialogs, so `auto` replaces the dialog's fit-content height. */
+/* Cards fill the panel's height and scroll their own body. The parent
+   memo panel owns the single dialog used for full-page viewing. */
 .annual-memos .memo-document-card {
   flex: 0 0 min(var(--memo-width, 800px), 100%);
   width: min(var(--memo-width, 800px), 100%);
@@ -1608,7 +1608,7 @@ body.document-block-selecting * {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.annual-memos dialog.memo-document-card {
+.annual-memos .memo-document-card {
   position: relative;
   inset: auto;
   margin: 0;
@@ -1632,69 +1632,6 @@ button.memo-document-title {
 .memo-document-heading > .document-tab-title-editor {
   min-width: 0;
   overflow: hidden;
-}
-.annual-memos dialog.memo-document-card.memo-full-page {
-  zoom: calc(1 / var(--grid-zoom, 1));
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
-  min-height: 0;
-  padding: 0;
-  gap: 0;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-/* The page scrolls across the window's whole width, with its scrollbar at
-   the window's edge; the document stays in the middle column. */
-.memo-document-card.memo-full-page .memo-document-body {
-  width: 100%;
-  margin: 0;
-  padding-bottom: 16px;
-  border: 0;
-  border-radius: 0;
-}
-.memo-document-card.memo-full-page .memo-document-body > * {
-  width: min(1120px, calc(100% - 48px));
-  margin-inline: auto;
-}
-/* Full width spans the window as the task and calendar details do. */
-.memo-document-card.memo-full-page.document-full-width .memo-document-body > * {
-  width: 100%;
-}
-.memo-document-card.memo-full-page .memo-document-heading {
-  width: 100%;
-  min-height: 56px;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-}
-.memo-full-page .memo-document-title {
-  font-size: 20px;
-}
-.memo-document-heading .document-full-width {
-  margin-left: auto;
-}
-.memo-document-heading .memo-document-close {
-  margin-left: auto;
-  border: 0;
-  padding: 5px;
-  min-height: 27px;
-  background: transparent;
-  color: var(--muted);
-}
-.memo-document-heading .document-full-width + .memo-document-close {
-  margin-left: 0;
-}
-.memo-full-page {
-  /* The tab row's 40px and its bottom line. */
-  --document-tabs-height: 41px;
-}
-.annual-memos .memo-full-page .document-rich-tools {
-  top: var(--document-tabs-height);
-}
-.memo-full-page-controls[hidden] {
-  display: none;
 }
 @media (max-width: 500px) {
   .memo-scroll-slider {
@@ -1733,48 +1670,69 @@ dialog.annual-memos.memo-panel {
   .button.document-full-width {
     display: none;
   }
-  dialog.annual-memos.memo-panel.document-full-page {
-    zoom: calc(1 / var(--grid-zoom, 1));
-    position: fixed;
-    inset: 0;
-    width: 100vw;
-    height: 100dvh;
-    min-height: 0;
-    max-height: none;
-    overflow: hidden;
-  }
-  .memo-panel.document-full-page .memo-height-handle,
-  .memo-panel.document-full-page .memo-scroll-slider,
-  .memo-panel.document-full-page .memo-accordion-icon,
-  .memo-panel.document-full-page .memo-width-handle,
-  .memo-panel.document-full-page .memo-document-card:not([data-selected]) {
-    display: none;
-  }
+}
+
+/* The same memo list and editor instances become a tabbed page on desktop
+   and mobile, preserving drafts, selection and undo history. */
+dialog.annual-memos.memo-panel.document-full-page {
+  zoom: calc(1 / var(--grid-zoom, 1));
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+.memo-panel.document-full-page .memo-height-handle,
+.memo-panel.document-full-page .memo-scroll-slider,
+.memo-panel.document-full-page .memo-accordion-icon,
+.memo-panel.document-full-page .memo-width-handle,
+.memo-panel.document-full-page .memo-document-card:not([data-selected]) {
+  display: none;
+}
+.memo-panel.document-full-page .memo-accordion-heading {
+  display: flex;
+  align-items: center;
+  padding: 14px 24px;
+  min-height: 56px;
+  gap: 8px;
+}
+.memo-panel-close {
+  margin-left: 0;
+  margin-right: 6px;
+}
+.memo-panel.document-full-page .memo-documents {
+  padding: 0;
+}
+.memo-panel.document-full-page .memo-document-card {
+  flex-basis: 100%;
+  width: 100%;
+  gap: 0;
+}
+.memo-panel.document-full-page .memo-document-body {
+  border: 0;
+  border-radius: 0;
+  padding-bottom: 16px;
+}
+.memo-panel.document-full-page .memo-document-body > * {
+  width: min(1120px, calc(100% - 48px));
+  margin-inline: auto;
+}
+
+.memo-page-title {
+  margin: 0;
+  flex: 1;
+  font-size: 20px;
+}
+.memo-panel.document-full-page .memo-document-heading {
+  display: none;
+}
+.memo-panel.document-full-page.document-full-width .memo-document-body > * {
+  width: 100%;
+}
+@media (max-width: 700px) {
   .memo-panel.document-full-page .memo-accordion-heading {
-    display: flex;
-    align-items: center;
-    min-height: 40px;
-  }
-  .memo-panel-close {
-    margin-left: auto;
-    margin-right: 6px;
-  }
-  .memo-panel.document-full-page .memo-documents {
-    padding: 0;
-  }
-  .memo-panel.document-full-page .memo-document-card {
-    flex-basis: 100%;
-    width: 100%;
-    gap: 0;
-  }
-  .memo-panel.document-full-page .memo-document-body {
-    border: 0;
-    border-radius: 0;
-  }
-  .memo-panel.document-full-page .memo-document-body > * {
-    width: 100%;
-  }
-  .memo-document-card.memo-full-page .memo-document-heading {
     padding: 8px 12px;
     min-height: 40px;
   }

@@ -17,6 +17,7 @@ import {
   ListFilter,
   LockKeyhole,
   EyeOff,
+  Eye,
   FileText,
   Search,
   Plus,
@@ -47,7 +48,7 @@ import {
   moveSecretEntries,
 } from "./secret-calendar-layout";
 
-import { isSecretEntry, setSecretCalendarVisible } from "./secret-calendar";
+import { isSecretEntry, setSecretCalendarMode } from "./secret-calendar";
 import CalendarEntries from "./CalendarEntries";
 import CalendarTaskPicker from "./CalendarTaskPicker";
 import CalendarTagManager, {
@@ -498,7 +499,10 @@ export default function Calendar({
     () =>
       new Map(
         [...schedules].map(([ownerId, schedule]) => {
-          const entries = schedule?.data?.entries || EMPTY_ENTRIES;
+          const entries =
+            ownerId === user.id && secret.mode === "only"
+              ? EMPTY_ENTRIES
+              : schedule?.data?.entries || EMPTY_ENTRIES;
           const change =
             rangeChange?.entry.userId === ownerId ? rangeChange : null;
           const placed = change
@@ -511,7 +515,7 @@ export default function Calendar({
               )
             : null;
           const local =
-            ownerId === user.id && secret.visible && schedule?.data
+            ownerId === user.id && secret.mode !== "hidden" && schedule?.data
               ? secret.entries
               : [];
           const layout = placed
@@ -546,7 +550,7 @@ export default function Calendar({
           return [ownerId, displayed] as const;
         }),
       ),
-    [schedules, rangeChange, secret.entries, secret.visible, user.id],
+    [schedules, rangeChange, secret.entries, secret.mode, user.id],
   );
   const displayEntries = useMemo(
     () => [...displayedCalendars.values()].flat(),
@@ -580,7 +584,9 @@ export default function Calendar({
     const position = positions.find((item) => item.id === drag.id)!;
     const display = mergeSecretCalendarLayout(
       positions,
-      entry.userId === user.id && secret.visible ? secret.entries : [],
+      entry.userId === user.id && secret.mode !== "hidden"
+        ? secret.entries
+        : [],
     ).find((item) => item.id === drag.id)!;
     return { ...entry, ...position, displayLane: display.lane };
   }, [
@@ -588,7 +594,7 @@ export default function Calendar({
     displayEntries,
     schedules,
     secret.entries,
-    secret.visible,
+    secret.mode,
     user.id,
   ]);
 
@@ -898,21 +904,60 @@ export default function Calendar({
   // Secret entries show only on the user's own calendar, so the toggle sits
   // there: in the toolbar of the user's own personal month, and left of the
   // user's own week dates in the team week.
+  // Follow the month in the period picker, even when older months remain
+  // loaded above it in the continuous scroll. Keep the calendar's edge weeks.
+  const countWeeks = monthWeeks(month);
+  const secretRange =
+    view === "team"
+      ? queries.find((query) => query.userId === user.id)
+      : {
+          from: countWeeks[0],
+          to: addDays(countWeeks[countWeeks.length - 1], 6),
+        };
+  const secretCount = secret.entries.filter(
+    (entry) =>
+      secretRange &&
+      entry.date <= secretRange.to &&
+      entry.endDate >= secretRange.from,
+  ).length;
+  const secretModeLabels = {
+    hidden: "시크릿 숨기기",
+    only: "시크릿만 보기",
+    all: "전체 보기",
+  };
+  const nextSecretMode = {
+    hidden: "only",
+    only: "all",
+    all: "hidden",
+  } as const;
   const secretToggle = () => (
     <Button
       className="calendar-secret-toggle"
-      tooltip={secret.visible ? "시크릿 일정 숨기기" : "시크릿 일정 보이기"}
-      aria-pressed={secret.visible}
-      active={secret.visible}
-      {...busyProps(locked)}
+      tooltip={`${secretModeLabels[secret.mode]} · ${secretModeLabels[nextSecretMode[secret.mode]]}로 전환`}
+      data-secret-mode={secret.mode}
+      aria-pressed={secret.mode !== "hidden"}
+      active={secret.mode !== "hidden"}
+      {...busyProps(locked, secretCount === 0)}
       onClick={() =>
-        localAction(() => setSecretCalendarVisible(user.id, !secret.visible))
+        localAction(() =>
+          setSecretCalendarMode(user.id, nextSecretMode[secret.mode]),
+        )
       }
     >
-      {secret.visible ? (
+      {secret.mode === "hidden" ? (
+        <EyeOff size={16} aria-hidden="true" />
+      ) : secret.mode === "only" ? (
         <LockKeyhole size={16} aria-hidden="true" />
       ) : (
-        <EyeOff size={16} aria-hidden="true" />
+        <Eye size={16} aria-hidden="true" />
+      )}
+      {secretCount > 0 && (
+        <span
+          className="calendar-secret-count"
+          aria-label={`시크릿 일정 ${secretCount}개`}
+        >
+          {secretCount}
+        </span>
       )}
     </Button>
   );

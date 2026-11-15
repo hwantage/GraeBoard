@@ -1260,3 +1260,105 @@ test("가로로 넘치는 표의 일반 스크롤 막대는 행과 꼬리 메모
   box = await sheetLayout(page);
   expect(focused).toBeLessThanOrEqual(box.railTop + 1);
 });
+
+test("꼬리 메모 전체 화면은 고정 제목 아래 탭으로 이동하고 편집 상태를 보존한다", async ({
+  page,
+}, info) => {
+  await page.request.post("/api/auth/login", {
+    headers,
+    data: { username: "test@somansa.com", password: "1234" },
+  });
+  const boot = unpack(await (await page.request.get("/api/bootstrap")).json());
+  const team = unpack(
+    await (
+      await page.request.post("/api/admin/teams", {
+        headers,
+        data: {
+          name: `전체 메모 ${randomUUID().slice(0, 8)}`,
+          members: [{ userId: boot.user.id, role: "lead" }],
+        },
+      })
+    ).json(),
+  );
+  const base = `/api/teams/${team.id}/years/2026/memos`;
+  const ids = [randomUUID(), randomUUID()];
+  for (const [index, id] of ids.entries()) {
+    await page.request.post(base, {
+      headers,
+      data: { id, title: `검증 메모 ${index + 1}` },
+    });
+    await page.request.put(`${base}/${id}`, {
+      headers,
+      data: {
+        markdown: `본문 ${index + 1}`,
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+    });
+  }
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(team.id);
+  const memos = page.locator(".annual-memos.memo-panel");
+  await memos.locator(".toggle-memos").click();
+  const first = memos.locator(`[data-document-id="${ids[0]}"]`);
+  await first
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  const source = first.getByRole("textbox", {
+    name: "연간 업무 메모 Markdown 원문",
+  });
+  await source.fill("편집 상태 보존");
+  await first
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .click();
+  await expect(memos).toHaveClass(/document-full-page/);
+  await expect(
+    memos.getByRole("heading", { name: "꼬리 메모", exact: true }),
+  ).toBeVisible();
+  await expect(memos.getByRole("tab")).toHaveCount(2);
+  await expect(source).toHaveValue("편집 상태 보존");
+  await memos.getByRole("tab", { name: "검증 메모 2", exact: true }).click();
+  await expect(first).toBeHidden();
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toContainText("본문 2");
+  await memos.getByRole("tab", { name: "검증 메모 1", exact: true }).click();
+  await expect(source).toHaveValue("편집 상태 보존");
+  const heading = (await memos
+    .getByRole("heading", { name: "꼬리 메모", exact: true })
+    .boundingBox())!;
+  const tabs = (await memos.getByRole("tablist").boundingBox())!;
+  const body = (await source.boundingBox())!;
+  expect(heading.y + heading.height).toBeLessThanOrEqual(tabs.y);
+  expect(tabs.y + tabs.height).toBeLessThanOrEqual(body.y);
+  await memos.screenshot({
+    path: info.outputPath("tail-memo-full-page-tabs.png"),
+  });
+  await memos.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(memos).not.toHaveClass(/document-full-page/);
+  await expect(source).toHaveValue("편집 상태 보존");
+  expect(
+    unpack(await (await page.request.get(`${base}/${ids[0]}`)).json()).markdown,
+  ).toBe("편집 상태 보존");
+  await page.getByRole("button", { name: "발표 모드", exact: true }).click();
+  await first
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .click();
+  await expect(memos).toHaveClass(/document-full-page/);
+  await expect(
+    memos.getByRole("heading", { name: "꼬리 메모", exact: true }),
+  ).toBeVisible();
+  await expect(memos.locator(".document-rich-tools")).toHaveCount(0);
+  await expect(
+    memos.locator('[contenteditable="true"], textarea:not([readonly])'),
+  ).toHaveCount(0);
+  await memos.getByRole("tab", { name: "검증 메모 2", exact: true }).click();
+  await expect(
+    memos.getByRole("textbox", { name: "연간 업무 메모 리치 편집" }),
+  ).toHaveAttribute("contenteditable", "false");
+  await page.keyboard.press("Escape");
+  await expect(memos).not.toHaveClass(/document-full-page/);
+  await expect(
+    page.getByRole("toolbar", { name: "보기모드 도구" }),
+  ).toBeVisible();
+});

@@ -16,7 +16,6 @@ import {
   Pencil,
   Trash2,
   FileText,
-  X,
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
@@ -43,9 +42,7 @@ import {
   MAX_DOCUMENT_TITLE_LENGTH,
 } from "../../shared/documents/task-documents.js";
 import CopyDocumentLinkButton from "./CopyDocumentLinkButton";
-import DocumentFullWidthButton from "./DocumentFullWidthButton";
 import DocumentFullPageButton from "./DocumentFullPageButton";
-import { useDocumentFullPage } from "./useDocumentFullPage";
 import {
   updateDocumentLinkTitle,
   useDocumentPageTitle,
@@ -72,6 +69,8 @@ export type DocumentPanelProps = Pick<
   initialDocumentId?: string;
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
+  inlineFullPage?: boolean;
+  onExpand?: () => void;
   // Memos shown as tabs (document browser): the list may be empty, and it
   // opens with any memo as the inline cards do.
   memoTabs?: boolean;
@@ -953,7 +952,15 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
             </Button>
           )}
           <div className="document-tab-actions">
-            {!props.inline && <div ref={setControlsTarget} />}
+            {props.inlineFullPage && current && props.documentLink && (
+              <CopyDocumentLinkButton
+                target={props.documentLink(current.id)}
+                title={current.title}
+              />
+            )}
+            {(!props.inline || props.inlineFullPage) && (
+              <div ref={setControlsTarget} />
+            )}
           </div>
           {!readOnly && menuDocument && (
             <div className="document-tab-menu" ref={menuRoot}>
@@ -1064,6 +1071,16 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
                   handles.current.get(doc.id)?.flush() ?? Promise.resolve(true)
                 }
                 inline={!!props.inline}
+                inlineFullPage={props.inlineFullPage}
+                onExpand={
+                  props.onExpand
+                    ? () => {
+                        void select(doc.id, false).then((saved) => {
+                          if (saved) props.onExpand?.();
+                        });
+                      }
+                    : undefined
+                }
                 selected={selected === doc.id}
                 loading={loading[doc.id] !== false}
                 controlsTarget={selected === doc.id ? controlsTarget : null}
@@ -1161,9 +1178,9 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
   },
 );
 
-// A document page. Memo cards (`inline`) also open in a full page; a memo
-// opened from a link (`onClose`) is only that full page and closes with it.
-export function DocumentPage({
+// Embedded document pages and inline memo cards share the same editor.
+// AnnualMemoPanel owns the full-page dialog and selected-card visibility.
+function DocumentPage({
   pageId,
   tabId,
   documentId,
@@ -1175,11 +1192,12 @@ export function DocumentPage({
   link,
   onNewTab,
   inline,
+  inlineFullPage = false,
+  onExpand,
   selected,
   loading,
   controlsTarget,
   onSelect,
-  onClose,
   children,
 }: {
   pageId: string;
@@ -1194,11 +1212,12 @@ export function DocumentPage({
   // Saves this memo before its full-page button loads it in a new tab.
   onNewTab?: () => Promise<boolean>;
   inline: boolean;
+  inlineFullPage?: boolean;
+  onExpand?: () => void;
   selected: boolean;
   loading: boolean;
   controlsTarget: HTMLDivElement | null;
   onSelect: () => void;
-  onClose?: () => void;
   children: (controls: HTMLDivElement | null) => ReactNode;
 }) {
   const [width, setWidth] = useState(() => {
@@ -1229,50 +1248,16 @@ export function DocumentPage({
       }
     }
   }
-  const [expanded, setFullPage] = useState(false);
-  const layout = useDocumentFullPage(expanded || !!onClose);
-  // Inline cards share AnnualMemoPanel's mobile page and tabs. A linked memo
-  // owns its page; embedded task documents use their parent detail's page.
-  const fullPage = !!onClose || (inline && !layout.mobile && expanded);
-  const fullWidth = layout.fullWidth;
-  const leaveFullPage = () => (onClose ? onClose() : setFullPage(false));
-  const dialog = useRef<HTMLDialogElement | null>(null);
-  const expandButton = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const element = dialog.current;
-    if (!inline || !element) return;
-    if (!fullPage && !element.matches(":modal")) {
-      element.open = true;
-      return;
-    }
-    element.close();
-    if (fullPage) element.showModal();
-    else element.show();
-    // show/showModal can autofocus an editor; keep the explicit toggle focused.
-    expandButton.current?.focus({ preventScroll: true });
-  }, [inline, fullPage]);
-  const Container = inline ? "dialog" : "div";
   const [cardControls, setCardControls] = useState<HTMLDivElement | null>(null);
-  const [fullPageControls, setFullPageControls] =
-    useState<HTMLDivElement | null>(null);
   return (
-    <Container
-      ref={(element: HTMLDialogElement | HTMLDivElement | null) => {
-        dialog.current = inline ? (element as HTMLDialogElement) : null;
-      }}
-      className={`document-page ${inline ? "memo-document-card" : ""}${fullPage ? ` memo-full-page${fullWidth ? " document-full-width" : ""}` : ""}`}
-      onCancel={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        leaveFullPage();
-      }}
+    <div
+      className={`document-page ${inline ? "memo-document-card" : ""}`}
       id={pageId}
       style={
         inline ? ({ "--memo-width": `${width}px` } as CSSProperties) : undefined
       }
-      role={fullPage ? "dialog" : "tabpanel"}
-      aria-label={fullPage ? title : undefined}
-      aria-labelledby={fullPage ? undefined : tabId}
+      role="tabpanel"
+      aria-labelledby={tabId}
       hidden={!inline && !selected}
       data-document-id={documentId}
       data-selected={selected || undefined}
@@ -1304,44 +1289,26 @@ export function DocumentPage({
               </span>
             ))}
           {link && <CopyDocumentLinkButton target={link} title={title} />}
-          <DocumentFullPageButton
-            ref={expandButton}
-            fullPage={fullPage}
-            link={link}
-            onToggle={() => (fullPage ? leaveFullPage() : setFullPage(true))}
-            onNewTab={onNewTab}
-          />
-          <div
-            className="memo-document-controls"
-            ref={setCardControls}
-            hidden={fullPage}
-          />
-          {fullPage && <DocumentFullWidthButton />}
-          {fullPage && (
-            <Button
-              className="memo-document-close"
-              tooltip="닫기"
-              onClick={leaveFullPage}
-            >
-              <X size={20} aria-hidden="true" />
-            </Button>
+          {onExpand && (
+            <DocumentFullPageButton
+              fullPage={false}
+              link={link}
+              onToggle={onExpand}
+              onNewTab={onNewTab}
+            />
           )}
+          <div className="memo-document-controls" ref={setCardControls} />
         </header>
       )}
       {inline ? (
         <div className="memo-document-body" data-loading={loading || undefined}>
-          <div
-            className="memo-full-page-controls document-mode-bar"
-            ref={setFullPageControls}
-            hidden={!fullPage}
-          />
           <ErrorNote error={titleError || ""} />
-          {children(fullPage ? fullPageControls : cardControls)}
+          {children(inlineFullPage ? controlsTarget : cardControls)}
         </div>
       ) : (
         children(controlsTarget)
       )}
-      {inline && !fullPage && (
+      {inline && (
         <div
           className="memo-width-handle"
           role="separator"
@@ -1409,6 +1376,6 @@ export function DocumentPage({
           }}
         />
       )}
-    </Container>
+    </div>
   );
 }
