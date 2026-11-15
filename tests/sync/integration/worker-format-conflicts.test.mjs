@@ -28,7 +28,7 @@ test(
     const f = await bridgeFixture(t, { port: 55448 }),
       { teamId, db, inside, outside } = f;
     const tasks = [];
-    for (let i = 0; i < 10; i++)
+    for (let i = 0; i < 14; i++)
       tasks.push(
         ok(
           await inside("/tasks", {
@@ -76,11 +76,12 @@ test(
         assert.deepEqual(byId(sharedRules()), byId(localRules()));
       };
 
-    // The external site appends each new rule, so the shared list soon has
-    // an order that is not the internal site's ID order.
+    // The external site appends each new rule under a random ID, so the
+    // shared list soon has an order that is not the internal site's ID order
+    // (all 10 appended in ID order: 1 in 10!).
     let next = 0;
     while (
-      next < 6 &&
+      next < 10 &&
       (next < 2 ||
         sharedRules()
           .map((rule) => rule.id)

@@ -25,16 +25,16 @@ import {
 // included, and shared state may hold the same rules in another order (the
 // external site appends a new rule). A base in ID order would be refused as a
 // concurrent change, so the base takes the shared order. Rules shared state
-// lacks follow in ID order; content still decides whether an edit conflicts.
+// lacks follow in the order given (the ID order read); content still decides
+// whether an edit conflicts.
 function inSharedOrder(rules, shared) {
   if (!Array.isArray(rules) || !Array.isArray(shared)) return rules;
-  const position = new Map(shared.map((rule, index) => [rule?.id, index]));
-  return [
-    ...rules
-      .filter((rule) => position.has(rule.id))
-      .sort((a, b) => position.get(a.id) - position.get(b.id)),
-    ...rules.filter((rule) => !position.has(rule.id)),
-  ];
+  const position = new Map(shared.map((rule, index) => [rule?.id, index])),
+    known = [],
+    added = [];
+  for (const rule of rules) (position.has(rule.id) ? known : added).push(rule);
+  known.sort((a, b) => position.get(a.id) - position.get(b.id));
+  return [...known, ...added];
 }
 
 export function installCapture(db, { onPending = () => {} } = {}) {
@@ -166,7 +166,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
   };
   refresh();
   // The rules the reducer will compare a formats edit's base with: those of
-  // the newest pending formats edit, or else those of shared state.
+  // the newest pending formats edit, or else those of shared state. Only the
+  // order is taken, so a missing outbox row falls back to shared state.
   const sharedFormatRules = (teamId, pending) => {
     let rules;
     if (pending) {
@@ -175,10 +176,10 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         rules = prepare(
           "SELECT json_extract(payload,?) AS rules FROM sync_outbox WHERE op_id=? AND team_id=?",
         ).get(`$.changes[${index}].desired.rules`, pending.opId, teamId)?.rules;
-    } else
-      rules = prepare(
-        "SELECT json_extract(payload,'$.rules') AS rules FROM sync_entities WHERE team_id=? AND entity='formats' AND entity_key='[]' AND deleted=0",
-      ).get(teamId)?.rules;
+    }
+    rules ??= prepare(
+      "SELECT json_extract(payload,'$.rules') AS rules FROM sync_entities WHERE team_id=? AND entity='formats' AND entity_key='[]' AND deleted=0",
+    ).get(teamId)?.rules;
     return typeof rules === "string" ? JSON.parse(rules) : null;
   };
   const record = (teamId, entity, key, beforeImage = undefined) => {
