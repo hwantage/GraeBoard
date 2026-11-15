@@ -66,6 +66,31 @@ test(
       );
     }
     const prefix = `/teams/${f.teamId}/sync/conflicts`;
+    // The internal site reads peer authors from its Git clone: exactly the
+    // operations of the conflicts it returns, in either tab, and no others.
+    const sync = f.app.locals.sync,
+      readAuthors = sync.readOperationAuthors;
+    let authorLookups = [];
+    sync.readOperationAuthors = (teamId, opIds) => {
+      authorLookups.push(opIds);
+      return readAuthors(teamId, opIds);
+    };
+    t.after(() => {
+      sync.readOperationAuthors = readAuthors;
+    });
+    const expectAuthorLookup = (site, conflicts) => {
+      if (site === "internal") {
+        assert.equal(authorLookups.length, 1);
+        assert.deepEqual(
+          [...authorLookups[0]].sort(),
+          conflicts.length
+            ? [...conflicts.map((c) => c.opId), "winner"].sort()
+            : [],
+          "internal authors are read for this response's conflicts only",
+        );
+      } else assert.deepEqual(authorLookups, []);
+      authorLookups = [];
+    };
     for (const [site, api] of [
       ["internal", f.inside],
       ["external", f.outside],
@@ -80,6 +105,7 @@ test(
           return parse.call(this, text, ...args);
         };
         let result;
+        authorLookups = [];
         try {
           result = ok(await api(prefix + query));
         } finally {
@@ -91,6 +117,7 @@ test(
           site + " list never parses full images in JS",
         );
         assert.ok(JSON.stringify(result).length < 20000);
+        expectAuthorLookup(site, result.conflicts);
         return result;
       };
       for (const status of ["open", "resolved", "all"]) {
@@ -129,8 +156,10 @@ test(
         (await api(prefix + "?after=" + "x".repeat(257))).status,
         400,
       );
+      authorLookups = [];
       const detail = ok(await api(prefix + "/" + rows[1].id));
       assert.equal(detail.resolved, true);
+      expectAuthorLookup(site, [detail]);
       assert.equal(detail.desired[0].value, value);
       // An unread page and the other tab deliberately contain invalid JSON.
       // If the query parses them before applying its filters/limit it fails.

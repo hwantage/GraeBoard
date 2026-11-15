@@ -597,12 +597,13 @@ function installTeamSyncRoutes(
       ),
       open = conflicts.filter((c) => !c.resolution);
     // External operations among them: their authors come from this site's
-    // Git clone. The list still works without them.
+    // Git clone, for this page's conflicts in either tab. The list still
+    // works without them.
     let remote = new Map();
     try {
       remote = await sync.readOperationAuthors(
         id(req),
-        conflictOpIds(open).filter((opId) => !local.has(opId)),
+        conflictOpIds(conflicts).filter((opId) => !local.has(opId)),
       );
     } catch {
       // Authors stay unknown; sites are still shown.
