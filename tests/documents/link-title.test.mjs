@@ -10,6 +10,7 @@ import {
   createLinkTitleService,
   allowedLinkTitleAddress,
   extractLinkTitle,
+  extractLinkTitleResponse,
   requestLinkTitle,
 } from "../../shared/http/link-title.mjs";
 import { createApp } from "../../server/app.mjs";
@@ -74,8 +75,34 @@ const linkTitleEncodingPages = {
   },
 };
 
+const artifactId = "3880f246-db08-4c6e-8294-5cbeb8c618ec";
+const metadataPages = {
+  "/oembed": { title: "공개 영상 제목 & 소개" },
+  [`/api/published_artifacts/${artifactId}`]: {
+    artifact: {
+      title: "WebKeeper 에디션 로고 배치",
+      content: "<title>본문은 메타데이터가 아님</title>",
+    },
+  },
+};
+const metadataLinks = [
+  ["https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30", "공개 영상 제목 & 소개"],
+  ["https://youtu.be/dQw4w9WgXcQ?si=shared", "공개 영상 제목 & 소개"],
+  ["https://m.youtube.com/shorts/dQw4w9WgXcQ", "공개 영상 제목 & 소개"],
+  [
+    `https://claude.ai/public/artifacts/${artifactId}`,
+    "WebKeeper 에디션 로고 배치",
+  ],
+];
+
 async function source(t) {
   const server = createServer((req, res) => {
+    const metadata =
+      metadataPages[new URL(req.url, "https://fixture.test").pathname];
+    if (metadata) {
+      res.setHeader("Content-Type", "application/json");
+      return res.end(JSON.stringify(metadata));
+    }
     if (req.url === "/slow") return;
     if (req.url === "/private") {
       res.writeHead(302, { Location: "http://127.0.0.1/" });
@@ -181,6 +208,57 @@ test("로컬 HTTP 응답의 제목, 비HTML, 본문 제한, 리다이렉트와 �
   await assert.rejects(title("user", "http://public.example/slow"), {
     status: 504,
   });
+});
+
+test("제공자 HTML의 공개 제목과 JSON 문자열은 코드 실행 없이 표시한다", () => {
+  const video = new URL(metadataLinks[0][0]);
+  assert.equal(
+    extractLinkTitleResponse(
+      video,
+      Buffer.from(
+        '<title>YouTube</title><meta property="og:title" content="실제 영상 &amp; 제목">',
+      ),
+      "text/html",
+    ),
+    "실제 영상 & 제목",
+  );
+  assert.equal(
+    extractLinkTitleResponse(
+      new URL(`https://claude.ai/api/published_artifacts/${artifactId}`),
+      Buffer.from(JSON.stringify({ title: "실제 제목 &amp; 원문" })),
+      "application/json",
+    ),
+    "실제 제목 &amp; 원문",
+  );
+});
+
+test("공개 YouTube와 Claude 제목은 제한된 JSON 메타데이터를 먼저 조회한다", async (t) => {
+  const f = await source(t);
+  const title = createLinkTitleService(f.options);
+  for (const [url, expected] of metadataLinks)
+    assert.deepEqual(await title("metadata", url), { title: expected });
+  assert.equal(f.calls.length, metadataLinks.length);
+  assert.equal(new URL(f.calls[0].url).hostname, "www.youtube.com");
+  assert.equal(new URL(f.calls[0].url).pathname, "/oembed");
+  assert.equal(
+    new URL(f.calls.at(-1).url).pathname,
+    `/api/published_artifacts/${artifactId}`,
+  );
+  const fallback = createLinkTitleService({
+    ...f.options,
+    request: async (url, ...args) => {
+      if (url.pathname === "/oembed") throw new Error("blocked");
+      return f.options.request(url, ...args);
+    },
+  });
+  assert.deepEqual(await fallback("metadata", metadataLinks[0][0]), {
+    title: "사이트 & 😀 제목",
+  });
+  // A look-alike host cannot request either provider's metadata.
+  const before = f.calls.length;
+  await title("metadata", "https://youtube.com.example/watch?v=dQw4w9WgXcQ");
+  assert.equal(f.calls.length, before + 1);
+  assert.equal(new URL(f.calls.at(-1).url).hostname, "youtube.com.example");
 });
 
 test("Node HTTP는 BOM·헤더·앞 1KiB meta 순서로 한국어 제목을 디코딩한다", async (t) => {
@@ -350,7 +428,10 @@ test("Node API는 로그인과 기존 CSRF 헤더를 요구하고 같은 계약�
   const app = createApp({
     db,
     rateLimits: false,
-    linkTitleOptions: { ...f.options, requestsPerMinute: 1 },
+    linkTitleOptions: {
+      ...f.options,
+      requestsPerMinute: metadataLinks.length + 1,
+    },
   });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -376,6 +457,13 @@ test("Node API는 로그인과 기존 CSRF 헤더를 요구하고 같은 계약�
   const response = await fetch(endpoint, { headers });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { title: "사이트 & 😀 제목" });
+  for (const [url, expected] of metadataLinks) {
+    const route = new URL(endpoint);
+    route.searchParams.set("url", url);
+    const metadata = await fetch(route, { headers });
+    assert.equal(metadata.status, 200);
+    assert.deepEqual(await metadata.json(), { title: expected });
+  }
   assert.equal((await fetch(endpoint, { headers })).status, 429);
 });
 
@@ -424,6 +512,36 @@ test("Edge 전송은 검사한 IP와 원래 TLS 호스트를 유지하고 HTML·
       },
     };
   }
+  const service = createLinkTitleService({
+    resolve: async () => [{ address: "8.8.8.8" }],
+    request: (url, address, signal) =>
+      requestEdgeLinkTitle(
+        url,
+        address,
+        signal,
+        runtime(
+          `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadataPages[url.pathname])}`,
+        ),
+      ),
+  });
+  for (const [url, title] of metadataLinks)
+    assert.deepEqual(await service("edge", url), { title });
+  for (const body of [
+    "{",
+    JSON.stringify({ title: 42 }),
+    " ".repeat(256 * 1024) + JSON.stringify({ title: "too late" }),
+  ])
+    assert.deepEqual(
+      await requestEdgeLinkTitle(
+        new URL("https://www.youtube.com/oembed"),
+        "8.8.8.8",
+        new AbortController().signal,
+        runtime(
+          `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n${body}`,
+        ),
+      ),
+      { title: null },
+    );
   for (const [path, page] of Object.entries(linkTitleEncodingPages)) {
     const response = runtime(
       Buffer.concat([

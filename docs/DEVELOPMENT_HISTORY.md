@@ -18,6 +18,15 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-16 — 붙여넣기 링크 제목 독립 분리
+
+- 기준 `ecfb556b32762c0d6121b840739ced186e01e02c`에서 `fix/pasted-provider-titles`를 시작해 합본 최종 소스 `9420992e56d978f9bf8889c204e3caddd5465b96`의 링크 제목 소스·검사 4개만 옮겼습니다. 해당 파일은 원본과 바이트 단위로 동일하며, 개발·사용 안내도 URL 붙여넣기 문단만 반영했습니다. DB 스키마·영속 저장 형식과 편집기 구현은 변경하지 않았습니다.
+- 기존 `DocumentLinkTitle` → 인증된 제목 API → 공통 서비스 → Node/Edge 전송 경로를 재사용합니다. YouTube는 고정 oEmbed 주소, Claude 공개 Artifact는 고정 공개 메타데이터 주소를 먼저 조회하고 실패하면 기존 HTML/URL 동작으로 돌아갑니다. DNS/IP·리다이렉트 검사, IP 고정 접속, 256KiB 응답과 총 5초 제한을 유지합니다. 일반 HTML의 제목 우선순위를 보존하고 일반 서비스명인 `YouTube`·`Claude Artifact`에만 OG 제목을 우선하는 기존 보완도 포함했습니다.
+- 리뷰 보완 범위: 첫 리뷰 수정 커밋은 이 4개 소스·검사 파일을 변경하지 않았습니다. 리뷰에서 정정한 Claude 근거 범위는 유지합니다. 공개 HTML의 API 경로는 확인했지만 API는 Cloudflare 차단 응답이었고, `artifact.title`·`data.title` 구조는 실제 공개 응답/클라이언트에서 확인하지 못한 추정 fixture입니다. fixture 기반 Node·Edge·API 처리를 검증한 것으로, 실제 Claude 제목 조회 성공은 미검증입니다. 공개 YouTube 단축 URL의 실제 서비스 조회 성공은 기존 부모 검증 근거이며 이번 실행에서 다시 조회한 결과로 세지 않습니다. 사용자 이미지의 특정 URL도 제공되지 않았습니다.
+- 이번 독립 Node 검증: Node 22.23.1·PostgreSQL 17.11에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`로 828건 통과, 실패·취소·skip 0건(854080ms). 링크 제목 10건과 실제 PostgreSQL을 사용하는 `team-site` 4건을 포함합니다. team-site의 제목 전송은 fixture이며 실제 제공자 응답 성공을 대신하지 않습니다. 과거 합본의 828건·리뷰 99건을 이번 실행으로 재집계하지 않았습니다.
+- `npm run build`, `npm run build:edge`, `npm run check:structure`, `npm run check:architecture`와 변경 소스·검사 4개의 Prettier 검사가 통과했습니다. 구조 721개 파일·오류 0·기존 검토 알림 38건, import 경계 447개 모듈·위반 0건이며 기존 700kB 초과 번들 경고는 남아 있습니다.
+- 브라우저 검증: `E2E_PORT=4444 npx playwright test tests/browser/documents/document-input.spec.ts --grep '외부 URL은|조회 중 고친 URL|링크 앞 문단 편집|제목 조회 중 링크|제목 조회 속성이'`로 Chromium·Firefox·WebKit 15건 모두 통과(실패·skip 0건). URL 즉시 링크화, 제목 변경 undo/redo, 조회 중 수정·삭제, 실패 시 보존, 선택 글자·코드·원문 붙여넣기, 앞 문단 편집 후 위치 추적과 제목 조회 비활성화를 확인했습니다. 임시 DB·이미지와 독립 포트만 사용했으며 로그·상세 보고서는 `/tmp/graeboard-split-link-*`에 기록했습니다.
+
 ## 2026-11-15 — JSON 파일명에 선택 주차 표시
 
 - 현재 보기·선택 기간 수행 업무의 두 JSON 형식에 화면과 같은 월별 주차 범위를 넣었습니다. 업무 데이터는 `graeboard-2026년-10월1주~11월4주-tasks.json`, 상세 보관은 같은 이름에서 `-tasks`를 뺍니다. 한 주는 한 번만, 연말을 넘는 기간은 양쪽 연도를 표시합니다. 원본·사본에 동일하게 적용하고 전체는 기존 연도 기준 이름을 유지합니다.
