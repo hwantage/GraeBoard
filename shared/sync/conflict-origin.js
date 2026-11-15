@@ -5,7 +5,25 @@
 // token from the first publication.
 // The Node server is always the internal site and the Edge one the external.
 
+import { requireThat } from "../http/http-error.js";
+
 export const PEER_SITE = { internal: "external", external: "internal" };
+export const CONFLICT_PAGE_SIZE = 20;
+
+/** Both list APIs bound work before reading any conflict payloads. */
+export function conflictPage({ status = "all", after = "" }) {
+  requireThat(
+    ["all", "open", "resolved"].includes(status),
+    400,
+    "충돌 목록 구분을 확인하세요.",
+  );
+  requireThat(
+    typeof after === "string" && after.length <= 256,
+    400,
+    "충돌 목록 위치를 확인하세요.",
+  );
+  return { status, after };
+}
 
 export function writerOpId(record) {
   const version = record?.version;
