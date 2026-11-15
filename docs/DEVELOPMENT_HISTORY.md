@@ -24,6 +24,12 @@
 - 원본·사본 모두 기존 `/export`의 현재 보기 경로로 대상 ID와 표시 열을 전달합니다. 사본에도 툴바와 같은 현재 팀의 업무 색 설정을 사용하며 저장 형식은 바꾸지 않습니다. 건수는 이미 불러온 업무에서 첫 해당 주차를 찾으면 멈추고 창 내에서 메모이제이션합니다. 추가 조회·문서 읽기 없이 계산합니다.
 - 검증 항목: 원본·사본의 실제 CSV 내려받기에서 필터·숨긴 행 포함, 다중 주차 중복 제거, 일반 배경·기간 밖 제외, 상속 표시 포함, 기존 현재 보기·전체 동작, 빈 기간이 전체 업무로 대체되지 않는지를 검사합니다. 개발 중 사본 설정을 사용하면 업무 색 목록이 없어 0건으로 보이는 오류를 이 검사에서 발견해 현재 팀 설정으로 고쳤습니다.
 
+## 2026-11-15 — PR #167 최신 main 통합 재검증
+
+- PR #167의 `466c97f`에 최신 main `9eb47a4`를 통합했습니다. 개발 안내·변경 이력의 문서 충돌은 양쪽 내용을 보존했고, 재연결·복구·로그 읽기의 실제 호출 경로와 최신 충돌 보관함 변경과의 결합을 다시 검토했습니다. 추가 차단 결함은 발견하지 못했습니다.
+- Node 22.23.1·`TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 822/822 통과(실패·취소·skip 0), Node 24.18.0 프런트·Edge 빌드 성공, 구조 오류 0·import 경계 위반 0. `sheet-clone-editing`·`data-sync`·`sync-log` 브라우저 105/105가 Chromium·Firefox·WebKit에서 통과했습니다(`E2E_PORT=4417`).
+- 로그: `/private/tmp/graeboard-pr167-review.bgvzHb/`. 운영 DB·운영 복구 실행·외부 운영 사이트는 이번 검사에서 변경하지 않았습니다.
+
 ## 2026-11-15 — 문서 브라우저 꼬리 메모 제목으로 닫기
 
 - 원본·사본의 꼬리 메모 제목을 다시 누르면 기존 `leave` 저장 경로를 거친 뒤 그 목록과 상세 선택을 함께 닫습니다. 개별 메모 선택과 화살표의 목록 펼침·접기는 기존 동작을 유지합니다.
@@ -76,6 +82,18 @@
 - 수정: 캡처가 서식 base를 공유값(같은 서식의 미전송 명령이 있으면 그 desired)의 순서로 맞추고, 규칙 내용이 그대로인 서식 쓰기는 명령을 만들지 않습니다. desired는 이전처럼 ID 순입니다. `writeFormatting`은 빠진 규칙을 먼저 지웁니다. reducer·명령 형식·DB 스키마·저장 형식은 바꾸지 않았으므로 과거 이력의 재생 결과는 같고, 이미 보관된 충돌은 그대로 남아 덮어쓰기로 해결할 수 있습니다.
 - 회귀 검사: `worker-format-conflicts.test.mjs`(실제 SQLite 앱·PostgreSQL 외부·bare Git), `sync-resolve.test.mjs`의 서식 덮어쓰기·롤백, `sync-protocol.test.mjs`의 프로토콜 3~5 순서 비교 고정. 수정 전 main `1b3e807`에서는 앞의 둘이 실패했습니다(첫 사내 연속 편집이 `conflict`, 덮어쓰기가 500 UNIQUE). 캡처만 고친 상태에서는 통합 검사가 같은 범위 규칙의 수신 반영에서 UNIQUE로 실패했습니다. 셋째는 수정 전후 모두 통과합니다.
 - 검증(커밋 `71efd30`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 817개 통과·실패 0, `npm run check:structure` 오류 0, `npm run check:architecture` 위반 0, `npm run build`·`npm run build:edge` 성공. 브라우저는 Node 24로 `tests/browser/sheet/common-formatting.spec.ts`·`tests/browser/sync/data-sync.spec.ts`를 Chromium·Firefox·WebKit에서 실행해 78개 통과했습니다. 개발 DB의 실제 충돌은 읽기 전용으로만 확인했고 해결 요청은 보내지 않았습니다.
+
+## 2026-11-15 — 프로토콜 5 재연결·복구의 사본 서식 보존, 동기화 로그 걸러 보기의 읽기 한도
+
+- 계기: release-2026-11-13-6(5085e9c) 이후 main(1b3e807) 코드리뷰에서 두 문제가 나왔습니다.
+- 재연결·복구(P1): 프로토콜 5 팀에서 사본 서식을 두 번 바꾸고 동기화한 뒤 사내 연결을 해제하고 셀을 고친 다음 다시 연결하면, 사본 셀이든 일반 업무 셀이든 고친 내용이 모두 충돌 보관함으로 갔고 화면·DB는 원래 값으로 돌아갔습니다. 다시 연결은 로컬 자료(`allEntities`, 사본이 지금 쓰는 서식·규칙만 나옴)와 C+P를 비교해 로컬에 없는 레코드를 삭제로 보냈습니다. C는 사본이 살아 있는 동안 더 이상 쓰지 않는 서식·규칙도 보존하므로(capture와 외부 서버의 규칙) 지난 서식·규칙의 삭제가 명령에 섞였고, reducer가 살아 있는 사본의 서식·규칙 삭제를 `Missing sheetClone format`으로 거절해 명령 전체가 충돌이 됐습니다. `sync:recover`도 같은 비교를 했고(점검 결과 미캡처 변경 2건이 4건으로 셈), 다시 연결이 지키던 로컬 보관 정리·tombstone·사람 표시 예외도 없었습니다.
+- 수정(P1): 두 경로가 `entities.mjs`의 `localAfterImage` 하나를 씁니다. 다시 연결의 기존 예외에 더해 살아 있는 사본의 서식·규칙은 로컬에 없어도 삭제로 보내지 않습니다. 사본을 지운 경우에는 그 사본의 서식·규칙을 지난 것까지 모두 지웁니다. reducer의 거절 규칙은 그대로입니다. DB 스키마·저장 형식 변경은 없습니다.
+- 동기화 로그(P2): **실패와 상태 변화만**은 실패가 드문 날 그날 파일 전체를 요청 하나에서 동기식으로 읽고 줄마다 `JSON.parse`했습니다. 모든 Git 명령 수준의 합성 로그 288,000줄(30.21MiB)에서 한 요청이 약 120ms 동안 이벤트 루프를 잡아 다른 팀의 사내 요청도 기다렸습니다(운영 측정치 아님).
+- 수정(P2): 파일을 `fs/promises`로 1MiB씩 읽고, 거르며 건너뛴 줄이 4MiB(`SYNC_LOG_SCAN`)에 닿으면 그 위치를 `next`로 돌려주고 멈춥니다. 걸러 본 쪽은 비어 있어도 `next`가 있을 수 있고, `SyncLogDialog`는 빈 쪽이면 같은 날짜의 `next`로 이어 읽습니다. **이전 기록 더 보기**도 보고 있는 쪽의 날짜로 읽습니다(자정이 지나도 위치가 그날 파일을 가리킴). 걸러 보기·날짜·더 보기·내려받기·권한과 화면 문구는 그대로입니다.
+- 검사: 새 `tests/sync/integration/sync-row-records-reconnect.test.mjs` 2건이 실제 SQLite·PostgreSQL·Git·HTTP로 확인합니다. 재연결은 일반 업무 셀·사본 셀의 오프라인 편집이 각각 변경 1건으로만 가고 충돌 없이 반영되며, C의 서식·규칙이 그대로이고 내부·외부의 head·state hash가 같습니다. 양쪽이 같은 사본 셀을 고치면 그 행만 충돌하고, 오프라인 사본 삭제는 지난 서식·규칙까지 지우며 충돌을 더하지 않습니다. 복구는 점검의 미캡처 변경이 2건이고 실행 뒤 P에 셀·사본 행 편집 2건만 남습니다. 로그는 `sync-log.test.mjs`(한도·이어 읽기·누락/중복 없음·한도보다 긴 줄·파일 증가), `sync-integration.test.mjs`(HTTP 경로, 읽는 동안 다른 요청 응답), `browser/sync/sync-log.spec.ts`(빈 쪽 이어 읽기·날짜 유지)에 1건씩 더했습니다.
+- 수정 전 코드(1b3e807)에 새 검사를 얹은 결과: 재연결은 `cell edit`에 `sheetCloneFormat delete`·`sheetCloneRule delete`가 섞여, 복구는 미캡처 4건(기대 2건)으로, 로그 읽기는 한 요청이 그날 전체를 읽어, 화면은 빈 쪽에서 "없습니다"와 더 보기를 함께 보여 각각 실패했습니다. 사본을 지운 뒤에도 서식을 남기는 변형도 검사가 잡습니다.
+- 합성 측정(운영 측정치 아님): 288,000줄(30.21MiB)의 걸러 보기는 수정 전 한 요청 122.7ms·타이머 최대 간격 122.9ms, 수정 후 8회 요청(첫 요청 21.3ms)·전체 134.0ms·최대 간격 8.0ms입니다. 걸러 보지 않는 200건 조회는 1ms 미만으로 같습니다.
+- 실행: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 818건 통과(이전 main 814건과 새 4건), `npm run build`·`npm run build:edge` 통과, `check:structure` 0 errors·`check:architecture` 0 violations, 브라우저 `sheet-clone-editing`·`sync-log`·`data-sync` 99건이 Chromium·Firefox·WebKit에서 통과했습니다(Node 24.18.0 Playwright 실행기, 전용 포트).
 
 ## 2026-11-14 — 외부 서버 요청의 DB 왕복 줄이기 (2차)
 

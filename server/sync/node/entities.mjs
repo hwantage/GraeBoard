@@ -36,6 +36,7 @@ import {
   PROTOCOL,
   SPLIT_PROTOCOL,
 } from "../core/protocol.mjs";
+import { isExcluded } from "../core/retention.mjs";
 
 const sheetCloneDecoded = channel("graeboard.sync.sheetClone.decode");
 const one = (db, sql, ...args) => db.prepare(sql).get(...args);
@@ -536,6 +537,40 @@ export function allEntities(
   }
   result[entityId("protocol", [])] = marker;
   return result;
+}
+const COPY_FORMATTING = ["sheetCloneFormat", "sheetCloneRule"];
+// The local data as the after-image of `before`, shared state with this site's
+// pending commands, for the command that reconnection and recovery make of the
+// changes never captured. A shared record missing locally is a deletion except:
+// - this site's local retention removed it,
+// - it is a tombstone or a display reference to an unused person, or
+// - it is a protocol 5 format or rule of a copy that lives. Those stay while
+//   their copy lives, as capture and the external site keep them, because a
+//   command or the other site may still name them (see validateIncrement).
+export function localAfterImage(db, link, before, exclusions = []) {
+  // A calendar document with no saved body is published only when shared
+  // state already has it.
+  const after = allEntities(db, link, {
+    calendarDocuments: (key, saved) =>
+      saved || !!before[entityId("document", key)],
+  });
+  const living = new Set(
+    Object.values(after)
+      .filter((record) => record.entity === "sheetClone" && !record.deleted)
+      .map((record) => record.key[0]),
+  );
+  for (const [key, previous] of Object.entries(before)) {
+    if (isExcluded(previous, before, exclusions)) delete after[key];
+    else if (!after[key])
+      after[key] =
+        previous.deleted ||
+        previous.entity === "person" ||
+        (COPY_FORMATTING.includes(previous.entity) &&
+          living.has(previous.key[0]))
+          ? previous
+          : null;
+  }
+  return after;
 }
 function documentTarget(key) {
   const [type, a, b, c] = key;

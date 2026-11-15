@@ -313,6 +313,80 @@ test("동기화 로그 팝업은 실패한 Git 단계의 원문과 조치 안내
   await expect(box).toHaveCount(0);
 });
 
+test("실패와 상태 변화만 보기는 서버가 나눠 읽은 빈 구간을 이어 읽어 보여 준다", async ({
+  page,
+}) => {
+  const { requests } = await open(page);
+  // The server reads a large filtered day a bounded part at a time: a part
+  // may show nothing and still continue from `next`.
+  const parts: Record<
+    string,
+    Record<string, { entries: SyncLogEntry[]; next: number | null }>
+  > = {
+    "2026-11-13": {
+      "": { entries: [], next: 900 },
+      "900": { entries: [], next: 400 },
+      "400": { entries: [entries[1]], next: 200 },
+      "200": { entries: [], next: null },
+    },
+    "2026-11-12": {
+      "": { entries: [], next: 50 },
+      "50": { entries: [], next: null },
+    },
+  };
+  await page.route("**/api/teams/*/sync/log?*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("problems") !== "1") return route.fallback();
+    requests.push(url);
+    const date = url.searchParams.get("date") || "2026-11-13";
+    return route.fulfill({
+      json: {
+        level: "git",
+        levels: ["changes", "cycles", "git"],
+        canSetLevel: true,
+        retentionDays: 14,
+        date,
+        dates: ["2026-11-13", "2026-11-12"],
+        ...parts[date][url.searchParams.get("before") || ""],
+      },
+    });
+  });
+  const read = () =>
+    requests
+      .filter((url) => url.searchParams.get("problems") === "1")
+      .map(
+        (url) =>
+          `${url.searchParams.get("date") || ""}:${url.searchParams.get("before") || ""}`,
+      );
+  await page.getByRole("button", { name: "동기화 로그", exact: true }).click();
+  const box = dialog(page),
+    rows = box.locator(".sync-log-entry"),
+    more = box.getByRole("button", { name: "이전 기록 더 보기" });
+  await expect(rows).toHaveCount(5);
+  await box.getByLabel("결과").selectOption("problems");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.nth(0)).toContainText(
+    "동기화 실패 · Git operation failed (128, merge-base)",
+  );
+  await expect(
+    box.getByText("이 날짜에는 실패나 상태 변화가 없습니다."),
+  ).toHaveCount(0);
+  await expect(more).toBeVisible();
+  // The parts with nothing to show were read on, from the page's own date.
+  expect(read()).toEqual([":", "2026-11-13:900", "2026-11-13:400"]);
+  await more.click();
+  await expect(more).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
+  expect(read().at(-1)).toBe("2026-11-13:200");
+  // A day whose parts all show nothing says so once it has been read.
+  await box.getByLabel("날짜").selectOption("2026-11-12");
+  await expect(
+    box.getByText("이 날짜에는 실패나 상태 변화가 없습니다."),
+  ).toBeVisible();
+  await expect(more).toHaveCount(0);
+  expect(read().slice(-2)).toEqual(["2026-11-12:", "2026-11-12:50"]);
+});
+
 test("팀장은 로그를 보되 기록 수준은 바꾸지 못하고, 좁은 화면에서도 넘치지 않는다", async ({
   page,
 }) => {
