@@ -400,7 +400,10 @@ test("전체 페이지는 창 끝에서 스크롤하고 닫기 왼쪽의 전체 
 
   // A memo's full page opens wide too, and its blank sides scroll the page.
   await page.goto(`/links/memo/${teamId}/2026/${memoId}`);
-  const memo = page.getByRole("dialog", { name: "긴 메모", exact: true });
+  const memo = page.getByRole("dialog", {
+    name: "연간 업무 메모 목록",
+    exact: true,
+  });
   await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toBeVisible();
   await expect(
     memo.getByRole("button", { name: "기본 너비로 보기" }),
@@ -476,7 +479,10 @@ test("업무 상세와 메모 전체 페이지는 스크롤 중 탭 줄과 모�
   await close(page);
 
   await page.goto(`/links/memo/${teamId}/2026/${memoId}`);
-  const memo = page.getByRole("dialog", { name: "긴 메모", exact: true });
+  const memo = page.getByRole("dialog", {
+    name: "연간 업무 메모 목록",
+    exact: true,
+  });
   await expect(memo.getByRole("textbox", { name: /리치 편집$/ })).toContainText(
     "문단 80",
   );

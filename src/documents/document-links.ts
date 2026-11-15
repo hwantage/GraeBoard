@@ -242,11 +242,16 @@ export function refreshDocumentLinkTitles() {
 // Opening a link is provided by the workspace, which knows the screens and
 // the detail windows already open. `close` leaves a detail window through its
 // own save path and says whether it closed.
+export type DocumentLinkNavigation = {
+  accepts: (target: DocumentLinkTarget) => boolean;
+  select: (target: DocumentLinkTarget) => Promise<boolean>;
+};
 export type DocumentLinkOpener = {
   open: (target: DocumentLinkTarget) => Promise<void>;
   register: (
     target: DocumentLinkTarget,
     close: () => Promise<boolean>,
+    navigation?: DocumentLinkNavigation,
   ) => () => void;
 };
 export const DocumentLinkContext = createContext<DocumentLinkOpener | null>(
@@ -271,13 +276,18 @@ export function useDocumentLinkOpener() {
 export function useOpenDocumentLink(
   target: DocumentLinkTarget | null,
   close: () => Promise<boolean>,
+  navigation?: DocumentLinkNavigation,
 ) {
   const opener = useContext(DocumentLinkContext);
-  const latestClose = useRef(close);
-  latestClose.current = close;
+  const latest = useRef({ close, navigation });
+  latest.current = { close, navigation };
   const key = target && documentLinkKey(target);
   useEffect(() => {
     if (!opener || !target) return;
-    return opener.register(target, () => latestClose.current());
+    return opener.register(target, () => latest.current.close(), {
+      accepts: (next) => latest.current.navigation?.accepts(next) ?? false,
+      select: (next) =>
+        latest.current.navigation?.select(next) ?? Promise.resolve(false),
+    });
   }, [opener, key]);
 }

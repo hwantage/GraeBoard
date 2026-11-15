@@ -18,6 +18,16 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-16 — 꼬리 메모 전체 화면 탭 독립 분리
+
+- 공통 기준 `ecfb556b32762c0d6121b840739ced186e01e02c`에서 메모 기능을 독립 분리했습니다. source/test 10개는 합본의 리뷰 보완을 포함한 `9420992e56d978f9bf8889c204e3caddd5465b96`과 동일하며, 현재 개발·사용 안내에는 메모 관련 문단만 반영했습니다.
+- 전체 화면은 고정 **꼬리 메모** 제목 아래 기존 문서 탭과 선택 본문을 표시합니다. `AnnualMemoPanel`이 하나의 dialog를 소유하고 `AnnualMemoDocumentPanel`·`DocumentPanel`의 편집기·선택·초안·저장·실행취소 경로를 공유합니다. 원본·사본 링크, 읽기 전용·발표, 모바일 전환도 같은 목록을 사용합니다.
+- 1차 리뷰에서 확인된 메모 주소의 탭 이동 후 React #185와 최초 메모 링크 무시를 보완한 상태입니다. 브라우저 제목은 `DocumentPanel`만 보고하며, 메모 이름이 `문서 1`이어도 실제 이름을 우선합니다. 같은 팀·연도 또는 사본의 링크는 기존 목록의 탭을 선택하고, 중첩 패널은 저장 후 닫습니다. 저장 실패 시 선택과 입력을 보존하며 다른 팀·연도·사본은 별도 패널로 엽니다.
+- 독립 검증: Node 22.23.1·npm 10.9.8·PostgreSQL 17.11에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 826/826 통과(실패·취소·skip 0). `npm run build`·`npm run build:edge` 성공(기존 700kB chunk 경고 유지), `npm run check:structure` 오류 0·검토 알림 38, `npm run check:architecture` 위반 0, 변경 source/test 10개 Prettier 통과.
+- 독립 브라우저 검증: `E2E_PORT=4447`의 임시 SQLite·이미지 서버에서 Chromium·Firefox·WebKit 156건 중 154통과·2건너뜀·실패 0(재시도 0). `annual-memos`·`document-links` 전체, `document-browser` 꼬리 메모, `task-documents` 전체 페이지·열람자, `workspace-improvements` 메모·모바일, `sheet-format-memo` 발표 회귀를 실행했습니다. Chromium·Firefox는 각 51통과·1건너뜀, WebKit은 52통과이며 건너뜀은 기존 WebKit 전용 일반 스크롤바 검사입니다. 원본·사본의 제목 단일 소유와 `문서 1` 이름, 같은 목록 링크 이동·저장 실패·재시도·중첩 닫기, 다른 목록 분리도 포함합니다. 전체 화면·390px 모바일 스크린샷을 직접 확인했습니다.
+- 검증 후 추가 source/test 변경 없이 분리 범위와 원본 일치를 확인했습니다. 정확한 명령·집계·제약·파일 비교는 `/tmp/graeboard-split-memo-report.json`, 실행 로그와 브라우저 화면은 `/tmp/graeboard-split-memo-*`에 보존합니다. 실제 모바일 기기·운영 배포 검증은 수행하지 않았습니다.
+- DB 스키마·영속 저장 형식·서버 API 변경은 없습니다. 메인·원본 워크트리는 읽기만 했으며, 의존성은 메인의 `node_modules` 심볼릭 링크를 사용합니다. 그래프 도구가 세션에 노출되지 않아 Git diff·`rg`·소스 읽기로 실제 호출 경로와 기존 회귀를 확인했습니다. 과거 합본 검증 수치는 이번 독립 실행 결과로 계산하지 않습니다.
+
 ## 2026-11-15 — JSON 파일명에 선택 주차 표시
 
 - 현재 보기·선택 기간 수행 업무의 두 JSON 형식에 화면과 같은 월별 주차 범위를 넣었습니다. 업무 데이터는 `graeboard-2026년-10월1주~11월4주-tasks.json`, 상세 보관은 같은 이름에서 `-tasks`를 뺍니다. 한 주는 한 번만, 연말을 넘는 기간은 양쪽 연도를 표시합니다. 원본·사본에 동일하게 적용하고 전체는 기존 연도 기준 이름을 유지합니다.

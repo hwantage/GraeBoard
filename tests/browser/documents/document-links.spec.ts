@@ -461,9 +461,9 @@ test("⌘/Ctrl+클릭은 새 탭으로 열고 그 주소는 팀과 화면을 바
   const id = await memo(page, "주소로 연 메모", 2026, "주소 메모 본문");
   await page.getByLabel("팀 선택").selectOption(other);
   await page.goto(`/links/memo/${teamId}/2026/${id}`);
-  await expect(
-    page.getByRole("dialog", { name: "주소로 연 메모", exact: true }),
-  ).toContainText("주소 메모 본문");
+  await expect(memoPage(page, "주소로 연 메모")).toContainText(
+    "주소 메모 본문",
+  );
   await expect(page.getByLabel("팀 선택")).toHaveValue(teamId);
   expect(new URL(page.url()).pathname).toBe("/");
 });
@@ -741,13 +741,15 @@ test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 �
 });
 
 const memoPage = (page: Page, title: string) =>
-  page.getByRole("dialog", { name: title, exact: true });
+  page
+    .getByRole("dialog", { name: "연간 업무 메모 목록", exact: true })
+    .filter({ has: page.getByRole("tab", { name: title, exact: true }) });
 const memoToggle = (page: Page) =>
   page
     .getByRole("region", { name: "연간 업무 메모 목록" })
     .getByRole("button", { name: "꼬리 메모", exact: true });
 
-test("메모 링크는 지금 화면 위에 그 메모만 전체 페이지로 열고 닫으면 보던 상세로 돌아온다", async ({
+test("메모 링크는 지금 화면 위에 선택 메모의 탭을 전체 페이지로 열고 닫으면 보던 상세로 돌아온다", async ({
   page,
 }, info) => {
   const current = await memo(
@@ -766,7 +768,7 @@ test("메모 링크는 지금 화면 위에 그 메모만 전체 페이지로 �
   await expect(links(source)).toHaveText(["링크할 메모", "지난해 메모"]);
   await links(source).nth(0).click();
   const full = memoPage(page, "링크할 메모");
-  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toHaveClass(/document-full-page/);
   await expect(full).toContainText("올해 메모 본문");
   // The detail below stays open and the screen does not move.
   await expect(source).toBeVisible();
@@ -1216,26 +1218,37 @@ test("꼬리 메모 카드와 사본 업무 상세도 전체 페이지 버튼으
   await expect(page.getByRole("tooltip")).toHaveText(fullPageHint);
   let tab = await openInNewTab(page, expand, true);
   const full = memoPage(tab, "새 탭 메모");
-  await expect(full).toHaveClass(/memo-full-page/);
+  await expect(full).toHaveClass(/document-full-page/);
   await expect(full).toContainText("새 탭 메모 본문");
   await expect(tab).toHaveTitle("새 탭 메모 · 그래보드");
   await tab.close();
-  await expect(card).not.toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).not.toHaveClass(/document-full-page/);
   await expect(expand).toHaveAttribute("aria-pressed", "false");
   // In full page the button also opens a new tab and keeps this page.
   await expand.click();
-  await expect(card).toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).toHaveClass(/document-full-page/);
   tab = await openInNewTab(
     page,
-    card.getByRole("button", { name: "전체 페이지 닫기", exact: true }),
+    memoPage(page, "새 탭 메모").getByRole("button", {
+      name: "전체 페이지 닫기",
+      exact: true,
+    }),
   );
-  await expect(memoPage(tab, "새 탭 메모")).toHaveClass(/memo-full-page/);
+  await expect(memoPage(tab, "새 탭 메모")).toHaveClass(/document-full-page/);
   await tab.close();
-  await expect(card).toHaveClass(/memo-full-page/);
-  await card
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).toHaveClass(/document-full-page/);
+  await memoPage(page, "새 탭 메모")
     .getByRole("button", { name: "전체 페이지 닫기", exact: true })
     .click();
-  await expect(card).not.toHaveClass(/memo-full-page/);
+  await expect(
+    card.locator("xpath=ancestor::dialog[contains(@class, 'memo-panel')]"),
+  ).not.toHaveClass(/document-full-page/);
 
   // A copy's task opens as the copy's task.
   const copyTab = page.getByRole("tab", { name: "링크 사본", exact: true });
@@ -1298,4 +1311,216 @@ test("저장하지 못하면 전체 페이지 버튼으로 연 새 탭을 닫고
   await expect(dialog.getByText("저장 실패 시험")).toBeVisible();
   await expect(rich(dialog)).toContainText("저장 실패 입력");
   await expect(dialog).not.toHaveClass(/document-full-page/);
+});
+
+for (const copy of [false, true]) {
+  test(`${copy ? "사본" : "원본"} 메모 주소의 제목은 선택·이름 변경·중첩 패널 닫기를 따른다`, async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    const first = await memo(page, "첫 메모", 2026, "첫 본문");
+    await memo(page, "둘째 메모", 2026, `[업무](/links/task/${taskIds[1]})`);
+    const clone = copy ? await copySheet(page) : "";
+    const path = copy
+      ? `/links/sheet-clone-memo/${clone}/${first}`
+      : `/links/memo/${teamId}/2026/${first}`;
+    await page.goto(path);
+    const panel = page.getByRole("dialog", {
+      name: "연간 업무 메모 목록",
+      exact: true,
+    });
+    await expect(page).toHaveTitle("첫 메모 · 그래보드");
+    await panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+    await expect(
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(page).toHaveTitle("둘째 메모 · 그래보드");
+    await panel.getByRole("tab", { name: "둘째 메모", exact: true }).dblclick();
+    const title = panel
+      .locator(".document-tabs")
+      .getByRole("textbox", { name: "문서 제목", exact: true });
+    // A memo named like the default task document still owns its page title.
+    await title.fill("문서 1");
+    await title.press("Enter");
+    await expect(page).toHaveTitle("문서 1 · 그래보드");
+    await panel.locator(".document-page[data-selected] .document-link").click();
+    await expect(details(page)).toBeVisible();
+    await expect(page).toHaveTitle("링크 대상 업무 · 그래보드");
+    await details(page)
+      .getByRole("button", { name: "닫기", exact: true })
+      .click();
+    await expect(page).toHaveTitle("문서 1 · 그래보드");
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(page).toHaveTitle("연간 업무 · 그래보드");
+    expect(pageErrors).toEqual([]);
+  });
+
+  test(`${copy ? "사본" : "원본"} 메모 내부 링크는 같은 목록의 탭을 저장 후 선택하고 다른 목록은 분리한다`, async ({
+    page,
+  }) => {
+    const first = await memo(page, "첫 메모", 2026, "첫 본문");
+    const second = await memo(page, "둘째 메모");
+    const previous = await memo(page, "지난 메모", 2025);
+    const clone = await copySheet(page);
+    const collection = copy
+      ? `/sheet-clones/${clone}/memos`
+      : `/teams/${teamId}/years/2026/memos`;
+    const linkPath = copy
+      ? `/links/sheet-clone-memo/${clone}/${first}`
+      : `/links/memo/${teamId}/2026/${first}`;
+    await request(
+      page,
+      `/teams/${teamId}/years/2025/memos/${previous}`,
+      "PUT",
+      {
+        markdown: `[열린 목록으로](${linkPath})`,
+        expectedRevision: 0,
+        operationId: randomUUID(),
+      },
+    );
+    const otherCopy = copy
+      ? `/links/memo/${teamId}/2026/${first}`
+      : `/links/sheet-clone-memo/${clone}/${first}`;
+    const otherTeam = (
+      await request(page, "/admin/teams", "POST", {
+        name: `메모 다른 팀 ${randomUUID().slice(0, 6)}`,
+        members: [{ userId, role: "lead" }],
+      })
+    ).id;
+    const otherMemo = randomUUID();
+    await request(page, `/teams/${otherTeam}/years/2026/memos`, "POST", {
+      id: otherMemo,
+      title: "다른 팀 메모",
+    });
+    const markdown = `[처음](${linkPath})\n\n[다른 연도](/links/memo/${teamId}/2025/${previous})\n\n[다른 시트](${otherCopy})\n\n[다른 팀](/links/memo/${otherTeam}/2026/${otherMemo})`;
+    await request(page, `${collection}/${second}`, "PUT", {
+      markdown,
+      expectedRevision: 0,
+      operationId: randomUUID(),
+    });
+    await saveTask(page, taskIds[0], `[메모](${linkPath})`);
+    const source = await open(page);
+    await links(source).click();
+    const panels = page.getByRole("dialog", {
+      name: "연간 업무 메모 목록",
+      exact: true,
+    });
+    const panel = panels.first();
+    const selectSecond = () =>
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+    const currentLinks = () =>
+      panel.locator(".document-page[data-selected] .document-link");
+    await selectSecond();
+    await currentLinks().first().click();
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panels).toHaveCount(1);
+    await selectSecond();
+    // A rejected save must keep B and its draft, with no extra A panel.
+    await page.route(`**/api${collection}/${second}`, (route) =>
+      route.request().method() === "PUT"
+        ? route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "탭 이동 저장 실패" }),
+          })
+        : route.continue(),
+    );
+    const body = panel
+      .locator(".document-page[data-selected]")
+      .getByRole("textbox", { name: "연간 업무 메모 리치 편집" });
+    await panel
+      .getByRole("button", { name: "Markdown 원문", exact: true })
+      .click();
+    await panel
+      .getByRole("textbox", { name: "연간 업무 메모 Markdown 원문" })
+      .fill(`${markdown}\n\n남길 입력`);
+    await panel.getByRole("button", { name: "리치 문서", exact: true }).click();
+    await expect(body).toContainText("남길 입력");
+    await expect(currentLinks()).toHaveCount(4);
+    await currentLinks().first().click();
+    await expect(panel.getByRole("alert").first()).toContainText(
+      "탭 이동 저장 실패",
+    );
+    await expect(
+      panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panels).toHaveCount(1);
+    await expect(body).toContainText("남길 입력");
+    await page.unroute(`**/api${collection}/${second}`);
+    await panel
+      .getByRole("button", { name: "저장 다시 시도", exact: true })
+      .click();
+    await currentLinks().first().click();
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect((await request(page, `${collection}/${second}`)).markdown).toContain(
+      "남길 입력",
+    );
+    await selectSecond();
+    await currentLinks().nth(1).click();
+    await expect(panels).toHaveCount(2);
+    await panels.last().locator(".document-link").click();
+    await expect(panels).toHaveCount(1);
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await selectSecond();
+    for (const index of [2, 3]) {
+      await currentLinks().nth(index).click();
+      await expect(panels).toHaveCount(2);
+      await panels
+        .last()
+        .getByRole("button", { name: "닫기", exact: true })
+        .click();
+      await expect(panels).toHaveCount(1);
+      await expect(
+        panel.getByRole("tab", { name: "둘째 메모", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+    }
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(source).toBeVisible();
+    // Closing unregisters the list; opening A again starts at A, once.
+    await links(source).click();
+    await expect(panels).toHaveCount(1);
+    await expect(
+      panel.getByRole("tab", { name: "첫 메모", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await panel.getByRole("button", { name: "닫기", exact: true }).click();
+  });
+}
+
+test("메모 목록 로딩 오류의 제목은 한 번만 보고하고 재시도 후 선택 제목을 따른다", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const first = await memo(page, "첫 메모");
+  await memo(page, "둘째 메모");
+  const path = `/api/teams/${teamId}/years/2026/memos`;
+  await page.route(`**${path}`, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "목록 일시 실패" }),
+    }),
+  );
+  await page.goto(`/links/memo/${teamId}/2026/${first}`);
+  const panel = page.getByRole("dialog", {
+    name: "연간 업무 메모 목록",
+    exact: true,
+  });
+  await expect(panel.getByRole("alert")).toContainText("목록 일시 실패");
+  await expect(page).toHaveTitle("첫 메모 · 그래보드");
+  await page.unroute(`**${path}`);
+  await panel
+    .getByRole("button", { name: "문서 다시 불러오기", exact: true })
+    .click();
+  await panel.getByRole("tab", { name: "둘째 메모", exact: true }).click();
+  await expect(page).toHaveTitle("둘째 메모 · 그래보드");
+  expect(pageErrors).toEqual([]);
 });
