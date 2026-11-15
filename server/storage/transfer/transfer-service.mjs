@@ -19,7 +19,7 @@ const exportSchema = z.object({
   revision: z.string().optional(),
   year: yearSchema,
   startMonth: z.number().int().min(1).max(12).default(1),
-  format: z.enum(["xlsx", "csv", "json"]),
+  format: z.enum(["xlsx", "csv", "json-data", "json"]),
   scope: z.enum(["view", "all"]),
   taskIds: z.array(uuid).max(20000).default([]),
   keys: z.array(z.string()).max(150).optional(),

@@ -6,6 +6,7 @@ import {
 } from "../../../shared/transfer/workbook.mjs";
 import { canonical, digest } from "../../../server/sync/core/protocol.mjs";
 import { pack } from "../../../shared/formatting/compact.js";
+import { taskDataRows } from "../../../shared/transfer/task-data.js";
 import {
   fieldsFor,
   weeksForPeriod,
@@ -30,7 +31,10 @@ import { requireFreeSheetCloneName } from "../../../shared/sheet-clones/sheet-cl
 import { assert } from "../../control/access.mjs";
 import { taskList, settingsFor, excludedYears } from "../../sheet/tasks.mjs";
 import { sheetCloneView } from "../../sheet-clones/sheet-clones.mjs";
-import { sheetCloneSummaries } from "../sheet-clones/postgres-sheet-clones.mjs";
+import {
+  copyRevision,
+  sheetCloneSummaries,
+} from "../sheet-clones/postgres-sheet-clones.mjs";
 import { imageReferences } from "../../documents/images.mjs";
 import {
   transferDownload as download,
@@ -58,7 +62,7 @@ export class PostgresTransferRepository {
       team = bootstrap.teams.find((t) => t.id === teamId);
     assert(team, 403, "팀에 접근할 권한이 없습니다.");
     assert(
-      ["xlsx", "csv", "json"].includes(body.format) &&
+      ["xlsx", "csv", "json-data", "json"].includes(body.format) &&
         ["all", "view"].includes(body.scope),
       400,
       "내보내기 형식을 확인하세요.",
@@ -73,7 +77,12 @@ export class PostgresTransferRepository {
         "사본을 찾을 수 없습니다.",
       );
       const sheetCloneData = sheetClone
-        ? await sheetCloneView(s, sheetClone)
+        ? body.format === "json-data"
+          ? {
+              ...sheetClone.payload.data,
+              revision: await copyRevision(s, sheetClone),
+            }
+          : await sheetCloneView(s, sheetClone)
         : null;
       if (sheetCloneData)
         assert(
@@ -95,7 +104,10 @@ export class PostgresTransferRepository {
           409,
           "일부 업무가 변경되었습니다.",
         );
-        tasks = selected;
+        if (body.format === "json-data") {
+          const byId = new Map(selected.map((task) => [task.id, task]));
+          tasks = [...ids].map((id) => byId.get(id));
+        } else tasks = selected;
       }
       const settings = sheetCloneData?.settings || (await settingsFor(s)),
         allowed = orderColumns(
@@ -108,6 +120,15 @@ export class PostgresTransferRepository {
         400,
         "내보낼 열을 확인하세요.",
       );
+      if (body.format === "json-data")
+        return {
+          rows: taskDataRows(
+            tasks,
+            keys,
+            sheetCloneData?.users || bootstrap.users,
+            settings,
+          ),
+        };
       const docs = await s.list("document");
       tasks = tasks.map((t) => ({
         ...t,
@@ -184,6 +205,12 @@ export class PostgresTransferRepository {
       };
     });
     const name = `graeboard-${year}.${body.format}`;
+    if (body.format === "json-data")
+      return download(
+        JSON.stringify(data.rows, null, 2),
+        "application/json",
+        `graeboard-${year}${body.startMonth > 1 ? `-${year + 1}` : ""}-tasks.json`,
+      );
     if (body.format === "xlsx")
       return download(
         await makeWorkbook(

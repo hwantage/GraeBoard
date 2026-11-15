@@ -85,6 +85,7 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
       key,
       expectedVersion: 0,
       expectedFormatRevision: tasks[index as number].formatting?.revision || 0,
+      ...(index === 0 && key === "2026-09-28" ? { value: "리뷰 회의" } : {}),
       style: { backgroundColor: "#0066cc", work },
     })),
   });
@@ -114,6 +115,8 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     fromWeek: "2026-09-28",
     toWeek: "2026-11-23",
     visibleFields: ["title"],
+    knownProperties: ["title", "owner", "status"],
+    columnVisibility: { title: true, owner: true, status: true },
     hiddenRows: [tasks[3].id],
     propertyFilters: { title: [titles[0], titles[2], titles[3], titles[5]] },
   };
@@ -149,6 +152,7 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     scope: string,
     expected: string[],
     workedCount = 4,
+    format = "csv",
   ) => {
     await page.getByRole("button", { name: "내보내기", exact: true }).click();
     const box = page.getByRole("dialog", {
@@ -163,7 +167,13 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     await box.getByLabel("내보낼 범위").selectOption(scope);
     if (scope === "worked")
       await box.screenshot({ path: info.outputPath("export-work-period.png") });
-    await box.getByLabel("파일 형식").selectOption("csv");
+    await box.getByLabel("파일 형식").selectOption(format);
+    if (format === "json-data") {
+      await expect(
+        box.getByLabel("파일 형식").locator("option:checked"),
+      ).toHaveText("JSON (.json) · 업무 데이터");
+      await box.screenshot({ path: info.outputPath(`json-data-${scope}.png`) });
+    }
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       box.getByRole("button", { name: "내보내기", exact: true }).click(),
@@ -172,6 +182,22 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     const chunks = [];
     for await (const chunk of stream!) chunks.push(chunk);
     const text = Buffer.concat(chunks).toString("utf8");
+    if (format === "json-data") {
+      const data = JSON.parse(text);
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.map((row: any) => row.작업)).toEqual(expected);
+      for (const row of data) {
+        expect(Object.keys(row)).toEqual(
+          scope === "all" ? ["작업", "팀원", "상태"] : ["작업"],
+        );
+      }
+      expect(download.suggestedFilename()).toBe("graeboard-2026-tasks.json");
+      expect(text).not.toContain("리뷰 회의");
+    } else if (format === "json") {
+      const data = unpack(JSON.parse(text));
+      expect(data.schemaVersion).toBe(7);
+      expect(data.tasks).toHaveLength(expected.length);
+    }
     for (const title of titles)
       expect(text.includes(title), title).toBe(expected.includes(title));
     await expect(box).toHaveCount(0);
@@ -179,10 +205,26 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
   await downloads("worked", [titles[0], titles[3], titles[4], titles[5]]);
   await downloads("view", [titles[0], titles[2], titles[5]]);
   await downloads("all", titles);
+  await downloads("view", [titles[0], titles[2], titles[5]], 4, "json-data");
+  await downloads(
+    "worked",
+    [titles[0], titles[3], titles[4], titles[5]],
+    4,
+    "json-data",
+  );
+  await downloads("all", titles, 4, "json-data");
+  await downloads("all", titles, 4, "json");
   const tab = page.getByRole("tab", { name: copyName, exact: true });
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
   await downloads("worked", [titles[0], titles[3], titles[4], titles[5]]);
+  await downloads(
+    "worked",
+    [titles[0], titles[3], titles[4], titles[5]],
+    4,
+    "json-data",
+  );
+  await downloads("all", titles, 4, "json-data");
 
   await selectMonths(page, 2026, 1);
   await page.getByRole("button", { name: "내보내기", exact: true }).click();
@@ -191,7 +233,7 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
     box.getByLabel("내보낼 범위").locator('option[value="worked"]'),
   ).toHaveText(/선택 기간 수행 업무 · 1월 1주~1월 5주 · 0개 업무/);
   await box.getByLabel("내보낼 범위").selectOption("worked");
-  await box.getByLabel("파일 형식").selectOption("csv");
+  await box.getByLabel("파일 형식").selectOption("json-data");
   const [empty] = await Promise.all([
     page.waitForEvent("download"),
     box.getByRole("button", { name: "내보내기", exact: true }).click(),
@@ -200,5 +242,6 @@ test("선택 기간 수행 업무는 원본·사본에서 숨김과 필터를 �
   for await (const chunk of (await empty.createReadStream())!)
     chunks.push(chunk);
   const text = Buffer.concat(chunks).toString("utf8");
+  expect(JSON.parse(text)).toEqual([]);
   for (const title of titles) expect(text).not.toContain(title);
 });
